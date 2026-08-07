@@ -42,32 +42,35 @@ proto/netra/v1/ingest.proto             wire schema (single source of truth)
 internal/gen/netrav1/                    generated protobuf code (committed)
 internal/buildinfo/buildinfo.go          version, commit, go version
 
-hub/cmd/netra/main.go                    hub entrypoint, wiring only
-hub/internal/config/config.go            NETRA_* env -> Config
-hub/internal/store/store.go              pgx pool lifecycle
-hub/internal/store/migrate.go            embedded migration runner
-hub/internal/store/migrations/*.sql      numbered, never edited once applied
-hub/internal/store/ingest.go             COPY into host_samples, host_current upsert
-hub/internal/auth/token.go               mint / hash / verify bearer tokens
-hub/internal/httpapi/router.go           route table
-hub/internal/httpapi/health.go           GET /api/health
-hub/internal/httpapi/ingest.go           POST /api/agent/v1/ingest
+cmd/netra/main.go                        hub entrypoint, wiring only
+internal/hub/config/config.go            NETRA_* env -> Config
+internal/hub/store/store.go              pgx pool lifecycle
+internal/hub/store/migrate.go            embedded migration runner
+internal/hub/store/migrations/*.sql      numbered, never edited once applied
+internal/hub/store/ingest.go             COPY into host_samples, host_current upsert
+internal/hub/auth/token.go               mint / hash / verify bearer tokens
+internal/hub/httpapi/router.go           route table
+internal/hub/httpapi/health.go           GET /api/health
+internal/hub/httpapi/ingest.go           POST /api/agent/v1/ingest
 
-agent/cmd/netra-agent/main.go            agent entrypoint, wiring only
+cmd/netra-agent/main.go                  agent entrypoint, wiring only
 
-Note on `internal`: `agent/config`, `agent/collector` and `agent/client` are deliberately
-NOT under `agent/internal/`. Go's internal rule makes `agent/internal/...` importable only
-from under `agent/`, and `hub/internal/...` only from under `hub/` — so no package in the
-module could import both, and the end-to-end test in Task 15 needs exactly that. The hub's
-packages stay internal because nothing outside `hub/` consumes them.
-agent/internal/config/config.go          NETRA_* env -> Config
-agent/collector/collector.go             Collector interface + registry
-agent/collector/cpu.go                   /proc/stat
-agent/collector/memory.go                /proc/meminfo
-agent/collector/load.go                  /proc/loadavg
-agent/collector/testdata/                fixture proc trees
-agent/internal/buffer/ring.go            bounded overwrite-oldest buffer
-agent/client/client.go                   POST loop, ack handling, metadata hash
+Note on layout: hub and agent packages live under a shared root `internal/`
+(`internal/hub/...`, `internal/agent/...`), the same pattern already used by
+`internal/buildinfo` and `internal/gen`. An earlier iteration split them into
+`hub/internal/...` and `agent/internal/...`; Go's internal rule made each tree
+importable only from under its own root, so no package in the module could
+import both — and the end-to-end test in Task 15 needs exactly that. Moving
+both trees under one shared `internal/` fixes the visibility problem without
+making any package public outside the module.
+internal/agent/config/config.go          NETRA_* env -> Config
+internal/agent/collector/collector.go    Collector interface + registry
+internal/agent/collector/cpu.go          /proc/stat
+internal/agent/collector/memory.go       /proc/meminfo
+internal/agent/collector/load.go         /proc/loadavg
+internal/agent/collector/testdata/       fixture proc trees
+internal/agent/buffer/ring.go            bounded overwrite-oldest buffer
+internal/agent/client/client.go          POST loop, ack handling, metadata hash
 
 hack/coverage-floors, coverage-gate.sh, patch-coverage.sh
 .github/workflows/ci.yaml
