@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package netra.v1;
 
-option go_package = "github.com/trick77/netra/internal/gen/netrav1;netrav1";
+option go_package = "github.com/trick77/netra/internal/gen/netra/v1;netrav1";
 
 // IngestRequest is one POST body from an agent to the hub.
 message IngestRequest {
