@@ -12,15 +12,15 @@ test:
 # Integration tests are skipped unless NETRA_TEST_DSN points at a TimescaleDB.
 test-integration:
 	NETRA_TEST_DSN=$${NETRA_TEST_DSN:-postgres://netra:netra@127.0.0.1:5432/netra_test} \
-		$(GO) test ./hub/... -run Integration -v
+		$(GO) test ./internal/hub/... -run Integration -v
 
 build: build-hub build-agent
 
 build-hub:
-	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/netra ./hub/cmd/netra
+	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/netra ./cmd/netra
 
 build-agent:
-	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/netra-agent ./agent/cmd/netra-agent
+	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/netra-agent ./cmd/netra-agent
 
 proto:
 	$(GO) run github.com/bufbuild/buf/cmd/buf@v1.47.2 generate
