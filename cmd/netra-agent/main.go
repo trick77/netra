@@ -16,6 +16,10 @@ import (
 )
 
 func main() {
+	if buildinfo.HandleVersionFlag(os.Args, os.Stdout, "netra-agent") {
+		return
+	}
+
 	if err := run(); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)

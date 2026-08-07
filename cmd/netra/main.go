@@ -24,6 +24,10 @@ import (
 const defaultInterval = 60 * time.Second
 
 func main() {
+	if buildinfo.HandleVersionFlag(os.Args, os.Stdout, "netra") {
+		return
+	}
+
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
