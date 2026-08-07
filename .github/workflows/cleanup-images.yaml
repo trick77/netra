@@ -1,0 +1,98 @@
+name: Cleanup Images
+
+on:
+  schedule:
+    # Weekly, Sundays at 04:00 UTC
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Preview deletions without removing anything"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+# Not cancel-in-progress: a half-cancelled deletion pass leaves an arbitrary
+# subset of versions removed, and there is no way to tell from the outside which
+# ones. Letting a run finish is always cheaper than reasoning about that.
+concurrency:
+  group: cleanup-images
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      # container-retention-policy PANICS rather than no-op'ing when a package
+      # does not exist, so probe first. This is not hypothetical for netra:
+      # release.yaml ignores .github/**, so until someone runs it by hand this
+      # repository has no container packages at all and every scheduled run of
+      # this workflow would fail with a red X on the Actions tab — a weekly
+      # false alarm that trains everyone to ignore the tab.
+      #
+      # Both packages are probed separately rather than with a single combined
+      # `&&` so that the summary can name WHICH one is missing. "netra-agent is
+      # missing" is actionable; "some package is missing" sends you back to the
+      # package list to work out which.
+      #
+      # Each probe stays in `if gh api ...; then` form on purpose. Actions runs
+      # `run:` blocks under `bash -e`, so a bare failing `gh api` would abort the
+      # step — which is precisely the case this check exists to survive. A
+      # command in an `if` condition is exempt from errexit; do not refactor
+      # these to `gh api ...; rc=$?`.
+      - id: package-check
+        name: Check whether the container packages exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MISSING=""
+          if ! gh api "users/${{ github.repository_owner }}/packages/container/netra" --silent 2>/dev/null; then
+            MISSING="$MISSING netra"
+          fi
+          if ! gh api "users/${{ github.repository_owner }}/packages/container/netra-agent" --silent 2>/dev/null; then
+            MISSING="$MISSING netra-agent"
+          fi
+          # Gate on BOTH existing, not on either. One invocation of the action
+          # below covers both image names, and a single missing name in that
+          # list is enough to panic the whole run — so there is no useful
+          # "clean just the one that exists" mode to fall back to here.
+          if [ -n "$MISSING" ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No container package yet for:$MISSING — nothing to clean." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Keeps the 10 most recent tagged versions per image and removes the rest,
+      # including orphaned untagged versions. v3.1.0+ automatically protects
+      # multi-arch / attestation child manifests of the kept images, so the
+      # provenance manifests produced by the release build are never broken.
+      #
+      # image-names is SPACE-separated (per the action's README: `image-names:
+      # "foo bar baz"`), not comma-separated. A comma-separated string is not
+      # rejected — it is treated as one absurd image name that matches nothing,
+      # so the run goes green having deleted precisely zero versions and the
+      # registry quietly grows forever.
+      #
+      # Both names are spelled out literally rather than as `netra*`. With a
+      # temporal token (secrets.GITHUB_TOKEN) the `*` and `!` filter operators
+      # are unavailable: the action cannot call the list-packages endpoint with
+      # such a token and falls back to get-package, which needs exact names to
+      # build the URL. Note also that a temporal token requires this repository
+      # to hold the `Admin` role in each package's settings — without it the
+      # deletions come back 403 rather than failing loudly at startup.
+      - if: steps.package-check.outputs.exists == 'true'
+        uses: snok/container-retention-policy@v3.1.0
+        with:
+          account: user
+          token: ${{ secrets.GITHUB_TOKEN }}
+          image-names: "netra netra-agent"
+          tag-selection: both
+          keep-n-most-recent: 10
+          # Protect anything pushed in the last hour so a fresh release is never
+          # caught by a concurrently scheduled cleanup.
+          cut-off: 1h
+          dry-run: ${{ github.event.inputs.dry-run || 'false' }}
