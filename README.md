@@ -28,7 +28,7 @@ What does not exist yet:
 - **No admin API**, so no endpoint and no CLI to mint an agent token — see
   [Creating an agent token](#creating-an-agent-token).
 - **No UI.**
-- **No `install-agent.sh`.**
+- **No `setup-agent.sh`.**
 
 ## Architecture
 
@@ -64,7 +64,7 @@ cannot reach Postgres reports unhealthy rather than accepting ingest it can only
 
 ## Agent quickstart
 
-The intended path is `install-agent.sh` — it detects the host's capabilities, asks before
+The intended path is `setup-agent.sh` — it detects the host's capabilities, asks before
 changing anything, and renders the compose file and `.env` for you. It has not landed yet.
 
 Until then, on each monitored host:

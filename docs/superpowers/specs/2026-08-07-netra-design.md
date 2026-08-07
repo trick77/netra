@@ -704,9 +704,9 @@ Mounts: `/var/run/docker.sock:ro`; marker dirs under `/netra/fs/`; optionally
 
 ---
 
-## 12a. Agent installer
+## 12a. Agent setup script
 
-`install-agent.sh` — POSIX shell, `curl`-able, idempotent, re-runnable. It detects the
+`setup-agent.sh` — POSIX shell, `curl`-able, idempotent, re-runnable. It detects the
 host's capabilities, asks before changing anything, and renders the agent's `compose.yaml`
 and `.env` from templates fetched from this repository.
 
@@ -754,7 +754,7 @@ token.
 
 ### Supported operating systems
 
-The installer reads `/etc/os-release` and refuses to proceed on anything it cannot
+The setup script reads `/etc/os-release` and refuses to proceed on anything it cannot
 support, rather than installing an agent that silently collects nothing.
 
 | Distro | Package inventory | Notes |
@@ -773,13 +773,13 @@ directly rather than inferred from the distro name.
 ### Template sourcing
 
 Templates live in the repository, not inline in the script. They are fetched at a **pinned
-tag** (`--ref`, defaulting to the installer's own version), never from `master`, so a
+tag** (`--ref`, defaulting to the setup script's own version), never from `master`, so a
 mid-refactor template cannot land on a production host. `--template-dir` uses local files
 for development and air-gapped installs.
 
 ### Token
 
-The hub mints agent tokens; the installer never invents one. It accepts `--token` or
+The hub mints agent tokens; the setup script never invents one. It accepts `--token` or
 prompts for it.
 
 ## 13. Assumptions

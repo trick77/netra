@@ -22,17 +22,17 @@ test-integration:
 	NETRA_TEST_DSN=$${NETRA_TEST_DSN:-postgres://netra:netra@127.0.0.1:5432/netra_test} \
 		$(GO) test -p 1 ./internal/hub/... -run Integration -v
 
-# install-agent.sh is POSIX sh, not bash, and is curl'd onto hosts whose /bin/sh
+# setup-agent.sh is POSIX sh, not bash, and is curl'd onto hosts whose /bin/sh
 # is dash or busybox ash. Linting with -s sh and then running the suite under a
 # real dash is the pair that catches bashisms: shellcheck alone misses some, and
 # bash-as-sh accepts nearly all of them.
 test-shell:
-	shellcheck -s sh install-agent.sh
-	shellcheck -s sh test/install-agent/run.sh test/install-agent/lib.sh \
-		test/install-agent/cases/*.sh
-	sh test/install-agent/run.sh
+	shellcheck -s sh setup-agent.sh
+	shellcheck -s sh test/setup-agent/run.sh test/setup-agent/lib.sh \
+		test/setup-agent/cases/*.sh
+	sh test/setup-agent/run.sh
 	@if command -v dash >/dev/null 2>&1; then \
-		dash test/install-agent/run.sh; \
+		dash test/setup-agent/run.sh; \
 	else \
 		echo "dash not installed - skipping the dash pass (CI runs it)"; \
 	fi
