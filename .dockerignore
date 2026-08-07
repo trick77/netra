@@ -1,0 +1,14 @@
+# Keep the build context to what `go build` actually reads: go.mod, go.sum,
+# cmd/, internal/, proto/. Everything below either bloats the context or
+# invalidates layer caches on changes that cannot affect the binaries.
+bin/
+coverage/
+data/
+docs/
+.github/
+test/
+.git/
+*.md
+.env
+compose*.yaml
+deploy/

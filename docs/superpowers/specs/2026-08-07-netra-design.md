@@ -44,7 +44,7 @@ Sizing basis for every storage decision below.
 |---|---|
 | Hosts | ~100 |
 | Containers per host | 20–40 |
-| Scrape interval | **60s** (default; configurable per host) |
+| Scrape interval | **60s** (fixed; not configurable — see §6.6) |
 | Active series | ~22,000 |
 | Sustained ingest | ~370 points/sec |
 | Retention | 90 days (tiered) |
@@ -425,11 +425,16 @@ All variables are `NETRA_`-prefixed. beszel's bare `TOKEN`, `KEY`, `LISTEN` are
 collision-prone in a `network_mode: host` container. This deviates from music's `BACKEND_`
 convention because `BACKEND_` is meaningless on an agent and netra ships two components.
 
+The scrape interval is fixed at 60s (`config.ScrapeInterval`) and is deliberately not
+configurable. The hub has no per-host cadence column, so it can only ever hand every agent
+back the same hardcoded constant — which silently overrode an operator's local setting on
+the first successful flush. An overridable knob is worse than no knob at all; a genuine
+per-host override arrives with the admin API in phase 2.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `NETRA_HUB_URL` | — | **Required** |
 | `NETRA_TOKEN` | — | **Required** |
-| `NETRA_INTERVAL` | `60s` | Duration string — no `uint16` millisecond ceiling |
 | `NETRA_COLLECTORS_DISABLED` | — | e.g. `smart,processes` — one uniform mechanism |
 | `NETRA_SMART_INTERVAL` | `1h` | |
 | `NETRA_SMART_DEVICES` | auto | `/dev/sda:sat,/dev/nvme0:nvme` — no separator variable needed |

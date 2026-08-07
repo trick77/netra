@@ -87,7 +87,12 @@ message IngestResponse {
   // before retrying, instead of using its own backoff.
   uint32 retry_after_s = 3;
 
-  // Non-zero when the hub wants this host scraping at a different cadence
-  // than it currently is. The agent adopts it for subsequent scrapes.
-  uint32 interval_s = 4;
+  // Field 4 was interval_s: a hub-supplied scrape cadence the agent adopted.
+  // Retired because the scrape interval is now fixed at 60s agent-side. The
+  // hub has no per-host cadence column, so it could only ever hand back one
+  // hardcoded constant — which silently overrode whatever the operator had
+  // configured on the agent. A per-host override belongs to phase 2 and will
+  // need a new field; 4 must never be reused.
+  reserved 4;
+  reserved "interval_s";
 }

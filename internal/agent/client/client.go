@@ -27,38 +27,33 @@ var ErrUnauthorized = errors.New("hub rejected the agent token")
 // ingestPath is the hub endpoint agents post to.
 const ingestPath = "/api/agent/v1/ingest"
 
-// minAdoptedInterval and maxAdoptedInterval bound a hub-supplied interval_s
-// before it is adopted, so a malformed or malicious response cannot make the
-// agent scrape in a tight loop or effectively stop scraping.
-const (
-	minAdoptedInterval = time.Second
-	maxAdoptedInterval = 24 * time.Hour
-)
-
 // maxAdoptedRetryAfter caps a hub-supplied retry_after_s so a bad value
 // cannot stall the agent indefinitely.
 const maxAdoptedRetryAfter = 10 * time.Minute
 
 // maxBatchSamples caps how many buffered samples one POST carries.
 //
-// The hub caps an ingest body at 4 MiB (httpapi.maxBodyBytes). A short
-// NETRA_INTERVAL makes the ring far larger than that — 6h at 1s is 21600
-// samples, several megabytes of protobuf — and sending it whole would earn a
-// 413 the agent can never recover from: the ring only drops its oldest entry
-// to make room for a new one, so it stays at capacity and every later flush
-// re-sends the same oversized body. Draining a prefix per flush keeps every
-// request comfortably inside the hub's limit; AckThrough is prefix-based and
-// seq is monotonic, so a partial drain is exactly as safe as a whole one.
+// The hub caps an ingest body at 4 MiB (httpapi.maxBodyBytes). Sending an
+// over-sized ring whole would earn a 413 the agent can never recover from:
+// the ring only drops its oldest entry to make room for a new one, so it
+// stays at capacity and every later flush re-sends the same oversized body.
+// Draining a prefix per flush keeps every request comfortably inside the
+// hub's limit; AckThrough is prefix-based and seq is monotonic, so a partial
+// drain is exactly as safe as a whole one.
+//
+// At the fixed 60s cadence the ring maxes out at 360 slots (6h window), so
+// this bound does not bind today. It is kept as the invariant that guards
+// the 413-forever failure mode independently of the window arithmetic.
 const maxBatchSamples = 2000
 
 // maxBufferSlots caps the ring's capacity in entries, independently of the
 // window/interval arithmetic that sizes it. capacityFor bounds the buffered
-// WINDOW, which says nothing about how many samples fit in it: a 10ms
-// interval turns the default 1h window into 360000 live *HostSample values,
-// hundreds of megabytes on a host the agent is meant to be a negligible
-// tenant of. During an outage the ring fills to capacity by design, so
-// without this the agent is OOM-killed on exactly the small machine the
-// buffering exists to protect.
+// WINDOW, which says nothing on its own about how many live *HostSample
+// values fit in it — and during an outage the ring fills to capacity by
+// design, on a host the agent is meant to be a negligible tenant of. The
+// fixed 60s cadence keeps the real number small (360 at the 6h maximum), so
+// like maxBatchSamples this is a standing guard on the memory invariant
+// rather than a limit reached in practice.
 const maxBufferSlots = 10000
 
 // RetryAfterError wraps a flush failure that came with a hub-specified
@@ -79,11 +74,10 @@ type Client struct {
 	http       *http.Client
 	ring       *buffer.Ring
 
-	// interval is the current scrape cadence. It starts at cfg.Interval and
-	// may be overridden by a hub-supplied interval_s. Collectors keep the
-	// interval they were constructed with (only CPU exposes it, and only for
-	// reporting; its percentage math is delta-based, not fixed-interval), so
-	// adopting a new value here does not require rebuilding them.
+	// interval is the scrape cadence. In production it is always
+	// config.ScrapeInterval; it is a field only so the package's own tests
+	// can drive Run's ticker faster than 60s (see export_test.go). Nothing
+	// mutates it after construction.
 	interval time.Duration
 
 	seq             uint64
@@ -94,11 +88,19 @@ type Client struct {
 	retryAfter      time.Duration
 }
 
-// New builds a Client. Buffer capacity is derived from the configured window
-// and interval, so NETRA_BUFFER_WINDOW is expressed in time rather than in a
-// sample count nobody can reason about.
+// New builds a Client scraping at the fixed config.ScrapeInterval. Buffer
+// capacity is derived from the configured window and that interval, so
+// NETRA_BUFFER_WINDOW is expressed in time rather than in a sample count
+// nobody can reason about.
 func New(cfg config.Config, collectors []collector.Collector) *Client {
-	capacity := capacityFor(cfg.BufferWindow, cfg.Interval)
+	return newClient(cfg, collectors, config.ScrapeInterval)
+}
+
+// newClient is New with the cadence injected, so export_test.go can hand the
+// package's own tests a faster ticker without exposing an interval knob to
+// production callers.
+func newClient(cfg config.Config, collectors []collector.Collector, interval time.Duration) *Client {
+	capacity := capacityFor(cfg.BufferWindow, interval)
 
 	md := BuildMetadata(cfg)
 
@@ -107,7 +109,7 @@ func New(cfg config.Config, collectors []collector.Collector) *Client {
 		collectors:   collectors,
 		http:         &http.Client{Timeout: 30 * time.Second},
 		ring:         buffer.New(capacity),
-		interval:     cfg.Interval,
+		interval:     interval,
 		metadata:     md,
 		metadataHash: HashMetadata(md),
 		// The hub asks for metadata when it needs it; nothing is assumed.
@@ -146,14 +148,10 @@ func capacityFor(window, interval time.Duration) int {
 // BufferDepth reports how many samples are waiting to be acknowledged.
 func (c *Client) BufferDepth() int { return c.ring.Depth() }
 
-// BufferCapacity reports the ring's current capacity in slots. Combined with
-// Interval, capacity * Interval is the effective buffered window, which
-// adopting a hub-supplied interval_s must keep within cfg.BufferWindow.
+// BufferCapacity reports the ring's capacity in slots. capacity *
+// config.ScrapeInterval is the effective buffered window, which capacityFor
+// keeps within cfg.BufferWindow.
 func (c *Client) BufferCapacity() int { return c.ring.Capacity() }
-
-// Interval reports the scrape cadence currently in effect, which may have
-// been adopted from a hub-supplied interval_s.
-func (c *Client) Interval() time.Duration { return c.interval }
 
 // ScrapeOnce runs every collector and buffers the resulting sample.
 //
@@ -270,25 +268,6 @@ func (c *Client) Flush(ctx context.Context) error {
 	c.lastFlushFailed = false
 	c.retryAfter = 0
 
-	if iv := time.Duration(resp.GetIntervalS()) * time.Second; iv >= minAdoptedInterval && iv <= maxAdoptedInterval {
-		if iv != c.interval {
-			slog.Info("adopting hub-supplied scrape interval", "old", c.interval, "new", iv)
-			c.interval = iv
-
-			// Capacity was sized in slots for the old interval. Left alone,
-			// adopting a longer interval would silently re-scale the
-			// buffered window past NETRA_BUFFER_WINDOW (and past the hub's
-			// 6h start_offset), while adopting a shorter one would shrink
-			// outage coverage for no reason. Recompute it so capacity *
-			// interval stays within the configured window.
-			newCapacity := capacityFor(c.cfg.BufferWindow, iv)
-			if dropped := c.ring.Resize(newCapacity); dropped > 0 {
-				slog.Warn("buffer capacity shrank to fit the adopted interval within the buffer window; oldest samples dropped",
-					"new_capacity", newCapacity, "dropped", dropped)
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -369,7 +348,8 @@ func parseRetryAfter(resp *http.Response) time.Duration {
 // hub has rejected the token. A revoked agent must not hammer the hub.
 const unauthorizedRetry = 5 * time.Minute
 
-// Run scrapes and flushes on the configured interval until ctx is cancelled.
+// Run scrapes and flushes on the fixed scrape interval until ctx is
+// cancelled. The cadence never changes for the lifetime of the process.
 func (c *Client) Run(ctx context.Context) error {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
@@ -400,8 +380,6 @@ func (c *Client) Run(ctx context.Context) error {
 			if time.Now().Before(flushNotBefore) {
 				continue
 			}
-
-			intervalBefore := c.interval
 
 			if err := c.Flush(ctx); err != nil {
 				if errors.Is(err, ErrUnauthorized) {
@@ -442,9 +420,6 @@ func (c *Client) Run(ctx context.Context) error {
 
 			backoff = time.Second
 			flushNotBefore = time.Time{}
-			if c.interval != intervalBefore {
-				ticker.Reset(c.interval)
-			}
 		}
 	}
 }

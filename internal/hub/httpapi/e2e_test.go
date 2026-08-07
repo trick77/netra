@@ -40,19 +40,18 @@ func TestIntegrationAgentToHubRoundTrip(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(
-		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, time.Minute))
+		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s))
 	t.Cleanup(srv.Close)
 
 	cfg := agentconfig.Config{
 		HubURL:       srv.URL,
 		Token:        token,
-		Interval:     time.Minute,
 		BufferWindow: time.Hour,
 		ProcRoot:     "../../../internal/agent/collector/testdata/proc1",
 	}
 	c := client.New(cfg, []collector.Collector{
-		collector.NewMemory(cfg.ProcRoot, cfg.Interval),
-		collector.NewLoad(cfg.ProcRoot, cfg.Interval),
+		collector.NewMemory(cfg.ProcRoot, agentconfig.ScrapeInterval),
+		collector.NewLoad(cfg.ProcRoot, agentconfig.ScrapeInterval),
 	})
 
 	c.ScrapeOnce(ctx)

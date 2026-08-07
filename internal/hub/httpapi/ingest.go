@@ -40,15 +40,15 @@ const maxPlausibleFuture = time.Hour
 
 // IngestHandler accepts agent metric batches.
 type IngestHandler struct {
-	auth     *auth.Authenticator
-	store    *store.Store
-	interval time.Duration
+	auth  *auth.Authenticator
+	store *store.Store
 }
 
-// NewIngestHandler wires the handler. interval is the scrape interval the hub
-// hands back to agents.
-func NewIngestHandler(a *auth.Authenticator, s *store.Store, interval time.Duration) *IngestHandler {
-	return &IngestHandler{auth: a, store: s, interval: interval}
+// NewIngestHandler wires the handler. The hub hands back no scrape cadence:
+// the agent's interval is a fixed 60s constant and there is no per-host
+// cadence column here to override it with.
+func NewIngestHandler(a *auth.Authenticator, s *store.Store) *IngestHandler {
+	return &IngestHandler{auth: a, store: s}
 }
 
 func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +127,6 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeProto(w, &netrav1.IngestResponse{
 		AckSeq:          req.GetSeq(),
 		RequestMetadata: requestMetadata,
-		IntervalS:       uint32(h.interval.Seconds()),
 	})
 }
 

@@ -13,6 +13,9 @@
 # cmd/). Both therefore go through the same Cobertura/diff-cover path; there
 # is no separate JS/UI stack in this repo.
 #
+# cmd/ is excluded from both sides, matching the exclusion hack/coverage-gate.sh
+# already applies to the absolute floor. See the diff-cover invocations below.
+#
 # The floor alone lets a large well-tested codebase absorb untested new code
 # without ever going red. The patch gate alone lets legacy debt sit forever.
 # Both, together, pin the gain without punishing anyone for debt they inherited.
@@ -186,10 +189,12 @@ if [[ -f coverage/hub.xml ]]; then
   go run hack/strip-comment-lines.go "$MODULE_DIR" \
     < coverage/hub-rooted.xml > coverage/hub-code-only.xml
 
+  # cmd/ excluded — see the agent section below for the full rationale.
   diff-cover coverage/hub-code-only.xml \
     --compare-branch "$BASE_REF" \
     --fail-under "$PATCH_MIN" \
-    --format "markdown:coverage/hub-patch.md" || fail=1
+    --format "markdown:coverage/hub-patch.md" \
+    --exclude '*/cmd/*' 'cmd/*' || fail=1
   cat coverage/hub-patch.md >> "$summary" 2>/dev/null || true
   assert_matched coverage/hub-patch.md hub coverage/hub-code-only.xml "" \
     "internal/hub/*.go" "internal/buildinfo/*.go" "internal/gen/*.go"
@@ -208,13 +213,31 @@ if [[ -f coverage/agent.xml ]]; then
   go run hack/strip-comment-lines.go "$MODULE_DIR" \
     < coverage/agent-rooted.xml > coverage/agent-code-only.xml
 
+  # cmd/ is excluded here for the same reason hack/coverage-gate.sh excludes it
+  # from the absolute floor: main() wiring — flag parsing, signal handling,
+  # dependency construction, ListenAndServe — is reachable only by running the
+  # binary, and the two gates must agree on what counts as testable. Without
+  # this, changing one argument in a constructor call inside run() is a 100%
+  # uncovered patch that no test anyone could write would turn green, and the
+  # only way to pass is to not make the change.
+  #
+  # Both pattern forms are needed. diff-cover fnmatches --exclude against the
+  # path it resolved from <source> + the class filename, which is absolute:
+  # bare 'cmd/*' matches nothing, and only '*/cmd/*' fires. 'cmd/*' is kept
+  # alongside it so the exclusion still holds if a future diff-cover matches
+  # repo-relative paths instead. Verified against diff-cover 10.3.0, the
+  # version ci.yaml pins.
   diff-cover coverage/agent-code-only.xml \
     --compare-branch "$BASE_REF" \
     --fail-under "$PATCH_MIN" \
-    --format "markdown:coverage/agent-patch.md" || fail=1
+    --format "markdown:coverage/agent-patch.md" \
+    --exclude '*/cmd/*' 'cmd/*' || fail=1
   cat coverage/agent-patch.md >> "$summary" 2>/dev/null || true
+  # cmd/*.go is deliberately absent from this pathspec: those files are excluded
+  # above, so a cmd-only diff produces no coverage data by design and must not
+  # trip the absent-from-report guard.
   assert_matched coverage/agent-patch.md agent coverage/agent-code-only.xml "" \
-    "internal/agent/*.go" "cmd/*.go"
+    "internal/agent/*.go"
 fi
 
 # A gate that checked nothing must not report success: if neither report was

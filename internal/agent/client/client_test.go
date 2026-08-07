@@ -82,13 +82,12 @@ func newClient(t *testing.T, url string) *client.Client {
 	cfg := config.Config{
 		HubURL:       url,
 		Token:        "nta_test",
-		Interval:     time.Minute,
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	collectors := []collector.Collector{
-		collector.NewMemory(cfg.ProcRoot, cfg.Interval),
-		collector.NewLoad(cfg.ProcRoot, cfg.Interval),
+		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
 	}
 	return client.New(cfg, collectors)
 }
@@ -265,12 +264,11 @@ func TestRunFlushesOnEveryTickAndStopsOnCancel(t *testing.T) {
 	cfg := config.Config{
 		HubURL:       srv.URL,
 		Token:        "nta_test",
-		Interval:     5 * time.Millisecond,
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
-	c := client.New(cfg, collectors)
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -310,12 +308,11 @@ func TestRunBacksOffOnTransientFailureAndStopsOnCancel(t *testing.T) {
 	cfg := config.Config{
 		HubURL:       srv.URL,
 		Token:        "nta_test",
-		Interval:     5 * time.Millisecond,
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
-	c := client.New(cfg, collectors)
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -349,12 +346,11 @@ func TestRunRetriesSlowlyOnUnauthorizedAndStopsOnCancel(t *testing.T) {
 	cfg := config.Config{
 		HubURL:       srv.URL,
 		Token:        "nta_test",
-		Interval:     5 * time.Millisecond,
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
-	c := client.New(cfg, collectors)
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -401,11 +397,10 @@ func TestFlushFailsOnInvalidHubURL(t *testing.T) {
 	cfg := config.Config{
 		HubURL:       "http://\x7f",
 		Token:        "nta_test",
-		Interval:     time.Minute,
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
 	c := client.New(cfg, collectors)
 	ctx := context.Background()
 
@@ -422,13 +417,12 @@ func TestScrapeOnceSkipsFailingCollector(t *testing.T) {
 	cfg := config.Config{
 		HubURL:       "http://unused.invalid",
 		Token:        "nta_test",
-		Interval:     time.Minute,
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	collectors := []collector.Collector{
 		failingCollector{},
-		collector.NewMemory(cfg.ProcRoot, cfg.Interval),
+		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
 	}
 	c := client.New(cfg, collectors)
 
@@ -507,150 +501,6 @@ func TestFlushIgnoresRetryAfterWithoutProtobufContentType(t *testing.T) {
 	}
 }
 
-// A hub-supplied interval_s must be adopted for subsequent scrapes.
-func TestFlushAdoptsHubSuppliedInterval(t *testing.T) {
-	rec := &recorder{
-		respond: func(req *netrav1.IngestRequest) *netrav1.IngestResponse {
-			return &netrav1.IngestResponse{AckSeq: req.GetSeq(), IntervalS: 30}
-		},
-	}
-	srv := httptest.NewServer(rec.handler(t))
-	t.Cleanup(srv.Close)
-
-	c := newClient(t, srv.URL) // built with Interval: time.Minute
-	ctx := context.Background()
-
-	if got := c.Interval(); got != time.Minute {
-		t.Fatalf("Interval() before any flush = %v, want the configured 1m", got)
-	}
-
-	c.ScrapeOnce(ctx)
-	if err := c.Flush(ctx); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-
-	if got := c.Interval(); got != 30*time.Second {
-		t.Fatalf("Interval() after flush = %v, want 30s (adopted from the hub)", got)
-	}
-}
-
-// A zero interval_s (the field's default, meaning "no opinion") must not be
-// adopted — the client keeps its configured interval.
-func TestFlushIgnoresZeroIntervalFromHub(t *testing.T) {
-	rec := &recorder{}
-	srv := httptest.NewServer(rec.handler(t))
-	t.Cleanup(srv.Close)
-
-	c := newClient(t, srv.URL)
-	ctx := context.Background()
-
-	c.ScrapeOnce(ctx)
-	if err := c.Flush(ctx); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-
-	if got := c.Interval(); got != time.Minute {
-		t.Fatalf("Interval() = %v, want the configured 1m unchanged", got)
-	}
-}
-
-// Adopting a hub-supplied interval_s must not silently re-scale the
-// buffered window past the agent's configured BufferWindow. The ring's
-// capacity is sized in slots for the interval in effect at construction, so
-// if the hub later adopts a longer interval without the capacity being
-// recomputed, the same slot count covers a much larger span of wall-clock
-// time — samples replayed from that far back land past the hub's 6h
-// continuous-aggregate start_offset and are silently excluded from rollups
-// forever. This asserts the effective window (capacity * interval), not
-// just capacity or just interval, so it fails if either half drifts.
-func TestFlushAdoptingLongerIntervalKeepsEffectiveWindowBounded(t *testing.T) {
-	rec := &recorder{
-		respond: func(req *netrav1.IngestRequest) *netrav1.IngestResponse {
-			// The hub adopts a much longer cadence (60s) than the agent was
-			// configured with (1s).
-			return &netrav1.IngestResponse{AckSeq: req.GetSeq(), IntervalS: 60}
-		},
-	}
-	srv := httptest.NewServer(rec.handler(t))
-	t.Cleanup(srv.Close)
-
-	cfg := config.Config{
-		HubURL:       srv.URL,
-		Token:        "nta_test",
-		Interval:     time.Second,
-		BufferWindow: time.Hour,
-		ProcRoot:     "../collector/testdata/proc1",
-	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
-	c := client.New(cfg, collectors)
-	ctx := context.Background()
-
-	c.ScrapeOnce(ctx)
-	if err := c.Flush(ctx); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-
-	if got := c.Interval(); got != 60*time.Second {
-		t.Fatalf("Interval() after flush = %v, want 60s (adopted from the hub)", got)
-	}
-
-	effectiveWindow := time.Duration(c.BufferCapacity()) * c.Interval()
-	if effectiveWindow > cfg.BufferWindow {
-		t.Fatalf("effective buffer window after adopting a longer interval = %v (capacity=%d * interval=%v), "+
-			"want no more than the configured BufferWindow of %v",
-			effectiveWindow, c.BufferCapacity(), c.Interval(), cfg.BufferWindow)
-	}
-}
-
-// The reverse case: adopting a shorter interval must not leave capacity
-// frozen at a value sized for the old, longer interval either — that would
-// silently shrink outage coverage well below the configured BufferWindow for
-// no reason. The effective window should grow back up to (at most) the
-// configured window once capacity is recomputed for the shorter interval.
-func TestFlushAdoptingShorterIntervalGrowsCapacityBackToWindow(t *testing.T) {
-	rec := &recorder{
-		respond: func(req *netrav1.IngestRequest) *netrav1.IngestResponse {
-			return &netrav1.IngestResponse{AckSeq: req.GetSeq(), IntervalS: 5}
-		},
-	}
-	srv := httptest.NewServer(rec.handler(t))
-	t.Cleanup(srv.Close)
-
-	cfg := config.Config{
-		HubURL:       srv.URL,
-		Token:        "nta_test",
-		Interval:     time.Minute,
-		BufferWindow: time.Hour,
-		ProcRoot:     "../collector/testdata/proc1",
-	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
-	c := client.New(cfg, collectors)
-	ctx := context.Background()
-
-	c.ScrapeOnce(ctx)
-	if err := c.Flush(ctx); err != nil {
-		t.Fatalf("Flush: %v", err)
-	}
-
-	if got := c.Interval(); got != 5*time.Second {
-		t.Fatalf("Interval() after flush = %v, want 5s (adopted from the hub)", got)
-	}
-
-	effectiveWindow := time.Duration(c.BufferCapacity()) * c.Interval()
-	if effectiveWindow > cfg.BufferWindow {
-		t.Fatalf("effective buffer window = %v, want no more than the configured %v", effectiveWindow, cfg.BufferWindow)
-	}
-	// Capacity should have grown back close to the full configured window
-	// now that the interval is short again (allow one slot of slack for
-	// integer division).
-	minEffectiveWindow := cfg.BufferWindow - 5*time.Second
-	if effectiveWindow < minEffectiveWindow {
-		t.Fatalf("effective buffer window after adopting a shorter interval = %v, want at least %v — "+
-			"capacity must be recomputed for the new interval, not left frozen at the old one",
-			effectiveWindow, minEffectiveWindow)
-	}
-}
-
 // Run must wait at least the hub's retry_after before retrying a failed
 // flush, in place of its own exponential backoff. The hub's retry_after (4s)
 // is set well outside the 1-2s range the agent's own initial jittered
@@ -678,12 +528,11 @@ func TestRunHonoursHubRetryAfterInsteadOfOwnBackoff(t *testing.T) {
 	cfg := config.Config{
 		HubURL:       srv.URL,
 		Token:        "nta_test",
-		Interval:     5 * time.Millisecond,
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
-	c := client.New(cfg, collectors)
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -719,89 +568,6 @@ func TestRunHonoursHubRetryAfterInsteadOfOwnBackoff(t *testing.T) {
 	if gap < 3*time.Second {
 		t.Fatalf("gap between retries = %v, want at least ~4s (the hub's retry_after); "+
 			"a gap this short means Run used its own 1-2s jittered backoff instead", gap)
-	}
-}
-
-// Run must actually retune its ticker when it adopts a hub-supplied
-// interval_s, not merely record the new value. The initial cadence is slow
-// (4s) and the hub asks for a 1s cadence starting with the very first
-// response; if the ticker were never reset, every request after the first
-// would still be ~4s apart. Instead of asserting a request count against a
-// wall-clock deadline (thin margins there flake under -race on a loaded
-// runner), this measures the actual gap between the second and third
-// request and checks it is far short of 4s — a comparison that holds
-// regardless of how slow or jittery the runner is, since a non-adopting
-// ticker could never produce a ~1s gap.
-func TestRunAdoptsHubSuppliedIntervalForSubsequentTicks(t *testing.T) {
-	var mu sync.Mutex
-	var times []time.Time
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		times = append(times, time.Now())
-		mu.Unlock()
-
-		resp := &netrav1.IngestResponse{AckSeq: 1, IntervalS: 1}
-		out, err := proto.Marshal(resp)
-		if err != nil {
-			t.Fatalf("Marshal: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		_, _ = w.Write(out)
-	}))
-	t.Cleanup(srv.Close)
-
-	cfg := config.Config{
-		HubURL:       srv.URL,
-		Token:        "nta_test",
-		Interval:     4 * time.Second, // slow initial cadence
-		BufferWindow: time.Hour,
-		ProcRoot:     "../collector/testdata/proc1",
-	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
-	c := client.New(cfg, collectors)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
-	go func() { errCh <- c.Run(ctx) }()
-
-	// Collecting 3 requests needs ~6s in the adopting case (4s + 1s + 1s)
-	// and would need ~12s in the non-adopting case (4s + 4s + 4s); a 30s
-	// budget gives generous headroom over either without depending on tight
-	// wall-clock timing for the pass/fail decision itself.
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		mu.Lock()
-		n := len(times)
-		mu.Unlock()
-		if n >= 3 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	cancel()
-	select {
-	case err := <-errCh:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Run() returned %v, want context.Canceled", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run() did not return within 2s of context cancellation")
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(times) < 3 {
-		t.Fatalf("requests observed = %d within 30s, want at least 3 — the ticker never adopted the faster interval_s "+
-			"(times so far: %v)", len(times), times)
-	}
-
-	gap := times[2].Sub(times[1])
-	if gap > 3*time.Second {
-		t.Fatalf("gap between the 2nd and 3rd request = %v, want well under 4s (the pre-adoption cadence); "+
-			"a gap this long means the ticker never adopted the hub's 1s interval_s", gap)
 	}
 }
 
@@ -870,12 +636,11 @@ func TestRunKeepsScrapingWhileBackingOffFlush(t *testing.T) {
 	cfg := config.Config{
 		HubURL:       srv.URL,
 		Token:        "nta_test",
-		Interval:     10 * time.Millisecond,
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
-	c := client.New(cfg, collectors)
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	c := client.NewWithInterval(cfg, collectors, 10*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)

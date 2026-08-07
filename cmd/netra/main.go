@@ -19,10 +19,6 @@ import (
 	"github.com/trick77/netra/internal/hub/store"
 )
 
-// defaultInterval is the scrape interval handed to agents. 60s matches the
-// spec's default; per-host overrides arrive with the admin API.
-const defaultInterval = 60 * time.Second
-
 func main() {
 	if buildinfo.HandleVersionFlag(os.Args, os.Stdout, "netra") {
 		return
@@ -60,7 +56,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, defaultInterval),
+		Handler:           httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

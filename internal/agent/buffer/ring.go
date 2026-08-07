@@ -101,9 +101,15 @@ func (r *Ring) Dropped() uint64 {
 // policy Add uses: if the new capacity is smaller than the number of
 // currently buffered entries, the oldest ones are dropped (and counted) to
 // make it fit; otherwise every entry is preserved. It returns how many
-// entries were dropped by this call, so the caller can log the loss. This
-// exists so the client can keep capacity * interval within the configured
-// buffer window when it adopts a hub-supplied interval_s after construction.
+// entries were dropped by this call, so the caller can log the loss.
+//
+// It exists so a caller can keep capacity * interval within the configured
+// buffer window when either factor changes after construction. Nothing
+// outside the tests calls it today: it was written for the hub-supplied
+// interval_s the agent used to adopt at runtime, and the scrape cadence is
+// now a fixed 60s constant. It is kept because a per-host cadence override
+// (phase 2) needs exactly this, and re-deriving the drop accounting later is
+// the easy thing to get wrong.
 func (r *Ring) Resize(capacity int) uint64 {
 	if capacity < 1 {
 		capacity = 1

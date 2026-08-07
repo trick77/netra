@@ -13,11 +13,20 @@ import (
 // re-materialises, so it would be silently excluded from rollups forever.
 const MaxBufferWindow = 6 * time.Hour
 
+// ScrapeInterval is how often the agent collects and ships a sample. It is
+// deliberately NOT configurable.
+//
+// The hub has no per-host cadence column: it could only ever hand every agent
+// the same hardcoded constant back, which silently overrode whatever an
+// operator had set locally on the first successful flush. A knob the hub can
+// override behind your back is worse than no knob at all, so there is no knob.
+// A genuine per-host override belongs to the admin API in phase 2.
+const ScrapeInterval = 60 * time.Second
+
 // Config holds every agent setting. Only HubURL and Token are required.
 type Config struct {
 	HubURL       string
 	Token        string
-	Interval     time.Duration
 	BufferWindow time.Duration
 	ProcRoot     string
 	SysRoot      string
@@ -50,9 +59,6 @@ func Load() (Config, error) {
 	}
 
 	var err error
-	if cfg.Interval, err = durationOr("NETRA_INTERVAL", time.Minute); err != nil {
-		return Config{}, err
-	}
 	// The buffer window is coupled to the hub's continuous-aggregate
 	// start_offset (MaxBufferWindow, 6h). Raising it past that would silently
 	// exclude replayed data from rollups forever, so it is rejected here.
