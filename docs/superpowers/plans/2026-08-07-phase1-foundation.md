@@ -1259,9 +1259,11 @@ func (a *Authenticator) Authenticate(ctx context.Context, bearer string) (int32,
 		return 0, ErrUnauthorized
 	}
 
+	// last_used_at is bookkeeping. A failed write must not deny an agent that
+	// presented a valid token, so this logs and carries on.
 	if _, err := a.pool.Exec(ctx,
 		`UPDATE tokens SET last_used_at = now() WHERE token_hash = $1`, want); err != nil {
-		return 0, fmt.Errorf("touch token: %w", err)
+		slog.Warn("could not update token last_used_at", "err", err)
 	}
 
 	return hostID, nil
