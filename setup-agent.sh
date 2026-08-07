@@ -287,10 +287,16 @@ netra_ask() {
     done
 }
 
-# netra_ask_value PROMPT EXAMPLE [DEFAULT] - a free-text answer, printed to
-# stdout so the caller captures it. An empty answer takes DEFAULT (usually
-# empty), which is not an error: an operator who has not minted a token yet must
-# still be able to finish the run.
+# netra_ask_value VARNAME PROMPT [EXAMPLE] - a free-text answer, ASSIGNED to
+# VARNAME. An empty answer leaves VARNAME as it was, which is not an error: an
+# operator who has not minted a token yet must still be able to finish the run.
+#
+# It assigns rather than printing to stdout for a reason that cost an afternoon:
+# `X=$(netra_ask_value ...)` runs the function in a SUBSHELL, so the
+# NETRA_VALUE_INDEX increment below would be discarded on every call. The values
+# file would hand out its first line forever, and the host-type validation loop
+# below would spin on it without end. This is the same class of trap as the
+# `cmd | while read` note in the header: state does not survive a subshell.
 #
 # NETRA_VALUES_FILE is the test seam, with its OWN index. Keeping it separate
 # from NETRA_ANSWERS_FILE is the whole point: adding a value prompt must never
@@ -298,9 +304,13 @@ netra_ask() {
 # NOT fatal - a case that cares about one value should not have to spell out
 # every other one.
 netra_ask_value() {
-    _av_q="$1"
-    _av_eg="${2:-}"
-    _av_def="${3:-}"
+    _av_var="$1"
+    _av_q="$2"
+    _av_eg="${3:-}"
+    # Assigned literally first so shellcheck can see it: the eval below is
+    # invisible to static analysis, and SC2154 is right to say so.
+    _av_def=""
+    eval "_av_def=\$$_av_var"
 
     if [ -n "${NETRA_VALUES_FILE:-}" ]; then
         NETRA_VALUE_INDEX=$((NETRA_VALUE_INDEX + 1))
@@ -323,7 +333,7 @@ netra_ask_value() {
     if [ -z "$_av_reply" ]; then
         _av_reply="$_av_def"
     fi
-    printf '%s' "$_av_reply"
+    eval "$_av_var=\$_av_reply"
 }
 
 # ---------------------------------------------------------------------------
@@ -2028,7 +2038,7 @@ configure() {
     step "Configuration"
 
     if [ -z "$HUB_URL" ]; then
-        HUB_URL=$(netra_ask_value "Hub base URL" "https://netra.example.com")
+        netra_ask_value HUB_URL "Hub base URL" "https://netra.example.com"
     fi
     if [ -z "$HUB_URL" ]; then
         # The same shape as the missing-token note below: equally fatal to the
@@ -2042,10 +2052,10 @@ configure() {
     resolve_token
 
     if [ -z "$LOCATION" ]; then
-        LOCATION=$(netra_ask_value "Where is this host (city, country)" "Zurich, CH")
+        netra_ask_value LOCATION "Where is this host (city, country)" "Zurich, CH"
     fi
     if [ -z "$PROVIDER" ]; then
-        PROVIDER=$(netra_ask_value "Who hosts it" "Hetzner, OVH, self-hosted")
+        netra_ask_value PROVIDER "Who hosts it" "Hetzner, OVH, self-hosted"
     fi
 
     # The one validated value: the hub stores it as an enum, so a typo here is a
@@ -2053,11 +2063,14 @@ configure() {
     # forever would trap an operator who does not know what to call a container
     # host - but a non-empty answer must be one of the three.
     if [ -z "$HOST_TYPE" ]; then
-        HOST_TYPE=$(netra_ask_value "Host type (bare_metal, vps, vm; blank to skip)" "vps")
+        netra_ask_value HOST_TYPE "Host type (bare_metal, vps, vm; blank to skip)" "vps"
     fi
     while [ -n "$HOST_TYPE" ] && ! _valid_host_type "$HOST_TYPE"; do
         warn "host type '$HOST_TYPE' is not one of bare_metal, vps, vm"
-        HOST_TYPE=$(netra_ask_value "Host type (bare_metal, vps, vm; blank to skip)" "vps")
+        # Cleared first, so an empty answer ENDS the loop instead of re-taking
+        # the rejected value as its own default and spinning forever.
+        HOST_TYPE=""
+        netra_ask_value HOST_TYPE "Host type (bare_metal, vps, vm; blank to skip)" "vps"
     done
 
     info "  location:        ${LOCATION:-(not set)}"

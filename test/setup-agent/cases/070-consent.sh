@@ -230,6 +230,42 @@ assert_eq 0 "$RUN_RC" "a run with no hub URL still completes"
 assert_contains "$RUN_OUT" "no hub URL" "the missing hub URL is called out"
 assert_contains "$(cat "$TMP/out-nohub/.env")" "NETRA_HUB_URL=" "NETRA_HUB_URL is written empty"
 
+# --- 8b. the free-text values are asked for, and each prompt advances ---------
+#
+# The bug this pins: netra_ask_value used to print its answer for the caller to
+# capture with `VAR=$(netra_ask_value ...)`, which runs it in a SUBSHELL - so
+# NETRA_VALUE_INDEX never advanced in the parent, every prompt read line 1
+# forever, and the host-type validation loop spun on it without end. A single
+# values file with four DIFFERENT lines is what catches that: with the bug, all
+# four values are the hub URL and the run never terminates.
+ROOT=$(mkroot values)
+VALS=$(values four https://vals.example "Gravelines, FR" OVH vps)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" NETRA_VALUES_FILE="$VALS" \
+    "$SH" "$SETUP" --token nta_x \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-values"
+assert_eq 0 "$RUN_RC" "a run driven by a values file completes"
+VALENV=$(cat "$TMP/out-values/.env")
+assert_contains "$VALENV" "NETRA_HUB_URL=https://vals.example" "the hub URL is the first value"
+assert_contains "$VALENV" "NETRA_LOCATION=Gravelines, FR" "the location is the second"
+assert_contains "$VALENV" "NETRA_PROVIDER=OVH" "the provider is the third"
+assert_contains "$VALENV" "NETRA_HOST_TYPE=vps" "the host type is the fourth"
+# Never asked for, so it stays blank however many values are supplied.
+assert_contains "$VALENV" "NETRA_FACILITY=" "the facility is not asked for"
+
+# An invalid host type is re-asked rather than written to .env, and an empty
+# answer ends the loop rather than re-taking the rejected value as its default.
+ROOT=$(mkroot badhosttype)
+VALS=$(values bad https://vals.example "Gravelines, FR" OVH nas "")
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" NETRA_VALUES_FILE="$VALS" \
+    "$SH" "$SETUP" --token nta_x \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-badht"
+assert_eq 0 "$RUN_RC" "an invalid host type does not abort the run"
+assert_contains "$RUN_OUT" "is not one of bare_metal" "the invalid host type is rejected out loud"
+assert_eq "NETRA_HOST_TYPE=" "$(grep '^NETRA_HOST_TYPE=' "$TMP/out-badht/.env")" \
+    "a rejected host type is left blank rather than written to .env"
+
 # --- 9. --token-file ----------------------------------------------------------
 #
 # A token pasted into a file by a provisioning system routinely arrives with a
