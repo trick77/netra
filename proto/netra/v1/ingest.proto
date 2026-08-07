@@ -6,8 +6,10 @@ option go_package = "github.com/trick77/netra/internal/gen/netra/v1;netrav1";
 
 // IngestRequest is one POST body from an agent to the hub.
 message IngestRequest {
-  // Monotonic per-agent batch sequence. The hub acks the highest contiguous
-  // value it accepted; the agent drops acked batches from its ring buffer.
+  // Monotonic per-agent batch sequence. Batches are all-or-nothing, so the
+  // hub's ack_seq simply echoes this value once the whole batch is stored;
+  // the agent drops the acked batch (and everything older) from its ring
+  // buffer.
   uint64 seq = 1;
 
   // 8-byte hash of the static metadata block. The hub compares it against the
@@ -19,8 +21,11 @@ message IngestRequest {
 
   repeated HostSample host_samples = 4;
 
-  // True when these samples are replayed from the ring buffer after an outage.
-  // Backfilled ranges need continuous-aggregate invalidation.
+  // True when these samples are replayed from the ring buffer after an
+  // outage. Informational only: TimescaleDB records continuous-aggregate
+  // invalidations automatically on INSERT into an older chunk, so the hub
+  // needs no explicit action on this flag. It exists so the hub can log
+  // backfill activity for observability.
   bool backfill = 5;
 }
 
@@ -77,6 +82,12 @@ message HostSample {
 message IngestResponse {
   uint64 ack_seq = 1;
   bool request_metadata = 2;
+
+  // Set on a 503 (storage unavailable). The agent waits at least this long
+  // before retrying, instead of using its own backoff.
   uint32 retry_after_s = 3;
+
+  // Non-zero when the hub wants this host scraping at a different cadence
+  // than it currently is. The agent adopts it for subsequent scrapes.
   uint32 interval_s = 4;
 }

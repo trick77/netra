@@ -24,8 +24,10 @@ const (
 // IngestRequest is one POST body from an agent to the hub.
 type IngestRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Monotonic per-agent batch sequence. The hub acks the highest contiguous
-	// value it accepted; the agent drops acked batches from its ring buffer.
+	// Monotonic per-agent batch sequence. Batches are all-or-nothing, so the
+	// hub's ack_seq simply echoes this value once the whole batch is stored;
+	// the agent drops the acked batch (and everything older) from its ring
+	// buffer.
 	Seq uint64 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
 	// 8-byte hash of the static metadata block. The hub compares it against the
 	// stored value and asks for a resend on mismatch.
@@ -33,8 +35,11 @@ type IngestRequest struct {
 	// Populated only when the hub set request_metadata on a previous response.
 	Metadata    *Metadata     `protobuf:"bytes,3,opt,name=metadata,proto3" json:"metadata,omitempty"`
 	HostSamples []*HostSample `protobuf:"bytes,4,rep,name=host_samples,json=hostSamples,proto3" json:"host_samples,omitempty"`
-	// True when these samples are replayed from the ring buffer after an outage.
-	// Backfilled ranges need continuous-aggregate invalidation.
+	// True when these samples are replayed from the ring buffer after an
+	// outage. Informational only: TimescaleDB records continuous-aggregate
+	// invalidations automatically on INSERT into an older chunk, so the hub
+	// needs no explicit action on this flag. It exists so the hub can log
+	// backfill activity for observability.
 	Backfill      bool `protobuf:"varint,5,opt,name=backfill,proto3" json:"backfill,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -459,10 +464,14 @@ type IngestResponse struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	AckSeq          uint64                 `protobuf:"varint,1,opt,name=ack_seq,json=ackSeq,proto3" json:"ack_seq,omitempty"`
 	RequestMetadata bool                   `protobuf:"varint,2,opt,name=request_metadata,json=requestMetadata,proto3" json:"request_metadata,omitempty"`
-	RetryAfterS     uint32                 `protobuf:"varint,3,opt,name=retry_after_s,json=retryAfterS,proto3" json:"retry_after_s,omitempty"`
-	IntervalS       uint32                 `protobuf:"varint,4,opt,name=interval_s,json=intervalS,proto3" json:"interval_s,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Set on a 503 (storage unavailable). The agent waits at least this long
+	// before retrying, instead of using its own backoff.
+	RetryAfterS uint32 `protobuf:"varint,3,opt,name=retry_after_s,json=retryAfterS,proto3" json:"retry_after_s,omitempty"`
+	// Non-zero when the hub wants this host scraping at a different cadence
+	// than it currently is. The agent adopts it for subsequent scrapes.
+	IntervalS     uint32 `protobuf:"varint,4,opt,name=interval_s,json=intervalS,proto3" json:"interval_s,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *IngestResponse) Reset() {
