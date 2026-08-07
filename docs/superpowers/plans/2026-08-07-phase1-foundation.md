@@ -3491,6 +3491,7 @@ package client
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"os"
 	"runtime"
 	"strings"
@@ -3550,7 +3551,10 @@ func fingerprint() string {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(strings.TrimSpace(string(raw))))
-	return string(sum[:])
+	// Hex, not string(sum[:]): Fingerprint is a proto3 string field, and
+	// protobuf-go rejects non-UTF-8 strings at Marshal. Raw digest bytes are
+	// almost never valid UTF-8, so this would fail on every Linux host.
+	return hex.EncodeToString(sum[:])
 }
 ```
 
