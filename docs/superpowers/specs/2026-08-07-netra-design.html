@@ -268,6 +268,14 @@ IP changes, agent version changes). <code>systemd_unit_events</code> and <code>p
 because both carry structured, queryable columns that would otherwise be buried in jsonb,
 and both are written in bursts large enough to warrant their own indexes.</p>
 <p><code>host_current</code> exists so the host-list endpoint never touches a hypertable.</p>
+<p><strong>Surrogate vs natural keys.</strong> Every dimension has an integer <code>id</code> (the surrogate PK that
+hypertables reference) <em>and</em>, where one exists, a natural key that identifies the thing on
+the host. For containers: <code>containers.id</code> is the PK referenced by
+<code>container_samples.container_id</code>, while <code>containers.container_key</code> holds the natural key —
+compose project + service name, falling back to container name (§6.2). The same split
+applies to <code>filesystems</code> (<code>id</code> / <code>label</code>), <code>sensors</code> (<code>id</code> / <code>chip</code>+<code>label</code>) and
+<code>systemd_units</code> (<code>id</code> / <code>unit_name</code>). Hypertables reference <code>id</code> only, so a rename changes
+one dimension row and no history.</p>
 <p><code>host_addresses.address</code> uses the native <code>inet</code> type, enabling subnet queries
 (<em>&quot;every host with an address in 172.19.0.0/16&quot;</em>, <em>&quot;every host with a public IPv4&quot;</em>).
 The <strong>hub</strong> derives <code>scope</code> (<code>loopback</code> / <code>private</code> / <code>public</code>) from the address — the
@@ -449,7 +457,7 @@ degradation is the specific behaviour being fixed.</p>
 <tr>
 <td>Addresses</td>
 <td>netlink</td>
-<td>on change</td>
+<td>detects changes (delivered via metadata hash)</td>
 <td><code>network_mode: host</code></td>
 </tr>
 <tr>
@@ -517,6 +525,20 @@ this is the classic Docker-stats overreporting mistake.</p>
 <p><strong>Container identity is <code>compose project + service name</code></strong> where those labels exist,
 falling back to container name. Container IDs change on every recreate; keying on them
 means one <code>docker compose up -d</code> orphans all history. The ID is stored as an attribute.</p>
+<p><strong>The addresses collector does not deliver anything itself.</strong> It detects that the address
+set changed, which flips <code>metadata_hash</code>; the hub then requests the metadata block on the
+next POST (§7.4). There is no push path.</p>
+<p><strong>Interface names are the join key</strong> between <code>net_samples.iface</code> and
+<code>host_addresses.iface</code>, so both collectors must use the kernel interface name — netlink
+for addresses, <code>/proc/net/dev</code> for counters, same string. An interface with counters but
+no address appears only in <code>net_samples</code>; a bridge with an address but filtered from
+metrics appears only in <code>host_addresses</code>. That asymmetry is intended.</p>
+<p><strong>Per-filesystem I/O requires a device mapping.</strong> <code>statfs</code> yields space and inodes only —
+never I/O counters. To populate <code>filesystem_samples.read_bytes</code> / <code>write_bytes</code>, the
+collector maps the marker directory&#39;s <code>st_dev</code> to a block device (<code>/sys/dev/block/&lt;major&gt;:&lt;minor&gt;</code>,
+resolving partitions to their parent device) and reads the counters from <code>/proc/diskstats</code>.
+Where that mapping fails — network filesystems, overlay, LVM stacks it cannot resolve —
+both columns are <code>NULL</code> rather than zero, per §5.1 rule 3.</p>
 <p><strong>Network metric filtering</strong> excludes <code>lo</code>, <code>veth*</code>, <code>docker0</code>, <code>br-*</code> and tunnels by
 default — a Docker host has one veth per container, and unfiltered they churn constantly.
 Note this differs from the <em>address inventory</em>, where bridge addresses are wanted; there,

@@ -152,6 +152,15 @@ and both are written in bursts large enough to warrant their own indexes.
 
 `host_current` exists so the host-list endpoint never touches a hypertable.
 
+**Surrogate vs natural keys.** Every dimension has an integer `id` (the surrogate PK that
+hypertables reference) *and*, where one exists, a natural key that identifies the thing on
+the host. For containers: `containers.id` is the PK referenced by
+`container_samples.container_id`, while `containers.container_key` holds the natural key —
+compose project + service name, falling back to container name (§6.2). The same split
+applies to `filesystems` (`id` / `label`), `sensors` (`id` / `chip`+`label`) and
+`systemd_units` (`id` / `unit_name`). Hypertables reference `id` only, so a rename changes
+one dimension row and no history.
+
 `host_addresses.address` uses the native `inet` type, enabling subnet queries
 (*"every host with an address in 172.19.0.0/16"*, *"every host with a public IPv4"*).
 The **hub** derives `scope` (`loopback` / `private` / `public`) from the address — the
@@ -248,7 +257,7 @@ degradation is the specific behaviour being fixed.
 | Load | `/proc/loadavg` | 60s | — |
 | Disk I/O | `/proc/diskstats` | 60s | — |
 | Network | `/proc/net/dev` | 60s | `network_mode: host` |
-| Addresses | netlink | on change | `network_mode: host` |
+| Addresses | netlink | detects changes (delivered via metadata hash) | `network_mode: host` |
 | Containers | cgroup v2 files + Docker socket for metadata | 60s | `/var/run/docker.sock:ro` |
 | Filesystems | `statfs` on marker dirs | 60s | marker mounts (§6.4) |
 | Sensors | `/sys/class/hwmon` | 60s | — (`/sys` is mounted ro by Docker automatically) |
@@ -271,6 +280,23 @@ this is the classic Docker-stats overreporting mistake.
 **Container identity is `compose project + service name`** where those labels exist,
 falling back to container name. Container IDs change on every recreate; keying on them
 means one `docker compose up -d` orphans all history. The ID is stored as an attribute.
+
+**The addresses collector does not deliver anything itself.** It detects that the address
+set changed, which flips `metadata_hash`; the hub then requests the metadata block on the
+next POST (§7.4). There is no push path.
+
+**Interface names are the join key** between `net_samples.iface` and
+`host_addresses.iface`, so both collectors must use the kernel interface name — netlink
+for addresses, `/proc/net/dev` for counters, same string. An interface with counters but
+no address appears only in `net_samples`; a bridge with an address but filtered from
+metrics appears only in `host_addresses`. That asymmetry is intended.
+
+**Per-filesystem I/O requires a device mapping.** `statfs` yields space and inodes only —
+never I/O counters. To populate `filesystem_samples.read_bytes` / `write_bytes`, the
+collector maps the marker directory's `st_dev` to a block device (`/sys/dev/block/<major>:<minor>`,
+resolving partitions to their parent device) and reads the counters from `/proc/diskstats`.
+Where that mapping fails — network filesystems, overlay, LVM stacks it cannot resolve —
+both columns are `NULL` rather than zero, per §5.1 rule 3.
 
 **Network metric filtering** excludes `lo`, `veth*`, `docker0`, `br-*` and tunnels by
 default — a Docker host has one veth per container, and unfiltered they churn constantly.
