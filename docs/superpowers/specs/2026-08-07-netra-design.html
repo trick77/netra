@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>netra — Design Specification</title>
+<style>
+:root{--bg:#0f1115;--panel:#161920;--panel2:#1b1f28;--fg:#e6e8ee;--muted:#9aa3b2;--line:#2a2f3a;--accent:#5aa9e6;--accent2:#7ee0c0;--warn:#e6b45a}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:56px 28px 96px}
+h1{font-size:34px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+h2{font-size:23px;margin:52px 0 14px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:17.5px;margin:30px 0 10px;color:var(--accent2)}
+h4{font-size:15px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+p{margin:12px 0}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(90,169,230,.35)}
+a:hover{border-bottom-color:var(--accent)}
+ul,ol{padding-left:22px;margin:12px 0}
+li{margin:6px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+code{background:var(--panel2);padding:2px 6px;border-radius:5px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent2)}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow:auto;margin:16px 0}
+pre code{background:none;padding:0;color:var(--fg);font-size:12.5px;line-height:1.55}
+table{border-collapse:collapse;width:100%;margin:18px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--panel2);font-weight:600;color:var(--muted);white-space:nowrap}
+tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+blockquote{margin:18px 0;padding:12px 18px;border-left:3px solid var(--warn);background:rgba(230,180,90,.07);border-radius:0 8px 8px 0;color:#f0dcb4}
+blockquote p{margin:4px 0}
+strong{color:#fff;font-weight:620}
+.meta{color:var(--muted);font-size:13.5px;margin-bottom:34px}
+</style></head>
+<body><div class="wrap"><h1>netra — Design Specification</h1>
+<p><strong>Date:</strong> 2026-08-07
+<strong>Status:</strong> Approved for phase 1 planning
+<strong>Phase:</strong> 1 of N</p>
+<hr>
+<h2>1. What netra is</h2>
+<p>A self-hosted monitoring system for Linux servers, bare-metal hosts and VPSes that run
+Docker. A central <strong>hub</strong> (container) stores metrics and inventory; <strong>agents</strong>
+(containers) run on each monitored host and push data to the hub.</p>
+<p>Positioned against <a href="https://github.com/henrygd/beszel">beszel</a>, which solves the same
+problem. netra targets the two axes where beszel is weakest: <strong>hub throughput at scale</strong>
+and <strong>collector correctness/observability</strong>. netra is not a beszel fork and carries no
+compatibility obligation — no shared wire format, no shared database, no migration path.</p>
+<h3>Goals</h3>
+<ul>
+<li>Handle ~100 hosts × 20–40 containers without the hub becoming the bottleneck.</li>
+<li>Never silently degrade: a collector that cannot run reports <em>why</em>, to the hub.</li>
+<li>No data loss across short hub outages.</li>
+<li>Docker-first deployment where every documented capability actually works in a container.</li>
+</ul>
+<h3>Non-goals (permanent)</h3>
+<ul>
+<li>Realtime / sub-minute live views.</li>
+<li>GPU metrics.</li>
+<li>Battery and eMMC metrics.</li>
+<li>Bare-binary agent distribution (Docker only).</li>
+<li>cgroup v1 support.</li>
+<li>Windows, macOS or FreeBSD agents.</li>
+<li>Replacing Prometheus/Grafana for arbitrary querying and dashboarding.</li>
+</ul>
+<hr>
+<h2>2. Scale targets</h2>
+<p>Sizing basis for every storage decision below.</p>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Hosts</td>
+<td>~100</td>
+</tr>
+<tr>
+<td>Containers per host</td>
+<td>20–40</td>
+</tr>
+<tr>
+<td>Scrape interval</td>
+<td><strong>60s</strong> (default; configurable per host)</td>
+</tr>
+<tr>
+<td>Active series</td>
+<td>~22,000</td>
+</tr>
+<tr>
+<td>Sustained ingest</td>
+<td>~370 points/sec</td>
+</tr>
+<tr>
+<td>Retention</td>
+<td>90 days (tiered)</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>3. Phase boundaries</h2>
+<h3>Phase 1 (this spec)</h3>
+<p>Agents collect → HTTPS POST → hub → TimescaleDB, plus a token-gated read API so
+ingestion can be verified from the command line.</p>
+<ul>
+<li>All collectors listed in §6, including package inventory.</li>
+<li>Full schema (§5), including tables whose data is only <em>displayed</em> in later phases.</li>
+<li>Read + admin JSON API (§8).</li>
+<li>CI/CD, image publishing, coverage gating (§11).</li>
+</ul>
+<h3>Deferred</h3>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Phase</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Web UI</td>
+<td>2</td>
+<td>Own design system — music&#39;s tokens are built for a media player and are not assumed to fit</td>
+</tr>
+<tr>
+<td>OIDC (Authentik)</td>
+<td>2</td>
+<td>Pointless without a UI to log into. <code>oidc-fix-report.md</code> in the music repo is the input</td>
+</tr>
+<tr>
+<td>Alerting engine</td>
+<td>2</td>
+<td>Thresholds, host-down, event-driven rules, notification delivery</td>
+</tr>
+<tr>
+<td>LLM diagnostics</td>
+<td>3</td>
+<td>Reuses music&#39;s <code>internal/llm</code> + <code>BACKEND_CHAT_*</code> pattern. Needs history and alerts to reason over</td>
+</tr>
+<tr>
+<td>Geocoding + map</td>
+<td>2</td>
+<td>Schema exists in phase 1; resolution and display come with the UI</td>
+</tr>
+<tr>
+<td>Fleet/aggregate API endpoints</td>
+<td>2</td>
+<td>Speccing them now would be guessing at the UI</td>
+</tr>
+<tr>
+<td>Latency probe (ioping-style)</td>
+<td>—</td>
+<td>Considered and dropped</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>4. Architecture</h2>
+<pre><code>┌─────────────────────────┐         ┌──────────────────────────────┐
+│ Monitored host          │         │ Hub host                     │
+│                         │         │                              │
+│  ┌───────────────────┐  │  HTTPS  │  ┌────────┐   ┌────────────┐ │
+│  │ netra-agent       │──┼────────▶│  │ netra  │──▶│ TimescaleDB│ │
+│  │ (container)       │  │  POST   │  │ (Go)   │   │ (Postgres) │ │
+│  └───────────────────┘  │ protobuf│  └────────┘   └────────────┘ │
+└─────────────────────────┘         └──────────────────────────────┘
+</code></pre>
+<p>Both components are Go, <code>CGO_ENABLED=0</code>, single static binary, distributed as Docker
+images. The hub follows <code>../music</code>&#39;s architecture: <code>backend/cmd/</code> + <code>backend/internal/&lt;domain&gt;/</code>,
+stdlib <code>net/http</code> with Go 1.22 method routing (no framework), numbered SQL migrations,
+Traefik labels on an external network.</p>
+<p><strong>The one deviation from music&#39;s locked choices</strong> is the database: netra uses
+Postgres + TimescaleDB via <code>pgx</code> (pure Go, so <code>CGO_ENABLED=0</code> survives) instead of
+<code>ncruces/go-sqlite3</code>. SQLite is <strong>not</strong> used anywhere in netra.</p>
+<h3>Why one datastore, not two</h3>
+<p>A split — SQLite for relational, Timescale for metrics — was explicitly rejected. It
+forfeits every advantage of Timescale (one backup, one migration runner, SQL joins from a
+container to its host to its alert rules) while still adding the Postgres dependency.</p>
+<hr>
+<h2>5. Data model</h2>
+<h3>5.1 Design rules</h3>
+<ol>
+<li><strong>Typed tables per metric family</strong>, not a generic <code>(series_id, ts, value)</code> table.
+At target scale this is ~3,300 rows/min instead of ~22,000, and compresses far better
+because each column holds one metric with a consistent magnitude.</li>
+<li><strong>Metric tables reference small integer ids</strong>, never strings. A container rename or a
+host re-registration must not fork history.</li>
+<li><strong>Absent subsystems are <code>NULL</code>, never <code>0</code>.</strong> <code>swap_used = 0</code> means swap exists and is
+unused; <code>NULL</code> means there is no swap. Collapsing them produces misleading graphs and
+un-writable alert rules. Applies to swap, ZFS ARC, and any sensor a board lacks.
+SQL aggregates ignore <code>NULL</code> by default, so continuous aggregates do the right thing
+for free. The wire format must preserve the distinction (§7.3).</li>
+<li><strong>Discrete state changes are events, not samples.</strong> Anything that is constant for hours
+and matters at the moment it changes goes to <code>events</code>, not a hypertable.</li>
+</ol>
+<h3>5.2 Dimension tables (plain Postgres)</h3>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Key columns</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>providers</code></td>
+<td><code>id</code>, <code>name</code></td>
+</tr>
+<tr>
+<td><code>sites</code></td>
+<td><code>id</code>, <code>provider_id</code>, <code>name</code>, <code>facility</code>, <code>address</code>, <code>latitude</code>, <code>longitude</code>, <code>country_code</code>, <code>timezone</code></td>
+</tr>
+<tr>
+<td><code>hosts</code></td>
+<td><code>id</code>, <code>site_id</code>, <code>hostname</code>, <code>fingerprint</code>, <code>host_type</code>, <code>agent_version</code>, <code>go_version</code>, <code>build_commit</code>, <code>kernel</code>, <code>os_name</code>, <code>arch</code>, <code>cpu_model</code>, <code>cores</code>, <code>threads</code>, <code>memory_total</code>, <code>metadata_hash</code>, <code>capabilities</code> (jsonb), <code>latitude</code>, <code>longitude</code></td>
+</tr>
+<tr>
+<td><code>host_current</code></td>
+<td>Denormalised latest snapshot per host, updated on ingest</td>
+</tr>
+<tr>
+<td><code>tokens</code></td>
+<td><code>id</code>, <code>host_id</code>, <code>token_hash</code>, <code>created_at</code>, <code>last_used_at</code></td>
+</tr>
+<tr>
+<td><code>containers</code></td>
+<td><code>id</code>, <code>host_id</code>, <code>container_key</code>, <code>name</code>, <code>image</code>, <code>is_agent</code></td>
+</tr>
+<tr>
+<td><code>filesystems</code></td>
+<td><code>id</code>, <code>host_id</code>, <code>label</code>, <code>mountpoint</code>, <code>device_id</code></td>
+</tr>
+<tr>
+<td><code>sensors</code></td>
+<td><code>id</code>, <code>host_id</code>, <code>chip</code>, <code>label</code></td>
+</tr>
+<tr>
+<td><code>devices</code></td>
+<td><code>id</code>, <code>host_id</code>, <code>device</code>, <code>model</code>, <code>serial</code></td>
+</tr>
+<tr>
+<td><code>systemd_units</code></td>
+<td><code>id</code>, <code>host_id</code>, <code>unit_name</code></td>
+</tr>
+<tr>
+<td><code>host_addresses</code></td>
+<td><code>host_id</code>, <code>iface</code>, <code>if_index</code>, <code>address</code> (<code>inet</code>), <code>family</code>, <code>scope</code>, <code>vrf</code>, <code>description</code>, <code>first_seen</code>, <code>last_seen</code></td>
+</tr>
+<tr>
+<td><code>host_packages</code></td>
+<td><code>host_id</code>, <code>name</code>, <code>version</code>, <code>arch</code>, <code>format</code>, <code>size_bytes</code>, <code>first_seen</code>, <code>last_seen</code></td>
+</tr>
+<tr>
+<td><code>events</code></td>
+<td><code>id</code>, <code>host_id</code>, <code>ts</code>, <code>type</code>, <code>subject</code>, <code>detail</code> (jsonb)</td>
+</tr>
+<tr>
+<td><code>systemd_unit_events</code></td>
+<td><code>host_id</code>, <code>unit_id</code>, <code>ts</code>, <code>state</code>, <code>substate</code></td>
+</tr>
+<tr>
+<td><code>package_events</code></td>
+<td><code>host_id</code>, <code>ts</code>, <code>name</code>, <code>action</code>, <code>from_version</code>, <code>to_version</code></td>
+</tr>
+<tr>
+<td><code>geocode_cache</code></td>
+<td><code>query</code>, <code>latitude</code>, <code>longitude</code>, <code>source</code>, <code>resolved_at</code></td>
+</tr>
+</tbody></table>
+<p><code>events</code> is the general discrete-state table (SMART thresholds, mdadm degradation, public
+IP changes, agent version changes). <code>systemd_unit_events</code> and <code>package_events</code> are separate
+because both carry structured, queryable columns that would otherwise be buried in jsonb,
+and both are written in bursts large enough to warrant their own indexes.</p>
+<p><code>host_current</code> exists so the host-list endpoint never touches a hypertable.</p>
+<p><code>host_addresses.address</code> uses the native <code>inet</code> type, enabling subnet queries
+(<em>&quot;every host with an address in 172.19.0.0/16&quot;</em>, <em>&quot;every host with a public IPv4&quot;</em>).
+The <strong>hub</strong> derives <code>scope</code> (<code>loopback</code> / <code>private</code> / <code>public</code>) from the address — the
+agent reports raw facts only, so classification is one implementation that can be fixed
+without redeploying agents. IPv4 and IPv6 are treated identically throughout.</p>
+<h3>5.3 Hypertables</h3>
+<table>
+<thead>
+<tr>
+<th>Table</th>
+<th>Columns beyond <code>(host_id, ts)</code></th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>host_samples</code></td>
+<td><code>cpu_total</code>, <code>cpu_user</code>, <code>cpu_system</code>, <code>cpu_iowait</code>, <code>cpu_steal</code>, <code>cpu_idle</code>, <code>mem_total</code>, <code>mem_used</code>, <code>mem_available</code>, <code>mem_buffcache</code>, <code>mem_zfs_arc</code>, <code>swap_total</code>, <code>swap_used</code>, <code>load1</code>, <code>load5</code>, <code>load15</code>, <code>uptime_s</code>, <code>services_total</code>, <code>services_failed</code></td>
+</tr>
+<tr>
+<td><code>cpu_core_samples</code></td>
+<td><code>core</code>, <code>busy</code></td>
+</tr>
+<tr>
+<td><code>container_samples</code></td>
+<td><code>container_id</code>, <code>cpu_pct</code>, <code>mem_used</code>, <code>mem_limit</code>, <code>net_rx</code>, <code>net_tx</code>, <code>io_read</code>, <code>io_write</code></td>
+</tr>
+<tr>
+<td><code>filesystem_samples</code></td>
+<td><code>fs_id</code>, <code>total</code>, <code>used</code>, <code>free</code>, <code>inodes_total</code>, <code>inodes_used</code>, <code>read_bytes</code>, <code>write_bytes</code></td>
+</tr>
+<tr>
+<td><code>disk_io_samples</code></td>
+<td><code>device</code>, <code>read_bytes</code>, <code>write_bytes</code>, <code>read_ops</code>, <code>write_ops</code>, <code>io_util_pct</code>, <code>r_await_ms</code>, <code>w_await_ms</code>, <code>weighted_io_pct</code></td>
+</tr>
+<tr>
+<td><code>net_samples</code></td>
+<td><code>iface</code>, <code>rx_bytes</code>, <code>tx_bytes</code>, <code>rx_errs</code>, <code>tx_errs</code></td>
+</tr>
+<tr>
+<td><code>sensor_samples</code></td>
+<td><code>sensor_id</code>, <code>temp</code></td>
+</tr>
+<tr>
+<td><code>smart_attributes</code></td>
+<td><code>device_id</code>, <code>attr_id</code>, <code>raw</code>, <code>normalized</code></td>
+</tr>
+<tr>
+<td><code>process_samples</code></td>
+<td><code>name</code>, <code>cpu_pct</code>, <code>mem_bytes</code>, <code>count</code></td>
+</tr>
+<tr>
+<td><code>agent_samples</code></td>
+<td><code>uptime_s</code>, <code>rss_bytes</code>, <code>goroutines</code>, <code>scrape_duration_ms</code>, <code>buffer_depth</code>, <code>buffer_dropped_total</code>, <code>post_failures_total</code>, <code>post_latency_ms</code></td>
+</tr>
+<tr>
+<td><code>collector_samples</code></td>
+<td><code>collector</code>, <code>duration_ms</code>, <code>ok</code>, <code>error_code</code></td>
+</tr>
+<tr>
+<td><code>custom_samples</code></td>
+<td><code>metric</code>, <code>labels</code> (jsonb), <code>value</code></td>
+</tr>
+</tbody></table>
+<p><code>custom_samples</code> is the escape hatch so a future pluggable collector does not require a
+migration. Everything with a known shape gets a typed table.</p>
+<p><code>smart_attributes</code> is deliberately generic — SMART attribute sets vary per drive model.</p>
+<p><code>agent_samples.uptime_s</code> and <code>host_samples.uptime_s</code> are <strong>different facts</strong>: an agent
+uptime reset with host uptime unchanged means the agent restarted on its own, which also
+means its ring buffer was lost. Conflating them hides agent crash-looping behind a
+healthy-looking host.</p>
+<h3>5.4 Retention and rollups</h3>
+<table>
+<thead>
+<tr>
+<th>Tier</th>
+<th>Resolution</th>
+<th>Retained</th>
+<th>Approx. points</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Raw</td>
+<td>60s</td>
+<td>7 days</td>
+<td>~220M</td>
+</tr>
+<tr>
+<td>Rollup 1</td>
+<td>5 min</td>
+<td>30 days</td>
+<td>~190M</td>
+</tr>
+<tr>
+<td>Rollup 2</td>
+<td>1 hour</td>
+<td>90 days</td>
+<td>~48M</td>
+</tr>
+</tbody></table>
+<p>Rollups are Timescale continuous aggregates with refresh policies; expired chunks are
+dropped by retention policies. Estimated 1–2 GB compressed.</p>
+<p><strong>Two coupling constraints that are silent-failure modes if violated:</strong></p>
+<ol>
+<li><strong><code>start_offset</code> must exceed the maximum backfill age.</strong> Timescale cuts invalidations
+against the refresh window — <em>&quot;invalidations are cut against the given refresh window,
+leaving only invalidation entries that are outside the refresh window&quot;</em> (invalidation.c).
+Data backfilled older than <code>start_offset</code> is recorded as invalid but the scheduled
+refresh never reaches it, and the rollup stays wrong permanently. The agent ring buffer
+is ~1 hour, so <strong><code>start_offset = 6h</code></strong>. If the buffer window is ever raised,
+<code>start_offset</code> must be raised with it.</li>
+<li><strong>Raw retention must exceed the aggregate refresh lag</strong>, or chunks are dropped before
+being materialised into the 5-minute tier. Raw at 7 days against a 6h <code>start_offset</code> is
+comfortable. Do not reduce raw retention without re-checking this.</li>
+</ol>
+<p><code>start_offset =&gt; NULL</code> is not a safe shortcut — Timescale validates it against raw
+retention.</p>
+<p><strong><code>process_samples</code> is the deliberate exception:</strong> raw only, <strong>48 hours</strong>, no continuous
+aggregates. A 1-hour average of a top-N list whose membership changes between buckets is
+close to meaningless; process data answers recent-past questions.</p>
+<h3>5.5 Ingest</h3>
+<p><code>COPY</code> into typed tables, not row-by-row <code>INSERT</code> — the single largest hub-side throughput
+factor. Deduplication on the natural key via <code>ON CONFLICT DO NOTHING</code>, so replayed batches
+are harmless.</p>
+<hr>
+<h2>6. Agent</h2>
+<p>Go, <code>CGO_ENABLED=0</code>, one image (<code>ghcr.io/trick77/netra-agent</code>). <strong>Stateless — no volumes.</strong></p>
+<h3>6.1 Collector model</h3>
+<p>A <code>Collector</code> interface with <strong>per-collector intervals</strong>, so slow collectors do not
+constrain the scrape loop. Every collector reports duration, success and an error code
+into <code>collector_samples</code>, and its availability into host capabilities.</p>
+<p><strong>A collector that cannot run never prevents the agent from starting.</strong> It reports
+unavailability with a reason; everything else keeps working. beszel&#39;s silent Debug-level
+degradation is the specific behaviour being fixed.</p>
+<h3>6.2 Collectors</h3>
+<table>
+<thead>
+<tr>
+<th>Collector</th>
+<th>Source</th>
+<th>Interval</th>
+<th>Requires</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>CPU</td>
+<td><code>/proc/stat</code></td>
+<td>60s</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Per-core CPU</td>
+<td><code>/proc/stat</code></td>
+<td>60s</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Memory</td>
+<td><code>/proc/meminfo</code>, ZFS ARC from <code>/proc/spl/kstat</code></td>
+<td>60s</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Load</td>
+<td><code>/proc/loadavg</code></td>
+<td>60s</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Disk I/O</td>
+<td><code>/proc/diskstats</code></td>
+<td>60s</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Network</td>
+<td><code>/proc/net/dev</code></td>
+<td>60s</td>
+<td><code>network_mode: host</code></td>
+</tr>
+<tr>
+<td>Addresses</td>
+<td>netlink</td>
+<td>on change</td>
+<td><code>network_mode: host</code></td>
+</tr>
+<tr>
+<td>Containers</td>
+<td>cgroup v2 files + Docker socket for metadata</td>
+<td>60s</td>
+<td><code>/var/run/docker.sock:ro</code></td>
+</tr>
+<tr>
+<td>Filesystems</td>
+<td><code>statfs</code> on marker dirs</td>
+<td>60s</td>
+<td>marker mounts (§6.4)</td>
+</tr>
+<tr>
+<td>Sensors</td>
+<td><code>/sys/class/hwmon</code></td>
+<td>60s</td>
+<td>— (<code>/sys</code> is mounted ro by Docker automatically)</td>
+</tr>
+<tr>
+<td>mdraid</td>
+<td>sysfs</td>
+<td>60s</td>
+<td>—</td>
+</tr>
+<tr>
+<td>SMART</td>
+<td><code>smartctl --scan -j</code> + per-device collect</td>
+<td>1h</td>
+<td><code>SYS_RAWIO</code> (SATA), <code>SYS_ADMIN</code> (NVMe), <code>devices:</code></td>
+</tr>
+<tr>
+<td>systemd</td>
+<td>D-Bus <code>org.freedesktop.systemd1</code></td>
+<td>60s</td>
+<td><code>/run/dbus/system_bus_socket:ro</code></td>
+</tr>
+<tr>
+<td>Processes</td>
+<td><code>/proc/*/stat</code></td>
+<td>60s</td>
+<td><code>pid: host</code> — <strong>opt-in</strong></td>
+</tr>
+<tr>
+<td>Packages</td>
+<td><code>/var/lib/dpkg/status</code>, <code>/lib/apk/db/installed</code></td>
+<td>on mtime change, daily floor</td>
+<td>package DB mounts</td>
+</tr>
+<tr>
+<td>Self</td>
+<td>runtime</td>
+<td>60s</td>
+<td>—</td>
+</tr>
+</tbody></table>
+<p><strong>Per-core CPU is collected for all cores, always.</strong> ~800 series at target scale; the
+earlier cardinality concern was unfounded.</p>
+<p><strong>Containers read cgroup v2 directly</strong>; the Docker socket is used only for the container
+list, names, labels, health and image, and only when the list changes. beszel calls the
+Docker stats API per container per scrape, which is the most expensive thing its agent
+does. <strong>Container memory subtracts <code>cache</code> and <code>inactive_file</code></strong> from raw usage — omitting
+this is the classic Docker-stats overreporting mistake.</p>
+<p><strong>Container identity is <code>compose project + service name</code></strong> where those labels exist,
+falling back to container name. Container IDs change on every recreate; keying on them
+means one <code>docker compose up -d</code> orphans all history. The ID is stored as an attribute.</p>
+<p><strong>Network metric filtering</strong> excludes <code>lo</code>, <code>veth*</code>, <code>docker0</code>, <code>br-*</code> and tunnels by
+default — a Docker host has one veth per container, and unfiltered they churn constantly.
+Note this differs from the <em>address inventory</em>, where bridge addresses are wanted; there,
+only interfaces that actually carry an address produce rows, which excludes veths naturally.</p>
+<p><strong>Counter resets</strong> — diskstats, network bytes, container CPU and <code>buffer_dropped_total</code>
+are monotonic and reset on reboot or agent restart. If the current value is below the
+previous, emit no sample rather than a negative or a spike.</p>
+<p><strong>Process CPU</strong> requires <code>utime+stime</code> deltas keyed on <code>(pid, starttime)</code> — PIDs are
+reused, and without the start-time check a recycled PID produces a garbage spike.
+Processes are <strong>aggregated by name</strong>, summing across PIDs, then top-10-by-CPU ∪
+top-10-by-memory. <code>nginx</code> with 16 workers is one row with <code>count = 16</code>.</p>
+<p><strong>Sensor identity is <code>chip_name + label</code>, never <code>hwmonN</code></strong> — hwmon numbering is not stable
+across reboots, and keying on the index silently forks temperature history on every
+restart. Primary sensor selection prefers known CPU chips (<code>coretemp</code>, <code>k10temp</code>,
+<code>zenpower</code>, then thermal zones) rather than &quot;highest temperature wins&quot;, which surfaces a
+spinning disk. <code>NETRA_PRIMARY_SENSOR</code> overrides.</p>
+<p>Sensor reads are <strong>individually deadlined</strong> (<code>NETRA_SENSORS_TIMEOUT</code>, default 2s) — a hung
+<code>temp1_input</code> on a flaky driver must not stall the scrape. Sensors are read from sysfs
+directly; gopsutil is not used, which also removes the panic-recovery workaround beszel
+needs.</p>
+<p><strong>NVMe temperatures come from hwmon</strong>, so they need no <code>smartctl</code>, no <code>SYS_ADMIN</code> and no
+device mounts. Only SATA drive temperatures require the SMART path.</p>
+<p><strong>mdraid health is read from sysfs</strong> — no smartctl, no privileges, works everywhere.</p>
+<p><strong>systemd is stored as events, not samples.</strong> A host has 50–200 units and almost none
+change state between scrapes; writing &quot;still active&quot; rows would add ~10,000 near-constant
+series. Only state changes are written, to <code>systemd_unit_events</code>; the numeric summary
+(<code>services_total</code>, <code>services_failed</code>) rides on <code>host_samples</code>. Default filter is <code>.service</code>
+units, excluding ephemeral ones (<code>user@*</code>, <code>systemd-udevd</code> workers, <code>session-*.scope</code>).</p>
+<p><strong>Packages</strong> are parsed only when the package DB mtime changes, with a daily floor.
+<code>dpkg</code> and <code>apk</code> are parsed natively; <strong>rpm is unsupported</strong> (Berkeley DB/SQLite needs
+librpm or the <code>rpm</code> binary) and reported as an unsupported-format capability rather than
+silently producing nothing. <code>package_events</code> records install/upgrade/remove — the
+&quot;what changed before this host started misbehaving&quot; timeline.</p>
+<h3>6.3 SMART</h3>
+<p><strong>One image, <code>smartctl</code> included at a pinned version.</strong> No <code>:alpine</code> tag split. Shipping
+it is what removes version variance: <code>smartctl</code> drives disks through kernel ioctls and has
+no dependency on host userspace, so one pinned version behaves identically everywhere,
+whereas using each host&#39;s binary means parsing output from whatever that distro shipped.</p>
+<p><code>drivedb.h</code> staleness affects only vendor <em>attribute naming</em>; health status, temperature,
+reallocated sectors and power-on hours are standardised. Mitigated by regular image
+rebuilds, with an optional mount for an updated <code>drivedb.h</code>.</p>
+<p><strong>Capabilities and devices are documented in the shipped compose</strong>, not left for the user
+to discover:</p>
+<ul>
+<li><code>SYS_RAWIO</code> — SATA</li>
+<li><code>SYS_ADMIN</code> — NVMe (documented as required <em>only</em> with NVMe drives; it is
+root-adjacent and should not be pasted in unconditionally)</li>
+<li>explicit <code>devices:</code> entries for the physical controllers</li>
+</ul>
+<p><strong>SMART availability is reported to the hub as a capability.</strong> A host missing device
+access says so, rather than showing an empty panel.</p>
+<h3>6.4 Filesystems — marker directories</h3>
+<p><code>statfs()</code> reports the filesystem containing the path given, so the measured path must
+physically live on that filesystem. An empty <strong>marker directory</strong> is bind-mounted, not the
+data:</p>
+<pre><code class="language-bash">mkdir -p /mnt/ark/.netra
+</code></pre>
+<pre><code class="language-yaml">- /mnt/ark/.netra:/netra/fs/ark:ro
+</code></pre>
+<p>This yields complete disk-usage metrics with <strong>zero data exposure</strong> — a deliberate
+least-privilege property, and the reason a <code>/host</code> root-filesystem mount was rejected
+despite being more convenient.</p>
+<ul>
+<li>Label is the trailing path segment (<code>ark</code>).</li>
+<li>The root filesystem needs its own marker (<code>/.netra</code> → <code>/netra/fs/root</code>); there is exactly
+one mechanism, no special case in code.</li>
+<li><strong>Deduplicate by <code>st_dev</code></strong> — two markers landing on one filesystem would double-report;
+keep the first, warn naming both.</li>
+<li><code>:ro</code> is documentation of intent; an empty directory has nothing to protect.</li>
+</ul>
+<p><strong>Discovery for awareness only.</strong> Optionally bind-mount <code>/proc/1/mountinfo:/host/mountinfo:ro</code>
+(exposing the mount table and nothing else). The agent then logs one line per unmonitored
+filesystem at startup, and again only when the set changes:</p>
+<pre><code>filesystem /mnt/backup (8.0T, ext4) is not monitored — bind-mount a marker dir
+to /netra/fs/&lt;name&gt; to enable
+</code></pre>
+<p>Absent, the check is skipped silently. <strong>Discovery never feeds metrics</strong>; measurement is
+exclusively marker-dir <code>statfs</code>. If <code>/netra/fs/</code> is empty the agent logs a startup
+<strong>warning</strong>, not a failure — a container-only host is legitimate.</p>
+<blockquote>
+<p><strong>To verify during implementation:</strong> that bind-mounting a procfs file yields live reads
+rather than a snapshot. If it does not, drop discovery and keep pure marker-dir behaviour.</p>
+</blockquote>
+<h3>6.5 Buffering</h3>
+<p><strong>In-memory bounded ring buffer, overwrite-oldest.</strong> No disk, no state directory, no
+corruption handling.</p>
+<ul>
+<li>Default window <del>1 hour (</del>60 snapshots at 60s), well under 1 MB.</li>
+<li>Replayed oldest-first on recovery, rate-limited so 100 agents reconnecting after a hub
+restart do not stampede it.</li>
+<li><strong>Deliberately not durable across agent restart.</strong> That case means a host reboot or an
+image update; during an image update the hub is up, so nothing would be buffered.</li>
+<li><code>buffer_depth</code> and <code>buffer_dropped_total</code> are reported, so overflow — i.e. real data
+loss — is visible rather than silent.</li>
+</ul>
+<p>beszel has no buffering at all: its <code>agent_cache.go</code> holds one snapshot per interval for
+request deduplication, discarded at half the interval, and <code>connection_manager.go</code> merely
+retries every 10s. A hub restart is a permanent hole in its graphs.</p>
+<h3>6.6 Configuration</h3>
+<p>All variables are <code>NETRA_</code>-prefixed. beszel&#39;s bare <code>TOKEN</code>, <code>KEY</code>, <code>LISTEN</code> are
+collision-prone in a <code>network_mode: host</code> container. This deviates from music&#39;s <code>BACKEND_</code>
+convention because <code>BACKEND_</code> is meaningless on an agent and netra ships two components.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>NETRA_HUB_URL</code></td>
+<td>—</td>
+<td><strong>Required</strong></td>
+</tr>
+<tr>
+<td><code>NETRA_TOKEN</code></td>
+<td>—</td>
+<td><strong>Required</strong></td>
+</tr>
+<tr>
+<td><code>NETRA_INTERVAL</code></td>
+<td><code>60s</code></td>
+<td>Duration string — no <code>uint16</code> millisecond ceiling</td>
+</tr>
+<tr>
+<td><code>NETRA_COLLECTORS_DISABLED</code></td>
+<td>—</td>
+<td>e.g. <code>smart,processes</code> — one uniform mechanism</td>
+</tr>
+<tr>
+<td><code>NETRA_SMART_INTERVAL</code></td>
+<td><code>1h</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>NETRA_SMART_DEVICES</code></td>
+<td>auto</td>
+<td><code>/dev/sda:sat,/dev/nvme0:nvme</code> — no separator variable needed</td>
+</tr>
+<tr>
+<td><code>NETRA_SENSORS</code> / <code>NETRA_SENSORS_EXCLUDED</code></td>
+<td>—</td>
+<td>Two explicit lists instead of a magic <code>-</code> prefix</td>
+</tr>
+<tr>
+<td><code>NETRA_SENSORS_TIMEOUT</code></td>
+<td><code>2s</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>NETRA_PRIMARY_SENSOR</code></td>
+<td>auto</td>
+<td></td>
+</tr>
+<tr>
+<td><code>NETRA_SYSFS_ROOT</code></td>
+<td><code>/sys</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>NETRA_BUFFER_WINDOW</code></td>
+<td><code>1h</code></td>
+<td>Coupled to hub <code>start_offset</code> (§5.4)</td>
+</tr>
+<tr>
+<td><code>NETRA_LOCATION</code></td>
+<td>—</td>
+<td>e.g. <code>Gravelines, FR</code></td>
+</tr>
+<tr>
+<td><code>NETRA_PROVIDER</code></td>
+<td>—</td>
+<td>e.g. <code>OVH</code></td>
+</tr>
+<tr>
+<td><code>NETRA_FACILITY</code></td>
+<td>—</td>
+<td>e.g. <code>GRA11</code></td>
+</tr>
+<tr>
+<td><code>NETRA_HOST_TYPE</code></td>
+<td>—</td>
+<td><code>bare_metal</code> | <code>vps</code> | <code>vm</code></td>
+</tr>
+<tr>
+<td><code>NETRA_LOG_LEVEL</code></td>
+<td><code>info</code></td>
+<td></td>
+</tr>
+</tbody></table>
+<p>Two required variables against beszel&#39;s four. Location and provider live in the agent&#39;s
+compose because the person deploying the host is the one who knows where it physically is.
+The agent performs <strong>no geocoding and no outbound calls</strong> — it states a fact; the hub
+interprets it.</p>
+<hr>
+<h2>7. Wire protocol</h2>
+<h3>7.1 Transport</h3>
+<p><strong>HTTPS POST</strong>, not WebSocket. <code>POST /api/agent/v1/ingest</code>, protobuf body,
+<code>Authorization: Bearer</code>.</p>
+<p>WebSocket buys server→agent push, an always-open connection, and no per-message TLS
+handshake. With a 60s cadence and no realtime view, none of those pay for the connection
+state, reconnect logic and ping/pong they cost. Every hub→agent message becomes a field in
+the response to a POST the agent was making anyway:</p>
+<table>
+<thead>
+<tr>
+<th>Response field</th>
+<th>Replaces</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>ack_seq</code></td>
+<td><code>Ack</code></td>
+</tr>
+<tr>
+<td><code>config</code>, <code>config_version</code></td>
+<td><code>ConfigUpdate</code></td>
+</tr>
+<tr>
+<td><code>request_metadata</code></td>
+<td>metadata resync</td>
+</tr>
+<tr>
+<td><code>retry_after</code></td>
+<td><code>Throttle</code></td>
+</tr>
+</tbody></table>
+<p>Consequences: the hub is stateless (no connection table, no per-connection goroutines);
+keep-alive reuses one TCP+TLS connection anyway; the endpoint is <code>curl</code>-able, which matters
+because phase 1 has no UI; buffer replay is just POSTs, needing no special reconnect path.</p>
+<p><strong>Self-monitoring uses the same path.</strong> The agent on the hub&#39;s own machine POSTs to
+<code>http://127.0.0.1:8080</code>. No unix socket, no special case. beszel needs one only because its
+hub dials the agent.</p>
+<h3>7.2 Authentication</h3>
+<p><strong>One long-lived token per host, from env. No enrollment handshake, no credential on disk.</strong></p>
+<ol>
+<li>Operator creates a host in the hub; hub mints a token (<code>nta_</code> + 256 bits), stored hashed.</li>
+<li>Token goes into that host&#39;s compose as <code>NETRA_TOKEN</code>.</li>
+<li>Agent presents it as a bearer token; the hub resolves the host before accepting the body.</li>
+</ol>
+<p>Revocation is deleting or rotating the token. There is <strong>no universal/self-registration
+token</strong> — no fleet-wide secret whose leak enrolls arbitrary machines. Enrollment stays a
+deliberate act.</p>
+<p>The agent reports a <strong>fingerprint</strong> (<code>/etc/machine-id</code> + primary MAC, hashed). A token
+arriving from a different fingerprint is flagged rather than silently accepted, catching a
+compose file copied to a second host.</p>
+<h3>7.3 Encoding</h3>
+<p>Protobuf, versioned under <code>/v1/</code>. <strong>Typed messages per family</strong> (<code>HostSample</code>,
+<code>ContainerSample</code>, <code>SensorSample</code>, …) — protobuf field numbers already serve as the
+dictionary, so there is no series-dictionary mechanism and no resync path.</p>
+<p><strong>Optional scalar fields</strong> are required wherever a value may be absent, so &quot;no swap here&quot;
+survives as <code>NULL</code> rather than being flattened to <code>0</code> by proto3 default-value semantics
+(§5.1 rule 3).</p>
+<h3>7.4 Static metadata</h3>
+<p>Static facts are sent once, not per scrape. The agent includes an 8-byte
+<strong><code>metadata_hash</code></strong> in every POST; on mismatch or unknown host the hub sets
+<code>request_metadata: true</code> and the agent sends the full block next tick.</p>
+<p>This self-heals across: the first POST, an agent upgrade, a hub restored from backup, and
+an edited <code>NETRA_LOCATION</code>.</p>
+<p>Metadata contents: <code>agent_version</code>, <code>go_version</code>, <code>build_commit</code>, <code>hostname</code>, <code>kernel</code>,
+<code>os_name</code>, <code>arch</code>, <code>cpu_model</code>, <code>cores</code>, <code>threads</code>, <code>memory_total</code>, <code>location</code>, <code>provider</code>,
+<code>facility</code>, <code>host_type</code>, <code>collector_capabilities</code>, <code>fingerprint</code>, <code>addresses</code>.</p>
+<p>Addresses ride here, so a new Docker bridge or changed public IP flips the hash and is
+picked up on the next POST — no separate mechanism.</p>
+<p><code>agent_version</code> changes are written to <code>events</code>, giving an upgrade timeline without storing
+the same string 1,440 times a day.</p>
+<h3>7.5 Delivery semantics</h3>
+<p>At-least-once. Unacked batches stay in the ring buffer and are dropped on <code>ack_seq</code>; replay
+is oldest-first with a <code>backfill</code> flag. The hub dedupes via <code>ON CONFLICT DO NOTHING</code>.</p>
+<p>Backfilled batches trigger continuous-aggregate invalidation for the affected range,
+subject to the <code>start_offset</code> constraint in §5.4.</p>
+<p>Timestamps are assigned <strong>agent-side</strong> in epoch milliseconds. The hub records observed
+clock skew per host and rejects implausibly-future samples rather than corrupting a chunk.</p>
+<p>Liveness: no POST within 3× the host&#39;s interval marks it down.</p>
+<hr>
+<h2>8. Read API (phase 1)</h2>
+<p>JSON — this exists to be <code>curl</code>ed. Gated by <code>Authorization: Bearer $NETRA_ADMIN_TOKEN</code>,
+bound to <code>127.0.0.1:8080</code>.</p>
+<p><strong>Unauthenticated</strong></p>
+<ul>
+<li><code>GET /api/health</code> — liveness for the compose healthcheck; reports DB reachability</li>
+</ul>
+<p><strong>Inventory / state</strong></p>
+<ul>
+<li><code>GET /api/v1/hosts</code> — served from <code>host_current</code>, never touches a hypertable</li>
+<li><code>GET /api/v1/hosts/{id}</code> — full metadata including <strong>collector capabilities</strong></li>
+<li><code>GET /api/v1/hosts/{id}/containers</code> · <code>/filesystems</code> · <code>/addresses</code> · <code>/packages</code> · <code>/units</code></li>
+</ul>
+<p><strong>Time series</strong></p>
+<ul>
+<li><code>GET /api/v1/hosts/{id}/metrics?family=…&amp;from=…&amp;to=…&amp;step=…</code></li>
+</ul>
+<p><code>family</code> ∈ <code>host|cpu_core|container|disk_io|net|sensor|process|agent</code>. <code>step</code> is optional;
+omitted, the hub selects the tier from the range (&lt;7d → raw, longer → 5-minute or 1-hour).
+<strong>That tier-selection logic is what the UI will depend on</strong>, so phase 1 is where it is
+built and tested.</p>
+<p><strong>Events</strong></p>
+<ul>
+<li><code>GET /api/v1/events?host=…&amp;since=…&amp;type=…</code> — SMART thresholds, mdadm degradation, systemd
+state changes, package changes, public IP changes, agent version changes</li>
+</ul>
+<p><strong>Admin</strong> (same token)</p>
+<ul>
+<li><code>POST /api/v1/hosts</code> — create; returns the minted token <strong>once</strong></li>
+<li><code>POST /api/v1/hosts/{id}/token</code> — rotate</li>
+<li><code>DELETE /api/v1/hosts/{id}</code></li>
+<li><code>GET|PATCH /api/v1/sites</code>, <code>/providers</code> — including manual lat/lon override, which the hub
+never overwrites with a geocode result</li>
+</ul>
+<p>A <strong>single shared admin token</strong> in phase 1; per-user roles arrive with OIDC in phase 2.
+No fleet-wide aggregate endpoints yet.</p>
+<hr>
+<h2>9. Failure modes</h2>
+<table>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Hub unreachable</td>
+<td>Buffer in memory, jittered backoff, replay oldest-first with <code>backfill</code></td>
+</tr>
+<tr>
+<td>Hub 5xx / <code>retry_after</code></td>
+<td>Same path; honour <code>retry_after</code></td>
+</tr>
+<tr>
+<td>Token invalid (401)</td>
+<td>Stop posting, log loudly, retry slowly — a revoked host must not hammer the hub</td>
+</tr>
+<tr>
+<td>Collector unavailable</td>
+<td>Reports reason as a capability; <strong>agent keeps running</strong>, everything else posts</td>
+</tr>
+<tr>
+<td>Docker socket absent</td>
+<td>Container collectors disabled; host vitals continue</td>
+</tr>
+<tr>
+<td>Duplicate/replayed batch</td>
+<td><code>ON CONFLICT DO NOTHING</code></td>
+</tr>
+<tr>
+<td>Clock skew</td>
+<td>Per-host skew recorded; implausibly-future samples rejected</td>
+</tr>
+<tr>
+<td>Agent restart</td>
+<td>Buffer lost by design; gap in graphs; host down after 3× interval</td>
+</tr>
+<tr>
+<td>Postgres down</td>
+<td>Hub returns 503; agents buffer — no loss for outages under the buffer window</td>
+</tr>
+<tr>
+<td>Buffer overflow</td>
+<td>Oldest dropped; <code>buffer_dropped_total</code> increments so loss is visible</td>
+</tr>
+<tr>
+<td>cgroup v1 host</td>
+<td>Startup error naming cgroup v1 explicitly</td>
+</tr>
+<tr>
+<td>rpm-based host</td>
+<td>Package collector reports unsupported format</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>10. Testing</h2>
+<p>TDD — failing test first, per music&#39;s conventions. <code>make test</code>.</p>
+<ul>
+<li><strong>Fixture-based collector tests</strong>: checked-in <code>/proc</code>, <code>/sys</code> and cgroup trees plus
+recorded <code>smartctl -j</code> output, so parsing is tested without privileged hardware.</li>
+<li><strong>Protobuf round-trip tests</strong>, including optional-field/<code>NULL</code> preservation.</li>
+<li><strong>Ingest tested against real TimescaleDB</strong> in a throwaway container, never a mock —
+continuous aggregates, backfill invalidation and the <code>start_offset</code> constraint are the
+risky parts and cannot be verified against a fake.</li>
+<li><strong>A <code>start_offset</code> regression test</strong> that backfills data older than the window and asserts
+the rollup is correct. This is the failure mode that is otherwise silent.</li>
+<li><strong>Counter-reset tests</strong> for diskstats, network and container CPU.</li>
+<li><strong>End-to-end</strong>: agent posts → rows land → read API returns them.</li>
+<li>No Playwright this phase — there is no UI.</li>
+</ul>
+<hr>
+<h2>11. CI/CD</h2>
+<p>Modelled on <code>../music</code>&#39;s workflows.</p>
+<h3><code>ci.yaml</code> — pull requests only, no image build</h3>
+<ul>
+<li><code>actions/checkout</code> with <strong><code>fetch-depth: 0</code></strong> (patch coverage diffs against the PR base;
+a shallow checkout leaves the base ref unresolvable and the gate exits 2)</li>
+<li><code>go build ./...</code>, <code>go vet ./...</code>, and an explicit <strong><code>gofmt -l</code></strong> check (<code>go vet</code> does not
+cover formatting)</li>
+<li><code>go test -race -covermode=atomic -coverpkg=./...</code> with <code>CGO_ENABLED=1</code> — the race detector
+needs cgo, which is independent of the <code>CGO_ENABLED=0</code> invariant for the shipped binary.
+<code>-coverpkg=./...</code> attributes coverage across package boundaries.</li>
+<li>Cobertura conversion via <code>gocover-cobertura</code> — Go reports statements, not lines, and the
+conversion also merges the duplicate blocks <code>-coverpkg</code> emits</li>
+<li><code>hack/coverage-gate.sh</code> — absolute project floor</li>
+<li><code>hack/patch-coverage.sh</code> — changed lines must be ≥ <code>PATCH_MIN</code>% covered</li>
+<li><code>concurrency</code> with <code>cancel-in-progress: true</code></li>
+</ul>
+<p>Jobs: <strong><code>hub</code></strong>, <strong><code>agent</code></strong>, and an <strong><code>integration</code></strong> job running TimescaleDB as a service
+container (netra-specific; music has no equivalent). No UI job in phase 1.</p>
+<p><code>hack/coverage-floors</code> carries one entry per component:</p>
+<pre><code>hub=75.0
+agent=75.0
+</code></pre>
+<p>Both gates are kept because they ask different questions: the floor asks &quot;is the codebase
+tested enough?&quot;, the patch gate asks &quot;is the code I just wrote tested?&quot;. The floor alone
+lets a large well-tested codebase absorb untested new code; the patch gate alone lets debt
+sit forever.</p>
+<h3><code>release.yaml</code> — push to master</h3>
+<ul>
+<li><strong><code>paths-ignore</code></strong> so a docs or comment change does not cut a version, build two images
+and push a tag. An ignore-list, not an allow-list: a new top-level directory starts out
+releasing, which is the safe default.</li>
+<li>Semver computed from the latest git tag; <code>workflow_dispatch</code> allows major/minor/patch</li>
+<li>Buildx + GHCR, tags <code>X.Y.Z</code>, <code>X.Y</code>, <code>X</code>, short SHA, <code>latest</code>; <code>cache-from/to: type=gha</code></li>
+<li><strong>Two images built per release, sharing one version</strong>: <code>ghcr.io/trick77/netra</code> and
+<code>ghcr.io/trick77/netra-agent</code>. Lockstep versioning makes protocol compatibility legible.</li>
+<li><strong>Git tag created only after both image pushes succeed</strong>, via the REST API — a
+git-transport tag push with <code>GITHUB_TOKEN</code> is refused once the repo contains workflow
+files. This prevents an orphan tag from a failed release.</li>
+<li>GitHub release created after the tag, so it attaches rather than creating a second pointer</li>
+</ul>
+<h3><code>cleanup-images.yaml</code> — weekly, Sundays 04:00 UTC</h3>
+<ul>
+<li><code>snok/container-retention-policy@v3.1.0</code>, <code>keep-n-most-recent: 10</code>, <code>tag-selection: both</code></li>
+<li><strong><code>cut-off: 1h</code></strong> so a fresh release is never caught by a concurrently scheduled cleanup</li>
+<li><strong>Package-existence check first</strong> — the action panics rather than no-oping when the
+package does not exist</li>
+<li>Covers <strong>both</strong> <code>netra</code> and <code>netra-agent</code></li>
+<li><code>workflow_dispatch</code> with a <code>dry-run</code> input</li>
+</ul>
+<hr>
+<h2>12. Deployment</h2>
+<h3>Hub — <code>compose.yaml</code></h3>
+<p>Two services on the external <code>traefik</code> network: <code>netra</code> and <code>timescaledb</code>. Traefik labels
+with <code>tls: &quot;true&quot;</code> and no certresolver (pre-loaded certificate, as in music). Postgres data
+under <code>./data</code>. Healthcheck on <code>/api/health</code>. Port published on <code>127.0.0.1</code> so the read API
+can be curled on the box — in phase 1 that loopback port <em>is</em> the interface.</p>
+<p>Hub variables: <code>NETRA_LISTEN_ADDR</code>, <code>NETRA_DB_DSN</code>, <code>NETRA_ADMIN_TOKEN</code>, <code>NETRA_LOG_LEVEL</code>,
+<code>NETRA_RETENTION_RAW</code> / <code>_5M</code> / <code>_1H</code>.</p>
+<h3>Agent — documented compose</h3>
+<p><code>ghcr.io/trick77/netra-agent:latest</code>, <code>network_mode: host</code>, <strong>no volumes for state</strong>.</p>
+<p>Mounts: <code>/var/run/docker.sock:ro</code>; marker dirs under <code>/netra/fs/</code>; optionally
+<code>/proc/1/mountinfo:ro</code>, <code>/run/dbus/system_bus_socket:ro</code>, <code>/var/lib/dpkg:ro</code>.
+<code>cap_add: [SYS_RAWIO]</code> (+ <code>SYS_ADMIN</code> with NVMe) and explicit <code>devices:</code> for SMART.
+<code>pid: host</code> only if the process collector is enabled.</p>
+<hr>
+<h2>13. Assumptions</h2>
+<ol>
+<li><strong>Agent is Docker-only.</strong> No bare binary, no Homebrew, no systemd unit — matching the
+&quot;docker based agent to docker based hub&quot; framing.</li>
+<li><strong>Linux only.</strong></li>
+<li><strong>cgroup v2 only.</strong> Debian 11+, Ubuntu 22.04+, RHEL 9+ default to it.</li>
+<li><strong>Hosts are added manually.</strong> No auto-discovery, no self-registration.</li>
+<li><strong>TimescaleDB&#39;s TSL license is acceptable</strong> — verified: it restricts offering
+TimescaleDB as a managed database service; self-hosting is unrestricted.</li>
+<li><strong>Location and provider are operator-entered facts</strong>, never inferred from IP.</li>
+</ol>
+<h2>14. Items to verify during implementation</h2>
+<ol>
+<li>Bind-mounting <code>/proc/1/mountinfo</code> yields live reads, not a snapshot (§6.4).</li>
+<li>Timescale continuous-aggregate <code>start_offset</code> behaviour under backfill, asserted by the
+regression test in §10 rather than trusted from documentation.</li>
+<li><code>smartctl</code> version pinning strategy and <code>drivedb.h</code> update cadence.</li>
+</ol>
+</div></body></html>
