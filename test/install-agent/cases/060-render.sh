@@ -24,13 +24,19 @@ NO_TTY=/nonexistent/netra-tty
 mkshims "$TMP/shims"
 
 # --- 1. a full run renders compose.yaml byte for byte --------------------------
+#
+# --sys-admin and --pid-host are passed deliberately: --yes takes each prompt's
+# DEFAULT, and both of those default no, so without the flags the golden would
+# lose the only coverage there is of a two-entry cap_add, a two-entry devices:
+# and the pid: host marker. The grants are what make this the MAXIMAL render.
 ROOT="$TMP/full"
 mkdir -p "$ROOT"
 cp -R "$(fixture root-full)/." "$ROOT/"
 
 OUT="$TMP/out"
 run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$INSTALLER" --yes --token nta_testtoken --hub-url https://netra.example.com \
+    "$SH" "$INSTALLER" --yes --sys-admin --pid-host \
+    --token nta_testtoken --hub-url https://netra.example.com \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
 assert_eq 0 "$RUN_RC" "a full run against the root-full fixture succeeds"
 assert_file_present "$OUT/compose.yaml" "compose.yaml is written"

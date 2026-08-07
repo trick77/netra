@@ -723,7 +723,18 @@ directories can be accepted while `pid: host` is declined:
 - starting the stack
 
 Defaults are **no** for anything privilege-expanding (`SYS_ADMIN`, `pid: host`), yes for
-benign steps. Flags: `--yes` accepts every prompt for unattended installs; `--dry-run`
+benign steps. Flags: `--yes` takes each prompt's **default** for unattended installs — it
+accepts the benign steps and *declines* the privilege-expanding ones, because a
+provisioning script must never silently expand privilege; `--sys-admin` and `--pid-host`
+grant those two by name without prompting, which keeps unattended installs capable of
+everything while making the grant explicit (`--sys-admin` is a no-op with a note on a host
+with no NVMe device). "Continue on an unsupported OS?" defaults no as well, so `--yes` on
+an unrecognised distro aborts rather than proceeding, and names `--unsupported-os` as the
+remedy; that flag takes the prompt without asking, keeping an unattended install possible
+on a cgroup v2 host netra has no name for (the floors below are advisory, so a refusal
+that could not be overridden would turn them into a gate they were never meant to be). It
+suppresses only the prompt — the warning naming the distro is still printed and still
+appears in the finish report — and is a no-op on a distro netra recognises. `--dry-run`
 prints the full plan and touches nothing; `--force` is additionally required to overwrite
 an existing `.env`, so a re-run in a provisioning script cannot silently replace a working
 token.

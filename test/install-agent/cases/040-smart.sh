@@ -234,4 +234,66 @@ assert_eq "" "$SMART_DEVICES" "a device with no node in /dev is not emitted"
 build_device_block
 assert_eq "" "$NETRA_BLK_DEVICES" "an empty device list deletes the devices: key entirely"
 
+# --- 10. --sys-admin grants without consuming a prompt ------------------------
+#
+# The discriminating assertion is NETRA_ANSWER_INDEX. An answers file holding
+# ONLY the SYS_RAWIO answer means a --sys-admin that still prompted would
+# exhaust the file and die, so "index is 1, not 2" is the proof that prompt 3
+# was skipped rather than answered.
+R="$TMP/r10"
+mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
+mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
+mkdir -p "$R/sys/class/nvme/nvme0"
+mkdev "$R" sda
+mkdev "$R" nvme0
+NETRA_INSTALL_ROOT="$R"
+export NETRA_INSTALL_ROOT
+init_paths
+
+ASSUME_YES=0
+GRANT_SYS_ADMIN=1
+NETRA_ANSWER_INDEX=0
+SKIPPED_NOTES=""
+printf 'y\n' >"$TMP/ans-grantflag"
+NETRA_ANSWERS_FILE="$TMP/ans-grantflag"
+export NETRA_ANSWERS_FILE
+run_capture plan_smart
+assert_eq 0 "$RUN_RC" "--sys-admin does not exhaust an answers file holding one answer"
+assert_contains "$RUN_OUT" "--sys-admin" "the output says the capability came from the flag"
+
+# run_capture ran plan_smart in a command-substitution subshell, so none of its
+# assignments survived. Re-run it in this shell for the state assertions.
+NETRA_ANSWER_INDEX=0
+SKIPPED_NOTES=""
+plan_smart >/dev/null 2>&1
+assert_eq 1 "$CAP_SYS_ADMIN" "--sys-admin grants SYS_ADMIN"
+assert_eq 1 "$NETRA_ANSWER_INDEX" "--sys-admin consumes no answer: prompt 3 is skipped entirely"
+assert_contains "$SMART_DEVICES" "/dev/nvme0" "--sys-admin also emits the NVMe controller"
+
+# --- 11. --sys-admin on a SATA-only host is a no-op with a note ----------------
+#
+# Nothing on such a host can use SYS_ADMIN, so honouring the flag would expand
+# privilege for no collected metric. It has to be visible in the finish report,
+# not silently dropped: the operator asked for something they did not get.
+R="$TMP/r11"
+mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
+mkdev "$R" sda
+NETRA_INSTALL_ROOT="$R"
+export NETRA_INSTALL_ROOT
+init_paths
+
+GRANT_SYS_ADMIN=1
+NETRA_ANSWER_INDEX=0
+SKIPPED_NOTES=""
+printf 'y\n' >"$TMP/ans-satagrant"
+NETRA_ANSWERS_FILE="$TMP/ans-satagrant"
+export NETRA_ANSWERS_FILE
+plan_smart >/dev/null 2>&1
+assert_eq 0 "$CAP_SYS_ADMIN" "--sys-admin grants nothing when there is no NVMe device"
+assert_contains "$SKIPPED_NOTES" "--sys-admin" "the unhonoured flag is recorded as a skip"
+assert_contains "$SKIPPED_NOTES" "no NVMe" "the note says why the flag was not honoured"
+build_cap_block
+assert_not_contains "$NETRA_BLK_CAP_ADD" "SYS_ADMIN" "the cap block still has no SYS_ADMIN"
+GRANT_SYS_ADMIN=0
+
 exit_case

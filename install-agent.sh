@@ -56,9 +56,10 @@
 # * stdin IS this script. `read` from stdin returns the script's own bytes, so
 #   ALL prompting reads $P_TTY (/dev/tty), never stdin.
 # * If $P_TTY is unreadable and --yes was not given, the installer FAILS with an
-#   explicit message. It never silently takes a default: an unattended run that
-#   quietly said "no" to the package mount would produce an agent that collects
-#   less than the operator thinks it does.
+#   explicit message rather than assuming an answer: a run that quietly said
+#   "no" to the package mount would produce an agent that collects less than the
+#   operator thinks it does. --yes IS that consent, and it takes each prompt's
+#   documented default — announced on stdout, never silently.
 #
 # ============================================================================
 # netra_ask AND errexit — the sharp edge
@@ -68,6 +69,11 @@
 # if/while/&&/|| context terminates the script. EVERY call site must therefore
 # be written `if netra_ask "..." y; then ... else ... fi`. Never a bare call,
 # never `netra_ask ... || handler` with a handler that can itself fail.
+#
+# The rule binds in UNATTENDED runs too, which it did not always: --yes takes
+# each prompt's default, so every `n`-default prompt now returns 1 under --yes.
+# A bare call at one of those sites would kill a --yes run, and no interactive
+# test would ever see it.
 #
 # The mirror-image trap, which phase B will meet as it adds detectors: a
 # capturing assignment `X=$(detect_something)` DOES propagate a die() correctly
@@ -95,6 +101,11 @@
 #   7. pid: host                       (always; default NO)
 #   8. write compose.yaml
 #   9. write .env                      (skipped entirely when it exists without --force)
+#
+# --unsupported-os, --sys-admin and --pid-host REMOVE prompts 1, 3 and 7 from
+# this sequence: the answer is taken without asking, so nothing is consumed for
+# them. A case that passes any of these flags and an answers file must drop the
+# matching line, or every answer after it means something else.
 #
 # Detection runs to completion BEFORE any of these, which is what makes "detect
 # first, then ask" (§12a) true rather than aspirational: an unwritable mount
@@ -172,18 +183,27 @@ netra_exec() {
 # Prompting
 # ---------------------------------------------------------------------------
 
-# netra_ask QUESTION DEFAULT — DEFAULT is `y` or `n`. Returns 0 for yes, 1 for
-# no.
+# netra_ask QUESTION DEFAULT [GRANT_FLAG] — DEFAULT is `y` or `n`. Returns 0
+# for yes, 1 for no. GRANT_FLAG is optional and names the flag that grants this
+# prompt outright; it only shapes the message printed under --yes.
 #
 # CALL SITES MUST BE `if netra_ask ...; then` — see the errexit note in the
 # header. A bare call kills the script the moment the operator says no.
 #
-# --yes accepts everything. NETRA_ANSWERS_FILE is a test seam: each call
-# consumes the next line of that file (an exhausted file is a hard error, not a
-# silent default). Otherwise a readable $P_TTY is required.
+# --yes takes each prompt's DEFAULT — it does NOT accept everything. A
+# provisioning script must never silently expand privilege, so the prompts that
+# default `n` (SYS_ADMIN, pid: host) are DECLINED under --yes; an operator who
+# wants them says so by name with --sys-admin / --pid-host. Everything benign
+# defaults `y` and is accepted, so an unattended run still produces a complete
+# agent.
+#
+# NETRA_ANSWERS_FILE is a test seam: each call consumes the next line of that
+# file (an exhausted file is a hard error, not a silent default). Otherwise a
+# readable $P_TTY is required.
 netra_ask() {
     _ask_q="$1"
     _ask_def="$2"
+    _ask_flag="${3:-}"
     if [ "$_ask_def" = y ]; then
         _ask_hint='[Y/n]'
     else
@@ -191,8 +211,21 @@ netra_ask() {
     fi
 
     if [ "${ASSUME_YES:-0}" = 1 ]; then
-        printf '%s %s y (--yes)\n' "$_ask_q" "$_ask_hint"
-        return 0
+        if [ -n "$_ask_flag" ]; then
+            printf '%s %s %s (--yes takes the default; pass %s to grant)\n' \
+                "$_ask_q" "$_ask_hint" "$_ask_def" "$_ask_flag"
+        else
+            printf '%s %s %s (--yes takes the default)\n' \
+                "$_ask_q" "$_ask_hint" "$_ask_def"
+        fi
+        # Explicit branches, not `[ "$_ask_def" = y ]` as the last command: a
+        # bare test that fails is a command that failed, and errexit is only
+        # suspended here because every call site is an `if`. Spelling out the
+        # returns keeps that independent of the caller.
+        if [ "$_ask_def" = y ]; then
+            return 0
+        fi
+        return 1
     fi
 
     while :; do
@@ -208,7 +241,8 @@ netra_ask() {
         else
             if [ ! -r "$P_TTY" ]; then
                 die "no terminal available to ask '$_ask_q' ($P_TTY is not readable)." \
-                    "Re-run with --yes to accept every prompt, or run the installer from a terminal." \
+                    "Re-run with --yes to take every prompt's default, or run the installer" \
+                    "from a terminal." \
                     "Refusing to silently take defaults."
             fi
             printf '%s %s ' "$_ask_q" "$_ask_hint"
@@ -245,7 +279,22 @@ Detects this host's capabilities and installs the netra agent as a Docker
 Compose stack. Nothing is created, written or started until you agree.
 
 Options:
-  -y, --yes                Accept every prompt (unattended install).
+  -y, --yes                Take every prompt's DEFAULT (unattended install).
+                           Benign prompts default yes; SYS_ADMIN, pid: host and
+                           "Continue on an unsupported OS?" default no and are
+                           DECLINED. Say yes to those by name with the three
+                           flags below.
+      --sys-admin          Grant SYS_ADMIN without prompting (NVMe SMART health
+                           and wear). A no-op with a note if there is no NVMe.
+      --pid-host           Enable `pid: host` without prompting. This exposes
+                           every process's cmdline and environ to the agent.
+      --unsupported-os     Continue on a distro netra does not recognise,
+                           without prompting. The version floors are only where
+                           cgroup v2 became the default and the real checks are
+                           probed directly, so this is how an unattended install
+                           reaches a cgroup v2 host netra has no name for. The
+                           warning is still printed and still reported; only the
+                           prompt goes away. A no-op on a known distro.
       --dry-run            Print the full plan and touch nothing.
       --force              Required to overwrite an existing .env.
       --start              Run `docker compose up -d` at the end.
@@ -278,6 +327,12 @@ _need_val() {
 parse_args() {
     DRY_RUN=0
     ASSUME_YES=0
+    # Privilege is granted by name, never by --yes. See netra_ask.
+    GRANT_SYS_ADMIN=0
+    GRANT_PID_HOST=0
+    # Not privilege, but the same shape: a prompt that defaults n, so --yes
+    # alone declines it and an operator who means it says so by name.
+    GRANT_UNSUPPORTED_OS=0
     FORCE=0
     START=0
     TOKEN=""
@@ -298,6 +353,9 @@ parse_args() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
         -y | --yes) ASSUME_YES=1 ;;
+        --sys-admin) GRANT_SYS_ADMIN=1 ;;
+        --pid-host) GRANT_PID_HOST=1 ;;
+        --unsupported-os) GRANT_UNSUPPORTED_OS=1 ;;
         --dry-run) DRY_RUN=1 ;;
         --force) FORCE=1 ;;
         --start) START=1 ;;
@@ -1094,15 +1152,32 @@ plan_smart() {
 
     if [ -n "$_ps_nvme" ]; then
         info "  NVMe:            $_ps_nvme (controllers, not namespaces)"
-        if netra_ask "Grant SYS_ADMIN for NVMe SMART health and wear? It is root-adjacent, and
+        # --sys-admin takes the grant WITHOUT asking, and runs exactly the body
+        # the yes-branch runs — the flag is a pure grant, not a second code
+        # path that could drift from the prompted one.
+        _ps_grant=0
+        if [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
+            info "  SYS_ADMIN:       granted by --sys-admin (not prompted)"
+            _ps_grant=1
+        elif netra_ask "Grant SYS_ADMIN for NVMe SMART health and wear? It is root-adjacent, and
   declining costs ONLY health/wear — NVMe temperature comes from hwmon and keeps
-  working without it." n; then
+  working without it." n --sys-admin; then
+            _ps_grant=1
+        fi
+        if [ "$_ps_grant" = 1 ]; then
             CAP_SYS_ADMIN=1
             for _ps_c in $_ps_nvme; do _smart_dev "$_ps_c"; done
         else
             warn "SYS_ADMIN declined: no NVMe SMART health status or wear indicators." \
-                "NVMe temperature still works — it comes from hwmon, not smartctl."
+                "NVMe temperature still works — it comes from hwmon, not smartctl." \
+                "Re-run with --sys-admin to grant it without prompting."
         fi
+    elif [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
+        # An unhonoured request, not a neutral state: the operator asked for a
+        # capability they did not get, so it belongs in the finish report.
+        # Granting it anyway would expand privilege for no collected metric.
+        warn "--sys-admin was given but no NVMe device was found: SYS_ADMIN is NOT granted." \
+            "Nothing on this host would use it."
     fi
 
     if [ -z "$SMART_DEVICES" ]; then
@@ -1511,14 +1586,30 @@ EOF
             "collector will be disabled. Everything else works."
         ;;
     *)
+        # The warn is OUTSIDE the branch below on purpose: --unsupported-os
+        # suppresses the PROMPT, not the DIAGNOSIS. An operator who forced the
+        # install still gets told which distro this is and what netra knows,
+        # and warn() puts it in the finish report as well as the scroll.
         warn "${OS_PRETTY:-$OS_ID ${OS_VER:-unknown}} is not a distribution/version netra is" \
             "known to support (Debian 11+, Ubuntu 22.04+, Alpine 3.18+, RHEL family 9+)." \
             "The checks that actually matter are probed directly, so this may still work."
+        # Two branches into one outcome, as in plan_smart: the flag is a pure
+        # grant, never a second code path that could drift from the prompted one.
         # `if netra_ask` — see the header. A bare call would end the script here.
-        if netra_ask "Continue on an unsupported OS?" n; then
+        _pf_os_ok=0
+        if [ "${GRANT_UNSUPPORTED_OS:-0}" = 1 ]; then
+            info "  os:              ${OS_PRETTY:-$OS_ID $OS_VER} (unsupported, continuing by --unsupported-os)"
+            _pf_os_ok=1
+        elif netra_ask "Continue on an unsupported OS?" n --unsupported-os; then
             info "  os:              ${OS_PRETTY:-$OS_ID $OS_VER} (unsupported, continuing at operator request)"
-        else
-            die "aborted: unsupported operating system"
+            _pf_os_ok=1
+        fi
+        if [ "$_pf_os_ok" != 1 ]; then
+            # The floors are advisory (§12a), so the refusal must name its own
+            # remedy or an unattended install on a cgroup-v2 host netra simply
+            # does not recognise by name has no way back in.
+            die "aborted: unsupported operating system." \
+                "Re-run with --unsupported-os to proceed without prompting."
         fi
         ;;
     esac
@@ -1610,15 +1701,18 @@ plan_extras() {
     fi
 
     PID_HOST=0
-    if netra_ask "Share the host PID namespace (pid: host) for per-process metrics?
+    if [ "${GRANT_PID_HOST:-0}" = 1 ]; then
+        PID_HOST=1
+        info "  processes:       pid: host enabled by --pid-host (not prompted)"
+    elif netra_ask "Share the host PID namespace (pid: host) for per-process metrics?
   WARNING: this makes EVERY process's /proc entry readable to the agent container,
   including cmdline and environ — the command-line arguments and environment
   variables of every service on this box, which routinely carry passwords, API
   keys and DSNs. The collector only aggregates CPU and memory by process name,
-  but the namespace grants far more than it uses." n; then
+  but the namespace grants far more than it uses." n --pid-host; then
         PID_HOST=1
     else
-        info "  processes:       declined (no per-process metrics)"
+        info "  processes:       declined (no per-process metrics; --pid-host enables it)"
     fi
 }
 

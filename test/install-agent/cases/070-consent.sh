@@ -242,4 +242,135 @@ assert_not_contains "$COMPOSE_BODY" "/netra/fs/" "no marker mount is rendered"
 # The Docker socket and the mount table are still mounted, so volumes: stays.
 assert_contains "$COMPOSE_BODY" "docker.sock" "the Docker socket is still mounted"
 
+# --- 12. --yes takes each prompt's DEFAULT, it does not accept everything ------
+#
+# A provisioning script must never silently expand privilege. The benign
+# prompts default y and are accepted, so the run still produces a complete
+# working compose; SYS_ADMIN and pid: host default n and are declined.
+ROOT=$(mkroot yesdefaults)
+run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    "$SH" "$INSTALLER" --yes --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-yesdef"
+assert_eq 0 "$RUN_RC" "a plain --yes run on an NVMe host succeeds"
+assert_file_present "$TMP/out-yesdef/compose.yaml" "--yes still writes compose.yaml"
+assert_file_present "$TMP/out-yesdef/.env" "--yes still writes .env"
+YESBODY=$(grep -v '^[[:space:]]*#' "$TMP/out-yesdef/compose.yaml")
+assert_not_contains "$YESBODY" "SYS_ADMIN" "--yes alone never grants SYS_ADMIN"
+assert_not_contains "$YESBODY" "pid: host" "--yes alone never enables pid: host"
+assert_not_contains "$YESBODY" "/dev/nvme0" \
+    "a declined SYS_ADMIN also drops the NVMe controller from devices:"
+assert_contains "$RUN_OUT" "--sys-admin" "the run says which flag would grant SYS_ADMIN"
+assert_contains "$RUN_OUT" "--pid-host" "the run says which flag would enable pid: host"
+assert_contains "$RUN_OUT" "Skipped or degraded" "the declines reach the finish report"
+# The benign half: everything that defaults y is still accepted, so this is a
+# complete agent and not a stripped one.
+assert_contains "$YESBODY" "SYS_RAWIO" "--yes accepts the benign SYS_RAWIO prompt"
+assert_contains "$YESBODY" "/dev/sda" "the SATA device is still collected"
+assert_contains "$YESBODY" "/var/lib/dpkg" "--yes accepts the package database mount"
+assert_contains "$YESBODY" "system_bus_socket" "--yes accepts the D-Bus mount"
+assert_contains "$YESBODY" "docker.sock" "the Docker socket is mounted"
+assert_contains "$YESBODY" "/netra/fs/root" "the marker mount is rendered"
+assert_file_present "$ROOT/.netra" "--yes accepts creating the marker directories"
+
+# --- 13. --sys-admin and --pid-host grant explicitly, without prompting --------
+#
+# NETRA_ANSWERS_FILE is EMPTY: any prompt that consumed a line would die with
+# "answers file exhausted", so a clean exit proves the whole run was decided by
+# flags rather than by answers.
+: >"$TMP/ans-empty"
+ROOT=$(mkroot grantsysadmin)
+run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$TMP/ans-empty" "$SH" "$INSTALLER" --yes --sys-admin \
+    --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-sysadmin"
+assert_eq 0 "$RUN_RC" "--yes --sys-admin succeeds and consumes no answer"
+SABODY=$(grep -v '^[[:space:]]*#' "$TMP/out-sysadmin/compose.yaml")
+assert_contains "$SABODY" "SYS_ADMIN" "--sys-admin grants SYS_ADMIN"
+assert_contains "$SABODY" "/dev/nvme0" "--sys-admin also brings the NVMe controller back"
+assert_not_contains "$SABODY" "pid: host" "--sys-admin does not also enable pid: host"
+
+ROOT=$(mkroot grantpidhost)
+run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$TMP/ans-empty" "$SH" "$INSTALLER" --yes --pid-host \
+    --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-pidhost"
+assert_eq 0 "$RUN_RC" "--yes --pid-host succeeds and consumes no answer"
+PHBODY=$(grep -v '^[[:space:]]*#' "$TMP/out-pidhost/compose.yaml")
+assert_contains "$PHBODY" "pid: host" "--pid-host enables the host PID namespace"
+assert_not_contains "$PHBODY" "SYS_ADMIN" "--pid-host does not also grant SYS_ADMIN"
+
+# --- 15. --unsupported-os suppresses the prompt without silencing the warning --
+#
+# §12a: the version floors are only the releases where cgroup v2 became the
+# default, and the checks that matter are probed directly rather than inferred
+# from the distro name. So an unattended install on a cgroup-v2 host netra does
+# not recognise BY NAME must remain possible — otherwise "--yes takes the
+# default" quietly turns an advisory floor into a hard refusal.
+ROOT=$(mkroot unsupportedgrant)
+cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
+run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$TMP/ans-empty" "$SH" "$INSTALLER" --yes --unsupported-os \
+    --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-unsupported"
+assert_eq 0 "$RUN_RC" "--yes --unsupported-os completes on a distro netra does not know"
+assert_file_present "$TMP/out-unsupported/compose.yaml" "a working compose.yaml is still produced"
+UOBODY=$(grep -v '^[[:space:]]*#' "$TMP/out-unsupported/compose.yaml")
+assert_contains "$UOBODY" "docker.sock" "the rendered compose is a real one, not a stub"
+assert_contains "$UOBODY" "/netra/fs/root" "the marker mount is rendered on the unknown distro too"
+
+# The flag suppresses the PROMPT, not the DIAGNOSIS. An operator who forced an
+# install onto an unrecognised distro must still be told which distro it was and
+# what netra knows, both in the scroll and in the finish report they read after.
+assert_contains "$RUN_OUT" "not a distribution/version" \
+    "--unsupported-os still prints the unsupported-OS warning"
+assert_contains "$RUN_OUT" "void Linux" "the warning names the actual distro"
+assert_contains "$RUN_OUT" "Debian 11+" "the warning still states the floors netra knows"
+assert_contains "$RUN_OUT" "--unsupported-os" "the run says the grant came from the flag"
+# The note has to survive to the finish report, not just scroll past. Everything
+# after the "Skipped or degraded:" header is that report.
+UONOTES=$(printf '%s\n' "$RUN_OUT" | sed -n '/Skipped or degraded:/,$p')
+assert_contains "$UONOTES" "not a distribution/version" \
+    "the unsupported OS is recorded as a note in the finish report"
+
+# The teeth: --yes decides every prompt on its own, so an empty answers file
+# under --yes proves nothing about consumption. This run has NO --yes, so every
+# prompt reads a line, and the file holds EXACTLY the seven prompts that remain
+# once prompt 1 is gone (SYS_RAWIO, SYS_ADMIN, package DB, D-Bus, pid: host,
+# compose.yaml, .env). An --unsupported-os that still asked prompt 1 would run
+# the file one line short and die with "answers file exhausted".
+ROOT=$(mkroot unsupportedcount)
+cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
+printf 'y\ny\ny\ny\ny\ny\ny\n' >"$TMP/ans-unsupported7"
+run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$TMP/ans-unsupported7" "$SH" "$INSTALLER" --unsupported-os \
+    --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-unscount"
+assert_eq 0 "$RUN_RC" "--unsupported-os consumes no answer: prompt 1 is skipped entirely"
+assert_not_contains "$RUN_OUT" "exhausted" "the answers file is not run short"
+assert_not_contains "$RUN_OUT" "Continue on an unsupported OS?" \
+    "the unsupported-OS question is never asked under the flag"
+
+# --- 16. --unsupported-os on a distro netra DOES know is a silent no-op --------
+#
+# Mirrors --sys-admin on a host with no NVMe, except that this one earns no note
+# either: nothing was withheld, so there is nothing to report. A spurious
+# warning here would make every provisioning script that passes the flag
+# defensively look degraded on a perfectly supported host.
+ROOT=$(mkroot unsupportednoop)
+run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    "$SH" "$INSTALLER" --yes --unsupported-os --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-unsnoop"
+assert_eq 0 "$RUN_RC" "--unsupported-os on a supported distro succeeds"
+assert_contains "$RUN_OUT" "(supported)" "the OS is still reported as supported"
+assert_not_contains "$RUN_OUT" "not a distribution/version" \
+    "--unsupported-os invents no warning on a distro netra knows"
+assert_not_contains "$RUN_OUT" "--unsupported-os" \
+    "an unused --unsupported-os is not mentioned anywhere in the run"
+
+# --- 17. every grant flag is documented ---------------------------------------
+run_capture "$SH" "$INSTALLER" --help
+assert_contains "$RUN_OUT" "--sys-admin" "--help documents --sys-admin"
+assert_contains "$RUN_OUT" "--pid-host" "--help documents --pid-host"
+assert_contains "$RUN_OUT" "--unsupported-os" "--help documents --unsupported-os"
+
 exit_case

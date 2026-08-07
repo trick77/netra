@@ -87,9 +87,16 @@ assert_contains "$RUN_OUT" "machine-id" "empty machine-id failure names machine-
 assert_contains "$RUN_OUT" "empty" "empty machine-id failure says it is empty"
 
 # --- 4a. --yes with no usable /dev/tty still completes ------------------------
+#
+# The grant flags are here to keep the LAST assertion meaningful. --yes takes
+# each prompt's default, and SYS_ADMIN defaults no, so on this NVMe fixture a
+# plain --yes run legitimately reports a skip. "Everything accepted" is now
+# spelled --yes --sys-admin --pid-host; that a plain --yes does skip SYS_ADMIN
+# is asserted in 070.
 ROOT=$(mkroot healthy)
 run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$INSTALLER" --yes --token nta_test --hub-url https://hub.example \
+    "$SH" "$INSTALLER" --yes --sys-admin --pid-host \
+    --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "--yes completes with no terminal"
 assert_contains "$RUN_OUT" "Summary" "--yes run reaches the summary"
@@ -125,6 +132,49 @@ assert_contains "$RUN_OUT" "no terminal" "no-terminal failure is explicit"
 assert_contains "$RUN_OUT" "--yes" "no-terminal failure suggests --yes"
 assert_not_contains "$RUN_OUT" "Summary" \
     "no-terminal failure does not silently take defaults and finish"
+
+# --- 4c. --yes on an unsupported OS aborts, because that prompt defaults n ----
+#
+# The reach of "--yes takes the default" is not limited to the two capability
+# prompts: prompt 1 defaults n as well, so an unattended install on a distro
+# netra does not know refuses rather than proceeding. Locked in here because
+# nothing else in the suite runs --yes against an unsupported os-release, and
+# the old "--yes accepts everything" quietly continued.
+#
+# The abort must also name its own remedy. The version floors are only the
+# releases where cgroup v2 became the default (§12a) and the checks that matter
+# are probed directly, so an unattended install on a cgroup-v2 host netra does
+# not recognise BY NAME has to stay possible — which it only is if the abort
+# tells the operator that --unsupported-os exists.
+ROOT=$(mkroot unsupportedyes)
+cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
+run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    "$SH" "$INSTALLER" --yes --token nta_test --hub-url https://hub.example \
+    --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
+assert_eq 1 "$RUN_RC" "--yes on an unsupported OS aborts rather than continuing"
+assert_contains "$RUN_OUT" "unsupported operating system" "the abort says why"
+# The needle SPANS two die arguments on purpose. netra_ask already prints
+# "pass --unsupported-os to grant" as its --yes hint, so a bare "--unsupported-os"
+# needle would stay green even if the die message lost the remedy entirely. This
+# one can only match the die itself — and, since die renders "$*", it also pins
+# that the IFS='|' read above left IFS restored for the join.
+assert_contains "$RUN_OUT" "system. Re-run with --unsupported-os" \
+    "the abort message itself names the flag that would allow it"
+assert_file_absent "$ROOT/out/compose.yaml" "nothing is written after the abort"
+
+# Answering y to the same prompt from an answers file still continues, so the
+# assertion above is about the default taken, not about an unreachable prompt.
+ROOT=$(mkroot unsupportedy)
+cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
+# Every prompt accepted. Surplus lines are simply never read; an answers file
+# that ran SHORT would die, so this is the safe direction to err in.
+printf 'y\ny\ny\ny\ny\ny\ny\ny\ny\n' >"$TMP/answers-unsupported"
+run_capture env NETRA_INSTALL_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$TMP/answers-unsupported" "$SH" "$INSTALLER" \
+    --token nta_test --hub-url https://hub.example \
+    --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
+assert_eq 0 "$RUN_RC" "answering y to the unsupported-OS prompt continues"
+assert_contains "$RUN_OUT" "continuing at operator request" "the run says it continued by consent"
 
 # --- 5. answering n to a mid-sequence prompt does NOT abort under set -eu -----
 # netra_ask returns 1 for "no". Under `set -e` a function returning 1 outside an
