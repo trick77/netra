@@ -622,6 +622,62 @@ func TestRunHonoursHubRetryAfterInsteadOfOwnBackoff(t *testing.T) {
 	}
 }
 
+// Run must actually retune its ticker when it adopts a hub-supplied
+// interval_s, not merely record the new value: the initial cadence is slow
+// (4s) and the hub asks for a 1s cadence starting with the very first
+// response, so several more requests arriving well inside a window a 4s
+// cadence alone could not produce proves the ticker was reset.
+func TestRunAdoptsHubSuppliedIntervalForSubsequentTicks(t *testing.T) {
+	var reqCount atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqCount.Add(1)
+		resp := &netrav1.IngestResponse{AckSeq: 1, IntervalS: 1}
+		out, err := proto.Marshal(resp)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(out)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		Interval:     4 * time.Second, // slow initial cadence
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
+	c := client.New(cfg, collectors)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	// A 4s-only cadence gives exactly 1 request by t=7.5s (the next would land
+	// at t=8s). Requiring 4 within 7.5s proves the ticker adopted the 1s
+	// interval after the first response.
+	deadline := time.Now().Add(7500 * time.Millisecond)
+	for reqCount.Load() < 4 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return within 2s of context cancellation")
+	}
+
+	if got := reqCount.Load(); got < 4 {
+		t.Fatalf("requests within 7.5s = %d, want at least 4 — the ticker never adopted the faster interval_s", got)
+	}
+}
+
 // Prime must run the collectors without buffering anything, unlike
 // ScrapeOnce. It exists so a CPU-collector baseline scrape at startup does
 // not store a row whose values are NULL for a reason indistinguishable from
