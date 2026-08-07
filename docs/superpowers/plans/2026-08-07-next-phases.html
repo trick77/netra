@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>netra — Next Phases</title>
+<style>
+:root{--bg:#0f1115;--panel:#161920;--panel2:#1b1f28;--fg:#e6e8ee;--muted:#9aa3b2;--line:#2a2f3a;--accent:#5aa9e6;--accent2:#7ee0c0;--warn:#e6b45a}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:56px 28px 96px}
+h1{font-size:34px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+h2{font-size:23px;margin:52px 0 14px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:17.5px;margin:30px 0 10px;color:var(--accent2)}
+h4{font-size:15px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+p{margin:12px 0}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(90,169,230,.35)}
+a:hover{border-bottom-color:var(--accent)}
+ul,ol{padding-left:22px;margin:12px 0}
+li{margin:6px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+code{background:var(--panel2);padding:2px 6px;border-radius:5px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent2)}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow:auto;margin:16px 0}
+pre code{background:none;padding:0;color:var(--fg);font-size:12.5px;line-height:1.55}
+table{border-collapse:collapse;width:100%;margin:18px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--panel2);font-weight:600;color:var(--muted);white-space:nowrap}
+tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+blockquote{margin:18px 0;padding:12px 18px;border-left:3px solid var(--warn);background:rgba(230,180,90,.07);border-radius:0 8px 8px 0;color:#f0dcb4}
+blockquote p{margin:4px 0}
+strong{color:#fff;font-weight:620}
+.meta{color:var(--muted);font-size:13.5px;margin-bottom:34px}
+ul.task{list-style:none;padding-left:2px}
+ul.task li{display:flex;gap:9px;align-items:flex-start}
+ul.task input[type=checkbox]{margin:5px 0 0;flex:0 0 auto;accent-color:var(--accent)}
+ul.toc{list-style:none;padding-left:2px;font-size:13.5px;color:var(--muted)}
+ul.toc li{margin:3px 0}
+ul.toc a{color:var(--muted);border-bottom:1px solid var(--line)}
+ul.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+</style></head>
+<body><div class="wrap"><h1>netra — Next Phases</h1>
+<p class="meta"><strong>Date:</strong> 2026-08-07
+<strong>Status:</strong> Planned
+<strong>Scope:</strong> Stages 1–3</p>
+<blockquote>
+<p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use <code>superpowers:subagent-driven-development</code> (recommended) or <code>superpowers:executing-plans</code> to implement each stage task-by-task. Steps use checkbox (<code>- [ ]</code>) syntax for tracking.</p>
+</blockquote>
+<p><strong>Spec:</strong> <code>docs/superpowers/specs/2026-08-07-netra-design.md</code> — authoritative for everything below.<br>
+<strong>Preceding plans:</strong> <code>2026-08-07-phase1-foundation.md</code> (merged, PRs #1–#3), deployment and installer (merged, PRs #4–#9).</p>
+<ul class="toc">
+<li><a href="#where-netra-actually-is">Where netra actually is</a></li>
+<li><a href="#global-constraints">Global constraints</a></li>
+<li><a href="#stage-1">Stage 1 — Finish phase 1 (make netra usable)</a></li>
+<li><a href="#stage-2">Stage 2 — Phase 2</a></li>
+<li><a href="#stage-3">Stage 3 — Phase 3</a></li>
+<li><a href="#known-gaps-and-debts">Known gaps and debts</a></li>
+<li><a href="#verification">Verification</a></li>
+<li><a href="#process-notes">Process notes worth not relearning</a></li>
+</ul>
+<hr>
+<h2 id="where-netra-actually-is">Where netra actually is</h2>
+<p>Two plans are complete. What that bought:</p>
+<ul>
+<li><strong>Wire and storage:</strong> protobuf <code>IngestRequest</code>/<code>HostSample</code>, HTTPS POST ingest, bearer auth, <code>COPY</code> into one hypertable with 5m/1h continuous aggregates and 7/30/90-day retention.</li>
+<li><strong>Agent:</strong> <code>Collector</code> interface, three collectors (CPU, memory, load), bounded ring buffer, metadata-hash handshake.</li>
+<li><strong>Deployment:</strong> two digest-pinned images published to GHCR on merge, lockstep-versioned; weekly GHCR retention; hub <code>compose.yaml</code>; agent reference compose; <code>install-agent.sh</code> with a 353-assertion suite.</li>
+<li><strong>CI:</strong> build/vet/gofmt, race tests against a real TimescaleDB, coverage floor + patch gates, a shell job under <code>sh</code> and <code>dash</code>, version-stamping guard.</li>
+</ul>
+<p><strong>What that does not buy: netra is not yet usable.</strong> Three collectors is not monitoring, and there is no way to read the data back out except <code>psql</code>. The gap to close is stated bluntly in Stage 1.</p>
+<h3>Six tables, one hypertable</h3>
+<p><code>0001_init.sql</code> ships <code>providers</code>, <code>sites</code>, <code>hosts</code>, <code>tokens</code>, <code>host_current</code>, <code>host_samples</code>. The spec's §5.2 lists sixteen dimension tables and §5.3 lists twelve hypertables. The rest land with the collectors that fill them — see Stage 1A.</p>
+<hr>
+<h2 id="global-constraints">Global constraints</h2>
+<p>Unchanged from the phase 1 plan and <strong>not restated in full here</strong> — read <code>2026-08-07-phase1-foundation.md</code> § "Global Constraints". The ones most likely to be violated by the work below:</p>
+<ul>
+<li><strong>Absent subsystems are <code>NULL</code>, never <code>0</code></strong> (§5.1 rule 3). Protobuf <code>optional</code> scalars, Go <code>*T</code>, SQL <code>NULL</code>. This is the single most repeated correctness rule in the spec and every new collector has to get it right.</li>
+<li><strong>Continuous aggregate <code>start_offset</code> (6h) must exceed the ring-buffer window (1h).</strong> Any new aggregate inherits this. Any change to <code>NETRA_BUFFER_WINDOW</code>'s 6h ceiling must move <code>start_offset</code> with it.</li>
+<li><strong>Metric tables reference integer surrogate ids, never strings.</strong> A container rename or a host re-registration must not fork history.</li>
+<li><strong>Counter resets emit no sample</strong>, rather than a negative or a spike.</li>
+<li>TDD, conventional commits, <code>.yaml</code> never <code>.yml</code>, English only, <code>CGO_ENABLED=0</code> for shipped binaries.</li>
+</ul>
+<p>Two constraints added by the deployment work:</p>
+<ul>
+<li><strong><code>deploy/**</code> and <code>install-agent.sh</code> are outside <code>release.yaml</code>'s <code>paths-ignore</code> on purpose.</strong> The installer fetches templates at a release tag; a change that cuts no release is contained in no tag and never ships. Do not "tidy" them into the ignore list.</li>
+<li><strong>Empty directories need a <code>.gitkeep</code>.</strong> The installer fixtures probe for directory <em>existence</em>; git does not track empty directories, so the suite was green in every working tree and red only in CI. <code>test/install-agent/run.sh</code> now guards this.</li>
+</ul>
+<hr>
+<h2 id="stage-1">Stage 1 — Finish phase 1 (make netra usable)</h2>
+<p>The spec calls all of this phase 1. It was deferred, not descoped.</p>
+<h3>1A. Admin API and token minting — <strong>do this first</strong></h3>
+<p><code>auth.Mint</code> has no non-test callers. <code>NETRA_ADMIN_TOKEN</code> is required at hub startup and consumed by nothing. Adding a host today means hand-inserting a SHA-256 hash with <code>psql</code> (README documents the SQL; it works, and it is not a product).</p>
+<p>Everything else in Stage 1 is easier to test once hosts can be created over HTTP, so this goes first despite being small.</p>
+<ul class="task">
+<li><input type="checkbox" disabled><span><code>POST /api/v1/hosts</code> — create; returns the minted token <strong>once</strong>, never again</span></li>
+<li><input type="checkbox" disabled><span><code>POST /api/v1/hosts/{id}/token</code> — rotate</span></li>
+<li><input type="checkbox" disabled><span><code>DELETE /api/v1/hosts/{id}</code></span></li>
+<li><input type="checkbox" disabled><span><code>GET|PATCH /api/v1/sites</code>, <code>/providers</code> — including manual lat/lon override the hub never overwrites with a geocode result</span></li>
+<li><input type="checkbox" disabled><span>Admin-token middleware, constant-time compare, bound to the loopback listener</span></li>
+<li><input type="checkbox" disabled><span>Update <code>README.md</code> to replace the hand-inserted-SQL section with the real endpoints — and say plainly that the SQL path still works for recovery</span></li>
+</ul>
+<p><strong>Risk:</strong> the token is shown once. A create call whose response is lost must be recoverable by rotation, not by reading the hash. Test that rotation invalidates the old token in the same transaction.</p>
+<h3>1B. Schema — the remaining tables</h3>
+<p>One migration per coherent group, numbered, never editing <code>0001_init.sql</code>. Each hypertable arrives with its continuous aggregates and retention policy in the same migration, so no tier is ever half-configured.</p>
+<ul class="task">
+<li><input type="checkbox" disabled><span><code>0002</code> — container dimensions and <code>container_samples</code></span></li>
+<li><input type="checkbox" disabled><span><code>0003</code> — <code>filesystems</code>, <code>filesystem_samples</code>, <code>devices</code>, <code>disk_io_samples</code>, <code>smart_attributes</code></span></li>
+<li><input type="checkbox" disabled><span><code>0004</code> — <code>sensors</code>, <code>sensor_samples</code>, <code>cpu_core_samples</code>, <code>net_samples</code>, <code>host_addresses</code></span></li>
+<li><input type="checkbox" disabled><span><code>0005</code> — <code>systemd_units</code>, <code>systemd_unit_events</code>, <code>host_packages</code>, <code>package_events</code>, <code>events</code></span></li>
+<li><input type="checkbox" disabled><span><code>0006</code> — <code>process_samples</code> (<strong>raw only, 48h, no continuous aggregates</strong> — a 1-hour average of a top-N list whose membership changes between buckets is close to meaningless), <code>agent_samples</code>, <code>collector_samples</code>, <code>custom_samples</code></span></li>
+<li><input type="checkbox" disabled><span><code>0007</code> — <code>geocode_cache</code></span></li>
+</ul>
+<p><strong>The <code>start_offset</code> regression test already exists</strong> for <code>host_samples</code>. Extend it to cover each new aggregate rather than trusting the pattern — that failure mode is permanently silent.</p>
+<h3>1C. The thirteen remaining collectors</h3>
+<p>Ordered by risk and by what unblocks what, not by the spec's table order. Each collector: fixture-based tests with checked-in <code>/proc</code>, <code>/sys</code> and cgroup trees; reports duration, success and error code into <code>collector_samples</code>; availability into host capabilities; <strong>never prevents the agent from starting</strong>.</p>
+<p><strong>Group 1 — no privileges, no dependencies.</strong> Cheap, high value, validates the multi-collector loop.</p>
+<ul class="task">
+<li><input type="checkbox" disabled><span>Per-core CPU (<code>/proc/stat</code>) — all cores, always; ~800 series at target scale</span></li>
+<li><input type="checkbox" disabled><span>Disk I/O (<code>/proc/diskstats</code>) — counter-reset handling</span></li>
+<li><input type="checkbox" disabled><span>Sensors (<code>/sys/class/hwmon</code>) — identity is <code>chip_name + label</code>, <strong>never <code>hwmonN</code></strong>; per-read deadline (<code>NETRA_SENSORS_TIMEOUT</code>); preference list, not hottest-wins</span></li>
+<li><input type="checkbox" disabled><span>mdraid (sysfs)</span></li>
+<li><input type="checkbox" disabled><span>Self (<code>agent_samples</code>) — note <code>agent_samples.uptime_s</code> and <code>host_samples.uptime_s</code> are <em>different facts</em></span></li>
+</ul>
+<p><strong>Group 2 — needs <code>network_mode: host</code>.</strong></p>
+<ul class="task">
+<li><input type="checkbox" disabled><span>Network (<code>/proc/net/dev</code>) — filter <code>lo</code>, <code>veth*</code>, <code>docker0</code>, <code>br-*</code>, tunnels</span></li>
+<li><input type="checkbox" disabled><span>Addresses (netlink) — delivers nothing itself; flips <code>metadata_hash</code>. Hub derives <code>scope</code> from the address, so classification is one implementation that can be fixed without redeploying agents. <strong>Interface names are the join key</strong> with <code>net_samples.iface</code>.</span></li>
+</ul>
+<p><strong>Group 3 — needs a mount.</strong></p>
+<ul class="task">
+<li><input type="checkbox" disabled><span>Containers (cgroup v2 + Docker socket for metadata only) — <strong>subtract <code>cache</code> and <code>inactive_file</code></strong> from raw memory usage; identity is compose project + service, falling back to container name</span></li>
+<li><input type="checkbox" disabled><span>Filesystems (<code>statfs</code> on marker dirs) — dedup by <code>st_dev</code>; per-filesystem I/O needs the <code>st_dev</code> → block device mapping, and <code>NULL</code> (not zero) where that mapping fails</span></li>
+<li><input type="checkbox" disabled><span>systemd (D-Bus) — <strong>events, not samples</strong>; numeric summary rides on <code>host_samples</code></span></li>
+<li><input type="checkbox" disabled><span>Packages (<code>dpkg</code>/<code>apk</code>) — parse on mtime change with a daily floor; rpm reports unsupported-format</span></li>
+</ul>
+<p><strong>Group 4 — privileged, opt-in.</strong></p>
+<ul class="task">
+<li><input type="checkbox" disabled><span>SMART (<code>smartctl</code>, already in the image at a pinned version) — 1h interval; capability reported when device access is missing</span></li>
+<li><input type="checkbox" disabled><span>Processes (<code>pid: host</code>) — <code>utime+stime</code> deltas keyed on <code>(pid, starttime)</code>, because a recycled PID otherwise produces a garbage spike; aggregate by name, top-10-by-CPU ∪ top-10-by-memory</span></li>
+</ul>
+<p><strong>Wire protocol:</strong> each family needs its own typed protobuf message (§7.3). <code>IngestResponse</code> field 4 is <strong>reserved</strong> — a per-host cadence override in phase 2 must use a new number.</p>
+<p><strong>Installer coupling:</strong> every collector that lands makes an existing <code>install-agent.sh</code> mount meaningful. <code>deploy/agent/compose.yaml.example</code> carries a note listing which collectors are implemented; <strong>update it in the same PR</strong>, or it becomes a lie about what works.</p>
+<h3>1D. Read API</h3>
+<ul class="task">
+<li><input type="checkbox" disabled><span><code>GET /api/v1/hosts</code> — from <code>host_current</code>, never touches a hypertable</span></li>
+<li><input type="checkbox" disabled><span><code>GET /api/v1/hosts/{id}</code> — full metadata including collector capabilities</span></li>
+<li><input type="checkbox" disabled><span><code>GET /api/v1/hosts/{id}/containers</code> · <code>/filesystems</code> · <code>/addresses</code> · <code>/packages</code> · <code>/units</code></span></li>
+<li><input type="checkbox" disabled><span><code>GET /api/v1/hosts/{id}/metrics?family=…&amp;from=…&amp;to=…&amp;step=…</code></span></li>
+<li><input type="checkbox" disabled><span><code>GET /api/v1/events?host=…&amp;since=…&amp;type=…</code></span></li>
+</ul>
+<p><strong>Tier selection is the load-bearing part.</strong> With <code>step</code> omitted the hub picks the tier from the range (&lt;7d raw, longer → 5m or 1h). The UI will depend on that logic, so phase 1 is where it gets built and tested — including the boundary cases where a range straddles two tiers.</p>
+<hr>
+<h2 id="stage-2">Stage 2 — Phase 2</h2>
+<p>Ordered by dependency: alerting needs history, the UI needs the read API, OIDC needs a UI to log into.</p>
+<ul class="task">
+<li><input type="checkbox" disabled><span><strong>Alerting engine</strong> — thresholds, host-down (no POST within 3× interval), event-driven rules, notification delivery</span></li>
+<li><input type="checkbox" disabled><span><strong>Web UI</strong> — its own design system. music's tokens are built for a media player and are <em>not</em> assumed to fit</span></li>
+<li><input type="checkbox" disabled><span><strong>OIDC (Authentik)</strong> — <code>oidc-fix-report.md</code> in the music repo is the input. Replaces the single shared admin token with per-user roles</span></li>
+<li><input type="checkbox" disabled><span><strong>Geocoding + map</strong> — schema exists already; a manual lat/lon override must never be overwritten by a geocode result</span></li>
+<li><input type="checkbox" disabled><span><strong>Fleet/aggregate endpoints</strong> — deliberately unspecced until the UI exists, because speccing them now is guessing</span></li>
+<li><input type="checkbox" disabled><span><strong>Per-host scrape cadence</strong> — <code>hosts.interval_s</code> column, admin API to set it, a <strong>new</strong> protobuf field number. <code>buffer.Ring.Resize</code> was kept for exactly this and currently has no production caller</span></li>
+</ul>
+<hr>
+<h2 id="stage-3">Stage 3 — Phase 3</h2>
+<ul class="task">
+<li><input type="checkbox" disabled><span><strong>LLM diagnostics</strong> — reuses music's <code>internal/llm</code> and the <code>BACKEND_CHAT_*</code> pattern. Needs history and alerts to reason over, hence last</span></li>
+</ul>
+<hr>
+<h2 id="known-gaps-and-debts">Known gaps and debts</h2>
+<p>Carried forward. None block Stage 1, all are cheap to fix in the right PR.</p>
+<table>
+<thead>
+<tr>
+<th>Gap</th>
+<th>Where</th>
+<th>Note</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>NETRA_RETENTION_RAW/_5M/_1H</code> spec'd, unimplemented</td>
+<td><code>0001_init.sql:152-154</code></td>
+<td>Tiers hardcoded. <code>.env.example</code> deliberately omits them rather than shipping ignored variables. Fix with Stage 1B or delete from §12</td>
+</tr>
+<tr>
+<td>Images are <code>linux/amd64</code> only</td>
+<td><code>release.yaml</code></td>
+<td>Fine for x86 servers; arm64 (Ampere VPS, Pi) needs <code>platforms:</code> widened and a QEMU step</td>
+</tr>
+<tr>
+<td><code>/proc/1/mountinfo</code> bind-mount liveness unverified</td>
+<td>Spec §14 item 1</td>
+<td>Whether it yields live reads or a snapshot. If a snapshot, drop discovery and keep pure marker-dir behaviour. Test when the filesystem collector lands</td>
+</tr>
+<tr>
+<td><code>smartctl</code> <code>drivedb.h</code> update cadence undecided</td>
+<td>Spec §14 item 3</td>
+<td>Affects vendor attribute <em>naming</em> only; health, temperature, reallocated sectors and power-on hours are standardised</td>
+</tr>
+<tr>
+<td>Installer <code>--ref</code> resolves the latest release at runtime</td>
+<td><code>install-agent.sh</code></td>
+<td>Deviates from §12a's "the installer's own version". A literal constant cannot self-update without the release workflow pushing to master. Revisit only if the runtime lookup proves flaky</td>
+</tr>
+<tr>
+<td><code>--force</code> guards <code>.env</code> but not <code>compose.yaml</code></td>
+<td>§12a specifies this asymmetry</td>
+<td>Defensible — compose is derived, <code>.env</code> holds the token — and stated in the finish output</td>
+</tr>
+<tr>
+<td>Coverage floors still 75%</td>
+<td><code>hack/coverage-floors</code></td>
+<td>Raise deliberately once the collector packages land, not incidentally</td>
+</tr>
+</tbody></table>
+<hr>
+<h2 id="verification">Verification</h2>
+<p>Per stage, in addition to <code>make check</code> (which now includes <code>test-shell</code>):</p>
+<p><strong>1A</strong> — create a host over HTTP, use the returned token from a real agent, rotate it, assert the old token 401s and the new one 200s. Assert the plaintext appears exactly once in the response and nowhere in the logs.</p>
+<p><strong>1B</strong> — migrations apply to an empty database <em>and</em> on top of <code>0001</code> (both paths, both tested). Extend the <code>start_offset</code> backfill regression test to each new aggregate: write data older than the window and assert the rollup is correct.</p>
+<p><strong>1C</strong> — fixture-based unit tests per collector, plus one end-to-end run per group against a real host: agent posts → rows land → read API returns them. Counter-reset tests for diskstats, network and container CPU. Recorded <code>smartctl -j</code> output rather than privileged hardware.</p>
+<p><strong>1D</strong> — tier selection tested at the boundaries, not just the middle. A range that straddles 7 days must pick deterministically and say which tier it used.</p>
+<p><strong>Integration tests need the container and <code>-p 1</code></strong> — <code>store.OpenTest</code> drops the shared public schema, so parallel package binaries race:</p>
+<pre><code class="language-bash">docker run -d --name netra-test-db -e POSTGRES_USER=netra -e POSTGRES_PASSWORD=netra \
+  -e POSTGRES_DB=netra_test -p 5432:5432 timescale/timescaledb:latest-pg17
+NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test make test-integration
+</code></pre>
+<hr>
+<h2 id="process-notes">Process notes worth not relearning</h2>
+<ul>
+<li><strong>Retargeting a PR does not trigger CI.</strong> A base change emits <code>pull_request: edited</code>, which is not in the default trigger set. Close and reopen. This is how a fixture bug survived four stacked PRs.</li>
+<li><strong><code>gh pr merge</code> fails on any PR touching <code>.github/workflows/</code></strong> unless the token carries <code>workflow</code> scope. A <code>git push</code> over SSH is not an OAuth app and is exempt.</li>
+<li><strong><code>hack/patch-coverage.sh</code> excludes <code>cmd/</code></strong>, matching <code>coverage-gate.sh</code>. <code>main()</code> wiring is reachable only by running the binary; without the exclusion, changing one constructor argument is an uncoverable red gate.</li>
+<li><strong>Verify against a fresh clone</strong>, not the working tree, whenever fixtures are involved.</li>
+</ul>
+</div></body></html>
