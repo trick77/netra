@@ -1,0 +1,68 @@
+# netra agent — RENDERED BY install-agent.sh. Do not hand-edit in place; re-run
+# the installer (compose.yaml is overwritten freely, .env is not).
+#
+# The annotated reference that explains every mount, capability and device is
+# compose.yaml.example next to this file. This template is deliberately terse:
+# it is generated output, not documentation.
+#
+# ---------------------------------------------------------------------------
+# HOW THIS TEMPLATE IS SUBSTITUTED
+# ---------------------------------------------------------------------------
+# Substitution happens by WHOLE MARKER LINES, never by inline tokens. Each
+# `#__NETRA_*__` line below is replaced in full by a rendered block, and a block
+# that is empty deletes its marker line entirely. That is how a conditional
+# `cap_add:` or `pid: host` vanishes without leaving a dangling key behind: the
+# KEY ITSELF lives inside the block, not in this file.
+#
+# The consequence, and the reason for the design: this file is valid YAML as it
+# stands (every marker is a comment), so it can be linted and reviewed on its
+# own without running the installer.
+services:
+  netra-agent:
+    image: ghcr.io/trick77/netra-agent:latest
+    restart: unless-stopped
+
+    # Required, not a convenience: the network collector reads /proc/net/dev and
+    # the address collector talks netlink, both of which see the container's
+    # veth pair instead of the host's interfaces without this. An agent must
+    # therefore NOT also declare `networks:` — Compose rejects that combination.
+    network_mode: host
+
+    env_file:
+      - .env
+
+    security_opt:
+      - no-new-privileges:true
+
+    pid: host
+    volumes:
+      - type: bind
+        source: "/.netra"
+        target: /netra/fs/root
+        read_only: true
+      - type: bind
+        source: "/mnt/ark/.netra"
+        target: /netra/fs/ark
+        read_only: true
+      - type: bind
+        source: "/var/run/docker.sock"
+        target: /var/run/docker.sock
+        read_only: true
+      - type: bind
+        source: "/proc/1/mountinfo"
+        target: /host/mountinfo
+        read_only: true
+      - type: bind
+        source: "/run/dbus/system_bus_socket"
+        target: /run/dbus/system_bus_socket
+        read_only: true
+      - type: bind
+        source: "/var/lib/dpkg"
+        target: /var/lib/dpkg
+        read_only: true
+    devices:
+      - /dev/sda
+      - /dev/nvme0
+    cap_add:
+      - SYS_RAWIO
+      - SYS_ADMIN

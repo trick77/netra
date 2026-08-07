@@ -1,0 +1,5 @@
+# Git does not track empty directories, and this one is meaningful precisely
+# because it is empty: the installer probes for its existence, not its
+# contents. Without this placeholder the directory vanishes in a fresh clone
+# and the suite fails only in CI, with assertion failures that point at the
+# detection logic rather than at the missing fixture.

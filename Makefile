@@ -10,7 +10,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS = -s -w -X github.com/trick77/netra/internal/buildinfo.version=$(VERSION) \
                 -X github.com/trick77/netra/internal/buildinfo.commit=$(COMMIT)
 
-.PHONY: test test-integration build build-hub build-agent proto fmt vet check
+.PHONY: test test-integration test-shell build build-hub build-agent proto fmt vet check
 
 test:
 	$(GO) test ./...
@@ -21,6 +21,21 @@ test:
 test-integration:
 	NETRA_TEST_DSN=$${NETRA_TEST_DSN:-postgres://netra:netra@127.0.0.1:5432/netra_test} \
 		$(GO) test -p 1 ./internal/hub/... -run Integration -v
+
+# install-agent.sh is POSIX sh, not bash, and is curl'd onto hosts whose /bin/sh
+# is dash or busybox ash. Linting with -s sh and then running the suite under a
+# real dash is the pair that catches bashisms: shellcheck alone misses some, and
+# bash-as-sh accepts nearly all of them.
+test-shell:
+	shellcheck -s sh install-agent.sh
+	shellcheck -s sh test/install-agent/run.sh test/install-agent/lib.sh \
+		test/install-agent/cases/*.sh
+	sh test/install-agent/run.sh
+	@if command -v dash >/dev/null 2>&1; then \
+		dash test/install-agent/run.sh; \
+	else \
+		echo "dash not installed - skipping the dash pass (CI runs it)"; \
+	fi
 
 build: build-hub build-agent
 
@@ -39,6 +54,6 @@ fmt:
 vet:
 	$(GO) vet ./...
 
-check: vet test
+check: vet test test-shell
 	@unformatted="$$(gofmt -l .)"; \
 	if [ -n "$$unformatted" ]; then echo "not gofmt'd:"; echo "$$unformatted"; exit 1; fi
