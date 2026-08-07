@@ -63,3 +63,32 @@ func TestLoadRejectsBadDuration(t *testing.T) {
 		t.Fatal("Load() succeeded with an unparseable NETRA_INTERVAL, want error")
 	}
 }
+
+// A buffer window past the hub's continuous-aggregate start_offset (6h) must
+// be rejected: data replayed from a buffer that deep would land in a chunk
+// TimescaleDB no longer re-materialises, silently excluding it from rollups
+// forever (internal/hub/store/migrations/0002_host_samples.sql).
+func TestLoadRejectsBufferWindowPastHubStartOffset(t *testing.T) {
+	t.Setenv("NETRA_HUB_URL", "http://hub:8080")
+	t.Setenv("NETRA_TOKEN", "nta_x")
+	t.Setenv("NETRA_BUFFER_WINDOW", "7h")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() succeeded with NETRA_BUFFER_WINDOW=7h (past the 6h hub start_offset), want error")
+	}
+}
+
+// The bound is inclusive: exactly the hub's start_offset must be accepted.
+func TestLoadAcceptsBufferWindowAtHubStartOffset(t *testing.T) {
+	t.Setenv("NETRA_HUB_URL", "http://hub:8080")
+	t.Setenv("NETRA_TOKEN", "nta_x")
+	t.Setenv("NETRA_BUFFER_WINDOW", "6h")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.BufferWindow != MaxBufferWindow {
+		t.Fatalf("BufferWindow = %v, want %v", cfg.BufferWindow, MaxBufferWindow)
+	}
+}

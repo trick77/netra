@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+// MaxBufferWindow is the hub's continuous-aggregate start_offset for the 5m
+// tier (internal/hub/store/migrations/0002_host_samples.sql). Data buffered
+// longer than this and then replayed lands in a chunk TimescaleDB no longer
+// re-materialises, so it would be silently excluded from rollups forever.
+const MaxBufferWindow = 6 * time.Hour
+
 // Config holds every agent setting. Only HubURL and Token are required.
 type Config struct {
 	HubURL       string
@@ -48,10 +54,17 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	// The buffer window is coupled to the hub's continuous-aggregate
-	// start_offset (6h). Raising it past that silently corrupts rollups for
-	// replayed data, so it is documented rather than validated here.
+	// start_offset (MaxBufferWindow, 6h). Raising it past that would silently
+	// exclude replayed data from rollups forever, so it is rejected here.
 	if cfg.BufferWindow, err = durationOr("NETRA_BUFFER_WINDOW", time.Hour); err != nil {
 		return Config{}, err
+	}
+	if cfg.BufferWindow > MaxBufferWindow {
+		return Config{}, fmt.Errorf(
+			"NETRA_BUFFER_WINDOW must not exceed %s (the hub's continuous-aggregate "+
+				"start_offset); data buffered longer than that and then replayed would be "+
+				"silently excluded from rollups forever, got %s",
+			MaxBufferWindow, cfg.BufferWindow)
 	}
 
 	return cfg, nil
