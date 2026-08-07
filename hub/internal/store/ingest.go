@@ -107,3 +107,47 @@ func u64(p *uint64) any {
 	}
 	return int64(*p)
 }
+
+// MetadataHash returns the stored metadata hash for a host, or nil if the hub
+// has never received one.
+func (s *Store) MetadataHash(ctx context.Context, hostID int32) ([]byte, error) {
+	var hash []byte
+	err := s.pool.QueryRow(ctx,
+		`SELECT metadata_hash FROM hosts WHERE id = $1`, hostID).Scan(&hash)
+	if err != nil {
+		return nil, fmt.Errorf("read metadata hash: %w", err)
+	}
+	return hash, nil
+}
+
+// SaveMetadata persists the static facts an agent reports, together with the
+// hash that lets the hub detect the next change.
+func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md *netrav1.Metadata) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE hosts SET
+			hostname      = $2,
+			fingerprint   = $3,
+			host_type     = NULLIF($4, ''),
+			agent_version = $5,
+			go_version    = $6,
+			build_commit  = $7,
+			kernel        = $8,
+			os_name       = $9,
+			arch          = $10,
+			cpu_model     = $11,
+			cores         = $12,
+			threads       = $13,
+			memory_total  = $14,
+			metadata_hash = $15
+		WHERE id = $1`,
+		hostID,
+		md.GetHostname(), md.GetFingerprint(), md.GetHostType(),
+		md.GetAgentVersion(), md.GetGoVersion(), md.GetBuildCommit(),
+		md.GetKernel(), md.GetOsName(), md.GetArch(), md.GetCpuModel(),
+		int32(md.GetCores()), int32(md.GetThreads()), int64(md.GetMemoryTotal()),
+		hash)
+	if err != nil {
+		return fmt.Errorf("save metadata: %w", err)
+	}
+	return nil
+}
