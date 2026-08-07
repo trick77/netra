@@ -1,0 +1,222 @@
+# netra agent — runs on every monitored Linux host and POSTs samples to the hub.
+#
+# This file is the hand-written reference. `install-agent.sh` detects what a host
+# actually has and renders an equivalent file for you; copy this one only if you
+# are deliberately skipping the installer and want to decide each mount yourself.
+#
+#   cp compose.yaml.example compose.yaml
+#   cp .env.example .env && $EDITOR .env      # hub URL and token
+#   mkdir -p /.netra                          # see "Filesystems" below
+#   docker compose up -d
+#
+# WHAT IS IMPLEMENTED TODAY (phase 1): three collectors — CPU, memory and load.
+# All three read /proc and need no mount, no capability and no device. Every
+# other mount, capability and device below is documented because this file is
+# the place an operator decides them, but the collector that consumes it has not
+# landed yet, so granting it today changes nothing. Nothing breaks if you enable
+# them now — they are inert, not harmful. Nothing is missing if you do not.
+#
+# The agent is STATELESS. There is no volume for state anywhere in this file and
+# there never will be: the buffer is an in-memory ring (§6.5), deliberately not
+# durable across a restart, so there is no data directory to back up or corrupt.
+services:
+  netra-agent:
+    image: ghcr.io/trick77/netra-agent:latest
+    restart: unless-stopped
+
+    # Required, not a convenience. The network collector reads /proc/net/dev and
+    # the address collector talks netlink; inside Docker's own namespace both see
+    # the container's veth pair instead of the host's interfaces, so the metrics
+    # would be real numbers about the wrong machine. Because of this the agent
+    # must NOT also declare `networks:` — Compose rejects that combination.
+    #
+    # It publishes no port and listens on nothing; host networking here is read
+    # access to the host's network state, not an exposed service.
+    network_mode: host
+
+    env_file:
+      - .env
+
+    # The agent never gains privileges through a setuid binary. smartctl is
+    # invoked with the capabilities granted below and needs no escalation path.
+    security_opt:
+      - no-new-privileges:true
+
+    # Every bind is written in LONG FORM on purpose. The `source:target:ro` short
+    # form is parsed by splitting on ':', so a host mount point that contains a
+    # colon breaks it outright and one that contains a space has to be quoted.
+    # install-agent.sh renders the same long form, so a hand-written file and a
+    # generated one stay comparable line for line.
+    volumes:
+      # --- Filesystems (marker directories, §6.4) --------------------------
+      #
+      # statfs() reports the filesystem containing the path it is given, so the
+      # measured path has to physically live on that filesystem. What is mounted
+      # is therefore an EMPTY marker directory, never the data: complete
+      # disk-usage and inode metrics with zero data exposure. That least-
+      # privilege property is exactly why a single `/host` root mount was
+      # rejected despite being far more convenient to write.
+      #
+      # Create the markers before the first run:
+      #
+      #   mkdir -p /.netra
+      #   mkdir -p /mnt/ark/.netra
+      #
+      # The label is the trailing path segment of the TARGET, so /netra/fs/root
+      # is labelled `root` and /netra/fs/ark is labelled `ark`. Two markers that
+      # land on the same filesystem are deduplicated by st_dev — the agent keeps
+      # the first and logs a warning naming both, rather than double-reporting
+      # one filesystem under two names.
+      #
+      # The root filesystem is not a special case in code: it gets its own marker
+      # like everything else. If /netra/fs/ is empty the agent logs a startup
+      # warning and carries on — a container-only host is legitimate.
+      #
+      # read_only here documents intent. An empty directory has nothing to
+      # protect, so it costs nothing to be explicit.
+      - type: bind
+        source: /.netra
+        target: /netra/fs/root
+        read_only: true
+      # One extra example. Repeat this block per filesystem you want measured —
+      # and DELETE it if this host has no second filesystem. A long-form bind
+      # does not create a missing source directory the way the short form does,
+      # so a source that is not there is a container startup failure, not a
+      # warning. Same rule as the `devices:` list below.
+      - type: bind
+        source: /mnt/ark/.netra
+        target: /netra/fs/ark
+        read_only: true
+
+      # --- Containers -------------------------------------------------------
+      #
+      # Read-only, and used for far less than it looks like. Container CPU and
+      # memory are read from cgroup v2 files directly; the socket supplies only
+      # the container list, names, labels, health and image, and only when that
+      # list changes. Calling the Docker stats API per container per scrape is
+      # the single most expensive thing a naive agent does, and this avoids it.
+      #
+      # Without this mount: no container inventory and no container metrics.
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+
+      # --- OPTIONAL: systemd units ------------------------------------------
+      #
+      # Enables the systemd collector, which talks to org.freedesktop.systemd1
+      # over the system bus. Only unit state CHANGES are stored, plus a
+      # services_total / services_failed summary on each host sample.
+      #
+      # Without it: no unit inventory and no failed-service alerting. Nothing
+      # else is affected.
+      - type: bind
+        source: /run/dbus/system_bus_socket
+        target: /run/dbus/system_bus_socket
+        read_only: true
+
+      # --- OPTIONAL: package inventory --------------------------------------
+      #
+      # Enables the packages collector, which builds the "what changed on this
+      # host just before it started misbehaving" timeline. Mount the directory
+      # for the package manager this host actually uses — ONE of these, not both:
+      #
+      #   Debian/Ubuntu — /var/lib/dpkg   (the collector parses .../status)
+      #   Alpine        — /lib/apk/db     (the collector parses .../installed)
+      #
+      # rpm is NOT supported: its Berkeley DB/SQLite store needs librpm or the
+      # rpm binary. On a RHEL-family host the collector reports an unsupported-
+      # format capability instead of silently producing nothing, so mounting
+      # anything here on such a host gains you nothing.
+      #
+      # Parsed only when the database mtime changes, with a daily floor, so this
+      # mount costs essentially nothing at steady state.
+      - type: bind
+        source: /var/lib/dpkg
+        target: /var/lib/dpkg
+        read_only: true
+      # Alpine hosts: comment out the dpkg block above and use this instead.
+      # - type: bind
+      #   source: /lib/apk/db
+      #   target: /lib/apk/db
+      #   read_only: true
+
+      # --- OPTIONAL: filesystem discovery (awareness only) ------------------
+      #
+      # Exposes the host mount table and nothing else. This NEVER feeds metrics:
+      # measurement is exclusively marker-dir statfs, above. All it does is let
+      # the agent log one line per unmonitored filesystem at startup, and again
+      # only when the set changes:
+      #
+      #   filesystem /mnt/backup (8.0T, ext4) is not monitored — bind-mount a
+      #   marker dir to /netra/fs/<name> to enable
+      #
+      # Absent, that check is skipped silently and nothing else changes.
+      #
+      # UNVERIFIED (spec §14 item 1): whether bind-mounting a procfs FILE yields
+      # live reads or a one-time snapshot has not been confirmed. If it turns out
+      # to be a snapshot this mount is dropped entirely and marker directories
+      # remain the only mechanism. Treat it as provisional.
+      - type: bind
+        source: /proc/1/mountinfo
+        target: /host/mountinfo
+        read_only: true
+
+    # --- Sensors, mdraid: NOTHING TO ADD -------------------------------------
+    #
+    # Do not add a /sys mount for these. Docker already mounts /sys read-only in
+    # every container, so the sensors collector (/sys/class/hwmon) and the mdraid
+    # collector (sysfs) work with no mount, no capability and no device. A
+    # hand-added /sys bind is at best redundant and at worst mounts it writable.
+    #
+    # This is also why NVMe temperatures are free: they come from hwmon, not from
+    # smartctl. See the SYS_ADMIN note below.
+
+    # --- SMART ---------------------------------------------------------------
+    #
+    # smartctl ships inside the image at a pinned version, so behaviour does not
+    # vary with whatever the host distro packaged. It drives disks through kernel
+    # ioctls, which is what these capabilities are for.
+    #
+    # SYS_RAWIO covers SATA/SAS drives (ATA passthrough) and is the ordinary
+    # case. Without it every SMART reading disappears and the agent reports SMART
+    # as an unavailable capability rather than showing an empty panel.
+    cap_add:
+      - SYS_RAWIO
+      # SYS_ADMIN — READ THIS BEFORE UNCOMMENTING.
+      #
+      # Required ONLY when this host has NVMe drives, because NVMe admin
+      # passthrough needs it. It is root-adjacent — close enough to full root on
+      # the host that it must never be pasted in unconditionally "just in case".
+      #
+      # What declining actually costs you: NVMe SMART health status and wear
+      # indicators. It does NOT cost you NVMe temperature. NVMe temperatures come
+      # from /sys/class/hwmon via the sensors collector, which needs no
+      # capability, no device entry and no smartctl at all. On a host with only
+      # NVMe drives, leaving this commented out still gives you drive temps.
+      # - SYS_ADMIN
+
+    # The physical controllers/whole devices, never partitions: /dev/sda, not
+    # /dev/sda1; /dev/nvme0 (the controller), not /dev/nvme0n1 (the namespace).
+    # smartctl talks to the device, and a partition node cannot answer.
+    #
+    # Edit this list to match the host — `lsblk -d` lists the whole devices.
+    # A device listed here that does not exist prevents the container starting,
+    # so remove the ones this host lacks.
+    devices:
+      - /dev/sda
+      - /dev/nvme0
+
+    # --- Processes (opt-in) --------------------------------------------------
+    #
+    # pid: host is what makes the processes collector possible: without the
+    # host PID namespace the agent sees only itself in /proc.
+    #
+    # It is commented out by default and should stay that way unless you want
+    # per-process metrics enough to accept the exposure. Sharing the host PID
+    # namespace makes EVERY process's /proc entry readable to this container,
+    # including cmdline and environ — that is command-line arguments and
+    # environment variables of every service on the box, which routinely carry
+    # passwords, API keys and DSNs. The collector itself only aggregates CPU and
+    # memory by process name, but the namespace grants far more than it uses.
+    # pid: host
