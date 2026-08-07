@@ -22,6 +22,22 @@ import (
 // few hundred bytes; this is generous headroom that still bounds memory.
 const maxBodyBytes = 4 << 20
 
+// storageFailureRetryAfter is handed back to the agent on a 503 so it waits
+// at least this long before retrying, rather than relying on its own
+// exponential backoff for a failure mode the hub can characterise directly.
+const storageFailureRetryAfter = 30 * time.Second
+
+// minPlausibleTs and maxPlausibleFuture bound the timestamps the hub accepts
+// (spec §7.5, §9 "Clock skew"). A sample outside this range is dropped
+// individually rather than failing the whole batch: Postgres would otherwise
+// reject the entire INSERT, the hub would 503, and the agent would re-send
+// the identical poison batch forever. A far-future sample is also dangerous
+// on its own because it would permanently poison host_current, whose
+// ON CONFLICT guard only accepts updates with a later timestamp.
+var minPlausibleTs = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
+const maxPlausibleFuture = time.Hour
+
 // IngestHandler accepts agent metric batches.
 type IngestHandler struct {
 	auth     *auth.Authenticator
@@ -54,8 +70,14 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	raw, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "read body", http.StatusBadRequest)
 		return
 	}
@@ -66,14 +88,28 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.store.InsertHostSamples(ctx, hostID, req.GetHostSamples()); err != nil {
+	if req.GetBackfill() {
+		// Informational: TimescaleDB invalidates continuous aggregates
+		// automatically on INSERT into an older chunk, so no action is
+		// needed here beyond making replay observable.
+		slog.Debug("ingesting backfilled batch", "host_id", hostID, "seq", req.GetSeq())
+	}
+
+	samples, dropped := filterPlausibleTimestamps(req.GetHostSamples())
+	if dropped > 0 {
+		slog.Warn("dropped samples with implausible timestamps",
+			"host_id", hostID, "dropped", dropped)
+	}
+
+	if _, err := h.store.InsertHostSamples(ctx, hostID, samples); err != nil {
 		slog.Error("insert host samples", "host_id", hostID, "err", err)
-		// 503, not 500: the agent should buffer and retry rather than discard.
-		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
+		})
 		return
 	}
 
-	if s := latest(req.GetHostSamples()); s != nil {
+	if s := latest(samples); s != nil {
 		if err := h.store.UpsertHostCurrent(ctx, hostID, s); err != nil {
 			slog.Error("upsert host_current", "host_id", hostID, "err", err)
 		}
@@ -82,7 +118,9 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestMetadata, err := h.reconcileMetadata(ctx, hostID, &req)
 	if err != nil {
 		slog.Error("reconcile metadata", "host_id", hostID, "err", err)
-		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
+		})
 		return
 	}
 
@@ -91,6 +129,31 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RequestMetadata: requestMetadata,
 		IntervalS:       uint32(h.interval.Seconds()),
 	})
+}
+
+// filterPlausibleTimestamps drops samples whose ts_ms is more than
+// maxPlausibleFuture ahead of now, or before minPlausibleTs. It returns the
+// surviving samples (in original order, never nil unless the input was
+// empty) and the number dropped. Filtering per-sample rather than failing
+// the whole batch keeps a single poisoned sample from stalling the rest of
+// a host's ingest.
+func filterPlausibleTimestamps(samples []*netrav1.HostSample) ([]*netrav1.HostSample, int) {
+	if len(samples) == 0 {
+		return samples, 0
+	}
+
+	future := time.Now().Add(maxPlausibleFuture)
+	out := make([]*netrav1.HostSample, 0, len(samples))
+	dropped := 0
+	for _, s := range samples {
+		ts := time.UnixMilli(s.GetTsMs()).UTC()
+		if ts.Before(minPlausibleTs) || ts.After(future) {
+			dropped++
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, dropped
 }
 
 // reconcileMetadata stores a supplied metadata block and reports whether the
@@ -132,6 +195,13 @@ func bearer(r *http.Request) string {
 }
 
 func writeProto(w http.ResponseWriter, m proto.Message) {
+	writeProtoStatus(w, http.StatusOK, m)
+}
+
+// writeProtoStatus writes m as the protobuf body of a non-200 response, so
+// fields like retry_after_s reach the agent even on a failure status. Plain
+// http.Error would discard them.
+func writeProtoStatus(w http.ResponseWriter, status int, m proto.Message) {
 	raw, err := proto.Marshal(m)
 	if err != nil {
 		slog.Error("marshal response", "err", err)
@@ -139,5 +209,6 @@ func writeProto(w http.ResponseWriter, m proto.Message) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/x-protobuf")
+	w.WriteHeader(status)
 	_, _ = w.Write(raw)
 }

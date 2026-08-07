@@ -441,3 +441,215 @@ func TestScrapeOnceSkipsFailingCollector(t *testing.T) {
 		t.Fatalf("BufferDepth() = %d, want 1 — the partial sample must still be buffered", c.BufferDepth())
 	}
 }
+
+// A 503 that carries retry_after_s must surface as a *client.RetryAfterError
+// with that duration, so Run can honour it instead of its own backoff.
+func TestFlushReturnsRetryAfterFromHub503(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := &netrav1.IngestResponse{RetryAfterS: 42}
+		out, err := proto.Marshal(resp)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write(out)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	err := c.Flush(ctx)
+	if err == nil {
+		t.Fatal("Flush() succeeded against a 503, want an error")
+	}
+
+	var raErr *client.RetryAfterError
+	if !errors.As(err, &raErr) {
+		t.Fatalf("Flush() error = %v, want a *client.RetryAfterError", err)
+	}
+	if raErr.After != 42*time.Second {
+		t.Fatalf("RetryAfterError.After = %v, want 42s", raErr.After)
+	}
+}
+
+// A 503 body not declared as protobuf (e.g. an intermediary's HTML error
+// page) must not be trusted for retry_after_s — arbitrary bytes can still
+// "unmarshal" as a zero-value message, and treating that as a real
+// instruction would risk sleeping on garbage.
+func TestFlushIgnoresRetryAfterWithoutProtobufContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte("<html>service unavailable</html>"))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	err := c.Flush(ctx)
+	if err == nil {
+		t.Fatal("Flush() succeeded against a 503, want an error")
+	}
+
+	var raErr *client.RetryAfterError
+	if !errors.As(err, &raErr) {
+		t.Fatalf("Flush() error = %v, want a *client.RetryAfterError", err)
+	}
+	if raErr.After != 0 {
+		t.Fatalf("RetryAfterError.After = %v, want 0 for a non-protobuf body", raErr.After)
+	}
+}
+
+// A hub-supplied interval_s must be adopted for subsequent scrapes.
+func TestFlushAdoptsHubSuppliedInterval(t *testing.T) {
+	rec := &recorder{
+		respond: func(req *netrav1.IngestRequest) *netrav1.IngestResponse {
+			return &netrav1.IngestResponse{AckSeq: req.GetSeq(), IntervalS: 30}
+		},
+	}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL) // built with Interval: time.Minute
+	ctx := context.Background()
+
+	if got := c.Interval(); got != time.Minute {
+		t.Fatalf("Interval() before any flush = %v, want the configured 1m", got)
+	}
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	if got := c.Interval(); got != 30*time.Second {
+		t.Fatalf("Interval() after flush = %v, want 30s (adopted from the hub)", got)
+	}
+}
+
+// A zero interval_s (the field's default, meaning "no opinion") must not be
+// adopted — the client keeps its configured interval.
+func TestFlushIgnoresZeroIntervalFromHub(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	if got := c.Interval(); got != time.Minute {
+		t.Fatalf("Interval() = %v, want the configured 1m unchanged", got)
+	}
+}
+
+// Run must wait at least the hub's retry_after before retrying a failed
+// flush, in place of its own exponential backoff. The hub's retry_after (4s)
+// is set well outside the 1-2s range the agent's own initial jittered
+// backoff could produce, so the gap between retries proves which one ran.
+func TestRunHonoursHubRetryAfterInsteadOfOwnBackoff(t *testing.T) {
+	var mu sync.Mutex
+	var times []time.Time
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		times = append(times, time.Now())
+		mu.Unlock()
+
+		resp := &netrav1.IngestResponse{RetryAfterS: 4}
+		out, err := proto.Marshal(resp)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write(out)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		Interval:     5 * time.Millisecond,
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
+	c := client.New(cfg, collectors)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	deadline := time.Now().Add(6 * time.Second)
+	for {
+		mu.Lock()
+		n := len(times)
+		mu.Unlock()
+		if n >= 2 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return within 2s of context cancellation")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(times) < 2 {
+		t.Fatalf("requests = %d, want at least 2 within 6s", len(times))
+	}
+	gap := times[1].Sub(times[0])
+	if gap < 3*time.Second {
+		t.Fatalf("gap between retries = %v, want at least ~4s (the hub's retry_after); "+
+			"a gap this short means Run used its own 1-2s jittered backoff instead", gap)
+	}
+}
+
+// Prime must run the collectors without buffering anything, unlike
+// ScrapeOnce. It exists so a CPU-collector baseline scrape at startup does
+// not store a row whose values are NULL for a reason indistinguishable from
+// an absent subsystem.
+func TestPrimeDoesNotEnqueueASample(t *testing.T) {
+	c := newClient(t, "http://unused.invalid")
+	ctx := context.Background()
+
+	c.Prime(ctx)
+
+	if c.BufferDepth() != 0 {
+		t.Fatalf("BufferDepth() = %d, want 0 after Prime", c.BufferDepth())
+	}
+
+	// The sequence counter must also be untouched: the first real scrape
+	// after priming must be seq 1, proving priming consumed no sequence
+	// number (and, as a consequence, buffered nothing).
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	c2 := newClient(t, srv.URL)
+	c2.Prime(ctx)
+	c2.ScrapeOnce(ctx)
+	if err := c2.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if got := rec.last().GetSeq(); got != 1 {
+		t.Fatalf("first flush after Prime carried seq = %d, want 1", got)
+	}
+}

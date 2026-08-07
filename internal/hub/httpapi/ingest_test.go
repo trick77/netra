@@ -297,6 +297,116 @@ func TestIntegrationIngestStorageFailureReturns503(t *testing.T) {
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
 	}
+
+	// A 503 must carry retry_after_s so the agent waits at least that long
+	// before retrying, instead of falling back to its own backoff blind.
+	var out netrav1.IngestResponse
+	decodeBody(t, resp, &out)
+	if out.RetryAfterS == 0 {
+		t.Fatal("RetryAfterS = 0, want non-zero on a storage-failure 503")
+	}
+}
+
+// TestIntegrationIngestDropsImplausibleTimestampsButStoresTheRest covers spec
+// §7.5/§9 clock skew handling: a far-future or pre-2020 sample must not fail
+// the whole batch (which would 503 and make the agent re-send the identical
+// poison batch forever), and must not poison host_current, whose upsert
+// guard only accepts a later last_seen — a permanently-future value would
+// block every real update after it.
+func TestIntegrationIngestDropsImplausibleTimestampsButStoresTheRest(t *testing.T) {
+	srv, token, s := newFixture(t)
+
+	goodTs := time.Now().Add(-time.Minute).UnixMilli()
+	farFutureTs := time.Now().Add(2 * time.Hour).UnixMilli()
+	preEpochTs := time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq: 1,
+		HostSamples: []*netrav1.HostSample{
+			{TsMs: farFutureTs, CpuTotal: proto.Float64(99)},
+			{TsMs: preEpochTs, CpuTotal: proto.Float64(1)},
+			{TsMs: goodTs, CpuTotal: proto.Float64(42)},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — the good sample must still be stored", resp.StatusCode)
+	}
+
+	var out netrav1.IngestResponse
+	decodeBody(t, resp, &out)
+	if out.AckSeq != 1 {
+		t.Fatalf("AckSeq = %d, want 1 — the batch is still acked in full", out.AckSeq)
+	}
+
+	ctx := context.Background()
+	var count int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM host_samples`).Scan(&count); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("stored rows = %d, want 1 (only the plausible sample)", count)
+	}
+
+	var cpuTotal float64
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT cpu_total FROM host_samples`).Scan(&cpuTotal); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if cpuTotal != 42 {
+		t.Fatalf("stored cpu_total = %v, want 42 (the plausible sample)", cpuTotal)
+	}
+
+	// host_current must reflect the good sample's timestamp, not the
+	// far-future one — that is the poisoning this fix prevents.
+	var lastSeen time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT last_seen FROM host_current`).Scan(&lastSeen); err != nil {
+		t.Fatalf("query host_current: %v", err)
+	}
+	wantLastSeen := time.UnixMilli(goodTs).UTC()
+	if lastSeen.Sub(wantLastSeen).Abs() > time.Second {
+		t.Fatalf("host_current.last_seen = %v, want ~%v (the plausible sample, not the far-future one)",
+			lastSeen, wantLastSeen)
+	}
+}
+
+// TestIntegrationIngestRejectsOversizedBody covers the failure mode of a
+// silent partial accept: io.ReadAll(io.LimitReader(...)) would truncate an
+// over-limit body at whatever byte the limit lands on, which can still parse
+// as a valid (short) batch — the hub would then ack a seq the agent never
+// fully got stored, permanently losing the truncated samples. MaxBytesReader
+// must instead fail the read outright.
+func TestIntegrationIngestRejectsOversizedBody(t *testing.T) {
+	srv, token, s := newFixture(t)
+
+	oversized := bytes.Repeat([]byte{0x0a}, 5<<20) // 5 MiB > 4 MiB maxBodyBytes
+
+	httpReq, err := http.NewRequest(http.MethodPost, srv.URL, bytes.NewReader(oversized))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/x-protobuf")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := srv.Client().Do(httpReq)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+
+	var count int
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM host_samples`).Scan(&count); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("stored rows = %d, want 0 — an oversized body must not be silently truncated and partially accepted", count)
+	}
 }
 
 func decodeBody(t *testing.T, resp *http.Response, out proto.Message) {

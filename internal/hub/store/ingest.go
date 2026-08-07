@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -122,7 +123,26 @@ func (s *Store) MetadataHash(ctx context.Context, hostID int32) ([]byte, error) 
 
 // SaveMetadata persists the static facts an agent reports, together with the
 // hash that lets the hub detect the next change.
+//
+// The incoming fingerprint is compared against the one already on file
+// before it is overwritten. A mismatch against a non-empty stored value is
+// exactly what spec §7.2 asks the hub to catch: a compose file (and its
+// token) copied to a second host. The request is still accepted and stored —
+// flagging, not rejecting, is the specified behaviour.
 func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md *netrav1.Metadata) error {
+	var storedFingerprint *string
+	if err := s.pool.QueryRow(ctx,
+		`SELECT fingerprint FROM hosts WHERE id = $1`, hostID).Scan(&storedFingerprint); err != nil {
+		return fmt.Errorf("read stored fingerprint: %w", err)
+	}
+	if storedFingerprint != nil && *storedFingerprint != "" &&
+		*storedFingerprint != md.GetFingerprint() {
+		slog.Warn("host fingerprint changed; token may have been copied to another host",
+			"host_id", hostID,
+			"stored_fingerprint", *storedFingerprint,
+			"reported_fingerprint", md.GetFingerprint())
+	}
+
 	_, err := s.pool.Exec(ctx, `
 		UPDATE hosts SET
 			hostname      = $2,

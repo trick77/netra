@@ -27,6 +27,29 @@ var ErrUnauthorized = errors.New("hub rejected the agent token")
 // ingestPath is the hub endpoint agents post to.
 const ingestPath = "/api/agent/v1/ingest"
 
+// minAdoptedInterval and maxAdoptedInterval bound a hub-supplied interval_s
+// before it is adopted, so a malformed or malicious response cannot make the
+// agent scrape in a tight loop or effectively stop scraping.
+const (
+	minAdoptedInterval = time.Second
+	maxAdoptedInterval = 24 * time.Hour
+)
+
+// maxAdoptedRetryAfter caps a hub-supplied retry_after_s so a bad value
+// cannot stall the agent indefinitely.
+const maxAdoptedRetryAfter = 10 * time.Minute
+
+// RetryAfterError wraps a flush failure that came with a hub-specified
+// minimum retry delay (a 503 with retry_after_s set). Run honours it in
+// place of its own exponential backoff.
+type RetryAfterError struct {
+	After time.Duration
+	err   error
+}
+
+func (e *RetryAfterError) Error() string { return e.err.Error() }
+func (e *RetryAfterError) Unwrap() error { return e.err }
+
 // Client owns the scrape loop, the buffer and the HTTP conversation.
 type Client struct {
 	cfg        config.Config
@@ -34,11 +57,19 @@ type Client struct {
 	http       *http.Client
 	ring       *buffer.Ring
 
+	// interval is the current scrape cadence. It starts at cfg.Interval and
+	// may be overridden by a hub-supplied interval_s. Collectors keep the
+	// interval they were constructed with (only CPU exposes it, and only for
+	// reporting; its percentage math is delta-based, not fixed-interval), so
+	// adopting a new value here does not require rebuilding them.
+	interval time.Duration
+
 	seq             uint64
 	metadata        *netrav1.Metadata
 	metadataHash    []byte
 	sendMetadata    bool
 	lastFlushFailed bool
+	retryAfter      time.Duration
 }
 
 // New builds a Client. Buffer capacity is derived from the configured window
@@ -57,6 +88,7 @@ func New(cfg config.Config, collectors []collector.Collector) *Client {
 		collectors:   collectors,
 		http:         &http.Client{Timeout: 30 * time.Second},
 		ring:         buffer.New(capacity),
+		interval:     cfg.Interval,
 		metadata:     md,
 		metadataHash: HashMetadata(md),
 		// The hub asks for metadata when it needs it; nothing is assumed.
@@ -67,11 +99,33 @@ func New(cfg config.Config, collectors []collector.Collector) *Client {
 // BufferDepth reports how many samples are waiting to be acknowledged.
 func (c *Client) BufferDepth() int { return c.ring.Depth() }
 
+// Interval reports the scrape cadence currently in effect, which may have
+// been adopted from a hub-supplied interval_s.
+func (c *Client) Interval() time.Duration { return c.interval }
+
 // ScrapeOnce runs every collector and buffers the resulting sample.
 //
 // A collector that fails is logged and skipped: its fields stay unset, and
 // the rest of the sample is still worth sending.
 func (c *Client) ScrapeOnce(ctx context.Context) *netrav1.HostSample {
+	sample := c.collect(ctx)
+	c.seq++
+	c.ring.Add(c.seq, sample)
+	return sample
+}
+
+// Prime runs every collector once without buffering or sending the result.
+// Some collectors (CPU) need a baseline scrape before they can report a
+// delta; calling Collect once here gives them that baseline without leaving
+// behind a stored row whose values are NULL for a reason ("not computable
+// yet") that is indistinguishable from an absent subsystem.
+func (c *Client) Prime(ctx context.Context) {
+	c.collect(ctx)
+}
+
+// collect runs every collector and returns the resulting sample, without
+// touching the sequence counter or the ring buffer.
+func (c *Client) collect(ctx context.Context) *netrav1.HostSample {
 	sample := &netrav1.HostSample{TsMs: time.Now().UnixMilli()}
 
 	for _, col := range c.collectors {
@@ -80,8 +134,6 @@ func (c *Client) ScrapeOnce(ctx context.Context) *netrav1.HostSample {
 		}
 	}
 
-	c.seq++
-	c.ring.Add(c.seq, sample)
 	return sample
 }
 
@@ -118,8 +170,20 @@ func (c *Client) Flush(ctx context.Context) error {
 			// nothing, so the buffer is dropped and the operator has to act.
 			c.ring.AckThrough(highest)
 			c.lastFlushFailed = false
+			c.retryAfter = 0
 			return err
 		}
+
+		// A retry_after only applies to the failure that carried it; any
+		// other failure clears it so a stale value from an earlier 503
+		// cannot outlive its relevance.
+		var raErr *RetryAfterError
+		if errors.As(err, &raErr) {
+			c.retryAfter = raErr.After
+		} else {
+			c.retryAfter = 0
+		}
+
 		c.lastFlushFailed = true
 		return err
 	}
@@ -139,6 +203,14 @@ func (c *Client) Flush(ctx context.Context) error {
 	c.ring.AckThrough(resp.GetAckSeq())
 	c.sendMetadata = resp.GetRequestMetadata()
 	c.lastFlushFailed = false
+	c.retryAfter = 0
+
+	if iv := time.Duration(resp.GetIntervalS()) * time.Second; iv >= minAdoptedInterval && iv <= maxAdoptedInterval {
+		if iv != c.interval {
+			slog.Info("adopting hub-supplied scrape interval", "old", c.interval, "new", iv)
+			c.interval = iv
+		}
+	}
 
 	return nil
 }
@@ -166,6 +238,12 @@ func (c *Client) post(ctx context.Context, req *netrav1.IngestRequest) (*netrav1
 	if httpResp.StatusCode == http.StatusUnauthorized {
 		return nil, ErrUnauthorized
 	}
+	if httpResp.StatusCode == http.StatusServiceUnavailable {
+		return nil, &RetryAfterError{
+			After: parseRetryAfter(httpResp),
+			err:   fmt.Errorf("hub returned %s", httpResp.Status),
+		}
+	}
 	if httpResp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("hub returned %s", httpResp.Status)
 	}
@@ -183,9 +261,36 @@ func (c *Client) post(ctx context.Context, req *netrav1.IngestRequest) (*netrav1
 	return &resp, nil
 }
 
+// parseRetryAfter best-effort extracts retry_after_s from a 503 body. It
+// only trusts a body declared as protobuf, so an intermediary's HTML error
+// page (which would happily "unmarshal" as a zero-value message) cannot be
+// mistaken for a real instruction, and it clamps the result so a bad or
+// hostile value cannot stall the agent for hours.
+func parseRetryAfter(resp *http.Response) time.Duration {
+	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/x-protobuf") {
+		return 0
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0
+	}
+
+	var body netrav1.IngestResponse
+	if err := proto.Unmarshal(raw, &body); err != nil {
+		return 0
+	}
+
+	d := time.Duration(body.GetRetryAfterS()) * time.Second
+	if d > maxAdoptedRetryAfter {
+		d = maxAdoptedRetryAfter
+	}
+	return d
+}
+
 // Run scrapes and flushes on the configured interval until ctx is cancelled.
 func (c *Client) Run(ctx context.Context) error {
-	ticker := time.NewTicker(c.cfg.Interval)
+	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
 	backoff := time.Second
@@ -196,6 +301,8 @@ func (c *Client) Run(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			c.ScrapeOnce(ctx)
+
+			intervalBefore := c.interval
 
 			if err := c.Flush(ctx); err != nil {
 				if errors.Is(err, ErrUnauthorized) {
@@ -212,7 +319,16 @@ func (c *Client) Run(ctx context.Context) error {
 				// Jitter keeps a fleet from reconnecting in lockstep after a
 				// hub restart.
 				jittered := backoff + time.Duration(rand.Int64N(int64(backoff)))
-				sleep(ctx, jittered)
+
+				// A hub-specified retry_after replaces the agent's own
+				// backoff rather than merely bounding it below: the hub
+				// knows more about how long its own outage will last.
+				wait := jittered
+				if c.retryAfter > 0 {
+					wait = c.retryAfter
+				}
+
+				sleep(ctx, wait)
 				if backoff < time.Minute {
 					backoff *= 2
 				}
@@ -220,6 +336,9 @@ func (c *Client) Run(ctx context.Context) error {
 			}
 
 			backoff = time.Second
+			if c.interval != intervalBefore {
+				ticker.Reset(c.interval)
+			}
 		}
 	}
 }

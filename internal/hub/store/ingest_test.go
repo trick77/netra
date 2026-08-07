@@ -1,7 +1,10 @@
 package store_test
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -286,5 +289,82 @@ func TestIntegrationInsertHostSamplesFloatNullVsZero(t *testing.T) {
 	}
 	if *load1 != 0 {
 		t.Fatalf("load1 = %v, want 0", *load1)
+	}
+}
+
+// TestIntegrationSaveMetadataFlagsFingerprintMismatch covers spec §7.2: a
+// token presented from a different fingerprint than the one on file must be
+// flagged (logged), not rejected — this is what catches a compose file
+// copied to a second host. The request must still succeed and the new
+// fingerprint must still be stored.
+func TestIntegrationSaveMetadataFlagsFingerprintMismatch(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	hostID := seedHost(t, s)
+
+	if err := s.SaveMetadata(ctx, hostID, []byte{1}, &netrav1.Metadata{
+		Hostname: "h1", Fingerprint: "aaaa",
+	}); err != nil {
+		t.Fatalf("SaveMetadata (first): %v", err)
+	}
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	if err := s.SaveMetadata(ctx, hostID, []byte{2}, &netrav1.Metadata{
+		Hostname: "h1", Fingerprint: "bbbb",
+	}); err != nil {
+		t.Fatalf("SaveMetadata (second): %v", err)
+	}
+
+	logged := buf.String()
+	if !strings.Contains(logged, "fingerprint") {
+		t.Fatalf("log output = %q, want a fingerprint mismatch warning", logged)
+	}
+	for _, want := range []string{"aaaa", "bbbb"} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("log output = %q, want it to name the stored and reported fingerprints", logged)
+		}
+	}
+
+	var fingerprint string
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT fingerprint FROM hosts WHERE id = $1`, hostID).Scan(&fingerprint); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if fingerprint != "bbbb" {
+		t.Fatalf("fingerprint = %q, want %q — mismatch is flagged, not rejected", fingerprint, "bbbb")
+	}
+}
+
+// TestIntegrationSaveMetadataDoesNotFlagFirstSighting covers the empty-stored
+// case: a host's first metadata report has nothing to compare against and
+// must not be logged as a mismatch.
+func TestIntegrationSaveMetadataDoesNotFlagFirstSighting(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	hostID := seedHost(t, s)
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	if err := s.SaveMetadata(ctx, hostID, []byte{1}, &netrav1.Metadata{
+		Hostname: "h1", Fingerprint: "aaaa",
+	}); err != nil {
+		t.Fatalf("SaveMetadata: %v", err)
+	}
+
+	if strings.Contains(buf.String(), "fingerprint changed") {
+		t.Fatalf("log output = %q, want no mismatch warning on first sighting", buf.String())
 	}
 }
