@@ -10,9 +10,11 @@ test:
 	$(GO) test ./...
 
 # Integration tests are skipped unless NETRA_TEST_DSN points at a TimescaleDB.
+# -p 1 is mandatory: store.OpenTest drops the shared public schema, so two
+# package binaries running in parallel race on the same database.
 test-integration:
 	NETRA_TEST_DSN=$${NETRA_TEST_DSN:-postgres://netra:netra@127.0.0.1:5432/netra_test} \
-		$(GO) test ./internal/hub/... -run Integration -v
+		$(GO) test -p 1 ./internal/hub/... -run Integration -v
 
 build: build-hub build-agent
 
