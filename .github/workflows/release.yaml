@@ -1,0 +1,247 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+    # Only cut a release when something that ships actually changed. A release
+    # here is expensive and irreversible-ish: it bumps the version, builds and
+    # pushes TWO images, creates a git tag and a GitHub release. A comment fix
+    # or a .gitignore line doing all of that is pure noise, and it also burns
+    # through the retention window in cleanup-images.yaml — keep-n-most-recent
+    # is 10, so ten junk releases evict every real one.
+    #
+    # An ignore-list rather than an allow-list on purpose: a new top-level
+    # directory starts out releasing, which is the safe default. Forgetting to
+    # add a path here costs a redundant release; forgetting to add one to an
+    # allow-list would silently skip a needed release, and nobody notices a
+    # release that did not happen.
+    #
+    # ------------------------------------------------------------------------
+    # NOT ignored, and this is the non-obvious part: deploy/** and
+    # install-agent.sh.
+    #
+    # Neither is copied into any image, so the instinct is to ignore both. That
+    # instinct is wrong. The agent installer (spec §12a) fetches its compose and
+    # env templates out of deploy/agent/ at a PINNED RELEASE TAG — never from
+    # master, so that a mid-refactor template cannot land on a production host.
+    # A template only ever reaches a host by being contained in some tag. So if
+    # a deploy/ change cuts no release, no tag exists that contains it, and every
+    # subsequent install keeps fetching the stale template forever. The change is
+    # merged, visible on master, and completely inert. There is no error, no
+    # failed job and no log line — it just never ships.
+    #
+    # By contrast the hub's own compose.yaml IS ignored, and that is correct: it
+    # is documentation for an operator who deploys the hub by hand, it is not
+    # copied into any image and it is not fetched at a tag by anything.
+    # ------------------------------------------------------------------------
+    #
+    # workflow_dispatch below is unfiltered, so a release can always be forced
+    # by hand — including after a change to this workflow, which .github/**
+    # ignores. See the bootstrap note on the workflow_dispatch trigger.
+    paths-ignore:
+      - "docs/**"
+      # Coverage gate scripts: CI-only, never copied into either image.
+      - "hack/**"
+      - ".github/**"
+      - "**/*.md"
+      - "LICENSE"
+      - ".gitignore"
+      - "Makefile"
+      # Hub deployment reference only — see the block comment above for why this
+      # is safe to ignore while deploy/** is not.
+      - "compose.yaml"
+      - ".env.example"
+      # Only covers a future top-level test/ directory. Go tests live beside
+      # their sources as internal/**/*_test.go, so a test-only change to those
+      # still cuts a release. That is the ignore-list-is-the-safe-default
+      # tradeoff made concrete: a redundant release, not a missing one.
+      - "test/**"
+  # Unfiltered on purpose, and the bootstrap path for this repository.
+  #
+  # FIRST RELEASE: .github/** is in paths-ignore, so merging this workflow on
+  # its own cuts nothing at all — there is no tag, no release and no image in
+  # GHCR, and cleanup-images.yaml will keep reporting that the packages do not
+  # exist. Running this workflow by hand from the Actions tab is how the first
+  # 0.0.1 images get minted.
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+permissions:
+  contents: write
+  packages: write
+
+# Serialised, and deliberately NOT cancel-in-progress: a cancelled release can
+# have already pushed the hub image but not the agent one, or pushed both but
+# not tagged, leaving the repository in a state no version number describes.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # Deliberately ONE job containing both builds sequentially, rather than a
+  # build matrix over (hub, agent).
+  #
+  # A matrix would parallelise the two builds, but it forces the tag and release
+  # steps out into a separate `needs:` job. At that point "tag only after BOTH
+  # pushes succeeded" stops being something the file structure guarantees and
+  # becomes something a reader has to reason about — needs:, plus the default
+  # job-failure semantics, plus whatever `if:` ends up on the tag job. Here the
+  # step order alone makes it true: the tag step cannot run unless every step
+  # above it succeeded. The two builds share a Go module cache and finish in a
+  # couple of minutes anyway, so the parallelism buys very little.
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 — the version is derived from the latest git tag, and a
+      # shallow checkout fetches no tags at all. Without this every release
+      # would compute 0.0.1 from the 0.0.0 default and then fail at the create-
+      # ref step with "reference already exists".
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: ver
+        name: Compute next version
+        run: |
+          BUMP="${{ github.event.inputs.bump || 'patch' }}"
+          LATEST=$(git tag --list '[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          LATEST="${LATEST:-0.0.0}"
+          IFS=. read -r MA MI PA <<< "$LATEST"
+          case "$BUMP" in
+            major) MA=$((MA+1)); MI=0; PA=0 ;;
+            minor) MI=$((MI+1)); PA=0 ;;
+            patch) PA=$((PA+1)) ;;
+          esac
+          NEXT="$MA.$MI.$PA"
+          SHORT=$(git rev-parse --short HEAD)
+          # Grouped into one redirect rather than four appends purely to keep
+          # actionlint's shellcheck pass clean (SC2129). Identical behaviour.
+          {
+            echo "version=$NEXT"
+            echo "major=$MA"
+            echo "minor=$MI"
+            echo "short=$SHORT"
+          } >> "$GITHUB_OUTPUT"
+          echo "Bumping $LATEST -> $NEXT ($BUMP) at $SHORT" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Both build steps pass VERSION *and* COMMIT. COMMIT is not optional here:
+      # .dockerignore keeps .git out of the build context and the golang-alpine
+      # builder has no git binary, so the Makefile's `git rev-parse` fallback
+      # cannot run and the Containerfile's `ARG COMMIT=unknown` default wins.
+      # The image would then build, push and run perfectly while reporting
+      # `commit unknown` from --version — the one thing you need when a
+      # deployed agent misbehaves. ci.yaml's "Verify version stamping" step
+      # guards the Makefile path against exactly this class of bug; passing
+      # COMMIT here is the same guarantee for the image path, which that step
+      # does not cover.
+      #
+      # Hub image: github.repository is "trick77/netra", which is the hub's
+      # image name for free.
+      - name: Build and push hub image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Containerfile
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+            COMMIT=${{ steps.ver.outputs.short }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.major }}.${{ steps.ver.outputs.minor }}
+            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.major }}
+            ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.short }}
+            ghcr.io/${{ github.repository }}:latest
+          # Scoped per image. Both builds run in one job and the GHA cache
+          # backend keys on scope, so an unscoped pair would have the agent's
+          # export overwrite the hub's cache manifest on every run — and the
+          # hub would then miss its own cache on the next release, every time.
+          cache-from: type=gha,scope=hub
+          cache-to: type=gha,mode=max,scope=hub
+
+      # Agent image. Unlike the hub above, github.repository does NOT give the
+      # right name here — the "-agent" suffix has to be appended to every single
+      # tag line. Miss it on one line and that tag silently overwrites the
+      # corresponding HUB tag with an agent binary, which is far worse than a
+      # failed build: `ghcr.io/trick77/netra:latest` would start the agent.
+      #
+      # The version is shared with the hub by construction (both read
+      # steps.ver.outputs). Lockstep versioning is a design decision, not an
+      # accident — it makes agent/hub protocol compatibility legible from the
+      # tag alone.
+      - name: Build and push agent image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Containerfile.agent
+          push: true
+          platforms: linux/amd64
+          build-args: |
+            VERSION=${{ steps.ver.outputs.version }}
+            COMMIT=${{ steps.ver.outputs.short }}
+          tags: |
+            ghcr.io/${{ github.repository }}-agent:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ github.repository }}-agent:${{ steps.ver.outputs.major }}.${{ steps.ver.outputs.minor }}
+            ghcr.io/${{ github.repository }}-agent:${{ steps.ver.outputs.major }}
+            ghcr.io/${{ github.repository }}-agent:${{ steps.ver.outputs.short }}
+            ghcr.io/${{ github.repository }}-agent:latest
+          # Separate scope from the hub build — see that step's comment.
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
+
+      # Tag only AFTER both image pushes succeed, so a failed release never
+      # leaves an orphan git tag behind. An orphan tag is not cosmetic here: the
+      # agent installer resolves its templates at a tag, so a tag with no images
+      # is an installer that fetches templates for a version nobody can pull.
+      #
+      # Create the tag via the REST API rather than `git push`. A git-transport tag push with
+      # GITHUB_TOKEN is refused once the repo contains workflow files (it needs the `workflows`
+      # scope, which is not grantable via the `permissions:` block); create-ref only adds a
+      # pointer to the existing commit and is allowed under `contents: write`.
+      - name: Create tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/${{ github.repository }}/git/refs" \
+            -f ref="refs/tags/${{ steps.ver.outputs.version }}" \
+            -f sha="${{ github.sha }}"
+
+      # Runs after the tag exists, so the release attaches to it rather than
+      # creating a second pointer at the same commit. Without this the repo has
+      # tags but no releases, and there is no one place that says which image
+      # digests a given version corresponds to.
+      #
+      # Both images are listed. A release that names only the hub image makes
+      # the agent image look unversioned or absent, and the agent is the half an
+      # operator actually has to pull onto every monitored host.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          # The heredoc body below sits at exactly this block scalar's own
+          # indentation, so YAML strips that indentation before the shell ever
+          # sees it and no further dedent is needed. Indent those lines any
+          # deeper and the extra leading spaces survive into the notes, where
+          # Markdown renders each one as an indented code block instead of text.
+          cat > /tmp/release-notes.md <<NOTES
+          Hub image: \`ghcr.io/${{ github.repository }}:$VERSION\`
+          Agent image: \`ghcr.io/${{ github.repository }}-agent:$VERSION\`
+          NOTES
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --notes-file /tmp/release-notes.md
