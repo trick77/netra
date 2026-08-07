@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -23,7 +24,19 @@ import (
 // spec's default; per-host overrides arrive with the admin API.
 const defaultInterval = 60 * time.Second
 
+// versionFlag reports whether the process was asked only to print its build
+// identity. Kept deliberately simple: neither binary takes any other flag.
+func versionFlag() bool {
+	return len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-version")
+}
+
 func main() {
+	if versionFlag() {
+		fmt.Printf("%s %s (commit %s, %s)\n",
+			"netra", buildinfo.Version(), buildinfo.Commit(), buildinfo.GoVersion())
+		return
+	}
+
 	if err := run(); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)

@@ -1,8 +1,14 @@
 GO      ?= go
-LDFLAGS := -s -w -X github.com/trick77/netra/internal/buildinfo.version=$(VERSION) \
-                 -X github.com/trick77/netra/internal/buildinfo.commit=$(COMMIT)
 VERSION ?= dev
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+
+# Deferred expansion (=, not :=) so VERSION and COMMIT are read when a build
+# rule runs rather than when this line is parsed. With := they expanded before
+# the assignments below existed, and -X stamped both symbols to the empty
+# string — which overrides the "dev"/"unknown" defaults in internal/buildinfo,
+# so every shipped binary reported an empty version.
+LDFLAGS = -s -w -X github.com/trick77/netra/internal/buildinfo.version=$(VERSION) \
+                -X github.com/trick77/netra/internal/buildinfo.commit=$(COMMIT)
 
 .PHONY: test test-integration build build-hub build-agent proto fmt vet check
 

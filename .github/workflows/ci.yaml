@@ -27,6 +27,29 @@ jobs:
       - run: go vet ./...
       # gofmt is not covered by `go vet`, so it is enforced explicitly rather
       # than trusted to editors.
+      # Guard against the ldflags expansion order bug: LDFLAGS once used :=
+      # and expanded before the VERSION/COMMIT assignments below it, so -X
+      # stamped both symbols to the empty string and every shipped binary
+      # reported no version at all.
+      #
+      # This checks the runtime value rather than grepping the binary: Go
+      # embeds the VCS revision automatically, so the SHA is present either
+      # way. It also builds with the defaults, because passing VERSION= on the
+      # command line masks the bug -- command-line variables are defined
+      # before the makefile is parsed, so := sees them.
+      - name: Verify version stamping
+        run: |
+          make build
+          sha="$(git rev-parse --short HEAD)"
+          for b in bin/netra bin/netra-agent; do
+            out="$("$b" --version)"
+            echo "$b: $out"
+            case "$out" in
+              *"commit $sha"*) ;;
+              *) echo "::error::$b reported '$out', expected commit $sha"; exit 1 ;;
+            esac
+          done
+
       - name: gofmt
         run: |
           unformatted="$(gofmt -l .)"
