@@ -211,7 +211,7 @@ git commit -m "feat: add module scaffold, Makefile and buildinfo"
 ## Task 2: Protobuf wire schema
 
 **Files:**
-- Create: `buf.yaml`, `buf.gen.yaml`, `proto/netra/v1/ingest.proto`, `internal/gen/netrav1/` (generated, committed), `internal/gen/netrav1/roundtrip_test.go`
+- Create: `buf.yaml`, `buf.gen.yaml`, `proto/netra/v1/ingest.proto`, `internal/gen/netra/v1/` (generated, committed), `internal/gen/netra/v1/roundtrip_test.go`
 
 **Interfaces:**
 - Consumes: nothing.
@@ -226,7 +226,7 @@ syntax = "proto3";
 
 package netra.v1;
 
-option go_package = "github.com/trick77/netra/internal/gen/netrav1;netrav1";
+option go_package = "github.com/trick77/netra/internal/gen/netra/v1;netrav1";
 
 // IngestRequest is one POST body from an agent to the hub.
 message IngestRequest {
