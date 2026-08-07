@@ -1490,6 +1490,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
@@ -1524,7 +1526,7 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 		)
 		ON CONFLICT (host_id, ts) DO NOTHING`
 
-	batch := &pgxBatch{}
+	batch := &pgx.Batch{}
 	for _, m := range samples {
 		batch.Queue(stmt,
 			hostID, time.UnixMilli(m.GetTsMs()).UTC(),
@@ -1537,7 +1539,7 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 		)
 	}
 
-	results := s.pool.SendBatch(ctx, batch.b)
+	results := s.pool.SendBatch(ctx, batch)
 	defer func() { _ = results.Close() }()
 
 	var inserted int64
@@ -1592,39 +1594,12 @@ func u64(p *uint64) any {
 }
 ```
 
-- [ ] **Step 4: Add the small batch wrapper**
-
-Append to `hub/internal/store/ingest.go`:
-
-```go
-// pgxBatch is a thin wrapper so the batch type does not leak into the
-// function signature above.
-type pgxBatch struct{ b *pgxpoolBatch }
-
-func (p *pgxBatch) Queue(sql string, args ...any) {
-	if p.b == nil {
-		p.b = &pgxpoolBatch{}
-	}
-	p.b.Queue(sql, args...)
-}
-```
-
-Replace `pgxpoolBatch` with the real type by adding this import and alias at the top of the file:
-
-```go
-import (
-	"github.com/jackc/pgx/v5"
-)
-
-type pgxpoolBatch = pgx.Batch
-```
-
-- [ ] **Step 5: Run the tests and make sure they pass**
+- [ ] **Step 4: Run the tests and make sure they pass**
 
 Run: `NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test ./hub/internal/store/ -run Integration -v`
 Expected: PASS, seven tests.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add hub/internal/store/
@@ -2109,7 +2084,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/trick77/netra/hub/internal/buildinfoshim"
+	"github.com/trick77/netra/internal/buildinfo"
 	"github.com/trick77/netra/hub/internal/store"
 )
 
@@ -2128,7 +2103,7 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body := map[string]string{
 		"status":   "ok",
 		"database": "ok",
-		"version":  buildinfoshim.Version(),
+		"version":  buildinfo.Version(),
 	}
 	status := http.StatusOK
 
@@ -2144,8 +2119,6 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 ```
-
-Replace the `buildinfoshim` import with the real one: `"github.com/trick77/netra/internal/buildinfo"` and call `buildinfo.Version()`. (The shim name above is a placeholder that must not survive — use the real package.)
 
 - [ ] **Step 4: Implement the router**
 
@@ -3112,12 +3085,6 @@ func TestLoadReadsLoadavgAndUptime(t *testing.T) {
 	}
 }
 
-func TestLoadMissingFileIsAnError() {}
-```
-
-Replace that last stub with the real test:
-
-```go
 func TestLoadMissingFileIsAnError(t *testing.T) {
 	c := collector.NewLoad("testdata/does-not-exist", time.Minute)
 
@@ -4460,7 +4427,7 @@ Expected: all checks pass. If the coverage gate fails, add tests rather than low
 
 **Deliberately out of scope**, deferred to later plans and listed in §Scope: the other thirteen collectors, remaining schema, read API breadth, release and cleanup workflows, compose files.
 
-**Known rough edges to fix during implementation.** Task 7 Step 4 introduces a `pgxBatch` wrapper that adds nothing over using `pgx.Batch` directly — collapse it into `InsertHostSamples` rather than keeping the indirection. Task 9 Step 3 shows a `buildinfoshim` import that must be replaced with the real `internal/buildinfo` package; the step says so explicitly. Task 12 Step 5 contains a stub `TestLoadMissingFileIsAnError() {}` immediately followed by its real form — write only the real one.
+**Rough edges found in self-review and corrected in place**, so no task ships a known defect: the redundant `pgxBatch` wrapper in Task 7 was collapsed into a direct `pgx.Batch`, the placeholder `buildinfoshim` import in Task 9 now names the real `internal/buildinfo` package, and the duplicated stub test in Task 12 was removed.
 
 **Type consistency.** `netrav1` is the import alias everywhere. `*float64` / `*uint64` on every optional field, mapped to SQL `NULL` by `f64` / `u64`. `Collector` is `Name() / Interval() / Collect(ctx, *netrav1.HostSample) error` in all four implementations. `auth.Authenticate` returns `int32`, matching the `hosts.id` column type used throughout.
 
