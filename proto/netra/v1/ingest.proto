@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package netra.v1;
+
+option go_package = "github.com/trick77/netra/internal/gen/netra/v1;netrav1";
+
+// IngestRequest is one POST body from an agent to the hub.
+message IngestRequest {
+  // Monotonic per-agent batch sequence. Batches are all-or-nothing, so the
+  // hub's ack_seq simply echoes this value once the whole batch is stored;
+  // the agent drops the acked batch (and everything older) from its ring
+  // buffer.
+  uint64 seq = 1;
+
+  // 8-byte hash of the static metadata block. The hub compares it against the
+  // stored value and asks for a resend on mismatch.
+  bytes metadata_hash = 2;
+
+  // Populated only when the hub set request_metadata on a previous response.
+  Metadata metadata = 3;
+
+  repeated HostSample host_samples = 4;
+
+  // True when these samples are replayed from the ring buffer after an
+  // outage. Informational only: TimescaleDB records continuous-aggregate
+  // invalidations automatically on INSERT into an older chunk, so the hub
+  // needs no explicit action on this flag. It exists so the hub can log
+  // backfill activity for observability.
+  bool backfill = 5;
+}
+
+// Metadata holds facts that change rarely. Sent once, then only on change.
+message Metadata {
+  string agent_version = 1;
+  string go_version = 2;
+  string build_commit = 3;
+  string hostname = 4;
+  string kernel = 5;
+  string os_name = 6;
+  string arch = 7;
+  string cpu_model = 8;
+  uint32 cores = 9;
+  uint32 threads = 10;
+  uint64 memory_total = 11;
+  string location = 12;
+  string provider = 13;
+  string facility = 14;
+  string host_type = 15;
+  string fingerprint = 16;
+}
+
+// HostSample is one scrape of host-level vitals.
+//
+// Every metric is optional: a field left unset means the subsystem is absent
+// (no swap, no ZFS) and must reach the database as NULL, not 0.
+message HostSample {
+  int64 ts_ms = 1;
+
+  optional double cpu_total = 2;
+  optional double cpu_user = 3;
+  optional double cpu_system = 4;
+  optional double cpu_iowait = 5;
+  optional double cpu_steal = 6;
+  optional double cpu_idle = 7;
+
+  optional uint64 mem_total = 8;
+  optional uint64 mem_used = 9;
+  optional uint64 mem_available = 10;
+  optional uint64 mem_buffcache = 11;
+  optional uint64 mem_zfs_arc = 12;
+  optional uint64 swap_total = 13;
+  optional uint64 swap_used = 14;
+
+  optional double load1 = 15;
+  optional double load5 = 16;
+  optional double load15 = 17;
+
+  optional uint64 uptime_s = 18;
+}
+
+// IngestResponse carries everything the hub would push over a socket.
+message IngestResponse {
+  uint64 ack_seq = 1;
+  bool request_metadata = 2;
+
+  // Set on a 503 (storage unavailable). The agent waits at least this long
+  // before retrying, instead of using its own backoff.
+  uint32 retry_after_s = 3;
+
+  // Non-zero when the hub wants this host scraping at a different cadence
+  // than it currently is. The agent adopts it for subsequent scrapes.
+  uint32 interval_s = 4;
+}
