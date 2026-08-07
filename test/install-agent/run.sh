@@ -29,6 +29,29 @@ export SH
 
 PATTERN="${1:-}"
 
+# Guard: several fixture directories are meaningful precisely because they are
+# EMPTY — the installer probes for their existence, not their contents
+# (`/sys/block/sda/device`, a mount point to create a marker dir under, an NVMe
+# controller node). Git does not track empty directories, so without a
+# placeholder file they exist in a working tree and vanish in a fresh clone.
+#
+# That failure mode already happened once and was expensive to read: the suite
+# was green locally and on a developer's machine, and failed only in CI with
+# four assertions pointing at the detection logic — "the SATA device is still
+# collected", "the ark marker directory is created" — none of which named the
+# real cause. Check up front and say so plainly instead.
+for _req in \
+    root-full/mnt/ark \
+    root-full/sys/class/nvme/nvme0 \
+    "root-full/sys/devices/pci0000:00/ata1/host0/block/sda/device" \
+    "root-full/sys/devices/pci0000:00/nvme/nvme0/block/nvme0n1/device"; do
+    if [ ! -d "$FIXTURES/$_req" ]; then
+        printf 'fixture directory missing: %s\n' "$FIXTURES/$_req" >&2
+        printf 'It is empty by design and needs a .gitkeep to survive a clone.\n' >&2
+        exit 2
+    fi
+done
+
 # Inline trap bodies rather than a cleanup function: $TMP changes per case, so
 # the trap has to read it at fire time, and an unset $TMP must be a no-op.
 TMP=""
