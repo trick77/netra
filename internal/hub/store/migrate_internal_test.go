@@ -129,12 +129,13 @@ CREATE INDEX CONCURRENTLY idx_concurrent_index_target_name ON concurrent_index_t
 // a migration "is retried". Retrying only works if every statement in the file
 // is individually re-runnable, and nothing else enforces that.
 //
-// The worst case is reproduced directly: apply 0002 fully, then forget it in
-// schema_migrations, which is exactly the state an interrupted run leaves
-// behind (partial application is strictly easier to recover from). Migrate
-// must then re-run the file from the top and succeed. Without IF NOT EXISTS
-// on every statement this fails on the first one with 42P07, and because the
-// hub migrates on every start it would refuse to boot from then on.
+// The worst case is reproduced directly: apply 0001_init.sql fully, then
+// forget it in schema_migrations, which is exactly the state an interrupted
+// run leaves behind (partial application is strictly easier to recover
+// from). Migrate must then re-run the file from the top and succeed. Without
+// IF NOT EXISTS on every statement this fails on the first one with 42P07,
+// and because the hub migrates on every start it would refuse to boot from
+// then on.
 func TestIntegrationMigrateRerunsUnrecordedNoTransactionMigration(t *testing.T) {
 	ctx := context.Background()
 	s := OpenTest(t)
@@ -144,8 +145,8 @@ func TestIntegrationMigrateRerunsUnrecordedNoTransactionMigration(t *testing.T) 
 	}
 
 	if _, err := s.pool.Exec(ctx,
-		`DELETE FROM schema_migrations WHERE name = '0002_host_samples.sql'`); err != nil {
-		t.Fatalf("forget 0002 in schema_migrations: %v", err)
+		`DELETE FROM schema_migrations WHERE name = '0001_init.sql'`); err != nil {
+		t.Fatalf("forget 0001_init.sql in schema_migrations: %v", err)
 	}
 
 	if err := s.Migrate(ctx); err != nil {
@@ -155,11 +156,11 @@ func TestIntegrationMigrateRerunsUnrecordedNoTransactionMigration(t *testing.T) 
 	// And it must still be recorded afterwards, so a third start is a no-op.
 	var recorded bool
 	if err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '0002_host_samples.sql')`,
+		`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '0001_init.sql')`,
 	).Scan(&recorded); err != nil {
 		t.Fatalf("query schema_migrations: %v", err)
 	}
 	if !recorded {
-		t.Fatal("0002_host_samples.sql was not recorded after the re-run")
+		t.Fatal("0001_init.sql was not recorded after the re-run")
 	}
 }

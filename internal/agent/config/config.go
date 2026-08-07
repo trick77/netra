@@ -8,7 +8,7 @@ import (
 )
 
 // MaxBufferWindow is the hub's continuous-aggregate start_offset for the 5m
-// tier (internal/hub/store/migrations/0002_host_samples.sql). Data buffered
+// tier (internal/hub/store/migrations/0001_init.sql). Data buffered
 // longer than this and then replayed lands in a chunk TimescaleDB no longer
 // re-materialises, so it would be silently excluded from rollups forever.
 const MaxBufferWindow = 6 * time.Hour

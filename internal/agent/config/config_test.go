@@ -67,7 +67,7 @@ func TestLoadRejectsBadDuration(t *testing.T) {
 // A buffer window past the hub's continuous-aggregate start_offset (6h) must
 // be rejected: data replayed from a buffer that deep would land in a chunk
 // TimescaleDB no longer re-materialises, silently excluding it from rollups
-// forever (internal/hub/store/migrations/0002_host_samples.sql).
+// forever (internal/hub/store/migrations/0001_init.sql).
 func TestLoadRejectsBufferWindowPastHubStartOffset(t *testing.T) {
 	t.Setenv("NETRA_HUB_URL", "http://hub:8080")
 	t.Setenv("NETRA_TOKEN", "nta_x")
