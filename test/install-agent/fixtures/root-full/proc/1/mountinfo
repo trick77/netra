@@ -1,0 +1,10 @@
+25 0 8:1 / / rw,relatime shared:1 - ext4 /dev/sda1 rw,errors=remount-ro
+26 25 0:22 / /proc rw,nosuid,nodev,noexec - proc proc rw
+27 25 0:21 / /sys rw,nosuid,nodev,noexec shared:7 - sysfs sysfs rw
+28 25 0:5 / /dev rw,nosuid - devtmpfs udev rw
+29 25 0:24 / /run rw,nosuid,nodev shared:5 - tmpfs tmpfs rw
+30 25 0:25 / /run/user/1000 rw,nosuid,nodev,relatime - tmpfs tmpfs rw
+31 25 8:32 / /mnt/ark rw,relatime shared:9 master:2 - xfs /dev/sdc rw
+32 25 8:1 /home /mnt/homebind rw,relatime - ext4 /dev/sda1 rw
+33 25 0:44 / /var/lib/docker/overlay2/8a1/merged rw,relatime - overlay overlay rw
+34 25 0:60 / /mnt/nas rw,relatime - nfs4 srv:/export rw

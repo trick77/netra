@@ -59,6 +59,39 @@ jobs:
             exit 1
           fi
 
+  # install-agent.sh is the one shipped artefact that is not Go, and it is the
+  # piece most likely to be wrong in a way nobody notices: it runs once, on
+  # somebody else's machine, against hardware this repo has never seen.
+  #
+  # The suite runs under BOTH sh and dash on purpose. shellcheck -s sh and a
+  # real POSIX shell disagree at the edges — shellcheck misses some bashisms,
+  # and ubuntu's /bin/sh is dash so `sh` alone would be the same interpreter
+  # twice on this runner but bash-as-sh on a developer's mac. Running both is
+  # what proves the linter and the interpreter agree.
+  #
+  # No fetch-depth: 0, no Python, no coverage steps. Shell files never enter
+  # the Cobertura reports, so both coverage gates ignore them by construction —
+  # coverage-gate.sh keys on hub|agent from hack/coverage-floors, and
+  # patch-coverage.sh's assert_matched guard is invoked with *.go pathspecs, so
+  # a shell-only PR returns an empty changed-set and exits early. No exclusion
+  # list is added for them; a redundant exclude only invites deletion later.
+  shell:
+    name: Shell (installer)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install shellcheck and dash
+        run: sudo apt-get update && sudo apt-get install -y shellcheck dash
+      - name: Lint
+        run: |
+          shellcheck -s sh install-agent.sh
+          shellcheck -s sh test/install-agent/run.sh test/install-agent/lib.sh \
+            test/install-agent/cases/*.sh
+      - name: Suite under sh
+        run: sh test/install-agent/run.sh
+      - name: Suite under dash
+        run: dash test/install-agent/run.sh
+
   test:
     name: Test (${{ matrix.component }})
     runs-on: ubuntu-latest

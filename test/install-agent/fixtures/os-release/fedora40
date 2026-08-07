@@ -1,0 +1,5 @@
+NAME="Fedora Linux"
+VERSION="40 (Server Edition)"
+ID=fedora
+VERSION_ID=40
+PRETTY_NAME="Fedora Linux 40 (Server Edition)"

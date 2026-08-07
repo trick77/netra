@@ -1,0 +1,5 @@
+PRETTY_NAME="Debian $(touch /tmp/netra-pwned)"
+NAME=`touch /tmp/netra-pwned-backtick`
+ID=debian
+VERSION_ID="12"
+SINGLE_QUOTED='quoted value'
