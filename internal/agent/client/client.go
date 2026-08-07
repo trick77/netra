@@ -76,10 +76,7 @@ type Client struct {
 // and interval, so NETRA_BUFFER_WINDOW is expressed in time rather than in a
 // sample count nobody can reason about.
 func New(cfg config.Config, collectors []collector.Collector) *Client {
-	capacity := int(cfg.BufferWindow / cfg.Interval)
-	if capacity < 1 {
-		capacity = 1
-	}
+	capacity := capacityFor(cfg.BufferWindow, cfg.Interval)
 
 	md := BuildMetadata(cfg)
 
@@ -96,8 +93,29 @@ func New(cfg config.Config, collectors []collector.Collector) *Client {
 	}
 }
 
+// capacityFor computes ring capacity in slots so that capacity * interval
+// stays within window, and never exceeds config.MaxBufferWindow regardless
+// of what window is passed in — a defence in depth against the 6h
+// continuous-aggregate start_offset, on top of the config-load-time guard
+// that already bounds cfg.BufferWindow itself.
+func capacityFor(window, interval time.Duration) int {
+	if window > config.MaxBufferWindow {
+		window = config.MaxBufferWindow
+	}
+	capacity := int(window / interval)
+	if capacity < 1 {
+		capacity = 1
+	}
+	return capacity
+}
+
 // BufferDepth reports how many samples are waiting to be acknowledged.
 func (c *Client) BufferDepth() int { return c.ring.Depth() }
+
+// BufferCapacity reports the ring's current capacity in slots. Combined with
+// Interval, capacity * Interval is the effective buffered window, which
+// adopting a hub-supplied interval_s must keep within cfg.BufferWindow.
+func (c *Client) BufferCapacity() int { return c.ring.Capacity() }
 
 // Interval reports the scrape cadence currently in effect, which may have
 // been adopted from a hub-supplied interval_s.
@@ -209,6 +227,18 @@ func (c *Client) Flush(ctx context.Context) error {
 		if iv != c.interval {
 			slog.Info("adopting hub-supplied scrape interval", "old", c.interval, "new", iv)
 			c.interval = iv
+
+			// Capacity was sized in slots for the old interval. Left alone,
+			// adopting a longer interval would silently re-scale the
+			// buffered window past NETRA_BUFFER_WINDOW (and past the hub's
+			// 6h start_offset), while adopting a shorter one would shrink
+			// outage coverage for no reason. Recompute it so capacity *
+			// interval stays within the configured window.
+			newCapacity := capacityFor(c.cfg.BufferWindow, iv)
+			if dropped := c.ring.Resize(newCapacity); dropped > 0 {
+				slog.Warn("buffer capacity shrank to fit the adopted interval within the buffer window; oldest samples dropped",
+					"new_capacity", newCapacity, "dropped", dropped)
+			}
 		}
 	}
 
