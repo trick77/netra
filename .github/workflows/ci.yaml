@@ -25,8 +25,6 @@ jobs:
           go-version-file: go.mod
       - run: go build ./...
       - run: go vet ./...
-      # gofmt is not covered by `go vet`, so it is enforced explicitly rather
-      # than trusted to editors.
       # Guard against the ldflags expansion order bug: LDFLAGS once used :=
       # and expanded before the VERSION/COMMIT assignments below it, so -X
       # stamped both symbols to the empty string and every shipped binary
@@ -44,12 +42,17 @@ jobs:
           for b in bin/netra bin/netra-agent; do
             out="$("$b" --version)"
             echo "$b: $out"
+            # The "?*" is load-bearing: a bare "*" also matches the empty
+            # string, so a binary that stamped only the commit and left the
+            # version empty ("netra  (commit abc, go...)") would still pass.
             case "$out" in
-              *"commit $sha"*) ;;
-              *) echo "::error::$b reported '$out', expected commit $sha"; exit 1 ;;
+              "$(basename "$b") "?*" (commit $sha, go"*) ;;
+              *) echo "::error::$b reported '$out', expected '$(basename "$b") <version> (commit $sha, go...)'"; exit 1 ;;
             esac
           done
 
+      # gofmt is not covered by `go vet`, so it is enforced explicitly rather
+      # than trusted to editors.
       - name: gofmt
         run: |
           unformatted="$(gofmt -l .)"
