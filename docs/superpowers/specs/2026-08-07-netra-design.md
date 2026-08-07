@@ -727,13 +727,32 @@ token.
 
 | Phase | Behaviour |
 |---|---|
-| Preflight | Docker present and daemon reachable; **cgroup v2** (hard fail with an explicit message on v1); `/etc/machine-id` present |
+| Preflight | **Supported OS** via `/etc/os-release` (see below); Docker present and daemon reachable; **cgroup v2** (hard fail with an explicit message on v1); `/etc/machine-id` present |
+| Package manager | Detects `dpkg` (`/var/lib/dpkg/status`) or `apk` (`/lib/apk/db/installed`) and emits the matching read-only mount. On an rpm host it **warns and disables the package collector** rather than failing — rpm's Berkeley DB/SQLite store needs librpm and is unsupported |
 | Filesystems | Reads the mount table, filters pseudo/bind/overlay mounts and everything under `/var/lib/docker`, and for each accepted filesystem creates the `.netra` marker directory and emits the matching `/netra/fs/<label>` bind mount |
 | Sensors | Enumerates `/sys/class/hwmon/*/name` and `temp*_label`; picks the primary sensor by known CPU chip (`coretemp`, `k10temp`, `zenpower`), not hottest-wins |
 | SMART | Lists physical controllers, not partitions; distinguishes SATA from NVMe and emits the matching `devices:` entries plus `SYS_RAWIO`, adding `SYS_ADMIN` **only** when NVMe is present |
 | Optional extras | Offers the D-Bus socket (systemd units), `/var/lib/dpkg` (packages), and `pid: host` (processes) — the last with an explicit warning that it exposes every process's cmdline and environ |
 | Render | Downloads `compose.yaml.tmpl` and `env.tmpl` from the repository and substitutes detected values |
 | Finish | Prints what was detected **and what was skipped**, then the `docker compose up -d` command. `--start` runs it |
+
+### Supported operating systems
+
+The installer reads `/etc/os-release` and refuses to proceed on anything it cannot
+support, rather than installing an agent that silently collects nothing.
+
+| Distro | Package inventory | Notes |
+|---|---|---|
+| Debian 11+ | `dpkg` | Fully supported |
+| Ubuntu 22.04+ | `dpkg` | Fully supported |
+| Alpine 3.18+ | `apk` | Fully supported |
+| RHEL/Fedora/Rocky 9+ | none | Agent runs; package collector disabled with a warning |
+| Anything on cgroup v1 | — | Hard fail |
+
+The real gate is **cgroup v2** — the version floors above are the releases where it is the
+default. An unrecognised distro is a warning plus a confirmation prompt, not an automatic
+refusal: the checks that matter (cgroup v2, Docker, a known package database) are probed
+directly rather than inferred from the distro name.
 
 ### Template sourcing
 
