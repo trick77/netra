@@ -164,8 +164,11 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
 .PHONY: test test-integration build build-hub build-agent proto fmt vet check
 
+# -p 1 serialises package-level test binaries. store.OpenTest drops and
+# recreates the public schema of the shared test database, so two packages
+# running concurrently race each other into "relation does not exist".
 test:
-	$(GO) test ./...
+	$(GO) test -p 1 ./...
 
 # Integration tests are skipped unless NETRA_TEST_DSN points at a TimescaleDB.
 test-integration:
@@ -4367,7 +4370,7 @@ jobs:
       # as uncovered, understating the real number badly.
       - name: Test
         run: |
-          go test -race -covermode=atomic -coverpkg=./... \
+          go test -p 1 -race -covermode=atomic -coverpkg=./... \
             -coverprofile=coverage/${{ matrix.component }}.out ${{ matrix.packages }}
         env:
           CGO_ENABLED: "1"
@@ -4390,7 +4393,7 @@ jobs:
 ```bash
 mkdir -p coverage
 NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test \
-  go test -covermode=atomic -coverpkg=./... -coverprofile=coverage/hub.out ./hub/... ./internal/...
+  go test -p 1 -covermode=atomic -coverpkg=./... -coverprofile=coverage/hub.out ./hub/... ./internal/...
 go run github.com/boumenot/gocover-cobertura@v1.5.0 < coverage/hub.out > coverage/hub.xml
 ./hack/coverage-gate.sh hub
 ```
