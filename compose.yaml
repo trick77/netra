@@ -1,0 +1,116 @@
+# netra hub — the central service that agents POST to and that stores metrics.
+#
+# Host prep before the first run:
+#
+#   mkdir -p data/timescaledb
+#   cp .env.example .env && $EDITOR .env      # set the two secrets
+#   docker compose up -d
+#
+# Agents are configured separately, on each monitored host — see
+# deploy/agent/ and install-agent.sh.
+services:
+  netra:
+    image: ghcr.io/trick77/netra:latest
+    restart: unless-stopped
+
+    # netra is on BOTH networks, and that is not redundant. Traefik reaches it
+    # over `traefik`; it reaches Postgres over `netra-internal`. On `traefik`
+    # alone the container cannot resolve the hostname `timescaledb` at all and
+    # every start fails on the DSN.
+    networks:
+      - traefik
+      - netra-internal
+
+    # Loopback only. In phase 1 there is no web UI, so this published port IS
+    # the interface: the read and admin API are curl'd from the box itself.
+    # Binding 127.0.0.1 rather than 0.0.0.0 keeps that API off the host's
+    # public interfaces — it is gated by a single shared admin token, which is
+    # adequate for loopback and is not adequate for the internet.
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    environment:
+      NETRA_LISTEN_ADDR: ":8080"
+      # sslmode=disable is correct here and only here: this connection never
+      # leaves the internal Docker network, and TLS between two containers on
+      # the same host buys nothing but a certificate to rotate.
+      NETRA_DB_DSN: "postgres://netra:${POSTGRES_PASSWORD}@timescaledb:5432/netra?sslmode=disable"
+      # Required — the hub refuses to start without it rather than serving an
+      # unauthenticated admin API.
+      NETRA_ADMIN_TOKEN: "${NETRA_ADMIN_TOKEN}"
+      NETRA_LOG_LEVEL: "${NETRA_LOG_LEVEL:-info}"
+
+    # /api/health reports database reachability, not just process liveness, so
+    # a hub that cannot reach Postgres correctly goes unhealthy instead of
+    # accepting ingest it will only 503. wget is busybox's, shipped in the
+    # image for exactly this — see Containerfile.
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 60s
+      timeout: 5s
+      start_period: 30s
+      start_interval: 5s
+      retries: 3
+
+    # service_healthy, not service_started: the hub runs migrations on startup
+    # and a Postgres that is merely listening is not necessarily ready to
+    # accept them.
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+    labels:
+      traefik.enable: "true"
+      # Required because this container sits on two networks — without it
+      # Traefik picks one arbitrarily and may route to the internal address.
+      traefik.docker.network: traefik
+      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:-netra.trick77.com}`)
+      traefik.http.routers.netra.entrypoints: websecure
+      # tls: "true" with no certresolver — the certificate is pre-loaded in
+      # Traefik's static config, so there is no ACME challenge to run here.
+      traefik.http.routers.netra.tls: "true"
+      traefik.http.services.netra.loadbalancer.server.port: "8080"
+
+  timescaledb:
+    # Pinned, deliberately not `latest-pg17`. That tag is right for the CI
+    # service container, which starts from an empty volume every run, and
+    # wrong here: an unattended `docker compose pull` would move the operator's
+    # database out from under their data directory. Bump this on purpose.
+    image: timescale/timescaledb:2.29.1-pg17
+    restart: unless-stopped
+
+    # Internal network only — never on `traefik`. Nothing outside this compose
+    # project has any business reaching Postgres, and no port is published, so
+    # it is not on the host's network either.
+    networks:
+      - netra-internal
+
+    environment:
+      POSTGRES_USER: netra
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: netra
+
+    # A bind mount rather than a named volume so the data is where the operator
+    # expects it and `tar czf` is a backup. Create it before the first run:
+    # the directory must exist or Docker creates it root-owned and the
+    # container's initdb fails.
+    volumes:
+      - ./data/timescaledb:/var/lib/postgresql/data
+
+    # -U and -d are both needed: bare pg_isready checks the default database
+    # `postgres`, which does not exist in this image's configuration, so the
+    # check would pass on a server that cannot serve netra.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netra -d netra"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+
+networks:
+  # Created outside this project and shared with every other Traefik-fronted
+  # stack on the host: `docker network create traefik`.
+  traefik:
+    external: true
+  # Project-local. Carries only the hub-to-Postgres connection.
+  netra-internal:
