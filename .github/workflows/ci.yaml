@@ -1,0 +1,110 @@
+name: CI
+
+# Tests run on pull requests. Master builds and pushes images in a separate
+# release workflow; no image build happens here.
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      # gofmt is not covered by `go vet`, so it is enforced explicitly rather
+      # than trusted to editors.
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::These files are not gofmt'd. Run: gofmt -w ."
+            echo "$unformatted"
+            exit 1
+          fi
+
+  test:
+    name: Test (${{ matrix.component }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: hub
+            packages: ./internal/hub/... ./internal/buildinfo/... ./internal/gen/...
+            coverpkg: ./internal/hub/...,./internal/buildinfo/...,./internal/gen/...
+          - component: agent
+            packages: ./internal/agent/... ./cmd/...
+            coverpkg: ./internal/agent/...,./cmd/...
+    services:
+      timescaledb:
+        image: timescale/timescaledb:latest-pg17
+        env:
+          POSTGRES_USER: netra
+          POSTGRES_PASSWORD: netra
+          POSTGRES_DB: netra_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U netra"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      # fetch-depth: 0 — hack/patch-coverage.sh diffs the branch against the
+      # PR base, which needs real history. A shallow checkout leaves the base
+      # ref unresolvable and the gate exits 2.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install diff-cover==10.3.0
+      - run: mkdir -p coverage
+      # The race detector needs cgo. This is independent of the
+      # CGO_ENABLED=0 invariant used for the statically linked shipped
+      # binaries.
+      #
+      # -coverpkg attributes coverage across package boundaries within a
+      # component: code exercised only by another package's tests in the same
+      # component would otherwise be reported as uncovered, understating the
+      # real number badly. It is deliberately scoped to matrix.coverpkg
+      # (hub's own packages, or agent's own packages) rather than ./... —
+      # hub and agent share one go.mod, so a whole-module ./... here would
+      # pull the OTHER component's untouched packages into this report at 0%
+      # coverage and tank the score for a component that never exercises them.
+      - name: Test
+        run: |
+          go test -p 1 -race -covermode=atomic -coverpkg=${{ matrix.coverpkg }} \
+            -coverprofile=coverage/${{ matrix.component }}.out ${{ matrix.packages }}
+        env:
+          CGO_ENABLED: "1"
+          NETRA_TEST_DSN: postgres://netra:netra@127.0.0.1:5432/netra_test
+      # Go exposes no line metric — `go tool cover` reports statements only —
+      # so the line percentage comes from a Cobertura conversion. That also
+      # merges the duplicate blocks -coverpkg emits, one set per test binary,
+      # which a naive sum over the raw profile gets badly wrong.
+      - run: go run github.com/boumenot/gocover-cobertura@v1.5.0 < coverage/${{ matrix.component }}.out > coverage/${{ matrix.component }}.xml
+      # The floor gate runs first: when a PR drops the project below the floor
+      # the absolute number is the more actionable failure, and reporting it
+      # before patch coverage keeps the log readable.
+      - run: ./hack/coverage-gate.sh ${{ matrix.component }}
+      - name: Patch coverage
+        run: ./hack/patch-coverage.sh "origin/${{ github.base_ref || 'master' }}"

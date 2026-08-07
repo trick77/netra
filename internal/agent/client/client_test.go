@@ -255,6 +255,163 @@ func TestFlushTreatsZeroAckSeqAsFailure(t *testing.T) {
 	}
 }
 
+// Run must scrape and flush on every tick, and stop promptly once its context
+// is cancelled — nothing in the ticker loop should outlive the caller.
+func TestRunFlushesOnEveryTickAndStopsOnCancel(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		Interval:     5 * time.Millisecond,
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
+	c := client.New(cfg, collectors)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	// Give the ticker a few chances to fire and successfully flush before
+	// tearing the loop down.
+	deadline := time.Now().Add(2 * time.Second)
+	for rec.count() < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if rec.count() < 2 {
+		t.Fatalf("requests = %d, want at least 2 before cancel", rec.count())
+	}
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return within 2s of context cancellation")
+	}
+}
+
+// A transient flush failure must not stop the loop: Run backs off with
+// jitter and keeps retrying, and still exits promptly once the context is
+// cancelled mid-backoff rather than waiting out the full sleep.
+func TestRunBacksOffOnTransientFailureAndStopsOnCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		Interval:     5 * time.Millisecond,
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
+	c := client.New(cfg, collectors)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	// Let at least one tick fail and enter the backoff sleep, which is far
+	// longer than the tick interval, before cancelling.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return within 2s of context cancellation during backoff")
+	}
+}
+
+// A 401 must switch Run into its slow-retry path rather than the normal
+// exponential backoff, and still honor context cancellation while sleeping.
+func TestRunRetriesSlowlyOnUnauthorizedAndStopsOnCancel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		Interval:     5 * time.Millisecond,
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
+	c := client.New(cfg, collectors)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	// The unauthorized path sleeps for 5 minutes, far longer than this test
+	// can wait, so cancelling shortly after the first tick is the only way to
+	// prove sleep() actually honors ctx.Done() in that branch.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return within 2s of context cancellation during the slow retry sleep")
+	}
+}
+
+// A malformed response body (not a valid IngestResponse) must surface as an
+// error rather than a zero-value success.
+func TestFlushFailsOnMalformedResponseBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write([]byte{0xFF, 0xFF, 0xFF}) // not a valid protobuf message
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush() succeeded against a malformed response body, want an error")
+	}
+}
+
+// An invalid hub URL must fail request construction with a clear error
+// rather than panicking or silently posting nowhere.
+func TestFlushFailsOnInvalidHubURL(t *testing.T) {
+	cfg := config.Config{
+		HubURL:       "http://\x7f",
+		Token:        "nta_test",
+		Interval:     time.Minute,
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
+	c := client.New(cfg, collectors)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush() succeeded with an invalid hub URL, want an error")
+	}
+}
+
 // A collector that fails must not stop the scrape: it is logged and skipped,
 // but the rest of the sample is still worth sending. An agent that dies
 // because one sensor is unreadable is worse than one reporting partial data.
