@@ -269,7 +269,6 @@ func TestIngestResponseRoundTrip(t *testing.T) {
 		AckSeq:          99,
 		RequestMetadata: true,
 		RetryAfterS:     30,
-		IntervalS:       10,
 	}
 
 	raw, err := proto.Marshal(in)
@@ -290,9 +289,6 @@ func TestIngestResponseRoundTrip(t *testing.T) {
 	}
 	if out.GetRetryAfterS() != 30 {
 		t.Errorf("RetryAfterS = %d, want 30", out.GetRetryAfterS())
-	}
-	if out.GetIntervalS() != 10 {
-		t.Errorf("IntervalS = %d, want 10", out.GetIntervalS())
 	}
 }
 

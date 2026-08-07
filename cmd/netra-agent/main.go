@@ -36,15 +36,15 @@ func run() error {
 		"version", buildinfo.Version(),
 		"commit", buildinfo.Commit(),
 		"hub", cfg.HubURL,
-		"interval", cfg.Interval)
+		"interval", config.ScrapeInterval)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	collectors := []collector.Collector{
-		collector.NewCPU(cfg.ProcRoot, cfg.Interval),
-		collector.NewMemory(cfg.ProcRoot, cfg.Interval),
-		collector.NewLoad(cfg.ProcRoot, cfg.Interval),
+		collector.NewCPU(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
 	}
 
 	c := client.New(cfg, collectors)

@@ -27,9 +27,6 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Interval != time.Minute {
-		t.Fatalf("Interval = %v, want 1m", cfg.Interval)
-	}
 	if cfg.BufferWindow != time.Hour {
 		t.Fatalf("BufferWindow = %v, want 1h", cfg.BufferWindow)
 	}
@@ -38,29 +35,17 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
-// The interval is a duration string, not a millisecond integer: beszel's
-// uint16 field caps its interval at ~65s, and netra must not inherit that.
-func TestLoadParsesDurationInterval(t *testing.T) {
-	t.Setenv("NETRA_HUB_URL", "http://hub:8080")
-	t.Setenv("NETRA_TOKEN", "nta_x")
-	t.Setenv("NETRA_INTERVAL", "5m")
-
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Interval != 5*time.Minute {
-		t.Fatalf("Interval = %v, want 5m", cfg.Interval)
-	}
-}
-
+// Durations are duration strings, not millisecond integers: beszel's uint16
+// field caps its interval at ~65s, and netra must not inherit that shape.
+// An unparseable one must be rejected loudly rather than falling back to the
+// default, which would leave the operator believing a setting took effect.
 func TestLoadRejectsBadDuration(t *testing.T) {
 	t.Setenv("NETRA_HUB_URL", "http://hub:8080")
 	t.Setenv("NETRA_TOKEN", "nta_x")
-	t.Setenv("NETRA_INTERVAL", "sixty")
+	t.Setenv("NETRA_BUFFER_WINDOW", "sixty")
 
 	if _, err := Load(); err == nil {
-		t.Fatal("Load() succeeded with an unparseable NETRA_INTERVAL, want error")
+		t.Fatal("Load() succeeded with an unparseable NETRA_BUFFER_WINDOW, want error")
 	}
 }
 

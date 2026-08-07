@@ -42,7 +42,7 @@ func newFixture(t *testing.T) (*httptest.Server, string, *store.Store) {
 		t.Fatalf("insert token: %v", err)
 	}
 
-	h := httpapi.NewIngestHandler(auth.NewAuthenticator(s.Pool()), s, time.Minute)
+	h := httpapi.NewIngestHandler(auth.NewAuthenticator(s.Pool()), s)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
@@ -107,9 +107,6 @@ func TestIntegrationIngestStoresSamplesAndAcks(t *testing.T) {
 	// The hub has never seen this host's metadata, so it must ask for it.
 	if !out.RequestMetadata {
 		t.Fatal("RequestMetadata = false, want true on first contact")
-	}
-	if out.IntervalS != 60 {
-		t.Fatalf("IntervalS = %d, want 60", out.IntervalS)
 	}
 
 	var count int
@@ -280,7 +277,7 @@ func TestIntegrationIngestStorageFailureReturns503(t *testing.T) {
 	}
 	t.Cleanup(authStore.Close)
 
-	h := httpapi.NewIngestHandler(auth.NewAuthenticator(authStore.Pool()), s, time.Minute)
+	h := httpapi.NewIngestHandler(auth.NewAuthenticator(authStore.Pool()), s)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
