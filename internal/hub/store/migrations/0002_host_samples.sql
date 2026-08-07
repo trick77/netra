@@ -1,8 +1,17 @@
 -- netra:no-transaction
 -- TimescaleDB refuses to create a continuous aggregate inside a transaction
 -- block, so this whole migration runs outside one.
+--
+-- Because there is no transaction to roll back, every statement here must be
+-- individually re-runnable. applyMigration only records the migration in
+-- schema_migrations once all of them have succeeded, so a failure part-way
+-- through (a busy job scheduler, a dropped connection) leaves the schema
+-- half-built and the migration unrecorded — and the hub re-runs this file
+-- from the top on its next start. Without IF NOT EXISTS the first
+-- already-applied statement would then fail with 42P07 and the hub would
+-- refuse to start, permanently, until someone hand-edited schema_migrations.
 
-CREATE TABLE host_samples (
+CREATE TABLE IF NOT EXISTS host_samples (
     host_id       INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
     ts            TIMESTAMPTZ NOT NULL,
     cpu_total     DOUBLE PRECISION,
@@ -27,9 +36,9 @@ CREATE TABLE host_samples (
     PRIMARY KEY (host_id, ts)
 );
 
-SELECT create_hypertable('host_samples', by_range('ts'));
+SELECT create_hypertable('host_samples', by_range('ts'), if_not_exists => TRUE);
 
-CREATE MATERIALIZED VIEW host_samples_5m
+CREATE MATERIALIZED VIEW IF NOT EXISTS host_samples_5m
     WITH (timescaledb.continuous) AS
 SELECT host_id,
        time_bucket(INTERVAL '5 minutes', ts) AS bucket,
@@ -45,7 +54,7 @@ SELECT host_id,
  GROUP BY host_id, bucket
 WITH NO DATA;
 
-CREATE MATERIALIZED VIEW host_samples_1h
+CREATE MATERIALIZED VIEW IF NOT EXISTS host_samples_1h
     WITH (timescaledb.continuous) AS
 SELECT host_id,
        time_bucket(INTERVAL '1 hour', bucket) AS bucket,
@@ -67,15 +76,17 @@ WITH NO DATA;
 SELECT add_continuous_aggregate_policy('host_samples_5m',
     start_offset      => INTERVAL '6 hours',
     end_offset        => INTERVAL '10 minutes',
-    schedule_interval => INTERVAL '5 minutes');
+    schedule_interval => INTERVAL '5 minutes',
+    if_not_exists     => TRUE);
 
 SELECT add_continuous_aggregate_policy('host_samples_1h',
     start_offset      => INTERVAL '12 hours',
     end_offset        => INTERVAL '1 hour',
-    schedule_interval => INTERVAL '30 minutes');
+    schedule_interval => INTERVAL '30 minutes',
+    if_not_exists     => TRUE);
 
 -- Raw retention must exceed the refresh lag, or chunks are dropped before
 -- being materialised into the 5m tier.
-SELECT add_retention_policy('host_samples',    INTERVAL '7 days');
-SELECT add_retention_policy('host_samples_5m', INTERVAL '30 days');
-SELECT add_retention_policy('host_samples_1h', INTERVAL '90 days');
+SELECT add_retention_policy('host_samples',    INTERVAL '7 days',  if_not_exists => TRUE);
+SELECT add_retention_policy('host_samples_5m', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('host_samples_1h', INTERVAL '90 days', if_not_exists => TRUE);

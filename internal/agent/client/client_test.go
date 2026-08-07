@@ -321,8 +321,10 @@ func TestRunBacksOffOnTransientFailureAndStopsOnCancel(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- c.Run(ctx) }()
 
-	// Let at least one tick fail and enter the backoff sleep, which is far
-	// longer than the tick interval, before cancelling.
+	// Let at least one tick fail and arm the flush backoff, which is far
+	// longer than the tick interval, before cancelling. Run keeps ticking
+	// through the backoff now rather than sleeping the loop, so what this
+	// proves is that cancellation is observed promptly in that state.
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 
@@ -358,9 +360,10 @@ func TestRunRetriesSlowlyOnUnauthorizedAndStopsOnCancel(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- c.Run(ctx) }()
 
-	// The unauthorized path sleeps for 5 minutes, far longer than this test
-	// can wait, so cancelling shortly after the first tick is the only way to
-	// prove sleep() actually honors ctx.Done() in that branch.
+	// The unauthorized path holds the next flush off for 5 minutes, far
+	// longer than this test can wait, so cancelling shortly after the first
+	// tick is the only way to prove Run still returns promptly in that
+	// branch rather than waiting the hold-off out.
 	time.Sleep(50 * time.Millisecond)
 	cancel()
 
@@ -831,5 +834,80 @@ func TestPrimeDoesNotEnqueueASample(t *testing.T) {
 	}
 	if got := rec.last().GetSeq(); got != 1 {
 		t.Fatalf("first flush after Prime carried seq = %d, want 1", got)
+	}
+}
+
+// The ring buffer exists so that a hub outage produces a replayable history
+// rather than a hole in it. That only holds if Run keeps SCRAPING while it is
+// backing off its FLUSH. Run used to sleep the whole loop through the backoff,
+// and because time.Ticker drops ticks nobody is receiving, the samples for
+// that window were simply never taken — a gap no replay can fill.
+//
+// This pins the invariant directly: against a hub that always 503s with a
+// multi-second retry_after, the buffer must keep growing between flush
+// attempts. The assertion is "many samples, few requests", which is the whole
+// claim and is robust to how slow the runner is.
+func TestRunKeepsScrapingWhileBackingOffFlush(t *testing.T) {
+	var mu sync.Mutex
+	requests := 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+
+		out, err := proto.Marshal(&netrav1.IngestResponse{RetryAfterS: 3})
+		if err != nil {
+			t.Errorf("Marshal: %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write(out)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		Interval:     10 * time.Millisecond,
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, cfg.Interval)}
+	c := client.New(cfg, collectors)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	// Well inside the 3s retry_after, so the flush is still held off.
+	time.Sleep(700 * time.Millisecond)
+
+	depth := c.BufferDepth()
+	mu.Lock()
+	n := requests
+	mu.Unlock()
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return within 2s of context cancellation")
+	}
+
+	// One request, because the hub asked for a 3s wait and we looked at 700ms.
+	if n != 1 {
+		t.Fatalf("requests = %d, want exactly 1 while the retry_after is still pending", n)
+	}
+	// ~70 ticks fit in 700ms at a 10ms interval. Anything well above 1 proves
+	// scraping continued; the old blocking-sleep implementation produced
+	// exactly 1, since the single tick that failed was the only one serviced.
+	if depth < 10 {
+		t.Fatalf("buffer depth = %d after 700ms of 10ms ticks, want >= 10; "+
+			"a depth this low means Run stopped scraping while backing off", depth)
 	}
 }

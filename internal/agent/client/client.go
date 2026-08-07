@@ -39,6 +39,28 @@ const (
 // cannot stall the agent indefinitely.
 const maxAdoptedRetryAfter = 10 * time.Minute
 
+// maxBatchSamples caps how many buffered samples one POST carries.
+//
+// The hub caps an ingest body at 4 MiB (httpapi.maxBodyBytes). A short
+// NETRA_INTERVAL makes the ring far larger than that — 6h at 1s is 21600
+// samples, several megabytes of protobuf — and sending it whole would earn a
+// 413 the agent can never recover from: the ring only drops its oldest entry
+// to make room for a new one, so it stays at capacity and every later flush
+// re-sends the same oversized body. Draining a prefix per flush keeps every
+// request comfortably inside the hub's limit; AckThrough is prefix-based and
+// seq is monotonic, so a partial drain is exactly as safe as a whole one.
+const maxBatchSamples = 2000
+
+// maxBufferSlots caps the ring's capacity in entries, independently of the
+// window/interval arithmetic that sizes it. capacityFor bounds the buffered
+// WINDOW, which says nothing about how many samples fit in it: a 10ms
+// interval turns the default 1h window into 360000 live *HostSample values,
+// hundreds of megabytes on a host the agent is meant to be a negligible
+// tenant of. During an outage the ring fills to capacity by design, so
+// without this the agent is OOM-killed on exactly the small machine the
+// buffering exists to protect.
+const maxBufferSlots = 10000
+
 // RetryAfterError wraps a flush failure that came with a hub-specified
 // minimum retry delay (a 503 with retry_after_s set). Run honours it in
 // place of its own exponential backoff.
@@ -97,7 +119,9 @@ func New(cfg config.Config, collectors []collector.Collector) *Client {
 // stays within window, and never exceeds config.MaxBufferWindow regardless
 // of what window is passed in — a defence in depth against the 6h
 // continuous-aggregate start_offset, on top of the config-load-time guard
-// that already bounds cfg.BufferWindow itself.
+// that already bounds cfg.BufferWindow itself. The slot count is capped
+// separately at maxBufferSlots so a very short interval cannot turn a bounded
+// window into an unbounded amount of memory.
 func capacityFor(window, interval time.Duration) int {
 	if window > config.MaxBufferWindow {
 		window = config.MaxBufferWindow
@@ -105,6 +129,16 @@ func capacityFor(window, interval time.Duration) int {
 	capacity := int(window / interval)
 	if capacity < 1 {
 		capacity = 1
+	}
+	if capacity > maxBufferSlots {
+		// Loudly, not silently: the operator asked for a window and is about
+		// to get less of one. config.Load errors on the same coupling and
+		// Ring.Resize logs its own losses; a quiet downgrade here would be
+		// the odd one out.
+		slog.Warn("buffer capacity clamped; the effective buffered window is shorter than NETRA_BUFFER_WINDOW",
+			"requested_slots", capacity, "max_slots", maxBufferSlots,
+			"interval", interval, "effective_window", time.Duration(maxBufferSlots)*interval)
+		capacity = maxBufferSlots
 	}
 	return capacity
 }
@@ -163,6 +197,13 @@ func (c *Client) Flush(ctx context.Context) error {
 		return nil
 	}
 
+	// Send at most maxBatchSamples per POST, oldest first. Pending is ordered
+	// and AckThrough drops a prefix, so the remainder simply goes out on the
+	// next flush rather than being lost.
+	if len(pending) > maxBatchSamples {
+		pending = pending[:maxBatchSamples]
+	}
+
 	samples := make([]*netrav1.HostSample, 0, len(pending))
 	for _, e := range pending {
 		samples = append(samples, e.Sample)
@@ -215,6 +256,12 @@ func (c *Client) Flush(ctx context.Context) error {
 		slog.Warn("hub returned a zero ack_seq; treating flush as failed",
 			"buffer_depth", c.ring.Depth())
 		c.lastFlushFailed = true
+		// This failure carried no retry_after of its own, so any value left
+		// over from an earlier 503 must be cleared here too — the same rule
+		// the transport-error path above applies. Leaving it set would make
+		// Run wait out a stale delay (up to maxAdoptedRetryAfter) for a
+		// failure the hub never asked to be retried slowly.
+		c.retryAfter = 0
 		return fmt.Errorf("hub returned ack_seq=0 for a batch of %d samples", len(samples))
 	}
 
@@ -318,12 +365,30 @@ func parseRetryAfter(resp *http.Response) time.Duration {
 	return d
 }
 
+// unauthorizedRetry is how long Run waits between flush attempts after the
+// hub has rejected the token. A revoked agent must not hammer the hub.
+const unauthorizedRetry = 5 * time.Minute
+
 // Run scrapes and flushes on the configured interval until ctx is cancelled.
 func (c *Client) Run(ctx context.Context) error {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
 	backoff := time.Second
+
+	// flushNotBefore holds off the next FLUSH attempt after a failure. It
+	// deliberately does not hold off the SCRAPE.
+	//
+	// Sleeping the whole loop through the backoff — as this used to — stops
+	// the agent collecting samples for the duration of the wait, because
+	// time.Ticker drops ticks nobody is receiving. The backoff reaches
+	// 60-120s against a 60s interval, and a hub-supplied retry_after may be
+	// up to maxAdoptedRetryAfter (10 minutes), so an outage produced a hole
+	// in the history rather than the buffered, replayable history the ring
+	// exists to provide. Deferring only the flush keeps everything on this
+	// one goroutine (Client's fields are not mutex-guarded) while the ticker
+	// keeps driving ScrapeOnce at the configured cadence throughout.
+	var flushNotBefore time.Time
 
 	for {
 		select {
@@ -332,13 +397,17 @@ func (c *Client) Run(ctx context.Context) error {
 		case <-ticker.C:
 			c.ScrapeOnce(ctx)
 
+			if time.Now().Before(flushNotBefore) {
+				continue
+			}
+
 			intervalBefore := c.interval
 
 			if err := c.Flush(ctx); err != nil {
 				if errors.Is(err, ErrUnauthorized) {
 					// Retry slowly: a revoked agent must not hammer the hub.
 					slog.Error("hub rejected the agent token; retrying slowly", "err", err)
-					sleep(ctx, 5*time.Minute)
+					flushNotBefore = time.Now().Add(unauthorizedRetry)
 					continue
 				}
 
@@ -346,19 +415,25 @@ func (c *Client) Run(ctx context.Context) error {
 					"err", err, "buffer_depth", c.ring.Depth(),
 					"dropped_total", c.ring.Dropped())
 
-				// Jitter keeps a fleet from reconnecting in lockstep after a
-				// hub restart.
-				jittered := backoff + time.Duration(rand.Int64N(int64(backoff)))
-
 				// A hub-specified retry_after replaces the agent's own
 				// backoff rather than merely bounding it below: the hub
 				// knows more about how long its own outage will last.
-				wait := jittered
+				//
+				// Jitter is added either way. It keeps a fleet from
+				// reconnecting in lockstep after a hub restart, and that
+				// matters MORE with a hub-supplied value, not less: the hub
+				// hands every agent the same constant (30s from its storage
+				// failure path), so honouring it verbatim would synchronise
+				// the entire fleet onto one instant against a database that
+				// is already struggling. The hub's number is treated as a
+				// floor and the spread above it is kept small (up to 10%), so
+				// the delay still closely tracks what the hub asked for.
+				wait := backoff + time.Duration(rand.Int64N(int64(backoff)))
 				if c.retryAfter > 0 {
-					wait = c.retryAfter
+					wait = c.retryAfter + time.Duration(rand.Int64N(int64(c.retryAfter/10)+1))
 				}
 
-				sleep(ctx, wait)
+				flushNotBefore = time.Now().Add(wait)
 				if backoff < time.Minute {
 					backoff *= 2
 				}
@@ -366,18 +441,10 @@ func (c *Client) Run(ctx context.Context) error {
 			}
 
 			backoff = time.Second
+			flushNotBefore = time.Time{}
 			if c.interval != intervalBefore {
 				ticker.Reset(c.interval)
 			}
 		}
-	}
-}
-
-func sleep(ctx context.Context, d time.Duration) {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-	case <-t.C:
 	}
 }

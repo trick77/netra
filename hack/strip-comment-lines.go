@@ -122,7 +122,7 @@ func codeLinesOf(path string) map[int]bool {
 
 	lines := map[int]bool{}
 	for {
-		pos, tok, _ := s.Scan()
+		pos, tok, lit := s.Scan()
 		if tok == token.EOF {
 			break
 		}
@@ -132,7 +132,34 @@ func codeLinesOf(path string) map[int]bool {
 		// SEMICOLON is included deliberately: an implicit one is positioned at
 		// the newline ending a statement, which is a line that really does
 		// carry code. An explicit one obviously does too.
-		lines[file.Position(pos).Line] = true
+		start := file.Position(pos).Line
+		lines[start] = true
+
+		// A token can span lines: a raw string literal (the multi-line SQL
+		// consts in internal/hub/store) is one token whose position is only
+		// its FIRST line. Marking that line alone would classify every
+		// interior line as non-code and strip it from the report, quietly
+		// removing real, changed code from the patch-coverage denominator —
+		// the opposite of this tool's "only ever remove lines it can prove
+		// carry no code" contract. Mark the whole span.
+		//
+		// STRING is the only token this may be done for. COMMENT is already
+		// skipped above, and every other multi-character token is confined to
+		// one line — but an IMPLICIT semicolon carries lit "\n" (go/scanner
+		// reports ";" when the source has one and "\n" when it inserted one),
+		// so scanning literals unconditionally would mark the line AFTER every
+		// statement as code. That silently reinstates own-line comments, which
+		// is exactly what this file exists to remove. An interpreted string is
+		// safe to include: its literal keeps "\n" as the two characters
+		// backslash-n, never a newline byte.
+		if tok == token.STRING {
+			for _, c := range lit {
+				if c == '\n' {
+					start++
+					lines[start] = true
+				}
+			}
+		}
 	}
 	if bad {
 		fmt.Fprintf(os.Stderr, "strip-comment-lines: %s: scan errors (keeping all lines)\n", path)
