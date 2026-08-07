@@ -16,8 +16,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/trick77/netra/agent/internal/buffer"
-	"github.com/trick77/netra/agent/internal/collector"
-	"github.com/trick77/netra/agent/internal/config"
+	"github.com/trick77/netra/agent/collector"
+	"github.com/trick77/netra/agent/config"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 

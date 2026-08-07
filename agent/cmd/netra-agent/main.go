@@ -9,9 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/trick77/netra/agent/internal/client"
-	"github.com/trick77/netra/agent/internal/collector"
-	"github.com/trick77/netra/agent/internal/config"
+	"github.com/trick77/netra/agent/client"
+	"github.com/trick77/netra/agent/collector"
+	"github.com/trick77/netra/agent/config"
 	"github.com/trick77/netra/internal/buildinfo"
 )
 

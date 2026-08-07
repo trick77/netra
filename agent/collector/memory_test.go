@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/trick77/netra/agent/internal/collector"
+	"github.com/trick77/netra/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 

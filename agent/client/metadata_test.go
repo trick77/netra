@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/trick77/netra/agent/internal/client"
+	"github.com/trick77/netra/agent/client"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
