@@ -124,6 +124,18 @@ func (c *Client) Flush(ctx context.Context) error {
 		return err
 	}
 
+	// Sequence numbers start at 1 (c.seq is incremented before the first
+	// Add), so a genuine ack is never 0. A zero ack_seq means the hub sent a
+	// zero-value or malformed response: treating it as success would leave
+	// the buffer un-drained while the agent believes it is healthy, with no
+	// backoff and no backfill flag on the next attempt.
+	if resp.GetAckSeq() == 0 {
+		slog.Warn("hub returned a zero ack_seq; treating flush as failed",
+			"buffer_depth", c.ring.Depth())
+		c.lastFlushFailed = true
+		return fmt.Errorf("hub returned ack_seq=0 for a batch of %d samples", len(samples))
+	}
+
 	c.ring.AckThrough(resp.GetAckSeq())
 	c.sendMetadata = resp.GetRequestMetadata()
 	c.lastFlushFailed = false

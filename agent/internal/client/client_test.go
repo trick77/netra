@@ -2,10 +2,12 @@ package client_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -66,6 +68,15 @@ func (rec *recorder) last() *netrav1.IngestRequest {
 	return rec.requests[len(rec.requests)-1]
 }
 
+// failingCollector always errors, simulating an unreadable sensor.
+type failingCollector struct{}
+
+func (failingCollector) Name() string            { return "failing" }
+func (failingCollector) Interval() time.Duration { return time.Minute }
+func (failingCollector) Collect(context.Context, *netrav1.HostSample) error {
+	return errors.New("sensor unreadable")
+}
+
 func newClient(t *testing.T, url string) *client.Client {
 	t.Helper()
 	cfg := config.Config{
@@ -109,10 +120,10 @@ func TestFlushSendsBufferedSamplesAndClearsOnAck(t *testing.T) {
 // An unreachable hub must not lose samples: they stay buffered and go out on
 // the next successful flush, flagged as backfill.
 func TestFlushBuffersWhileHubIsDown(t *testing.T) {
-	var down bool
+	var down atomic.Bool
 	rec := &recorder{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if down {
+		if down.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
@@ -123,7 +134,7 @@ func TestFlushBuffersWhileHubIsDown(t *testing.T) {
 	c := newClient(t, srv.URL)
 	ctx := context.Background()
 
-	down = true
+	down.Store(true)
 	c.ScrapeOnce(ctx)
 	c.ScrapeOnce(ctx)
 	if err := c.Flush(ctx); err == nil {
@@ -133,7 +144,7 @@ func TestFlushBuffersWhileHubIsDown(t *testing.T) {
 		t.Fatalf("BufferDepth() = %d, want 2 while the hub is down", c.BufferDepth())
 	}
 
-	down = false
+	down.Store(false)
 	if err := c.Flush(ctx); err != nil {
 		t.Fatalf("Flush after recovery: %v", err)
 	}
@@ -216,5 +227,60 @@ func TestFlushRejectsUnauthorized(t *testing.T) {
 	// rather than replayed forever.
 	if c.BufferDepth() != 0 {
 		t.Fatalf("BufferDepth() = %d, want 0 after a 401", c.BufferDepth())
+	}
+}
+
+// A zero-value or malformed response must not be mistaken for success:
+// sequence numbers start at 1, so ack_seq == 0 can never be a genuine ack.
+// Treating it as one would drain nothing from the buffer while the agent
+// believes the flush succeeded — no error, no backoff, no backfill flag on
+// the next attempt.
+func TestFlushTreatsZeroAckSeqAsFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		out, _ := proto.Marshal(&netrav1.IngestResponse{})
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(out)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush() succeeded with ack_seq=0, want an error")
+	}
+	if c.BufferDepth() != 1 {
+		t.Fatalf("BufferDepth() = %d, want 1 — a zero ack must not drain the buffer", c.BufferDepth())
+	}
+}
+
+// A collector that fails must not stop the scrape: it is logged and skipped,
+// but the rest of the sample is still worth sending. An agent that dies
+// because one sensor is unreadable is worse than one reporting partial data.
+func TestScrapeOnceSkipsFailingCollector(t *testing.T) {
+	cfg := config.Config{
+		HubURL:       "http://unused.invalid",
+		Token:        "nta_test",
+		Interval:     time.Minute,
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{
+		failingCollector{},
+		collector.NewMemory(cfg.ProcRoot, cfg.Interval),
+	}
+	c := client.New(cfg, collectors)
+
+	sample := c.ScrapeOnce(context.Background())
+
+	if sample == nil {
+		t.Fatal("ScrapeOnce() returned nil, want a sample despite the failing collector")
+	}
+	if sample.MemTotal == nil {
+		t.Fatal("MemTotal is unset — the working collector's fields were lost alongside the failing one's")
+	}
+	if c.BufferDepth() != 1 {
+		t.Fatalf("BufferDepth() = %d, want 1 — the partial sample must still be buffered", c.BufferDepth())
 	}
 }
