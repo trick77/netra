@@ -66,8 +66,17 @@ func (s *Store) applyMigration(ctx context.Context, name, body string) error {
 	if strings.HasPrefix(strings.TrimSpace(body), noTxMarker) {
 		// Outside a transaction: the statements are individually atomic and a
 		// partial failure leaves the migration unrecorded, so it is retried.
-		if _, err := s.pool.Exec(ctx, body); err != nil {
-			return err
+		//
+		// Each statement is Exec'd separately rather than passed as one
+		// multi-statement body. pgx sends a multi-statement Exec via the
+		// simple-query protocol, and Postgres wraps that in an implicit
+		// transaction block regardless of the caller not opening one — which
+		// defeats the whole point of this branch, since TimescaleDB refuses
+		// to create a continuous aggregate inside any transaction block.
+		for _, stmt := range splitStatements(body) {
+			if _, err := s.pool.Exec(ctx, stmt); err != nil {
+				return err
+			}
 		}
 		_, err := s.pool.Exec(ctx,
 			`INSERT INTO schema_migrations (name) VALUES ($1)`, name)
@@ -88,4 +97,152 @@ func (s *Store) applyMigration(ctx context.Context, name, body string) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// splitStatements splits body into individual SQL statements on top-level
+// semicolons. It does not split on a semicolon inside a single-quoted string
+// literal, a dollar-quoted block (tagged or untagged), a line comment, or a
+// block comment. Statements are trimmed and empty or comment-only statements
+// are dropped, so a trailing semicolon or a file-ending comment does not
+// yield a blank Exec.
+func splitStatements(body string) []string {
+	var stmts []string
+	var cur strings.Builder
+
+	inSingleQuote := false
+	inLineComment := false
+	inBlockComment := false
+	dollarTag := "" // non-empty while inside a $tag$ ... $tag$ block
+
+	n := len(body)
+	for i := 0; i < n; i++ {
+		c := body[i]
+
+		if inLineComment {
+			cur.WriteByte(c)
+			if c == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+
+		if inBlockComment {
+			cur.WriteByte(c)
+			if c == '*' && i+1 < n && body[i+1] == '/' {
+				cur.WriteByte('/')
+				i++
+				inBlockComment = false
+			}
+			continue
+		}
+
+		if dollarTag != "" {
+			cur.WriteByte(c)
+			if c == '$' && strings.HasPrefix(body[i:], dollarTag) {
+				cur.WriteString(dollarTag[1:])
+				i += len(dollarTag) - 1
+				dollarTag = ""
+			}
+			continue
+		}
+
+		if inSingleQuote {
+			cur.WriteByte(c)
+			if c == '\'' {
+				// A doubled quote ('') is an escaped quote, not the closing
+				// delimiter.
+				if i+1 < n && body[i+1] == '\'' {
+					cur.WriteByte('\'')
+					i++
+				} else {
+					inSingleQuote = false
+				}
+			}
+			continue
+		}
+
+		// Not inside any quoted/commented region.
+		switch {
+		case c == '\'':
+			inSingleQuote = true
+			cur.WriteByte(c)
+		case c == '-' && i+1 < n && body[i+1] == '-':
+			inLineComment = true
+			cur.WriteByte(c)
+		case c == '/' && i+1 < n && body[i+1] == '*':
+			inBlockComment = true
+			cur.WriteByte(c)
+		case c == '$':
+			if tag, ok := dollarQuoteTag(body[i:]); ok {
+				dollarTag = tag
+				cur.WriteString(tag)
+				i += len(tag) - 1
+			} else {
+				cur.WriteByte(c)
+			}
+		case c == ';':
+			stmts = appendStatement(stmts, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	stmts = appendStatement(stmts, cur.String())
+
+	return stmts
+}
+
+// dollarQuoteTag reports whether s begins with a dollar-quote opening
+// delimiter ($$ or $tag$) and returns that delimiter.
+func dollarQuoteTag(s string) (string, bool) {
+	if len(s) < 2 || s[0] != '$' {
+		return "", false
+	}
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if c == '$' {
+			return s[:i+1], true
+		}
+		// Valid dollar-quote tag characters: letters, digits, underscore.
+		if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// appendStatement trims stmt and appends it to stmts unless it is empty or
+// consists only of comments.
+func appendStatement(stmts []string, stmt string) []string {
+	trimmed := strings.TrimSpace(stmt)
+	if trimmed == "" || isCommentOnly(trimmed) {
+		return stmts
+	}
+	return append(stmts, trimmed)
+}
+
+// isCommentOnly reports whether s contains only whitespace and comments
+// (line or block), i.e. no executable SQL.
+func isCommentOnly(s string) bool {
+	i := 0
+	n := len(s)
+	for i < n {
+		switch {
+		case s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r':
+			i++
+		case s[i] == '-' && i+1 < n && s[i+1] == '-':
+			for i < n && s[i] != '\n' {
+				i++
+			}
+		case s[i] == '/' && i+1 < n && s[i+1] == '*':
+			end := strings.Index(s[i+2:], "*/")
+			if end == -1 {
+				return true
+			}
+			i = i + 2 + end + 2
+		default:
+			return false
+		}
+	}
+	return true
 }
