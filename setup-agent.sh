@@ -315,8 +315,14 @@ netra_ask_value() {
     if [ -n "${NETRA_VALUES_FILE:-}" ]; then
         NETRA_VALUE_INDEX=$((NETRA_VALUE_INDEX + 1))
         _av_reply=$(sed -n "${NETRA_VALUE_INDEX}p" "$NETRA_VALUES_FILE")
+    elif [ "${DRY_RUN:-0}" = 1 ]; then
+        # The same short-circuit netra_ask takes, and for the same reason: a dry
+        # run answers with the default and mutates nothing. Without it --dry-run
+        # would auto-answer every y/n question and then block on this one, which
+        # is exactly what --help promises it does not do.
+        _av_reply=""
+        printf '%s: (dry run takes the default)\n' "$_av_q"
     elif [ ! -r "$P_TTY" ]; then
-        # Only reachable under --dry-run, the one case require_tty exempts.
         _av_reply=""
     else
         if [ -n "$_av_eg" ]; then
@@ -357,9 +363,9 @@ hold no data and exist only so the agent can measure the filesystem they sit on.
 Everything found is shown as a plan and confirmed before anything is written,
 and the stack is not started unless you pass --start.
 
-One thing is asked earlier, during detection: loading the drivetemp kernel
-module, because the answer has to be visible to the sensor scan. Declining
-leaves the host untouched.
+On a host with SATA drives, one thing may be asked earlier, during detection:
+loading the drivetemp kernel module, because the answer has to be visible to the
+sensor scan. Declining leaves the host untouched.
 EOF
 }
 
@@ -414,7 +420,7 @@ Options:
       --include-network-fs Also offer NFS/CIFS/SMB filesystems.
   -h, --help               Print this and exit.
 
-The four values asked for interactively - hub URL, token, location, provider,
+The values asked for interactively - hub URL, token, location, provider and
 host type - can each be passed as a flag instead, in which case the prompt is
 skipped.
 EOF
@@ -1460,15 +1466,6 @@ plan_drivetemp() {
         return 0
     fi
 
-    if [ "${DRY_RUN:-0}" = 1 ]; then
-        # Announce, and stop: verifying means measuring the result of a mutation
-        # a dry run did not make, and a claim it did not measure is worse than
-        # no claim.
-        info "  drivetemp:       not loaded"
-        netra_exec modprobe drivetemp
-        return 0
-    fi
-
     if ! command -v modprobe >/dev/null 2>&1; then
         warn "no modprobe on PATH, so the drivetemp module cannot be offered. With it, SATA" \
             "drive temperatures come from hwmon every 60s instead of hourly from smartctl:" \
@@ -1490,6 +1487,17 @@ plan_drivetemp() {
 
     info "  drivetemp:       not loaded; it gives SATA drive temperatures every 60s"
     info "                   instead of hourly, with no extra privileges"
+
+    if [ "${DRY_RUN:-0}" = 1 ]; then
+        # Announce, and stop. Verifying would mean measuring the result of a
+        # mutation a dry run did not make, and a claim it did not measure is
+        # worse than no claim. BELOW the modprobe and root checks on purpose: a
+        # non-root dry run announcing `would run: modprobe` would be announcing
+        # something it would not in fact do.
+        netra_exec modprobe drivetemp
+        return 0
+    fi
+
     # `if netra_ask` — see the header.
     if ! netra_ask "Load the drivetemp kernel module and check whether it works?" y; then
         warn "drivetemp not loaded: SATA drive temperatures stay on the hourly SMART path." \
@@ -2205,7 +2213,38 @@ EOF
         netra_exec netra_write_env "$_wo_env_tmpl" "$OUTPUT_DIR/.env"
     fi
 
+    if [ -e "$OUTPUT_DIR/.env" ]; then
+        _check_env_value NETRA_HUB_URL "$HUB_URL" "$OUTPUT_DIR/.env"
+        _check_env_value NETRA_TOKEN "$TOKEN" "$OUTPUT_DIR/.env"
+        _check_env_value NETRA_LOCATION "$LOCATION" "$OUTPUT_DIR/.env"
+        _check_env_value NETRA_PROVIDER "$PROVIDER" "$OUTPUT_DIR/.env"
+        _check_env_value NETRA_HOST_TYPE "$HOST_TYPE" "$OUTPUT_DIR/.env"
+        _check_env_value NETRA_PRIMARY_SENSOR "$PRIMARY_SENSOR" "$OUTPUT_DIR/.env"
+    fi
+
     rm -rf "$SCRATCH_DIR"
+}
+
+# _check_env_value KEY VALUE FILE — did a value the operator gave us actually
+# land in the rendered .env?
+#
+# The templates are fetched at a RELEASE TAG, not from this working tree, so a
+# script that asks for a value the tagged env.tmpl has no `__TOKEN__` for will
+# ask the question, echo the answer in the plan, and write nothing. Silent, and
+# it recurs every time a value is added ahead of the release that carries the
+# template. This turns it into a note in the finish report.
+#
+# grep -qF, not -q: a hub URL is full of regex metacharacters. The VALUE is
+# never printed — this runs over the token too.
+_check_env_value() {
+    [ -n "$2" ] || return 0
+    [ -f "$3" ] || return 0
+    if ! grep -qF "$1=$2" "$3"; then
+        warn "$1 is not in the rendered .env, although you gave a value for it. The env" \
+            "template fetched at ${REF} has no placeholder for it — most likely this" \
+            "script is newer than the release its templates come from. Set $1 in" \
+            "$3 by hand and restart the agent."
+    fi
 }
 
 # compose_cmd — whichever of the two spellings this host actually has.

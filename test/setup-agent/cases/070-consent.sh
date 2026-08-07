@@ -266,6 +266,32 @@ assert_contains "$RUN_OUT" "is not one of bare_metal" "the invalid host type is 
 assert_eq "NETRA_HOST_TYPE=" "$(grep '^NETRA_HOST_TYPE=' "$TMP/out-badht/.env")" \
     "a rejected host type is left blank rather than written to .env"
 
+# --- 8c. a value with no placeholder to land in is REPORTED, not swallowed ----
+#
+# Templates are fetched at a RELEASE TAG, not from this working tree, so a
+# script newer than the release its templates come from will ask for a value the
+# tagged env.tmpl has no `__TOKEN__` for, echo the answer in the plan, and write
+# nothing. Simulated here with a template directory whose env.tmpl predates the
+# identity values.
+ROOT=$(mkroot oldtmpl)
+OLDTMPL="$TMP/oldtmpl"
+mkdir -p "$OLDTMPL"
+cp "$TEMPLATES/compose.yaml.tmpl" "$OLDTMPL/"
+grep -v '^NETRA_LOCATION=' "$TEMPLATES/env.tmpl" >"$OLDTMPL/env.tmpl"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --token nta_x \
+    --hub-url https://h --location "Gravelines, FR" \
+    --template-dir "$OLDTMPL" --output-dir "$TMP/out-oldtmpl"
+assert_eq 0 "$RUN_RC" "an out-of-date template is not a hard failure"
+assert_contains "$RUN_OUT" "NETRA_LOCATION is not in the rendered .env" \
+    "a value that found no placeholder is named"
+assert_contains "$RUN_OUT" "newer than the release" "the note explains why it happened"
+# ...and the values that DID land say nothing, or the note is noise.
+assert_not_contains "$RUN_OUT" "NETRA_PROVIDER is not in the rendered .env" \
+    "a value that was never given is not reported as lost"
+assert_not_contains "$RUN_OUT" "NETRA_HUB_URL is not in the rendered .env" \
+    "a value that landed correctly is not reported as lost"
+
 # --- 9. --token-file ----------------------------------------------------------
 #
 # A token pasted into a file by a provisioning system routinely arrives with a
