@@ -54,14 +54,20 @@ hub/internal/httpapi/health.go           GET /api/health
 hub/internal/httpapi/ingest.go           POST /api/agent/v1/ingest
 
 agent/cmd/netra-agent/main.go            agent entrypoint, wiring only
+
+Note on `internal`: `agent/config`, `agent/collector` and `agent/client` are deliberately
+NOT under `agent/internal/`. Go's internal rule makes `agent/internal/...` importable only
+from under `agent/`, and `hub/internal/...` only from under `hub/` — so no package in the
+module could import both, and the end-to-end test in Task 15 needs exactly that. The hub's
+packages stay internal because nothing outside `hub/` consumes them.
 agent/internal/config/config.go          NETRA_* env -> Config
-agent/internal/collector/collector.go    Collector interface + registry
-agent/internal/collector/cpu.go          /proc/stat
-agent/internal/collector/memory.go       /proc/meminfo
-agent/internal/collector/load.go         /proc/loadavg
-agent/internal/collector/testdata/       fixture proc trees
+agent/collector/collector.go             Collector interface + registry
+agent/collector/cpu.go                   /proc/stat
+agent/collector/memory.go                /proc/meminfo
+agent/collector/load.go                  /proc/loadavg
+agent/collector/testdata/                fixture proc trees
 agent/internal/buffer/ring.go            bounded overwrite-oldest buffer
-agent/internal/client/client.go          POST loop, ack handling, metadata hash
+agent/client/client.go                   POST loop, ack handling, metadata hash
 
 hack/coverage-floors, coverage-gate.sh, patch-coverage.sh
 .github/workflows/ci.yaml
@@ -4231,7 +4237,9 @@ func TestIntegrationAgentToHubRoundTrip(t *testing.T) {
 
 - [ ] **Step 2: Run it**
 
-Run: `NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test ./hub/internal/httpapi/ -run E2E -v`
+Run: `NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test -p 1 ./hub/internal/httpapi/ -run TestIntegrationAgentToHubRoundTrip -v`
+
+(Do not use `-run E2E` — it matches no test name here and reports a false PASS.)
 
 If it fails, the failure is a real integration defect — fix the production code, not the test.
 
