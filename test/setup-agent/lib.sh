@@ -115,6 +115,35 @@ run_capture() {
     export RUN_OUT RUN_RC
 }
 
+# answers NAME LINE... — write a y/n answers file and print its path.
+#
+# Spelling the answers as arguments rather than a printf of '\n'-joined letters
+# is the whole point: `answers foo n y n` is checkable against the PROMPT ORDER
+# contract at a glance, and a run that consumes one line too many dies naming
+# the question it could not answer.
+answers() {
+    _ans_name="$1"
+    shift
+    : >"$TMP/ans-$_ans_name"
+    for _ans_l in "$@"; do
+        printf '%s\n' "$_ans_l" >>"$TMP/ans-$_ans_name"
+    done
+    printf '%s\n' "$TMP/ans-$_ans_name"
+}
+
+# values NAME LINE... — the same for NETRA_VALUES_FILE (free-text prompts).
+# A separate file with its own index, so adding a value prompt never shifts a
+# y/n answers file by a line.
+values() {
+    _val_name="$1"
+    shift
+    : >"$TMP/val-$_val_name"
+    for _val_l in "$@"; do
+        printf '%s\n' "$_val_l" >>"$TMP/val-$_val_name"
+    done
+    printf '%s\n' "$TMP/val-$_val_name"
+}
+
 # fixture NAME — absolute path of a fixture.
 fixture() {
     printf '%s\n' "$FIXTURES/$1"
@@ -173,6 +202,36 @@ printf 'docker-compose version 1.29.2\n'
 exit 0
 SHIM
 
+    # modprobe is shimmed for two reasons at once: macOS has no modprobe at all,
+    # so plan_drivetemp would take its "no modprobe on PATH" branch on a laptop
+    # and its real branch in CI — the prompt count would differ per platform and
+    # every answers file with it. And a real modprobe in CI would load a kernel
+    # module into the runner.
+    #
+    # NETRA_SHIM_MODPROBE_HWMON makes the shim HONEST rather than merely
+    # successful: it creates the hwmon chip a working drivetemp would create, so
+    # the verify-then-persist path is exercised end to end. Left unset, the shim
+    # exits 0 and creates nothing, which is exactly the "loads but reports no SCT
+    # temperature" hardware plan_drivetemp must detect and unload again.
+    cat >"$_mks_dir/bin/modprobe" <<'SHIM'
+#!/bin/sh
+printf 'modprobe %s\n' "$*" >>"$NETRA_SHIM_LOG"
+if [ "${NETRA_SHIM_MODPROBE_RC:-0}" != 0 ]; then
+    printf 'modprobe: FATAL: Module drivetemp not found.\n' >&2
+    exit "${NETRA_SHIM_MODPROBE_RC}"
+fi
+if [ "${1:-}" = "-r" ]; then
+    [ -z "${NETRA_SHIM_MODPROBE_HWMON:-}" ] || rm -rf "$NETRA_SHIM_MODPROBE_HWMON/hwmon90"
+    exit 0
+fi
+if [ -n "${NETRA_SHIM_MODPROBE_HWMON:-}" ]; then
+    mkdir -p "$NETRA_SHIM_MODPROBE_HWMON/hwmon90"
+    printf 'drivetemp\n' >"$NETRA_SHIM_MODPROBE_HWMON/hwmon90/name"
+    printf '38000\n' >"$NETRA_SHIM_MODPROBE_HWMON/hwmon90/temp1_input"
+fi
+exit 0
+SHIM
+
     cat >"$_mks_dir/bin/curl" <<'SHIM'
 #!/bin/sh
 printf 'curl %s\n' "$*" >>"$NETRA_SHIM_LOG"
@@ -180,7 +239,8 @@ printf '%s' "${NETRA_SHIM_CURL_BODY:-}"
 exit "${NETRA_SHIM_CURL_RC:-0}"
 SHIM
 
-    chmod +x "$_mks_dir/bin/docker" "$_mks_dir/bin/docker-compose" "$_mks_dir/bin/curl"
+    chmod +x "$_mks_dir/bin/docker" "$_mks_dir/bin/docker-compose" "$_mks_dir/bin/curl" \
+        "$_mks_dir/bin/modprobe"
     PATH="$_mks_dir/bin:$PATH"
     export PATH
 }

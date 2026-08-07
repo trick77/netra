@@ -5,8 +5,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/trick77/netra/master/setup-agent.sh | sh
 #   sh setup-agent.sh --help
 #
-# Detects what this host actually has, asks before changing anything, and (from
-# phase B onwards) renders the agent's compose.yaml and .env from templates.
+# Detects what this host actually has, asks before changing anything, and renders
+# the agent's compose.yaml and .env from templates. It INSTALLS NOTHING: Docker
+# pulls the agent image when the stack is started.
 # See docs/superpowers/specs/2026-08-07-netra-design.md §12a.
 #
 # ============================================================================
@@ -55,11 +56,29 @@
 # ============================================================================
 # * stdin IS this script. `read` from stdin returns the script's own bytes, so
 #   ALL prompting reads $P_TTY (/dev/tty), never stdin.
-# * If $P_TTY is unreadable and --yes was not given, the setup script FAILS with an
-#   explicit message rather than assuming an answer: a run that quietly said
-#   "no" to the package mount would produce an agent that collects less than the
-#   operator thinks it does. --yes IS that consent, and it takes each prompt's
-#   documented default — announced on stdout, never silently.
+# * If $P_TTY is unreadable the setup script FAILS IMMEDIATELY, before any
+#   detection runs, rather than assuming answers: a run that quietly said "no"
+#   to the package mount would produce an agent that collects less than the
+#   operator thinks it does. There is NO unattended mode — see below.
+#
+# ============================================================================
+# THERE IS NO UNATTENDED MODE
+# ============================================================================
+# `--yes` was removed. The script asks, the operator answers, and one of the
+# answers loads a kernel module — none of that belongs in a provisioning run
+# nobody is watching. A fleet is configured from deploy/agent/compose.yaml.example
+# and .env.example, templated by whatever provisioning system already exists.
+#
+# require_tty() enforces this once, in netra_main, before any phase. It is
+# exempted in exactly two cases:
+#
+#   --dry-run             answers every prompt with its default and touches
+#                         nothing, so no terminal is needed to print a plan.
+#   NETRA_ANSWERS_FILE    the test seam, checked before $P_TTY in netra_ask.
+#
+# The second one IS a non-interactive path, and the README says so rather than
+# pretending otherwise. It is an env var, not a flag, and its answers are
+# positional — fit for the suite, not a supported provisioning interface.
 #
 # ============================================================================
 # netra_ask AND errexit — the sharp edge
@@ -70,10 +89,10 @@
 # be written `if netra_ask "..." y; then ... else ... fi`. Never a bare call,
 # never `netra_ask ... || handler` with a handler that can itself fail.
 #
-# The rule binds in UNATTENDED runs too, which it did not always: --yes takes
-# each prompt's default, so every `n`-default prompt now returns 1 under --yes.
-# A bare call at one of those sites would kill a --yes run, and no interactive
-# test would ever see it.
+# The rule binds under --dry-run too, which is easy to forget: --dry-run answers
+# every prompt with its DEFAULT, so every `n`-default prompt returns 1 there. A
+# bare call at one of those sites would kill a --dry-run and no interactive test
+# would ever see it.
 #
 # The mirror-image trap, which phase B will meet as it adds detectors: a
 # capturing assignment `X=$(detect_something)` DOES propagate a die() correctly
@@ -93,14 +112,21 @@
 # answers files with it.
 #
 #   1. continue on an unsupported OS   (only when the distro is unrecognised)
-#   2. SYS_RAWIO                       (only when a SATA/unknown drive exists)
-#   3. SYS_ADMIN                       (only when NVMe exists; default NO)
-#   4. pin the primary sensor          (only on a tie between equal-ranked chips)
-#   5. mount the package database      (only when dpkg/apk was found)
-#   6. mount the D-Bus socket          (only when the socket exists)
-#   7. pid: host                       (always; default NO)
-#   8. write compose.yaml
-#   9. write .env                      (skipped entirely when it exists without --force)
+#   2. SYS_ADMIN                       (only when NVMe exists; default NO)
+#   3. load the drivetemp module       (only with SATA drives and no such chip)
+#   4. pid: host                       (always; default NO)
+#   5. write everything                (the single gate; default YES)
+#
+# FIVE, not the nine this file used to ask. Everything read-only — the package
+# database, the D-Bus socket, SYS_RAWIO — is enabled automatically, on exactly
+# the argument plan_extras already made for the Docker socket: it is read-only,
+# and an agent configured without it is not the thing the operator asked for.
+# The primary-sensor tie is resolved by --primary-sensor, not by a prompt with a
+# variable count.
+#
+# Free-text values (hub URL, token, location, provider, host type) are read by
+# netra_ask_value from NETRA_VALUES_FILE, a SEPARATE seam with its own index, so
+# adding one never shifts a y/n answers file by a line.
 #
 # --unsupported-os, --sys-admin and --pid-host REMOVE prompts 1, 3 and 7 from
 # this sequence: the answer is taken without asking, so nothing is consumed for
@@ -131,8 +157,11 @@ NETRA_SETUP_ROOT="${NETRA_SETUP_ROOT:-}"
 # declined or degraded, so the operator sees what the agent will NOT collect.
 SKIPPED_NOTES=""
 
-# Consumed answers when NETRA_ANSWERS_FILE is set (test seam only).
+# Consumed answers when NETRA_ANSWERS_FILE is set (test seam only). The two
+# indexes are deliberately independent: a y/n prompt and a free-text prompt read
+# from different files, so neither can shift the other by a line.
 NETRA_ANSWER_INDEX=0
+NETRA_VALUE_INDEX=0
 
 # ---------------------------------------------------------------------------
 # Output
@@ -183,23 +212,20 @@ netra_exec() {
 # Prompting
 # ---------------------------------------------------------------------------
 
-# netra_ask QUESTION DEFAULT [GRANT_FLAG] — DEFAULT is `y` or `n`. Returns 0
+# netra_ask QUESTION DEFAULT [GRANT_FLAG] - DEFAULT is `y` or `n`. Returns 0
 # for yes, 1 for no. GRANT_FLAG is optional and names the flag that grants this
-# prompt outright; it only shapes the message printed under --yes.
+# prompt outright; it only shapes the message printed under --dry-run.
 #
-# CALL SITES MUST BE `if netra_ask ...; then` — see the errexit note in the
+# CALL SITES MUST BE `if netra_ask ...; then` - see the errexit note in the
 # header. A bare call kills the script the moment the operator says no.
 #
-# --yes takes each prompt's DEFAULT — it does NOT accept everything. A
-# provisioning script must never silently expand privilege, so the prompts that
-# default `n` (SYS_ADMIN, pid: host) are DECLINED under --yes; an operator who
-# wants them says so by name with --sys-admin / --pid-host. Everything benign
-# defaults `y` and is accepted, so an unattended run still produces a complete
-# agent.
+# --dry-run takes each prompt's DEFAULT rather than asking. That is the only
+# non-interactive answer path besides the test seam, and it is safe precisely
+# because a dry run mutates nothing whichever way the answer goes.
 #
 # NETRA_ANSWERS_FILE is a test seam: each call consumes the next line of that
 # file (an exhausted file is a hard error, not a silent default). Otherwise a
-# readable $P_TTY is required.
+# readable $P_TTY is required, which require_tty has already checked.
 netra_ask() {
     _ask_q="$1"
     _ask_def="$2"
@@ -210,12 +236,12 @@ netra_ask() {
         _ask_hint='[y/N]'
     fi
 
-    if [ "${ASSUME_YES:-0}" = 1 ]; then
+    if [ "${DRY_RUN:-0}" = 1 ] && [ -z "${NETRA_ANSWERS_FILE:-}" ]; then
         if [ -n "$_ask_flag" ]; then
-            printf '%s %s %s (--yes takes the default; pass %s to grant)\n' \
+            printf '%s %s %s (dry run takes the default; pass %s to grant)\n' \
                 "$_ask_q" "$_ask_hint" "$_ask_def" "$_ask_flag"
         else
-            printf '%s %s %s (--yes takes the default)\n' \
+            printf '%s %s %s (dry run takes the default)\n' \
                 "$_ask_q" "$_ask_hint" "$_ask_def"
         fi
         # Explicit branches, not `[ "$_ask_def" = y ]` as the last command: a
@@ -239,15 +265,9 @@ netra_ask() {
             fi
             printf '%s %s %s\n' "$_ask_q" "$_ask_hint" "$_ask_reply"
         else
-            if [ ! -r "$P_TTY" ]; then
-                die "no terminal available to ask '$_ask_q' ($P_TTY is not readable)." \
-                    "Re-run with --yes to take every prompt's default, or run the setup script" \
-                    "from a terminal." \
-                    "Refusing to silently take defaults."
-            fi
             printf '%s %s ' "$_ask_q" "$_ask_hint"
             if ! IFS= read -r _ask_reply <"$P_TTY"; then
-                die "could not read an answer from $P_TTY; re-run with --yes"
+                die "could not read an answer from $P_TTY"
             fi
         fi
 
@@ -267,51 +287,126 @@ netra_ask() {
     done
 }
 
+# netra_ask_value PROMPT EXAMPLE [DEFAULT] - a free-text answer, printed to
+# stdout so the caller captures it. An empty answer takes DEFAULT (usually
+# empty), which is not an error: an operator who has not minted a token yet must
+# still be able to finish the run.
+#
+# NETRA_VALUES_FILE is the test seam, with its OWN index. Keeping it separate
+# from NETRA_ANSWERS_FILE is the whole point: adding a value prompt must never
+# shift a y/n answers file by a line. Unlike the y/n seam an exhausted file is
+# NOT fatal - a case that cares about one value should not have to spell out
+# every other one.
+netra_ask_value() {
+    _av_q="$1"
+    _av_eg="${2:-}"
+    _av_def="${3:-}"
+
+    if [ -n "${NETRA_VALUES_FILE:-}" ]; then
+        NETRA_VALUE_INDEX=$((NETRA_VALUE_INDEX + 1))
+        _av_reply=$(sed -n "${NETRA_VALUE_INDEX}p" "$NETRA_VALUES_FILE")
+    elif [ ! -r "$P_TTY" ]; then
+        # Only reachable under --dry-run, the one case require_tty exempts.
+        _av_reply=""
+    else
+        if [ -n "$_av_eg" ]; then
+            printf '%s (e.g. %s): ' "$_av_q" "$_av_eg"
+        else
+            printf '%s: ' "$_av_q"
+        fi
+        IFS= read -r _av_reply <"$P_TTY" || _av_reply=""
+    fi
+
+    # A CR arrives from anything Windows-shaped and would become part of the
+    # value in .env, where every request 401s with nothing in the logs to say why.
+    _av_reply=$(printf '%s' "$_av_reply" | tr -d '\r')
+    if [ -z "$_av_reply" ]; then
+        _av_reply="$_av_def"
+    fi
+    printf '%s' "$_av_reply"
+}
+
 # ---------------------------------------------------------------------------
 # Arguments
 # ---------------------------------------------------------------------------
+
+# describe_setup - the one description of what this script does, shared by
+# --help and the opening banner so the two cannot drift. $OUTPUT_DIR must
+# already be final when this runs (parse_args + the basename rule).
+describe_setup() {
+    cat <<EOF
+This writes two files and creates marker directories.
+It does not install any software: Docker pulls the
+agent image when you start the stack.
+
+  $OUTPUT_DIR/compose.yaml   generated, overwritten on every run
+  $OUTPUT_DIR/.env           your hub URL and token, never overwritten
+
+Empty .netra marker directories are created on each measured filesystem - they
+hold no data and exist only so the agent can measure the filesystem they sit on.
+Everything found is shown as a plan and confirmed before anything is written,
+and the stack is not started unless you pass --start.
+
+One thing is asked earlier, during detection: loading the drivetemp kernel
+module, because the answer has to be visible to the sensor scan. Declining
+leaves the host untouched.
+EOF
+}
 
 usage() {
     cat <<'EOF'
 Usage: setup-agent.sh [options]
 
-Detects this host's capabilities and installs the netra agent as a Docker
-Compose stack. Nothing is created, written or started until you agree.
+Detects this host's capabilities and writes the netra agent's compose.yaml and
+.env. It installs no software - Docker pulls the agent image when the stack is
+started. Nothing is created, written or started until you agree.
+
+This script is INTERACTIVE. There is no unattended mode: it needs a terminal and
+fails immediately without one. To configure a fleet, template
+deploy/agent/compose.yaml.example and .env.example from your provisioning system.
+
+Everything read-only is enabled automatically - the Docker socket, the mount
+table, the package database, the D-Bus socket and SYS_RAWIO for SATA SMART.
+SYS_ADMIN and `pid: host` are the only privilege grants, and both are asked.
 
 Options:
-  -y, --yes                Take every prompt's DEFAULT (unattended install).
-                           Benign prompts default yes; SYS_ADMIN, pid: host and
-                           "Continue on an unsupported OS?" default no and are
-                           DECLINED. Say yes to those by name with the three
-                           flags below.
       --sys-admin          Grant SYS_ADMIN without prompting (NVMe SMART health
                            and wear). A no-op with a note if there is no NVMe.
-      --pid-host           Enable `pid: host` without prompting. This exposes
-                           every process's cmdline and environ to the agent.
+      --pid-host           Enable `pid: host` without prompting. This lets the
+                           agent read every process's cmdline and environ.
       --unsupported-os     Continue on a distro netra does not recognise,
                            without prompting. The version floors are only where
                            cgroup v2 became the default and the real checks are
-                           probed directly, so this is how an unattended install
-                           reaches a cgroup v2 host netra has no name for. The
-                           warning is still printed and still reported; only the
-                           prompt goes away. A no-op on a known distro.
-      --dry-run            Print the full plan and touch nothing.
+                           probed directly, so this is how a run reaches a
+                           cgroup v2 host netra has no name for. The warning is
+                           still printed and still reported; only the prompt
+                           goes away. A no-op on a known distro.
+      --dry-run            Print the full plan and touch nothing. Every prompt
+                           takes its default, so this needs no terminal.
       --force              Required to overwrite an existing .env.
       --start              Run `docker compose up -d` at the end.
       --token VALUE        Agent token minted by the hub (starts with nta_).
       --token-file PATH    Read the agent token from PATH instead.
       --hub-url VALUE      Hub base URL, e.g. https://netra.example.com
+      --location VALUE     Where this host is, e.g. "Zurich, CH".
+      --provider VALUE     Who hosts it, e.g. Hetzner, OVH, self-hosted.
+      --host-type VALUE    One of bare_metal, vps, vm.
       --ref VALUE          Git ref to fetch templates from. Without it the
                            latest release tag is resolved at run time; never
                            master, in either case.
       --template-dir PATH  Use local template files instead of fetching them
                            (no network at all).
-      --output-dir PATH    Where compose.yaml and .env are written
-                           (default: ./netra-agent).
+      --output-dir PATH    Where compose.yaml and .env are written (default:
+                           ./netra-agent, or ./ when the current directory is
+                           already named netra-agent).
       --primary-sensor VALUE
                            Override automatic primary-sensor selection.
       --include-network-fs Also offer NFS/CIFS/SMB filesystems.
   -h, --help               Print this and exit.
+
+The four values asked for interactively - hub URL, token, location, provider,
+host type - can each be passed as a flag instead, in which case the prompt is
+skipped.
 EOF
 }
 
@@ -326,18 +421,21 @@ _need_val() {
 
 parse_args() {
     DRY_RUN=0
-    ASSUME_YES=0
-    # Privilege is granted by name, never by --yes. See netra_ask.
+    # Privilege is granted by name. Each of these removes a prompt from the
+    # sequence in the header; see the note there about answers files.
     GRANT_SYS_ADMIN=0
     GRANT_PID_HOST=0
-    # Not privilege, but the same shape: a prompt that defaults n, so --yes
-    # alone declines it and an operator who means it says so by name.
+    # Not privilege, but the same shape: a prompt that defaults n, which an
+    # operator who means it takes by name.
     GRANT_UNSUPPORTED_OS=0
     FORCE=0
     START=0
     TOKEN=""
     TOKEN_FILE=""
     HUB_URL=""
+    LOCATION=""
+    PROVIDER=""
+    HOST_TYPE=""
     # REF defaults to the setup script's own version tag, and REF_EXPLICIT records
     # whether the operator chose it. Without that flag, "not given" and "given
     # as exactly the default" are indistinguishable after parsing, and the
@@ -346,13 +444,17 @@ parse_args() {
     REF="v$NETRA_SETUP_VERSION"
     REF_EXPLICIT=0
     TEMPLATE_DIR=""
+    # OUTPUT_DIR_EXPLICIT mirrors REF_EXPLICIT above, and for the same reason:
+    # after the loop, "not given" and "given as exactly the default" would
+    # otherwise be indistinguishable, and the basename rule below must not
+    # override a directory the operator named on purpose.
     OUTPUT_DIR="./netra-agent"
+    OUTPUT_DIR_EXPLICIT=0
     PRIMARY_SENSOR=""
     INCLUDE_NETWORK_FS=0
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
-        -y | --yes) ASSUME_YES=1 ;;
         --sys-admin) GRANT_SYS_ADMIN=1 ;;
         --pid-host) GRANT_PID_HOST=1 ;;
         --unsupported-os) GRANT_UNSUPPORTED_OS=1 ;;
@@ -375,6 +477,21 @@ parse_args() {
             HUB_URL="$2"
             shift
             ;;
+        --location)
+            _need_val "$1" "$#"
+            LOCATION="$2"
+            shift
+            ;;
+        --provider)
+            _need_val "$1" "$#"
+            PROVIDER="$2"
+            shift
+            ;;
+        --host-type)
+            _need_val "$1" "$#"
+            HOST_TYPE="$2"
+            shift
+            ;;
         --ref)
             _need_val "$1" "$#"
             REF="$2"
@@ -389,6 +506,7 @@ parse_args() {
         --output-dir)
             _need_val "$1" "$#"
             OUTPUT_DIR="$2"
+            OUTPUT_DIR_EXPLICIT=1
             shift
             ;;
         --primary-sensor)
@@ -410,6 +528,40 @@ parse_args() {
     if [ -n "$TOKEN" ] && [ -n "$TOKEN_FILE" ]; then
         die "--token and --token-file are mutually exclusive"
     fi
+
+    # Read here rather than in configure(): an unreadable token file is a typo
+    # in the command line, and finding it out after the operator has answered
+    # four questions is a worse experience than finding it out immediately.
+    if [ -n "$TOKEN_FILE" ]; then
+        if [ ! -f "$TOKEN_FILE" ]; then
+            die "--token-file $TOKEN_FILE does not exist"
+        fi
+        TOKEN=$(head -n 1 "$TOKEN_FILE" | tr -d '\r')
+        [ -n "$TOKEN" ] || die "--token-file $TOKEN_FILE is empty"
+    fi
+
+    if [ -n "$HOST_TYPE" ]; then
+        _valid_host_type "$HOST_TYPE" ||
+            die "--host-type must be one of bare_metal, vps, vm (got '$HOST_TYPE')"
+    fi
+
+    # Running from inside a directory already named netra-agent means THIS is
+    # the netra-agent directory; nesting another one inside it is nobody's
+    # intent. Computed from $PWD directly and never through _p(): this is where
+    # output goes, not a path being probed. An explicit --output-dir still means
+    # exactly what it says, even when it names ./netra-agent from in here.
+    if [ "$OUTPUT_DIR_EXPLICIT" = 0 ] && [ "$(basename "$PWD")" = netra-agent ]; then
+        OUTPUT_DIR="."
+    fi
+}
+
+# _valid_host_type VALUE - the three the hub understands (spec 12a env table).
+# Returns 0/1 and is called from `if`/`||` only; see the errexit note.
+_valid_host_type() {
+    case "$1" in
+    bare_metal | vps | vm) return 0 ;;
+    esac
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -450,6 +602,17 @@ init_paths() {
     P_APK="${NETRA_APK_PATH:-$(_p /lib/apk/db/installed)}"
     P_DBUS="${NETRA_DBUS_PATH:-$(_p /run/dbus/system_bus_socket)}"
     P_DOCKERSOCK="${NETRA_DOCKERSOCK_PATH:-$(_p /var/run/docker.sock)}"
+    # A host WRITE path, not an emit path, and therefore prefixed: it never
+    # reaches a template, and a test that persisted a module to the real
+    # /etc/modules-load.d would be changing the machine running the suite.
+    P_MODULESLOAD="${NETRA_MODULESLOAD_DIR:-$(_p /etc/modules-load.d)}"
+
+    # The effective user id is a probe like any other. Not prefixed (it is not a
+    # path), but seamed for the same reason $P_TTY is: the suite has to reach
+    # both the root and the non-root branch of plan_drivetemp, and it runs as
+    # neither reliably — a developer's laptop is not root and a CI runner is not
+    # root either, so without this the root path would never be exercised.
+    P_UID="${NETRA_UID:-$(id -u)}"
 }
 
 # debug_paths — dump every resolved probe path. `NETRA_DEBUG_PATHS=1` makes the
@@ -471,6 +634,8 @@ debug_paths() {
     printf 'apk|%s\n' "$P_APK"
     printf 'dbus|%s\n' "$P_DBUS"
     printf 'dockersock|%s\n' "$P_DOCKERSOCK"
+    printf 'modulesload|%s\n' "$P_MODULESLOAD"
+    printf 'uid|%s\n' "$P_UID"
 }
 
 # ---------------------------------------------------------------------------
@@ -1138,16 +1303,18 @@ plan_smart() {
         _ps_nvme="${_ps_nvme:+$_ps_nvme }$_ps_c"
     done
 
+    # SMART_ATA_DEVICES outlives this function: detect_sensors reads it to decide
+    # whether the drivetemp module is worth offering. A probe result, never an
+    # emit value.
+    SMART_ATA_DEVICES="$_ps_ata"
+
     if [ -n "$_ps_ata" ]; then
-        info "  SATA/SAS:        $_ps_ata"
-        # `if netra_ask` — see the header.
-        if netra_ask "Grant SYS_RAWIO so smartctl can read SATA/SAS drives (benign)?" y; then
-            CAP_RAWIO=1
-            for _ps_d in $_ps_ata; do _smart_dev "$_ps_d"; done
-        else
-            warn "SYS_RAWIO declined: no SMART data for SATA/SAS drives, and no drive" \
-                "temperatures for them either. The agent reports SMART as unavailable."
-        fi
+        # Not prompted. SYS_RAWIO lets smartctl issue ATA passthrough ioctls and
+        # nothing else; without it every SATA drive reports SMART as
+        # unavailable, which is not an agent anyone asked for.
+        CAP_RAWIO=1
+        info "  SATA/SAS:        $_ps_ata (SYS_RAWIO)"
+        for _ps_d in $_ps_ata; do _smart_dev "$_ps_d"; done
     fi
 
     if [ -n "$_ps_nvme" ]; then
@@ -1159,9 +1326,8 @@ plan_smart() {
         if [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
             info "  SYS_ADMIN:       granted by --sys-admin (not prompted)"
             _ps_grant=1
-        elif netra_ask "Grant SYS_ADMIN for NVMe SMART health and wear? It is root-adjacent, and
-  declining costs ONLY health/wear — NVMe temperature comes from hwmon and keeps
-  working without it." n --sys-admin; then
+        elif netra_ask "Grant SYS_ADMIN for NVMe SMART health and wear? NVMe temperature
+  works without it." n --sys-admin; then
             _ps_grant=1
         fi
         if [ "$_ps_grant" = 1 ]; then
@@ -1169,8 +1335,7 @@ plan_smart() {
             for _ps_c in $_ps_nvme; do _smart_dev "$_ps_c"; done
         else
             warn "SYS_ADMIN declined: no NVMe SMART health status or wear indicators." \
-                "NVMe temperature still works — it comes from hwmon, not smartctl." \
-                "Re-run with --sys-admin to grant it without prompting."
+                "NVMe temperature still works, from hwmon. --sys-admin grants it."
         fi
     elif [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
         # An unhonoured request, not a neutral state: the operator asked for a
@@ -1249,19 +1414,121 @@ EOF
 # that changed the chip — so it is written ONLY when --primary-sensor was passed
 # explicitly, or when two equally-ranked known CPU chips exist and the operator
 # resolves the tie.
+# _sensor_module_hint — no CPU temperature chip is usually a missing driver, not
+# missing hardware. Optional, so it is a note and never a prompt: nothing else
+# in the agent depends on it.
+_sensor_module_hint() {
+    warn "no CPU temperature sensor was found. That is usually a driver that is not loaded" \
+        "rather than a chip that is not there — coretemp (Intel), k10temp (AMD) or" \
+        "nct6775 (many motherboards). To load one and keep it across reboots:" \
+        "  modprobe coretemp && echo coretemp > /etc/modules-load.d/coretemp.conf" \
+        "This is optional; everything else works without it."
+}
+
+# plan_drivetemp — the one host mutation this script offers, and the only thing
+# that changes the machine before the write gate.
+#
+# WHY IT IS WORTH ASKING. Per spec §6.2 only SATA drive temperature needs the
+# SMART path, and SMART polls at 1h (§6.1). With drivetemp loaded the same
+# temperatures arrive through hwmon on the 60s sensor scrape, with no SYS_RAWIO
+# and no devices: mapping — the existing hwmon enumeration picks the chips up
+# with no collector change at all.
+#
+# WHY IT IS VERIFIED RATHER THAN ASSUMED. `modprobe drivetemp` exits 0 on any
+# kernel that ships the module, but produces no hwmon chip whatsoever when the
+# controller or the drives do not report SCT temperature. Writing
+# /etc/modules-load.d/drivetemp.conf on the strength of that exit status is
+# cargo-culting: it persists a module that does nothing, forever. So it is
+# loaded, the hwmon tree is re-read, and only a chip that actually appeared
+# earns the persist. When nothing appears the module is unloaded again and the
+# host is left as it was found.
+plan_drivetemp() {
+    [ -n "${SMART_ATA_DEVICES:-}" ] || return 0
+
+    if hwmon_chips | grep -q '|drivetemp|'; then
+        info "  drivetemp:       already loaded"
+        return 0
+    fi
+
+    if [ "${DRY_RUN:-0}" = 1 ]; then
+        # Announce, and stop: verifying means measuring the result of a mutation
+        # a dry run did not make, and a claim it did not measure is worse than
+        # no claim.
+        info "  drivetemp:       not loaded"
+        netra_exec modprobe drivetemp
+        return 0
+    fi
+
+    if ! command -v modprobe >/dev/null 2>&1; then
+        warn "no modprobe on PATH, so the drivetemp module cannot be offered. With it, SATA" \
+            "drive temperatures come from hwmon every 60s instead of hourly from smartctl:" \
+            "  modprobe drivetemp && echo drivetemp > /etc/modules-load.d/drivetemp.conf"
+        return 0
+    fi
+
+    if [ "$P_UID" != 0 ]; then
+        # First place this run notices it is not root, but far from the only
+        # thing root affects here: creating /.netra at the filesystem root and
+        # `docker compose up -d` normally need it too.
+        warn "not running as root, so the drivetemp module cannot be loaded — nor, most" \
+            "likely, can the marker directories be created or the stack be started. With" \
+            "drivetemp, SATA drive temperatures come from hwmon every 60s instead of hourly" \
+            "from smartctl. As root:" \
+            "  modprobe drivetemp && echo drivetemp > /etc/modules-load.d/drivetemp.conf"
+        return 0
+    fi
+
+    info "  drivetemp:       not loaded; it gives SATA drive temperatures every 60s"
+    info "                   instead of hourly, with no extra privileges"
+    # `if netra_ask` — see the header.
+    if ! netra_ask "Load the drivetemp kernel module and check whether it works?" y; then
+        warn "drivetemp not loaded: SATA drive temperatures stay on the hourly SMART path." \
+            "To do it later: modprobe drivetemp &&" \
+            "echo drivetemp > /etc/modules-load.d/drivetemp.conf"
+        return 0
+    fi
+
+    if ! netra_exec modprobe drivetemp; then
+        warn "modprobe drivetemp failed: this kernel has no drivetemp module. Nothing was" \
+            "persisted, and SATA drive temperatures stay on the hourly SMART path."
+        return 0
+    fi
+    info "  modprobe drivetemp        ok"
+
+    _pd_chips=$(hwmon_chips | grep -c '|drivetemp|' || true)
+    if [ "$_pd_chips" = 0 ]; then
+        # Loaded and useless. Unload rather than leave a module behind that this
+        # script talked the operator into for nothing; best-effort, because a
+        # module held by something else is not this script's problem to solve.
+        netra_exec modprobe -r drivetemp || true
+        warn "drivetemp loaded but produced no hwmon chip: this controller or these drives" \
+            "do not report SCT temperature. The module was unloaded again and nothing was" \
+            "persisted; SATA drive temperatures stay on the hourly SMART path."
+        return 0
+    fi
+    info "  hwmon rescan              drivetemp: $_pd_chips chip(s)"
+
+    netra_exec mkdir -p "$P_MODULESLOAD"
+    netra_exec netra_write_line drivetemp "$P_MODULESLOAD/drivetemp.conf"
+    info "  persisted                 /etc/modules-load.d/drivetemp.conf"
+}
+
 detect_sensors() {
     step "Sensors"
     SENSOR_ROWS=""
+    plan_drivetemp
     if [ ! -d "$P_HWMON" ]; then
         # A note, not an error: hwmon is absent inside some VMs and the agent
         # simply reports no temperatures.
         info "  sensors:         $P_HWMON does not exist (no temperatures on this host)"
+        _sensor_module_hint
         return 0
     fi
 
     SENSOR_ROWS=$(hwmon_chips)
     if [ -z "$SENSOR_ROWS" ]; then
         info "  sensors:         none detected"
+        _sensor_module_hint
         return 0
     fi
 
@@ -1279,6 +1546,7 @@ EOF
     fi
     if [ -z "$_ds_primary" ]; then
         info "  primary sensor:  none of the known CPU chips; the agent will choose at runtime"
+        _sensor_module_hint
         return 0
     fi
 
@@ -1299,20 +1567,14 @@ EOF
     fi
 
     info "  primary sensor:  $_ds_count '$_ds_primary' chips are equally ranked"
-    while IFS='|' read -r _ds_h _ds_n _ds_l; do
-        [ "$_ds_n" = "$_ds_primary" ] || continue
-        # `if netra_ask` — see the header.
-        if netra_ask "Pin $_ds_h ($_ds_n) as the primary sensor?" y; then
-            PRIMARY_SENSOR="$_ds_n"
-            break
-        fi
-    done <<EOF
-$SENSOR_ROWS
-EOF
-    if [ -z "$PRIMARY_SENSOR" ]; then
-        warn "primary sensor left unpinned with $_ds_count equally-ranked '$_ds_primary' chips;" \
-            "the agent will pick one at runtime and it may change across reboots."
-    fi
+    # Not prompted, and this is a change from the first version of this script.
+    # A tie can be any number of chips, so asking about it made the prompt
+    # sequence variable-length - and the answer is a guess frozen into .env that
+    # outlives the hardware that justified it. The agent picks at runtime unless
+    # --primary-sensor says otherwise.
+    warn "primary sensor left unpinned with $_ds_count equally-ranked '$_ds_primary' chips;" \
+        "the agent will pick one at runtime and it may change across reboots." \
+        "Pass --primary-sensor to pin one."
 }
 
 # ---------------------------------------------------------------------------
@@ -1563,6 +1825,13 @@ netra_write_env() {
     render_env "$1" >"$2"
 }
 
+# netra_write_line TEXT PATH — a redirection cannot be an argument to
+# netra_exec, so every file this script creates outside render_* goes through a
+# named function the way netra_write_compose does.
+netra_write_line() {
+    printf '%s\n' "$1" >"$2"
+}
+
 # ---------------------------------------------------------------------------
 # Phases
 # ---------------------------------------------------------------------------
@@ -1606,8 +1875,8 @@ EOF
         fi
         if [ "$_pf_os_ok" != 1 ]; then
             # The floors are advisory (§12a), so the refusal must name its own
-            # remedy or an unattended install on a cgroup-v2 host netra simply
-            # does not recognise by name has no way back in.
+            # remedy, or a run on a cgroup-v2 host netra simply does not
+            # recognise by name has no way back in.
             die "aborted: unsupported operating system." \
                 "Re-run with --unsupported-os to proceed without prompting."
         fi
@@ -1650,15 +1919,12 @@ detect_packages() {
         ;;
     esac
 
-    info "  package manager: $PKGMGR ($PKG_MOUNT)"
-    # `if netra_ask` — see the header.
-    if netra_ask "Mount $PKG_MOUNT read-only so the package collector can run?" y; then
-        PKG_ENABLED=1
-    else
-        PKG_MOUNT=""
-        warn "package inventory declined: the '$PKGMGR' collector will not run, so there" \
-            "will be no install/upgrade/remove timeline for this host."
-    fi
+    # Not prompted. A read-only mount of the package database is what the
+    # package collector IS, and the same argument plan_extras makes for the
+    # Docker socket applies unchanged: an agent configured without it is not the
+    # thing the operator ran this script for.
+    PKG_ENABLED=1
+    info "  package db:      $PKG_MOUNT (read-only, $PKGMGR)"
 }
 
 # plan_extras — the mounts and namespaces that are not implied by hardware.
@@ -1688,14 +1954,11 @@ plan_extras() {
         info "  mount table:     /proc/1/mountinfo (read-only, awareness only)"
     fi
 
+    # Read-only, like the two above, and for the same reason not prompted.
     DBUS_ENABLED=0
     if [ -e "$P_DBUS" ]; then
-        # `if netra_ask` — see the header.
-        if netra_ask "Mount the D-Bus system socket read-only so the systemd collector can run?" y; then
-            DBUS_ENABLED=1
-        else
-            warn "D-Bus declined: no systemd unit inventory and no failed-service alerting."
-        fi
+        DBUS_ENABLED=1
+        info "  d-bus:           /run/dbus/system_bus_socket (read-only)"
     else
         info "  d-bus:           $P_DBUS not present (no systemd collector)"
     fi
@@ -1704,36 +1967,29 @@ plan_extras() {
     if [ "${GRANT_PID_HOST:-0}" = 1 ]; then
         PID_HOST=1
         info "  processes:       pid: host enabled by --pid-host (not prompted)"
-    elif netra_ask "Share the host PID namespace (pid: host) for per-process metrics?
-  WARNING: this makes EVERY process's /proc entry readable to the agent container,
-  including cmdline and environ — the command-line arguments and environment
-  variables of every service on this box, which routinely carry passwords, API
-  keys and DSNs. The collector only aggregates CPU and memory by process name,
-  but the namespace grants far more than it uses." n --pid-host; then
+    elif netra_ask "Enable per-process CPU and memory metrics? This shares the host PID
+  namespace, so the agent can read every process's command line and environment." \
+        n --pid-host; then
         PID_HOST=1
     else
-        info "  processes:       declined (no per-process metrics; --pid-host enables it)"
+        info "  processes:       off (no per-process metrics; --pid-host enables it)"
     fi
 }
 
-# resolve_token — --token, --token-file, or a prompt with echo off.
+# resolve_token — the prompt, with echo off. --token and --token-file are
+# resolved in parse_args, so reaching the body means neither was given.
 #
 # The setup script NEVER invents a token: the hub mints them and stores only a
-# SHA-256, so a value made up here could never authenticate. An unattended run
-# with no token renders an empty NETRA_TOKEN and says loudly that the agent will
-# refuse to start until it is filled in — which is a better outcome than dying
-# after the operator has already answered every prompt.
+# SHA-256, so a value made up here could never authenticate. An empty answer is
+# ALLOWED and is not an error: NETRA_TOKEN is written empty with a loud note
+# that the agent will refuse to start until it is filled in. An operator who has
+# not minted a token yet must still be able to finish the run, and dying here
+# would waste every answer already given.
 resolve_token() {
-    if [ -n "$TOKEN_FILE" ]; then
-        if [ ! -f "$TOKEN_FILE" ]; then
-            die "--token-file $TOKEN_FILE does not exist"
-        fi
-        TOKEN=$(head -n 1 "$TOKEN_FILE" | tr -d '\r')
-        [ -n "$TOKEN" ] || die "--token-file $TOKEN_FILE is empty"
-    fi
+    # --token and --token-file have both already been resolved by parse_args.
     [ -z "$TOKEN" ] || return 0
 
-    if [ "$ASSUME_YES" = 1 ] || [ ! -r "$P_TTY" ]; then
+    if [ ! -r "$P_TTY" ]; then
         warn "no agent token was provided (--token / --token-file). NETRA_TOKEN will be" \
             "written empty and the agent will refuse to start until you fill it in." \
             "Tokens are minted by the hub; the setup script cannot invent one."
@@ -1742,8 +1998,8 @@ resolve_token() {
 
     printf 'Agent token from the hub (starts with nta_, input hidden): '
     # `command -v stty` guarded: a minimal container image may not ship it, and
-    # a visible token is better than a failed install. The trap restores echo if
-    # the read is interrupted.
+    # a visible token is better than a failed run. The saved setting is restored
+    # on both paths out.
     if command -v stty >/dev/null 2>&1; then
         _rt_saved=$(stty -g <"$P_TTY" 2>/dev/null || printf '')
         [ -z "$_rt_saved" ] || stty -echo <"$P_TTY" 2>/dev/null || true
@@ -1758,6 +2014,55 @@ resolve_token() {
         warn "no token entered. NETRA_TOKEN will be written empty and the agent will refuse" \
             "to start until you fill it in."
     fi
+}
+
+# configure — everything the operator states rather than the host reveals.
+#
+# Detection cannot guess any of these, and an .env without a hub URL or a token
+# cannot start the agent, so they are asked rather than left blank with a
+# comment telling the operator to come back later. Each prompt is skipped when
+# its flag was given. NETRA_FACILITY is deliberately NOT asked: it is a
+# datacenter code most self-hosters do not have, and a prompt nobody can answer
+# is a prompt that teaches people to hit Enter through the rest of them.
+configure() {
+    step "Configuration"
+
+    if [ -z "$HUB_URL" ]; then
+        HUB_URL=$(netra_ask_value "Hub base URL" "https://netra.example.com")
+    fi
+    if [ -z "$HUB_URL" ]; then
+        # The same shape as the missing-token note below: equally fatal to the
+        # agent, so it is equally loud and reaches the finish report.
+        warn "no hub URL was given. NETRA_HUB_URL will be written empty and the agent will" \
+            "refuse to start until you fill it in."
+    else
+        info "  hub url:         $HUB_URL"
+    fi
+
+    resolve_token
+
+    if [ -z "$LOCATION" ]; then
+        LOCATION=$(netra_ask_value "Where is this host (city, country)" "Zurich, CH")
+    fi
+    if [ -z "$PROVIDER" ]; then
+        PROVIDER=$(netra_ask_value "Who hosts it" "Hetzner, OVH, self-hosted")
+    fi
+
+    # The one validated value: the hub stores it as an enum, so a typo here is a
+    # host that never groups with its siblings. Empty stays allowed - re-asking
+    # forever would trap an operator who does not know what to call a container
+    # host - but a non-empty answer must be one of the three.
+    if [ -z "$HOST_TYPE" ]; then
+        HOST_TYPE=$(netra_ask_value "Host type (bare_metal, vps, vm; blank to skip)" "vps")
+    fi
+    while [ -n "$HOST_TYPE" ] && ! _valid_host_type "$HOST_TYPE"; do
+        warn "host type '$HOST_TYPE' is not one of bare_metal, vps, vm"
+        HOST_TYPE=$(netra_ask_value "Host type (bare_metal, vps, vm; blank to skip)" "vps")
+    done
+
+    info "  location:        ${LOCATION:-(not set)}"
+    info "  provider:        ${PROVIDER:-(not set)}"
+    info "  host type:       ${HOST_TYPE:-(not set)}"
 }
 
 # print_plan — SUMMARISED, never dumped.
@@ -1799,6 +2104,9 @@ EOF
     info "  hub url:         ${HUB_URL:-(not set)}"
     # The token is NEVER printed, here or anywhere else.
     info "  token:           $(if [ -n "$TOKEN" ]; then printf '****'; else printf '(not provided)'; fi)"
+    info "  location:        ${LOCATION:-(not set)}"
+    info "  provider:        ${PROVIDER:-(not set)}"
+    info "  host type:       ${HOST_TYPE:-(not set)}"
     info "  output dir:      $OUTPUT_DIR"
 }
 
@@ -1811,7 +2119,23 @@ _plan_caps() {
     printf '%s' "${_pc_out:-none}"
 }
 
-# write_outputs — everything that touches the host, and nothing else does.
+# write_outputs — everything that touches the output directory and the marker
+# directories, behind ONE gate, and nothing happens before that gate.
+#
+# The ordering is the point. This function used to mkdir the output directory
+# and every .netra marker BEFORE asking whether to write compose.yaml, so
+# declining left a host littered with directories, possibly a .env, and a finish
+# report cheerfully printing `cd <dir> && docker compose up -d`. With --start it
+# was worse: docker compose ran against whatever stale compose.yaml a previous
+# run had left, paired with this run's fresh .env.
+#
+# Template fetching and rendering stay ahead of the gate deliberately: mktemp is
+# not a host mutation, and a proxy that blocks the template download is better
+# discovered before the operator is asked to approve a plan that cannot be
+# carried out.
+#
+# Returns 0 when everything was written, 1 when the operator declined. The
+# caller MUST treat that as a normal outcome — see the errexit note.
 write_outputs() {
     step "Render"
 
@@ -1825,6 +2149,18 @@ write_outputs() {
     _env_value HUB_URL "$HUB_URL"
     _env_value TOKEN "$TOKEN"
     _env_value PRIMARY_SENSOR "$PRIMARY_SENSOR"
+    _env_value LOCATION "$LOCATION"
+    _env_value PROVIDER "$PROVIDER"
+    _env_value HOST_TYPE "$HOST_TYPE"
+
+    # The gate. One question covering everything below it, so "no" means the
+    # host is exactly as it was.
+    if ! netra_ask "Write compose.yaml and .env to $OUTPUT_DIR and create the marker directories?" y; then
+        rm -rf "$SCRATCH_DIR"
+        info ""
+        info "  Nothing was written and nothing was changed."
+        return 1
+    fi
 
     netra_exec mkdir -p "$OUTPUT_DIR"
 
@@ -1842,24 +2178,18 @@ write_outputs() {
 $FS_MOUNTS
 EOF
 
+    netra_exec netra_write_compose "$_wo_compose_tmpl" "$OUTPUT_DIR/compose.yaml"
+
     # compose.yaml is overwritten freely and .env is not (§12a). compose.yaml is
     # derived output — every byte of it comes from this run's detection — while
-    # .env holds the token, and a provisioning script that re-ran the setup script
-    # must not be able to silently replace a working one.
-    if netra_ask "Write $OUTPUT_DIR/compose.yaml?" y; then
-        netra_exec netra_write_compose "$_wo_compose_tmpl" "$OUTPUT_DIR/compose.yaml"
-    else
-        warn "compose.yaml not written, so nothing detected above has been applied."
-    fi
-
+    # .env holds the token, and a re-run must not be able to silently replace a
+    # working one.
     if [ -e "$OUTPUT_DIR/.env" ] && [ "$FORCE" != 1 ]; then
         warn "$OUTPUT_DIR/.env already exists and --force was not given, so it was left" \
             "untouched. Its existing token and settings still apply. Re-run with --force to" \
             "overwrite it."
-    elif netra_ask "Write $OUTPUT_DIR/.env?" y; then
-        netra_exec netra_write_env "$_wo_env_tmpl" "$OUTPUT_DIR/.env"
     else
-        warn ".env not written; the agent has no hub URL or token and will refuse to start."
+        netra_exec netra_write_env "$_wo_env_tmpl" "$OUTPUT_DIR/.env"
     fi
 
     rm -rf "$SCRATCH_DIR"
@@ -1895,6 +2225,13 @@ $SKIPPED_NOTES
 EOF
     fi
 
+    if [ "${WROTE_OUTPUTS:-1}" != 1 ]; then
+        info ""
+        info "  Nothing was written. Re-run when you want to apply the plan above."
+        info ""
+        return 0
+    fi
+
     info ""
     info "  compose.yaml is DERIVED and is overwritten on every run; .env is NOT, because"
     info "  it holds the token. If you hand-edited either one, re-check it now: your"
@@ -1906,18 +2243,47 @@ EOF
         info "  A changed compose.yaml does nothing until the stack is recreated. Run:"
     fi
     info ""
-    info "    cd $OUTPUT_DIR && $(compose_cmd) up -d"
+    # `cd . && ...` reads as a bug, and OUTPUT_DIR is "." whenever this ran from
+    # a directory already named netra-agent.
+    if [ "$OUTPUT_DIR" = "." ]; then
+        info "    $(compose_cmd) up -d"
+    else
+        info "    cd $OUTPUT_DIR && $(compose_cmd) up -d"
+    fi
     info ""
 }
 
 start_stack() {
     [ "$START" = 1 ] || return 0
+    # A declined write gate means the compose.yaml on disk, if any, is a
+    # PREVIOUS run's — pairing it with this run's plan is exactly the bug the
+    # single gate exists to prevent.
+    [ "${WROTE_OUTPUTS:-1}" = 1 ] || return 0
     step "Start"
     if [ "$DOCKER_COMPOSE" = compose_v1 ]; then
         netra_exec docker-compose -f "$OUTPUT_DIR/compose.yaml" up -d
     else
         netra_exec docker compose -f "$OUTPUT_DIR/compose.yaml" up -d
     fi
+}
+
+# require_tty — the whole of "there is no unattended mode", in one place.
+#
+# Checked ONCE, before any phase, rather than discovered at the first prompt: a
+# `curl ... | sh` on a host with no terminal should fail in the first second,
+# not after three minutes of detection it is about to throw away.
+require_tty() {
+    # --dry-run answers every prompt with its default and mutates nothing, so it
+    # needs no terminal. NETRA_ANSWERS_FILE is the test seam, checked ahead of
+    # $P_TTY inside netra_ask.
+    [ "${DRY_RUN:-0}" = 1 ] && return 0
+    [ -z "${NETRA_ANSWERS_FILE:-}" ] || return 0
+    [ -r "$P_TTY" ] && return 0
+
+    die "no terminal available ($P_TTY is not readable), and this script is interactive." \
+        "There is no unattended mode. Run it from a terminal, or use --dry-run to see" \
+        "the plan. To configure a fleet, template deploy/agent/compose.yaml.example" \
+        "and .env.example from your provisioning system instead."
 }
 
 netra_main() {
@@ -1929,9 +2295,15 @@ netra_main() {
         return 0
     fi
 
-    info "netra agent setup script $NETRA_SETUP_VERSION"
+    require_tty
+
+    info "netra agent setup $NETRA_SETUP_VERSION"
+    info ""
+    describe_setup
     if [ "$DRY_RUN" = 1 ]; then
-        info "(dry run: nothing will be created, written or started)"
+        info ""
+        info "(dry run: nothing will be created, written or started, and every prompt takes"
+        info "its default)"
     fi
 
     preflight
@@ -1940,9 +2312,18 @@ netra_main() {
     detect_sensors
     detect_packages
     plan_extras
-    resolve_token
+    configure
     print_plan
-    write_outputs
+
+    # `if write_outputs` — it returns 1 when the operator declines the gate, and
+    # a bare call would end the run before the summary that explains what did
+    # not happen. See the errexit note in the header.
+    if write_outputs; then
+        WROTE_OUTPUTS=1
+    else
+        WROTE_OUTPUTS=0
+    fi
+
     print_finish
     start_stack
 }

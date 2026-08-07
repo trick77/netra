@@ -53,11 +53,27 @@ assert_eq "$TMP" "$(cd "$TMP" && pwd -P)" "\$TMP handed to a case is already a p
 # variable and the tests point it at a path that cannot be opened.
 NO_TTY=/nonexistent/netra-tty
 
+# There is no --yes any more: the script is interactive, and require_tty fails a
+# run with no terminal before any phase. NETRA_ANSWERS_FILE is the seam that
+# lets the suite drive the prompts anyway, and it exempts require_tty.
+#
+# NETRA_UID=0 makes plan_drivetemp take its root branch. Without it the suite
+# would exercise whichever branch the machine happened to be on — never root on
+# a laptop, never root on a CI runner.
+NETRA_UID=0
+export NETRA_UID
+
+# An EMPTY answers file for the runs that die in preflight: it satisfies
+# require_tty and, because an exhausted file is a hard error, it also proves no
+# prompt was reached before the failure.
+ANS_EMPTY=$(answers empty)
+
 # --- 1. cgroup v1 (no cgroup.controllers) => hard fail naming cgroup v2 -------
 ROOT=$(mkroot cgroupv1)
 rm -f "$ROOT/sys/fs/cgroup/cgroup.controllers"
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$SETUP" --yes --token nta_test --hub-url https://hub.example \
+    NETRA_ANSWERS_FILE="$ANS_EMPTY" \
+    "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "cgroup v1 host exits non-zero"
 assert_contains "$RUN_OUT" "cgroup v2" "cgroup v1 failure names cgroup v2"
@@ -70,7 +86,8 @@ assert_contains "$RUN_OUT" "systemd.unified_cgroup_hierarchy=1" \
 ROOT=$(mkroot cgrouphybrid)
 mkdir -p "$ROOT/sys/fs/cgroup/unified"
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$SETUP" --yes --token nta_test --hub-url https://hub.example \
+    NETRA_ANSWERS_FILE="$ANS_EMPTY" \
+    "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "hybrid cgroup host exits non-zero"
 assert_contains "$RUN_OUT" "cgroup v2" "hybrid failure names cgroup v2"
@@ -80,97 +97,115 @@ assert_contains "$RUN_OUT" "hybrid" "hybrid failure says hybrid"
 ROOT=$(mkroot emptymachineid)
 : >"$ROOT/etc/machine-id"
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$SETUP" --yes --token nta_test --hub-url https://hub.example \
+    NETRA_ANSWERS_FILE="$ANS_EMPTY" \
+    "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "empty machine-id exits non-zero"
 assert_contains "$RUN_OUT" "machine-id" "empty machine-id failure names machine-id"
 assert_contains "$RUN_OUT" "empty" "empty machine-id failure says it is empty"
 
-# --- 4a. --yes with no usable /dev/tty still completes ------------------------
+# --- 4a. a fully-accepted run on a healthy host reports nothing skipped -------
 #
-# The grant flags are here to keep the LAST assertion meaningful. --yes takes
-# each prompt's default, and SYS_ADMIN defaults no, so on this NVMe fixture a
-# plain --yes run legitimately reports a skip. "Everything accepted" is now
-# spelled --yes --sys-admin --pid-host; that a plain --yes does skip SYS_ADMIN
-# is asserted in 070.
+# The grant flags keep the LAST assertion meaningful: SYS_ADMIN and pid: host
+# default no, so answering the defaults on this NVMe fixture would legitimately
+# report skips. "Everything accepted" is --sys-admin --pid-host plus a y to the
+# two prompts those flags do not remove (drivetemp, the write gate).
 ROOT=$(mkroot healthy)
+ANS=$(answers healthy y y)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$SETUP" --yes --sys-admin --pid-host \
+    NETRA_ANSWERS_FILE="$ANS" NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+    "$SH" "$SETUP" --sys-admin --pid-host \
     --token nta_test --hub-url https://hub.example \
+    --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
-assert_eq 0 "$RUN_RC" "--yes completes with no terminal"
-assert_contains "$RUN_OUT" "Summary" "--yes run reaches the summary"
-assert_contains "$RUN_OUT" "compose_v2" "--yes run detects docker compose v2"
-assert_contains "$RUN_OUT" "dpkg" "--yes run detects dpkg"
+assert_eq 0 "$RUN_RC" "a fully-accepted run completes"
+assert_contains "$RUN_OUT" "Summary" "the run reaches the summary"
+assert_contains "$RUN_OUT" "compose_v2" "the run detects docker compose v2"
+assert_contains "$RUN_OUT" "dpkg" "the run detects dpkg"
 assert_not_contains "$RUN_OUT" "Skipped or degraded" \
     "a healthy host with everything accepted lists nothing as skipped"
+assert_file_present "$ROOT/etc/modules-load.d/drivetemp.conf" \
+    "a drivetemp load that produced a chip is persisted"
 
 # Compose v1 fallback and an unreachable daemon. The shims read these at run
 # time, which is why check_docker's three outcomes are reachable without
 # rebuilding them.
 ROOT=$(mkroot composev1)
+ANS=$(answers composev1 n n n n)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_SHIM_COMPOSE_V2_RC=1 "$SH" "$SETUP" --yes --token nta_test --hub-url https://hub.example \
+    NETRA_ANSWERS_FILE="$ANS" \
+    NETRA_SHIM_COMPOSE_V2_RC=1 "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
-assert_eq 0 "$RUN_RC" "a host with only docker-compose v1 still installs"
+assert_eq 0 "$RUN_RC" "a host with only docker-compose v1 completes"
 assert_contains "$RUN_OUT" "compose_v1" "docker compose v1 is detected as the fallback"
 
 ROOT=$(mkroot nodaemon)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_SHIM_INFO_RC=1 "$SH" "$SETUP" --yes --token nta_test --hub-url https://hub.example \
+    NETRA_ANSWERS_FILE="$ANS_EMPTY" \
+    NETRA_SHIM_INFO_RC=1 "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "an unreachable Docker daemon exits non-zero"
 assert_contains "$RUN_OUT" "Docker daemon" "the daemon failure says so"
 
-# --- 4b. no --yes and no usable /dev/tty => explicit failure, not a default ---
+# --- 4b. no terminal is an explicit failure, before any phase runs ------------
+#
+# There is no unattended mode, and the refusal must not arrive three minutes
+# into detection it is about to throw away. Neither NETRA_ANSWERS_FILE nor
+# --dry-run is set here, so require_tty is the first thing that speaks.
 ROOT=$(mkroot notty)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
     "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
-assert_eq 1 "$RUN_RC" "no terminal and no --yes exits non-zero"
+assert_eq 1 "$RUN_RC" "no terminal exits non-zero"
 assert_contains "$RUN_OUT" "no terminal" "no-terminal failure is explicit"
-assert_contains "$RUN_OUT" "--yes" "no-terminal failure suggests --yes"
+assert_contains "$RUN_OUT" "no unattended mode" \
+    "the refusal says plainly that there is no unattended mode"
+assert_contains "$RUN_OUT" "compose.yaml.example" \
+    "the refusal names what to use for a fleet instead"
+assert_not_contains "$RUN_OUT" "Preflight" \
+    "the refusal comes before any detection, not after it"
 assert_not_contains "$RUN_OUT" "Summary" \
     "no-terminal failure does not silently take defaults and finish"
 
-# --- 4c. --yes on an unsupported OS aborts, because that prompt defaults n ----
+# --dry-run is the one exemption, and it has to be: a plan that mutates nothing
+# needs no consent to print, and every prompt takes its documented default.
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    "$SH" "$SETUP" --dry-run --token nta_test --hub-url https://hub.example \
+    --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
+assert_eq 0 "$RUN_RC" "--dry-run needs no terminal"
+assert_contains "$RUN_OUT" "Summary" "--dry-run runs to the end"
+
+# --- 4c. an unsupported OS aborts, because that prompt defaults n -------------
 #
-# The reach of "--yes takes the default" is not limited to the two capability
-# prompts: prompt 1 defaults n as well, so an unattended install on a distro
-# netra does not know refuses rather than proceeding. Locked in here because
-# nothing else in the suite runs --yes against an unsupported os-release, and
-# the old "--yes accepts everything" quietly continued.
-#
-# The abort must also name its own remedy. The version floors are only the
-# releases where cgroup v2 became the default (§12a) and the checks that matter
-# are probed directly, so an unattended install on a cgroup-v2 host netra does
-# not recognise BY NAME has to stay possible — which it only is if the abort
-# tells the operator that --unsupported-os exists.
-ROOT=$(mkroot unsupportedyes)
+# The abort must name its own remedy. The version floors are only the releases
+# where cgroup v2 became the default (§12a) and the checks that matter are
+# probed directly, so a run on a cgroup-v2 host netra does not recognise BY NAME
+# has to stay possible — which it only is if the abort says --unsupported-os
+# exists. Exercised through --dry-run, the one path that takes defaults without
+# a terminal.
+ROOT=$(mkroot unsupporteddefault)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$SETUP" --yes --token nta_test --hub-url https://hub.example \
+    "$SH" "$SETUP" --dry-run --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
-assert_eq 1 "$RUN_RC" "--yes on an unsupported OS aborts rather than continuing"
+assert_eq 1 "$RUN_RC" "taking the default on an unsupported OS aborts"
 assert_contains "$RUN_OUT" "unsupported operating system" "the abort says why"
 # The needle SPANS two die arguments on purpose. netra_ask already prints
-# "pass --unsupported-os to grant" as its --yes hint, so a bare "--unsupported-os"
-# needle would stay green even if the die message lost the remedy entirely. This
-# one can only match the die itself — and, since die renders "$*", it also pins
-# that the IFS='|' read above left IFS restored for the join.
+# "pass --unsupported-os to grant" as its dry-run hint, so a bare
+# "--unsupported-os" needle would stay green even if the die message lost the
+# remedy entirely. This one can only match the die itself — and, since die
+# renders "$*", it also pins that the IFS='|' read above left IFS restored.
 assert_contains "$RUN_OUT" "system. Re-run with --unsupported-os" \
     "the abort message itself names the flag that would allow it"
 assert_file_absent "$ROOT/out/compose.yaml" "nothing is written after the abort"
 
-# Answering y to the same prompt from an answers file still continues, so the
-# assertion above is about the default taken, not about an unreachable prompt.
+# Answering y to the same prompt continues, so the assertion above is about the
+# default taken, not about an unreachable prompt.
 ROOT=$(mkroot unsupportedy)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
-# Every prompt accepted. Surplus lines are simply never read; an answers file
-# that ran SHORT would die, so this is the safe direction to err in.
-printf 'y\ny\ny\ny\ny\ny\ny\ny\ny\n' >"$TMP/answers-unsupported"
+ANS=$(answers unsupported y y y y y)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$TMP/answers-unsupported" "$SH" "$SETUP" \
+    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" \
     --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "answering y to the unsupported-OS prompt continues"
@@ -182,35 +217,35 @@ assert_contains "$RUN_OUT" "continuing at operator request" "the run says it con
 # `if netra_ask ...; then`. This has to be a full end-to-end run: sourcing the
 # script and calling netra_ask inside an `if` disables errexit for the whole
 # dynamic extent of the call and would pass regardless.
+#
+# Four answers, one per prompt, in the order pinned by the PROMPT ORDER contract
+# in the setup script header: SYS_ADMIN, drivetemp, pid: host, write gate. An
+# exhausted answers file is a hard error in netra_ask, so this count is checked
+# by the test rather than assumed.
 ROOT=$(mkroot answern)
-# Seven answers, one per prompt, in the order pinned by the PROMPT ORDER
-# contract in the setup script header: SYS_RAWIO, SYS_ADMIN, package DB, D-Bus,
-# pid: host, write compose.yaml, write .env. An exhausted answers file is a hard
-# error in netra_ask, so this count is checked by the test rather than assumed.
-printf 'n\nn\nn\nn\nn\nn\nn\n' >"$TMP/answers-n"
+ANS=$(answers n4 n n n n)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$TMP/answers-n" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
+    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "answering n mid-sequence does not abort the script"
 assert_contains "$RUN_OUT" "Summary" "the script continues past a declined prompt"
-# These two, and not a bare "package" match: `package manager: dpkg` prints on
-# every run including the fully-accepted one, so matching it would pass whether
-# or not warn() accumulated into SKIPPED_NOTES and whether or not finish_report
-# renders the block. Paired with the assert_not_contains above, this is the only
-# assertion in the suite that exercises the warn -> SKIPPED_NOTES -> report path.
 assert_contains "$RUN_OUT" "Skipped or degraded" \
     "the finish report renders the skipped-notes block"
-assert_contains "$RUN_OUT" "will not run" \
-    "the declined package collector is named in the skipped notes"
-assert_contains "$RUN_OUT" "package mount:   none" \
-    "the declined mount is reported as none"
+assert_contains "$RUN_OUT" "SYS_ADMIN declined" \
+    "the declined capability is named in the skipped notes"
+# The read-only mounts are NOT prompts any more, so a run that declined
+# everything it was asked still has its package database mounted. Asserting the
+# positive here is what would catch a resurrected prompt: a re-added package
+# question would consume the drivetemp answer and this line would report none.
+assert_contains "$RUN_OUT" "package mount:   /var/lib/dpkg" \
+    "the package database is mounted without being asked about"
 
-# ...and answering y to the same prompt also completes, so the assertion above
-# is about errexit and not about the prompt being unreachable.
+# ...and answering y to the same prompts also completes, so the assertion above
+# is about errexit and not about the prompts being unreachable.
 ROOT=$(mkroot answery)
-printf 'y\ny\ny\ny\ny\ny\ny\n' >"$TMP/answers-y"
+ANS=$(answers y4 y y y y)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$TMP/answers-y" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
+    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "answering y completes"
 assert_contains "$RUN_OUT" "Summary" "answering y reaches the summary"
@@ -263,7 +298,6 @@ parse_args --dry-run --force --start --token t1 --hub-url https://h \
 assert_eq 1 "$DRY_RUN" "--dry-run sets DRY_RUN"
 assert_eq 1 "$FORCE" "--force sets FORCE"
 assert_eq 1 "$START" "--start sets START"
-assert_eq 0 "$ASSUME_YES" "ASSUME_YES defaults to 0"
 assert_eq "t1" "$TOKEN" "--token sets TOKEN"
 assert_eq "" "$TOKEN_FILE" "TOKEN_FILE defaults to empty"
 assert_eq "https://h" "$HUB_URL" "--hub-url sets HUB_URL"
@@ -273,9 +307,13 @@ assert_eq "/out" "$OUTPUT_DIR" "--output-dir sets OUTPUT_DIR"
 assert_eq "coretemp/Package_id_0" "$PRIMARY_SENSOR" "--primary-sensor sets PRIMARY_SENSOR"
 assert_eq 1 "$INCLUDE_NETWORK_FS" "--include-network-fs sets INCLUDE_NETWORK_FS"
 
-parse_args -y --token-file /tf
-assert_eq 1 "$ASSUME_YES" "-y sets ASSUME_YES"
-assert_eq "/tf" "$TOKEN_FILE" "--token-file sets TOKEN_FILE"
+# A REAL file: parse_args now reads the token file rather than deferring it to
+# configure(), so a typo in the command line is caught before the operator has
+# answered four questions about a run that cannot finish.
+printf 'nta_fromfile\n' >"$TMP/tokenfile"
+parse_args --token-file "$TMP/tokenfile"
+assert_eq "$TMP/tokenfile" "$TOKEN_FILE" "--token-file sets TOKEN_FILE"
+assert_eq "nta_fromfile" "$TOKEN" "--token-file is read at parse time"
 assert_eq 0 "$DRY_RUN" "DRY_RUN defaults to 0"
 assert_eq 0 "$FORCE" "FORCE defaults to 0"
 assert_eq 0 "$START" "START defaults to 0"
@@ -291,6 +329,42 @@ assert_not_contains "$REF" "master" "REF never defaults to master"
 assert_eq 0 "$REF_EXPLICIT" "REF_EXPLICIT is 0 when --ref was not passed"
 parse_args --ref v1.2.3
 assert_eq 1 "$REF_EXPLICIT" "--ref sets REF_EXPLICIT"
+
+# --- the identity values, and the one that is validated -----------------------
+parse_args --location "Zurich, CH" --provider Hetzner --host-type vps
+assert_eq "Zurich, CH" "$LOCATION" "--location sets LOCATION"
+assert_eq "Hetzner" "$PROVIDER" "--provider sets PROVIDER"
+assert_eq "vps" "$HOST_TYPE" "--host-type sets HOST_TYPE"
+# The hub stores host type as an enum, so a typo is a host that never groups
+# with its siblings. Rejected at parse time rather than written to .env.
+#
+# A SUBSHELL, not assert_exit_code: die() calls `exit 1`, and this case has
+# sourced the script, so a bare call would take the case down with it.
+if (parse_args --host-type nas) >/dev/null 2>&1; then HT_RC=0; else HT_RC=$?; fi
+assert_eq 1 "$HT_RC" "an invalid --host-type is rejected at parse time"
+
+# --- the output directory is not nested inside itself -------------------------
+# Running from a directory already named netra-agent means THIS is the
+# netra-agent directory; ./netra-agent/netra-agent is nobody's intent.
+mkdir -p "$TMP/somewhere/netra-agent"
+(
+    cd "$TMP/somewhere/netra-agent" || exit 1
+    parse_args
+    [ "$OUTPUT_DIR" = "." ]
+) && OD_RC=0 || OD_RC=1
+assert_eq 0 "$OD_RC" "the default output dir collapses to . inside a netra-agent directory"
+(
+    cd "$TMP/somewhere/netra-agent" || exit 1
+    parse_args --output-dir ./netra-agent
+    [ "$OUTPUT_DIR" = "./netra-agent" ]
+) && OD_RC=0 || OD_RC=1
+assert_eq 0 "$OD_RC" "an explicit --output-dir still means exactly what it says"
+(
+    cd "$TMP/somewhere" || exit 1
+    parse_args
+    [ "$OUTPUT_DIR" = "./netra-agent" ]
+) && OD_RC=0 || OD_RC=1
+assert_eq 0 "$OD_RC" "anywhere else the default is still ./netra-agent"
 
 # --- probe-path prefixing -----------------------------------------------------
 # Every probe path must pick up NETRA_SETUP_ROOT; explicit overrides must not.

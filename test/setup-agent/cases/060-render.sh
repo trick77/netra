@@ -25,18 +25,25 @@ mkshims "$TMP/shims"
 
 # --- 1. a full run renders compose.yaml byte for byte --------------------------
 #
-# --sys-admin and --pid-host are passed deliberately: --yes takes each prompt's
-# DEFAULT, and both of those default no, so without the flags the golden would
-# lose the only coverage there is of a two-entry cap_add, a two-entry devices:
-# and the pid: host marker. The grants are what make this the MAXIMAL render.
+# --sys-admin and --pid-host are passed deliberately: both prompts default no, so
+# without the flags the golden would lose the only coverage there is of a
+# two-entry cap_add, a two-entry devices: and the pid: host marker. The grants
+# are what make this the MAXIMAL render.
+#
+# The answers file holds the two prompts the flags do NOT remove: drivetemp and
+# the write gate. It is the PROMPT ORDER contract written down, and a run that
+# consumed one line too many would die naming the question it could not answer.
 ROOT="$TMP/full"
 mkdir -p "$ROOT"
 cp -R "$(fixture root-full)/." "$ROOT/"
 
 OUT="$TMP/out"
+ANS=$(answers full y y)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$SETUP" --yes --sys-admin --pid-host \
+    NETRA_ANSWERS_FILE="$ANS" NETRA_UID=0 \
+    "$SH" "$SETUP" --sys-admin --pid-host \
     --token nta_testtoken --hub-url https://netra.example.com \
+    --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
 assert_eq 0 "$RUN_RC" "a full run against the root-full fixture succeeds"
 assert_file_present "$OUT/compose.yaml" "compose.yaml is written"
@@ -63,7 +70,13 @@ assert_contains "$ENVOUT" "NETRA_TOKEN=nta_testtoken" "the token is substituted"
 assert_contains "$ENVOUT" "NETRA_PRIMARY_SENSOR=" \
     "the primary sensor is present but empty (the agent picks at runtime)"
 assert_not_contains "$ENVOUT" "NETRA_PRIMARY_SENSOR=coretemp" \
-    "an install-time auto-pick is NOT frozen into .env"
+    "a setup-time auto-pick is NOT frozen into .env"
+# The three values the script asks for, and the one it deliberately does not.
+assert_contains "$ENVOUT" "NETRA_LOCATION=Zurich, CH" \
+    "the location reaches .env, comma and space intact"
+assert_contains "$ENVOUT" "NETRA_PROVIDER=Hetzner" "the provider reaches .env"
+assert_contains "$ENVOUT" "NETRA_HOST_TYPE=bare_metal" "the host type reaches .env"
+assert_contains "$ENVOUT" "NETRA_FACILITY=" "the facility is present but never asked for"
 # The scrape interval is a fixed 60s constant, so there is no knob for it.
 # Matched against the ASSIGNMENTS only: the template's own header comment names
 # NETRA_INTERVAL in order to explain why it is absent.
@@ -206,7 +219,7 @@ export NETRA_SHIM_CURL_RC
 resolve_ref
 assert_eq "v0.0.1-pinned" "$REF" "an explicit --ref is never overridden by the API lookup"
 
-# --template-dir short-circuits the lookup entirely: an air-gapped install must
+# --template-dir short-circuits the lookup entirely: an air-gapped run must
 # make no network call at all.
 TEMPLATE_DIR="$TEMPLATES"
 REF_EXPLICIT=0

@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # Block device enumeration, transport classification, NVMe controller
-# resolution, and the two SMART capability prompts.
+# resolution, and the one SMART capability prompt that remains.
 # Many variables set here are read by the SOURCED setup script, not by this file,
 # so shellcheck cannot see the use. The directive is file-wide rather than
 # repeated at a dozen assignments.
@@ -138,6 +138,9 @@ init_paths
 ASSUME_YES=1
 plan_smart >/dev/null 2>&1
 assert_eq 1 "$CAP_RAWIO" "a SATA-only host gets SYS_RAWIO"
+# Read by plan_drivetemp in the sensor phase to decide whether the drivetemp
+# module is worth offering, so it has to outlive plan_smart.
+assert_eq "sda" "$SMART_ATA_DEVICES" "the SATA device list survives plan_smart"
 assert_eq 0 "$CAP_SYS_ADMIN" "a SATA-only host is never even asked about SYS_ADMIN"
 assert_eq "/dev/sda" "$SMART_DEVICES" "the SATA device is emitted unprefixed"
 assert_not_contains "$SMART_DEVICES" "$R" "NETRA_SETUP_ROOT never leaks into devices:"
@@ -157,11 +160,13 @@ NETRA_SETUP_ROOT="$R"
 export NETRA_SETUP_ROOT
 init_paths
 
-ASSUME_YES=0
 SKIPPED_NOTES=""
 NETRA_ANSWER_INDEX=0
-# Prompt order inside plan_smart: SYS_RAWIO, then SYS_ADMIN.
-printf 'y\nn\n' >"$TMP/ans-decline"
+# ONE prompt inside plan_smart: SYS_ADMIN. SYS_RAWIO is granted automatically
+# whenever a SATA/SAS device exists - it lets smartctl issue ATA passthrough
+# ioctls and nothing else, and without it every SATA drive reports SMART as
+# unavailable, which is not an agent anyone asked for.
+printf 'n\n' >"$TMP/ans-decline"
 NETRA_ANSWERS_FILE="$TMP/ans-decline"
 export NETRA_ANSWERS_FILE
 run_capture plan_smart
@@ -172,7 +177,9 @@ assert_contains "$RUN_OUT" "hwmon" "the SYS_ADMIN prompt names hwmon as the temp
 NETRA_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 plan_smart >/dev/null 2>&1
-assert_eq 1 "$CAP_RAWIO" "SYS_RAWIO accepted"
+assert_eq 1 "$CAP_RAWIO" "SYS_RAWIO is granted without being asked about"
+assert_eq 1 "$NETRA_ANSWER_INDEX" \
+    "exactly one answer is consumed: SYS_RAWIO is no longer a prompt"
 assert_eq 0 "$CAP_SYS_ADMIN" "declining leaves SYS_ADMIN off"
 assert_eq "/dev/sda" "$SMART_DEVICES" \
     "a declined SYS_ADMIN also drops the NVMe controller from devices:"
@@ -183,7 +190,7 @@ assert_contains "$SKIPPED_NOTES" "temperature still works" \
 # --- 7. NVMe present, SYS_ADMIN granted ---------------------------------------
 NETRA_ANSWER_INDEX=0
 SKIPPED_NOTES=""
-printf 'y\ny\n' >"$TMP/ans-accept"
+printf 'y\n' >"$TMP/ans-accept"
 NETRA_ANSWERS_FILE="$TMP/ans-accept"
 export NETRA_ANSWERS_FILE
 plan_smart >/dev/null 2>&1
@@ -207,7 +214,9 @@ export NETRA_SETUP_ROOT
 init_paths
 NETRA_ANSWER_INDEX=0
 SKIPPED_NOTES=""
-printf 'y\n' >"$TMP/ans-usb"
+# No NVMe on this host, so plan_smart asks nothing at all: an EMPTY answers file
+# is what proves it.
+: >"$TMP/ans-usb"
 NETRA_ANSWERS_FILE="$TMP/ans-usb"
 export NETRA_ANSWERS_FILE
 plan_smart >/dev/null 2>&1
@@ -226,7 +235,7 @@ export NETRA_SETUP_ROOT
 init_paths
 NETRA_ANSWER_INDEX=0
 SKIPPED_NOTES=""
-printf 'y\n' >"$TMP/ans-nodev"
+: >"$TMP/ans-nodev"
 NETRA_ANSWERS_FILE="$TMP/ans-nodev"
 export NETRA_ANSWERS_FILE
 plan_smart >/dev/null 2>&1
@@ -236,10 +245,9 @@ assert_eq "" "$NETRA_BLK_DEVICES" "an empty device list deletes the devices: key
 
 # --- 10. --sys-admin grants without consuming a prompt ------------------------
 #
-# The discriminating assertion is NETRA_ANSWER_INDEX. An answers file holding
-# ONLY the SYS_RAWIO answer means a --sys-admin that still prompted would
-# exhaust the file and die, so "index is 1, not 2" is the proof that prompt 3
-# was skipped rather than answered.
+# The discriminating assertion is NETRA_ANSWER_INDEX. An EMPTY answers file
+# means a --sys-admin that still prompted would exhaust the file and die, so
+# "index is 0" is the proof that the prompt was skipped rather than answered.
 R="$TMP/r10"
 mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
 mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
@@ -250,15 +258,14 @@ NETRA_SETUP_ROOT="$R"
 export NETRA_SETUP_ROOT
 init_paths
 
-ASSUME_YES=0
 GRANT_SYS_ADMIN=1
 NETRA_ANSWER_INDEX=0
 SKIPPED_NOTES=""
-printf 'y\n' >"$TMP/ans-grantflag"
+: >"$TMP/ans-grantflag"
 NETRA_ANSWERS_FILE="$TMP/ans-grantflag"
 export NETRA_ANSWERS_FILE
 run_capture plan_smart
-assert_eq 0 "$RUN_RC" "--sys-admin does not exhaust an answers file holding one answer"
+assert_eq 0 "$RUN_RC" "--sys-admin consumes nothing from an empty answers file"
 assert_contains "$RUN_OUT" "--sys-admin" "the output says the capability came from the flag"
 
 # run_capture ran plan_smart in a command-substitution subshell, so none of its
@@ -267,7 +274,7 @@ NETRA_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 plan_smart >/dev/null 2>&1
 assert_eq 1 "$CAP_SYS_ADMIN" "--sys-admin grants SYS_ADMIN"
-assert_eq 1 "$NETRA_ANSWER_INDEX" "--sys-admin consumes no answer: prompt 3 is skipped entirely"
+assert_eq 0 "$NETRA_ANSWER_INDEX" "--sys-admin consumes no answer: the prompt is skipped entirely"
 assert_contains "$SMART_DEVICES" "/dev/nvme0" "--sys-admin also emits the NVMe controller"
 
 # --- 11. --sys-admin on a SATA-only host is a no-op with a note ----------------
@@ -285,7 +292,7 @@ init_paths
 GRANT_SYS_ADMIN=1
 NETRA_ANSWER_INDEX=0
 SKIPPED_NOTES=""
-printf 'y\n' >"$TMP/ans-satagrant"
+: >"$TMP/ans-satagrant"
 NETRA_ANSWERS_FILE="$TMP/ans-satagrant"
 export NETRA_ANSWERS_FILE
 plan_smart >/dev/null 2>&1

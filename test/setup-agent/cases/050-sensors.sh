@@ -17,7 +17,9 @@ export NETRA_SOURCED
 . "$SETUP"
 
 DRY_RUN=1
-ASSUME_YES=1
+# No SATA devices in these fixtures unless a case sets it, so plan_drivetemp
+# returns before it can prompt or shell out.
+SMART_ATA_DEVICES=""
 PRIMARY_SENSOR=""
 
 # mkchip ROOT N NAME — a hwmon chip with a name file.
@@ -92,8 +94,8 @@ assert_contains "$(hwmon_chips)" "hwmon0|nvme|temp1_input" \
 
 # --- 3. the sensor phase is INFORMATIONAL ------------------------------------
 #
-# The agent auto-selects at runtime with this same preference order. Freezing an
-# install-time guess into .env would outlive the CPU swap or kernel upgrade that
+# The agent auto-selects at runtime with this same preference order. Freezing a
+# setup-time guess into .env would outlive the CPU swap or kernel upgrade that
 # invalidated it, so NETRA_PRIMARY_SENSOR stays unset unless the operator asked
 # for it explicitly.
 NETRA_SETUP_ROOT="$TMP/r1"
@@ -120,10 +122,21 @@ NETRA_SETUP_ROOT="$R"
 export NETRA_SETUP_ROOT
 init_paths
 PRIMARY_SENSOR=""
-ASSUME_YES=1
+SKIPPED_NOTES=""
+NETRA_ANSWER_INDEX=0
+: >"$TMP/ans-sensors"
+NETRA_ANSWERS_FILE="$TMP/ans-sensors"
+export NETRA_ANSWERS_FILE
 detect_sensors >/dev/null 2>&1
-assert_eq "coretemp" "$PRIMARY_SENSOR" \
-    "two equally-ranked chips of the same name prompt, and the answer is written"
+# A tie is REPORTED, never prompted. Asking about it made the prompt sequence
+# variable-length - a dual-socket box has two, a four-socket box four - and the
+# answer was a guess frozen into .env that outlives the hardware justifying it.
+# The empty answers file is the proof: a surviving prompt would die exhausted.
+assert_eq "" "$PRIMARY_SENSOR" "a tie is left unpinned rather than guessed at"
+assert_eq 0 "$NETRA_ANSWER_INDEX" "a tie consumes no answer, because it asks nothing"
+assert_contains "$SKIPPED_NOTES" "equally-ranked" "the tie is reported as a note"
+assert_contains "$SKIPPED_NOTES" "--primary-sensor" "the note names the flag that pins one"
+unset NETRA_ANSWERS_FILE
 
 # --- 4. a missing hwmon directory is a note, not an error ---------------------
 R="$TMP/r4"
@@ -137,5 +150,157 @@ run_capture detect_sensors
 assert_eq 0 "$RUN_RC" "a host with no /sys/class/hwmon is not an error"
 assert_contains "$RUN_OUT" "does not exist" "the missing hwmon directory is reported"
 assert_eq "" "$(hwmon_chips)" "hwmon_chips prints nothing when the directory is absent"
+
+# --- 6. drivetemp: ask, load, VERIFY, and only then persist -------------------
+#
+# Per spec 6.2 only SATA drive temperature needs the SMART path, and SMART polls
+# at 1h. With drivetemp loaded the same temperatures arrive through hwmon on the
+# 60s sensor scrape, with no SYS_RAWIO and no devices: mapping.
+#
+# The verification is the point. `modprobe drivetemp` exits 0 on any kernel that
+# ships the module but produces no hwmon chip at all when the controller or the
+# drives do not report SCT temperature, so persisting on the strength of that
+# exit status would enshrine a module that does nothing, forever.
+mkshims "$TMP/shims"
+NETRA_UID=0
+export NETRA_UID
+DRY_RUN=0
+
+dt_root() {
+    _dt_r="$TMP/$1"
+    mkdir -p "$_dt_r/sys/class/hwmon" "$_dt_r/etc"
+    printf '%s\n' "$_dt_r"
+}
+
+# 6a. loads and produces a chip -> persisted, and the sensor list sees it.
+R=$(dt_root dt_ok)
+NETRA_SETUP_ROOT="$R"
+export NETRA_SETUP_ROOT
+init_paths
+SMART_ATA_DEVICES="sda"
+SKIPPED_NOTES=""
+NETRA_ANSWER_INDEX=0
+NETRA_ANSWERS_FILE=$(answers dt-ok y)
+export NETRA_ANSWERS_FILE
+NETRA_SHIM_MODPROBE_HWMON="$R/sys/class/hwmon"
+export NETRA_SHIM_MODPROBE_HWMON
+: >"$NETRA_SHIM_LOG"
+run_capture plan_drivetemp
+assert_eq 0 "$RUN_RC" "a working drivetemp load succeeds"
+plan_drivetemp >/dev/null 2>&1
+assert_file_present "$R/etc/modules-load.d/drivetemp.conf" \
+    "a load that produced a chip is persisted across reboots"
+assert_eq "drivetemp" "$(cat "$R/etc/modules-load.d/drivetemp.conf")" \
+    "the persisted file names the module and nothing else"
+assert_contains "$(hwmon_chips)" "drivetemp" "the new chip is visible to the sensor scan"
+assert_eq "" "$SKIPPED_NOTES" "a drivetemp that works is not a degradation"
+
+# 6b. loads but produces nothing -> unloaded again, nothing persisted.
+R=$(dt_root dt_nochip)
+NETRA_SETUP_ROOT="$R"
+export NETRA_SETUP_ROOT
+init_paths
+SMART_ATA_DEVICES="sda"
+SKIPPED_NOTES=""
+NETRA_ANSWER_INDEX=0
+NETRA_ANSWERS_FILE=$(answers dt-nochip y)
+export NETRA_ANSWERS_FILE
+unset NETRA_SHIM_MODPROBE_HWMON
+: >"$NETRA_SHIM_LOG"
+plan_drivetemp >/dev/null 2>&1
+assert_file_absent "$R/etc/modules-load.d/drivetemp.conf" \
+    "a load that produced no chip persists nothing"
+assert_contains "$(cat "$NETRA_SHIM_LOG")" "modprobe -r drivetemp" \
+    "a useless module is unloaded again, leaving the host as it was found"
+assert_contains "$SKIPPED_NOTES" "no hwmon chip" "the operator is told it did not work"
+
+# 6c. modprobe fails outright -> warned, nothing persisted, no unload attempted.
+R=$(dt_root dt_fail)
+NETRA_SETUP_ROOT="$R"
+export NETRA_SETUP_ROOT
+init_paths
+SMART_ATA_DEVICES="sda"
+SKIPPED_NOTES=""
+NETRA_ANSWER_INDEX=0
+NETRA_ANSWERS_FILE=$(answers dt-fail y)
+export NETRA_ANSWERS_FILE
+NETRA_SHIM_MODPROBE_RC=1
+export NETRA_SHIM_MODPROBE_RC
+: >"$NETRA_SHIM_LOG"
+plan_drivetemp >/dev/null 2>&1
+assert_file_absent "$R/etc/modules-load.d/drivetemp.conf" \
+    "a failed modprobe persists nothing"
+assert_contains "$SKIPPED_NOTES" "no drivetemp module" "the failure names the cause"
+assert_not_contains "$(cat "$NETRA_SHIM_LOG")" "modprobe -r" \
+    "nothing is unloaded when nothing loaded"
+unset NETRA_SHIM_MODPROBE_RC
+
+# 6d. declining is not an error, and says how to do it later.
+R=$(dt_root dt_no)
+NETRA_SETUP_ROOT="$R"
+export NETRA_SETUP_ROOT
+init_paths
+SMART_ATA_DEVICES="sda"
+SKIPPED_NOTES=""
+NETRA_ANSWER_INDEX=0
+NETRA_ANSWERS_FILE=$(answers dt-no n)
+export NETRA_ANSWERS_FILE
+: >"$NETRA_SHIM_LOG"
+plan_drivetemp >/dev/null 2>&1
+assert_eq "" "$(cat "$NETRA_SHIM_LOG")" "declining calls modprobe not at all"
+assert_contains "$SKIPPED_NOTES" "modules-load.d" "the note gives the command to do it later"
+
+# 6e. not root -> the command is printed, modprobe is never called, and the note
+# does not pretend drivetemp is the only thing root affects here.
+R=$(dt_root dt_nonroot)
+NETRA_SETUP_ROOT="$R"
+export NETRA_SETUP_ROOT
+# Before init_paths, which is where P_UID is resolved.
+NETRA_UID=1000
+export NETRA_UID
+init_paths
+SMART_ATA_DEVICES="sda"
+SKIPPED_NOTES=""
+NETRA_ANSWER_INDEX=0
+NETRA_ANSWERS_FILE=$(answers dt-nonroot)
+export NETRA_ANSWERS_FILE
+: >"$NETRA_SHIM_LOG"
+plan_drivetemp >/dev/null 2>&1
+assert_eq "" "$(cat "$NETRA_SHIM_LOG")" "a non-root run never calls modprobe"
+assert_eq 0 "$NETRA_ANSWER_INDEX" "a non-root run does not ask a question it cannot act on"
+assert_contains "$SKIPPED_NOTES" "modprobe drivetemp" "the note gives the command to run as root"
+assert_contains "$SKIPPED_NOTES" "marker directories" \
+    "the note says root affects more than drivetemp"
+NETRA_UID=0
+export NETRA_UID
+
+# 6f. no SATA devices at all -> nothing is offered, because nothing would use it.
+R=$(dt_root dt_nosata)
+NETRA_SETUP_ROOT="$R"
+export NETRA_SETUP_ROOT
+init_paths
+SMART_ATA_DEVICES=""
+SKIPPED_NOTES=""
+NETRA_ANSWER_INDEX=0
+: >"$NETRA_SHIM_LOG"
+run_capture plan_drivetemp
+assert_eq "" "$RUN_OUT" "an NVMe-only host is not offered drivetemp at all"
+assert_eq "" "$SKIPPED_NOTES" "and it is not reported as a degradation either"
+
+# 6g. already loaded -> nothing to do, and no second modprobe.
+R=$(dt_root dt_already)
+mkdir -p "$R/sys/class/hwmon/hwmon0"
+printf 'drivetemp\n' >"$R/sys/class/hwmon/hwmon0/name"
+NETRA_SETUP_ROOT="$R"
+export NETRA_SETUP_ROOT
+init_paths
+SMART_ATA_DEVICES="sda"
+SKIPPED_NOTES=""
+NETRA_ANSWER_INDEX=0
+: >"$NETRA_SHIM_LOG"
+run_capture plan_drivetemp
+assert_contains "$RUN_OUT" "already loaded" "an already-loaded module says so"
+assert_eq "" "$(cat "$NETRA_SHIM_LOG")" "and calls modprobe not at all"
+unset NETRA_ANSWERS_FILE
 
 exit_case
