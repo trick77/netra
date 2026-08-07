@@ -47,7 +47,8 @@ func run() error {
 
 	// Prime the CPU collector: it needs a baseline before it can report a
 	// delta, and doing it here means the first scheduled scrape has one.
-	c.ScrapeOnce(ctx)
+	// Prime does not buffer or send anything, unlike ScrapeOnce.
+	c.Prime(ctx)
 
 	return c.Run(ctx)
 }
