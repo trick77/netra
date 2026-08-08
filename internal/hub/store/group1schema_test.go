@@ -179,6 +179,60 @@ func TestIntegrationSensorSamplesCannotReferenceAnotherHostsSensor(t *testing.T)
 	}
 }
 
+// DELETE /api/v1/hosts/{id} is a shipped endpoint, and this PR puts a
+// composite foreign key from a hypertable in the middle of its cascade path:
+// hosts -> sensors -> sensor_samples, the last hop crossing chunks. The
+// admin API's own tests delete hosts that have no Group 1 rows, so nothing
+// else exercises this. A host with a sensor must still delete cleanly, and
+// take its samples with it.
+func TestIntegrationDeletingAHostCascadesThroughSensorSamples(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	hostID := seedHost(t, s)
+	sensorID := seedSensor(t, s, hostID, "coretemp", "Package id 0")
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO sensor_samples (host_id, ts, sensor_id, temp) VALUES ($1, $2, $3, 44.0)`,
+		hostID, recentBucket(), sensorID); err != nil {
+		t.Fatalf("insert sensor sample: %v", err)
+	}
+	// One row in each of the other Group 1 tables too, so the cascade is
+	// exercised across every hypertable this PR adds rather than only the
+	// one with the composite key.
+	for _, insert := range []string{
+		`INSERT INTO cpu_core_samples (host_id, ts, core, busy) VALUES ($1, $2, 0, 5.0)`,
+		`INSERT INTO disk_io_samples (host_id, ts, device, read_bytes) VALUES ($1, $2, 'sda', 1.0)`,
+		`INSERT INTO net_samples (host_id, ts, iface, rx_bytes) VALUES ($1, $2, 'eth0', 1.0)`,
+		`INSERT INTO collector_samples (host_id, ts, collector, duration_ms, ok) VALUES ($1, $2, 'cpu', 1, TRUE)`,
+		`INSERT INTO events (host_id, ts, type, subject) VALUES ($1, $2, 'mdraid', 'md0')`,
+	} {
+		if _, err := s.Pool().Exec(ctx, insert, hostID, recentBucket()); err != nil {
+			t.Fatalf("seed row: %v", err)
+		}
+	}
+
+	if _, err := s.Pool().Exec(ctx, `DELETE FROM hosts WHERE id = $1`, hostID); err != nil {
+		t.Fatalf("delete host: %v", err)
+	}
+
+	for _, table := range []string{
+		"sensors", "sensor_samples", "cpu_core_samples", "disk_io_samples",
+		"net_samples", "collector_samples", "events",
+	} {
+		var n int
+		if err := s.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM `+table+` WHERE host_id = $1`, hostID).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Errorf("%s rows left after deleting the host = %d, want 0", table, n)
+		}
+	}
+}
+
 // events is a plain Postgres table (spec §5.2), not a hypertable. mdraid
 // degradation, SMART threshold crossings and public-IP changes land here
 // precisely because they are constant for hours: spec §5.1 rule 4 sends
