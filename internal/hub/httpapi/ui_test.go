@@ -11,6 +11,64 @@ import (
 	"github.com/trick77/netra/internal/hub/auth"
 )
 
+// The UI is mounted on "/", which is the whole server's last-resort pattern,
+// so every unmatched path lands inside it. This pins what that does: an
+// unknown path is gated like any other page and 404s once past the gate,
+// while ingest and health -- both on more specific patterns -- keep their own
+// behaviour rather than being swallowed by the fallback.
+func TestIntegrationRoutingOfUnmatchedAndSiblingPaths(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	t.Run("unknown path without a credential goes to login", func(t *testing.T) {
+		resp, err := noRedirectClient(srv).Get(srv.URL + "/nonexistent")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Errorf("status = %d, want 303", resp.StatusCode)
+		}
+	})
+
+	t.Run("unknown path with a credential is a plain 404", func(t *testing.T) {
+		if got := doAdmin(t, srv, http.MethodGet, "/nonexistent", "").StatusCode; got != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", got)
+		}
+	})
+
+	t.Run("unknown admin path is a plain 404", func(t *testing.T) {
+		if got := doAdmin(t, srv, http.MethodGet, "/api/v1/bogus", "").StatusCode; got != http.StatusNotFound {
+			t.Errorf("status = %d, want 404", got)
+		}
+	})
+
+	t.Run("health stays unauthenticated", func(t *testing.T) {
+		resp, err := srv.Client().Get(srv.URL + "/api/health")
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("status = %d, want 200 — the compose healthcheck has no token", resp.StatusCode)
+		}
+	})
+
+	t.Run("ingest keeps its own agent auth", func(t *testing.T) {
+		resp, err := srv.Client().Post(srv.URL+"/api/agent/v1/ingest", "application/x-protobuf", nil)
+		if err != nil {
+			t.Fatalf("Post: %v", err)
+		}
+		t.Cleanup(func() { _ = resp.Body.Close() })
+
+		// 401 from the agent authenticator, not a redirect to the UI login.
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401", resp.StatusCode)
+		}
+	})
+}
+
 func TestIntegrationUIListRendersAHost(t *testing.T) {
 	srv, _ := newAdminFixture(t)
 	createHost(t, srv, "web01")
