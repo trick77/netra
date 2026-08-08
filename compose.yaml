@@ -21,11 +21,16 @@ services:
       - traefik
       - netra-internal
 
-    # Loopback only. In phase 1 there is no web UI, so this published port IS
-    # the interface: the read and admin API are curl'd from the box itself.
-    # Binding 127.0.0.1 rather than 0.0.0.0 keeps that API off the host's
-    # public interfaces — it is gated by a single shared admin token, which is
-    # adequate for loopback and is not adequate for the internet.
+    # Loopback only. This published port IS the interface: the read and admin
+    # API are curl'd from the box itself, and the host management UI is served
+    # on it at http://127.0.0.1:8080/. From a laptop, reach it through a
+    # tunnel — ssh -L 8080:127.0.0.1:8080 <this host> — rather than by binding
+    # 0.0.0.0 here.
+    #
+    # Binding 127.0.0.1 rather than 0.0.0.0 keeps the API and the UI off the
+    # host's public interfaces — both are gated by a single shared admin
+    # token, which is adequate for loopback and is not adequate for the
+    # internet.
     ports:
       - "127.0.0.1:8080:8080"
 
@@ -39,6 +44,11 @@ services:
       # unauthenticated admin API.
       NETRA_ADMIN_TOKEN: "${NETRA_ADMIN_TOKEN}"
       NETRA_LOG_LEVEL: "${NETRA_LOG_LEVEL:-info}"
+      # The address agents post to. Used only to render a ready-to-paste
+      # setup-agent.sh command in the UI: the browser reaches the hub on
+      # loopback, so the hub cannot infer its own agent-facing name from that
+      # request. Unset renders a placeholder rather than a wrong URL.
+      NETRA_HUB_URL: "https://${NETRA_HOSTNAME:-netra.trick77.com}"
 
     # /api/health reports database reachability, not just process liveness, so
     # a hub that cannot reach Postgres correctly goes unhealthy instead of
@@ -67,10 +77,11 @@ services:
       # PathPrefix, not Host alone. The only route that has any business being
       # reachable from the internet is agent ingest — everything else the hub
       # grows (the read API, the admin API that mints agent tokens and deletes
-      # hosts) is behind the same shared token and would otherwise become
-      # internet-facing the moment it was added, silently, with no change to
-      # this file. That directly contradicts the loopback-binding rationale
-      # three lines below. Widen this deliberately, per route, or not at all.
+      # hosts, and the management UI at /) is behind the same shared token and
+      # would otherwise become internet-facing the moment it was added,
+      # silently, with no change to this file. That directly contradicts the
+      # loopback-binding rationale above. Widen this deliberately, per route,
+      # or not at all.
       traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:-netra.trick77.com}`) && PathPrefix(`/api/agent/`)
       traefik.http.routers.netra.entrypoints: websecure
       # tls: "true" with no certresolver — the certificate is pre-loaded in

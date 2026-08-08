@@ -58,20 +58,22 @@ Two constraints added by the deployment work:
 
 The spec calls all of this phase 1. It was deferred, not descoped.
 
-### 1A. Admin API and token minting — **do this first**
+### 1A. Admin API and token minting — **landed**
 
-`auth.Mint` has no non-test callers. `NETRA_ADMIN_TOKEN` is required at hub startup and consumed by nothing. Adding a host today means hand-inserting a SHA-256 hash with `psql` (README documents the SQL; it works, and it is not a product).
+`auth.Mint` had no non-test callers and `NETRA_ADMIN_TOKEN` was consumed by nothing. Adding a host meant hand-inserting a SHA-256 hash with `psql` — it worked, and it was not a product.
 
-Everything else in Stage 1 is easier to test once hosts can be created over HTTP, so this goes first despite being small.
+Plan: `2026-08-08-stage1a-admin-api.html`.
 
-- [ ] `POST /api/v1/hosts` — create; returns the minted token **once**, never again
-- [ ] `POST /api/v1/hosts/{id}/token` — rotate
-- [ ] `DELETE /api/v1/hosts/{id}`
-- [ ] `GET|PATCH /api/v1/sites`, `/providers` — including manual lat/lon override the hub never overwrites with a geocode result
-- [ ] Admin-token middleware, constant-time compare, bound to the loopback listener
-- [ ] Update `README.md` to replace the hand-inserted-SQL section with the real endpoints — and say plainly that the SQL path still works for recovery
+- [x] `POST /api/v1/hosts` — create; returns the minted token **once**, never again
+- [x] `POST /api/v1/hosts/{id}/token` — rotate
+- [x] `DELETE /api/v1/hosts/{id}`
+- [x] `GET|PATCH /api/v1/sites`, `/providers` — including manual lat/lon override the hub never overwrites with a geocode result
+- [x] Admin-token middleware, constant-time compare, bound to the loopback listener
+- [x] A minimal server-rendered UI at `/` — host list, create, rotate, delete, and the token shown once beside a ready-to-paste `setup-agent.sh` line. `html/template` + `embed`, no build step and no design system; the phase-2 UI owns that decision. **This replaced the "update `README.md`" item**, which died with the README in #16
 
-**Risk:** the token is shown once. A create call whose response is lost must be recoverable by rotation, not by reading the hash. Test that rotation invalidates the old token in the same transaction.
+**Two things worth carrying forward.** `tokens` has no `UNIQUE (host_id)`, so rotation deletes and inserts in one transaction — an insert-only rotation leaves the old token live and nothing looks wrong. And the browser cannot send a bearer header on a form post, so the UI exchanges the admin token for a session cookie signed with a key **derived from that token**: changing `NETRA_ADMIN_TOKEN` logs every session out, with no session table to clear.
+
+An unauthenticated `dev` mode was considered for local use and rejected — the loopback binding is a second line of defence, not a reason to drop the first. No `AuthMode` switch exists yet; phase-2 OIDC adds one when there is a second mode to select.
 
 ### 1B. Schema — the remaining tables
 
@@ -81,7 +83,7 @@ The properties `0001_init.sql:1-12` documents still bind: `-- netra:no-transacti
 
 **Two consequences to carry until the first release:**
 
-- [ ] `Migrate` matches `schema_migrations` **by filename with no checksum** (`migrate.go:41-50`), so an edited `0001` is *silently skipped* on an existing database — the hub starts against a schema missing the new columns and fails on the first insert. Documented in the README; drop and recreate.
+- [ ] `Migrate` matches `schema_migrations` **by filename with no checksum** (`migrate.go:41-50`), so an edited `0001` is *silently skipped* on an existing database — the hub starts against a schema missing the new columns and fails on the first insert. The fix is to drop and recreate the database. (The README that used to say so is gone; this line is now the only record.)
 - [ ] Add checksum detection to the migration runner before the first release, so an edited applied migration is a startup error rather than silence. **This is what unfreezes the numbered-migration plan below.**
 
 Still to add to `0001` (each hypertable with its continuous aggregates and retention policy, so no tier is ever half-configured):

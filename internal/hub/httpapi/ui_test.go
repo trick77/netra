@@ -231,6 +231,69 @@ func TestIntegrationUILoginPageIsReachableWithoutACredential(t *testing.T) {
 	}
 }
 
+// A browser that already has a session has no business seeing the form again:
+// bouncing it to the host list is the difference between "logged in" and
+// "logged in but still looking at a login box".
+func TestIntegrationUILoginFormRedirectsAnAlreadyValidSession(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	login := postFormUnauthenticated(t, srv, "/login", url.Values{"token": {testAdminToken}})
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/login", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	for _, c := range login.Cookies() {
+		req.AddCookie(c)
+	}
+
+	resp, err := noRedirectClient(srv).Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Location"); got != "/" {
+		t.Errorf("Location = %q, want /", got)
+	}
+}
+
+// Deleting a host that is already gone is not an error worth showing: the
+// operator asked for it to be absent, and it is.
+func TestIntegrationUIDeleteOfAnAlreadyDeletedHostStillRedirects(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	id, _ := createHost(t, srv, "web01")
+
+	first := postForm(t, srv, fmt.Sprintf("/ui/hosts/%d/delete", id), url.Values{})
+	if first.StatusCode != http.StatusSeeOther {
+		t.Fatalf("first delete status = %d, want 303", first.StatusCode)
+	}
+
+	second := postForm(t, srv, fmt.Sprintf("/ui/hosts/%d/delete", id), url.Values{})
+	if second.StatusCode != http.StatusSeeOther {
+		t.Errorf("second delete status = %d, want 303", second.StatusCode)
+	}
+}
+
+// Rotating a host that was deleted in another tab must say so, not 500.
+func TestIntegrationUIRotateOfADeletedHostExplainsItself(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	id, _ := createHost(t, srv, "web01")
+
+	postForm(t, srv, fmt.Sprintf("/ui/hosts/%d/delete", id), url.Values{})
+
+	resp := postForm(t, srv, fmt.Sprintf("/ui/hosts/%d/token", id), url.Values{})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if body := readBody(t, resp); !strings.Contains(body, "no longer exists") {
+		t.Errorf("body does not explain the problem: %s", body)
+	}
+}
+
 func TestIntegrationUILogoutClearsTheSession(t *testing.T) {
 	srv, _ := newAdminFixture(t)
 
