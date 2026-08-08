@@ -229,6 +229,13 @@ if [ "${NETRA_SHIM_MODPROBE_RC:-0}" != 0 ]; then
     exit "${NETRA_SHIM_MODPROBE_RC}"
 fi
 if [ "${1:-}" = "-r" ]; then
+    # Separate from NETRA_SHIM_MODPROBE_RC on purpose: the interesting case is a
+    # module that LOADS and then refuses to unload (held by something else),
+    # which one shared exit code cannot express.
+    if [ "${NETRA_SHIM_MODPROBE_R_RC:-0}" != 0 ]; then
+        printf 'modprobe: FATAL: Module drivetemp is in use.\n' >&2
+        exit "${NETRA_SHIM_MODPROBE_R_RC}"
+    fi
     [ -z "${NETRA_SHIM_MODPROBE_HWMON:-}" ] || rm -rf "$NETRA_SHIM_MODPROBE_HWMON/hwmon90"
     exit 0
 fi

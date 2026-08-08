@@ -198,6 +198,63 @@ assert_contains "$RUN_OUT" "Nothing was written" "the run says plainly that it w
 assert_contains "$RUN_OUT" "Nothing was changed" "the run says plainly that it changed nothing"
 assert_contains "$RUN_OUT" "Skipped or degraded" "everything declined is reported"
 
+# --- 7b. "nothing was changed" is CONDITIONAL, and drivetemp is the condition --
+#
+# plan_drivetemp is the one mutation that happens before the gate, because the
+# sensor scan has to see its result. Declining the gate afterwards must not
+# claim the host is untouched — the operator would have no idea what to undo.
+#
+# Three shapes, and the remedy has to match the one that actually happened:
+#   a) loaded and persisted        -> unload AND remove the conf file
+#   b) loaded, unload failed       -> unload only; no file was ever written
+#   c) loaded, unloaded cleanly    -> genuinely nothing changed
+
+# (a) drivetemp accepted, works, persisted, THEN the gate is declined.
+ROOT=$(mkroot declinedt)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers declinedt n y n)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-declinedt"
+assert_eq 0 "$RUN_RC" "declining the gate after drivetemp was loaded is not an error"
+assert_file_absent "$TMP/out-declinedt/compose.yaml" "still nothing written"
+assert_not_contains "$RUN_OUT" "Nothing was changed" \
+    "the run must NOT claim it changed nothing after loading a kernel module"
+assert_contains "$(flatten "$RUN_OUT")" "modprobe -r drivetemp && rm /etc/modules-load.d/drivetemp.conf" \
+    "the undo names both the module and the file that was persisted"
+
+# (b) drivetemp loads but reports no chip, and the unload FAILS — so the module
+# is still loaded and no file was ever written. The `|| true` on that unload
+# exists precisely because this can happen.
+ROOT=$(mkroot declinedtstuck)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers declinedtstuck n y n)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    NETRA_SHIM_MODPROBE_R_RC=1 \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-declinedtstuck"
+assert_eq 0 "$RUN_RC" "a drivetemp module that will not unload is not a fatal error"
+assert_contains "$RUN_OUT" "STILL LOADED" "the run says the module is still loaded"
+assert_not_contains "$RUN_OUT" "Nothing was changed" \
+    "a module left loaded is a change, and must not be reported as none"
+# No conf file was written on this path, so the remedy must not tell the
+# operator to rm one — a failing rm reads as though the undo itself is broken.
+assert_not_contains "$RUN_OUT" "rm /etc/modules-load.d/drivetemp.conf" \
+    "the undo does not name a file that was never written"
+assert_file_absent "$ROOT/etc/modules-load.d/drivetemp.conf" "and indeed none was"
+
+# (c) drivetemp declined outright: the host really is untouched, and the run is
+# allowed to say so. This is the control for both cases above.
+ROOT=$(mkroot declinedtno)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers declinedtno n n n)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-declinedtno"
+assert_contains "$RUN_OUT" "Nothing was changed" \
+    "a run that loaded nothing is still allowed to say it changed nothing"
+
 # --- 7b. a declined gate must not let --start run a PREVIOUS run's compose ----
 #
 # The worst shape of the old bug: --start ran `docker compose -f <dir>/compose.yaml

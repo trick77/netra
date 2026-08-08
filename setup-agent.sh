@@ -159,6 +159,12 @@ SKIPPED_NOTES=""
 # to undo.
 DRIVETEMP_CHANGED=""
 
+# Set separately from DRIVETEMP_CHANGED, because the two changes are separate
+# and either can happen without the other: the module can be loaded and then
+# fail to unload, leaving no file behind, and it is never persisted without
+# first being loaded. The undo instructions must name only what happened.
+DRIVETEMP_PERSISTED=""
+
 # Consumed answers when NETRA_ANSWERS_FILE is set (test seam only). The two
 # indexes are deliberately independent: a y/n prompt and a free-text prompt read
 # from different files, so neither can shift the other by a line.
@@ -1818,16 +1824,32 @@ plan_drivetemp() {
         return 0
     fi
     info "  modprobe drivetemp        ok"
+    # Set HERE, the moment the host actually changed, not after the persist
+    # below. The kernel module is loaded from this line onward, and every exit
+    # path between here and the write gate has to be able to say so.
+    DRIVETEMP_CHANGED=1
 
     _pd_chips=$(hwmon_chips | grep -c '|drivetemp|' || true)
     if [ "$_pd_chips" = 0 ]; then
         # Loaded and useless. Unload rather than leave a module behind that this
         # script talked the operator into for nothing; best-effort, because a
         # module held by something else is not this script's problem to solve.
-        netra_exec modprobe -r drivetemp || true
-        warn "drivetemp loaded but produced no hwmon chip: this controller or these drives" \
-            "do not report SCT temperature. The module was unloaded again and nothing was" \
-            "persisted; SATA drive temperatures stay on the hourly SMART path."
+        #
+        # And the flag is cleared ONLY when that unload actually succeeds. The
+        # `|| true` exists precisely because it can fail, and on that path the
+        # module is still loaded — reporting "nothing was changed" afterwards
+        # would be the exact lie this flag was added to prevent.
+        if netra_exec modprobe -r drivetemp; then
+            DRIVETEMP_CHANGED=""
+            warn "drivetemp loaded but produced no hwmon chip: this controller or these drives" \
+                "do not report SCT temperature. The module was unloaded again and nothing was" \
+                "persisted; SATA drive temperatures stay on the hourly SMART path."
+        else
+            warn "drivetemp loaded but produced no hwmon chip, and unloading it again failed" \
+                "(something else is holding it). It is STILL LOADED. Nothing was persisted, so" \
+                "it will not come back after a reboot, and SATA drive temperatures stay on the" \
+                "hourly SMART path."
+        fi
         return 0
     fi
     info "  hwmon rescan              drivetemp: $_pd_chips chip(s)"
@@ -1835,7 +1857,10 @@ plan_drivetemp() {
     netra_exec mkdir -p "$P_MODULESLOAD"
     netra_exec netra_write_line drivetemp "$P_MODULESLOAD/drivetemp.conf"
     info "  persisted                 /etc/modules-load.d/drivetemp.conf"
-    DRIVETEMP_CHANGED=1
+    # DRIVETEMP_CHANGED is already set, from the successful modprobe above.
+    # This one records the SECOND change, so the undo instructions can name the
+    # file only when there is a file to remove.
+    DRIVETEMP_PERSISTED=1
 }
 
 detect_sensors() {
@@ -2579,13 +2604,21 @@ write_outputs() {
         info ""
         info "  Nothing was written."
         # The one exception to "nothing was changed", and it has to be named:
-        # plan_drivetemp runs before this gate and may already have loaded and
-        # persisted the module. Saying "nothing was changed" here would be
-        # false, and would leave the operator with no idea what to undo.
-        if [ -n "$DRIVETEMP_CHANGED" ]; then
+        # plan_drivetemp runs before this gate and may already have loaded the
+        # module, persisted it, or both. Saying "nothing was changed" here
+        # would be false, and would leave the operator with no idea what to
+        # undo — so the remedy names exactly what happened, and nothing else.
+        # `rm` on a file that was never written would fail and read as though
+        # the undo itself were broken.
+        if [ -n "$DRIVETEMP_PERSISTED" ]; then
             warn_cmd "modprobe -r drivetemp && rm /etc/modules-load.d/drivetemp.conf" \
                 "the drivetemp module was loaded and persisted earlier in this run, before" \
                 "this gate, and that change is still in place. To undo it:"
+        elif [ -n "$DRIVETEMP_CHANGED" ]; then
+            warn_cmd "modprobe -r drivetemp" \
+                "the drivetemp module was loaded earlier in this run, before this gate, and" \
+                "is still loaded. Nothing was persisted, so it will not survive a reboot" \
+                "either way. To unload it now:"
         else
             info "  Nothing was changed."
         fi

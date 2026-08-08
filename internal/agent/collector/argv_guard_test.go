@@ -150,7 +150,23 @@ func guardRoots(t *testing.T) []string {
 		t.Fatalf("go list -deps %s: %v", agentMain, err)
 	}
 
-	var roots []string
+	// ".." — all of internal/agent — UNCONDITIONALLY, alongside whatever the
+	// compiler reports. `go list -deps` covers only what main already imports,
+	// which narrows the guard in the other direction: a new collector written
+	// before it is wired into netra-agent would be unguarded until the import
+	// lands. That is precisely the processes collector, the package this whole
+	// guard exists to constrain, during precisely the window it is being
+	// written. Overlap with a computed root is harmless — WalkDir would visit
+	// a file twice and report it twice, and duplicate findings in a failure
+	// message cost nothing next to a missed one.
+	roots := []string{".."}
+	// Absolute form of that root, so the loop below can tell which computed
+	// dirs it already covers.
+	agentTree, err := filepath.Abs("..")
+	if err != nil {
+		t.Fatalf("resolving the agent tree: %v", err)
+	}
+
 	for _, dir := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		dir = strings.TrimSpace(dir)
 		if dir == "" {
@@ -160,6 +176,11 @@ func guardRoots(t *testing.T) []string {
 		// ours to police, and scanning them would be both slow and noisy.
 		rel, err := filepath.Rel(modRoot, dir)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		// Skip only what the ".." root already covers, so the common case does
+		// not walk internal/agent twice on every run.
+		if dir == agentTree || strings.HasPrefix(dir, agentTree+string(filepath.Separator)) {
 			continue
 		}
 		roots = append(roots, dir)
@@ -335,23 +356,47 @@ func TestGuardDetectsTheShapesItIsMeantTo(t *testing.T) {
 	}
 }
 
-// TestGuardRootsCoverTheWireFormat pins the coverage gap itself: the generated
-// protobuf package must be among the roots. A guard that walks only
-// internal/agent is green and blind.
+// TestGuardRootsCoverTheWireFormat pins both coverage gaps at once.
+//
+// Membership is not the property worth asserting — a directory can be covered
+// by an ANCESTOR root — so this asks whether each path is actually walked.
+// Both directions matter and each was wrong once:
+//
+//   - internal/gen/netra/v1 must be reachable, or a cmdline field added to the
+//     proto passes green. It is not under internal/agent, so only the computed
+//     roots can supply it.
+//   - internal/agent must be reachable WHOLE, not just the packages main
+//     already imports, or a collector is unguarded while it is being written.
 func TestGuardRootsCoverTheWireFormat(t *testing.T) {
-	var haveGen, haveCollector bool
-	for _, r := range guardRoots(t) {
-		if strings.HasSuffix(r, filepath.Join("internal", "gen", "netra", "v1")) {
-			haveGen = true
+	roots := guardRoots(t)
+
+	covered := func(rel string) bool {
+		want, err := filepath.Abs(filepath.Join("..", "..", "..", rel))
+		if err != nil {
+			t.Fatalf("resolving %s: %v", rel, err)
 		}
-		if strings.HasSuffix(r, filepath.Join("internal", "agent", "collector")) {
-			haveCollector = true
+		for _, r := range roots {
+			abs, err := filepath.Abs(r)
+			if err != nil {
+				continue
+			}
+			if want == abs || strings.HasPrefix(want, abs+string(filepath.Separator)) {
+				return true
+			}
 		}
+		return false
 	}
-	if !haveGen {
-		t.Error("guardRoots does not cover internal/gen/netra/v1 — a cmdline field added to the proto would pass")
+
+	if !covered(filepath.Join("internal", "gen", "netra", "v1")) {
+		t.Error("internal/gen/netra/v1 is not walked — a cmdline field added to the proto would pass")
 	}
-	if !haveCollector {
-		t.Error("guardRoots does not cover internal/agent/collector")
+	if !covered(filepath.Join("internal", "agent", "collector")) {
+		t.Error("internal/agent/collector is not walked")
+	}
+	// A package that exists but is not yet imported by main: the shape a new
+	// collector has while it is being written.
+	if !covered(filepath.Join("internal", "agent", "notyetimported")) {
+		t.Error("an un-imported package under internal/agent is not walked — " +
+			"a collector would be unguarded until it is wired into main")
 	}
 }

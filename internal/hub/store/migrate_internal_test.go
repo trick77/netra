@@ -3,8 +3,126 @@ package store
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 )
+
+// A replica that cannot get the migration lock must FAIL, loudly and by
+// itself, rather than block forever.
+//
+// pg_advisory_lock blocks indefinitely and the context Migrate runs under
+// carries no deadline of its own — cmd/netra passes the bare
+// signal.NotifyContext. Without the bounded wait, a hub whose migration hangs
+// rather than crashes (Postgres releases session locks on backend death, but
+// not on a wedged backend) leaves every other replica stopped with no log line
+// and no health signal. That is a worse failure than the duplicate-key crash
+// the lock was added to prevent, because nothing reports it.
+//
+// The lock is held here by a SEPARATE connection, exactly as a second replica
+// would hold it.
+func TestIntegrationMigrateTimesOutWaitingForTheLock(t *testing.T) {
+	ctx := context.Background()
+	s := OpenTest(t)
+
+	holder, err := s.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire holder connection: %v", err)
+	}
+	defer holder.Release()
+
+	if _, err := holder.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrateLockID); err != nil {
+		t.Fatalf("holder could not take the migration lock: %v", err)
+	}
+	defer func() {
+		_, _ = holder.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, migrateLockID)
+	}()
+
+	// Short enough to keep the suite fast; the production value is five
+	// minutes and waiting it out would prove the same thing.
+	saved := migrateLockTimeout
+	migrateLockTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { migrateLockTimeout = saved })
+
+	start := time.Now()
+	err = s.Migrate(ctx)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Migrate succeeded while another session held the lock; it must wait, then give up")
+	}
+	// The message is the entire point of the branch: it has to tell an
+	// operator where to look.
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("error does not say it timed out: %v", err)
+	}
+	if !strings.Contains(err.Error(), "pg_locks") {
+		t.Errorf("error does not name pg_locks, so it does not say where to look: %v", err)
+	}
+	// It must actually WAIT rather than fail instantly — a replica that gives
+	// up immediately would turn every concurrent start into a crash.
+	if elapsed < 400*time.Millisecond {
+		t.Errorf("gave up after %s, want a wait of about %s", elapsed, migrateLockTimeout)
+	}
+	// And it must not block anywhere near the production timeout.
+	if elapsed > 30*time.Second {
+		t.Errorf("blocked for %s; the bounded wait did not apply", elapsed)
+	}
+}
+
+// The mirror case: once the holder releases, a waiting replica proceeds
+// normally. Without this, the test above would still pass if the lock were
+// never actually acquired by Migrate at all.
+func TestIntegrationMigrateProceedsOnceTheLockIsFree(t *testing.T) {
+	ctx := context.Background()
+	s := OpenTest(t)
+
+	holder, err := s.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire holder connection: %v", err)
+	}
+	if _, err := holder.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrateLockID); err != nil {
+		t.Fatalf("holder could not take the migration lock: %v", err)
+	}
+
+	saved := migrateLockTimeout
+	migrateLockTimeout = 30 * time.Second
+	t.Cleanup(func() { migrateLockTimeout = saved })
+
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		_, _ = holder.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, migrateLockID)
+		holder.Release()
+		close(released)
+	}()
+
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate after the lock was released: %v", err)
+	}
+	<-released
+
+	// And the lock is not left held afterwards, or the next replica would wait
+	// out the full timeout for nothing. Asked by TAKING it rather than by
+	// reading pg_locks: the bigint form of pg_advisory_lock splits its key
+	// across classid/objid, so a catalog query is both fiddlier and less
+	// direct than simply proving the lock is available.
+	probe, err := s.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire probe connection: %v", err)
+	}
+	defer probe.Release()
+
+	var got bool
+	if err := probe.QueryRow(ctx, `SELECT pg_try_advisory_lock($1)`, migrateLockID).Scan(&got); err != nil {
+		t.Fatalf("probing the migration lock: %v", err)
+	}
+	if !got {
+		t.Error("Migrate returned with the advisory lock still held")
+	} else {
+		_, _ = probe.Exec(ctx, `SELECT pg_advisory_unlock($1)`, migrateLockID)
+	}
+}
 
 func TestSplitStatements(t *testing.T) {
 	tests := []struct {
