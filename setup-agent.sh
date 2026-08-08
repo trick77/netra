@@ -128,10 +128,12 @@
 # netra_ask_value from NETRA_VALUES_FILE, a SEPARATE seam with its own index, so
 # adding one never shifts a y/n answers file by a line.
 #
-# --unsupported-os, --sys-admin and --pid-host REMOVE prompts 1, 3 and 7 from
+# --unsupported-os, --sys-admin and --pid-host REMOVE prompts 1, 2 and 4 from
 # this sequence: the answer is taken without asking, so nothing is consumed for
 # them. A case that passes any of these flags and an answers file must drop the
-# matching line, or every answer after it means something else.
+# matching line, or every answer after it means something else. Prompt 3
+# (drivetemp) has no flag; it disappears only when the host gives it no reason
+# to be asked. Renumber this WITH the list above or the warning is worthless.
 #
 # Detection runs to completion BEFORE any of these, which is what makes "detect
 # first, then ask" (§12a) true rather than aspirational: an unwritable mount
@@ -2007,6 +2009,15 @@ resolve_token() {
     # --token and --token-file have both already been resolved by parse_args.
     [ -z "$TOKEN" ] || return 0
 
+    if [ "${DRY_RUN:-0}" = 1 ]; then
+        # The same short-circuit netra_ask and netra_ask_value take. Without it
+        # --dry-run auto-answers every other question and then blocks on a
+        # hidden read — and applies `stty -echo` to the operator's terminal to
+        # do it — which is exactly what --help promises it does not do.
+        info "Agent token from the hub: (dry run takes the default)"
+        return 0
+    fi
+
     if [ ! -r "$P_TTY" ]; then
         warn "no agent token was provided (--token / --token-file). NETRA_TOKEN will be" \
             "written empty and the agent will refuse to start until you fill it in." \
@@ -2017,12 +2028,18 @@ resolve_token() {
     printf 'Agent token from the hub (starts with nta_, input hidden): '
     # `command -v stty` guarded: a minimal container image may not ship it, and
     # a visible token is better than a failed run. The saved setting is restored
-    # on both paths out.
+    # on every path out, including an interrupt — see the trap.
     if command -v stty >/dev/null 2>&1; then
         _rt_saved=$(stty -g <"$P_TTY" 2>/dev/null || printf '')
+        # A REAL trap, because the comment used to claim one that was not there:
+        # Ctrl-C at a hidden prompt would otherwise leave the operator staring at
+        # a terminal that no longer echoes what they type. Cleared again right
+        # after, so an interrupt later in the run is not caught by this handler.
+        trap '[ -z "$_rt_saved" ] || stty "$_rt_saved" <"$P_TTY" 2>/dev/null; printf "\n"; exit 130' INT
         [ -z "$_rt_saved" ] || stty -echo <"$P_TTY" 2>/dev/null || true
         IFS= read -r TOKEN <"$P_TTY" || TOKEN=""
         [ -z "$_rt_saved" ] || stty "$_rt_saved" <"$P_TTY" 2>/dev/null || true
+        trap - INT
         printf '\n'
     else
         IFS= read -r TOKEN <"$P_TTY" || TOKEN=""
@@ -2155,8 +2172,18 @@ _plan_caps() {
 # discovered before the operator is asked to approve a plan that cannot be
 # carried out.
 #
-# Returns 0 when everything was written, 1 when the operator declined. The
-# caller MUST treat that as a normal outcome — see the errexit note.
+# Sets WROTE_OUTPUTS rather than returning a status, and is called PLAINLY —
+# never `if write_outputs; then`. That distinction is the whole point:
+# `if write_outputs` suspends errexit for every command inside the function, so
+# a failed `mkdir` and two failed redirections would each be shrugged off, the
+# function would return 0, the summary would announce files that do not exist,
+# and --start would run `docker compose -f <dir>/compose.yaml up -d` against a
+# missing file — while the script exited 0 and a provisioning wrapper checking
+# $? saw success. The asymmetry gave it away: the benign outcome (a declined
+# gate) could be signalled, the dangerous one could not.
+#
+# So: errexit stays armed, the writes that matter carry `|| die`, and the
+# declined-gate case is carried by a variable instead of an exit status.
 write_outputs() {
     step "Render"
 
@@ -2178,28 +2205,38 @@ write_outputs() {
     # host is exactly as it was.
     if ! netra_ask "Write compose.yaml and .env to $OUTPUT_DIR and create the marker directories?" y; then
         rm -rf "$SCRATCH_DIR"
+        WROTE_OUTPUTS=0
         info ""
         info "  Nothing was written and nothing was changed."
-        return 1
+        return 0
     fi
+    WROTE_OUTPUTS=1
 
-    netra_exec mkdir -p "$OUTPUT_DIR"
+    netra_exec mkdir -p "$OUTPUT_DIR" ||
+        die "could not create $OUTPUT_DIR. Nothing was written."
 
     # Marker directories. The mount point is a PROBE path here (so a test can
     # redirect it) and an EMIT path in compose.yaml; _p() on the way in, never on
     # the way out.
     while IFS='|' read -r _wo_mm _wo_mp _wo_lab; do
         [ -n "$_wo_mm" ] || continue
+        # A marker directory that cannot be created is a DEGRADATION, not a
+        # failure: a read-only filesystem loses its own measurement and nothing
+        # else. Warned rather than fatal, unlike the two writes below.
         if [ "$_wo_mp" = "/" ]; then
-            netra_exec mkdir -p "$(_p /.netra)"
+            netra_exec mkdir -p "$(_p /.netra)" ||
+                warn "could not create the marker directory at /.netra, so / will not be measured."
         else
-            netra_exec mkdir -p "$(_p "$_wo_mp/.netra")"
+            netra_exec mkdir -p "$(_p "$_wo_mp/.netra")" ||
+                warn "could not create the marker directory at $_wo_mp/.netra, so $_wo_mp" \
+                    "will not be measured."
         fi
     done <<EOF
 $FS_MOUNTS
 EOF
 
-    netra_exec netra_write_compose "$_wo_compose_tmpl" "$OUTPUT_DIR/compose.yaml"
+    netra_exec netra_write_compose "$_wo_compose_tmpl" "$OUTPUT_DIR/compose.yaml" ||
+        die "could not write $OUTPUT_DIR/compose.yaml"
 
     # compose.yaml is overwritten freely and .env is not (§12a). compose.yaml is
     # derived output — every byte of it comes from this run's detection — while
@@ -2210,16 +2247,22 @@ EOF
             "untouched. Its existing token and settings still apply. Re-run with --force to" \
             "overwrite it."
     else
-        netra_exec netra_write_env "$_wo_env_tmpl" "$OUTPUT_DIR/.env"
-    fi
+        netra_exec netra_write_env "$_wo_env_tmpl" "$OUTPUT_DIR/.env" ||
+            die "could not write $OUTPUT_DIR/.env"
 
-    if [ -e "$OUTPUT_DIR/.env" ]; then
-        _check_env_value NETRA_HUB_URL "$HUB_URL" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_TOKEN "$TOKEN" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_LOCATION "$LOCATION" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_PROVIDER "$PROVIDER" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_HOST_TYPE "$HOST_TYPE" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_PRIMARY_SENSOR "$PRIMARY_SENSOR" "$OUTPUT_DIR/.env"
+        # INSIDE the branch that rendered the file, and only there. Run against
+        # an .env this run deliberately left alone, these checks report every
+        # value that differs from the existing file as a missing placeholder —
+        # blaming the template for what the --force guard directly above just
+        # did. Skipped under --dry-run for the same reason: there is no file.
+        if [ "${DRY_RUN:-0}" != 1 ]; then
+            _check_env_value NETRA_HUB_URL "$HUB_URL" "$OUTPUT_DIR/.env"
+            _check_env_value NETRA_TOKEN "$TOKEN" "$OUTPUT_DIR/.env"
+            _check_env_value NETRA_LOCATION "$LOCATION" "$OUTPUT_DIR/.env"
+            _check_env_value NETRA_PROVIDER "$PROVIDER" "$OUTPUT_DIR/.env"
+            _check_env_value NETRA_HOST_TYPE "$HOST_TYPE" "$OUTPUT_DIR/.env"
+            _check_env_value NETRA_PRIMARY_SENSOR "$PRIMARY_SENSOR" "$OUTPUT_DIR/.env"
+        fi
     fi
 
     rm -rf "$SCRATCH_DIR"
@@ -2367,14 +2410,10 @@ netra_main() {
     configure
     print_plan
 
-    # `if write_outputs` — it returns 1 when the operator declines the gate, and
-    # a bare call would end the run before the summary that explains what did
-    # not happen. See the errexit note in the header.
-    if write_outputs; then
-        WROTE_OUTPUTS=1
-    else
-        WROTE_OUTPUTS=0
-    fi
+    # PLAINLY, never `if write_outputs` — see the note on the function. It sets
+    # WROTE_OUTPUTS itself, which is what lets errexit stay armed for the writes.
+    WROTE_OUTPUTS=0
+    write_outputs
 
     print_finish
     start_stack

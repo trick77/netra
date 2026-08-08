@@ -292,6 +292,71 @@ assert_not_contains "$RUN_OUT" "NETRA_PROVIDER is not in the rendered .env" \
 assert_not_contains "$RUN_OUT" "NETRA_HUB_URL is not in the rendered .env" \
     "a value that landed correctly is not reported as lost"
 
+# --- 8d. a write that FAILS is a failure, not a summary claiming success ------
+#
+# write_outputs used to be called as `if write_outputs; then`, which suspends
+# errexit for every command inside it. With an unwritable output directory the
+# mkdir failed, both redirections failed, the function still returned 0, the
+# summary announced files that do not exist, --start ran docker compose against
+# a missing compose.yaml, and the script exited 0 — so a provisioning wrapper
+# checking $? saw success.
+ROOT=$(mkroot writefail)
+BLOCKED="$TMP/blocked"
+mkdir -p "$BLOCKED"
+chmod 500 "$BLOCKED"
+: >"$NETRA_SHIM_LOG"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --start \
+    --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$BLOCKED/out"
+chmod 700 "$BLOCKED"
+assert_eq 1 "$RUN_RC" "a write that cannot be performed exits non-zero"
+assert_contains "$RUN_OUT" "could not create" "the failure names what it could not do"
+assert_not_contains "$RUN_OUT" "Summary" "a failed write does not reach the summary"
+assert_not_contains "$(cat "$NETRA_SHIM_LOG")" "up -d" \
+    "and --start never runs against files that were not written"
+
+# --- 8e. --dry-run never blocks on a prompt, free-text ones included ----------
+#
+# netra_ask and netra_ask_value short-circuit on DRY_RUN; resolve_token did not,
+# so a dry run on a real terminal auto-answered everything else and then blocked
+# on a hidden read — applying stty -echo to the operator's terminal to do it.
+# Every other dry-run test passes --token, which is why this needs its own.
+#
+# NETRA_TTY points at /dev/null: READABLE (so the no-terminal branch is not the
+# one under test) but instantly EOF, so a surviving prompt shows up as the
+# prompt string in the output rather than as a hang.
+ROOT=$(mkroot drytoken)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY=/dev/null \
+    "$SH" "$SETUP" --dry-run --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-drytoken"
+assert_eq 0 "$RUN_RC" "--dry-run with a readable terminal and no token completes"
+assert_contains "$RUN_OUT" "dry run takes the default" "the token prompt takes the default too"
+assert_not_contains "$RUN_OUT" "input hidden" \
+    "--dry-run never opens the hidden token prompt"
+assert_contains "$RUN_OUT" "Summary" "--dry-run runs to the end"
+
+# --- 8f. an .env left alone is not diagnosed as a broken template -------------
+#
+# _check_env_value ran against whatever .env was on disk, so a re-run without
+# --force warned (correctly) that the file was left untouched and then blamed
+# the template for every value that differed from it.
+ROOT=$(mkroot recheck)
+OUT2="$TMP/out-recheck"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" \
+    --token nta_first --hub-url https://first.example \
+    --template-dir "$TEMPLATES" --output-dir "$OUT2"
+assert_eq 0 "$RUN_RC" "the first run succeeds"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" \
+    --token nta_second --hub-url https://second.example --location "Zurich, CH" \
+    --template-dir "$TEMPLATES" --output-dir "$OUT2"
+assert_eq 0 "$RUN_RC" "the re-run succeeds"
+assert_contains "$RUN_OUT" "already exists and --force" "the re-run says why .env was kept"
+assert_not_contains "$RUN_OUT" "is not in the rendered .env" \
+    "an .env deliberately left alone is not blamed on the template"
+
 # --- 9. --token-file ----------------------------------------------------------
 #
 # A token pasted into a file by a provisioning system routinely arrives with a
