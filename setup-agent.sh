@@ -716,6 +716,8 @@ init_paths() {
     P_DOCKERSOCK="${NETRA_DOCKERSOCK_PATH:-$(_p /var/run/docker.sock)}"
     P_CPUINFO="${NETRA_CPUINFO_PATH:-$(_p /proc/cpuinfo)}"
     P_DMIVENDOR="${NETRA_DMIVENDOR_PATH:-$(_p /sys/class/dmi/id/sys_vendor)}"
+    P_MACHINEID="${NETRA_MACHINEID_PATH:-$(_p /etc/machine-id)}"
+    P_MACHINEID_DBUS="${NETRA_MACHINEID_DBUS_PATH:-$(_p /var/lib/dbus/machine-id)}"
     P_HYPERVISOR="${NETRA_HYPERVISOR_PATH:-$(_p /sys/hypervisor/type)}"
     P_HYPERVISOR_CAPS="${NETRA_HYPERVISOR_CAPS_PATH:-$(_p /sys/hypervisor/properties/capabilities)}"
     # A host WRITE path, not an emit path, and therefore prefixed: it never
@@ -755,6 +757,8 @@ debug_paths() {
     printf 'dmivendor|%s\n' "$P_DMIVENDOR"
     printf 'hypervisor|%s\n' "$P_HYPERVISOR"
     printf 'hypervisor_caps|%s\n' "$P_HYPERVISOR_CAPS"
+    printf 'machineid|%s\n' "$P_MACHINEID"
+    printf 'machineid_dbus|%s\n' "$P_MACHINEID_DBUS"
     printf 'uid|%s\n' "$P_UID"
 }
 
@@ -2074,6 +2078,9 @@ EOF
     if [ "${MOUNTINFO_ENABLED:-0}" = 1 ]; then
         _bv_add "/proc/1/mountinfo" "/host/mountinfo"
     fi
+    if [ "${MACHINEID_ENABLED:-0}" = 1 ] && [ -n "${MACHINEID_SOURCE:-}" ]; then
+        _bv_add "$MACHINEID_SOURCE" "/etc/machine-id"
+    fi
     if [ "${DBUS_ENABLED:-0}" = 1 ]; then
         _bv_add "/run/dbus/system_bus_socket" "/run/dbus/system_bus_socket"
     fi
@@ -2288,6 +2295,32 @@ plan_extras() {
     else
         warn "no Docker socket at $P_DOCKERSOCK: no container inventory and no container" \
             "metrics."
+    fi
+
+    # The agent hashes /etc/machine-id into the metadata fingerprint, which is
+    # how the hub detects a token copied to a second host. The agent image is
+    # Alpine and has NO /etc/machine-id of its own, so without this mount
+    # fingerprint() reads nothing, returns "", and every containerised agent
+    # reports the same empty fingerprint — the anti-copy check can never fire.
+    # Read-only, and not prompted, for the same reason as the Docker socket.
+    #
+    # EMIT path, so the host path is used verbatim. /var/lib/dbus/machine-id is
+    # the fallback on hosts that predate systemd's location; both are mounted AT
+    # /etc/machine-id, because that is where the agent looks.
+    MACHINEID_ENABLED=0
+    MACHINEID_SOURCE=""
+    if [ -f "$P_MACHINEID" ]; then
+        MACHINEID_ENABLED=1
+        MACHINEID_SOURCE=/etc/machine-id
+        info "  machine id:      /etc/machine-id (read-only, host fingerprint)"
+    elif [ -f "$P_MACHINEID_DBUS" ]; then
+        MACHINEID_ENABLED=1
+        MACHINEID_SOURCE=/var/lib/dbus/machine-id
+        info "  machine id:      /var/lib/dbus/machine-id (read-only, host fingerprint)"
+    else
+        warn "no /etc/machine-id or /var/lib/dbus/machine-id on this host, so the agent" \
+            "cannot fingerprint it. The hub will not be able to tell if this agent's token" \
+            "is later copied to a second machine."
     fi
 
     MOUNTINFO_ENABLED=0

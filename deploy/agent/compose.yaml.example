@@ -5,7 +5,7 @@
 # are deliberately skipping the setup script and want to decide each mount yourself.
 #
 #   cp compose.yaml.example compose.yaml
-#   cp .env.example .env && $EDITOR .env      # hub URL and token
+#   cp env.tmpl .env && $EDITOR .env          # hub URL and token; replace every __PLACEHOLDER__
 #   mkdir -p /.netra                          # see "Filesystems" below
 #   docker compose up -d
 #
@@ -15,6 +15,12 @@
 # the place an operator decides them, but the collector that consumes it has not
 # landed yet, so granting it today changes nothing. Nothing breaks if you enable
 # them now — they are inert, not harmful. Nothing is missing if you do not.
+#
+# Every OPTIONAL mount, device and capability below therefore ships COMMENTED
+# OUT, and the quickstart above works as written. Uncommenting one whose source
+# does not exist is not a no-op: a long-form bind does not create a missing
+# source, and a `devices:` entry for a node this host lacks stops the container
+# from starting at all. Uncomment what this host actually has.
 #
 # The agent is STATELESS. There is no volume for state anywhere in this file and
 # there never will be: the buffer is an in-memory ring (§6.5), deliberately not
@@ -83,10 +89,10 @@ services:
       # does not create a missing source directory the way the short form does,
       # so a source that is not there is a container startup failure, not a
       # warning. Same rule as the `devices:` list below.
-      - type: bind
-        source: /mnt/ark/.netra
-        target: /netra/fs/ark
-        read_only: true
+      # - type: bind
+      #   source: /mnt/ark/.netra
+      #   target: /netra/fs/ark
+      #   read_only: true
 
       # --- Containers -------------------------------------------------------
       #
@@ -97,9 +103,31 @@ services:
       # the single most expensive thing a naive agent does, and this avoids it.
       #
       # Without this mount: no container inventory and no container metrics.
+      #
+      # `read_only: true` here restricts the INODE, not the API. Anything that
+      # can talk to the Docker socket at all can start a privileged container,
+      # which is root on the host — strictly more powerful than the SYS_ADMIN
+      # this file is careful to gate below. It is mounted by default because the
+      # container collectors are the point of the agent, but grant it knowing
+      # that, not because it says read-only.
       - type: bind
         source: /var/run/docker.sock
         target: /var/run/docker.sock
+        read_only: true
+
+      # --- Host fingerprint -------------------------------------------------
+      #
+      # The agent hashes this into the metadata fingerprint, which is how the
+      # hub notices a token that has been copied to a second machine. The image
+      # is Alpine and has NO /etc/machine-id of its own, so without this mount
+      # the fingerprint is empty on every containerised agent and the check can
+      # never fire.
+      #
+      # On hosts that predate systemd's location, use /var/lib/dbus/machine-id
+      # as the source instead — the target stays /etc/machine-id either way.
+      - type: bind
+        source: /etc/machine-id
+        target: /etc/machine-id
         read_only: true
 
       # --- OPTIONAL: systemd units ------------------------------------------
@@ -110,10 +138,10 @@ services:
       #
       # Without it: no unit inventory and no failed-service alerting. Nothing
       # else is affected.
-      - type: bind
-        source: /run/dbus/system_bus_socket
-        target: /run/dbus/system_bus_socket
-        read_only: true
+      # - type: bind
+      #   source: /run/dbus/system_bus_socket
+      #   target: /run/dbus/system_bus_socket
+      #   read_only: true
 
       # --- OPTIONAL: package inventory --------------------------------------
       #
@@ -131,10 +159,10 @@ services:
       #
       # Parsed only when the database mtime changes, with a daily floor, so this
       # mount costs essentially nothing at steady state.
-      - type: bind
-        source: /var/lib/dpkg
-        target: /var/lib/dpkg
-        read_only: true
+      # - type: bind
+      #   source: /var/lib/dpkg
+      #   target: /var/lib/dpkg
+      #   read_only: true
       # Alpine hosts: comment out the dpkg block above and use this instead.
       # - type: bind
       #   source: /lib/apk/db
@@ -181,8 +209,8 @@ services:
     # SYS_RAWIO covers SATA/SAS drives (ATA passthrough) and is the ordinary
     # case. Without it every SMART reading disappears and the agent reports SMART
     # as an unavailable capability rather than showing an empty panel.
-    cap_add:
-      - SYS_RAWIO
+    # cap_add:
+    #   - SYS_RAWIO
       # SYS_ADMIN — READ THIS BEFORE UNCOMMENTING.
       #
       # Required ONLY when this host has NVMe drives, because NVMe admin
@@ -203,9 +231,9 @@ services:
     # Edit this list to match the host — `lsblk -d` lists the whole devices.
     # A device listed here that does not exist prevents the container starting,
     # so remove the ones this host lacks.
-    devices:
-      - /dev/sda
-      - /dev/nvme0
+    # devices:
+    #   - /dev/sda
+    #   - /dev/nvme0
 
     # --- Processes (opt-in) --------------------------------------------------
     #

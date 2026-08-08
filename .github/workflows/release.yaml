@@ -96,6 +96,15 @@ jobs:
   # couple of minutes anyway, so the parallelism buys very little.
   release:
     runs-on: ubuntu-latest
+    # master ONLY, on every trigger. push already filters by branch, but
+    # workflow_dispatch does not: the Actions tab offers a branch selector, and
+    # without this guard a manual run from any feature branch builds and pushes
+    # :latest, :0, :0.1 and :0.1.2 from unmerged code, tags that off-master
+    # commit, and publishes a release the agent installer then resolves its
+    # templates from. The "unfiltered on purpose" note on workflow_dispatch is
+    # about PATHS, not branches — the bootstrap run it describes happens on
+    # master like every other release.
+    if: github.ref == 'refs/heads/master'
     steps:
       # fetch-depth: 0 — the version is derived from the latest git tag, and a
       # shallow checkout fetches no tags at all. Without this every release

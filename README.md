@@ -51,6 +51,7 @@ The hub expects a Traefik-fronted host. `compose.yaml` publishes the API on `127
 only, because in phase 1 that loopback port is the entire interface.
 
 ```bash
+git clone https://github.com/trick77/netra.git && cd netra   # compose.yaml and .env.example live here
 docker network create traefik          # external, shared with other stacks
 mkdir -p data/timescaledb              # must exist first, or initdb fails root-owned
 cp .env.example .env && $EDITOR .env   # POSTGRES_PASSWORD, NETRA_ADMIN_TOKEN, hostname
