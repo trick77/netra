@@ -368,6 +368,59 @@ func TestIntegrationIngestDropsImplausibleTimestampsButStoresTheRest(t *testing.
 	}
 }
 
+// A broken agent_samples insert still 503s the batch, but must not freeze
+// host_current. The host samples the cache summarises landed successfully on
+// this very request, and the agent will keep retrying — so leaving last_seen
+// stale would show the host as gone while its data is in fact arriving.
+func TestIntegrationIngestAgentSampleFailureStillRefreshesHostCurrent(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+
+	// Break only agent_samples, and only for writes: a constraint no row can
+	// satisfy fails every insert while leaving the table, its continuous
+	// aggregates, host_samples and host_current intact. That isolates the one
+	// failing insert rather than simulating a dead pool.
+	if _, err := s.Pool().Exec(ctx,
+		`ALTER TABLE agent_samples ADD CONSTRAINT reject_every_insert CHECK (false) NOT VALID`); err != nil {
+		t.Fatalf("break agent_samples: %v", err)
+	}
+
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq: 1,
+		HostSamples: []*netrav1.HostSample{
+			{
+				TsMs:     ts,
+				CpuTotal: proto.Float64(42),
+				Agent:    &netrav1.AgentSample{ScrapeDurationMs: proto.Uint32(7)},
+			},
+		},
+	})
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 — a lost agent sample must be retried", resp.StatusCode)
+	}
+
+	var count int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM host_samples`).Scan(&count); err != nil {
+		t.Fatalf("query host_samples: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("host_samples rows = %d, want 1 — the primary write did succeed", count)
+	}
+
+	var lastSeen time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT last_seen FROM host_current`).Scan(&lastSeen); err != nil {
+		t.Fatalf("query host_current: %v — want a row, not a host frozen as stale", err)
+	}
+	want := time.UnixMilli(ts).UTC()
+	if lastSeen.Sub(want).Abs() > time.Second {
+		t.Fatalf("host_current.last_seen = %v, want ~%v", lastSeen, want)
+	}
+}
+
 // TestIntegrationIngestRejectsOversizedBody covers the failure mode of a
 // silent partial accept: io.ReadAll(io.LimitReader(...)) would truncate an
 // over-limit body at whatever byte the limit lands on, which can still parse

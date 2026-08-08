@@ -14,8 +14,9 @@ import (
 
 // Capability values reported by Procs.
 const (
-	procsCapOK         = "ok"
-	procsCapNamespaced = "namespaced"
+	procsCapOK          = "ok"
+	procsCapNamespaced  = "namespaced"
+	procsCapUnavailable = "unavailable"
 )
 
 // minPlausibleProcs is the count below which a reading is treated as a view
@@ -91,7 +92,12 @@ func (p *Procs) Collect(_ context.Context, sample *netrav1.HostSample) error {
 		// An unreadable /proc leaves the field unset. It is not an error the
 		// scrape should fail on: every other collector reading the same tree
 		// will report its own failure.
-		p.setCapability(procsCapNamespaced)
+		//
+		// Reported as unavailable, not namespaced: a missing bind mount, a
+		// misconfigured NETRA_PROC_ROOT and a permission error all land here,
+		// and none of them is fixed by adding pid: host. The namespace verdict
+		// is only reached below, where the tree was actually readable.
+		p.setCapability(procsCapUnavailable)
 		return nil
 	}
 

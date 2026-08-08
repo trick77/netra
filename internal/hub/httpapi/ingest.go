@@ -109,8 +109,19 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ahead of the agent_samples insert below, which can 503 out of the
+	// handler. host_current is the cache "last seen" reads from, and the host
+	// samples it summarises have just been written -- so if agent_samples is
+	// the only thing broken, the host must not read as stale while its data is
+	// in fact arriving on every retry.
+	if s := latest(samples); s != nil {
+		if err := h.store.UpsertHostCurrent(ctx, hostID, s); err != nil {
+			slog.Error("upsert host_current", "host_id", hostID, "err", err)
+		}
+	}
+
 	// A 503 rather than a logged-and-ignored failure, unlike host_current
-	// below. host_current is a derived cache that the next scrape rebuilds,
+	// above. host_current is a derived cache that the next scrape rebuilds,
 	// whereas these are primary rows on the same natural key as the host
 	// samples just written -- silently dropping them would hide exactly the
 	// agent-health problems they exist to expose. Asking for a retry is cheap
@@ -121,12 +132,6 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
 		return
-	}
-
-	if s := latest(samples); s != nil {
-		if err := h.store.UpsertHostCurrent(ctx, hostID, s); err != nil {
-			slog.Error("upsert host_current", "host_id", hostID, "err", err)
-		}
 	}
 
 	requestMetadata, err := h.reconcileMetadata(ctx, hostID, &req)
