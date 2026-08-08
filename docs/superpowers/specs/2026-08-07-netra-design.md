@@ -179,7 +179,7 @@ without redeploying agents. IPv4 and IPv6 are treated identically throughout.
 | `net_samples` | `iface`, `rx_bytes`, `tx_bytes`, `rx_errs`, `tx_errs` |
 | `sensor_samples` | `sensor_id`, `temp` |
 | `smart_attributes` | `device_id`, `attr_id`, `raw`, `normalized` |
-| `process_samples` | `name`, `cpu_pct`, `mem_bytes`, `count` |
+| `process_samples` | `name` (comm — see §6.2, never argv), `cpu_pct`, `mem_bytes`, `count` |
 | `agent_samples` | `uptime_s`, `rss_bytes`, `goroutines`, `scrape_duration_ms`, `buffer_depth`, `buffer_dropped_total`, `post_failures_total`, `post_latency_ms` |
 | `collector_samples` | `collector`, `duration_ms`, `ok`, `error_code` |
 | `custom_samples` | `metric`, `labels` (jsonb), `value` |
@@ -311,6 +311,28 @@ previous, emit no sample rather than a negative or a spike.
 reused, and without the start-time check a recycled PID produces a garbage spike.
 Processes are **aggregated by name**, summing across PIDs, then top-10-by-CPU ∪
 top-10-by-memory. `nginx` with 16 workers is one row with `count = 16`.
+
+**Process identity is `comm`, and the agent never reads `cmdline` or `environ`.** The name
+comes from `/proc/PID/comm`, or field 2 of `/proc/PID/stat`, which the kernel caps at 15
+bytes. `/proc/PID/cmdline` is **argv**, and argv routinely carries credentials —
+`mysql -p<pass>`, `-Dspring.datasource.password=…`, `--token=…`. `/proc/PID/environ` is
+worse. Either one on the wire would make netra a credential exfiltration path with a
+database behind it, and the operator who enabled `pid: host` for a CPU chart would have no
+idea.
+
+The trap is that the dangerous implementation is the *natural* one: 15 bytes is an
+unsatisfying name, and `cmdline` is right there with the full command in it. So the rule is
+enforced by a test rather than left to review —
+`internal/agent/collector/argv_guard_test.go` walks `internal/agent/` and `cmd/netra-agent/`
+and fails the build on either file name appearing in a Go string literal. It matches
+literals only, on word boundaries, case-sensitively, so a comment explaining this rule and
+`os.Environ()` (the agent's own environment) both stay legal.
+
+**The cost is real and accepted.** Names truncate — `postgres: chec` for
+`postgres: checkpointer` — and interpreted programs collapse to `python3` or `java` rather
+than the script they run. Aggregation is by name anyway, so most of that detail would be
+summed away, and the alternative is shipping secrets. Do not "fix" this by reaching for
+`cmdline`.
 
 **Sensor identity is `chip_name + label`, never `hwmonN`** — hwmon numbering is not stable
 across reboots, and keying on the index silently forks temperature history on every
@@ -708,7 +730,10 @@ Hub variables: `NETRA_LISTEN_ADDR`, `NETRA_DB_DSN`, `NETRA_ADMIN_TOKEN`, `NETRA_
 Mounts: `/var/run/docker.sock:ro`; marker dirs under `/netra/fs/`; optionally
 `/proc/1/mountinfo:ro`, `/run/dbus/system_bus_socket:ro`, `/var/lib/dpkg:ro`.
 `cap_add: [SYS_RAWIO]` (+ `SYS_ADMIN` with NVMe) and explicit `devices:` for SMART.
-`pid: host` only if the process collector is enabled.
+`pid: host` only if the process collector is enabled. Note what that grants versus what it
+is used for: the namespace makes every process's `cmdline` and `environ` readable to the
+container, while the collector reads neither (§6.2). The exposure is the namespace, not the
+agent.
 
 ---
 

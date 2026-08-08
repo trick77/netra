@@ -217,6 +217,14 @@ services:
     # namespace makes EVERY process's /proc entry readable to this container,
     # including cmdline and environ — that is command-line arguments and
     # environment variables of every service on the box, which routinely carry
-    # passwords, API keys and DSNs. The collector itself only aggregates CPU and
-    # memory by process name, but the namespace grants far more than it uses.
+    # passwords, API keys and DSNs.
+    #
+    # netra reads NEITHER. Process names come from `comm` (/proc/PID/comm, 15
+    # bytes, no arguments), and the agent never opens cmdline or environ at all
+    # — enforced by internal/agent/collector/argv_guard_test.go, which fails the
+    # build if either name appears in a Go string literal. The collector
+    # aggregates CPU and memory by process name and nothing else.
+    #
+    # So the exposure is the namespace, not the agent: it grants far more than
+    # netra uses, and you are trusting the image not to use it.
     # pid: host

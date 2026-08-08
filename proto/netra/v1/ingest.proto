@@ -78,6 +78,25 @@ message HostSample {
   optional uint64 uptime_s = 18;
 }
 
+// ProcessSample is NOT DEFINED YET, and this note is here so that when it is,
+// the decision below is already made.
+//
+// It may carry exactly: name, cpu_pct, mem_bytes, count.
+//
+// `name` is `comm` — /proc/PID/comm, or field 2 of /proc/PID/stat — which the
+// kernel caps at 15 bytes. No field may ever carry argv or the environment.
+// /proc/PID/cmdline is argv, and argv routinely carries credentials
+// (`mysql -p<pass>`, `-Dspring.datasource.password=...`, `--token=...`);
+// /proc/PID/environ is worse. Either on the wire turns netra into a credential
+// exfiltration path with a database behind it, for an operator who enabled
+// `pid: host` to see a CPU chart.
+//
+// The trap is that the dangerous implementation is the natural one: 15 bytes is
+// an unsatisfying name and cmdline has the whole command in it. Enforced by
+// internal/agent/collector/argv_guard_test.go, which fails the build rather
+// than trusting review. See spec 6.2 for the accepted cost (truncated names,
+// "python3" instead of the script).
+
 // IngestResponse carries everything the hub would push over a socket.
 message IngestResponse {
   uint64 ack_seq = 1;
