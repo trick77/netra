@@ -184,6 +184,32 @@ func TestIntegrationUIListShowsTheIDForSameNamedHostsAtDifferentSites(t *testing
 	}
 }
 
+// A database error that is nobody's input mistake still has to produce a page,
+// not a blank response -- and it must not show the operator the SQL. Broken
+// with a check constraint rather than a dead pool, so the failure is the
+// insert itself and nothing else.
+func TestIntegrationUICreateReportsAnUnexpectedFailure(t *testing.T) {
+	srv, s := newAdminFixture(t)
+
+	if _, err := s.Pool().Exec(context.Background(),
+		`ALTER TABLE hosts ADD CONSTRAINT reject_every_insert CHECK (false) NOT VALID`); err != nil {
+		t.Fatalf("break hosts: %v", err)
+	}
+
+	resp := postForm(t, srv, "/ui/hosts", url.Values{"hostname": {"web01"}})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	if !strings.Contains(body, "Could not create the host") {
+		t.Errorf("the page does not report the failure: %s", body)
+	}
+	if strings.Contains(body, "reject_every_insert") {
+		t.Error("the page leaked the constraint name to the operator")
+	}
+}
+
 // The operator can only fix a name collision if the page says that is what
 // happened, rather than "could not create the host".
 func TestIntegrationUICreateReportsANameCollision(t *testing.T) {
