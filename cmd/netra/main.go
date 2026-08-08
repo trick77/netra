@@ -17,6 +17,7 @@ import (
 	"github.com/trick77/netra/internal/hub/config"
 	"github.com/trick77/netra/internal/hub/httpapi"
 	"github.com/trick77/netra/internal/hub/store"
+	"github.com/trick77/netra/internal/logging"
 )
 
 func main() {
@@ -33,6 +34,11 @@ func main() {
 func run() error {
 	cfg, err := config.Load()
 	if err != nil {
+		return err
+	}
+
+	// Before the first log line, or the level would not apply to it.
+	if err := logging.Setup(cfg.LogLevel); err != nil {
 		return err
 	}
 

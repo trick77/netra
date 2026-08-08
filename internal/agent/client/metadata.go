@@ -1,12 +1,14 @@
 package client
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -43,9 +45,22 @@ func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 func HashMetadata(md *netrav1.Metadata) []byte {
 	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(md)
 	if err != nil {
-		// Marshalling a struct we built ourselves cannot fail in practice;
-		// a zero hash still behaves correctly, it just forces a resend.
-		return make([]byte, 8)
+		// Marshalling a struct we built ourselves cannot fail in practice, but
+		// the fallback must still be a hash that never MATCHES, not a fixed
+		// one. A zero hash did the opposite of what it claimed: once the hub
+		// stored it, reconcileMetadata's
+		// `!bytes.Equal(stored, sent) || len(stored) == 0` is false on both
+		// sides, so request_metadata was never set again and no later change —
+		// an agent upgrade, a hostname change — was ever propagated.
+		//
+		// A random value forces the resend the comment always promised: it
+		// cannot equal what the hub stored, and it differs again next time.
+		out := make([]byte, 8)
+		if _, rerr := rand.Read(out); rerr != nil {
+			// Even the failure path must not settle on a stable value.
+			binary.BigEndian.PutUint64(out, uint64(time.Now().UnixNano()))
+		}
+		return out
 	}
 
 	sum := sha256.Sum256(raw)

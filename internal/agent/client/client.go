@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"strings"
@@ -80,12 +81,17 @@ type Client struct {
 	// mutates it after construction.
 	interval time.Duration
 
-	seq             uint64
-	metadata        *netrav1.Metadata
-	metadataHash    []byte
-	sendMetadata    bool
-	lastFlushFailed bool
-	retryAfter      time.Duration
+	seq          uint64
+	metadata     *netrav1.Metadata
+	metadataHash []byte
+	sendMetadata bool
+	// replaying stays true for the WHOLE of a replay, not just its first
+	// batch. It was cleared on the first successful partial drain, so
+	// recovering 7200 buffered samples flagged batch 1 as backfill and the
+	// three 2000-sample batches after it as live — every one of which was
+	// replayed history the hub needs to invalidate aggregates for.
+	replaying  bool
+	retryAfter time.Duration
 }
 
 // New builds a Client scraping at the fixed config.ScrapeInterval. Buffer
@@ -214,7 +220,7 @@ func (c *Client) Flush(ctx context.Context) error {
 		HostSamples:  samples,
 		// Anything sent after a failed flush is replayed history, and the hub
 		// needs to know so it can invalidate the affected aggregate ranges.
-		Backfill: c.lastFlushFailed,
+		Backfill: c.replaying,
 	}
 	if c.sendMetadata {
 		req.Metadata = c.metadata
@@ -225,8 +231,16 @@ func (c *Client) Flush(ctx context.Context) error {
 		if errors.Is(err, ErrUnauthorized) {
 			// The token is gone. Replaying forever would hammer the hub for
 			// nothing, so the buffer is dropped and the operator has to act.
-			c.ring.AckThrough(highest)
-			c.lastFlushFailed = false
+			//
+			// The WHOLE buffer, not just the batch that was attempted.
+			// AckThrough(highest) dropped at most maxBatchSamples of the
+			// maxBufferSlots the ring can hold, and ScrapeOnce keeps adding on
+			// every tick — so a revoked token left the ring pinned at capacity
+			// indefinitely, which is exactly the state this branch says it is
+			// avoiding. math.MaxUint64 is above every sequence number the agent
+			// can issue.
+			c.ring.AckThrough(math.MaxUint64)
+			c.replaying = false
 			c.retryAfter = 0
 			return err
 		}
@@ -241,7 +255,7 @@ func (c *Client) Flush(ctx context.Context) error {
 			c.retryAfter = 0
 		}
 
-		c.lastFlushFailed = true
+		c.replaying = true
 		return err
 	}
 
@@ -253,7 +267,7 @@ func (c *Client) Flush(ctx context.Context) error {
 	if resp.GetAckSeq() == 0 {
 		slog.Warn("hub returned a zero ack_seq; treating flush as failed",
 			"buffer_depth", c.ring.Depth())
-		c.lastFlushFailed = true
+		c.replaying = true
 		// This failure carried no retry_after of its own, so any value left
 		// over from an earlier 503 must be cleared here too — the same rule
 		// the transport-error path above applies. Leaving it set would make
@@ -265,7 +279,12 @@ func (c *Client) Flush(ctx context.Context) error {
 
 	c.ring.AckThrough(resp.GetAckSeq())
 	c.sendMetadata = resp.GetRequestMetadata()
-	c.lastFlushFailed = false
+	// Cleared only once the ring is actually EMPTY. A partial drain means
+	// there is still buffered history behind this batch, and every batch of it
+	// is backfill.
+	if c.ring.Depth() == 0 {
+		c.replaying = false
+	}
 	c.retryAfter = 0
 
 	return nil

@@ -151,13 +151,20 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 			agent_version = $5,
 			go_version    = $6,
 			build_commit  = $7,
-			kernel        = $8,
-			os_name       = $9,
-			arch          = $10,
-			cpu_model     = $11,
-			cores         = $12,
-			threads       = $13,
-			memory_total  = $14,
+			-- NULLIF on every field the agent may legitimately leave unset.
+			-- BuildMetadata does not populate kernel, cpu_model, cores or
+			-- memory_total at all today, so without this every metadata save
+			-- wrote '' and 0 — and a host list would later render "0 cores /
+			-- 0 B RAM" as though it had been measured. An unset field reaches
+			-- the database as NULL; that invariant is stated in both
+			-- collector.go's package doc and the HostSample proto comment.
+			kernel        = NULLIF($8, ''),
+			os_name       = NULLIF($9, ''),
+			arch          = NULLIF($10, ''),
+			cpu_model     = NULLIF($11, ''),
+			cores         = NULLIF($12, 0),
+			threads       = NULLIF($13, 0),
+			memory_total  = NULLIF($14, 0::BIGINT),
 			metadata_hash = $15
 		WHERE id = $1`,
 		hostID,
