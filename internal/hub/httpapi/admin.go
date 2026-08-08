@@ -119,15 +119,25 @@ func (h *adminHandler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// pathID parses the {id} path value, answering 400 and reporting false when
-// it is not an integer.
-func pathID(w http.ResponseWriter, r *http.Request) (int32, bool) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 32)
+// parseID parses a path id. It is shared with the UI, which reports a bad one
+// as HTML rather than JSON.
+func parseID(raw string) (int32, bool) {
+	id, err := strconv.ParseInt(raw, 10, 32)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id must be an integer"})
 		return 0, false
 	}
 	return int32(id), true
+}
+
+// pathID parses the {id} path value, answering 400 and reporting false when
+// it is not an integer.
+func pathID(w http.ResponseWriter, r *http.Request) (int32, bool) {
+	id, ok := parseID(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id must be an integer"})
+		return 0, false
+	}
+	return id, true
 }
 
 // writeAdminError maps a service error to a status. Only the two sentinel

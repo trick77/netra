@@ -24,8 +24,10 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Ha
 	mux.Handle("GET /api/health", NewHealthHandler(s))
 	mux.Handle("POST /api/agent/v1/ingest", NewIngestHandler(a, s))
 
-	// The admin API answers 401 to an unauthenticated caller.
+	// The admin API answers 401 to an unauthenticated caller; the UI sends it
+	// to a login page instead. Both accept the same credential.
 	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc)))
+	mux.Handle("/", NewUIHandler(svc, cfg.AdminToken, cfg.HubURL))
 
 	return mux
 }

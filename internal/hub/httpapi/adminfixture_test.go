@@ -93,6 +93,25 @@ func postForm(t *testing.T, srv *httptest.Server, path string, form url.Values) 
 	return resp
 }
 
+// postFormUnauthenticated submits a form with no credential, for the login
+// and redirect paths.
+func postFormUnauthenticated(t *testing.T, srv *httptest.Server, path string, form url.Values) *http.Response {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := noRedirectClient(srv).Do(req)
+	if err != nil {
+		t.Fatalf("Do: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
 func readBody(t *testing.T, resp *http.Response) string {
 	t.Helper()
 	raw, err := io.ReadAll(resp.Body)

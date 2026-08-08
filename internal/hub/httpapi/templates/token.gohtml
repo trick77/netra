@@ -1,0 +1,25 @@
+{{define "content"}}
+<h1>{{.Hostname}}</h1>
+<p class="sub">{{if .Rotated}}Token rotated.{{else}}Host created.{{end}}</p>
+
+<div class="card warn">
+  <p><strong>This token is shown once.</strong> It is stored only as a SHA-256
+  hash, so it cannot be displayed again. If you lose it, rotate the host to
+  mint a new one.{{if .Rotated}} The previous token stopped working the moment
+  this one was minted.{{end}}</p>
+</div>
+
+<h2>Token</h2>
+<pre>{{.Token}}</pre>
+
+<h2>Install the agent</h2>
+<p>Run this on <code>{{.Hostname}}</code>:</p>
+<pre>{{.SetupCommand}}</pre>
+{{if not .HubURLConfigured}}
+<p class="muted">Replace the hub URL above with the address agents reach this
+hub on. Set <code>NETRA_HUB_URL</code> on the hub to have it filled in
+automatically.</p>
+{{end}}
+
+<p><a href="/">← Back to hosts</a></p>
+{{end}}

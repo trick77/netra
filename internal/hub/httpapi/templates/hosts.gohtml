@@ -1,0 +1,43 @@
+{{define "content"}}
+<h1>netra hosts</h1>
+<p class="sub">{{len .Hosts}} host{{if ne (len .Hosts) 1}}s{{end}} registered.</p>
+
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+<table>
+  <thead>
+    <tr><th>Host</th><th>Last seen</th><th></th></tr>
+  </thead>
+  <tbody>
+  {{range .Hosts}}
+    <tr>
+      <td>{{.Hostname}}</td>
+      <td>
+        {{if .LastSeen}}{{.LastSeen.UTC.Format "2006-01-02 15:04:05 UTC"}}
+        {{else}}<span class="muted">never</span>{{end}}
+      </td>
+      <td>
+        <form class="inline" method="post" action="/ui/hosts/{{.ID}}/token">
+          <button type="submit">Rotate token</button>
+        </form>
+        <form class="inline" method="post" action="/ui/hosts/{{.ID}}/delete">
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {{else}}
+    <tr><td colspan="3" class="muted">No hosts yet. Add the first one below.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+
+<h2>Add a host</h2>
+<div class="card">
+  <form method="post" action="/ui/hosts">
+    <input type="text" name="hostname" placeholder="web01" autofocus required>
+    <button type="submit" class="primary">Create and mint token</button>
+  </form>
+  <p class="muted">The token is shown once, immediately after creation. If you
+  lose it, rotate rather than look it up — it is stored only as a hash.</p>
+</div>
+{{end}}

@@ -1,0 +1,14 @@
+{{define "content"}}
+<h1>netra</h1>
+<p class="sub">Enter the admin token to continue.</p>
+
+<div class="card">
+  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  <form method="post" action="/login">
+    <input type="password" name="token" placeholder="admin token" autofocus required>
+    <button type="submit" class="primary">Log in</button>
+  </form>
+  <p class="muted">This is <code>NETRA_ADMIN_TOKEN</code> from the hub's
+  environment, not an agent token.</p>
+</div>
+{{end}}
