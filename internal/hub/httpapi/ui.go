@@ -138,12 +138,17 @@ func (h *uiHandler) create(w http.ResponseWriter, r *http.Request) {
 	hostname := r.PostFormValue("hostname")
 	host, token, err := h.svc.CreateHost(r.Context(), hostname, nil)
 	if err != nil {
-		if errors.Is(err, admin.ErrInvalid) {
+		switch {
+		case errors.Is(err, admin.ErrInvalid):
 			h.uiError(w, r, "A hostname is required.")
-			return
+		case errors.Is(err, admin.ErrConflict):
+			// The operator's mistake to fix, and they can only fix it if the
+			// page says which one it was.
+			h.uiError(w, r, "A host with that name already exists at that site.")
+		default:
+			slog.Error("ui: create host", "err", err)
+			h.uiError(w, r, "Could not create the host.")
 		}
-		slog.Error("ui: create host", "err", err)
-		h.uiError(w, r, "Could not create the host.")
 		return
 	}
 

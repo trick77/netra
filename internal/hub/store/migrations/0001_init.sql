@@ -56,6 +56,22 @@ CREATE TABLE IF NOT EXISTS hosts (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- One hostname per site. Two machines at different sites may legitimately
+-- share a name — that is what site_id is for — but two at the same site
+-- cannot, and without this the admin API happily creates rows that are
+-- indistinguishable in every view that shows a hostname.
+--
+-- NULLS NOT DISTINCT because site_id and hostname are both nullable, and
+-- Postgres's default treats every NULL as unique: without it, hosts with no
+-- site assigned could collide freely, which is the common case on a new hub
+-- and exactly what this is meant to prevent. Requires PostgreSQL 15+.
+--
+-- A unique index rather than a table constraint: ALTER TABLE ADD CONSTRAINT
+-- has no IF NOT EXISTS, and every statement in this file has to be
+-- individually re-runnable — see the header.
+CREATE UNIQUE INDEX IF NOT EXISTS hosts_site_id_hostname_key
+    ON hosts (site_id, hostname) NULLS NOT DISTINCT;
+
 CREATE TABLE IF NOT EXISTS tokens (
     id           INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     host_id      INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
