@@ -26,6 +26,30 @@ func TestRequireAdminRejectsAMissingCredential(t *testing.T) {
 	}
 }
 
+// The fail-open case. ConstantTimeCompare reports equal for two empty
+// strings, so an empty configured token would match the empty bearer of a
+// request that sent no header at all -- authorizing everyone. config.Load
+// rejects an empty NETRA_ADMIN_TOKEN, but NewRouter takes a Config by value
+// and test code builds literals directly, so that guard is one struct literal
+// away from being bypassed.
+func TestRequireAdminWithNoConfiguredTokenDeniesEverything(t *testing.T) {
+	h := httpapi.RequireAdmin("", false, okHandler())
+
+	for _, header := range []string{"", "Bearer ", "Bearer anything"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
+		if header != "" {
+			req.Header.Set("Authorization", header)
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("Authorization %q: status = %d, want 401", header, rec.Code)
+		}
+	}
+}
+
 func TestRequireAdminRejectsAWrongBearer(t *testing.T) {
 	h := httpapi.RequireAdmin("s3cret", false, okHandler())
 

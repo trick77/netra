@@ -52,7 +52,7 @@ func (s *Service) CreateProvider(ctx context.Context, name string) (Provider, er
 	var id int32
 	if err := s.pool.QueryRow(ctx,
 		`INSERT INTO providers (name) VALUES ($1) RETURNING id`, name).Scan(&id); err != nil {
-		return Provider{}, fmt.Errorf("insert provider: %w", err)
+		return Provider{}, fmt.Errorf("insert provider: %w", classify(err))
 	}
 	return Provider{ID: id, Name: name}, nil
 }
@@ -88,7 +88,7 @@ func (s *Service) PatchProvider(ctx context.Context, id int32, name string) erro
 
 	tag, err := s.pool.Exec(ctx, `UPDATE providers SET name = $2 WHERE id = $1`, id, name)
 	if err != nil {
-		return fmt.Errorf("update provider: %w", err)
+		return fmt.Errorf("update provider: %w", classify(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -107,7 +107,7 @@ func (s *Service) CreateSite(ctx context.Context, name string, providerID *int32
 	if err := s.pool.QueryRow(ctx,
 		`INSERT INTO sites (name, provider_id) VALUES ($1, $2) RETURNING id`,
 		name, providerID).Scan(&id); err != nil {
-		return Site{}, fmt.Errorf("insert site: %w", err)
+		return Site{}, fmt.Errorf("insert site: %w", classify(err))
 	}
 	return Site{ID: id, Name: name, ProviderID: providerID}, nil
 }
@@ -193,7 +193,7 @@ func (s *Service) PatchSite(ctx context.Context, id int32, patch SitePatch) erro
 	query := fmt.Sprintf(`UPDATE sites SET %s WHERE id = $1`, strings.Join(sets, ", "))
 	tag, err := s.pool.Exec(ctx, query, append([]any{id}, args...)...)
 	if err != nil {
-		return fmt.Errorf("update site: %w", err)
+		return fmt.Errorf("update site: %w", classify(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

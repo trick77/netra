@@ -43,6 +43,50 @@ func TestCreateProviderRejectsADuplicateName(t *testing.T) {
 	}
 }
 
+// A duplicate name is an operator mistake with an obvious fix, not a broken
+// hub. It has to be distinguishable from a database failure, or the handler
+// answers 500 to what is really "try a different name".
+func TestCreateProviderReportsADuplicateAsConflict(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+
+	if _, err := svc.CreateProvider(ctx, "hetzner"); err != nil {
+		t.Fatalf("CreateProvider: %v", err)
+	}
+
+	if _, err := svc.CreateProvider(ctx, "hetzner"); !errors.Is(err, admin.ErrConflict) {
+		t.Errorf("err = %v, want ErrConflict", err)
+	}
+}
+
+func TestPatchProviderOntoAnExistingNameIsConflict(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+
+	if _, err := svc.CreateProvider(ctx, "hetzner"); err != nil {
+		t.Fatalf("CreateProvider: %v", err)
+	}
+	second, err := svc.CreateProvider(ctx, "aws")
+	if err != nil {
+		t.Fatalf("CreateProvider: %v", err)
+	}
+
+	if err := svc.PatchProvider(ctx, second.ID, "hetzner"); !errors.Is(err, admin.ErrConflict) {
+		t.Errorf("err = %v, want ErrConflict", err)
+	}
+}
+
+// A reference to a row that does not exist is the caller's mistake to fix, so
+// it must read as invalid input rather than as a hub failure.
+func TestCreateSiteWithAnUnknownProviderIsInvalid(t *testing.T) {
+	svc, _ := newService(t)
+
+	unknown := int32(4242)
+	if _, err := svc.CreateSite(context.Background(), "zrh", &unknown); !errors.Is(err, admin.ErrInvalid) {
+		t.Errorf("err = %v, want ErrInvalid", err)
+	}
+}
+
 func TestCreateProviderRejectsAnEmptyName(t *testing.T) {
 	svc, _ := newService(t)
 

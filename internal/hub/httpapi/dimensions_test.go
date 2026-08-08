@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -23,6 +24,35 @@ func TestIntegrationAdminCreateAndListProviders(t *testing.T) {
 
 	if len(providers) != 1 || providers[0].Name != "hetzner" {
 		t.Fatalf("providers = %+v, want one named hetzner", providers)
+	}
+}
+
+// A duplicate name is a 409 the operator can act on, not a 500 that reads as
+// "the hub is broken".
+func TestIntegrationAdminDuplicateProviderIs409(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	if resp := doAdmin(t, srv, http.MethodPost, "/api/v1/providers", `{"name":"hetzner"}`); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("first create status = %d, want 201", resp.StatusCode)
+	}
+
+	resp := doAdmin(t, srv, http.MethodPost, "/api/v1/providers", `{"name":"hetzner"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if body := readBody(t, resp); !strings.Contains(body, "already exists") {
+		t.Errorf("body does not say what collided: %s", body)
+	}
+}
+
+// A reference to a row that does not exist is bad input, so 400 rather than
+// the 500 an unclassified constraint violation would produce.
+func TestIntegrationAdminCreateHostWithAnUnknownSiteIs400(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	resp := doAdmin(t, srv, http.MethodPost, "/api/v1/hosts", `{"hostname":"web01","site_id":4242}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
 	}
 }
 

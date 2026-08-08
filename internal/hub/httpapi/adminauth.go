@@ -17,11 +17,16 @@ import (
 // it can act on; a browser wants somewhere to go.
 func RequireAdmin(token string, redirectToLogin bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The header is checked first so an API client never pays for a
-		// cookie parse.
+		// An empty configured token must deny everything, not match the empty
+		// bearer of a request that sent no header at all -- ConstantTimeCompare
+		// reports equal for two empty strings, which would authorize every
+		// caller. config.Load rejects an empty NETRA_ADMIN_TOKEN, but NewRouter
+		// takes a Config by value and test code builds literals directly, so
+		// that guard is one struct literal away from being bypassed.
 		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		authorized := subtle.ConstantTimeCompare([]byte(bearer), []byte(token)) == 1 ||
-			validSession(token, r, time.Now())
+		authorized := token != "" &&
+			(subtle.ConstantTimeCompare([]byte(bearer), []byte(token)) == 1 ||
+				validSession(token, r, time.Now()))
 		if authorized {
 			next.ServeHTTP(w, r)
 			return

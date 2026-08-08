@@ -149,6 +149,8 @@ func writeAdminError(w http.ResponseWriter, r *http.Request, err error) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 	case errors.Is(err, admin.ErrInvalid):
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	case errors.Is(err, admin.ErrConflict):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 	default:
 		slog.Error("admin request failed", "path", r.URL.Path, "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})

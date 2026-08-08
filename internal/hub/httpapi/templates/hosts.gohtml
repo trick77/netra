@@ -6,11 +6,12 @@
 
 <table>
   <thead>
-    <tr><th>Host</th><th>Last seen</th><th></th></tr>
+    <tr><th>ID</th><th>Host</th><th>Last seen</th><th></th></tr>
   </thead>
   <tbody>
   {{range .Hosts}}
     <tr>
+      <td class="muted">{{.ID}}</td>
       <td>{{.Hostname}}</td>
       <td>
         {{if .LastSeen}}{{.LastSeen.UTC.Format "2006-01-02 15:04:05 UTC"}}
@@ -26,7 +27,7 @@
       </td>
     </tr>
   {{else}}
-    <tr><td colspan="3" class="muted">No hosts yet. Add the first one below.</td></tr>
+    <tr><td colspan="4" class="muted">No hosts yet. Add the first one below.</td></tr>
   {{end}}
   </tbody>
 </table>
@@ -39,5 +40,8 @@
   </form>
   <p class="muted">The token is shown once, immediately after creation. If you
   lose it, rotate rather than look it up — it is stored only as a hash.</p>
+  <p class="muted">Hostnames are not required to be unique. Two hosts may share
+  one, which is why the id is shown above — it is what rotate and delete act
+  on.</p>
 </div>
 {{end}}

@@ -15,11 +15,21 @@
 <h2>Install the agent</h2>
 <p>Run this on <code>{{.Hostname}}</code>:</p>
 <pre>{{.SetupCommand}}</pre>
-{{if not .HubURLConfigured}}
-<p class="muted">Replace the hub URL above with the address agents reach this
-hub on. Set <code>NETRA_HUB_URL</code> on the hub to have it filled in
-automatically.</p>
+
+<div class="card warn">
+{{if .HubURLConfigured}}
+  <p><strong>Check <code>{{.HubURL}}</code> is the address agents reach this
+  hub on</strong> before running the command. It comes from
+  <code>NETRA_HUB_URL</code>, and the line above pipes that host to
+  <code>sh</code> and sends it this token — so a stale value hands both to
+  whoever owns that name.</p>
+{{else}}
+  <p><strong><code>NETRA_HUB_URL</code> is not set, so the URL above is a
+  placeholder.</strong> Replace both occurrences with the address agents reach
+  this hub on. As written the command would pipe a stranger's script to
+  <code>sh</code> and send them this token.</p>
 {{end}}
+</div>
 
 <p><a href="/">← Back to hosts</a></p>
 {{end}}

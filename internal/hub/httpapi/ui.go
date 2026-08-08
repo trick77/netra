@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"embed"
 	"errors"
@@ -116,8 +117,11 @@ func (h *uiHandler) list(w http.ResponseWriter, r *http.Request) {
 	hosts, err := h.svc.ListHosts(r.Context())
 	if err != nil {
 		slog.Error("ui: list hosts", "err", err)
+		// A typed empty slice, not an untyped nil: the template calls
+		// {{len .Hosts}}, and len of an untyped nil is a template error --
+		// which would turn the page explaining the failure into a blank 500.
 		h.render(w, h.hosts, http.StatusInternalServerError, map[string]any{
-			"Title": "Hosts", "Hosts": nil, "Error": "Could not read the host list.",
+			"Title": "Hosts", "Hosts": []admin.Host{}, "Error": "Could not read the host list.",
 		})
 		return
 	}
@@ -215,6 +219,12 @@ func (h *uiHandler) renderToken(w http.ResponseWriter, hostname, token string, r
 		"SetupCommand": fmt.Sprintf(
 			"curl -fsSL %s/setup-agent.sh | sh -s -- \\\n  --hub-url %s --token %s",
 			hubURL, hubURL, token),
+		"HubURL": hubURL,
+		// The page asks the operator to confirm this URL either way. Set or
+		// unset, the command pipes that host to sh and hands it a live token,
+		// so a stale NETRA_HUB_URL is as dangerous as a missing one -- and
+		// compose defaults it, which means "configured" is not evidence that
+		// anyone checked it.
 		"HubURLConfigured": h.hubURL != "",
 	})
 }
@@ -231,13 +241,27 @@ func (h *uiHandler) uiError(w http.ResponseWriter, r *http.Request, message stri
 
 // render writes a page that must never be cached: one of them carries a
 // token, and the rest reflect state that changes under the operator.
+//
+// The template is executed into a buffer before anything is written. Executing
+// straight to the ResponseWriter commits the status line on the first byte, so
+// a template that fails halfway leaves a truncated page that cannot be
+// corrected -- and on the token page that means losing the one value the
+// operator came for, with no way to get it back.
 func (h *uiHandler) render(w http.ResponseWriter, t *template.Template, status int, data map[string]any) {
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "layout", data); err != nil {
+		slog.Error("ui: render", "err", err)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		http.Error(w, "the page could not be rendered", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	if err := t.ExecuteTemplate(w, "layout", data); err != nil {
-		// The status line is already written, so this can only be logged.
-		slog.Error("ui: render", "err", err)
+	if _, err := buf.WriteTo(w); err != nil {
+		slog.Error("ui: write response", "err", err)
 	}
 }
 

@@ -119,6 +119,53 @@ func TestIntegrationUICreateUsesTheConfiguredHubURL(t *testing.T) {
 	}
 }
 
+// The command pipes the hub URL to sh and hands it a live token, so the page
+// must ask the operator to confirm that URL — set or unset. compose defaults
+// NETRA_HUB_URL from NETRA_HOSTNAME, which means "configured" is not evidence
+// that anyone checked it.
+func TestIntegrationUITokenPageAlwaysAsksToConfirmTheHubURL(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	body := readBody(t, postForm(t, srv, "/ui/hosts", url.Values{"hostname": {"web01"}}))
+
+	if !strings.Contains(body, "Check") || !strings.Contains(body, "netra.example.com") {
+		t.Errorf("the token page does not ask the operator to confirm the hub URL: %s", body)
+	}
+}
+
+// The host list must stay usable when the database is unreachable: the page
+// exists to say so. An untyped nil in the template data makes {{len .Hosts}}
+// fail, which truncates the response after the heading and shows nothing.
+func TestIntegrationUIListRendersItsOwnFailure(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	s.Close()
+
+	resp := doAdmin(t, srv, http.MethodGet, "/", "")
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+	if body := readBody(t, resp); !strings.Contains(body, "Could not read the host list") {
+		t.Errorf("the error page does not explain the failure: %s", body)
+	}
+}
+
+// Hostnames are not unique, so the id is what distinguishes two rows -- and
+// it is what rotate and delete act on.
+func TestIntegrationUIListShowsTheIDForDuplicateHostnames(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	first, _ := createHost(t, srv, "web01")
+	second, _ := createHost(t, srv, "web01")
+
+	body := readBody(t, doAdmin(t, srv, http.MethodGet, "/", ""))
+
+	if !strings.Contains(body, fmt.Sprintf("<td class=\"muted\">%d</td>", first)) {
+		t.Errorf("the list does not show id %d", first)
+	}
+	if !strings.Contains(body, fmt.Sprintf("<td class=\"muted\">%d</td>", second)) {
+		t.Errorf("the list does not show id %d", second)
+	}
+}
+
 func TestIntegrationUICreateRejectsAnEmptyHostname(t *testing.T) {
 	srv, _ := newAdminFixture(t)
 

@@ -72,12 +72,14 @@ func TestCreateHostRejectsAnEmptyHostname(t *testing.T) {
 	}
 }
 
+// A site id that does not exist is the caller's mistake, so it must read as
+// invalid input rather than as a hub failure the operator cannot act on.
 func TestCreateHostRejectsAnUnknownSite(t *testing.T) {
 	svc, _ := newService(t)
 
 	siteID := int32(4242)
-	if _, _, err := svc.CreateHost(context.Background(), "web01", &siteID); err == nil {
-		t.Error("CreateHost succeeded with a site id that does not exist")
+	if _, _, err := svc.CreateHost(context.Background(), "web01", &siteID); !errors.Is(err, admin.ErrInvalid) {
+		t.Errorf("err = %v, want ErrInvalid", err)
 	}
 }
 
