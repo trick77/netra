@@ -60,7 +60,7 @@ export NETRA_SOURCED
 # host missing awk would fail while printing the message explaining what it was
 # missing.
 LONG="the quick brown fox jumps over the lazy dog and keeps going well past any reasonable terminal width to prove the fold happens"
-WRAPPED=$(_wrap 40 '  ' "$LONG")
+WRAPPED=$(_wrap 40 '' '  ' "$LONG")
 TESTS_RUN=$((TESTS_RUN + 1))
 if [ "$(printf '%s\n' "$WRAPPED" | wc -l | tr -d ' ')" -gt 1 ]; then
     ok "_wrap folds a long line"
@@ -80,8 +80,27 @@ assert_contains "$(printf '%s\n' "$WRAPPED" | sed -n 2p)" "  " \
 
 # A message containing a glob must not be replaced by filenames. The unquoted
 # expansion _wrap relies on would do exactly that without `set -f`.
-assert_eq "hello * world ?" "$(_wrap 200 '' 'hello * world ?')" \
+assert_eq "hello * world ?" "$(_wrap 200 '' '' 'hello * world ?')" \
     "a glob character in a message is not expanded against the working directory"
+
+# The prefix belongs to the FIRST line and the indent to the rest. Passing the
+# bullet inside the text destroyed it: the word split strips leading whitespace,
+# so "    - note" came out at column 0 under continuation lines indented six.
+BULLET=$(_wrap 30 '    - ' '      ' "a note long enough that it has to fold at least once here")
+assert_eq "    - a note long enough that" "$(printf '%s\n' "$BULLET" | sed -n 1p)" \
+    "the prefix survives on the first line"
+assert_contains "$(printf '%s\n' "$BULLET" | sed -n 2p)" "      " \
+    "and continuation lines carry the indent instead"
+
+# The indent counts toward the width, or every continuation line overruns by
+# exactly the indent.
+WIDE=$(_wrap 20 '' '          ' "alpha bravo charlie delta echo foxtrot golf hotel")
+TESTS_RUN=$((TESTS_RUN + 1))
+if [ "$(printf '%s\n' "$WIDE" | awk '{ if (length($0) > 20) c++ } END { print c + 0 }')" = 0 ]; then
+    ok "a wide indent is counted toward the width, not added on top of it"
+else
+    fail "a wide indent overran the requested width"
+fi
 
 # --- 2. detect_virt -----------------------------------------------------------
 mkplatform() {
@@ -108,14 +127,31 @@ export NETRA_SETUP_ROOT
 init_paths
 assert_eq "" "$(detect_virt)" "a physical host is not reported as virtual"
 
-# arm64 guests set no such flag, so DMI carries it alone.
+# No CPU flag: DMI carries it alone, and only for a hypervisor PRODUCT.
 R=$(mkplatform virt-dmi)
 printf 'processor\t: 0\n' >"$R/proc/cpuinfo"
-printf 'Amazon EC2\n' >"$R/sys/class/dmi/id/sys_vendor"
+printf 'QEMU\n' >"$R/sys/class/dmi/id/sys_vendor"
 NETRA_SETUP_ROOT="$R"
 export NETRA_SETUP_ROOT
 init_paths
-assert_eq "Amazon EC2" "$(detect_virt)" "a known cloud vendor is detected without the CPU flag"
+assert_eq "QEMU" "$(detect_virt)" "a hypervisor product in DMI is detected without the CPU flag"
+
+# A cloud's BRAND NAME is not a hypervisor. This branch is reached exactly when
+# the CPU flag is absent - on genuine bare metal - so a match here is always
+# wrong, and every one of these companies also ships physical machines:
+# sys_vendor on a Chromebox is "Google", on a Surface "Microsoft Corporation".
+# The cost is not symmetric either: a missed guest is offered SMART that reads
+# nothing, while a misjudged physical host loses SMART, drive temperatures and
+# the sensor hint on hardware that has them.
+for v in Google "Microsoft Corporation" "Amazon EC2" Hetzner Scaleway DigitalOcean; do
+    R=$(mkplatform "virt-brand")
+    printf 'processor\t: 0\n' >"$R/proc/cpuinfo"
+    printf '%s\n' "$v" >"$R/sys/class/dmi/id/sys_vendor"
+    NETRA_SETUP_ROOT="$R"
+    export NETRA_SETUP_ROOT
+    init_paths
+    assert_eq "" "$(detect_virt)" "'$v' alone is a brand name, not a hypervisor"
+done
 
 # Xen PV sets neither.
 R=$(mkplatform virt-xen)
@@ -148,8 +184,17 @@ GRANT_SYS_ADMIN=0
 run_capture plan_smart
 assert_eq 0 "$RUN_RC" "a virtual host is not an error"
 assert_contains "$RUN_OUT" "skipped on a virtual host" "the run says SMART was skipped and why"
+SKIPPED_NOTES=""
 plan_smart >/dev/null 2>&1
 assert_eq 0 "$CAP_RAWIO" "no SYS_RAWIO is granted for a disk that has no SMART data"
+# SKIPPED_NOTES is "everything the agent will NOT collect", and this withholds
+# every SMART metric and every SATA drive temperature. An operator whose host
+# was misjudged has to find that in the finish report without re-reading the
+# scroll - which means warn, not info.
+assert_contains "$(flatten "$SKIPPED_NOTES")" "SMART is skipped" \
+    "the skip reaches the finish report"
+assert_contains "$(flatten "$SKIPPED_NOTES")" "--assume-physical" \
+    "and names the flag that overrides the detection"
 assert_eq "" "$SMART_DEVICES" "no device is mapped either"
 assert_eq "" "$SMART_ATA_DEVICES" "and drivetemp is therefore never offered"
 
@@ -174,7 +219,13 @@ assert_eq "sda" "$SMART_ATA_DEVICES" "and does offer its SATA device"
 VIRT="QEMU"
 SKIPPED_NOTES=""
 run_capture _sensor_module_hint
-assert_contains "$RUN_OUT" "normal on a virtual host" "a guest is told why there are no sensors"
+assert_contains "$(flatten "$RUN_OUT")" "normal on a virtual host" \
+    "a guest is told why there is no CPU sensor"
+# It must not claim there is no thermal hardware at all: the third call site is
+# reached with a populated chip list that simply holds nothing the agent
+# recognises as a CPU, and telling that operator "no sensors" contradicts the
+# list they are looking at.
+assert_contains "$RUN_OUT" "no CPU temperature sensor" "and told precisely what is missing"
 assert_not_contains "$RUN_OUT" "modprobe" "and is not told to load a driver that cannot help"
 assert_eq "" "$SKIPPED_NOTES" "missing sensors on a VM are not a degradation"
 
@@ -224,6 +275,20 @@ run_capture env PATH="$ONEBIN" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TT
 assert_eq 1 "$RUN_RC" "a host missing a required command exits non-zero"
 assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs: tr" \
     "the failure names the command that is missing"
+
+# `id` is the one that proved the check was running too late: init_paths
+# resolved $P_UID with `id -u` BEFORE check_tools, so a host without it died
+# with "line 745: id: command not found" and never reached the check whose
+# whole job is to name it.
+NOID=$(linkbin noid awk sed grep tr head cat sort wc mktemp mkdir rm cp)
+run_capture env PATH="$NOID" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-noid"
+assert_eq 1 "$RUN_RC" "a host without id exits non-zero"
+assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs: id" \
+    "and is told which command, rather than being shown a line number"
+assert_not_contains "$RUN_OUT" "id: command not found" \
+    "the check runs before anything reaches for id"
 
 # ...and with tr restored the same run gets past the check, so the assertion
 # above is about tr and not about the restricted PATH in general.

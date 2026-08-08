@@ -213,13 +213,19 @@ init_colors() {
 
 # die MSG... — one-line error on stderr, exit 1.
 die() {
-    _wrap 76 '  ' "setup-agent: $*" |
-        sed "1s/^setup-agent:/${C_RED:-}${C_BOLD:-}setup-agent: error:${C_RESET:-}/" >&2
+    _wrap 76 'setup-agent: error: ' '  ' "$*" |
+        sed "1s/^setup-agent: error:/${C_RED:-}${C_BOLD:-}setup-agent: error:${C_RESET:-}/" >&2
     exit 1
 }
 
-# _wrap WIDTH INDENT TEXT — fold TEXT at WIDTH columns, every line after the
-# first prefixed with INDENT.
+# _wrap WIDTH PREFIX INDENT TEXT — fold PREFIX+TEXT at WIDTH columns, every line
+# after the first starting with INDENT.
+#
+# PREFIX is separate from TEXT because the word split below destroys leading
+# whitespace: passing "    - note" as the text produced a bullet at column 0
+# under continuation lines indented six, which is worse than not wrapping at all.
+# The indent counts toward WIDTH for the same reason a prefix does — a fold that
+# ignores it overruns by exactly the indent on every continuation line.
 #
 # Pure shell: no awk, no `fold` (which breaks mid-word), no external process at
 # all. Wrapping is the one thing every message in this script passes through, so
@@ -232,17 +238,20 @@ die() {
 # the rest of this script relies on globbing (the hwmon and block-device scans).
 _wrap() {
     _wr_w="$1"
-    _wr_ind="$2"
+    _wr_pfx="$2"
+    _wr_ind="$3"
     _wr_line=""
 
     set -f
-    # shellcheck disable=SC2086 # deliberate: split $3 into words on IFS.
-    set -- $3
+    # shellcheck disable=SC2086 # deliberate: split the text into words on IFS.
+    # ${4:-} rather than $4: `set -u` makes a missing argument fatal, and a
+    # caller wrapping an empty message is asking for the prefix alone.
+    set -- ${4:-}
     set +f
 
     for _wr_word in "$@"; do
         if [ -z "$_wr_line" ]; then
-            _wr_line="$_wr_word"
+            _wr_line="$_wr_pfx$_wr_word"
         elif [ $((${#_wr_line} + 1 + ${#_wr_word})) -gt "$_wr_w" ]; then
             printf '%s\n' "$_wr_line"
             _wr_line="$_wr_ind$_wr_word"
@@ -250,7 +259,12 @@ _wrap() {
             _wr_line="$_wr_line $_wr_word"
         fi
     done
-    [ -z "$_wr_line" ] || printf '%s\n' "$_wr_line"
+    if [ -z "$_wr_line" ]; then
+        # No words at all: the prefix alone is still the caller's line.
+        [ -z "$_wr_pfx" ] || printf '%s\n' "$_wr_pfx"
+    else
+        printf '%s\n' "$_wr_line"
+    fi
 }
 
 # warn MSG... — a degradation the operator must know about. Also accumulates
@@ -265,7 +279,7 @@ warn() {
     _warn_msg="$*"
     # Wrapped as PLAIN text and coloured afterwards: an escape sequence inside
     # the text would be counted as characters and throw the fold off.
-    _wrap 76 '  ' "setup-agent: warning: $_warn_msg" |
+    _wrap 76 'setup-agent: warning: ' '  ' "$_warn_msg" |
         sed "1s/^setup-agent: warning:/${C_YELLOW:-}${C_BOLD:-}setup-agent: warning:${C_RESET:-}/" >&2
     if [ -n "$SKIPPED_NOTES" ]; then
         SKIPPED_NOTES="$SKIPPED_NOTES
@@ -939,6 +953,27 @@ check_machine_id() {
 #
 # `command -v docker` rather than a path probe: which docker is on PATH is the
 # thing that matters, and it is also what the tests shim.
+check_docker() {
+    if ! command -v docker >/dev/null 2>&1; then
+        die "docker is not on PATH. The netra agent is Docker-only (spec §13);" \
+            "install Docker Engine and try again."
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        die "the Docker daemon is not reachable (docker info failed)." \
+            "Start it, or re-run as a user in the docker group."
+    fi
+    if docker compose version >/dev/null 2>&1; then
+        printf 'compose_v2\n'
+        return 0
+    fi
+    if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
+        printf 'compose_v1\n'
+        return 0
+    fi
+    die "neither 'docker compose' nor 'docker-compose' works." \
+        "Install the Compose plugin (docker-compose-plugin) and try again."
+}
+
 # detect_virt — prints the hypervisor's name, or nothing on bare metal.
 #
 # It exists because three separate pieces of this script were giving a VPS
@@ -947,9 +982,14 @@ check_machine_id() {
 # there, and telling the operator to modprobe coretemp on a machine with no
 # thermal hardware at all. All three are the same question asked once.
 #
-# Three signals, cheapest first. The `hypervisor` CPU flag is the reliable one
-# on x86 and is always readable; DMI catches arm64 guests and names the cloud;
-# /sys/hypervisor/type catches Xen PV, which sets neither.
+# Three signals, cheapest first. The `hypervisor` CPU flag is the reliable one on
+# x86 and is always readable; DMI names the hypervisor PRODUCT where the flag is
+# absent (see the warning on that branch); /sys/hypervisor/type catches Xen PV,
+# which sets neither.
+#
+# Deliberately conservative: a guest this misses merely gets offered SMART that
+# reads nothing, while a physical host it misjudges loses SMART, drive
+# temperatures and the sensor hint on hardware that has them.
 detect_virt() {
     if [ -r "$P_CPUINFO" ] && grep -q '^flags.*[[:space:]]hypervisor' "$P_CPUINFO" 2>/dev/null; then
         _dv_vendor=$(cat "$P_DMIVENDOR" 2>/dev/null || printf '')
@@ -959,10 +999,18 @@ detect_virt() {
 
     if [ -r "$P_DMIVENDOR" ]; then
         _dv_vendor=$(cat "$P_DMIVENDOR" 2>/dev/null || printf '')
+        # HYPERVISOR PRODUCTS ONLY — never a cloud's brand name.
+        #
+        # This branch is reached exactly when the CPU flag is ABSENT, which is
+        # to say on genuine bare metal, so a false match here is always wrong.
+        # An earlier version listed "Google", "Microsoft Corporation",
+        # "Hetzner" and friends; every one of those companies also ships
+        # physical machines, and sys_vendor on a Chromebox is "Google". The
+        # cost of that mistake is not symmetric: a missed guest merely offers
+        # SMART that reads nothing, while a misjudged physical host loses SMART,
+        # drive temperatures and the sensor hint on hardware that has them.
         case "$_dv_vendor" in
-        QEMU* | *VMware* | Xen* | *VirtualBox* | innotek* | Bochs* | Parallels* | \
-            "Microsoft Corporation" | "Amazon EC2" | "Google" | "Alibaba Cloud" | \
-            "DigitalOcean" | "Hetzner" | "Scaleway" | "OpenStack"*)
+        QEMU* | *VMware* | Xen* | *VirtualBox* | innotek* | Bochs* | Parallels*)
             printf '%s' "$_dv_vendor"
             return 0
             ;;
@@ -1014,6 +1062,11 @@ check_tools() {
     # the reason a later phase is quieter is not a mystery.
     command -v stty >/dev/null 2>&1 ||
         info "  note:            no stty, so the token prompt cannot hide what you type"
+}
+
+# check_http_client — separate from check_tools because it depends on a FLAG,
+# and check_tools runs before parse_args has been consulted for anything.
+check_http_client() {
     if [ -z "$TEMPLATE_DIR" ] && [ -z "$(_http_client)" ]; then
         die "neither curl nor wget is available, and templates are fetched over HTTPS." \
             "Install either one, or pass --template-dir with a local copy of deploy/agent."
@@ -1044,27 +1097,6 @@ _http_get() {
     wget) wget -qO- "$1" 2>/dev/null ;;
     *) return 1 ;;
     esac
-}
-
-check_docker() {
-    if ! command -v docker >/dev/null 2>&1; then
-        die "docker is not on PATH. The netra agent is Docker-only (spec §13);" \
-            "install Docker Engine and try again."
-    fi
-    if ! docker info >/dev/null 2>&1; then
-        die "the Docker daemon is not reachable (docker info failed)." \
-            "Start it, or re-run as a user in the docker group."
-    fi
-    if docker compose version >/dev/null 2>&1; then
-        printf 'compose_v2\n'
-        return 0
-    fi
-    if command -v docker-compose >/dev/null 2>&1 && docker-compose version >/dev/null 2>&1; then
-        printf 'compose_v1\n'
-        return 0
-    fi
-    die "neither 'docker compose' nor 'docker-compose' works." \
-        "Install the Compose plugin (docker-compose-plugin) and try again."
 }
 
 # detect_pkgmgr ID ID_LIKE — prints dpkg, apk, rpm or none.
@@ -1533,7 +1565,14 @@ plan_smart() {
     # is worse than collecting nothing.
     if [ -n "${VIRT:-}" ]; then
         info "  smart:           skipped on a virtual host ($VIRT)"
-        info "                   its disks are the hypervisor's, not this machine's"
+        # warn, not info: SKIPPED_NOTES is "everything the agent will NOT
+        # collect", and this withholds every SMART metric and every SATA drive
+        # temperature. An operator whose host was misjudged has to be able to
+        # find out from the finish report, without re-reading the scroll.
+        warn "SMART is skipped on this host because it looks virtual ($VIRT), and a" \
+            "hypervisor's disks carry no SMART data: no health, no wear, no drive" \
+            "temperatures. Re-run with --assume-physical if this machine really does" \
+            "have disks of its own."
         if [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
             warn "--sys-admin was given on a virtual host ($VIRT), where there is no SMART" \
                 "data to read, so it was not granted. --assume-physical overrides the" \
@@ -1681,8 +1720,14 @@ EOF
 # A note either way, never a prompt: nothing else in the agent depends on it.
 _sensor_module_hint() {
     if [ -n "${VIRT:-}" ]; then
-        info "  sensors:         none, which is normal on a virtual host ($VIRT) — a guest"
-        info "                   has no thermal hardware to read"
+        # A continuation line, not a second "sensors:" label: all three call
+        # sites have already printed one. And it says NO CPU SENSOR rather than
+        # "no sensors", because the third site is reached with a populated chip
+        # list that simply holds nothing the agent recognises as a CPU — telling
+        # that operator there is no thermal hardware contradicts the list they
+        # are looking at.
+        info "                   no CPU temperature sensor, which is normal on a virtual"
+        info "                   host ($VIRT): a guest is not given the CPU's thermal data"
         return 0
     fi
     warn_cmd "modprobe coretemp && echo coretemp > /etc/modules-load.d/coretemp.conf" \
@@ -2592,7 +2637,7 @@ print_finish() {
                 info "        $(printf '%s' "$_fr_note" | tr -d '\t')"
                 ;;
             *)
-                _wrap 74 '      ' "    - $_fr_note"
+                _wrap 76 '    - ' '      ' "$_fr_note"
                 ;;
             esac
         done <<EOF
@@ -2662,7 +2707,18 @@ require_tty() {
 }
 
 netra_main() {
+    # FIRST, before anything runs an external command. init_paths resolves
+    # $P_UID with `id -u`, and a host missing `id` used to die with
+    # "line 745: id: command not found" — never reaching the check whose entire
+    # job is to name it. parse_args is after it for the same reason: --help
+    # needs `cat`.
+    #
+    # check_tools itself uses only `command -v`, a shell builtin, so it can run
+    # this early. Its own message goes through _wrap and printf, both builtins.
+    check_tools
+
     parse_args "$@"
+    check_http_client
     init_paths
     init_colors
 
@@ -2670,11 +2726,6 @@ netra_main() {
         debug_paths
         return 0
     fi
-
-    # BEFORE the banner: describe_setup needs `cat`, and every phase after it
-    # needs more. A tool check that runs later reports a missing command by
-    # failing to run the message that would have named it.
-    check_tools
 
     require_tty
 
