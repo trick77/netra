@@ -64,6 +64,10 @@ services:
         source: "/var/lib/dpkg"
         target: /var/lib/dpkg
         read_only: true
+      - type: bind
+        source: "/var/run/utmp"
+        target: /var/run/utmp
+        read_only: true
     devices:
       - /dev/sda
       - /dev/nvme0

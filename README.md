@@ -8,17 +8,35 @@ binaries shipped as container images.
 
 Phase 1 is in progress. What works today, precisely:
 
-- **Three collectors** — CPU, memory, load. That is all of `internal/agent/collector/`.
-  The remaining collectors in the design spec (containers, filesystems, network, SMART,
-  sensors, systemd, packages, processes, mdraid, per-core CPU) are not implemented.
+- **Seven collectors** — CPU, memory, load, kernelstat, netstat, procs, users. That is all
+  of `internal/agent/collector/`. Between them they cover host CPU/memory/load and uptime,
+  context switches, interrupts, fork rate, runnable and blocked task counts, boot time,
+  TCP/UDP/IP counters and fragmentation for both IPv4 and IPv6, the total process count
+  (needs `pid: host`) and the logged-in session count (needs `/var/run/utmp`).
+  The remaining collectors in the design spec (containers, filesystems, per-interface
+  network, disk I/O, SMART, sensors, systemd, packages, per-process, mdraid, per-core CPU)
+  are not implemented.
+- **Agent self-telemetry** — scrape duration, agent→hub post latency and buffer depth land
+  in `agent_samples`. There is no hub→agent probe and there will not be one: the hub is
+  stateless and never dials an agent (spec §7.1).
 - **Agent → hub ingest** — the agent scrapes every 60s, buffers in memory when the hub is
   unreachable, and POSTs protobuf to `/api/agent/v1/ingest` with a bearer token.
 - **Hub storage** — host-level schema only, applied by migration on startup: `providers`,
-  `sites`, `hosts`, `tokens`, `host_current`, `host_samples`. One hypertable
-  (`host_samples`) with 5m and 1h continuous aggregates and retention at 7/30/90 days.
+  `sites`, `hosts`, `tokens`, `host_current`, `host_samples`, `agent_samples`. Two
+  hypertables (`host_samples`, `agent_samples`), each with 5m and 1h continuous aggregates
+  and retention at 7/30/90 days.
   The per-collector tables in the spec (`net_samples`, `filesystem_samples`,
   `collector_samples`, `host_addresses`, `systemd_unit_events`, `package_events`) land
   with the collectors that fill them.
+
+**The schema is not stable yet, and there is no upgrade path.** While netra is
+pre-release the whole schema lives in `0001_init.sql` and is edited in place rather than
+extended by numbered migrations. `Migrate` tracks migrations **by filename, with no
+checksum** (`internal/hub/store/migrate.go`), so an edited `0001` is silently skipped on a
+database that already applied it: the hub starts cleanly against a schema missing the new
+columns, and the first insert fails on an unknown column. After pulling a change that
+touches the schema, **drop and recreate the database** — do not try to migrate it. This
+stops at the first release.
 
 What does not exist yet:
 

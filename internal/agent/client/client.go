@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"math"
 	"math/rand/v2"
 	"net/http"
@@ -92,6 +93,14 @@ type Client struct {
 	// replayed history the hub needs to invalidate aggregates for.
 	replaying  bool
 	retryAfter time.Duration
+
+	// lastPostLatency is the round-trip time of the most recent SUCCESSFUL
+	// post, or nil when the last attempt failed or none has happened yet.
+	//
+	// It is reported one scrape behind by construction: a post's RTT is only
+	// known once the post returns, which is after the sample that would carry
+	// it has already been built and buffered.
+	lastPostLatency *time.Duration
 }
 
 // New builds a Client scraping at the fixed config.ScrapeInterval. Buffer
@@ -171,8 +180,9 @@ func (c *Client) ScrapeOnce(ctx context.Context) *netrav1.HostSample {
 }
 
 // Prime runs every collector once without buffering or sending the result.
-// Some collectors (CPU) need a baseline scrape before they can report a
-// delta; calling Collect once here gives them that baseline without leaving
+// The delta-based collectors (CPU, kernelstat, netstat) need a baseline
+// scrape before they can report a rate; calling Collect once here gives them
+// that baseline without leaving
 // behind a stored row whose values are NULL for a reason ("not computable
 // yet") that is indistinguishable from an absent subsystem.
 func (c *Client) Prime(ctx context.Context) {
@@ -184,14 +194,68 @@ func (c *Client) Prime(ctx context.Context) {
 func (c *Client) collect(ctx context.Context) *netrav1.HostSample {
 	sample := &netrav1.HostSample{TsMs: time.Now().UnixMilli()}
 
+	start := time.Now()
 	for _, col := range c.collectors {
 		if err := col.Collect(ctx, sample); err != nil {
 			slog.Warn("collector failed", "collector", col.Name(), "err", err)
 		}
 	}
+	elapsed := time.Since(start)
+
+	c.refreshCapabilities()
+
+	depth := uint32(c.ring.Depth())
+	dropped := c.ring.Dropped()
+	agent := &netrav1.AgentSample{
+		ScrapeDurationMs:   ptr(uint32(elapsed.Milliseconds())),
+		BufferDepth:        &depth,
+		BufferDroppedTotal: &dropped,
+	}
+	// Only carried when the last post actually succeeded. Reusing a stale
+	// value would report a healthy RTT throughout an outage, and zeroing it
+	// would report an impossibly fast one; both are worse than saying nothing.
+	if c.lastPostLatency != nil {
+		agent.PostLatencyMs = ptr(uint32(c.lastPostLatency.Milliseconds()))
+	}
+	sample.Agent = agent
 
 	return sample
 }
+
+// refreshCapabilities re-reads what each collector reports about its own
+// availability and, if anything changed, flips the metadata hash so the hub
+// asks for a resend.
+//
+// Capabilities travel with metadata rather than with the sample because they
+// change on the order of deployments, not of scrapes: repeating them 1440
+// times a day would be the same constant string every time.
+func (c *Client) refreshCapabilities() {
+	merged := make(map[string]string)
+	for _, col := range c.collectors {
+		reporter, ok := col.(collector.CapabilityReporter)
+		if !ok {
+			continue
+		}
+		for k, v := range reporter.Capabilities() {
+			merged[k] = v
+		}
+	}
+	if len(merged) == 0 {
+		return
+	}
+
+	if maps.Equal(merged, c.metadata.GetCapabilities()) {
+		return
+	}
+
+	c.metadata.Capabilities = merged
+	c.metadataHash = HashMetadata(c.metadata)
+	c.sendMetadata = true
+}
+
+// ptr returns a pointer to v, for the optional protobuf scalars that must
+// distinguish "not measured" from zero.
+func ptr[T any](v T) *T { return &v }
 
 // Flush posts every buffered sample, oldest first, and drops the ones the hub
 // acknowledges.
@@ -304,10 +368,20 @@ func (c *Client) post(ctx context.Context, req *netrav1.IngestRequest) (*netrav1
 	httpReq.Header.Set("Content-Type", "application/x-protobuf")
 	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.Token)
 
+	// Measured around Do alone, so the number means "how long did the hub and
+	// the network take" rather than including this agent's own marshalling.
+	// Cleared up front and set only on the success path below, so a 401, a
+	// 503 or an unreadable body all leave it nil. A stale value would report
+	// a healthy RTT right through an outage, and a zero would report an
+	// impossible one; NULL correctly reads as "could not tell".
+	c.lastPostLatency = nil
+
+	sentAt := time.Now()
 	httpResp, err := c.http.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("post to hub: %w", err)
 	}
+	rtt := time.Since(sentAt)
 	defer func() { _ = httpResp.Body.Close() }()
 
 	if httpResp.StatusCode == http.StatusUnauthorized {
@@ -332,6 +406,8 @@ func (c *Client) post(ctx context.Context, req *netrav1.IngestRequest) (*netrav1
 	if err := proto.Unmarshal(raw, &resp); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
+
+	c.lastPostLatency = &rtt
 
 	return &resp, nil
 }

@@ -51,13 +51,18 @@ func run() error {
 		collector.NewCPU(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewKernelStat(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewProcs(cfg.ProcRoot, cfg.PidHost, config.ScrapeInterval),
+		collector.NewNetstat(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewUsers(cfg.UtmpPath, config.ScrapeInterval),
 	}
 
 	c := client.New(cfg, collectors)
 
-	// Prime the CPU collector: it needs a baseline before it can report a
-	// delta, and doing it here means the first scheduled scrape has one.
-	// Prime does not buffer or send anything, unlike ScrapeOnce.
+	// Prime the delta-based collectors (CPU, kernelstat, netstat): each needs
+	// a baseline before it can report a rate, and doing it here means the
+	// first scheduled scrape has one. Prime does not buffer or send anything,
+	// unlike ScrapeOnce.
 	c.Prime(ctx)
 
 	return c.Run(ctx)

@@ -720,6 +720,10 @@ init_paths() {
     P_APK="${NETRA_APK_PATH:-$(_p /lib/apk/db/installed)}"
     P_DBUS="${NETRA_DBUS_PATH:-$(_p /run/dbus/system_bus_socket)}"
     P_DOCKERSOCK="${NETRA_DOCKERSOCK_PATH:-$(_p /var/run/docker.sock)}"
+    # utmp holds the logged-in session list. Absent on Alpine and other
+    # busybox systems, which ship no utmp writer at all, so its presence is
+    # detected rather than assumed.
+    P_UTMP="${NETRA_UTMP_PATH:-$(_p /var/run/utmp)}"
     P_CPUINFO="${NETRA_CPUINFO_PATH:-$(_p /proc/cpuinfo)}"
     P_DMIVENDOR="${NETRA_DMIVENDOR_PATH:-$(_p /sys/class/dmi/id/sys_vendor)}"
     P_MACHINEID="${NETRA_MACHINEID_PATH:-$(_p /etc/machine-id)}"
@@ -758,6 +762,7 @@ debug_paths() {
     printf 'apk|%s\n' "$P_APK"
     printf 'dbus|%s\n' "$P_DBUS"
     printf 'dockersock|%s\n' "$P_DOCKERSOCK"
+    printf 'utmp|%s\n' "$P_UTMP"
     printf 'modulesload|%s\n' "$P_MODULESLOAD"
     printf 'cpuinfo|%s\n' "$P_CPUINFO"
     printf 'dmivendor|%s\n' "$P_DMIVENDOR"
@@ -2112,6 +2117,9 @@ EOF
     if [ "${PKG_ENABLED:-0}" = 1 ] && [ -n "${PKG_MOUNT:-}" ]; then
         _bv_add "$PKG_MOUNT" "$PKG_MOUNT"
     fi
+    if [ "${UTMP_ENABLED:-0}" = 1 ]; then
+        _bv_add "/var/run/utmp" "/var/run/utmp"
+    fi
 
     if [ -n "$_bv_body" ]; then
         NETRA_BLK_VOLUMES="    volumes:
@@ -2363,6 +2371,20 @@ plan_extras() {
         info "  d-bus:           $P_DBUS not present (no systemd collector)"
     fi
 
+    # Detected, not prompted: the five-question design is deliberate, and a
+    # read-only bind of a file that lists tty names is not worth a sixth. The
+    # agent reads one 2-byte field per record and transmits only the count.
+    #
+    # Absent on Alpine and other busybox systems, which have no utmp writer at
+    # all -- so this is a genuinely common "no", not an edge case.
+    UTMP_ENABLED=0
+    if [ -f "$P_UTMP" ]; then
+        UTMP_ENABLED=1
+        info "  logged-in users: /var/run/utmp (read-only, session count only)"
+    else
+        info "  logged-in users: $P_UTMP not present (no session count)"
+    fi
+
     # NOT PROMPTED, and this is the last prompt to go. Two reasons, either of
     # which would be enough.
     #
@@ -2595,6 +2617,7 @@ write_outputs() {
     _env_value LOCATION "$LOCATION"
     _env_value PROVIDER "$PROVIDER"
     _env_value HOST_TYPE "$HOST_TYPE"
+    _env_value PID_HOST "${PID_HOST:-0}"
 
     # The gate. One question covering everything below it, so "no" means the
     # host is exactly as it was.

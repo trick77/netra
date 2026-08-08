@@ -47,6 +47,12 @@ message Metadata {
   string facility = 14;
   string host_type = 15;
   string fingerprint = 16;
+
+  // Per-collector availability, e.g. {"processes": "namespaced"}. Rides the
+  // metadata hash, so a collector that starts or stops being able to run
+  // flips the hash and the hub asks for a resend on the next post. The
+  // hosts.capabilities JSONB column already exists to receive it.
+  map<string, string> capabilities = 17;
 }
 
 // HostSample is one scrape of host-level vitals.
@@ -76,6 +82,122 @@ message HostSample {
   optional double load15 = 17;
 
   optional uint64 uptime_s = 18;
+
+  // --- /proc/stat, the lines the CPU collector steps over ---
+  //
+  // ctxt, intr and processes are monotonic counters. They are reported as
+  // per-second rates computed agent-side, not as raw counters: detecting a
+  // counter reset needs the previous value, which only the agent holds. The
+  // hub never sees the reset and could not correct for one.
+  optional double ctxt_per_s = 19;
+  optional double intr_per_s = 20;
+  optional double forks_per_s = 21;
+
+  // Gauges, so unlike the rates above these are set on the very first scrape.
+  optional uint32 procs_running = 22;
+  optional uint32 procs_blocked = 23;
+
+  // btime: an absolute unix timestamp, deliberately not derived from
+  // uptime_s + ts_ms. That derivation drifts by a second or two per sample,
+  // so "when did this host last reboot" would answer slightly differently for
+  // every row of the same boot.
+  optional uint64 boot_time_s = 24;
+
+  // Count of numeric entries in /proc. Unset -- never 0 -- when the agent is
+  // in a PID namespace and can see only itself.
+  optional uint32 processes_total = 25;
+
+  // USER_PROCESS records in /var/run/utmp. Unset when utmp is absent, which
+  // is the normal case on a host with no utmp writer.
+  optional uint32 users_logged_in = 26;
+
+  // systemd unit summary. The fields land here so host_samples matches spec
+  // 5.3; the collector that fills them is a later phase, until which they
+  // stay NULL.
+  optional uint32 services_total = 27;
+  optional uint32 services_failed = 28;
+
+  // --- /proc/net/snmp, Tcp: ---
+  //
+  // No tcp6_* mirror exists, on purpose. The Tcp: block is the RFC 1213 TCP
+  // MIB, which Linux keeps as one family-agnostic counter set: these values
+  // already include IPv6 connections. /proc/net/snmp6 has no Tcp6 block at
+  // all -- it carries Ip6*, Icmp6* and Udp6* only -- so a tcp6_* field could
+  // only duplicate the field above it or be permanently NULL. The IPv6 mirror
+  // further down covers exactly what the kernel does account separately.
+  optional double tcp_retrans_segs_per_s = 29;
+  optional double tcp_out_rsts_per_s = 30;
+  optional double tcp_in_errs_per_s = 31;
+  optional double tcp_active_opens_per_s = 32;
+  optional double tcp_passive_opens_per_s = 33;
+  optional double tcp_attempt_fails_per_s = 34;
+
+  // Gauge: connections currently established, not a counter.
+  optional uint32 tcp_curr_estab = 35;
+
+  // --- /proc/net/netstat, TcpExt: ---
+  optional double tcp_listen_overflows_per_s = 36;
+  optional double tcp_listen_drops_per_s = 37;
+
+  // --- /proc/net/snmp, Udp: ---
+  optional double udp_in_errors_per_s = 38;
+  optional double udp_rcvbuf_errors_per_s = 39;
+  optional double udp_sndbuf_errors_per_s = 40;
+  optional double udp_no_ports_per_s = 41;
+
+  // --- /proc/net/snmp, Ip: fragmentation and reassembly ---
+  optional double ip_reasm_reqds_per_s = 42;
+  optional double ip_reasm_fails_per_s = 43;
+  optional double ip_frag_fails_per_s = 44;
+  optional double ip_frag_creates_per_s = 45;
+
+  // --- /proc/net/snmp6, Udp6 ---
+  optional double udp6_in_errors_per_s = 46;
+  optional double udp6_rcvbuf_errors_per_s = 47;
+  optional double udp6_sndbuf_errors_per_s = 48;
+  optional double udp6_no_ports_per_s = 49;
+
+  // --- /proc/net/snmp6, Ip6 fragmentation and reassembly ---
+  optional double ip6_reasm_reqds_per_s = 50;
+  optional double ip6_reasm_fails_per_s = 51;
+  optional double ip6_frag_fails_per_s = 52;
+  optional double ip6_frag_creates_per_s = 53;
+
+  // The agent's own telemetry for this scrape. Singular, not repeated: it is
+  // 1:1 with (host_id, ts), so nesting it here means it rides the existing
+  // ring buffer, partial drain and backfill paths unchanged, and the hub
+  // stores it under the same natural key. It lands in its own table because
+  // agent uptime and host uptime are different facts (spec 5.3).
+  optional AgentSample agent = 54;
+}
+
+// AgentSample is the agent's telemetry about itself for one scrape.
+//
+// It carries the full column set of spec 5.3's agent_samples so the table is
+// complete on arrival. The fields the Self collector owns stay unset until it
+// lands, and unset means NULL rather than a fabricated zero.
+message AgentSample {
+  // Wall time spent running every collector for this scrape.
+  optional uint32 scrape_duration_ms = 1;
+
+  // Round-trip time of the most recent SUCCESSFUL post, as of this scrape.
+  //
+  // It necessarily lags by one scrape: the RTT of a post is only known inside
+  // the post itself, which runs after this sample was built and buffered. It
+  // is left unset -- never zeroed -- when the last flush failed, so an outage
+  // reads as "no measurement" rather than "instantaneous".
+  optional uint32 post_latency_ms = 2;
+
+  // Set by the Self collector in a later phase.
+  optional uint64 uptime_s = 3;
+  optional uint64 rss_bytes = 4;
+  optional uint32 goroutines = 5;
+
+  optional uint32 buffer_depth = 6;
+  optional uint64 buffer_dropped_total = 7;
+
+  // Set by the Self collector in a later phase.
+  optional uint64 post_failures_total = 8;
 }
 
 // ProcessSample is NOT DEFINED YET, and this note is here so that when it is,

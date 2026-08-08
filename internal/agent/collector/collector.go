@@ -27,3 +27,20 @@ type Collector interface {
 	// Collect reads the current values and writes them into sample.
 	Collect(ctx context.Context, sample *netrav1.HostSample) error
 }
+
+// CapabilityReporter is implemented by collectors whose ability to run is a
+// fact the hub needs, not just a reason to skip a field.
+//
+// "processes is NULL" is ambiguous on its own: the host could be idle, the
+// mount could be missing, or the agent could be confined to a PID namespace.
+// A capability turns that into a stated reason. Capabilities ride the
+// metadata hash rather than the sample, because they change on the order of
+// deployments rather than of scrapes.
+//
+// The interface is optional: a collector that does not implement it reports
+// nothing and is unaffected.
+type CapabilityReporter interface {
+	// Capabilities returns this collector's availability facts, keyed by a
+	// stable name. An empty or nil map means "nothing to report".
+	Capabilities() map[string]string
+}

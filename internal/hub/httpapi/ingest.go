@@ -109,6 +109,20 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A 503 rather than a logged-and-ignored failure, unlike host_current
+	// below. host_current is a derived cache that the next scrape rebuilds,
+	// whereas these are primary rows on the same natural key as the host
+	// samples just written -- silently dropping them would hide exactly the
+	// agent-health problems they exist to expose. Asking for a retry is cheap
+	// because host_samples dedupes the replay.
+	if _, err := h.store.InsertAgentSamples(ctx, hostID, samples); err != nil {
+		slog.Error("insert agent samples", "host_id", hostID, "err", err)
+		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
+		})
+		return
+	}
+
 	if s := latest(samples); s != nil {
 		if err := h.store.UpsertHostCurrent(ctx, hostID, s); err != nil {
 			slog.Error("upsert host_current", "host_id", hostID, "err", err)

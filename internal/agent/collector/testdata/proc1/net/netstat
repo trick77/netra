@@ -1,0 +1,4 @@
+TcpExt: SyncookiesSent SyncookiesRecv SyncookiesFailed EmbryonicRsts PruneCalled ListenOverflows ListenDrops TCPHPHits TCPPureAcks TCPLossProbes
+TcpExt: 0 0 0 2 0 30 45 100000 50000 12
+IpExt: InNoRoutes InTruncatedPkts InMcastPkts OutMcastPkts InBcastPkts OutBcastPkts InOctets OutOctets
+IpExt: 0 0 500 480 20 10 900000000 850000000

@@ -35,6 +35,18 @@ type Config struct {
 	Facility     string
 	HostType     string
 	LogLevel     string
+
+	// UtmpPath is the file the logged-in session count is read from. It is
+	// configurable so a host that keeps utmp somewhere other than
+	// /var/run/utmp, or a test using a fixture, can point at it.
+	UtmpPath string
+
+	// PidHost records whether the container was started with pid: host.
+	//
+	// The process collector can only guess otherwise, and every guess has a
+	// case it gets wrong. setup-agent.sh already knows what it rendered, so it
+	// writes the answer here and the guessing is skipped entirely.
+	PidHost bool
 }
 
 // Load reads the environment and applies defaults.
@@ -49,6 +61,8 @@ func Load() (Config, error) {
 		Facility: os.Getenv("NETRA_FACILITY"),
 		HostType: os.Getenv("NETRA_HOST_TYPE"),
 		LogLevel: envOr("NETRA_LOG_LEVEL", "info"),
+		UtmpPath: envOr("NETRA_UTMP_PATH", "/var/run/utmp"),
+		PidHost:  boolEnv("NETRA_PID_HOST"),
 	}
 
 	if cfg.HubURL == "" {
@@ -81,6 +95,18 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// boolEnv reads a flag that is written by setup-agent.sh as 1 or 0. Anything
+// unrecognised is false: this drives whether a heuristic is skipped, and
+// defaulting an unparseable value to "trust it" would be the wrong direction.
+func boolEnv(key string) bool {
+	switch os.Getenv(key) {
+	case "1", "true", "TRUE", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func durationOr(key string, fallback time.Duration) (time.Duration, error) {

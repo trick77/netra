@@ -9,12 +9,30 @@
 #   mkdir -p /.netra                          # see "Filesystems" below
 #   docker compose up -d
 #
-# WHAT IS IMPLEMENTED TODAY (phase 1): three collectors — CPU, memory and load.
-# All three read /proc and need no mount, no capability and no device. Every
-# other mount, capability and device below is documented because this file is
-# the place an operator decides them, but the collector that consumes it has not
-# landed yet, so granting it today changes nothing. Nothing breaks if you enable
-# them now — they are inert, not harmful. Nothing is missing if you do not.
+# WHAT IS IMPLEMENTED TODAY (phase 1): seven collectors — CPU, memory, load,
+# kernelstat (context switches, interrupts, fork rate, runnable and blocked
+# tasks, boot time), netstat (TCP/UDP/IP counters and fragmentation, IPv4 and
+# IPv6), procs (total process count) and users (logged-in session count).
+#
+# All but two need nothing at all: they read /proc and require no mount, no
+# capability and no device. The two exceptions are called out where they are
+# configured below —
+#
+#   * procs reports a total process count only with `pid: host`. Without it the
+#     agent sees its own PID namespace, and reports the metric as unavailable
+#     rather than reporting the two processes it can see.
+#   * users needs the /var/run/utmp bind. Without it, or on a system with no
+#     utmp writer at all (Alpine and other busybox systems), the session count
+#     is reported as unavailable.
+#
+# Both leave their metric NULL rather than 0 when unavailable, and record why
+# in the host's capabilities.
+#
+# Every OTHER mount, capability and device below is documented because this
+# file is the place an operator decides them, but the collector that consumes
+# it has not landed yet, so granting it today changes nothing. Nothing breaks
+# if you enable them now — they are inert, not harmful. Nothing is missing if
+# you do not.
 #
 # Every OPTIONAL mount, device and capability below therefore ships COMMENTED
 # OUT. Uncommenting one whose source does not exist is not a no-op: a long-form
@@ -190,6 +208,25 @@ services:
       #   target: /lib/apk/db
       #   read_only: true
 
+      # --- OPTIONAL: logged-in users ----------------------------------------
+      #
+      # Enables the users collector, which reports ONE NUMBER: how many
+      # interactive sessions are logged in. This one IS implemented today.
+      #
+      # Nothing about a session is transmitted — not the username, not the tty,
+      # not the remote host. The parser reads a single 2-byte field per record
+      # (ut_type) and counts the ones marked USER_PROCESS; the usernames and
+      # hostnames in the file are never even decoded.
+      #
+      # Absent, the count is reported as unavailable and left NULL. That is
+      # also the normal outcome on Alpine and other busybox-based systems,
+      # which ship no utmp writer at all — there the file is missing or empty
+      # no matter what you mount.
+      # - type: bind
+      #   source: /var/run/utmp
+      #   target: /var/run/utmp
+      #   read_only: true
+
       # --- OPTIONAL: filesystem discovery (awareness only) ------------------
       #
       # Exposes the host mount table and nothing else. This NEVER feeds metrics:
@@ -260,6 +297,15 @@ services:
     #
     # pid: host is what makes the processes collector possible: without the
     # host PID namespace the agent sees only itself in /proc.
+    #
+    # Partly implemented today: with this enabled the agent reports a total
+    # process count. Without it that metric is NULL and the host's
+    # capabilities say "namespaced" — it is never guessed at. The per-process
+    # CPU and memory breakdown is still a later phase.
+    #
+    # If you uncomment this, also set NETRA_PID_HOST=1 in .env. The agent can
+    # only guess otherwise, and every guess has a case it gets wrong; the
+    # setup script writes this for you.
     #
     # It is commented out by default and should stay that way unless you want
     # per-process metrics enough to accept the exposure. Sharing the host PID
