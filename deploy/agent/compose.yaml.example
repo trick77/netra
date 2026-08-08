@@ -17,10 +17,18 @@
 # them now — they are inert, not harmful. Nothing is missing if you do not.
 #
 # Every OPTIONAL mount, device and capability below therefore ships COMMENTED
-# OUT, and the quickstart above works as written. Uncommenting one whose source
-# does not exist is not a no-op: a long-form bind does not create a missing
-# source, and a `devices:` entry for a node this host lacks stops the container
-# from starting at all. Uncomment what this host actually has.
+# OUT. Uncommenting one whose source does not exist is not a no-op: a long-form
+# bind does not create a missing source, and a `devices:` entry for a node this
+# host lacks stops the container from starting at all. Uncomment what this host
+# actually has.
+#
+# The mounts left ACTIVE are the ones a Docker host has by definition —
+# /var/run/docker.sock, /proc/1/mountinfo — plus /.netra, which the quickstart
+# above creates, and /etc/machine-id, which every systemd host has. That last
+# one is the single conditional mount that is active by default, because
+# without it the hub cannot tell a copied token from a legitimate one and
+# nothing says so at runtime; see the note on it below, which names the swap
+# for hosts that keep their id elsewhere.
 #
 # The agent is STATELESS. There is no volume for state anywhere in this file and
 # there never will be: the buffer is an in-memory ring (§6.5), deliberately not
@@ -123,12 +131,25 @@ services:
       # the fingerprint is empty on every containerised agent and the check can
       # never fire.
       #
-      # On hosts that predate systemd's location, use /var/lib/dbus/machine-id
-      # as the source instead — the target stays /etc/machine-id either way.
+      # ACTIVE by default, unlike every other conditional mount in this file:
+      # an agent that silently cannot be fingerprinted is a security control
+      # that fails open with nothing to notice, whereas a host without
+      # /etc/machine-id fails LOUDLY here — the container will not start,
+      # because a long-form bind does not create a missing source.
+      #
+      # If that happens, this host keeps its id at the pre-systemd location.
+      # Swap the two blocks: the source changes, the target stays
+      # /etc/machine-id either way, because that is where the agent looks.
       - type: bind
         source: /etc/machine-id
         target: /etc/machine-id
         read_only: true
+      # Hosts predating systemd's location: comment out the block above and
+      # use this instead.
+      # - type: bind
+      #   source: /var/lib/dbus/machine-id
+      #   target: /etc/machine-id
+      #   read_only: true
 
       # --- OPTIONAL: systemd units ------------------------------------------
       #

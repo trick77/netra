@@ -234,9 +234,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          gh api "repos/${{ github.repository }}/git/refs" \
+          # `if ! ...; then :; fi`, NOT a bare call. Actions runs this block
+          # under `bash -e`, so a bare create-ref that returns non-2xx aborts
+          # the step on the spot — and the verification below, whose entire
+          # purpose is to explain THAT failure, would never execute. A command
+          # in an `if` condition is exempt from errexit; the failure is handled
+          # by the check that follows, which is the point.
+          if ! gh api "repos/${{ github.repository }}/git/refs" \
             -f ref="refs/tags/$VERSION" \
-            -f sha="${{ github.sha }}"
+            -f sha="${{ github.sha }}"; then
+            echo "::warning::create-ref for $VERSION failed; verifying whether the tag exists anyway"
+          fi
 
           if ! gh api "repos/${{ github.repository }}/git/ref/tags/$VERSION" --silent 2>/dev/null; then
             echo "::error::images for $VERSION are already pushed to GHCR but the tag was not" \

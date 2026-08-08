@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 //go:embed migrations/*.sql
@@ -23,6 +25,21 @@ const noTxMarker = "-- netra:no-transaction"
 // so every hub replica must use the same one. Chosen from "netra" so it does
 // not collide with an application lock added later.
 const migrateLockID int64 = 0x6E65747261 // "netra"
+
+// migrateLockTimeout bounds how long one replica waits for another's migration.
+//
+// pg_advisory_lock blocks FOREVER, and the context this runs under carries no
+// deadline of its own (cmd/netra passes the bare signal.NotifyContext). A
+// replica whose migration hangs rather than crashes — Postgres releases session
+// locks on backend death, but not on a wedged one — would leave every other
+// replica blocked silently, with no log line and no health signal. That trades
+// a loud 23505 for an invisible hang, which is a worse failure than the one the
+// lock was added to fix.
+//
+// Generous rather than tight: a first deploy applies the whole schema including
+// hypertables and continuous aggregates, and timing out mid-way through a
+// legitimate slow migration would be its own outage.
+const migrateLockTimeout = 5 * time.Minute
 
 // Migrate applies every pending migration in filename order, exactly once.
 //
@@ -45,7 +62,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	defer conn.Release()
 
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrateLockID); err != nil {
+	lockCtx, cancelLock := context.WithTimeout(ctx, migrateLockTimeout)
+	defer cancelLock()
+	if _, err := conn.Exec(lockCtx, `SELECT pg_advisory_lock($1)`, migrateLockID); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf(
+				"timed out after %s waiting for the migration lock: another hub is applying "+
+					"migrations and has not finished, or a previous one is wedged holding it "+
+					"(check pg_locks for objid %d): %w",
+				migrateLockTimeout, migrateLockID, err)
+		}
 		return fmt.Errorf("acquire migration lock: %w", err)
 	}
 	defer func() {
