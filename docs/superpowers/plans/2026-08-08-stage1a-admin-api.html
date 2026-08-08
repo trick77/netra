@@ -143,7 +143,7 @@
   <dt>Goal</dt>
   <dd>Create, rotate and delete hosts and their agent tokens over HTTP, and from a minimal local web page, replacing the <code>psql</code> hand-insert that is the only path today.</dd>
   <dt>Architecture</dt>
-  <dd>Admin JSON routes and a server-rendered page join the hub's existing mux. Auth is a mode switch (<code>dev</code> = none, <code>token</code> = shared bearer) modelled on music's <code>BACKEND_AUTH_MODE</code>. No new listener, no frontend toolchain.</dd>
+  <dd>Admin JSON routes and a server-rendered page join the hub's existing mux. <code>NETRA_ADMIN_TOKEN</code> stays mandatory exactly as it is today; <code>curl</code> sends it as a bearer, the browser exchanges it once for a signed session cookie. No new listener, no frontend toolchain, no new environment variable.</dd>
   <dt>Stack</dt>
   <dd>Go 1.22 method routing, <code>html/template</code> + <code>embed</code>, pgx, TimescaleDB. No new dependencies.</dd>
   <dt>Base</dt>
@@ -158,7 +158,7 @@
 
 <p>Everything else in Stage 1 — the remaining schema, thirteen collectors, the read API — is easier to build and test once hosts can be created over HTTP. That is why the plan puts this small piece first.</p>
 
-<p>Two decisions were taken before this plan was written. The operator wants tokens minted <strong>in a UI</strong>, not by <code>curl</code>; and the local deployment runs <strong>without authentication</strong>, the way the sibling <code>music</code> repo does in dev mode. Both are reflected below.</p>
+<p>Two decisions were taken before this plan was written. The operator wants tokens minted <strong>in a UI</strong>, not by <code>curl</code>; and the admin token stays <strong>required, including locally</strong> — an unauthenticated admin API was considered and rejected as the riskier default, even behind a loopback binding. Both are reflected below.</p>
 
 <h2>Global constraints</h2>
 
@@ -210,12 +210,14 @@ labels:
 
 <p><code>sites</code> has <code>latitude</code>, <code>longitude</code>, <code>country_code</code> and <code>timezone</code> in <code>0001_init.sql:21-32</code>. <code>PATCH /api/v1/sites</code> needs no migration and this stage has no dependency on 1B. The rule that a manually set lat/lon is never overwritten by a geocode result is enforced in the handler, not the schema.</p>
 
-<h2>Behaviour being removed</h2>
+<h2>Nothing existing is removed</h2>
 
 <div class="note">
-  <strong>The mandatory <code>NETRA_ADMIN_TOKEN</code> startup check goes away in <code>dev</code> mode.</strong>
-  <code>config.go:33-35</code> fails startup without it, and <code>compose.yaml:37-38</code> documents that as deliberate: "the hub refuses to start without it rather than serving an unauthenticated admin API." Serving an unauthenticated admin API is now the requested default for local use. The variable keeps working — it is required, and enforced, whenever <code>NETRA_AUTH_MODE=token</code>. This is the only place this stage removes something previously built on purpose.
+  <strong><code>NETRA_ADMIN_TOKEN</code> stays mandatory, and <code>compose.yaml</code>'s comment about it stays true.</strong>
+  <code>config.go:33-35</code> fails startup without the token, and <code>compose.yaml:37-38</code> documents that as deliberate: "the hub refuses to start without it rather than serving an unauthenticated admin API." An earlier draft of this stage relaxed both for local use. That was rejected: the loopback binding is a second line of defence, not a reason to drop the first. No config change, no new environment variable, and <code>AuthMode</code> is not introduced — the phase-2 OIDC switch can add it when there is a second mode to switch to.
 </div>
+
+<p>The cost lands on the UI instead. A browser cannot attach <code>Authorization: Bearer</code> to a form post, so the page needs its own way to carry the token — Task 1.</p>
 
 <h2>File structure</h2>
 
@@ -223,7 +225,7 @@ labels:
 <table>
   <thead><tr><th>File</th><th>Responsibility</th></tr></thead>
   <tbody>
-    <tr><td><code>internal/hub/config/config.go</code></td><td>modified — add <code>AuthMode</code>, make <code>AdminToken</code> conditional</td></tr>
+    <tr><td><code>internal/hub/httpapi/session.go</code></td><td>new — mint and verify the signed session cookie</td></tr>
     <tr><td><code>internal/hub/admin/hosts.go</code></td><td>new — store-level host and token operations, incl. the rotation transaction</td></tr>
     <tr><td><code>internal/hub/admin/dimensions.go</code></td><td>new — sites and providers read/patch, with the lat/lon override rule</td></tr>
     <tr><td><code>internal/hub/httpapi/admin.go</code></td><td>new — JSON handlers for <code>/api/v1/*</code></td></tr>
@@ -232,7 +234,7 @@ labels:
     <tr><td><code>internal/hub/httpapi/templates/*.gohtml</code></td><td>new — embedded templates</td></tr>
     <tr><td><code>internal/hub/httpapi/router.go</code></td><td>modified — mount the new routes</td></tr>
     <tr><td><code>cmd/netra/main.go</code></td><td>modified — pass config through; wiring only</td></tr>
-    <tr><td><code>compose.yaml</code>, <code>.env.example</code></td><td>modified — <code>NETRA_AUTH_MODE</code>, admin token now optional</td></tr>
+    <tr><td><code>compose.yaml</code>, <code>.env.example</code></td><td>modified — document the UI's address; admin token unchanged</td></tr>
   </tbody>
 </table>
 </div>
@@ -244,88 +246,160 @@ labels:
 <h2>Tasks</h2>
 
 <div class="task">
-<h3><span class="num">1</span>Auth mode in config</h3>
+<h3><span class="num">1</span>Session cookie keyed on the admin token</h3>
 
 <div class="files">
-  <div><span class="k">Modify</span> internal/hub/config/config.go</div>
-  <div><span class="k">Test</span> internal/hub/config/config_test.go</div>
+  <div><span class="k">Create</span> internal/hub/httpapi/session.go</div>
+  <div><span class="k">Test</span> internal/hub/httpapi/session_test.go</div>
 </div>
 
-<p><strong>Produces:</strong> <code>config.AuthMode</code> (string type, constants <code>AuthModeDev = "dev"</code>, <code>AuthModeToken = "token"</code>) and <code>Config.AuthMode</code>. Defaults to <code>dev</code>.</p>
+<p><strong>Produces:</strong></p>
+<pre><code>const sessionCookieName = "netra_session"
+const sessionTTL = 12 * time.Hour
+
+func newSessionCookie(adminToken string, now time.Time) *http.Cookie
+func validSession(adminToken string, r *http.Request, now time.Time) bool</code></pre>
+
+<p>The cookie is <code>&lt;expiry-unix&gt;.&lt;base64 HMAC-SHA256&gt;</code>, signed with a key derived from the admin token itself. That choice does the work of a second secret without adding one to configure, and it buys a property worth having: <strong>changing <code>NETRA_ADMIN_TOKEN</code> invalidates every existing session</strong>, because the verification key changes with it. There is no session table and no server-side state.</p>
+
+<p><code>now</code> is a parameter rather than a call to <code>time.Now()</code> so expiry is tested exactly instead of with a sleep.</p>
 
 <ol class="steps">
 <li><strong>Write the failing tests</strong>
-<pre><code>func TestLoadDefaultsToDevAuthMode(t *testing.T) {
-	t.Setenv("NETRA_DB_DSN", "postgres://x/y")
-	t.Setenv("NETRA_ADMIN_TOKEN", "")
+<pre><code>func TestSessionCookieRoundTrips(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	c := httpapi.NewSessionCookieForTest("s3cret", now)
 
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Load: %v — dev mode must not require an admin token", err)
-	}
-	if cfg.AuthMode != config.AuthModeDev {
-		t.Errorf("AuthMode = %q, want %q", cfg.AuthMode, config.AuthModeDev)
-	}
-}
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(c)
 
-func TestLoadRequiresAdminTokenInTokenMode(t *testing.T) {
-	t.Setenv("NETRA_DB_DSN", "postgres://x/y")
-	t.Setenv("NETRA_AUTH_MODE", "token")
-	t.Setenv("NETRA_ADMIN_TOKEN", "")
-
-	if _, err := config.Load(); err == nil {
-		t.Fatal("Load succeeded, want an error when token mode has no token")
+	if !httpapi.ValidSessionForTest("s3cret", req, now.Add(time.Minute)) {
+		t.Error("a freshly minted cookie did not validate")
 	}
 }
 
-func TestLoadRejectsUnknownAuthMode(t *testing.T) {
-	t.Setenv("NETRA_DB_DSN", "postgres://x/y")
-	t.Setenv("NETRA_AUTH_MODE", "oidc")
+func TestSessionCookieExpires(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	c := httpapi.NewSessionCookieForTest("s3cret", now)
 
-	if _, err := config.Load(); err == nil {
-		t.Fatal("Load succeeded, want an error for an unimplemented mode")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(c)
+
+	if httpapi.ValidSessionForTest("s3cret", req, now.Add(13*time.Hour)) {
+		t.Error("an expired cookie validated")
+	}
+}
+
+func TestSessionCookieRejectsATamperedExpiry(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	c := httpapi.NewSessionCookieForTest("s3cret", now)
+
+	// Push the expiry far into the future, keeping the original signature.
+	_, mac, _ := strings.Cut(c.Value, ".")
+	c.Value = fmt.Sprintf("%d.%s", now.Add(100*time.Hour).Unix(), mac)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(c)
+
+	if httpapi.ValidSessionForTest("s3cret", req, now) {
+		t.Error("a cookie with a rewritten expiry validated — the MAC does not cover it")
+	}
+}
+
+func TestSessionCookieFromAnotherAdminTokenIsRejected(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	c := httpapi.NewSessionCookieForTest("old-token", now)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(c)
+
+	if httpapi.ValidSessionForTest("new-token", req, now.Add(time.Minute)) {
+		t.Error("a session survived an admin-token change — rotation must log everyone out")
+	}
+}
+
+func TestSessionCookieIsHttpOnlyAndSameSiteStrict(t *testing.T) {
+	c := httpapi.NewSessionCookieForTest("s3cret", time.Unix(1_700_000_000, 0))
+
+	if !c.HttpOnly {
+		t.Error("cookie is not HttpOnly — script-readable session")
+	}
+	if c.SameSite != http.SameSiteStrictMode {
+		t.Errorf("SameSite = %v, want Strict", c.SameSite)
+	}
+}
+
+func TestValidSessionWithNoCookie(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+
+	if httpapi.ValidSessionForTest("s3cret", req, time.Unix(1_700_000_000, 0)) {
+		t.Error("a request with no cookie validated")
 	}
 }</code></pre>
-<p>The third test is the guard that matters: <code>oidc</code> is phase 2, and a typo that silently fell back to <code>dev</code> would serve an unauthenticated API on a host the operator believed was protected.</p>
-</li>
+<p>The third and fourth tests are the ones that matter. A MAC that covered only a constant would pass a naive round-trip test and still let anyone mint a permanent session.</p>
+<p>Add an <code>export_test.go</code> exposing the two unexported functions, following the existing <code>internal/agent/client/export_test.go</code> pattern.</p></li>
 
 <li><strong>Run them and watch them fail</strong>
-<pre><code>go test ./internal/hub/config/ -run AuthMode -v</code></pre>
-<p>Expected: compile failure, <code>undefined: config.AuthModeDev</code>.</p></li>
+<pre><code>go test ./internal/hub/httpapi/ -run Session -v</code></pre>
+<p>Expected: compile failure, <code>undefined: httpapi.NewSessionCookieForTest</code>. No database needed — these are pure <code>httptest</code>.</p></li>
 
 <li><strong>Implement</strong>
-<pre><code>// AuthMode selects how the admin API and UI authenticate. Agent ingest is
-// unaffected: it always uses per-host bearer tokens.
-type AuthMode string
+<pre><code>// sessionKey derives the cookie-signing key from the admin token, so there is
+// no second secret to configure and changing NETRA_ADMIN_TOKEN invalidates
+// every session that was issued under the old one.
+func sessionKey(adminToken string) []byte {
+	sum := sha256.Sum256([]byte("netra-session\x00" + adminToken))
+	return sum[:]
+}
 
-const (
-	// AuthModeDev serves the admin API and UI with no authentication. It is
-	// the default because the published port is loopback-only and Traefik
-	// routes just /api/agent/ — see compose.yaml.
-	AuthModeDev AuthMode = "dev"
-	// AuthModeToken requires NETRA_ADMIN_TOKEN as a bearer token.
-	AuthModeToken AuthMode = "token"
-)
+func sign(key []byte, expiry int64) string {
+	m := hmac.New(sha256.New, key)
+	fmt.Fprintf(m, "%d", expiry)
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
 
-// in Config:
-	AuthMode AuthMode
-
-// in Load(), after the DSN check:
-	cfg.AuthMode = AuthMode(envOr("NETRA_AUTH_MODE", string(AuthModeDev)))
-	if cfg.AuthMode != AuthModeDev &amp;&amp; cfg.AuthMode != AuthModeToken {
-		return Config{}, fmt.Errorf(
-			"NETRA_AUTH_MODE must be 'dev' or 'token', got %q", cfg.AuthMode)
+func newSessionCookie(adminToken string, now time.Time) *http.Cookie {
+	expiry := now.Add(sessionTTL).Unix()
+	return &amp;http.Cookie{
+		Name:  sessionCookieName,
+		Value: fmt.Sprintf("%d.%s", expiry, sign(sessionKey(adminToken), expiry)),
+		Path:  "/",
+		// The UI is served over plain HTTP on loopback, so Secure would make
+		// the cookie undeliverable. HttpOnly keeps it out of script, and
+		// SameSite=Strict is what stops a cross-site form post from reaching
+		// the state-changing routes with a live session attached.
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  now.Add(sessionTTL),
 	}
-	if cfg.AuthMode == AuthModeToken &amp;&amp; cfg.AdminToken == "" {
-		return Config{}, fmt.Errorf("NETRA_ADMIN_TOKEN is required when NETRA_AUTH_MODE=token")
-	}</code></pre>
-<p>Delete the unconditional <code>NETRA_ADMIN_TOKEN is required</code> check. Update the <code>Load</code> doc comment, which currently promises it "fails rather than starting with … an unauthenticated admin API."</p></li>
+}
 
-<li><strong>Run the whole config package</strong> — <code>go test ./internal/hub/config/</code>. Existing tests that set the admin token still pass; any that assert the old mandatory failure need updating to token mode.</li>
+func validSession(adminToken string, r *http.Request, now time.Time) bool {
+	c, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return false
+	}
+	rawExpiry, mac, ok := strings.Cut(c.Value, ".")
+	if !ok {
+		return false
+	}
+	expiry, err := strconv.ParseInt(rawExpiry, 10, 64)
+	if err != nil {
+		return false
+	}
+	// Verify before trusting the expiry: the MAC is what makes it unforgeable.
+	if subtle.ConstantTimeCompare([]byte(mac), []byte(sign(sessionKey(adminToken), expiry))) != 1 {
+		return false
+	}
+	return now.Unix() &lt; expiry
+}</code></pre>
+<p><code>SameSite=Strict</code> is doing real work here: with it, this stage needs no separate CSRF token for the form posts in Task 6.</p></li>
+
+<li><strong>Run until green</strong> — <code>go test ./internal/hub/httpapi/ -run Session -v</code>.</li>
 
 <li><strong>Commit</strong>
-<pre><code>git add internal/hub/config
-git commit -m "feat(hub): NETRA_AUTH_MODE, dev by default"</code></pre></li>
+<pre><code>git add internal/hub/httpapi/session.go internal/hub/httpapi/session_test.go internal/hub/httpapi/export_test.go
+git commit -m "feat(hub): signed session cookie keyed on the admin token"</code></pre></li>
 </ol>
 </div>
 
@@ -530,30 +604,22 @@ git commit -m "feat(hub): host and token admin operations"</code></pre></li>
 </div>
 
 <div class="task">
-<h3><span class="num">3</span>Auth-mode middleware</h3>
+<h3><span class="num">3</span>Admin authentication middleware</h3>
 
 <div class="files">
   <div><span class="k">Create</span> internal/hub/httpapi/adminauth.go</div>
   <div><span class="k">Test</span> internal/hub/httpapi/adminauth_test.go</div>
 </div>
 
-<p><strong>Produces:</strong> <code>func RequireAdmin(mode config.AuthMode, token string, next http.Handler) http.Handler</code>.</p>
+<p><strong>Consumes:</strong> <code>validSession</code> from Task 1.</p>
+<p><strong>Produces:</strong> <code>func RequireAdmin(token string, redirectToLogin bool, next http.Handler) http.Handler</code>.</p>
+
+<p>One credential, two carriers: <code>Authorization: Bearer &lt;admin token&gt;</code> for <code>curl</code>, or a valid session cookie for the browser. <code>redirectToLogin</code> is the only difference between the API and UI mounts — an unauthenticated API call gets 401 JSON, an unauthenticated page request gets a 303 to <code>/login</code>. A browser handed a bare 401 on <code>GET /</code> would show a blank error page with no way forward.</p>
 
 <ol class="steps">
 <li><strong>Write the failing tests</strong>
-<pre><code>func TestRequireAdminDevModeAllowsAnUnauthenticatedRequest(t *testing.T) {
-	h := httpapi.RequireAdmin(config.AuthModeDev, "", okHandler())
-
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil))
-
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200 in dev mode", rec.Code)
-	}
-}
-
-func TestRequireAdminTokenModeRejectsAMissingToken(t *testing.T) {
-	h := httpapi.RequireAdmin(config.AuthModeToken, "s3cret", okHandler())
+<pre><code>func TestRequireAdminRejectsAMissingCredential(t *testing.T) {
+	h := httpapi.RequireAdmin("s3cret", false, okHandler())
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil))
@@ -563,8 +629,8 @@ func TestRequireAdminTokenModeRejectsAMissingToken(t *testing.T) {
 	}
 }
 
-func TestRequireAdminTokenModeRejectsAWrongToken(t *testing.T) {
-	h := httpapi.RequireAdmin(config.AuthModeToken, "s3cret", okHandler())
+func TestRequireAdminRejectsAWrongBearer(t *testing.T) {
+	h := httpapi.RequireAdmin("s3cret", false, okHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
 	req.Header.Set("Authorization", "Bearer wrong")
@@ -577,8 +643,8 @@ func TestRequireAdminTokenModeRejectsAWrongToken(t *testing.T) {
 	}
 }
 
-func TestRequireAdminTokenModeAcceptsTheRightToken(t *testing.T) {
-	h := httpapi.RequireAdmin(config.AuthModeToken, "s3cret", okHandler())
+func TestRequireAdminAcceptsTheRightBearer(t *testing.T) {
+	h := httpapi.RequireAdmin("s3cret", false, okHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
 	req.Header.Set("Authorization", "Bearer s3cret")
@@ -589,36 +655,82 @@ func TestRequireAdminTokenModeAcceptsTheRightToken(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
+}
+
+func TestRequireAdminAcceptsAValidSessionCookie(t *testing.T) {
+	h := httpapi.RequireAdmin("s3cret", false, okHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
+	req.AddCookie(httpapi.NewSessionCookieForTest("s3cret", time.Now()))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 with a valid session", rec.Code)
+	}
+}
+
+func TestRequireAdminRejectsASessionCookieFromAnotherToken(t *testing.T) {
+	h := httpapi.RequireAdmin("new-token", false, okHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
+	req.AddCookie(httpapi.NewSessionCookieForTest("old-token", time.Now()))
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestRequireAdminRedirectsAPageRequestToLogin(t *testing.T) {
+	h := httpapi.RequireAdmin("s3cret", true, okHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "/login" {
+		t.Errorf("Location = %q, want %q", got, "/login")
+	}
 }</code></pre>
-<p><code>okHandler()</code> is a two-line local helper returning <code>http.HandlerFunc</code> that writes 200. These are pure <code>httptest</code> — no database, so they run without <code>NETRA_TEST_DSN</code>.</p></li>
+<p><code>okHandler()</code> is a two-line local helper returning an <code>http.HandlerFunc</code> that writes 200. These are pure <code>httptest</code> — no database, so they run without <code>NETRA_TEST_DSN</code>.</p></li>
 
 <li><strong>Run and watch fail</strong> — <code>go test ./internal/hub/httpapi/ -run RequireAdmin -v</code>, expect <code>undefined: httpapi.RequireAdmin</code>.</li>
 
 <li><strong>Implement</strong>
-<pre><code>// RequireAdmin gates the admin API and UI according to the configured mode.
+<pre><code>// RequireAdmin gates the admin API and the UI on NETRA_ADMIN_TOKEN, presented
+// either as a bearer header or as a session cookie minted from the same token.
 //
-// In dev mode it is a pass-through: the published port is loopback-only and
-// Traefik routes only /api/agent/, so the operator's own box is the security
-// boundary. In token mode it requires NETRA_ADMIN_TOKEN as a bearer.
-func RequireAdmin(mode config.AuthMode, token string, next http.Handler) http.Handler {
-	if mode == config.AuthModeDev {
-		return next
-	}
+// redirectToLogin is set for the UI mount only. An API client wants a 401 it
+// can act on; a browser wants somewhere to go.
+func RequireAdmin(token string, redirectToLogin bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(bearer), []byte(token)) != 1 {
-			w.Header().Set("Cache-Control", "no-store")
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		ok := subtle.ConstantTimeCompare([]byte(bearer), []byte(token)) == 1 ||
+			validSession(token, r, time.Now())
+		if ok {
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+
+		w.Header().Set("Cache-Control", "no-store")
+		if redirectToLogin {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	})
 }</code></pre>
-<p>Constant-time compare for the same reason <code>auth.Authenticate</code> uses one.</p></li>
+<p>Constant-time compare for the same reason <code>auth.Authenticate</code> uses one. The bearer check runs first so an API client never pays for a cookie parse.</p></li>
 
 <li><strong>Run until green</strong>, then <strong>commit</strong>
 <pre><code>git add internal/hub/httpapi/adminauth.go internal/hub/httpapi/adminauth_test.go
-git commit -m "feat(hub): admin auth-mode middleware"</code></pre></li>
+git commit -m "feat(hub): admin auth middleware, bearer or session"</code></pre></li>
 </ol>
 </div>
 
@@ -647,7 +759,7 @@ git commit -m "feat(hub): admin auth-mode middleware"</code></pre></li>
 </div>
 
 <ol class="steps">
-<li><strong>Write the failing tests.</strong> Extend <code>newFixture(t)</code> in <code>ingest_test.go</code> rather than rebuilding the setup — it already creates store, host, token and an <code>httptest</code> server. Add a sibling <code>newAdminFixture(t)</code> returning a server whose router includes the admin routes in dev mode.
+<li><strong>Write the failing tests.</strong> Extend <code>newFixture(t)</code> in <code>ingest_test.go</code> rather than rebuilding the setup — it already creates store, host, token and an <code>httptest</code> server. Add a sibling <code>newAdminFixture(t)</code> returning a server whose router includes the admin routes, plus a <code>testAdminToken</code> constant. Its request helpers attach <code>Authorization: Bearer testAdminToken</code> by default, so every test below is authenticated unless it deliberately is not.
 <pre><code>func TestIntegrationAdminCreateHostReturnsTheTokenOnce(t *testing.T) {
 	srv, s := newAdminFixture(t)
 
@@ -817,10 +929,13 @@ git commit -m "feat(hub): sites and providers admin endpoints"</code></pre></li>
   <div><span class="k">Create</span> internal/hub/httpapi/ui.go</div>
   <div><span class="k">Create</span> internal/hub/httpapi/templates/hosts.gohtml</div>
   <div><span class="k">Create</span> internal/hub/httpapi/templates/token.gohtml</div>
+  <div><span class="k">Create</span> internal/hub/httpapi/templates/login.gohtml</div>
   <div><span class="k">Test</span> internal/hub/httpapi/ui_test.go</div>
 </div>
 
-<p><strong>Produces:</strong> <code>func NewUIHandler(svc *admin.Service, hubURL string) http.Handler</code> serving <code>GET /</code>, <code>POST /ui/hosts</code>, <code>POST /ui/hosts/{id}/token</code>, <code>POST /ui/hosts/{id}/delete</code>.</p>
+<p><strong>Produces:</strong> <code>func NewUIHandler(svc *admin.Service, adminToken, hubURL string) http.Handler</code> serving <code>GET /</code>, <code>GET|POST /login</code>, <code>POST /ui/hosts</code>, <code>POST /ui/hosts/{id}/token</code>, <code>POST /ui/hosts/{id}/delete</code>.</p>
+
+<p><code>/login</code> is the only route outside <code>RequireAdmin</code> — it is what an unauthenticated browser is redirected to. It renders one password field, compares the submitted value against the admin token in constant time, and on success sets the Task 1 cookie and redirects to <code>/</code>. On failure it re-renders with an error and <strong>never echoes the submitted value back into the form</strong>.</p>
 
 <p>Templates are embedded with <code>//go:embed templates/*.gohtml</code> and parsed once at construction, following <code>migrationFS</code> in <code>internal/hub/store/migrate.go</code>. Forms post and redirect; no JavaScript, no build step, no design system — the phase-2 UI owns that.</p>
 
@@ -853,6 +968,57 @@ func TestIntegrationUICreateShowsTheTokenAndTheSetupCommand(t *testing.T) {
 	}
 	if !strings.Contains(body, "--token") {
 		t.Error("the create page does not show a ready-to-paste setup-agent.sh command")
+	}
+}
+
+func TestIntegrationUILoginSetsASessionAndRedirects(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	resp := postForm(t, srv, "/login", url.Values{"token": {testAdminToken}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", resp.StatusCode)
+	}
+
+	var found bool
+	for _, c := range resp.Cookies() {
+		if c.Name == "netra_session" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no session cookie was set")
+	}
+}
+
+func TestIntegrationUILoginRejectsAWrongTokenWithoutEchoingIt(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	resp := postForm(t, srv, "/login", url.Values{"token": {"hunter2"}})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	if strings.Contains(body, "hunter2") {
+		t.Error("the login page echoed the submitted token back into the response")
+	}
+}
+
+func TestIntegrationUIUnauthenticatedRequestRedirectsToLogin(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	// A client that does not follow redirects, so the 303 is observable.
+	client := &amp;http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	resp, err := client.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Errorf("status = %d, want 303 to /login", resp.StatusCode)
 	}
 }
 
@@ -889,14 +1055,14 @@ git commit -m "feat(hub): minimal host management page"</code></pre></li>
 
 <p><code>NewRouter</code> grows the config it needs to gate the new routes:</p>
 <pre><code>func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Handler</code></pre>
-<p><code>main.go</code> only passes <code>cfg</code> through — no logic there, since <code>hack/patch-coverage.sh</code> excludes <code>cmd/</code>.</p>
+<p><code>main.go</code> only passes <code>cfg</code> through — no logic there, since <code>hack/patch-coverage.sh</code> excludes <code>cmd/</code>. The API mount gets <code>RequireAdmin(cfg.AdminToken, false, …)</code>, the UI mount <code>RequireAdmin(cfg.AdminToken, true, …)</code>, and <code>/login</code> is mounted outside both. Ingest and health are untouched.</p>
 
 <ol class="steps">
-<li><strong>Wire the routes</strong>, wrapping the admin and UI muxes in <code>RequireAdmin(cfg.AuthMode, cfg.AdminToken, …)</code>. Ingest and health stay exactly as they are.</li>
+<li><strong>Wire the routes</strong> as described above. Ingest and health stay exactly as they are.</li>
 
-<li><strong>Update <code>compose.yaml</code></strong>: add <code>NETRA_AUTH_MODE: "${NETRA_AUTH_MODE:-dev}"</code>, make <code>NETRA_ADMIN_TOKEN</code> optional, and rewrite the comment on lines 37-38 that promises the hub refuses to start without it. Leave the Traefik <code>PathPrefix</code> and the <code>127.0.0.1</code> port binding untouched, and extend their comments to name the UI as another thing that must not become internet-facing.</li>
+<li><strong>Update <code>compose.yaml</code></strong>: no environment change is needed — <code>NETRA_ADMIN_TOKEN</code> is already there and still required. Leave the Traefik <code>PathPrefix</code> and the <code>127.0.0.1</code> port binding untouched, and extend their comments to name the UI as another thing that must not become internet-facing. The comment on lines 37-38 stays true and stays as written.</li>
 
-<li><strong>Update <code>.env.example</code></strong> with <code>NETRA_AUTH_MODE</code> and a line saying the UI is at <code>http://127.0.0.1:8080/</code> on the hub host, reachable from a laptop via <code>ssh -L 8080:127.0.0.1:8080</code>.</li>
+<li><strong>Update <code>.env.example</code></strong> with a line saying the UI is at <code>http://127.0.0.1:8080/</code> on the hub host, that it is reachable from a laptop via <code>ssh -L 8080:127.0.0.1:8080 hub</code>, and that the login field takes <code>NETRA_ADMIN_TOKEN</code>.</li>
 
 <li><strong>Fix the plan doc.</strong> In <code>2026-08-07-next-phases.md</code>, strike 1A's dead checklist item — "Update <code>README.md</code> to replace the hand-inserted-SQL section with the real endpoints" — since the README was deleted on purpose in #16. Replace it with a line pointing at the UI. Tick the 1A boxes this stage completes.</li>
 
@@ -922,22 +1088,23 @@ gh pr create --base master</code></pre></li>
 <p>Beyond <code>make check</code>, the spec's own acceptance test for 1A is an end-to-end onboarding run:</p>
 
 <ol>
-  <li>Start the hub with <code>NETRA_AUTH_MODE</code> unset. It must start with no <code>NETRA_ADMIN_TOKEN</code>.</li>
-  <li>Open <code>http://127.0.0.1:8080/</code>, create host <code>web01</code>, copy the rendered <code>setup-agent.sh</code> line.</li>
-  <li>Run that line on a real host. The agent posts; <code>GET /api/v1/hosts</code> shows a <code>last_seen</code> that advances.</li>
-  <li>Rotate the token in the UI. The running agent starts getting 401s; re-run setup with the new token and it recovers.</li>
-  <li>Grep the hub logs for the plaintext token. It must not appear — not on create, not on rotate, not on the 401s.</li>
-  <li>Set <code>NETRA_AUTH_MODE=token</code> with no <code>NETRA_ADMIN_TOKEN</code>. The hub must refuse to start.</li>
+  <li>Start the hub with no <code>NETRA_ADMIN_TOKEN</code>. It must still refuse to start, exactly as before this stage.</li>
+  <li>Open <code>http://127.0.0.1:8080/</code>. It must redirect to <code>/login</code>, not render the host list.</li>
+  <li>Log in with the admin token, create host <code>web01</code>, copy the rendered <code>setup-agent.sh</code> line.</li>
+  <li>Run that line on a real host. The agent posts; <code>GET /api/v1/hosts</code> with a bearer header shows a <code>last_seen</code> that advances.</li>
+  <li>Rotate the host's token in the UI. The running agent starts getting 401s; re-run setup with the new token and it recovers.</li>
+  <li>Change <code>NETRA_ADMIN_TOKEN</code> and restart. The still-open browser session must be logged out on its next request — the cookie's signing key changed with it.</li>
+  <li>Grep the hub logs for both plaintexts, the agent token and the admin token. Neither may appear — not on create, not on rotate, not on login, not on the 401s.</li>
   <li><code>curl</code> the admin API from another machine against the public hostname. Traefik must 404 — only <code>/api/agent/</code> is routed.</li>
 </ol>
 
-<p>Step 5 is the one most likely to be skipped and most likely to be wrong: a token that leaks into a log is as compromised as one in a cached response, and nothing in the unit tests looks at log output.</p>
+<p>Step 7 is the one most likely to be skipped and most likely to be wrong: a token that leaks into a log is as compromised as one in a cached response, and nothing in the unit tests looks at log output.</p>
 
 <h2>Out of scope</h2>
 
 <ul>
   <li><strong>The read API (1D)</strong> — <code>GET /api/v1/hosts/{id}/metrics</code> and tier selection. <code>GET /api/v1/hosts</code> lands here only because the UI needs a list to render.</li>
-  <li><strong>OIDC</strong> — phase 2. <code>AuthMode</code> exists so it becomes a third constant and one middleware branch, with no handler changes.</li>
+  <li><strong>OIDC</strong> — phase 2. It replaces the login handler and the session-cookie source; <code>RequireAdmin</code> and every route behind it stay as they are. An <code>AuthMode</code> switch is deliberately not introduced now, when there would be only one mode to select.</li>
   <li><strong>Any design system or frontend build.</strong> The phase-2 UI owns that decision, and starting it here would prejudge it.</li>
   <li><strong>Migration checksum detection.</strong> Still open in 1B, still gated on "before the first release".</li>
 </ul>
