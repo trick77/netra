@@ -174,6 +174,32 @@ export NETRA_SETUP_ROOT
 init_paths
 assert_eq "xen" "$(detect_virt)" "Xen PV is detected through /sys/hypervisor/type"
 
+# ...but a Xen dom0 is REAL HARDWARE reading `xen` from the same file. The CPU
+# flag is absent on dom0 and sys_vendor is the real board vendor, so both
+# earlier branches fall through and the type file alone would misjudge a machine
+# with real disks — losing SMART, drive temperatures and the sensor hint on
+# hardware that has all of them. `control_d` in the capabilities file is what
+# systemd-detect-virt discriminates on.
+R=$(mkplatform virt-dom0)
+printf 'processor\t: 0\n' >"$R/proc/cpuinfo"
+printf 'Supermicro\n' >"$R/sys/class/dmi/id/sys_vendor"
+mkdir -p "$R/sys/hypervisor/properties"
+printf 'xen\n' >"$R/sys/hypervisor/type"
+printf 'xen-3.0-x86_64 xen-3.0-x86_32p hvm-3.0-x86_32 control_d\n' \
+    >"$R/sys/hypervisor/properties/capabilities"
+NETRA_SETUP_ROOT="$R"
+export NETRA_SETUP_ROOT
+init_paths
+assert_eq "" "$(detect_virt)" "a Xen dom0 is physical, not a guest"
+
+# The same tree WITHOUT control_d is a Xen HVM/PV guest and stays virtual, so
+# the assertion above is about dom0 and not about the capabilities file merely
+# existing.
+printf 'xen-3.0-x86_64 xen-3.0-x86_32p hvm-3.0-x86_32\n' \
+    >"$R/sys/hypervisor/properties/capabilities"
+init_paths
+assert_eq "xen" "$(detect_virt)" "a Xen guest with capabilities but no control_d is virtual"
+
 # --- 3. SMART is skipped on a virtual host ------------------------------------
 #
 # The hypervisor presents an /dev/sda that looks exactly like a real one from
@@ -299,6 +325,22 @@ assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs
     "and is told which command, rather than being shown a line number"
 assert_not_contains "$RUN_OUT" "id: command not found" \
     "the check runs before anything reaches for id"
+
+# `sed` is the one that proved die itself could be the casualty. die used to
+# colour its label by piping _wrap through sed; under `set -e` a missing sed
+# failed the pipeline and aborted die BEFORE `exit 1`, so the host got
+# "sed: not found" and exit 127 instead of the message naming what to install.
+# Every other command in the list is reported BY die, so die has to survive the
+# absence of each of them.
+NOSED=$(linkbin nosed awk grep tr head cat sort wc mktemp mkdir rm cp id)
+run_capture env PATH="$NOSED" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-nosed"
+assert_eq 1 "$RUN_RC" "a host without sed exits 1, not 127 from a broken die"
+assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs: sed" \
+    "die still delivers its message with no sed on the host"
+assert_not_contains "$RUN_OUT" "sed: command not found" \
+    "die does not shell out to sed to print an error about sed"
 
 # ...and with tr restored the same run gets past the check, so the assertion
 # above is about tr and not about the restricted PATH in general.

@@ -152,6 +152,13 @@ NETRA_SETUP_ROOT="${NETRA_SETUP_ROOT:-}"
 # declined or degraded, so the operator sees what the agent will NOT collect.
 SKIPPED_NOTES=""
 
+# Set by plan_drivetemp when it has actually changed the host — the one mutation
+# that happens BEFORE the write gate, because the sensor scan has to see its
+# result. Declining the gate must not then claim "nothing was changed", which
+# would be a lie on exactly this path, and the operator would have no idea what
+# to undo.
+DRIVETEMP_CHANGED=""
+
 # Consumed answers when NETRA_ANSWERS_FILE is set (test seam only). The two
 # indexes are deliberately independent: a y/n prompt and a free-text prompt read
 # from different files, so neither can shift the other by a line.
@@ -204,9 +211,18 @@ init_colors() {
 }
 
 # die MSG... — one-line error on stderr, exit 1.
+#
+# NO PIPELINE, and no `sed`. This used to colour the label by piping _wrap
+# through sed; under `set -e` a host with no `sed` failed the pipeline and
+# aborted die BEFORE `exit 1` was reached — no message, exit 127. The victim was
+# check_tools, whose entire job is to name the missing command. The label is a
+# known literal, so stripping it back off the wrapped text and re-emitting it
+# coloured needs nothing but builtins. Colour is applied AFTER wrapping because
+# an escape sequence inside the text would be counted toward the fold width.
 die() {
-    _wrap 76 'setup-agent: error: ' '  ' "$*" |
-        sed "1s/^setup-agent: error:/${C_RED:-}${C_BOLD:-}setup-agent: error:${C_RESET:-}/" >&2
+    _die_out=$(_wrap 76 'setup-agent: error: ' '  ' "$*")
+    printf '%s%s\n' "${C_RED:-}${C_BOLD:-}setup-agent: error:${C_RESET:-}" \
+        "${_die_out#setup-agent: error:}" >&2
     exit 1
 }
 
@@ -270,9 +286,11 @@ _wrap() {
 warn() {
     _warn_msg="$*"
     # Wrapped as PLAIN text and coloured afterwards: an escape sequence inside
-    # the text would be counted as characters and throw the fold off.
-    _wrap 76 'setup-agent: warning: ' '  ' "$_warn_msg" |
-        sed "1s/^setup-agent: warning:/${C_YELLOW:-}${C_BOLD:-}setup-agent: warning:${C_RESET:-}/" >&2
+    # the text would be counted as characters and throw the fold off. Builtins
+    # only, for the reason spelled out on die.
+    _warn_out=$(_wrap 76 'setup-agent: warning: ' '  ' "$_warn_msg")
+    printf '%s%s\n' "${C_YELLOW:-}${C_BOLD:-}setup-agent: warning:${C_RESET:-}" \
+        "${_warn_out#setup-agent: warning:}" >&2
     if [ -n "$SKIPPED_NOTES" ]; then
         SKIPPED_NOTES="$SKIPPED_NOTES
 $_warn_msg"
@@ -699,6 +717,7 @@ init_paths() {
     P_CPUINFO="${NETRA_CPUINFO_PATH:-$(_p /proc/cpuinfo)}"
     P_DMIVENDOR="${NETRA_DMIVENDOR_PATH:-$(_p /sys/class/dmi/id/sys_vendor)}"
     P_HYPERVISOR="${NETRA_HYPERVISOR_PATH:-$(_p /sys/hypervisor/type)}"
+    P_HYPERVISOR_CAPS="${NETRA_HYPERVISOR_CAPS_PATH:-$(_p /sys/hypervisor/properties/capabilities)}"
     # A host WRITE path, not an emit path, and therefore prefixed: it never
     # reaches a template, and a test that persisted a module to the real
     # /etc/modules-load.d would be changing the machine running the suite.
@@ -735,6 +754,7 @@ debug_paths() {
     printf 'cpuinfo|%s\n' "$P_CPUINFO"
     printf 'dmivendor|%s\n' "$P_DMIVENDOR"
     printf 'hypervisor|%s\n' "$P_HYPERVISOR"
+    printf 'hypervisor_caps|%s\n' "$P_HYPERVISOR_CAPS"
     printf 'uid|%s\n' "$P_UID"
 }
 
@@ -997,6 +1017,17 @@ detect_virt() {
 
     if [ -r "$P_HYPERVISOR" ]; then
         _dv_type=$(cat "$P_HYPERVISOR" 2>/dev/null || printf '')
+        # A Xen dom0 is REAL HARDWARE with real disks, and it reads `xen` here
+        # exactly like a guest does: the CPU flag is absent on dom0 and
+        # sys_vendor is the real board vendor, so both branches above fall
+        # through. Calling it virtual costs it SMART, drive temperatures and the
+        # sensor hint on hardware that has all of them — the asymmetric cost the
+        # DMI branch above already refuses to pay. systemd-detect-virt
+        # discriminates on the `control_d` capability; so do we.
+        if [ -n "$_dv_type" ] && [ -r "$P_HYPERVISOR_CAPS" ] &&
+            grep -q 'control_d' "$P_HYPERVISOR_CAPS" 2>/dev/null; then
+            return 0
+        fi
         [ -z "$_dv_type" ] || {
             printf '%s' "$_dv_type"
             return 0
@@ -1535,28 +1566,29 @@ plan_smart() {
     _ps_ata=""
     _ps_nvme=""
 
-    # A virtual disk has no SMART data behind it. The hypervisor presents an
-    # /dev/sda that looks exactly like a real one from sysfs, so the transport
+    # An EMULATED SATA disk has no SMART data behind it. The hypervisor presents
+    # an /dev/sda that looks exactly like a real one from sysfs, so the transport
     # probe below cannot tell the difference and would happily grant SYS_RAWIO,
     # map a device, and ship an agent whose SMART collector reads nothing on
     # every single scrape. Granting a capability for a metric that cannot exist
     # is worse than collecting nothing.
+    #
+    # NVMe is NOT in that boat and is deliberately still probed below. On
+    # passthrough and virtio-NVMe setups — AWS Nitro instance store and EBS
+    # among them — `nvme smart-log` returns real temperature, data units
+    # read/written and percentage_used. Skipping the whole function on any guest
+    # threw that away on hosts that had it, and SYS_ADMIN is behind its own
+    # prompt regardless, so nothing is granted here that was not asked for.
     if [ -n "${VIRT:-}" ]; then
-        info "  smart:           skipped on a virtual host ($VIRT)"
+        info "  SATA/SAS:        skipped on a virtual host ($VIRT)"
         # warn, not info: SKIPPED_NOTES is "everything the agent will NOT
-        # collect", and this withholds every SMART metric and every SATA drive
-        # temperature. An operator whose host was misjudged has to be able to
-        # find out from the finish report, without re-reading the scroll.
-        warn "SMART is skipped on this host because it looks virtual ($VIRT), and a" \
-            "hypervisor's disks carry no SMART data: no health, no wear, no drive" \
-            "temperatures. Re-run with --assume-physical if this machine really does" \
-            "have disks of its own."
-        if [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
-            warn "--sys-admin was given on a virtual host ($VIRT), where there is no SMART" \
-                "data to read, so it was not granted. --assume-physical overrides the" \
-                "detection if this machine really does have disks of its own."
-        fi
-        return 0
+        # collect", and this withholds every ATA SMART metric and every SATA
+        # drive temperature. An operator whose host was misjudged has to be able
+        # to find out from the finish report, without re-reading the scroll.
+        warn "ATA SMART is skipped on this host because it looks virtual ($VIRT), and a" \
+            "hypervisor's emulated disks carry no SMART data: no health, no wear, no" \
+            "drive temperatures. NVMe, if present, is still offered. Re-run with" \
+            "--assume-physical if this machine really does have disks of its own."
     fi
 
     for _ps_d in $(block_devices); do
@@ -1577,6 +1609,14 @@ plan_smart() {
     for _ps_c in $(nvme_controllers); do
         _ps_nvme="${_ps_nvme:+$_ps_nvme }$_ps_c"
     done
+
+    # On a guest the ATA candidates are dropped here rather than at collection
+    # time, so SYS_RAWIO is never granted and drivetemp is never offered for
+    # drives the hypervisor invented. Cleared AFTER the loop so the loop stays
+    # one shape.
+    if [ -n "${VIRT:-}" ]; then
+        _ps_ata=""
+    fi
 
     # SMART_ATA_DEVICES outlives this function: detect_sensors reads it to decide
     # whether the drivetemp module is worth offering. A probe result, never an
@@ -1602,7 +1642,7 @@ plan_smart() {
             info "  SYS_ADMIN:       granted by --sys-admin (not prompted)"
             _ps_grant=1
         elif netra_ask "Grant SYS_ADMIN for NVMe SMART health and wear? NVMe temperature
-  works without it." n --sys-admin; then
+  works without it." n; then
             _ps_grant=1
         fi
         if [ "$_ps_grant" = 1 ]; then
@@ -1791,6 +1831,7 @@ plan_drivetemp() {
     netra_exec mkdir -p "$P_MODULESLOAD"
     netra_exec netra_write_line drivetemp "$P_MODULESLOAD/drivetemp.conf"
     info "  persisted                 /etc/modules-load.d/drivetemp.conf"
+    DRIVETEMP_CHANGED=1
 }
 
 detect_sensors() {
@@ -2170,6 +2211,13 @@ EOF
     if [ -n "$VIRT" ] && [ "${ASSUME_PHYSICAL:-0}" = 1 ]; then
         info "  platform:        $VIRT, overridden by --assume-physical"
         VIRT=""
+    elif [ "${ASSUME_PHYSICAL:-0}" = 1 ]; then
+        # An unhonoured request is not a neutral state — the same rule
+        # --sys-admin follows on a virtual host. Without this, an operator who
+        # suspects a misdetection passes the flag, detection returns physical
+        # for some unrelated reason, and they cannot tell whether the flag did
+        # anything at all.
+        info "  platform:        physical (--assume-physical had nothing to override)"
     elif [ -n "$VIRT" ]; then
         info "  platform:        virtual ($VIRT)"
     else
@@ -2339,6 +2387,18 @@ resolve_token() {
 configure() {
     step "Configuration"
 
+    # BEFORE the questions, not after the answers. write_outputs refuses to
+    # overwrite an existing .env without --force, and that refusal does not
+    # depend on anything detection found — so an operator re-running to rotate a
+    # token used to type the new one at a hidden prompt, watch the run succeed,
+    # and keep the old token, with the warning arriving only after every value
+    # had already been collected and silently dropped.
+    if [ -e "$OUTPUT_DIR/.env" ] && [ "$FORCE" != 1 ]; then
+        warn "$OUTPUT_DIR/.env already exists and --force was not given, so the values" \
+            "asked for below will NOT be written to it. Its existing token and settings" \
+            "stay in force. Re-run with --force to replace them."
+    fi
+
     if [ -z "$HUB_URL" ]; then
         netra_ask_value HUB_URL "Hub base URL" "https://netra.example.com"
     fi
@@ -2484,7 +2544,18 @@ write_outputs() {
         rm -rf "$SCRATCH_DIR"
         WROTE_OUTPUTS=0
         info ""
-        info "  Nothing was written and nothing was changed."
+        info "  Nothing was written."
+        # The one exception to "nothing was changed", and it has to be named:
+        # plan_drivetemp runs before this gate and may already have loaded and
+        # persisted the module. Saying "nothing was changed" here would be
+        # false, and would leave the operator with no idea what to undo.
+        if [ -n "$DRIVETEMP_CHANGED" ]; then
+            warn_cmd "modprobe -r drivetemp && rm /etc/modules-load.d/drivetemp.conf" \
+                "the drivetemp module was loaded and persisted earlier in this run, before" \
+                "this gate, and that change is still in place. To undo it:"
+        else
+            info "  Nothing was changed."
+        fi
         return 0
     fi
     WROTE_OUTPUTS=1

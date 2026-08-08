@@ -192,7 +192,10 @@ assert_file_absent "$TMP/out-decline/.env" "a declined .env is not written"
 assert_file_absent "$TMP/out-decline" "the output directory itself is not created either"
 assert_file_absent "$ROOT/.netra" "no marker directory is created at the filesystem root"
 assert_file_absent "$ROOT/mnt/ark/.netra" "and none on the other measured filesystem"
-assert_contains "$RUN_OUT" "nothing was changed" "the run says plainly that it changed nothing"
+assert_contains "$RUN_OUT" "Nothing was written" "the run says plainly that it wrote nothing"
+# Only sayable because drivetemp was declined too (answer 2 above). The claim is
+# conditional on purpose — see the drivetemp case below.
+assert_contains "$RUN_OUT" "Nothing was changed" "the run says plainly that it changed nothing"
 assert_contains "$RUN_OUT" "Skipped or degraded" "everything declined is reported"
 
 # --- 7b. a declined gate must not let --start run a PREVIOUS run's compose ----
@@ -451,8 +454,8 @@ assert_contains "$COMPOSE_BODY" "docker.sock" "the Docker socket is still mounte
 
 # --- 12. the defaults produce a complete agent, and grant no privilege --------
 #
-# Taking every prompt's default must never expand privilege — SYS_ADMIN and
-# pid: host default n and stay off — while still producing an agent that
+# Taking every prompt's default must never expand privilege — SYS_ADMIN defaults
+# n and stays off, and pid: host is not a prompt at all — while still producing an agent that
 # collects everything it can without them. That second half is now carried by
 # the read-only mounts, which are NOT prompts at all: the package database, the
 # D-Bus socket and SYS_RAWIO are enabled automatically, on the same argument
@@ -482,9 +485,10 @@ assert_not_contains "$RUN_OUT" "Enable per-process" \
 assert_contains "$RUN_OUT" "always collected" \
     "and the run says host CPU, memory and load are not optional"
 assert_contains "$RUN_OUT" "Skipped or degraded" "the declines reach the finish report"
-# The benign half, and the proof that it is no longer asked about: this run's
-# answers file has exactly four lines, so a resurrected package or D-Bus prompt
-# would consume one and the run would die on an exhausted file.
+# The benign half, and the proof that it is no longer asked about: ANS_DEFAULT
+# has exactly three lines (SYS_ADMIN, drivetemp, write gate), so a resurrected
+# package or D-Bus prompt would consume a fourth and the run would die on an
+# exhausted answers file rather than quietly asserting the wrong thing.
 assert_contains "$YESBODY" "SYS_RAWIO" "SYS_RAWIO is granted automatically"
 assert_contains "$YESBODY" "/dev/sda" "the SATA device is still collected"
 assert_contains "$YESBODY" "/var/lib/dpkg" "the package database is mounted automatically"
