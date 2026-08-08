@@ -106,10 +106,10 @@ assert_contains "$RUN_OUT" "empty" "empty machine-id failure says it is empty"
 
 # --- 4a. a fully-accepted run on a healthy host reports nothing skipped -------
 #
-# The grant flags keep the LAST assertion meaningful: SYS_ADMIN and pid: host
-# default no, so answering the defaults on this NVMe fixture would legitimately
-# report skips. "Everything accepted" is --sys-admin --pid-host plus a y to the
-# two prompts those flags do not remove (drivetemp, the write gate).
+# The grant flags keep the LAST assertion meaningful: SYS_ADMIN defaults no and
+# pid: host is off unless asked for, so a plain run on this NVMe fixture would
+# legitimately report skips. "Everything accepted" is --sys-admin --pid-host
+# plus a y to the two prompts that remain (drivetemp, the write gate).
 ROOT=$(mkroot healthy)
 ANS=$(answers healthy y y)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
@@ -195,7 +195,7 @@ assert_contains "$RUN_OUT" "unsupported operating system" "the abort says why"
 # "--unsupported-os" needle would stay green even if the die message lost the
 # remedy entirely. This one can only match the die itself — and, since die
 # renders "$*", it also pins that the IFS='|' read above left IFS restored.
-assert_contains "$RUN_OUT" "system. Re-run with --unsupported-os" \
+assert_contains "$(flatten "$RUN_OUT")" "system. Re-run with --unsupported-os" \
     "the abort message itself names the flag that would allow it"
 assert_file_absent "$ROOT/out/compose.yaml" "nothing is written after the abort"
 

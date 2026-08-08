@@ -727,15 +727,21 @@ directories, and the opening banner states exactly that before the first questio
 **Detect first, then ask.** Nothing is created, written or started until the operator has
 seen what was found and agreed.
 
-**Five prompts, at most, and three of them only on some hosts:**
+**Four prompts, at most, and only the last on every host:**
 
 | Prompt | Default | Condition | Taken by |
 |---|---|---|---|
 | Continue on an unsupported OS? | no | unrecognised distro | `--unsupported-os` |
-| Grant `SYS_ADMIN` (NVMe SMART health/wear)? | no | NVMe present | `--sys-admin` |
-| Load the `drivetemp` module and check? | yes | SATA present, no such chip, root | — |
-| Enable per-process metrics (`pid: host`)? | no | always | `--pid-host` |
+| Grant `SYS_ADMIN` (NVMe SMART health/wear)? | no | NVMe present, physical host | `--sys-admin` |
+| Load the `drivetemp` module and check? | yes | SATA present, no such chip, root, physical | — |
 | Write the files and create the marker directories? | yes | always | — |
+
+**The core is never a question.** Host CPU, memory and load come from `/proc/stat`,
+`/proc/meminfo` and `/proc/loadavg`, need no privilege, and are what the agent is *for* — a
+run that could decline them would not be netra. Only the per-*process* breakdown needs the
+host PID namespace, and it is `--pid-host` or nothing. It was a prompt once, reading "enable
+per-process CPU and memory metrics?", which invited the operator to weigh a real privacy
+cost against a collector that does not exist yet and made the product look optional.
 
 **Everything read-only is enabled automatically**, with an informational line and no
 question: the Docker socket, `/proc/1/mountinfo`, the package database, the D-Bus socket,
@@ -744,9 +750,25 @@ Docker socket — these mounts *are* what the collectors are, and an agent confi
 without them is not the thing the operator ran the script for. Asking about a read-only
 bind mount trains people to hit Enter through the questions that matter.
 
-`SYS_ADMIN` and `pid: host` are the only privilege grants, and both default to **no**. The
-prompt text is one factual sentence each; an alarming prompt is not more informative, it
-just gets declined by people who wanted the feature.
+`SYS_ADMIN` is the only privilege the script asks about, and it defaults to **no**. The
+prompt text is one factual sentence; an alarming prompt is not more informative, it just
+gets declined by people who wanted the feature.
+
+**Virtual hosts are detected and asked less.** A hypervisor presents an `/dev/sda` that is
+indistinguishable from a real one in sysfs, so SMART detection would grant `SYS_RAWIO` and
+map a device whose SMART collector reads nothing on every scrape; and no driver will
+conjure thermal hardware a guest does not have. The probe is the `hypervisor` CPU flag,
+then DMI `sys_vendor`, then `/sys/hypervisor/type`. On a hit: SMART is skipped, `drivetemp`
+is not offered, and absent sensors are reported as normal rather than as a missing driver.
+`--assume-physical` overrides it.
+
+**External tooling is checked first, before the banner.** `awk sed grep tr head cat sort wc
+mktemp mkdir rm cp id` are required and named if missing — a `curl … | sh` lands on hosts
+nobody has inspected, and discovering a missing `tr` from inside a command substitution
+mid-detection produces a run that limps on with an empty variable. Templates are fetched
+with `curl` or `wget`, whichever exists; `--template-dir` needs neither. Messages are
+wrapped at 76 columns in pure shell, and colour is emitted only when both streams are
+terminals and `NO_COLOR` is unset.
 
 **The write gate is single, and nothing mutates before it.** One question covers
 `compose.yaml`, `.env` and every `.netra` marker directory, so declining leaves the host

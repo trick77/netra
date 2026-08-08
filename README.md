@@ -83,24 +83,38 @@ Plus empty `.netra` marker directories on each measured filesystem, which hold n
 exist only so the agent can `statfs` the filesystem they sit on. Docker pulls the agent
 image when you start the stack, which the script does not do unless you pass `--start`.
 
-It asks five yes/no questions at most, and several only apply to some hosts:
+It asks four yes/no questions at most, and only the last applies to every host:
 
 | Question | Default | Skip it with |
 |---|---|---|
 | Continue on a distro netra does not recognise? | no | `--unsupported-os` |
 | Grant `SYS_ADMIN` for NVMe SMART health and wear? | no | `--sys-admin` |
 | Load the `drivetemp` kernel module and check whether it works? | yes | — |
-| Enable per-process CPU and memory metrics (`pid: host`)? | no | `--pid-host` |
 | Write the files and create the marker directories? | yes | — |
 
-Everything read-only is enabled without asking — the Docker socket, the mount table, the
-package database, the D-Bus socket, and `SYS_RAWIO` for SATA SMART. `SYS_ADMIN` and
-`pid: host` are the only privilege grants, and both default to no.
+**Host CPU, memory and load are never asked about.** They come from `/proc`, they need no
+privileges, and they are what netra is for. Only the per-*process* breakdown needs the host
+PID namespace, and that is `--pid-host` or nothing — never a prompt, because a question
+reading "enable CPU and memory metrics?" makes the core of the product look optional.
+
+Everything read-only is enabled without asking, too — the Docker socket, the mount table,
+the package database, the D-Bus socket, and `SYS_RAWIO` for SATA SMART. `SYS_ADMIN` is the
+only privilege it asks about.
+
+On a **virtual host** it asks less still. A hypervisor's disks carry no SMART data, so SMART
+is skipped entirely rather than granting `SYS_RAWIO` for a metric that cannot exist, and the
+missing temperature sensors are reported as normal rather than as a driver you should go and
+load. `--assume-physical` overrides the detection.
 
 It also asks for the hub URL, the agent token (input hidden), and where the host is —
 location, provider and host type. Each can be given as a flag instead: `--hub-url`,
 `--token` / `--token-file`, `--location`, `--provider`, `--host-type`. `--dry-run` prints
 the whole plan and touches nothing.
+
+It needs `awk`, `sed`, `grep`, `tr`, `head`, `cat`, `sort`, `wc`, `mktemp`, `mkdir`, `rm`,
+`cp` and `id` — checked in the first second, so a minimal image is told what it is missing
+instead of failing halfway through with `tr: not found`. Templates are fetched with `curl`
+or, failing that, `wget`; `--template-dir` needs neither.
 
 `drivetemp` is worth a word. Without it, SATA drive temperatures come from `smartctl` on
 the hourly SMART poll; with it they arrive through hwmon on the 60-second sensor scrape,

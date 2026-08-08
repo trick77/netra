@@ -9,9 +9,11 @@
 # setup script header written down:
 #
 #   unsupported OS (unknown distro only) -> SYS_ADMIN (NVMe only)
-#     -> drivetemp (SATA and no such chip) -> pid: host -> the write gate
+#     -> drivetemp (SATA and no such chip) -> the write gate
 #
-# On the root-full fixture that is four: SYS_ADMIN, drivetemp, pid: host, gate.
+# On the root-full fixture that is three: SYS_ADMIN, drivetemp, gate. pid: host
+# is NOT among them - it is --pid-host or nothing, because the question read as
+# though host CPU and memory were optional, and they are the product.
 set -eu
 # shellcheck source=/dev/null
 . "$LIB"
@@ -27,10 +29,10 @@ mkshims "$TMP/shims"
 NETRA_UID=0
 export NETRA_UID
 
-# The four defaults on this fixture: SYS_ADMIN no, drivetemp yes, pid: host no,
-# write gate yes. Named rather than repeated so a change to the prompt sequence
-# is one edit, not fourteen.
-ANS_DEFAULT=$(answers default n y n y)
+# The three defaults on this fixture: SYS_ADMIN no, drivetemp yes, write gate
+# yes. Named rather than repeated so a change to the prompt sequence is one
+# edit, not fourteen.
+ANS_DEFAULT=$(answers default n y y)
 
 mkroot() {
     _mkroot_dst="$TMP/$1"
@@ -61,7 +63,7 @@ assert_file_absent "$ROOT/.netra" "no marker directory is created under --dry-ru
 assert_file_absent "$ROOT/mnt/ark/.netra" "no marker directory is created under --dry-run"
 assert_contains "$RUN_OUT" "would run:" "--dry-run announces the mutations it did not perform"
 assert_contains "$RUN_OUT" "would run: netra_write_compose" "the compose write is announced"
-assert_contains "$RUN_OUT" "does not install any software" \
+assert_contains "$RUN_OUT" "Installs nothing" \
     "the banner says up front that this installs nothing"
 assert_contains "$RUN_OUT" "compose.yaml   generated" \
     "the banner names the files it is going to write"
@@ -464,6 +466,14 @@ assert_not_contains "$YESBODY" "/dev/nvme0" \
     "a declined SYS_ADMIN also drops the NVMe controller from devices:"
 assert_contains "$RUN_OUT" "--sys-admin" "the run says which flag would grant SYS_ADMIN"
 assert_contains "$RUN_OUT" "--pid-host" "the run says which flag would enable pid: host"
+# The core of the product is never a question. A prompt that reads "Enable
+# per-process CPU and memory metrics?" invites the operator to think host CPU
+# and memory are optional; they are collected always, and the only thing that
+# needs the namespace is the per-process breakdown.
+assert_not_contains "$RUN_OUT" "Enable per-process" \
+    "pid: host is not prompted for at all"
+assert_contains "$RUN_OUT" "always collected" \
+    "and the run says host CPU, memory and load are not optional"
 assert_contains "$RUN_OUT" "Skipped or degraded" "the declines reach the finish report"
 # The benign half, and the proof that it is no longer asked about: this run's
 # answers file has exactly four lines, so a resurrected package or D-Bus prompt
@@ -482,7 +492,7 @@ assert_file_present "$ROOT/.netra" "the marker directories are created"
 # --sys-admin that still asked would run one line short and die with "answers
 # file exhausted" rather than passing quietly.
 ROOT=$(mkroot grantsysadmin)
-ANS=$(answers sysadmin y n y)
+ANS=$(answers sysadmin y y)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
     NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --sys-admin \
     --token nta_x --hub-url https://h \
@@ -537,13 +547,13 @@ UONOTES=$(printf '%s\n' "$RUN_OUT" | sed -n '/Skipped or degraded:/,$p')
 assert_contains "$UONOTES" "not a distribution/version" \
     "the unsupported OS is recorded as a note in the finish report"
 
-# The teeth: this file holds EXACTLY the four prompts that remain once prompt 1
-# is gone (SYS_ADMIN, drivetemp, pid: host, the write gate). An
-# --unsupported-os that still asked prompt 1 would run the file one line short
-# and die with "answers file exhausted".
+# The teeth: this file holds EXACTLY the three prompts that remain once prompt 1
+# is gone (SYS_ADMIN, drivetemp, the write gate). An --unsupported-os that still
+# asked prompt 1 would run the file one line short and die with "answers file
+# exhausted".
 ROOT=$(mkroot unsupportedcount)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
-ANS=$(answers unsupported4 y y y y)
+ANS=$(answers unsupported3 y y y)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
     NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --unsupported-os \
     --token nta_x --hub-url https://h \
