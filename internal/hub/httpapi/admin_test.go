@@ -79,6 +79,21 @@ func TestIntegrationAdminCreateHostRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+// A name already taken at that site is a 409 the operator can act on, not a
+// 500 that reads as "the hub is broken".
+func TestIntegrationAdminDuplicateHostnameIs409(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	createHost(t, srv, "web01")
+
+	resp := doAdmin(t, srv, http.MethodPost, "/api/v1/hosts", `{"hostname":"web01"}`)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", resp.StatusCode)
+	}
+	if body := readBody(t, resp); !strings.Contains(body, "already exists") {
+		t.Errorf("body does not say what collided: %s", body)
+	}
+}
+
 func TestIntegrationAdminListHostsReportsLastSeen(t *testing.T) {
 	srv, s := newAdminFixture(t)
 	id, _ := createHost(t, srv, "web01")

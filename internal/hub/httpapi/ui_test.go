@@ -149,20 +149,53 @@ func TestIntegrationUIListRendersItsOwnFailure(t *testing.T) {
 	}
 }
 
-// Hostnames are not unique, so the id is what distinguishes two rows -- and
-// it is what rotate and delete act on.
-func TestIntegrationUIListShowsTheIDForDuplicateHostnames(t *testing.T) {
-	srv, _ := newAdminFixture(t)
-	first, _ := createHost(t, srv, "web01")
-	second, _ := createHost(t, srv, "web01")
+// A hostname is unique per site, not globally, so two rows can still share a
+// name across sites. The id is what tells them apart, and it is what rotate
+// and delete act on.
+func TestIntegrationUIListShowsTheIDForSameNamedHostsAtDifferentSites(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	ctx := context.Background()
+
+	var zrh, fsn int32
+	if err := s.Pool().QueryRow(ctx,
+		`INSERT INTO sites (name) VALUES ('zrh') RETURNING id`).Scan(&zrh); err != nil {
+		t.Fatalf("insert site: %v", err)
+	}
+	if err := s.Pool().QueryRow(ctx,
+		`INSERT INTO sites (name) VALUES ('fsn1') RETURNING id`).Scan(&fsn); err != nil {
+		t.Fatalf("insert site: %v", err)
+	}
+
+	var first, second struct {
+		ID int32 `json:"id"`
+	}
+	decodeJSON(t, doAdmin(t, srv, http.MethodPost, "/api/v1/hosts",
+		fmt.Sprintf(`{"hostname":"web01","site_id":%d}`, zrh)), &first)
+	decodeJSON(t, doAdmin(t, srv, http.MethodPost, "/api/v1/hosts",
+		fmt.Sprintf(`{"hostname":"web01","site_id":%d}`, fsn)), &second)
 
 	body := readBody(t, doAdmin(t, srv, http.MethodGet, "/", ""))
 
-	if !strings.Contains(body, fmt.Sprintf("<td class=\"muted\">%d</td>", first)) {
-		t.Errorf("the list does not show id %d", first)
+	if !strings.Contains(body, fmt.Sprintf("<td class=\"muted\">%d</td>", first.ID)) {
+		t.Errorf("the list does not show id %d", first.ID)
 	}
-	if !strings.Contains(body, fmt.Sprintf("<td class=\"muted\">%d</td>", second)) {
-		t.Errorf("the list does not show id %d", second)
+	if !strings.Contains(body, fmt.Sprintf("<td class=\"muted\">%d</td>", second.ID)) {
+		t.Errorf("the list does not show id %d", second.ID)
+	}
+}
+
+// The operator can only fix a name collision if the page says that is what
+// happened, rather than "could not create the host".
+func TestIntegrationUICreateReportsANameCollision(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	createHost(t, srv, "web01")
+
+	resp := postForm(t, srv, "/ui/hosts", url.Values{"hostname": {"web01"}})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	if body := readBody(t, resp); !strings.Contains(body, "already exists") {
+		t.Errorf("the page does not say the name is taken: %s", body)
 	}
 }
 

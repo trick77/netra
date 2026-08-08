@@ -73,6 +73,8 @@ func describeConstraint(pgErr *pgconn.PgError) string {
 		return "a provider with that name"
 	case "sites_provider_id_name_key":
 		return "a site with that name for that provider"
+	case "hosts_site_id_hostname_key":
+		return "a host with that name at that site"
 	case "hosts_site_id_fkey", "sites_provider_id_fkey":
 		return "the referenced row"
 	case "tokens_token_hash_key":
