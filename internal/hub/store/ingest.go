@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -32,13 +33,45 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 			cpu_total, cpu_user, cpu_system, cpu_iowait, cpu_steal, cpu_idle,
 			mem_total, mem_used, mem_available, mem_buffcache, mem_zfs_arc,
 			swap_total, swap_used,
-			load1, load5, load15, uptime_s
+			load1, load5, load15, uptime_s,
+			ctxt_per_s, intr_per_s, forks_per_s,
+			procs_running, procs_blocked, boot_time_s,
+			processes_total, users_logged_in,
+			services_total, services_failed,
+			tcp_retrans_segs_per_s, tcp_out_rsts_per_s, tcp_in_errs_per_s,
+			tcp_active_opens_per_s, tcp_passive_opens_per_s,
+			tcp_attempt_fails_per_s, tcp_curr_estab,
+			tcp_listen_overflows_per_s, tcp_listen_drops_per_s,
+			udp_in_errors_per_s, udp_rcvbuf_errors_per_s,
+			udp_sndbuf_errors_per_s, udp_no_ports_per_s,
+			ip_reasm_reqds_per_s, ip_reasm_fails_per_s,
+			ip_frag_fails_per_s, ip_frag_creates_per_s,
+			udp6_in_errors_per_s, udp6_rcvbuf_errors_per_s,
+			udp6_sndbuf_errors_per_s, udp6_no_ports_per_s,
+			ip6_reasm_reqds_per_s, ip6_reasm_fails_per_s,
+			ip6_frag_fails_per_s, ip6_frag_creates_per_s
 		) VALUES (
 			$1, $2,
 			$3, $4, $5, $6, $7, $8,
 			$9, $10, $11, $12, $13,
 			$14, $15,
-			$16, $17, $18, $19
+			$16, $17, $18, $19,
+			$20, $21, $22,
+			$23, $24, $25,
+			$26, $27,
+			$28, $29,
+			$30, $31, $32,
+			$33, $34,
+			$35, $36,
+			$37, $38,
+			$39, $40,
+			$41, $42,
+			$43, $44,
+			$45, $46,
+			$47, $48,
+			$49, $50,
+			$51, $52,
+			$53, $54
 		)
 		ON CONFLICT (host_id, ts) DO NOTHING`
 
@@ -52,6 +85,22 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 			u64(m.MemBuffcache), u64(m.MemZfsArc),
 			u64(m.SwapTotal), u64(m.SwapUsed),
 			f64(m.Load1), f64(m.Load5), f64(m.Load15), u64(m.UptimeS),
+			f64(m.CtxtPerS), f64(m.IntrPerS), f64(m.ForksPerS),
+			u32(m.ProcsRunning), u32(m.ProcsBlocked), u64(m.BootTimeS),
+			u32(m.ProcessesTotal), u32(m.UsersLoggedIn),
+			u32(m.ServicesTotal), u32(m.ServicesFailed),
+			f64(m.TcpRetransSegsPerS), f64(m.TcpOutRstsPerS), f64(m.TcpInErrsPerS),
+			f64(m.TcpActiveOpensPerS), f64(m.TcpPassiveOpensPerS),
+			f64(m.TcpAttemptFailsPerS), u32(m.TcpCurrEstab),
+			f64(m.TcpListenOverflowsPerS), f64(m.TcpListenDropsPerS),
+			f64(m.UdpInErrorsPerS), f64(m.UdpRcvbufErrorsPerS),
+			f64(m.UdpSndbufErrorsPerS), f64(m.UdpNoPortsPerS),
+			f64(m.IpReasmReqdsPerS), f64(m.IpReasmFailsPerS),
+			f64(m.IpFragFailsPerS), f64(m.IpFragCreatesPerS),
+			f64(m.Udp6InErrorsPerS), f64(m.Udp6RcvbufErrorsPerS),
+			f64(m.Udp6SndbufErrorsPerS), f64(m.Udp6NoPortsPerS),
+			f64(m.Ip6ReasmReqdsPerS), f64(m.Ip6ReasmFailsPerS),
+			f64(m.Ip6FragFailsPerS), f64(m.Ip6FragCreatesPerS),
 		)
 	}
 
@@ -92,6 +141,65 @@ func (s *Store) UpsertHostCurrent(ctx context.Context, hostID int32, m *netrav1.
 	return nil
 }
 
+// InsertAgentSamples writes the agent self-telemetry carried by a batch and
+// returns the number of rows stored.
+//
+// Samples without an AgentSample are skipped rather than written as an
+// all-NULL row: an agent too old to send one has said nothing about itself,
+// which is not the same as having reported nothing.
+//
+// Same conflict handling as InsertHostSamples, for the same reason -- these
+// rows share that table's (host_id, ts) key and are replayed with it.
+func (s *Store) InsertAgentSamples(ctx context.Context, hostID int32, samples []*netrav1.HostSample) (int64, error) {
+	const stmt = `
+		INSERT INTO agent_samples (
+			host_id, ts,
+			uptime_s, rss_bytes, goroutines,
+			scrape_duration_ms, buffer_depth,
+			buffer_dropped_total, post_failures_total, post_latency_ms
+		) VALUES (
+			$1, $2,
+			$3, $4, $5,
+			$6, $7,
+			$8, $9, $10
+		)
+		ON CONFLICT (host_id, ts) DO NOTHING`
+
+	batch := &pgx.Batch{}
+	queued := 0
+	for _, m := range samples {
+		a := m.GetAgent()
+		if a == nil {
+			continue
+		}
+		batch.Queue(stmt,
+			hostID, time.UnixMilli(m.GetTsMs()).UTC(),
+			u64(a.UptimeS), u64(a.RssBytes), u32(a.Goroutines),
+			u32(a.ScrapeDurationMs), u32(a.BufferDepth),
+			u64(a.BufferDroppedTotal), u64(a.PostFailuresTotal),
+			u32(a.PostLatencyMs),
+		)
+		queued++
+	}
+	if queued == 0 {
+		return 0, nil
+	}
+
+	results := s.pool.SendBatch(ctx, batch)
+	defer func() { _ = results.Close() }()
+
+	var inserted int64
+	for range queued {
+		tag, err := results.Exec()
+		if err != nil {
+			return 0, fmt.Errorf("insert agent sample: %w", err)
+		}
+		inserted += tag.RowsAffected()
+	}
+
+	return inserted, nil
+}
+
 // f64 and u64 map an unset protobuf optional to a SQL NULL. Returning the
 // pointer directly would work for float64 but not for the uint64 -> int64
 // column mapping, so both are explicit.
@@ -107,6 +215,14 @@ func u64(p *uint64) any {
 		return nil
 	}
 	return int64(*p)
+}
+
+// u32 is the same mapping for the counts stored in INTEGER columns.
+func u32(p *uint32) any {
+	if p == nil {
+		return nil
+	}
+	return int32(*p)
 }
 
 // MetadataHash returns the stored metadata hash for a host, or nil if the hub
@@ -165,16 +281,43 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 			cores         = NULLIF($12, 0),
 			threads       = NULLIF($13, 0),
 			memory_total  = NULLIF($14, 0::BIGINT),
-			metadata_hash = $15
+			metadata_hash = $15,
+			-- The column is NOT NULL DEFAULT '{}', so an agent reporting no
+			-- capabilities writes an empty object. Unlike the sample columns,
+			-- absence here is not a distinct fact worth preserving: no
+			-- collector reporting a capability and every collector reporting
+			-- that it is fine are both "nothing to flag".
+			capabilities  = $16
 		WHERE id = $1`,
 		hostID,
 		md.GetHostname(), md.GetFingerprint(), md.GetHostType(),
 		md.GetAgentVersion(), md.GetGoVersion(), md.GetBuildCommit(),
 		md.GetKernel(), md.GetOsName(), md.GetArch(), md.GetCpuModel(),
 		int32(md.GetCores()), int32(md.GetThreads()), int64(md.GetMemoryTotal()),
-		hash)
+		hash, capabilitiesJSON(md.GetCapabilities()))
 	if err != nil {
 		return fmt.Errorf("save metadata: %w", err)
 	}
 	return nil
+}
+
+// capabilitiesJSON renders the capability map for the JSONB column.
+//
+// An agent reporting none writes '{}' rather than NULL, because the column is
+// NOT NULL DEFAULT '{}' and an empty object is already its "nothing to say"
+// value.
+func capabilitiesJSON(caps map[string]string) any {
+	const empty = "{}"
+
+	if len(caps) == 0 {
+		return empty
+	}
+	raw, err := json.Marshal(caps)
+	if err != nil {
+		// A map[string]string cannot fail to marshal. Writing the empty
+		// object is still better than failing the whole metadata save.
+		slog.Warn("marshal capabilities", "err", err)
+		return empty
+	}
+	return raw
 }

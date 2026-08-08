@@ -12,11 +12,24 @@
 Two plans are complete. What that bought:
 
 - **Wire and storage:** protobuf `IngestRequest`/`HostSample`, HTTPS POST ingest, bearer auth, `COPY` into one hypertable with 5m/1h continuous aggregates and 7/30/90-day retention.
-- **Agent:** `Collector` interface, three collectors (CPU, memory, load), bounded ring buffer, metadata-hash handshake.
+- **Agent:** `Collector` interface, seven collectors (CPU, memory, load, kernelstat, netstat, procs, users), bounded ring buffer, metadata-hash handshake carrying per-collector capabilities.
 - **Deployment:** two digest-pinned images published to GHCR on merge, lockstep-versioned; weekly GHCR retention; hub `compose.yaml`; agent reference compose; `setup-agent.sh` with a 353-assertion suite.
 - **CI:** build/vet/gofmt, race tests against a real TimescaleDB, coverage floor + patch gates, a shell job under `sh` and `dash`, version-stamping guard.
 
-**What that does not buy: netra is not yet usable.** Three collectors is not monitoring, and there is no way to read the data back out except `psql`. The gap to close is stated bluntly in Stage 1.
+**What that does not buy: netra is not yet usable.** Seven host-level collectors is still not monitoring — nothing per-device, per-interface, per-filesystem or per-container is collected — and there is no way to read the data back out except `psql`. The gap to close is stated bluntly in Stage 1.
+
+### Group 0 — landed (host-level scalars)
+
+Delivered on the existing flat `Collector` interface, without the dimensional
+plumbing Group 1 needs:
+
+- [x] kernelstat (`/proc/stat`) — `ctxt`, `intr`, `processes` as rates with counter-reset handling; `procs_running`/`procs_blocked` as gauges; `btime` as an absolute `boot_time_s`, so "last reboot" does not drift between rows of one boot
+- [x] netstat (`/proc/net/snmp`, `/proc/net/netstat`, `/proc/net/snmp6`) — TCP retransmits/resets/opens/errors, `CurrEstab` as a gauge, listen overflows and drops, UDP errors, IP fragmentation and reassembly; UDP and IP mirrored for IPv6. **No `tcp6_*` mirror on purpose:** the kernel's TCP MIB is family-agnostic and already counts IPv6, and `snmp6` has no `Tcp6` block
+- [x] procs (`/proc` dirents) — total process count; needs `pid: host`, reports `processes=namespaced` and stays NULL otherwise
+- [x] users (`/var/run/utmp`) — session count only. Record size is **detected per file** (384 or 400 bytes): it depends on the host's libc and word size, which a static binary reading a bind-mounted file cannot know at build time
+- [x] Agent self-telemetry — `agent_samples` with `scrape_duration_ms`, `post_latency_ms`, `buffer_depth`, `buffer_dropped_total`. Post latency lags one scrape by construction and is NULL after a failed flush
+- [x] Collector capabilities — optional `CapabilityReporter`, merged into metadata, flips the hash, stored in `hosts.capabilities`
+- [x] `services_total`/`services_failed` reconciled with spec §5.3 (NULL until the systemd collector lands)
 
 ### Six tables, one hypertable
 
@@ -62,16 +75,25 @@ Everything else in Stage 1 is easier to test once hosts can be created over HTTP
 
 ### 1B. Schema — the remaining tables
 
-One migration per coherent group, numbered, never editing `0001_init.sql`. Each hypertable arrives with its continuous aggregates and retention policy in the same migration, so no tier is ever half-configured.
+**While netra is pre-release the schema is squashed into `0001_init.sql` and edited in place.** There are no numbered follow-on migrations and no upgrade path; a schema change means dropping and recreating the database. This reverses the earlier "never edit `0001`" rule for as long as there is nothing deployed to migrate, and it buys something concrete: TimescaleDB cannot `ALTER` a continuous aggregate to add a column, so with numbered migrations every new host-level metric would have been raw-only (7 days) until a later migration recreated the rollups. Editing `0001` means the aggregate is simply *defined* with the new columns.
 
-- [ ] `0002` — container dimensions and `container_samples`
-- [ ] `0003` — `filesystems`, `filesystem_samples`, `devices`, `disk_io_samples`, `smart_attributes`
-- [ ] `0004` — `sensors`, `sensor_samples`, `cpu_core_samples`, `net_samples`, `host_addresses`
-- [ ] `0005` — `systemd_units`, `systemd_unit_events`, `host_packages`, `package_events`, `events`
-- [ ] `0006` — `process_samples` (**raw only, 48h, no continuous aggregates** — a 1-hour average of a top-N list whose membership changes between buckets is close to meaningless), `agent_samples`, `collector_samples`, `custom_samples`
-- [ ] `0007` — `geocode_cache`
+The properties `0001_init.sql:1-12` documents still bind: `-- netra:no-transaction` on line 1, and every statement individually re-runnable. No `DROP … CREATE` pair may appear in the file.
 
-**The `start_offset` regression test already exists** for `host_samples`. Extend it to cover each new aggregate rather than trusting the pattern — that failure mode is permanently silent.
+**Two consequences to carry until the first release:**
+
+- [ ] `Migrate` matches `schema_migrations` **by filename with no checksum** (`migrate.go:41-50`), so an edited `0001` is *silently skipped* on an existing database — the hub starts against a schema missing the new columns and fails on the first insert. Documented in the README; drop and recreate.
+- [ ] Add checksum detection to the migration runner before the first release, so an edited applied migration is a startup error rather than silence. **This is what unfreezes the numbered-migration plan below.**
+
+Still to add to `0001` (each hypertable with its continuous aggregates and retention policy, so no tier is ever half-configured):
+
+- [ ] container dimensions and `container_samples`
+- [ ] `filesystems`, `filesystem_samples`, `devices`, `disk_io_samples`, `smart_attributes`
+- [ ] `sensors`, `sensor_samples`, `cpu_core_samples`, `net_samples`, `host_addresses`
+- [ ] `systemd_units`, `systemd_unit_events`, `host_packages`, `package_events`, `events`
+- [ ] `process_samples` (**raw only, 48h, no continuous aggregates** — a 1-hour average of a top-N list whose membership changes between buckets is close to meaningless), `collector_samples`, `custom_samples`
+- [ ] `geocode_cache`
+
+**The `start_offset` regression test covers `host_samples` and `agent_samples`.** Extend it to each new aggregate rather than trusting the pattern — that failure mode is permanently silent. `rollup_test.go`'s policy count is a hard-coded literal on purpose: adding a hypertable must break it until the new policy is counted. It reads 4 today.
 
 ### 1C. The thirteen remaining collectors
 
@@ -82,7 +104,7 @@ Ordered by risk and by what unblocks what, not by the spec's table order. Each c
 - [ ] Disk I/O (`/proc/diskstats`) — counter-reset handling
 - [ ] Sensors (`/sys/class/hwmon`) — identity is `chip_name + label`, **never `hwmonN`**; per-read deadline (`NETRA_SENSORS_TIMEOUT`); preference list, not hottest-wins
 - [ ] mdraid (sysfs)
-- [ ] Self (`agent_samples`) — note `agent_samples.uptime_s` and `host_samples.uptime_s` are *different facts*
+- [~] Self (`agent_samples`) — **partly landed** (Group 0): the table, `scrape_duration_ms`, `post_latency_ms`, `buffer_depth`, `buffer_dropped_total`. Still to fill: `uptime_s`, `rss_bytes`, `goroutines`, `post_failures_total`. Note `agent_samples.uptime_s` and `host_samples.uptime_s` are *different facts*
 
 **Group 2 — needs `network_mode: host`.**
 - [ ] Network (`/proc/net/dev`) — filter `lo`, `veth*`, `docker0`, `br-*`, tunnels

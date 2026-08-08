@@ -171,7 +171,7 @@ without redeploying agents. IPv4 and IPv6 are treated identically throughout.
 
 | Table | Columns beyond `(host_id, ts)` |
 |---|---|
-| `host_samples` | `cpu_total`, `cpu_user`, `cpu_system`, `cpu_iowait`, `cpu_steal`, `cpu_idle`, `mem_total`, `mem_used`, `mem_available`, `mem_buffcache`, `mem_zfs_arc`, `swap_total`, `swap_used`, `load1`, `load5`, `load15`, `uptime_s`, `services_total`, `services_failed` |
+| `host_samples` | `cpu_total`, `cpu_user`, `cpu_system`, `cpu_iowait`, `cpu_steal`, `cpu_idle`, `mem_total`, `mem_used`, `mem_available`, `mem_buffcache`, `mem_zfs_arc`, `swap_total`, `swap_used`, `load1`, `load5`, `load15`, `uptime_s`, `services_total`, `services_failed`, `ctxt_per_s`, `intr_per_s`, `forks_per_s`, `procs_running`, `procs_blocked`, `boot_time_s`, `processes_total`, `users_logged_in`, `tcp_retrans_segs_per_s`, `tcp_out_rsts_per_s`, `tcp_in_errs_per_s`, `tcp_active_opens_per_s`, `tcp_passive_opens_per_s`, `tcp_attempt_fails_per_s`, `tcp_curr_estab`, `tcp_listen_overflows_per_s`, `tcp_listen_drops_per_s`, `udp_in_errors_per_s`, `udp_rcvbuf_errors_per_s`, `udp_sndbuf_errors_per_s`, `udp_no_ports_per_s`, `ip_reasm_reqds_per_s`, `ip_reasm_fails_per_s`, `ip_frag_fails_per_s`, `ip_frag_creates_per_s`, and the `udp6_*`/`ip6_*` mirror of the last eight |
 | `cpu_core_samples` | `core`, `busy` |
 | `container_samples` | `container_id`, `cpu_pct`, `mem_used`, `mem_limit`, `net_rx`, `net_tx`, `io_read`, `io_write` |
 | `filesystem_samples` | `fs_id`, `total`, `used`, `free`, `inodes_total`, `inodes_used`, `read_bytes`, `write_bytes` |
@@ -254,7 +254,11 @@ degradation is the specific behaviour being fixed.
 | CPU | `/proc/stat` | 60s | — |
 | Per-core CPU | `/proc/stat` | 60s | — |
 | Memory | `/proc/meminfo`, ZFS ARC from `/proc/spl/kstat` | 60s | — |
-| Load | `/proc/loadavg` | 60s | — |
+| Load | `/proc/loadavg`, `/proc/uptime` | 60s | — |
+| kernelstat | `/proc/stat` (`ctxt`, `intr`, `processes`, `procs_running`, `procs_blocked`, `btime`) | 60s | — |
+| netstat | `/proc/net/snmp`, `/proc/net/netstat`, `/proc/net/snmp6` | 60s | — |
+| procs | `/proc` dirents (count only) | 60s | `pid: host` — degrades to unavailable |
+| users | `/var/run/utmp` (`ut_type` only) | 60s | `/var/run/utmp:ro` |
 | Disk I/O | `/proc/diskstats` | 60s | — |
 | Network | `/proc/net/dev` | 60s | `network_mode: host` |
 | Addresses | netlink | detects changes (delivered via metadata hash) | `network_mode: host` |

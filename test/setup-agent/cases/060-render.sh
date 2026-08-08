@@ -77,12 +77,56 @@ assert_contains "$ENVOUT" "NETRA_LOCATION=Zurich, CH" \
 assert_contains "$ENVOUT" "NETRA_PROVIDER=Hetzner" "the provider reaches .env"
 assert_contains "$ENVOUT" "NETRA_HOST_TYPE=bare_metal" "the host type reaches .env"
 assert_contains "$ENVOUT" "NETRA_FACILITY=" "the facility is present but never asked for"
+# This run passed --pid-host, so the agent is told so as a fact rather than
+# left to guess whether it is confined to a PID namespace.
+assert_contains "$ENVOUT" "NETRA_PID_HOST=1" \
+    "--pid-host is recorded in .env, so the process collector need not guess"
+assert_contains "$ENVOUT" "NETRA_UTMP_PATH=/var/run/utmp" \
+    "the utmp path reaches .env"
 # The scrape interval is a fixed 60s constant, so there is no knob for it.
 # Matched against the ASSIGNMENTS only: the template's own header comment names
 # NETRA_INTERVAL in order to explain why it is absent.
 ENVBODY=$(printf '%s\n' "$ENVOUT" | grep -v '^#' || true)
 assert_not_contains "$ENVBODY" "NETRA_INTERVAL" "there is no NETRA_INTERVAL assignment in .env"
 assert_not_contains "$ENVBODY" "__" "no substitution token is left unreplaced"
+
+# --- 2b. a host with no utmp, and no --pid-host -------------------------------
+#
+# The negative of the golden render, and the common case rather than the exotic
+# one: Alpine and other busybox systems ship no utmp writer at all, and
+# --pid-host defaults off. Neither may be rendered speculatively -- binding a
+# file that does not exist makes the container fail to start.
+#
+# This runs BEFORE the script is sourced below: sourcing exports NETRA_BLK_*
+# and the curl shim's return code, which a later subprocess run would inherit.
+ROOT2="$TMP/noutmp"
+mkdir -p "$ROOT2"
+cp -R "$(fixture root-full)/." "$ROOT2/"
+rm -f "$ROOT2/var/run/utmp"
+
+OUT2="$TMP/out-noutmp"
+ANS2=$(answers noutmp y y)
+run_capture env NETRA_SETUP_ROOT="$ROOT2" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS2" NETRA_UID=0 \
+    "$SH" "$SETUP" --sys-admin \
+    --token nta_testtoken --hub-url https://netra.example.com \
+    --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
+    --template-dir "$TEMPLATES" --output-dir "$OUT2"
+assert_eq 0 "$RUN_RC" "a run against a host without utmp succeeds"
+assert_file_present "$OUT2/compose.yaml" "the no-utmp run still writes compose.yaml"
+
+# Comments are stripped first: the template's own header explains what a
+# `pid: host` block would look like, so matching the whole file would assert
+# against the documentation rather than the render.
+COMPOSE2=$(grep -v '^[[:space:]]*#' "$OUT2/compose.yaml" 2>/dev/null || true)
+assert_not_contains "$COMPOSE2" "/var/run/utmp" \
+    "no utmp bind is rendered when the host has no utmp"
+assert_not_contains "$COMPOSE2" "pid: host" \
+    "no pid: host is rendered without --pid-host"
+
+ENVOUT2=$(cat "$OUT2/.env" 2>/dev/null || true)
+assert_contains "$ENVOUT2" "NETRA_PID_HOST=0" \
+    "the absence of --pid-host is stated, not left blank"
 
 # The whole reason render_env is awk and not `sed s///`: a value containing `/`
 # or `&` turns a sed expression into something else entirely.

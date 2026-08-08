@@ -61,8 +61,13 @@ func TestIntegrationRefreshPolicyStartOffsetExceedsBufferWindow(t *testing.T) {
 			t.Fatalf("start_offset = %s, want greater than the 1h buffer window", startOffset)
 		}
 	}
-	if seen != 2 {
-		t.Fatalf("refresh policies found = %d, want 2 (5m and 1h aggregates)", seen)
+	// host_samples and agent_samples, each with a 5m and a 1h aggregate.
+	// This literal is deliberately hard-coded rather than derived: a new
+	// hypertable whose refresh policy is forgotten is a permanently silent
+	// failure, so adding one must break this test until it is counted.
+	if seen != 4 {
+		t.Fatalf("refresh policies found = %d, want 4 "+
+			"(host_samples and agent_samples, 5m and 1h each)", seen)
 	}
 }
 
