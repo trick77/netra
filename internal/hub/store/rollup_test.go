@@ -107,6 +107,18 @@ func TestIntegrationBackfillOlderThanStartOffsetIsExcludedFromRollup(t *testing.
 		t.Fatalf("insert within-window sample: %v", err)
 	}
 
+	// Unschedule the policy jobs before refreshing by hand. A background
+	// refresh that is already running makes a manual one fail outright with
+	// "concurrent refresh" rather than wait, and the schema now carries
+	// fourteen aggregates whose policies all fire within seconds of being
+	// created. See refreshTiers in group1rollup_test.go.
+	if _, err := s.Pool().Exec(ctx,
+		`SELECT alter_job(job_id, scheduled => false)
+		   FROM timescaledb_information.jobs
+		  WHERE proc_name = 'policy_refresh_continuous_aggregate'`); err != nil {
+		t.Fatalf("unschedule refresh policies: %v", err)
+	}
+
 	if _, err := s.Pool().Exec(ctx,
 		`CALL refresh_continuous_aggregate('host_samples_5m',
 			(now() - interval '6 hours')::timestamptz,

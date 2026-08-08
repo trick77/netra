@@ -2,10 +2,13 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/trick77/netra/internal/hub/store"
 )
@@ -334,16 +337,64 @@ func insertAggregateRow(t *testing.T, s *store.Store, table, dimension string, d
 // refreshTiers materialises the 5m tier and then the 1h tier that reads it.
 // Order matters: the 1h aggregate is built on the 5m aggregate, so refreshing
 // it first would roll up nothing.
+//
+// The refresh policy jobs are unscheduled first. TimescaleDB's scheduler runs
+// a newly created policy within seconds rather than at its nominal
+// schedule_interval -- the same behaviour resetSchema in testing.go documents
+// at length -- and a manual refresh that collides with one fails outright
+// with "concurrent refresh" (SQLSTATE 55P03) rather than waiting. With
+// fourteen aggregates now in the schema that stopped being a rare race and
+// started being most runs.
+//
+// Unscheduling is per-test: OpenTest drops the schema, so nothing leaks into
+// another test, and the jobs still exist for the tests that count them.
 func refreshTiers(t *testing.T, s *store.Store, table string) {
 	t.Helper()
 
-	for _, tier := range []string{"5m", "1h"} {
-		if _, err := s.Pool().Exec(context.Background(),
-			fmt.Sprintf(`CALL refresh_continuous_aggregate('%s_%s',
-				(now() - interval '12 hours')::timestamptz, now()::timestamptz)`, table, tier)); err != nil {
-			t.Fatalf("refresh %s_%s: %v", table, tier, err)
-		}
+	ctx := context.Background()
+	if _, err := s.Pool().Exec(ctx,
+		`SELECT alter_job(job_id, scheduled => false)
+		   FROM timescaledb_information.jobs
+		  WHERE proc_name = 'policy_refresh_continuous_aggregate'`); err != nil {
+		t.Fatalf("unschedule refresh policies: %v", err)
 	}
+
+	for _, tier := range []string{"5m", "1h"} {
+		view := fmt.Sprintf("%s_%s", table, tier)
+		refreshAggregate(t, s, view)
+	}
+}
+
+// concurrentRefreshSQLState is TimescaleDB's error for a refresh that
+// overlaps another one already in progress.
+const concurrentRefreshSQLState = "55P03"
+
+// refreshAggregate refreshes one continuous aggregate, retrying while a
+// background job dispatched before refreshTiers unscheduled it is still in
+// flight. Unscheduling removes the routine cause of the collision but cannot
+// recall a worker that has already started, which is the same residual race
+// resetSchema retries for.
+func refreshAggregate(t *testing.T, s *store.Store, view string) {
+	t.Helper()
+
+	sql := fmt.Sprintf(`CALL refresh_continuous_aggregate('%s',
+		(now() - interval '12 hours')::timestamptz, now()::timestamptz)`, view)
+
+	var lastErr error
+	for attempt := 1; attempt <= 5; attempt++ {
+		_, err := s.Pool().Exec(context.Background(), sql)
+		if err == nil {
+			return
+		}
+		lastErr = err
+
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != concurrentRefreshSQLState {
+			t.Fatalf("refresh %s: %v", view, err)
+		}
+		time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+	}
+	t.Fatalf("refresh %s: still colliding after 5 attempts: %v", view, lastErr)
 }
 
 // assertTier reads one aggregated column for one series across every bucket
