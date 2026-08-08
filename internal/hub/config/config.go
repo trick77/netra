@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // Config holds every hub setting. There is no config file: env only, so a
@@ -13,6 +14,13 @@ type Config struct {
 	DatabaseDSN string
 	AdminToken  string
 	LogLevel    string
+
+	// HubURL is the address agents post to, used only to render a
+	// ready-to-paste setup-agent.sh command in the UI. It is optional: the
+	// hub is reached on loopback by the browser and cannot infer its own
+	// public name from that request, so an unset value renders a placeholder
+	// rather than a wrong URL.
+	HubURL string
 }
 
 // Load reads the environment and applies defaults. It fails rather than
@@ -23,6 +31,7 @@ func Load() (Config, error) {
 		DatabaseDSN: os.Getenv("NETRA_DB_DSN"),
 		AdminToken:  os.Getenv("NETRA_ADMIN_TOKEN"),
 		LogLevel:    envOr("NETRA_LOG_LEVEL", "info"),
+		HubURL:      strings.TrimRight(os.Getenv("NETRA_HUB_URL"), "/"),
 	}
 
 	if cfg.DatabaseDSN == "" {

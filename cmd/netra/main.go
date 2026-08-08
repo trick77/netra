@@ -62,7 +62,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
-		Handler:           httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s),
+		Handler:           httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, cfg),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

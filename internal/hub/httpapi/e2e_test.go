@@ -10,6 +10,7 @@ import (
 	"github.com/trick77/netra/internal/agent/collector"
 	agentconfig "github.com/trick77/netra/internal/agent/config"
 	"github.com/trick77/netra/internal/hub/auth"
+	hubconfig "github.com/trick77/netra/internal/hub/config"
 	"github.com/trick77/netra/internal/hub/httpapi"
 	"github.com/trick77/netra/internal/hub/store"
 )
@@ -40,7 +41,8 @@ func TestIntegrationAgentToHubRoundTrip(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(
-		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s))
+		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s,
+			hubconfig.Config{AdminToken: testAdminToken}))
 	t.Cleanup(srv.Close)
 
 	cfg := agentconfig.Config{
