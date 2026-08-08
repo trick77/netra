@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>netra — Stage 1A: Admin API and host UI</title>
+<style>
+  :root {
+    --bg: #fbfbfa;
+    --surface: #ffffff;
+    --border: #e3e1dc;
+    --text: #22201c;
+    --muted: #6b6862;
+    --accent: #b4531f;
+    --accent-soft: #fdf1e8;
+    --code-bg: #f5f3ef;
+    --warn-bg: #fdf6e3;
+    --warn-border: #d9b872;
+    --ok: #3f7a4a;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171614;
+      --surface: #1e1d1a;
+      --border: #33312c;
+      --text: #e8e5df;
+      --muted: #9a958c;
+      --accent: #e08c4f;
+      --accent-soft: #2a211a;
+      --code-bg: #232220;
+      --warn-bg: #2a2418;
+      --warn-border: #6b5a30;
+      --ok: #6fae7c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171614;
+    --surface: #1e1d1a;
+    --border: #33312c;
+    --text: #e8e5df;
+    --muted: #9a958c;
+    --accent: #e08c4f;
+    --accent-soft: #2a211a;
+    --code-bg: #232220;
+    --warn-bg: #2a2418;
+    --warn-border: #6b5a30;
+    --ok: #6fae7c;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 3rem 1.5rem 6rem;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 62rem; margin: 0 auto; }
+
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 .4rem; letter-spacing: -.02em; }
+  h2 {
+    font-size: 1.3rem; margin: 3.5rem 0 1rem; padding-bottom: .4rem;
+    border-bottom: 2px solid var(--border); letter-spacing: -.01em;
+  }
+  h3 { font-size: 1.05rem; margin: 2rem 0 .6rem; }
+  h4 { font-size: .95rem; margin: 1.4rem 0 .4rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+  p { margin: .7rem 0; }
+  ul, ol { margin: .7rem 0; padding-left: 1.4rem; }
+  li { margin: .3rem 0; }
+
+  .sub { color: var(--muted); margin: 0 0 2rem; font-size: 1.05rem; }
+
+  code {
+    font-family: var(--mono); font-size: .87em;
+    background: var(--code-bg); padding: .12em .38em; border-radius: 3px;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: .9rem 1rem; overflow-x: auto; margin: .8rem 0;
+  }
+  pre code { background: none; padding: 0; font-size: .82rem; line-height: 1.55; }
+
+  .meta {
+    display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1.2rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 1.1rem 1.3rem; margin: 1.5rem 0 2rem; font-size: .93rem;
+  }
+  .meta dt { color: var(--muted); font-weight: 600; }
+  .meta dd { margin: 0; }
+
+  .task {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 1.2rem 1.4rem; margin: 1.2rem 0;
+  }
+  .task > h3 { margin-top: 0; }
+  .task > h3 .num {
+    display: inline-block; background: var(--accent-soft); color: var(--accent);
+    font-family: var(--mono); font-size: .75rem; font-weight: 700;
+    padding: .15rem .5rem; border-radius: 4px; margin-right: .55rem; vertical-align: 2px;
+  }
+
+  .files { font-size: .88rem; margin: .6rem 0 1rem; }
+  .files div { font-family: var(--mono); padding: .12rem 0; }
+  .files .k { color: var(--muted); display: inline-block; min-width: 5.5rem; font-family: inherit; }
+
+  .note {
+    background: var(--warn-bg); border: 1px solid var(--warn-border);
+    border-left-width: 4px; border-radius: 5px; padding: .8rem 1rem; margin: 1rem 0; font-size: .93rem;
+  }
+  .note strong { display: block; margin-bottom: .2rem; }
+
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: .9rem; }
+  th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: .82rem; text-transform: uppercase; letter-spacing: .05em; }
+  .scroll { overflow-x: auto; }
+
+  .steps { list-style: none; padding-left: 0; counter-reset: step; }
+  .steps > li { margin: 1rem 0; padding-left: 2rem; position: relative; }
+  .steps > li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 0; top: .1rem;
+    width: 1.45rem; height: 1.45rem; border-radius: 50%;
+    background: var(--accent-soft); color: var(--accent);
+    font-family: var(--mono); font-size: .75rem; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .steps > li > strong { display: block; }
+
+  .done { color: var(--ok); font-weight: 600; }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 3rem 0; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Stage 1A — Admin API and host UI</h1>
+<p class="sub">Make it possible to onboard a host without hand-writing SQL.</p>
+
+<dl class="meta">
+  <dt>Goal</dt>
+  <dd>Create, rotate and delete hosts and their agent tokens over HTTP, and from a minimal local web page, replacing the <code>psql</code> hand-insert that is the only path today.</dd>
+  <dt>Architecture</dt>
+  <dd>Admin JSON routes and a server-rendered page join the hub's existing mux. Auth is a mode switch (<code>dev</code> = none, <code>token</code> = shared bearer) modelled on music's <code>BACKEND_AUTH_MODE</code>. No new listener, no frontend toolchain.</dd>
+  <dt>Stack</dt>
+  <dd>Go 1.22 method routing, <code>html/template</code> + <code>embed</code>, pgx, TimescaleDB. No new dependencies.</dd>
+  <dt>Base</dt>
+  <dd><code>865a12f</code> on <code>master</code>; branch <code>worktree-admin-api-1a</code></dd>
+  <dt>Spec</dt>
+  <dd><code>docs/superpowers/specs/2026-08-07-netra-design.md</code> §8 — authoritative</dd>
+</dl>
+
+<h2>Context</h2>
+
+<p><code>auth.Mint</code> has no non-test callers. <code>NETRA_ADMIN_TOKEN</code> is required at hub startup and consumed by nothing. Adding a host today means computing a SHA-256 hash by hand and inserting it with <code>psql</code>, then pasting the plaintext into <code>setup-agent.sh --token</code>. That works and it is not a product.</p>
+
+<p>Everything else in Stage 1 — the remaining schema, thirteen collectors, the read API — is easier to build and test once hosts can be created over HTTP. That is why the plan puts this small piece first.</p>
+
+<p>Two decisions were taken before this plan was written. The operator wants tokens minted <strong>in a UI</strong>, not by <code>curl</code>; and the local deployment runs <strong>without authentication</strong>, the way the sibling <code>music</code> repo does in dev mode. Both are reflected below.</p>
+
+<h2>Global constraints</h2>
+
+<p>From the phase 1 plan's "Global Constraints" and the deployment work. The ones this stage can violate:</p>
+
+<ul>
+  <li><strong>Absent values are <code>NULL</code>, never <code>0</code>.</strong> A host created with no site has <code>site_id NULL</code>, not <code>0</code>.</li>
+  <li><strong>Metric tables reference integer surrogate ids, never strings.</strong> Deleting and recreating a host must not be a way to "rename" one.</li>
+  <li><strong>The plaintext token is shown exactly once</strong> and never recoverable. A lost create response is fixed by rotation, never by reading the hash.</li>
+  <li><strong>Only <code>/api/agent/</code> is internet-routed</strong> (Traefik <code>PathPrefix</code> in <code>compose.yaml</code>). Everything added here must live outside that prefix.</li>
+  <li>TDD, conventional commits, <code>.yaml</code> never <code>.yml</code>, English only, <code>CGO_ENABLED=0</code> for shipped binaries.</li>
+  <li><strong>Integration tests need <code>-p 1</code></strong> — <code>store.OpenTest</code> drops the shared public schema, so parallel package binaries race.</li>
+  <li><strong>Patch coverage gate is 75% and <code>hack/patch-coverage.sh</code> excludes <code>cmd/</code>.</strong> Every error branch needs an exercised test; keep <code>main.go</code> wiring thin.</li>
+</ul>
+
+<h2>Three findings that shaped this plan</h2>
+
+<h3>1. Exposure is already solved — no second listener</h3>
+
+<p>There is one listener and one mux today (<code>internal/hub/httpapi/router.go</code>, <code>NETRA_LISTEN_ADDR=:8080</code>). The concern was that unauthenticated host-creation on that mux would publish token minting to the internet. It does not, because <code>compose.yaml</code> already constrains both ends:</p>
+
+<pre><code>ports:
+  - "127.0.0.1:8080:8080"          # every route is loopback-only
+labels:
+  traefik.http.routers.netra.rule: Host(`…`) &amp;&amp; PathPrefix(`/api/agent/`)</code></pre>
+
+<p>Traefik routes <em>only</em> the ingest prefix from outside. So <code>/api/v1/*</code> and <code>/ui/*</code> are unreachable off-box by construction, and admin routes join the existing mux with no split and no new port.</p>
+
+<div class="note">
+  <strong>Do not widen that PathPrefix.</strong>
+  The comment above it in <code>compose.yaml</code> says so already, and this plan is the reason it was written. Widening it publishes host creation and token minting with no other visible change.
+</div>
+
+<p>Consequence to accept: the UI is reachable only on the hub host itself. From a laptop that means an SSH tunnel (<code>ssh -L 8080:127.0.0.1:8080 hub</code>). That follows directly from "no auth" and is not changed here.</p>
+
+<h3>2. <code>tokens</code> allows multiple live rows per host</h3>
+
+<pre><code>CREATE TABLE IF NOT EXISTS tokens (
+    id           INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    host_id      INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    token_hash   BYTEA NOT NULL UNIQUE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at TIMESTAMPTZ
+);</code></pre>
+
+<p>There is no unique constraint on <code>host_id</code>. A rotation that only inserts leaves the previous token valid — silently, with no symptom, until someone notices a revoked agent still posting. Rotation therefore deletes and inserts in <strong>one transaction</strong>, and its test asserts both halves.</p>
+
+<h3>3. <code>sites</code> already carries lat/lon — no schema work</h3>
+
+<p><code>sites</code> has <code>latitude</code>, <code>longitude</code>, <code>country_code</code> and <code>timezone</code> in <code>0001_init.sql:21-32</code>. <code>PATCH /api/v1/sites</code> needs no migration and this stage has no dependency on 1B. The rule that a manually set lat/lon is never overwritten by a geocode result is enforced in the handler, not the schema.</p>
+
+<h2>Behaviour being removed</h2>
+
+<div class="note">
+  <strong>The mandatory <code>NETRA_ADMIN_TOKEN</code> startup check goes away in <code>dev</code> mode.</strong>
+  <code>config.go:33-35</code> fails startup without it, and <code>compose.yaml:37-38</code> documents that as deliberate: "the hub refuses to start without it rather than serving an unauthenticated admin API." Serving an unauthenticated admin API is now the requested default for local use. The variable keeps working — it is required, and enforced, whenever <code>NETRA_AUTH_MODE=token</code>. This is the only place this stage removes something previously built on purpose.
+</div>
+
+<h2>File structure</h2>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>File</th><th>Responsibility</th></tr></thead>
+  <tbody>
+    <tr><td><code>internal/hub/config/config.go</code></td><td>modified — add <code>AuthMode</code>, make <code>AdminToken</code> conditional</td></tr>
+    <tr><td><code>internal/hub/admin/hosts.go</code></td><td>new — store-level host and token operations, incl. the rotation transaction</td></tr>
+    <tr><td><code>internal/hub/admin/dimensions.go</code></td><td>new — sites and providers read/patch, with the lat/lon override rule</td></tr>
+    <tr><td><code>internal/hub/httpapi/admin.go</code></td><td>new — JSON handlers for <code>/api/v1/*</code></td></tr>
+    <tr><td><code>internal/hub/httpapi/adminauth.go</code></td><td>new — auth-mode middleware</td></tr>
+    <tr><td><code>internal/hub/httpapi/ui.go</code></td><td>new — server-rendered page handlers</td></tr>
+    <tr><td><code>internal/hub/httpapi/templates/*.gohtml</code></td><td>new — embedded templates</td></tr>
+    <tr><td><code>internal/hub/httpapi/router.go</code></td><td>modified — mount the new routes</td></tr>
+    <tr><td><code>cmd/netra/main.go</code></td><td>modified — pass config through; wiring only</td></tr>
+    <tr><td><code>compose.yaml</code>, <code>.env.example</code></td><td>modified — <code>NETRA_AUTH_MODE</code>, admin token now optional</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Business logic lives in <code>internal/hub/admin</code> so it is testable without an HTTP server and outside <code>cmd/</code>'s coverage exclusion. Handlers stay thin: decode, call, encode.</p>
+
+<hr>
+
+<h2>Tasks</h2>
+
+<div class="task">
+<h3><span class="num">1</span>Auth mode in config</h3>
+
+<div class="files">
+  <div><span class="k">Modify</span> internal/hub/config/config.go</div>
+  <div><span class="k">Test</span> internal/hub/config/config_test.go</div>
+</div>
+
+<p><strong>Produces:</strong> <code>config.AuthMode</code> (string type, constants <code>AuthModeDev = "dev"</code>, <code>AuthModeToken = "token"</code>) and <code>Config.AuthMode</code>. Defaults to <code>dev</code>.</p>
+
+<ol class="steps">
+<li><strong>Write the failing tests</strong>
+<pre><code>func TestLoadDefaultsToDevAuthMode(t *testing.T) {
+	t.Setenv("NETRA_DB_DSN", "postgres://x/y")
+	t.Setenv("NETRA_ADMIN_TOKEN", "")
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v — dev mode must not require an admin token", err)
+	}
+	if cfg.AuthMode != config.AuthModeDev {
+		t.Errorf("AuthMode = %q, want %q", cfg.AuthMode, config.AuthModeDev)
+	}
+}
+
+func TestLoadRequiresAdminTokenInTokenMode(t *testing.T) {
+	t.Setenv("NETRA_DB_DSN", "postgres://x/y")
+	t.Setenv("NETRA_AUTH_MODE", "token")
+	t.Setenv("NETRA_ADMIN_TOKEN", "")
+
+	if _, err := config.Load(); err == nil {
+		t.Fatal("Load succeeded, want an error when token mode has no token")
+	}
+}
+
+func TestLoadRejectsUnknownAuthMode(t *testing.T) {
+	t.Setenv("NETRA_DB_DSN", "postgres://x/y")
+	t.Setenv("NETRA_AUTH_MODE", "oidc")
+
+	if _, err := config.Load(); err == nil {
+		t.Fatal("Load succeeded, want an error for an unimplemented mode")
+	}
+}</code></pre>
+<p>The third test is the guard that matters: <code>oidc</code> is phase 2, and a typo that silently fell back to <code>dev</code> would serve an unauthenticated API on a host the operator believed was protected.</p>
+</li>
+
+<li><strong>Run them and watch them fail</strong>
+<pre><code>go test ./internal/hub/config/ -run AuthMode -v</code></pre>
+<p>Expected: compile failure, <code>undefined: config.AuthModeDev</code>.</p></li>
+
+<li><strong>Implement</strong>
+<pre><code>// AuthMode selects how the admin API and UI authenticate. Agent ingest is
+// unaffected: it always uses per-host bearer tokens.
+type AuthMode string
+
+const (
+	// AuthModeDev serves the admin API and UI with no authentication. It is
+	// the default because the published port is loopback-only and Traefik
+	// routes just /api/agent/ — see compose.yaml.
+	AuthModeDev AuthMode = "dev"
+	// AuthModeToken requires NETRA_ADMIN_TOKEN as a bearer token.
+	AuthModeToken AuthMode = "token"
+)
+
+// in Config:
+	AuthMode AuthMode
+
+// in Load(), after the DSN check:
+	cfg.AuthMode = AuthMode(envOr("NETRA_AUTH_MODE", string(AuthModeDev)))
+	if cfg.AuthMode != AuthModeDev &amp;&amp; cfg.AuthMode != AuthModeToken {
+		return Config{}, fmt.Errorf(
+			"NETRA_AUTH_MODE must be 'dev' or 'token', got %q", cfg.AuthMode)
+	}
+	if cfg.AuthMode == AuthModeToken &amp;&amp; cfg.AdminToken == "" {
+		return Config{}, fmt.Errorf("NETRA_ADMIN_TOKEN is required when NETRA_AUTH_MODE=token")
+	}</code></pre>
+<p>Delete the unconditional <code>NETRA_ADMIN_TOKEN is required</code> check. Update the <code>Load</code> doc comment, which currently promises it "fails rather than starting with … an unauthenticated admin API."</p></li>
+
+<li><strong>Run the whole config package</strong> — <code>go test ./internal/hub/config/</code>. Existing tests that set the admin token still pass; any that assert the old mandatory failure need updating to token mode.</li>
+
+<li><strong>Commit</strong>
+<pre><code>git add internal/hub/config
+git commit -m "feat(hub): NETRA_AUTH_MODE, dev by default"</code></pre></li>
+</ol>
+</div>
+
+<div class="task">
+<h3><span class="num">2</span>Host and token operations</h3>
+
+<div class="files">
+  <div><span class="k">Create</span> internal/hub/admin/hosts.go</div>
+  <div><span class="k">Test</span> internal/hub/admin/hosts_test.go</div>
+</div>
+
+<p><strong>Consumes:</strong> <code>auth.Mint() (string, []byte, error)</code>, <code>store.Store.Pool() *pgxpool.Pool</code>.</p>
+<p><strong>Produces:</strong></p>
+<pre><code>type Host struct {
+	ID       int32
+	Hostname string
+	SiteID   *int32   // nil, never 0, when unassigned
+	LastSeen *time.Time
+}
+
+func NewService(pool *pgxpool.Pool) *Service
+func (s *Service) CreateHost(ctx context.Context, hostname string, siteID *int32) (Host, string, error)
+func (s *Service) RotateToken(ctx context.Context, hostID int32) (string, error)
+func (s *Service) DeleteHost(ctx context.Context, hostID int32) error
+func (s *Service) ListHosts(ctx context.Context) ([]Host, error)</code></pre>
+<p>The second return of <code>CreateHost</code> and the first of <code>RotateToken</code> are the plaintext token — the only moment it exists.</p>
+
+<ol class="steps">
+<li><strong>Write the failing tests.</strong> Rotation is the one that earns its keep:
+<pre><code>func TestRotateTokenInvalidatesTheOldToken(t *testing.T) {
+	s := store.OpenTest(t)
+	ctx := context.Background()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	svc := admin.NewService(s.Pool())
+
+	host, first, err := svc.CreateHost(ctx, "h1", nil)
+	if err != nil {
+		t.Fatalf("CreateHost: %v", err)
+	}
+
+	second, err := svc.RotateToken(ctx, host.ID)
+	if err != nil {
+		t.Fatalf("RotateToken: %v", err)
+	}
+	if second == first {
+		t.Fatal("rotation returned the same token")
+	}
+
+	a := auth.NewAuthenticator(s.Pool())
+	if _, err := a.Authenticate(ctx, first); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Errorf("old token error = %v, want ErrUnauthorized — rotation must revoke", err)
+	}
+	if _, err := a.Authenticate(ctx, second); err != nil {
+		t.Errorf("new token rejected: %v", err)
+	}
+
+	// tokens has no UNIQUE (host_id), so an insert-only rotation would leave
+	// both rows live and the assertion above would still pass on a fresh row.
+	var rows int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM tokens WHERE host_id = $1`, host.ID).Scan(&amp;rows); err != nil {
+		t.Fatalf("count tokens: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("tokens rows = %d, want exactly 1 after rotation", rows)
+	}
+}
+
+func TestCreateHostWithNoSiteStoresNullNotZero(t *testing.T) {
+	s := store.OpenTest(t)
+	ctx := context.Background()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	svc := admin.NewService(s.Pool())
+
+	host, _, err := svc.CreateHost(ctx, "h1", nil)
+	if err != nil {
+		t.Fatalf("CreateHost: %v", err)
+	}
+
+	var siteID *int32
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT site_id FROM hosts WHERE id = $1`, host.ID).Scan(&amp;siteID); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if siteID != nil {
+		t.Errorf("site_id = %d, want NULL", *siteID)
+	}
+}
+
+func TestDeleteHostCascadesItsTokens(t *testing.T) {
+	s := store.OpenTest(t)
+	ctx := context.Background()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	svc := admin.NewService(s.Pool())
+
+	host, plain, err := svc.CreateHost(ctx, "h1", nil)
+	if err != nil {
+		t.Fatalf("CreateHost: %v", err)
+	}
+	if err := svc.DeleteHost(ctx, host.ID); err != nil {
+		t.Fatalf("DeleteHost: %v", err)
+	}
+
+	a := auth.NewAuthenticator(s.Pool())
+	if _, err := a.Authenticate(ctx, plain); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Errorf("token of a deleted host still authenticates: %v", err)
+	}
+}
+
+func TestDeleteUnknownHostIsAnError(t *testing.T) {
+	s := store.OpenTest(t)
+	ctx := context.Background()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	svc := admin.NewService(s.Pool())
+
+	if err := svc.DeleteHost(ctx, 4242); !errors.Is(err, admin.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestRotateTokenOnUnknownHostIsAnError(t *testing.T) {
+	s := store.OpenTest(t)
+	ctx := context.Background()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	svc := admin.NewService(s.Pool())
+
+	if _, err := svc.RotateToken(ctx, 4242); !errors.Is(err, admin.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}</code></pre>
+</li>
+
+<li><strong>Run them and watch them fail</strong>
+<pre><code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test \
+  go test -p 1 ./internal/hub/admin/ -v</code></pre>
+<p>Expected: compile failure, <code>no required module provides package …/internal/hub/admin</code>.</p></li>
+
+<li><strong>Implement.</strong> Rotation in one transaction — this is the whole point of the task:
+<pre><code>// ErrNotFound is returned when an operation names a host that does not exist.
+// It is separate from a database failure so the handler can answer 404 rather
+// than 500.
+var ErrNotFound = errors.New("not found")
+
+// RotateToken mints a replacement token and revokes every previous one.
+//
+// Delete and insert share a transaction because tokens has no UNIQUE
+// constraint on host_id: an insert-only rotation would leave the old token
+// live, and a delete that committed alone would lock the agent out with no
+// replacement. Neither half is correct without the other.
+func (s *Service) RotateToken(ctx context.Context, hostID int32) (string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var exists bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM hosts WHERE id = $1)`, hostID).Scan(&amp;exists); err != nil {
+		return "", fmt.Errorf("check host: %w", err)
+	}
+	if !exists {
+		return "", ErrNotFound
+	}
+
+	plain, hash, err := auth.Mint()
+	if err != nil {
+		return "", fmt.Errorf("mint: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM tokens WHERE host_id = $1`, hostID); err != nil {
+		return "", fmt.Errorf("revoke old tokens: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO tokens (host_id, token_hash) VALUES ($1, $2)`, hostID, hash); err != nil {
+		return "", fmt.Errorf("insert token: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
+	}
+	return plain, nil
+}</code></pre>
+<p><code>CreateHost</code> follows the same shape: one transaction, <code>INSERT INTO hosts … RETURNING id</code>, then the token insert, so a host is never created without a token. <code>DeleteHost</code> uses <code>DELETE FROM hosts WHERE id = $1</code> and returns <code>ErrNotFound</code> on a zero <code>RowsAffected</code>; tokens go with it via <code>ON DELETE CASCADE</code>. <code>ListHosts</code> left-joins <code>host_current</code> for <code>last_seen</code> and never touches a hypertable.</p></li>
+
+<li><strong>Run the tests until green</strong> — same command as step 2.</li>
+
+<li><strong>Commit</strong>
+<pre><code>git add internal/hub/admin
+git commit -m "feat(hub): host and token admin operations"</code></pre></li>
+</ol>
+</div>
+
+<div class="task">
+<h3><span class="num">3</span>Auth-mode middleware</h3>
+
+<div class="files">
+  <div><span class="k">Create</span> internal/hub/httpapi/adminauth.go</div>
+  <div><span class="k">Test</span> internal/hub/httpapi/adminauth_test.go</div>
+</div>
+
+<p><strong>Produces:</strong> <code>func RequireAdmin(mode config.AuthMode, token string, next http.Handler) http.Handler</code>.</p>
+
+<ol class="steps">
+<li><strong>Write the failing tests</strong>
+<pre><code>func TestRequireAdminDevModeAllowsAnUnauthenticatedRequest(t *testing.T) {
+	h := httpapi.RequireAdmin(config.AuthModeDev, "", okHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 in dev mode", rec.Code)
+	}
+}
+
+func TestRequireAdminTokenModeRejectsAMissingToken(t *testing.T) {
+	h := httpapi.RequireAdmin(config.AuthModeToken, "s3cret", okHandler())
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil))
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestRequireAdminTokenModeRejectsAWrongToken(t *testing.T) {
+	h := httpapi.RequireAdmin(config.AuthModeToken, "s3cret", okHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestRequireAdminTokenModeAcceptsTheRightToken(t *testing.T) {
+	h := httpapi.RequireAdmin(config.AuthModeToken, "s3cret", okHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
+	req.Header.Set("Authorization", "Bearer s3cret")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}</code></pre>
+<p><code>okHandler()</code> is a two-line local helper returning <code>http.HandlerFunc</code> that writes 200. These are pure <code>httptest</code> — no database, so they run without <code>NETRA_TEST_DSN</code>.</p></li>
+
+<li><strong>Run and watch fail</strong> — <code>go test ./internal/hub/httpapi/ -run RequireAdmin -v</code>, expect <code>undefined: httpapi.RequireAdmin</code>.</li>
+
+<li><strong>Implement</strong>
+<pre><code>// RequireAdmin gates the admin API and UI according to the configured mode.
+//
+// In dev mode it is a pass-through: the published port is loopback-only and
+// Traefik routes only /api/agent/, so the operator's own box is the security
+// boundary. In token mode it requires NETRA_ADMIN_TOKEN as a bearer.
+func RequireAdmin(mode config.AuthMode, token string, next http.Handler) http.Handler {
+	if mode == config.AuthModeDev {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(bearer), []byte(token)) != 1 {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}</code></pre>
+<p>Constant-time compare for the same reason <code>auth.Authenticate</code> uses one.</p></li>
+
+<li><strong>Run until green</strong>, then <strong>commit</strong>
+<pre><code>git add internal/hub/httpapi/adminauth.go internal/hub/httpapi/adminauth_test.go
+git commit -m "feat(hub): admin auth-mode middleware"</code></pre></li>
+</ol>
+</div>
+
+<div class="task">
+<h3><span class="num">4</span>Admin JSON handlers</h3>
+
+<div class="files">
+  <div><span class="k">Create</span> internal/hub/httpapi/admin.go</div>
+  <div><span class="k">Modify</span> internal/hub/httpapi/router.go</div>
+  <div><span class="k">Test</span> internal/hub/httpapi/admin_test.go</div>
+</div>
+
+<p><strong>Consumes:</strong> <code>admin.Service</code> from Task 2, <code>RequireAdmin</code> from Task 3.</p>
+<p><strong>Produces:</strong> <code>func NewAdminHandler(svc *admin.Service) http.Handler</code>, mounted at:</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Route</th><th>Success</th><th>Body</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /api/v1/hosts</code></td><td>200</td><td><code>[{"id","hostname","site_id","last_seen"}]</code></td></tr>
+    <tr><td><code>POST /api/v1/hosts</code></td><td>201</td><td><code>{"id","hostname","token"}</code> — token present once</td></tr>
+    <tr><td><code>POST /api/v1/hosts/{id}/token</code></td><td>200</td><td><code>{"id","token"}</code></td></tr>
+    <tr><td><code>DELETE /api/v1/hosts/{id}</code></td><td>204</td><td>empty</td></tr>
+  </tbody>
+</table>
+</div>
+
+<ol class="steps">
+<li><strong>Write the failing tests.</strong> Extend <code>newFixture(t)</code> in <code>ingest_test.go</code> rather than rebuilding the setup — it already creates store, host, token and an <code>httptest</code> server. Add a sibling <code>newAdminFixture(t)</code> returning a server whose router includes the admin routes in dev mode.
+<pre><code>func TestIntegrationAdminCreateHostReturnsTheTokenOnce(t *testing.T) {
+	srv, s := newAdminFixture(t)
+
+	resp := postJSON(t, srv, "/api/v1/hosts", `{"hostname":"web01"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", resp.StatusCode)
+	}
+
+	var created struct {
+		ID    int32  `json:"id"`
+		Token string `json:"token"`
+	}
+	decodeJSON(t, resp, &amp;created)
+	if !strings.HasPrefix(created.Token, auth.TokenPrefix) {
+		t.Fatalf("token = %q, want the %q prefix", created.Token, auth.TokenPrefix)
+	}
+
+	// The plaintext must exist nowhere but that response.
+	var stored []byte
+	if err := s.Pool().QueryRow(context.Background(),
+		`SELECT token_hash FROM tokens WHERE host_id = $1`, created.ID).Scan(&amp;stored); err != nil {
+		t.Fatalf("query token: %v", err)
+	}
+	if string(stored) == created.Token {
+		t.Fatal("the plaintext token was stored in the database")
+	}
+
+	// It is also not recoverable by listing.
+	list := getJSON(t, srv, "/api/v1/hosts")
+	if strings.Contains(list, created.Token) {
+		t.Fatal("GET /api/v1/hosts leaked the plaintext token")
+	}
+}
+
+func TestIntegrationAdminCreateHostRejectsAnEmptyHostname(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	resp := postJSON(t, srv, "/api/v1/hosts", `{"hostname":""}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestIntegrationAdminRotateUnknownHostIs404(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	resp := postJSON(t, srv, "/api/v1/hosts/4242/token", ``)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestIntegrationAdminRotateRejectsANonNumericID(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	resp := postJSON(t, srv, "/api/v1/hosts/abc/token", ``)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestIntegrationAdminDeleteHostIs204ThenGone(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	resp := postJSON(t, srv, "/api/v1/hosts", `{"hostname":"web01"}`)
+	var created struct {
+		ID int32 `json:"id"`
+	}
+	decodeJSON(t, resp, &amp;created)
+
+	del := doRequest(t, srv, http.MethodDelete, fmt.Sprintf("/api/v1/hosts/%d", created.ID), ``)
+	if del.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", del.StatusCode)
+	}
+
+	again := doRequest(t, srv, http.MethodDelete, fmt.Sprintf("/api/v1/hosts/%d", created.ID), ``)
+	if again.StatusCode != http.StatusNotFound {
+		t.Errorf("second delete status = %d, want 404", again.StatusCode)
+	}
+}</code></pre>
+<p>The leak assertions in the first test are the ones worth writing carefully: "shown once" is a property of the whole system, not of one handler.</p></li>
+
+<li><strong>Run and watch fail</strong>
+<pre><code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test \
+  go test -p 1 ./internal/hub/httpapi/ -run Admin -v</code></pre></li>
+
+<li><strong>Implement.</strong> Go 1.22 method routing with path values, matching <code>router.go</code>'s existing style:
+<pre><code>mux.Handle("GET /api/v1/hosts", h.list())
+mux.Handle("POST /api/v1/hosts", h.create())
+mux.Handle("POST /api/v1/hosts/{id}/token", h.rotate())
+mux.Handle("DELETE /api/v1/hosts/{id}", h.delete())</code></pre>
+<p>Each handler: parse <code>r.PathValue("id")</code> with <code>strconv.ParseInt(…, 10, 32)</code> → 400 on failure; call the service; map <code>admin.ErrNotFound</code> → 404 and anything else → 500 with the error logged, never returned to the client. Every response carries <code>Cache-Control: no-store</code> — a token in a cached response is the failure this prevents.</p></li>
+
+<li><strong>Run until green</strong>, then <strong>commit</strong>
+<pre><code>git add internal/hub/httpapi
+git commit -m "feat(hub): admin API for hosts and tokens"</code></pre></li>
+</ol>
+</div>
+
+<div class="task">
+<h3><span class="num">5</span>Sites and providers</h3>
+
+<div class="files">
+  <div><span class="k">Create</span> internal/hub/admin/dimensions.go</div>
+  <div><span class="k">Modify</span> internal/hub/httpapi/admin.go</div>
+  <div><span class="k">Test</span> internal/hub/admin/dimensions_test.go</div>
+</div>
+
+<p><strong>Produces:</strong> <code>ListSites</code>, <code>PatchSite</code>, <code>ListProviders</code>, <code>PatchProvider</code> on <code>admin.Service</code>, and <code>GET|PATCH /api/v1/sites</code>, <code>/api/v1/providers</code>.</p>
+
+<p><code>PatchSite</code> takes a struct of pointers so an omitted field is distinguishable from an explicit null — the same absent-is-not-zero rule the collectors follow:</p>
+<pre><code>type SitePatch struct {
+	Name        *string
+	Facility    *string
+	Address     *string
+	Latitude    *float64
+	Longitude   *float64
+	CountryCode *string
+	Timezone    *string
+}</code></pre>
+
+<ol class="steps">
+<li><strong>Write the failing test</strong> — the override rule is the only non-obvious behaviour here:
+<pre><code>func TestPatchSiteLeavesUnsetFieldsAlone(t *testing.T) {
+	s := store.OpenTest(t)
+	ctx := context.Background()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	svc := admin.NewService(s.Pool())
+
+	var siteID int32
+	if err := s.Pool().QueryRow(ctx,
+		`INSERT INTO sites (name, latitude, longitude) VALUES ('zrh', 47.37, 8.54)
+		 RETURNING id`).Scan(&amp;siteID); err != nil {
+		t.Fatalf("insert site: %v", err)
+	}
+
+	facility := "Interxion ZUR1"
+	if err := svc.PatchSite(ctx, siteID, admin.SitePatch{Facility: &amp;facility}); err != nil {
+		t.Fatalf("PatchSite: %v", err)
+	}
+
+	var lat, lon float64
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT latitude, longitude FROM sites WHERE id = $1`, siteID).Scan(&amp;lat, &amp;lon); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if lat != 47.37 || lon != 8.54 {
+		t.Errorf("lat,lon = %v,%v — a patch that did not mention them must not move them", lat, lon)
+	}
+}</code></pre>
+<p>This is the guard the spec asks for: a manually set lat/lon is never overwritten by anything the operator did not explicitly send. The phase-2 geocoder will patch through the same method.</p></li>
+
+<li><strong>Run and watch fail</strong>, <strong>implement</strong> with <code>COALESCE</code>-style conditional updates driven by the non-nil pointers, <strong>run until green</strong>.</li>
+
+<li><strong>Commit</strong>
+<pre><code>git add internal/hub/admin internal/hub/httpapi
+git commit -m "feat(hub): sites and providers admin endpoints"</code></pre></li>
+</ol>
+</div>
+
+<div class="task">
+<h3><span class="num">6</span>The host page</h3>
+
+<div class="files">
+  <div><span class="k">Create</span> internal/hub/httpapi/ui.go</div>
+  <div><span class="k">Create</span> internal/hub/httpapi/templates/hosts.gohtml</div>
+  <div><span class="k">Create</span> internal/hub/httpapi/templates/token.gohtml</div>
+  <div><span class="k">Test</span> internal/hub/httpapi/ui_test.go</div>
+</div>
+
+<p><strong>Produces:</strong> <code>func NewUIHandler(svc *admin.Service, hubURL string) http.Handler</code> serving <code>GET /</code>, <code>POST /ui/hosts</code>, <code>POST /ui/hosts/{id}/token</code>, <code>POST /ui/hosts/{id}/delete</code>.</p>
+
+<p>Templates are embedded with <code>//go:embed templates/*.gohtml</code> and parsed once at construction, following <code>migrationFS</code> in <code>internal/hub/store/migrate.go</code>. Forms post and redirect; no JavaScript, no build step, no design system — the phase-2 UI owns that.</p>
+
+<p>The payoff over <code>curl</code> is the token screen. After create or rotate it renders the plaintext once, next to a ready-to-paste command:</p>
+<pre><code>curl -fsSL https://netra.trick77.com/setup-agent.sh | sh -s -- \
+  --hub-url {{ .HubURL }} --token {{ .Token }}</code></pre>
+
+<ol class="steps">
+<li><strong>Write the failing tests</strong>
+<pre><code>func TestIntegrationUIListRendersAHost(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	if _, err := s.Pool().Exec(context.Background(),
+		`INSERT INTO hosts (hostname) VALUES ('web01')`); err != nil {
+		t.Fatalf("insert host: %v", err)
+	}
+
+	body := getBody(t, srv, "/")
+	if !strings.Contains(body, "web01") {
+		t.Error("host list page does not mention the host")
+	}
+}
+
+func TestIntegrationUICreateShowsTheTokenAndTheSetupCommand(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	body := postFormBody(t, srv, "/ui/hosts", url.Values{"hostname": {"web01"}})
+
+	if !strings.Contains(body, auth.TokenPrefix) {
+		t.Error("the create page does not show the minted token")
+	}
+	if !strings.Contains(body, "--token") {
+		t.Error("the create page does not show a ready-to-paste setup-agent.sh command")
+	}
+}
+
+func TestIntegrationUIEscapesAHostnameThatLooksLikeMarkup(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	if _, err := s.Pool().Exec(context.Background(),
+		`INSERT INTO hosts (hostname) VALUES ('&lt;script&gt;alert(1)&lt;/script&gt;')`); err != nil {
+		t.Fatalf("insert host: %v", err)
+	}
+
+	body := getBody(t, srv, "/")
+	if strings.Contains(body, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Error("hostname rendered unescaped")
+	}
+}</code></pre>
+<p><code>html/template</code> escapes by default, so the third test passes for free — it is there to fail loudly if anyone reaches for <code>text/template</code> later.</p></li>
+
+<li><strong>Run and watch fail</strong>, <strong>implement</strong>, <strong>run until green</strong>.</li>
+
+<li><strong>Commit</strong>
+<pre><code>git add internal/hub/httpapi
+git commit -m "feat(hub): minimal host management page"</code></pre></li>
+</ol>
+</div>
+
+<div class="task">
+<h3><span class="num">7</span>Wiring, compose and plan hygiene</h3>
+
+<div class="files">
+  <div><span class="k">Modify</span> cmd/netra/main.go, internal/hub/httpapi/router.go</div>
+  <div><span class="k">Modify</span> compose.yaml, .env.example, deploy/agent/compose.yaml.example</div>
+  <div><span class="k">Modify</span> docs/superpowers/plans/2026-08-07-next-phases.md</div>
+</div>
+
+<p><code>NewRouter</code> grows the config it needs to gate the new routes:</p>
+<pre><code>func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Handler</code></pre>
+<p><code>main.go</code> only passes <code>cfg</code> through — no logic there, since <code>hack/patch-coverage.sh</code> excludes <code>cmd/</code>.</p>
+
+<ol class="steps">
+<li><strong>Wire the routes</strong>, wrapping the admin and UI muxes in <code>RequireAdmin(cfg.AuthMode, cfg.AdminToken, …)</code>. Ingest and health stay exactly as they are.</li>
+
+<li><strong>Update <code>compose.yaml</code></strong>: add <code>NETRA_AUTH_MODE: "${NETRA_AUTH_MODE:-dev}"</code>, make <code>NETRA_ADMIN_TOKEN</code> optional, and rewrite the comment on lines 37-38 that promises the hub refuses to start without it. Leave the Traefik <code>PathPrefix</code> and the <code>127.0.0.1</code> port binding untouched, and extend their comments to name the UI as another thing that must not become internet-facing.</li>
+
+<li><strong>Update <code>.env.example</code></strong> with <code>NETRA_AUTH_MODE</code> and a line saying the UI is at <code>http://127.0.0.1:8080/</code> on the hub host, reachable from a laptop via <code>ssh -L 8080:127.0.0.1:8080</code>.</li>
+
+<li><strong>Fix the plan doc.</strong> In <code>2026-08-07-next-phases.md</code>, strike 1A's dead checklist item — "Update <code>README.md</code> to replace the hand-inserted-SQL section with the real endpoints" — since the README was deleted on purpose in #16. Replace it with a line pointing at the UI. Tick the 1A boxes this stage completes.</li>
+
+<li><strong>Check <code>deploy/agent/compose.yaml.example</code></strong> for its "which collectors are implemented" note. An admin API changes no collector, so this is a read-and-confirm step, not an edit — but the plan requires the check.</li>
+
+<li><strong>Full verification</strong>
+<pre><code>go build ./... &amp;&amp; go vet ./...
+NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test -p 1 ./...
+make test-shell</code></pre></li>
+
+<li><strong>Commit and open the PR</strong>
+<pre><code>git add -A
+git commit -m "feat(hub): wire the admin API and UI"
+git push -u origin worktree-admin-api-1a
+gh pr create --base master</code></pre></li>
+</ol>
+</div>
+
+<hr>
+
+<h2>Verification</h2>
+
+<p>Beyond <code>make check</code>, the spec's own acceptance test for 1A is an end-to-end onboarding run:</p>
+
+<ol>
+  <li>Start the hub with <code>NETRA_AUTH_MODE</code> unset. It must start with no <code>NETRA_ADMIN_TOKEN</code>.</li>
+  <li>Open <code>http://127.0.0.1:8080/</code>, create host <code>web01</code>, copy the rendered <code>setup-agent.sh</code> line.</li>
+  <li>Run that line on a real host. The agent posts; <code>GET /api/v1/hosts</code> shows a <code>last_seen</code> that advances.</li>
+  <li>Rotate the token in the UI. The running agent starts getting 401s; re-run setup with the new token and it recovers.</li>
+  <li>Grep the hub logs for the plaintext token. It must not appear — not on create, not on rotate, not on the 401s.</li>
+  <li>Set <code>NETRA_AUTH_MODE=token</code> with no <code>NETRA_ADMIN_TOKEN</code>. The hub must refuse to start.</li>
+  <li><code>curl</code> the admin API from another machine against the public hostname. Traefik must 404 — only <code>/api/agent/</code> is routed.</li>
+</ol>
+
+<p>Step 5 is the one most likely to be skipped and most likely to be wrong: a token that leaks into a log is as compromised as one in a cached response, and nothing in the unit tests looks at log output.</p>
+
+<h2>Out of scope</h2>
+
+<ul>
+  <li><strong>The read API (1D)</strong> — <code>GET /api/v1/hosts/{id}/metrics</code> and tier selection. <code>GET /api/v1/hosts</code> lands here only because the UI needs a list to render.</li>
+  <li><strong>OIDC</strong> — phase 2. <code>AuthMode</code> exists so it becomes a third constant and one middleware branch, with no handler changes.</li>
+  <li><strong>Any design system or frontend build.</strong> The phase-2 UI owns that decision, and starting it here would prejudge it.</li>
+  <li><strong>Migration checksum detection.</strong> Still open in 1B, still gated on "before the first release".</li>
+</ul>
+
+</main>
+</body>
+</html>
