@@ -144,6 +144,41 @@ func TestIntegrationSensorsNaturalKeyIsChipAndLabelPerHost(t *testing.T) {
 	}
 }
 
+// sensor_samples carries both host_id and sensor_id, and a foreign key on
+// sensor_id alone lets the two disagree: a row with host B's host_id and host
+// A's sensor_id inserts cleanly, and the join then attributes A's chip and
+// label to B's sample. Worse, deleting host A cascades away rows belonging to
+// B. Every other Group 1 table's dimension is self-describing; this is the
+// one that needs the composite key to say so.
+func TestIntegrationSensorSamplesCannotReferenceAnotherHostsSensor(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	hostA := seedHost(t, s)
+	var hostB int32
+	if err := s.Pool().QueryRow(ctx,
+		`INSERT INTO hosts (hostname) VALUES ('sensor-fk-host-b') RETURNING id`).Scan(&hostB); err != nil {
+		t.Fatalf("insert second host: %v", err)
+	}
+	sensorA := seedSensor(t, s, hostA, "coretemp", "Package id 0")
+
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO sensor_samples (host_id, ts, sensor_id, temp) VALUES ($1, $2, $3, 40.0)`,
+		hostB, recentBucket(), sensorA); err == nil {
+		t.Error("host B accepted a sample referencing host A's sensor, want a foreign key violation")
+	}
+
+	// The same sensor with its own host is of course fine.
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO sensor_samples (host_id, ts, sensor_id, temp) VALUES ($1, $2, $3, 40.0)`,
+		hostA, recentBucket(), sensorA); err != nil {
+		t.Fatalf("host A's own sensor: %v", err)
+	}
+}
+
 // events is a plain Postgres table (spec §5.2), not a hypertable. mdraid
 // degradation, SMART threshold crossings and public-IP changes land here
 // precisely because they are constant for hours: spec §5.1 rule 4 sends

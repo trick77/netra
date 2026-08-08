@@ -172,6 +172,12 @@ CREATE TABLE IF NOT EXISTS host_samples (
 
 SELECT create_hypertable('host_samples', by_range('ts'), if_not_exists => TRUE);
 
+-- drop_chunks removes a chunk only once its NEWEST row is past the cutoff, so
+-- the retention policy above keeps data for up to retention + chunk_interval.
+-- Timescale's default is a 7-day chunk, which turns "7 days" into as much as
+-- 14. One-day chunks bound the overshoot to a day.
+SELECT set_chunk_time_interval('host_samples', INTERVAL '1 day');
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS host_samples_5m
     WITH (timescaledb.continuous) AS
 SELECT host_id,
@@ -251,6 +257,12 @@ SELECT host_id,
  GROUP BY host_id, bucket
 WITH NO DATA;
 
+-- Same overshoot, worse: Timescale sizes a continuous aggregate's chunks at
+-- 10x the raw interval -- 70 days here -- so a 30-day retention was really
+-- retaining ~100. Sized to roughly a fifteenth of each tier's retention.
+
+SELECT set_chunk_time_interval('host_samples_5m', INTERVAL '2 days');
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS host_samples_1h
     WITH (timescaledb.continuous) AS
 SELECT host_id,
@@ -328,6 +340,8 @@ SELECT host_id,
  GROUP BY host_id, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;
 
+SELECT set_chunk_time_interval('host_samples_1h', INTERVAL '7 days');
+
 -- start_offset (6h) must stay above the agent ring-buffer window (1h).
 -- Timescale cuts invalidations against the refresh window, so anything
 -- backfilled older than start_offset is never re-materialised.
@@ -376,6 +390,7 @@ CREATE TABLE IF NOT EXISTS agent_samples (
 );
 
 SELECT create_hypertable('agent_samples', by_range('ts'), if_not_exists => TRUE);
+SELECT set_chunk_time_interval('agent_samples', INTERVAL '1 day');
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS agent_samples_5m
     WITH (timescaledb.continuous) AS
@@ -395,6 +410,8 @@ SELECT host_id,
  GROUP BY host_id, bucket
 WITH NO DATA;
 
+SELECT set_chunk_time_interval('agent_samples_5m', INTERVAL '2 days');
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS agent_samples_1h
     WITH (timescaledb.continuous) AS
 SELECT host_id,
@@ -410,6 +427,8 @@ SELECT host_id,
   FROM agent_samples_5m
  GROUP BY host_id, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;
+
+SELECT set_chunk_time_interval('agent_samples_1h', INTERVAL '7 days');
 
 -- Identical start_offsets to host_samples, and for the identical reason: the
 -- agent replays this table's rows from the same ring buffer.
@@ -457,6 +476,14 @@ CREATE TABLE IF NOT EXISTS sensors (
 CREATE UNIQUE INDEX IF NOT EXISTS sensors_host_id_chip_label_key
     ON sensors (host_id, chip, label);
 
+-- Redundant on its own -- id is already the primary key -- but it is what
+-- lets sensor_samples declare a composite foreign key on (sensor_id,
+-- host_id). Without that, a sample row can carry host B's host_id and host
+-- A's sensor_id, and the join then attributes A's chip and label to B's
+-- sample with nothing raised.
+CREATE UNIQUE INDEX IF NOT EXISTS sensors_id_host_id_key
+    ON sensors (id, host_id);
+
 -- The general discrete-state table (spec 5.2): mdraid degradation, SMART
 -- threshold crossings, public IP changes, agent version changes.
 --
@@ -501,6 +528,7 @@ CREATE TABLE IF NOT EXISTS cpu_core_samples (
 );
 
 SELECT create_hypertable('cpu_core_samples', by_range('ts'), if_not_exists => TRUE);
+SELECT set_chunk_time_interval('cpu_core_samples', INTERVAL '1 day');
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS cpu_core_samples_5m
     WITH (timescaledb.continuous) AS
@@ -513,6 +541,8 @@ SELECT host_id,
  GROUP BY host_id, core, bucket
 WITH NO DATA;
 
+SELECT set_chunk_time_interval('cpu_core_samples_5m', INTERVAL '2 days');
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS cpu_core_samples_1h
     WITH (timescaledb.continuous) AS
 SELECT host_id,
@@ -523,6 +553,8 @@ SELECT host_id,
   FROM cpu_core_samples_5m
  GROUP BY host_id, core, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;
+
+SELECT set_chunk_time_interval('cpu_core_samples_1h', INTERVAL '7 days');
 
 SELECT add_continuous_aggregate_policy('cpu_core_samples_5m',
     start_offset      => INTERVAL '6 hours',
@@ -569,6 +601,7 @@ CREATE TABLE IF NOT EXISTS disk_io_samples (
 );
 
 SELECT create_hypertable('disk_io_samples', by_range('ts'), if_not_exists => TRUE);
+SELECT set_chunk_time_interval('disk_io_samples', INTERVAL '1 day');
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS disk_io_samples_5m
     WITH (timescaledb.continuous) AS
@@ -598,6 +631,8 @@ SELECT host_id,
  GROUP BY host_id, device, bucket
 WITH NO DATA;
 
+SELECT set_chunk_time_interval('disk_io_samples_5m', INTERVAL '2 days');
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS disk_io_samples_1h
     WITH (timescaledb.continuous) AS
 SELECT host_id,
@@ -623,6 +658,8 @@ SELECT host_id,
  GROUP BY host_id, device, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;
 
+SELECT set_chunk_time_interval('disk_io_samples_1h', INTERVAL '7 days');
+
 SELECT add_continuous_aggregate_policy('disk_io_samples_5m',
     start_offset      => INTERVAL '6 hours',
     end_offset        => INTERVAL '10 minutes',
@@ -646,12 +683,17 @@ SELECT add_retention_policy('disk_io_samples_1h', INTERVAL '90 days', if_not_exi
 CREATE TABLE IF NOT EXISTS sensor_samples (
     host_id   INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
     ts        TIMESTAMPTZ NOT NULL,
-    sensor_id INTEGER NOT NULL REFERENCES sensors (id) ON DELETE CASCADE,
+    sensor_id INTEGER NOT NULL,
     temp      DOUBLE PRECISION,
-    PRIMARY KEY (host_id, ts, sensor_id)
+    PRIMARY KEY (host_id, ts, sensor_id),
+    -- Composite rather than sensor_id alone, so the sensor is required to
+    -- belong to the host on the same row. Every other Group 1 table's
+    -- dimension is self-describing; this is the one that can disagree.
+    FOREIGN KEY (sensor_id, host_id) REFERENCES sensors (id, host_id) ON DELETE CASCADE
 );
 
 SELECT create_hypertable('sensor_samples', by_range('ts'), if_not_exists => TRUE);
+SELECT set_chunk_time_interval('sensor_samples', INTERVAL '1 day');
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_samples_5m
     WITH (timescaledb.continuous) AS
@@ -664,6 +706,8 @@ SELECT host_id,
  GROUP BY host_id, sensor_id, bucket
 WITH NO DATA;
 
+SELECT set_chunk_time_interval('sensor_samples_5m', INTERVAL '2 days');
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_samples_1h
     WITH (timescaledb.continuous) AS
 SELECT host_id,
@@ -674,6 +718,8 @@ SELECT host_id,
   FROM sensor_samples_5m
  GROUP BY host_id, sensor_id, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;
+
+SELECT set_chunk_time_interval('sensor_samples_1h', INTERVAL '7 days');
 
 SELECT add_continuous_aggregate_policy('sensor_samples_5m',
     start_offset      => INTERVAL '6 hours',
@@ -710,6 +756,7 @@ CREATE TABLE IF NOT EXISTS net_samples (
 );
 
 SELECT create_hypertable('net_samples', by_range('ts'), if_not_exists => TRUE);
+SELECT set_chunk_time_interval('net_samples', INTERVAL '1 day');
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS net_samples_5m
     WITH (timescaledb.continuous) AS
@@ -728,6 +775,8 @@ SELECT host_id,
  GROUP BY host_id, iface, bucket
 WITH NO DATA;
 
+SELECT set_chunk_time_interval('net_samples_5m', INTERVAL '2 days');
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS net_samples_1h
     WITH (timescaledb.continuous) AS
 SELECT host_id,
@@ -744,6 +793,8 @@ SELECT host_id,
   FROM net_samples_5m
  GROUP BY host_id, iface, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;
+
+SELECT set_chunk_time_interval('net_samples_1h', INTERVAL '7 days');
 
 SELECT add_continuous_aggregate_policy('net_samples_5m',
     start_offset      => INTERVAL '6 hours',
@@ -784,6 +835,7 @@ CREATE TABLE IF NOT EXISTS collector_samples (
 );
 
 SELECT create_hypertable('collector_samples', by_range('ts'), if_not_exists => TRUE);
+SELECT set_chunk_time_interval('collector_samples', INTERVAL '1 day');
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS collector_samples_5m
     WITH (timescaledb.continuous) AS
@@ -803,6 +855,8 @@ SELECT host_id,
  GROUP BY host_id, collector, bucket
 WITH NO DATA;
 
+SELECT set_chunk_time_interval('collector_samples_5m', INTERVAL '2 days');
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS collector_samples_1h
     WITH (timescaledb.continuous) AS
 SELECT host_id,
@@ -810,12 +864,18 @@ SELECT host_id,
        time_bucket(INTERVAL '1 hour', bucket) AS bucket,
        avg(duration_ms_avg)     AS duration_ms_avg,
        max(duration_ms_max)     AS duration_ms_max,
-       sum(sample_count)        AS sample_count,
-       sum(failure_count)       AS failure_count,
+       -- Cast back to bigint: sum(bigint) returns numeric, which would give
+       -- collector_samples_1h a different column type from
+       -- collector_samples_5m. 1D's tier selection reads both through one
+       -- query path, so a shared scan target would break on the wider range.
+       sum(sample_count)::BIGINT  AS sample_count,
+       sum(failure_count)::BIGINT AS failure_count,
        last(error_code, bucket) AS error_code
   FROM collector_samples_5m
  GROUP BY host_id, collector, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;
+
+SELECT set_chunk_time_interval('collector_samples_1h', INTERVAL '7 days');
 
 SELECT add_continuous_aggregate_policy('collector_samples_5m',
     start_offset      => INTERVAL '6 hours',

@@ -10,6 +10,18 @@ import (
 	"github.com/trick77/netra/internal/hub/store"
 )
 
+// rollupHour is a timestamp about an hour back, truncated to the hour, so a
+// test can place rows in several distinct 5m buckets that all share ONE 1h
+// bucket. recentBucket() truncates to 5 minutes instead, which is right for a
+// single-scrape test but would let a "+7 minutes" row cross an hour boundary
+// whenever the truncated time landed at :55.
+//
+// An hour back keeps it inside every retention policy and inside the window
+// refreshTiers materialises, while sitting in buckets that have closed.
+func rollupHour() time.Time {
+	return time.Now().UTC().Add(-time.Hour).Truncate(time.Hour)
+}
+
 // The 1h views are ~60 lines of near-identical avg(X_avg) / max(X_max) pairs
 // -- disk_io_samples_1h alone has sixteen. A transposition there
 // (avg(read_bytes_max) where avg(read_bytes_avg) was meant, or w_await
@@ -17,11 +29,12 @@ import (
 // without error, and is wrong forever. Asserting the aggregates merely EXIST
 // cannot see it.
 //
-// This is newcolumns_test.go's argument applied to the rollups: every value
-// is distinct, so a transposition lands on a named column instead of hiding
-// behind two equal numbers. With one 5m bucket per family, avg and max of the
-// same column still differ, which is what catches an avg/max swap in the 1h
-// tier.
+// Two things are needed to make one visible, and they catch different
+// mistakes. Distinct values per column catch a COLUMN transposition, which is
+// newcolumns_test.go's argument applied to the rollups. Two 5m buckets per
+// series catch a FUNCTION transposition: with only one input row per series
+// the 1h tier's avg, max, min and sum are all the same number, so max-where-
+// avg-was-meant passes silently.
 func TestIntegrationGroup1AggregatesComputeTheRightNumbers(t *testing.T) {
 	ctx := context.Background()
 	s := store.OpenTest(t)
@@ -29,15 +42,15 @@ func TestIntegrationGroup1AggregatesComputeTheRightNumbers(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	hostID := seedHost(t, s)
-	ts := recentBucket()
+	base := rollupHour()
 
 	sensorID := seedSensor(t, s, hostID, "coretemp", "Package id 0")
 
 	families := []struct {
 		table string
-		// dimension is the column that joins the two rows of one scrape;
-		// both sample rows share its value here, since the arithmetic under
-		// test is within a series, not across one.
+		// dimension is the column that joins these rows into one series;
+		// every row here shares its value, since the arithmetic under test is
+		// within a series, not across one.
 		dimension string
 		dimValue  any
 		columns   []string
@@ -51,36 +64,43 @@ func TestIntegrationGroup1AggregatesComputeTheRightNumbers(t *testing.T) {
 		}},
 	}
 
+	// Rows 0 and 1 land in the first 5m bucket, rows 2 and 3 in the second.
+	offsets := []time.Duration{0, time.Minute, 6 * time.Minute, 7 * time.Minute}
+
 	for _, f := range families {
-		// Column i gets 10*(i+1) in the first row and 10*(i+1)+2 in the
-		// second, so every avg (10i+11) and every max (10i+12) is unique
-		// across the whole family. Two columns holding the same number would
-		// let a swap through, which is the entire point.
-		lo := make([]float64, len(f.columns))
-		hi := make([]float64, len(f.columns))
+		// Column i is centred on 100*(i+1), so no two columns anywhere in the
+		// family share a value.
+		values := make([][]float64, len(f.columns))
 		for i := range f.columns {
-			lo[i] = float64(10 * (i + 1))
-			hi[i] = lo[i] + 2
+			c := float64(100 * (i + 1))
+			values[i] = []float64{c, c + 2, c + 6, c + 10}
 		}
 
-		insertAggregateRow(t, s, f.table, f.dimension, f.dimValue, hostID, ts, f.columns, lo)
-		insertAggregateRow(t, s, f.table, f.dimension, f.dimValue, hostID, ts.Add(time.Minute), f.columns, hi)
+		for row, offset := range offsets {
+			rowValues := make([]float64, len(f.columns))
+			for i := range f.columns {
+				rowValues[i] = values[i][row]
+			}
+			insertAggregateRow(t, s, f.table, f.dimension, f.dimValue, hostID, base.Add(offset), f.columns, rowValues)
+		}
 
 		refreshTiers(t, s, f.table)
 
-		for _, tier := range []string{"5m", "1h"} {
-			for i, col := range f.columns {
-				wantAvg := lo[i] + 1
-				wantMax := hi[i]
-				gotAvg := queryFloat(t, s, f.table+"_"+tier, col+"_avg", f.dimension, f.dimValue, hostID)
-				gotMax := queryFloat(t, s, f.table+"_"+tier, col+"_max", f.dimension, f.dimValue, hostID)
-				if gotAvg != wantAvg {
-					t.Errorf("%s_%s.%s_avg = %v, want %v", f.table, tier, col, gotAvg, wantAvg)
-				}
-				if gotMax != wantMax {
-					t.Errorf("%s_%s.%s_max = %v, want %v", f.table, tier, col, gotMax, wantMax)
-				}
-			}
+		for i, col := range f.columns {
+			c := values[i]
+			wantBucketAvg := []float64{(c[0] + c[1]) / 2, (c[2] + c[3]) / 2}
+			wantBucketMax := []float64{c[1], c[3]}
+
+			assertTier(t, s, f.table+"_5m", col+"_avg", f.dimension, f.dimValue, hostID, wantBucketAvg)
+			assertTier(t, s, f.table+"_5m", col+"_max", f.dimension, f.dimValue, hostID, wantBucketMax)
+
+			// avg-of-avgs across the two buckets, and max-of-maxes. Chosen so
+			// these two differ from each other AND from either bucket's own
+			// avg and max, which is what a function transposition trips over.
+			assertTier(t, s, f.table+"_1h", col+"_avg", f.dimension, f.dimValue, hostID,
+				[]float64{(wantBucketAvg[0] + wantBucketAvg[1]) / 2})
+			assertTier(t, s, f.table+"_1h", col+"_max", f.dimension, f.dimValue, hostID,
+				[]float64{wantBucketMax[1]})
 		}
 	}
 }
@@ -89,8 +109,10 @@ func TestIntegrationGroup1AggregatesComputeTheRightNumbers(t *testing.T) {
 // the aggregates least certain to survive a continuous aggregate: count(*)
 // and sum((NOT ok)::INTEGER) in the 5m tier, summed again in the 1h tier,
 // with last(error_code, bucket) carrying the most recent failure forward.
-// Three scrapes, two of them failures, so a count and a failure count that
-// were accidentally the same expression are distinguishable.
+//
+// Two 5m buckets, for the same reason as above, and with deliberately
+// different row counts: three scrapes then two. sum (5) is then distinct from
+// max (3) and from either bucket, so a sum silently written as a max fails.
 func TestIntegrationCollectorSamplesAggregateCountsFailures(t *testing.T) {
 	ctx := context.Background()
 	s := store.OpenTest(t)
@@ -98,7 +120,7 @@ func TestIntegrationCollectorSamplesAggregateCountsFailures(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 	hostID := seedHost(t, s)
-	ts := recentBucket()
+	base := rollupHour()
 
 	rows := []struct {
 		offset    time.Duration
@@ -106,52 +128,134 @@ func TestIntegrationCollectorSamplesAggregateCountsFailures(t *testing.T) {
 		ok        bool
 		errorCode any
 	}{
+		// First 5m bucket: three scrapes, two of them failures. Durations
+		// average exactly, so the assertions below need no epsilon.
 		{0, 4, true, nil},
-		{time.Minute, 9, false, "permission_denied"},
+		{time.Minute, 8, false, "permission_denied"},
 		{2 * time.Minute, 6, false, "timeout"},
+		// Second 5m bucket: two scrapes, one failure.
+		{6 * time.Minute, 20, true, nil},
+		{7 * time.Minute, 30, false, "io_error"},
 	}
 	for _, r := range rows {
 		if _, err := s.Pool().Exec(ctx,
 			`INSERT INTO collector_samples (host_id, ts, collector, duration_ms, ok, error_code)
 			 VALUES ($1, $2, 'sensors', $3, $4, $5)`,
-			hostID, ts.Add(r.offset), r.duration, r.ok, r.errorCode); err != nil {
+			hostID, base.Add(r.offset), r.duration, r.ok, r.errorCode); err != nil {
 			t.Fatalf("insert collector sample: %v", err)
 		}
 	}
 
 	refreshTiers(t, s, "collector_samples")
 
-	for _, tier := range []string{"5m", "1h"} {
-		view := "collector_samples_" + tier
-		var sampleCount, failureCount int64
-		var durationAvg float64
-		var durationMax int
-		var errorCode string
-		if err := s.Pool().QueryRow(ctx,
-			`SELECT sample_count, failure_count, duration_ms_avg, duration_ms_max, error_code
-			   FROM `+view+` WHERE host_id = $1 AND collector = 'sensors'`,
-			hostID).Scan(&sampleCount, &failureCount, &durationAvg, &durationMax, &errorCode); err != nil {
-			t.Fatalf("query %s: %v", view, err)
-		}
+	// (4+8+6)/3 in the first bucket, (20+30)/2 in the second.
+	firstAvg := 6.0
+	secondAvg := 25.0
 
-		if sampleCount != 3 {
-			t.Errorf("%s.sample_count = %d, want 3", view, sampleCount)
+	assertTier(t, s, "collector_samples_5m", "sample_count", "collector", "sensors", hostID, []float64{3, 2})
+	assertTier(t, s, "collector_samples_5m", "failure_count", "collector", "sensors", hostID, []float64{2, 1})
+	assertTier(t, s, "collector_samples_5m", "duration_ms_avg", "collector", "sensors", hostID, []float64{firstAvg, secondAvg})
+	assertTier(t, s, "collector_samples_5m", "duration_ms_max", "collector", "sensors", hostID, []float64{8, 30})
+
+	assertTier(t, s, "collector_samples_1h", "sample_count", "collector", "sensors", hostID, []float64{5})
+	assertTier(t, s, "collector_samples_1h", "failure_count", "collector", "sensors", hostID, []float64{3})
+	assertTier(t, s, "collector_samples_1h", "duration_ms_avg", "collector", "sensors", hostID, []float64{(firstAvg + secondAvg) / 2})
+	assertTier(t, s, "collector_samples_1h", "duration_ms_max", "collector", "sensors", hostID, []float64{30})
+
+	// The last failure in each window, not the first, and not the NULL
+	// belonging to the successful scrape that followed it in bucket two.
+	assertTextTier(t, s, "collector_samples_5m", "error_code", hostID, []string{"timeout", "io_error"})
+	assertTextTier(t, s, "collector_samples_1h", "error_code", hostID, []string{"io_error"})
+}
+
+// sum(bigint) returns numeric, so collector_samples_1h's counts would have a
+// different column type from collector_samples_5m's without an explicit cast.
+// pgx scans numeric into int64 transparently, which is exactly why no
+// value-based assertion can see this: it surfaces in 1D, where tier selection
+// reads both tiers through one query path and a shared scan target or JSON
+// encoder gets a different type depending on the range requested.
+func TestIntegrationCollectorSampleCountsAreBigintInBothTiers(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	for _, view := range []string{"collector_samples_5m", "collector_samples_1h"} {
+		for _, column := range []string{"sample_count", "failure_count"} {
+			var dataType string
+			if err := s.Pool().QueryRow(ctx,
+				`SELECT data_type FROM information_schema.columns
+				  WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2`,
+				view, column).Scan(&dataType); err != nil {
+				t.Fatalf("query %s.%s type: %v", view, column, err)
+			}
+			if dataType != "bigint" {
+				t.Errorf("%s.%s is %s, want bigint", view, column, dataType)
+			}
 		}
-		if failureCount != 2 {
-			t.Errorf("%s.failure_count = %d, want 2", view, failureCount)
+	}
+}
+
+// drop_chunks removes a chunk only once its NEWEST row is past the cutoff, so
+// a tier really retains up to retention + chunk_interval. Timescale defaults
+// to 7-day raw chunks and sizes continuous-aggregate chunks at 10x that, so
+// the 5m tier was retaining ~100 days against a stated 30. Nothing reports
+// it; the disk just fills.
+//
+// The bound is retention/4 rather than an exact interval per table, so this
+// stays a statement about the property rather than a second copy of the
+// migration's numbers.
+func TestIntegrationChunkIntervalIsSmallEnoughForItsRetention(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	// The interval comparison stays in SQL: time_interval is a Postgres
+	// interval, which pgx does not scan into a time.Duration, and dividing
+	// intervals is something Postgres does correctly for free.
+	rows, err := s.Pool().Query(ctx,
+		`SELECT j.hypertable_name,
+		        j.config ->> 'drop_after'      AS drop_after,
+		        d.time_interval::TEXT          AS chunk_interval,
+		        d.time_interval <= (j.config ->> 'drop_after')::INTERVAL / 4 AS ok
+		   FROM timescaledb_information.jobs j
+		   JOIN timescaledb_information.dimensions d
+		     ON d.hypertable_name = COALESCE(
+		          (SELECT ca.materialization_hypertable_name
+		             FROM timescaledb_information.continuous_aggregates ca
+		            WHERE ca.view_name = j.hypertable_name),
+		          j.hypertable_name)
+		  WHERE j.proc_name = 'policy_retention'`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	seen := 0
+	for rows.Next() {
+		var name, dropAfter, chunkInterval string
+		var ok bool
+		if err := rows.Scan(&name, &dropAfter, &chunkInterval, &ok); err != nil {
+			t.Fatalf("scan: %v", err)
 		}
-		// (4+9+6)/3, and the slowest of the three.
-		if durationAvg != 19.0/3.0 {
-			t.Errorf("%s.duration_ms_avg = %v, want %v", view, durationAvg, 19.0/3.0)
+		seen++
+
+		if !ok {
+			t.Errorf("%s chunk interval %s against retention %s: a chunk is dropped only "+
+				"when its newest row expires, so this retains far longer than stated",
+				name, chunkInterval, dropAfter)
 		}
-		if durationMax != 9 {
-			t.Errorf("%s.duration_ms_max = %d, want 9", view, durationMax)
-		}
-		// The last failure in the bucket, not the first and not the NULL
-		// belonging to the successful scrape.
-		if errorCode != "timeout" {
-			t.Errorf("%s.error_code = %q, want \"timeout\"", view, errorCode)
-		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate: %v", err)
+	}
+
+	// Seven raw hypertables and fourteen continuous aggregates.
+	if seen != 21 {
+		t.Fatalf("retention policies with a chunk interval = %d, want 21", seen)
 	}
 }
 
@@ -242,14 +346,92 @@ func refreshTiers(t *testing.T, s *store.Store, table string) {
 	}
 }
 
-// queryFloat reads one aggregated column for one series.
-func queryFloat(t *testing.T, s *store.Store, view, column, dimension string, dimValue any, hostID int32) float64 {
+// assertTier reads one aggregated column for one series across every bucket
+// in the view, oldest first, and compares it to want.
+func assertTier(t *testing.T, s *store.Store, view, column, dimension string, dimValue any,
+	hostID int32, want []float64,
+) {
 	t.Helper()
 
-	var got float64
-	sql := fmt.Sprintf(`SELECT %s FROM %s WHERE host_id = $1 AND %s = $2`, column, view, dimension)
-	if err := s.Pool().QueryRow(context.Background(), sql, hostID, dimValue).Scan(&got); err != nil {
+	// Cast in SQL: these columns are variously double precision, bigint and
+	// numeric (avg of an integer column), and pgx will not scan the latter
+	// two into a float64. The column types themselves are asserted by
+	// TestIntegrationCollectorSampleCountsAreBigintInBothTiers, so casting
+	// here hides nothing.
+	sql := fmt.Sprintf(
+		`SELECT (%s)::DOUBLE PRECISION FROM %s WHERE host_id = $1 AND %s = $2 ORDER BY bucket`,
+		column, view, dimension)
+	rows, err := s.Pool().Query(context.Background(), sql, hostID, dimValue)
+	if err != nil {
 		t.Fatalf("query %s.%s: %v", view, column, err)
 	}
-	return got
+	defer rows.Close()
+
+	var got []float64
+	for rows.Next() {
+		var v float64
+		if err := rows.Scan(&v); err != nil {
+			t.Fatalf("scan %s.%s: %v", view, column, err)
+		}
+		got = append(got, v)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate %s.%s: %v", view, column, err)
+	}
+
+	if !equalFloats(got, want) {
+		t.Errorf("%s.%s = %v, want %v", view, column, got, want)
+	}
+}
+
+// assertTextTier is assertTier for a text column, hard-wired to the one
+// collector series these tests write.
+func assertTextTier(t *testing.T, s *store.Store, view, column string, hostID int32, want []string) {
+	t.Helper()
+
+	sql := fmt.Sprintf(
+		`SELECT %s FROM %s WHERE host_id = $1 AND collector = 'sensors' ORDER BY bucket`, column, view)
+	rows, err := s.Pool().Query(context.Background(), sql, hostID)
+	if err != nil {
+		t.Fatalf("query %s.%s: %v", view, column, err)
+	}
+	defer rows.Close()
+
+	var got []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			t.Fatalf("scan %s.%s: %v", view, column, err)
+		}
+		got = append(got, v)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate %s.%s: %v", view, column, err)
+	}
+
+	if len(got) != len(want) {
+		t.Errorf("%s.%s = %v, want %v", view, column, got, want)
+		return
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("%s.%s = %v, want %v", view, column, got, want)
+			return
+		}
+	}
+}
+
+// equalFloats compares two float slices exactly. The test values are chosen
+// so every expected number is exactly representable, so an epsilon would only
+// hide a real disagreement.
+func equalFloats(got, want []float64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
