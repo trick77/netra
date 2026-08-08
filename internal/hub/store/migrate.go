@@ -39,7 +39,10 @@ const migrateLockID int64 = 0x6E65747261 // "netra"
 // Generous rather than tight: a first deploy applies the whole schema including
 // hypertables and continuous aggregates, and timing out mid-way through a
 // legitimate slow migration would be its own outage.
-const migrateLockTimeout = 5 * time.Minute
+//
+// A var, not a const, only so the timeout branch is reachable from a test
+// without making one wait five minutes for it. Nothing in production writes it.
+var migrateLockTimeout = 5 * time.Minute
 
 // Migrate applies every pending migration in filename order, exactly once.
 //
@@ -69,7 +72,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 			return fmt.Errorf(
 				"timed out after %s waiting for the migration lock: another hub is applying "+
 					"migrations and has not finished, or a previous one is wedged holding it "+
-					"(check pg_locks for objid %d): %w",
+					"(look for an advisory lock with key %d in pg_locks, joined to "+
+					"pg_stat_activity to find the session): %w",
 				migrateLockTimeout, migrateLockID, err)
 		}
 		return fmt.Errorf("acquire migration lock: %w", err)
