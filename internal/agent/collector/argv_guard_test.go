@@ -1,12 +1,16 @@
 package collector_test
 
 import (
-	"bufio"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -37,32 +41,22 @@ import (
 // The threat model is a well-meaning contributor, not an attacker. Anyone who
 // wants to defeat this can; the point is that they cannot do it by accident.
 const (
-	guardSelf = "argv_guard_test.go"
-
 	// A line carrying this marker is exempt. It exists so the guard is never
 	// the thing standing in someone's way at 2am — a genuine need becomes a
 	// visible, greppable decision rather than a reason to delete the test.
 	// With literal-only matching below, it should never be needed.
 	allowMarker = "//netra:allow-proc-read"
-)
 
-// guardRoots is every tree the agent binary is built from. cmd/netra-agent is
-// listed separately and deliberately: it is exactly where a convenience "dump
-// the process list" helper would land, and a walk that silently covered only
-// the first root would pass every other assertion in this file.
-// Relative to this package, internal/agent/collector.
-var guardRoots = []string{
-	"..", // internal/agent, this package included
-	filepath.Join("..", "..", "..", "cmd", "netra-agent"),
-}
+	agentMain = "./cmd/netra-agent"
+)
 
 // forbidden matches the /proc file names inside a Go string literal.
 //
 // Three properties, each load-bearing:
 //
 //   - STRING LITERALS ONLY. A comment saying "never read cmdline" is fine, and
-//     the processes collector will want to write exactly that. Only quoted and
-//     backtick-quoted text is examined.
+//     the processes collector will want to write exactly that. Only string
+//     literal nodes are examined — see literalsOf.
 //   - WORD BOUNDARIES. `environ` is a substring of "environment", which appears
 //     in config.go's package comment. A naive substring match would be red the
 //     moment this file landed.
@@ -71,23 +65,16 @@ var guardRoots = []string{
 //     lowercase.
 var forbidden = regexp.MustCompile(`\b(cmdline|environ)\b`)
 
-// literals extracts the contents of interpreted and raw string literals.
-//
-// Deliberately simple: it does not parse Go. A go/ast walk would be more
-// correct and would also fail closed in the wrong direction — this must never
-// miss a violation because a file did not compile, and a regexp over the raw
-// bytes cannot.
-var literals = regexp.MustCompile("\"[^\"\\n]*\"|`[^`]*`")
+// rawLiterals is the FALLBACK extractor, used only when a file does not parse.
+// It runs over the whole file rather than line by line: a backtick literal can
+// span lines, and a per-line match would never see its interior — the guard
+// would fail OPEN on exactly the shape a path-building const block takes.
+var rawLiterals = regexp.MustCompile("\"[^\"\\n]*\"|`[^`]*`")
 
 func TestAgentNeverReadsProcessArgsOrEnviron(t *testing.T) {
 	var findings []string
 
-	for _, root := range guardRoots {
-		if _, err := os.Stat(root); err != nil {
-			// A root that does not exist is a bug in this test, not a pass.
-			t.Fatalf("guard root %s is not readable: %v", root, err)
-		}
-
+	for _, root := range guardRoots(t) {
 		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -95,7 +82,7 @@ func TestAgentNeverReadsProcessArgsOrEnviron(t *testing.T) {
 			if d.IsDir() || !strings.HasSuffix(path, ".go") {
 				return nil
 			}
-			// Test files hold fixtures and this guard holds the words it bans.
+			// Test code does not ship. This guard file holds the words it bans.
 			if strings.HasSuffix(path, "_test.go") {
 				return nil
 			}
@@ -132,34 +119,239 @@ so the decision is visible rather than silent.`,
 		strings.Join(findings, "\n"), allowMarker)
 }
 
-// scanFile reports every forbidden literal in one file, as "path:line: text".
-func scanFile(path string) ([]string, error) {
-	if filepath.Base(path) == guardSelf {
-		return nil, nil
+// guardRoots is every directory in this module that the agent binary is built
+// from, ASKED OF THE COMPILER rather than listed by hand.
+//
+// A hand-written list was wrong the day it was written: it named internal/agent
+// and cmd/netra-agent, so internal/gen/netra/v1 was never walked — and that is
+// the tree that matters most. Adding `string cmdline = 5;` to ProcessSample and
+// running `make proto` regenerates ingest.pb.go with a
+// `protobuf:"...name=cmdline..."` struct tag, which is a string literal this
+// guard would catch, in a file it never opened. The wire format is the whole
+// point: a field that reaches the hub is the violation, and the proto comment
+// claims this test prevents exactly that.
+//
+// `go list -deps` means any package a future import pulls into the agent is
+// guarded automatically, with no list to keep in step.
+func guardRoots(t *testing.T) []string {
+	t.Helper()
+
+	modRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatalf("resolving module root: %v", err)
 	}
 
-	f, err := os.Open(path)
+	cmd := exec.Command("go", "list", "-deps", "-f", "{{.Dir}}", agentMain)
+	cmd.Dir = modRoot
+	out, err := cmd.Output()
+	if err != nil {
+		// Fails CLOSED. A guard that quietly scanned nothing because `go list`
+		// broke would be worse than no guard: it would report success.
+		t.Fatalf("go list -deps %s: %v", agentMain, err)
+	}
+
+	var roots []string
+	for _, dir := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		// Only this module. The standard library and the module cache are not
+		// ours to police, and scanning them would be both slow and noisy.
+		rel, err := filepath.Rel(modRoot, dir)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		roots = append(roots, dir)
+	}
+
+	// The agent imports at least its own collector package and the generated
+	// wire types; a result this small means the query, not the program, changed.
+	if len(roots) < 2 {
+		t.Fatalf("go list returned %d in-module dirs for %s, expected the agent's own packages: %v",
+			len(roots), agentMain, roots)
+	}
+	return roots
+}
+
+// scanFile reports every forbidden string literal in one file, as
+// "path:line: text".
+func scanFile(path string) ([]string, error) {
+	src, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+
+	fset := token.NewFileSet()
+	lits, ok := literalsOf(fset, path, src)
+	if !ok {
+		// Unparseable: fall back to the raw regexp. It over-reports (a comment
+		// mentioning "cmdline" in quotes counts), which is the correct
+		// direction to be wrong in — this must never MISS a violation because a
+		// file did not compile.
+		return scanRaw(path, src), nil
+	}
 
 	var out []string
-	sc := bufio.NewScanner(f)
-	// Generated protobuf files carry lines far longer than the default 64KiB.
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for line := 1; sc.Scan(); line++ {
-		text := sc.Text()
-		if strings.Contains(text, allowMarker) {
+	for _, lit := range lits {
+		val, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			// Not unquotable: test the raw token rather than skipping it.
+			val = lit.Value
+		}
+		if !forbidden.MatchString(val) {
 			continue
 		}
-		for _, lit := range literals.FindAllString(text, -1) {
-			if forbidden.MatchString(lit) {
-				out = append(out, fmt.Sprintf("  %s:%d: %s", path, line, strings.TrimSpace(text)))
-				break
+		pos := fset.Position(lit.Pos())
+		if lineHasMarker(src, pos.Line) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("  %s:%d: %s", path, pos.Line, strings.TrimSpace(lit.Value)))
+	}
+	return out, nil
+}
+
+// literalsOf returns every string literal node in the file.
+//
+// The AST is what makes "string literals only" true rather than aspirational.
+// The previous regexp had no idea what a comment was, so
+// `// names come from comm, never "cmdline"` failed the build — the exact
+// comment this file predicts the processes collector's author will write, in
+// the repo's own backtick-quoting house style. It also could not see inside a
+// multi-line raw string, so the same path hidden in one passed. Both directions
+// were wrong; the parser gets both right.
+//
+// ast.Inspect reaches struct tags too, which is how generated protobuf files
+// are covered.
+func literalsOf(fset *token.FileSet, path string, src []byte) ([]*ast.BasicLit, bool) {
+	file, err := parser.ParseFile(fset, path, src, parser.SkipObjectResolution)
+	if err != nil {
+		return nil, false
+	}
+	var lits []*ast.BasicLit
+	ast.Inspect(file, func(n ast.Node) bool {
+		if lit, isLit := n.(*ast.BasicLit); isLit && lit.Kind == token.STRING {
+			lits = append(lits, lit)
+		}
+		return true
+	})
+	return lits, true
+}
+
+func scanRaw(path string, src []byte) []string {
+	var out []string
+	for _, lit := range rawLiterals.FindAllIndex(src, -1) {
+		if !forbidden.Match(src[lit[0]:lit[1]]) {
+			continue
+		}
+		line := 1 + strings.Count(string(src[:lit[0]]), "\n")
+		if lineHasMarker(src, line) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("  %s:%d: %s", path, line,
+			strings.TrimSpace(string(src[lit[0]:lit[1]]))))
+	}
+	return out
+}
+
+// lineHasMarker reports whether the 1-based line carries the exemption marker.
+func lineHasMarker(src []byte, line int) bool {
+	lines := strings.Split(string(src), "\n")
+	if line < 1 || line > len(lines) {
+		return false
+	}
+	return strings.Contains(lines[line-1], allowMarker)
+}
+
+// TestGuardDetectsTheShapesItIsMeantTo pins the scanner's behaviour on the
+// shapes a hand-rolled version got wrong. Each case is a real file on disk,
+// because scanFile reads files.
+//
+// Without these, the guard's own properties are only assertable by editing the
+// agent and watching CI — which is how the gaps survived review in the first
+// place: the guard was green, and green proved nothing about what it covered.
+func TestGuardDetectsTheShapesItIsMeantTo(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want bool // want at least one finding
+	}{{
+		name: "one-line literal",
+		src:  "package p\n\nconst path = \"/proc/self/cmdline\"\n",
+		want: true,
+	}, {
+		// The wire format. This is the shape `make proto` produces after a
+		// cmdline field is added to the .proto, in a tree the old guardRoots
+		// never walked.
+		name: "generated protobuf struct tag",
+		src: "package p\n\ntype S struct {\n" +
+			"\tCmdline string `protobuf:\"bytes,5,opt,name=cmdline,proto3\" json:\"cmdline,omitempty\"`\n}\n",
+		want: true,
+	}, {
+		// A per-line scan never sees the interior of one of these.
+		name: "multi-line raw string",
+		src:  "package p\n\nconst paths = `\n/proc/self/cmdline\n`\n",
+		want: true,
+	}, {
+		// The comment this file predicts the collector's author will write.
+		name: "comment naming the file in quotes",
+		src:  "package p\n\n// never read \"cmdline\" — see spec 6.2\nfunc f() {}\n",
+		want: false,
+	}, {
+		name: "comment naming the file in backticks",
+		src:  "package p\n\n// names come from `comm`, never `cmdline`\nfunc f() {}\n",
+		want: false,
+	}, {
+		// os.Environ reads the agent's OWN environment and stays allowed, as
+		// does the word "environment" in prose.
+		name: "os.Environ and the word environment",
+		src:  "package p\n\n// the agent's own environment\nconst s = \"environment\"\n",
+		want: false,
+	}, {
+		name: "explicit allow marker",
+		src:  "package p\n\nconst path = \"/proc/self/cmdline\" //netra:allow-proc-read\n",
+		want: false,
+	}, {
+		// Falls over to the raw regexp, which over-reports rather than missing.
+		name: "unparseable file is still scanned",
+		src:  "package p\n\nthis is not go\n\nconst x = \"/proc/self/cmdline\"\n",
+		want: true,
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "probe.go")
+			if err := os.WriteFile(path, []byte(tc.src), 0o600); err != nil {
+				t.Fatalf("writing probe: %v", err)
 			}
+			got, err := scanFile(path)
+			if err != nil {
+				t.Fatalf("scanFile: %v", err)
+			}
+			if (len(got) > 0) != tc.want {
+				t.Errorf("findings=%v, want any=%v\nsource:\n%s", got, tc.want, tc.src)
+			}
+		})
+	}
+}
+
+// TestGuardRootsCoverTheWireFormat pins the coverage gap itself: the generated
+// protobuf package must be among the roots. A guard that walks only
+// internal/agent is green and blind.
+func TestGuardRootsCoverTheWireFormat(t *testing.T) {
+	var haveGen, haveCollector bool
+	for _, r := range guardRoots(t) {
+		if strings.HasSuffix(r, filepath.Join("internal", "gen", "netra", "v1")) {
+			haveGen = true
+		}
+		if strings.HasSuffix(r, filepath.Join("internal", "agent", "collector")) {
+			haveCollector = true
 		}
 	}
-	return out, sc.Err()
+	if !haveGen {
+		t.Error("guardRoots does not cover internal/gen/netra/v1 — a cmdline field added to the proto would pass")
+	}
+	if !haveCollector {
+		t.Error("guardRoots does not cover internal/agent/collector")
+	}
 }
