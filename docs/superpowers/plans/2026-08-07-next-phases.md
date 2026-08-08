@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement each stage task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Spec:** `docs/superpowers/specs/2026-08-07-netra-design.md` — authoritative for everything below.
-**Preceding plans:** `2026-08-07-phase1-foundation.md` (merged, PRs #1–#3), deployment and installer (merged, PRs #4–#9).
+**Preceding plans:** `2026-08-07-phase1-foundation.md` (merged, PRs #1–#3), deployment and setup script (merged, PRs #4–#9).
 
 ---
 
@@ -13,7 +13,7 @@ Two plans are complete. What that bought:
 
 - **Wire and storage:** protobuf `IngestRequest`/`HostSample`, HTTPS POST ingest, bearer auth, `COPY` into one hypertable with 5m/1h continuous aggregates and 7/30/90-day retention.
 - **Agent:** `Collector` interface, three collectors (CPU, memory, load), bounded ring buffer, metadata-hash handshake.
-- **Deployment:** two digest-pinned images published to GHCR on merge, lockstep-versioned; weekly GHCR retention; hub `compose.yaml`; agent reference compose; `install-agent.sh` with a 353-assertion suite.
+- **Deployment:** two digest-pinned images published to GHCR on merge, lockstep-versioned; weekly GHCR retention; hub `compose.yaml`; agent reference compose; `setup-agent.sh` with a 353-assertion suite.
 - **CI:** build/vet/gofmt, race tests against a real TimescaleDB, coverage floor + patch gates, a shell job under `sh` and `dash`, version-stamping guard.
 
 **What that does not buy: netra is not yet usable.** Three collectors is not monitoring, and there is no way to read the data back out except `psql`. The gap to close is stated bluntly in Stage 1.
@@ -36,8 +36,8 @@ Unchanged from the phase 1 plan and **not restated in full here** — read `2026
 
 Two constraints added by the deployment work:
 
-- **`deploy/**` and `install-agent.sh` are outside `release.yaml`'s `paths-ignore` on purpose.** The installer fetches templates at a release tag; a change that cuts no release is contained in no tag and never ships. Do not "tidy" them into the ignore list.
-- **Empty directories need a `.gitkeep`.** The installer fixtures probe for directory *existence*; git does not track empty directories, so the suite was green in every working tree and red only in CI. `test/install-agent/run.sh` now guards this.
+- **`deploy/**` and `setup-agent.sh` are outside `release.yaml`'s `paths-ignore` on purpose.** The setup script fetches templates at a release tag; a change that cuts no release is contained in no tag and never ships. Do not "tidy" them into the ignore list.
+- **Empty directories need a `.gitkeep`.** The setup script fixtures probe for directory *existence*; git does not track empty directories, so the suite was green in every working tree and red only in CI. `test/setup-agent/run.sh` now guards this.
 
 ---
 
@@ -100,7 +100,7 @@ Ordered by risk and by what unblocks what, not by the spec's table order. Each c
 
 **Wire protocol:** each family needs its own typed protobuf message (§7.3). `IngestResponse` field 4 is **reserved** — a per-host cadence override in phase 2 must use a new number.
 
-**Installer coupling:** every collector that lands makes an existing `install-agent.sh` mount meaningful. `deploy/agent/compose.yaml.example` carries a note listing which collectors are implemented; **update it in the same PR**, or it becomes a lie about what works.
+**Setup script coupling:** every collector that lands makes an existing `setup-agent.sh` mount meaningful. `deploy/agent/compose.yaml.example` carries a note listing which collectors are implemented; **update it in the same PR**, or it becomes a lie about what works.
 
 ### 1D. Read API
 
@@ -143,7 +143,7 @@ Carried forward. None block Stage 1, all are cheap to fix in the right PR.
 | Images are `linux/amd64` only | `release.yaml` | Fine for x86 servers; arm64 (Ampere VPS, Pi) needs `platforms:` widened and a QEMU step |
 | `/proc/1/mountinfo` bind-mount liveness unverified | Spec §14 item 1 | Whether it yields live reads or a snapshot. If a snapshot, drop discovery and keep pure marker-dir behaviour. Test when the filesystem collector lands |
 | `smartctl` `drivedb.h` update cadence undecided | Spec §14 item 3 | Affects vendor attribute *naming* only; health, temperature, reallocated sectors and power-on hours are standardised |
-| Installer `--ref` resolves the latest release at runtime | `install-agent.sh` | Deviates from §12a's "the installer's own version". A literal constant cannot self-update without the release workflow pushing to master. Revisit only if the runtime lookup proves flaky |
+| Setup script `--ref` resolves the latest release at runtime | `setup-agent.sh` | Deviates from §12a's "the setup script's own version". A literal constant cannot self-update without the release workflow pushing to master. Revisit only if the runtime lookup proves flaky |
 | `--force` guards `.env` but not `compose.yaml` | §12a specifies this asymmetry | Defensible — compose is derived, `.env` holds the token — and stated in the finish output |
 | Coverage floors still 75% | `hack/coverage-floors` | Raise deliberately once the collector packages land, not incidentally |
 

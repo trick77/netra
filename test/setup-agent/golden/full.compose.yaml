@@ -34,7 +34,35 @@ services:
     security_opt:
       - no-new-privileges:true
 
-    #__NETRA_PID__
-    #__NETRA_VOLUMES__
-    #__NETRA_DEVICES__
-    #__NETRA_CAP_ADD__
+    pid: host
+    volumes:
+      - type: bind
+        source: "/.netra"
+        target: /netra/fs/root
+        read_only: true
+      - type: bind
+        source: "/mnt/ark/.netra"
+        target: /netra/fs/ark
+        read_only: true
+      - type: bind
+        source: "/var/run/docker.sock"
+        target: /var/run/docker.sock
+        read_only: true
+      - type: bind
+        source: "/proc/1/mountinfo"
+        target: /host/mountinfo
+        read_only: true
+      - type: bind
+        source: "/run/dbus/system_bus_socket"
+        target: /run/dbus/system_bus_socket
+        read_only: true
+      - type: bind
+        source: "/var/lib/dpkg"
+        target: /var/lib/dpkg
+        read_only: true
+    devices:
+      - /dev/sda
+      - /dev/nvme0
+    cap_add:
+      - SYS_RAWIO
+      - SYS_ADMIN

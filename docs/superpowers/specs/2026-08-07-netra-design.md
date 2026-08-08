@@ -324,7 +324,15 @@ directly; gopsutil is not used, which also removes the panic-recovery workaround
 needs.
 
 **NVMe temperatures come from hwmon**, so they need no `smartctl`, no `SYS_ADMIN` and no
-device mounts. Only SATA drive temperatures require the SMART path.
+device mounts. Only SATA drive temperatures require the SMART path — and only while the
+**`drivetemp`** module is not loaded. With it, the same temperatures arrive through hwmon
+on the 60s sensor scrape instead of the 1h SMART poll, with no `SYS_RAWIO` and no
+`devices:` mapping, and the existing hwmon enumeration picks the chips up with no collector
+change. `setup-agent.sh` therefore offers to load it — and **verifies** it: `modprobe
+drivetemp` exits 0 on any kernel that ships the module but produces no chip at all when the
+controller or the drives do not report SCT temperature, so the module is loaded, hwmon is
+re-read, and `/etc/modules-load.d/drivetemp.conf` is written only if a chip actually
+appeared. When none does, the module is unloaded again and the host is left as found.
 
 **mdraid health is read from sysfs** — no smartctl, no privileges, works everywhere.
 
@@ -704,40 +712,78 @@ Mounts: `/var/run/docker.sock:ro`; marker dirs under `/netra/fs/`; optionally
 
 ---
 
-## 12a. Agent installer
+## 12a. Agent setup script
 
-`install-agent.sh` — POSIX shell, `curl`-able, idempotent, re-runnable. It detects the
+`setup-agent.sh` — POSIX shell, `curl`-able, idempotent, re-runnable. It detects the
 host's capabilities, asks before changing anything, and renders the agent's `compose.yaml`
 and `.env` from templates fetched from this repository.
+
+**It installs nothing**, and the name says so. Docker pulls the agent image when the stack
+is started. What the script produces is two files and a handful of empty marker
+directories, and the opening banner states exactly that before the first question.
 
 ### Consent model
 
 **Detect first, then ask.** Nothing is created, written or started until the operator has
-seen what was found and agreed. Each mutating step prompts separately, so marker
-directories can be accepted while `pid: host` is declined:
+seen what was found and agreed.
 
-- creating each `.netra` marker directory
-- writing `compose.yaml`
-- writing `.env`
-- granting each capability or optional mount
-- starting the stack
+**Five prompts, at most, and three of them only on some hosts:**
 
-Defaults are **no** for anything privilege-expanding (`SYS_ADMIN`, `pid: host`), yes for
-benign steps. Flags: `--yes` takes each prompt's **default** for unattended installs — it
-accepts the benign steps and *declines* the privilege-expanding ones, because a
-provisioning script must never silently expand privilege; `--sys-admin` and `--pid-host`
-grant those two by name without prompting, which keeps unattended installs capable of
-everything while making the grant explicit (`--sys-admin` is a no-op with a note on a host
-with no NVMe device). "Continue on an unsupported OS?" defaults no as well, so `--yes` on
-an unrecognised distro aborts rather than proceeding, and names `--unsupported-os` as the
-remedy; that flag takes the prompt without asking, keeping an unattended install possible
-on a cgroup v2 host netra has no name for (the floors below are advisory, so a refusal
-that could not be overridden would turn them into a gate they were never meant to be). It
-suppresses only the prompt — the warning naming the distro is still printed and still
-appears in the finish report — and is a no-op on a distro netra recognises. `--dry-run`
-prints the full plan and touches nothing; `--force` is additionally required to overwrite
-an existing `.env`, so a re-run in a provisioning script cannot silently replace a working
-token.
+| Prompt | Default | Condition | Taken by |
+|---|---|---|---|
+| Continue on an unsupported OS? | no | unrecognised distro | `--unsupported-os` |
+| Grant `SYS_ADMIN` (NVMe SMART health/wear)? | no | NVMe present | `--sys-admin` |
+| Load the `drivetemp` module and check? | yes | SATA present, no such chip, root | — |
+| Enable per-process metrics (`pid: host`)? | no | always | `--pid-host` |
+| Write the files and create the marker directories? | yes | always | — |
+
+**Everything read-only is enabled automatically**, with an informational line and no
+question: the Docker socket, `/proc/1/mountinfo`, the package database, the D-Bus socket,
+and `SYS_RAWIO` for SATA SMART. The argument is the one that was always made for the
+Docker socket — these mounts *are* what the collectors are, and an agent configured
+without them is not the thing the operator ran the script for. Asking about a read-only
+bind mount trains people to hit Enter through the questions that matter.
+
+`SYS_ADMIN` and `pid: host` are the only privilege grants, and both default to **no**. The
+prompt text is one factual sentence each; an alarming prompt is not more informative, it
+just gets declined by people who wanted the feature.
+
+**The write gate is single, and nothing mutates before it.** One question covers
+`compose.yaml`, `.env` and every `.netra` marker directory, so declining leaves the host
+exactly as it was — and, in particular, `--start` does not then run `docker compose up -d`
+against a *previous* run's `compose.yaml`. `--force` is still required to overwrite an
+existing `.env`, because it holds the token.
+
+The `drivetemp` prompt is the one exception to "nothing before the gate": it loads a
+kernel module during detection, because the result has to be visible to the sensor scan.
+It is individually consented and reversible. See §6.2.
+
+**There is no unattended mode.** `--yes` was removed. A readable terminal is a
+precondition, checked before any phase rather than discovered at the first prompt, and
+exempted only by `--dry-run` (which takes every default and touches nothing). A fleet is
+configured by templating `deploy/agent/compose.yaml.example` and `.env.example` from
+whatever provisioning system the operator already runs — the script is not that system.
+
+The grant flags remain, and now mean only "do not ask me this one". `--sys-admin` is a
+no-op with a note on a host with no NVMe device. `--unsupported-os` suppresses only the
+prompt — the warning naming the distro is still printed and still appears in the finish
+report — and is a no-op on a distro netra recognises. The floors below are advisory, so a
+refusal that could not be overridden would turn them into a gate they were never meant to
+be.
+
+### Values the operator states
+
+Detection cannot guess these, and an `.env` without a hub URL or a token cannot start the
+agent, so the script asks rather than leaving them blank with a comment: the hub URL, the
+agent token (echo off), `NETRA_LOCATION`, `NETRA_PROVIDER` and `NETRA_HOST_TYPE` (validated
+against `bare_metal` / `vps` / `vm`). Each is skipped when the matching flag was passed.
+
+`NETRA_FACILITY` is deliberately **not** asked: a datacentre code most self-hosters do not
+have is a prompt nobody can answer, which teaches people to hit Enter through the rest.
+
+An empty answer is allowed everywhere. An empty token or hub URL is written as such, with
+a loud note that the agent will refuse to start until it is filled in — better than dying
+after the operator has already answered every question.
 
 ### Phases
 
@@ -746,16 +792,16 @@ token.
 | Preflight | **Supported OS** via `/etc/os-release` (see below); Docker present and daemon reachable; **cgroup v2** (hard fail with an explicit message on v1); `/etc/machine-id` present |
 | Package manager | Detects `dpkg` (`/var/lib/dpkg/status`) or `apk` (`/lib/apk/db/installed`) and emits the matching read-only mount. On an rpm host it **warns and disables the package collector** rather than failing — rpm's Berkeley DB/SQLite store needs librpm and is unsupported |
 | Filesystems | Reads the mount table, filters pseudo/bind/overlay mounts and everything under `/var/lib/docker`, and for each accepted filesystem creates the `.netra` marker directory and emits the matching `/netra/fs/<label>` bind mount |
-| Sensors | Enumerates `/sys/class/hwmon/*/name` and `temp*_label`; picks the primary sensor by known CPU chip (`coretemp`, `k10temp`, `zenpower`), not hottest-wins |
+| Sensors | Offers `drivetemp` (see §6.2), then enumerates `/sys/class/hwmon/*/name` and `temp*_label` and picks the primary sensor by known CPU chip (`coretemp`, `k10temp`, `zenpower`), not hottest-wins. A tie between equally-ranked chips is **reported, never prompted** — the answer would be a guess frozen into `.env` that outlives the hardware justifying it, and the prompt count would vary with the socket count. `--primary-sensor` pins one |
 | SMART | Lists physical controllers, not partitions; distinguishes SATA from NVMe and emits the matching `devices:` entries plus `SYS_RAWIO`, adding `SYS_ADMIN` **only** when NVMe is present |
-| Optional extras | Offers the D-Bus socket (systemd units), `/var/lib/dpkg` (packages), and `pid: host` (processes) — the last with an explicit warning that it exposes every process's cmdline and environ |
+| Optional extras | Mounts the D-Bus socket (systemd units) and the package database read-only without asking; offers `pid: host` (processes), the one thing here that grants more than it uses |
 | Render | Downloads `compose.yaml.tmpl` and `env.tmpl` from the repository and substitutes detected values |
-| Finish | Prints what was detected **and what was skipped**, then the `docker compose up -d` command. `--start` runs it |
+| Finish | Prints what was detected **and what was skipped**, then the `docker compose up -d` command (without a `cd` when the output directory is the current one). `--start` runs it, unless the write gate was declined |
 
 ### Supported operating systems
 
-The installer reads `/etc/os-release` and refuses to proceed on anything it cannot
-support, rather than installing an agent that silently collects nothing.
+The setup script reads `/etc/os-release` and refuses to proceed on anything it cannot
+support, rather than configuring an agent that silently collects nothing.
 
 | Distro | Package inventory | Notes |
 |---|---|---|
@@ -773,14 +819,16 @@ directly rather than inferred from the distro name.
 ### Template sourcing
 
 Templates live in the repository, not inline in the script. They are fetched at a **pinned
-tag** (`--ref`, defaulting to the installer's own version), never from `master`, so a
+tag** (`--ref`, defaulting to the setup script's own version), never from `master`, so a
 mid-refactor template cannot land on a production host. `--template-dir` uses local files
 for development and air-gapped installs.
 
 ### Token
 
-The hub mints agent tokens; the installer never invents one. It accepts `--token` or
-prompts for it.
+The hub mints agent tokens; the setup script never invents one — the hub stores only a
+SHA-256, so a value made up here could never authenticate. `--token` and `--token-file` are
+resolved during argument parsing, so a typo in a path fails before any question is asked;
+otherwise it prompts with echo off.
 
 ## 13. Assumptions
 

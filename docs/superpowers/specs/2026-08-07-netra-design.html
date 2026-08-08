@@ -560,7 +560,15 @@ spinning disk. <code>NETRA_PRIMARY_SENSOR</code> overrides.</p>
 directly; gopsutil is not used, which also removes the panic-recovery workaround beszel
 needs.</p>
 <p><strong>NVMe temperatures come from hwmon</strong>, so they need no <code>smartctl</code>, no <code>SYS_ADMIN</code> and no
-device mounts. Only SATA drive temperatures require the SMART path.</p>
+device mounts. Only SATA drive temperatures require the SMART path &mdash; and only while the
+<strong><code>drivetemp</code></strong> module is not loaded. With it, the same temperatures arrive through hwmon
+on the 60s sensor scrape instead of the 1h SMART poll, with no <code>SYS_RAWIO</code> and no
+<code>devices:</code> mapping, and the existing hwmon enumeration picks the chips up with no collector
+change. <code>setup-agent.sh</code> therefore offers to load it &mdash; and <strong>verifies</strong> it: <code>modprobe
+drivetemp</code> exits 0 on any kernel that ships the module but produces no chip at all when the
+controller or the drives do not report SCT temperature, so the module is loaded, hwmon is
+re-read, and <code>/etc/modules-load.d/drivetemp.conf</code> is written only if a chip actually
+appeared. When none does, the module is unloaded again and the host is left as found.</p>
 <p><strong>mdraid health is read from sysfs</strong> — no smartctl, no privileges, works everywhere.</p>
 <p><strong>systemd is stored as events, not samples.</strong> A host has 50–200 units and almost none
 change state between scrapes; writing &quot;still active&quot; rows would add ~10,000 near-constant

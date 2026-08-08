@@ -28,7 +28,6 @@ What does not exist yet:
 - **No admin API**, so no endpoint and no CLI to mint an agent token — see
   [Creating an agent token](#creating-an-agent-token).
 - **No UI.**
-- **No `install-agent.sh`.**
 
 ## Architecture
 
@@ -64,10 +63,59 @@ cannot reach Postgres reports unhealthy rather than accepting ingest it can only
 
 ## Agent quickstart
 
-The intended path is `install-agent.sh` — it detects the host's capabilities, asks before
-changing anything, and renders the compose file and `.env` for you. It has not landed yet.
+On each monitored host:
 
-Until then, on each monitored host:
+```bash
+curl -fsSL https://raw.githubusercontent.com/trick77/netra/master/setup-agent.sh -o setup-agent.sh
+sh setup-agent.sh
+```
+
+It **installs nothing**. It detects what the host actually has, asks before changing
+anything, and writes two files into `./netra-agent` (or into `./` when you are already in
+a directory named `netra-agent`):
+
+| | |
+|---|---|
+| `compose.yaml` | generated from this run's detection, overwritten on every run |
+| `.env` | your hub URL and token — never overwritten without `--force` |
+
+Plus empty `.netra` marker directories on each measured filesystem, which hold no data and
+exist only so the agent can `statfs` the filesystem they sit on. Docker pulls the agent
+image when you start the stack, which the script does not do unless you pass `--start`.
+
+It asks five yes/no questions at most, and several only apply to some hosts:
+
+| Question | Default | Skip it with |
+|---|---|---|
+| Continue on a distro netra does not recognise? | no | `--unsupported-os` |
+| Grant `SYS_ADMIN` for NVMe SMART health and wear? | no | `--sys-admin` |
+| Load the `drivetemp` kernel module and check whether it works? | yes | — |
+| Enable per-process CPU and memory metrics (`pid: host`)? | no | `--pid-host` |
+| Write the files and create the marker directories? | yes | — |
+
+Everything read-only is enabled without asking — the Docker socket, the mount table, the
+package database, the D-Bus socket, and `SYS_RAWIO` for SATA SMART. `SYS_ADMIN` and
+`pid: host` are the only privilege grants, and both default to no.
+
+It also asks for the hub URL, the agent token (input hidden), and where the host is —
+location, provider and host type. Each can be given as a flag instead: `--hub-url`,
+`--token` / `--token-file`, `--location`, `--provider`, `--host-type`. `--dry-run` prints
+the whole plan and touches nothing.
+
+`drivetemp` is worth a word. Without it, SATA drive temperatures come from `smartctl` on
+the hourly SMART poll; with it they arrive through hwmon on the 60-second sensor scrape,
+with no extra privileges. The module loads on any kernel that ships it but produces
+nothing when the controller or the drives do not report SCT temperature, so the script
+loads it, re-reads hwmon, and persists it to `/etc/modules-load.d/drivetemp.conf` **only**
+if a chip actually appeared — unloading it again if not. No host package is ever needed:
+`smartmontools` ships inside the agent image.
+
+### There is no unattended mode
+
+The script is interactive and fails immediately without a terminal. To configure a fleet,
+template [`deploy/agent/compose.yaml.example`](deploy/agent/compose.yaml.example) and
+[`.env.example`](deploy/agent/.env.example) from whatever provisioning system you already
+run:
 
 ```bash
 mkdir -p /path/to/netra-agent && cd /path/to/netra-agent

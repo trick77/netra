@@ -62,7 +62,7 @@ jobs:
             exit 1
           fi
 
-  # install-agent.sh is the one shipped artefact that is not Go, and it is the
+  # setup-agent.sh is the one shipped artefact that is not Go, and it is the
   # piece most likely to be wrong in a way nobody notices: it runs once, on
   # somebody else's machine, against hardware this repo has never seen.
   #
@@ -79,7 +79,7 @@ jobs:
   # a shell-only PR returns an empty changed-set and exits early. No exclusion
   # list is added for them; a redundant exclude only invites deletion later.
   shell:
-    name: Shell (installer)
+    name: Shell (setup script)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -87,13 +87,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck dash
       - name: Lint
         run: |
-          shellcheck -s sh install-agent.sh
-          shellcheck -s sh test/install-agent/run.sh test/install-agent/lib.sh \
-            test/install-agent/cases/*.sh
+          shellcheck -s sh setup-agent.sh
+          shellcheck -s sh test/setup-agent/run.sh test/setup-agent/lib.sh \
+            test/setup-agent/cases/*.sh
       - name: Suite under sh
-        run: sh test/install-agent/run.sh
+        run: sh test/setup-agent/run.sh
       - name: Suite under dash
-        run: dash test/install-agent/run.sh
+        run: dash test/setup-agent/run.sh
 
   test:
     name: Test (${{ matrix.component }})

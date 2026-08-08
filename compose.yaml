@@ -7,7 +7,7 @@
 #   docker compose up -d
 #
 # Agents are configured separately, on each monitored host — see
-# deploy/agent/ and install-agent.sh.
+# deploy/agent/ and setup-agent.sh.
 services:
   netra:
     image: ghcr.io/trick77/netra:latest

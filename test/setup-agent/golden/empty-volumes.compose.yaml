@@ -34,7 +34,3 @@ services:
     security_opt:
       - no-new-privileges:true
 
-    #__NETRA_PID__
-    #__NETRA_VOLUMES__
-    #__NETRA_DEVICES__
-    #__NETRA_CAP_ADD__

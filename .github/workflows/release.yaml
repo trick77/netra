@@ -18,10 +18,10 @@ on:
     #
     # ------------------------------------------------------------------------
     # NOT ignored, and this is the non-obvious part: deploy/** and
-    # install-agent.sh.
+    # setup-agent.sh.
     #
     # Neither is copied into any image, so the instinct is to ignore both. That
-    # instinct is wrong. The agent installer (spec §12a) fetches its compose and
+    # instinct is wrong. The agent setup script (spec §12a) fetches its compose and
     # env templates out of deploy/agent/ at a PINNED RELEASE TAG — never from
     # master, so that a mid-refactor template cannot land on a production host.
     # A template only ever reaches a host by being contained in some tag. So if
@@ -205,8 +205,8 @@ jobs:
 
       # Tag only AFTER both image pushes succeed, so a failed release never
       # leaves an orphan git tag behind. An orphan tag is not cosmetic here: the
-      # agent installer resolves its templates at a tag, so a tag with no images
-      # is an installer that fetches templates for a version nobody can pull.
+      # agent setup script resolves its templates at a tag, so a tag with no images
+      # is a setup script that fetches templates for a version nobody can pull.
       #
       # Create the tag via the REST API rather than `git push`. A git-transport tag push with
       # GITHUB_TOKEN is refused once the repo contains workflow files (it needs the `workflows`

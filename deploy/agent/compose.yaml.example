@@ -1,8 +1,8 @@
 # netra agent — runs on every monitored Linux host and POSTs samples to the hub.
 #
-# This file is the hand-written reference. `install-agent.sh` detects what a host
+# This file is the hand-written reference. `setup-agent.sh` detects what a host
 # actually has and renders an equivalent file for you; copy this one only if you
-# are deliberately skipping the installer and want to decide each mount yourself.
+# are deliberately skipping the setup script and want to decide each mount yourself.
 #
 #   cp compose.yaml.example compose.yaml
 #   cp .env.example .env && $EDITOR .env      # hub URL and token
@@ -45,7 +45,7 @@ services:
     # Every bind is written in LONG FORM on purpose. The `source:target:ro` short
     # form is parsed by splitting on ':', so a host mount point that contains a
     # colon breaks it outright and one that contains a space has to be quoted.
-    # install-agent.sh renders the same long form, so a hand-written file and a
+    # setup-agent.sh renders the same long form, so a hand-written file and a
     # generated one stay comparable line for line.
     volumes:
       # --- Filesystems (marker directories, §6.4) --------------------------
