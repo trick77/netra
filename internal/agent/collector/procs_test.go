@@ -90,6 +90,11 @@ func TestProcsTrustsPidHostConfigOverHeuristics(t *testing.T) {
 
 // An unreadable /proc is another collector's problem to report. This one
 // leaves its field unset and does not fail the scrape.
+//
+// It reports unavailable rather than namespaced: a missing bind mount, a
+// misconfigured NETRA_PROC_ROOT and a permission error all reach this branch,
+// and "namespaced" would send the operator off to add pid: host, which fixes
+// none of them.
 func TestProcsUnreadableProcRootIsUnsetNotZero(t *testing.T) {
 	p := collector.NewProcs("testdata/does-not-exist", false, time.Minute)
 
@@ -101,8 +106,29 @@ func TestProcsUnreadableProcRootIsUnsetNotZero(t *testing.T) {
 	if sample.ProcessesTotal != nil {
 		t.Errorf("ProcessesTotal = %v, want nil", *sample.ProcessesTotal)
 	}
-	if got := p.Capabilities()["processes"]; got != "namespaced" {
-		t.Errorf("capability = %q, want %q", got, "namespaced")
+	if got := p.Capabilities()["processes"]; got != "unavailable" {
+		t.Errorf("capability = %q, want %q", got, "unavailable")
+	}
+}
+
+// The two unset reasons must stay distinguishable end to end: the same
+// collector reports namespaced only when it could actually read the tree.
+func TestProcsUnreadableAndNamespacedReportDifferentCauses(t *testing.T) {
+	unreadable := collector.NewProcs("testdata/does-not-exist", false, time.Minute)
+	namespaced := collector.NewProcs("testdata/procpids-namespaced", false, time.Minute)
+
+	var sample netrav1.HostSample
+	if err := unreadable.Collect(context.Background(), &sample); err != nil {
+		t.Fatalf("Collect (unreadable): %v", err)
+	}
+	if err := namespaced.Collect(context.Background(), &sample); err != nil {
+		t.Fatalf("Collect (namespaced): %v", err)
+	}
+
+	got := unreadable.Capabilities()["processes"]
+	want := namespaced.Capabilities()["processes"]
+	if got == want {
+		t.Errorf("unreadable and namespaced both report %q, want distinct causes", got)
 	}
 }
 
