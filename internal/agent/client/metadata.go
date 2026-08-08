@@ -1,12 +1,14 @@
 package client
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -43,9 +45,22 @@ func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 func HashMetadata(md *netrav1.Metadata) []byte {
 	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(md)
 	if err != nil {
-		// Marshalling a struct we built ourselves cannot fail in practice;
-		// a zero hash still behaves correctly, it just forces a resend.
-		return make([]byte, 8)
+		// Marshalling a struct we built ourselves cannot fail in practice, but
+		// the fallback must still be a hash that never MATCHES, not a fixed
+		// one. A zero hash did the opposite of what it claimed: once the hub
+		// stored it, reconcileMetadata's
+		// `!bytes.Equal(stored, sent) || len(stored) == 0` is false on both
+		// sides, so request_metadata was never set again and no later change —
+		// an agent upgrade, a hostname change — was ever propagated.
+		//
+		// A random value forces the resend the comment always promised: it
+		// cannot equal what the hub stored, and it differs again next time.
+		out := make([]byte, 8)
+		if _, rerr := rand.Read(out); rerr != nil {
+			// Even the failure path must not settle on a stable value.
+			binary.BigEndian.PutUint64(out, uint64(time.Now().UnixNano()))
+		}
+		return out
 	}
 
 	sum := sha256.Sum256(raw)
@@ -65,11 +80,32 @@ func HashMetadata(md *netrav1.Metadata) []byte {
 // hub asks for it (RequestMetadata=true), permanently — the agent would
 // never send metadata again while buffering forever. Hex-encoding the sum
 // keeps it valid UTF-8 and just as suitable as a stable, opaque identifier.
+// machineIDPaths are tried in order. /var/lib/dbus/machine-id is the fallback
+// on hosts that predate systemd's location, and on images that ship only the
+// D-Bus one. The agent image is Alpine and has NEITHER of its own, so one of
+// these has to be bind-mounted in from the host — setup-agent.sh does that —
+// or every containerised agent reports the same empty fingerprint and the hub's
+// token-copied-to-a-second-host check can never fire.
+var machineIDPaths = []string{
+	"/etc/machine-id",
+	"/var/lib/dbus/machine-id",
+}
+
 func fingerprint() string {
-	raw, err := os.ReadFile("/etc/machine-id")
-	if err != nil {
-		return ""
+	for _, p := range machineIDPaths {
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		id := strings.TrimSpace(string(raw))
+		// An empty file is not an identity. Treat it like a missing one and
+		// fall through, rather than hashing "" into a fingerprint every host
+		// with an unprovisioned machine-id would share.
+		if id == "" {
+			continue
+		}
+		sum := sha256.Sum256([]byte(id))
+		return hex.EncodeToString(sum[:])
 	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(string(raw))))
-	return hex.EncodeToString(sum[:])
+	return ""
 }

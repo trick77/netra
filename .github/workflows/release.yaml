@@ -96,6 +96,15 @@ jobs:
   # couple of minutes anyway, so the parallelism buys very little.
   release:
     runs-on: ubuntu-latest
+    # master ONLY, on every trigger. push already filters by branch, but
+    # workflow_dispatch does not: the Actions tab offers a branch selector, and
+    # without this guard a manual run from any feature branch builds and pushes
+    # :latest, :0, :0.1 and :0.1.2 from unmerged code, tags that off-master
+    # commit, and publishes a release the agent installer then resolves its
+    # templates from. The "unfiltered on purpose" note on workflow_dispatch is
+    # about PATHS, not branches — the bootstrap run it describes happens on
+    # master like every other release.
+    if: github.ref == 'refs/heads/master'
     steps:
       # fetch-depth: 0 — the version is derived from the latest git tag, and a
       # shallow checkout fetches no tags at all. Without this every release
@@ -212,13 +221,30 @@ jobs:
       # GITHUB_TOKEN is refused once the repo contains workflow files (it needs the `workflows`
       # scope, which is not grantable via the `permissions:` block); create-ref only adds a
       # pointer to the existing commit and is allowed under `contents: write`.
+      #
+      # The ordering guards "a tag with no images". The MIRROR failure —
+      # images with no tag — is guarded here, because the step order cannot
+      # guard it: if this step fails after both pushes have landed, the next
+      # release recomputes the same NEXT from the latest tag and republishes
+      # DIFFERENT content under a version that was already pushed to GHCR.
+      # Verifying the tag exists afterwards turns that into a loud failure with
+      # the manual fix named, instead of a silently reused version number.
       - name: Create tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION="${{ steps.ver.outputs.version }}"
           gh api "repos/${{ github.repository }}/git/refs" \
-            -f ref="refs/tags/${{ steps.ver.outputs.version }}" \
+            -f ref="refs/tags/$VERSION" \
             -f sha="${{ github.sha }}"
+
+          if ! gh api "repos/${{ github.repository }}/git/ref/tags/$VERSION" --silent 2>/dev/null; then
+            echo "::error::images for $VERSION are already pushed to GHCR but the tag was not" \
+                 "created. Do NOT re-run this workflow: it would recompute $VERSION and publish" \
+                 "different content under a version that is already public. Create the tag by" \
+                 "hand at ${{ github.sha }}, then continue."
+            exit 1
+          fi
 
       # Runs after the tag exists, so the release attaches to it rather than
       # creating a second pointer at the same commit. Without this the repo has

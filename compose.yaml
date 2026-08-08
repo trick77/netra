@@ -64,7 +64,14 @@ services:
       # Required because this container sits on two networks — without it
       # Traefik picks one arbitrarily and may route to the internal address.
       traefik.docker.network: traefik
-      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:-netra.trick77.com}`)
+      # PathPrefix, not Host alone. The only route that has any business being
+      # reachable from the internet is agent ingest — everything else the hub
+      # grows (the read API, the admin API that mints agent tokens and deletes
+      # hosts) is behind the same shared token and would otherwise become
+      # internet-facing the moment it was added, silently, with no change to
+      # this file. That directly contradicts the loopback-binding rationale
+      # three lines below. Widen this deliberately, per route, or not at all.
+      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:-netra.trick77.com}`) && PathPrefix(`/api/agent/`)
       traefik.http.routers.netra.entrypoints: websecure
       # tls: "true" with no certresolver — the certificate is pre-loaded in
       # Traefik's static config, so there is no ACME challenge to run here.

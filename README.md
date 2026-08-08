@@ -51,6 +51,7 @@ The hub expects a Traefik-fronted host. `compose.yaml` publishes the API on `127
 only, because in phase 1 that loopback port is the entire interface.
 
 ```bash
+git clone https://github.com/trick77/netra.git && cd netra   # compose.yaml and .env.example live here
 docker network create traefik          # external, shared with other stacks
 mkdir -p data/timescaledb              # must exist first, or initdb fails root-owned
 cp .env.example .env && $EDITOR .env   # POSTGRES_PASSWORD, NETRA_ADMIN_TOKEN, hostname
@@ -108,8 +109,8 @@ load. `--assume-physical` overrides the detection.
 
 It also asks for the hub URL, the agent token (input hidden), and where the host is —
 location, provider and host type. Each can be given as a flag instead: `--hub-url`,
-`--token` / `--token-file`, `--location`, `--provider`, `--host-type`. `--dry-run` prints
-the whole plan and touches nothing.
+`--token` / `--token-file`, `--location`, `--provider`, `--host-type`. Nothing is
+created, written or started until you agree at the single write gate.
 
 It reports whether it is running as **root** before it asks anything. Root is not required
 — detection reads world-readable files, the two files land wherever `--output-dir` points,

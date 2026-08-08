@@ -26,6 +26,16 @@ mkshims "$TMP/shims"
 # once, and link it into each restricted bin alongside the commands being tested.
 SH_ABS=$(command -v "$SH")
 
+# There is no unattended mode, so every run below that is expected to reach the
+# end drives its prompts through NETRA_ANSWERS_FILE. NETRA_UID is pinned on each
+# of those runs too: plan_drivetemp asks nothing when the run is not root, so an
+# unpinned uid would make the prompt COUNT depend on who runs the suite.
+#
+#   root-full, uid 0     -> SYS_ADMIN, drivetemp, write gate
+#   root-full, uid 1000  -> SYS_ADMIN, write gate   (drivetemp returns early)
+ANS_ROOT=$(answers plat-root n y y)
+ANS_USER=$(answers plat-user n y)
+
 # NETRA_SOURCED=0 on every subprocess run below. This case SOURCES the script to
 # unit-test _wrap, detect_virt and friends, and NETRA_SOURCED has to be exported
 # for that — but a child process inheriting it reads "you are being sourced",
@@ -164,6 +174,32 @@ export NETRA_SETUP_ROOT
 init_paths
 assert_eq "xen" "$(detect_virt)" "Xen PV is detected through /sys/hypervisor/type"
 
+# ...but a Xen dom0 is REAL HARDWARE reading `xen` from the same file. The CPU
+# flag is absent on dom0 and sys_vendor is the real board vendor, so both
+# earlier branches fall through and the type file alone would misjudge a machine
+# with real disks — losing SMART, drive temperatures and the sensor hint on
+# hardware that has all of them. `control_d` in the capabilities file is what
+# systemd-detect-virt discriminates on.
+R=$(mkplatform virt-dom0)
+printf 'processor\t: 0\n' >"$R/proc/cpuinfo"
+printf 'Supermicro\n' >"$R/sys/class/dmi/id/sys_vendor"
+mkdir -p "$R/sys/hypervisor/properties"
+printf 'xen\n' >"$R/sys/hypervisor/type"
+printf 'xen-3.0-x86_64 xen-3.0-x86_32p hvm-3.0-x86_32 control_d\n' \
+    >"$R/sys/hypervisor/properties/capabilities"
+NETRA_SETUP_ROOT="$R"
+export NETRA_SETUP_ROOT
+init_paths
+assert_eq "" "$(detect_virt)" "a Xen dom0 is physical, not a guest"
+
+# The same tree WITHOUT control_d is a Xen HVM/PV guest and stays virtual, so
+# the assertion above is about dom0 and not about the capabilities file merely
+# existing.
+printf 'xen-3.0-x86_64 xen-3.0-x86_32p hvm-3.0-x86_32\n' \
+    >"$R/sys/hypervisor/properties/capabilities"
+init_paths
+assert_eq "xen" "$(detect_virt)" "a Xen guest with capabilities but no control_d is virtual"
+
 # --- 3. SMART is skipped on a virtual host ------------------------------------
 #
 # The hypervisor presents an /dev/sda that looks exactly like a real one from
@@ -270,7 +306,7 @@ cp -R "$(fixture root-full)/." "$ROOT/"
 # Everything the check requires EXCEPT tr, so the failure has exactly one cause.
 ONEBIN=$(linkbin onebin awk sed grep head cat sort wc mktemp mkdir rm cp id)
 run_capture env PATH="$ONEBIN" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-tools"
 assert_eq 1 "$RUN_RC" "a host missing a required command exits non-zero"
 assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs: tr" \
@@ -282,7 +318,7 @@ assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs
 # whole job is to name it.
 NOID=$(linkbin noid awk sed grep tr head cat sort wc mktemp mkdir rm cp)
 run_capture env PATH="$NOID" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-noid"
 assert_eq 1 "$RUN_RC" "a host without id exits non-zero"
 assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs: id" \
@@ -290,11 +326,28 @@ assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs
 assert_not_contains "$RUN_OUT" "id: command not found" \
     "the check runs before anything reaches for id"
 
+# `sed` is the one that proved die itself could be the casualty. die used to
+# colour its label by piping _wrap through sed; under `set -e` a missing sed
+# failed the pipeline and aborted die BEFORE `exit 1`, so the host got
+# "sed: not found" and exit 127 instead of the message naming what to install.
+# Every other command in the list is reported BY die, so die has to survive the
+# absence of each of them.
+NOSED=$(linkbin nosed awk grep tr head cat sort wc mktemp mkdir rm cp id)
+run_capture env PATH="$NOSED" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-nosed"
+assert_eq 1 "$RUN_RC" "a host without sed exits 1, not 127 from a broken die"
+assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs: sed" \
+    "die still delivers its message with no sed on the host"
+assert_not_contains "$RUN_OUT" "sed: command not found" \
+    "die does not shell out to sed to print an error about sed"
+
 # ...and with tr restored the same run gets past the check, so the assertion
 # above is about tr and not about the restricted PATH in general.
 FULLBIN=$(linkbin fullbin awk sed grep tr head cat sort wc mktemp mkdir rm cp id)
 run_capture env PATH="$FULLBIN" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    NETRA_UID=1000 NETRA_ANSWERS_FILE="$ANS_USER" \
+    "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-tools2"
 assert_eq 0 "$RUN_RC" "the same run succeeds once the missing command is there"
 
@@ -319,7 +372,8 @@ chmod +x "$NOCURL/wget"
 : >"$NETRA_SHIM_LOG"
 run_capture env PATH="$NOCURL" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT2" NETRA_TTY="$NO_TTY" \
     NETRA_SHIM_CURL_BODY='{"tag_name":"v9.9.9"}' \
-    "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    NETRA_UID=1000 NETRA_ANSWERS_FILE="$ANS_USER" \
+    "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --output-dir "$TMP/out-wget"
 assert_contains "$(cat "$NETRA_SHIM_LOG")" "wget " "wget is used when curl is absent"
 assert_not_contains "$(cat "$NETRA_SHIM_LOG")" "curl " "and curl is not reached for at all"
@@ -327,14 +381,15 @@ assert_not_contains "$(cat "$NETRA_SHIM_LOG")" "curl " "and curl is not reached 
 # Neither one, and no --template-dir, is a hard error naming both.
 NONET=$(linkbin nonetbin awk sed grep tr head cat sort wc mktemp mkdir rm cp id)
 run_capture env PATH="$NONET" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT2" NETRA_TTY="$NO_TTY" \
-    "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --output-dir "$TMP/out-nonet"
 assert_eq 1 "$RUN_RC" "no HTTP client and no --template-dir is a hard error"
 assert_contains "$(flatten "$RUN_OUT")" "neither curl nor wget" "the failure names both"
 
 # ...but --template-dir needs no HTTP client at all.
 run_capture env PATH="$NONET" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT2" NETRA_TTY="$NO_TTY" \
-    "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    NETRA_UID=1000 NETRA_ANSWERS_FILE="$ANS_USER" \
+    "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-nonet2"
 assert_eq 0 "$RUN_RC" "--template-dir works with no HTTP client on the host"
 
@@ -351,14 +406,16 @@ mkdir -p "$ROOT3"
 cp -R "$(fixture root-full)/." "$ROOT3/"
 
 run_capture env NETRA_SETUP_ROOT="$ROOT3" NETRA_UID=0 NETRA_TTY="$NO_TTY" \
-    NETRA_SOURCED=0 "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    NETRA_ANSWERS_FILE="$ANS_ROOT" \
+    NETRA_SOURCED=0 "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-root"
 assert_eq 0 "$RUN_RC" "a root run succeeds"
 assert_contains "$RUN_OUT" "user:            root" "a root run says so"
 assert_not_contains "$RUN_OUT" "not running as root" "and warns about nothing"
 
 run_capture env NETRA_SETUP_ROOT="$ROOT3" NETRA_UID=1000 NETRA_TTY="$NO_TTY" \
-    NETRA_SOURCED=0 "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    NETRA_ANSWERS_FILE="$ANS_USER" \
+    NETRA_SOURCED=0 "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-root2"
 assert_eq 0 "$RUN_RC" "a non-root run is not refused"
 assert_contains "$RUN_OUT" "uid 1000 (not root)" "the run says which uid it is"

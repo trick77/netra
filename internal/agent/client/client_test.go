@@ -53,6 +53,15 @@ func (rec *recorder) handler(t *testing.T) http.Handler {
 	})
 }
 
+// all returns a copy of every recorded request, oldest first.
+func (rec *recorder) all() []*netrav1.IngestRequest {
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	out := make([]*netrav1.IngestRequest, len(rec.requests))
+	copy(out, rec.requests)
+	return out
+}
+
 func (rec *recorder) count() int {
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
@@ -226,6 +235,140 @@ func TestFlushRejectsUnauthorized(t *testing.T) {
 	// rather than replayed forever.
 	if c.BufferDepth() != 0 {
 		t.Fatalf("BufferDepth() = %d, want 0 after a 401", c.BufferDepth())
+	}
+}
+
+// newDeepBufferClient builds a client whose ring is large enough to hold more
+// than one maxBatchSamples batch.
+//
+// At the production cadence it cannot be: capacityFor caps the ring at
+// window/interval, and the 6h maximum window over a fixed 60s interval is 360
+// entries — comfortably under the 2000-sample batch cap, so a real agent never
+// reaches a multi-batch drain. maxBatchSamples and maxBufferSlots are standing
+// guards on that invariant rather than limits met in practice, and the two
+// behaviours below (drop-the-batch vs drop-the-ring, first-batch backfill vs
+// whole-replay backfill) only diverge past them. A millisecond interval takes
+// the ring to maxBufferSlots so the guards themselves can be tested.
+func newDeepBufferClient(t *testing.T, url string) *client.Client {
+	t.Helper()
+	cfg := config.Config{
+		HubURL:       url,
+		Token:        "nta_test",
+		BufferWindow: 6 * time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{
+		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
+	}
+	return client.NewWithInterval(cfg, collectors, time.Millisecond)
+}
+
+// The 401 path must drop the WHOLE ring, not just the batch it attempted.
+//
+// The single-sample case above passes either way: with one sample buffered,
+// "drop the attempted batch" and "drop everything" are the same thing. With
+// more samples than maxBatchSamples the two diverge, and the old
+// AckThrough(highest) left every sample beyond the first batch in the ring —
+// so a revoked agent stayed pinned near capacity while ScrapeOnce kept adding.
+func TestFlushOnUnauthorizedDropsTheEntireBufferNotJustTheBatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newDeepBufferClient(t, srv.URL)
+	ctx := context.Background()
+
+	// Comfortably more than one maxBatchSamples worth (2000).
+	const buffered = 2500
+	for i := 0; i < buffered; i++ {
+		c.ScrapeOnce(ctx)
+	}
+	if got := c.BufferDepth(); got != buffered {
+		t.Fatalf("BufferDepth() = %d before the flush, want %d", got, buffered)
+	}
+
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush() succeeded against a 401, want an error")
+	}
+	if got := c.BufferDepth(); got != 0 {
+		t.Fatalf("BufferDepth() = %d after a 401, want 0 — the whole buffer must go, not one batch", got)
+	}
+}
+
+// Backfill must stay set for every batch of a replay, not just the first.
+//
+// It was derived from "the last flush failed", which the first successful
+// partial drain cleared — so recovering a buffer larger than one batch flagged
+// batch 1 as backfill and everything after it as live, even though all of it
+// was replayed history the hub needs to invalidate aggregate ranges for.
+func TestFlushKeepsBackfillSetForEveryBatchOfAReplay(t *testing.T) {
+	var rec recorder
+	var mu sync.Mutex
+	down := true
+	inner := rec.handler(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		isDown := down
+		mu.Unlock()
+		if isDown {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newDeepBufferClient(t, srv.URL)
+	ctx := context.Background()
+
+	// Build up more than two batches of history while the hub is down.
+	const buffered = 4500
+	for i := 0; i < buffered; i++ {
+		c.ScrapeOnce(ctx)
+	}
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush() succeeded while the hub was down, want an error")
+	}
+
+	mu.Lock()
+	down = false
+	mu.Unlock()
+
+	var flushes int
+	for c.BufferDepth() > 0 {
+		if err := c.Flush(ctx); err != nil {
+			t.Fatalf("Flush() during replay: %v", err)
+		}
+		flushes++
+		if flushes > 10 {
+			t.Fatal("replay did not drain in a reasonable number of flushes")
+		}
+	}
+	if flushes < 2 {
+		t.Fatalf("replay took %d flushes, want at least 2 — the test needs a multi-batch drain", flushes)
+	}
+
+	reqs := rec.all()
+	if len(reqs) < 2 {
+		t.Fatalf("recorded %d requests, want at least 2", len(reqs))
+	}
+	// Every batch EXCEPT the last one is drained while history remains, so
+	// every one of them is backfill. The final batch empties the ring.
+	for i, req := range reqs {
+		if !req.GetBackfill() {
+			t.Errorf("request %d of %d had backfill=false; every batch of a replay is backfill", i+1, len(reqs))
+		}
+	}
+
+	// And once drained, the next flush is live traffic again.
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush() after the replay drained: %v", err)
+	}
+	if last := rec.last(); last.GetBackfill() {
+		t.Error("backfill stayed set after the buffer drained; it must clear on an empty ring")
 	}
 }
 

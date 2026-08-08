@@ -805,11 +805,10 @@ The `drivetemp` prompt is the one exception to "nothing before the gate": it loa
 kernel module during detection, because the result has to be visible to the sensor scan.
 It is individually consented and reversible. See §6.2.
 
-**There is no unattended mode.** `--yes` was removed. A readable terminal is a
-precondition, checked before any phase rather than discovered at the first prompt, and
-exempted only by `--dry-run` (which takes every default and touches nothing). A fleet is
-configured by templating `deploy/agent/compose.yaml.example` and `.env.example` from
-whatever provisioning system the operator already runs — the script is not that system.
+**There is no unattended mode.** A readable terminal is a precondition, checked before
+any phase rather than discovered at the first prompt. A fleet is configured by templating
+`deploy/agent/compose.yaml.example` and `.env.example` from whatever provisioning system
+the operator already runs — the script is not that system.
 
 The grant flags remain, and now mean only "do not ask me this one". `--sys-admin` is a
 no-op with a note on a host with no NVMe device. `--unsupported-os` suppresses only the

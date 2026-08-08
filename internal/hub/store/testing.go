@@ -108,14 +108,30 @@ func OpenTest(t *testing.T) *Store {
 // means something else briefly held the lock — so the loser should just try
 // again.
 func resetSchema(ctx context.Context, s *Store) error {
+	// ONE connection for the whole reset.
+	//
+	// timescaledb_pre_restore() sets timescaledb.restoring on the SESSION that
+	// runs it, and the matching `SET SESSION ... = 'off'` below only clears it
+	// on the session that runs THAT. Both used to go through s.pool, which
+	// offers no connection affinity — so the two could land on different
+	// pooled connections, leaving the flag stuck on for the first one. The
+	// Migrate() that runs immediately afterwards then failed with
+	// TimescaleDB's refusal to create a continuous aggregate while restoring:
+	// an intermittent, ordering-dependent test failure with no obvious cause.
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire reset connection: %w", err)
+	}
+	defer conn.Release()
+
 	var extensionInstalled bool
-	if err := s.pool.QueryRow(ctx,
+	if err := conn.QueryRow(ctx,
 		`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb')`,
 	).Scan(&extensionInstalled); err != nil {
 		return fmt.Errorf("check timescaledb extension: %w", err)
 	}
 	if extensionInstalled {
-		if _, err := s.pool.Exec(ctx, `SELECT timescaledb_pre_restore()`); err != nil {
+		if _, err := conn.Exec(ctx, `SELECT timescaledb_pre_restore()`); err != nil {
 			return fmt.Errorf("pause timescaledb background jobs: %w", err)
 		}
 	}
@@ -124,7 +140,7 @@ func resetSchema(ctx context.Context, s *Store) error {
 	attempts := 0
 	for attempt := 1; attempt <= resetSchemaRetries; attempt++ {
 		attempts = attempt
-		_, err := s.pool.Exec(ctx,
+		_, err := conn.Exec(ctx,
 			`SET lock_timeout = '5s'; DROP SCHEMA public CASCADE; CREATE SCHEMA public;`)
 		lastErr = err
 		if err == nil {
@@ -139,12 +155,12 @@ func resetSchema(ctx context.Context, s *Store) error {
 	// Always try to clear the session- and database-level restoring flag,
 	// even if the drop itself failed, so a failed reset does not wedge every
 	// later test sharing this database or this connection.
-	if _, err := s.pool.Exec(ctx, `SET SESSION timescaledb.restoring = 'off'`); err != nil && lastErr == nil {
+	if _, err := conn.Exec(ctx, `SET SESSION timescaledb.restoring = 'off'`); err != nil && lastErr == nil {
 		return fmt.Errorf("resume timescaledb background jobs (session): %w", err)
 	}
 	var dbName string
-	if err := s.pool.QueryRow(ctx, `SELECT current_database()`).Scan(&dbName); err == nil {
-		_, _ = s.pool.Exec(ctx, fmt.Sprintf(
+	if err := conn.QueryRow(ctx, `SELECT current_database()`).Scan(&dbName); err == nil {
+		_, _ = conn.Exec(ctx, fmt.Sprintf(
 			`ALTER DATABASE %s SET timescaledb.restoring = 'off'`, quoteIdentifier(dbName)))
 	}
 

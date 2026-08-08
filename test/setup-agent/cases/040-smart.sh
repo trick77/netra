@@ -17,8 +17,6 @@ export NETRA_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
-DRY_RUN=1
-ASSUME_YES=0
 PRIMARY_SENSOR=""
 
 # mkdisk ROOT NAME SIZE PATHPART — build a sysfs devices-tree entry for a whole
@@ -135,7 +133,6 @@ NETRA_SETUP_ROOT="$R"
 export NETRA_SETUP_ROOT
 init_paths
 
-ASSUME_YES=1
 plan_smart >/dev/null 2>&1
 assert_eq 1 "$CAP_RAWIO" "a SATA-only host gets SYS_RAWIO"
 # Read by plan_drivetemp in the sensor phase to decide whether the drivetemp

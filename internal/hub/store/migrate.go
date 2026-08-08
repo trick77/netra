@@ -17,8 +17,43 @@ var migrationFS embed.FS
 // block, so those migrations carry this marker on their first line.
 const noTxMarker = "-- netra:no-transaction"
 
+// migrateLockID is the advisory-lock key held for the whole of Migrate.
+//
+// An arbitrary but FIXED constant: pg_advisory_lock namespaces by value alone,
+// so every hub replica must use the same one. Chosen from "netra" so it does
+// not collide with an application lock added later.
+const migrateLockID int64 = 0x6E65747261 // "netra"
+
 // Migrate applies every pending migration in filename order, exactly once.
+//
+// Serialised across replicas by a session advisory lock. Without it, two hubs
+// starting together — a first deploy, or a restart racing a slow start — both
+// read applied=false for the same file and both apply it. The DDL survives that
+// (every statement is IF NOT EXISTS / if_not_exists => TRUE), but
+// `INSERT INTO schema_migrations` against a TEXT PRIMARY KEY does not: the
+// loser gets SQLSTATE 23505, which propagates out through run() to os.Exit(1).
+// The second replica died on first deploy.
+//
+// The lock is taken on a DEDICATED connection held for the duration, because a
+// session-level advisory lock belongs to one session and s.pool hands out a
+// different connection per call. It is released explicitly rather than left to
+// connection teardown, so the next replica proceeds immediately.
 func (s *Store) Migrate(ctx context.Context) error {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer conn.Release()
+
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, migrateLockID); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		// Best effort: a failure here means the connection is already gone, and
+		// Postgres drops session advisory locks when the session ends.
+		_, _ = conn.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migrateLockID)
+	}()
+
 	if _, err := s.pool.Exec(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations (
 			name       TEXT PRIMARY KEY,

@@ -38,21 +38,48 @@ jobs:
       # missing" is actionable; "some package is missing" sends you back to the
       # package list to work out which.
       #
-      # Each probe stays in `if gh api ...; then` form on purpose. Actions runs
-      # `run:` blocks under `bash -e`, so a bare failing `gh api` would abort the
+      # Each probe stays in `if probe ...; then` form on purpose. Actions runs
+      # `run:` blocks under `bash -e`, so a bare failing call would abort the
       # step — which is precisely the case this check exists to survive. A
       # command in an `if` condition is exempt from errexit; do not refactor
-      # these to `gh api ...; rc=$?`.
+      # these to `probe ...; rc=$?`. The deliberate `exit 1` inside probe still
+      # aborts the step, because `exit` is not subject to that exemption — which
+      # is exactly what an ambiguous status should do.
       - id: package-check
         name: Check whether the container packages exist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Probe on the HTTP STATUS, not on the exit code. `gh api` exits
+          # non-zero for 404 and for 403, 401, 5xx and rate limiting alike, so
+          # the old exit-code probe read every one of those as "the package does
+          # not exist yet" and reported nothing to clean. Losing the Admin role
+          # — the exact case the note above warns about — therefore disabled
+          # retention silently, behind a weekly green check, forever. Only a
+          # real 404 is "absent"; anything else fails the step loudly.
+          # `--include` puts the status line first: "HTTP/2.0 404 Not Found".
+          # Field 2, not a digit filter — "HTTP/2.0" is full of digits itself.
+          probe() {
+            status=$(gh api "users/${{ github.repository_owner }}/packages/container/$1" \
+              --include 2>/dev/null | head -n 1 | awk '{ print $2 }' || true)
+            case "$status" in
+              200) return 0 ;;
+              404) return 1 ;;
+              *)
+                echo "::error::package probe for $1 returned HTTP '${status:-no response}'," \
+                     "which is neither 200 nor 404. Refusing to report 'nothing to clean' —" \
+                     "a 401/403 here means the token lost the Admin role and retention would" \
+                     "silently stop running."
+                exit 1
+                ;;
+            esac
+          }
+
           MISSING=""
-          if ! gh api "users/${{ github.repository_owner }}/packages/container/netra" --silent 2>/dev/null; then
+          if ! probe netra; then
             MISSING="$MISSING netra"
           fi
-          if ! gh api "users/${{ github.repository_owner }}/packages/container/netra-agent" --silent 2>/dev/null; then
+          if ! probe netra-agent; then
             MISSING="$MISSING netra-agent"
           fi
           # Gate on BOTH existing, not on either. One invocation of the action

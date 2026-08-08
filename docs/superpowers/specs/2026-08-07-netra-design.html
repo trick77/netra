@@ -80,7 +80,7 @@ compatibility obligation — no shared wire format, no shared database, no migra
 </tr>
 <tr>
 <td>Scrape interval</td>
-<td><strong>60s</strong> (default; configurable per host)</td>
+<td><strong>60s</strong> (fixed; not configurable — see §6.6)</td>
 </tr>
 <tr>
 <td>Active series</td>
@@ -666,11 +666,6 @@ convention because <code>BACKEND_</code> is meaningless on an agent and netra sh
 <td><code>NETRA_TOKEN</code></td>
 <td>—</td>
 <td><strong>Required</strong></td>
-</tr>
-<tr>
-<td><code>NETRA_INTERVAL</code></td>
-<td><code>60s</code></td>
-<td>Duration string — no <code>uint16</code> millisecond ceiling</td>
 </tr>
 <tr>
 <td><code>NETRA_COLLECTORS_DISABLED</code></td>

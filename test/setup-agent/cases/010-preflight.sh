@@ -150,8 +150,8 @@ assert_contains "$RUN_OUT" "Docker daemon" "the daemon failure says so"
 # --- 4b. no terminal is an explicit failure, before any phase runs ------------
 #
 # There is no unattended mode, and the refusal must not arrive three minutes
-# into detection it is about to throw away. Neither NETRA_ANSWERS_FILE nor
-# --dry-run is set here, so require_tty is the first thing that speaks.
+# into detection it is about to throw away. NETRA_ANSWERS_FILE is not set here,
+# so require_tty is the first thing that speaks.
 ROOT=$(mkroot notty)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
     "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
@@ -167,13 +167,15 @@ assert_not_contains "$RUN_OUT" "Preflight" \
 assert_not_contains "$RUN_OUT" "Summary" \
     "no-terminal failure does not silently take defaults and finish"
 
-# --dry-run is the one exemption, and it has to be: a plan that mutates nothing
-# needs no consent to print, and every prompt takes its documented default.
+# NETRA_ANSWERS_FILE is the one exemption, and it is the test seam rather than a
+# supported provisioning interface: an env var, not a flag, with positional
+# answers that the PROMPT ORDER contract in the script header defines.
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$SETUP" --dry-run --token nta_test --hub-url https://hub.example \
+    NETRA_ANSWERS_FILE="$(answers notty n n y)" \
+    "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
-assert_eq 0 "$RUN_RC" "--dry-run needs no terminal"
-assert_contains "$RUN_OUT" "Summary" "--dry-run runs to the end"
+assert_eq 0 "$RUN_RC" "an answers file needs no terminal"
+assert_contains "$RUN_OUT" "Summary" "the seeded run reaches the end"
 
 # --- 4c. an unsupported OS aborts, because that prompt defaults n -------------
 #
@@ -181,20 +183,18 @@ assert_contains "$RUN_OUT" "Summary" "--dry-run runs to the end"
 # where cgroup v2 became the default (§12a) and the checks that matter are
 # probed directly, so a run on a cgroup-v2 host netra does not recognise BY NAME
 # has to stay possible — which it only is if the abort says --unsupported-os
-# exists. Exercised through --dry-run, the one path that takes defaults without
-# a terminal.
+# exists. The answers file says `n`, which is also this prompt's default.
 ROOT=$(mkroot unsupporteddefault)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$SETUP" --dry-run --token nta_test --hub-url https://hub.example \
+    NETRA_ANSWERS_FILE="$(answers unsupported n)" \
+    "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
-assert_eq 1 "$RUN_RC" "taking the default on an unsupported OS aborts"
+assert_eq 1 "$RUN_RC" "answering no on an unsupported OS aborts"
 assert_contains "$RUN_OUT" "unsupported operating system" "the abort says why"
-# The needle SPANS two die arguments on purpose. netra_ask already prints
-# "pass --unsupported-os to grant" as its dry-run hint, so a bare
-# "--unsupported-os" needle would stay green even if the die message lost the
-# remedy entirely. This one can only match the die itself — and, since die
-# renders "$*", it also pins that the IFS='|' read above left IFS restored.
+# The needle SPANS two die arguments on purpose, so it can only match the die
+# itself rather than any other mention of the flag — and, since die renders
+# "$*", it also pins that the IFS='|' read above left IFS restored.
 assert_contains "$(flatten "$RUN_OUT")" "system. Re-run with --unsupported-os" \
     "the abort message itself names the flag that would allow it"
 assert_file_absent "$ROOT/out/compose.yaml" "nothing is written after the abort"
@@ -277,25 +277,17 @@ export NETRA_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
-DRY_RUN=1
-run_capture netra_exec mkdir -p "$TMP/must-not-exist"
-assert_eq 0 "$RUN_RC" "netra_exec returns 0 under --dry-run"
-assert_contains "$RUN_OUT" "would run: mkdir -p" "netra_exec announces the command"
-assert_file_absent "$TMP/must-not-exist" "netra_exec mutates nothing under --dry-run"
-
-DRY_RUN=0
-export DRY_RUN
 netra_exec mkdir -p "$TMP/really-created"
-assert_file_present "$TMP/really-created" \
-    "netra_exec actually runs the command when not in dry-run"
+assert_file_present "$TMP/really-created" "netra_exec runs the command it is given"
+assert_exit_code 1 netra_exec false \
+    'netra_exec propagates the exit status, so the || die at each call site works'
 
 # --- parse_args sets exactly the variables phase B consumes -------------------
 # Every one of these names is a contract with the template renderer, so they are
 # pinned here rather than left to be discovered by a typo in phase B.
-parse_args --dry-run --force --start --token t1 --hub-url https://h \
+parse_args --force --start --token t1 --hub-url https://h \
     --ref v9.9.9 --template-dir /tpl --output-dir /out \
     --primary-sensor coretemp/Package_id_0 --include-network-fs
-assert_eq 1 "$DRY_RUN" "--dry-run sets DRY_RUN"
 assert_eq 1 "$FORCE" "--force sets FORCE"
 assert_eq 1 "$START" "--start sets START"
 assert_eq "t1" "$TOKEN" "--token sets TOKEN"
@@ -314,7 +306,6 @@ printf 'nta_fromfile\n' >"$TMP/tokenfile"
 parse_args --token-file "$TMP/tokenfile"
 assert_eq "$TMP/tokenfile" "$TOKEN_FILE" "--token-file sets TOKEN_FILE"
 assert_eq "nta_fromfile" "$TOKEN" "--token-file is read at parse time"
-assert_eq 0 "$DRY_RUN" "DRY_RUN defaults to 0"
 assert_eq 0 "$FORCE" "FORCE defaults to 0"
 assert_eq 0 "$START" "START defaults to 0"
 assert_eq 0 "$INCLUDE_NETWORK_FS" "INCLUDE_NETWORK_FS defaults to 0"

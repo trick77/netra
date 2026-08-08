@@ -22,7 +22,6 @@ export NETRA_SOURCED
 # Defaults the sourced functions read. parse_args normally sets these; sourcing
 # skips netra_main, so they are set explicitly rather than left unset under -u.
 INCLUDE_NETWORK_FS=0
-DRY_RUN=1
 
 # mi NAME — write $TMP/mi.NAME from stdin and point P_MOUNTINFO at it.
 mi() {
@@ -209,7 +208,7 @@ assert_contains "$NETRA_BLK_VOLUMES" 'source: "/mnt/my data/.netra"' \
 #
 # `mkdir /mnt/ro/.netra` would fail halfway through the mutating phase. It is
 # caught during detection instead, with access(W_OK) rather than a mkdir probe:
-# a mkdir here would be a mutation outside netra_exec, which --dry-run must not
+# a mkdir here would be a mutation in the detection phase, which must not
 # perform.
 #
 # Root bypasses DAC permission bits entirely, so chmod 500 is not unwritable for

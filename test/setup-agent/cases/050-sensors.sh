@@ -16,7 +16,6 @@ export NETRA_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
-DRY_RUN=1
 # No SATA devices in these fixtures unless a case sets it, so plan_drivetemp
 # returns before it can prompt or shell out.
 SMART_ATA_DEVICES=""
@@ -164,7 +163,6 @@ assert_eq "" "$(hwmon_chips)" "hwmon_chips prints nothing when the directory is 
 mkshims "$TMP/shims"
 NETRA_UID=0
 export NETRA_UID
-DRY_RUN=0
 
 dt_root() {
     _dt_r="$TMP/$1"

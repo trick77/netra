@@ -1,6 +1,7 @@
 package client
 
 import (
+	"testing"
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
@@ -18,3 +19,16 @@ import (
 func NewWithInterval(cfg config.Config, collectors []collector.Collector, interval time.Duration) *Client {
 	return newClient(cfg, collectors, interval)
 }
+
+// SetMachineIDPaths redirects the fingerprint source for one test and restores
+// it afterwards. fingerprint() reads absolute host paths, which a test cannot
+// otherwise reach without being root on the machine running the suite.
+func SetMachineIDPaths(t *testing.T, paths ...string) {
+	t.Helper()
+	saved := machineIDPaths
+	machineIDPaths = paths
+	t.Cleanup(func() { machineIDPaths = saved })
+}
+
+// Fingerprint exposes the unexported fingerprint() to the external test package.
+func Fingerprint() string { return fingerprint() }
