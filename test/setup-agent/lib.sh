@@ -115,6 +115,14 @@ run_capture() {
     export RUN_OUT RUN_RC
 }
 
+# flatten TEXT — collapse every run of whitespace, newlines included, to one
+# space. Messages are wrapped at 76 columns now, so a needle that spans a fold
+# would never match the raw output; flattening asserts on what the message SAYS
+# rather than on where the terminal happened to break it.
+flatten() {
+    printf '%s' "$1" | tr -s ' \t\n' ' '
+}
+
 # answers NAME LINE... — write a y/n answers file and print its path.
 #
 # Spelling the answers as arguments rather than a printf of '\n'-joined letters

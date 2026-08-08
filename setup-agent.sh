@@ -114,26 +114,27 @@
 #   1. continue on an unsupported OS   (only when the distro is unrecognised)
 #   2. SYS_ADMIN                       (only when NVMe exists; default NO)
 #   3. load the drivetemp module       (only with SATA drives and no such chip)
-#   4. pid: host                       (always; default NO)
-#   5. write everything                (the single gate; default YES)
+#   4. write everything                (the single gate; default YES)
 #
-# FIVE, not the nine this file used to ask. Everything read-only — the package
-# database, the D-Bus socket, SYS_RAWIO — is enabled automatically, on exactly
-# the argument plan_extras already made for the Docker socket: it is read-only,
-# and an agent configured without it is not the thing the operator asked for.
-# The primary-sensor tie is resolved by --primary-sensor, not by a prompt with a
-# variable count.
+# FOUR, not the nine this file used to ask, and only ONE of them is asked on
+# every host. Everything read-only — the package database, the D-Bus socket,
+# SYS_RAWIO — is enabled automatically, on exactly the argument plan_extras
+# already made for the Docker socket: it is read-only, and an agent configured
+# without it is not the thing the operator asked for. The primary-sensor tie is
+# resolved by --primary-sensor, not by a prompt with a variable count. And
+# nothing about host CPU, memory or load is ever asked: that is the product.
 #
 # Free-text values (hub URL, token, location, provider, host type) are read by
 # netra_ask_value from NETRA_VALUES_FILE, a SEPARATE seam with its own index, so
 # adding one never shifts a y/n answers file by a line.
 #
-# --unsupported-os, --sys-admin and --pid-host REMOVE prompts 1, 2 and 4 from
-# this sequence: the answer is taken without asking, so nothing is consumed for
-# them. A case that passes any of these flags and an answers file must drop the
-# matching line, or every answer after it means something else. Prompt 3
-# (drivetemp) has no flag; it disappears only when the host gives it no reason
-# to be asked. Renumber this WITH the list above or the warning is worthless.
+# --unsupported-os and --sys-admin REMOVE prompts 1 and 2 from this sequence:
+# the answer is taken without asking, so nothing is consumed for them. A case
+# that passes either flag and an answers file must drop the matching line, or
+# every answer after it means something else. Prompt 3 (drivetemp) has no flag;
+# it disappears only when the host gives it no reason to be asked. --pid-host is
+# no longer in this list at all — it grants a prompt that no longer exists.
+# Renumber this WITH the list above or the warning is worthless.
 #
 # Detection runs to completion BEFORE any of these, which is what makes "detect
 # first, then ask" (§12a) true rather than aspirational: an unwritable mount
@@ -165,26 +166,143 @@ SKIPPED_NOTES=""
 NETRA_ANSWER_INDEX=0
 NETRA_VALUE_INDEX=0
 
+# Defined before any function can reference them: the tests source this file and
+# call individual functions without going through netra_main, and `set -u` would
+# abort on the first unset colour. init_colors fills them in for a real run.
+C_RESET=""
+C_BOLD=""
+C_RED=""
+C_YELLOW=""
+C_CYAN=""
+
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
 
+# init_colors — ANSI escapes, or empty strings when they would be noise.
+#
+# BOTH streams must be terminals. A run whose stdout is piped into a file and
+# whose stderr is not would otherwise write escape codes into the file, and the
+# suite captures with 2>&1 into a command substitution, which is neither — so
+# the tests see plain text without asking for it.
+#
+# NO_COLOR is honoured (no-color.org), as is TERM=dumb. Colour is applied to the
+# THREE things that mark a place in the scroll — phase headings, warnings and
+# the prompt hint — and to nothing else: colouring every value is how output
+# stops being scannable rather than starts.
+init_colors() {
+    C_RESET=""
+    C_BOLD=""
+    C_RED=""
+    C_YELLOW=""
+    C_CYAN=""
+
+    [ -t 1 ] || return 0
+    [ -t 2 ] || return 0
+    [ -z "${NO_COLOR:-}" ] || return 0
+    case "${TERM:-}" in
+    "" | dumb) return 0 ;;
+    esac
+
+    C_RESET=$(printf '\033[0m')
+    C_BOLD=$(printf '\033[1m')
+    C_RED=$(printf '\033[31m')
+    C_YELLOW=$(printf '\033[33m')
+    C_CYAN=$(printf '\033[36m')
+}
+
 # die MSG... — one-line error on stderr, exit 1.
 die() {
-    printf 'setup-agent: %s\n' "$*" >&2
+    _wrap 76 'setup-agent: error: ' '  ' "$*" |
+        sed "1s/^setup-agent: error:/${C_RED:-}${C_BOLD:-}setup-agent: error:${C_RESET:-}/" >&2
     exit 1
+}
+
+# _wrap WIDTH PREFIX INDENT TEXT — fold PREFIX+TEXT at WIDTH columns, every line
+# after the first starting with INDENT.
+#
+# PREFIX is separate from TEXT because the word split below destroys leading
+# whitespace: passing "    - note" as the text produced a bullet at column 0
+# under continuation lines indented six, which is worse than not wrapping at all.
+# The indent counts toward WIDTH for the same reason a prefix does — a fold that
+# ignores it overruns by exactly the indent on every continuation line.
+#
+# Pure shell: no awk, no `fold` (which breaks mid-word), no external process at
+# all. Wrapping is the one thing every message in this script passes through, so
+# it is also the one thing that must not add a dependency — a host missing awk
+# would otherwise fail while printing the message explaining what it was missing.
+#
+# `set -f` around the word split is load-bearing: the split relies on unquoted
+# expansion, and a message containing * or ? would otherwise be replaced by
+# matching filenames from the current directory. Restored immediately, because
+# the rest of this script relies on globbing (the hwmon and block-device scans).
+_wrap() {
+    _wr_w="$1"
+    _wr_pfx="$2"
+    _wr_ind="$3"
+    _wr_line=""
+
+    set -f
+    # shellcheck disable=SC2086 # deliberate: split the text into words on IFS.
+    # ${4:-} rather than $4: `set -u` makes a missing argument fatal, and a
+    # caller wrapping an empty message is asking for the prefix alone.
+    set -- ${4:-}
+    set +f
+
+    for _wr_word in "$@"; do
+        if [ -z "$_wr_line" ]; then
+            _wr_line="$_wr_pfx$_wr_word"
+        elif [ $((${#_wr_line} + 1 + ${#_wr_word})) -gt "$_wr_w" ]; then
+            printf '%s\n' "$_wr_line"
+            _wr_line="$_wr_ind$_wr_word"
+        else
+            _wr_line="$_wr_line $_wr_word"
+        fi
+    done
+    if [ -z "$_wr_line" ]; then
+        # No words at all: the prefix alone is still the caller's line.
+        [ -z "$_wr_pfx" ] || printf '%s\n' "$_wr_pfx"
+    else
+        printf '%s\n' "$_wr_line"
+    fi
 }
 
 # warn MSG... — a degradation the operator must know about. Also accumulates
 # into SKIPPED_NOTES so the finish report repeats it after the scroll.
+#
+# WRAPPED, because these messages are long by design — they name the missing
+# metric, the cause and the remedy — and a paragraph printed as one 400-column
+# line is a wall of text the operator's eye slides off. The note stored in
+# SKIPPED_NOTES stays a SINGLE line: the finish report is a list of notes, and a
+# wrapped note would turn one degradation into four bullets.
 warn() {
-    printf 'setup-agent: warning: %s\n' "$*" >&2
+    _warn_msg="$*"
+    # Wrapped as PLAIN text and coloured afterwards: an escape sequence inside
+    # the text would be counted as characters and throw the fold off.
+    _wrap 76 'setup-agent: warning: ' '  ' "$_warn_msg" |
+        sed "1s/^setup-agent: warning:/${C_YELLOW:-}${C_BOLD:-}setup-agent: warning:${C_RESET:-}/" >&2
     if [ -n "$SKIPPED_NOTES" ]; then
         SKIPPED_NOTES="$SKIPPED_NOTES
-$*"
+$_warn_msg"
     else
-        SKIPPED_NOTES="$*"
+        SKIPPED_NOTES="$_warn_msg"
     fi
+}
+
+# warn_cmd CMD MSG... — a warning whose remedy is a command. The command is
+# printed on its OWN line, indented and unwrapped, because a shell command
+# folded into a paragraph cannot be copied and pasted, which is the only thing
+# anyone wants to do with it.
+#
+# The command rides into SKIPPED_NOTES as a separate entry marked with a leading
+# tab, which print_finish renders verbatim instead of as another bullet.
+warn_cmd() {
+    _wc_cmd="$1"
+    shift
+    warn "$@"
+    printf '    %s\n' "$_wc_cmd" >&2
+    SKIPPED_NOTES="$SKIPPED_NOTES
+	$_wc_cmd"
 }
 
 info() {
@@ -192,7 +310,7 @@ info() {
 }
 
 step() {
-    printf '\n==> %s\n' "$*"
+    printf '\n%s==> %s%s\n' "${C_CYAN:-}${C_BOLD:-}" "$*" "${C_RESET:-}"
 }
 
 # ---------------------------------------------------------------------------
@@ -233,9 +351,9 @@ netra_ask() {
     _ask_def="$2"
     _ask_flag="${3:-}"
     if [ "$_ask_def" = y ]; then
-        _ask_hint='[Y/n]'
+        _ask_hint="${C_BOLD:-}[Y/n]${C_RESET:-}"
     else
-        _ask_hint='[y/N]'
+        _ask_hint="${C_BOLD:-}[y/N]${C_RESET:-}"
     fi
 
     if [ "${DRY_RUN:-0}" = 1 ] && [ -z "${NETRA_ANSWERS_FILE:-}" ]; then
@@ -353,21 +471,13 @@ netra_ask_value() {
 # already be final when this runs (parse_args + the basename rule).
 describe_setup() {
     cat <<EOF
-This writes two files and creates marker directories.
-It does not install any software: Docker pulls the
-agent image when you start the stack.
+Writes two files. Installs nothing — Docker pulls the agent image at \`up -d\`.
 
-  $OUTPUT_DIR/compose.yaml   generated, overwritten on every run
-  $OUTPUT_DIR/.env           your hub URL and token, never overwritten
+  $OUTPUT_DIR/compose.yaml   generated, overwritten every run
+  $OUTPUT_DIR/.env           hub URL and token, never overwritten
 
-Empty .netra marker directories are created on each measured filesystem - they
-hold no data and exist only so the agent can measure the filesystem they sit on.
-Everything found is shown as a plan and confirmed before anything is written,
-and the stack is not started unless you pass --start.
-
-On a host with SATA drives, one thing may be asked earlier, during detection:
-loading the drivetemp kernel module, because the answer has to be visible to the
-sensor scan. Declining leaves the host untouched.
+Plus empty .netra marker dirs on each measured filesystem. Nothing is written
+until you approve the plan; nothing starts unless you pass --start.
 EOF
 }
 
@@ -385,13 +495,18 @@ deploy/agent/compose.yaml.example and .env.example from your provisioning system
 
 Everything read-only is enabled automatically - the Docker socket, the mount
 table, the package database, the D-Bus socket and SYS_RAWIO for SATA SMART.
-SYS_ADMIN and `pid: host` are the only privilege grants, and both are asked.
+SYS_ADMIN is the only privilege this asks about. `pid: host` is never prompted
+for - pass --pid-host if you want per-process metrics. Host CPU, memory and load
+are always collected and are not optional.
 
 Options:
       --sys-admin          Grant SYS_ADMIN without prompting (NVMe SMART health
                            and wear). A no-op with a note if there is no NVMe.
-      --pid-host           Enable `pid: host` without prompting. This lets the
-                           agent read every process's cmdline and environ.
+      --pid-host           Enable `pid: host`, for per-process CPU and memory
+                           metrics. This lets the agent read every process's
+                           cmdline and environ, so it is off unless asked for.
+                           Host CPU, memory and load need nothing: they are
+                           always collected.
       --unsupported-os     Continue on a distro netra does not recognise,
                            without prompting. The version floors are only where
                            cgroup v2 became the default and the real checks are
@@ -399,6 +514,10 @@ Options:
                            cgroup v2 host netra has no name for. The warning is
                            still printed and still reported; only the prompt
                            goes away. A no-op on a known distro.
+      --assume-physical    Treat this host as bare metal even if it looks
+                           virtual. Virtual disks carry no SMART data, so SMART
+                           is skipped on a detected hypervisor; this overrides
+                           that.
       --dry-run            Print the full plan and touch nothing. Every prompt
                            takes its default, so this needs no terminal.
       --force              Required to overwrite an existing .env.
@@ -446,6 +565,9 @@ parse_args() {
     # Not privilege, but the same shape: a prompt that defaults n, which an
     # operator who means it takes by name.
     GRANT_UNSUPPORTED_OS=0
+    # Not a grant: an override of a DETECTION. A virtual host has no SMART data
+    # behind its disks, and this says "you detected wrong, this box is real".
+    ASSUME_PHYSICAL=0
     FORCE=0
     START=0
     TOKEN=""
@@ -476,6 +598,7 @@ parse_args() {
         --sys-admin) GRANT_SYS_ADMIN=1 ;;
         --pid-host) GRANT_PID_HOST=1 ;;
         --unsupported-os) GRANT_UNSUPPORTED_OS=1 ;;
+        --assume-physical) ASSUME_PHYSICAL=1 ;;
         --dry-run) DRY_RUN=1 ;;
         --force) FORCE=1 ;;
         --start) START=1 ;;
@@ -568,7 +691,7 @@ parse_args() {
     # intent. Computed from $PWD directly and never through _p(): this is where
     # output goes, not a path being probed. An explicit --output-dir still means
     # exactly what it says, even when it names ./netra-agent from in here.
-    if [ "$OUTPUT_DIR_EXPLICIT" = 0 ] && [ "$(basename "$PWD")" = netra-agent ]; then
+    if [ "$OUTPUT_DIR_EXPLICIT" = 0 ] && [ "${PWD##*/}" = netra-agent ]; then
         OUTPUT_DIR="."
     fi
 }
@@ -620,6 +743,9 @@ init_paths() {
     P_APK="${NETRA_APK_PATH:-$(_p /lib/apk/db/installed)}"
     P_DBUS="${NETRA_DBUS_PATH:-$(_p /run/dbus/system_bus_socket)}"
     P_DOCKERSOCK="${NETRA_DOCKERSOCK_PATH:-$(_p /var/run/docker.sock)}"
+    P_CPUINFO="${NETRA_CPUINFO_PATH:-$(_p /proc/cpuinfo)}"
+    P_DMIVENDOR="${NETRA_DMIVENDOR_PATH:-$(_p /sys/class/dmi/id/sys_vendor)}"
+    P_HYPERVISOR="${NETRA_HYPERVISOR_PATH:-$(_p /sys/hypervisor/type)}"
     # A host WRITE path, not an emit path, and therefore prefixed: it never
     # reaches a template, and a test that persisted a module to the real
     # /etc/modules-load.d would be changing the machine running the suite.
@@ -653,6 +779,9 @@ debug_paths() {
     printf 'dbus|%s\n' "$P_DBUS"
     printf 'dockersock|%s\n' "$P_DOCKERSOCK"
     printf 'modulesload|%s\n' "$P_MODULESLOAD"
+    printf 'cpuinfo|%s\n' "$P_CPUINFO"
+    printf 'dmivendor|%s\n' "$P_DMIVENDOR"
+    printf 'hypervisor|%s\n' "$P_HYPERVISOR"
     printf 'uid|%s\n' "$P_UID"
 }
 
@@ -824,6 +953,31 @@ check_machine_id() {
 #
 # `command -v docker` rather than a path probe: which docker is on PATH is the
 # thing that matters, and it is also what the tests shim.
+# check_root — who this run is, and what root would add.
+#
+# NOT a hard failure, and not a list of consequences either. Everything root
+# actually affects is already handled where it happens: detect_filesystems
+# probes each mount point for writability and skips the ones it cannot use, with
+# a note naming each; plan_drivetemp says the module cannot be loaded; and
+# check_docker has ALREADY proved this user can reach the daemon, so the part
+# the operator will actually run needs no root at all.
+#
+# What was missing was the plain fact, stated once, before any question: you are
+# not root, and here is what that costs. Refusing outright would turn a degraded
+# run into no run at all, and repeating the individual notes here would bury
+# them.
+check_root() {
+    if [ "$P_UID" = 0 ]; then
+        info "  user:            root"
+        return 0
+    fi
+
+    info "  user:            uid $P_UID (not root)"
+    warn "not running as root. Filesystems this user cannot write are skipped (each one is" \
+        "reported as it is found), and the drivetemp module cannot be loaded. Docker is" \
+        "fine — the daemon answered above. Re-run with sudo to get the rest."
+}
+
 check_docker() {
     if ! command -v docker >/dev/null 2>&1; then
         die "docker is not on PATH. The netra agent is Docker-only (spec §13);" \
@@ -843,6 +997,131 @@ check_docker() {
     fi
     die "neither 'docker compose' nor 'docker-compose' works." \
         "Install the Compose plugin (docker-compose-plugin) and try again."
+}
+
+# detect_virt — prints the hypervisor's name, or nothing on bare metal.
+#
+# It exists because three separate pieces of this script were giving a VPS
+# advice that could not possibly apply to it: offering SMART on a disk the
+# hypervisor invented, offering a drivetemp module for drives that are not
+# there, and telling the operator to modprobe coretemp on a machine with no
+# thermal hardware at all. All three are the same question asked once.
+#
+# Three signals, cheapest first. The `hypervisor` CPU flag is the reliable one on
+# x86 and is always readable; DMI names the hypervisor PRODUCT where the flag is
+# absent (see the warning on that branch); /sys/hypervisor/type catches Xen PV,
+# which sets neither.
+#
+# Deliberately conservative: a guest this misses merely gets offered SMART that
+# reads nothing, while a physical host it misjudges loses SMART, drive
+# temperatures and the sensor hint on hardware that has them.
+detect_virt() {
+    if [ -r "$P_CPUINFO" ] && grep -q '^flags.*[[:space:]]hypervisor' "$P_CPUINFO" 2>/dev/null; then
+        _dv_vendor=$(cat "$P_DMIVENDOR" 2>/dev/null || printf '')
+        printf '%s' "${_dv_vendor:-hypervisor}"
+        return 0
+    fi
+
+    if [ -r "$P_DMIVENDOR" ]; then
+        _dv_vendor=$(cat "$P_DMIVENDOR" 2>/dev/null || printf '')
+        # HYPERVISOR PRODUCTS ONLY — never a cloud's brand name.
+        #
+        # This branch is reached exactly when the CPU flag is ABSENT, which is
+        # to say on genuine bare metal, so a false match here is always wrong.
+        # An earlier version listed "Google", "Microsoft Corporation",
+        # "Hetzner" and friends; every one of those companies also ships
+        # physical machines, and sys_vendor on a Chromebox is "Google". The
+        # cost of that mistake is not symmetric: a missed guest merely offers
+        # SMART that reads nothing, while a misjudged physical host loses SMART,
+        # drive temperatures and the sensor hint on hardware that has them.
+        case "$_dv_vendor" in
+        QEMU* | *VMware* | Xen* | *VirtualBox* | innotek* | Bochs* | Parallels*)
+            printf '%s' "$_dv_vendor"
+            return 0
+            ;;
+        esac
+    fi
+
+    if [ -r "$P_HYPERVISOR" ]; then
+        _dv_type=$(cat "$P_HYPERVISOR" 2>/dev/null || printf '')
+        [ -z "$_dv_type" ] || {
+            printf '%s' "$_dv_type"
+            return 0
+        }
+    fi
+
+    return 0
+}
+
+# check_tools — every external command this script runs, checked once, up front.
+#
+# The script is `curl … | sh` onto a host nobody has inspected: a minimal image,
+# a distroless-ish base, a busybox userland with pieces removed. Discovering a
+# missing `tr` halfway through detection produces "tr: not found" from inside a
+# command substitution and a run that limps on with an empty variable, which is
+# a far worse failure than saying so in the first second.
+#
+# REQUIRED is what the script cannot work without. An HTTP client is NOT in it:
+# it is only needed when templates are fetched, and --template-dir skips that
+# entirely, so it is checked separately — and curl or wget will do, since plenty
+# of minimal images ship exactly one of the two. stty and modprobe are optional
+# by design and each already has its own fallback path.
+check_tools() {
+    _ct_missing=""
+    # Derived from the source, not from memory: `sort` was missing from a first
+    # version of this list and version_ge reached for it three lines into
+    # preflight, which is precisely the failure this check exists to prevent.
+    # readlink is deliberately absent — the header rules it out in favour of
+    # `cd … && pwd -P`, and listing it would require a command nothing runs.
+    for _ct_cmd in awk sed grep tr head cat sort wc mktemp mkdir rm cp id; do
+        command -v "$_ct_cmd" >/dev/null 2>&1 ||
+            _ct_missing="${_ct_missing:+$_ct_missing }$_ct_cmd"
+    done
+    if [ -n "$_ct_missing" ]; then
+        die "this host is missing commands the setup script needs: $_ct_missing." \
+            "Install them (on a minimal image, coreutils and the awk/sed/grep trio)" \
+            "and re-run."
+    fi
+
+    # Optional, and each one degrades rather than fails — said once, here, so
+    # the reason a later phase is quieter is not a mystery.
+    command -v stty >/dev/null 2>&1 ||
+        info "  note:            no stty, so the token prompt cannot hide what you type"
+}
+
+# check_http_client — separate from check_tools because it depends on a FLAG,
+# and check_tools runs before parse_args has been consulted for anything.
+check_http_client() {
+    if [ -z "$TEMPLATE_DIR" ] && [ -z "$(_http_client)" ]; then
+        die "neither curl nor wget is available, and templates are fetched over HTTPS." \
+            "Install either one, or pass --template-dir with a local copy of deploy/agent."
+    fi
+}
+
+# _http_client — the name of whichever HTTP client this host has, or nothing.
+#
+# curl first, because the `curl … | sh` line in the header means a host that ran
+# this script that way demonstrably has it. Busybox wget is the common second:
+# no --https-only, no -S, so _http_get uses only flags both spellings share.
+_http_client() {
+    if command -v curl >/dev/null 2>&1; then
+        printf 'curl'
+    elif command -v wget >/dev/null 2>&1; then
+        printf 'wget'
+    fi
+}
+
+# _http_get URL — the body on stdout, non-zero on any failure.
+#
+# One place, so the curl/wget split is not repeated at each call site and cannot
+# drift between them. Quiet on both: a progress bar interleaved with the plan is
+# noise, and the callers turn a failure into their own message.
+_http_get() {
+    case "$(_http_client)" in
+    curl) curl -fsSL "$1" 2>/dev/null ;;
+    wget) wget -qO- "$1" 2>/dev/null ;;
+    *) return 1 ;;
+    esac
 }
 
 # detect_pkgmgr ID ID_LIKE — prints dpkg, apk, rpm or none.
@@ -1297,10 +1576,35 @@ _smart_dev() {
 plan_smart() {
     step "SMART"
     SMART_DEVICES=""
+    SMART_ATA_DEVICES=""
     CAP_RAWIO=0
     CAP_SYS_ADMIN=0
     _ps_ata=""
     _ps_nvme=""
+
+    # A virtual disk has no SMART data behind it. The hypervisor presents an
+    # /dev/sda that looks exactly like a real one from sysfs, so the transport
+    # probe below cannot tell the difference and would happily grant SYS_RAWIO,
+    # map a device, and ship an agent whose SMART collector reads nothing on
+    # every single scrape. Granting a capability for a metric that cannot exist
+    # is worse than collecting nothing.
+    if [ -n "${VIRT:-}" ]; then
+        info "  smart:           skipped on a virtual host ($VIRT)"
+        # warn, not info: SKIPPED_NOTES is "everything the agent will NOT
+        # collect", and this withholds every SMART metric and every SATA drive
+        # temperature. An operator whose host was misjudged has to be able to
+        # find out from the finish report, without re-reading the scroll.
+        warn "SMART is skipped on this host because it looks virtual ($VIRT), and a" \
+            "hypervisor's disks carry no SMART data: no health, no wear, no drive" \
+            "temperatures. Re-run with --assume-physical if this machine really does" \
+            "have disks of its own."
+        if [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
+            warn "--sys-admin was given on a virtual host ($VIRT), where there is no SMART" \
+                "data to read, so it was not granted. --assume-physical overrides the" \
+                "detection if this machine really does have disks of its own."
+        fi
+        return 0
+    fi
 
     for _ps_d in $(block_devices); do
         _ps_t=$(device_transport "$_ps_d")
@@ -1432,15 +1736,30 @@ EOF
 # that changed the chip — so it is written ONLY when --primary-sensor was passed
 # explicitly, or when two equally-ranked known CPU chips exist and the operator
 # resolves the tie.
-# _sensor_module_hint — no CPU temperature chip is usually a missing driver, not
-# missing hardware. Optional, so it is a note and never a prompt: nothing else
-# in the agent depends on it.
+# _sensor_module_hint — no CPU temperature chip is usually a missing driver
+# rather than missing hardware, EXCEPT on a virtual host, where it is neither: a
+# guest has no thermal hardware to expose and no driver will conjure any. Telling
+# a VPS operator to modprobe coretemp is advice that can only waste their time,
+# so the two cases say different things.
+#
+# A note either way, never a prompt: nothing else in the agent depends on it.
 _sensor_module_hint() {
-    warn "no CPU temperature sensor was found. That is usually a driver that is not loaded" \
-        "rather than a chip that is not there — coretemp (Intel), k10temp (AMD) or" \
-        "nct6775 (many motherboards). To load one and keep it across reboots:" \
-        "  modprobe coretemp && echo coretemp > /etc/modules-load.d/coretemp.conf" \
-        "This is optional; everything else works without it."
+    if [ -n "${VIRT:-}" ]; then
+        # A continuation line, not a second "sensors:" label: all three call
+        # sites have already printed one. And it says NO CPU SENSOR rather than
+        # "no sensors", because the third site is reached with a populated chip
+        # list that simply holds nothing the agent recognises as a CPU — telling
+        # that operator there is no thermal hardware contradicts the list they
+        # are looking at.
+        info "                   no CPU temperature sensor, which is normal on a virtual"
+        info "                   host ($VIRT): a guest is not given the CPU's thermal data"
+        return 0
+    fi
+    warn_cmd "modprobe coretemp && echo coretemp > /etc/modules-load.d/coretemp.conf" \
+        "no CPU temperature sensor was found. On physical hardware that is usually a" \
+        "driver that is not loaded rather than a chip that is not there — coretemp" \
+        "(Intel), k10temp (AMD) or nct6775 (many motherboards). Optional; everything" \
+        "else works without it. To load one and keep it across reboots:"
 }
 
 # plan_drivetemp — the one host mutation this script offers, and the only thing
@@ -1469,21 +1788,19 @@ plan_drivetemp() {
     fi
 
     if ! command -v modprobe >/dev/null 2>&1; then
-        warn "no modprobe on PATH, so the drivetemp module cannot be offered. With it, SATA" \
-            "drive temperatures come from hwmon every 60s instead of hourly from smartctl:" \
-            "  modprobe drivetemp && echo drivetemp > /etc/modules-load.d/drivetemp.conf"
+        warn_cmd "modprobe drivetemp && echo drivetemp > /etc/modules-load.d/drivetemp.conf" \
+            "no modprobe on PATH, so the drivetemp module cannot be offered. With it, SATA" \
+            "drive temperatures come from hwmon every 60s instead of hourly from smartctl:"
         return 0
     fi
 
     if [ "$P_UID" != 0 ]; then
-        # First place this run notices it is not root, but far from the only
-        # thing root affects here: creating /.netra at the filesystem root and
-        # `docker compose up -d` normally need it too.
-        warn "not running as root, so the drivetemp module cannot be loaded — nor, most" \
-            "likely, can the marker directories be created or the stack be started. With" \
-            "drivetemp, SATA drive temperatures come from hwmon every 60s instead of hourly" \
-            "from smartctl. As root:" \
-            "  modprobe drivetemp && echo drivetemp > /etc/modules-load.d/drivetemp.conf"
+        # check_root has already said this run is not root and what that costs;
+        # this adds only the part specific to drivetemp.
+        warn_cmd "modprobe drivetemp && echo drivetemp > /etc/modules-load.d/drivetemp.conf" \
+            "the drivetemp module needs root to load, and this run is not root. With it," \
+            "SATA drive temperatures come from hwmon every 60s instead of hourly from" \
+            "smartctl. As root:"
         return 0
     fi
 
@@ -1502,9 +1819,9 @@ plan_drivetemp() {
 
     # `if netra_ask` — see the header.
     if ! netra_ask "Load the drivetemp kernel module and check whether it works?" y; then
-        warn "drivetemp not loaded: SATA drive temperatures stay on the hourly SMART path." \
-            "To do it later: modprobe drivetemp &&" \
-            "echo drivetemp > /etc/modules-load.d/drivetemp.conf"
+        warn_cmd "modprobe drivetemp && echo drivetemp > /etc/modules-load.d/drivetemp.conf" \
+            "drivetemp not loaded: SATA drive temperatures stay on the hourly SMART path." \
+            "To do it later:"
         return 0
     fi
 
@@ -1610,7 +1927,7 @@ resolve_ref() {
     [ "$REF_EXPLICIT" = 0 ] || return 0
     [ -z "$TEMPLATE_DIR" ] || return 0
     _rr_url="https://api.github.com/repos/trick77/netra/releases/latest"
-    if ! _rr_body=$(curl -fsSL "$_rr_url" 2>/dev/null); then
+    if ! _rr_body=$(_http_get "$_rr_url"); then
         _rr_body=""
     fi
     _rr_tag=$(printf '%s' "$_rr_body" |
@@ -1648,7 +1965,7 @@ fetch_template() {
     fi
 
     _ft_url="https://raw.githubusercontent.com/trick77/netra/$REF/deploy/agent/$_ft_name"
-    if ! curl -fsSL "$_ft_url" >"$_ft_dest" 2>/dev/null; then
+    if ! _http_get "$_ft_url" >"$_ft_dest"; then
         die "could not download the template from $_ft_url." \
             "Pass --ref <tag> to pin a different release tag, or --template-dir <path> to use" \
             "local template files (no network at all). Neither option needs the hub."
@@ -1906,8 +2223,22 @@ EOF
     check_cgroup_v2
     check_machine_id
 
+    VIRT=$(detect_virt)
+    if [ -n "$VIRT" ] && [ "${ASSUME_PHYSICAL:-0}" = 1 ]; then
+        info "  platform:        $VIRT, overridden by --assume-physical"
+        VIRT=""
+    elif [ -n "$VIRT" ]; then
+        info "  platform:        virtual ($VIRT)"
+    else
+        info "  platform:        physical"
+    fi
+
     DOCKER_COMPOSE=$(check_docker)
     info "  docker:          daemon reachable, $DOCKER_COMPOSE"
+
+    # After check_docker on purpose: it has just proved this user can reach the
+    # daemon, so the note does not have to speculate about that half.
+    check_root
 }
 
 detect_packages() {
@@ -1983,16 +2314,28 @@ plan_extras() {
         info "  d-bus:           $P_DBUS not present (no systemd collector)"
     fi
 
+    # NOT PROMPTED, and this is the last prompt to go. Two reasons, either of
+    # which would be enough.
+    #
+    # The question read as "Enable per-process CPU and memory metrics?", which
+    # invites the operator to think CPU and memory monitoring is optional. It is
+    # not: host CPU, memory and load come from /proc/stat, /proc/meminfo and
+    # /proc/loadavg, they are the core of what netra is for, and they are never
+    # asked about because a run that declined them would not be netra. Only the
+    # per-PROCESS breakdown needs this namespace.
+    #
+    # And that breakdown is a collector that does not exist yet. Asking an
+    # operator to weigh a real privacy cost against a metric nothing collects is
+    # asking them to guess. --pid-host turns it on for those who know they want
+    # it; everyone else gets an agent that is complete for what it can measure.
     PID_HOST=0
     if [ "${GRANT_PID_HOST:-0}" = 1 ]; then
         PID_HOST=1
-        info "  processes:       pid: host enabled by --pid-host (not prompted)"
-    elif netra_ask "Enable per-process CPU and memory metrics? This shares the host PID
-  namespace, so the agent can read every process's command line and environment." \
-        n --pid-host; then
-        PID_HOST=1
+        info "  processes:       pid: host enabled by --pid-host"
+        info "                   the agent can read every process's cmdline and environ"
     else
-        info "  processes:       off (no per-process metrics; --pid-host enables it)"
+        info "  processes:       host CPU, memory and load are always collected;"
+        info "                   per-process breakdown needs --pid-host"
     fi
 }
 
@@ -2314,7 +2657,16 @@ print_finish() {
         info "  Skipped or degraded:"
         while IFS= read -r _fr_note; do
             [ -n "$_fr_note" ] || continue
-            info "    - $_fr_note"
+            # A tab-marked entry is a command from warn_cmd: verbatim, no
+            # bullet, no wrapping — it exists to be copied.
+            case "$_fr_note" in
+            "$(printf '\t')"*)
+                info "        $(printf '%s' "$_fr_note" | tr -d '\t')"
+                ;;
+            *)
+                _wrap 76 '    - ' '      ' "$_fr_note"
+                ;;
+            esac
         done <<EOF
 $SKIPPED_NOTES
 EOF
@@ -2382,8 +2734,20 @@ require_tty() {
 }
 
 netra_main() {
+    # FIRST, before anything runs an external command. init_paths resolves
+    # $P_UID with `id -u`, and a host missing `id` used to die with
+    # "line 745: id: command not found" — never reaching the check whose entire
+    # job is to name it. parse_args is after it for the same reason: --help
+    # needs `cat`.
+    #
+    # check_tools itself uses only `command -v`, a shell builtin, so it can run
+    # this early. Its own message goes through _wrap and printf, both builtins.
+    check_tools
+
     parse_args "$@"
+    check_http_client
     init_paths
+    init_colors
 
     if [ "${NETRA_DEBUG_PATHS:-0}" = 1 ]; then
         debug_paths
