@@ -111,6 +111,12 @@ location, provider and host type. Each can be given as a flag instead: `--hub-ur
 `--token` / `--token-file`, `--location`, `--provider`, `--host-type`. `--dry-run` prints
 the whole plan and touches nothing.
 
+It reports whether it is running as **root** before it asks anything. Root is not required
+— detection reads world-readable files, the two files land wherever `--output-dir` points,
+and Docker only needs a user in the `docker` group. What root adds is the `.netra` marker
+directory on filesystems this user cannot write (each one is named as it is skipped) and
+loading the `drivetemp` module.
+
 It needs `awk`, `sed`, `grep`, `tr`, `head`, `cat`, `sort`, `wc`, `mktemp`, `mkdir`, `rm`,
 `cp` and `id` — checked in the first second, so a minimal image is told what it is missing
 instead of failing halfway through with `tr: not found`. Templates are fetched with `curl`

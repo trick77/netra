@@ -953,6 +953,31 @@ check_machine_id() {
 #
 # `command -v docker` rather than a path probe: which docker is on PATH is the
 # thing that matters, and it is also what the tests shim.
+# check_root — who this run is, and what root would add.
+#
+# NOT a hard failure, and not a list of consequences either. Everything root
+# actually affects is already handled where it happens: detect_filesystems
+# probes each mount point for writability and skips the ones it cannot use, with
+# a note naming each; plan_drivetemp says the module cannot be loaded; and
+# check_docker has ALREADY proved this user can reach the daemon, so the part
+# the operator will actually run needs no root at all.
+#
+# What was missing was the plain fact, stated once, before any question: you are
+# not root, and here is what that costs. Refusing outright would turn a degraded
+# run into no run at all, and repeating the individual notes here would bury
+# them.
+check_root() {
+    if [ "$P_UID" = 0 ]; then
+        info "  user:            root"
+        return 0
+    fi
+
+    info "  user:            uid $P_UID (not root)"
+    warn "not running as root. Filesystems this user cannot write are skipped (each one is" \
+        "reported as it is found), and the drivetemp module cannot be loaded. Docker is" \
+        "fine — the daemon answered above. Re-run with sudo to get the rest."
+}
+
 check_docker() {
     if ! command -v docker >/dev/null 2>&1; then
         die "docker is not on PATH. The netra agent is Docker-only (spec §13);" \
@@ -1770,14 +1795,12 @@ plan_drivetemp() {
     fi
 
     if [ "$P_UID" != 0 ]; then
-        # First place this run notices it is not root, but far from the only
-        # thing root affects here: creating /.netra at the filesystem root and
-        # `docker compose up -d` normally need it too.
+        # check_root has already said this run is not root and what that costs;
+        # this adds only the part specific to drivetemp.
         warn_cmd "modprobe drivetemp && echo drivetemp > /etc/modules-load.d/drivetemp.conf" \
-            "not running as root, so the drivetemp module cannot be loaded — nor, most" \
-            "likely, can the marker directories be created or the stack be started. With" \
-            "drivetemp, SATA drive temperatures come from hwmon every 60s instead of hourly" \
-            "from smartctl. As root:"
+            "the drivetemp module needs root to load, and this run is not root. With it," \
+            "SATA drive temperatures come from hwmon every 60s instead of hourly from" \
+            "smartctl. As root:"
         return 0
     fi
 
@@ -2212,6 +2235,10 @@ EOF
 
     DOCKER_COMPOSE=$(check_docker)
     info "  docker:          daemon reachable, $DOCKER_COMPOSE"
+
+    # After check_docker on purpose: it has just proved this user can reach the
+    # daemon, so the note does not have to speculate about that half.
+    check_root
 }
 
 detect_packages() {

@@ -338,6 +338,54 @@ run_capture env PATH="$NONET" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT2" NETRA_TT
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-nonet2"
 assert_eq 0 "$RUN_RC" "--template-dir works with no HTTP client on the host"
 
+# --- 7b. the root check states the fact once, and refuses nothing --------------
+#
+# Root was noticed only inside plan_drivetemp before, halfway through a run that
+# had already promised things it could not do. It is not a hard failure and not
+# a list of consequences either: detect_filesystems already skips each mount
+# point it cannot write and names it, plan_drivetemp already says the module
+# cannot be loaded, and check_docker has already proved this user reaches the
+# daemon. What was missing was the plain fact, stated before any question.
+ROOT3="$TMP/rootcheck"
+mkdir -p "$ROOT3"
+cp -R "$(fixture root-full)/." "$ROOT3/"
+
+run_capture env NETRA_SETUP_ROOT="$ROOT3" NETRA_UID=0 NETRA_TTY="$NO_TTY" \
+    NETRA_SOURCED=0 "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-root"
+assert_eq 0 "$RUN_RC" "a root run succeeds"
+assert_contains "$RUN_OUT" "user:            root" "a root run says so"
+assert_not_contains "$RUN_OUT" "not running as root" "and warns about nothing"
+
+run_capture env NETRA_SETUP_ROOT="$ROOT3" NETRA_UID=1000 NETRA_TTY="$NO_TTY" \
+    NETRA_SOURCED=0 "$SH_ABS" "$SETUP" --dry-run --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-root2"
+assert_eq 0 "$RUN_RC" "a non-root run is not refused"
+assert_contains "$RUN_OUT" "uid 1000 (not root)" "the run says which uid it is"
+FLAT=$(flatten "$RUN_OUT")
+assert_contains "$FLAT" "not running as root" "and says so before any question is asked"
+assert_contains "$FLAT" "Docker is fine" \
+    "docker is excluded, because the daemon has already answered"
+# Once in the scroll, and once more in the finish report - which is warn's whole
+# contract, not a duplicate. Every consequence stays reported where it happens;
+# repeating the list here would bury the individual notes rather than help.
+SCROLL=$(printf '%s\n' "$RUN_OUT" | sed -n '1,/==> Summary/p')
+assert_eq 1 "$(printf '%s\n' "$SCROLL" | grep -c 'not running as root' || true)" \
+    "the root fact is stated once in the scroll"
+REPORT=$(printf '%s\n' "$RUN_OUT" | sed -n '/Skipped or degraded/,$p')
+assert_contains "$(flatten "$REPORT")" "not running as root" \
+    "and repeated in the finish report, like every other note"
+# Before the first question, so an operator can stop and re-run with sudo rather
+# than find out after answering.
+ROOT_LINE=$(printf '%s\n' "$RUN_OUT" | grep -n 'not running as root' | head -n 1 | cut -d: -f1)
+FIRST_Q=$(printf '%s\n' "$RUN_OUT" | grep -n '\[Y/n\]\|\[y/N\]' | head -n 1 | cut -d: -f1)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [ "$ROOT_LINE" -lt "$FIRST_Q" ]; then
+    ok "the root note comes before the first prompt"
+else
+    fail "the root note came after a prompt had already been asked"
+fi
+
 # --- 8. colour is off unless both streams are terminals ------------------------
 #
 # run_capture reads through a command substitution, so this is the real check a

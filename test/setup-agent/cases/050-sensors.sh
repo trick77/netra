@@ -250,8 +250,9 @@ plan_drivetemp >/dev/null 2>&1
 assert_eq "" "$(cat "$NETRA_SHIM_LOG")" "declining calls modprobe not at all"
 assert_contains "$SKIPPED_NOTES" "modules-load.d" "the note gives the command to do it later"
 
-# 6e. not root -> the command is printed, modprobe is never called, and the note
-# does not pretend drivetemp is the only thing root affects here.
+# 6e. not root -> the command is printed and modprobe is never called. The note
+# covers only drivetemp: check_root says once, up front, what a non-root run
+# costs generally, so repeating it here would be noise at the point of use.
 R=$(dt_root dt_nonroot)
 NETRA_SETUP_ROOT="$R"
 export NETRA_SETUP_ROOT
@@ -269,8 +270,8 @@ plan_drivetemp >/dev/null 2>&1
 assert_eq "" "$(cat "$NETRA_SHIM_LOG")" "a non-root run never calls modprobe"
 assert_eq 0 "$NETRA_ANSWER_INDEX" "a non-root run does not ask a question it cannot act on"
 assert_contains "$SKIPPED_NOTES" "modprobe drivetemp" "the note gives the command to run as root"
-assert_contains "$SKIPPED_NOTES" "marker directories" \
-    "the note says root affects more than drivetemp"
+assert_contains "$(flatten "$SKIPPED_NOTES")" "needs root to load" \
+    "and says why it could not"
 NETRA_UID=0
 export NETRA_UID
 
