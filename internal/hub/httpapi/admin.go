@@ -25,6 +25,12 @@ func NewAdminHandler(svc *admin.Service) http.Handler {
 	mux.Handle("POST /api/v1/hosts", http.HandlerFunc(h.create))
 	mux.Handle("POST /api/v1/hosts/{id}/token", http.HandlerFunc(h.rotate))
 	mux.Handle("DELETE /api/v1/hosts/{id}", http.HandlerFunc(h.delete))
+	mux.Handle("GET /api/v1/sites", http.HandlerFunc(h.listSites))
+	mux.Handle("POST /api/v1/sites", http.HandlerFunc(h.createSite))
+	mux.Handle("PATCH /api/v1/sites/{id}", http.HandlerFunc(h.patchSite))
+	mux.Handle("GET /api/v1/providers", http.HandlerFunc(h.listProviders))
+	mux.Handle("POST /api/v1/providers", http.HandlerFunc(h.createProvider))
+	mux.Handle("PATCH /api/v1/providers/{id}", http.HandlerFunc(h.patchProvider))
 	return mux
 }
 
