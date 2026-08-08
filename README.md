@@ -108,8 +108,8 @@ load. `--assume-physical` overrides the detection.
 
 It also asks for the hub URL, the agent token (input hidden), and where the host is —
 location, provider and host type. Each can be given as a flag instead: `--hub-url`,
-`--token` / `--token-file`, `--location`, `--provider`, `--host-type`. `--dry-run` prints
-the whole plan and touches nothing.
+`--token` / `--token-file`, `--location`, `--provider`, `--host-type`. Nothing is
+created, written or started until you agree at the single write gate.
 
 It reports whether it is running as **root** before it asks anything. Root is not required
 — detection reads world-readable files, the two files land wherever `--output-dir` points,

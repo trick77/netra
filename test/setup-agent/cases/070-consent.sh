@@ -1,10 +1,10 @@
 #!/bin/sh
 #
-# The consent model: --dry-run mutates nothing, .env is protected by --force,
-# compose.yaml is not, a run with no terminal fails loudly, and a repeated run
-# is byte-identical.
+# The consent model: declining the write gate mutates nothing, .env is protected
+# by --force, compose.yaml is not, a run with no terminal fails loudly, and a
+# repeated run is byte-identical.
 #
-# There is no --yes. Every run here drives its prompts through
+# There is no unattended mode. Every run here drives its prompts through
 # NETRA_ANSWERS_FILE, whose contents are the PROMPT ORDER contract from the
 # setup script header written down:
 #
@@ -41,33 +41,38 @@ mkroot() {
     printf '%s\n' "$_mkroot_dst"
 }
 
-# --- 1. --dry-run creates nothing and starts nothing ---------------------------
-ROOT=$(mkroot dryrun)
+# --- 1. declining the write gate creates nothing and starts nothing ------------
+#
+# The gate is the whole consent model: "no" must leave the host exactly as it
+# was, even with --start on the command line. Every prompt before the gate is
+# answered NO here as well, so this asserts the one path on which the script
+# is guaranteed to have touched nothing at all.
+ROOT=$(mkroot declined)
 CWD="$TMP/emptycwd"
 mkdir -p "$CWD"
 : >"$NETRA_SHIM_LOG"
+ANS_DECLINE=$(answers decline n n n)
 
 # A subshell so the case's own working directory is not disturbed. OUTPUT_DIR
-# defaults to ./netra-agent, so a --dry-run that leaked would leave it here.
+# defaults to ./netra-agent, so a declined run that leaked would leave it here.
 if RUN_OUT=$(cd "$CWD" && env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    "$SH" "$SETUP" --dry-run --start --token nta_x --hub-url https://h \
+    NETRA_ANSWERS_FILE="$ANS_DECLINE" \
+    "$SH" "$SETUP" --start --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" 2>&1); then
     RUN_RC=0
 else
     RUN_RC=$?
 fi
-assert_eq 0 "$RUN_RC" "--dry-run exits 0"
-assert_eq "" "$(ls -A "$CWD")" "--dry-run creates nothing in the working directory"
+assert_eq 0 "$RUN_RC" "declining the gate exits 0 — it is an answer, not an error"
+assert_eq "" "$(ls -A "$CWD")" "declining creates nothing in the working directory"
 assert_file_absent "$CWD/netra-agent" "the default output directory is not created"
-assert_file_absent "$ROOT/.netra" "no marker directory is created under --dry-run"
-assert_file_absent "$ROOT/mnt/ark/.netra" "no marker directory is created under --dry-run"
-assert_contains "$RUN_OUT" "would run:" "--dry-run announces the mutations it did not perform"
-assert_contains "$RUN_OUT" "would run: netra_write_compose" "the compose write is announced"
+assert_file_absent "$ROOT/.netra" "no marker directory is created when the gate is declined"
+assert_file_absent "$ROOT/mnt/ark/.netra" "no marker directory is created when the gate is declined"
+assert_contains "$RUN_OUT" "Nothing was written" "the run says plainly that it wrote nothing"
 assert_contains "$RUN_OUT" "Installs nothing" \
     "the banner says up front that this installs nothing"
 assert_contains "$RUN_OUT" "compose.yaml   generated" \
-    "the banner names the files it is going to write"
-assert_contains "$RUN_OUT" "up -d" "--start under --dry-run announces the start it did not run"
+    "the banner names the files it would write"
 
 # Every mutation goes through netra_exec, so the docker shim must have been
 # called for preflight probes and NOTHING else. Asserting "the log is empty"
@@ -75,8 +80,9 @@ assert_contains "$RUN_OUT" "up -d" "--start under --dry-run announces the start 
 # `docker compose version` before any consent is needed, since a host with no
 # reachable daemon has nothing to consent to.
 SHIMLOG=$(cat "$NETRA_SHIM_LOG")
-assert_not_contains "$SHIMLOG" "up -d" "--dry-run never actually starts the stack"
-assert_not_contains "$SHIMLOG" "modprobe" "--dry-run loads no kernel module either"
+assert_not_contains "$SHIMLOG" "up -d" \
+    "--start never reaches the stack when the gate was declined"
+assert_not_contains "$SHIMLOG" "modprobe" "a declined run loads no kernel module either"
 assert_eq "" "$(printf '%s\n' "$SHIMLOG" | grep -v '^docker info$' |
     grep -v '^docker compose version$' | grep -v '^$' || true)" \
     "the only docker calls made are the preflight probes"
@@ -318,25 +324,26 @@ assert_not_contains "$RUN_OUT" "Summary" "a failed write does not reach the summ
 assert_not_contains "$(cat "$NETRA_SHIM_LOG")" "up -d" \
     "and --start never runs against files that were not written"
 
-# --- 8e. --dry-run never blocks on a prompt, free-text ones included ----------
+# --- 8e. no token is not a hard error, and the run still finishes -------------
 #
-# netra_ask and netra_ask_value short-circuit on DRY_RUN; resolve_token did not,
-# so a dry run on a real terminal auto-answered everything else and then blocked
-# on a hidden read — applying stty -echo to the operator's terminal to do it.
-# Every other dry-run test passes --token, which is why this needs its own.
+# The setup script never invents a token: the hub mints them and stores only a
+# SHA-256. An operator who has not minted one yet must still be able to finish
+# the run rather than have every answer already given thrown away — NETRA_TOKEN
+# is written empty with a loud note instead. Every other test passes --token,
+# which is why this needs its own.
 #
 # NETRA_TTY points at /dev/null: READABLE (so the no-terminal branch is not the
-# one under test) but instantly EOF, so a surviving prompt shows up as the
-# prompt string in the output rather than as a hang.
-ROOT=$(mkroot drytoken)
+# one under test) but instantly EOF, so the hidden read returns an empty token
+# rather than hanging.
+ROOT=$(mkroot notoken)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY=/dev/null \
-    "$SH" "$SETUP" --dry-run --hub-url https://h \
-    --template-dir "$TEMPLATES" --output-dir "$TMP/out-drytoken"
-assert_eq 0 "$RUN_RC" "--dry-run with a readable terminal and no token completes"
-assert_contains "$RUN_OUT" "dry run takes the default" "the token prompt takes the default too"
-assert_not_contains "$RUN_OUT" "input hidden" \
-    "--dry-run never opens the hidden token prompt"
-assert_contains "$RUN_OUT" "Summary" "--dry-run runs to the end"
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-notoken"
+assert_eq 0 "$RUN_RC" "a run with no token completes rather than dying"
+assert_contains "$RUN_OUT" "Summary" "the run reaches the end"
+assert_file_present "$TMP/out-notoken/.env" ".env is still written"
+assert_contains "$(cat "$TMP/out-notoken/.env")" "NETRA_TOKEN=" \
+    "NETRA_TOKEN is present and empty, not invented"
 
 # --- 8f. an .env left alone is not diagnosed as a broken template -------------
 #
@@ -393,8 +400,8 @@ assert_eq 1 "$RUN_RC" "an empty --token-file is a hard error, not an empty token
 
 # --- 10. --start actually starts the stack ------------------------------------
 #
-# Section 1 only proves --start is suppressed under --dry-run. This proves the
-# other half: that a real --start reaches docker at all, and does so through
+# Section 1 only proves --start is suppressed when the gate is declined. This
+# proves the other half: that a real --start reaches docker at all, and does so through
 # netra_exec with a -f pointing at the file just rendered (the setup script cannot
 # cd, so an implicit ./compose.yaml would start the wrong thing or nothing).
 ROOT=$(mkroot started)
@@ -518,9 +525,9 @@ assert_not_contains "$PHBODY" "SYS_ADMIN" "--pid-host does not also grant SYS_AD
 #
 # §12a: the version floors are only the releases where cgroup v2 became the
 # default, and the checks that matter are probed directly rather than inferred
-# from the distro name. So an unattended install on a cgroup-v2 host netra does
-# not recognise BY NAME must remain possible — otherwise "--yes takes the
-# default" quietly turns an advisory floor into a hard refusal.
+# from the distro name. So an install on a cgroup-v2 host netra does not
+# recognise BY NAME must remain possible — otherwise a prompt that defaults to
+# "no" quietly turns an advisory floor into a hard refusal.
 ROOT=$(mkroot unsupportedgrant)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
