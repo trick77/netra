@@ -173,7 +173,8 @@ CREATE TABLE IF NOT EXISTS host_samples (
 SELECT create_hypertable('host_samples', by_range('ts'), if_not_exists => TRUE);
 
 -- drop_chunks removes a chunk only once its NEWEST row is past the cutoff, so
--- the retention policy above keeps data for up to retention + chunk_interval.
+-- the retention policy further down keeps data for up to
+-- retention + chunk_interval.
 -- Timescale's default is a 7-day chunk, which turns "7 days" into as much as
 -- 14. One-day chunks bound the overshoot to a day.
 SELECT set_chunk_time_interval('host_samples', INTERVAL '1 day');

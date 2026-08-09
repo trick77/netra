@@ -376,9 +376,18 @@ const concurrentRefreshSQLState = "55P03"
 // resetSchema retries for.
 func refreshAggregate(t *testing.T, s *store.Store, view string) {
 	t.Helper()
+	refreshAggregateRange(t, s, view, "now() - interval '12 hours'", "now()")
+}
+
+// refreshAggregateRange is refreshAggregate over an explicit window, for a
+// test that cares which buckets the refresh covers rather than wanting every
+// bucket it wrote. from and to are SQL expressions, not values, so a caller
+// can express the window relative to now() the way the policies do.
+func refreshAggregateRange(t *testing.T, s *store.Store, view, from, to string) {
+	t.Helper()
 
 	sql := fmt.Sprintf(`CALL refresh_continuous_aggregate('%s',
-		(now() - interval '12 hours')::timestamptz, now()::timestamptz)`, view)
+		(%s)::timestamptz, (%s)::timestamptz)`, view, from, to)
 
 	var lastErr error
 	for attempt := 1; attempt <= 5; attempt++ {

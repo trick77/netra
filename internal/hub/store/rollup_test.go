@@ -119,12 +119,13 @@ func TestIntegrationBackfillOlderThanStartOffsetIsExcludedFromRollup(t *testing.
 		t.Fatalf("unschedule refresh policies: %v", err)
 	}
 
-	if _, err := s.Pool().Exec(ctx,
-		`CALL refresh_continuous_aggregate('host_samples_5m',
-			(now() - interval '6 hours')::timestamptz,
-			(now() - interval '10 minutes')::timestamptz)`); err != nil {
-		t.Fatalf("refresh_continuous_aggregate: %v", err)
-	}
+	// Mirror host_samples_5m's own policy window rather than refreshing
+	// everything: the point of the test is that the 8-hour-old sample falls
+	// outside start_offset, which only holds if the refresh stops at 6h.
+	// refreshAggregateRange carries the 55P03 retry, because unscheduling
+	// cannot recall a worker that has already started.
+	refreshAggregateRange(t, s, "host_samples_5m",
+		"now() - interval '6 hours'", "now() - interval '10 minutes'")
 
 	var tooOldCount int
 	if err := s.Pool().QueryRow(ctx,
