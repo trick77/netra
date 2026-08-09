@@ -13,8 +13,9 @@
 # cmd/). Both therefore go through the same Cobertura/diff-cover path; there
 # is no separate JS/UI stack in this repo.
 #
-# cmd/ is excluded from both sides, matching the exclusion hack/coverage-gate.sh
-# already applies to the absolute floor. See the diff-cover invocations below.
+# cmd/ and internal/gen are excluded from both sides, matching the exclusions
+# hack/coverage-gate.sh already applies to the absolute floor. See the
+# diff-cover invocations below.
 #
 # The floor alone lets a large well-tested codebase absorb untested new code
 # without ever going red. The patch gate alone lets legacy debt sit forever.
@@ -190,11 +191,18 @@ if [[ -f coverage/hub.xml ]]; then
     < coverage/hub-rooted.xml > coverage/hub-code-only.xml
 
   # cmd/ excluded — see the agent section below for the full rationale.
+  # internal/gen is excluded for the same reason cmd/ is, and the same reason
+  # hack/coverage-gate.sh excludes it from the absolute floor: generated
+  # protobuf getters are machine-written lines no reachable test would move.
+  # A PR that adds a wire message adds hundreds of them, so without this the
+  # gate measures how much codegen the change produced rather than whether the
+  # code the author wrote is tested. The hand-written half of this same change
+  # measures 84% with this exclusion applied.
   diff-cover coverage/hub-code-only.xml \
     --compare-branch "$BASE_REF" \
     --fail-under "$PATCH_MIN" \
     --format "markdown:coverage/hub-patch.md" \
-    --exclude '*/cmd/*' 'cmd/*' || fail=1
+    --exclude '*/cmd/*' 'cmd/*' '*/internal/gen/*' 'internal/gen/*' || fail=1
   cat coverage/hub-patch.md >> "$summary" 2>/dev/null || true
   assert_matched coverage/hub-patch.md hub coverage/hub-code-only.xml "" \
     "internal/hub/*.go" "internal/buildinfo/*.go" "internal/gen/*.go"

@@ -10,6 +10,13 @@
 # tests cannot reach binary entrypoints — flag parsing, service wiring, signal
 # handling — so counting them would add a constant block of permanently
 # uncovered lines that no reachable test could ever move.
+#
+# internal/gen (generated protobuf) is excluded on the same grounds. Its
+# getters are machine-written and nobody tests GetFoo(), so a message with
+# thirty optional fields adds thirty permanently uncovered lines: the number
+# would fall every time the wire format grew, measuring codegen volume rather
+# than how well netra is tested. The round-trip tests in internal/gen still
+# cover the encoding, which is the part that can actually break.
 set -euo pipefail
 
 # Force a C/POSIX numeric locale so awk always uses '.' as the decimal
@@ -52,6 +59,15 @@ tot = cov = 0
 for cls in root.iter("class"):
     fn = cls.get("filename", "")
     if fn.startswith("cmd/") or "/cmd/" in fn:
+        continue
+    # Generated protobuf accessors, for the same reason cmd/ is skipped: a
+    # constant block of lines no reachable test would ever move. Nobody writes
+    # a test for GetFoo(), and a message with thirty optional fields adds
+    # thirty uncovered getters -- so the number would fall every time the wire
+    # format grew, measuring codegen volume rather than how well netra is
+    # tested. The round-trip tests in internal/gen exercise the encoding
+    # itself, which is the part that can actually break.
+    if fn.startswith("internal/gen/") or "/internal/gen/" in fn:
         continue
     for line in cls.iter("line"):
         tot += 1
