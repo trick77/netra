@@ -47,6 +47,14 @@ type IngestHandler struct {
 // NewIngestHandler wires the handler. The hub hands back no scrape cadence:
 // the agent's interval is a fixed 60s constant and there is no per-host
 // cadence column here to override it with.
+//
+// There is deliberately no ingest rate limiting. Agent-to-hub is a trusted
+// loop — a valid token means a host we deployed — so the 60s cadence is the
+// agent's own fixed constant rather than something enforced here. Two cases
+// would break a naive "one POST per host per minute" rule and are both
+// accepted as normal: replaying the ring buffer after an outage flushes
+// batches back to back (IngestRequest.backfill), and an agent restart can
+// land a second sample inside the same minute, once.
 func NewIngestHandler(a *auth.Authenticator, s *store.Store) *IngestHandler {
 	return &IngestHandler{auth: a, store: s}
 }
