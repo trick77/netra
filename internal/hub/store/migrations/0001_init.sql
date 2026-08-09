@@ -515,6 +515,147 @@ CREATE UNIQUE INDEX IF NOT EXISTS events_host_id_ts_type_subject_key
 -- "What happened on this host recently", the only way this table is read.
 CREATE INDEX IF NOT EXISTS events_host_id_ts_idx ON events (host_id, ts DESC);
 
+-- ------------------------------------------------- dimensions for Groups 2-4
+
+-- Every dimension below follows the shape sensors established: an identity
+-- surrogate id that hypertables reference, a natural key unique WITHIN a host
+-- (two hosts both having an "sda" is normal), and an (id, host_id) index so a
+-- sample table can declare a composite foreign key and never attribute one
+-- host's entity to another's row.
+
+-- container_key is the natural key: compose project + service, falling back to
+-- the container name (spec 6.2). Deliberately NOT the Docker id, which changes
+-- on every recreate -- keying on it would restart the history of a service
+-- that merely got a new image.
+CREATE TABLE IF NOT EXISTS containers (
+    id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    host_id       INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    container_key TEXT NOT NULL,
+    name          TEXT,
+    image         TEXT,
+    is_agent      BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS containers_host_id_container_key_key
+    ON containers (host_id, container_key);
+CREATE UNIQUE INDEX IF NOT EXISTS containers_id_host_id_key
+    ON containers (id, host_id);
+
+CREATE TABLE IF NOT EXISTS filesystems (
+    id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    host_id    INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    label      TEXT NOT NULL,
+    mountpoint TEXT,
+    -- st_dev of the mountpoint. Bind mounts of one filesystem share it, which
+    -- is how the collector dedups them -- counting both would overstate the
+    -- host's disk usage by however many bind mounts it happens to have.
+    device_id  BIGINT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS filesystems_host_id_label_key
+    ON filesystems (host_id, label);
+CREATE UNIQUE INDEX IF NOT EXISTS filesystems_id_host_id_key
+    ON filesystems (id, host_id);
+
+CREATE TABLE IF NOT EXISTS devices (
+    id      INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    host_id INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    device  TEXT NOT NULL,
+    model   TEXT,
+    serial  TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS devices_host_id_device_key
+    ON devices (host_id, device);
+CREATE UNIQUE INDEX IF NOT EXISTS devices_id_host_id_key
+    ON devices (id, host_id);
+
+CREATE TABLE IF NOT EXISTS systemd_units (
+    id        INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    host_id   INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    unit_name TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS systemd_units_host_id_unit_name_key
+    ON systemd_units (host_id, unit_name);
+CREATE UNIQUE INDEX IF NOT EXISTS systemd_units_id_host_id_key
+    ON systemd_units (id, host_id);
+
+-- address is INET rather than TEXT so subnet queries work -- "every host with
+-- an address in 172.19.0.0/16", "every host with a public IPv4". As text those
+-- are string matches and get the answer wrong.
+--
+-- scope is derived BY THE HUB from the address (spec 5.2). The agent reports
+-- raw facts only, so loopback/private/public classification is one
+-- implementation that can be corrected without redeploying every agent.
+-- IPv4 and IPv6 are treated identically throughout.
+CREATE TABLE IF NOT EXISTS host_addresses (
+    host_id     INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    iface       TEXT NOT NULL,
+    if_index    INTEGER,
+    address     INET NOT NULL,
+    family      SMALLINT NOT NULL,
+    scope       TEXT,
+    vrf         TEXT,
+    description TEXT,
+    first_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (host_id, iface, address)
+);
+
+-- arch is in the key because a host can legitimately carry the same package
+-- for two architectures (amd64 and i386 on a multiarch Debian), and they are
+-- different installations with their own versions.
+CREATE TABLE IF NOT EXISTS host_packages (
+    host_id    INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    version    TEXT NOT NULL,
+    arch       TEXT NOT NULL DEFAULT '',
+    format     TEXT NOT NULL,
+    size_bytes BIGINT,
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (host_id, name, arch)
+);
+
+-- systemd_unit_events and package_events are separate from `events` because
+-- both carry structured, queryable columns that would otherwise be buried in
+-- jsonb, and both arrive in bursts large enough to want their own indexes
+-- (spec 5.2).
+--
+-- Plain Postgres tables, NOT hypertables: a unit changes state a handful of
+-- times a month. They must not move the counts in rollup_test.go.
+CREATE TABLE IF NOT EXISTS systemd_unit_events (
+    host_id  INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    unit_id  INTEGER NOT NULL,
+    ts       TIMESTAMPTZ NOT NULL,
+    state    TEXT NOT NULL,
+    substate TEXT,
+    PRIMARY KEY (host_id, unit_id, ts),
+    FOREIGN KEY (unit_id, host_id) REFERENCES systemd_units (id, host_id) ON DELETE CASCADE
+);
+
+-- The composite foreign key's cascade path needs its own index, for the same
+-- reason sensor_samples does: deleting a host cascades to systemd_units first,
+-- and each deleted unit then searches for its events. The primary key leads
+-- with host_id, so without this that search is a sequential scan per unit.
+CREATE INDEX IF NOT EXISTS systemd_unit_events_unit_id_host_id_idx
+    ON systemd_unit_events (unit_id, host_id);
+
+CREATE TABLE IF NOT EXISTS package_events (
+    host_id      INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    ts           TIMESTAMPTZ NOT NULL,
+    name         TEXT NOT NULL,
+    action       TEXT NOT NULL,
+    from_version TEXT,
+    to_version   TEXT,
+    PRIMARY KEY (host_id, ts, name)
+);
+
+-- "What changed on this host recently", the only way this table is read.
+CREATE INDEX IF NOT EXISTS package_events_host_id_ts_idx
+    ON package_events (host_id, ts DESC);
+
 -- --------------------------------------------------------------- per-core CPU
 
 -- All cores, always -- ~800 series at target scale, which the earlier
