@@ -15,9 +15,10 @@ import (
 	"github.com/trick77/netra/internal/hub/store"
 )
 
-// A real agent posting to a real hub backed by a real TimescaleDB. Everything
-// below the HTTP boundary is the production code path.
-func TestIntegrationAgentToHubRoundTrip(t *testing.T) {
+// newE2EFixture builds a migrated store, a registered host with a live token,
+// and a server running the production router.
+func newE2EFixture(t *testing.T) (*store.Store, int32, string, *httptest.Server) {
+	t.Helper()
 	ctx := context.Background()
 
 	s := store.OpenTest(t)
@@ -44,6 +45,15 @@ func TestIntegrationAgentToHubRoundTrip(t *testing.T) {
 		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s,
 			hubconfig.Config{AdminToken: testAdminToken}))
 	t.Cleanup(srv.Close)
+
+	return s, hostID, token, srv
+}
+
+// A real agent posting to a real hub backed by a real TimescaleDB. Everything
+// below the HTTP boundary is the production code path.
+func TestIntegrationAgentToHubRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s, hostID, token, srv := newE2EFixture(t)
 
 	cfg := agentconfig.Config{
 		HubURL:       srv.URL,
@@ -127,5 +137,79 @@ func TestIntegrationAgentToHubRoundTrip(t *testing.T) {
 	}
 	if lastSeen == nil {
 		t.Fatal("host_current.last_seen is NULL, want it updated on ingest")
+	}
+}
+
+// The whole path for a per-entity family, with nothing stubbed: a real
+// collector reads a real /proc fixture, the real client buffers and posts it,
+// the real handler stores it. The unit tests each cover one hop; this is the
+// one that fails if the hops disagree -- a field number changed on one side, a
+// family dropped during flush assembly, a row filtered out by the wrong bound.
+func TestIntegrationEndToEndPerCoreCPUReachesTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	s, hostID, token, srv := newE2EFixture(t)
+
+	cfg := agentconfig.Config{
+		HubURL:       srv.URL,
+		Token:        token,
+		BufferWindow: time.Hour,
+		ProcRoot:     "../../../internal/agent/collector/testdata/percpu/first",
+	}
+	percpu := collector.NewPerCoreCPU(cfg.ProcRoot, agentconfig.ScrapeInterval)
+	c := client.New(cfg, []collector.Collector{percpu})
+
+	// The first scrape is the baseline: a rate has nothing to average over
+	// yet, so nothing should reach the database.
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("baseline Flush: %v", err)
+	}
+
+	var baseline int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM cpu_core_samples WHERE host_id = $1`, hostID).Scan(&baseline); err != nil {
+		t.Fatalf("count after baseline: %v", err)
+	}
+	if baseline != 0 {
+		t.Fatalf("cpu_core_samples = %d after the baseline scrape, want 0", baseline)
+	}
+
+	// Advance the counters and scrape again.
+	percpu.SetProcRootForTest("../../../internal/agent/collector/testdata/percpu/second")
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	// One row per core, with the percentages the fixtures encode: core 0
+	// fully busy over the interval, core 1 idle.
+	rows, err := s.Pool().Query(ctx,
+		`SELECT core, busy FROM cpu_core_samples WHERE host_id = $1 ORDER BY core`, hostID)
+	if err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	defer rows.Close()
+
+	got := map[int32]*float64{}
+	for rows.Next() {
+		var core int32
+		var busy *float64
+		if err := rows.Scan(&core, &busy); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		got[core] = busy
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate: %v", err)
+	}
+
+	if len(got) != 2 {
+		t.Fatalf("cores stored = %d, want 2", len(got))
+	}
+	if got[0] == nil || *got[0] != 100 {
+		t.Errorf("core 0 busy = %v, want 100", got[0])
+	}
+	if got[1] == nil || *got[1] != 0 {
+		t.Errorf("core 1 busy = %v, want 0", got[1])
 	}
 }
