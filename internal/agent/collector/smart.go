@@ -145,6 +145,16 @@ func (s *Smart) wait() time.Duration {
 	return backoff
 }
 
+// EmitsBaseline implements BaselineEmitter, keeping this collector out of the
+// agent's startup priming.
+//
+// Its first Collect is a full scan plus a --all per drive, and it stamps
+// lastRun on success -- so priming would spin up every sleeping drive on the
+// host to produce a reading that is then thrown away, AND start the hour-long
+// interval, costing the first real hour of SMART data on every agent restart.
+// That is the exact opposite of what the due() self-gate exists to prevent.
+func (s *Smart) EmitsBaseline() bool { return true }
+
 // Name implements Collector.
 func (s *Smart) Name() string { return "smart" }
 

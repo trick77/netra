@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1025,4 +1027,53 @@ func (c *countingCollector) EmitsBaseline() bool     { return c.baseline }
 func (c *countingCollector) Collect(context.Context) (*collector.Result, error) {
 	c.calls++
 	return &collector.Result{}, nil
+}
+
+// The package inventory must survive priming, through the real startup path.
+//
+// Packages is the worst case for a discarded first Collect: the parse stamps
+// lastMtime and lastParse, so every later scrape short-circuits on "unchanged
+// and recent" until the database is written to or the 24h floor elapses. A
+// primed-away inventory therefore does not come back on the next scrape -- a
+// freshly enrolled host reports no packages at all for up to a day, and an
+// existing one keeps whatever it had before the restart, because
+// UpsertHostPackages returns early on an empty set.
+func TestPrimeDoesNotConsumeThePackageInventory(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	dpkg := filepath.Join(t.TempDir(), "status")
+	if err := os.WriteFile(dpkg, []byte(
+		"Package: bash\nVersion: 5.3\nArchitecture: amd64\nInstalled-Size: 1024\nStatus: install ok installed\n\n",
+	), 0o644); err != nil {
+		t.Fatalf("write dpkg status: %v", err)
+	}
+
+	ctx := context.Background()
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	c := client.New(cfg, []collector.Collector{
+		collector.NewPackages(dpkg, "", config.ScrapeInterval),
+	})
+
+	// The agent's real startup order, from main.go.
+	c.Prime(ctx)
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	pkgs := rec.last().GetPackages()
+	if len(pkgs) != 1 {
+		t.Fatalf("first scrape after Prime carried %d packages, want 1 -- priming consumed the inventory",
+			len(pkgs))
+	}
+	if got := pkgs[0].GetName(); got != "bash" {
+		t.Errorf("package name = %q, want bash", got)
+	}
 }

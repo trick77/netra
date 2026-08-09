@@ -51,6 +51,19 @@ func NewPackages(dpkgPath, apkPath string, interval time.Duration) *Packages {
 	return &Packages{dpkgPath: dpkgPath, apkPath: apkPath, interval: interval, now: time.Now}
 }
 
+// EmitsBaseline implements BaselineEmitter, keeping this collector out of the
+// agent's startup priming.
+//
+// Its first Collect is the inventory, and it is also the LAST one for a while:
+// the parse stamps lastMtime and lastParse, so every later scrape short-
+// circuits on "unchanged and recent" until the package database is written to
+// or the daily floor elapses. Priming would therefore discard the only
+// inventory the agent produces for up to 24 hours -- a freshly enrolled host
+// would report no packages at all for that window, and an existing one would
+// keep serving the inventory it had before the restart, because
+// UpsertHostPackages returns early on an empty set.
+func (p *Packages) EmitsBaseline() bool { return true }
+
 // Name implements Collector.
 func (p *Packages) Name() string { return "packages" }
 

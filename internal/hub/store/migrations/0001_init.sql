@@ -1151,6 +1151,21 @@ SELECT add_retention_policy('container_samples_1h', INTERVAL '90 days', if_not_e
 -- device mapping fails: "we could not attribute I/O to this filesystem" is a
 -- different fact from "this filesystem did no I/O", and averaging the two
 -- together would understate every host where the mapping is unavailable.
+--
+-- used AND free DO NOT SUM TO total, by construction, and a consumer that
+-- assumes they do will be wrong on every default ext4 filesystem. The agent
+-- reports what df reports:
+--
+--   total = statfs Blocks           every block on the filesystem
+--   free  = statfs Bavail           what an unprivileged process may allocate
+--   used  = Blocks - Bfree          what actually holds data
+--
+-- The gap is the root reserve (5% by default), which holds no data and is not
+-- available either. So a fullness percentage MUST be used / (used + free) --
+-- df's Use% -- and never used / total, which reads ~5% low. The rollups below
+-- inherit this: used_avg, used_max and free_min are the same three quantities
+-- bucketed, and mixing them with total the wrong way is wrong at every
+-- resolution.
 CREATE TABLE IF NOT EXISTS filesystem_samples (
     host_id      INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
     ts           TIMESTAMPTZ NOT NULL,

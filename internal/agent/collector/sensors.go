@@ -292,10 +292,18 @@ func (s *Sensors) readTrimmed(ctx context.Context, path string) (string, error) 
 		s.markWedged(path)
 		return "", fmt.Errorf("read %s: %w", path, err)
 	}
+
+	// Cleared on ANY non-timeout outcome, not just success. A read that
+	// returns ENOENT answered -- the path is gone, which is the opposite of
+	// wedged. Clearing only on success left the entry behind forever for a
+	// chip that timed out once and was then unbound or renumbered by a driver
+	// rebind, so Capabilities() reported "degraded" for the life of the agent
+	// with no sensor actually failing.
+	s.clearWedged(path)
+
 	if err != nil {
 		return "", err
 	}
-	s.clearWedged(path)
 	return strings.TrimSpace(string(data)), nil
 }
 
@@ -317,8 +325,9 @@ func (s *Sensors) readDir(ctx context.Context, path string) ([]os.DirEntry, erro
 		s.markWedged(path)
 		return nil, fmt.Errorf("read dir %s: %w", path, err)
 	}
-	if err == nil {
-		s.clearWedged(path)
-	}
+
+	// Any non-timeout outcome clears the backoff, for the reason readTrimmed
+	// gives: a directory that reports ENOENT is answering, not wedged.
+	s.clearWedged(path)
 	return entries, err
 }

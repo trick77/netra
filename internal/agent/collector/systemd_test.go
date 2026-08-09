@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
 func fakeUnits(units ...collector.Unit) collector.UnitLister {
@@ -39,43 +38,97 @@ func TestSystemdReportsTheSummaryOnTheHostRow(t *testing.T) {
 	}
 }
 
-// The first scrape emits a BASELINE: one event per unit, saying what the agent
-// found on arrival. Same as mdraid, and for the same reason.
+// The first scrape emits a BASELINE of the units that are already FAILED.
 //
-// A unit that was ALREADY failed when the agent started is the case that
-// forces it. Emitting nothing until the next transition means a host whose
-// database has been down for a week produces no event for it at all, and only
-// the services_failed counter reveals anything is wrong -- with no unit name
-// and no "since when". That is precisely the question this table exists to
-// answer.
-func TestSystemdEmitsABaselineOnTheFirstScrape(t *testing.T) {
+// A unit that was already failed when the agent started would otherwise
+// produce no event at all -- only the services_failed counter would show
+// anything, with no unit name and no "since when", which is the question this
+// table exists to answer.
+//
+// Restricted to failed units on purpose, unlike mdraid. Every loaded .service
+// on a normal host is 200-400, mostly inactive/dead oneshots, and
+// systemd_unit_events is a plain table with no retention policy: baselining
+// all of them would write a few hundred unprunable rows per host on every
+// agent restart.
+func TestSystemdEmitsABaselineOfFailedUnitsOnTheFirstScrape(t *testing.T) {
 	testee := collector.NewSystemd(time.Minute, fakeUnits(
 		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
 		collector.Unit{Name: "nginx.service", Active: "failed", SubState: "failed"},
+		collector.Unit{Name: "cleanup.service", Active: "inactive", SubState: "dead"},
 	))
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	if len(res.SystemdEvents) != 2 {
-		t.Fatalf("events on the first scrape = %d, want 2 (one per unit)", len(res.SystemdEvents))
+
+	if len(res.SystemdEvents) != 1 {
+		t.Fatalf("events on the first scrape = %d, want 1 -- only the failed unit is news",
+			len(res.SystemdEvents))
+	}
+	ev := res.SystemdEvents[0]
+	if got := ev.GetUnitName(); got != "nginx.service" {
+		t.Errorf("unit_name = %q, want nginx.service", got)
+	}
+	if got := ev.GetState(); got != "failed" {
+		t.Errorf("state = %q, want failed", got)
+	}
+	if ev.GetTsMs() == 0 {
+		t.Error("baseline event carries no ts_ms")
+	}
+}
+
+// A healthy unit that fails LATER must still produce an event: the baseline
+// restriction applies only to the first scrape, not to transitions.
+func TestSystemdEmitsAnEventWhenAUnitFailsAfterAHealthyBaseline(t *testing.T) {
+	testee := collector.NewSystemd(time.Minute, fakeUnits(
+		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
+	))
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("baseline: %v", err)
+	}
+	if len(res.SystemdEvents) != 0 {
+		t.Fatalf("baseline emitted %d events for a healthy host, want 0", len(res.SystemdEvents))
 	}
 
-	var failed *netrav1.SystemdUnitEvent
-	for _, e := range res.SystemdEvents {
-		if e.GetUnitName() == "nginx.service" {
-			failed = e
-		}
+	testee.SetListerForTest(fakeUnits(
+		collector.Unit{Name: "ssh.service", Active: "failed", SubState: "failed"},
+	))
+	res, err = testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
 	}
-	if failed == nil {
-		t.Fatal("no event for nginx.service; a unit already failed at agent start must be reported")
+	if len(res.SystemdEvents) != 1 {
+		t.Fatalf("events on failure = %d, want 1", len(res.SystemdEvents))
 	}
-	if got := failed.GetState(); got != "failed" {
-		t.Errorf("nginx.service state = %q, want failed", got)
+}
+
+// A unit that appears after the baseline scrape is a change worth recording
+// whatever state it landed in -- an installed-and-started service is news even
+// though a healthy unit present at startup is not.
+func TestSystemdEmitsAnEventForAUnitThatAppearsLater(t *testing.T) {
+	testee := collector.NewSystemd(time.Minute, fakeUnits(
+		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
+	))
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("baseline: %v", err)
 	}
-	if failed.GetTsMs() == 0 {
-		t.Error("baseline event carries no ts_ms")
+
+	testee.SetListerForTest(fakeUnits(
+		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
+		collector.Unit{Name: "nginx.service", Active: "active", SubState: "running"},
+	))
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if len(res.SystemdEvents) != 1 {
+		t.Fatalf("events = %d, want 1 for the newly installed unit", len(res.SystemdEvents))
+	}
+	if got := res.SystemdEvents[0].GetUnitName(); got != "nginx.service" {
+		t.Errorf("unit_name = %q, want nginx.service", got)
 	}
 }
 
