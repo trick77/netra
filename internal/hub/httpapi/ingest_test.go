@@ -562,3 +562,66 @@ func TestIntegrationIngestStoresCpuCoreRowsAndDropsImplausibleOnes(t *testing.T)
 		t.Errorf("host_samples = %d, want 1", hostRows)
 	}
 }
+
+// A per-core insert that fails must 503 with retry_after_s, exactly like the
+// host-sample path above -- not a logged-and-ignored failure. These rows are
+// primary data on a key the agent will replay, so a silent drop would lose
+// them: the agent takes the 200 as an ack and clears its ring buffer.
+//
+// The request carries no host samples on purpose. InsertHostSamples returns
+// early on an empty batch without touching the pool, so the per-core insert is
+// the first statement to meet the closed one -- which is what puts the failure
+// on the branch under test rather than an earlier one.
+func TestIntegrationIngestCpuCoreStorageFailureReturns503(t *testing.T) {
+	ctx := context.Background()
+
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	var hostID int32
+	if err := s.Pool().QueryRow(ctx,
+		`INSERT INTO hosts (hostname) VALUES ('h1') RETURNING id`).Scan(&hostID); err != nil {
+		t.Fatalf("insert host: %v", err)
+	}
+
+	plain, hash, err := auth.Mint()
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO tokens (host_id, token_hash) VALUES ($1, $2)`, hostID, hash); err != nil {
+		t.Fatalf("insert token: %v", err)
+	}
+
+	// A second pool for auth, so the request still authenticates after the
+	// store's own pool is closed.
+	authStore, err := store.Open(ctx, os.Getenv("NETRA_TEST_DSN"))
+	if err != nil {
+		t.Fatalf("open second pool for auth: %v", err)
+	}
+	t.Cleanup(authStore.Close)
+
+	h := httpapi.NewIngestHandler(auth.NewAuthenticator(authStore.Pool()), s)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	s.Close()
+
+	resp := post(t, srv, plain, &netrav1.IngestRequest{
+		Seq: 1,
+		CpuCores: []*netrav1.CpuCoreSample{
+			{TsMs: time.Now().Add(-time.Minute).UnixMilli(), Core: 0, Busy: proto.Float64(50)},
+		},
+	})
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+
+	var out netrav1.IngestResponse
+	decodeBody(t, resp, &out)
+	if out.RetryAfterS == 0 {
+		t.Fatal("RetryAfterS = 0, want non-zero on a storage-failure 503")
+	}
+}
