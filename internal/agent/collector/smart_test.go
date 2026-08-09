@@ -216,3 +216,126 @@ func TestSmartRunsOnlyOncePerInterval(t *testing.T) {
 		t.Errorf("smartctl runs after the interval elapsed = %d, want 2", runs)
 	}
 }
+
+// A transient scan failure must not cost a full hour of SMART data.
+//
+// lastRun used to be stamped BEFORE the run, so a single failed --scan --
+// smartctl not yet installed, a device node appearing late in boot, a
+// momentary EBUSY -- consumed the whole interval and pinned the
+// no-device-access capability for that hour, even though the very next scrape
+// would have succeeded.
+func TestSmartRetriesSoonAfterAFailedScan(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	now := base
+
+	var calls int
+	testee := collector.NewSmart(time.Hour, func(_ context.Context, args ...string) ([]byte, error) {
+		if args[1] == "--scan" {
+			calls++
+			if calls == 1 {
+				return nil, errors.New("smartctl: transient failure")
+			}
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"sat"}]}`), nil
+		}
+		return []byte(`{"model_name":"Samsung","serial_number":"S1",
+			"ata_smart_attributes":{"table":[{"id":5,"value":100,"raw":{"value":0}}]}}`), nil
+	})
+	testee.SetClockForTest(func() time.Time { return now })
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.Capabilities()["smart"]; got != "no-device-access" {
+		t.Errorf("capability = %q after a failed scan, want no-device-access", got)
+	}
+
+	// A minute later -- far short of the hour interval -- it must try again.
+	now = base.Add(time.Minute)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("scan calls = %d, want 2 -- a failed scan must be retried well before the full interval", calls)
+	}
+	if len(res.Smart) == 0 {
+		t.Error("no attributes after the retry succeeded")
+	}
+	if testee.Capabilities() != nil {
+		t.Errorf("capability = %v after a successful scan, want none", testee.Capabilities())
+	}
+}
+
+// A success must restore the full interval, so a working host is not scanned
+// every minute for the rest of its uptime.
+func TestSmartReturnsToTheFullIntervalAfterASuccess(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	now := base
+
+	var calls int
+	testee := collector.NewSmart(time.Hour, func(_ context.Context, args ...string) ([]byte, error) {
+		if args[1] == "--scan" {
+			calls++
+			return []byte(`{"devices":[]}`), nil
+		}
+		return nil, errors.New("unexpected")
+	})
+	testee.SetClockForTest(func() time.Time { return now })
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	// Ten minutes on, the hour has not elapsed and nothing should run.
+	now = base.Add(10 * time.Minute)
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("scan calls = %d, want 1 -- a successful scan must wait the full interval", calls)
+	}
+}
+
+// A host where SMART is permanently unavailable must settle back to the full
+// interval rather than probing forever at the retry cadence.
+//
+// The backoff doubles per consecutive failure and is capped at the interval,
+// so a host with no smartctl at all ends up scanned exactly as often as a host
+// with working drives.
+func TestSmartBacksOffOnRepeatedFailures(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	now := base
+
+	var calls int
+	testee := collector.NewSmart(time.Hour, func(context.Context, ...string) ([]byte, error) {
+		calls++
+		return nil, errors.New("smartctl: not found")
+	})
+	testee.SetClockForTest(func() time.Time { return now })
+
+	// Drive the backoff up by always waiting the longest it could ask for.
+	// The clock is NOT advanced after the last one, so `now` sits exactly on
+	// the most recent attempt and the check below measures from there.
+	for i := range 8 {
+		if _, err := testee.Collect(context.Background()); err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		if i < 7 {
+			now = now.Add(time.Hour)
+		}
+	}
+	if calls != 8 {
+		t.Fatalf("scan calls = %d, want 8", calls)
+	}
+
+	// Now that the backoff has saturated, a minute must no longer be enough.
+	before := calls
+	now = now.Add(time.Minute)
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if calls != before {
+		t.Errorf("scan calls = %d, want %d -- a permanently unavailable host must not be probed every minute",
+			calls, before)
+	}
+}

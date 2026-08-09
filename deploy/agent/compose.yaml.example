@@ -186,12 +186,28 @@ services:
 
       # --- OPTIONAL: systemd units ------------------------------------------
       #
-      # Enables the systemd collector, which talks to org.freedesktop.systemd1
-      # over the system bus. Only unit state CHANGES are stored, plus a
-      # services_total / services_failed summary on each host sample.
+      # Enables the systemd collector, which calls
+      # org.freedesktop.systemd1.Manager.ListUnits on the system bus. This
+      # socket is the ONLY thing it needs: the agent speaks D-Bus itself and
+      # does not run systemctl, which is absent from the image (netra-agent
+      # ships on Alpine, and systemd is not packaged for musl).
       #
-      # Without it: no unit inventory and no failed-service alerting. Nothing
-      # else is affected.
+      # The agent must be able to read and write the socket, which is why it
+      # runs as root -- the bus rejects an unprivileged peer that has not been
+      # granted a policy for it.
+      #
+      # On a host whose systemd predates the /run/dbus location, use
+      # /var/run/dbus/system_bus_socket instead.
+      #
+      # Without it: the collector reports a "systemd: unavailable" capability
+      # rather than an error, so the host still reports everything else. There
+      # is no unit inventory, no failed-service alerting, and
+      # services_total / services_failed stay unset on every host sample.
+      #
+      # Only unit state CHANGES are stored, plus that summary. The first
+      # scrape after an agent start emits one baseline event per service, so a
+      # unit that was already failed when the agent arrived is visible rather
+      # than waiting for its next transition.
       # - type: bind
       #   source: /run/dbus/system_bus_socket
       #   target: /run/dbus/system_bus_socket

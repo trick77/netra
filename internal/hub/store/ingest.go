@@ -171,7 +171,7 @@ func (s *Store) InsertCpuCoreSamples(ctx context.Context, hostID int32, rows []*
 			r.Busy)
 	}
 
-	return execBatch(ctx, s.pool, batch, len(rows), "cpu core sample")
+	return execBatch(ctx, s.pool, batch, "cpu core sample")
 }
 
 // InsertAgentSamples writes the agent self-telemetry carried by a batch and

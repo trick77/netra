@@ -2,7 +2,9 @@ package collector
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -40,6 +42,12 @@ type Sensors struct {
 	// absent records that this host has no hwmon at all, so the hub is told
 	// rather than left to infer it from missing rows.
 	absent bool
+
+	// wedged holds the sysfs paths whose read did not return within
+	// readTimeout. They are never read again: each attempt strands a goroutine
+	// in an uninterruptible read(2), so retrying every 60s would leak one per
+	// scrape for as long as the agent runs.
+	wedged map[string]bool
 }
 
 // NewSensors builds a Sensors collector reading from sysRoot (normally "/sys").
@@ -61,14 +69,27 @@ func (s *Sensors) Capabilities() map[string]string {
 	if s.absent {
 		return map[string]string{"sensors": "absent"}
 	}
+	if len(s.wedged) > 0 {
+		// A sensor abandoned for a wedged driver stops producing rows, which
+		// is indistinguishable from a sensor that vanished unless it is said
+		// out loud. "degraded" rather than "absent": the other chips on this
+		// host are still being read.
+		return map[string]string{"sensors": "degraded"}
+	}
 	return nil
 }
 
 // Collect implements Collector.
 func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 	dir := filepath.Join(s.sysRoot, "class", "hwmon")
-	entries, err := os.ReadDir(dir)
+	entries, err := s.readDir(ctx, dir)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errWedged) {
+			// NOT absent: the host has hwmon, it is the tree that will not
+			// answer. Saying "absent" here would report a hardware fault as a
+			// host that simply has no sensors.
+			return &Result{}, nil
+		}
 		if os.IsNotExist(err) {
 			// An absent subsystem, not a failure: most VPSes expose no hwmon,
 			// and erroring every 60s would be noise an operator learns to
@@ -94,7 +115,7 @@ func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 			continue
 		}
 
-		labels, err := os.ReadDir(chipDir)
+		labels, err := s.readDir(ctx, chipDir)
 		if err != nil {
 			continue
 		}
@@ -137,34 +158,104 @@ func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 	return &Result{Sensors: rows}, nil
 }
 
-// readTrimmed reads a sysfs file under a deadline and trims its trailing
-// newline.
+// errWedged is returned for a path whose read has already timed out once.
+var errWedged = errors.New("path previously timed out; not read again")
+
+// deadlined runs fn on its own goroutine and returns either its result or the
+// deadline's error, whichever comes first.
 //
-// The deadline is the point: a wedged hwmon driver blocks read(2) forever, and
-// a collector without one would hold the scrape loop -- and therefore every
-// other collector -- for as long as the driver stayed stuck.
-func (s *Sensors) readTrimmed(ctx context.Context, path string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, s.readTimeout)
+// It does NOT cancel fn, and cannot. A read(2) blocked in the kernel on a
+// wedged hwmon driver is uninterruptible from userspace: there is no way to
+// take the call back, so the goroutine and its stack stay resident until the
+// driver returns or the process exits. Closing the file from another goroutine
+// does not unblock it either.
+//
+// What the deadline buys is therefore narrower than "the read is abandoned
+// safely": it buys the SCRAPE LOOP not being the thing left waiting, so every
+// other collector still runs on time. The abandoned goroutine is a real leak,
+// and bounding it is the caller's job -- see the wedged set below, which is
+// what keeps it to one goroutine per stuck file rather than one per stuck file
+// per scrape, forever.
+//
+// The channel is buffered so a read that finishes after the deadline can still
+// send and exit, rather than blocking on a receiver that is long gone.
+func deadlined[T any](ctx context.Context, timeout time.Duration, fn func() (T, error)) (T, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	type result struct {
-		data []byte
-		err  error
+		val T
+		err error
 	}
 	done := make(chan result, 1)
 
 	go func() {
-		data, err := os.ReadFile(path)
-		done <- result{data, err}
+		v, err := fn()
+		done <- result{v, err}
 	}()
 
 	select {
 	case <-ctx.Done():
-		return "", fmt.Errorf("read %s: %w", path, ctx.Err())
+		var zero T
+		return zero, ctx.Err()
 	case r := <-done:
-		if r.err != nil {
-			return "", r.err
-		}
-		return strings.TrimSpace(string(r.data)), nil
+		return r.val, r.err
 	}
+}
+
+// markWedged records a path whose read did not return in time, so no later
+// scrape reads it again.
+//
+// This is what makes the deadline's cost bounded. Without it, a driver stuck
+// forever -- the failure mode this whole mechanism exists for -- leaks one
+// goroutine every 60s for the life of the agent, and a long-running agent on a
+// host with a bad sensor accumulates thousands.
+func (s *Sensors) markWedged(path string) {
+	if s.wedged == nil {
+		s.wedged = make(map[string]bool)
+	}
+	s.wedged[path] = true
+	slog.Warn("hwmon read timed out; abandoning this path for the life of the agent",
+		"path", path, "timeout", s.readTimeout)
+}
+
+// readTrimmed reads a sysfs file under a deadline and trims its trailing
+// newline.
+func (s *Sensors) readTrimmed(ctx context.Context, path string) (string, error) {
+	if s.wedged[path] {
+		return "", errWedged
+	}
+
+	data, err := deadlined(ctx, s.readTimeout, func() ([]byte, error) {
+		return os.ReadFile(path)
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		s.markWedged(path)
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// readDir lists a directory under the same deadline as a file read.
+//
+// The hwmon tree is sysfs, so a ReadDir on it is as capable of blocking on a
+// wedged driver as a read of one of its files -- and this one is worse,
+// because it happens before any per-file deadline could apply and would hold
+// the entire scrape loop.
+func (s *Sensors) readDir(ctx context.Context, path string) ([]os.DirEntry, error) {
+	if s.wedged[path] {
+		return nil, errWedged
+	}
+
+	entries, err := deadlined(ctx, s.readTimeout, func() ([]os.DirEntry, error) {
+		return os.ReadDir(path)
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		s.markWedged(path)
+		return nil, fmt.Errorf("read dir %s: %w", path, err)
+	}
+	return entries, err
 }

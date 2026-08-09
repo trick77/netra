@@ -76,8 +76,28 @@ type Smart struct {
 	lastRun time.Time
 	hasRun  bool
 
+	// failures counts consecutive failed scans, which sets how long to wait
+	// before the next attempt. Reset to zero by any successful scan.
+	failures int
+
 	unavailable bool
 }
+
+// failureBackoff is the wait after a failed --scan, doubling per consecutive
+// failure up to the collector's own interval.
+//
+// A transient failure -- smartctl not yet installed, a device node appearing
+// late in boot, a momentary EBUSY -- must not cost a full hour of SMART data
+// and pin the no-device-access capability for that hour, which is what setting
+// lastRun before the run did. But a host where SMART is permanently
+// unavailable must not be probed every 60s either.
+//
+// Retrying `--scan` is cheap in the way that matters: it enumerates devices
+// and does NOT wake sleeping drives. Only `--all DEV` spins a drive up, and
+// that only runs for devices a successful scan returned. So the fast retry
+// costs nothing on the host where it fires most often -- the one with no
+// drives to wake.
+const failureBackoff = time.Minute
 
 // NewSmart builds a Smart collector.
 func NewSmart(interval time.Duration, run SmartRunner) *Smart {
@@ -101,7 +121,28 @@ func (s *Smart) due() bool {
 	if !s.hasRun {
 		return true
 	}
-	return s.now().Sub(s.lastRun) >= s.interval
+	return s.now().Sub(s.lastRun) >= s.wait()
+}
+
+// wait is how long to hold off before the next attempt: the full interval
+// after a success, an exponentially growing but interval-capped delay after
+// consecutive failures.
+//
+// Capping at the interval is what keeps a host with no smartctl at all from
+// being probed more often than a host with working drives. It converges there
+// after six failures rather than costing an hour after the first one.
+func (s *Smart) wait() time.Duration {
+	if s.failures == 0 {
+		return s.interval
+	}
+
+	backoff := failureBackoff << min(s.failures-1, 16)
+	if backoff <= 0 || backoff > s.interval {
+		// Also catches the shift overflowing into a negative duration on a
+		// host that has been failing for a very long time.
+		return s.interval
+	}
+	return backoff
 }
 
 // Name implements Collector.
@@ -123,25 +164,39 @@ func (s *Smart) Capabilities() map[string]string {
 	return nil
 }
 
+// fail records a scan that did not produce a device list, so the next attempt
+// comes sooner than the full interval.
+func (s *Smart) fail() {
+	s.lastRun, s.hasRun = s.now(), true
+	s.failures++
+	s.unavailable = true
+}
+
 // Collect implements Collector.
 func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	if !s.due() {
 		return &Result{}, nil
 	}
-	s.lastRun, s.hasRun = s.now(), true
 
+	// lastRun is stamped AFTER the scan, together with the outcome. Stamping
+	// it first made every failure cost a full interval: one transient --scan
+	// error lost an hour of SMART data and pinned the no-device-access
+	// capability for that hour, even though the next scrape would have
+	// succeeded.
 	raw, err := s.run(ctx, "--json", "--scan")
 	if err != nil {
-		s.unavailable = true
+		s.fail()
 		return &Result{}, nil
 	}
-	s.unavailable = false
 
 	var scan smartctlScan
 	if err := json.Unmarshal(raw, &scan); err != nil {
-		s.unavailable = true
+		s.fail()
 		return &Result{}, nil
 	}
+
+	s.lastRun, s.hasRun = s.now(), true
+	s.failures, s.unavailable = 0, false
 
 	ts := time.Now().UnixMilli()
 	var rows []*netrav1.SmartAttribute

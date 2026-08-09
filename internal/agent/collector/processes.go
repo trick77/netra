@@ -193,6 +193,14 @@ func (p *Processes) Collect(_ context.Context) (*Result, error) {
 // memory, so a process heavy in either dimension is reported. Taking the top-N
 // by one alone would hide a memory hog that uses no CPU, which is the case an
 // operator most often goes looking for.
+//
+// The two rankings are INDEPENDENT passes over the same rows, not a tiebreak
+// applied after the CPU one, and that is what makes the unset CpuPct of a
+// process with no baseline harmless here. Such a row sorts as 0 and loses the
+// CPU ranking -- correctly, since there is nothing to rank it on yet -- but it
+// competes for a memory slot on equal terms. So a large process that started
+// since the last scrape is still reported on a churn-heavy host, on the
+// strength of the memory it holds this instant.
 func topByCPUAndMemory(rows []*netrav1.ProcessSample) []*netrav1.ProcessSample {
 	if len(rows) <= topN {
 		return rows

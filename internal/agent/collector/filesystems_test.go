@@ -36,10 +36,10 @@ func fsRow(t *testing.T, rows []*netrav1.FilesystemSample, label string) *netrav
 
 func TestFilesystemsReportsUsagePerMount(t *testing.T) {
 	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
-		"/":            {Total: 1000, Free: 400, InodesTotal: 100, InodesFree: 60, DeviceID: 1},
-		"/data":        {Total: 2000, Free: 500, InodesTotal: 200, InodesFree: 50, DeviceID: 2},
-		"/run":         {Total: 500, Free: 250, InodesTotal: 50, InodesFree: 25, DeviceID: 3},
-		"/mnt/my disk": {Total: 300, Free: 100, InodesTotal: 30, InodesFree: 10, DeviceID: 4},
+		"/":            {Total: 1000, Free: 400, Used: 600, InodesTotal: 100, InodesFree: 60, DeviceID: 1},
+		"/data":        {Total: 2000, Free: 500, Used: 1500, InodesTotal: 200, InodesFree: 50, DeviceID: 2},
+		"/run":         {Total: 500, Free: 250, Used: 250, InodesTotal: 50, InodesFree: 25, DeviceID: 3},
+		"/mnt/my disk": {Total: 300, Free: 100, Used: 200, InodesTotal: 30, InodesFree: 10, DeviceID: 4},
 	}))
 
 	res, err := testee.Collect(context.Background())
@@ -72,9 +72,9 @@ func TestFilesystemsReportsUsagePerMount(t *testing.T) {
 // of the bind mount -- and a container host has many.
 func TestFilesystemsDedupesBindMountsByDeviceID(t *testing.T) {
 	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
-		"/":               {Total: 1000, Free: 400, DeviceID: 1},
-		"/var/lib/docker": {Total: 1000, Free: 400, DeviceID: 1}, // same device
-		"/data":           {Total: 2000, Free: 500, DeviceID: 2},
+		"/":               {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
+		"/var/lib/docker": {Total: 1000, Free: 400, Used: 600, DeviceID: 1}, // same device
+		"/data":           {Total: 2000, Free: 500, Used: 1500, DeviceID: 2},
 	}))
 
 	res, err := testee.Collect(context.Background())
@@ -99,8 +99,8 @@ func TestFilesystemsDedupesBindMountsByDeviceID(t *testing.T) {
 // break things.
 func TestFilesystemsExcludesPseudoFilesystemsButKeepsTmpfs(t *testing.T) {
 	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
-		"/":    {Total: 1000, Free: 400, DeviceID: 1},
-		"/run": {Total: 500, Free: 250, DeviceID: 3},
+		"/":    {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
+		"/run": {Total: 500, Free: 250, Used: 250, DeviceID: 3},
 	}))
 
 	res, err := testee.Collect(context.Background())
@@ -125,7 +125,7 @@ func TestFilesystemsExcludesPseudoFilesystemsButKeepsTmpfs(t *testing.T) {
 // a rollup averaging zeros in would understate every host.
 func TestFilesystemsLeavesIOUnsetRatherThanZero(t *testing.T) {
 	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
-		"/": {Total: 1000, Free: 400, DeviceID: 1},
+		"/": {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
 	}))
 
 	res, err := testee.Collect(context.Background())
@@ -146,7 +146,7 @@ func TestFilesystemsLeavesIOUnsetRatherThanZero(t *testing.T) {
 // other filesystems their reading.
 func TestFilesystemsSkipsAnUnstatableMount(t *testing.T) {
 	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
-		"/": {Total: 1000, Free: 400, DeviceID: 1},
+		"/": {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
 		// /broken deliberately absent from the table: statfs will error.
 	}))
 
@@ -167,7 +167,7 @@ func TestFilesystemsSkipsAnUnstatableMount(t *testing.T) {
 // fail on every such mount.
 func TestFilesystemsUnescapesMountpoints(t *testing.T) {
 	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
-		"/mnt/my disk": {Total: 300, Free: 100, DeviceID: 4},
+		"/mnt/my disk": {Total: 300, Free: 100, Used: 200, DeviceID: 4},
 	}))
 
 	res, err := testee.Collect(context.Background())
@@ -192,5 +192,38 @@ func TestFilesystemsReportsAnUnreadableMountTable(t *testing.T) {
 	}
 	if res != nil {
 		t.Errorf("Collect returned %+v alongside an error; want nil", res)
+	}
+}
+
+// On a filesystem with a root reserve, used and free are independent numbers
+// that do NOT sum to total.
+//
+// ext4 reserves 5% for root by default. Those blocks hold no data, so they are
+// not used; an unprivileged process cannot allocate them, so they are not
+// free. Deriving used as total - free would count the reserve as occupied and
+// overstate consumption on every default ext4 filesystem -- and disagree with
+// the df output an operator checks the number against.
+//
+// 1000 total, 50 reserved: 400 available to anyone, 450 not holding data, so
+// used is 550 and free is 400. Their sum is 950, and that is correct.
+func TestFilesystemsDoesNotCountTheRootReserveAsUsed(t *testing.T) {
+	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+		"/": {Total: 1000, Free: 400, Used: 550, DeviceID: 1},
+	}))
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	root := fsRow(t, res.Filesystems, "/")
+	if got := root.GetUsed(); got != 550 {
+		t.Errorf("/ used = %d, want 550 -- total - free (600) counts the root reserve as used", got)
+	}
+	if got := root.GetFree(); got != 400 {
+		t.Errorf("/ free = %d, want 400 -- the reserve is not available either", got)
+	}
+	if root.GetUsed()+root.GetFree() == root.GetTotal() {
+		t.Error("used + free = total, so one of them absorbed the root reserve")
 	}
 }

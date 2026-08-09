@@ -31,13 +31,20 @@ func SystemStatfs(mountpoint string) (FsStat, error) {
 	// Bsize is the block size the counts below are expressed in.
 	bs := uint64(fs.Bsize)
 
-	// Bavail rather than Bfree: Bfree includes the blocks reserved for root,
-	// which an unprivileged process cannot use. Reporting Bfree would show
-	// free space the host cannot actually give out, so a "disk full" alert
-	// would fire late.
+	// Free is Bavail, not Bfree: Bfree includes the blocks reserved for root,
+	// which an unprivileged process cannot use. Reporting Bfree as free would
+	// show space the host cannot actually give out, so a "disk full" alert
+	// would fire late -- after writes had already started failing.
+	//
+	// Used is measured from Bfree for the mirror-image reason, and is NOT
+	// Total - Free. The root reserve holds no data, so counting it as used
+	// would overstate consumption by 5% on every default ext4 filesystem and
+	// disagree with the df output an operator checks it against. The two
+	// therefore do not sum to Total; FsStat documents why that is correct.
 	return FsStat{
 		Total:       fs.Blocks * bs,
 		Free:        fs.Bavail * bs,
+		Used:        (fs.Blocks - fs.Bfree) * bs,
 		InodesTotal: fs.Files,
 		InodesFree:  fs.Ffree,
 		DeviceID:    uint64(st.Dev),

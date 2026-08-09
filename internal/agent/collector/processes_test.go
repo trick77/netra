@@ -206,3 +206,53 @@ func TestProcessesCountsMemoryOfProcessesWithNoBaseline(t *testing.T) {
 		t.Errorf("postgres cpu_pct = %v with no baseline; want unset", pg.GetCpuPct())
 	}
 }
+
+// A process with no baseline is ranked by MEMORY on its own merits, even
+// though its unset CPU sorts as 0.
+//
+// The concern this answers: topByCPUAndMemory sorts on GetCpuPct(), which
+// returns 0 for the unset field a process with no baseline carries, so on a
+// churn-heavy host every new process sorts to the bottom of the CPU ranking.
+// It survives anyway because the top-N by memory is an INDEPENDENT ranking
+// over the same rows, not a tiebreak applied after the CPU one -- which is
+// precisely why the union exists. Reducing it to a single CPU-ordered list
+// would hide the case below.
+//
+// The fixture has thirteen names against a topN of ten, so the ranking has to
+// discard something and the test can tell that it discarded the right rows.
+func TestProcessesRanksANewProcessByMemoryDespiteUnsetCPU(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee := collector.NewProcesses("testdata/processes/topn/first", true, time.Minute)
+	procsAt(t, testee, base)
+
+	// The second tree advances all twelve and adds newhog, which the first
+	// scrape never saw and which holds more memory than the rest combined.
+	testee.SetProcRootForTest("testdata/processes/topn/second")
+	res := procsAt(t, testee, base.Add(10*time.Second))
+
+	hog := procRow(t, res.Processes, "newhog")
+	if got := hog.GetMemBytes(); got != 100000*4096 {
+		t.Errorf("newhog mem_bytes = %d, want %d", got, 100000*4096)
+	}
+	if hog.CpuPct != nil {
+		t.Errorf("newhog cpu_pct = %v with no baseline; want unset", hog.GetCpuPct())
+	}
+
+	// p01 and p02 are the two lightest in BOTH dimensions, so they are the
+	// rows the ranking is supposed to drop. If either survives while newhog
+	// does not, the union collapsed into a single ordering.
+	names := make(map[string]bool, len(res.Processes))
+	for _, r := range res.Processes {
+		names[r.GetName()] = true
+	}
+	for _, dropped := range []string{"p01", "p02"} {
+		if names[dropped] {
+			t.Errorf("%s was reported; it is bottom of both rankings and must be dropped", dropped)
+		}
+	}
+	// Everything from p03 up wins a slot on CPU, and newhog wins one on
+	// memory: eleven rows out of thirteen names.
+	if len(res.Processes) != 11 {
+		t.Errorf("reported %d rows, want 11", len(res.Processes))
+	}
+}

@@ -47,6 +47,14 @@ LABEL org.opencontainers.image.source="https://github.com/trick77/netra" \
 # (smartctl 7.5 2025-04-30 r5714), so bumping the base surfaces the version
 # change in the diff of this comment.
 # ca-certificates is required: the agent POSTs telemetry to the hub over HTTPS.
+#
+# There is deliberately nothing here for the systemd collector, and adding
+# something would not work: systemd is not packaged for Alpine at any version,
+# and a bind-mounted systemctl from the host is glibc-linked and will not
+# execute against musl. The collector speaks D-Bus directly instead, so all it
+# needs is the system bus socket mounted in -- no binary at all. It reported a
+# "systemd: unavailable" capability on every host for exactly as long as it
+# shelled out to systemctl.
 RUN apk add --no-cache ca-certificates smartmontools
 
 COPY --from=build /out/netra-agent /usr/local/bin/netra-agent
