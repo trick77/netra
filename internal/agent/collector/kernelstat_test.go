@@ -1,7 +1,6 @@
 package collector_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -38,7 +37,7 @@ func TestKernelStatFirstCollectEmitsGaugesButNoRates(t *testing.T) {
 	k := newKernelStat(t, "testdata/proc1", fixedClock(time.Unix(1000, 0), time.Minute))
 
 	var sample netrav1.HostSample
-	if err := k.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(k, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -67,14 +66,14 @@ func TestKernelStatSecondCollectComputesRates(t *testing.T) {
 	k := newKernelStat(t, "testdata/proc1", fixedClock(time.Unix(1000, 0), time.Minute))
 
 	var first netrav1.HostSample
-	if err := k.Collect(context.Background(), &first); err != nil {
+	if err := collectInto(k, &first); err != nil {
 		t.Fatalf("first Collect: %v", err)
 	}
 
 	k.SetProcRootForTest("testdata/proc2")
 
 	var sample netrav1.HostSample
-	if err := k.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(k, &sample); err != nil {
 		t.Fatalf("second Collect: %v", err)
 	}
 
@@ -110,7 +109,7 @@ func TestKernelStatCounterResetProducesNoRatesButKeepsGauges(t *testing.T) {
 	k := newKernelStat(t, "testdata/proc2", fixedClock(time.Unix(1000, 0), time.Minute))
 
 	var first netrav1.HostSample
-	if err := k.Collect(context.Background(), &first); err != nil {
+	if err := collectInto(k, &first); err != nil {
 		t.Fatalf("first Collect: %v", err)
 	}
 
@@ -118,7 +117,7 @@ func TestKernelStatCounterResetProducesNoRatesButKeepsGauges(t *testing.T) {
 	k.SetProcRootForTest("testdata/proc1")
 
 	var sample netrav1.HostSample
-	if err := k.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(k, &sample); err != nil {
 		t.Fatalf("second Collect: %v", err)
 	}
 
@@ -155,14 +154,14 @@ func TestKernelStatNonAdvancingClockProducesNoRates(t *testing.T) {
 			k := newKernelStat(t, "testdata/proc1", fixedClock(time.Unix(1000, 0), tc.step))
 
 			var first netrav1.HostSample
-			if err := k.Collect(context.Background(), &first); err != nil {
+			if err := collectInto(k, &first); err != nil {
 				t.Fatalf("first Collect: %v", err)
 			}
 
 			k.SetProcRootForTest("testdata/proc2")
 
 			var sample netrav1.HostSample
-			if err := k.Collect(context.Background(), &sample); err != nil {
+			if err := collectInto(k, &sample); err != nil {
 				t.Fatalf("second Collect: %v", err)
 			}
 
@@ -186,7 +185,7 @@ func TestKernelStatMissingLinesStayUnsetWithoutError(t *testing.T) {
 	k := newKernelStat(t, dir, fixedClock(time.Unix(1000, 0), time.Minute))
 
 	var sample netrav1.HostSample
-	if err := k.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(k, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -208,7 +207,7 @@ func TestKernelStatCounterAppearingLateProducesNoRate(t *testing.T) {
 	k := newKernelStat(t, dir, fixedClock(time.Unix(1000, 0), time.Minute))
 
 	var first netrav1.HostSample
-	if err := k.Collect(context.Background(), &first); err != nil {
+	if err := collectInto(k, &first); err != nil {
 		t.Fatalf("first Collect: %v", err)
 	}
 
@@ -216,7 +215,7 @@ func TestKernelStatCounterAppearingLateProducesNoRate(t *testing.T) {
 	writeFile(t, dir+"/stat", "cpu  1 2 3 4 5 6 7 8 0 0\nintr 960\nctxt 5000000\n")
 
 	var sample netrav1.HostSample
-	if err := k.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(k, &sample); err != nil {
 		t.Fatalf("second Collect: %v", err)
 	}
 
@@ -243,7 +242,7 @@ func TestKernelStatMissingProcRootIsAnError(t *testing.T) {
 	k := collector.NewKernelStat(t.TempDir(), time.Minute)
 
 	var sample netrav1.HostSample
-	if err := k.Collect(context.Background(), &sample); err == nil {
+	if err := collectInto(k, &sample); err == nil {
 		t.Fatal("Collect() = nil, want an error when /proc/stat cannot be opened")
 	}
 }

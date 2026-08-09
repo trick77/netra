@@ -48,6 +48,25 @@ type Config struct {
 	// case it gets wrong. setup-agent.sh already knows what it rendered, so it
 	// writes the answer here and the guessing is skipped entirely.
 	PidHost bool
+
+	// CgroupRoot is the mounted cgroup v2 hierarchy the container collector
+	// reads. cgroup v1 is a permanent non-goal (spec §1).
+	CgroupRoot string
+
+	// DpkgStatus and ApkInstalled are the package databases. Whichever exists
+	// decides the format; a host with neither reports an unsupported-format
+	// capability rather than failing.
+	DpkgStatus   string
+	ApkInstalled string
+
+	// SensorsTimeout bounds a single hwmon read. A wedged driver blocks
+	// read(2) indefinitely, and without a deadline that stalls the whole
+	// scrape loop -- every other collector included.
+	SensorsTimeout time.Duration
+
+	// SmartInterval is how often smartctl runs. Long on purpose: SMART values
+	// change slowly and reading them spins up sleeping drives.
+	SmartInterval time.Duration
 }
 
 // Load reads the environment and applies defaults.
@@ -64,6 +83,10 @@ func Load() (Config, error) {
 		LogLevel: envOr("NETRA_LOG_LEVEL", "info"),
 		UtmpPath: envOr("NETRA_UTMP_PATH", "/var/run/utmp"),
 		PidHost:  boolEnv("NETRA_PID_HOST"),
+
+		CgroupRoot:   envOr("NETRA_CGROUP_ROOT", "/sys/fs/cgroup"),
+		DpkgStatus:   envOr("NETRA_DPKG_STATUS", "/var/lib/dpkg/status"),
+		ApkInstalled: envOr("NETRA_APK_INSTALLED", "/lib/apk/db/installed"),
 	}
 
 	if cfg.HubURL == "" {
@@ -74,6 +97,20 @@ func Load() (Config, error) {
 	}
 
 	var err error
+
+	// Two seconds is generous for a sysfs read that normally takes
+	// microseconds, and short enough that a wedged driver costs one scrape
+	// rather than the whole loop.
+	if cfg.SensorsTimeout, err = durationOr("NETRA_SENSORS_TIMEOUT", 2*time.Second); err != nil {
+		return Config{}, err
+	}
+
+	// One hour: SMART values move slowly, and reading them wakes sleeping
+	// drives.
+	if cfg.SmartInterval, err = durationOr("NETRA_SMART_INTERVAL", time.Hour); err != nil {
+		return Config{}, err
+	}
+
 	// The buffer window is coupled to the hub's continuous-aggregate
 	// start_offset (MaxBufferWindow, 6h). Raising it past that would silently
 	// exclude replayed data from rollups forever, so it is rejected here.

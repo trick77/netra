@@ -67,9 +67,10 @@ func TestIntegrationRefreshPolicyStartOffsetExceedsBufferWindow(t *testing.T) {
 	// This literal is deliberately hard-coded rather than derived: a new
 	// hypertable whose refresh policy is forgotten is a permanently silent
 	// failure, so adding one must break this test until it is counted.
-	if seen != 14 {
-		t.Fatalf("refresh policies found = %d, want 14 "+
-			"(host_samples, agent_samples and the five Group 1 tables, 5m and 1h each)", seen)
+	if seen != 18 {
+		t.Fatalf("refresh policies found = %d, want 18 "+
+			"(host_samples, agent_samples, the five Group 1 tables, plus "+
+			"container_samples and filesystem_samples, 5m and 1h each)", seen)
 	}
 }
 
@@ -197,7 +198,7 @@ func TestIntegrationRawRetentionExceedsRefreshLag(t *testing.T) {
 	// policies too, and Timescale reports those under the aggregate's own
 	// view name rather than the internal materialisation hypertable — hence
 	// the anti-join above rather than a name pattern.
-	if seen != 7 {
+	if seen != 11 {
 		t.Fatalf("raw retention policies found = %d, want 7 "+
 			"(host_samples, agent_samples and the five Group 1 tables)", seen)
 	}
@@ -228,7 +229,7 @@ func TestIntegrationEveryContinuousAggregateHasRetention(t *testing.T) {
 		t.Fatalf("count aggregate retention policies: %v", err)
 	}
 
-	if aggregates != 14 {
+	if aggregates != 18 {
 		t.Fatalf("continuous aggregates found = %d, want 14", aggregates)
 	}
 	if policies != aggregates {

@@ -34,23 +34,25 @@ func (l *Load) Name() string { return "load" }
 func (l *Load) Interval() time.Duration { return l.interval }
 
 // Collect implements Collector.
-func (l *Load) Collect(_ context.Context, sample *netrav1.HostSample) error {
+func (l *Load) Collect(_ context.Context) (*Result, error) {
+	sample := &netrav1.HostSample{}
+
 	path := filepath.Join(l.procRoot, "loadavg")
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
 	fields := strings.Fields(string(raw))
 	if len(fields) < 3 {
-		return fmt.Errorf("malformed %s: %q", path, string(raw))
+		return nil, fmt.Errorf("malformed %s: %q", path, string(raw))
 	}
 
 	targets := []**float64{&sample.Load1, &sample.Load5, &sample.Load15}
 	for i, target := range targets {
 		v, err := strconv.ParseFloat(fields[i], 64)
 		if err != nil {
-			return fmt.Errorf("parse %s field %d: %w", path, i, err)
+			return nil, fmt.Errorf("parse %s field %d: %w", path, i, err)
 		}
 		value := v
 		*target = &value
@@ -60,7 +62,7 @@ func (l *Load) Collect(_ context.Context, sample *netrav1.HostSample) error {
 		sample.UptimeS = &up
 	}
 
-	return nil
+	return &Result{Host: sample}, nil
 }
 
 // readUptime returns whole seconds of host uptime, and false if unreadable.

@@ -56,10 +56,10 @@ func (c *CPU) Interval() time.Duration { return c.interval }
 func (c *CPU) SetProcRootForTest(root string) { c.procRoot = root }
 
 // Collect implements Collector.
-func (c *CPU) Collect(_ context.Context, sample *netrav1.HostSample) error {
+func (c *CPU) Collect(_ context.Context) (*Result, error) {
 	cur, err := c.read()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	prev := c.prev
@@ -67,14 +67,14 @@ func (c *CPU) Collect(_ context.Context, sample *netrav1.HostSample) error {
 
 	if prev == nil {
 		// No baseline yet: report nothing rather than invent a value.
-		return nil
+		return &Result{}, nil
 	}
 
 	totalDelta := cur.total() - prev.total()
 	if cur.total() < prev.total() || totalDelta == 0 {
 		// Counters went backwards (reboot) or did not move. Either way there
 		// is no meaningful percentage to report.
-		return nil
+		return &Result{}, nil
 	}
 
 	pct := func(a, b uint64) *float64 {
@@ -85,20 +85,19 @@ func (c *CPU) Collect(_ context.Context, sample *netrav1.HostSample) error {
 		return &v
 	}
 
-	busyDelta := float64(cur.busy() - prev.busy())
 	if cur.busy() < prev.busy() {
-		return nil
+		return &Result{}, nil
 	}
-	totalPct := busyDelta / float64(totalDelta) * 100
+	totalPct := float64(cur.busy()-prev.busy()) / float64(totalDelta) * 100
 
-	sample.CpuTotal = &totalPct
-	sample.CpuUser = pct(cur.user, prev.user)
-	sample.CpuSystem = pct(cur.system, prev.system)
-	sample.CpuIowait = pct(cur.iowait, prev.iowait)
-	sample.CpuSteal = pct(cur.steal, prev.steal)
-	sample.CpuIdle = pct(cur.idle, prev.idle)
-
-	return nil
+	return &Result{Host: &netrav1.HostSample{
+		CpuTotal:  &totalPct,
+		CpuUser:   pct(cur.user, prev.user),
+		CpuSystem: pct(cur.system, prev.system),
+		CpuIowait: pct(cur.iowait, prev.iowait),
+		CpuSteal:  pct(cur.steal, prev.steal),
+		CpuIdle:   pct(cur.idle, prev.idle),
+	}}, nil
 }
 
 func (c *CPU) read() (cpuTimes, error) {

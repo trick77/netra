@@ -515,6 +515,147 @@ CREATE UNIQUE INDEX IF NOT EXISTS events_host_id_ts_type_subject_key
 -- "What happened on this host recently", the only way this table is read.
 CREATE INDEX IF NOT EXISTS events_host_id_ts_idx ON events (host_id, ts DESC);
 
+-- ------------------------------------------------- dimensions for Groups 2-4
+
+-- Every dimension below follows the shape sensors established: an identity
+-- surrogate id that hypertables reference, a natural key unique WITHIN a host
+-- (two hosts both having an "sda" is normal), and an (id, host_id) index so a
+-- sample table can declare a composite foreign key and never attribute one
+-- host's entity to another's row.
+
+-- container_key is the natural key: compose project + service, falling back to
+-- the container name (spec 6.2). Deliberately NOT the Docker id, which changes
+-- on every recreate -- keying on it would restart the history of a service
+-- that merely got a new image.
+CREATE TABLE IF NOT EXISTS containers (
+    id            INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    host_id       INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    container_key TEXT NOT NULL,
+    name          TEXT,
+    image         TEXT,
+    is_agent      BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS containers_host_id_container_key_key
+    ON containers (host_id, container_key);
+CREATE UNIQUE INDEX IF NOT EXISTS containers_id_host_id_key
+    ON containers (id, host_id);
+
+CREATE TABLE IF NOT EXISTS filesystems (
+    id         INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    host_id    INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    label      TEXT NOT NULL,
+    mountpoint TEXT,
+    -- st_dev of the mountpoint. Bind mounts of one filesystem share it, which
+    -- is how the collector dedups them -- counting both would overstate the
+    -- host's disk usage by however many bind mounts it happens to have.
+    device_id  BIGINT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS filesystems_host_id_label_key
+    ON filesystems (host_id, label);
+CREATE UNIQUE INDEX IF NOT EXISTS filesystems_id_host_id_key
+    ON filesystems (id, host_id);
+
+CREATE TABLE IF NOT EXISTS devices (
+    id      INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    host_id INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    device  TEXT NOT NULL,
+    model   TEXT,
+    serial  TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS devices_host_id_device_key
+    ON devices (host_id, device);
+CREATE UNIQUE INDEX IF NOT EXISTS devices_id_host_id_key
+    ON devices (id, host_id);
+
+CREATE TABLE IF NOT EXISTS systemd_units (
+    id        INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    host_id   INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    unit_name TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS systemd_units_host_id_unit_name_key
+    ON systemd_units (host_id, unit_name);
+CREATE UNIQUE INDEX IF NOT EXISTS systemd_units_id_host_id_key
+    ON systemd_units (id, host_id);
+
+-- address is INET rather than TEXT so subnet queries work -- "every host with
+-- an address in 172.19.0.0/16", "every host with a public IPv4". As text those
+-- are string matches and get the answer wrong.
+--
+-- scope is derived BY THE HUB from the address (spec 5.2). The agent reports
+-- raw facts only, so loopback/private/public classification is one
+-- implementation that can be corrected without redeploying every agent.
+-- IPv4 and IPv6 are treated identically throughout.
+CREATE TABLE IF NOT EXISTS host_addresses (
+    host_id     INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    iface       TEXT NOT NULL,
+    if_index    INTEGER,
+    address     INET NOT NULL,
+    family      SMALLINT NOT NULL,
+    scope       TEXT,
+    vrf         TEXT,
+    description TEXT,
+    first_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (host_id, iface, address)
+);
+
+-- arch is in the key because a host can legitimately carry the same package
+-- for two architectures (amd64 and i386 on a multiarch Debian), and they are
+-- different installations with their own versions.
+CREATE TABLE IF NOT EXISTS host_packages (
+    host_id    INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    version    TEXT NOT NULL,
+    arch       TEXT NOT NULL DEFAULT '',
+    format     TEXT NOT NULL,
+    size_bytes BIGINT,
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (host_id, name, arch)
+);
+
+-- systemd_unit_events and package_events are separate from `events` because
+-- both carry structured, queryable columns that would otherwise be buried in
+-- jsonb, and both arrive in bursts large enough to want their own indexes
+-- (spec 5.2).
+--
+-- Plain Postgres tables, NOT hypertables: a unit changes state a handful of
+-- times a month. They must not move the counts in rollup_test.go.
+CREATE TABLE IF NOT EXISTS systemd_unit_events (
+    host_id  INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    unit_id  INTEGER NOT NULL,
+    ts       TIMESTAMPTZ NOT NULL,
+    state    TEXT NOT NULL,
+    substate TEXT,
+    PRIMARY KEY (host_id, unit_id, ts),
+    FOREIGN KEY (unit_id, host_id) REFERENCES systemd_units (id, host_id) ON DELETE CASCADE
+);
+
+-- The composite foreign key's cascade path needs its own index, for the same
+-- reason sensor_samples does: deleting a host cascades to systemd_units first,
+-- and each deleted unit then searches for its events. The primary key leads
+-- with host_id, so without this that search is a sequential scan per unit.
+CREATE INDEX IF NOT EXISTS systemd_unit_events_unit_id_host_id_idx
+    ON systemd_unit_events (unit_id, host_id);
+
+CREATE TABLE IF NOT EXISTS package_events (
+    host_id      INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    ts           TIMESTAMPTZ NOT NULL,
+    name         TEXT NOT NULL,
+    action       TEXT NOT NULL,
+    from_version TEXT,
+    to_version   TEXT,
+    PRIMARY KEY (host_id, ts, name)
+);
+
+-- "What changed on this host recently", the only way this table is read.
+CREATE INDEX IF NOT EXISTS package_events_host_id_ts_idx
+    ON package_events (host_id, ts DESC);
+
 -- --------------------------------------------------------------- per-core CPU
 
 -- All cores, always -- ~800 series at target scale, which the earlier
@@ -904,3 +1045,254 @@ SELECT add_continuous_aggregate_policy('collector_samples_1h',
 SELECT add_retention_policy('collector_samples',    INTERVAL '7 days',  if_not_exists => TRUE);
 SELECT add_retention_policy('collector_samples_5m', INTERVAL '30 days', if_not_exists => TRUE);
 SELECT add_retention_policy('collector_samples_1h', INTERVAL '90 days', if_not_exists => TRUE);
+
+-- ------------------------------------------------------------- containers
+
+-- container_id references containers.id, never the Docker id: a recreate
+-- issues a new Docker id for the same service, and keying history on it would
+-- restart every series whenever an image is bumped.
+--
+-- mem_used already has cache and inactive_file subtracted by the agent. Raw
+-- cgroup memory.current counts the page cache as consumption, so a container
+-- that merely read files would look like it is holding that memory.
+CREATE TABLE IF NOT EXISTS container_samples (
+    host_id      INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    ts           TIMESTAMPTZ NOT NULL,
+    container_id INTEGER NOT NULL,
+    cpu_pct      DOUBLE PRECISION,
+    mem_used     BIGINT,
+    mem_limit    BIGINT,
+    net_rx       DOUBLE PRECISION,
+    net_tx       DOUBLE PRECISION,
+    io_read      DOUBLE PRECISION,
+    io_write     DOUBLE PRECISION,
+    PRIMARY KEY (host_id, ts, container_id),
+    FOREIGN KEY (container_id, host_id) REFERENCES containers (id, host_id) ON DELETE CASCADE
+);
+
+SELECT create_hypertable('container_samples', by_range('ts'), if_not_exists => TRUE);
+SELECT set_chunk_time_interval('container_samples', INTERVAL '1 day');
+
+-- The composite foreign key's cascade path needs its own index, exactly as
+-- sensor_samples does: deleting a host cascades to containers first, and each
+-- deleted container then scans every chunk for its samples. The primary key
+-- leads with host_id, not container_id, so without this that is a sequential
+-- scan per chunk per container inside DELETE /api/v1/hosts/{id}.
+CREATE INDEX IF NOT EXISTS container_samples_container_id_host_id_idx
+    ON container_samples (container_id, host_id);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS container_samples_5m
+    WITH (timescaledb.continuous) AS
+SELECT host_id,
+       container_id,
+       time_bucket(INTERVAL '5 minutes', ts) AS bucket,
+       avg(cpu_pct)   AS cpu_pct_avg,
+       max(cpu_pct)   AS cpu_pct_max,
+       avg(mem_used)  AS mem_used_avg,
+       max(mem_used)  AS mem_used_max,
+       max(mem_limit) AS mem_limit,
+       avg(net_rx)    AS net_rx_avg,
+       max(net_rx)    AS net_rx_max,
+       avg(net_tx)    AS net_tx_avg,
+       max(net_tx)    AS net_tx_max,
+       avg(io_read)   AS io_read_avg,
+       max(io_read)   AS io_read_max,
+       avg(io_write)  AS io_write_avg,
+       max(io_write)  AS io_write_max
+  FROM container_samples
+ GROUP BY host_id, container_id, bucket
+WITH NO DATA;
+
+SELECT set_chunk_time_interval('container_samples_5m', INTERVAL '2 days');
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS container_samples_1h
+    WITH (timescaledb.continuous) AS
+SELECT host_id,
+       container_id,
+       time_bucket(INTERVAL '1 hour', bucket) AS bucket,
+       avg(cpu_pct_avg)  AS cpu_pct_avg,
+       max(cpu_pct_max)  AS cpu_pct_max,
+       avg(mem_used_avg) AS mem_used_avg,
+       max(mem_used_max) AS mem_used_max,
+       max(mem_limit)    AS mem_limit,
+       avg(net_rx_avg)   AS net_rx_avg,
+       max(net_rx_max)   AS net_rx_max,
+       avg(net_tx_avg)   AS net_tx_avg,
+       max(net_tx_max)   AS net_tx_max,
+       avg(io_read_avg)  AS io_read_avg,
+       max(io_read_max)  AS io_read_max,
+       avg(io_write_avg) AS io_write_avg,
+       max(io_write_max) AS io_write_max
+  FROM container_samples_5m
+ GROUP BY host_id, container_id, time_bucket(INTERVAL '1 hour', bucket)
+WITH NO DATA;
+
+SELECT set_chunk_time_interval('container_samples_1h', INTERVAL '7 days');
+
+SELECT add_continuous_aggregate_policy('container_samples_5m',
+    start_offset      => INTERVAL '6 hours',
+    end_offset        => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '5 minutes',
+    if_not_exists     => TRUE);
+
+SELECT add_continuous_aggregate_policy('container_samples_1h',
+    start_offset      => INTERVAL '12 hours',
+    end_offset        => INTERVAL '1 hour',
+    schedule_interval => INTERVAL '30 minutes',
+    if_not_exists     => TRUE);
+
+SELECT add_retention_policy('container_samples',    INTERVAL '7 days',  if_not_exists => TRUE);
+SELECT add_retention_policy('container_samples_5m', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('container_samples_1h', INTERVAL '90 days', if_not_exists => TRUE);
+
+-- ------------------------------------------------------------ filesystems
+
+-- read_bytes and write_bytes are NULL, not zero, when the st_dev -> block
+-- device mapping fails: "we could not attribute I/O to this filesystem" is a
+-- different fact from "this filesystem did no I/O", and averaging the two
+-- together would understate every host where the mapping is unavailable.
+CREATE TABLE IF NOT EXISTS filesystem_samples (
+    host_id      INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    ts           TIMESTAMPTZ NOT NULL,
+    fs_id        INTEGER NOT NULL,
+    total        BIGINT,
+    used         BIGINT,
+    free         BIGINT,
+    inodes_total BIGINT,
+    inodes_used  BIGINT,
+    read_bytes   DOUBLE PRECISION,
+    write_bytes  DOUBLE PRECISION,
+    PRIMARY KEY (host_id, ts, fs_id),
+    FOREIGN KEY (fs_id, host_id) REFERENCES filesystems (id, host_id) ON DELETE CASCADE
+);
+
+SELECT create_hypertable('filesystem_samples', by_range('ts'), if_not_exists => TRUE);
+SELECT set_chunk_time_interval('filesystem_samples', INTERVAL '1 day');
+
+CREATE INDEX IF NOT EXISTS filesystem_samples_fs_id_host_id_idx
+    ON filesystem_samples (fs_id, host_id);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS filesystem_samples_5m
+    WITH (timescaledb.continuous) AS
+SELECT host_id,
+       fs_id,
+       time_bucket(INTERVAL '5 minutes', ts) AS bucket,
+       max(total)         AS total,
+       avg(used)          AS used_avg,
+       max(used)          AS used_max,
+       min(free)          AS free_min,
+       max(inodes_total)  AS inodes_total,
+       max(inodes_used)   AS inodes_used_max,
+       avg(read_bytes)    AS read_bytes_avg,
+       max(read_bytes)    AS read_bytes_max,
+       avg(write_bytes)   AS write_bytes_avg,
+       max(write_bytes)   AS write_bytes_max
+  FROM filesystem_samples
+ GROUP BY host_id, fs_id, bucket
+WITH NO DATA;
+
+SELECT set_chunk_time_interval('filesystem_samples_5m', INTERVAL '2 days');
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS filesystem_samples_1h
+    WITH (timescaledb.continuous) AS
+SELECT host_id,
+       fs_id,
+       time_bucket(INTERVAL '1 hour', bucket) AS bucket,
+       max(total)            AS total,
+       avg(used_avg)         AS used_avg,
+       max(used_max)         AS used_max,
+       min(free_min)         AS free_min,
+       max(inodes_total)     AS inodes_total,
+       max(inodes_used_max)  AS inodes_used_max,
+       avg(read_bytes_avg)   AS read_bytes_avg,
+       max(read_bytes_max)   AS read_bytes_max,
+       avg(write_bytes_avg)  AS write_bytes_avg,
+       max(write_bytes_max)  AS write_bytes_max
+  FROM filesystem_samples_5m
+ GROUP BY host_id, fs_id, time_bucket(INTERVAL '1 hour', bucket)
+WITH NO DATA;
+
+SELECT set_chunk_time_interval('filesystem_samples_1h', INTERVAL '7 days');
+
+SELECT add_continuous_aggregate_policy('filesystem_samples_5m',
+    start_offset      => INTERVAL '6 hours',
+    end_offset        => INTERVAL '10 minutes',
+    schedule_interval => INTERVAL '5 minutes',
+    if_not_exists     => TRUE);
+
+SELECT add_continuous_aggregate_policy('filesystem_samples_1h',
+    start_offset      => INTERVAL '12 hours',
+    end_offset        => INTERVAL '1 hour',
+    schedule_interval => INTERVAL '30 minutes',
+    if_not_exists     => TRUE);
+
+SELECT add_retention_policy('filesystem_samples',    INTERVAL '7 days',  if_not_exists => TRUE);
+SELECT add_retention_policy('filesystem_samples_5m', INTERVAL '30 days', if_not_exists => TRUE);
+SELECT add_retention_policy('filesystem_samples_1h', INTERVAL '90 days', if_not_exists => TRUE);
+
+-- ------------------------------------------------------------------ SMART
+
+-- Deliberately generic: SMART attribute sets vary per drive model, so a column
+-- per attribute would need a migration for every new drive (spec 5.3).
+--
+-- RAW ONLY, and that is a decision rather than an omission. SMART is read
+-- hourly, so a 5-minute bucket holds at most one reading and a 1-hour bucket
+-- exactly one -- continuous aggregates here would restate the raw table at
+-- triple the storage and answer no question the raw table cannot.
+-- TestIntegrationRawOnlyTablesHaveNoContinuousAggregates pins this, so adding
+-- one later is a deliberate act rather than an accident.
+--
+-- Retention is 90 days, matching the 1h tier elsewhere: at one reading an hour
+-- the row count is tiny, and drive degradation is a slow trend worth keeping
+-- as long as any aggregate.
+CREATE TABLE IF NOT EXISTS smart_attributes (
+    host_id    INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    ts         TIMESTAMPTZ NOT NULL,
+    device_id  INTEGER NOT NULL,
+    attr_id    SMALLINT NOT NULL,
+    raw        BIGINT,
+    normalized SMALLINT,
+    PRIMARY KEY (host_id, ts, device_id, attr_id),
+    FOREIGN KEY (device_id, host_id) REFERENCES devices (id, host_id) ON DELETE CASCADE
+);
+
+SELECT create_hypertable('smart_attributes', by_range('ts'), if_not_exists => TRUE);
+
+-- 7 days rather than 1: at one reading an hour a day holds ~24 rows per
+-- attribute, so daily chunks would be thousands of near-empty chunks over the
+-- 90-day retention, each with its own planning cost.
+SELECT set_chunk_time_interval('smart_attributes', INTERVAL '7 days');
+
+CREATE INDEX IF NOT EXISTS smart_attributes_device_id_host_id_idx
+    ON smart_attributes (device_id, host_id);
+
+SELECT add_retention_policy('smart_attributes', INTERVAL '90 days', if_not_exists => TRUE);
+
+-- -------------------------------------------------------------- processes
+
+-- name is comm, from /proc/PID/stat -- NEVER argv. Reading cmdline or environ
+-- would capture secrets passed on command lines, and argv_guard_test.go fails
+-- the build if either name appears in a Go string literal.
+--
+-- RAW ONLY, 48 hours: the spec's stated exception (5.4). A 1-hour average of a
+-- top-N list whose membership changes between buckets is close to meaningless,
+-- and process data answers recent-past questions rather than trend ones.
+CREATE TABLE IF NOT EXISTS process_samples (
+    host_id    INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    ts         TIMESTAMPTZ NOT NULL,
+    name       TEXT NOT NULL,
+    cpu_pct    DOUBLE PRECISION,
+    mem_bytes  BIGINT,
+    -- How many processes were aggregated under this name.
+    count      INTEGER,
+    PRIMARY KEY (host_id, ts, name)
+);
+
+SELECT create_hypertable('process_samples', by_range('ts'), if_not_exists => TRUE);
+
+-- 6 hours against 48 hours of retention: a chunk is dropped only once its
+-- NEWEST row expires, so a 1-day chunk would retain up to 72 hours against a
+-- stated 48.
+SELECT set_chunk_time_interval('process_samples', INTERVAL '6 hours');
+
+SELECT add_retention_policy('process_samples', INTERVAL '48 hours', if_not_exists => TRUE);

@@ -49,12 +49,35 @@ func run() error {
 
 	collectors := []collector.Collector{
 		collector.NewCPU(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewPerCoreCPU(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewKernelStat(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewProcs(cfg.ProcRoot, cfg.PidHost, config.ScrapeInterval),
 		collector.NewNetstat(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewUsers(cfg.UtmpPath, config.ScrapeInterval),
+
+		// Group 1: no privileges, no dependencies.
+		collector.NewDiskIO(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewSensors(cfg.SysRoot, config.ScrapeInterval, cfg.SensorsTimeout),
+		collector.NewMdraid(cfg.SysRoot, config.ScrapeInterval),
+
+		// Group 2: needs network_mode: host to see the host's interfaces
+		// rather than the container's.
+		collector.NewNetwork(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewAddresses(config.ScrapeInterval, collector.SystemIfaces),
+
+		// Group 3: needs a mount.
+		collector.NewContainers(cfg.CgroupRoot, config.ScrapeInterval, collector.SystemDockerContainers),
+		collector.NewFilesystems(cfg.ProcRoot, config.ScrapeInterval, collector.SystemStatfs),
+		collector.NewSystemd(config.ScrapeInterval, collector.SystemUnits),
+		collector.NewPackages(cfg.DpkgStatus, cfg.ApkInstalled, config.ScrapeInterval),
+
+		// Group 4: privileged, opt-in. SMART gates itself to cfg.SmartInterval
+		// internally -- the scrape loop runs every collector on every tick, and
+		// waking sleeping drives once a minute would shorten their life.
+		collector.NewSmart(cfg.SmartInterval, collector.SystemSmartctl),
+		collector.NewProcesses(cfg.ProcRoot, cfg.PidHost, config.ScrapeInterval),
 	}
 
 	c := client.New(cfg, collectors)

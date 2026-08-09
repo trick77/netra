@@ -86,7 +86,9 @@ func (p *Procs) setCapability(value string) {
 }
 
 // Collect implements Collector.
-func (p *Procs) Collect(_ context.Context, sample *netrav1.HostSample) error {
+func (p *Procs) Collect(_ context.Context) (*Result, error) {
+	sample := &netrav1.HostSample{}
+
 	entries, err := os.ReadDir(p.procRoot)
 	if err != nil {
 		// An unreadable /proc leaves the field unset. It is not an error the
@@ -98,7 +100,7 @@ func (p *Procs) Collect(_ context.Context, sample *netrav1.HostSample) error {
 		// and none of them is fixed by adding pid: host. The namespace verdict
 		// is only reached below, where the tree was actually readable.
 		p.setCapability(procsCapUnavailable)
-		return nil
+		return &Result{Host: sample}, nil
 	}
 
 	count := 0
@@ -113,14 +115,14 @@ func (p *Procs) Collect(_ context.Context, sample *netrav1.HostSample) error {
 
 	if p.namespaced(count) {
 		p.setCapability(procsCapNamespaced)
-		return nil
+		return &Result{Host: sample}, nil
 	}
 
 	p.setCapability(procsCapOK)
 	n := uint32(count)
 	sample.ProcessesTotal = &n
 
-	return nil
+	return &Result{Host: sample}, nil
 }
 
 // namespaced reports whether this reading is a PID namespace's view rather

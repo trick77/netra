@@ -1,7 +1,6 @@
 package collector_test
 
 import (
-	"context"
 	"math"
 	"testing"
 	"time"
@@ -14,7 +13,7 @@ func TestLoadReadsLoadavgAndUptime(t *testing.T) {
 	c := collector.NewLoad("testdata/proc1", time.Minute)
 
 	var s netrav1.HostSample
-	if err := c.Collect(context.Background(), &s); err != nil {
+	if err := collectInto(c, &s); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -37,7 +36,7 @@ func TestLoadMissingFileIsAnError(t *testing.T) {
 	c := collector.NewLoad("testdata/does-not-exist", time.Minute)
 
 	var s netrav1.HostSample
-	if err := c.Collect(context.Background(), &s); err == nil {
+	if err := collectInto(c, &s); err == nil {
 		t.Fatal("Collect() succeeded with no /proc tree, want an error")
 	}
 }

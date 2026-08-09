@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -33,7 +34,8 @@ const ingestPath = "/api/agent/v1/ingest"
 // cannot stall the agent indefinitely.
 const maxAdoptedRetryAfter = 10 * time.Minute
 
-// maxBatchSamples caps how many buffered samples one POST carries.
+// maxBatchRows caps how many rows one POST carries: host samples plus every
+// per-entity row riding with them.
 //
 // The hub caps an ingest body at 4 MiB (httpapi.maxBodyBytes). Sending an
 // over-sized ring whole would earn a 413 the agent can never recover from:
@@ -43,19 +45,29 @@ const maxAdoptedRetryAfter = 10 * time.Minute
 // hub's limit; AckThrough is prefix-based and seq is monotonic, so a partial
 // drain is exactly as safe as a whole one.
 //
-// At the fixed 60s cadence the ring maxes out at 360 slots (6h window), so
-// this bound does not bind today. It is kept as the invariant that guards
-// the 413-forever failure mode independently of the window arithmetic.
-const maxBatchSamples = 2000
+// This counts ROWS, not scrapes. Counting scrapes was a sound proxy for body
+// size only while a scrape was one narrow row: a 64-core host now carries 65
+// rows per scrape, so 2000 scrapes would be 130,000 rows and blow the very
+// limit this constant exists to respect.
+//
+// 20000 rows at a generous 100 bytes each is ~2 MB, half the cap, leaving
+// room for the metadata block and for the families that later 1C PRs add.
+const maxBatchRows = 20000
 
 // maxBufferSlots caps the ring's capacity in entries, independently of the
 // window/interval arithmetic that sizes it. capacityFor bounds the buffered
-// WINDOW, which says nothing on its own about how many live *HostSample
-// values fit in it — and during an outage the ring fills to capacity by
-// design, on a host the agent is meant to be a negligible tenant of. The
-// fixed 60s cadence keeps the real number small (360 at the 6h maximum), so
-// like maxBatchSamples this is a standing guard on the memory invariant
-// rather than a limit reached in practice.
+// WINDOW, which says nothing on its own about how much memory the entries in
+// it hold — and during an outage the ring fills to capacity by design, on a
+// host the agent is meant to be a negligible tenant of.
+//
+// An entry is now a whole scrape rather than one narrow row, so a slot is
+// both larger and variable: a 64-core host buffers ~65 rows per slot where a
+// single-core VPS buffers 2. The window arithmetic still bounds the slot
+// COUNT correctly — 360 at the 6h maximum, at the fixed 60s cadence — so the
+// worst case is ~23,000 buffered rows, a few MB. This stays a standing guard
+// on the invariant rather than a limit reached in practice; revisit it when a
+// family arrives whose row count per scrape is unbounded (containers,
+// processes).
 const maxBufferSlots = 10000
 
 // RetryAfterError wraps a flush failure that came with a hub-specified
@@ -101,6 +113,18 @@ type Client struct {
 	// known once the post returns, which is after the sample that would carry
 	// it has already been built and buffered.
 	lastPostLatency *time.Duration
+
+	// startedAt is when this process began, so uptime is the AGENT's rather
+	// than the host's. The two are different facts: an agent uptime reset with
+	// host uptime unchanged means the agent restarted alone, which also means
+	// its ring buffer was lost -- exactly the crash-looping that conflating
+	// them would hide behind a healthy-looking host.
+	startedAt time.Time
+
+	// postFailures is cumulative across the agent's life and is never reset by
+	// a success. An agent that failed ten times and then recovered must still
+	// report ten, or the history of the outage vanishes the moment it ends.
+	postFailures uint64
 }
 
 // New builds a Client scraping at the fixed config.ScrapeInterval. Buffer
@@ -129,6 +153,7 @@ func newClient(cfg config.Config, collectors []collector.Collector, interval tim
 		metadataHash: HashMetadata(md),
 		// The hub asks for metadata when it needs it; nothing is assumed.
 		sendMetadata: false,
+		startedAt:    time.Now(),
 	}
 }
 
@@ -167,15 +192,16 @@ func (c *Client) BufferDepth() int { return c.ring.Depth() }
 // keeps within cfg.BufferWindow.
 func (c *Client) BufferCapacity() int { return c.ring.Capacity() }
 
-// ScrapeOnce runs every collector and buffers the resulting sample.
+// ScrapeOnce runs every collector and buffers the resulting scrape.
 //
-// A collector that fails is logged and skipped: its fields stay unset, and
-// the rest of the sample is still worth sending.
+// A collector that fails is logged and skipped, and contributes nothing at
+// all: the rest of the scrape is still worth sending. It returns the host row
+// for the caller's convenience; the per-entity rows go to the ring with it.
 func (c *Client) ScrapeOnce(ctx context.Context) *netrav1.HostSample {
-	sample := c.collect(ctx)
+	scrape := c.collect(ctx)
 	c.seq++
-	c.ring.Add(c.seq, sample)
-	return sample
+	c.ring.Add(c.seq, scrape)
+	return scrape.Host
 }
 
 // Prime runs every collector once without buffering or sending the result.
@@ -188,16 +214,37 @@ func (c *Client) Prime(ctx context.Context) {
 	c.collect(ctx)
 }
 
-// collect runs every collector and returns the resulting sample, without
+// collect runs every collector and returns the resulting scrape, without
 // touching the sequence counter or the ring buffer.
-func (c *Client) collect(ctx context.Context) *netrav1.HostSample {
+func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 	sample := &netrav1.HostSample{TsMs: time.Now().UnixMilli()}
+	scrape := &buffer.Scrape{}
 
 	start := time.Now()
 	for _, col := range c.collectors {
-		if err := col.Collect(ctx, sample); err != nil {
+		res, err := col.Collect(ctx)
+		if err != nil {
+			// Nothing from a failed collector reaches the scrape. Merging a
+			// partial result would store fields the collector never finished
+			// measuring, and an unset field is supposed to mean the subsystem
+			// is absent.
 			slog.Warn("collector failed", "collector", col.Name(), "err", err)
+			continue
 		}
+		if res == nil {
+			// The interface says a failed collector returns a nil Result and
+			// an error; nothing enforces the inverse. Dereferencing here
+			// would take the whole agent down over one collector's slip, so
+			// treat "no error, no result" as "nothing to report".
+			continue
+		}
+		if res.Host != nil {
+			// Merge rather than assign: each collector owns a disjoint set of
+			// fields, and proto.Merge copies only the ones actually set,
+			// which is what keeps unset meaning "absent".
+			proto.Merge(sample, res.Host)
+		}
+		appendFamilies(scrape, res)
 	}
 	elapsed := time.Since(start)
 
@@ -205,10 +252,21 @@ func (c *Client) collect(ctx context.Context) *netrav1.HostSample {
 
 	depth := uint32(c.ring.Depth())
 	dropped := c.ring.Dropped()
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
 	agent := &netrav1.AgentSample{
 		ScrapeDurationMs:   ptr(uint32(elapsed.Milliseconds())),
 		BufferDepth:        &depth,
 		BufferDroppedTotal: &dropped,
+		// The AGENT's uptime, not the host's -- see the startedAt field.
+		UptimeS: ptr(uint64(time.Since(c.startedAt).Seconds())),
+		// Sys rather than Alloc: what the process took from the OS is what an
+		// operator sees in ps and what makes the agent a bad tenant, whereas
+		// Alloc is Go's live heap and understates the footprint.
+		RssBytes:          ptr(mem.Sys),
+		Goroutines:        ptr(uint32(runtime.NumGoroutine())),
+		PostFailuresTotal: ptr(c.postFailures),
 	}
 	// Only carried when the last post actually succeeded. Reusing a stale
 	// value would report a healthy RTT throughout an outage, and zeroing it
@@ -217,8 +275,47 @@ func (c *Client) collect(ctx context.Context) *netrav1.HostSample {
 		agent.PostLatencyMs = ptr(uint32(c.lastPostLatency.Milliseconds()))
 	}
 	sample.Agent = agent
+	scrape.Host = sample
 
-	return sample
+	return scrape
+}
+
+// appendFamilies concatenates one collector's per-entity rows onto the scrape.
+//
+// Every family is listed here explicitly. A family added to Result and Scrape
+// but forgotten here would be collected and then silently dropped before it
+// ever reached the ring -- TestScrapeCarriesEveryFamilyFromAResult walks the
+// struct reflectively so a missed line fails rather than ships.
+func appendFamilies(s *buffer.Scrape, res *collector.Result) {
+	s.Cores = append(s.Cores, res.Cores...)
+	s.Disks = append(s.Disks, res.Disks...)
+	s.Sensors = append(s.Sensors, res.Sensors...)
+	s.Nets = append(s.Nets, res.Nets...)
+	s.Containers = append(s.Containers, res.Containers...)
+	s.Filesystems = append(s.Filesystems, res.Filesystems...)
+	s.Smart = append(s.Smart, res.Smart...)
+	s.Processes = append(s.Processes, res.Processes...)
+	s.Events = append(s.Events, res.Events...)
+	s.SystemdEvents = append(s.SystemdEvents, res.SystemdEvents...)
+	s.PackageEvents = append(s.PackageEvents, res.PackageEvents...)
+	s.Addresses = append(s.Addresses, res.Addresses...)
+	s.Packages = append(s.Packages, res.Packages...)
+}
+
+// countRows is how many rows a scrape contributes to a request body: the host
+// row plus every per-entity row measured with it.
+//
+// The flush bound is expressed in rows because a scrape stopped being one row.
+// A family missing from this sum silently un-enforces the 4 MiB body limit --
+// nothing fails until a large host replays after an outage and 413s forever,
+// which is why TestScrapeRowCountCoversEveryFamily walks the struct rather
+// than trusting this list to stay complete.
+func countRows(s *buffer.Scrape) int {
+	return 1 +
+		len(s.Cores) + len(s.Disks) + len(s.Sensors) + len(s.Nets) +
+		len(s.Containers) + len(s.Filesystems) + len(s.Smart) +
+		len(s.Processes) + len(s.Events) + len(s.SystemdEvents) +
+		len(s.PackageEvents) + len(s.Addresses) + len(s.Packages)
 }
 
 // refreshCapabilities re-reads what each collector reports about its own
@@ -264,39 +361,96 @@ func (c *Client) Flush(ctx context.Context) error {
 		return nil
 	}
 
-	// Send at most maxBatchSamples per POST, oldest first. Pending is ordered
-	// and AckThrough drops a prefix, so the remainder simply goes out on the
-	// next flush rather than being lost.
-	if len(pending) > maxBatchSamples {
-		pending = pending[:maxBatchSamples]
+	// Send at most maxBatchRows per POST, oldest first. Pending is ordered and
+	// AckThrough drops a prefix, so the remainder simply goes out on the next
+	// flush rather than being lost.
+	//
+	// Counted in rows rather than scrapes: a scrape now carries its host row
+	// plus every per-entity row measured with it, so the scrape count says
+	// nothing about the encoded body size.
+	rows := 0
+	for i, e := range pending {
+		next := countRows(e.Scrape)
+		// The i > 0 guard lets a single oversized scrape through on its own.
+		// Without it a host whose scrape exceeds the cap would never flush,
+		// and the ring would fill and start dropping.
+		if i > 0 && rows+next > maxBatchRows {
+			pending = pending[:i]
+			break
+		}
+		rows += next
 	}
 
 	samples := make([]*netrav1.HostSample, 0, len(pending))
+	req := &netrav1.IngestRequest{}
 	for _, e := range pending {
-		samples = append(samples, e.Sample)
+		samples = append(samples, e.Scrape.Host)
+		s := e.Scrape
+		req.CpuCores = append(req.CpuCores, s.Cores...)
+		req.DiskIo = append(req.DiskIo, s.Disks...)
+		req.Sensors = append(req.Sensors, s.Sensors...)
+		req.Net = append(req.Net, s.Nets...)
+		req.Containers = append(req.Containers, s.Containers...)
+		req.Filesystems = append(req.Filesystems, s.Filesystems...)
+		req.Smart = append(req.Smart, s.Smart...)
+		req.Processes = append(req.Processes, s.Processes...)
+		req.Events = append(req.Events, s.Events...)
+		req.SystemdEvents = append(req.SystemdEvents, s.SystemdEvents...)
+		req.PackageEvents = append(req.PackageEvents, s.PackageEvents...)
+
+		// Inventory is a WHOLE SET, not a time series: the hub replaces what
+		// it holds with what arrives, deleting anything the set omits. So the
+		// newest non-empty set in this batch supersedes the older ones rather
+		// than being concatenated with them.
+		//
+		// Concatenating breaks the replacement. A scrape reporting {A, B}
+		// followed by one reporting {A} after B was removed would arrive as
+		// A, B, A -- the union -- and the hub, seeing B in the batch it is
+		// told is the current set, would keep it forever.
+		//
+		// "Non-empty" is a residual gap rather than a rule: a collector
+		// reports an empty slice both for "unchanged" and for "the host now
+		// has none of these", and the two are indistinguishable here. The hub
+		// cannot act on an empty set either (UpsertHostAddresses returns
+		// early), so a host that loses its LAST address keeps a stale row --
+		// closing that needs an explicit "empty" signal on the wire.
+		//
+		// countRows still counts every scrape's inventory rows. That
+		// over-counts the body this loop actually builds, which is the safe
+		// direction for a bound that exists to stay under a size cap.
+		if len(s.Addresses) > 0 {
+			req.Addresses = s.Addresses
+		}
+		if len(s.Packages) > 0 {
+			req.Packages = s.Packages
+		}
 	}
 	highest := pending[len(pending)-1].Seq
 
-	req := &netrav1.IngestRequest{
-		Seq:          highest,
-		MetadataHash: c.metadataHash,
-		HostSamples:  samples,
-		// Anything sent after a failed flush is replayed history, and the hub
-		// needs to know so it can invalidate the affected aggregate ranges.
-		Backfill: c.replaying,
-	}
+	req.Seq = highest
+	req.MetadataHash = c.metadataHash
+	req.HostSamples = samples
+	// Anything sent after a failed flush is replayed history, and the hub
+	// needs to know so it can invalidate the affected aggregate ranges.
+	req.Backfill = c.replaying
 	if c.sendMetadata {
 		req.Metadata = c.metadata
 	}
 
 	resp, err := c.post(ctx, req)
 	if err != nil {
+		// Counted here rather than inside post so every failure kind lands in
+		// one place: a network error, a 401 and a 503 are all "the agent could
+		// not deliver", which is the question this number answers.
+		c.postFailures++
+
 		if errors.Is(err, ErrUnauthorized) {
 			// The token is gone. Replaying forever would hammer the hub for
 			// nothing, so the buffer is dropped and the operator has to act.
 			//
 			// The WHOLE buffer, not just the batch that was attempted.
-			// AckThrough(highest) dropped at most maxBatchSamples of the
+			// AckThrough(highest) dropped only the prefix that fit in one
+			// maxBatchRows batch, out of the
 			// maxBufferSlots the ring can hold, and ScrapeOnce keeps adding on
 			// every tick — so a revoked token left the ring pinned at capacity
 			// indefinitely, which is exactly the state this branch says it is

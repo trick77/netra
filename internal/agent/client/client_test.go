@@ -82,8 +82,8 @@ type failingCollector struct{}
 
 func (failingCollector) Name() string            { return "failing" }
 func (failingCollector) Interval() time.Duration { return time.Minute }
-func (failingCollector) Collect(context.Context, *netrav1.HostSample) error {
-	return errors.New("sensor unreadable")
+func (failingCollector) Collect(context.Context) (*collector.Result, error) {
+	return nil, errors.New("sensor unreadable")
 }
 
 func newClient(t *testing.T, url string) *client.Client {
@@ -238,17 +238,35 @@ func TestFlushRejectsUnauthorized(t *testing.T) {
 	}
 }
 
-// newDeepBufferClient builds a client whose ring is large enough to hold more
-// than one maxBatchSamples batch.
+// wideCollector emits a fixed number of per-core rows per scrape, standing in
+// for a many-core host. It is how a test reaches a multi-batch drain without
+// buffering tens of thousands of scrapes: the batch bound counts rows, and a
+// 64-core host carries 65 of them per scrape.
+type wideCollector struct{ cores int }
+
+func (wideCollector) Name() string            { return "wide" }
+func (wideCollector) Interval() time.Duration { return time.Minute }
+func (w wideCollector) Collect(context.Context) (*collector.Result, error) {
+	rows := make([]*netrav1.CpuCoreSample, 0, w.cores)
+	ts := time.Now().UnixMilli()
+	for i := 0; i < w.cores; i++ {
+		busy := float64(i)
+		rows = append(rows, &netrav1.CpuCoreSample{TsMs: ts, Core: uint32(i), Busy: &busy})
+	}
+	return &collector.Result{Cores: rows}, nil
+}
+
+// newDeepBufferClient builds a client whose ring holds more than one
+// maxBatchRows batch.
 //
-// At the production cadence it cannot be: capacityFor caps the ring at
+// At the production cadence it cannot: capacityFor caps the ring at
 // window/interval, and the 6h maximum window over a fixed 60s interval is 360
-// entries — comfortably under the 2000-sample batch cap, so a real agent never
-// reaches a multi-batch drain. maxBatchSamples and maxBufferSlots are standing
-// guards on that invariant rather than limits met in practice, and the two
-// behaviours below (drop-the-batch vs drop-the-ring, first-batch backfill vs
-// whole-replay backfill) only diverge past them. A millisecond interval takes
-// the ring to maxBufferSlots so the guards themselves can be tested.
+// entries. On a 64-core host that is ~23,000 rows, just past one batch — so
+// the multi-batch behaviours below (drop-the-batch vs drop-the-ring,
+// first-batch backfill vs whole-replay backfill) are reachable in principle
+// but awkward to provoke. A millisecond interval takes the ring to
+// maxBufferSlots, and the wide collector makes each entry carry 65 rows, so
+// the guards themselves can be tested without buffering 20,000 scrapes.
 func newDeepBufferClient(t *testing.T, url string) *client.Client {
 	t.Helper()
 	cfg := config.Config{
@@ -260,6 +278,7 @@ func newDeepBufferClient(t *testing.T, url string) *client.Client {
 	collectors := []collector.Collector{
 		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
+		wideCollector{cores: 64},
 	}
 	return client.NewWithInterval(cfg, collectors, time.Millisecond)
 }
@@ -268,7 +287,7 @@ func newDeepBufferClient(t *testing.T, url string) *client.Client {
 //
 // The single-sample case above passes either way: with one sample buffered,
 // "drop the attempted batch" and "drop everything" are the same thing. With
-// more samples than maxBatchSamples the two diverge, and the old
+// more rows than maxBatchRows the two diverge, and the old
 // AckThrough(highest) left every sample beyond the first batch in the ring —
 // so a revoked agent stayed pinned near capacity while ScrapeOnce kept adding.
 func TestFlushOnUnauthorizedDropsTheEntireBufferNotJustTheBatch(t *testing.T) {
@@ -280,8 +299,9 @@ func TestFlushOnUnauthorizedDropsTheEntireBufferNotJustTheBatch(t *testing.T) {
 	c := newDeepBufferClient(t, srv.URL)
 	ctx := context.Background()
 
-	// Comfortably more than one maxBatchSamples worth (2000).
-	const buffered = 2500
+	// Comfortably more than one maxBatchRows worth: 400 scrapes from the wide
+	// collector is 400 host rows plus 25,600 core rows.
+	const buffered = 400
 	for i := 0; i < buffered; i++ {
 		c.ScrapeOnce(ctx)
 	}
@@ -323,8 +343,9 @@ func TestFlushKeepsBackfillSetForEveryBatchOfAReplay(t *testing.T) {
 	c := newDeepBufferClient(t, srv.URL)
 	ctx := context.Background()
 
-	// Build up more than two batches of history while the hub is down.
-	const buffered = 4500
+	// Build up more than two batches of history while the hub is down: 700
+	// scrapes from the wide collector is ~45,500 rows, over two batches.
+	const buffered = 700
 	for i := 0; i < buffered; i++ {
 		c.ScrapeOnce(ctx)
 	}
@@ -817,5 +838,90 @@ func TestRunKeepsScrapingWhileBackingOffFlush(t *testing.T) {
 	if depth < 10 {
 		t.Fatalf("buffer depth = %d after 700ms of 10ms ticks, want >= 10; "+
 			"a depth this low means Run stopped scraping while backing off", depth)
+	}
+}
+
+// Per-entity rows must reach the request, and a collector that fails must
+// contribute nothing to it -- not even the part it managed to produce before
+// the failure.
+func TestFlushCarriesPerCoreRowsAndDropsFailedCollectors(t *testing.T) {
+	// Given: one collector producing core rows, and one that always fails.
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	c := client.NewWithInterval(cfg,
+		[]collector.Collector{wideCollector{cores: 4}, failingCollector{}},
+		time.Millisecond)
+
+	// When: one scrape is taken and flushed.
+	ctx := context.Background()
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	// Then: the core rows arrived, keyed by core, each with its own ts.
+	req := rec.last()
+	if got := len(req.GetCpuCores()); got != 4 {
+		t.Fatalf("cpu_cores in request = %d, want 4", got)
+	}
+	for i, row := range req.GetCpuCores() {
+		if row.GetCore() != uint32(i) {
+			t.Errorf("row %d has core %d, want %d", i, row.GetCore(), i)
+		}
+		if row.GetTsMs() == 0 {
+			t.Errorf("row %d carries no ts_ms; a per-entity row must timestamp itself", i)
+		}
+	}
+	// And the host row still went, because one collector failing does not
+	// cost the scrape the rest of its contributors.
+	if got := len(req.GetHostSamples()); got != 1 {
+		t.Errorf("host samples = %d, want 1", got)
+	}
+}
+
+// The batch bound exists to keep a body inside the hub's 4 MiB cap. Counting
+// scrapes stopped being a proxy for body size the moment a scrape started
+// carrying per-entity rows: 2000 scrapes from a 64-core host is 130,000 rows,
+// and the resulting 413 would repeat forever, because the ring re-sends the
+// same oversized prefix on every flush.
+func TestFlushBoundsBatchByTotalRowsNotScrapeCount(t *testing.T) {
+	// Given: a deep ring of wide scrapes, well past one batch of rows.
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	c := newDeepBufferClient(t, srv.URL)
+	ctx := context.Background()
+	for i := 0; i < 600; i++ {
+		c.ScrapeOnce(ctx)
+	}
+
+	// When: it flushes once.
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	// Then: the request stayed inside the row cap...
+	req := rec.last()
+	rows := len(req.GetHostSamples()) + len(req.GetCpuCores())
+	if rows > client.MaxBatchRowsForTest {
+		t.Fatalf("flushed %d rows in one request, cap is %d", rows, client.MaxBatchRowsForTest)
+	}
+	// ...and still carried something, rather than stalling on a cap it could
+	// never satisfy.
+	if len(req.GetHostSamples()) == 0 {
+		t.Fatal("flushed 0 host samples; the bound must still let a batch through")
+	}
+	// ...leaving the remainder buffered for the next flush rather than losing it.
+	if c.BufferDepth() == 0 {
+		t.Fatal("BufferDepth() = 0; a partial drain must leave the rest buffered")
 	}
 }

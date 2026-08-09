@@ -32,10 +32,12 @@ func (m *Memory) Name() string { return "memory" }
 func (m *Memory) Interval() time.Duration { return m.interval }
 
 // Collect implements Collector.
-func (m *Memory) Collect(_ context.Context, sample *netrav1.HostSample) error {
+func (m *Memory) Collect(_ context.Context) (*Result, error) {
+	sample := &netrav1.HostSample{}
+
 	values, err := m.readMeminfo()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	total, hasTotal := values["MemTotal"]
@@ -75,7 +77,7 @@ func (m *Memory) Collect(_ context.Context, sample *netrav1.HostSample) error {
 		sample.MemZfsArc = &arc
 	}
 
-	return nil
+	return &Result{Host: sample}, nil
 }
 
 // readMeminfo returns every "Key: value kB" line converted to bytes.

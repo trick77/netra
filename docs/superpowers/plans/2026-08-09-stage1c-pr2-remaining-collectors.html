@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>netra — Stage 1C PR 2 Implementation Plan</title>
+<style>
+:root{--bg:#0f1115;--panel:#161920;--panel2:#1b1f28;--fg:#e6e8ee;--muted:#9aa3b2;--line:#2a2f3a;--accent:#5aa9e6;--accent2:#7ee0c0;--warn:#e6b45a}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:56px 28px 96px}
+h1{font-size:34px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+h2{font-size:23px;margin:52px 0 14px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:17.5px;margin:30px 0 10px;color:var(--accent2)}
+h4{font-size:15px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+p{margin:12px 0}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(90,169,230,.35)}
+a:hover{border-bottom-color:var(--accent)}
+ul,ol{padding-left:22px;margin:12px 0}
+li{margin:6px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+code{background:var(--panel2);padding:2px 6px;border-radius:5px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent2)}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow:auto;margin:16px 0}
+pre code{background:none;padding:0;color:var(--fg);font-size:12.5px;line-height:1.55}
+table{border-collapse:collapse;width:100%;margin:18px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--panel2);font-weight:600;color:var(--muted);white-space:nowrap}
+tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+blockquote{margin:18px 0;padding:12px 18px;border-left:3px solid var(--warn);background:rgba(230,180,90,.07);border-radius:0 8px 8px 0;color:#f0dcb4}
+blockquote p{margin:4px 0}
+strong{color:#fff;font-weight:620}
+.meta{color:var(--muted);font-size:13.5px;margin-bottom:34px}
+
+li input[type=checkbox]{margin-right:8px}
+blockquote{border-left-color:var(--accent)}
+h4{color:var(--accent2);text-transform:none;letter-spacing:0;font-size:16px}
+</style></head>
+<body><div class="wrap">
+<h1>Stage 1C PR 2 — the remaining twelve collectors</h1>
+<blockquote><p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (<code>- [ ]</code>) syntax for tracking.</p></blockquote>
+<p><strong>Goal:</strong> Land the twelve collectors that remain after PR 1, together with the seven table families and wire messages they need, in a single PR.</p>
+<p><strong>Architecture:</strong> PR 1 established the contract — a collector returns a <code>Result</code>, the agent merges successes and drops failures whole, per-entity rows ride on <code>IngestRequest</code> with their own <code>ts_ms</code>, and the ring buffers whole scrapes. Every collector here is an instance of that pattern; nothing structural changes. Schema lands first so no later task edits <code>0001</code>, then the wire messages, then one collector per task.</p>
+<p><strong>Tech Stack:</strong> Go, protobuf, pgx v5, TimescaleDB, cgroup v2, netlink, D-Bus, <code>smartctl</code>.</p>
+<h2>Global Constraints</h2>
+<ul><li>Design: <code>docs/superpowers/specs/2026-08-09-stage1c-collectors-design.md</code>. Data model: <code>docs/superpowers/specs/2026-08-07-netra-design.md</code> §5.2, §5.3, §5.4.</li><li><strong>All schema is edited into <code>internal/hub/store/migrations/0001_init.sql</code> in place. There is no <code>0002</code>.</strong> Keep it re-runnable (<code>IF NOT EXISTS</code>, <code>if_not_exists =&gt; TRUE</code>) so <code>TestIntegrationMigrationIsRerunnableAgainstItsOwnSchema</code> stays green.</li><li><code>start_offset = 6h</code> on every 5m aggregate and <code>12h</code> on every 1h aggregate. Raw retention 7 days, 5m 30 days, 1h 90 days. <code>process_samples</code> is the exception: raw only, 48h, no aggregates.</li><li>An unset proto field means the subsystem is absent (§5.1 rule 3). Never write a zero where nothing was measured, and never a zero where a counter reset.</li><li>Every collector contributing to <code>host_samples</code> runs at the fixed <code>config.ScrapeInterval</code>. Only collectors writing their own tables may take a longer interval (SMART 1h, packages daily floor).</li><li>Hypertables reference a dimension&#x27;s surrogate <code>id</code>, never its natural key, so a rename touches one dimension row and no history (§5.2).</li><li>Never read <code>/proc/PID/cmdline</code> or <code>environ</code> — <code>argv_guard_test.go</code> fails the build if either name appears in a Go string literal.</li><li>Fixture-based tests only: checked-in <code>/proc</code>, <code>/sys</code> and cgroup trees. No test may read the machine it runs on.</li><li>Commit as <code>trick77@users.noreply.github.com</code>. Integration tests need <code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test</code> and the <code>netra-test-db</code> container running.</li></ul>
+<hr>
+<h2>File Structure</h2>
+<p><strong>Created — collectors</strong> (each with a <code>_test.go</code> and a <code>testdata/</code> tree): <code>diskio.go</code>, <code>sensors.go</code>, <code>mdraid.go</code>, <code>network.go</code>, <code>addresses.go</code>, <code>containers.go</code>, <code>filesystems.go</code>, <code>systemd.go</code>, <code>packages.go</code>, <code>smart.go</code>, <code>processes.go</code> in <code>internal/agent/collector/</code>.</p>
+<p><strong>Modified:</strong></p>
+<ul><li><code>internal/hub/store/migrations/0001_init.sql</code> — seven table families</li><li><code>proto/netra/v1/ingest.proto</code> — family messages, <code>IngestRequest</code> fields 7-16</li><li><code>internal/agent/collector/result.go</code> — a slice per family</li><li><code>internal/agent/buffer/ring.go</code> — <code>Scrape</code> gains the same slices</li><li><code>internal/agent/client/client.go</code> — merge, flush assembly, row counting</li><li><code>internal/hub/store/ingest.go</code> — an insert per family, plus dimension upserts</li><li><code>internal/hub/httpapi/ingest.go</code> — store each family, filter its timestamps</li><li><code>internal/hub/store/rollup_test.go</code> — the pinned policy counts</li><li><code>cmd/netra-agent/main.go</code> — register the collectors</li><li><code>deploy/agent/compose.yaml.example</code> — the implemented-collectors note</li></ul>
+<hr>
+<h3>Task 1: Dimension and event tables</h3>
+<p>The dimensions every per-entity family joins to, plus the two event tables. Plain Postgres, not hypertables.</p>
+<p><strong>Files:</strong> Modify <code>internal/hub/store/migrations/0001_init.sql</code>, <code>internal/hub/store/group1schema_test.go</code></p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: tables <code>containers</code>, <code>filesystems</code>, <code>devices</code>, <code>systemd_units</code>, <code>host_addresses</code>, <code>host_packages</code>, <code>systemd_unit_events</code>, <code>package_events</code>.</li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the failing test</strong></li></ul>
+<p>Add to <code>group1schema_test.go</code>:</p>
+<pre><code>// Every dimension carries a surrogate id AND its natural key, with the natural
+// key unique per host. Hypertables reference the id only, so renaming the thing
+// on the host touches one dimension row and no history (spec 5.2).
+func TestIntegrationGroup2DimensionsHaveSurrogateAndNaturalKeys(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf(&quot;Migrate: %v&quot;, err)
+	}
+
+	for _, d := range []struct{ table, natural string }{
+		{&quot;containers&quot;, &quot;container_key&quot;},
+		{&quot;filesystems&quot;, &quot;label&quot;},
+		{&quot;devices&quot;, &quot;device&quot;},
+		{&quot;systemd_units&quot;, &quot;unit_name&quot;},
+	} {
+		var hasID bool
+		if err := s.Pool().QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM information_schema.columns
+				 WHERE table_name = $1 AND column_name = &#x27;id&#x27;)`, d.table).Scan(&amp;hasID); err != nil {
+			t.Fatalf(&quot;%s id lookup: %v&quot;, d.table, err)
+		}
+		if !hasID {
+			t.Errorf(&quot;%s has no surrogate id&quot;, d.table)
+		}
+
+		// The natural key must be unique WITHIN a host, not globally: two hosts
+		// both having an &quot;sda&quot; is normal.
+		var unique bool
+		if err := s.Pool().QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM pg_indexes
+				 WHERE tablename = $1 AND indexdef LIKE &#x27;%UNIQUE%&#x27;
+				   AND indexdef LIKE &#x27;%host_id%&#x27; AND indexdef LIKE &#x27;%&#x27; || $2 || &#x27;%&#x27;)`,
+			d.table, d.natural).Scan(&amp;unique); err != nil {
+			t.Fatalf(&quot;%s unique lookup: %v&quot;, d.table, err)
+		}
+		if !unique {
+			t.Errorf(&quot;%s has no UNIQUE (host_id, %s); the same natural key could be inserted twice&quot;, d.table, d.natural)
+		}
+	}
+}
+
+// Deleting a host must take every dimension and event row with it, or the next
+// host to reuse the id inherits a stranger&#x27;s inventory.
+func TestIntegrationGroup2TablesCascadeOnHostDelete(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf(&quot;Migrate: %v&quot;, err)
+	}
+
+	var hostID int32
+	if err := s.Pool().QueryRow(ctx,
+		`INSERT INTO hosts (hostname) VALUES (&#x27;cascade-g2&#x27;) RETURNING id`).Scan(&amp;hostID); err != nil {
+		t.Fatalf(&quot;insert host: %v&quot;, err)
+	}
+
+	seed := []string{
+		`INSERT INTO containers (host_id, container_key, name) VALUES ($1, &#x27;proj/svc&#x27;, &#x27;c1&#x27;)`,
+		`INSERT INTO filesystems (host_id, label, mountpoint) VALUES ($1, &#x27;root&#x27;, &#x27;/&#x27;)`,
+		`INSERT INTO devices (host_id, device) VALUES ($1, &#x27;sda&#x27;)`,
+		`INSERT INTO systemd_units (host_id, unit_name) VALUES ($1, &#x27;ssh.service&#x27;)`,
+		`INSERT INTO host_addresses (host_id, iface, address, family) VALUES ($1, &#x27;eth0&#x27;, &#x27;10.0.0.1&#x27;, 4)`,
+		`INSERT INTO host_packages (host_id, name, version, format) VALUES ($1, &#x27;bash&#x27;, &#x27;5.2&#x27;, &#x27;dpkg&#x27;)`,
+	}
+	for _, q := range seed {
+		if _, err := s.Pool().Exec(ctx, q, hostID); err != nil {
+			t.Fatalf(&quot;seed %q: %v&quot;, q, err)
+		}
+	}
+
+	if _, err := s.Pool().Exec(ctx, `DELETE FROM hosts WHERE id = $1`, hostID); err != nil {
+		t.Fatalf(&quot;delete host: %v&quot;, err)
+	}
+
+	for _, table := range []string{
+		&quot;containers&quot;, &quot;filesystems&quot;, &quot;devices&quot;, &quot;systemd_units&quot;,
+		&quot;host_addresses&quot;, &quot;host_packages&quot;,
+	} {
+		var n int
+		if err := s.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM `+table+` WHERE host_id = $1`, hostID).Scan(&amp;n); err != nil {
+			t.Fatalf(&quot;count %s: %v&quot;, table, err)
+		}
+		if n != 0 {
+			t.Errorf(&quot;%s kept %d rows after the host was deleted&quot;, table, n)
+		}
+	}
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run to verify it fails</strong></li></ul>
+<p>Run: <code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test -p 1 ./internal/hub/store/ -run TestIntegrationGroup2</code> Expected: FAIL — relation &quot;containers&quot; does not exist.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Add the tables</strong></li></ul>
+<p>Append to <code>0001_init.sql</code>, after the existing <code>sensors</code> dimension:</p>
+<pre><code>-- ------------------------------------------------------------- dimensions (2)
+
+-- container_key is the natural key: compose project + service, falling back to
+-- the container name (spec 6.2). It is NOT the Docker id, which changes on
+-- every recreate and would restart the history of a service that merely got a
+-- new image.
+CREATE TABLE IF NOT EXISTS containers (
+    id            SERIAL PRIMARY KEY,
+    host_id       INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    container_key TEXT NOT NULL,
+    name          TEXT,
+    image         TEXT,
+    is_agent      BOOLEAN NOT NULL DEFAULT FALSE,
+    UNIQUE (host_id, container_key)
+);
+
+CREATE TABLE IF NOT EXISTS filesystems (
+    id         SERIAL PRIMARY KEY,
+    host_id    INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    label      TEXT NOT NULL,
+    mountpoint TEXT,
+    -- st_dev of the mountpoint, used to dedup bind mounts of one filesystem.
+    device_id  BIGINT,
+    UNIQUE (host_id, label)
+);
+
+CREATE TABLE IF NOT EXISTS devices (
+    id      SERIAL PRIMARY KEY,
+    host_id INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    device  TEXT NOT NULL,
+    model   TEXT,
+    serial  TEXT,
+    UNIQUE (host_id, device)
+);
+
+CREATE TABLE IF NOT EXISTS systemd_units (
+    id        SERIAL PRIMARY KEY,
+    host_id   INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    unit_name TEXT NOT NULL,
+    UNIQUE (host_id, unit_name)
+);
+
+-- address is inet, not text, so subnet queries work: &quot;every host with an
+-- address in 172.19.0.0/16&quot;, &quot;every host with a public IPv4&quot;. scope is derived
+-- BY THE HUB from the address -- the agent reports raw facts only, so the
+-- classification is one implementation that can be corrected without
+-- redeploying agents.
+CREATE TABLE IF NOT EXISTS host_addresses (
+    host_id     INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    iface       TEXT NOT NULL,
+    if_index    INTEGER,
+    address     INET NOT NULL,
+    family      SMALLINT NOT NULL,
+    scope       TEXT,
+    vrf         TEXT,
+    description TEXT,
+    first_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (host_id, iface, address)
+);
+
+CREATE TABLE IF NOT EXISTS host_packages (
+    host_id    INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    version    TEXT NOT NULL,
+    arch       TEXT,
+    format     TEXT NOT NULL,
+    size_bytes BIGINT,
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (host_id, name, arch)
+);
+
+-- ------------------------------------------------------------- event tables
+
+-- Separate from `events` because both carry structured, queryable columns that
+-- would otherwise be buried in jsonb, and both arrive in bursts large enough to
+-- want their own indexes (spec 5.2).
+--
+-- Plain tables, NOT hypertables: a unit changes state a handful of times a
+-- month. They must not move the counts in rollup_test.go.
+CREATE TABLE IF NOT EXISTS systemd_unit_events (
+    host_id  INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    unit_id  INTEGER NOT NULL REFERENCES systemd_units (id) ON DELETE CASCADE,
+    ts       TIMESTAMPTZ NOT NULL,
+    state    TEXT NOT NULL,
+    substate TEXT,
+    PRIMARY KEY (host_id, unit_id, ts)
+);
+
+CREATE TABLE IF NOT EXISTS package_events (
+    host_id      INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    ts           TIMESTAMPTZ NOT NULL,
+    name         TEXT NOT NULL,
+    action       TEXT NOT NULL,
+    from_version TEXT,
+    to_version   TEXT,
+    PRIMARY KEY (host_id, ts, name)
+);
+
+-- The cascade path needs its own index for the same reason sensor_samples does:
+-- deleting a host cascades to systemd_units first, and each deleted unit then
+-- scans for its events.
+CREATE INDEX IF NOT EXISTS systemd_unit_events_unit_id_idx
+    ON systemd_unit_events (unit_id);</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Run the tests</strong></li></ul>
+<p>Run: <code>NETRA_TEST_DSN=... go test -p 1 ./internal/hub/store/ -run TestIntegrationGroup2</code> Expected: PASS</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Commit</strong></li></ul>
+<pre><code>git add internal/hub/store/
+git commit -m &quot;feat(hub): dimension and event tables for the Group 2-4 collectors&quot;</code></pre>
+<hr>
+<h3>Task 2: The four remaining hypertables</h3>
+<p><strong>Files:</strong> Modify <code>internal/hub/store/migrations/0001_init.sql</code>, <code>internal/hub/store/rollup_test.go</code>, <code>internal/hub/store/group1rollup_test.go</code></p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>container_samples</code>, <code>filesystem_samples</code> (each with 5m and 1h aggregates), <code>smart_attributes</code> and <code>process_samples</code> (raw only).</li></ul>
+<p><strong>Design decision to apply, not re-litigate:</strong> <code>smart_attributes</code> gets <strong>no</strong> continuous aggregates. SMART is collected hourly, so a 5-minute bucket holds at most one reading and a 1-hour bucket exactly one — the aggregates would restate the raw table at triple the storage. Retention 90 days on raw, matching the 1h tier elsewhere. <code>process_samples</code> is the spec&#x27;s stated exception: raw only, 48h.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the failing test</strong></li></ul>
+<p>The pinned counts in <code>rollup_test.go</code> are literals on purpose: a hypertable whose refresh or retention policy is forgotten is a permanently silent failure, so adding one must break the test until it is counted. Update them to the new reality and add the tables to the sweep:</p>
+<pre><code>// 11 hypertables now: the 7 from Group 0/1 plus container_samples,
+// filesystem_samples, smart_attributes and process_samples.
+//
+// 18 refresh policies: 9 aggregated tables x 2 tiers. smart_attributes and
+// process_samples are deliberately raw-only, so they contribute none --
+// SMART is read hourly, which makes a 5m bucket hold one reading and an
+// aggregate restate the raw table; process top-N membership changes between
+// buckets, so an average across them is close to meaningless (spec 5.4).
+if seen != 18 {
+	t.Fatalf(&quot;refresh policies found = %d, want 18&quot;, seen)
+}</code></pre>
+<p>Add a test pinning the raw-only decision, so a later PR cannot quietly add aggregates that would then need retention nobody assigned:</p>
+<pre><code>// smart_attributes and process_samples are raw-only BY DESIGN. If a future
+// change adds an aggregate to either, this test must be updated deliberately
+// rather than the aggregate silently shipping without a retention policy.
+func TestIntegrationRawOnlyTablesHaveNoContinuousAggregates(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf(&quot;Migrate: %v&quot;, err)
+	}
+
+	for _, table := range []string{&quot;smart_attributes&quot;, &quot;process_samples&quot;} {
+		var n int
+		if err := s.Pool().QueryRow(ctx, `
+			SELECT count(*) FROM timescaledb_information.continuous_aggregates
+			 WHERE hypertable_name = $1`, table).Scan(&amp;n); err != nil {
+			t.Fatalf(&quot;count aggregates on %s: %v&quot;, table, err)
+		}
+		if n != 0 {
+			t.Errorf(&quot;%s has %d continuous aggregates, want 0 -- it is raw-only by design&quot;, table, n)
+		}
+	}
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run to verify it fails</strong></li></ul>
+<p>Run: <code>NETRA_TEST_DSN=... go test -p 1 ./internal/hub/store/ -run &#x27;TestIntegrationRefreshPolicy|TestIntegrationRawOnly&#x27;</code> Expected: FAIL — policy count is 14, want 18; <code>process_samples</code> does not exist.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Add the hypertables</strong></li></ul>
+<p>Follow the <code>cpu_core_samples</code> block already in <code>0001</code> verbatim in shape — table, <code>create_hypertable</code>, <code>set_chunk_time_interval</code>, two aggregates, two refresh policies, three retention policies. For the two raw-only tables, stop after the chunk interval and add one retention policy.</p>
+<pre><code>CREATE TABLE IF NOT EXISTS container_samples (
+    host_id      INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
+    ts           TIMESTAMPTZ NOT NULL,
+    container_id INTEGER NOT NULL,
+    cpu_pct      DOUBLE PRECISION,
+    mem_used     BIGINT,
+    mem_limit    BIGINT,
+    net_rx       DOUBLE PRECISION,
+    net_tx       DOUBLE PRECISION,
+    io_read      DOUBLE PRECISION,
+    io_write     DOUBLE PRECISION,
+    PRIMARY KEY (host_id, ts, container_id),
+    FOREIGN KEY (container_id, host_id) REFERENCES containers (id, host_id) ON DELETE CASCADE
+);
+
+-- The composite FK&#x27;s cascade path needs its own index, exactly as
+-- sensor_samples does: the PK leads with host_id, so without this a host
+-- deletion sequentially scans every chunk once per container.
+CREATE INDEX IF NOT EXISTS container_samples_container_id_host_id_idx
+    ON container_samples (container_id, host_id);</code></pre>
+<p><code>containers</code> therefore needs <code>UNIQUE (id, host_id)</code> for the composite FK to reference, matching how <code>sensors</code> was done. Mirror the whole shape for <code>filesystem_samples</code> (<code>fs_id</code> → <code>filesystems</code>), <code>smart_attributes</code> (<code>device_id</code> → <code>devices</code>, plus <code>attr_id</code>, <code>raw</code>, <code>normalized</code>) and <code>process_samples</code> (<code>name</code>, <code>cpu_pct</code>, <code>mem_bytes</code>, <code>count</code>, PK <code>(host_id, ts, name)</code>).</p>
+<p>Retention:</p>
+<pre><code>SELECT add_retention_policy(&#x27;smart_attributes&#x27;, INTERVAL &#x27;90 days&#x27;, if_not_exists =&gt; TRUE);
+-- Raw only, 48 hours: process data answers recent-past questions, and a
+-- 1-hour average of a top-N list whose membership changes between buckets is
+-- close to meaningless (spec 5.4).
+SELECT add_retention_policy(&#x27;process_samples&#x27;,  INTERVAL &#x27;48 hours&#x27;, if_not_exists =&gt; TRUE);</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Run the whole store suite</strong></li></ul>
+<p>Run: <code>NETRA_TEST_DSN=... go test -count=1 -p 1 ./internal/hub/store/</code> Expected: PASS. Every pinned count moved deliberately; the <code>start_offset</code>, retention-exceeds-lag and every-aggregate-has-retention sweeps generalise and must stay green untouched.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Commit</strong></li></ul>
+<pre><code>git add internal/hub/store/
+git commit -m &quot;feat(hub): container, filesystem, SMART and process tables&quot;</code></pre>
+<hr>
+<h3>Task 3: Wire messages for every remaining family</h3>
+<p><strong>Files:</strong> Modify <code>proto/netra/v1/ingest.proto</code>, <code>internal/agent/collector/result.go</code>, <code>internal/agent/buffer/ring.go</code>, <code>internal/agent/client/client.go</code>; test <code>internal/gen/netra/v1/roundtrip_test.go</code></p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>DiskIoSample</code>, <code>SensorSample</code>, <code>NetSample</code>, <code>CollectorSample</code>, <code>Event</code>, <code>ContainerSample</code>, <code>FilesystemSample</code>, <code>SmartAttribute</code>, <code>ProcessSample</code>, <code>HostAddress</code>, <code>HostPackage</code>, <code>SystemdUnitEvent</code>, <code>PackageEvent</code>; <code>IngestRequest</code> fields 7-16.</li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the failing test</strong></li></ul>
+<pre><code>// Every per-entity family carries its own ts_ms and its own entity key. A
+// family that inherited a host row&#x27;s timestamp would be wrong the moment a
+// replayed batch spanned more than one scrape.
+func TestEveryPerEntityFamilyCarriesItsOwnTimestamp(t *testing.T) {
+	req := &amp;netrav1.IngestRequest{
+		Seq:         1,
+		DiskIo:      []*netrav1.DiskIoSample{{TsMs: 10, Device: &quot;sda&quot;}},
+		Sensors:     []*netrav1.SensorSample{{TsMs: 20, Chip: &quot;coretemp&quot;, Label: &quot;Package id 0&quot;}},
+		Net:         []*netrav1.NetSample{{TsMs: 30, Iface: &quot;eth0&quot;}},
+		Containers:  []*netrav1.ContainerSample{{TsMs: 40, ContainerKey: &quot;proj/svc&quot;}},
+		Filesystems: []*netrav1.FilesystemSample{{TsMs: 50, Label: &quot;root&quot;}},
+		Processes:   []*netrav1.ProcessSample{{TsMs: 60, Name: &quot;postgres&quot;}},
+		Smart:       []*netrav1.SmartAttribute{{TsMs: 70, Device: &quot;sda&quot;, AttrId: 5}},
+		Collectors:  []*netrav1.CollectorSample{{TsMs: 80, Collector: &quot;sensors&quot;, Ok: true}},
+		Events:      []*netrav1.Event{{TsMs: 90, Type: &quot;mdraid&quot;, Subject: &quot;md0&quot;}},
+	}
+
+	raw, err := proto.Marshal(req)
+	if err != nil {
+		t.Fatalf(&quot;Marshal: %v&quot;, err)
+	}
+	var out netrav1.IngestRequest
+	if err := proto.Unmarshal(raw, &amp;out); err != nil {
+		t.Fatalf(&quot;Unmarshal: %v&quot;, err)
+	}
+
+	for name, ts := range map[string]int64{
+		&quot;disk_io&quot;:     out.GetDiskIo()[0].GetTsMs(),
+		&quot;sensors&quot;:     out.GetSensors()[0].GetTsMs(),
+		&quot;net&quot;:         out.GetNet()[0].GetTsMs(),
+		&quot;containers&quot;:  out.GetContainers()[0].GetTsMs(),
+		&quot;filesystems&quot;: out.GetFilesystems()[0].GetTsMs(),
+		&quot;processes&quot;:   out.GetProcesses()[0].GetTsMs(),
+		&quot;smart&quot;:       out.GetSmart()[0].GetTsMs(),
+		&quot;collectors&quot;:  out.GetCollectors()[0].GetTsMs(),
+		&quot;events&quot;:      out.GetEvents()[0].GetTsMs(),
+	} {
+		if ts == 0 {
+			t.Errorf(&quot;%s row lost its ts_ms in the round trip&quot;, name)
+		}
+	}
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run to verify it fails</strong></li></ul>
+<p>Run: <code>go test ./internal/gen/netra/v1/ -run TestEveryPerEntityFamily</code> Expected: FAIL — undefined types.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Add the messages</strong></li></ul>
+<p>Each message: <code>int64 ts_ms = 1</code>, then its entity key as the schema names it, then <code>optional</code> metrics. <strong>Agents send natural keys, never surrogate ids</strong> — the agent has no idea what <code>containers.id</code> is. The hub resolves <code>container_key</code> → <code>id</code> on ingest.</p>
+<pre><code>message ContainerSample {
+  int64 ts_ms = 1;
+  // Compose project + service, falling back to container name. NOT the Docker
+  // id, which changes on every recreate and would restart the history of a
+  // service that merely got a new image.
+  string container_key = 2;
+  string name = 3;
+  string image = 4;
+  optional double cpu_pct = 5;
+  // Already has cache and inactive_file subtracted -- see the containers
+  // collector. Raw cgroup usage counts the page cache as consumption.
+  optional uint64 mem_used = 6;
+  optional uint64 mem_limit = 7;
+  optional double net_rx = 8;
+  optional double net_tx = 9;
+  optional double io_read = 10;
+  optional double io_write = 11;
+}</code></pre>
+<p>Add <code>repeated</code> fields 7-16 on <code>IngestRequest</code>, mirror the slices onto <code>collector.Result</code> and <code>buffer.Scrape</code>, and extend the merge loop and flush assembly in <code>client.go</code>. <strong>The row count in the flush bound must include every new slice</strong>, or the 4 MiB body limit stops being enforced:</p>
+<pre><code>next := 1 + len(e.Scrape.Cores) + len(e.Scrape.Disks) + len(e.Scrape.Sensors) +
+	len(e.Scrape.Nets) + len(e.Scrape.Containers) + len(e.Scrape.Filesystems) +
+	len(e.Scrape.Processes) + len(e.Scrape.Smart) + len(e.Scrape.Collectors) +
+	len(e.Scrape.Events)</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Regenerate and test</strong></li></ul>
+<p>Run: <code>make proto &amp;&amp; go test ./internal/gen/... ./internal/agent/...</code> Expected: PASS</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Add a guard against forgetting a family in the row count</strong></li></ul>
+<pre><code>// The flush bound must count every family. A slice added to Scrape without
+// being added to the row count silently un-enforces the 4 MiB body limit --
+// nothing fails until a large host replays after an outage and 413s forever.
+func TestScrapeRowCountCoversEveryFamily(t *testing.T) {
+	// reflect over buffer.Scrape&#x27;s slice fields and assert countRows sees each
+	// one: build a Scrape with exactly one element in a single field at a time
+	// and require countRows to return 2 (host row + that row) every time.
+	v := reflect.ValueOf(buffer.Scrape{})
+	for i := 0; i &lt; v.NumField(); i++ {
+		f := v.Type().Field(i)
+		if f.Type.Kind() != reflect.Slice {
+			continue
+		}
+		s := &amp;buffer.Scrape{Host: &amp;netrav1.HostSample{}}
+		rs := reflect.ValueOf(s).Elem().Field(i)
+		rs.Set(reflect.MakeSlice(f.Type, 1, 1))
+		if got := client.CountRowsForTest(s); got != 2 {
+			t.Errorf(&quot;countRows with one %s row = %d, want 2 -- the family is missing from the row count&quot;, f.Name, got)
+		}
+	}
+}</code></pre>
+<p>Extract the arithmetic into <code>countRows(*buffer.Scrape) int</code> and export it via <code>export_test.go</code>.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 6: Commit</strong></li></ul>
+<pre><code>git add proto internal/gen internal/agent
+git commit -m &quot;feat(proto): wire messages for every remaining 1C family&quot;</code></pre>
+<hr>
+<h3>Tasks 4-15: the collectors</h3>
+<p>Every collector follows the same shape, established in PR 1: <code>Collect(ctx) (*Result, error)</code>, <code>nil, err</code> on failure, <code>&amp;Result{}, nil</code> when there is nothing to report yet, fixtures under <code>testdata/</code>, registered in <code>cmd/netra-agent/main.go</code>, and <strong>one commit per collector</strong>.</p>
+<p>Each task below is: write the fixture, write the failing test, implement, run, commit. The steps are not restated per collector — what differs is the trap each one has to avoid, which is what the notes below are for.</p>
+<h4>Task 4: Disk I/O (<code>/proc/diskstats</code>)</h4>
+<p>Rows: <code>device</code>, <code>read_bytes</code>, <code>write_bytes</code>, <code>read_ops</code>, <code>write_ops</code>, <code>io_util_pct</code>, <code>r_await_ms</code>, <code>w_await_ms</code>, <code>weighted_io_pct</code>.</p>
+<p><strong>Trap: counter resets.</strong> Every column is a rate derived from a monotonic counter that resets on reboot. Only the agent holds the previous reading, so only the agent can notice. <strong>A reset emits no row at all</strong> — not a zero, not a negative, not a spike. Same reset test as <code>TestPerCoreCPUSkipsCoresMissingFromTheCurrentRead</code> in shape.</p>
+<p>Sector counts are 512-byte units regardless of the device&#x27;s logical block size; multiply by 512 for bytes. Filter partitions (<code>sda1</code>) and keep whole devices (<code>sda</code>, <code>nvme0n1</code>) — a partition&#x27;s I/O is already counted in its parent, so keeping both double-counts the host&#x27;s throughput.</p>
+<h4>Task 5: Sensors (<code>/sys/class/hwmon</code>)</h4>
+<p>Rows: <code>chip</code>, <code>label</code>, <code>temp</code>. Dimension: <code>sensors (host_id, chip, label)</code>.</p>
+<p><strong>Trap: identity.</strong> The key is <code>chip_name + label</code>, <strong>never <code>hwmonN</code></strong> — the N is allocation-order dependent and changes across reboots, so a <code>hwmon3</code> key silently reattributes one chip&#x27;s history to another. Read <code>name</code> from the hwmon directory and <code>tempN_label</code> for each input.</p>
+<p>Per-read deadline from <code>NETRA_SENSORS_TIMEOUT</code>: a wedged driver blocks a <code>read()</code> on sysfs indefinitely and would stall the whole scrape loop. Use a preference list for which sensors matter, not hottest-wins — hottest-wins reports a different physical sensor from one minute to the next.</p>
+<h4>Task 6: mdraid (sysfs)</h4>
+<p>Writes <strong><code>events</code></strong>, not a hypertable. An array is <code>clean</code> for weeks; a 60s series saying so is the same near-constant waste that keeps systemd out of §5.3. Only the transition is worth storing.</p>
+<p><strong>Trap: emitting on every scrape.</strong> The collector must hold the last known state per array and emit an event only when it changes. A first sighting emits one event establishing the baseline; identical subsequent readings emit nothing.</p>
+<h4>Task 7: Agent self-telemetry</h4>
+<p>Fills the remaining <code>agent_samples</code> columns: <code>uptime_s</code>, <code>rss_bytes</code>, <code>goroutines</code>, <code>post_failures_total</code>.</p>
+<p><strong>Trap: two different uptimes.</strong> <code>agent_samples.uptime_s</code> is the agent process; <code>host_samples.uptime_s</code> is the host. An agent uptime reset with host uptime unchanged means the agent restarted alone — which also means its ring buffer was lost. Conflating them hides crash-looping behind a healthy host. Write a test asserting the two differ for a process younger than its host.</p>
+<h4>Task 8: Network (<code>/proc/net/dev</code>)</h4>
+<p>Rows: <code>iface</code>, <code>rx_bytes</code>, <code>tx_bytes</code>, <code>rx_errs</code>, <code>tx_errs</code>. Needs <code>network_mode: host</code>.</p>
+<p>Filter <code>lo</code>, <code>veth*</code>, <code>docker0</code>, <code>br-*</code> and tunnels — without <code>network_mode: host</code> the agent sees only its own namespace and should report the capability as unavailable rather than reporting the container&#x27;s interfaces as the host&#x27;s.</p>
+<h4>Task 9: Addresses (netlink)</h4>
+<p>Writes no samples. Populates <code>host_addresses</code> and <strong>flips <code>metadata_hash</code></strong> so the hub re-asks for metadata.</p>
+<p><strong>Trap: the agent must not classify.</strong> It reports raw addresses; the <strong>hub</strong> derives <code>scope</code> (<code>loopback</code>/<code>private</code>/<code>public</code>) from the address, so the classification is one implementation that can be corrected without redeploying agents. Interface names are the join key with <code>net_samples.iface</code> — they must match exactly what the network collector reports.</p>
+<h4>Task 10: Containers (cgroup v2 + Docker socket)</h4>
+<p><strong>Trap: page cache counted as memory.</strong> Raw <code>memory.current</code> includes the page cache, so a container that has merely read files looks like it is consuming that memory. <strong>Subtract <code>cache</code> and <code>inactive_file</code></strong> — without it every container over-reports, and the number an operator would act on is wrong.</p>
+<p>Identity is compose project + service (<code>container_key</code>), falling back to container name. The Docker socket is metadata only — names and images — never the metrics; cgroup v2 provides those and does not require the socket.</p>
+<h4>Task 11: Filesystems (<code>statfs</code>)</h4>
+<p><strong>Trap: bind mounts double-count.</strong> Dedup by <code>st_dev</code>: the same filesystem mounted twice must produce one row, or a host&#x27;s total disk usage is overstated by however many bind mounts it has.</p>
+<p>Per-filesystem I/O needs the <code>st_dev</code> → block device mapping. Where that mapping fails, the value is <strong>NULL, not zero</strong> — &quot;we could not attribute I/O to this filesystem&quot; is not &quot;this filesystem did no I/O&quot;.</p>
+<h4>Task 12: systemd (D-Bus)</h4>
+<p>Events, not samples, for the same reason as mdraid. A numeric summary (<code>services_total</code>, <code>services_failed</code>) rides on <code>host_samples</code>, so this collector returns both a <code>Host</code> contribution and events.</p>
+<h4>Task 13: Packages (<code>dpkg</code>/<code>apk</code>)</h4>
+<p>Parse on mtime change with a daily floor: the package DB is large and changes rarely, so re-parsing every 60s is pure waste. rpm reports an unsupported-format <strong>capability</strong> rather than failing — a RHEL host is not broken, it is unsupported, and those are different facts.</p>
+<h4>Task 14: SMART (<code>smartctl</code>)</h4>
+<p>1h interval — the only collector besides packages permitted a non-default one, because it writes its own table and contributes nothing to <code>host_samples</code>. Missing device access reports a <strong>capability</strong>, not a failure.</p>
+<p><strong>Trap: the attribute set varies per drive model</strong>, which is why <code>smart_attributes</code> is generic (<code>attr_id</code>, <code>raw</code>, <code>normalized</code>) rather than a column per attribute.</p>
+<h4>Task 15: Processes (<code>pid: host</code>)</h4>
+<p><strong>Trap: recycled PIDs.</strong> <code>utime+stime</code> deltas must be keyed on <code>(pid, starttime)</code>, not <code>pid</code> alone. A recycled PID otherwise produces a garbage spike — the new process&#x27;s total CPU minus the old one&#x27;s, attributed to whatever the new process is called.</p>
+<p>Aggregate by name; report top-10-by-CPU ∪ top-10-by-memory. <strong>Never read <code>/proc/PID/cmdline</code> or <code>environ</code></strong> — <code>argv_guard_test.go</code> fails the build if either string appears.</p>
+<hr>
+<h3>Task 16: Hub storage for every family</h3>
+<p><strong>Files:</strong> Modify <code>internal/hub/store/ingest.go</code>, <code>internal/hub/httpapi/ingest.go</code>; tests alongside.</p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>InsertDiskIoSamples</code>, <code>InsertSensorSamples</code>, <code>InsertNetSamples</code>, <code>InsertContainerSamples</code>, <code>InsertFilesystemSamples</code>, <code>InsertProcessSamples</code>, <code>InsertSmartAttributes</code>, <code>InsertCollectorSamples</code>, <code>InsertEvents</code>, <code>UpsertHostAddresses</code>, <code>UpsertHostPackages</code>, and the dimension resolvers below.</li></ul>
+<p><strong>The one genuinely new piece: resolving natural keys to surrogate ids.</strong> Agents send <code>container_key</code>, <code>chip</code>+<code>label</code>, <code>device</code>, <code>label</code>. The hub must map each to a dimension <code>id</code> before inserting the sample row, creating the dimension row on first sight:</p>
+<pre><code>// resolveContainerIDs upserts the containers named in rows and returns
+// container_key -&gt; id for the caller to stamp onto the sample rows.
+//
+// ON CONFLICT DO UPDATE rather than DO NOTHING: a container that changed image
+// must have the new one recorded, and DO NOTHING would leave the dimension
+// describing a container that no longer exists. RETURNING then yields a row
+// either way, which DO NOTHING would not.
+func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*netrav1.ContainerSample) (map[string]int32, error)</code></pre>
+<p>Same shape for sensors, devices and filesystems. Each family&#x27;s insert then mirrors <code>InsertCpuCoreSamples</code> exactly — <code>pgx.Batch</code>, <code>SendBatch</code>, one <code>Exec</code> per queued row, <code>ON CONFLICT DO NOTHING</code> so a replay is absorbed.</p>
+<p>Every family gets its own <code>filterPlausible*Timestamps</code> using the shared <code>plausibleTs</code> predicate from PR 1.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Test: a replay of an entire scrape is absorbed by every family</strong></li></ul>
+<pre><code>// A replayed batch re-sends every family, not just host samples. Any family
+// whose insert lacks ON CONFLICT DO NOTHING fails the whole flush, and the
+// agent&#x27;s ring buffer never drains.
+func TestIntegrationReplayingAWholeScrapeIsAbsorbedByEveryFamily(t *testing.T) {
+	// post a request populating every family, post the identical request
+	// again, assert 200 both times and that no table gained rows on the second
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Test: an unknown natural key creates its dimension row exactly once</strong></li></ul>
+<pre><code>func TestIntegrationUnknownContainerKeyCreatesOneDimensionRow(t *testing.T) {
+	// post two scrapes for the same container_key, assert containers has one
+	// row and both sample rows point at it
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Commit</strong></li></ul>
+<pre><code>git add internal/hub/
+git commit -m &quot;feat(hub): store every 1C family, resolving natural keys to dimension ids&quot;</code></pre>
+<hr>
+<h3>Task 17: Deploy artifacts and capabilities</h3>
+<p><strong>Files:</strong> Modify <code>deploy/agent/compose.yaml.example</code>, <code>deploy/agent/.env.example</code></p>
+<p>Every collector that lands makes an existing <code>setup-agent.sh</code> mount meaningful. Update the implemented-collectors note to list all twenty, and state for each group what it needs: <code>network_mode: host</code> for network and addresses, the Docker socket and cgroup mount for containers, <code>/var/lib/dpkg</code> or <code>/lib/apk/db</code> for packages, device access for SMART, <code>pid: host</code> for processes.</p>
+<p>Add <code>NETRA_SENSORS_TIMEOUT</code> to <code>.env.example</code> with its rationale — a wedged hwmon driver blocks a sysfs read indefinitely, and without a deadline that stalls the whole scrape loop.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Run:</strong> <code>make test-shell</code> — expected PASS (8 files, 0 failed)</li><li><input type="checkbox" disabled><strong>Commit:</strong> <code>git commit -m &quot;docs(deploy): document the mounts every 1C collector needs&quot;</code></li></ul>
+<hr>
+<h2>Final verification</h2>
+<ul class="task"><li><input type="checkbox" disabled><code>make vet</code> clean; <code>gofmt -l internal cmd</code> prints nothing</li><li><input type="checkbox" disabled><code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test -count=1 -p 1 ./...</code> green</li><li><input type="checkbox" disabled><code>make test-shell</code> green</li><li><input type="checkbox" disabled><strong>Patch coverage.</strong> This PR adds many generated protobuf lines, which the gate counts and no test can meaningfully cover. Reproduce it locally before pushing rather than discovering it in CI:</li></ul>
+<p>``<code>bash go test -p 1 -covermode=atomic -coverpkg=./internal/hub/...,./internal/buildinfo/...,./internal/gen/...,./cmd/netra/... \ -coverprofile=coverage/hub.out ./internal/hub/... ./internal/buildinfo/... ./internal/gen/... ./cmd/netra/... go run github.com/boumenot/gocover-cobertura@v1.5.0 &lt; coverage/hub.out &gt; coverage/hub.xml sed &#x27;s|&lt;source&gt;.<em>&lt;/source&gt;|&lt;source&gt;.&lt;/source&gt;|&#x27; coverage/hub.xml &gt; coverage/hub-rooted.xml go run hack/strip-comment-lines.go . &lt; coverage/hub-rooted.xml &gt; coverage/hub-code-only.xml uvx --from diff-cover==10.3.0 diff-cover coverage/hub-code-only.xml \ --compare-branch origin/master --fail-under 75 --exclude &#x27;</em>/cmd/<em>&#x27; &#x27;cmd/</em>&#x27; </code>`<code> If it fails on generated code alone, the durable fix is excluding </code>internal/gen/<code> in </code>hack/patch-coverage.sh<code> the way </code>cmd/` already is — a CI policy change to raise with Jan, not to make unilaterally.</p>
+<ul class="task"><li><input type="checkbox" disabled>End-to-end: run the agent against a local hub and confirm each family lands —</li></ul>
+<p><code>SELECT count(*) FROM container_samples</code>, <code>filesystem_samples</code>, <code>disk_io_samples</code>, <code>sensor_samples</code>, <code>net_samples</code>, <code>process_samples</code>, <code>smart_attributes</code>, <code>events</code></p>
+<ul class="task"><li><input type="checkbox" disabled>Confirm the pinned counts in <code>rollup_test.go</code> match the new schema and were moved deliberately, not to make a failure go away</li></ul>
+</div></body></html>

@@ -58,7 +58,9 @@ func (n *Netstat) SetProcRootForTest(root string) { n.procRoot = root }
 func (n *Netstat) SetClockForTest(fn func() time.Time) { n.now = fn }
 
 // Collect implements Collector.
-func (n *Netstat) Collect(_ context.Context, sample *netrav1.HostSample) error {
+func (n *Netstat) Collect(_ context.Context) (*Result, error) {
+	sample := &netrav1.HostSample{}
+
 	cur := make(map[string]uint64, 64)
 
 	// A missing file is an absent subsystem, not a failure: /proc/net/snmp6
@@ -67,11 +69,11 @@ func (n *Netstat) Collect(_ context.Context, sample *netrav1.HostSample) error {
 	// have provided simply stays unset.
 	for _, name := range []string{"snmp", "netstat"} {
 		if err := n.readPaired(filepath.Join(n.procRoot, "net", name), cur); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := n.readFlat(filepath.Join(n.procRoot, "net", "snmp6"), cur); err != nil {
-		return err
+		return nil, err
 	}
 
 	// CurrEstab is a gauge, so it is reported on the first scrape too.
@@ -85,11 +87,11 @@ func (n *Netstat) Collect(_ context.Context, sample *netrav1.HostSample) error {
 	n.prev, n.prevAt = cur, at
 
 	if prev == nil {
-		return nil
+		return &Result{Host: sample}, nil
 	}
 	elapsed := at.Sub(prevAt).Seconds()
 	if elapsed <= 0 {
-		return nil
+		return &Result{Host: sample}, nil
 	}
 
 	// r resolves one key in both readings. A key missing from either -- a
@@ -135,7 +137,7 @@ func (n *Netstat) Collect(_ context.Context, sample *netrav1.HostSample) error {
 	sample.Ip6FragFailsPerS = r("Snmp6.Ip6FragFails")
 	sample.Ip6FragCreatesPerS = r("Snmp6.Ip6FragCreates")
 
-	return nil
+	return &Result{Host: sample}, nil
 }
 
 // readPaired parses the format of /proc/net/snmp and /proc/net/netstat, where

@@ -1,0 +1,16 @@
+C:Q1eVpkuVAqbNZlqQqXGMzZOZ2rXtE=
+P:busybox
+V:1.36.1-r5
+A:x86_64
+S:507904
+I:962560
+T:Size optimized toolbox of many common UNIX utilities
+
+C:Q1kJH0Rf3ULrbFPPMOL5pt4iGWiZo=
+P:musl
+V:1.2.4-r1
+A:x86_64
+S:383017
+I:622592
+T:the musl c library (libc) implementation
+

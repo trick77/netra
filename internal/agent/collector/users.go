@@ -141,14 +141,16 @@ func (u *Users) setCapability(value string) {
 }
 
 // Collect implements Collector.
-func (u *Users) Collect(_ context.Context, sample *netrav1.HostSample) error {
+func (u *Users) Collect(_ context.Context) (*Result, error) {
+	sample := &netrav1.HostSample{}
+
 	raw, err := os.ReadFile(u.path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
 			u.setCapability(usersCapUnavailable)
-			return nil
+			return &Result{Host: sample}, nil
 		}
-		return err
+		return nil, err
 	}
 
 	// An empty file is the normal state on a musl system, whose pututline
@@ -158,20 +160,20 @@ func (u *Users) Collect(_ context.Context, sample *netrav1.HostSample) error {
 		u.setCapability(usersCapOK)
 		n := uint32(0)
 		sample.UsersLoggedIn = &n
-		return nil
+		return &Result{Host: sample}, nil
 	}
 
 	count, ok := u.countSessions(raw)
 	if !ok {
 		u.setCapability(usersCapUnsupportedFormat)
-		return nil
+		return &Result{Host: sample}, nil
 	}
 
 	u.setCapability(usersCapOK)
 	n := uint32(count)
 	sample.UsersLoggedIn = &n
 
-	return nil
+	return &Result{Host: sample}, nil
 }
 
 // countSessions counts USER_PROCESS records, and reports false when the bytes

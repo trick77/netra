@@ -117,6 +117,14 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.storeFamilies(ctx, hostID, &req); err != nil {
+		slog.Error("insert per-entity families", "host_id", hostID, "err", err)
+		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
+		})
+		return
+	}
+
 	// Ahead of the agent_samples insert below, which can 503 out of the
 	// handler. host_current is the cache "last seen" reads from, and the host
 	// samples it summarises have just been written -- so if agent_samples is
@@ -172,14 +180,20 @@ func filterPlausibleTimestamps(samples []*netrav1.HostSample) ([]*netrav1.HostSa
 	out := make([]*netrav1.HostSample, 0, len(samples))
 	dropped := 0
 	for _, s := range samples {
-		ts := time.UnixMilli(s.GetTsMs()).UTC()
-		if ts.Before(minPlausibleTs) || ts.After(future) {
+		if !plausibleTs(s.GetTsMs(), future) {
 			dropped++
 			continue
 		}
 		out = append(out, s)
 	}
 	return out, dropped
+}
+
+// plausibleTs is the bounds check both families share, so the two filters
+// cannot drift apart on what counts as a poison timestamp.
+func plausibleTs(tsMs int64, future time.Time) bool {
+	ts := time.UnixMilli(tsMs).UTC()
+	return !ts.Before(minPlausibleTs) && !ts.After(future)
 }
 
 // reconcileMetadata stores a supplied metadata block and reports whether the
