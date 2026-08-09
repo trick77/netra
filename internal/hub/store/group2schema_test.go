@@ -210,3 +210,45 @@ func TestIntegrationHostAddressesSupportsSubnetQueries(t *testing.T) {
 		t.Errorf("IPv6 addresses = %d, want 1", n)
 	}
 }
+
+// smart_attributes and process_samples are raw-only BY DESIGN.
+//
+// SMART is read hourly, so a 5-minute bucket holds at most one reading and a
+// 1-hour bucket exactly one -- the aggregates would restate the raw table at
+// triple the storage. process_samples is the spec's stated exception (5.4): a
+// 1-hour average of a top-N list whose membership changes between buckets is
+// close to meaningless.
+//
+// Pinned so a later change adding an aggregate has to move this deliberately,
+// rather than shipping one without the retention policy nobody assigned it.
+func TestIntegrationRawOnlyTablesHaveNoContinuousAggregates(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	for _, table := range []string{"smart_attributes", "process_samples"} {
+		var n int
+		if err := s.Pool().QueryRow(ctx, `
+			SELECT count(*) FROM timescaledb_information.continuous_aggregates
+			 WHERE hypertable_name = $1`, table).Scan(&n); err != nil {
+			t.Fatalf("count aggregates on %s: %v", table, err)
+		}
+		if n != 0 {
+			t.Errorf("%s has %d continuous aggregates, want 0 -- it is raw-only by design", table, n)
+		}
+
+		// Raw-only still means retained: a hypertable with no retention policy
+		// grows without bound, and nothing reports that either.
+		var retention int
+		if err := s.Pool().QueryRow(ctx, `
+			SELECT count(*) FROM timescaledb_information.jobs
+			 WHERE proc_name = 'policy_retention' AND hypertable_name = $1`, table).Scan(&retention); err != nil {
+			t.Fatalf("count retention on %s: %v", table, err)
+		}
+		if retention != 1 {
+			t.Errorf("%s has %d retention policies, want 1", table, retention)
+		}
+	}
+}
