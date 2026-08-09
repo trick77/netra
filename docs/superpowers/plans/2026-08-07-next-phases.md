@@ -90,12 +90,18 @@ Still to add to `0001` (each hypertable with its continuous aggregates and reten
 
 - [ ] container dimensions and `container_samples`
 - [ ] `filesystems`, `filesystem_samples`, `devices`, `disk_io_samples`, `smart_attributes`
-- [ ] `sensors`, `sensor_samples`, `cpu_core_samples`, `net_samples`, `host_addresses`
-- [ ] `systemd_units`, `systemd_unit_events`, `host_packages`, `package_events`, `events`
-- [ ] `process_samples` (**raw only, 48h, no continuous aggregates** — a 1-hour average of a top-N list whose membership changes between buckets is close to meaningless), `collector_samples`, `custom_samples`
+- [x] `sensors`, `sensor_samples`, `cpu_core_samples`, `net_samples` — landed with the Group 1 schema slice. `host_addresses` still to come, with the Group 2 addresses collector
+- [x] `events` — landed early, out of bullet order, because the **mdraid collector has no hypertable of its own and writes here**. See below
+- [ ] `systemd_units`, `systemd_unit_events`, `host_packages`, `package_events`
+- [x] `collector_samples` — landed with the Group 1 schema slice
+- [ ] `process_samples` (**raw only, 48h, no continuous aggregates** — a 1-hour average of a top-N list whose membership changes between buckets is close to meaningless), `custom_samples`
 - [ ] `geocode_cache`
 
-**The `start_offset` regression test covers `host_samples` and `agent_samples`.** Extend it to each new aggregate rather than trusting the pattern — that failure mode is permanently silent. `rollup_test.go`'s policy count is a hard-coded literal on purpose: adding a hypertable must break it until the new policy is counted. It reads 4 today.
+**`mdraid` has no hypertable, and that is not an omission.** 1B lists no mdraid table while 1C Group 1 expects an mdraid collector, which reads like a gap. It is not: spec §5.2 names *"mdadm degradation"* explicitly as one of the things `events` carries, and §5.1 rule 4 sends anything constant for hours to `events` rather than to a sample table — an array is `clean` for weeks, so a 60s series saying so is the same near-constant-series waste that keeps systemd out of §5.3. The mdraid collector writes to **`events`** plus `collector_samples`, which is why `events` was pulled forward out of bullet order. `events` stays a **plain Postgres table**: no `create_hypertable`, no aggregates, no retention policy, and it must not move the counts in `rollup_test.go`.
+
+**The `start_offset` regression test already generalises.** `TestIntegrationRefreshPolicyStartOffsetExceedsBufferWindow` sweeps *every* `policy_refresh_continuous_aggregate` row rather than naming tables, so a new aggregate is checked the moment it exists — no per-aggregate extension needed. The hard-coded policy count is the part that must move, and it is a literal on purpose: adding a hypertable must break the test until the new policy is counted. It reads **14** now (was 4). `TestIntegrationRawRetentionExceedsRefreshLag` was the narrow one — it filtered on `host_samples` alone — and now sweeps every raw hypertable, with `TestIntegrationEveryContinuousAggregateHasRetention` alongside it so an aggregate shipped without retention fails rather than growing unbounded.
+
+**Timescale reports aggregate policies under the aggregate's own view name**, not the internal `_materialized_hypertable_N`. Separating raw from aggregate policies therefore needs an anti-join against `timescaledb_information.continuous_aggregates`, not a name pattern.
 
 ### 1C. The thirteen remaining collectors
 
@@ -105,7 +111,7 @@ Ordered by risk and by what unblocks what, not by the spec's table order. Each c
 - [ ] Per-core CPU (`/proc/stat`) — all cores, always; ~800 series at target scale
 - [ ] Disk I/O (`/proc/diskstats`) — counter-reset handling
 - [ ] Sensors (`/sys/class/hwmon`) — identity is `chip_name + label`, **never `hwmonN`**; per-read deadline (`NETRA_SENSORS_TIMEOUT`); preference list, not hottest-wins
-- [ ] mdraid (sysfs)
+- [ ] mdraid (sysfs) — writes **`events`**, not a hypertable (see 1B). Array state is constant for weeks; only the transition is worth storing
 - [~] Self (`agent_samples`) — **partly landed** (Group 0): the table, `scrape_duration_ms`, `post_latency_ms`, `buffer_depth`, `buffer_dropped_total`. Still to fill: `uptime_s`, `rss_bytes`, `goroutines`, `post_failures_total`. Note `agent_samples.uptime_s` and `host_samples.uptime_s` are *different facts*
 
 **Group 2 — needs `network_mode: host`.**
