@@ -587,3 +587,62 @@ func TestIntegrationANonPoisonResolverFailureStill503s(t *testing.T) {
 		})
 	}
 }
+
+// A poison natural key must be attempted ONCE per batch, not once per row.
+//
+// The dedupe guard used to be "is this key already in the resolved map", which
+// a poison key never enters -- so every row carrying it issued another failed
+// round trip and another warning. A host reporting many samples for one
+// unstorable unit name would make that many failed queries on every ingest,
+// and keep doing it, because the agent re-sends the batch it was acknowledged
+// for.
+func TestIntegrationAPoisonNaturalKeyIsResolvedOncePerBatch(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	req := fullRequest(1, ts)
+
+	// Forty rows sharing one poison key, across the dimensions that resolve
+	// natural keys to ids.
+	for i := range 10 {
+		at := ts + int64(i)
+		req.Containers = append(req.Containers, &netrav1.ContainerSample{
+			TsMs: at, ContainerKey: "proj/ev\x00il", Name: "evil", CpuPct: proto.Float64(1),
+		})
+		req.Filesystems = append(req.Filesystems, &netrav1.FilesystemSample{
+			TsMs: at, Label: "/ev\x00il", Mountpoint: "/evil", Total: proto.Uint64(1),
+		})
+		req.Smart = append(req.Smart, &netrav1.SmartAttribute{
+			TsMs: at, Device: "sd\x00z", AttrId: 5, Raw: proto.Int64(0),
+		})
+		req.SystemdEvents = append(req.SystemdEvents, &netrav1.SystemdUnitEvent{
+			TsMs: at, UnitName: "ev\x00il.service", State: "failed", Substate: "failed",
+		})
+	}
+
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// The good rows still landed, and none of the poison keys created a row.
+	for _, c := range []struct{ what, query string }{
+		{"container", `SELECT count(*) FROM containers WHERE container_key LIKE 'proj/ev%'`},
+		{"filesystem", `SELECT count(*) FROM filesystems WHERE mountpoint = '/evil'`},
+		{"device", `SELECT count(*) FROM devices WHERE device LIKE 'sd_z'`},
+		{"systemd unit", `SELECT count(*) FROM systemd_units WHERE unit_name LIKE 'ev%'`},
+	} {
+		var n int
+		if err := s.Pool().QueryRow(ctx, c.query).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", c.what, err)
+		}
+		if n != 0 {
+			t.Errorf("%s: %d poison rows stored, want 0", c.what, n)
+		}
+	}
+
+	// A replay of the same batch must still be absorbed rather than 503.
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Errorf("replay status = %d, want 200", resp.StatusCode)
+	}
+}

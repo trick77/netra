@@ -204,14 +204,34 @@ func (c *Client) ScrapeOnce(ctx context.Context) *netrav1.HostSample {
 	return scrape.Host
 }
 
-// Prime runs every collector once without buffering or sending the result.
-// The delta-based collectors (CPU, kernelstat, netstat) need a baseline
-// scrape before they can report a rate; calling Collect once here gives them
-// that baseline without leaving
+// Prime runs the delta-based collectors once without buffering or sending the
+// result. The delta-based collectors (CPU, kernelstat, netstat) need a
+// baseline scrape before they can report a rate; calling Collect once here
+// gives them that baseline without leaving
 // behind a stored row whose values are NULL for a reason ("not computable
 // yet") that is indistinguishable from an absent subsystem.
+//
+// A collector reporting itself as a collector.BaselineEmitter is SKIPPED, not
+// primed. Its first Collect is data -- mdraid and systemd each report what
+// they found on arrival -- and priming it would consume that baseline into the
+// result this function throws away, leaving the first real scrape with nothing
+// to report because the state it would compare against is now identical. An
+// array or a unit that was already failed when the agent started would raise
+// no event at all, which is the one case the baseline exists for.
+//
+// Collectors are run here directly rather than through collect() for that
+// reason: collect() has no way to leave one out.
 func (c *Client) Prime(ctx context.Context) {
-	c.collect(ctx)
+	for _, col := range c.collectors {
+		if b, ok := col.(collector.BaselineEmitter); ok && b.EmitsBaseline() {
+			continue
+		}
+		if _, err := col.Collect(ctx); err != nil {
+			// Priming is best-effort: the scheduled scrape reports the same
+			// failure, with somewhere to record it.
+			slog.Warn("priming collector failed", "collector", col.Name(), "err", err)
+		}
+	}
 }
 
 // collect runs every collector and returns the resulting scrape, without

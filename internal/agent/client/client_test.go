@@ -925,3 +925,104 @@ func TestFlushBoundsBatchByTotalRowsNotScrapeCount(t *testing.T) {
 		t.Fatal("BufferDepth() = 0; a partial drain must leave the rest buffered")
 	}
 }
+
+// A baseline-emitting collector must NOT be primed, or its baseline is lost.
+//
+// This is the production path, and it is the one a collector-level test cannot
+// see: main.go calls Prime before Run, Prime discards the Result it collects,
+// and a collector that reports its whole state on the first Collect has by
+// then also recorded that state as "previous". The first buffered scrape then
+// compares identical states and emits nothing -- so a unit that was already
+// failed when the agent started produces no event at all, which is precisely
+// the case the baseline exists for.
+//
+// Asserted through Prime + ScrapeOnce + Flush rather than by calling Collect
+// directly, because calling Collect directly is exactly what hid this.
+func TestPrimeDoesNotConsumeABaselineCollectorsFirstScrape(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	ctx := context.Background()
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	// A unit that is already failed before the agent ever starts.
+	systemd := collector.NewSystemd(config.ScrapeInterval, func(context.Context) ([]collector.Unit, error) {
+		return []collector.Unit{
+			{Name: "broken.service", Active: "failed", SubState: "failed"},
+		}, nil
+	})
+	c := client.New(cfg, []collector.Collector{systemd})
+
+	// The agent's real startup order, from main.go.
+	c.Prime(ctx)
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	events := rec.last().GetSystemdEvents()
+	if len(events) != 1 {
+		t.Fatalf("first scrape after Prime carried %d systemd events, want 1 -- priming consumed the baseline",
+			len(events))
+	}
+	if got := events[0].GetUnitName(); got != "broken.service" {
+		t.Errorf("unit_name = %q, want broken.service", got)
+	}
+	if got := events[0].GetState(); got != "failed" {
+		t.Errorf("state = %q, want failed", got)
+	}
+}
+
+// Priming must still happen for everything else: a delta-based collector needs
+// a baseline before it can report a rate, and skipping it would put a row in
+// the first stored scrape whose NULL means "not computable yet" -- which is
+// indistinguishable from an absent subsystem.
+//
+// Counted rather than asserted through a real delta collector: every fixture
+// /proc tree is static, so a real one reads the same values twice and reports
+// nothing either way, which would pass whether or not priming ran.
+func TestPrimeStillPrimesDeltaCollectors(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Config{
+		HubURL:       "http://unused.invalid",
+		Token:        "nta_test",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+
+	ordinary := &countingCollector{}
+	baseline := &countingCollector{baseline: true}
+	c := client.New(cfg, []collector.Collector{ordinary, baseline})
+
+	c.Prime(ctx)
+
+	if ordinary.calls != 1 {
+		t.Errorf("ordinary collector Collect calls = %d, want 1 -- priming must still establish its baseline",
+			ordinary.calls)
+	}
+	if baseline.calls != 0 {
+		t.Errorf("baseline collector Collect calls = %d, want 0 -- its first scrape is data, not a warm-up",
+			baseline.calls)
+	}
+}
+
+// countingCollector records how many times it was collected, and optionally
+// reports itself as a collector.BaselineEmitter.
+type countingCollector struct {
+	baseline bool
+	calls    int
+}
+
+func (c *countingCollector) Name() string            { return "counting" }
+func (c *countingCollector) Interval() time.Duration { return config.ScrapeInterval }
+func (c *countingCollector) EmitsBaseline() bool     { return c.baseline }
+
+func (c *countingCollector) Collect(context.Context) (*collector.Result, error) {
+	c.calls++
+	return &collector.Result{}, nil
+}

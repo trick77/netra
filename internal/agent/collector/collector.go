@@ -52,3 +52,26 @@ type CapabilityReporter interface {
 	// stable name. An empty or nil map means "nothing to report".
 	Capabilities() map[string]string
 }
+
+// BaselineEmitter is implemented by collectors whose FIRST Collect returns
+// data rather than a warm-up reading.
+//
+// The distinction exists because the agent PRIMES its collectors at startup
+// and throws that first Result away (Client.Prime). For a delta-based
+// collector that is exactly right: it has no previous reading, so its first
+// Collect can only establish one. For an event-based collector it is data
+// loss. mdraid and systemd both report a baseline on their first Collect --
+// "here is what I found on arrival" -- and priming them would consume that
+// baseline into a discarded scrape, set the previous state, and leave the
+// first real scrape with nothing to say. A unit or an array that was already
+// failed when the agent started would then produce no event at all, which is
+// the one case the baseline exists for.
+//
+// Reported as a method rather than inferred from the Result, because Prime
+// has to decide whether to call Collect AT ALL: by the time there is a Result
+// to inspect, the state it would be asked about has already been consumed.
+type BaselineEmitter interface {
+	// EmitsBaseline reports whether this collector's first Collect carries
+	// data that must not be discarded.
+	EmitsBaseline() bool
+}

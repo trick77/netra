@@ -123,6 +123,16 @@ func quarantine(ctx context.Context, db batchExecer, batch *pgx.Batch, what stri
 		dropped++
 	}
 
+	if dropped == 0 {
+		// Every statement succeeded on its own, so the batch failed for a
+		// reason that did not survive being taken apart. Saying "dropped
+		// rows" here would send an operator looking for data loss that did
+		// not happen.
+		slog.Warn("a batch failed but every row stored individually",
+			"family", what, "kept", inserted, "err", cause)
+		return inserted, nil
+	}
+
 	slog.Warn("dropped rows Postgres refused to store",
 		"family", what, "dropped", dropped, "kept", inserted, "err", cause)
 	return inserted, nil
@@ -303,14 +313,12 @@ func (s *Store) InsertSensorSamples(ctx context.Context, hostID int32, rows []*n
 		ON CONFLICT (host_id, ts, sensor_id) DO NOTHING`
 
 	batch := &pgx.Batch{}
-	queued := 0
 	for _, r := range rows {
 		id, ok := ids[r.GetChip()+"\x00"+r.GetLabel()]
 		if !ok {
 			continue
 		}
 		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), id, r.Temp)
-		queued++
 	}
 	return execBatch(ctx, s.pool, batch, "sensor sample")
 }
@@ -327,11 +335,20 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 		return out, nil
 	}
 
+	// tried records every key this batch has already attempted, INCLUDING the
+	// ones that failed. Keying the skip on the output map alone would re-issue
+	// a failed query for every row carrying the same poison key -- a host with
+	// two hundred samples for one unstorable name would make two hundred round
+	// trips and log two hundred warnings, on every ingest, forever, since the
+	// agent keeps re-sending it.
+	tried := make(map[string]bool, len(rows))
+
 	for _, r := range rows {
 		key := r.GetContainerKey()
-		if key == "" || out[key] != 0 {
+		if key == "" || tried[key] {
 			continue
 		}
+		tried[key] = true
 
 		id, ok, err := s.resolveOne(ctx, "container", key, `
 			INSERT INTO containers (host_id, container_key, name, image, is_agent)
@@ -370,7 +387,6 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 		ON CONFLICT (host_id, ts, container_id) DO NOTHING`
 
 	batch := &pgx.Batch{}
-	queued := 0
 	for _, r := range rows {
 		id, ok := ids[r.GetContainerKey()]
 		if !ok {
@@ -379,7 +395,6 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), id,
 			r.CpuPct, int64OrNil(r.MemUsed), int64OrNil(r.MemLimit),
 			r.NetRx, r.NetTx, r.IoRead, r.IoWrite)
-		queued++
 	}
 	return execBatch(ctx, s.pool, batch, "container sample")
 }
@@ -392,11 +407,16 @@ func (s *Store) resolveFilesystemIDs(ctx context.Context, hostID int32, rows []*
 		return out, nil
 	}
 
+	// See resolveContainerIDs on why the skip is keyed on attempts rather than
+	// on successful resolutions.
+	tried := make(map[string]bool, len(rows))
+
 	for _, r := range rows {
 		label := r.GetLabel()
-		if label == "" || out[label] != 0 {
+		if label == "" || tried[label] {
 			continue
 		}
+		tried[label] = true
 
 		id, ok, err := s.resolveOne(ctx, "filesystem", label, `
 			INSERT INTO filesystems (host_id, label, mountpoint, device_id)
@@ -435,7 +455,6 @@ func (s *Store) InsertFilesystemSamples(ctx context.Context, hostID int32, rows 
 		ON CONFLICT (host_id, ts, fs_id) DO NOTHING`
 
 	batch := &pgx.Batch{}
-	queued := 0
 	for _, r := range rows {
 		id, ok := ids[r.GetLabel()]
 		if !ok {
@@ -445,7 +464,6 @@ func (s *Store) InsertFilesystemSamples(ctx context.Context, hostID int32, rows 
 			int64OrNil(r.Total), int64OrNil(r.Used), int64OrNil(r.Free),
 			int64OrNil(r.InodesTotal), int64OrNil(r.InodesUsed),
 			r.ReadBytes, r.WriteBytes)
-		queued++
 	}
 	return execBatch(ctx, s.pool, batch, "filesystem sample")
 }
@@ -457,11 +475,16 @@ func (s *Store) resolveDeviceIDs(ctx context.Context, hostID int32, rows []*netr
 		return out, nil
 	}
 
+	// See resolveContainerIDs on why the skip is keyed on attempts rather than
+	// on successful resolutions.
+	tried := make(map[string]bool, len(rows))
+
 	for _, r := range rows {
 		name := r.GetDevice()
-		if name == "" || out[name] != 0 {
+		if name == "" || tried[name] {
 			continue
 		}
+		tried[name] = true
 
 		id, ok, err := s.resolveOne(ctx, "device", name, `
 			INSERT INTO devices (host_id, device, model, serial)
@@ -498,7 +521,6 @@ func (s *Store) InsertSmartAttributes(ctx context.Context, hostID int32, rows []
 		ON CONFLICT (host_id, ts, device_id, attr_id) DO NOTHING`
 
 	batch := &pgx.Batch{}
-	queued := 0
 	for _, r := range rows {
 		id, ok := ids[r.GetDevice()]
 		if !ok {
@@ -510,7 +532,6 @@ func (s *Store) InsertSmartAttributes(ctx context.Context, hostID int32, rows []
 			normalized = &v
 		}
 		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), id, int16(r.GetAttrId()), r.Raw, normalized)
-		queued++
 	}
 	return execBatch(ctx, s.pool, batch, "smart attribute")
 }
@@ -700,11 +721,15 @@ func (s *Store) InsertSystemdUnitEvents(ctx context.Context, hostID int32, rows 
 	}
 
 	ids := make(map[string]int32, len(rows))
+	// See resolveContainerIDs on why the skip is keyed on attempts rather than
+	// on successful resolutions.
+	tried := make(map[string]bool, len(rows))
 	for _, r := range rows {
 		name := r.GetUnitName()
-		if name == "" || ids[name] != 0 {
+		if name == "" || tried[name] {
 			continue
 		}
+		tried[name] = true
 		id, ok, err := s.resolveOne(ctx, "systemd unit", name, `
 			INSERT INTO systemd_units (host_id, unit_name) VALUES ($1, $2)
 			ON CONFLICT (host_id, unit_name) DO UPDATE SET unit_name = EXCLUDED.unit_name
@@ -724,14 +749,12 @@ func (s *Store) InsertSystemdUnitEvents(ctx context.Context, hostID int32, rows 
 		ON CONFLICT (host_id, unit_id, ts) DO NOTHING`
 
 	batch := &pgx.Batch{}
-	queued := 0
 	for _, r := range rows {
 		id, ok := ids[r.GetUnitName()]
 		if !ok {
 			continue
 		}
 		batch.Queue(stmt, hostID, id, tsOf(r.GetTsMs()), r.GetState(), emptyToNil(r.GetSubstate()))
-		queued++
 	}
 	return execBatch(ctx, s.pool, batch, "systemd unit event")
 }

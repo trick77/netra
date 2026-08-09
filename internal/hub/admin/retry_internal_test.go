@@ -87,8 +87,8 @@ func TestRetryOnDeadlockGivesUpAndReportsTheDeadlock(t *testing.T) {
 	if !isDeadlock(err) {
 		t.Errorf("err = %v, want the deadlock -- a persistent failure must not be reported as success", err)
 	}
-	if calls != deleteRetries {
-		t.Errorf("calls = %d, want %d", calls, deleteRetries)
+	if calls != deleteAttempts {
+		t.Errorf("calls = %d, want %d", calls, deleteAttempts)
 	}
 }
 
@@ -117,5 +117,55 @@ func TestRetryOnDeadlockStopsWhenTheContextIsCancelled(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed >= deleteRetryBackoff {
 		t.Errorf("waited %v; a cancelled request must not sleep out the backoff", elapsed)
+	}
+}
+
+// A request cancelled after the LAST attempt must still report the deadlock.
+//
+// The loop used to back off unconditionally, including after the final
+// attempt, where there was nothing left to wait for. A request cancelled
+// during that pointless pause returned context.Canceled instead of the
+// PgError -- so the cause vanished from both the response and the logs, on
+// exactly the failure this retry exists to make diagnosable.
+func TestRetryOnDeadlockReportsTheDeadlockEvenIfCancelledAfterTheLastAttempt(t *testing.T) {
+	// Given a statement that always deadlocks, and a request cancelled as the
+	// final attempt fails.
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	fn := func() error {
+		calls++
+		if calls == deleteAttempts {
+			cancel()
+		}
+		return deadlockErr()
+	}
+
+	// When it is run under the retry.
+	err := retryOnDeadlock(ctx, fn)
+
+	// Then the deadlock is what surfaces, not the cancellation.
+	if !isDeadlock(err) {
+		t.Errorf("err = %v, want the deadlock -- the cause must not be masked by a late cancellation", err)
+	}
+	if calls != deleteAttempts {
+		t.Errorf("calls = %d, want %d", calls, deleteAttempts)
+	}
+}
+
+// The bound must not cost a backoff nobody waits on: after the last attempt
+// there is nothing left to retry, so the call returns immediately.
+func TestRetryOnDeadlockDoesNotBackOffAfterTheLastAttempt(t *testing.T) {
+	// Given a statement that always deadlocks.
+	fn := func() error { return deadlockErr() }
+
+	// When it is run under the retry.
+	start := time.Now()
+	_ = retryOnDeadlock(context.Background(), fn)
+
+	// Then it slept between attempts, but not after the final one.
+	elapsed := time.Since(start)
+	if max := time.Duration(deleteAttempts-1) * deleteRetryBackoff; elapsed >= max+deleteRetryBackoff {
+		t.Errorf("took %v, want under %v -- the last attempt must not be followed by a backoff",
+			elapsed, max+deleteRetryBackoff)
 	}
 }

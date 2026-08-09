@@ -48,49 +48,57 @@ func wedgedHwmon(t *testing.T) string {
 	return root
 }
 
-// A wedged driver must cost ONE scrape, not the loop -- and not one leaked
-// goroutine per scrape thereafter.
+// A wedged driver must cost ONE scrape, not the loop -- and must not strand a
+// goroutine on every scrape thereafter.
 //
 // The deadline alone does not achieve that. A read(2) blocked in the kernel
 // cannot be cancelled from Go, so the goroutine behind a timed-out read stays
 // resident until the process exits. Retrying the same path every 60s would
-// therefore strand a new one every minute for the life of the agent. The fix
-// is to stop reading a path that has already timed out once, and that is what
-// this test pins.
-func TestSensorsDoesNotRereadAWedgedPath(t *testing.T) {
+// strand a new one every minute for the life of the agent.
+//
+// The answer is an exponential backoff, not a permanent blacklist: the
+// deadline cannot tell a wedged driver from a merely slow one, so a path is
+// retried on a doubling schedule. Over 20 scrapes that is a handful of
+// attempts instead of 20.
+func TestSensorsBacksOffAWedgedPathInsteadOfRereadingIt(t *testing.T) {
 	root := wedgedHwmon(t)
 	testee := collector.NewSensors(root, time.Minute, 50*time.Millisecond)
 
-	// First scrape pays the deadline once and gives up on the path.
-	start := time.Now()
-	res, err := testee.Collect(context.Background())
-	if err != nil {
-		t.Fatalf("Collect: %v", err)
-	}
-	if len(res.Sensors) != 0 {
-		t.Errorf("rows = %d, want 0 -- the chip never identified itself", len(res.Sensors))
-	}
-	if elapsed := time.Since(start); elapsed < 50*time.Millisecond {
-		t.Errorf("first scrape took %v, want at least the 50ms deadline", elapsed)
-	}
-
+	const scrapes = 20
+	attempts := 0
 	before := runtime.NumGoroutine()
 
-	// Every later scrape must skip the path outright: no deadline waited, no
-	// second goroutine stranded.
-	for i := range 5 {
-		start = time.Now()
-		if _, err := testee.Collect(context.Background()); err != nil {
+	for i := range scrapes {
+		start := time.Now()
+		res, err := testee.Collect(context.Background())
+		if err != nil {
 			t.Fatalf("Collect %d: %v", i, err)
 		}
-		if elapsed := time.Since(start); elapsed >= 50*time.Millisecond {
-			t.Fatalf("scrape %d took %v; a path that already timed out must not be read again", i, elapsed)
+		if len(res.Sensors) != 0 {
+			t.Errorf("scrape %d produced rows; the chip never identified itself", i)
+		}
+		// A scrape that waited out the deadline actually attempted the read.
+		if time.Since(start) >= 50*time.Millisecond {
+			attempts++
 		}
 	}
 
-	// Five more scrapes must not have stranded five more goroutines.
-	if after := runtime.NumGoroutine(); after > before+1 {
-		t.Errorf("goroutines went from %d to %d across five scrapes of a wedged path", before, after)
+	// Doubling from the first failure gives attempts at scrapes 1, 2, 4, 8 and
+	// 16 -- five of twenty. The bound is loose enough not to encode the exact
+	// schedule, tight enough to fail a collector that retries every scrape.
+	if attempts > 8 {
+		t.Errorf("attempted the wedged read %d times in %d scrapes; the backoff is not holding",
+			attempts, scrapes)
+	}
+	// ...but it must NOT be permanent: a path that recovers has to be retried.
+	if attempts < 2 {
+		t.Errorf("attempted the wedged read %d times; a slow read that recovers would never be picked up again",
+			attempts)
+	}
+
+	// And the stranded goroutines are bounded by the attempts, not the scrapes.
+	if after := runtime.NumGoroutine(); after > before+attempts+1 {
+		t.Errorf("goroutines went from %d to %d across %d scrapes", before, after, scrapes)
 	}
 }
 

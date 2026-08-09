@@ -44,11 +44,40 @@ type Sensors struct {
 	absent bool
 
 	// wedged holds the sysfs paths whose read did not return within
-	// readTimeout. They are never read again: each attempt strands a goroutine
-	// in an uninterruptible read(2), so retrying every 60s would leak one per
-	// scrape for as long as the agent runs.
-	wedged map[string]bool
+	// readTimeout, and when each may be tried again.
+	//
+	// Backing off rather than blacklisting outright. Each attempt on a truly
+	// wedged path strands a goroutine in an uninterruptible read(2), so
+	// retrying every scrape would leak one a minute for the life of the agent
+	// -- but never retrying is too strong the other way, because the deadline
+	// cannot tell a wedged driver from a slow one. A contended i2c bus or a
+	// momentarily loaded host can exceed the timeout and recover, and giving
+	// up permanently would cost that sensor until someone restarted the agent.
+	//
+	// Doubling the wait means a transient blip recovers on the next scrape,
+	// while a permanently stuck path is retried a logarithmic number of times
+	// -- roughly ten stranded goroutines over a year, not half a million.
+	wedged map[string]*wedgedPath
+
+	// scrapes counts Collect calls, which is the clock the backoff is measured
+	// in. Scrapes rather than wall time because the retry is only meaningful
+	// when a scrape actually happens.
+	scrapes uint64
 }
+
+// wedgedPath is one path's backoff state.
+type wedgedPath struct {
+	// failures is how many times this path has timed out, which sets the wait.
+	failures uint
+	// retryAt is the scrape number at which it may be read again.
+	retryAt uint64
+}
+
+// maxWedgedBackoff caps the doubling at 1024 scrapes -- about seventeen hours
+// at the 60s cadence. A path is never abandoned entirely, so a sensor that
+// comes back after a firmware reset or a rebind is picked up again without an
+// agent restart.
+const maxWedgedBackoff = 1024
 
 // NewSensors builds a Sensors collector reading from sysRoot (normally "/sys").
 func NewSensors(sysRoot string, interval, readTimeout time.Duration) *Sensors {
@@ -81,6 +110,8 @@ func (s *Sensors) Capabilities() map[string]string {
 
 // Collect implements Collector.
 func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
+	s.scrapes++
+
 	dir := filepath.Join(s.sysRoot, "class", "hwmon")
 	entries, err := s.readDir(ctx, dir)
 	if err != nil {
@@ -203,26 +234,54 @@ func deadlined[T any](ctx context.Context, timeout time.Duration, fn func() (T, 
 	}
 }
 
-// markWedged records a path whose read did not return in time, so no later
-// scrape reads it again.
+// markWedged records a path whose read did not return in time and schedules
+// when it may be tried again.
 //
 // This is what makes the deadline's cost bounded. Without it, a driver stuck
-// forever -- the failure mode this whole mechanism exists for -- leaks one
-// goroutine every 60s for the life of the agent, and a long-running agent on a
-// host with a bad sensor accumulates thousands.
+// forever -- the failure mode this whole mechanism exists for -- strands one
+// goroutine every 60s for the life of the agent.
 func (s *Sensors) markWedged(path string) {
 	if s.wedged == nil {
-		s.wedged = make(map[string]bool)
+		s.wedged = make(map[string]*wedgedPath)
 	}
-	s.wedged[path] = true
-	slog.Warn("hwmon read timed out; abandoning this path for the life of the agent",
-		"path", path, "timeout", s.readTimeout)
+
+	w := s.wedged[path]
+	if w == nil {
+		w = &wedgedPath{}
+		s.wedged[path] = w
+	}
+	w.failures++
+
+	backoff := uint64(1) << min(w.failures-1, 10)
+	if backoff > maxWedgedBackoff {
+		backoff = maxWedgedBackoff
+	}
+	w.retryAt = s.scrapes + backoff
+
+	slog.Warn("hwmon read timed out; backing off this path",
+		"path", path, "timeout", s.readTimeout,
+		"failures", w.failures, "skipping_scrapes", backoff)
+}
+
+// skipWedged reports whether path is still inside its backoff window.
+func (s *Sensors) skipWedged(path string) bool {
+	w := s.wedged[path]
+	return w != nil && s.scrapes < w.retryAt
+}
+
+// clearWedged forgets a path's backoff after a read that succeeded, so a
+// sensor that recovers is not held at a seventeen-hour cadence forever.
+func (s *Sensors) clearWedged(path string) {
+	if s.wedged[path] != nil {
+		slog.Info("hwmon path recovered", "path", path)
+		delete(s.wedged, path)
+	}
 }
 
 // readTrimmed reads a sysfs file under a deadline and trims its trailing
 // newline.
 func (s *Sensors) readTrimmed(ctx context.Context, path string) (string, error) {
-	if s.wedged[path] {
+	if s.skipWedged(path) {
 		return "", errWedged
 	}
 
@@ -236,6 +295,7 @@ func (s *Sensors) readTrimmed(ctx context.Context, path string) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	s.clearWedged(path)
 	return strings.TrimSpace(string(data)), nil
 }
 
@@ -246,7 +306,7 @@ func (s *Sensors) readTrimmed(ctx context.Context, path string) (string, error) 
 // because it happens before any per-file deadline could apply and would hold
 // the entire scrape loop.
 func (s *Sensors) readDir(ctx context.Context, path string) ([]os.DirEntry, error) {
-	if s.wedged[path] {
+	if s.skipWedged(path) {
 		return nil, errWedged
 	}
 
@@ -256,6 +316,9 @@ func (s *Sensors) readDir(ctx context.Context, path string) ([]os.DirEntry, erro
 	if errors.Is(err, context.DeadlineExceeded) {
 		s.markWedged(path)
 		return nil, fmt.Errorf("read dir %s: %w", path, err)
+	}
+	if err == nil {
+		s.clearWedged(path)
 	}
 	return entries, err
 }

@@ -226,13 +226,14 @@ func (s *Service) DeleteHost(ctx context.Context, hostID int32) error {
 	return nil
 }
 
-// deleteRetries is how many times a deadlocked statement is re-attempted.
+// deleteAttempts is how many times the statement is run in TOTAL -- one
+// initial attempt and two retries, not three retries.
 //
 // Three because a deadlock is resolved the instant Postgres kills one side:
 // the contending party is gone by the time the retry runs, so the second
-// attempt nearly always succeeds. More attempts would only lengthen the
-// request for a failure that is no longer a deadlock.
-const deleteRetries = 3
+// attempt nearly always succeeds. More would only lengthen the request for a
+// failure that is no longer a deadlock.
+const deleteAttempts = 3
 
 // deleteRetryBackoff is the pause between attempts. Short on purpose -- an
 // operator is waiting on this request -- but non-zero, so the retry does not
@@ -250,13 +251,21 @@ const deleteRetryBackoff = 50 * time.Millisecond
 func retryOnDeadlock(ctx context.Context, fn func() error) error {
 	var err error
 
-	for attempt := range deleteRetries {
+	for attempt := range deleteAttempts {
 		if err = fn(); !isDeadlock(err) {
 			return err
 		}
 
+		// No backoff after the LAST attempt: there is nothing left to wait
+		// for. Sleeping there would also let a request cancelled during that
+		// pointless pause return ctx.Err() instead of the deadlock, losing
+		// the cause of the failure this retry exists to make diagnosable.
+		if attempt == deleteAttempts-1 {
+			break
+		}
+
 		slog.Warn("retrying a statement Postgres deadlocked",
-			"attempt", attempt+1, "of", deleteRetries, "err", err)
+			"attempt", attempt+1, "of", deleteAttempts, "err", err)
 
 		select {
 		case <-ctx.Done():

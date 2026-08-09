@@ -103,6 +103,11 @@ func NewSystemd(interval time.Duration, lister UnitLister) *Systemd {
 // previous state the transition detection depends on.
 func (s *Systemd) SetListerForTest(l UnitLister) { s.lister = l }
 
+// EmitsBaseline implements BaselineEmitter, keeping this collector out of the
+// agent's startup priming. Its first Collect reports every unit's state, and
+// priming would discard exactly that.
+func (s *Systemd) EmitsBaseline() bool { return true }
+
 // Name implements Collector.
 func (s *Systemd) Name() string { return "systemd" }
 
