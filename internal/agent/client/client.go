@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"net/http"
+	"runtime"
 	"strings"
 	"time"
 
@@ -112,6 +113,18 @@ type Client struct {
 	// known once the post returns, which is after the sample that would carry
 	// it has already been built and buffered.
 	lastPostLatency *time.Duration
+
+	// startedAt is when this process began, so uptime is the AGENT's rather
+	// than the host's. The two are different facts: an agent uptime reset with
+	// host uptime unchanged means the agent restarted alone, which also means
+	// its ring buffer was lost -- exactly the crash-looping that conflating
+	// them would hide behind a healthy-looking host.
+	startedAt time.Time
+
+	// postFailures is cumulative across the agent's life and is never reset by
+	// a success. An agent that failed ten times and then recovered must still
+	// report ten, or the history of the outage vanishes the moment it ends.
+	postFailures uint64
 }
 
 // New builds a Client scraping at the fixed config.ScrapeInterval. Buffer
@@ -140,6 +153,7 @@ func newClient(cfg config.Config, collectors []collector.Collector, interval tim
 		metadataHash: HashMetadata(md),
 		// The hub asks for metadata when it needs it; nothing is assumed.
 		sendMetadata: false,
+		startedAt:    time.Now(),
 	}
 }
 
@@ -231,10 +245,21 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 
 	depth := uint32(c.ring.Depth())
 	dropped := c.ring.Dropped()
+	var mem runtime.MemStats
+	runtime.ReadMemStats(&mem)
+
 	agent := &netrav1.AgentSample{
 		ScrapeDurationMs:   ptr(uint32(elapsed.Milliseconds())),
 		BufferDepth:        &depth,
 		BufferDroppedTotal: &dropped,
+		// The AGENT's uptime, not the host's -- see the startedAt field.
+		UptimeS: ptr(uint64(time.Since(c.startedAt).Seconds())),
+		// Sys rather than Alloc: what the process took from the OS is what an
+		// operator sees in ps and what makes the agent a bad tenant, whereas
+		// Alloc is Go's live heap and understates the footprint.
+		RssBytes:          ptr(mem.Sys),
+		Goroutines:        ptr(uint32(runtime.NumGoroutine())),
+		PostFailuresTotal: ptr(c.postFailures),
 	}
 	// Only carried when the last post actually succeeded. Reusing a stale
 	// value would report a healthy RTT throughout an outage, and zeroing it
@@ -382,6 +407,11 @@ func (c *Client) Flush(ctx context.Context) error {
 
 	resp, err := c.post(ctx, req)
 	if err != nil {
+		// Counted here rather than inside post so every failure kind lands in
+		// one place: a network error, a 401 and a 503 are all "the agent could
+		// not deliver", which is the question this number answers.
+		c.postFailures++
+
 		if errors.Is(err, ErrUnauthorized) {
 			// The token is gone. Replaying forever would hammer the hub for
 			// nothing, so the buffer is dropped and the operator has to act.
