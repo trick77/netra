@@ -1,0 +1,31 @@
+Package: bash
+Status: install ok installed
+Priority: required
+Section: shells
+Installed-Size: 1740
+Architecture: amd64
+Version: 5.2.15-2+b7
+Description: GNU Bourne Again SHell
+
+Package: removed-thing
+Status: deinstall ok config-files
+Priority: optional
+Architecture: amd64
+Version: 1.0-1
+Description: a package that was removed but kept its config
+
+Package: coreutils
+Status: install ok installed
+Priority: required
+Section: utils
+Installed-Size: 18049
+Architecture: amd64
+Version: 9.1-1
+Description: GNU core utilities
+
+Package: libfoo
+Status: install ok installed
+Architecture: i386
+Version: 2.1-3
+Installed-Size: 512
+Description: multiarch library, same name as the amd64 build
