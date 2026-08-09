@@ -165,13 +165,54 @@ func TestSmartTreatsUnparseableOutputAsUnavailable(t *testing.T) {
 	}
 }
 
-// SMART runs on a long interval: the values change slowly and smartctl spins
-// up sleeping drives. It is one of only two collectors permitted a non-default
-// cadence, because it writes its own table and contributes nothing to
-// host_samples -- a skipped tick there would read as an absent subsystem.
-func TestSmartUsesTheLongIntervalItWasGiven(t *testing.T) {
-	testee := collector.NewSmart(time.Hour, fakeSmartctl(scanJSON, deviceJSON))
-	if got := testee.Interval(); got != time.Hour {
-		t.Errorf("Interval() = %v, want 1h", got)
+// SMART gates ITSELF rather than relying on the scrape loop, which runs every
+// collector on every tick. Without the gate smartctl would spin up every
+// sleeping drive on the host once a minute, shortening their life -- exactly
+// what a monitoring agent must not do.
+//
+// Self-gating is safe here because SMART writes its own table and contributes
+// nothing to host_samples: a skipped scrape leaves no column NULL, so nothing
+// reads as an absent subsystem.
+func TestSmartRunsOnlyOncePerInterval(t *testing.T) {
+	var runs int
+	counting := func(_ context.Context, args ...string) ([]byte, error) {
+		for _, a := range args {
+			if a == "--scan" {
+				runs++
+				return []byte(scanJSON), nil
+			}
+		}
+		return []byte(deviceJSON), nil
+	}
+
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee := collector.NewSmart(time.Hour, counting)
+	testee.SetClockForTest(func() time.Time { return base })
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+	if runs != 1 {
+		t.Fatalf("smartctl runs after the first scrape = %d, want 1", runs)
+	}
+
+	// Sixty scrapes over the next hour, as the 60s loop would deliver.
+	for i := 1; i <= 59; i++ {
+		testee.SetClockForTest(func() time.Time { return base.Add(time.Duration(i) * time.Minute) })
+		if _, err := testee.Collect(context.Background()); err != nil {
+			t.Fatalf("Collect %d: %v", i, err)
+		}
+	}
+	if runs != 1 {
+		t.Errorf("smartctl runs within the interval = %d, want 1 -- drives must not be woken every minute", runs)
+	}
+
+	// Past the interval, it runs again.
+	testee.SetClockForTest(func() time.Time { return base.Add(time.Hour) })
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect after the interval: %v", err)
+	}
+	if runs != 2 {
+		t.Errorf("smartctl runs after the interval elapsed = %d, want 2", runs)
 	}
 }

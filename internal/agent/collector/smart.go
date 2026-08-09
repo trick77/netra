@@ -72,12 +72,36 @@ type Smart struct {
 	interval time.Duration
 	run      SmartRunner
 
+	now     func() time.Time
+	lastRun time.Time
+	hasRun  bool
+
 	unavailable bool
 }
 
 // NewSmart builds a Smart collector.
 func NewSmart(interval time.Duration, run SmartRunner) *Smart {
-	return &Smart{interval: interval, run: run}
+	return &Smart{interval: interval, run: run, now: time.Now}
+}
+
+// SetClockForTest replaces the clock used for the interval gate.
+func (s *Smart) SetClockForTest(fn func() time.Time) { s.now = fn }
+
+// due reports whether the interval has elapsed since the last run.
+//
+// The collector gates ITSELF rather than relying on the scrape loop, which
+// runs every collector on every tick. Without this, smartctl would spin up
+// every sleeping drive on the host once a minute -- which shortens their life
+// and is exactly the behaviour a monitoring agent must not have.
+//
+// Self-gating is safe here, and only here, because SMART writes its own table
+// and contributes nothing to host_samples: a scrape that skips it leaves no
+// column NULL, so nothing reads as an absent subsystem.
+func (s *Smart) due() bool {
+	if !s.hasRun {
+		return true
+	}
+	return s.now().Sub(s.lastRun) >= s.interval
 }
 
 // Name implements Collector.
@@ -101,6 +125,11 @@ func (s *Smart) Capabilities() map[string]string {
 
 // Collect implements Collector.
 func (s *Smart) Collect(ctx context.Context) (*Result, error) {
+	if !s.due() {
+		return &Result{}, nil
+	}
+	s.lastRun, s.hasRun = s.now(), true
+
 	raw, err := s.run(ctx, "--json", "--scan")
 	if err != nil {
 		s.unavailable = true
