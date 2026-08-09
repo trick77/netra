@@ -45,6 +45,12 @@ func NewMdraid(sysRoot string, interval time.Duration) *Mdraid {
 	return &Mdraid{sysRoot: sysRoot, interval: interval}
 }
 
+// EmitsBaseline implements BaselineEmitter, keeping this collector out of the
+// agent's startup priming. Its first Collect reports every array's state, and
+// priming would discard exactly that -- so an array already degraded when the
+// agent started would raise no event.
+func (m *Mdraid) EmitsBaseline() bool { return true }
+
 // Name implements Collector.
 func (m *Mdraid) Name() string { return "mdraid" }
 

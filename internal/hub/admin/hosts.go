@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -62,6 +63,10 @@ func classify(err error) error {
 const (
 	pgUniqueViolation     = "23505"
 	pgForeignKeyViolation = "23503"
+	// pgDeadlockDetected is the one SQLSTATE the database itself declares
+	// transient: it has rolled this transaction back and retrying is the
+	// documented response.
+	pgDeadlockDetected = "40P01"
 )
 
 // describeConstraint names what the caller collided with, without leaking the
@@ -190,8 +195,28 @@ func (s *Service) RotateToken(ctx context.Context, hostID int32) (string, error)
 
 // DeleteHost removes a host. Its tokens and samples go with it through the
 // ON DELETE CASCADE declared in 0001_init.sql.
+//
+// The delete is RETRIED on a deadlock, which is not a defensive flourish: this
+// statement deadlocks against TimescaleDB's own retention jobs in practice.
+// The cascade walks every hypertable that references hosts, while
+// policy_retention concurrently wants AccessExclusiveLock on chunks of those
+// same hypertables to drop them -- and 0001_init.sql registers 49 such
+// policies. Postgres resolves the cycle by killing one side, and roughly half
+// the time the loser is the operator's delete, which then answers 500 for a
+// failure that would succeed if simply tried again.
+//
+// Retrying is always safe here. Postgres has already rolled the losing
+// transaction back completely, so there is no partial cascade to clean up, and
+// the statement is idempotent: a delete that did land leaves RowsAffected at
+// zero on the next attempt, which is exactly the ErrNotFound path.
 func (s *Service) DeleteHost(ctx context.Context, hostID int32) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM hosts WHERE id = $1`, hostID)
+	var tag pgconn.CommandTag
+
+	err := retryOnDeadlock(ctx, func() error {
+		var err error
+		tag, err = s.pool.Exec(ctx, `DELETE FROM hosts WHERE id = $1`, hostID)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("delete host: %w", err)
 	}
@@ -199,6 +224,64 @@ func (s *Service) DeleteHost(ctx context.Context, hostID int32) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// deleteAttempts is how many times the statement is run in TOTAL -- one
+// initial attempt and two retries, not three retries.
+//
+// Three because a deadlock is resolved the instant Postgres kills one side:
+// the contending party is gone by the time the retry runs, so the second
+// attempt nearly always succeeds. More would only lengthen the request for a
+// failure that is no longer a deadlock.
+const deleteAttempts = 3
+
+// deleteRetryBackoff is the pause between attempts. Short on purpose -- an
+// operator is waiting on this request -- but non-zero, so the retry does not
+// land inside the same lock window that produced the deadlock.
+const deleteRetryBackoff = 50 * time.Millisecond
+
+// retryOnDeadlock runs fn, re-attempting it while Postgres reports a deadlock.
+//
+// ONLY SQLSTATE 40P01. A deadlock is the one failure the database itself
+// declares transient: it has already rolled the loser back and states that
+// retrying is the correct response. Everything else -- a constraint violation,
+// a dropped connection -- either will not change on a retry or needs the
+// caller to know it happened, so widening this would turn real failures into
+// silent delays.
+func retryOnDeadlock(ctx context.Context, fn func() error) error {
+	var err error
+
+	for attempt := range deleteAttempts {
+		if err = fn(); !isDeadlock(err) {
+			return err
+		}
+
+		// No backoff after the LAST attempt: there is nothing left to wait
+		// for. Sleeping there would also let a request cancelled during that
+		// pointless pause return ctx.Err() instead of the deadlock, losing
+		// the cause of the failure this retry exists to make diagnosable.
+		if attempt == deleteAttempts-1 {
+			break
+		}
+
+		slog.Warn("retrying a statement Postgres deadlocked",
+			"attempt", attempt+1, "of", deleteAttempts, "err", err)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(deleteRetryBackoff):
+		}
+	}
+
+	return err
+}
+
+// isDeadlock reports whether err is Postgres killing this transaction to break
+// a lock cycle.
+func isDeadlock(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgDeadlockDetected
 }
 
 // ListHosts returns every host with its last_seen, ordered by hostname.

@@ -1,13 +1,13 @@
 package collector
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"os/exec"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/coreos/go-systemd/v22/dbus"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
@@ -25,50 +25,56 @@ type Unit struct {
 // running these tests do not have.
 type UnitLister func(ctx context.Context) ([]Unit, error)
 
-// SystemUnits is the production UnitLister.
+// SystemUnits is the production UnitLister. It calls
+// org.freedesktop.systemd1.Manager.ListUnits on the system bus.
 //
-// Shells out to systemctl rather than speaking D-Bus directly: the wire
-// protocol would pull in a D-Bus library and a hand-rolled authentication
-// handshake for a question systemctl already answers, and the binary is
-// present on every host that has systemd at all. --plain and --no-legend make
-// the output stable across versions, which `--output=json` is not.
+// D-Bus rather than shelling out to `systemctl list-units`, which is what this
+// collector did until it was found never to run at all. systemctl is itself
+// only a formatter around this same method call, and it is NOT present in the
+// agent image: netra-agent ships on Alpine, and systemd is not packaged for
+// musl at any version. Bind-mounting the host's binary does not help either --
+// it is linked against glibc and will not execute against musl. So every host
+// reported a "systemd: unavailable" capability and no unit data whatsoever,
+// while deploy/agent/compose.yaml.example already documented the bus socket
+// mount this function actually needs.
+//
+// Talking to the bus directly also removes the column parsing that stood
+// between systemd and the three fields netra wants, including the leading
+// bullet systemd puts on a failed unit -- the units that matter most were the
+// ones most likely to be misparsed.
+//
+// A fresh connection per scrape, closed on the way out, rather than one held
+// open: the call runs once a minute, so the cost is immaterial next to running
+// smartctl, and a connection that is never reused cannot go stale when dbus or
+// systemd is restarted under the agent.
 func SystemUnits(ctx context.Context) ([]Unit, error) {
-	cmd := exec.CommandContext(ctx, "systemctl",
-		"list-units", "--type=service", "--all", "--plain", "--no-legend", "--no-pager")
-	out, err := cmd.Output()
+	conn, err := dbus.NewSystemConnectionContext(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect to the system bus: %w", err)
 	}
-	return parseSystemctl(out), nil
-}
+	defer conn.Close()
 
-// parseSystemctl reads the columns of `systemctl list-units --plain
-// --no-legend`: UNIT LOAD ACTIVE SUB DESCRIPTION.
-func parseSystemctl(out []byte) []Unit {
-	var units []Unit
+	statuses, err := conn.ListUnitsContext(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list units: %w", err)
+	}
 
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-
-		// systemd marks a failed unit with a leading bullet, separated by a
-		// space -- so it arrives as its OWN field and shifts every column
-		// right. Dropping it by prefix-trimming fields[0] would leave an empty
-		// name and silently skip exactly the units that matter most.
-		if len(fields) > 0 && (fields[0] == "●" || fields[0] == "*") {
-			fields = fields[1:]
-		}
-
-		if len(fields) < 4 {
+	units := make([]Unit, 0, len(statuses))
+	for _, s := range statuses {
+		// ListUnits returns every LOADED unit of every type, which is what
+		// `list-units --all` printed. Services are the only type with a
+		// failure an operator acts on, and the summary counters on the host
+		// row are defined as service counts.
+		if !strings.HasSuffix(s.Name, ".service") {
 			continue
 		}
-		name := fields[0]
-		if !strings.HasSuffix(name, ".service") {
-			continue
-		}
-		units = append(units, Unit{Name: name, Active: fields[2], SubState: fields[3]})
+		units = append(units, Unit{
+			Name:     s.Name,
+			Active:   s.ActiveState,
+			SubState: s.SubState,
+		})
 	}
-	return units
+	return units, nil
 }
 
 // Systemd reports unit state changes as EVENTS, plus a numeric summary on the
@@ -97,10 +103,10 @@ func NewSystemd(interval time.Duration, lister UnitLister) *Systemd {
 // previous state the transition detection depends on.
 func (s *Systemd) SetListerForTest(l UnitLister) { s.lister = l }
 
-// ParseSystemctlForTest exposes the output parser, which is otherwise
-// unreachable: the production path runs a binary the test machines do not
-// have.
-func ParseSystemctlForTest(out []byte) []Unit { return parseSystemctl(out) }
+// EmitsBaseline implements BaselineEmitter, keeping this collector out of the
+// agent's startup priming. Its first Collect reports every unit's state, and
+// priming would discard exactly that.
+func (s *Systemd) EmitsBaseline() bool { return true }
 
 // Name implements Collector.
 func (s *Systemd) Name() string { return "systemd" }
@@ -111,9 +117,10 @@ func (s *Systemd) Interval() time.Duration { return s.interval }
 // Capabilities implements CapabilityReporter.
 func (s *Systemd) Capabilities() map[string]string {
 	if s.unavailable {
-		// A host running OpenRC or running the agent without /run/systemd is
-		// not broken; it has no systemd. Distinguishing that from "zero
-		// services" is the whole point of saying so.
+		// A host running OpenRC, or an agent started without the system bus
+		// socket mounted, is not broken; it has no systemd to ask.
+		// Distinguishing that from "zero services" is the whole point of
+		// saying so.
 		return map[string]string{"systemd": "unavailable"}
 	}
 	return nil
@@ -149,22 +156,33 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 	ts := time.Now().UnixMilli()
 	var events []*netrav1.SystemdUnitEvent
 
-	if prev != nil {
-		for _, name := range names {
-			u := cur[name]
-			p, seen := prev[name]
-			if seen && p.Active == u.Active && p.SubState == u.SubState {
-				// Unchanged. Emitting anyway would turn the event table into
-				// the 60s series this collector exists to avoid.
-				continue
-			}
-			events = append(events, &netrav1.SystemdUnitEvent{
-				TsMs:     ts,
-				UnitName: name,
-				State:    u.Active,
-				Substate: u.SubState,
-			})
+	// The first scrape emits a BASELINE: prev is nil, nothing matches, so every
+	// unit produces one event. Same as mdraid, and for the same reason -- a
+	// unit that was already failed when the agent started would otherwise
+	// produce no event at all, and only the services_failed counter would
+	// reveal it. "Which units are failed, and since when" is the question this
+	// table exists to answer, and it cannot answer it about a failure that
+	// predates the agent unless the agent says what it found on arrival.
+	//
+	// The volume is the one real difference from mdraid, which baselines a
+	// handful of arrays while this baselines every .service on the host --
+	// a few hundred rows, once per agent start. That is a bounded one-off, not
+	// a per-scrape cost: the loop below still emits nothing for an unchanged
+	// unit, so the steady state is unaffected.
+	for _, name := range names {
+		u := cur[name]
+		p, seen := prev[name]
+		if seen && p.Active == u.Active && p.SubState == u.SubState {
+			// Unchanged. Emitting anyway would turn the event table into
+			// the 60s series this collector exists to avoid.
+			continue
 		}
+		events = append(events, &netrav1.SystemdUnitEvent{
+			TsMs:     ts,
+			UnitName: name,
+			State:    u.Active,
+			Substate: u.SubState,
+		})
 	}
 
 	// The summary rides the host row, where two integers cost nothing, rather

@@ -275,3 +275,374 @@ func TestIntegrationOneImplausibleRowDoesNotFailTheBatch(t *testing.T) {
 		t.Errorf("sda rows = %d, want 1 -- one poison row must not cost the good ones", n)
 	}
 }
+
+// A row Postgres itself rejects must not cost the other eleven families their
+// data, and must not 503.
+//
+// This is the same failure mode maxBatchRows and the timestamp filter exist to
+// prevent, arriving through a different door: a 503 makes the agent re-send
+// the identical batch forever, so a single unstorable row wedges the ring
+// buffer permanently. The timestamp filter only catches implausible ts_ms --
+// a NUL byte in a process comm or an address INET will not parse are equally
+// unstorable and equally permanent.
+//
+// Both quarantine paths are exercised on purpose. A NUL in a process name
+// fails inside the family's own INSERT batch; a NUL in a container_key fails
+// EARLIER, in the dimension resolver that maps natural keys to ids, which the
+// batch quarantine never sees.
+func TestIntegrationOneUnstorableRowDoesNotCostTheOtherFamiliesTheirData(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	req := fullRequest(1, ts)
+	// Batch path: SQLSTATE 22021, invalid byte sequence for encoding UTF8.
+	req.Processes = append(req.Processes, &netrav1.ProcessSample{
+		TsMs: ts, Name: "evil\x00comm", CpuPct: proto.Float64(1),
+	})
+	// Resolver path: the same NUL, but in a natural key the hub must resolve
+	// to a surrogate id before any sample can reference it. Every dimension is
+	// poisoned, because each resolver is its own code path and a quarantine
+	// that covered only some of them would still wedge on the rest.
+	req.Containers = append(req.Containers, &netrav1.ContainerSample{
+		TsMs: ts, ContainerKey: "proj/ev\x00il", Name: "evil", CpuPct: proto.Float64(1),
+	})
+	req.Sensors = append(req.Sensors, &netrav1.SensorSample{
+		TsMs: ts, Chip: "core\x00temp", Label: "evil", Temp: proto.Float64(50),
+	})
+	req.Filesystems = append(req.Filesystems, &netrav1.FilesystemSample{
+		TsMs: ts, Label: "/ev\x00il", Mountpoint: "/evil", Total: proto.Uint64(1),
+	})
+	req.Smart = append(req.Smart, &netrav1.SmartAttribute{
+		TsMs: ts, Device: "sd\x00z", AttrId: 5, Raw: proto.Int64(0),
+	})
+	req.SystemdEvents = append(req.SystemdEvents, &netrav1.SystemdUnitEvent{
+		TsMs: ts, UnitName: "ev\x00il.service", State: "failed", Substate: "failed",
+	})
+	// Batch path, different SQLSTATE: 22P02, invalid input syntax for inet.
+	req.Addresses = append(req.Addresses, &netrav1.HostAddress{
+		Iface: "eth0", Address: "not-an-address", Family: 4,
+	})
+
+	resp := post(t, srv, token, req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 -- a 503 here makes the agent re-send this batch forever", resp.StatusCode)
+	}
+
+	// Every family still lands, including the good rows of the three families
+	// that carried a poison row.
+	for _, table := range familyTables {
+		var n int
+		if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM `+table).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n == 0 {
+			t.Errorf("%s is empty; one unstorable row cost an unrelated family its data", table)
+		}
+	}
+
+	// The poisoned rows themselves are dropped, not stored mangled. Every
+	// dimension keeps exactly the one good row fullRequest carries.
+	for _, c := range []struct{ what, query string }{
+		{"process", `SELECT count(*) FROM process_samples WHERE name LIKE 'evil%'`},
+		{"container", `SELECT count(*) FROM containers WHERE container_key LIKE 'proj/ev%'`},
+		{"address", `SELECT count(*) FROM host_addresses WHERE host(address) = 'not-an-address'`},
+		{"sensor", `SELECT count(*) FROM sensors WHERE label = 'evil'`},
+		{"filesystem", `SELECT count(*) FROM filesystems WHERE mountpoint = '/evil'`},
+		{"device", `SELECT count(*) FROM devices WHERE device LIKE 'sd_z'`},
+		{"systemd unit", `SELECT count(*) FROM systemd_units WHERE unit_name LIKE 'ev%'`},
+	} {
+		var n int
+		if err := s.Pool().QueryRow(ctx, c.query).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", c.what, err)
+		}
+		if n != 0 {
+			t.Errorf("%s: %d poison rows stored, want 0", c.what, n)
+		}
+	}
+
+	// And the good row of each poisoned family survived its quarantine.
+	for _, c := range []struct{ what, query string }{
+		{"process", `SELECT count(*) FROM process_samples WHERE name = 'postgres'`},
+		{"container", `SELECT count(*) FROM containers WHERE container_key = 'proj/web'`},
+		{"address", `SELECT count(*) FROM host_addresses WHERE host(address) = '10.0.0.5'`},
+	} {
+		var n int
+		if err := s.Pool().QueryRow(ctx, c.query).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", c.what, err)
+		}
+		if n != 1 {
+			t.Errorf("%s: good rows = %d, want 1 -- quarantine dropped more than the poison row", c.what, n)
+		}
+	}
+}
+
+// A failure that is NOT a poison row must still 503, because a retry is how
+// the agent recovers from one.
+//
+// A column the statement names but the schema does not have is SQLSTATE class
+// 42, which is permanent like a poison row but is the HUB's bug rather than
+// the agent's. Quarantining it would drop every row of that family one by one
+// and answer 200, turning a schema mistake into silent, fleet-wide data loss.
+// It stays a 503 an operator can see.
+//
+// A renamed COLUMN rather than a dropped table, deliberately. process_samples
+// is a hypertable: dropping it disturbs TimescaleDB's own catalog and orphans
+// the retention and continuous-aggregate jobs the migration registers, which
+// then fire against a later test's freshly recreated schema and deadlock
+// against whatever it is doing. A rename produces the same SQLSTATE with no
+// catalog damage at all.
+func TestIntegrationANonPoisonFailureStill503s(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	if _, err := s.Pool().Exec(ctx,
+		`ALTER TABLE process_samples RENAME COLUMN cpu_pct TO cpu_pct_gone`); err != nil {
+		t.Fatalf("rename process_samples column: %v", err)
+	}
+
+	resp := post(t, srv, token, fullRequest(1, ts))
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 -- only rows Postgres rejects identically forever may be quarantined",
+			resp.StatusCode)
+	}
+}
+
+// A package the host no longer has installed must go, and the multiarch case
+// must survive the pruning.
+//
+// "apt remove nginx" writes a remove row to package_events. An inventory that
+// still lists nginx contradicts it, and the two halves of the same answer
+// disagreeing is worse than either being absent.
+func TestIntegrationPackagesNoLongerInstalledArePruned(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+
+	req := fullRequest(1, time.Now().Add(-2*time.Minute).UnixMilli())
+	req.Packages = []*netrav1.HostPackage{
+		{Name: "bash", Version: "5.3", Arch: "amd64", Format: "dpkg"},
+		{Name: "nginx", Version: "1.24", Arch: "amd64", Format: "dpkg"},
+		// The same package for a second architecture is a SEPARATE
+		// installation with its own version, so pruning on name alone would
+		// delete one of these every time the other was reported.
+		{Name: "zlib1g", Version: "1.3", Arch: "amd64", Format: "dpkg"},
+		{Name: "zlib1g", Version: "1.3", Arch: "i386", Format: "dpkg"},
+	}
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// The package is removed, and the next inventory omits it.
+	req = fullRequest(2, time.Now().Add(-time.Minute).UnixMilli())
+	req.Packages = []*netrav1.HostPackage{
+		{Name: "bash", Version: "5.3", Arch: "amd64", Format: "dpkg"},
+		{Name: "zlib1g", Version: "1.3", Arch: "amd64", Format: "dpkg"},
+		{Name: "zlib1g", Version: "1.3", Arch: "i386", Format: "dpkg"},
+	}
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d, want 200", resp.StatusCode)
+	}
+
+	var n int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM host_packages WHERE name = 'nginx'`).Scan(&n); err != nil {
+		t.Fatalf("count nginx: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("nginx rows = %d, want 0 -- a removed package must not stay in the inventory", n)
+	}
+
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM host_packages WHERE name = 'zlib1g'`).Scan(&n); err != nil {
+		t.Fatalf("count zlib1g: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("zlib1g rows = %d, want 2 -- amd64 and i386 are separate installations", n)
+	}
+
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM host_packages`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("host_packages = %d, want 3", n)
+	}
+}
+
+// An empty package set means "the agent did not re-parse", NOT "this host has
+// no packages", so it must never prune.
+//
+// The collector parses only when the database mtime moved or the daily floor
+// elapsed, and sends nothing otherwise -- so most scrapes carry no inventory
+// at all. Treating those as an empty set would wipe the whole inventory on
+// every ordinary scrape.
+func TestIntegrationAnAbsentPackageSetDoesNotPruneTheInventory(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+
+	req := fullRequest(1, time.Now().Add(-2*time.Minute).UnixMilli())
+	req.Packages = []*netrav1.HostPackage{
+		{Name: "bash", Version: "5.3", Arch: "amd64", Format: "dpkg"},
+		{Name: "nginx", Version: "1.24", Arch: "amd64", Format: "dpkg"},
+	}
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// The ordinary scrape: nothing re-parsed, so no inventory rides along.
+	req = fullRequest(2, time.Now().Add(-time.Minute).UnixMilli())
+	req.Packages = nil
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d, want 200", resp.StatusCode)
+	}
+
+	var n int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM host_packages`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("host_packages = %d, want 2 -- a scrape that did not re-parse must not prune", n)
+	}
+}
+
+// A poison value in an INVENTORY set also poisons the prune that follows it,
+// because the deleted-set comparison carries the same value. Skipping that
+// prune must not 503.
+//
+// A stale row outliving its address is a wrong answer to a subnet query, which
+// is bad. A 503 is a permanently wedged agent, which is worse -- and the next
+// scrape prunes correctly anyway, since by then the quarantine has dropped the
+// offending row from the set the agent keeps sending.
+func TestIntegrationAPoisonInventoryValueDoesNotWedgeThePrune(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	req := fullRequest(1, ts)
+	req.Addresses = []*netrav1.HostAddress{
+		{Iface: "eth0", Address: "10.0.0.5", Family: 4},
+		{Iface: "et\x00h0", Address: "10.0.0.9", Family: 4},
+	}
+	req.Packages = []*netrav1.HostPackage{
+		{Name: "bash", Version: "5.3", Arch: "amd64", Format: "dpkg"},
+		{Name: "ba\x00d", Version: "1.0", Arch: "amd64", Format: "dpkg"},
+	}
+
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 -- a poisoned prune must not wedge the agent", resp.StatusCode)
+	}
+
+	// The good half of each inventory still landed.
+	var n int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM host_addresses WHERE host(address) = '10.0.0.5'`).Scan(&n); err != nil {
+		t.Fatalf("count address: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("good address rows = %d, want 1", n)
+	}
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM host_packages WHERE name = 'bash'`).Scan(&n); err != nil {
+		t.Fatalf("count package: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("good package rows = %d, want 1", n)
+	}
+}
+
+// A non-poison failure inside a DIMENSION RESOLVER must 503 too.
+//
+// The resolvers run before the family's own INSERT, so they are a second place
+// a failure can arise -- and the one the batch quarantine cannot see. Each is
+// its own code path, so each is checked: a resolver that swallowed a real
+// database failure would report 200 and silently drop every sample keyed on
+// that dimension.
+func TestIntegrationANonPoisonResolverFailureStill503s(t *testing.T) {
+	// A renamed column rather than a dropped table, for the reason spelled out
+	// on TestIntegrationANonPoisonFailureStill503s: dropping these CASCADEs
+	// into the hypertables that reference them and leaves TimescaleDB's
+	// background jobs pointing at a schema that no longer matches.
+	for _, d := range []struct{ table, column string }{
+		{"sensors", "chip"},
+		{"containers", "container_key"},
+		{"filesystems", "mountpoint"},
+		{"devices", "model"},
+		{"systemd_units", "unit_name"},
+	} {
+		t.Run(d.table, func(t *testing.T) {
+			srv, token, s := newFixture(t)
+			ctx := context.Background()
+			ts := time.Now().Add(-time.Minute).UnixMilli()
+
+			if _, err := s.Pool().Exec(ctx,
+				`ALTER TABLE `+d.table+` RENAME COLUMN `+d.column+` TO `+d.column+`_gone`); err != nil {
+				t.Fatalf("rename %s.%s: %v", d.table, d.column, err)
+			}
+
+			resp := post(t, srv, token, fullRequest(1, ts))
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Errorf("status = %d, want 503 -- a %s column the hub names but the schema lacks is the hub's bug, not a poison row",
+					resp.StatusCode, d.table)
+			}
+		})
+	}
+}
+
+// A poison natural key must be attempted ONCE per batch, not once per row.
+//
+// The dedupe guard used to be "is this key already in the resolved map", which
+// a poison key never enters -- so every row carrying it issued another failed
+// round trip and another warning. A host reporting many samples for one
+// unstorable unit name would make that many failed queries on every ingest,
+// and keep doing it, because the agent re-sends the batch it was acknowledged
+// for.
+func TestIntegrationAPoisonNaturalKeyIsResolvedOncePerBatch(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	req := fullRequest(1, ts)
+
+	// Forty rows sharing one poison key, across the dimensions that resolve
+	// natural keys to ids.
+	for i := range 10 {
+		at := ts + int64(i)
+		req.Containers = append(req.Containers, &netrav1.ContainerSample{
+			TsMs: at, ContainerKey: "proj/ev\x00il", Name: "evil", CpuPct: proto.Float64(1),
+		})
+		req.Filesystems = append(req.Filesystems, &netrav1.FilesystemSample{
+			TsMs: at, Label: "/ev\x00il", Mountpoint: "/evil", Total: proto.Uint64(1),
+		})
+		req.Smart = append(req.Smart, &netrav1.SmartAttribute{
+			TsMs: at, Device: "sd\x00z", AttrId: 5, Raw: proto.Int64(0),
+		})
+		req.SystemdEvents = append(req.SystemdEvents, &netrav1.SystemdUnitEvent{
+			TsMs: at, UnitName: "ev\x00il.service", State: "failed", Substate: "failed",
+		})
+	}
+
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// The good rows still landed, and none of the poison keys created a row.
+	for _, c := range []struct{ what, query string }{
+		{"container", `SELECT count(*) FROM containers WHERE container_key LIKE 'proj/ev%'`},
+		{"filesystem", `SELECT count(*) FROM filesystems WHERE mountpoint = '/evil'`},
+		{"device", `SELECT count(*) FROM devices WHERE device LIKE 'sd_z'`},
+		{"systemd unit", `SELECT count(*) FROM systemd_units WHERE unit_name LIKE 'ev%'`},
+	} {
+		var n int
+		if err := s.Pool().QueryRow(ctx, c.query).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", c.what, err)
+		}
+		if n != 0 {
+			t.Errorf("%s: %d poison rows stored, want 0", c.what, n)
+		}
+	}
+
+	// A replay of the same batch must still be absorbed rather than 503.
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Errorf("replay status = %d, want 200", resp.StatusCode)
+	}
+}

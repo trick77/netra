@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
+	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
 func fakeUnits(units ...collector.Unit) collector.UnitLister {
@@ -38,21 +39,43 @@ func TestSystemdReportsTheSummaryOnTheHostRow(t *testing.T) {
 	}
 }
 
-// A unit's state is constant for days, so only the transition is stored. The
-// first scrape establishes the baseline and emits nothing -- otherwise an
-// agent start would deliver one event per unit on the host, hundreds of rows
-// saying nothing happened.
-func TestSystemdEmitsNoEventsOnTheFirstScrape(t *testing.T) {
+// The first scrape emits a BASELINE: one event per unit, saying what the agent
+// found on arrival. Same as mdraid, and for the same reason.
+//
+// A unit that was ALREADY failed when the agent started is the case that
+// forces it. Emitting nothing until the next transition means a host whose
+// database has been down for a week produces no event for it at all, and only
+// the services_failed counter reveals anything is wrong -- with no unit name
+// and no "since when". That is precisely the question this table exists to
+// answer.
+func TestSystemdEmitsABaselineOnTheFirstScrape(t *testing.T) {
 	testee := collector.NewSystemd(time.Minute, fakeUnits(
 		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
+		collector.Unit{Name: "nginx.service", Active: "failed", SubState: "failed"},
 	))
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	if len(res.SystemdEvents) != 0 {
-		t.Errorf("events on the first scrape = %d, want 0", len(res.SystemdEvents))
+	if len(res.SystemdEvents) != 2 {
+		t.Fatalf("events on the first scrape = %d, want 2 (one per unit)", len(res.SystemdEvents))
+	}
+
+	var failed *netrav1.SystemdUnitEvent
+	for _, e := range res.SystemdEvents {
+		if e.GetUnitName() == "nginx.service" {
+			failed = e
+		}
+	}
+	if failed == nil {
+		t.Fatal("no event for nginx.service; a unit already failed at agent start must be reported")
+	}
+	if got := failed.GetState(); got != "failed" {
+		t.Errorf("nginx.service state = %q, want failed", got)
+	}
+	if failed.GetTsMs() == 0 {
+		t.Error("baseline event carries no ts_ms")
 	}
 }
 
@@ -134,28 +157,5 @@ func TestSystemdReportsUnavailableAsACapability(t *testing.T) {
 	}
 	if got := testee.Capabilities()["systemd"]; got != "unavailable" {
 		t.Errorf("capability = %q, want unavailable", got)
-	}
-}
-
-// The columns systemctl prints are UNIT LOAD ACTIVE SUB DESCRIPTION, and a
-// failed unit is bulleted in some versions.
-func TestSystemdParsesSystemctlOutput(t *testing.T) {
-	out := []byte(`ssh.service          loaded active   running OpenBSD Secure Shell server
-● broken.service     loaded failed   failed  A unit that failed
-docker.socket        loaded active   running Docker Socket
-`)
-	units := collector.ParseSystemctlForTest(out)
-
-	if len(units) != 2 {
-		t.Fatalf("units = %d, want 2 (.socket is not a service)", len(units))
-	}
-	if units[0].Name != "ssh.service" || units[0].Active != "active" {
-		t.Errorf("unit 0 = %+v", units[0])
-	}
-	if units[1].Name != "broken.service" {
-		t.Errorf("unit 1 name = %q; the bullet must be stripped", units[1].Name)
-	}
-	if units[1].Active != "failed" {
-		t.Errorf("unit 1 active = %q, want failed", units[1].Active)
 	}
 }

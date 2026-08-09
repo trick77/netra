@@ -14,9 +14,28 @@ import (
 )
 
 // FsStat is one filesystem's statfs result, in the terms the schema uses.
+//
+// Used and Free are reported INDEPENDENTLY, and on a filesystem with a root
+// reserve they do not add up to Total. That is deliberate, and it is what df
+// does:
+//
+//	Total = Blocks           every block on the filesystem
+//	Free  = Bavail           what an unprivileged process may still allocate
+//	Used  = Blocks - Bfree   what actually holds data
+//
+// The gap between them is the root reserve -- ext4's default 5% -- which is
+// neither used nor available. Deriving one from the other would misreport
+// whichever end it was derived from: Total - Free counts the reserve as used
+// and overstates consumption by 5% on every ext4 filesystem, while
+// Total - Used counts it as free and fires a "disk full" alert late, after
+// unprivileged writes have already started failing with ENOSPC.
+//
+// So a UI must compute its percentage as Used / (Used + Free), the way df
+// computes Use%, rather than Used / Total.
 type FsStat struct {
 	Total       uint64
 	Free        uint64
+	Used        uint64
 	InodesTotal uint64
 	InodesFree  uint64
 	// DeviceID is st_dev. Bind mounts of one filesystem share it, which is
@@ -102,14 +121,15 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 		}
 		seen[st.DeviceID] = m.mountpoint
 
-		used := st.Total - st.Free
 		rows = append(rows, &netrav1.FilesystemSample{
-			TsMs:        ts,
-			Label:       m.mountpoint,
-			Mountpoint:  m.mountpoint,
-			DeviceId:    ptrTo(st.DeviceID),
-			Total:       ptrTo(st.Total),
-			Used:        ptrTo(used),
+			TsMs:       ts,
+			Label:      m.mountpoint,
+			Mountpoint: m.mountpoint,
+			DeviceId:   ptrTo(st.DeviceID),
+			Total:      ptrTo(st.Total),
+			// Used is NOT Total - Free: see FsStat on why the root reserve
+			// makes those two different numbers.
+			Used:        ptrTo(st.Used),
 			Free:        ptrTo(st.Free),
 			InodesTotal: ptrTo(st.InodesTotal),
 			InodesUsed:  ptrTo(st.InodesTotal - st.InodesFree),

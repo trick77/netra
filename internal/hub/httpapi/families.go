@@ -15,11 +15,26 @@ import (
 // stays readable, and so a new family is one entry here rather than another
 // twelve-line copy of the same 503 handling.
 //
-// A failure in any family fails the whole request with a 503. That is
-// deliberate: these are primary rows on the same natural keys as the host
+// A TRANSIENT failure in any family fails the whole request with a 503. That
+// is deliberate: these are primary rows on the same natural keys as the host
 // samples already written, so silently dropping them would hide exactly the
 // data the collectors exist to deliver, and host_samples dedupes the replay
 // that the retry produces.
+//
+// A row Postgres will reject identically forever is NOT such a failure, and is
+// quarantined in the store rather than 503'd (see store.poisonRow). The
+// difference matters because the agent answers a 503 by re-sending the
+// IDENTICAL batch: one NUL byte in a process comm would otherwise wedge that
+// host's ring buffer permanently, which is the failure mode maxBatchRows and
+// the timestamp filter below already exist to prevent.
+//
+// Quarantine rather than per-family isolation, deliberately. Isolating the
+// families would let eleven of them land while the twelfth still 503'd -- but
+// the agent then re-sends everything anyway, so the eleven gain nothing, and
+// the poisoned family stays poisoned forever. Quarantine is what actually
+// guarantees forward progress: it drops the individual rows that can never be
+// stored and keeps every row that can, including the good rows of the family
+// that carried the poison.
 func (h *IngestHandler) storeFamilies(ctx context.Context, hostID int32, req *netrav1.IngestRequest) error {
 	// Every family's timestamps are bounded the same way host samples' are: a
 	// far-future row would outlive every retention policy, and one poison row
