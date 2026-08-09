@@ -32,3 +32,8 @@ func SetMachineIDPaths(t *testing.T, paths ...string) {
 
 // Fingerprint exposes the unexported fingerprint() to the external test package.
 func Fingerprint() string { return fingerprint() }
+
+// MaxBatchRowsForTest exposes the per-request row cap so a test can assert the
+// drain respects it without restating the literal, which would then agree with
+// a wrong value as readily as a right one.
+const MaxBatchRowsForTest = maxBatchRows

@@ -7,10 +7,22 @@ import (
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
-// Entry is one buffered sample and its batch sequence number.
+// Scrape is everything one scrape produced: the wide host row plus the
+// per-entity rows measured at the same instant.
+//
+// The ring buffers whole scrapes rather than host rows alone. Replaying a host
+// row without the rows collected beside it would lose data that nothing
+// reports as lost -- the host samples arrive intact and the batch looks
+// complete, so the gap is invisible on both ends.
+type Scrape struct {
+	Host  *netrav1.HostSample
+	Cores []*netrav1.CpuCoreSample
+}
+
+// Entry is one buffered scrape and its batch sequence number.
 type Entry struct {
 	Seq    uint64
-	Sample *netrav1.HostSample
+	Scrape *Scrape
 }
 
 // Ring is a bounded, overwrite-oldest buffer of unacknowledged samples.
@@ -37,8 +49,8 @@ func New(capacity int) *Ring {
 	}
 }
 
-// Add appends a sample, discarding the oldest entry when full.
-func (r *Ring) Add(seq uint64, s *netrav1.HostSample) {
+// Add appends a scrape, discarding the oldest entry when full.
+func (r *Ring) Add(seq uint64, s *Scrape) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -46,7 +58,7 @@ func (r *Ring) Add(seq uint64, s *netrav1.HostSample) {
 		r.entries = r.entries[1:]
 		r.dropped++
 	}
-	r.entries = append(r.entries, Entry{Seq: seq, Sample: s})
+	r.entries = append(r.entries, Entry{Seq: seq, Scrape: s})
 }
 
 // Pending returns a copy of the buffered entries, oldest first. Replay sends

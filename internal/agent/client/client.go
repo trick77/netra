@@ -33,7 +33,8 @@ const ingestPath = "/api/agent/v1/ingest"
 // cannot stall the agent indefinitely.
 const maxAdoptedRetryAfter = 10 * time.Minute
 
-// maxBatchSamples caps how many buffered samples one POST carries.
+// maxBatchRows caps how many rows one POST carries: host samples plus every
+// per-entity row riding with them.
 //
 // The hub caps an ingest body at 4 MiB (httpapi.maxBodyBytes). Sending an
 // over-sized ring whole would earn a 413 the agent can never recover from:
@@ -43,19 +44,29 @@ const maxAdoptedRetryAfter = 10 * time.Minute
 // hub's limit; AckThrough is prefix-based and seq is monotonic, so a partial
 // drain is exactly as safe as a whole one.
 //
-// At the fixed 60s cadence the ring maxes out at 360 slots (6h window), so
-// this bound does not bind today. It is kept as the invariant that guards
-// the 413-forever failure mode independently of the window arithmetic.
-const maxBatchSamples = 2000
+// This counts ROWS, not scrapes. Counting scrapes was a sound proxy for body
+// size only while a scrape was one narrow row: a 64-core host now carries 65
+// rows per scrape, so 2000 scrapes would be 130,000 rows and blow the very
+// limit this constant exists to respect.
+//
+// 20000 rows at a generous 100 bytes each is ~2 MB, half the cap, leaving
+// room for the metadata block and for the families that later 1C PRs add.
+const maxBatchRows = 20000
 
 // maxBufferSlots caps the ring's capacity in entries, independently of the
 // window/interval arithmetic that sizes it. capacityFor bounds the buffered
-// WINDOW, which says nothing on its own about how many live *HostSample
-// values fit in it — and during an outage the ring fills to capacity by
-// design, on a host the agent is meant to be a negligible tenant of. The
-// fixed 60s cadence keeps the real number small (360 at the 6h maximum), so
-// like maxBatchSamples this is a standing guard on the memory invariant
-// rather than a limit reached in practice.
+// WINDOW, which says nothing on its own about how much memory the entries in
+// it hold — and during an outage the ring fills to capacity by design, on a
+// host the agent is meant to be a negligible tenant of.
+//
+// An entry is now a whole scrape rather than one narrow row, so a slot is
+// both larger and variable: a 64-core host buffers ~65 rows per slot where a
+// single-core VPS buffers 2. The window arithmetic still bounds the slot
+// COUNT correctly — 360 at the 6h maximum, at the fixed 60s cadence — so the
+// worst case is ~23,000 buffered rows, a few MB. This stays a standing guard
+// on the invariant rather than a limit reached in practice; revisit it when a
+// family arrives whose row count per scrape is unbounded (containers,
+// processes).
 const maxBufferSlots = 10000
 
 // RetryAfterError wraps a flush failure that came with a hub-specified
@@ -167,15 +178,16 @@ func (c *Client) BufferDepth() int { return c.ring.Depth() }
 // keeps within cfg.BufferWindow.
 func (c *Client) BufferCapacity() int { return c.ring.Capacity() }
 
-// ScrapeOnce runs every collector and buffers the resulting sample.
+// ScrapeOnce runs every collector and buffers the resulting scrape.
 //
-// A collector that fails is logged and skipped: its fields stay unset, and
-// the rest of the sample is still worth sending.
+// A collector that fails is logged and skipped, and contributes nothing at
+// all: the rest of the scrape is still worth sending. It returns the host row
+// for the caller's convenience; the per-entity rows go to the ring with it.
 func (c *Client) ScrapeOnce(ctx context.Context) *netrav1.HostSample {
-	sample := c.collect(ctx)
+	scrape := c.collect(ctx)
 	c.seq++
-	c.ring.Add(c.seq, sample)
-	return sample
+	c.ring.Add(c.seq, scrape)
+	return scrape.Host
 }
 
 // Prime runs every collector once without buffering or sending the result.
@@ -188,16 +200,17 @@ func (c *Client) Prime(ctx context.Context) {
 	c.collect(ctx)
 }
 
-// collect runs every collector and returns the resulting sample, without
+// collect runs every collector and returns the resulting scrape, without
 // touching the sequence counter or the ring buffer.
-func (c *Client) collect(ctx context.Context) *netrav1.HostSample {
+func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 	sample := &netrav1.HostSample{TsMs: time.Now().UnixMilli()}
+	var cores []*netrav1.CpuCoreSample
 
 	start := time.Now()
 	for _, col := range c.collectors {
 		res, err := col.Collect(ctx)
 		if err != nil {
-			// Nothing from a failed collector reaches the sample. Merging a
+			// Nothing from a failed collector reaches the scrape. Merging a
 			// partial result would store fields the collector never finished
 			// measuring, and an unset field is supposed to mean the subsystem
 			// is absent.
@@ -205,8 +218,12 @@ func (c *Client) collect(ctx context.Context) *netrav1.HostSample {
 			continue
 		}
 		if res.Host != nil {
+			// Merge rather than assign: each collector owns a disjoint set of
+			// fields, and proto.Merge copies only the ones actually set,
+			// which is what keeps unset meaning "absent".
 			proto.Merge(sample, res.Host)
 		}
+		cores = append(cores, res.Cores...)
 	}
 	elapsed := time.Since(start)
 
@@ -227,7 +244,7 @@ func (c *Client) collect(ctx context.Context) *netrav1.HostSample {
 	}
 	sample.Agent = agent
 
-	return sample
+	return &buffer.Scrape{Host: sample, Cores: cores}
 }
 
 // refreshCapabilities re-reads what each collector reports about its own
@@ -273,16 +290,31 @@ func (c *Client) Flush(ctx context.Context) error {
 		return nil
 	}
 
-	// Send at most maxBatchSamples per POST, oldest first. Pending is ordered
-	// and AckThrough drops a prefix, so the remainder simply goes out on the
-	// next flush rather than being lost.
-	if len(pending) > maxBatchSamples {
-		pending = pending[:maxBatchSamples]
+	// Send at most maxBatchRows per POST, oldest first. Pending is ordered and
+	// AckThrough drops a prefix, so the remainder simply goes out on the next
+	// flush rather than being lost.
+	//
+	// Counted in rows rather than scrapes: a scrape now carries its host row
+	// plus every per-entity row measured with it, so the scrape count says
+	// nothing about the encoded body size.
+	rows := 0
+	for i, e := range pending {
+		next := 1 + len(e.Scrape.Cores)
+		// The i > 0 guard lets a single oversized scrape through on its own.
+		// Without it a host whose scrape exceeds the cap would never flush,
+		// and the ring would fill and start dropping.
+		if i > 0 && rows+next > maxBatchRows {
+			pending = pending[:i]
+			break
+		}
+		rows += next
 	}
 
 	samples := make([]*netrav1.HostSample, 0, len(pending))
+	var cores []*netrav1.CpuCoreSample
 	for _, e := range pending {
-		samples = append(samples, e.Sample)
+		samples = append(samples, e.Scrape.Host)
+		cores = append(cores, e.Scrape.Cores...)
 	}
 	highest := pending[len(pending)-1].Seq
 
@@ -290,6 +322,7 @@ func (c *Client) Flush(ctx context.Context) error {
 		Seq:          highest,
 		MetadataHash: c.metadataHash,
 		HostSamples:  samples,
+		CpuCores:     cores,
 		// Anything sent after a failed flush is replayed history, and the hub
 		// needs to know so it can invalidate the affected aggregate ranges.
 		Backfill: c.replaying,
@@ -305,7 +338,8 @@ func (c *Client) Flush(ctx context.Context) error {
 			// nothing, so the buffer is dropped and the operator has to act.
 			//
 			// The WHOLE buffer, not just the batch that was attempted.
-			// AckThrough(highest) dropped at most maxBatchSamples of the
+			// AckThrough(highest) dropped only the prefix that fit in one
+			// maxBatchRows batch, out of the
 			// maxBufferSlots the ring can hold, and ScrapeOnce keeps adding on
 			// every tick — so a revoked token left the ring pinned at capacity
 			// indefinitely, which is exactly the state this branch says it is
