@@ -9,17 +9,29 @@
 #   mkdir -p /.netra                          # see "Filesystems" below
 #   docker compose up -d
 #
-# WHAT IS IMPLEMENTED TODAY (phase 1): eight collectors — CPU, per-core CPU
-# (one utilisation figure per core, from /proc/stat's cpuN lines), memory,
-# load, kernelstat (context switches, interrupts, fork rate, runnable and
-# blocked tasks, boot time), netstat (TCP/UDP/IP counters and fragmentation,
-# IPv4 and IPv6), procs (total process count) and users (logged-in session
-# count).
+# WHAT IS IMPLEMENTED TODAY (phase 1): all twenty collectors.
 #
-# All but two need nothing at all: they read /proc and require no mount, no
-# capability and no device. Per-core CPU in particular adds no requirement over
-# the aggregate CPU collector — it reads the same file. The two exceptions are
-# called out where they are configured below —
+# Needing nothing but /proc and /sys — no mount, no capability, no device:
+#   CPU, per-core CPU, memory, load, kernelstat, netstat, procs, users,
+#   disk I/O (/proc/diskstats), sensors (/sys/class/hwmon), mdraid (sysfs).
+#
+# Needing network_mode: host, or they see the container's namespace instead of
+# the host's:
+#   network (/proc/net/dev), addresses.
+#
+# Needing a mount, each called out where it is configured below:
+#   containers (cgroup v2 + the Docker socket for names only), filesystems,
+#   systemd, packages.
+#
+# Needing a privilege the operator grants explicitly:
+#   SMART (device access), processes (pid: host).
+#
+# A collector that cannot run reports WHY as a capability and is skipped; it
+# never prevents the agent from starting. So a host that grants none of the
+# optional access below still delivers every collector in the first group.
+#
+# The two long-standing exceptions are called out where they are configured
+# below —
 #
 #   * procs reports a total process count only with `pid: host`. Without it the
 #     agent sees its own PID namespace, and reports the metric as unavailable
@@ -31,13 +43,13 @@
 # Both leave their metric NULL rather than 0 when unavailable, and record why
 # in the host's capabilities.
 #
-# Every OTHER mount, capability and device below is documented because this
-# file is the place an operator decides them, but the collector that consumes
-# it has not landed yet, so granting it today changes nothing. Nothing breaks
-# if you enable them now — they are inert, not harmful. Nothing is missing if
-# you do not.
+# Every OTHER mount, capability and device below now HAS a collector consuming
+# it. Granting one turns its collector on; declining leaves that collector
+# reporting an unavailable capability and every other collector unaffected.
+# This paragraph used to say these were inert -- they were, until Stage 1C
+# landed the collectors, and leaving it would have been a lie about what works.
 #
-# Every OPTIONAL mount, device and capability below therefore ships COMMENTED
+# Every OPTIONAL mount, device and capability below ships COMMENTED
 # OUT. Uncommenting one whose source does not exist is not a no-op: a long-form
 # bind does not create a missing source, and a `devices:` entry for a node this
 # host lacks stops the container from starting at all. Uncomment what this host
