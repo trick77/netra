@@ -1,0 +1,9 @@
+proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
+/dev/sda1 / ext4 rw,relatime 0 0
+/dev/sda1 /var/lib/docker ext4 rw,relatime 0 0
+/dev/sdb1 /data ext4 rw,relatime 0 0
+tmpfs /run tmpfs rw,nosuid,nodev 0 0
+cgroup2 /sys/fs/cgroup cgroup2 rw,nosuid,nodev,noexec,relatime 0 0
+/dev/sdc1 /mnt/my\040disk ext4 rw,relatime 0 0
+/dev/sdd1 /broken ext4 rw,relatime 0 0
