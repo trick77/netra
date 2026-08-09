@@ -124,6 +124,16 @@ func (s *Store) Migrate(ctx context.Context) error {
 		}
 	}
 
+	if s.unscheduleJobs {
+		// Test databases only; the flag is unreachable from Open. Done HERE
+		// rather than in OpenTest because the jobs do not exist until the
+		// migrations that register them have run, and OpenTest returns before
+		// its caller migrates.
+		if err := s.unschedulePolicyJobs(ctx); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

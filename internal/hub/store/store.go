@@ -11,6 +11,14 @@ import (
 // Store wraps the connection pool. It is the only place that knows a DSN.
 type Store struct {
 	pool *pgxpool.Pool
+
+	// unscheduleJobs makes Migrate leave TimescaleDB's policy jobs registered
+	// but not RUNNING. It is set only by OpenTest, never by Open, so it cannot
+	// reach a hub: a production hub needs its retention and refresh policies to
+	// fire, and they are the whole reason those policies exist.
+	//
+	// See unschedulePolicyJobs for why a test database needs this.
+	unscheduleJobs bool
 }
 
 // Open connects and verifies the database is reachable.

@@ -45,6 +45,12 @@ func OpenTest(t *testing.T) *Store {
 		t.Fatalf("open test database: %v", err)
 	}
 
+	// Every test's Migrate leaves TimescaleDB's policy jobs unscheduled, so the
+	// background scheduler cannot deadlock against the test's own statements.
+	// Set here rather than by each test because a test that forgets does not
+	// fail -- it flakes, later, somewhere else. See unschedulePolicyJobs.
+	s.unscheduleJobs = true
+
 	if err := resetSchema(ctx, s); err != nil {
 		s.Close()
 		t.Fatalf("reset schema: %v", err)
@@ -193,4 +199,45 @@ func isRetryableLockError(err error) bool {
 		return false
 	}
 	return pgErr.Code == deadlockSQLState || pgErr.Code == lockNotAvailableSQLState
+}
+
+// unschedulePolicyJobs leaves TimescaleDB's policy jobs registered but stops
+// the scheduler from ever running them. Test databases only.
+//
+// 0001_init.sql registers 49 retention and continuous-aggregate policies, and
+// TimescaleDB's background scheduler fires newly created jobs within seconds
+// rather than at their nominal schedule_interval. policy_retention drops
+// chunks, which takes AccessExclusiveLock on them; a test that deletes a host
+// takes RowExclusiveLock across the same hypertables through the ON DELETE
+// CASCADE. The two deadlock, Postgres kills one side, and if the loser is the
+// test it fails with SQLSTATE 40P01 -- intermittently, and with nothing in the
+// test's own code to explain it. TestIntegrationGroup2TablesCascadeOnHostDelete
+// and the admin/UI host-delete tests all hit this.
+//
+// resetSchema already stops the workers for the DROP SCHEMA it performs, but
+// that protection ends when Migrate reinstalls the extension and creates these
+// jobs. This closes the remaining window: the test body itself.
+//
+// UNSCHEDULED, not deleted. Several tests count the policies to prove the
+// migration registered them (rollup_test.go, group1rollup_test.go), and
+// deleting the jobs would make those tests pass for the wrong reason -- or
+// fail. An unscheduled job still appears in timescaledb_information.jobs; it
+// simply never runs. Two of those tests already unschedule jobs themselves for
+// this exact reason; doing it here means every test gets it rather than each
+// one rediscovering the problem.
+//
+// Nothing is lost: no test depends on a policy running on its own. The ones
+// that need aggregate data call refresh_continuous_aggregate directly, which
+// is unaffected.
+func (s *Store) unschedulePolicyJobs(ctx context.Context) error {
+	// The job ids are not stable across runs, so they are selected rather than
+	// hardcoded. alter_job returns a record, hence the SELECT rather than CALL.
+	if _, err := s.pool.Exec(ctx, `
+		SELECT alter_job(job_id, scheduled => false)
+		  FROM timescaledb_information.jobs
+		 WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate')`,
+	); err != nil {
+		return fmt.Errorf("unschedule policy jobs: %w", err)
+	}
+	return nil
 }
