@@ -113,9 +113,19 @@ func TestIntegrationGroup1AggregatesComputeTheRightNumbers(t *testing.T) {
 // and sum((NOT ok)::INTEGER) in the 5m tier, summed again in the 1h tier,
 // with last(error_code, bucket) carrying the most recent failure forward.
 //
-// Two 5m buckets, for the same reason as above, and with deliberately
-// different row counts: three scrapes then two. sum (5) is then distinct from
-// max (3) and from either bucket, so a sum silently written as a max fails.
+// Three 5m buckets, for the same reason as above, and with deliberately
+// different row counts: three scrapes, then two, then two. sum (7) is then
+// distinct from max (3) and from every bucket, so a sum silently written as a
+// max fails.
+//
+// The third bucket is the one where the collector RECOVERS, and it is there
+// for error_code specifically. last(error_code, ts) must carry the bucket's
+// NULL forward, not the last non-NULL it saw: a collector that failed at
+// 09:03 and has been fine since must not still be reported as broken. With
+// only the first two buckets the failure was last in both, so the assertion
+// held whether last() returned the NULL at the maximum ts or skipped NULLs
+// entirely — and a rewrite to last(error_code, ts) FILTER (WHERE NOT ok)
+// would have made error_code permanently sticky with every test still green.
 func TestIntegrationCollectorSamplesAggregateCountsFailures(t *testing.T) {
 	ctx := context.Background()
 	s := store.OpenTest(t)
@@ -139,6 +149,10 @@ func TestIntegrationCollectorSamplesAggregateCountsFailures(t *testing.T) {
 		// Second 5m bucket: two scrapes, one failure.
 		{6 * time.Minute, 20, true, nil},
 		{7 * time.Minute, 30, false, "io_error"},
+		// Third 5m bucket: the collector has recovered. error_code must be
+		// NULL here and in the hour that contains it.
+		{12 * time.Minute, 40, true, nil},
+		{13 * time.Minute, 60, true, nil},
 	}
 	for _, r := range rows {
 		if _, err := s.Pool().Exec(ctx,
@@ -151,24 +165,27 @@ func TestIntegrationCollectorSamplesAggregateCountsFailures(t *testing.T) {
 
 	refreshTiers(t, s, "collector_samples")
 
-	// (4+8+6)/3 in the first bucket, (20+30)/2 in the second.
+	// (4+8+6)/3, (20+30)/2, (40+60)/2.
 	firstAvg := 6.0
 	secondAvg := 25.0
+	thirdAvg := 50.0
 
-	assertTier(t, s, "collector_samples_5m", "sample_count", "collector", "sensors", hostID, []float64{3, 2})
-	assertTier(t, s, "collector_samples_5m", "failure_count", "collector", "sensors", hostID, []float64{2, 1})
-	assertTier(t, s, "collector_samples_5m", "duration_ms_avg", "collector", "sensors", hostID, []float64{firstAvg, secondAvg})
-	assertTier(t, s, "collector_samples_5m", "duration_ms_max", "collector", "sensors", hostID, []float64{8, 30})
+	assertTier(t, s, "collector_samples_5m", "sample_count", "collector", "sensors", hostID, []float64{3, 2, 2})
+	assertTier(t, s, "collector_samples_5m", "failure_count", "collector", "sensors", hostID, []float64{2, 1, 0})
+	assertTier(t, s, "collector_samples_5m", "duration_ms_avg", "collector", "sensors", hostID, []float64{firstAvg, secondAvg, thirdAvg})
+	assertTier(t, s, "collector_samples_5m", "duration_ms_max", "collector", "sensors", hostID, []float64{8, 30, 60})
 
-	assertTier(t, s, "collector_samples_1h", "sample_count", "collector", "sensors", hostID, []float64{5})
+	assertTier(t, s, "collector_samples_1h", "sample_count", "collector", "sensors", hostID, []float64{7})
 	assertTier(t, s, "collector_samples_1h", "failure_count", "collector", "sensors", hostID, []float64{3})
-	assertTier(t, s, "collector_samples_1h", "duration_ms_avg", "collector", "sensors", hostID, []float64{(firstAvg + secondAvg) / 2})
-	assertTier(t, s, "collector_samples_1h", "duration_ms_max", "collector", "sensors", hostID, []float64{30})
+	assertTier(t, s, "collector_samples_1h", "duration_ms_avg", "collector", "sensors", hostID,
+		[]float64{(firstAvg + secondAvg + thirdAvg) / 3})
+	assertTier(t, s, "collector_samples_1h", "duration_ms_max", "collector", "sensors", hostID, []float64{60})
 
-	// The last failure in each window, not the first, and not the NULL
-	// belonging to the successful scrape that followed it in bucket two.
-	assertTextTier(t, s, "collector_samples_5m", "error_code", hostID, []string{"timeout", "io_error"})
-	assertTextTier(t, s, "collector_samples_1h", "error_code", hostID, []string{"io_error"})
+	// The last failure in each window, not the first — and NULL once the
+	// collector recovers, rather than the last error still standing.
+	assertTextTier(t, s, "collector_samples_5m", "error_code", hostID,
+		[]*string{ptr("timeout"), ptr("io_error"), nil})
+	assertTextTier(t, s, "collector_samples_1h", "error_code", hostID, []*string{nil})
 }
 
 // sum(bigint) returns numeric, so collector_samples_1h's counts would have a
@@ -444,9 +461,16 @@ func assertTier(t *testing.T, s *store.Store, view, column, dimension string, di
 	}
 }
 
-// assertTextTier is assertTier for a text column, hard-wired to the one
-// collector series these tests write.
-func assertTextTier(t *testing.T, s *store.Store, view, column string, hostID int32, want []string) {
+// ptr returns a pointer to v, so a caller can spell a non-NULL expectation
+// inline next to a nil one.
+func ptr[T any](v T) *T { return &v }
+
+// assertTextTier is assertTier for a nullable text column, hard-wired to the
+// one collector series these tests write. It scans into *string rather than
+// string on purpose: a NULL error_code is the value that says the collector
+// recovered, and scanning into string would fail on it rather than compare
+// it.
+func assertTextTier(t *testing.T, s *store.Store, view, column string, hostID int32, want []*string) {
 	t.Helper()
 
 	sql := fmt.Sprintf(
@@ -457,9 +481,9 @@ func assertTextTier(t *testing.T, s *store.Store, view, column string, hostID in
 	}
 	defer rows.Close()
 
-	var got []string
+	var got []*string
 	for rows.Next() {
-		var v string
+		var v *string
 		if err := rows.Scan(&v); err != nil {
 			t.Fatalf("scan %s.%s: %v", view, column, err)
 		}
@@ -469,16 +493,40 @@ func assertTextTier(t *testing.T, s *store.Store, view, column string, hostID in
 		t.Fatalf("iterate %s.%s: %v", view, column, err)
 	}
 
+	if !equalTextPtrs(got, want) {
+		t.Errorf("%s.%s = %v, want %v", view, column, formatTextPtrs(got), formatTextPtrs(want))
+	}
+}
+
+// equalTextPtrs compares two nullable-text slices, treating nil as NULL.
+func equalTextPtrs(got, want []*string) bool {
 	if len(got) != len(want) {
-		t.Errorf("%s.%s = %v, want %v", view, column, got, want)
-		return
+		return false
 	}
 	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("%s.%s = %v, want %v", view, column, got, want)
-			return
+		switch {
+		case got[i] == nil && want[i] == nil:
+		case got[i] == nil || want[i] == nil:
+			return false
+		case *got[i] != *want[i]:
+			return false
 		}
 	}
+	return true
+}
+
+// formatTextPtrs renders a nullable-text slice for a failure message, so a
+// NULL reads as NULL rather than as a pointer address.
+func formatTextPtrs(v []*string) []string {
+	out := make([]string, len(v))
+	for i, s := range v {
+		if s == nil {
+			out[i] = "NULL"
+			continue
+		}
+		out[i] = *s
+	}
+	return out
 }
 
 // equalFloats compares two float slices exactly. The test values are chosen

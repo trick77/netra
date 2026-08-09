@@ -696,6 +696,17 @@ CREATE TABLE IF NOT EXISTS sensor_samples (
 SELECT create_hypertable('sensor_samples', by_range('ts'), if_not_exists => TRUE);
 SELECT set_chunk_time_interval('sensor_samples', INTERVAL '1 day');
 
+-- The composite foreign key's cascade path needs its own index. Deleting a
+-- host cascades to sensors first (that constraint is created earlier, so its
+-- trigger fires first), and each deleted sensor makes Postgres run
+-- "WHERE sensor_id = $1 AND host_id = $2" against every chunk. The primary
+-- key leads with host_id, not sensor_id, so without this index that is a
+-- sequential scan per chunk per sensor -- twenty sensors across a week of
+-- one-day chunks is a hundred and sixty full chunk scans inside
+-- DELETE /api/v1/hosts/{id}. Column order matches the foreign key.
+CREATE INDEX IF NOT EXISTS sensor_samples_sensor_id_host_id_idx
+    ON sensor_samples (sensor_id, host_id);
+
 CREATE MATERIALIZED VIEW IF NOT EXISTS sensor_samples_5m
     WITH (timescaledb.continuous) AS
 SELECT host_id,
