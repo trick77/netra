@@ -117,14 +117,8 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cores, droppedCores := filterPlausibleCoreTimestamps(req.GetCpuCores())
-	if droppedCores > 0 {
-		slog.Warn("dropped cpu core rows with implausible timestamps",
-			"host_id", hostID, "dropped", droppedCores)
-	}
-
-	if _, err := h.store.InsertCpuCoreSamples(ctx, hostID, cores); err != nil {
-		slog.Error("insert cpu core samples", "host_id", hostID, "err", err)
+	if err := h.storeFamilies(ctx, hostID, &req); err != nil {
+		slog.Error("insert per-entity families", "host_id", hostID, "err", err)
 		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
@@ -200,29 +194,6 @@ func filterPlausibleTimestamps(samples []*netrav1.HostSample) ([]*netrav1.HostSa
 func plausibleTs(tsMs int64, future time.Time) bool {
 	ts := time.UnixMilli(tsMs).UTC()
 	return !ts.Before(minPlausibleTs) && !ts.After(future)
-}
-
-// filterPlausibleCoreTimestamps is filterPlausibleTimestamps for the per-core
-// family, which carries its own timestamps rather than inheriting a host
-// sample's. A bad row is dropped individually for the same reason: failing the
-// whole INSERT would 503 the batch, and the agent would re-send the identical
-// poison batch forever.
-func filterPlausibleCoreTimestamps(rows []*netrav1.CpuCoreSample) ([]*netrav1.CpuCoreSample, int) {
-	if len(rows) == 0 {
-		return rows, 0
-	}
-
-	future := time.Now().Add(maxPlausibleFuture)
-	out := make([]*netrav1.CpuCoreSample, 0, len(rows))
-	dropped := 0
-	for _, r := range rows {
-		if !plausibleTs(r.GetTsMs(), future) {
-			dropped++
-			continue
-		}
-		out = append(out, r)
-	}
-	return out, dropped
 }
 
 // reconcileMetadata stores a supplied metadata block and reports whether the
