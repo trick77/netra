@@ -49,6 +49,7 @@ func run() error {
 
 	collectors := []collector.Collector{
 		collector.NewCPU(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewPerCoreCPU(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
 		collector.NewKernelStat(cfg.ProcRoot, config.ScrapeInterval),
