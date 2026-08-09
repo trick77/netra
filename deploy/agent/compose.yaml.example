@@ -9,14 +9,17 @@
 #   mkdir -p /.netra                          # see "Filesystems" below
 #   docker compose up -d
 #
-# WHAT IS IMPLEMENTED TODAY (phase 1): seven collectors — CPU, memory, load,
-# kernelstat (context switches, interrupts, fork rate, runnable and blocked
-# tasks, boot time), netstat (TCP/UDP/IP counters and fragmentation, IPv4 and
-# IPv6), procs (total process count) and users (logged-in session count).
+# WHAT IS IMPLEMENTED TODAY (phase 1): eight collectors — CPU, per-core CPU
+# (one utilisation figure per core, from /proc/stat's cpuN lines), memory,
+# load, kernelstat (context switches, interrupts, fork rate, runnable and
+# blocked tasks, boot time), netstat (TCP/UDP/IP counters and fragmentation,
+# IPv4 and IPv6), procs (total process count) and users (logged-in session
+# count).
 #
 # All but two need nothing at all: they read /proc and require no mount, no
-# capability and no device. The two exceptions are called out where they are
-# configured below —
+# capability and no device. Per-core CPU in particular adds no requirement over
+# the aggregate CPU collector — it reads the same file. The two exceptions are
+# called out where they are configured below —
 #
 #   * procs reports a total process count only with `pid: host`. Without it the
 #     agent sees its own PID namespace, and reports the metric as unavailable
