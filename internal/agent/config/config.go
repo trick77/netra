@@ -20,7 +20,8 @@ const MaxBufferWindow = 6 * time.Hour
 // the same hardcoded constant back, which silently overrode whatever an
 // operator had set locally on the first successful flush. A knob the hub can
 // override behind your back is worse than no knob at all, so there is no knob.
-// A genuine per-host override belongs to the admin API in phase 2.
+// A per-host cadence override was considered and dropped: nothing should
+// reintroduce a hosts.interval_s column or a wire field to carry one.
 const ScrapeInterval = 60 * time.Second
 
 // Config holds every agent setting. Only HubURL and Token are required.

@@ -462,8 +462,8 @@ convention because `BACKEND_` is meaningless on an agent and netra ships two com
 The scrape interval is fixed at 60s (`config.ScrapeInterval`) and is deliberately not
 configurable. The hub has no per-host cadence column, so it can only ever hand every agent
 back the same hardcoded constant — which silently overrode an operator's local setting on
-the first successful flush. An overridable knob is worse than no knob at all; a genuine
-per-host override arrives with the admin API in phase 2.
+the first successful flush. An overridable knob is worse than no knob at all, and a per-host
+override was considered and dropped, so no admin API will introduce one.
 
 | Variable | Default | Purpose |
 |---|---|---|

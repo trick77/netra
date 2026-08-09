@@ -128,7 +128,7 @@ Ordered by risk and by what unblocks what, not by the spec's table order. Each c
 - [ ] SMART (`smartctl`, already in the image at a pinned version) — 1h interval; capability reported when device access is missing
 - [ ] Processes (`pid: host`) — `utime+stime` deltas keyed on `(pid, starttime)`, because a recycled PID otherwise produces a garbage spike; aggregate by name, top-10-by-CPU ∪ top-10-by-memory
 
-**Wire protocol:** each family needs its own typed protobuf message (§7.3). `IngestResponse` field 4 is **reserved** — a per-host cadence override in phase 2 must use a new number.
+**Wire protocol:** each family needs its own typed protobuf message (§7.3). `IngestResponse` field 4 is **reserved permanently** — it carried the retired `interval_s`, the scrape interval is fixed at 60s, and no cadence override is planned. Never reuse the number.
 
 **Setup script coupling:** every collector that lands makes an existing `setup-agent.sh` mount meaningful. `deploy/agent/compose.yaml.example` carries a note listing which collectors are implemented; **update it in the same PR**, or it becomes a lie about what works.
 
@@ -153,7 +153,6 @@ Ordered by dependency: alerting needs history, the UI needs the read API, OIDC n
 - [ ] **OIDC (Authentik)** — `oidc-fix-report.md` in the music repo is the input. Replaces the single shared admin token with per-user roles
 - [ ] **Geocoding + map** — schema exists already; a manual lat/lon override must never be overwritten by a geocode result
 - [ ] **Fleet/aggregate endpoints** — deliberately unspecced until the UI exists, because speccing them now is guessing
-- [ ] **Per-host scrape cadence** — `hosts.interval_s` column, admin API to set it, a **new** protobuf field number. `buffer.Ring.Resize` was kept for exactly this and currently has no production caller
 
 ---
 

@@ -136,7 +136,7 @@ ul.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 <li><input type="checkbox" disabled><span>SMART (<code>smartctl</code>, already in the image at a pinned version) — 1h interval; capability reported when device access is missing</span></li>
 <li><input type="checkbox" disabled><span>Processes (<code>pid: host</code>) — <code>utime+stime</code> deltas keyed on <code>(pid, starttime)</code>, because a recycled PID otherwise produces a garbage spike; aggregate by name, top-10-by-CPU ∪ top-10-by-memory</span></li>
 </ul>
-<p><strong>Wire protocol:</strong> each family needs its own typed protobuf message (§7.3). <code>IngestResponse</code> field 4 is <strong>reserved</strong> — a per-host cadence override in phase 2 must use a new number.</p>
+<p><strong>Wire protocol:</strong> each family needs its own typed protobuf message (§7.3). <code>IngestResponse</code> field 4 is <strong>reserved permanently</strong> — it carried the retired <code>interval_s</code>, the scrape interval is fixed at 60s, and no cadence override is planned. Never reuse the number.</p>
 <p><strong>Setup script coupling:</strong> every collector that lands makes an existing <code>setup-agent.sh</code> mount meaningful. <code>deploy/agent/compose.yaml.example</code> carries a note listing which collectors are implemented; <strong>update it in the same PR</strong>, or it becomes a lie about what works.</p>
 <h3>1D. Read API</h3>
 <ul class="task">
@@ -156,7 +156,6 @@ ul.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 <li><input type="checkbox" disabled><span><strong>OIDC (Authentik)</strong> — <code>oidc-fix-report.md</code> in the music repo is the input. Replaces the single shared admin token with per-user roles</span></li>
 <li><input type="checkbox" disabled><span><strong>Geocoding + map</strong> — schema exists already; a manual lat/lon override must never be overwritten by a geocode result</span></li>
 <li><input type="checkbox" disabled><span><strong>Fleet/aggregate endpoints</strong> — deliberately unspecced until the UI exists, because speccing them now is guessing</span></li>
-<li><input type="checkbox" disabled><span><strong>Per-host scrape cadence</strong> — <code>hosts.interval_s</code> column, admin API to set it, a <strong>new</strong> protobuf field number. <code>buffer.Ring.Resize</code> was kept for exactly this and currently has no production caller</span></li>
 </ul>
 <hr>
 <h2 id="stage-3">Stage 3 — Phase 3</h2>
