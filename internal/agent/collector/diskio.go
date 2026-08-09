@@ -179,8 +179,12 @@ func reportable(name string) bool {
 		return false
 	}
 
-	// nvme0n1 is a device; nvme0n1p1 is its partition.
-	if strings.HasPrefix(name, "nvme") {
+	// nvme0n1 and mmcblk0 are whole devices whose names END in a digit;
+	// their partitions add a "p<N>" suffix (nvme0n1p1, mmcblk0p1). The
+	// trailing-digit rule below would drop the device itself, which on an SD
+	// card or eMMC host is the only disk it has -- leaving disk_io_samples
+	// empty for every Raspberry Pi and ARM board in the fleet.
+	if strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "mmcblk") {
 		if i := strings.LastIndex(name, "p"); i > 0 {
 			if _, err := strconv.Atoi(name[i+1:]); err == nil {
 				return false

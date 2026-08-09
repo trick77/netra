@@ -86,10 +86,20 @@ func TestProcessesTreatsARecycledPIDAsANewProcess(t *testing.T) {
 	testee.SetProcRootForTest("testdata/processes/recycled")
 	res := procsAt(t, testee, base.Add(10*time.Second))
 
+	// python3 IS reported -- its memory and count are real, measured this
+	// instant. What must not appear is a CPU figure: the whole hazard of a
+	// recycled PID is that the new process's total minus the old one's gets
+	// attributed to it, and that number can be enormous.
 	for _, r := range res.Processes {
-		if r.GetName() == "python3" {
-			t.Errorf("python3 reported with cpu_pct %v on the scrape it first appeared; a recycled PID has no baseline",
+		if r.GetName() != "python3" {
+			continue
+		}
+		if r.CpuPct != nil {
+			t.Errorf("python3 cpu_pct = %v on the scrape its PID was reused; a recycled PID has no baseline and must report no rate",
 				r.GetCpuPct())
+		}
+		if r.GetMemBytes() == 0 {
+			t.Error("python3 mem_bytes = 0; the process occupies memory whether or not its CPU is measurable")
 		}
 	}
 
@@ -163,5 +173,36 @@ func TestProcessesSkipsAProcessThatVanishes(t *testing.T) {
 	}
 	if len(res.Processes) != 1 {
 		t.Errorf("rows = %d, want 1 (only nginx remains)", len(res.Processes))
+	}
+}
+
+// Memory and count are GAUGES: both are true of this instant and need no
+// previous reading.
+//
+// Skipping them alongside the CPU delta made a churn-heavy host -- a CI
+// runner, anything cron-driven -- systematically under-report how much memory
+// its processes held and how many there were, because every process started
+// since the last scrape contributed nothing at all.
+func TestProcessesCountsMemoryOfProcessesWithNoBaseline(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee := collector.NewProcesses("testdata/processes/gone", true, time.Minute)
+	procsAt(t, testee, base)
+
+	// The second tree adds postgres, which the first scrape never saw.
+	testee.SetProcRootForTest("testdata/processes/second")
+	res := procsAt(t, testee, base.Add(10*time.Second))
+
+	pg := procRow(t, res.Processes, "postgres")
+	if got := pg.GetMemBytes(); got != 1200*4096 {
+		t.Errorf("postgres mem_bytes = %d, want %d -- a new process still occupies memory", got, 1200*4096)
+	}
+	if got := pg.GetCount(); got != 1 {
+		t.Errorf("postgres count = %d, want 1 -- a new process is still a process", got)
+	}
+
+	// ...but its CPU is not measurable yet, and must stay UNSET rather than
+	// being reported as 0%, which would read as a genuinely idle process.
+	if pg.CpuPct != nil {
+		t.Errorf("postgres cpu_pct = %v with no baseline; want unset", pg.GetCpuPct())
 	}
 }

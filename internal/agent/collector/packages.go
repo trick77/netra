@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -309,11 +308,4 @@ func parseApk(f *os.File) (map[string]*netrav1.HostPackage, error) {
 	flush()
 
 	return out, scanner.Err()
-}
-
-// DefaultPackagePaths returns the usual database locations, so main() does not
-// restate them.
-func DefaultPackagePaths(root string) (dpkg, apk string) {
-	return filepath.Join(root, "var", "lib", "dpkg", "status"),
-		filepath.Join(root, "lib", "apk", "db", "installed")
 }

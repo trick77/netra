@@ -123,16 +123,35 @@ func (p *Processes) Collect(_ context.Context) (*Result, error) {
 		jiffies uint64
 		rssPage uint64
 		count   uint32
+		// measurable records that at least one process under this name had a
+		// baseline, so a CPU percentage means something. Without it a name
+		// whose processes are all new would report 0%, which reads as an idle
+		// process rather than an unmeasured one.
+		measurable bool
 	}
 	byName := make(map[string]*agg)
 
 	for key, c := range cur {
+		a := byName[c.name]
+		if a == nil {
+			a = &agg{}
+			byName[c.name] = a
+		}
+
+		// Memory and count are GAUGES: both are true of this instant and need
+		// no previous reading. Skipping them alongside the CPU delta made a
+		// churn-heavy host -- a CI runner, anything cron-driven -- systematically
+		// under-report how much memory its processes held and how many there
+		// were, because the newest ones contributed nothing at all.
+		a.rssPage += c.rssPage
+		a.count++
+
 		q, ok := prev[key]
 		if !ok {
 			// New process, or a PID reused for a different one -- the
 			// starttime in the key is what tells those apart from a process
 			// that has simply been running. Either way there is no interval
-			// to compute a rate over yet.
+			// to compute a CPU rate over yet.
 			continue
 		}
 		if c.jiffies < q.jiffies {
@@ -141,14 +160,8 @@ func (p *Processes) Collect(_ context.Context) (*Result, error) {
 			continue
 		}
 
-		a := byName[c.name]
-		if a == nil {
-			a = &agg{}
-			byName[c.name] = a
-		}
 		a.jiffies += c.jiffies - q.jiffies
-		a.rssPage += c.rssPage
-		a.count++
+		a.measurable = true
 	}
 
 	names := make([]string, 0, len(byName))
@@ -161,13 +174,16 @@ func (p *Processes) Collect(_ context.Context) (*Result, error) {
 	rows := make([]*netrav1.ProcessSample, 0, len(names))
 	for _, name := range names {
 		a := byName[name]
-		rows = append(rows, &netrav1.ProcessSample{
+		row := &netrav1.ProcessSample{
 			TsMs:     ts,
 			Name:     name,
-			CpuPct:   ptrTo(float64(a.jiffies) / userHZ / elapsed * 100),
 			MemBytes: ptrTo(a.rssPage * pageSize),
 			Count:    ptrTo(a.count),
-		})
+		}
+		if a.measurable {
+			row.CpuPct = ptrTo(float64(a.jiffies) / userHZ / elapsed * 100)
+		}
+		rows = append(rows, row)
 	}
 
 	return &Result{Processes: topByCPUAndMemory(rows)}, nil

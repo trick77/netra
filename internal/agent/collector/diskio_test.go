@@ -94,16 +94,26 @@ func TestDiskIOReportsWholeDevicesOnly(t *testing.T) {
 	testee.SetProcRootForTest("testdata/diskstats/second")
 	res := diskioAt(t, testee, base.Add(10*time.Second))
 
+	seen := map[string]bool{}
 	for _, r := range res.Disks {
+		seen[r.GetDevice()] = true
 		switch r.GetDevice() {
 		case "sda1":
 			t.Error("sda1 reported; a partition's I/O is already counted in sda")
 		case "loop0":
 			t.Error("loop0 reported; loop devices are not physical storage")
+		case "mmcblk0p1":
+			t.Error("mmcblk0p1 reported; a partition's I/O is already counted in mmcblk0")
 		}
 	}
-	if len(res.Disks) != 2 {
-		t.Errorf("devices = %d, want 2 (sda and nvme0n1)", len(res.Disks))
+	// mmcblk0 is a WHOLE device whose name ends in a digit, like nvme0n1.
+	// Dropping it would leave every Raspberry Pi and ARM board -- whose only
+	// disk it is -- with no disk I/O at all.
+	if !seen["mmcblk0"] {
+		t.Error("mmcblk0 not reported; it is a whole device, not a partition")
+	}
+	if len(res.Disks) != 3 {
+		t.Errorf("devices = %d, want 3 (sda, nvme0n1 and mmcblk0)", len(res.Disks))
 	}
 }
 

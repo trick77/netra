@@ -231,6 +231,13 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 			slog.Warn("collector failed", "collector", col.Name(), "err", err)
 			continue
 		}
+		if res == nil {
+			// The interface says a failed collector returns a nil Result and
+			// an error; nothing enforces the inverse. Dereferencing here
+			// would take the whole agent down over one collector's slip, so
+			// treat "no error, no result" as "nothing to report".
+			continue
+		}
 		if res.Host != nil {
 			// Merge rather than assign: each collector owns a disjoint set of
 			// fields, and proto.Merge copies only the ones actually set,
@@ -390,8 +397,33 @@ func (c *Client) Flush(ctx context.Context) error {
 		req.Events = append(req.Events, s.Events...)
 		req.SystemdEvents = append(req.SystemdEvents, s.SystemdEvents...)
 		req.PackageEvents = append(req.PackageEvents, s.PackageEvents...)
-		req.Addresses = append(req.Addresses, s.Addresses...)
-		req.Packages = append(req.Packages, s.Packages...)
+
+		// Inventory is a WHOLE SET, not a time series: the hub replaces what
+		// it holds with what arrives, deleting anything the set omits. So the
+		// newest non-empty set in this batch supersedes the older ones rather
+		// than being concatenated with them.
+		//
+		// Concatenating breaks the replacement. A scrape reporting {A, B}
+		// followed by one reporting {A} after B was removed would arrive as
+		// A, B, A -- the union -- and the hub, seeing B in the batch it is
+		// told is the current set, would keep it forever.
+		//
+		// "Non-empty" is a residual gap rather than a rule: a collector
+		// reports an empty slice both for "unchanged" and for "the host now
+		// has none of these", and the two are indistinguishable here. The hub
+		// cannot act on an empty set either (UpsertHostAddresses returns
+		// early), so a host that loses its LAST address keeps a stale row --
+		// closing that needs an explicit "empty" signal on the wire.
+		//
+		// countRows still counts every scrape's inventory rows. That
+		// over-counts the body this loop actually builds, which is the safe
+		// direction for a bound that exists to stay under a size cap.
+		if len(s.Addresses) > 0 {
+			req.Addresses = s.Addresses
+		}
+		if len(s.Packages) > 0 {
+			req.Packages = s.Packages
+		}
 	}
 	highest := pending[len(pending)-1].Seq
 
