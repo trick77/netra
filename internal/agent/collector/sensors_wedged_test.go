@@ -194,8 +194,15 @@ func TestSensorsRecoversAfterATransientTimeout(t *testing.T) {
 	}
 }
 
-// The two event-based collectors must declare themselves to Prime, or their
-// first scrape is silently consumed at agent startup.
+// Every collector whose FIRST Collect returns data must declare itself to
+// Prime, or that data is silently discarded at agent startup.
+//
+// The list is spelled out rather than derived, because the property cannot be
+// inferred from the type: it is a statement about what the first Collect
+// MEANS. Each entry below has a different reason, and all four were found the
+// hard way -- systemd and mdraid report what they found on arrival, while
+// packages and smart additionally gate themselves afterwards, so a discarded
+// first result is not re-taken for up to 24 hours and an hour respectively.
 func TestBaselineCollectorsDeclareThemselves(t *testing.T) {
 	for _, c := range []struct {
 		name string
@@ -203,14 +210,65 @@ func TestBaselineCollectorsDeclareThemselves(t *testing.T) {
 	}{
 		{"systemd", collector.NewSystemd(time.Minute, nil)},
 		{"mdraid", collector.NewMdraid("/sys", time.Minute)},
+		{"packages", collector.NewPackages("/var/lib/dpkg/status", "/lib/apk/db/installed", time.Minute)},
+		{"smart", collector.NewSmart(time.Hour, nil)},
 	} {
 		b, ok := c.col.(collector.BaselineEmitter)
 		if !ok {
-			t.Errorf("%s does not implement BaselineEmitter; Prime will eat its baseline", c.name)
+			t.Errorf("%s does not implement BaselineEmitter; Prime will discard its first Collect", c.name)
 			continue
 		}
 		if !b.EmitsBaseline() {
 			t.Errorf("%s.EmitsBaseline() = false, want true", c.name)
 		}
+	}
+}
+
+// A path that times out and then DISAPPEARS must not pin the host at
+// "degraded" forever.
+//
+// Clearing the backoff only on a successful read left the entry behind for a
+// chip that timed out once and was then unbound, or renumbered by a driver
+// rebind (hwmon3 -> hwmon4). ENOENT hits neither the timeout branch nor the
+// success branch, so nothing ever removed it: Capabilities() kept reporting
+// degraded for the life of the agent with no sensor actually failing, and the
+// metadata hash never flipped back.
+func TestSensorsClearsTheBackoffWhenAWedgedPathDisappears(t *testing.T) {
+	root := t.TempDir()
+	chip := filepath.Join(root, "class", "hwmon", "hwmon0")
+	if err := os.MkdirAll(chip, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	name := filepath.Join(chip, "name")
+	if err := syscall.Mkfifo(name, 0o644); err != nil {
+		t.Skipf("mkfifo unavailable: %v", err)
+	}
+
+	testee := collector.NewSensors(root, time.Minute, 50*time.Millisecond)
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+	if got := testee.Capabilities()["sensors"]; got != "degraded" {
+		t.Fatalf("capability = %q after the timeout, want degraded", got)
+	}
+
+	// The chip goes away entirely: release the stranded reader, then remove it.
+	if f, err := os.OpenFile(name, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+		_, _ = f.WriteString("coretemp\n")
+		_ = f.Close()
+	}
+	if err := os.Remove(name); err != nil {
+		t.Fatalf("remove fifo: %v", err)
+	}
+
+	// The next scrape is past the first backoff window, reads ENOENT, and must
+	// forget the path rather than hold the host at degraded.
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if got := testee.Capabilities(); got != nil {
+		t.Errorf("capability = %v after the path vanished, want none -- ENOENT is an answer, not a wedge", got)
 	}
 }

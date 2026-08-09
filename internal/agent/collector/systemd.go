@@ -104,8 +104,8 @@ func NewSystemd(interval time.Duration, lister UnitLister) *Systemd {
 func (s *Systemd) SetListerForTest(l UnitLister) { s.lister = l }
 
 // EmitsBaseline implements BaselineEmitter, keeping this collector out of the
-// agent's startup priming. Its first Collect reports every unit's state, and
-// priming would discard exactly that.
+// agent's startup priming. Its first Collect reports the units that are
+// already failed, and priming would discard exactly that.
 func (s *Systemd) EmitsBaseline() bool { return true }
 
 // Name implements Collector.
@@ -156,33 +156,52 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 	ts := time.Now().UnixMilli()
 	var events []*netrav1.SystemdUnitEvent
 
-	// The first scrape emits a BASELINE: prev is nil, nothing matches, so every
-	// unit produces one event. Same as mdraid, and for the same reason -- a
-	// unit that was already failed when the agent started would otherwise
-	// produce no event at all, and only the services_failed counter would
-	// reveal it. "Which units are failed, and since when" is the question this
-	// table exists to answer, and it cannot answer it about a failure that
-	// predates the agent unless the agent says what it found on arrival.
+	// The first scrape emits a BASELINE, but only of the units that are
+	// FAILED.
 	//
-	// The volume is the one real difference from mdraid, which baselines a
-	// handful of arrays while this baselines every .service on the host --
-	// a few hundred rows, once per agent start. That is a bounded one-off, not
-	// a per-scrape cost: the loop below still emits nothing for an unchanged
-	// unit, so the steady state is unaffected.
+	// The baseline exists because a unit already failed when the agent started
+	// would otherwise produce no event at all, and only the services_failed
+	// counter would reveal it -- with no unit name and no "since when". That
+	// is the question this table exists to answer, and it cannot answer it
+	// about a failure predating the agent unless the agent says what it found
+	// on arrival.
+	//
+	// Restricted to failed units because the volume is nothing like mdraid's.
+	// mdraid baselines a handful of arrays; every loaded .service on a normal
+	// host is 200-400, most of them inactive/dead oneshots that say nothing.
+	// systemd_unit_events is deliberately a plain table with no retention
+	// policy, sized on the premise that "a unit changes state a handful of
+	// times a month" -- so an unrestricted baseline would write a few hundred
+	// unprunable rows per host on EVERY agent restart, and a crash-looping
+	// agent or a fleet redeploy would multiply that. A failed unit is the rare
+	// case by construction, so this is normally zero rows and never more than
+	// a handful.
+	//
+	// This is the one place this collector deliberately differs from mdraid.
 	for _, name := range names {
 		u := cur[name]
 		p, seen := prev[name]
+
+		if !seen && prev == nil {
+			// First scrape. Report it only if it is already broken; a healthy
+			// unit's state is not news, and saying so for every unit on the
+			// host is what the restriction above avoids.
+			if u.Active == "failed" {
+				events = append(events, unitEvent(ts, name, u))
+			}
+			continue
+		}
+
 		if seen && p.Active == u.Active && p.SubState == u.SubState {
 			// Unchanged. Emitting anyway would turn the event table into
 			// the 60s series this collector exists to avoid.
 			continue
 		}
-		events = append(events, &netrav1.SystemdUnitEvent{
-			TsMs:     ts,
-			UnitName: name,
-			State:    u.Active,
-			Substate: u.SubState,
-		})
+
+		// A transition, including a unit appearing for the first time after
+		// the baseline scrape -- an installed-and-started service is a change
+		// worth recording whatever state it landed in.
+		events = append(events, unitEvent(ts, name, u))
 	}
 
 	// The summary rides the host row, where two integers cost nothing, rather
@@ -194,4 +213,14 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 		},
 		SystemdEvents: events,
 	}, nil
+}
+
+// unitEvent builds one unit-state event.
+func unitEvent(ts int64, name string, u Unit) *netrav1.SystemdUnitEvent {
+	return &netrav1.SystemdUnitEvent{
+		TsMs:     ts,
+		UnitName: name,
+		State:    u.Active,
+		Substate: u.SubState,
+	}
 }
