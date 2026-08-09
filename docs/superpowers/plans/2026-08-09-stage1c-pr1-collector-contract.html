@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>netra — Stage 1C PR 1 Implementation Plan</title>
+<style>
+:root{--bg:#0f1115;--panel:#161920;--panel2:#1b1f28;--fg:#e6e8ee;--muted:#9aa3b2;--line:#2a2f3a;--accent:#5aa9e6;--accent2:#7ee0c0;--warn:#e6b45a}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:56px 28px 96px}
+h1{font-size:34px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+h2{font-size:23px;margin:52px 0 14px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:17.5px;margin:30px 0 10px;color:var(--accent2)}
+h4{font-size:15px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+p{margin:12px 0}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(90,169,230,.35)}
+a:hover{border-bottom-color:var(--accent)}
+ul,ol{padding-left:22px;margin:12px 0}
+li{margin:6px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+code{background:var(--panel2);padding:2px 6px;border-radius:5px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent2)}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow:auto;margin:16px 0}
+pre code{background:none;padding:0;color:var(--fg);font-size:12.5px;line-height:1.55}
+table{border-collapse:collapse;width:100%;margin:18px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--panel2);font-weight:600;color:var(--muted);white-space:nowrap}
+tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+blockquote{margin:18px 0;padding:12px 18px;border-left:3px solid var(--warn);background:rgba(230,180,90,.07);border-radius:0 8px 8px 0;color:#f0dcb4}
+blockquote p{margin:4px 0}
+strong{color:#fff;font-weight:620}
+.meta{color:var(--muted);font-size:13.5px;margin-bottom:34px}
+
+.task input{margin-right:8px}
+li input[type=checkbox]{margin-right:8px}
+blockquote{border-left-color:var(--accent)}
+</style></head>
+<body><div class="wrap">
+<h1>Stage 1C PR 1 — collector contract and per-core CPU</h1>
+<blockquote><p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (<code>- [ ]</code>) syntax for tracking.</p></blockquote>
+<p><strong>Goal:</strong> Change the collector contract so a collector returns its contribution instead of mutating a shared sample, carry per-entity rows on the wire and through the ring buffer, and prove it end to end with a per-core CPU collector writing <code>cpu_core_samples</code>.</p>
+<p><strong>Architecture:</strong> <code>Collect(ctx) (*Result, error)</code> replaces <code>Collect(ctx, *HostSample) error</code>. The agent merges results from collectors that succeeded with <code>proto.Merge</code> and discards failures whole, which closes the partial-write hole where a collector that fails midway leaves its already-written fields looking like measurements. A buffered ring entry becomes a whole scrape — host row plus per-family rows — so an outage cannot replay host rows while dropping the per-core rows measured alongside them. Flush batching moves from counting samples to counting rows, because a batch of 2000 samples that each carry 64 cores would exceed the hub&#x27;s body limit.</p>
+<p><strong>Tech Stack:</strong> Go 1.x, protobuf (<code>google.golang.org/protobuf</code>), pgx v5, TimescaleDB, <code>buf</code> for codegen.</p>
+<h2>Global Constraints</h2>
+<ul><li>Spec: <code>docs/superpowers/specs/2026-08-09-stage1c-collectors-design.md</code>.</li><li>Scrape interval is a fixed 60s const (<code>config.ScrapeInterval</code>). Never make it configurable; never add a per-host cadence.</li><li>All schema changes are edited into <code>internal/hub/store/migrations/0001_init.sql</code> in place. There is no <code>0002</code>. <code>0001</code> must stay re-runnable (<code>IF NOT EXISTS</code>, guarded <code>SELECT</code>s).</li><li>An unset proto field means the subsystem is absent (spec §5.1 rule 3). Never write a zero where nothing was measured.</li><li><code>IngestResponse</code> field 4 stays <code>reserved</code>. Never reuse it.</li><li>Every collector: fixture-based tests with checked-in <code>/proc</code> trees, never reads the host it is tested on, and never prevents the agent from starting.</li><li>Commit as <code>trick77@users.noreply.github.com</code>. Feature branch, never push to master.</li><li>Run tests with the project venv/Go toolchain locally. Integration tests need <code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test</code> and the <code>netra-test-db</code> container running.</li></ul>
+<hr>
+<h2>File Structure</h2>
+<p><strong>Created:</strong></p>
+<ul><li><code>internal/agent/collector/result.go</code> — the <code>Result</code> type collectors return.</li><li><code>internal/agent/collector/percpu.go</code> — the per-core CPU collector.</li><li><code>internal/agent/collector/percpu_test.go</code> — its fixture tests.</li><li><code>internal/agent/collector/testdata/percpu/*/stat</code> — two <code>/proc/stat</code> fixtures (before/after) so a delta can be computed.</li></ul>
+<p><strong>Modified:</strong></p>
+<ul><li><code>proto/netra/v1/ingest.proto</code> — add <code>CpuCoreSample</code>, add <code>repeated CpuCoreSample cpu_cores = 6</code> to <code>IngestRequest</code>.</li><li><code>internal/agent/collector/collector.go</code> — the <code>Collector</code> interface.</li><li><code>internal/agent/collector/{cpu,memory,load,kernelstat,procs,netstat,users}.go</code> — migrated to the new signature.</li><li><code>internal/agent/buffer/ring.go</code> — <code>Entry.Sample</code> becomes <code>Entry.Scrape</code>; add the <code>Scrape</code> type.</li><li><code>internal/agent/client/client.go</code> — merge loop, flush assembly, row-based batch limit.</li><li><code>internal/hub/store/ingest.go</code> — <code>InsertCpuCoreSamples</code>.</li><li><code>internal/hub/httpapi/ingest.go</code> — store the new family, filter its timestamps.</li><li><code>deploy/agent/compose.yaml.example</code> — the implemented-collectors note.</li></ul>
+<hr>
+<h3>Task 1: Wire message for per-core CPU</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>proto/netra/v1/ingest.proto</code></li><li>Test: <code>internal/gen/netra/v1/roundtrip_test.go</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>netrav1.CpuCoreSample{TsMs int64, Core uint32, Busy *float64}</code>, and <code>netrav1.IngestRequest.CpuCores []*CpuCoreSample</code>.</li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the failing test</strong></li></ul>
+<p>Append to <code>internal/gen/netra/v1/roundtrip_test.go</code>:</p>
+<pre><code>// A per-entity family rides on IngestRequest, not on HostSample: a request
+// carries a batch of scrapes, so these rows span several timestamps and carry
+// their own ts_ms rather than being positionally tied to a host row.
+func TestCpuCoreSampleRoundTrip(t *testing.T) {
+	busy := 41.5
+	in := &amp;netrav1.IngestRequest{
+		Seq: 7,
+		CpuCores: []*netrav1.CpuCoreSample{
+			{TsMs: 1000, Core: 0, Busy: &amp;busy},
+			{TsMs: 1000, Core: 1},
+		},
+	}
+
+	raw, err := proto.Marshal(in)
+	if err != nil {
+		t.Fatalf(&quot;marshal: %v&quot;, err)
+	}
+	var out netrav1.IngestRequest
+	if err := proto.Unmarshal(raw, &amp;out); err != nil {
+		t.Fatalf(&quot;unmarshal: %v&quot;, err)
+	}
+
+	if len(out.GetCpuCores()) != 2 {
+		t.Fatalf(&quot;cpu_cores = %d, want 2&quot;, len(out.GetCpuCores()))
+	}
+	if out.GetCpuCores()[0].GetBusy() != 41.5 {
+		t.Errorf(&quot;core 0 busy = %v, want 41.5&quot;, out.GetCpuCores()[0].GetBusy())
+	}
+	// An unset busy must stay unset: &quot;core present, utilisation not
+	// computable&quot; is a different fact from &quot;core was 0% busy&quot;.
+	if out.GetCpuCores()[1].Busy != nil {
+		t.Error(&quot;core 1 busy is set; an unmeasured value must stay nil&quot;)
+	}
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run test to verify it fails</strong></li></ul>
+<p>Run: <code>go test ./internal/gen/netra/v1/ -run TestCpuCoreSampleRoundTrip</code> Expected: FAIL — compile error, <code>CpuCores</code> undefined on <code>IngestRequest</code>.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Add the message and the field</strong></li></ul>
+<p>In <code>proto/netra/v1/ingest.proto</code>, add to <code>IngestRequest</code> after <code>backfill = 5</code>:</p>
+<pre><code>  // Per-entity families ride here rather than on HostSample: host_samples is
+  // repeated, so a replayed batch spans many scrapes and these rows cannot be
+  // positionally associated with one host row. Each carries its own ts_ms.
+  //
+  // Field numbers 7-11 are claimed by the families that land in later 1C PRs
+  // (disk I/O, sensors, network, collector telemetry, events) so their
+  // numbering does not collide with anything added here.
+  repeated CpuCoreSample cpu_cores = 6;</code></pre>
+<p>and add the message at the end of the file:</p>
+<pre><code>// CpuCoreSample is one core&#x27;s utilisation over one scrape interval. Rows land
+// in cpu_core_samples, whose primary key is (host_id, ts, core).
+message CpuCoreSample {
+  int64 ts_ms = 1;
+
+  // The N in /proc/stat&#x27;s cpuN, not a physical package or thread id.
+  uint32 core = 2;
+
+  // Percentage of the interval the core was not idle and not in iowait.
+  // Unset on the first scrape after start, and after a counter reset, because
+  // a rate needs a previous reading the agent does not yet have.
+  optional double busy = 3;
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Regenerate and run the test</strong></li></ul>
+<p>Run: <code>make proto &amp;&amp; go test ./internal/gen/netra/v1/ -run TestCpuCoreSampleRoundTrip</code> Expected: PASS</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Commit</strong></li></ul>
+<pre><code>git add proto/netra/v1/ingest.proto internal/gen/netra/v1/
+git commit -m &quot;feat(proto): CpuCoreSample rides on IngestRequest, not HostSample&quot;</code></pre>
+<hr>
+<h3>Task 2: Collectors return a Result instead of mutating a sample</h3>
+<p>This is one task and cannot be split: the interface change breaks every collector until all seven are migrated, so nothing compiles in between.</p>
+<p><strong>Files:</strong></p>
+<ul><li>Create: <code>internal/agent/collector/result.go</code></li><li>Modify: <code>internal/agent/collector/collector.go</code></li><li>Modify: <code>internal/agent/collector/{cpu,memory,load,kernelstat,procs,netstat,users}.go</code> and their <code>_test.go</code> files</li><li>Modify: <code>internal/agent/client/client.go</code> (call site, minimally — full merge logic is Task 4)</li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>collector.Result{Host *netrav1.HostSample; Cores []*netrav1.CpuCoreSample}</code> and <code>Collector.Collect(ctx context.Context) (*Result, error)</code>.</li><li>Consumes: <code>netrav1.CpuCoreSample</code> from Task 1.</li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the failing test</strong></li></ul>
+<p>Create <code>internal/agent/collector/result_test.go</code>:</p>
+<pre><code>package collector_test
+
+import (
+	&quot;context&quot;
+	&quot;testing&quot;
+	&quot;time&quot;
+
+	&quot;github.com/trick77/netra/internal/agent/collector&quot;
+)
+
+// A collector that fails must contribute nothing at all. Under the old
+// contract it wrote into a shared sample and a mid-way failure left those
+// fields behind, where they were indistinguishable from real measurements and
+// silently broke the rule that an unset field means the subsystem is absent.
+func TestFailingCollectorReturnsNoPartialResult(t *testing.T) {
+	c := collector.NewMemory(t.TempDir(), time.Minute) // no /proc/meminfo there
+
+	res, err := c.Collect(context.Background())
+	if err == nil {
+		t.Fatal(&quot;Collect succeeded against an empty proc root; want an error&quot;)
+	}
+	if res != nil {
+		t.Errorf(&quot;Collect returned %+v alongside an error; a failed collector must return nil&quot;, res)
+	}
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run test to verify it fails</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/collector/ -run TestFailingCollectorReturnsNoPartialResult</code> Expected: FAIL — compile error, <code>Collect</code> takes two arguments.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Define Result</strong></li></ul>
+<p>Create <code>internal/agent/collector/result.go</code>:</p>
+<pre><code>package collector
+
+import netrav1 &quot;github.com/trick77/netra/internal/gen/netra/v1&quot;
+
+// Result is one collector&#x27;s contribution to a scrape.
+//
+// A collector fills only what it owns and leaves everything else nil. The
+// agent merges the results of collectors that succeeded and discards the rest
+// whole, so a collector that fails part-way through contributes nothing rather
+// than leaving half its fields behind.
+type Result struct {
+	// Host is this collector&#x27;s share of the wide per-host row. Fields it does
+	// not own stay unset, and the agent merges only the set ones.
+	Host *netrav1.HostSample
+
+	// Cores is one row per CPU core. Later 1C PRs add a slice per family
+	// alongside this one.
+	Cores []*netrav1.CpuCoreSample
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Change the interface</strong></li></ul>
+<p>In <code>internal/agent/collector/collector.go</code>, replace the <code>Collect</code> method:</p>
+<pre><code>	// Collect reads the current values and returns them.
+	//
+	// It must return a nil Result alongside any error: the agent discards a
+	// failed collector&#x27;s contribution entirely, and a non-nil Result on the
+	// error path would be silently dropped, which is a confusing contract to
+	// leave for the next collector author.
+	Collect(ctx context.Context) (*Result, error)</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Migrate each collector</strong></li></ul>
+<p>For each of <code>cpu</code>, <code>memory</code>, <code>load</code>, <code>kernelstat</code>, <code>procs</code>, <code>netstat</code>, <code>users</code>: build a local <code>*netrav1.HostSample</code>, write into it, and return it wrapped. The CPU collector becomes:</p>
+<pre><code>// Collect implements Collector.
+func (c *CPU) Collect(_ context.Context) (*Result, error) {
+	cur, err := c.read()
+	if err != nil {
+		return nil, err
+	}
+
+	prev := c.prev
+	c.prev = &amp;cur
+
+	if prev == nil {
+		// No baseline yet: report nothing rather than invent a value.
+		return &amp;Result{}, nil
+	}
+
+	totalDelta := cur.total() - prev.total()
+	if cur.total() &lt; prev.total() || totalDelta == 0 {
+		return &amp;Result{}, nil
+	}
+
+	pct := func(a, b uint64) *float64 {
+		if a &lt; b {
+			return nil
+		}
+		v := float64(a-b) / float64(totalDelta) * 100
+		return &amp;v
+	}
+
+	if cur.busy() &lt; prev.busy() {
+		return &amp;Result{}, nil
+	}
+	totalPct := float64(cur.busy()-prev.busy()) / float64(totalDelta) * 100
+
+	return &amp;Result{Host: &amp;netrav1.HostSample{
+		CpuTotal:  &amp;totalPct,
+		CpuUser:   pct(cur.user, prev.user),
+		CpuSystem: pct(cur.system, prev.system),
+		CpuIowait: pct(cur.iowait, prev.iowait),
+		CpuSteal:  pct(cur.steal, prev.steal),
+		CpuIdle:   pct(cur.idle, prev.idle),
+	}}, nil
+}</code></pre>
+<p>Note the distinction the tests must preserve: <strong><code>nil, err</code> on failure; <code>&amp;Result{}, nil</code> when there is simply nothing to report yet.</strong> &quot;No baseline&quot; is not an error.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 6: Update the call site so the package compiles</strong></li></ul>
+<p>In <code>internal/agent/client/client.go</code>, in <code>collect</code>, replace the loop body with a placeholder merge (Task 4 completes it):</p>
+<pre><code>	for _, col := range c.collectors {
+		res, err := col.Collect(ctx)
+		if err != nil {
+			slog.Warn(&quot;collector failed&quot;, &quot;collector&quot;, col.Name(), &quot;err&quot;, err)
+			continue
+		}
+		if res.Host != nil {
+			proto.Merge(sample, res.Host)
+		}
+	}</code></pre>
+<p>Add <code>&quot;google.golang.org/protobuf/proto&quot;</code> to the imports.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 7: Migrate the collector tests</strong></li></ul>
+<p>Each existing collector test constructs a sample and passes it in. Change it to take the returned result. For example, in <code>cpu_test.go</code>:</p>
+<pre><code>	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf(&quot;Collect: %v&quot;, err)
+	}
+	if res.Host.GetCpuTotal() != want {
+		t.Errorf(&quot;CpuTotal = %v, want %v&quot;, res.Host.GetCpuTotal(), want)
+	}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 8: Run the whole agent suite</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/...</code> Expected: PASS, including the new <code>TestFailingCollectorReturnsNoPartialResult</code>.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 9: Commit</strong></li></ul>
+<pre><code>git add internal/agent/
+git commit -m &quot;refactor(agent): collectors return their contribution instead of mutating a shared sample&quot;</code></pre>
+<hr>
+<h3>Task 3: A buffered entry holds a whole scrape</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>internal/agent/buffer/ring.go</code></li><li>Modify: <code>internal/agent/buffer/ring_test.go</code></li><li>Modify: <code>internal/agent/client/client.go</code> (construction of entries)</li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>buffer.Scrape{Host *netrav1.HostSample; Cores []*netrav1.CpuCoreSample}</code>, <code>buffer.Entry{Seq uint64; Scrape *Scrape}</code>, <code>Ring.Add(seq uint64, s *Scrape)</code>.</li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the failing test</strong></li></ul>
+<p>Add to <code>internal/agent/buffer/ring_test.go</code>:</p>
+<pre><code>// An outage replays whole scrapes. Buffering only the host row would replay
+// host samples while silently discarding every per-core row measured at the
+// same instant -- a data loss nothing reports, because the host rows arrive
+// intact and look complete.
+func TestRingPreservesPerFamilyRowsAcrossReplay(t *testing.T) {
+	r := buffer.New(4)
+	busy := 12.5
+	r.Add(1, &amp;buffer.Scrape{
+		Host:  &amp;netrav1.HostSample{TsMs: 100},
+		Cores: []*netrav1.CpuCoreSample{{TsMs: 100, Core: 0, Busy: &amp;busy}},
+	})
+
+	pending := r.Pending()
+	if len(pending) != 1 {
+		t.Fatalf(&quot;len(Pending()) = %d, want 1&quot;, len(pending))
+	}
+	if got := len(pending[0].Scrape.Cores); got != 1 {
+		t.Fatalf(&quot;buffered cores = %d, want 1 -- per-family rows must survive buffering&quot;, got)
+	}
+	if pending[0].Scrape.Cores[0].GetBusy() != 12.5 {
+		t.Errorf(&quot;busy = %v, want 12.5&quot;, pending[0].Scrape.Cores[0].GetBusy())
+	}
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run test to verify it fails</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/buffer/ -run TestRingPreservesPerFamilyRowsAcrossReplay</code> Expected: FAIL — compile error, <code>buffer.Scrape</code> undefined.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Add Scrape and change Entry</strong></li></ul>
+<p>In <code>internal/agent/buffer/ring.go</code>:</p>
+<pre><code>// Scrape is everything one scrape produced: the wide host row plus the
+// per-entity rows measured at the same instant. The ring buffers whole
+// scrapes because replaying a host row without the rows collected alongside
+// it loses data that nothing would report as lost.
+type Scrape struct {
+	Host  *netrav1.HostSample
+	Cores []*netrav1.CpuCoreSample
+}
+
+// Entry is one buffered scrape and its batch sequence number.
+type Entry struct {
+	Seq    uint64
+	Scrape *Scrape
+}</code></pre>
+<p>and change <code>Add</code>:</p>
+<pre><code>func (r *Ring) Add(seq uint64, s *Scrape) {</code></pre>
+<p>updating its body to store <code>Entry{Seq: seq, Scrape: s}</code>.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Update existing ring tests and the client</strong></li></ul>
+<p>The existing ring tests build entries with <code>sample(...)</code>. Change the helper to return a <code>*buffer.Scrape</code>:</p>
+<pre><code>func scrape(ts int64) *buffer.Scrape {
+	return &amp;buffer.Scrape{Host: &amp;netrav1.HostSample{TsMs: ts}}
+}</code></pre>
+<p>In <code>client.go</code>, <code>ScrapeOnce</code> adds the assembled scrape rather than the sample.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Run the tests</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/...</code> Expected: PASS</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 6: Commit</strong></li></ul>
+<pre><code>git add internal/agent/
+git commit -m &quot;feat(agent): the ring buffers a whole scrape, not just the host row&quot;</code></pre>
+<hr>
+<h3>Task 4: The agent merges results and assembles the request</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>internal/agent/client/client.go</code></li><li>Modify: <code>internal/agent/client/client_test.go</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: <code>collector.Result</code> (Task 2), <code>buffer.Scrape</code> (Task 3), <code>netrav1.IngestRequest.CpuCores</code> (Task 1).</li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the failing test</strong></li></ul>
+<p>Add to <code>internal/agent/client/client_test.go</code>:</p>
+<pre><code>// A collector that fails after producing rows must contribute none of them.
+type partialFailer struct{}
+
+func (partialFailer) Name() string            { return &quot;partial&quot; }
+func (partialFailer) Interval() time.Duration { return time.Minute }
+func (partialFailer) Collect(context.Context) (*collector.Result, error) {
+	return nil, errors.New(&quot;failed after reading half the tree&quot;)
+}
+
+func TestFlushCarriesPerCoreRowsAndDropsFailedCollectors(t *testing.T) {
+	busy := 33.0
+	cores := &amp;stubCoreCollector{cores: []*netrav1.CpuCoreSample{{TsMs: 1, Core: 0, Busy: &amp;busy}}}
+
+	rec := newRecordingHub(t)
+	defer rec.Close()
+
+	c := client.NewWithInterval(cfgFor(rec), []collector.Collector{cores, partialFailer{}}, time.Millisecond)
+	c.ScrapeOnce(context.Background())
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatalf(&quot;Flush: %v&quot;, err)
+	}
+
+	req := rec.last()
+	if len(req.GetCpuCores()) != 1 {
+		t.Fatalf(&quot;cpu_cores in request = %d, want 1&quot;, len(req.GetCpuCores()))
+	}
+	if req.GetCpuCores()[0].GetBusy() != 33.0 {
+		t.Errorf(&quot;busy = %v, want 33&quot;, req.GetCpuCores()[0].GetBusy())
+	}
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run test to verify it fails</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/client/ -run TestFlushCarriesPerCoreRowsAndDropsFailedCollectors</code> Expected: FAIL — <code>cpu_cores in request = 0, want 1</code>.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Merge in collect, assemble in flush</strong></li></ul>
+<p>In <code>collect</code>, accumulate the families and return a <code>*buffer.Scrape</code>:</p>
+<pre><code>func (c *Client) collect(ctx context.Context) *buffer.Scrape {
+	sample := &amp;netrav1.HostSample{TsMs: time.Now().UnixMilli()}
+	var cores []*netrav1.CpuCoreSample
+
+	start := time.Now()
+	for _, col := range c.collectors {
+		res, err := col.Collect(ctx)
+		if err != nil {
+			slog.Warn(&quot;collector failed&quot;, &quot;collector&quot;, col.Name(), &quot;err&quot;, err)
+			continue
+		}
+		if res.Host != nil {
+			proto.Merge(sample, res.Host)
+		}
+		cores = append(cores, res.Cores...)
+	}
+	elapsed := time.Since(start)
+	// ... existing capability refresh and agent-sample assembly, unchanged ...
+
+	return &amp;buffer.Scrape{Host: sample, Cores: cores}
+}</code></pre>
+<p>In the flush path, build the request from the drained entries:</p>
+<pre><code>	samples := make([]*netrav1.HostSample, 0, len(entries))
+	var cores []*netrav1.CpuCoreSample
+	for _, e := range entries {
+		samples = append(samples, e.Scrape.Host)
+		cores = append(cores, e.Scrape.Cores...)
+	}
+
+	req := &amp;netrav1.IngestRequest{
+		Seq:          highest,
+		MetadataHash: c.metadataHash,
+		HostSamples:  samples,
+		CpuCores:     cores,
+		Backfill:     c.replaying,
+	}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Run the tests</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/client/</code> Expected: PASS</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Commit</strong></li></ul>
+<pre><code>git add internal/agent/client/
+git commit -m &quot;feat(agent): merge collector results and carry per-core rows through flush&quot;</code></pre>
+<hr>
+<h3>Task 5: Bound a flush by rows, not by samples</h3>
+<p><code>maxBatchSamples = 2000</code> exists so a request stays inside the hub&#x27;s <code>maxBodyBytes = 4 &lt;&lt; 20</code>. That arithmetic assumed one narrow row per sample. A 64-core host draining 2000 buffered scrapes now sends 2000 host rows <strong>and 128,000 core rows</strong> in one body, which exceeds the limit and produces the 413-forever failure <code>maxBatchSamples</code> was written to prevent.</p>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>internal/agent/client/client.go</code></li><li>Modify: <code>internal/agent/client/client_test.go</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>maxBatchRows</code> const; the drain limit becomes a row count.</li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the failing test</strong></li></ul>
+<pre><code>// The batch limit exists to keep a body inside the hub&#x27;s 4MB cap. Counting
+// samples stopped being a proxy for body size the moment a scrape started
+// carrying per-entity rows: 2000 scrapes from a 64-core host is 128k core
+// rows, and the resulting 413 would repeat forever because the ring re-sends
+// the same oversized prefix.
+func TestFlushBoundsBatchByTotalRowsNotSampleCount(t *testing.T) {
+	rec := newRecordingHub(t)
+	defer rec.Close()
+
+	wide := &amp;stubCoreCollector{cores: makeCores(64)} // 64 cores per scrape
+	c := client.NewWithInterval(cfgFor(rec), []collector.Collector{wide}, time.Millisecond)
+
+	for i := 0; i &lt; 500; i++ {
+		c.ScrapeOnce(context.Background())
+	}
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatalf(&quot;Flush: %v&quot;, err)
+	}
+
+	req := rec.last()
+	rows := len(req.GetHostSamples()) + len(req.GetCpuCores())
+	if rows &gt; client.MaxBatchRowsForTest {
+		t.Fatalf(&quot;flushed %d rows in one request, limit is %d&quot;, rows, client.MaxBatchRowsForTest)
+	}
+	if len(req.GetHostSamples()) == 0 {
+		t.Fatal(&quot;flushed 0 host samples; the limit must still let a batch through&quot;)
+	}
+}</code></pre>
+<p>Export the limit for the test in <code>export_test.go</code>:</p>
+<pre><code>// MaxBatchRowsForTest exposes the row cap so a test can assert the drain
+// respects it without duplicating the literal.
+const MaxBatchRowsForTest = maxBatchRows</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run test to verify it fails</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/client/ -run TestFlushBoundsBatchByTotalRowsNotSampleCount</code> Expected: FAIL — the flush sends 500 samples plus 32,000 core rows.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Replace the sample cap with a row cap</strong></li></ul>
+<pre><code>// maxBatchRows caps the TOTAL rows in one flush -- host samples plus every
+// per-entity row riding with them -- so the encoded body stays inside the
+// hub&#x27;s maxBodyBytes (4MB). Counting host samples alone was a valid proxy
+// only while a scrape was one narrow row; a 64-core host carries 65 rows per
+// scrape, so the sample count no longer says anything about body size.
+//
+// 20000 rows at a generous 100 bytes each is ~2MB, half the cap, leaving room
+// for the metadata block and for families added by later 1C PRs. AckThrough
+// is prefix-based and seq is monotonic, so draining a prefix is exactly as
+// safe as draining the whole ring.
+const maxBatchRows = 20000</code></pre>
+<p>and drain by accumulating rows:</p>
+<pre><code>	rows := 0
+	for _, e := range pending {
+		next := 1 + len(e.Scrape.Cores)
+		if rows &gt; 0 &amp;&amp; rows+next &gt; maxBatchRows {
+			break
+		}
+		entries = append(entries, e)
+		rows += next
+	}</code></pre>
+<p>The <code>rows &gt; 0</code> guard matters: a single scrape whose rows exceed the cap on its own must still be sent, or it blocks the ring forever.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Re-derive the memory bound</strong></li></ul>
+<p><code>maxBufferSlots = 10000</code> and <code>capacityFor</code> were written when a slot was one narrow row; the spec (§2) requires this be settled here rather than discovered during an outage on the largest host. Update the reasoning in the comment and leave the value with a stated basis:</p>
+<pre><code>// maxBufferSlots caps the ring&#x27;s capacity in entries, independently of the
+// window/interval arithmetic that sizes it. A slot is now a whole scrape --
+// the host row plus every per-entity row measured with it -- so a slot is
+// both larger and variable: a 64-core host buffers ~65 rows per slot where a
+// 1-core VPS buffers 2.
+//
+// The window arithmetic still bounds the slot COUNT correctly (360 at the 6h
+// maximum, at the fixed 60s cadence). Worst case is therefore ~360 * 65 =
+// ~23k rows, a few MB -- acceptable on a host the agent is meant to be a
+// negligible tenant of. This constant stays a standing guard on the
+// invariant rather than a limit reached in practice; revisit it if a family
+// arrives whose row count per scrape is unbounded (containers, processes).
+const maxBufferSlots = 10000</code></pre>
+<p><code>capacityFor</code> itself needs no change: it sizes the ring so <code>capacity * interval</code> stays inside the window, which is still exactly what it should do.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Run the tests</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/client/</code> Expected: PASS</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 6: Commit</strong></li></ul>
+<pre><code>git add internal/agent/client/
+git commit -m &quot;fix(agent): bound a flush by total rows so per-entity families cannot blow the body limit&quot;</code></pre>
+<hr>
+<h3>Task 6: The per-core CPU collector</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Create: <code>internal/agent/collector/percpu.go</code>, <code>internal/agent/collector/percpu_test.go</code></li><li>Create: <code>internal/agent/collector/testdata/percpu/{first,second}/stat</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>collector.NewPerCoreCPU(procRoot string, interval time.Duration) *PerCoreCPU</code>, satisfying <code>Collector</code>.</li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the fixtures</strong></li></ul>
+<p><code>testdata/percpu/first/stat</code>:</p>
+<pre><code>cpu  100 0 100 800 0 0 0 0 0 0
+cpu0 50 0 50 400 0 0 0 0 0 0
+cpu1 50 0 50 400 0 0 0 0 0 0
+intr 12345</code></pre>
+<p><code>testdata/percpu/second/stat</code> — core 0 fully busy over the interval, core 1 idle:</p>
+<pre><code>cpu  200 0 200 1600 0 0 0 0 0 0
+cpu0 150 0 150 400 0 0 0 0 0 0
+cpu1 50 0 50 800 0 0 0 0 0 0
+intr 12999</code></pre>
+<p>Core 0: busy delta 200, total delta 200 → 100%. Core 1: busy delta 0, total delta 400 → 0%.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Write the failing test</strong></li></ul>
+<pre><code>func TestPerCoreCPUReportsPerCoreBusyPercentages(t *testing.T) {
+	testee := collector.NewPerCoreCPU(&quot;testdata/percpu/first&quot;, time.Minute)
+
+	// First scrape establishes the baseline and reports nothing.
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf(&quot;first Collect: %v&quot;, err)
+	}
+	if len(res.Cores) != 0 {
+		t.Fatalf(&quot;first scrape produced %d rows, want 0 -- a rate needs a baseline&quot;, len(res.Cores))
+	}
+
+	testee.SetProcRootForTest(&quot;testdata/percpu/second&quot;)
+	res, err = testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf(&quot;second Collect: %v&quot;, err)
+	}
+	if len(res.Cores) != 2 {
+		t.Fatalf(&quot;cores = %d, want 2&quot;, len(res.Cores))
+	}
+	if got := res.Cores[0].GetBusy(); got != 100 {
+		t.Errorf(&quot;core 0 busy = %v, want 100&quot;, got)
+	}
+	if got := res.Cores[1].GetBusy(); got != 0 {
+		t.Errorf(&quot;core 1 busy = %v, want 0&quot;, got)
+	}
+	if res.Cores[0].GetCore() != 0 || res.Cores[1].GetCore() != 1 {
+		t.Errorf(&quot;core ids = %d,%d, want 0,1&quot;, res.Cores[0].GetCore(), res.Cores[1].GetCore())
+	}
+}
+
+// A core that disappears between scrapes (offlined) must not produce a row
+// derived from a stale baseline.
+func TestPerCoreCPUSkipsCoresMissingFromTheCurrentRead(t *testing.T) {
+	testee := collector.NewPerCoreCPU(&quot;testdata/percpu/second&quot;, time.Minute)
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf(&quot;baseline: %v&quot;, err)
+	}
+
+	testee.SetProcRootForTest(&quot;testdata/percpu/onecore&quot;)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf(&quot;Collect: %v&quot;, err)
+	}
+	for _, c := range res.Cores {
+		if c.GetCore() == 1 {
+			t.Error(&quot;core 1 reported after it vanished from /proc/stat&quot;)
+		}
+	}
+}</code></pre>
+<p>Add <code>testdata/percpu/onecore/stat</code> with only <code>cpu</code> and <code>cpu0</code> lines (cpu0 values advanced past <code>second</code>).</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Run test to verify it fails</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/collector/ -run TestPerCoreCPU</code> Expected: FAIL — <code>collector.NewPerCoreCPU</code> undefined.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Implement</strong></li></ul>
+<pre><code>// PerCoreCPU reports per-core busy percentage from /proc/stat&#x27;s cpuN lines.
+//
+// Separate from CPU on purpose: CPU owns the aggregate line and writes scalar
+// host fields, this owns the per-core lines and produces one row per core.
+// Splitting them keeps each collector&#x27;s failure independent -- an unparseable
+// cpuN line must not cost the host its aggregate utilisation.
+type PerCoreCPU struct {
+	procRoot string
+	interval time.Duration
+	prev     map[uint32]cpuTimes
+}
+
+func NewPerCoreCPU(procRoot string, interval time.Duration) *PerCoreCPU {
+	return &amp;PerCoreCPU{procRoot: procRoot, interval: interval}
+}
+
+func (p *PerCoreCPU) Name() string            { return &quot;percpu&quot; }
+func (p *PerCoreCPU) Interval() time.Duration { return p.interval }
+
+// SetProcRootForTest repoints the collector at another fixture tree so a test
+// can simulate the passage of time between two scrapes.
+func (p *PerCoreCPU) SetProcRootForTest(root string) { p.procRoot = root }
+
+func (p *PerCoreCPU) Collect(_ context.Context) (*Result, error) {
+	cur, err := p.read()
+	if err != nil {
+		return nil, err
+	}
+
+	prev := p.prev
+	p.prev = cur
+
+	if prev == nil {
+		return &amp;Result{}, nil
+	}
+
+	ts := time.Now().UnixMilli()
+	cores := make([]*netrav1.CpuCoreSample, 0, len(cur))
+
+	ids := make([]uint32, 0, len(cur))
+	for id := range cur {
+		ids = append(ids, id)
+	}
+	// Sorted so the rows are deterministic; the hub keys on (host, ts, core)
+	// and does not care, but a stable order makes tests and logs readable.
+	slices.Sort(ids)
+
+	for _, id := range ids {
+		c := cur[id]
+		q, ok := prev[id]
+		if !ok {
+			// A core that appeared this scrape has no baseline yet.
+			continue
+		}
+		totalDelta := c.total() - q.total()
+		if c.total() &lt; q.total() || totalDelta == 0 || c.busy() &lt; q.busy() {
+			// Reset, or no movement: no meaningful percentage. Emit no row
+			// rather than a zero, which would read as a genuinely idle core.
+			continue
+		}
+		busy := float64(c.busy()-q.busy()) / float64(totalDelta) * 100
+		cores = append(cores, &amp;netrav1.CpuCoreSample{TsMs: ts, Core: id, Busy: &amp;busy})
+	}
+
+	return &amp;Result{Cores: cores}, nil
+}</code></pre>
+<p><code>read</code> parses lines matching <code>cpuN</code> (reusing the unexported <code>cpuTimes</code> type and its <code>total()</code>/<code>busy()</code> methods from <code>cpu.go</code>, same package) into a <code>map[uint32]cpuTimes</code>, skipping the bare <code>cpu</code> aggregate line. Imports needed beyond the existing set: <code>slices</code> for the deterministic ordering.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Run the tests</strong></li></ul>
+<p>Run: <code>go test ./internal/agent/collector/ -run TestPerCoreCPU -v</code> Expected: PASS</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 6: Register the collector</strong></li></ul>
+<p>In <code>cmd/netra-agent/main.go</code>, add to the collector slice:</p>
+<pre><code>		collector.NewPerCoreCPU(cfg.ProcRoot, config.ScrapeInterval),</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 7: Commit</strong></li></ul>
+<pre><code>git add internal/agent/collector/ cmd/netra-agent/main.go
+git commit -m &quot;feat(agent): per-core CPU collector&quot;</code></pre>
+<hr>
+<h3>Task 7: The hub stores per-core rows</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>internal/hub/store/ingest.go</code></li><li>Modify: <code>internal/hub/httpapi/ingest.go</code></li><li>Test: <code>internal/hub/store/ingest_test.go</code>, <code>internal/hub/httpapi/ingest_test.go</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>(*Store).InsertCpuCoreSamples(ctx context.Context, hostID int32, rows []*netrav1.CpuCoreSample) (int64, error)</code>.</li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Write the failing test</strong></li></ul>
+<pre><code>func TestIntegrationInsertCpuCoreSamplesStoresOneRowPerCore(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf(&quot;Migrate: %v&quot;, err)
+	}
+	hostID := insertTestHost(t, s, &quot;percore-host&quot;)
+
+	busy0, busy1 := 100.0, 0.0
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+	n, err := s.InsertCpuCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
+		{TsMs: ts, Core: 0, Busy: &amp;busy0},
+		{TsMs: ts, Core: 1, Busy: &amp;busy1},
+	})
+	if err != nil {
+		t.Fatalf(&quot;InsertCpuCoreSamples: %v&quot;, err)
+	}
+	if n != 2 {
+		t.Fatalf(&quot;inserted = %d, want 2&quot;, n)
+	}
+
+	// A replayed batch re-sends the same rows; the primary key must absorb it
+	// rather than failing the whole flush.
+	if _, err := s.InsertCpuCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
+		{TsMs: ts, Core: 0, Busy: &amp;busy0},
+	}); err != nil {
+		t.Fatalf(&quot;replay insert: %v&quot;, err)
+	}
+
+	var count int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM cpu_core_samples WHERE host_id = $1`, hostID).Scan(&amp;count); err != nil {
+		t.Fatalf(&quot;count: %v&quot;, err)
+	}
+	if count != 2 {
+		t.Fatalf(&quot;rows = %d, want 2 -- a replayed row must not duplicate&quot;, count)
+	}
+}</code></pre>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run test to verify it fails</strong></li></ul>
+<p>Run: <code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test -p 1 ./internal/hub/store/ -run TestIntegrationInsertCpuCoreSamples</code> Expected: FAIL — <code>InsertCpuCoreSamples</code> undefined.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Implement the insert</strong></li></ul>
+<pre><code>// InsertCpuCoreSamples writes one row per core. ON CONFLICT DO NOTHING for the
+// same reason host_samples has it: a replayed batch re-sends rows the hub
+// already stored, and a duplicate must be absorbed rather than failing the
+// flush and pinning the agent&#x27;s ring buffer.
+func (s *Store) InsertCpuCoreSamples(ctx context.Context, hostID int32, rows []*netrav1.CpuCoreSample) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	const stmt = `
+		INSERT INTO cpu_core_samples (host_id, ts, core, busy)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (host_id, ts, core) DO NOTHING`
+
+	batch := &amp;pgx.Batch{}
+	for _, r := range rows {
+		// r.Busy is passed as *float64 on purpose: nil becomes SQL NULL,
+		// which is &quot;not computable this scrape&quot; -- a different fact from a
+		// core that was genuinely 0% busy.
+		batch.Queue(stmt, hostID,
+			time.UnixMilli(r.GetTsMs()).UTC(),
+			int32(r.GetCore()),
+			r.Busy)
+	}
+
+	results := s.pool.SendBatch(ctx, batch)
+	defer func() { _ = results.Close() }()
+
+	var inserted int64
+	for range rows {
+		tag, err := results.Exec()
+		if err != nil {
+			return 0, fmt.Errorf(&quot;insert cpu core sample: %w&quot;, err)
+		}
+		inserted += tag.RowsAffected()
+	}
+
+	return inserted, nil
+}</code></pre>
+<p>This mirrors <code>InsertHostSamples</code> exactly — <code>pgx.Batch</code>, <code>SendBatch</code>, then one <code>results.Exec()</code> per queued row totalling <code>RowsAffected</code>. There is no shared batch helper in this package; do not invent one for a single caller.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 4: Run the store test</strong></li></ul>
+<p>Run: <code>NETRA_TEST_DSN=... go test -p 1 ./internal/hub/store/ -run TestIntegrationInsertCpuCoreSamples</code> Expected: PASS</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 5: Wire the handler, with timestamp filtering</strong></li></ul>
+<p>In <code>internal/hub/httpapi/ingest.go</code>, after the host-sample insert:</p>
+<pre><code>	cores, droppedCores := filterPlausibleCoreTimestamps(req.GetCpuCores())
+	if droppedCores &gt; 0 {
+		slog.Warn(&quot;dropped cpu core rows with implausible timestamps&quot;,
+			&quot;host_id&quot;, hostID, &quot;dropped&quot;, droppedCores)
+	}
+	if _, err := h.store.InsertCpuCoreSamples(ctx, hostID, cores); err != nil {
+		slog.Error(&quot;insert cpu core samples&quot;, &quot;host_id&quot;, hostID, &quot;err&quot;, err)
+		writeProtoStatus(w, http.StatusServiceUnavailable, &amp;netrav1.IngestResponse{
+			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
+		})
+		return
+	}</code></pre>
+<p>The filter mirrors <code>filterPlausibleTimestamps</code> and exists for the same reason: a far-future row must not be stored, and one bad row must be dropped individually rather than failing the whole INSERT and making the agent re-send an identical poison batch forever.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 6: Add the handler test</strong></li></ul>
+<pre><code>// A core row whose timestamp is implausible is dropped on its own. Failing the
+// whole batch instead would make the agent re-send an identical poison batch
+// forever, and a far-future row would outlive every retention policy.
+func TestIntegrationIngestDropsImplausibleCoreTimestamps(t *testing.T) {
+	ctx := context.Background()
+	fx := newIngestFixture(t) // existing helper: migrated store, host, token, handler
+
+	good := time.Now().Add(-time.Minute).UnixMilli()
+	poison := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	busy := 50.0
+
+	body := mustMarshal(t, &amp;netrav1.IngestRequest{
+		Seq:         1,
+		HostSamples: []*netrav1.HostSample{{TsMs: good}},
+		CpuCores: []*netrav1.CpuCoreSample{
+			{TsMs: good, Core: 0, Busy: &amp;busy},
+			{TsMs: poison, Core: 1, Busy: &amp;busy},
+		},
+	})
+
+	rec := fx.post(t, body)
+	if rec.Code != http.StatusOK {
+		t.Fatalf(&quot;status = %d, want 200 -- one bad row must not fail the batch&quot;, rec.Code)
+	}
+
+	var count, cores int
+	if err := fx.store.Pool().QueryRow(ctx,
+		`SELECT count(*), count(DISTINCT core) FROM cpu_core_samples WHERE host_id = $1`,
+		fx.hostID).Scan(&amp;count, &amp;cores); err != nil {
+		t.Fatalf(&quot;count: %v&quot;, err)
+	}
+	if count != 1 || cores != 1 {
+		t.Fatalf(&quot;stored %d rows across %d cores, want 1 and 1 -- the year-2100 row must be dropped&quot;, count, cores)
+	}
+
+	// And the host sample beside it still landed.
+	var hostRows int
+	if err := fx.store.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM host_samples WHERE host_id = $1`, fx.hostID).Scan(&amp;hostRows); err != nil {
+		t.Fatalf(&quot;count host samples: %v&quot;, err)
+	}
+	if hostRows != 1 {
+		t.Errorf(&quot;host_samples = %d, want 1&quot;, hostRows)
+	}
+}</code></pre>
+<p>Reuse the existing fixture helpers in <code>internal/hub/httpapi/</code> rather than building new ones — check <code>ingest_test.go</code> for the current names and adapt the two helper calls above to match.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 7: Run the hub suite</strong></li></ul>
+<p>Run: <code>NETRA_TEST_DSN=... go test -p 1 ./internal/hub/...</code> Expected: PASS</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 8: Commit</strong></li></ul>
+<pre><code>git add internal/hub/
+git commit -m &quot;feat(hub): store per-core CPU rows&quot;</code></pre>
+<hr>
+<h3>Task 8: Deploy artifacts tell the truth</h3>
+<p>Per the roadmap: every collector that lands makes an existing <code>setup-agent.sh</code> mount meaningful, and the compose example carries a note listing which collectors are implemented. Updating it later means shipping a lie about what works.</p>
+<p><strong>Files:</strong></p>
+<ul><li>Modify: <code>deploy/agent/compose.yaml.example</code></li></ul>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 1: Update the implemented-collectors note</strong></li></ul>
+<p>Add per-core CPU to the list of implemented collectors. It needs no new mount — <code>/proc</code> is already mounted for the aggregate CPU collector — so state that explicitly rather than leaving a reader to wonder.</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 2: Run the shell suite</strong></li></ul>
+<p>Run: <code>make test-shell</code> Expected: PASS (8 files, 0 failed)</p>
+<ul class="task"><li><input type="checkbox" disabled><strong>Step 3: Commit</strong></li></ul>
+<pre><code>git add deploy/agent/compose.yaml.example
+git commit -m &quot;docs(deploy): per-core CPU is implemented and needs no new mount&quot;</code></pre>
+<hr>
+<h2>Final verification</h2>
+<ul class="task"><li><input type="checkbox" disabled><code>make vet</code> clean</li><li><input type="checkbox" disabled><code>gofmt -l internal cmd</code> prints nothing</li><li><input type="checkbox" disabled><code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test -count=1 -p 1 ./...</code> fully green</li><li><input type="checkbox" disabled><code>make test-shell</code> green</li><li><input type="checkbox" disabled>End-to-end: run the agent against a local hub, confirm <code>SELECT count(*), count(DISTINCT core) FROM cpu_core_samples</code> grows by one row per core per minute</li><li><input type="checkbox" disabled>Confirm no pinned count in <code>rollup_test.go</code> moved — this PR adds no hypertable</li></ul>
+</div></body></html>
