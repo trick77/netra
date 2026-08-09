@@ -141,6 +141,51 @@ func (s *Store) UpsertHostCurrent(ctx context.Context, hostID int32, m *netrav1.
 	return nil
 }
 
+// InsertCpuCoreSamples writes one row per CPU core.
+//
+// Unlike the host families above, these rows carry their own timestamps: a
+// request holds a batch of scrapes, so the rows in it span several instants
+// and are not positionally tied to any one host sample.
+//
+// ON CONFLICT DO NOTHING for the same reason InsertHostSamples has it -- a
+// replayed batch re-sends rows the hub already stored, and failing the INSERT
+// would pin the agent's ring buffer on a batch it can never land.
+func (s *Store) InsertCpuCoreSamples(ctx context.Context, hostID int32, rows []*netrav1.CpuCoreSample) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	const stmt = `
+		INSERT INTO cpu_core_samples (host_id, ts, core, busy)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (host_id, ts, core) DO NOTHING`
+
+	batch := &pgx.Batch{}
+	for _, r := range rows {
+		// Busy is passed as the *float64 it already is: nil becomes SQL NULL,
+		// which means "not computable this scrape" -- a different fact from a
+		// core genuinely measured at 0%.
+		batch.Queue(stmt, hostID,
+			time.UnixMilli(r.GetTsMs()).UTC(),
+			int32(r.GetCore()),
+			r.Busy)
+	}
+
+	results := s.pool.SendBatch(ctx, batch)
+	defer func() { _ = results.Close() }()
+
+	var inserted int64
+	for range rows {
+		tag, err := results.Exec()
+		if err != nil {
+			return 0, fmt.Errorf("insert cpu core sample: %w", err)
+		}
+		inserted += tag.RowsAffected()
+	}
+
+	return inserted, nil
+}
+
 // InsertAgentSamples writes the agent self-telemetry carried by a batch and
 // returns the number of rows stored.
 //

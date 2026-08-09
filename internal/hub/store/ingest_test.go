@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -366,5 +367,90 @@ func TestIntegrationSaveMetadataDoesNotFlagFirstSighting(t *testing.T) {
 
 	if strings.Contains(buf.String(), "fingerprint changed") {
 		t.Fatalf("log output = %q, want no mismatch warning on first sighting", buf.String())
+	}
+}
+
+// One row per core, and a replayed row absorbed rather than duplicated or
+// failed: a replayed batch re-sends rows the hub already has, and rejecting
+// the INSERT would pin the agent's ring buffer on a batch it can never land.
+func TestIntegrationInsertCpuCoreSamplesStoresOneRowPerCore(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	hostID := seedHost(t, s)
+
+	// Given: two cores measured at the same instant, one of them idle.
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+	busy0, busy1 := 100.0, 0.0
+	n, err := s.InsertCpuCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
+		{TsMs: ts, Core: 0, Busy: &busy0},
+		{TsMs: ts, Core: 1, Busy: &busy1},
+	})
+	if err != nil {
+		t.Fatalf("InsertCpuCoreSamples: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("inserted = %d, want 2", n)
+	}
+
+	// When: the same row arrives again, as a replay would send it.
+	if _, err := s.InsertCpuCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
+		{TsMs: ts, Core: 0, Busy: &busy0},
+	}); err != nil {
+		t.Fatalf("replay insert: %v", err)
+	}
+
+	// Then: it is absorbed, not duplicated.
+	var count int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM cpu_core_samples WHERE host_id = $1`, hostID).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("rows = %d, want 2 -- a replayed row must not duplicate", count)
+	}
+
+	// And the idle core stored a real 0, not a NULL.
+	var busy *float64
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT busy FROM cpu_core_samples WHERE host_id = $1 AND core = 1`, hostID).Scan(&busy); err != nil {
+		t.Fatalf("select core 1: %v", err)
+	}
+	if busy == nil {
+		t.Fatal("core 1 busy is NULL; a core measured at 0% must store 0")
+	}
+	if *busy != 0 {
+		t.Errorf("core 1 busy = %v, want 0", *busy)
+	}
+}
+
+// An unmeasurable core stores NULL, not zero. The distinction is the whole
+// reason busy is optional: "not computable this scrape" is a different fact
+// from "this core was idle", and a rollup averaging them together would be
+// quietly wrong.
+func TestIntegrationInsertCpuCoreSamplesPreservesUnsetBusyAsNull(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	hostID := seedHost(t, s)
+
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+	if _, err := s.InsertCpuCoreSamples(ctx, hostID, []*netrav1.CpuCoreSample{
+		{TsMs: ts, Core: 0}, // Busy deliberately unset
+	}); err != nil {
+		t.Fatalf("InsertCpuCoreSamples: %v", err)
+	}
+
+	var busy *float64
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT busy FROM cpu_core_samples WHERE host_id = $1 AND core = 0`, hostID).Scan(&busy); err != nil {
+		t.Fatalf("select: %v", err)
+	}
+	if busy != nil {
+		t.Errorf("busy = %v, want NULL for an unmeasured core", *busy)
 	}
 }

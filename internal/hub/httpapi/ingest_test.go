@@ -508,3 +508,57 @@ func decodeBody(t *testing.T, resp *http.Response, out proto.Message) {
 		t.Fatalf("Unmarshal response: %v", err)
 	}
 }
+
+// Per-core rows carry their own timestamps, so they need their own bounds
+// check. A poison row is dropped on its own: failing the batch would 503, and
+// the agent would re-send the identical batch forever.
+func TestIntegrationIngestStoresCpuCoreRowsAndDropsImplausibleOnes(t *testing.T) {
+	srv, token, s := newFixture(t)
+
+	goodTs := time.Now().Add(-time.Minute).UnixMilli()
+	farFutureTs := time.Now().Add(2 * time.Hour).UnixMilli()
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq:         1,
+		HostSamples: []*netrav1.HostSample{{TsMs: goodTs, CpuTotal: proto.Float64(42)}},
+		CpuCores: []*netrav1.CpuCoreSample{
+			{TsMs: goodTs, Core: 0, Busy: proto.Float64(75)},
+			{TsMs: goodTs, Core: 1, Busy: proto.Float64(25)},
+			{TsMs: farFutureTs, Core: 2, Busy: proto.Float64(99)},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 -- one bad row must not fail the batch", resp.StatusCode)
+	}
+
+	ctx := context.Background()
+	var count int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM cpu_core_samples`).Scan(&count); err != nil {
+		t.Fatalf("count cpu_core_samples: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("cpu_core_samples rows = %d, want 2 -- the far-future row must be dropped", count)
+	}
+
+	// The core the far-future row claimed must not be present at all: a row
+	// dated past every retention policy would otherwise never be cleaned up.
+	var future int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM cpu_core_samples WHERE core = 2`).Scan(&future); err != nil {
+		t.Fatalf("count core 2: %v", err)
+	}
+	if future != 0 {
+		t.Errorf("core 2 rows = %d, want 0", future)
+	}
+
+	// And the host sample alongside them still landed.
+	var hostRows int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM host_samples`).Scan(&hostRows); err != nil {
+		t.Fatalf("count host_samples: %v", err)
+	}
+	if hostRows != 1 {
+		t.Errorf("host_samples = %d, want 1", hostRows)
+	}
+}
