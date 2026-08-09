@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>netra — Stage 1C Collectors Design</title>
+<style>
+:root{--bg:#0f1115;--panel:#161920;--panel2:#1b1f28;--fg:#e6e8ee;--muted:#9aa3b2;--line:#2a2f3a;--accent:#5aa9e6;--accent2:#7ee0c0;--warn:#e6b45a}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:56px 28px 96px}
+h1{font-size:34px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+h2{font-size:23px;margin:52px 0 14px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:17.5px;margin:30px 0 10px;color:var(--accent2)}
+h4{font-size:15px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+p{margin:12px 0}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(90,169,230,.35)}
+a:hover{border-bottom-color:var(--accent)}
+ul,ol{padding-left:22px;margin:12px 0}
+li{margin:6px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+code{background:var(--panel2);padding:2px 6px;border-radius:5px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent2)}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow:auto;margin:16px 0}
+pre code{background:none;padding:0;color:var(--fg);font-size:12.5px;line-height:1.55}
+table{border-collapse:collapse;width:100%;margin:18px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--panel2);font-weight:600;color:var(--muted);white-space:nowrap}
+tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+blockquote{margin:18px 0;padding:12px 18px;border-left:3px solid var(--warn);background:rgba(230,180,90,.07);border-radius:0 8px 8px 0;color:#f0dcb4}
+blockquote p{margin:4px 0}
+strong{color:#fff;font-weight:620}
+.meta{color:var(--muted);font-size:13.5px;margin-bottom:34px}
+</style></head>
+<body><div class="wrap">
+<h1>Stage 1C — the thirteen remaining collectors</h1>
+<p><strong>Status:</strong> design, approved 2026-08-09. Supersedes nothing; extends the phase 1 design spec (<code>2026-08-07-netra-design.md</code>) and the 1C section of <code>docs/superpowers/plans/2026-08-07-next-phases.md</code>.</p>
+<h2>Context</h2>
+<p>Stage 1B landed the Group 1 schema: <code>cpu_core_samples</code>, <code>disk_io_samples</code>, <code>sensor_samples</code>, <code>net_samples</code>, <code>events</code> and <code>collector_samples</code>, each with its 5m and 1h aggregates. Nothing writes to any of them. Seven collectors ship today (CPU, memory, load, kernelstat, procs, netstat, users), all of them filling scalar fields on the single wide <code>host_samples</code> row.</p>
+<p>The thirteen collectors that remain cannot be built on that foundation, for a reason that is structural rather than incidental: <strong>they produce lists, and the current collector contract has nowhere to put one.</strong> Per-core CPU on a 16-core host is sixteen rows. Disk I/O is one row per device, network one per interface. mdraid and systemd produce events — statements that something changed — rather than measurements at all.</p>
+<p>So 1C begins with a change to how a collector returns data, and everything else follows from it.</p>
+<h2>1. The collector contract</h2>
+<h3>The problem being fixed</h3>
+<p>Today <code>Collect</code> takes the sample and writes into it:</p>
+<pre><code>Collect(ctx context.Context, sample *netrav1.HostSample) error</code></pre>
+<p>and the agent logs a failure and moves on:</p>
+<pre><code>if err := col.Collect(ctx, sample); err != nil {
+    slog.Warn(&quot;collector failed&quot;, &quot;collector&quot;, col.Name(), &quot;err&quot;, err)
+}</code></pre>
+<p>A collector that sets three fields and then fails leaves those three fields in the sample. Nothing unsets them, and they are stored as though they were measured. Spec §5.1 rule 3 says an unset field means the subsystem is absent — a partially-written field is indistinguishable from a real reading, so the rule quietly stops holding. <code>Prime</code>&#x27;s doc comment already asserts the behaviour the code does not provide (&quot;its fields stay unset&quot;). This is latent with seven collectors and sharper with twenty.</p>
+<h3>The change</h3>
+<p>Collectors return their contribution instead of mutating a shared one:</p>
+<pre><code>// Result is one collector&#x27;s contribution to a scrape. A collector fills only
+// what it owns; everything else stays nil.
+type Result struct {
+    Host    *netrav1.HostSample // this collector&#x27;s share of the host row
+    Cores   []*netrav1.CpuCoreSample
+    Disks   []*netrav1.DiskIoSample
+    Sensors []*netrav1.SensorSample
+    Nets    []*netrav1.NetSample
+    Events  []*netrav1.Event
+    // further families added by the PR that introduces them
+}
+
+type Collector interface {
+    Name() string
+    Interval() time.Duration
+    Collect(ctx context.Context) (*Result, error)
+}</code></pre>
+<p>The agent merges results from collectors that succeeded and discards the rest whole:</p>
+<pre><code>for _, col := range c.collectors {
+    res, err := col.Collect(ctx)
+    if err != nil {
+        slog.Warn(&quot;collector failed&quot;, &quot;collector&quot;, col.Name(), &quot;err&quot;, err)
+        continue // nothing from a failed collector reaches the sample
+    }
+    if res.Host != nil {
+        proto.Merge(sample, res.Host)
+    }
+    cores = append(cores, res.Cores...)
+    // ... and so on per family
+}</code></pre>
+<p><code>proto.Merge</code> is correct here because every <code>HostSample</code> field is declared <code>optional</code>, so presence is explicit and only set fields are copied. Two collectors writing the same field would be a bug; merge order must not be load bearing, and no collector pair shares a field today.</p>
+<h3>Why this shape</h3>
+<ul><li><strong>Failure is all-or-nothing.</strong> A collector contributes everything or nothing, which is what §5.1 rule 3 requires. The guarantee is structural rather than a discipline each of twenty collectors has to observe.</li><li><strong>Collectors become pure readers.</strong> Input is a filesystem tree, output is a value. Tests construct no shared fixture and cannot interfere with each other.</li><li><strong>Merge policy lives in one place</strong> — the agent — instead of being decided by whichever collector ran last.</li></ul>
+<p>Rejected: nesting the repeated messages inside <code>HostSample</code>. It is the smallest diff and it costs the meaning of the row. <code>HostSample</code> would become &quot;everything from this scrape&quot; rather than &quot;one measurement of this host&quot;, and an unset field would mean two different things. Also rejected: a second interface alongside the existing one, which leaves the agent with two dispatch paths permanently and makes &quot;which kind is this collector&quot; a per-collector fact to remember.</p>
+<h3>Migration</h3>
+<p>All seven existing collectors are reworked, not merely re-signatured. The compiler finds every call site; there is no silent partial migration. Their tests change shape too — they assert on a returned <code>Result</code> rather than on a fixture sample passed in.</p>
+<h2>2. Wire protocol</h2>
+<p>Each family gets its own typed message (§7.3), carried as repeated fields on <code>IngestRequest</code> — <strong>not</strong> on <code>HostSample</code>, so the host row keeps its meaning:</p>
+<pre><code>message IngestRequest {
+  // ... fields 1-5 unchanged ...
+  repeated CpuCoreSample   cpu_cores  = 6;
+  repeated DiskIoSample    disk_io    = 7;
+  repeated SensorSample    sensors    = 8;
+  repeated NetSample       net        = 9;
+  repeated CollectorSample collectors = 10;
+  repeated Event           events     = 11;
+}</code></pre>
+<p>Later families are appended by the PR that introduces them. <code>IngestResponse</code> field 4 remains <code>reserved</code> permanently — it carried the retired <code>interval_s</code>, the scrape interval is a fixed 60s, and no cadence override is planned.</p>
+<p>Each message carries its entity key as the schema defines it: <code>cpu</code> for a core, <code>device</code> for a disk, <code>chip_name + label</code> for a sensor, <code>iface</code> for an interface.</p>
+<h3>Every family message carries its own <code>ts_ms</code></h3>
+<p><code>IngestRequest.host_samples</code> is <strong>repeated</strong>: one request carries a batch, and after an outage it carries the whole replayed ring. The per-family lists are therefore flat lists spanning several scrapes, not the rows belonging to &quot;the&quot; sample in the request. Each family message carries its own <code>ts_ms</code>, exactly as <code>HostSample</code> does, and the hub stores on that — there is no positional association with a host row and none should be inferred.</p>
+<h3>The ring buffer holds a scrape, not a host sample</h3>
+<p>This is the consequence that reaches furthest. Today:</p>
+<pre><code>type Entry struct {
+    Seq    uint64
+    Sample *netrav1.HostSample
+}</code></pre>
+<p>A buffered entry must become the whole scrape — the host row plus every family list produced at that timestamp — or an outage would replay host rows and silently drop every per-core, per-disk and per-interface row measured during it.</p>
+<p>Two knock-on effects, both in PR 1:</p>
+<ul><li><strong><code>capacityFor</code> changes meaning.</strong> It sizes the ring in slots so that <code>capacity × interval</code> stays inside <code>NETRA_BUFFER_WINDOW</code>, and <code>maxBufferSlots</code> bounds memory. A slot is now much larger and, worse, <em>variable</em>: a 64-core host with twelve disks buffers far more per slot than a 1-core VPS. The slot count still bounds the window correctly, but no longer bounds memory the way it did. Either <code>maxBufferSlots</code> is re-derived from a realistic worst-case slot size, or the bound moves from slot count to approximate bytes. <strong>Decide this in PR 1 rather than discovering it during an outage on the largest host.</strong></li><li><strong><code>Flush</code> builds the request from the entries</strong>, appending each entry&#x27;s family lists into the request&#x27;s repeated fields, rather than only its host samples.</li></ul>
+<h2>3. Schema</h2>
+<p>Seven families have no tables yet. Per project rule, <strong>every schema change is edited into <code>internal/hub/store/migrations/0001_init.sql</code> in place</strong> — there is no <code>0002</code>. Each family lands in the PR of the collector that needs it, and <code>0001</code> stays re-runnable (<code>IF NOT EXISTS</code>, guarded <code>SELECT</code>s) so <code>TestIntegrationMigrationIsRerunnableAgainstItsOwnSchema</code> stays green.</p>
+<table><thead><tr><th>Family</th><th>Tables</th><th>PR</th></tr></thead><tbody><tr><td>Containers</td><td>container dimension + <code>container_samples</code></td><td>4</td></tr><tr><td>Filesystems</td><td><code>filesystems</code> + <code>filesystem_samples</code></td><td>4</td></tr><tr><td>SMART</td><td><code>devices</code> + <code>smart_attributes</code></td><td>5</td></tr><tr><td>Addresses</td><td><code>host_addresses</code></td><td>3</td></tr><tr><td>systemd</td><td><code>systemd_units</code> + <code>systemd_unit_events</code></td><td>4</td></tr><tr><td>Packages</td><td><code>host_packages</code> + <code>package_events</code></td><td>4</td></tr><tr><td>Processes</td><td><code>process_samples</code> (raw only, 48h, no aggregates)</td><td>5</td></tr></tbody></table>
+<p>Each new hypertable moves the hard-coded policy counts in <code>rollup_test.go</code>, which is the point of their being literals: a hypertable whose refresh or retention policy is forgotten is a permanently silent failure, so adding one must break the test until it is counted.</p>
+<h2>4. The thirteen collectors</h2>
+<p>Ordered by what they need from the host, because that is what the compose file and the setup script have to grant.</p>
+<h3>PR 1 — plumbing, proven with per-core CPU</h3>
+<p>The contract change, the typed wire messages, the ring-buffer entry change and the <code>capacityFor</code> decision, plus one collector to prove it end to end.</p>
+<p>Per-core CPU (<code>/proc/stat</code>), all cores always. Writes <code>cpu_core_samples</code>, which already exists. Chosen as the proof because it is the simplest collector that produces a list, so it exercises the new contract end to end — agent read, ring buffer, wire message, hub store — without any new schema.</p>
+<p><strong>Cardinality note:</strong> ~800 series at target scale, the largest jump in 1C. Ingest body size and hub write throughput are worth measuring here, before PR 2 adds more families on top.</p>
+<h3>PR 2 — no privileges, no dependencies</h3>
+<ul><li><strong>Disk I/O</strong> (<code>/proc/diskstats</code>) — counter-reset handling; a reset detected agent-side, since only the agent holds the previous value.</li><li><strong>Sensors</strong> (<code>/sys/class/hwmon</code>) — identity is <code>chip_name + label</code>, <strong>never <code>hwmonN</code></strong>, which is allocation-order dependent and unstable across reboots. Per-read deadline (<code>NETRA_SENSORS_TIMEOUT</code>); a preference list rather than hottest-wins.</li><li><strong>mdraid</strong> (sysfs) — writes <code>events</code>, not a hypertable. Array state is constant for weeks; only the transition is worth storing. <code>events</code> stays a plain Postgres table: no <code>create_hypertable</code>, no aggregates, no retention, and it must not move the counts in <code>rollup_test.go</code>.</li><li><strong>Agent self-telemetry</strong> — fill the remaining <code>agent_samples</code> columns: <code>uptime_s</code>, <code>rss_bytes</code>, <code>goroutines</code>, <code>post_failures_total</code>. <code>agent_samples.uptime_s</code> is the agent process; <code>host_samples.uptime_s</code> is the host. <strong>They are different facts</strong> and both get written in this PR, which is where conflating them is most likely.</li></ul>
+<h3>PR 3 — needs <code>network_mode: host</code></h3>
+<ul><li><strong>Network</strong> (<code>/proc/net/dev</code>) — filter <code>lo</code>, <code>veth*</code>, <code>docker0</code>, <code>br-*</code> and tunnels.</li><li><strong>Addresses</strong> (netlink) — delivers no samples; flips <code>metadata_hash</code>. The hub derives <code>scope</code> from the address, so classification is one implementation that can be corrected without redeploying agents. <strong>Interface names are the join key</strong> with <code>net_samples.iface</code>.</li></ul>
+<h3>PR 4 — needs a mount</h3>
+<ul><li><strong>Containers</strong> (cgroup v2, Docker socket for metadata only) — <strong>subtract <code>cache</code> and <code>inactive_file</code></strong> from raw memory usage, or every container reports its page cache as consumption. Identity is compose project + service, falling back to container name.</li><li><strong>Filesystems</strong> (<code>statfs</code> on marker dirs) — dedup by <code>st_dev</code>. Per-filesystem I/O needs the <code>st_dev</code> → block device mapping; where that mapping fails the value is <strong>NULL, not zero</strong>.</li><li><strong>systemd</strong> (D-Bus) — events, not samples; a numeric summary rides on <code>host_samples</code>. A unit&#x27;s state is constant for days, so a 60s series of it is the same near-constant waste that keeps it out of §5.3.</li><li><strong>Packages</strong> (<code>dpkg</code>/<code>apk</code>) — parse on mtime change with a daily floor; rpm reports an unsupported-format capability rather than failing.</li></ul>
+<h3>PR 5 — privileged, opt-in</h3>
+<ul><li><strong>SMART</strong> (<code>smartctl</code>, already in the image at a pinned version) — 1h interval. Reports a capability when device access is missing, rather than failing.</li><li><strong>Processes</strong> (<code>pid: host</code>) — <code>utime+stime</code> deltas keyed on <code>(pid, starttime)</code>, because a recycled PID otherwise produces a garbage spike. Aggregate by name; top-10-by-CPU ∪ top-10-by-memory.</li></ul>
+<h2>5. Rules every collector follows</h2>
+<ul><li><strong>Fixture-based tests</strong> with checked-in <code>/proc</code>, <code>/sys</code> and cgroup trees. No test may depend on the machine it runs on.</li><li><strong>Reports into <code>collector_samples</code></strong>: duration, success, and an error code on failure. <code>error_code</code> is NULL when the collector last succeeded — a collector that failed once must not read as broken forever.</li><li><strong>Availability via <code>CapabilityReporter</code></strong>, the existing optional interface. Capabilities ride the metadata hash, not the sample, because they change on the order of deployments rather than of scrapes.</li><li><strong>Never prevents the agent from starting.</strong> A collector that cannot run reports why and is skipped.</li><li><strong>Interval:</strong> every collector contributing to <code>host_samples</code> runs at the fixed scrape interval. Only collectors writing their own tables (SMART, packages) take a longer one — otherwise a skipped tick would leave <code>host_samples</code> columns NULL, which reads as &quot;subsystem absent&quot; rather than &quot;not due yet&quot;.</li><li><strong>Deploy artifacts change in the same PR.</strong> Every collector that lands makes an existing <code>setup-agent.sh</code> mount meaningful. <code>deploy/agent/compose.yaml.example</code> carries a note listing which collectors are implemented; updating it later means shipping a lie about what works.</li></ul>
+<h2>6. Risks</h2>
+<ul><li><strong>Cardinality.</strong> Per-core CPU alone is ~800 series at target scale; containers and processes add more. PR 1 is the place to measure ingest size and hub write throughput, while one family is easy to isolate.</li><li><strong><code>0001</code> grows with every PR.</strong> Seven families are added to a file that is already large. It stays re-runnable, but review burden rises and the already-migrated-hub gap widens. Accepted: the project is pre-release and the database is recreated rather than upgraded.</li><li><strong>Merge collisions.</strong> <code>proto.Merge</code> assumes no two collectors set the same <code>host_samples</code> field. True today. A test asserting it stays true is cheap insurance as the count grows.</li><li><strong>Buffer memory is no longer bounded the way it was.</strong> A ring slot holding a whole scrape is variable in size and much larger on a big host. <code>capacityFor</code> and <code>maxBufferSlots</code> were written when a slot was one narrow row. Resolved in PR 1 — see §2 — but it is the item most likely to be missed, because nothing fails until a long outage on the largest host in the fleet.</li></ul>
+</div></body></html>
