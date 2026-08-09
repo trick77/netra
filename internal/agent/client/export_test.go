@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/trick77/netra/internal/agent/buffer"
 	"github.com/trick77/netra/internal/agent/collector"
 	"github.com/trick77/netra/internal/agent/config"
 )
@@ -37,3 +38,11 @@ func Fingerprint() string { return fingerprint() }
 // drain respects it without restating the literal, which would then agree with
 // a wrong value as readily as a right one.
 const MaxBatchRowsForTest = maxBatchRows
+
+// CountRowsForTest exposes the flush bound's row arithmetic, and
+// AppendFamiliesForTest the merge that feeds it, so the completeness tests can
+// walk buffer.Scrape reflectively rather than restating a list of families
+// that would drift out of date exactly as quietly as the code it guards.
+func CountRowsForTest(s *buffer.Scrape) int { return countRows(s) }
+
+func AppendFamiliesForTest(s *buffer.Scrape, res *collector.Result) { appendFamilies(s, res) }

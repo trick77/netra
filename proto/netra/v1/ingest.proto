@@ -31,11 +31,24 @@ message IngestRequest {
   // Per-entity families ride here rather than on HostSample: host_samples is
   // repeated, so a replayed batch spans many scrapes and these rows cannot be
   // positionally associated with one host row. Each carries its own ts_ms.
-  //
-  // Field numbers 7-11 are claimed by the families landing in later 1C PRs
-  // (disk I/O, sensors, network, collector telemetry, events), so their
-  // numbering does not collide with anything added here.
   repeated CpuCoreSample cpu_cores = 6;
+  repeated DiskIoSample disk_io = 7;
+  repeated SensorSample sensors = 8;
+  repeated NetSample net = 9;
+  repeated CollectorSample collectors = 10;
+  repeated Event events = 11;
+  repeated ContainerSample containers = 12;
+  repeated FilesystemSample filesystems = 13;
+  repeated SmartAttribute smart = 14;
+  repeated ProcessSample processes = 15;
+  repeated SystemdUnitEvent systemd_events = 16;
+  repeated PackageEvent package_events = 17;
+
+  // Inventory, not samples: these describe what the host HAS rather than what
+  // it measured, so they are sent when they change rather than every scrape.
+  // They ride the metadata hash the same way capabilities do.
+  repeated HostAddress addresses = 18;
+  repeated HostPackage packages = 19;
 }
 
 // CpuCoreSample is one core's utilisation over one scrape interval. Rows land
@@ -260,4 +273,203 @@ message IngestResponse {
   // so no replacement field is coming; 4 must never be reused.
   reserved 4;
   reserved "interval_s";
+}
+
+// Every message below carries its own ts_ms and its own NATURAL key.
+//
+// ts_ms because IngestRequest.host_samples is repeated: a replayed batch spans
+// many scrapes, so these rows cannot be positionally associated with one host
+// row and must timestamp themselves.
+//
+// Natural keys because the agent has no idea what a dimension's surrogate id
+// is -- ids are assigned by the hub, which resolves container_key, chip+label,
+// device and label to them on ingest. An agent that sent ids would have to
+// learn them first, which is a round trip the protocol deliberately does not
+// have.
+
+// DiskIoSample is one block device over one scrape interval. Every value is a
+// rate the AGENT computed: the kernel counters are monotonic and reset on
+// reboot, and only the agent holds the previous reading needed to notice a
+// reset. A reset emits no row at all rather than a negative rate or a spike.
+message DiskIoSample {
+  int64 ts_ms = 1;
+  // Kernel name (sda, nvme0n1), whole devices only -- a partition's I/O is
+  // already counted in its parent, so reporting both double-counts the host.
+  string device = 2;
+  optional double read_bytes = 3;
+  optional double write_bytes = 4;
+  optional double read_ops = 5;
+  optional double write_ops = 6;
+  optional double io_util_pct = 7;
+  optional double r_await_ms = 8;
+  optional double w_await_ms = 9;
+  optional double weighted_io_pct = 10;
+}
+
+// SensorSample is one temperature reading. Identity is chip + label, NEVER
+// hwmonN: the N is allocation-order dependent and changes across reboots, so
+// keying on it silently reattributes one chip's history to another.
+message SensorSample {
+  int64 ts_ms = 1;
+  string chip = 2;
+  string label = 3;
+  optional double temp = 4;
+}
+
+// NetSample is one interface over one scrape interval. Rates, for the same
+// counter-reset reason as DiskIoSample.
+//
+// iface is the join key with host_addresses.iface -- the two collectors must
+// name an interface identically or the address and its traffic cannot be
+// related.
+message NetSample {
+  int64 ts_ms = 1;
+  string iface = 2;
+  optional double rx_bytes = 3;
+  optional double tx_bytes = 4;
+  optional double rx_errs = 5;
+  optional double tx_errs = 6;
+}
+
+// ContainerSample is one container over one scrape interval.
+message ContainerSample {
+  int64 ts_ms = 1;
+  // Compose project + service, falling back to container name (spec 6.2).
+  // Deliberately NOT the Docker id, which changes on every recreate -- keying
+  // on it would restart the history of a service that merely got a new image.
+  string container_key = 2;
+  string name = 3;
+  string image = 4;
+  bool is_agent = 5;
+  optional double cpu_pct = 6;
+  // Already has cache and inactive_file subtracted. Raw cgroup memory.current
+  // counts the page cache as consumption, so a container that merely read
+  // files would report that as memory it is holding.
+  optional uint64 mem_used = 7;
+  optional uint64 mem_limit = 8;
+  optional double net_rx = 9;
+  optional double net_tx = 10;
+  optional double io_read = 11;
+  optional double io_write = 12;
+}
+
+// FilesystemSample is one mounted filesystem, deduplicated by st_dev so a bind
+// mount of an already-reported filesystem does not double-count the host's
+// disk usage.
+message FilesystemSample {
+  int64 ts_ms = 1;
+  string label = 2;
+  string mountpoint = 3;
+  // st_dev, so the hub can tell two labels naming one filesystem apart from
+  // two genuinely distinct ones.
+  optional uint64 device_id = 4;
+  optional uint64 total = 5;
+  optional uint64 used = 6;
+  optional uint64 free = 7;
+  optional uint64 inodes_total = 8;
+  optional uint64 inodes_used = 9;
+  // Unset -- not zero -- when the st_dev to block device mapping fails.
+  // "Could not attribute I/O to this filesystem" is not "did no I/O".
+  optional double read_bytes = 10;
+  optional double write_bytes = 11;
+}
+
+// SmartAttribute is one SMART attribute of one drive. Deliberately generic:
+// attribute sets vary per drive model, so a typed field per attribute would
+// need a schema change for every new drive.
+message SmartAttribute {
+  int64 ts_ms = 1;
+  string device = 2;
+  string model = 3;
+  string serial = 4;
+  uint32 attr_id = 5;
+  optional int64 raw = 6;
+  optional uint32 normalized = 7;
+}
+
+// ProcessSample is one process NAME, aggregated across every process sharing
+// it -- top-10-by-CPU union top-10-by-memory, not every process on the host.
+message ProcessSample {
+  int64 ts_ms = 1;
+  // comm from /proc/PID/stat. NEVER argv: cmdline and environ carry secrets
+  // passed on command lines, and argv_guard_test.go fails the build if either
+  // name appears in a Go string literal. The accepted cost is truncated names
+  // and "python3" rather than the script (spec 6.2).
+  string name = 2;
+  optional double cpu_pct = 3;
+  optional uint64 mem_bytes = 4;
+  // How many processes were aggregated under this name.
+  optional uint32 count = 5;
+}
+
+// CollectorSample is one collector's own health for one scrape: how long it
+// took, whether it worked, and why not.
+message CollectorSample {
+  int64 ts_ms = 1;
+  string collector = 2;
+  optional uint32 duration_ms = 3;
+  bool ok = 4;
+  // Unset when the collector succeeded. A collector that failed once must not
+  // read as broken forever, so this clears on recovery rather than sticking.
+  optional string error_code = 5;
+}
+
+// Event is a discrete state change: mdraid degradation, a SMART threshold
+// crossing, a systemd unit failing. Spec 5.1 rule 4 sends anything constant
+// for hours here rather than to a sample table -- an array is "clean" for
+// weeks, and a 60s series saying so is pure waste.
+message Event {
+  int64 ts_ms = 1;
+  string type = 2;
+  // The thing the event is about: an array name, a device, an interface.
+  // Empty for events about the host as a whole.
+  string subject = 3;
+  // JSON object. Kept as a string on the wire so the agent needs no structured
+  // representation of something the hub only stores.
+  string detail_json = 4;
+}
+
+// HostAddress is one address on one interface. The agent reports raw facts
+// only: the HUB derives scope (loopback/private/public) from the address, so
+// the classification is one implementation that can be corrected without
+// redeploying every agent.
+message HostAddress {
+  string iface = 1;
+  optional uint32 if_index = 2;
+  string address = 3;
+  // 4 or 6. IPv4 and IPv6 are treated identically throughout.
+  uint32 family = 4;
+  string vrf = 5;
+  string description = 6;
+}
+
+// HostPackage is one installed package.
+message HostPackage {
+  string name = 1;
+  string version = 2;
+  string arch = 3;
+  // "dpkg" or "apk". An rpm host reports an unsupported-format capability
+  // instead: unsupported is not broken, and they are different facts.
+  string format = 4;
+  optional uint64 size_bytes = 5;
+}
+
+// SystemdUnitEvent is a unit changing state. Events, not samples: a unit's
+// state is constant for days, which is the same near-constant-series waste
+// that keeps systemd out of 5.3.
+message SystemdUnitEvent {
+  int64 ts_ms = 1;
+  string unit_name = 2;
+  string state = 3;
+  string substate = 4;
+}
+
+// PackageEvent is a package being installed, upgraded or removed.
+message PackageEvent {
+  int64 ts_ms = 1;
+  string name = 2;
+  // "install", "upgrade" or "remove".
+  string action = 3;
+  string from_version = 4;
+  string to_version = 5;
 }

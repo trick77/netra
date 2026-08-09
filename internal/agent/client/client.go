@@ -204,7 +204,7 @@ func (c *Client) Prime(ctx context.Context) {
 // touching the sequence counter or the ring buffer.
 func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 	sample := &netrav1.HostSample{TsMs: time.Now().UnixMilli()}
-	var cores []*netrav1.CpuCoreSample
+	scrape := &buffer.Scrape{}
 
 	start := time.Now()
 	for _, col := range c.collectors {
@@ -223,7 +223,7 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 			// which is what keeps unset meaning "absent".
 			proto.Merge(sample, res.Host)
 		}
-		cores = append(cores, res.Cores...)
+		appendFamilies(scrape, res)
 	}
 	elapsed := time.Since(start)
 
@@ -243,8 +243,47 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 		agent.PostLatencyMs = ptr(uint32(c.lastPostLatency.Milliseconds()))
 	}
 	sample.Agent = agent
+	scrape.Host = sample
 
-	return &buffer.Scrape{Host: sample, Cores: cores}
+	return scrape
+}
+
+// appendFamilies concatenates one collector's per-entity rows onto the scrape.
+//
+// Every family is listed here explicitly. A family added to Result and Scrape
+// but forgotten here would be collected and then silently dropped before it
+// ever reached the ring -- TestScrapeCarriesEveryFamilyFromAResult walks the
+// struct reflectively so a missed line fails rather than ships.
+func appendFamilies(s *buffer.Scrape, res *collector.Result) {
+	s.Cores = append(s.Cores, res.Cores...)
+	s.Disks = append(s.Disks, res.Disks...)
+	s.Sensors = append(s.Sensors, res.Sensors...)
+	s.Nets = append(s.Nets, res.Nets...)
+	s.Containers = append(s.Containers, res.Containers...)
+	s.Filesystems = append(s.Filesystems, res.Filesystems...)
+	s.Smart = append(s.Smart, res.Smart...)
+	s.Processes = append(s.Processes, res.Processes...)
+	s.Events = append(s.Events, res.Events...)
+	s.SystemdEvents = append(s.SystemdEvents, res.SystemdEvents...)
+	s.PackageEvents = append(s.PackageEvents, res.PackageEvents...)
+	s.Addresses = append(s.Addresses, res.Addresses...)
+	s.Packages = append(s.Packages, res.Packages...)
+}
+
+// countRows is how many rows a scrape contributes to a request body: the host
+// row plus every per-entity row measured with it.
+//
+// The flush bound is expressed in rows because a scrape stopped being one row.
+// A family missing from this sum silently un-enforces the 4 MiB body limit --
+// nothing fails until a large host replays after an outage and 413s forever,
+// which is why TestScrapeRowCountCoversEveryFamily walks the struct rather
+// than trusting this list to stay complete.
+func countRows(s *buffer.Scrape) int {
+	return 1 +
+		len(s.Cores) + len(s.Disks) + len(s.Sensors) + len(s.Nets) +
+		len(s.Containers) + len(s.Filesystems) + len(s.Smart) +
+		len(s.Processes) + len(s.Events) + len(s.SystemdEvents) +
+		len(s.PackageEvents) + len(s.Addresses) + len(s.Packages)
 }
 
 // refreshCapabilities re-reads what each collector reports about its own
@@ -299,7 +338,7 @@ func (c *Client) Flush(ctx context.Context) error {
 	// nothing about the encoded body size.
 	rows := 0
 	for i, e := range pending {
-		next := 1 + len(e.Scrape.Cores)
+		next := countRows(e.Scrape)
 		// The i > 0 guard lets a single oversized scrape through on its own.
 		// Without it a host whose scrape exceeds the cap would never flush,
 		// and the ring would fill and start dropping.
@@ -311,22 +350,32 @@ func (c *Client) Flush(ctx context.Context) error {
 	}
 
 	samples := make([]*netrav1.HostSample, 0, len(pending))
-	var cores []*netrav1.CpuCoreSample
+	req := &netrav1.IngestRequest{}
 	for _, e := range pending {
 		samples = append(samples, e.Scrape.Host)
-		cores = append(cores, e.Scrape.Cores...)
+		s := e.Scrape
+		req.CpuCores = append(req.CpuCores, s.Cores...)
+		req.DiskIo = append(req.DiskIo, s.Disks...)
+		req.Sensors = append(req.Sensors, s.Sensors...)
+		req.Net = append(req.Net, s.Nets...)
+		req.Containers = append(req.Containers, s.Containers...)
+		req.Filesystems = append(req.Filesystems, s.Filesystems...)
+		req.Smart = append(req.Smart, s.Smart...)
+		req.Processes = append(req.Processes, s.Processes...)
+		req.Events = append(req.Events, s.Events...)
+		req.SystemdEvents = append(req.SystemdEvents, s.SystemdEvents...)
+		req.PackageEvents = append(req.PackageEvents, s.PackageEvents...)
+		req.Addresses = append(req.Addresses, s.Addresses...)
+		req.Packages = append(req.Packages, s.Packages...)
 	}
 	highest := pending[len(pending)-1].Seq
 
-	req := &netrav1.IngestRequest{
-		Seq:          highest,
-		MetadataHash: c.metadataHash,
-		HostSamples:  samples,
-		CpuCores:     cores,
-		// Anything sent after a failed flush is replayed history, and the hub
-		// needs to know so it can invalidate the affected aggregate ranges.
-		Backfill: c.replaying,
-	}
+	req.Seq = highest
+	req.MetadataHash = c.metadataHash
+	req.HostSamples = samples
+	// Anything sent after a failed flush is replayed history, and the hub
+	// needs to know so it can invalidate the affected aggregate ranges.
+	req.Backfill = c.replaying
 	if c.sendMetadata {
 		req.Metadata = c.metadata
 	}

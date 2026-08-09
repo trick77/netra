@@ -110,3 +110,59 @@ func TestCpuCoreSampleRoundTrip(t *testing.T) {
 		t.Error("core 1 Busy is set; an unmeasured value must stay nil")
 	}
 }
+
+// Every per-entity family carries its own ts_ms. A family that inherited a
+// host row's timestamp would be wrong the moment a replayed batch spanned more
+// than one scrape, which is the normal case after an outage.
+func TestEveryPerEntityFamilyCarriesItsOwnTimestamp(t *testing.T) {
+	in := &netrav1.IngestRequest{
+		Seq:           1,
+		CpuCores:      []*netrav1.CpuCoreSample{{TsMs: 10, Core: 0}},
+		DiskIo:        []*netrav1.DiskIoSample{{TsMs: 20, Device: "sda"}},
+		Sensors:       []*netrav1.SensorSample{{TsMs: 30, Chip: "coretemp", Label: "Package id 0"}},
+		Net:           []*netrav1.NetSample{{TsMs: 40, Iface: "eth0"}},
+		Collectors:    []*netrav1.CollectorSample{{TsMs: 50, Collector: "sensors", Ok: true}},
+		Events:        []*netrav1.Event{{TsMs: 60, Type: "mdraid", Subject: "md0"}},
+		Containers:    []*netrav1.ContainerSample{{TsMs: 70, ContainerKey: "proj/svc"}},
+		Filesystems:   []*netrav1.FilesystemSample{{TsMs: 80, Label: "root"}},
+		Smart:         []*netrav1.SmartAttribute{{TsMs: 90, Device: "sda", AttrId: 5}},
+		Processes:     []*netrav1.ProcessSample{{TsMs: 100, Name: "postgres"}},
+		SystemdEvents: []*netrav1.SystemdUnitEvent{{TsMs: 110, UnitName: "ssh.service", State: "failed"}},
+		PackageEvents: []*netrav1.PackageEvent{{TsMs: 120, Name: "bash", Action: "upgrade"}},
+	}
+
+	raw, err := proto.Marshal(in)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var out netrav1.IngestRequest
+	if err := proto.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	for name, ts := range map[string]int64{
+		"cpu_cores":      out.GetCpuCores()[0].GetTsMs(),
+		"disk_io":        out.GetDiskIo()[0].GetTsMs(),
+		"sensors":        out.GetSensors()[0].GetTsMs(),
+		"net":            out.GetNet()[0].GetTsMs(),
+		"collectors":     out.GetCollectors()[0].GetTsMs(),
+		"events":         out.GetEvents()[0].GetTsMs(),
+		"containers":     out.GetContainers()[0].GetTsMs(),
+		"filesystems":    out.GetFilesystems()[0].GetTsMs(),
+		"smart":          out.GetSmart()[0].GetTsMs(),
+		"processes":      out.GetProcesses()[0].GetTsMs(),
+		"systemd_events": out.GetSystemdEvents()[0].GetTsMs(),
+		"package_events": out.GetPackageEvents()[0].GetTsMs(),
+	} {
+		if ts == 0 {
+			t.Errorf("%s row lost its ts_ms in the round trip", name)
+		}
+	}
+
+	// Inventory carries no timestamp by design: addresses and packages describe
+	// what the host HAS, reported on change rather than measured per scrape.
+	// The hub stamps first_seen and last_seen itself.
+	if len(out.GetAddresses()) != 0 || len(out.GetPackages()) != 0 {
+		t.Error("inventory unexpectedly populated; this case sends none")
+	}
+}

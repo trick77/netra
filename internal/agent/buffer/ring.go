@@ -15,8 +15,20 @@ import (
 // reports as lost -- the host samples arrive intact and the batch looks
 // complete, so the gap is invisible on both ends.
 type Scrape struct {
-	Host  *netrav1.HostSample
-	Cores []*netrav1.CpuCoreSample
+	Host          *netrav1.HostSample
+	Cores         []*netrav1.CpuCoreSample
+	Disks         []*netrav1.DiskIoSample
+	Sensors       []*netrav1.SensorSample
+	Nets          []*netrav1.NetSample
+	Containers    []*netrav1.ContainerSample
+	Filesystems   []*netrav1.FilesystemSample
+	Smart         []*netrav1.SmartAttribute
+	Processes     []*netrav1.ProcessSample
+	Events        []*netrav1.Event
+	SystemdEvents []*netrav1.SystemdUnitEvent
+	PackageEvents []*netrav1.PackageEvent
+	Addresses     []*netrav1.HostAddress
+	Packages      []*netrav1.HostPackage
 }
 
 // Entry is one buffered scrape and its batch sequence number.
