@@ -7,8 +7,6 @@ package collector
 import (
 	"context"
 	"time"
-
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
 // Collector fills in the fields of a HostSample it is responsible for.
@@ -24,8 +22,18 @@ type Collector interface {
 	// longer interval than the scrape loop so they never stall it.
 	Interval() time.Duration
 
-	// Collect reads the current values and writes them into sample.
-	Collect(ctx context.Context, sample *netrav1.HostSample) error
+	// Collect reads the current values and returns them.
+	//
+	// It must return a nil Result alongside any error: the agent discards a
+	// failed collector's contribution entirely, so a non-nil Result on the
+	// error path would be silently dropped -- a confusing contract to leave
+	// for the next collector author.
+	//
+	// Having nothing to report is not an error. A delta-based collector on
+	// its first scrape returns an empty Result and no error, because "no
+	// baseline yet" is a normal state rather than a fault to log on every
+	// restart.
+	Collect(ctx context.Context) (*Result, error)
 }
 
 // CapabilityReporter is implemented by collectors whose ability to run is a

@@ -1,7 +1,6 @@
 package collector_test
 
 import (
-	"context"
 	"math"
 	"testing"
 	"time"
@@ -16,7 +15,7 @@ func TestCPUFirstCollectYieldsNoValue(t *testing.T) {
 	c := collector.NewCPU("testdata/proc1", time.Minute)
 
 	var sample netrav1.HostSample
-	if err := c.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(c, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 	if sample.CpuTotal != nil {
@@ -26,17 +25,16 @@ func TestCPUFirstCollectYieldsNoValue(t *testing.T) {
 
 func TestCPUSecondCollectComputesDelta(t *testing.T) {
 	c := collector.NewCPU("testdata/proc1", time.Minute)
-	ctx := context.Background()
 
 	var first netrav1.HostSample
-	if err := c.Collect(ctx, &first); err != nil {
+	if err := collectInto(c, &first); err != nil {
 		t.Fatalf("first Collect: %v", err)
 	}
 
 	c.SetProcRootForTest("testdata/proc2")
 
 	var second netrav1.HostSample
-	if err := c.Collect(ctx, &second); err != nil {
+	if err := collectInto(c, &second); err != nil {
 		t.Fatalf("second Collect: %v", err)
 	}
 
@@ -61,17 +59,16 @@ func TestCPUSecondCollectComputesDelta(t *testing.T) {
 // or an enormous spike; the collector must emit nothing instead.
 func TestCPUCounterResetProducesNoValue(t *testing.T) {
 	c := collector.NewCPU("testdata/proc2", time.Minute)
-	ctx := context.Background()
 
 	var first netrav1.HostSample
-	if err := c.Collect(ctx, &first); err != nil {
+	if err := collectInto(c, &first); err != nil {
 		t.Fatalf("first Collect: %v", err)
 	}
 
 	c.SetProcRootForTest("testdata/proc1") // counters go backwards
 
 	var second netrav1.HostSample
-	if err := c.Collect(ctx, &second); err != nil {
+	if err := collectInto(c, &second); err != nil {
 		t.Fatalf("second Collect: %v", err)
 	}
 	if second.CpuTotal != nil {

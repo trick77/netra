@@ -23,8 +23,8 @@ type capabilityCollector struct {
 
 func (capabilityCollector) Name() string            { return "capability" }
 func (capabilityCollector) Interval() time.Duration { return time.Minute }
-func (capabilityCollector) Collect(context.Context, *netrav1.HostSample) error {
-	return nil
+func (capabilityCollector) Collect(context.Context) (*collector.Result, error) {
+	return &collector.Result{}, nil
 }
 func (c *capabilityCollector) Capabilities() map[string]string {
 	return map[string]string{c.key: c.value}

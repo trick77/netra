@@ -82,8 +82,8 @@ type failingCollector struct{}
 
 func (failingCollector) Name() string            { return "failing" }
 func (failingCollector) Interval() time.Duration { return time.Minute }
-func (failingCollector) Collect(context.Context, *netrav1.HostSample) error {
-	return errors.New("sensor unreadable")
+func (failingCollector) Collect(context.Context) (*collector.Result, error) {
+	return nil, errors.New("sensor unreadable")
 }
 
 func newClient(t *testing.T, url string) *client.Client {

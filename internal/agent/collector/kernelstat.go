@@ -76,10 +76,12 @@ func (k *KernelStat) SetProcRootForTest(root string) { k.procRoot = root }
 func (k *KernelStat) SetClockForTest(fn func() time.Time) { k.now = fn }
 
 // Collect implements Collector.
-func (k *KernelStat) Collect(_ context.Context, sample *netrav1.HostSample) error {
+func (k *KernelStat) Collect(_ context.Context) (*Result, error) {
+	sample := &netrav1.HostSample{}
+
 	cur, gauges, err := k.read()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Gauges are reported on every scrape including the first: they are
@@ -94,7 +96,7 @@ func (k *KernelStat) Collect(_ context.Context, sample *netrav1.HostSample) erro
 
 	if prev == nil {
 		// No baseline yet: report no rates rather than invent them.
-		return nil
+		return &Result{Host: sample}, nil
 	}
 
 	elapsed := at.Sub(prevAt).Seconds()
@@ -102,14 +104,14 @@ func (k *KernelStat) Collect(_ context.Context, sample *netrav1.HostSample) erro
 		// The clock did not advance, or stepped backwards. Dividing by that
 		// produces an infinity or a negative rate, neither of which is a
 		// measurement.
-		return nil
+		return &Result{Host: sample}, nil
 	}
 
 	sample.CtxtPerS = rate(cur.ctxt, prev.ctxt, elapsed)
 	sample.IntrPerS = rate(cur.intr, prev.intr, elapsed)
 	sample.ForksPerS = rate(cur.processes, prev.processes, elapsed)
 
-	return nil
+	return &Result{Host: sample}, nil
 }
 
 // rate converts a counter delta to a per-second value. It returns nil when

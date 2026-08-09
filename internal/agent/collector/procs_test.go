@@ -1,7 +1,6 @@
 package collector_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -15,7 +14,7 @@ func TestProcsCountsNumericDirentsOnly(t *testing.T) {
 	p := collector.NewProcs("testdata/procpids", true, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := p.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(p, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -34,7 +33,7 @@ func TestProcsUnsetWhenProcOneCommMatchesSelf(t *testing.T) {
 	p := collector.NewProcs("testdata/procpids-namespaced", false, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := p.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(p, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -56,7 +55,7 @@ func TestProcsUnsetWhenTooFewProcessesToBeAHost(t *testing.T) {
 	p := collector.NewProcs(dir, false, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := p.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(p, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -78,7 +77,7 @@ func TestProcsTrustsPidHostConfigOverHeuristics(t *testing.T) {
 	p := collector.NewProcs(dir, true, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := p.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(p, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -99,7 +98,7 @@ func TestProcsUnreadableProcRootIsUnsetNotZero(t *testing.T) {
 	p := collector.NewProcs("testdata/does-not-exist", false, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := p.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(p, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -118,10 +117,10 @@ func TestProcsUnreadableAndNamespacedReportDifferentCauses(t *testing.T) {
 	namespaced := collector.NewProcs("testdata/procpids-namespaced", false, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := unreadable.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(unreadable, &sample); err != nil {
 		t.Fatalf("Collect (unreadable): %v", err)
 	}
-	if err := namespaced.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(namespaced, &sample); err != nil {
 		t.Fatalf("Collect (namespaced): %v", err)
 	}
 
@@ -138,7 +137,7 @@ func TestProcsCapabilitiesReturnsACopy(t *testing.T) {
 	p := collector.NewProcs("testdata/procpids", true, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := p.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(p, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 

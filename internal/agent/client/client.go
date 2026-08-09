@@ -195,8 +195,17 @@ func (c *Client) collect(ctx context.Context) *netrav1.HostSample {
 
 	start := time.Now()
 	for _, col := range c.collectors {
-		if err := col.Collect(ctx, sample); err != nil {
+		res, err := col.Collect(ctx)
+		if err != nil {
+			// Nothing from a failed collector reaches the sample. Merging a
+			// partial result would store fields the collector never finished
+			// measuring, and an unset field is supposed to mean the subsystem
+			// is absent.
 			slog.Warn("collector failed", "collector", col.Name(), "err", err)
+			continue
+		}
+		if res.Host != nil {
+			proto.Merge(sample, res.Host)
 		}
 	}
 	elapsed := time.Since(start)

@@ -1,7 +1,6 @@
 package collector_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -26,14 +25,14 @@ func collectTwice(t *testing.T, first, second string) *netrav1.HostSample {
 	n := newNetstat(t, first, fixedClock(time.Unix(1000, 0), time.Minute))
 
 	var warmup netrav1.HostSample
-	if err := n.Collect(context.Background(), &warmup); err != nil {
+	if err := collectInto(n, &warmup); err != nil {
 		t.Fatalf("first Collect: %v", err)
 	}
 
 	n.SetProcRootForTest(second)
 
 	var sample netrav1.HostSample
-	if err := n.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(n, &sample); err != nil {
 		t.Fatalf("second Collect: %v", err)
 	}
 	return &sample
@@ -45,7 +44,7 @@ func TestNetstatFirstCollectEmitsOnlyCurrEstab(t *testing.T) {
 	n := newNetstat(t, "testdata/proc1", fixedClock(time.Unix(1000, 0), time.Minute))
 
 	var sample netrav1.HostSample
-	if err := n.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(n, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -196,14 +195,14 @@ func TestNetstatIndividuallyMissingKeyLeavesOnlyThatFieldUnset(t *testing.T) {
 	n := newNetstat(t, dir, fixedClock(time.Unix(1000, 0), time.Minute))
 
 	var warmup netrav1.HostSample
-	if err := n.Collect(context.Background(), &warmup); err != nil {
+	if err := collectInto(n, &warmup); err != nil {
 		t.Fatalf("first Collect: %v", err)
 	}
 
 	writeFile(t, dir+"/net/snmp6", "Udp6InErrors 11\nIp6FragCreates 120\n")
 
 	var sample netrav1.HostSample
-	if err := n.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(n, &sample); err != nil {
 		t.Fatalf("second Collect: %v", err)
 	}
 
@@ -227,12 +226,12 @@ func TestNetstatMismatchedHeaderAndValueLineIsSkipped(t *testing.T) {
 	n := newNetstat(t, dir, fixedClock(time.Unix(1000, 0), time.Minute))
 
 	var warmup netrav1.HostSample
-	if err := n.Collect(context.Background(), &warmup); err != nil {
+	if err := collectInto(n, &warmup); err != nil {
 		t.Fatalf("first Collect: %v", err)
 	}
 
 	var sample netrav1.HostSample
-	if err := n.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(n, &sample); err != nil {
 		t.Fatalf("second Collect: %v", err)
 	}
 
@@ -268,7 +267,7 @@ func TestNetstatAllFilesAbsentIsNotAnError(t *testing.T) {
 	n := collector.NewNetstat(t.TempDir(), time.Minute)
 
 	var sample netrav1.HostSample
-	if err := n.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(n, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 	if sample.TcpCurrEstab != nil {

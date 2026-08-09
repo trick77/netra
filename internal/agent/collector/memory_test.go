@@ -1,7 +1,6 @@
 package collector_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -13,7 +12,7 @@ func TestMemoryReadsMeminfo(t *testing.T) {
 	c := collector.NewMemory("testdata/proc1", time.Minute)
 
 	var s netrav1.HostSample
-	if err := c.Collect(context.Background(), &s); err != nil {
+	if err := collectInto(c, &s); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -42,7 +41,7 @@ func TestMemoryAbsentSwapIsUnset(t *testing.T) {
 	c := collector.NewMemory("testdata/noswap", time.Minute)
 
 	var s netrav1.HostSample
-	if err := c.Collect(context.Background(), &s); err != nil {
+	if err := collectInto(c, &s); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -63,7 +62,7 @@ func TestMemoryAbsentZfsArcIsUnset(t *testing.T) {
 	c := collector.NewMemory("testdata/proc1", time.Minute)
 
 	var s netrav1.HostSample
-	if err := c.Collect(context.Background(), &s); err != nil {
+	if err := collectInto(c, &s); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 	if s.MemZfsArc != nil {

@@ -1,7 +1,6 @@
 package collector_test
 
 import (
-	"context"
 	"encoding/binary"
 	"os"
 	"testing"
@@ -31,7 +30,7 @@ func TestUsersCountsOnlyUserProcess(t *testing.T) {
 			u := collector.NewUsers(tc.file, time.Minute)
 
 			var sample netrav1.HostSample
-			if err := u.Collect(context.Background(), &sample); err != nil {
+			if err := collectInto(u, &sample); err != nil {
 				t.Fatalf("Collect: %v", err)
 			}
 
@@ -60,7 +59,7 @@ func TestUsersParsesWithThePinnedRecordSize(t *testing.T) {
 		u.SetRecordSizesForTest(tc.recordSize)
 
 		var sample netrav1.HostSample
-		if err := u.Collect(context.Background(), &sample); err != nil {
+		if err := collectInto(u, &sample); err != nil {
 			t.Fatalf("Collect %s: %v", tc.file, err)
 		}
 		if sample.UsersLoggedIn == nil || *sample.UsersLoggedIn != 3 {
@@ -78,7 +77,7 @@ func TestUsersWrongRecordSizeIsRejectedNotMiscounted(t *testing.T) {
 	u.SetRecordSizesForTest(384) // the file is 400-byte records
 
 	var sample netrav1.HostSample
-	if err := u.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(u, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -98,7 +97,7 @@ func TestUsersMissingFileLeavesFieldUnsetAndReportsCapability(t *testing.T) {
 	u := collector.NewUsers(t.TempDir()+"/absent-utmp", time.Minute)
 
 	var sample netrav1.HostSample
-	if err := u.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(u, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -121,7 +120,7 @@ func TestUsersEmptyFileCountsZero(t *testing.T) {
 	u := collector.NewUsers(path, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := u.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(u, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -154,7 +153,7 @@ func TestUsersTruncatedTrailingRecordIsRefused(t *testing.T) {
 	u.SetRecordSizesForTest(384)
 
 	var sample netrav1.HostSample
-	if err := u.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(u, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -192,7 +191,7 @@ func TestUsersAmbiguousFileLengthPicksTheValidLayout(t *testing.T) {
 	u := collector.NewUsers(path, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := u.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(u, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
@@ -222,7 +221,7 @@ func TestUsersImplausibleRecordsReportUnsupportedFormat(t *testing.T) {
 	u := collector.NewUsers(path, time.Minute)
 
 	var sample netrav1.HostSample
-	if err := u.Collect(context.Background(), &sample); err != nil {
+	if err := collectInto(u, &sample); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 
