@@ -27,6 +27,30 @@ message IngestRequest {
   // needs no explicit action on this flag. It exists so the hub can log
   // backfill activity for observability.
   bool backfill = 5;
+
+  // Per-entity families ride here rather than on HostSample: host_samples is
+  // repeated, so a replayed batch spans many scrapes and these rows cannot be
+  // positionally associated with one host row. Each carries its own ts_ms.
+  //
+  // Field numbers 7-11 are claimed by the families landing in later 1C PRs
+  // (disk I/O, sensors, network, collector telemetry, events), so their
+  // numbering does not collide with anything added here.
+  repeated CpuCoreSample cpu_cores = 6;
+}
+
+// CpuCoreSample is one core's utilisation over one scrape interval. Rows land
+// in cpu_core_samples, whose primary key is (host_id, ts, core).
+message CpuCoreSample {
+  int64 ts_ms = 1;
+
+  // The N in /proc/stat's cpuN, not a physical package or thread id.
+  uint32 core = 2;
+
+  // Percentage of the interval the core was neither idle nor in iowait.
+  // Unset on the first scrape after start, and after a counter reset, because
+  // a rate needs a previous reading the agent does not have yet. Unset is not
+  // zero: an idle core reports 0, an unmeasurable one reports nothing.
+  optional double busy = 3;
 }
 
 // Metadata holds facts that change rarely. Sent once, then only on change.

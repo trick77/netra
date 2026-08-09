@@ -72,3 +72,41 @@ func TestIngestRequestRoundTrip(t *testing.T) {
 		t.Fatalf("CpuTotal = %v, want 12.5", got)
 	}
 }
+
+// A per-entity family rides on IngestRequest, not on HostSample: a request
+// carries a batch of scrapes, so these rows span several timestamps and carry
+// their own ts_ms rather than being positionally tied to a host row.
+func TestCpuCoreSampleRoundTrip(t *testing.T) {
+	in := &netrav1.IngestRequest{
+		Seq: 7,
+		CpuCores: []*netrav1.CpuCoreSample{
+			{TsMs: 1000, Core: 0, Busy: proto.Float64(41.5)},
+			{TsMs: 1000, Core: 1},
+		},
+	}
+
+	raw, err := proto.Marshal(in)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var out netrav1.IngestRequest
+	if err := proto.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if len(out.GetCpuCores()) != 2 {
+		t.Fatalf("len(CpuCores) = %d, want 2", len(out.GetCpuCores()))
+	}
+	if got := out.GetCpuCores()[0].GetBusy(); got != 41.5 {
+		t.Errorf("core 0 Busy = %v, want 41.5", got)
+	}
+	if got := out.GetCpuCores()[0].GetCore(); got != 0 {
+		t.Errorf("core 0 Core = %d, want 0", got)
+	}
+	// An unset busy must stay unset: "core present, utilisation not
+	// computable" is a different fact from "core was 0% busy".
+	if out.GetCpuCores()[1].Busy != nil {
+		t.Error("core 1 Busy is set; an unmeasured value must stay nil")
+	}
+}
