@@ -121,6 +121,19 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// stale in the UI while its data is in fact arriving on every retry.
 	// Anywhere further down and that guarantee only covers the failures that
 	// happen to come after it.
+	//
+	// InsertHostSamples quarantines rather than 503s a row Postgres will never
+	// accept, so in principle this could advance last_seen past a sample that
+	// was dropped. It cannot, and the reason is worth stating because it is a
+	// property of the schema rather than of this code: host_samples has exactly
+	// one class 22/23 constraint reachable at runtime -- the foreign key to
+	// hosts. Its timestamps are already bounded by filterByTs, every other
+	// column is a nullable numeric with no CHECK, and float8 accepts NaN and
+	// Inf. So the only row that quarantines is one whose host was deleted
+	// mid-post, and host_current.host_id references that same row: the upsert
+	// below fails the identical foreign key and is logged, not written. Adding
+	// a CHECK to host_samples would break that, and would need this to learn
+	// which rows actually landed.
 	if s := latest(samples); s != nil {
 		if err := h.store.UpsertHostCurrent(ctx, hostID, s); err != nil {
 			slog.Error("upsert host_current", "host_id", hostID, "err", err)
