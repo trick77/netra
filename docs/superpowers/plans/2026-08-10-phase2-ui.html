@@ -92,34 +92,40 @@ internal/hub/httpapi/router.go  MODIFIED: mount the SPA at /</code></pre>
 <p><strong>Interfaces:</strong></p>
 <ul><li>Produces: <code>web.Handler() http.Handler</code> — serves the built SPA with SPA fallback.</li><li>Produces: <code>make ui</code> builds <code>ui/</code> into <code>internal/hub/web/dist</code>.</li></ul>
 <ul><li>[ ] <strong>Step 1: Create the Vite project files</strong></li></ul>
-<p><code>ui/package.json</code>:</p>
+<p><code>ui/package.json</code> — <strong>versions copied verbatim from <code>../music/ui/package.json</code>, not guessed.</strong> Note TypeScript 7, jsdom 30 and <code>@vitejs/plugin-react</code> 6; and <code>TZ=Europe/Zurich</code> on the test scripts, which is how music makes date-dependent tests deterministic — <code>format.test.ts</code> depends on it.</p>
 <pre class="code" data-lang="json"><code>{
   &quot;name&quot;: &quot;netra-ui&quot;,
   &quot;private&quot;: true,
   &quot;type&quot;: &quot;module&quot;,
   &quot;scripts&quot;: {
     &quot;dev&quot;: &quot;vite&quot;,
-    &quot;build&quot;: &quot;tsc -b &amp;&amp; vite build&quot;,
-    &quot;test&quot;: &quot;vitest run&quot;,
-    &quot;test:watch&quot;: &quot;vitest&quot;
+    &quot;build&quot;: &quot;tsc --noEmit &amp;&amp; vite build&quot;,
+    &quot;test&quot;: &quot;TZ=Europe/Zurich vitest run&quot;,
+    &quot;test:watch&quot;: &quot;TZ=Europe/Zurich vitest&quot;,
+    &quot;test:coverage&quot;: &quot;TZ=Europe/Zurich vitest run --coverage&quot;,
+    &quot;format&quot;: &quot;prettier --write &#x27;src/**/*.{ts,tsx,css}&#x27;&quot;,
+    &quot;format:check&quot;: &quot;prettier --check &#x27;src/**/*.{ts,tsx,css}&#x27;&quot;
   },
   &quot;dependencies&quot;: {
-    &quot;react&quot;: &quot;^19.2.0&quot;,
-    &quot;react-dom&quot;: &quot;^19.2.0&quot;,
-    &quot;lucide-react&quot;: &quot;^1.27.0&quot;
+    &quot;lucide-react&quot;: &quot;^1.27.0&quot;,
+    &quot;react&quot;: &quot;^19.2.8&quot;,
+    &quot;react-dom&quot;: &quot;^19.2.8&quot;
   },
   &quot;devDependencies&quot;: {
-    &quot;@tailwindcss/vite&quot;: &quot;^4.1.0&quot;,
-    &quot;@testing-library/jest-dom&quot;: &quot;^6.6.0&quot;,
-    &quot;@testing-library/react&quot;: &quot;^16.3.0&quot;,
-    &quot;@types/react&quot;: &quot;^19.2.0&quot;,
-    &quot;@types/react-dom&quot;: &quot;^19.2.0&quot;,
-    &quot;@vitejs/plugin-react&quot;: &quot;^5.0.0&quot;,
-    &quot;jsdom&quot;: &quot;^27.0.0&quot;,
-    &quot;tailwindcss&quot;: &quot;^4.1.0&quot;,
-    &quot;typescript&quot;: &quot;^5.9.0&quot;,
-    &quot;vite&quot;: &quot;^8.0.0&quot;,
-    &quot;vitest&quot;: &quot;^4.0.0&quot;
+    &quot;@tailwindcss/vite&quot;: &quot;^4.3.3&quot;,
+    &quot;@testing-library/jest-dom&quot;: &quot;^7.0.0&quot;,
+    &quot;@testing-library/react&quot;: &quot;^16.3.2&quot;,
+    &quot;@testing-library/user-event&quot;: &quot;^14.6.1&quot;,
+    &quot;@types/react&quot;: &quot;^19.2.17&quot;,
+    &quot;@types/react-dom&quot;: &quot;^19.2.3&quot;,
+    &quot;@vitejs/plugin-react&quot;: &quot;^6.0.4&quot;,
+    &quot;@vitest/coverage-v8&quot;: &quot;^4.1.10&quot;,
+    &quot;jsdom&quot;: &quot;^30.0.1&quot;,
+    &quot;prettier&quot;: &quot;3.9.6&quot;,
+    &quot;tailwindcss&quot;: &quot;^4.3.0&quot;,
+    &quot;typescript&quot;: &quot;^7.0.2&quot;,
+    &quot;vite&quot;: &quot;^8.1.5&quot;,
+    &quot;vitest&quot;: &quot;^4.1.7&quot;
   }
 }</code></pre>
 <p><code>ui/.nvmrc</code>:</p>
@@ -262,7 +268,7 @@ func Handler() http.Handler {
 		files.ServeHTTP(w, r2)
 	})
 }</code></pre>
-<ul><li>[ ] <strong>Step 5: Build the UI and run the test</strong></li></ul>
+<ul><li>[ ] <strong>Step 5: Build the UI and run the test</strong> (the placeholder from Step 6 must exist first if you reorder these)</li></ul>
 <p>Run:</p>
 <pre class="code" data-lang="bash"><code>cd ui &amp;&amp; npm ci &amp;&amp; npm run build &amp;&amp; cd ..
 go test ./internal/hub/web/...</code></pre>
@@ -277,8 +283,12 @@ ui-test:
 
 build-hub: ui</code></pre>
 <p>Add to <code>.gitignore</code>:</p>
-<pre class="code" data-lang=""><code>internal/hub/web/dist/
+<pre class="code" data-lang=""><code>internal/hub/web/dist/*
+!internal/hub/web/dist/index.html
 ui/node_modules/</code></pre>
+<p><strong>Then commit a placeholder <code>internal/hub/web/dist/index.html</code>:</strong></p>
+<pre class="code" data-lang="html"><code>&lt;!doctype html&gt;&lt;title&gt;netra&lt;/title&gt;&lt;p&gt;UI not built. Run &lt;code&gt;make ui&lt;/code&gt;.&lt;/p&gt;</code></pre>
+<p>This placeholder is load-bearing, not cosmetic. <code>//go:embed all:dist</code> is resolved at <strong>compile</strong> time, so a fully-ignored <code>dist/</code> makes <code>go build ./...</code> and <code>go test ./...</code> fail on a fresh checkout with <code>pattern all:dist: no matching files found</code> — including for anyone touching only Go, and including any CI job that does not run <code>make ui</code> first. One committed file keeps the tree compiling; <code>vite build</code> overwrites it with the real one.</p>
 <ul><li>[ ] <strong>Step 7: Commit</strong></li></ul>
 <pre class="code" data-lang="bash"><code>git add ui internal/hub/web Makefile .gitignore
 git commit -m &quot;feat(ui): scaffold the phase-2 SPA and embed it in the hub&quot;</code></pre>
