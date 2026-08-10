@@ -154,6 +154,8 @@ Plan: `2026-08-10-stage1d-read-api.html`. Everything lives in `internal/hub/read
 3. **Value columns are discovered from `information_schema`, not declared in Go.** The three `host_samples` tiers carry 190 columns between them; a hand-kept copy would drift, and drift *silently* — a missing column reads as a metric nobody collected.
 4. **The numbers that cannot be discovered are pinned.** `TestIntegrationTierSpecsMatchTheSchema` checks every tier's retention against `policy_retention` and every lag against `policy_refresh_continuous_aggregate`, and `TestIntegrationEveryAggregateIsMaterializedOnly` guards the assumption behind the trailing clamp. Editing `0001` without editing `tier.go` fails the build.
 
+**`?columns=` is tier-specific, and that is the sharp edge of the design above.** The column names differ per tier by construction — that is what makes the tiers unconfusable — so `columns=cpu_total` over a thirty-day range **400s**, because the range selects 5m and the 5m view has `cpu_total_avg` instead. The error names the columns the chosen tier does have, so it is recoverable; a client using the filter should either pin `step` or read `columns` off an unfiltered response first. `TestIntegrationMetricsColumnFilterIsTierSpecific` pins the behaviour rather than leaving the phase-2 UI to discover it.
+
 **No fullness percentage anywhere.** `filesystem_samples.used` and `free` do not sum to `total` — the gap is the root reserve — so the API exposes all three and computes nothing. At the aggregate tiers a percentage would be worse than absent: `used_max / (used_max + free_min)` composes two different instants and is not the maximum of the true ratio.
 
 ---

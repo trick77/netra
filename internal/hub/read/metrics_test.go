@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -463,5 +464,139 @@ func TestIntegrationMetricsAggregatedIntegersAreNumbers(t *testing.T) {
 	value := res.Series[0].Points[0][1]
 	if _, ok := value.(float64); !ok {
 		t.Errorf("mem_used_avg = %#v (%T), want a float64", value, value)
+	}
+}
+
+// The 1h tier, with data in it.
+//
+// Every other aggregate test here stops at 5m, which would leave the coarsest
+// tier exercised for its envelope alone -- and the 1h relation is not simply
+// the 5m one at a wider bucket. It has its own column set (host_samples_1h
+// carries tcp_active_opens_per_s_avg with no _max sibling, which the 5m view
+// does have), its own discovery pass, and it is materialised FROM the 5m view
+// rather than from the raw table, so both refreshes are needed and the order
+// between them matters.
+//
+// This is the tier a 90-day chart draws from, so "silently empty" here is a
+// failure the UI would find rather than the suite.
+func TestIntegrationMetricsHourlyTierReturnsBuckets(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+	id := seedHost(t, pool, "long-history")
+
+	// Forty days back, so range selection reaches past the 5m tier for 1h.
+	// The rows survive because OpenTest unschedules the retention policies.
+	seedHostSamples(t, pool, id, 40*24*time.Hour, 40*24*time.Hour+time.Minute)
+
+	// Order matters: the 1h view aggregates the 5m view, so refreshing 1h
+	// first would materialise it from an empty source and leave it empty.
+	refresh(t, pool, "host_samples_5m")
+	refresh(t, pool, "host_samples_1h")
+
+	res, err := svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "host", From: now.Add(-60 * 24 * time.Hour), To: now,
+	}, now)
+	if err != nil {
+		t.Fatalf("Metrics: %v", err)
+	}
+
+	if res.Tier != read.Tier1h || res.StepS != 3600 {
+		t.Fatalf("tier = %s/%ds, want 1h/3600s", res.Tier, res.StepS)
+	}
+	if want := now.Add(-time.Hour); res.Window.To.After(want.Add(time.Second)) {
+		t.Errorf("window.to = %v, want it clamped to the 1h materialisation horizon %v",
+			res.Window.To, want)
+	}
+	if len(res.Series) != 1 {
+		t.Fatalf("got %d series, want 1 -- the 1h relation returned nothing, which is exactly "+
+			"what a 90-day chart would show", len(res.Series))
+	}
+	if len(res.Series[0].Points) == 0 {
+		t.Fatal("the 1h series has no points")
+	}
+
+	// The column set is the 1h view's own, not the 5m view's.
+	if !slices.Contains(res.Columns, "cpu_total_avg") {
+		t.Errorf("columns = %v, want cpu_total_avg", res.Columns)
+	}
+	if slices.Contains(res.Columns, "tcp_active_opens_per_s_max") {
+		t.Errorf("columns include tcp_active_opens_per_s_max, which host_samples_1h does not " +
+			"define -- the columns are being read off the wrong relation")
+	}
+}
+
+// A dimensional family at the 1h tier: the dimension join has to work against
+// the aggregate's id column too, not only the raw table's.
+func TestIntegrationMetricsHourlyTierJoinsItsDimension(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+	id := seedHost(t, pool, "long-cores")
+
+	exec(t, pool, `
+		INSERT INTO cpu_core_samples (host_id, ts, core, busy)
+		VALUES ($1, now() - INTERVAL '40 days', 0, 11.0),
+		       ($1, now() - INTERVAL '40 days' + INTERVAL '1 minute', 0, 13.0)`, id)
+	refresh(t, pool, "cpu_core_samples_5m")
+	refresh(t, pool, "cpu_core_samples_1h")
+
+	res, err := svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "cpu_core", From: now.Add(-60 * 24 * time.Hour), To: now,
+	}, now)
+	if err != nil {
+		t.Fatalf("Metrics: %v", err)
+	}
+
+	if res.Tier != read.Tier1h {
+		t.Fatalf("tier = %q, want 1h", res.Tier)
+	}
+	if len(res.Series) != 1 || len(res.Series[0].Points) == 0 {
+		t.Fatalf("series = %+v, want one core with points", res.Series)
+	}
+	if res.Series[0].Key["core"] != "0" {
+		t.Errorf("key = %v, want core 0", res.Series[0].Key)
+	}
+	if res.Series[0].Points[0][1] == nil {
+		t.Error("busy_avg = nil, want the bucketed average")
+	}
+}
+
+// An explicit columns filter is TIER-SPECIFIC, and the combination of
+// ?columns= with automatic tier selection is the sharp edge of that: the same
+// column name does not exist at every tier, by the design that makes the
+// tiers unconfusable in the first place.
+//
+// The error names the columns the chosen tier does have, so it is
+// recoverable -- but it is behaviour a client has to know about, which is why
+// the plan document states it and why this test pins it rather than leaving
+// it to be discovered.
+func TestIntegrationMetricsColumnFilterIsTierSpecific(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+	id := seedHost(t, pool, "filtered")
+
+	_, err := svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "host", From: now.Add(-30 * 24 * time.Hour), To: now,
+		Columns: []string{"cpu_total"},
+	}, now)
+	if !errors.Is(err, read.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid -- cpu_total is a raw column and this range selects 5m", err)
+	}
+	if !strings.Contains(err.Error(), "cpu_total_avg") {
+		t.Errorf("err = %q, want it to name the columns the chosen tier does have", err)
+	}
+
+	// The same request with the tier pinned is the documented way through.
+	res, err := svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "host", From: now.Add(-30 * 24 * time.Hour), To: now,
+		Columns: []string{"cpu_total_avg"},
+	}, now)
+	if err != nil {
+		t.Fatalf("Metrics with the tier's own column name: %v", err)
+	}
+	if !slices.Equal(res.Columns, []string{"cpu_total_avg"}) {
+		t.Errorf("columns = %v, want [cpu_total_avg]", res.Columns)
 	}
 }

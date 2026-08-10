@@ -37,17 +37,43 @@ ul.toc li{margin:3px 0}
 ul.toc a{color:var(--muted);border-bottom:1px solid var(--line)}
 ul.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 </style>
-<style>li input[type=checkbox]{margin-right:8px;accent-color:var(--accent)}</style>
+<style>li input[type=checkbox]{margin-right:8px;accent-color:var(--accent)}.toc{margin:0 0 34px;padding:14px 18px;background:var(--panel);border:1px solid var(--line);border-radius:10px}.toc ul{margin:0;padding-left:20px}.toc>ul>li>ul{display:none}</style>
 </head>
 <body><div class="wrap">
-<h1>netra — Next Phases</h1>
+<div class="toc">
+<ul>
+<li><a href="#netra-next-phases">netra — Next Phases</a><ul>
+<li><a href="#where-netra-actually-is">Where netra actually is</a><ul>
+<li><a href="#group-0-landed-host-level-scalars">Group 0 — landed (host-level scalars)</a></li>
+<li><a href="#six-tables-one-hypertable-superseded">Six tables, one hypertable — superseded</a></li>
+</ul>
+</li>
+<li><a href="#global-constraints">Global constraints</a></li>
+<li><a href="#stage-1-finish-phase-1-make-netra-usable">Stage 1 — Finish phase 1 (make netra usable)</a><ul>
+<li><a href="#1a-admin-api-and-token-minting-landed">1A. Admin API and token minting — landed</a></li>
+<li><a href="#1b-schema-the-remaining-tables">1B. Schema — the remaining tables</a></li>
+<li><a href="#1c-the-thirteen-remaining-collectors-landed">1C. The thirteen remaining collectors — landed</a></li>
+<li><a href="#1d-read-api-landed">1D. Read API — landed</a></li>
+</ul>
+</li>
+<li><a href="#stage-2-phase-2">Stage 2 — Phase 2</a></li>
+<li><a href="#stage-3-phase-3">Stage 3 — Phase 3</a></li>
+<li><a href="#known-gaps-and-debts">Known gaps and debts</a></li>
+<li><a href="#verification">Verification</a></li>
+<li><a href="#process-notes-worth-not-relearning">Process notes worth not relearning</a></li>
+</ul>
+</li>
+</ul>
+</div>
+
+<h1 id="netra-next-phases">netra — Next Phases</h1>
 <blockquote>
 <p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use <code>superpowers:subagent-driven-development</code> (recommended) or <code>superpowers:executing-plans</code> to implement each stage task-by-task. Steps use checkbox (<code>- [ ]</code>) syntax for tracking.</p>
 </blockquote>
 <p><strong>Spec:</strong> <code>docs/superpowers/specs/2026-08-07-netra-design.md</code> — authoritative for everything below.
 <strong>Preceding plans:</strong> <code>2026-08-07-phase1-foundation.md</code> (merged, PRs #1–#3), deployment and setup script (merged, PRs #4–#9).</p>
 <hr />
-<h2>Where netra actually is</h2>
+<h2 id="where-netra-actually-is">Where netra actually is</h2>
 <p>Two plans are complete. What that bought:</p>
 <ul>
 <li><strong>Wire and storage:</strong> protobuf <code>IngestRequest</code>/<code>HostSample</code>, HTTPS POST ingest, bearer auth, <code>COPY</code> into one hypertable with 5m/1h continuous aggregates and 7/30/90-day retention.</li>
@@ -56,7 +82,7 @@ ul.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 <li><strong>CI:</strong> build/vet/gofmt, race tests against a real TimescaleDB, coverage floor + patch gates, a shell job under <code>sh</code> and <code>dash</code>, version-stamping guard.</li>
 </ul>
 <p><strong>What that did not buy: netra was not yet usable.</strong> Seven host-level collectors is not monitoring — nothing per-device, per-interface, per-filesystem or per-container was collected — and there was no way to read the data back out except <code>psql</code>. Stage 1 closed both halves of that gap: 1A–1C brought the fleet to twenty collectors over the full Group 1–4 schema, and 1D added the read API. <strong>Stage 1 is complete</strong>; what remains below it is phase 2.</p>
-<h3>Group 0 — landed (host-level scalars)</h3>
+<h3 id="group-0-landed-host-level-scalars">Group 0 — landed (host-level scalars)</h3>
 <p>Delivered on the existing flat <code>Collector</code> interface, without the dimensional
 plumbing Group 1 needs:</p>
 <ul>
@@ -68,10 +94,10 @@ plumbing Group 1 needs:</p>
 <li><input type="checkbox" checked disabled> Collector capabilities — optional <code>CapabilityReporter</code>, merged into metadata, flips the hash, stored in <code>hosts.capabilities</code></li>
 <li><input type="checkbox" checked disabled> <code>services_total</code>/<code>services_failed</code> reconciled with spec §5.3 (NULL until the systemd collector lands)</li>
 </ul>
-<h3>Six tables, one hypertable — superseded</h3>
+<h3 id="six-tables-one-hypertable-superseded">Six tables, one hypertable — superseded</h3>
 <p>That was the Group 0 state: <code>0001_init.sql</code> shipped <code>providers</code>, <code>sites</code>, <code>hosts</code>, <code>tokens</code>, <code>host_current</code>, <code>host_samples</code> against the spec's §5.2 sixteen dimension tables and §5.3 twelve hypertables. Stage 1B landed the rest alongside the collectors that fill them; the only §5.2/§5.3 tables still absent are <code>custom_samples</code> and <code>geocode_cache</code>, and both are listed as open in 1B with the reason.</p>
 <hr />
-<h2>Global constraints</h2>
+<h2 id="global-constraints">Global constraints</h2>
 <p>Unchanged from the phase 1 plan and <strong>not restated in full here</strong> — read <code>2026-08-07-phase1-foundation.md</code> § "Global Constraints". The ones most likely to be violated by the work below:</p>
 <ul>
 <li><strong>Absent subsystems are <code>NULL</code>, never <code>0</code></strong> (§5.1 rule 3). Protobuf <code>optional</code> scalars, Go <code>*T</code>, SQL <code>NULL</code>. This is the single most repeated correctness rule in the spec and every new collector has to get it right.</li>
@@ -86,9 +112,9 @@ plumbing Group 1 needs:</p>
 <li><strong>Empty directories need a <code>.gitkeep</code>.</strong> The setup script fixtures probe for directory <em>existence</em>; git does not track empty directories, so the suite was green in every working tree and red only in CI. <code>test/setup-agent/run.sh</code> now guards this.</li>
 </ul>
 <hr />
-<h2>Stage 1 — Finish phase 1 (make netra usable)</h2>
+<h2 id="stage-1-finish-phase-1-make-netra-usable">Stage 1 — Finish phase 1 (make netra usable)</h2>
 <p>The spec calls all of this phase 1. It was deferred, not descoped.</p>
-<h3>1A. Admin API and token minting — <strong>landed</strong></h3>
+<h3 id="1a-admin-api-and-token-minting-landed">1A. Admin API and token minting — <strong>landed</strong></h3>
 <p><code>auth.Mint</code> had no non-test callers and <code>NETRA_ADMIN_TOKEN</code> was consumed by nothing. Adding a host meant hand-inserting a SHA-256 hash with <code>psql</code> — it worked, and it was not a product.</p>
 <p>Plan: <code>2026-08-08-stage1a-admin-api.html</code>.</p>
 <ul>
@@ -101,7 +127,7 @@ plumbing Group 1 needs:</p>
 </ul>
 <p><strong>Two things worth carrying forward.</strong> <code>tokens</code> has no <code>UNIQUE (host_id)</code>, so rotation deletes and inserts in one transaction — an insert-only rotation leaves the old token live and nothing looks wrong. And the browser cannot send a bearer header on a form post, so the UI exchanges the admin token for a session cookie signed with a key <strong>derived from that token</strong>: changing <code>NETRA_ADMIN_TOKEN</code> logs every session out, with no session table to clear.</p>
 <p>An unauthenticated <code>dev</code> mode was considered for local use and rejected — the loopback binding is a second line of defence, not a reason to drop the first. No <code>AuthMode</code> switch exists yet; phase-2 OIDC adds one when there is a second mode to select.</p>
-<h3>1B. Schema — the remaining tables</h3>
+<h3 id="1b-schema-the-remaining-tables">1B. Schema — the remaining tables</h3>
 <p><strong>While netra is pre-release the schema is squashed into <code>0001_init.sql</code> and edited in place.</strong> There are no numbered follow-on migrations and no upgrade path; a schema change means dropping and recreating the database. This reverses the earlier "never edit <code>0001</code>" rule for as long as there is nothing deployed to migrate, and it buys something concrete: TimescaleDB cannot <code>ALTER</code> a continuous aggregate to add a column, so with numbered migrations every new host-level metric would have been raw-only (7 days) until a later migration recreated the rollups. Editing <code>0001</code> means the aggregate is simply <em>defined</em> with the new columns.</p>
 <p>The properties <code>0001_init.sql:1-12</code> documents still bind: <code>-- netra:no-transaction</code> on line 1, and every statement individually re-runnable. No <code>DROP … CREATE</code> pair may appear in the file.</p>
 <p><strong>Two consequences to carry until the first release:</strong></p>
@@ -125,7 +151,7 @@ plumbing Group 1 needs:</p>
 <p><strong><code>mdraid</code> has no hypertable, and that is not an omission.</strong> 1B lists no mdraid table while 1C Group 1 expects an mdraid collector, which reads like a gap. It is not: spec §5.2 names <em>"mdadm degradation"</em> explicitly as one of the things <code>events</code> carries, and §5.1 rule 4 sends anything constant for hours to <code>events</code> rather than to a sample table — an array is <code>clean</code> for weeks, so a 60s series saying so is the same near-constant-series waste that keeps systemd out of §5.3. The mdraid collector writes to <strong><code>events</code></strong> plus <code>collector_samples</code>, which is why <code>events</code> was pulled forward out of bullet order. <code>events</code> stays a <strong>plain Postgres table</strong>: no <code>create_hypertable</code>, no aggregates, no retention policy, and it must not move the counts in <code>rollup_test.go</code>.</p>
 <p><strong>The <code>start_offset</code> regression test already generalises.</strong> <code>TestIntegrationRefreshPolicyStartOffsetExceedsBufferWindow</code> sweeps <em>every</em> <code>policy_refresh_continuous_aggregate</code> row rather than naming tables, so a new aggregate is checked the moment it exists — no per-aggregate extension needed. The hard-coded policy count is the part that must move, and it is a literal on purpose: adding a hypertable must break the test until the new policy is counted. It reads <strong>14</strong> now (was 4). <code>TestIntegrationRawRetentionExceedsRefreshLag</code> was the narrow one — it filtered on <code>host_samples</code> alone — and now sweeps every raw hypertable, with <code>TestIntegrationEveryContinuousAggregateHasRetention</code> alongside it so an aggregate shipped without retention fails rather than growing unbounded.</p>
 <p><strong>Timescale reports aggregate policies under the aggregate's own view name</strong>, not the internal <code>_materialized_hypertable_N</code>. Separating raw from aggregate policies therefore needs an anti-join against <code>timescaledb_information.continuous_aggregates</code>, not a name pattern.</p>
-<h3>1C. The thirteen remaining collectors — <strong>landed</strong></h3>
+<h3 id="1c-the-thirteen-remaining-collectors-landed">1C. The thirteen remaining collectors — <strong>landed</strong></h3>
 <p>Ordered by risk and by what unblocks what, not by the spec's table order. Each collector: fixture-based tests with checked-in <code>/proc</code>, <code>/sys</code> and cgroup trees; reports duration, success and error code into <code>collector_samples</code>; availability into host capabilities; <strong>never prevents the agent from starting</strong>.</p>
 <p><strong>Group 1 — no privileges, no dependencies.</strong> Cheap, high value, validates the multi-collector loop.
 - <input type="checkbox" checked disabled> Per-core CPU (<code>/proc/stat</code>) — all cores, always; ~800 series at target scale
@@ -146,7 +172,7 @@ plumbing Group 1 needs:</p>
 - <input type="checkbox" checked disabled> Processes (<code>pid: host</code>) — <code>utime+stime</code> deltas keyed on <code>(pid, starttime)</code>, because a recycled PID otherwise produces a garbage spike; aggregate by name, top-10-by-CPU ∪ top-10-by-memory</p>
 <p><strong>Wire protocol:</strong> each family needs its own typed protobuf message (§7.3). <code>IngestResponse</code> field 4 is <strong>reserved permanently</strong> — it carried the retired <code>interval_s</code>, the scrape interval is fixed at 60s, and no cadence override is planned. Never reuse the number.</p>
 <p><strong>Setup script coupling:</strong> every collector that lands makes an existing <code>setup-agent.sh</code> mount meaningful. <code>deploy/agent/compose.yaml.example</code> carries a note listing which collectors are implemented; <strong>update it in the same PR</strong>, or it becomes a lie about what works.</p>
-<h3>1D. Read API — <strong>landed</strong></h3>
+<h3 id="1d-read-api-landed">1D. Read API — <strong>landed</strong></h3>
 <p>Plan: <code>2026-08-10-stage1d-read-api.html</code>. Everything lives in <code>internal/hub/read</code>, a sibling of <code>internal/hub/admin</code>: admin <em>writes</em> the inventory, read projects what the agents reported.</p>
 <ul>
 <li><input type="checkbox" checked disabled> <code>GET /api/v1/hosts</code> — from <code>host_current</code>, never touches a hypertable</li>
@@ -163,9 +189,10 @@ plumbing Group 1 needs:</p>
 <li><strong>Value columns are discovered from <code>information_schema</code>, not declared in Go.</strong> The three <code>host_samples</code> tiers carry 190 columns between them; a hand-kept copy would drift, and drift <em>silently</em> — a missing column reads as a metric nobody collected.</li>
 <li><strong>The numbers that cannot be discovered are pinned.</strong> <code>TestIntegrationTierSpecsMatchTheSchema</code> checks every tier's retention against <code>policy_retention</code> and every lag against <code>policy_refresh_continuous_aggregate</code>, and <code>TestIntegrationEveryAggregateIsMaterializedOnly</code> guards the assumption behind the trailing clamp. Editing <code>0001</code> without editing <code>tier.go</code> fails the build.</li>
 </ol>
+<p><strong><code>?columns=</code> is tier-specific, and that is the sharp edge of the design above.</strong> The column names differ per tier by construction — that is what makes the tiers unconfusable — so <code>columns=cpu_total</code> over a thirty-day range <strong>400s</strong>, because the range selects 5m and the 5m view has <code>cpu_total_avg</code> instead. The error names the columns the chosen tier does have, so it is recoverable; a client using the filter should either pin <code>step</code> or read <code>columns</code> off an unfiltered response first. <code>TestIntegrationMetricsColumnFilterIsTierSpecific</code> pins the behaviour rather than leaving the phase-2 UI to discover it.</p>
 <p><strong>No fullness percentage anywhere.</strong> <code>filesystem_samples.used</code> and <code>free</code> do not sum to <code>total</code> — the gap is the root reserve — so the API exposes all three and computes nothing. At the aggregate tiers a percentage would be worse than absent: <code>used_max / (used_max + free_min)</code> composes two different instants and is not the maximum of the true ratio.</p>
 <hr />
-<h2>Stage 2 — Phase 2</h2>
+<h2 id="stage-2-phase-2">Stage 2 — Phase 2</h2>
 <p>Ordered by dependency: alerting needs history, the UI needs the read API, OIDC needs a UI to log into.</p>
 <ul>
 <li><input type="checkbox" disabled> <strong>Alerting engine</strong> — thresholds, host-down (no POST within 3× interval), event-driven rules, notification delivery</li>
@@ -175,12 +202,12 @@ plumbing Group 1 needs:</p>
 <li><input type="checkbox" disabled> <strong>Fleet/aggregate endpoints</strong> — deliberately unspecced until the UI exists, because speccing them now is guessing</li>
 </ul>
 <hr />
-<h2>Stage 3 — Phase 3</h2>
+<h2 id="stage-3-phase-3">Stage 3 — Phase 3</h2>
 <ul>
 <li><input type="checkbox" disabled> <strong>LLM diagnostics</strong> — reuses music's <code>internal/llm</code> and the <code>BACKEND_CHAT_*</code> pattern. Needs history and alerts to reason over, hence last</li>
 </ul>
 <hr />
-<h2>Known gaps and debts</h2>
+<h2 id="known-gaps-and-debts">Known gaps and debts</h2>
 <p>Carried forward. None block Stage 1, all are cheap to fix in the right PR.</p>
 <table>
 <thead>
@@ -229,7 +256,7 @@ plumbing Group 1 needs:</p>
 </tbody>
 </table>
 <hr />
-<h2>Verification</h2>
+<h2 id="verification">Verification</h2>
 <p>Per stage, in addition to <code>make check</code> (which now includes <code>test-shell</code>):</p>
 <p><strong>1A</strong> — create a host over HTTP, use the returned token from a real agent, rotate it, assert the old token 401s and the new one 200s. Assert the plaintext appears exactly once in the response and nowhere in the logs.</p>
 <p><strong>1B</strong> — migrations apply to an empty database <em>and</em> on top of <code>0001</code> (both paths, both tested). Extend the <code>start_offset</code> backfill regression test to each new aggregate: write data older than the window and assert the rollup is correct.</p>
@@ -241,7 +268,7 @@ plumbing Group 1 needs:</p>
 NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test make test-integration
 </code></pre>
 <hr />
-<h2>Process notes worth not relearning</h2>
+<h2 id="process-notes-worth-not-relearning">Process notes worth not relearning</h2>
 <ul>
 <li><strong>Retargeting a PR does not trigger CI.</strong> A base change emits <code>pull_request: edited</code>, which is not in the default trigger set. Close and reopen. This is how a fixture bug survived four stacked PRs.</li>
 <li><strong><code>gh pr merge</code> fails on any PR touching <code>.github/workflows/</code></strong> unless the token carries <code>workflow</code> scope. A <code>git push</code> over SSH is not an OAuth app and is exempt.</li>
