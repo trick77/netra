@@ -1148,7 +1148,7 @@ SELECT host_id,
        max(cpu_pct)   AS cpu_pct_max,
        avg(mem_used)  AS mem_used_avg,
        max(mem_used)  AS mem_used_max,
-       max(mem_limit) AS mem_limit,
+       max(mem_limit) AS mem_limit_max,
        avg(net_rx)    AS net_rx_avg,
        max(net_rx)    AS net_rx_max,
        avg(net_tx)    AS net_tx_avg,
@@ -1172,7 +1172,7 @@ SELECT host_id,
        max(cpu_pct_max)  AS cpu_pct_max,
        avg(mem_used_avg) AS mem_used_avg,
        max(mem_used_max) AS mem_used_max,
-       max(mem_limit)    AS mem_limit,
+       max(mem_limit_max) AS mem_limit_max,
        avg(net_rx_avg)   AS net_rx_avg,
        max(net_rx_max)   AS net_rx_max,
        avg(net_tx_avg)   AS net_tx_avg,
@@ -1245,16 +1245,31 @@ SELECT set_chunk_time_interval('filesystem_samples', INTERVAL '1 day');
 CREATE INDEX IF NOT EXISTS filesystem_samples_fs_id_host_id_idx
     ON filesystem_samples (fs_id, host_id);
 
+-- total_max and inodes_total_max, NOT total and inodes_total. An aggregate
+-- column carrying the raw column's own name is a bucket statistic wearing an
+-- instantaneous reading's clothes: max(total) over five minutes differs from
+-- the raw total exactly when a filesystem is resized down mid-bucket, and a
+-- reader who asked for "total" has no way to notice.
+--
+-- It is also what makes the read API's tier guarantee true rather than nearly
+-- true. Every value column must be named differently at every tier, so a
+-- client that ignores which tier answered gets a key it does not recognise
+-- instead of a plausible number -- see internal/hub/read/metrics.go and
+-- TestIntegrationNoValueColumnNameIsSharedBetweenTiers, which enumerates every
+-- family and fails if a new aggregate reintroduces one.
+--
+-- The exemptions are last() columns and monotonic counters, where the bucket
+-- value IS the raw quantity. They are listed in that test with the reason.
 CREATE MATERIALIZED VIEW IF NOT EXISTS filesystem_samples_5m
     WITH (timescaledb.continuous) AS
 SELECT host_id,
        fs_id,
        time_bucket(INTERVAL '5 minutes', ts) AS bucket,
-       max(total)         AS total,
+       max(total)         AS total_max,
        avg(used)          AS used_avg,
        max(used)          AS used_max,
        min(free)          AS free_min,
-       max(inodes_total)  AS inodes_total,
+       max(inodes_total)  AS inodes_total_max,
        max(inodes_used)   AS inodes_used_max,
        avg(read_bytes)    AS read_bytes_avg,
        max(read_bytes)    AS read_bytes_max,
@@ -1271,11 +1286,11 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS filesystem_samples_1h
 SELECT host_id,
        fs_id,
        time_bucket(INTERVAL '1 hour', bucket) AS bucket,
-       max(total)            AS total,
+       max(total_max)        AS total_max,
        avg(used_avg)         AS used_avg,
        max(used_max)         AS used_max,
        min(free_min)         AS free_min,
-       max(inodes_total)     AS inodes_total,
+       max(inodes_total_max) AS inodes_total_max,
        max(inodes_used_max)  AS inodes_used_max,
        avg(read_bytes_avg)   AS read_bytes_avg,
        max(read_bytes_max)   AS read_bytes_max,

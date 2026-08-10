@@ -3,6 +3,7 @@ package read
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -54,6 +55,96 @@ func TestIntegrationTierSpecsMatchTheSchema(t *testing.T) {
 				assertPolicyInterval(t, ctx, s.Pool(),
 					"policy_refresh_continuous_aggregate", rel, "end_offset", spec.lag)
 			})
+		}
+	}
+}
+
+// sameQuantityAtEveryTier lists the value columns that may legitimately keep
+// one name across tiers, with the reason each is exempt.
+//
+// The rule the exemptions are carved out of: an aggregate column named like
+// its raw column is a bucket statistic wearing an instantaneous reading's
+// clothes, and a client that ignores which tier answered reads it as the
+// latter. These are the cases where the bucket value IS the raw quantity, so
+// there is nothing to confuse:
+//
+//   - last() over the bucket -- the value at the bucket's end, which is what
+//     the raw column holds at that instant.
+//   - max() of a MONOTONIC counter -- likewise the value at the bucket's end,
+//     because the counter only rises within it.
+//
+// max() of a capacity is NOT in either category, which is why
+// filesystem_samples_5m spells its as total_max and container_samples_5m as
+// mem_limit_max: a filesystem resized down mid-bucket makes the bucket
+// maximum and the reading genuinely different numbers.
+var sameQuantityAtEveryTier = map[string]string{
+	"uptime_s":             "last() over the bucket",
+	"boot_time_s":          "last() over the bucket",
+	"processes_total":      "last() over the bucket",
+	"users_logged_in":      "last() over the bucket",
+	"services_total":       "last() over the bucket",
+	"services_failed":      "last() over the bucket",
+	"error_code":           "last() over the bucket",
+	"buffer_dropped_total": "max() of a monotonic counter",
+	"post_failures_total":  "max() of a monotonic counter",
+}
+
+// The read API's central guarantee, enumerated rather than asserted.
+//
+// metrics.go claims a client that ignores `tier` cannot silently mix
+// resolutions, because the column names differ per tier BY CONSTRUCTION: busy
+// at raw, busy_avg and busy_max at 5m. That claim is only worth making if it
+// holds for EVERY family and EVERY column, and the test that used to guard it
+// checked one column of one family while asserting the universal rule in its
+// failure message -- so it gave more confidence than it earned. Three capacity
+// columns did in fact share a name, and this is the test that found them.
+//
+// A new continuous aggregate that reintroduces a shared name fails here rather
+// than in a chart drawn six months later.
+func TestIntegrationNoValueColumnNameIsSharedBetweenTiers(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	svc := NewService(s.Pool())
+
+	for name, fam := range families {
+		if len(fam.tiers) < 2 {
+			continue
+		}
+
+		// Which tiers each column name appears at.
+		appearsAt := map[string][]string{}
+		for _, spec := range fam.tiers {
+			cols, err := svc.valueColumns(ctx, fam, spec)
+			if err != nil {
+				t.Fatalf("%s/%s columns: %v", name, spec.name, err)
+			}
+			for _, c := range cols {
+				appearsAt[c.name] = append(appearsAt[c.name], spec.name)
+			}
+		}
+
+		for col, tiers := range appearsAt {
+			if len(tiers) < 2 {
+				continue
+			}
+			// Shared between the two AGGREGATE tiers alone is fine and
+			// expected -- 5m and 1h roll up identically. The confusion this
+			// guards against needs raw on one side.
+			if !slices.Contains(tiers, TierRaw) {
+				continue
+			}
+			if reason, exempt := sameQuantityAtEveryTier[col]; exempt {
+				t.Logf("%s.%s is shared across %v, exempt: %s", name, col, tiers, reason)
+				continue
+			}
+			t.Errorf("family %s: column %q exists at tiers %v including raw.\n"+
+				"    A client that ignores `tier` reads the bucketed value as an instantaneous one.\n"+
+				"    Either give the aggregate column a distinct name (total -> total_max), or add it\n"+
+				"    to sameQuantityAtEveryTier with the reason the bucket value IS the raw value.",
+				name, col, tiers)
 		}
 	}
 }

@@ -277,7 +277,7 @@ func TestIntegrationMetricsFilesystemExposesTheThreeQuantitiesAndNoPercentage(t 
 		want []string
 	}{
 		{"raw", time.Minute, []string{"total", "used", "free"}},
-		{"5m", 5 * time.Minute, []string{"total", "used_avg", "used_max", "free_min"}},
+		{"5m", 5 * time.Minute, []string{"total_max", "used_avg", "used_max", "free_min"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.step > time.Minute {
@@ -295,6 +295,12 @@ func TestIntegrationMetricsFilesystemExposesTheThreeQuantitiesAndNoPercentage(t 
 				if !slices.Contains(res.Columns, want) {
 					t.Errorf("columns = %v, want %q", res.Columns, want)
 				}
+			}
+			// The raw name must not reappear at an aggregate tier: max(total)
+			// over a bucket is not the instantaneous capacity, and a client
+			// reading "total" would take it for one.
+			if tc.name != "raw" && slices.Contains(res.Columns, "total") {
+				t.Errorf("columns = %v; the 5m tier must spell its bucket maximum total_max", res.Columns)
 			}
 			for _, c := range res.Columns {
 				if c == "used_pct" || c == "fullness" || c == "use_pct" {

@@ -30,6 +30,13 @@ type Series struct {
 	// Points is one row per timestamp: the unix millisecond timestamp
 	// followed by one value per entry of Result.Columns, in that order. A
 	// null in the response is a metric that was not collected, never a zero.
+	//
+	// A value carries its COLUMN'S type, which is not always a number.
+	// family=collector is the case that proves it: at raw it yields ok as a
+	// boolean and error_code as a string, and at 5m and 1h it yields numeric
+	// counts beside the same string error_code. Result.Columns is the
+	// authority on what a position holds -- a client indexing points[i][n]
+	// without reading it will eventually parse a string as a number.
 	Points [][]any `json:"points"`
 }
 
@@ -52,6 +59,15 @@ type Result struct {
 	// at 5m it is busy_avg and busy_max. The names differ per tier BY
 	// CONSTRUCTION, so ignoring Tier yields a key the client does not
 	// recognise rather than a number that looks plausible and is not.
+	//
+	// The exceptions are columns where the bucket value IS the raw quantity
+	// and there is nothing to confuse: last() columns such as uptime_s and
+	// error_code, and max() of a monotonic counter such as
+	// buffer_dropped_total. Those keep one name at every tier deliberately.
+	// TestIntegrationNoValueColumnNameIsSharedBetweenTiers enumerates every
+	// family against that exemption list, so a new aggregate that shares a
+	// name for any other reason fails the build -- which is how
+	// filesystem_samples' total became total_max.
 	Columns []string `json:"columns"`
 
 	Series []Series `json:"series"`
