@@ -78,13 +78,71 @@ describe("metrics", () => {
   });
 
   describe("windowNotice edge differences", () => {
-    it("reports a materialization-lag trailing clamp", () => {
+    it("reports a materialization-lag trailing clamp at a rolled-up tier", () => {
       const laggy = {
-        ...raw,
-        window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T13:00:00Z" },
+        ...fiveMin,
+        window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T13:50:00Z" },
         requested_window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
       };
       expect(windowNotice(laggy as never)).toMatch(/materializ|available|fresh/i);
+    });
+
+    // internal/hub/read/tier.go:165-171 clamps `to` down to `now` whenever the
+    // requested window extends into the future, and this clamp fires at EVERY
+    // tier -- including raw, which has lag: 0 and no materialization step at
+    // all (tier.go:41). A raw-tier future-`to` clamp must never be described
+    // with materialization language: that mechanism does not exist at raw.
+    it("does not claim materialization for a raw-tier future-to clamp", () => {
+      const futureClamped = {
+        ...raw,
+        window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+        requested_window: { from: "2026-08-09T14:00:00Z", to: "2026-08-11T00:00:00Z" },
+      };
+      const notice = windowNotice(futureClamped as never);
+      expect(notice).not.toBeNull();
+      expect(notice).not.toMatch(/materializ/i);
+    });
+
+    // The server already knows exactly which clamp fired and says so with
+    // real numbers (tier.go's Warnings). The client must surface that
+    // verbatim rather than re-deriving a generic sentence that could get the
+    // mechanism wrong, as the raw-tier case above shows.
+    it("surfaces server warnings verbatim instead of re-deriving them", () => {
+      const serverWarned = {
+        ...raw,
+        window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+        requested_window: { from: "2026-08-01T14:00:00Z", to: "2026-08-11T00:00:00Z" },
+        warnings: [
+          "from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists",
+          "to was in the future and was clamped to now",
+        ],
+      };
+      const notice = windowNotice(serverWarned as never);
+      expect(notice).toContain(
+        "from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists",
+      );
+      expect(notice).toContain("to was in the future and was clamped to now");
+    });
+
+    // Truncation is a point-limit cut -- exactly the "chart is silently
+    // wrong" failure this module exists to catch -- and must never be
+    // dropped from the notice, independent of whether the window also moved.
+    it("reports a truncated result even when the window matches exactly", () => {
+      const truncated = { ...raw, truncated: true };
+      expect(windowNotice(truncated as never)).toMatch(/truncat/i);
+    });
+
+    it("combines a passed-through server warning with the truncated notice", () => {
+      const both = {
+        ...raw,
+        window: { from: "2026-08-08T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+        requested_window: { from: "2026-05-12T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+        warnings: ["from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists"],
+        truncated: true,
+      };
+      const notice = windowNotice(both as never);
+      expect(notice).toMatch(/retention/i);
+      expect(notice).toMatch(/truncat/i);
     });
   });
 });

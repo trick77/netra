@@ -57,6 +57,15 @@ export class UnknownColumnError extends Error {
  * columns, not the raw quantity. Trying the exact name first means a family
  * whose raw and rolled-up tiers happen to share a name (last()/max()
  * columns such as uptime_s) still resolves correctly.
+ *
+ * IMPORTANT: at 5m and 1h, nearly every rolled-up metric carries BOTH an
+ * _avg and a _max column (0001_init.sql), and this function prefers _avg.
+ * That means column(res, "cpu_total") -- and seriesValues() built on it --
+ * silently resolves to the AVERAGE, never the peak, at every rolled-up
+ * tier. This is deliberate and brief-mandated, not a bug: a caller who
+ * actually wants the maximum must ask for it explicitly by passing the
+ * fully-suffixed name as base, e.g. column(res, "cpu_total_max"), which
+ * matches on the exact-name branch above.
  */
 export function column(res: MetricsResponse, base: string): number {
   const candidates = [base, `${base}_avg`, `${base}_max`];
@@ -90,35 +99,63 @@ export function hasGaps(vals: readonly (number | null)[]): boolean {
 }
 
 /**
- * Turns a window/requested_window mismatch into a sentence a human can act
- * on. Returns null when the response covers exactly what was asked.
+ * Turns a window/requested_window mismatch (and a truncated result) into a
+ * sentence a human can act on. Returns null when the response is complete
+ * and covers exactly what was asked.
  *
- * The two edges mean different things and must not be conflated:
- *  - leading edge (from moved later): retention -- the data simply does not
- *    exist that far back at this tier.
- *  - trailing edge (to moved earlier): every continuous aggregate is
- *    materialized_only, so the 5m/1h tiers are fresh only up to now minus
- *    their refresh lag.
- * Reporting this in words is what keeps retention from being misread as
- * data loss.
+ * The server (internal/hub/read/tier.go's planQuery, metrics.go's Metrics)
+ * already knows exactly which clamp fired and states it with real numbers
+ * -- "from predates the 5m tier's 30 days retention", "the 5m tier
+ * materialises 10 minutes behind now", "to was in the future and was
+ * clamped to now". Those three clamps apply at DIFFERENT tiers and edges
+ * (retention: leading edge, any tier; materialization lag: trailing edge,
+ * 5m/1h only, never raw -- raw has lag 0 and no materialization step at
+ * all; future-to: trailing edge, every tier including raw), so
+ * res.warnings is surfaced verbatim rather than re-derived: re-deriving
+ * risks folding the future-to clamp into materialization wording, which is
+ * false at the raw tier.
+ *
+ * A derived sentence is used only as a fallback, for a window mismatch the
+ * server did not explain with a warning (e.g. a caller-constructed response
+ * in a test). That fallback is tier-aware: it never asserts materialization
+ * for the raw tier, since raw has no such mechanism.
+ *
+ * truncated is folded in unconditionally: a truncated series must never
+ * render as if it were complete, independent of whether the window also
+ * moved.
  */
 export function windowNotice(res: MetricsResponse): string | null {
-  const { window, requested_window: requested } = res;
-  const fromMoved = window.from !== requested.from;
-  const toMoved = window.to !== requested.to;
-
-  if (!fromMoved && !toMoved) return null;
-
   const parts: string[] = [];
-  if (fromMoved) {
-    parts.push(
-      `data before ${window.from} is outside the ${res.tier} tier's retention and is not available`,
-    );
+
+  if (res.warnings.length > 0) {
+    parts.push(...res.warnings);
+  } else {
+    const { window, requested_window: requested } = res;
+    const fromMoved = window.from !== requested.from;
+    const toMoved = window.to !== requested.to;
+
+    if (fromMoved) {
+      parts.push(
+        `data before ${window.from} is outside the ${res.tier} tier's retention and is not available`,
+      );
+    }
+    if (toMoved) {
+      if (res.tier === "raw") {
+        parts.push(
+          `the requested end time was after now and was clamped to ${window.to}`,
+        );
+      } else {
+        parts.push(
+          `data after ${window.to} has not materialized yet at the ${res.tier} tier`,
+        );
+      }
+    }
   }
-  if (toMoved) {
-    parts.push(
-      `data after ${window.to} has not materialized yet at the ${res.tier} tier`,
-    );
+
+  if (res.truncated) {
+    parts.push("the result was truncated at the point limit and is incomplete");
   }
+
+  if (parts.length === 0) return null;
   return parts.join("; ") + ".";
 }
