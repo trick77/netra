@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/trick77/netra/internal/hub/admin"
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/config"
+	"github.com/trick77/netra/internal/hub/read"
 	"github.com/trick77/netra/internal/hub/store"
 )
 
@@ -19,6 +21,7 @@ import (
 // publish host creation and token minting with no other visible change.
 func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Handler {
 	svc := admin.NewService(s.Pool())
+	rd := read.NewService(s.Pool())
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/health", NewHealthHandler(s))
@@ -26,7 +29,7 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Ha
 
 	// The admin API answers 401 to an unauthenticated caller; the UI sends it
 	// to a login page instead. Both accept the same credential.
-	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc)))
+	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc, rd, time.Now)))
 	mux.Handle("/", NewUIHandler(svc, cfg.AdminToken, cfg.HubURL))
 
 	return mux

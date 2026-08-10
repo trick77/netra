@@ -1,3 +1,15 @@
 # Line-coverage floors. Hard floor, not a ratchet — see hack/coverage-gate.sh.
-hub=75.0
-agent=75.0
+#
+# Raised off 75.0 in Stage 1D, deliberately and once, now that the collector
+# packages and the read API have landed. 75 was the number to start a codebase
+# at; holding it against a suite measuring 87.9 and 85.8 would let a large
+# well-tested project absorb a lot of untested code without ever going red,
+# which is the failure mode the floor exists to prevent.
+#
+# Each floor sits about two points under the measured value. That is margin for
+# an honest refactor, not slack: the 0.05 grace in coverage-gate.sh is
+# float-formatting tolerance and nothing more. Raise these again the same way —
+# measure first, then set — rather than ratcheting them automatically, which
+# turns every unrelated PR into a coverage negotiation.
+hub=86.0
+agent=84.0

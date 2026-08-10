@@ -36,40 +36,42 @@ ul.toc{list-style:none;padding-left:2px;font-size:13.5px;color:var(--muted)}
 ul.toc li{margin:3px 0}
 ul.toc a{color:var(--muted);border-bottom:1px solid var(--line)}
 ul.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
-</style></head>
-<body><div class="wrap"><h1>netra — Next Phases</h1>
-<p class="meta"><strong>Date:</strong> 2026-08-07
-<strong>Status:</strong> Planned
-<strong>Scope:</strong> Stages 1–3</p>
+</style>
+<style>li input[type=checkbox]{margin-right:8px;accent-color:var(--accent)}</style>
+</head>
+<body><div class="wrap">
+<h1>netra — Next Phases</h1>
 <blockquote>
 <p><strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use <code>superpowers:subagent-driven-development</code> (recommended) or <code>superpowers:executing-plans</code> to implement each stage task-by-task. Steps use checkbox (<code>- [ ]</code>) syntax for tracking.</p>
 </blockquote>
-<p><strong>Spec:</strong> <code>docs/superpowers/specs/2026-08-07-netra-design.md</code> — authoritative for everything below.<br>
+<p><strong>Spec:</strong> <code>docs/superpowers/specs/2026-08-07-netra-design.md</code> — authoritative for everything below.
 <strong>Preceding plans:</strong> <code>2026-08-07-phase1-foundation.md</code> (merged, PRs #1–#3), deployment and setup script (merged, PRs #4–#9).</p>
-<ul class="toc">
-<li><a href="#where-netra-actually-is">Where netra actually is</a></li>
-<li><a href="#global-constraints">Global constraints</a></li>
-<li><a href="#stage-1">Stage 1 — Finish phase 1 (make netra usable)</a></li>
-<li><a href="#stage-2">Stage 2 — Phase 2</a></li>
-<li><a href="#stage-3">Stage 3 — Phase 3</a></li>
-<li><a href="#known-gaps-and-debts">Known gaps and debts</a></li>
-<li><a href="#verification">Verification</a></li>
-<li><a href="#process-notes">Process notes worth not relearning</a></li>
-</ul>
-<hr>
-<h2 id="where-netra-actually-is">Where netra actually is</h2>
+<hr />
+<h2>Where netra actually is</h2>
 <p>Two plans are complete. What that bought:</p>
 <ul>
 <li><strong>Wire and storage:</strong> protobuf <code>IngestRequest</code>/<code>HostSample</code>, HTTPS POST ingest, bearer auth, <code>COPY</code> into one hypertable with 5m/1h continuous aggregates and 7/30/90-day retention.</li>
-<li><strong>Agent:</strong> <code>Collector</code> interface, three collectors (CPU, memory, load), bounded ring buffer, metadata-hash handshake.</li>
+<li><strong>Agent:</strong> <code>Collector</code> interface, seven collectors (CPU, memory, load, kernelstat, netstat, procs, users), bounded ring buffer, metadata-hash handshake carrying per-collector capabilities.</li>
 <li><strong>Deployment:</strong> two digest-pinned images published to GHCR on merge, lockstep-versioned; weekly GHCR retention; hub <code>compose.yaml</code>; agent reference compose; <code>setup-agent.sh</code> with a 353-assertion suite.</li>
 <li><strong>CI:</strong> build/vet/gofmt, race tests against a real TimescaleDB, coverage floor + patch gates, a shell job under <code>sh</code> and <code>dash</code>, version-stamping guard.</li>
 </ul>
-<p><strong>What that does not buy: netra is not yet usable.</strong> Three collectors is not monitoring, and there is no way to read the data back out except <code>psql</code>. The gap to close is stated bluntly in Stage 1.</p>
-<h3>Six tables, one hypertable</h3>
-<p><code>0001_init.sql</code> ships <code>providers</code>, <code>sites</code>, <code>hosts</code>, <code>tokens</code>, <code>host_current</code>, <code>host_samples</code>. The spec's §5.2 lists sixteen dimension tables and §5.3 lists twelve hypertables. The rest land with the collectors that fill them — see Stage 1A.</p>
-<hr>
-<h2 id="global-constraints">Global constraints</h2>
+<p><strong>What that did not buy: netra was not yet usable.</strong> Seven host-level collectors is not monitoring — nothing per-device, per-interface, per-filesystem or per-container was collected — and there was no way to read the data back out except <code>psql</code>. Stage 1 closed both halves of that gap: 1A–1C brought the fleet to twenty collectors over the full Group 1–4 schema, and 1D added the read API. <strong>Stage 1 is complete</strong>; what remains below it is phase 2.</p>
+<h3>Group 0 — landed (host-level scalars)</h3>
+<p>Delivered on the existing flat <code>Collector</code> interface, without the dimensional
+plumbing Group 1 needs:</p>
+<ul>
+<li><input type="checkbox" checked disabled> kernelstat (<code>/proc/stat</code>) — <code>ctxt</code>, <code>intr</code>, <code>processes</code> as rates with counter-reset handling; <code>procs_running</code>/<code>procs_blocked</code> as gauges; <code>btime</code> as an absolute <code>boot_time_s</code>, so "last reboot" does not drift between rows of one boot</li>
+<li><input type="checkbox" checked disabled> netstat (<code>/proc/net/snmp</code>, <code>/proc/net/netstat</code>, <code>/proc/net/snmp6</code>) — TCP retransmits/resets/opens/errors, <code>CurrEstab</code> as a gauge, listen overflows and drops, UDP errors, IP fragmentation and reassembly; UDP and IP mirrored for IPv6. <strong>No <code>tcp6_*</code> mirror on purpose:</strong> the kernel's TCP MIB is family-agnostic and already counts IPv6, and <code>snmp6</code> has no <code>Tcp6</code> block</li>
+<li><input type="checkbox" checked disabled> procs (<code>/proc</code> dirents) — total process count; needs <code>pid: host</code>, reports <code>processes=namespaced</code> and stays NULL otherwise</li>
+<li><input type="checkbox" checked disabled> users (<code>/var/run/utmp</code>) — session count only. Record size is <strong>detected per file</strong> (384 or 400 bytes): it depends on the host's libc and word size, which a static binary reading a bind-mounted file cannot know at build time</li>
+<li><input type="checkbox" checked disabled> Agent self-telemetry — <code>agent_samples</code> with <code>scrape_duration_ms</code>, <code>post_latency_ms</code>, <code>buffer_depth</code>, <code>buffer_dropped_total</code>. Post latency lags one scrape by construction and is NULL after a failed flush</li>
+<li><input type="checkbox" checked disabled> Collector capabilities — optional <code>CapabilityReporter</code>, merged into metadata, flips the hash, stored in <code>hosts.capabilities</code></li>
+<li><input type="checkbox" checked disabled> <code>services_total</code>/<code>services_failed</code> reconciled with spec §5.3 (NULL until the systemd collector lands)</li>
+</ul>
+<h3>Six tables, one hypertable — superseded</h3>
+<p>That was the Group 0 state: <code>0001_init.sql</code> shipped <code>providers</code>, <code>sites</code>, <code>hosts</code>, <code>tokens</code>, <code>host_current</code>, <code>host_samples</code> against the spec's §5.2 sixteen dimension tables and §5.3 twelve hypertables. Stage 1B landed the rest alongside the collectors that fill them; the only §5.2/§5.3 tables still absent are <code>custom_samples</code> and <code>geocode_cache</code>, and both are listed as open in 1B with the reason.</p>
+<hr />
+<h2>Global constraints</h2>
 <p>Unchanged from the phase 1 plan and <strong>not restated in full here</strong> — read <code>2026-08-07-phase1-foundation.md</code> § "Global Constraints". The ones most likely to be violated by the work below:</p>
 <ul>
 <li><strong>Absent subsystems are <code>NULL</code>, never <code>0</code></strong> (§5.1 rule 3). Protobuf <code>optional</code> scalars, Go <code>*T</code>, SQL <code>NULL</code>. This is the single most repeated correctness rule in the spec and every new collector has to get it right.</li>
@@ -83,87 +85,102 @@ ul.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 <li><strong><code>deploy/**</code> and <code>setup-agent.sh</code> are outside <code>release.yaml</code>'s <code>paths-ignore</code> on purpose.</strong> The setup script fetches templates at a release tag; a change that cuts no release is contained in no tag and never ships. Do not "tidy" them into the ignore list.</li>
 <li><strong>Empty directories need a <code>.gitkeep</code>.</strong> The setup script fixtures probe for directory <em>existence</em>; git does not track empty directories, so the suite was green in every working tree and red only in CI. <code>test/setup-agent/run.sh</code> now guards this.</li>
 </ul>
-<hr>
-<h2 id="stage-1">Stage 1 — Finish phase 1 (make netra usable)</h2>
+<hr />
+<h2>Stage 1 — Finish phase 1 (make netra usable)</h2>
 <p>The spec calls all of this phase 1. It was deferred, not descoped.</p>
-<h3>1A. Admin API and token minting — <strong>do this first</strong></h3>
-<p><code>auth.Mint</code> has no non-test callers. <code>NETRA_ADMIN_TOKEN</code> is required at hub startup and consumed by nothing. Adding a host today means hand-inserting a SHA-256 hash with <code>psql</code> (README documents the SQL; it works, and it is not a product).</p>
-<p>Everything else in Stage 1 is easier to test once hosts can be created over HTTP, so this goes first despite being small.</p>
-<ul class="task">
-<li><input type="checkbox" disabled><span><code>POST /api/v1/hosts</code> — create; returns the minted token <strong>once</strong>, never again</span></li>
-<li><input type="checkbox" disabled><span><code>POST /api/v1/hosts/{id}/token</code> — rotate</span></li>
-<li><input type="checkbox" disabled><span><code>DELETE /api/v1/hosts/{id}</code></span></li>
-<li><input type="checkbox" disabled><span><code>GET|PATCH /api/v1/sites</code>, <code>/providers</code> — including manual lat/lon override the hub never overwrites with a geocode result</span></li>
-<li><input type="checkbox" disabled><span>Admin-token middleware, constant-time compare, bound to the loopback listener</span></li>
-<li><input type="checkbox" disabled><span>Update <code>README.md</code> to replace the hand-inserted-SQL section with the real endpoints — and say plainly that the SQL path still works for recovery</span></li>
+<h3>1A. Admin API and token minting — <strong>landed</strong></h3>
+<p><code>auth.Mint</code> had no non-test callers and <code>NETRA_ADMIN_TOKEN</code> was consumed by nothing. Adding a host meant hand-inserting a SHA-256 hash with <code>psql</code> — it worked, and it was not a product.</p>
+<p>Plan: <code>2026-08-08-stage1a-admin-api.html</code>.</p>
+<ul>
+<li><input type="checkbox" checked disabled> <code>POST /api/v1/hosts</code> — create; returns the minted token <strong>once</strong>, never again</li>
+<li><input type="checkbox" checked disabled> <code>POST /api/v1/hosts/{id}/token</code> — rotate</li>
+<li><input type="checkbox" checked disabled> <code>DELETE /api/v1/hosts/{id}</code></li>
+<li><input type="checkbox" checked disabled> <code>GET|PATCH /api/v1/sites</code>, <code>/providers</code> — including manual lat/lon override the hub never overwrites with a geocode result</li>
+<li><input type="checkbox" checked disabled> Admin-token middleware, constant-time compare, bound to the loopback listener</li>
+<li><input type="checkbox" checked disabled> A minimal server-rendered UI at <code>/</code> — host list, create, rotate, delete, and the token shown once beside a ready-to-paste <code>setup-agent.sh</code> line. <code>html/template</code> + <code>embed</code>, no build step and no design system; the phase-2 UI owns that decision. <strong>This replaced the "update <code>README.md</code>" item</strong>, which died with the README in #16</li>
 </ul>
-<p><strong>Risk:</strong> the token is shown once. A create call whose response is lost must be recoverable by rotation, not by reading the hash. Test that rotation invalidates the old token in the same transaction.</p>
+<p><strong>Two things worth carrying forward.</strong> <code>tokens</code> has no <code>UNIQUE (host_id)</code>, so rotation deletes and inserts in one transaction — an insert-only rotation leaves the old token live and nothing looks wrong. And the browser cannot send a bearer header on a form post, so the UI exchanges the admin token for a session cookie signed with a key <strong>derived from that token</strong>: changing <code>NETRA_ADMIN_TOKEN</code> logs every session out, with no session table to clear.</p>
+<p>An unauthenticated <code>dev</code> mode was considered for local use and rejected — the loopback binding is a second line of defence, not a reason to drop the first. No <code>AuthMode</code> switch exists yet; phase-2 OIDC adds one when there is a second mode to select.</p>
 <h3>1B. Schema — the remaining tables</h3>
-<p>One migration per coherent group, numbered, never editing <code>0001_init.sql</code>. Each hypertable arrives with its continuous aggregates and retention policy in the same migration, so no tier is ever half-configured.</p>
-<ul class="task">
-<li><input type="checkbox" disabled><span><code>0002</code> — container dimensions and <code>container_samples</code></span></li>
-<li><input type="checkbox" disabled><span><code>0003</code> — <code>filesystems</code>, <code>filesystem_samples</code>, <code>devices</code>, <code>disk_io_samples</code>, <code>smart_attributes</code></span></li>
-<li><input type="checkbox" disabled><span><code>0004</code> — <code>sensors</code>, <code>sensor_samples</code>, <code>cpu_core_samples</code>, <code>net_samples</code>, <code>host_addresses</code></span></li>
-<li><input type="checkbox" disabled><span><code>0005</code> — <code>systemd_units</code>, <code>systemd_unit_events</code>, <code>host_packages</code>, <code>package_events</code>, <code>events</code></span></li>
-<li><input type="checkbox" disabled><span><code>0006</code> — <code>process_samples</code> (<strong>raw only, 48h, no continuous aggregates</strong> — a 1-hour average of a top-N list whose membership changes between buckets is close to meaningless), <code>agent_samples</code>, <code>collector_samples</code>, <code>custom_samples</code></span></li>
-<li><input type="checkbox" disabled><span><code>0007</code> — <code>geocode_cache</code></span></li>
+<p><strong>While netra is pre-release the schema is squashed into <code>0001_init.sql</code> and edited in place.</strong> There are no numbered follow-on migrations and no upgrade path; a schema change means dropping and recreating the database. This reverses the earlier "never edit <code>0001</code>" rule for as long as there is nothing deployed to migrate, and it buys something concrete: TimescaleDB cannot <code>ALTER</code> a continuous aggregate to add a column, so with numbered migrations every new host-level metric would have been raw-only (7 days) until a later migration recreated the rollups. Editing <code>0001</code> means the aggregate is simply <em>defined</em> with the new columns.</p>
+<p>The properties <code>0001_init.sql:1-12</code> documents still bind: <code>-- netra:no-transaction</code> on line 1, and every statement individually re-runnable. No <code>DROP … CREATE</code> pair may appear in the file.</p>
+<p><strong>Two consequences to carry until the first release:</strong></p>
+<ul>
+<li><input type="checkbox" disabled> <code>Migrate</code> matches <code>schema_migrations</code> <strong>by filename with no checksum</strong> (<code>migrate.go:41-50</code>), so an edited <code>0001</code> is <em>silently skipped</em> on an existing database — the hub starts against a schema missing the new columns and fails on the first insert. The fix is to drop and recreate the database. (The README that used to say so is gone; this line is now the only record.)</li>
+<li><input type="checkbox" disabled> Add checksum detection to the migration runner before the first release, so an edited applied migration is a startup error rather than silence. <strong>This is what unfreezes the numbered-migration plan below.</strong></li>
 </ul>
-<p><strong>The <code>start_offset</code> regression test already exists</strong> for <code>host_samples</code>. Extend it to cover each new aggregate rather than trusting the pattern — that failure mode is permanently silent.</p>
-<h3>1C. The thirteen remaining collectors</h3>
+<p>Still to add to <code>0001</code> (each hypertable with its continuous aggregates and retention policy, so no tier is ever half-configured):</p>
+<ul>
+<li><input type="checkbox" checked disabled> container dimensions and <code>container_samples</code></li>
+<li><input type="checkbox" checked disabled> <code>filesystems</code>, <code>filesystem_samples</code>, <code>devices</code>, <code>disk_io_samples</code>, <code>smart_attributes</code></li>
+<li><input type="checkbox" checked disabled> <code>sensors</code>, <code>sensor_samples</code>, <code>cpu_core_samples</code>, <code>net_samples</code> — landed with the Group 1 schema slice. <code>host_addresses</code> landed with the Group 2 addresses collector</li>
+<li><input type="checkbox" checked disabled> <code>events</code> — landed early, out of bullet order, because the <strong>mdraid collector has no hypertable of its own and writes here</strong>. See below</li>
+<li><input type="checkbox" checked disabled> <code>systemd_units</code>, <code>systemd_unit_events</code>, <code>host_packages</code>, <code>package_events</code></li>
+<li><input type="checkbox" checked disabled> <code>collector_samples</code> — landed with the Group 1 schema slice</li>
+<li><input type="checkbox" checked disabled> <code>process_samples</code> (<strong>raw only, 48h, no continuous aggregates</strong> — a 1-hour average of a top-N list whose membership changes between buckets is close to meaningless)</li>
+<li><input type="checkbox" disabled> <code>custom_samples</code> — nothing writes it yet, so it is unbuilt rather than deferred</li>
+<li><input type="checkbox" disabled> <code>geocode_cache</code> — lands with the phase-2 map, which is what reads it</li>
+</ul>
+<p><strong>Retention for the three plain event tables — added in 1D.</strong> <code>events</code>, <code>systemd_unit_events</code> and <code>package_events</code> are the only tables in <code>0001</code> with no retention at all, because <code>add_retention_policy</code> takes hypertables and these are deliberately not. They were sized on "a unit changes state a handful of times a month", which held until the agent began emitting a failed-unit baseline on restart — bounded per restart, unbounded across a crash loop. They are now pruned by <code>netra_prune_discrete_events</code>, a <code>CREATE OR REPLACE PROCEDURE</code> plus a daily <code>add_job</code> at a 90-day horizon (matching the 1h tier, so an event never expires before the series it explains). <strong>Pruned, not converted:</strong> hypertables would buy chunk drops these row volumes do not need and would cost the composite foreign keys. <code>add_job</code> has no <code>if_not_exists</code>, so the registration is wrapped in a <code>DO</code> block that checks <code>timescaledb_information.jobs</code> — every statement in <code>0001</code> must stay individually re-runnable. The job's <code>proc_name</code> joins the two Timescale policy names <code>store.OpenTest</code> unschedules, for the reason #26 exists.</p>
+<p><strong><code>mdraid</code> has no hypertable, and that is not an omission.</strong> 1B lists no mdraid table while 1C Group 1 expects an mdraid collector, which reads like a gap. It is not: spec §5.2 names <em>"mdadm degradation"</em> explicitly as one of the things <code>events</code> carries, and §5.1 rule 4 sends anything constant for hours to <code>events</code> rather than to a sample table — an array is <code>clean</code> for weeks, so a 60s series saying so is the same near-constant-series waste that keeps systemd out of §5.3. The mdraid collector writes to <strong><code>events</code></strong> plus <code>collector_samples</code>, which is why <code>events</code> was pulled forward out of bullet order. <code>events</code> stays a <strong>plain Postgres table</strong>: no <code>create_hypertable</code>, no aggregates, no retention policy, and it must not move the counts in <code>rollup_test.go</code>.</p>
+<p><strong>The <code>start_offset</code> regression test already generalises.</strong> <code>TestIntegrationRefreshPolicyStartOffsetExceedsBufferWindow</code> sweeps <em>every</em> <code>policy_refresh_continuous_aggregate</code> row rather than naming tables, so a new aggregate is checked the moment it exists — no per-aggregate extension needed. The hard-coded policy count is the part that must move, and it is a literal on purpose: adding a hypertable must break the test until the new policy is counted. It reads <strong>14</strong> now (was 4). <code>TestIntegrationRawRetentionExceedsRefreshLag</code> was the narrow one — it filtered on <code>host_samples</code> alone — and now sweeps every raw hypertable, with <code>TestIntegrationEveryContinuousAggregateHasRetention</code> alongside it so an aggregate shipped without retention fails rather than growing unbounded.</p>
+<p><strong>Timescale reports aggregate policies under the aggregate's own view name</strong>, not the internal <code>_materialized_hypertable_N</code>. Separating raw from aggregate policies therefore needs an anti-join against <code>timescaledb_information.continuous_aggregates</code>, not a name pattern.</p>
+<h3>1C. The thirteen remaining collectors — <strong>landed</strong></h3>
 <p>Ordered by risk and by what unblocks what, not by the spec's table order. Each collector: fixture-based tests with checked-in <code>/proc</code>, <code>/sys</code> and cgroup trees; reports duration, success and error code into <code>collector_samples</code>; availability into host capabilities; <strong>never prevents the agent from starting</strong>.</p>
-<p><strong>Group 1 — no privileges, no dependencies.</strong> Cheap, high value, validates the multi-collector loop.</p>
-<ul class="task">
-<li><input type="checkbox" disabled><span>Per-core CPU (<code>/proc/stat</code>) — all cores, always; ~800 series at target scale</span></li>
-<li><input type="checkbox" disabled><span>Disk I/O (<code>/proc/diskstats</code>) — counter-reset handling</span></li>
-<li><input type="checkbox" disabled><span>Sensors (<code>/sys/class/hwmon</code>) — identity is <code>chip_name + label</code>, <strong>never <code>hwmonN</code></strong>; per-read deadline (<code>NETRA_SENSORS_TIMEOUT</code>); preference list, not hottest-wins</span></li>
-<li><input type="checkbox" disabled><span>mdraid (sysfs)</span></li>
-<li><input type="checkbox" disabled><span>Self (<code>agent_samples</code>) — note <code>agent_samples.uptime_s</code> and <code>host_samples.uptime_s</code> are <em>different facts</em></span></li>
-</ul>
-<p><strong>Group 2 — needs <code>network_mode: host</code>.</strong></p>
-<ul class="task">
-<li><input type="checkbox" disabled><span>Network (<code>/proc/net/dev</code>) — filter <code>lo</code>, <code>veth*</code>, <code>docker0</code>, <code>br-*</code>, tunnels</span></li>
-<li><input type="checkbox" disabled><span>Addresses (netlink) — delivers nothing itself; flips <code>metadata_hash</code>. Hub derives <code>scope</code> from the address, so classification is one implementation that can be fixed without redeploying agents. <strong>Interface names are the join key</strong> with <code>net_samples.iface</code>.</span></li>
-</ul>
-<p><strong>Group 3 — needs a mount.</strong></p>
-<ul class="task">
-<li><input type="checkbox" disabled><span>Containers (cgroup v2 + Docker socket for metadata only) — <strong>subtract <code>cache</code> and <code>inactive_file</code></strong> from raw memory usage; identity is compose project + service, falling back to container name</span></li>
-<li><input type="checkbox" disabled><span>Filesystems (<code>statfs</code> on marker dirs) — dedup by <code>st_dev</code>; per-filesystem I/O needs the <code>st_dev</code> → block device mapping, and <code>NULL</code> (not zero) where that mapping fails</span></li>
-<li><input type="checkbox" disabled><span>systemd (D-Bus) — <strong>events, not samples</strong>; numeric summary rides on <code>host_samples</code></span></li>
-<li><input type="checkbox" disabled><span>Packages (<code>dpkg</code>/<code>apk</code>) — parse on mtime change with a daily floor; rpm reports unsupported-format</span></li>
-</ul>
-<p><strong>Group 4 — privileged, opt-in.</strong></p>
-<ul class="task">
-<li><input type="checkbox" disabled><span>SMART (<code>smartctl</code>, already in the image at a pinned version) — 1h interval; capability reported when device access is missing</span></li>
-<li><input type="checkbox" disabled><span>Processes (<code>pid: host</code>) — <code>utime+stime</code> deltas keyed on <code>(pid, starttime)</code>, because a recycled PID otherwise produces a garbage spike; aggregate by name, top-10-by-CPU ∪ top-10-by-memory</span></li>
-</ul>
+<p><strong>Group 1 — no privileges, no dependencies.</strong> Cheap, high value, validates the multi-collector loop.
+- <input type="checkbox" checked disabled> Per-core CPU (<code>/proc/stat</code>) — all cores, always; ~800 series at target scale
+- <input type="checkbox" checked disabled> Disk I/O (<code>/proc/diskstats</code>) — counter-reset handling
+- <input type="checkbox" checked disabled> Sensors (<code>/sys/class/hwmon</code>) — identity is <code>chip_name + label</code>, <strong>never <code>hwmonN</code></strong>; per-read deadline (<code>NETRA_SENSORS_TIMEOUT</code>); preference list, not hottest-wins
+- <input type="checkbox" checked disabled> mdraid (sysfs) — writes <strong><code>events</code></strong>, not a hypertable (see 1B). Array state is constant for weeks; only the transition is worth storing
+- <input type="checkbox" checked disabled> Self (<code>agent_samples</code>) — the table and <code>scrape_duration_ms</code>, <code>post_latency_ms</code>, <code>buffer_depth</code>, <code>buffer_dropped_total</code> landed in Group 0; <code>uptime_s</code>, <code>rss_bytes</code>, <code>goroutines</code> and <code>post_failures_total</code> filled in 1C. Note <code>agent_samples.uptime_s</code> and <code>host_samples.uptime_s</code> are <em>different facts</em></p>
+<p><strong>Group 2 — needs <code>network_mode: host</code>.</strong>
+- <input type="checkbox" checked disabled> Network (<code>/proc/net/dev</code>) — filter <code>lo</code>, <code>veth*</code>, <code>docker0</code>, <code>br-*</code>, tunnels
+- <input type="checkbox" checked disabled> Addresses (netlink) — delivers nothing itself; flips <code>metadata_hash</code>. Hub derives <code>scope</code> from the address, so classification is one implementation that can be fixed without redeploying agents. <strong>Interface names are the join key</strong> with <code>net_samples.iface</code>.</p>
+<p><strong>Group 3 — needs a mount.</strong>
+- <input type="checkbox" checked disabled> Containers (cgroup v2 + Docker socket for metadata only) — <strong>subtract <code>cache</code> and <code>inactive_file</code></strong> from raw memory usage; identity is compose project + service, falling back to container name
+- <input type="checkbox" checked disabled> Filesystems (<code>statfs</code> on marker dirs) — dedup by <code>st_dev</code>; per-filesystem I/O needs the <code>st_dev</code> → block device mapping, and <code>NULL</code> (not zero) where that mapping fails
+- <input type="checkbox" checked disabled> systemd (D-Bus) — <strong>events, not samples</strong>; numeric summary rides on <code>host_samples</code>. Worth recording: this line spec'd D-Bus from the start, and the <code>systemctl</code> implementation that shipped first in #23 was the deviation, not the other way round. #24 replaced it with the D-Bus route this plan always named
+- <input type="checkbox" checked disabled> Packages (<code>dpkg</code>/<code>apk</code>) — parse on mtime change with a daily floor; rpm reports unsupported-format</p>
+<p><strong>Group 4 — privileged, opt-in.</strong>
+- <input type="checkbox" checked disabled> SMART (<code>smartctl</code>, already in the image at a pinned version) — 1h interval; capability reported when device access is missing
+- <input type="checkbox" checked disabled> Processes (<code>pid: host</code>) — <code>utime+stime</code> deltas keyed on <code>(pid, starttime)</code>, because a recycled PID otherwise produces a garbage spike; aggregate by name, top-10-by-CPU ∪ top-10-by-memory</p>
 <p><strong>Wire protocol:</strong> each family needs its own typed protobuf message (§7.3). <code>IngestResponse</code> field 4 is <strong>reserved permanently</strong> — it carried the retired <code>interval_s</code>, the scrape interval is fixed at 60s, and no cadence override is planned. Never reuse the number.</p>
 <p><strong>Setup script coupling:</strong> every collector that lands makes an existing <code>setup-agent.sh</code> mount meaningful. <code>deploy/agent/compose.yaml.example</code> carries a note listing which collectors are implemented; <strong>update it in the same PR</strong>, or it becomes a lie about what works.</p>
-<h3>1D. Read API</h3>
-<ul class="task">
-<li><input type="checkbox" disabled><span><code>GET /api/v1/hosts</code> — from <code>host_current</code>, never touches a hypertable</span></li>
-<li><input type="checkbox" disabled><span><code>GET /api/v1/hosts/{id}</code> — full metadata including collector capabilities</span></li>
-<li><input type="checkbox" disabled><span><code>GET /api/v1/hosts/{id}/containers</code> · <code>/filesystems</code> · <code>/addresses</code> · <code>/packages</code> · <code>/units</code></span></li>
-<li><input type="checkbox" disabled><span><code>GET /api/v1/hosts/{id}/metrics?family=…&amp;from=…&amp;to=…&amp;step=…</code></span></li>
-<li><input type="checkbox" disabled><span><code>GET /api/v1/events?host=…&amp;since=…&amp;type=…</code></span></li>
+<h3>1D. Read API — <strong>landed</strong></h3>
+<p>Plan: <code>2026-08-10-stage1d-read-api.html</code>. Everything lives in <code>internal/hub/read</code>, a sibling of <code>internal/hub/admin</code>: admin <em>writes</em> the inventory, read projects what the agents reported.</p>
+<ul>
+<li><input type="checkbox" checked disabled> <code>GET /api/v1/hosts</code> — from <code>host_current</code>, never touches a hypertable</li>
+<li><input type="checkbox" checked disabled> <code>GET /api/v1/hosts/{id}</code> — full metadata including collector capabilities</li>
+<li><input type="checkbox" checked disabled> <code>GET /api/v1/hosts/{id}/containers</code> · <code>/filesystems</code> · <code>/addresses</code> · <code>/packages</code> · <code>/units</code></li>
+<li><input type="checkbox" checked disabled> <code>GET /api/v1/hosts/{id}/metrics?family=…&amp;from=…&amp;to=…&amp;step=…</code></li>
+<li><input type="checkbox" checked disabled> <code>GET /api/v1/events?host=…&amp;since=…&amp;type=…</code></li>
 </ul>
-<p><strong>Tier selection is the load-bearing part.</strong> With <code>step</code> omitted the hub picks the tier from the range (&lt;7d raw, longer → 5m or 1h). The UI will depend on that logic, so phase 1 is where it gets built and tested — including the boundary cases where a range straddles two tiers.</p>
-<hr>
-<h2 id="stage-2">Stage 2 — Phase 2</h2>
+<p><strong>Tier selection is the load-bearing part</strong>, and the rule is <strong>retention on <code>from</code>, not span</strong>. Span alone gets the two raw-only families wrong in both directions: <code>smart</code> over sixty days must answer <em>raw</em> because there is no 5m tier to fall back to, and <code>process</code> can never cover more than its 48 hours however long a range is asked for.</p>
+<p><strong>Four things worth carrying forward.</strong></p>
+<ol>
+<li><strong>A response cannot be read at the wrong resolution by accident.</strong> The tier is named, but the stronger guarantee is structural: <code>busy</code> at raw becomes <code>busy_avg</code>/<code>busy_max</code> at 5m, so the column names differ <em>per tier by construction</em>. A client that ignores <code>tier</code> gets a key it does not recognise rather than a number that looks fine and is wrong.</li>
+<li><strong>Two windows, not one.</strong> <code>window</code> is what the response actually covers; <code>requested_window</code> is the echo. They differ at the leading edge (retention) and at the trailing one — <strong>every continuous aggregate is <code>materialized_only</code></strong>, so the 5m tier is fresh only to <code>now − 10m</code> and the 1h tier to <code>now − 1h</code>, the <code>end_offset</code> of each refresh policy. The SQL is bounded by <code>window</code>, which buys the contract: <em>a missing point inside <code>window</code> means the host reported nothing, never that the hub lagged.</em></li>
+<li><strong>Value columns are discovered from <code>information_schema</code>, not declared in Go.</strong> The three <code>host_samples</code> tiers carry 190 columns between them; a hand-kept copy would drift, and drift <em>silently</em> — a missing column reads as a metric nobody collected.</li>
+<li><strong>The numbers that cannot be discovered are pinned.</strong> <code>TestIntegrationTierSpecsMatchTheSchema</code> checks every tier's retention against <code>policy_retention</code> and every lag against <code>policy_refresh_continuous_aggregate</code>, and <code>TestIntegrationEveryAggregateIsMaterializedOnly</code> guards the assumption behind the trailing clamp. Editing <code>0001</code> without editing <code>tier.go</code> fails the build.</li>
+</ol>
+<p><strong>No fullness percentage anywhere.</strong> <code>filesystem_samples.used</code> and <code>free</code> do not sum to <code>total</code> — the gap is the root reserve — so the API exposes all three and computes nothing. At the aggregate tiers a percentage would be worse than absent: <code>used_max / (used_max + free_min)</code> composes two different instants and is not the maximum of the true ratio.</p>
+<hr />
+<h2>Stage 2 — Phase 2</h2>
 <p>Ordered by dependency: alerting needs history, the UI needs the read API, OIDC needs a UI to log into.</p>
-<ul class="task">
-<li><input type="checkbox" disabled><span><strong>Alerting engine</strong> — thresholds, host-down (no POST within 3× interval), event-driven rules, notification delivery</span></li>
-<li><input type="checkbox" disabled><span><strong>Web UI</strong> — its own design system. music's tokens are built for a media player and are <em>not</em> assumed to fit</span></li>
-<li><input type="checkbox" disabled><span><strong>OIDC (Authentik)</strong> — <code>oidc-fix-report.md</code> in the music repo is the input. Replaces the single shared admin token with per-user roles</span></li>
-<li><input type="checkbox" disabled><span><strong>Geocoding + map</strong> — schema exists already; a manual lat/lon override must never be overwritten by a geocode result</span></li>
-<li><input type="checkbox" disabled><span><strong>Fleet/aggregate endpoints</strong> — deliberately unspecced until the UI exists, because speccing them now is guessing</span></li>
+<ul>
+<li><input type="checkbox" disabled> <strong>Alerting engine</strong> — thresholds, host-down (no POST within 3× interval), event-driven rules, notification delivery</li>
+<li><input type="checkbox" disabled> <strong>Web UI</strong> — its own design system. music's tokens are built for a media player and are <em>not</em> assumed to fit</li>
+<li><input type="checkbox" disabled> <strong>OIDC (Authentik)</strong> — <code>oidc-fix-report.md</code> in the music repo is the input. Replaces the single shared admin token with per-user roles</li>
+<li><input type="checkbox" disabled> <strong>Geocoding + map</strong> — schema exists already; a manual lat/lon override must never be overwritten by a geocode result</li>
+<li><input type="checkbox" disabled> <strong>Fleet/aggregate endpoints</strong> — deliberately unspecced until the UI exists, because speccing them now is guessing</li>
 </ul>
-<hr>
-<h2 id="stage-3">Stage 3 — Phase 3</h2>
-<ul class="task">
-<li><input type="checkbox" disabled><span><strong>LLM diagnostics</strong> — reuses music's <code>internal/llm</code> and the <code>BACKEND_CHAT_*</code> pattern. Needs history and alerts to reason over, hence last</span></li>
+<hr />
+<h2>Stage 3 — Phase 3</h2>
+<ul>
+<li><input type="checkbox" disabled> <strong>LLM diagnostics</strong> — reuses music's <code>internal/llm</code> and the <code>BACKEND_CHAT_*</code> pattern. Needs history and alerts to reason over, hence last</li>
 </ul>
-<hr>
-<h2 id="known-gaps-and-debts">Known gaps and debts</h2>
+<hr />
+<h2>Known gaps and debts</h2>
 <p>Carried forward. None block Stage 1, all are cheap to fix in the right PR.</p>
 <table>
 <thead>
@@ -173,7 +190,8 @@ ul.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 <th>Note</th>
 </tr>
 </thead>
-<tbody><tr>
+<tbody>
+<tr>
 <td><code>NETRA_RETENTION_RAW/_5M/_1H</code> spec'd, unimplemented</td>
 <td><code>0001_init.sql:152-154</code></td>
 <td>Tiers hardcoded. <code>.env.example</code> deliberately omits them rather than shipping ignored variables. Fix with Stage 1B or delete from §12</td>
@@ -204,25 +222,26 @@ ul.toc a:hover{color:var(--accent);border-bottom-color:var(--accent)}
 <td>Defensible — compose is derived, <code>.env</code> holds the token — and stated in the finish output</td>
 </tr>
 <tr>
-<td>Coverage floors still 75%</td>
+<td>~~Coverage floors still 75%~~</td>
 <td><code>hack/coverage-floors</code></td>
-<td>Raise deliberately once the collector packages land, not incidentally</td>
+<td><strong>Raised in 1D</strong>, once the collector and read packages had landed. Both floors are set from the measured number with a point or two of margin; the gate's 0.05 grace is float-formatting slack, not headroom</td>
 </tr>
-</tbody></table>
-<hr>
-<h2 id="verification">Verification</h2>
+</tbody>
+</table>
+<hr />
+<h2>Verification</h2>
 <p>Per stage, in addition to <code>make check</code> (which now includes <code>test-shell</code>):</p>
 <p><strong>1A</strong> — create a host over HTTP, use the returned token from a real agent, rotate it, assert the old token 401s and the new one 200s. Assert the plaintext appears exactly once in the response and nowhere in the logs.</p>
 <p><strong>1B</strong> — migrations apply to an empty database <em>and</em> on top of <code>0001</code> (both paths, both tested). Extend the <code>start_offset</code> backfill regression test to each new aggregate: write data older than the window and assert the rollup is correct.</p>
 <p><strong>1C</strong> — fixture-based unit tests per collector, plus one end-to-end run per group against a real host: agent posts → rows land → read API returns them. Counter-reset tests for diskstats, network and container CPU. Recorded <code>smartctl -j</code> output rather than privileged hardware.</p>
-<p><strong>1D</strong> — tier selection tested at the boundaries, not just the middle. A range that straddles 7 days must pick deterministically and say which tier it used.</p>
+<p><strong>1D</strong> — tier selection tested at the boundaries, not just the middle. A range that straddles 7 days must pick deterministically and say which tier it used. Selection is a pure function of <code>(family, from, to, step, now)</code>, so every boundary is an ordinary table test needing no data at a particular age. <strong>Aggregate-tier tests must <code>CALL refresh_continuous_aggregate(…)</code> explicitly</strong> — every view is <code>WITH NO DATA</code> and <code>OpenTest</code> unschedules the refresh policies, so insert-then-query returns zero rows otherwise.</p>
 <p><strong>Integration tests need the container and <code>-p 1</code></strong> — <code>store.OpenTest</code> drops the shared public schema, so parallel package binaries race:</p>
 <pre><code class="language-bash">docker run -d --name netra-test-db -e POSTGRES_USER=netra -e POSTGRES_PASSWORD=netra \
   -e POSTGRES_DB=netra_test -p 5432:5432 timescale/timescaledb:latest-pg17
 NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test make test-integration
 </code></pre>
-<hr>
-<h2 id="process-notes">Process notes worth not relearning</h2>
+<hr />
+<h2>Process notes worth not relearning</h2>
 <ul>
 <li><strong>Retargeting a PR does not trigger CI.</strong> A base change emits <code>pull_request: edited</code>, which is not in the default trigger set. Close and reopen. This is how a fixture bug survived four stacked PRs.</li>
 <li><strong><code>gh pr merge</code> fails on any PR touching <code>.github/workflows/</code></strong> unless the token carries <code>workflow</code> scope. A <code>git push</code> over SSH is not an OAuth app and is exempt.</li>

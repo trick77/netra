@@ -656,6 +656,64 @@ CREATE TABLE IF NOT EXISTS package_events (
 CREATE INDEX IF NOT EXISTS package_events_host_id_ts_idx
     ON package_events (host_id, ts DESC);
 
+-- ------------------------------------------ retention for the event tables
+
+-- events, systemd_unit_events and package_events are the three tables in this
+-- file with no retention at all, and they are plain Postgres tables rather
+-- than hypertables, so add_retention_policy cannot be pointed at them.
+--
+-- That was sized on "a unit changes state a handful of times a month", which
+-- held until the agent began emitting a failed-unit baseline on restart: the
+-- baseline is bounded, but a crash-looping agent re-emits it every restart
+-- into a table nothing prunes. events has the identical problem for the same
+-- reason -- an mdraid array that flaps writes a row per transition -- and is
+-- included here rather than left as the next surprise.
+--
+-- PRUNED, NOT CONVERTED. Turning them into hypertables would buy chunk drops
+-- these row volumes do not need, and would cost the composite foreign keys
+-- systemd_unit_events uses to keep one host's units off another host's
+-- events. A DELETE on an indexed ts is the cheaper answer at this size.
+--
+-- 90 days matches the 1h tier: an event is the thing a metric chart is read
+-- ALONGSIDE, and an event log that expired before the series it explains
+-- would leave a spike with no cause.
+CREATE OR REPLACE PROCEDURE netra_prune_discrete_events(job_id INTEGER, config JSONB)
+LANGUAGE plpgsql AS $$
+DECLARE
+    -- Read from the job's config rather than hardcoded, so the horizon can be
+    -- changed with alter_job on a running hub instead of a schema edit.
+    horizon INTERVAL := coalesce((config ->> 'retention')::INTERVAL, INTERVAL '90 days');
+    cutoff  TIMESTAMPTZ := now() - horizon;
+BEGIN
+    -- Separate statements, in dependency order, each committing on its own:
+    -- one transaction spanning all three would hold row locks on every event
+    -- table for the length of the slowest delete.
+    DELETE FROM systemd_unit_events WHERE ts < cutoff;
+    COMMIT;
+    DELETE FROM package_events WHERE ts < cutoff;
+    COMMIT;
+    DELETE FROM events WHERE ts < cutoff;
+    COMMIT;
+END;
+$$;
+
+-- add_job has no if_not_exists, unlike every other Timescale registration in
+-- this file, and this migration re-runs from the top whenever it fails
+-- part-way (see the header). An unguarded call would therefore register a
+-- second, third and fourth copy of the same job. The DO block is what keeps
+-- the statement individually re-runnable.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM timescaledb_information.jobs
+         WHERE proc_name = 'netra_prune_discrete_events'
+    ) THEN
+        PERFORM add_job('netra_prune_discrete_events', INTERVAL '1 day',
+                        config => '{"retention": "90 days"}'::jsonb);
+    END IF;
+END;
+$$;
+
 -- --------------------------------------------------------------- per-core CPU
 
 -- All cores, always -- ~800 series at target scale, which the earlier

@@ -16,7 +16,7 @@ Two plans are complete. What that bought:
 - **Deployment:** two digest-pinned images published to GHCR on merge, lockstep-versioned; weekly GHCR retention; hub `compose.yaml`; agent reference compose; `setup-agent.sh` with a 353-assertion suite.
 - **CI:** build/vet/gofmt, race tests against a real TimescaleDB, coverage floor + patch gates, a shell job under `sh` and `dash`, version-stamping guard.
 
-**What that does not buy: netra is not yet usable.** Seven host-level collectors is still not monitoring — nothing per-device, per-interface, per-filesystem or per-container is collected — and there is no way to read the data back out except `psql`. The gap to close is stated bluntly in Stage 1.
+**What that did not buy: netra was not yet usable.** Seven host-level collectors is not monitoring — nothing per-device, per-interface, per-filesystem or per-container was collected — and there was no way to read the data back out except `psql`. Stage 1 closed both halves of that gap: 1A–1C brought the fleet to twenty collectors over the full Group 1–4 schema, and 1D added the read API. **Stage 1 is complete**; what remains below it is phase 2.
 
 ### Group 0 — landed (host-level scalars)
 
@@ -31,9 +31,9 @@ plumbing Group 1 needs:
 - [x] Collector capabilities — optional `CapabilityReporter`, merged into metadata, flips the hash, stored in `hosts.capabilities`
 - [x] `services_total`/`services_failed` reconciled with spec §5.3 (NULL until the systemd collector lands)
 
-### Six tables, one hypertable
+### Six tables, one hypertable — superseded
 
-`0001_init.sql` ships `providers`, `sites`, `hosts`, `tokens`, `host_current`, `host_samples`. The spec's §5.2 lists sixteen dimension tables and §5.3 lists twelve hypertables. The rest land with the collectors that fill them — see Stage 1A.
+That was the Group 0 state: `0001_init.sql` shipped `providers`, `sites`, `hosts`, `tokens`, `host_current`, `host_samples` against the spec's §5.2 sixteen dimension tables and §5.3 twelve hypertables. Stage 1B landed the rest alongside the collectors that fill them; the only §5.2/§5.3 tables still absent are `custom_samples` and `geocode_cache`, and both are listed as open in 1B with the reason.
 
 ---
 
@@ -88,14 +88,17 @@ The properties `0001_init.sql:1-12` documents still bind: `-- netra:no-transacti
 
 Still to add to `0001` (each hypertable with its continuous aggregates and retention policy, so no tier is ever half-configured):
 
-- [ ] container dimensions and `container_samples`
-- [ ] `filesystems`, `filesystem_samples`, `devices`, `disk_io_samples`, `smart_attributes`
-- [x] `sensors`, `sensor_samples`, `cpu_core_samples`, `net_samples` — landed with the Group 1 schema slice. `host_addresses` still to come, with the Group 2 addresses collector
+- [x] container dimensions and `container_samples`
+- [x] `filesystems`, `filesystem_samples`, `devices`, `disk_io_samples`, `smart_attributes`
+- [x] `sensors`, `sensor_samples`, `cpu_core_samples`, `net_samples` — landed with the Group 1 schema slice. `host_addresses` landed with the Group 2 addresses collector
 - [x] `events` — landed early, out of bullet order, because the **mdraid collector has no hypertable of its own and writes here**. See below
-- [ ] `systemd_units`, `systemd_unit_events`, `host_packages`, `package_events`
+- [x] `systemd_units`, `systemd_unit_events`, `host_packages`, `package_events`
 - [x] `collector_samples` — landed with the Group 1 schema slice
-- [ ] `process_samples` (**raw only, 48h, no continuous aggregates** — a 1-hour average of a top-N list whose membership changes between buckets is close to meaningless), `custom_samples`
-- [ ] `geocode_cache`
+- [x] `process_samples` (**raw only, 48h, no continuous aggregates** — a 1-hour average of a top-N list whose membership changes between buckets is close to meaningless)
+- [ ] `custom_samples` — nothing writes it yet, so it is unbuilt rather than deferred
+- [ ] `geocode_cache` — lands with the phase-2 map, which is what reads it
+
+**Retention for the three plain event tables — added in 1D.** `events`, `systemd_unit_events` and `package_events` are the only tables in `0001` with no retention at all, because `add_retention_policy` takes hypertables and these are deliberately not. They were sized on "a unit changes state a handful of times a month", which held until the agent began emitting a failed-unit baseline on restart — bounded per restart, unbounded across a crash loop. They are now pruned by `netra_prune_discrete_events`, a `CREATE OR REPLACE PROCEDURE` plus a daily `add_job` at a 90-day horizon (matching the 1h tier, so an event never expires before the series it explains). **Pruned, not converted:** hypertables would buy chunk drops these row volumes do not need and would cost the composite foreign keys. `add_job` has no `if_not_exists`, so the registration is wrapped in a `DO` block that checks `timescaledb_information.jobs` — every statement in `0001` must stay individually re-runnable. The job's `proc_name` joins the two Timescale policy names `store.OpenTest` unschedules, for the reason #26 exists.
 
 **`mdraid` has no hypertable, and that is not an omission.** 1B lists no mdraid table while 1C Group 1 expects an mdraid collector, which reads like a gap. It is not: spec §5.2 names *"mdadm degradation"* explicitly as one of the things `events` carries, and §5.1 rule 4 sends anything constant for hours to `events` rather than to a sample table — an array is `clean` for weeks, so a 60s series saying so is the same near-constant-series waste that keeps systemd out of §5.3. The mdraid collector writes to **`events`** plus `collector_samples`, which is why `events` was pulled forward out of bullet order. `events` stays a **plain Postgres table**: no `create_hypertable`, no aggregates, no retention policy, and it must not move the counts in `rollup_test.go`.
 
@@ -103,44 +106,55 @@ Still to add to `0001` (each hypertable with its continuous aggregates and reten
 
 **Timescale reports aggregate policies under the aggregate's own view name**, not the internal `_materialized_hypertable_N`. Separating raw from aggregate policies therefore needs an anti-join against `timescaledb_information.continuous_aggregates`, not a name pattern.
 
-### 1C. The thirteen remaining collectors
+### 1C. The thirteen remaining collectors — **landed**
 
 Ordered by risk and by what unblocks what, not by the spec's table order. Each collector: fixture-based tests with checked-in `/proc`, `/sys` and cgroup trees; reports duration, success and error code into `collector_samples`; availability into host capabilities; **never prevents the agent from starting**.
 
 **Group 1 — no privileges, no dependencies.** Cheap, high value, validates the multi-collector loop.
-- [ ] Per-core CPU (`/proc/stat`) — all cores, always; ~800 series at target scale
-- [ ] Disk I/O (`/proc/diskstats`) — counter-reset handling
-- [ ] Sensors (`/sys/class/hwmon`) — identity is `chip_name + label`, **never `hwmonN`**; per-read deadline (`NETRA_SENSORS_TIMEOUT`); preference list, not hottest-wins
-- [ ] mdraid (sysfs) — writes **`events`**, not a hypertable (see 1B). Array state is constant for weeks; only the transition is worth storing
-- [~] Self (`agent_samples`) — **partly landed** (Group 0): the table, `scrape_duration_ms`, `post_latency_ms`, `buffer_depth`, `buffer_dropped_total`. Still to fill: `uptime_s`, `rss_bytes`, `goroutines`, `post_failures_total`. Note `agent_samples.uptime_s` and `host_samples.uptime_s` are *different facts*
+- [x] Per-core CPU (`/proc/stat`) — all cores, always; ~800 series at target scale
+- [x] Disk I/O (`/proc/diskstats`) — counter-reset handling
+- [x] Sensors (`/sys/class/hwmon`) — identity is `chip_name + label`, **never `hwmonN`**; per-read deadline (`NETRA_SENSORS_TIMEOUT`); preference list, not hottest-wins
+- [x] mdraid (sysfs) — writes **`events`**, not a hypertable (see 1B). Array state is constant for weeks; only the transition is worth storing
+- [x] Self (`agent_samples`) — the table and `scrape_duration_ms`, `post_latency_ms`, `buffer_depth`, `buffer_dropped_total` landed in Group 0; `uptime_s`, `rss_bytes`, `goroutines` and `post_failures_total` filled in 1C. Note `agent_samples.uptime_s` and `host_samples.uptime_s` are *different facts*
 
 **Group 2 — needs `network_mode: host`.**
-- [ ] Network (`/proc/net/dev`) — filter `lo`, `veth*`, `docker0`, `br-*`, tunnels
-- [ ] Addresses (netlink) — delivers nothing itself; flips `metadata_hash`. Hub derives `scope` from the address, so classification is one implementation that can be fixed without redeploying agents. **Interface names are the join key** with `net_samples.iface`.
+- [x] Network (`/proc/net/dev`) — filter `lo`, `veth*`, `docker0`, `br-*`, tunnels
+- [x] Addresses (netlink) — delivers nothing itself; flips `metadata_hash`. Hub derives `scope` from the address, so classification is one implementation that can be fixed without redeploying agents. **Interface names are the join key** with `net_samples.iface`.
 
 **Group 3 — needs a mount.**
-- [ ] Containers (cgroup v2 + Docker socket for metadata only) — **subtract `cache` and `inactive_file`** from raw memory usage; identity is compose project + service, falling back to container name
-- [ ] Filesystems (`statfs` on marker dirs) — dedup by `st_dev`; per-filesystem I/O needs the `st_dev` → block device mapping, and `NULL` (not zero) where that mapping fails
-- [ ] systemd (D-Bus) — **events, not samples**; numeric summary rides on `host_samples`
-- [ ] Packages (`dpkg`/`apk`) — parse on mtime change with a daily floor; rpm reports unsupported-format
+- [x] Containers (cgroup v2 + Docker socket for metadata only) — **subtract `cache` and `inactive_file`** from raw memory usage; identity is compose project + service, falling back to container name
+- [x] Filesystems (`statfs` on marker dirs) — dedup by `st_dev`; per-filesystem I/O needs the `st_dev` → block device mapping, and `NULL` (not zero) where that mapping fails
+- [x] systemd (D-Bus) — **events, not samples**; numeric summary rides on `host_samples`. Worth recording: this line spec'd D-Bus from the start, and the `systemctl` implementation that shipped first in #23 was the deviation, not the other way round. #24 replaced it with the D-Bus route this plan always named
+- [x] Packages (`dpkg`/`apk`) — parse on mtime change with a daily floor; rpm reports unsupported-format
 
 **Group 4 — privileged, opt-in.**
-- [ ] SMART (`smartctl`, already in the image at a pinned version) — 1h interval; capability reported when device access is missing
-- [ ] Processes (`pid: host`) — `utime+stime` deltas keyed on `(pid, starttime)`, because a recycled PID otherwise produces a garbage spike; aggregate by name, top-10-by-CPU ∪ top-10-by-memory
+- [x] SMART (`smartctl`, already in the image at a pinned version) — 1h interval; capability reported when device access is missing
+- [x] Processes (`pid: host`) — `utime+stime` deltas keyed on `(pid, starttime)`, because a recycled PID otherwise produces a garbage spike; aggregate by name, top-10-by-CPU ∪ top-10-by-memory
 
 **Wire protocol:** each family needs its own typed protobuf message (§7.3). `IngestResponse` field 4 is **reserved permanently** — it carried the retired `interval_s`, the scrape interval is fixed at 60s, and no cadence override is planned. Never reuse the number.
 
 **Setup script coupling:** every collector that lands makes an existing `setup-agent.sh` mount meaningful. `deploy/agent/compose.yaml.example` carries a note listing which collectors are implemented; **update it in the same PR**, or it becomes a lie about what works.
 
-### 1D. Read API
+### 1D. Read API — **landed**
 
-- [ ] `GET /api/v1/hosts` — from `host_current`, never touches a hypertable
-- [ ] `GET /api/v1/hosts/{id}` — full metadata including collector capabilities
-- [ ] `GET /api/v1/hosts/{id}/containers` · `/filesystems` · `/addresses` · `/packages` · `/units`
-- [ ] `GET /api/v1/hosts/{id}/metrics?family=…&from=…&to=…&step=…`
-- [ ] `GET /api/v1/events?host=…&since=…&type=…`
+Plan: `2026-08-10-stage1d-read-api.html`. Everything lives in `internal/hub/read`, a sibling of `internal/hub/admin`: admin *writes* the inventory, read projects what the agents reported.
 
-**Tier selection is the load-bearing part.** With `step` omitted the hub picks the tier from the range (<7d raw, longer → 5m or 1h). The UI will depend on that logic, so phase 1 is where it gets built and tested — including the boundary cases where a range straddles two tiers.
+- [x] `GET /api/v1/hosts` — from `host_current`, never touches a hypertable
+- [x] `GET /api/v1/hosts/{id}` — full metadata including collector capabilities
+- [x] `GET /api/v1/hosts/{id}/containers` · `/filesystems` · `/addresses` · `/packages` · `/units`
+- [x] `GET /api/v1/hosts/{id}/metrics?family=…&from=…&to=…&step=…`
+- [x] `GET /api/v1/events?host=…&since=…&type=…`
+
+**Tier selection is the load-bearing part**, and the rule is **retention on `from`, not span**. Span alone gets the two raw-only families wrong in both directions: `smart` over sixty days must answer *raw* because there is no 5m tier to fall back to, and `process` can never cover more than its 48 hours however long a range is asked for.
+
+**Four things worth carrying forward.**
+
+1. **A response cannot be read at the wrong resolution by accident.** The tier is named, but the stronger guarantee is structural: `busy` at raw becomes `busy_avg`/`busy_max` at 5m, so the column names differ *per tier by construction*. A client that ignores `tier` gets a key it does not recognise rather than a number that looks fine and is wrong.
+2. **Two windows, not one.** `window` is what the response actually covers; `requested_window` is the echo. They differ at the leading edge (retention) and at the trailing one — **every continuous aggregate is `materialized_only`**, so the 5m tier is fresh only to `now − 10m` and the 1h tier to `now − 1h`, the `end_offset` of each refresh policy. The SQL is bounded by `window`, which buys the contract: *a missing point inside `window` means the host reported nothing, never that the hub lagged.*
+3. **Value columns are discovered from `information_schema`, not declared in Go.** The three `host_samples` tiers carry 190 columns between them; a hand-kept copy would drift, and drift *silently* — a missing column reads as a metric nobody collected.
+4. **The numbers that cannot be discovered are pinned.** `TestIntegrationTierSpecsMatchTheSchema` checks every tier's retention against `policy_retention` and every lag against `policy_refresh_continuous_aggregate`, and `TestIntegrationEveryAggregateIsMaterializedOnly` guards the assumption behind the trailing clamp. Editing `0001` without editing `tier.go` fails the build.
+
+**No fullness percentage anywhere.** `filesystem_samples.used` and `free` do not sum to `total` — the gap is the root reserve — so the API exposes all three and computes nothing. At the aggregate tiers a percentage would be worse than absent: `used_max / (used_max + free_min)` composes two different instants and is not the maximum of the true ratio.
 
 ---
 
@@ -174,7 +188,7 @@ Carried forward. None block Stage 1, all are cheap to fix in the right PR.
 | `smartctl` `drivedb.h` update cadence undecided | Spec §14 item 3 | Affects vendor attribute *naming* only; health, temperature, reallocated sectors and power-on hours are standardised |
 | Setup script `--ref` resolves the latest release at runtime | `setup-agent.sh` | Deviates from §12a's "the setup script's own version". A literal constant cannot self-update without the release workflow pushing to master. Revisit only if the runtime lookup proves flaky |
 | `--force` guards `.env` but not `compose.yaml` | §12a specifies this asymmetry | Defensible — compose is derived, `.env` holds the token — and stated in the finish output |
-| Coverage floors still 75% | `hack/coverage-floors` | Raise deliberately once the collector packages land, not incidentally |
+| ~~Coverage floors still 75%~~ | `hack/coverage-floors` | **Raised in 1D**, once the collector and read packages had landed. Both floors are set from the measured number with a point or two of margin; the gate's 0.05 grace is float-formatting slack, not headroom |
 
 ---
 
@@ -188,7 +202,7 @@ Per stage, in addition to `make check` (which now includes `test-shell`):
 
 **1C** — fixture-based unit tests per collector, plus one end-to-end run per group against a real host: agent posts → rows land → read API returns them. Counter-reset tests for diskstats, network and container CPU. Recorded `smartctl -j` output rather than privileged hardware.
 
-**1D** — tier selection tested at the boundaries, not just the middle. A range that straddles 7 days must pick deterministically and say which tier it used.
+**1D** — tier selection tested at the boundaries, not just the middle. A range that straddles 7 days must pick deterministically and say which tier it used. Selection is a pure function of `(family, from, to, step, now)`, so every boundary is an ordinary table test needing no data at a particular age. **Aggregate-tier tests must `CALL refresh_continuous_aggregate(…)` explicitly** — every view is `WITH NO DATA` and `OpenTest` unschedules the refresh policies, so insert-then-query returns zero rows otherwise.
 
 **Integration tests need the container and `-p 1`** — `store.OpenTest` drops the shared public schema, so parallel package binaries race:
 
