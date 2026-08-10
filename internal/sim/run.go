@@ -290,6 +290,16 @@ func (h *host) post(ctx context.Context, hub *Hub, scrapes []*Scrape, isBackfill
 		// Halving rather than estimating per scrape: the split is rare, and
 		// a size estimate accurate enough to avoid it would have to marshal
 		// every scrape twice.
+		//
+		// req is discarded here, so everything request() consumed while
+		// building it has to be given back first. sendMeta in particular: it
+		// is one-shot, and leaving it cleared would drop the metadata block
+		// this run was going to send -- the block only goes out again if the
+		// hub asks for it, which it cannot do if this was the last POST.
+		if req.GetMetadata() != nil {
+			h.sendMeta = true
+		}
+		h.seq--
 		mid := len(scrapes) / 2
 		if err := h.post(ctx, hub, scrapes[:mid], isBackfill); err != nil {
 			return err

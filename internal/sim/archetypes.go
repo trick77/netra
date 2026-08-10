@@ -114,7 +114,7 @@ func rpi5() *Profile {
 			"smart":     "no-device-access",
 			"processes": "namespaced",
 		},
-		Packages: packages("dpkg", "arm64", 64),
+		Packages: packages("arm64", 64),
 	}
 }
 
@@ -193,7 +193,7 @@ func nvmeVPS() *Profile {
 			"sensors": "absent",
 			"smart":   "no-device-access",
 		},
-		Packages: packages("dpkg", "amd64", 96),
+		Packages: packages("amd64", 96),
 	}
 }
 
@@ -286,7 +286,7 @@ func smartBaremetal() *Profile {
 			"processes",
 		},
 		Capabilities: map[string]string{},
-		Packages:     packages("dpkg", "amd64", 140),
+		Packages:     packages("amd64", 140),
 	}
 
 	// One package-manager container per service, plus a per-core sensor tree.
@@ -300,7 +300,6 @@ func smartBaremetal() *Profile {
 			MemBase:  uint64(340+i*37) * mib,
 		})
 	}
-	p.Containers[0].IsAgent = false
 	p.Containers = append([]ContainerSpec{{
 		Key: "netra_agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest",
 		IsAgent: true, MemLimit: 128 * mib, CPUBase: 1.5, MemBase: 44 * mib,
@@ -382,7 +381,7 @@ func minimalVPS() *Profile {
 			"smart":      "no-device-access",
 			"systemd":    "unavailable",
 		},
-		Packages: packages("apk", "x86_64", 48),
+		Packages: packages("x86_64", 48),
 	}
 }
 
@@ -419,7 +418,7 @@ var packageNames = []string{
 // from the index so a re-run produces the identical list -- the hub upserts
 // on (host_id, name, arch), and a version that changed every run would look
 // like an upgrade on every scrape.
-func packages(format, arch string, n int) []PackageSpec {
+func packages(arch string, n int) []PackageSpec {
 	if n > len(packageNames) {
 		n = len(packageNames)
 	}
@@ -432,6 +431,5 @@ func packages(format, arch string, n int) []PackageSpec {
 			Size:    uint64(48*1024 + i*7919),
 		})
 	}
-	_ = format
 	return out
 }

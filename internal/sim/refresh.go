@@ -65,10 +65,12 @@ func (r *Refresher) Close() {
 
 // Refresh materialises every aggregate over [from,to).
 //
-// A refresh cannot run inside a transaction, and it cannot overlap the window
-// a scheduled policy is working on -- so the range is clamped to end before
-// the 5m policy's end_offset, and a conflict with a running job is reported
-// rather than retried silently.
+// A refresh cannot run inside a transaction. The range is NOT clamped away
+// from the window the scheduled policies work on: the last backfill segment
+// runs right up to now, straight through the 5m policy's [now-6h, now-10m].
+// The two can collide, and a collision is reported rather than retried
+// silently -- re-running the simulator is idempotent, so the cheap answer to
+// a losing race is to run it again.
 func (r *Refresher) Refresh(ctx context.Context, from, to time.Time) error {
 	for _, pair := range aggregatePairs {
 		for _, view := range pair {

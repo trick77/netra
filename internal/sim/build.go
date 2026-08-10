@@ -261,7 +261,7 @@ func (g *Generator) netstat(h *netrav1.HostSample, ts time.Time, cpu float64) {
 	h.TcpPassiveOpensPerS = proto.Float64(round2(g.sig.daily("tcp.passive", ts, 31, 0.7, 0.3) * busy))
 	h.TcpAttemptFailsPerS = proto.Float64(round2(g.sig.daily("tcp.fail", ts, 0.7, 1.1, 0.9) * busy))
 	h.TcpCurrEstab = proto.Uint32(uint32(g.sig.daily("tcp.estab", ts, 180, 0.6, 0.15) * busy))
-	h.TcpListenOverflowsPerS = proto.Float64(round2(g.sig.spike("tcp.ovf", ts, 0, 0.01, 0) + g.sig.unit("tcp.ovf2", ts)*0.2))
+	h.TcpListenOverflowsPerS = proto.Float64(round2(g.sig.unit("tcp.ovf2", ts) * 0.2))
 	h.TcpListenDropsPerS = proto.Float64(round2(g.sig.unit("tcp.drops", ts) * 0.3))
 	h.UdpInErrorsPerS = proto.Float64(round2(g.sig.daily("udp.inerr", ts, 0.5, 1.0, 0.8)))
 	h.UdpRcvbufErrorsPerS = proto.Float64(round2(g.sig.daily("udp.rcv", ts, 0.2, 1.0, 1.0)))

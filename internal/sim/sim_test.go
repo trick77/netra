@@ -2,12 +2,17 @@ package sim
 
 import (
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"google.golang.org/protobuf/proto"
+
+	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
 // window used by every test here, so a failure is reproducible without
@@ -417,6 +422,72 @@ func TestTheSimulatorRefusesToTouchAHostItDidNotCreate(t *testing.T) {
 	}
 	if _, _, err := hub.EnsureHost(t.Context(), "prod-db-01", nil); err == nil {
 		t.Error("EnsureHost accepted a host the simulator does not manage")
+	}
+}
+
+// A batch too large for the hub is split in half and re-posted -- which
+// throws away the request that was already built. Everything that build
+// consumed has to be given back, or the metadata block goes out with a
+// request that is never sent and the hub never learns the host's arch,
+// kernel or capabilities.
+func TestSplittingAnOversizedBatchStillDeliversTheMetadata(t *testing.T) {
+	var posts, withMetadata int
+	var seqs []uint64
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req netrav1.IngestRequest
+		if err := proto.Unmarshal(raw, &req); err != nil {
+			t.Errorf("hub got an unparseable body: %v", err)
+		}
+		if len(raw) > maxBodyBytes {
+			t.Errorf("a POST of %d bytes exceeds the hub's %d cap", len(raw), maxBodyBytes)
+		}
+		posts++
+		seqs = append(seqs, req.GetSeq())
+		if req.GetMetadata() != nil {
+			withMetadata++
+		}
+		out, _ := proto.Marshal(&netrav1.IngestResponse{AckSeq: req.GetSeq()})
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		_, _ = w.Write(out)
+	}))
+	defer srv.Close()
+
+	p := Fleet()[2]
+	g := NewGenerator(p, 1, testFrom, testTo)
+	meta := p.Metadata("sim", "sim", "simulated")
+	h := &host{profile: p, gen: g, meta: meta, metaHash: HashMetadata(meta), sendMeta: true}
+
+	// Enough scrapes to push the marshalled request past the split threshold.
+	opt := Options{Smart: true, Processes: true, Collectors: true, Inventory: true}
+	for ts := testTo.Add(-2000 * time.Minute); ts.Before(testTo); ts = ts.Add(time.Minute) {
+		h.append(g.Scrape(ts, opt))
+	}
+	if proto.Size(h.request(h.pending, true)) <= maxBodyBytes-bodyHeadroom {
+		t.Fatal("the test batch is not large enough to trigger a split")
+	}
+	// request() above consumed the one-shot metadata; restore it so the flush
+	// under test starts from the same state a real run would.
+	h.sendMeta = true
+	h.seq = 0
+
+	if err := h.flush(t.Context(), NewHub(srv.URL, "admin"), true); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+
+	if posts < 2 {
+		t.Fatalf("the batch was posted in %d request(s); the split never happened", posts)
+	}
+	if withMetadata != 1 {
+		t.Errorf("%d of %d posts carried the metadata block, want exactly 1", withMetadata, posts)
+	}
+	// Sequence numbers must stay dense: the hub acks by echoing them, and a
+	// gap left by a rolled-back build would ack a batch that was never sent.
+	for i, seq := range seqs {
+		if seq != uint64(i+1) {
+			t.Errorf("post %d used seq %d, want %d", i, seq, i+1)
+		}
 	}
 }
 
