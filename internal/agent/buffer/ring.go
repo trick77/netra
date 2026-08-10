@@ -67,7 +67,25 @@ func (r *Ring) Add(seq uint64, s *Scrape) {
 	defer r.mu.Unlock()
 
 	if len(r.entries) == r.capacity {
-		r.entries = r.entries[1:]
+		// Shifted down and the vacated tail slot cleared, rather than
+		// r.entries = r.entries[1:].
+		//
+		// Resliding the start pointer forward left the dropped Entry -- and
+		// through it the whole *Scrape, a host row plus every per-entity row
+		// measured with it -- in a backing-array slot the garbage collector
+		// could still reach, so a ring that had been dropping for an hour held
+		// on to every scrape it reported as dropped. It also walked the start
+		// pointer up the array until append had to reallocate, which then
+		// copied the live window into a fresh block and abandoned the old one.
+		//
+		// Shifting keeps the slice anchored at the array's start for the life
+		// of the ring: nothing is retained past its window, and the array is
+		// allocated exactly once. The memmove is over at most capacity entries
+		// of two words each -- 360 slots at the 6h maximum -- which is nothing
+		// against the scrape that produced the entry.
+		copy(r.entries, r.entries[1:])
+		r.entries[len(r.entries)-1] = Entry{}
+		r.entries = r.entries[:len(r.entries)-1]
 		r.dropped++
 	}
 	r.entries = append(r.entries, Entry{Seq: seq, Scrape: s})
@@ -94,6 +112,14 @@ func (r *Ring) AckThrough(seq uint64) {
 		if e.Seq > seq {
 			keep = append(keep, e)
 		}
+	}
+	// The filter compacts in place, so the tail beyond len(keep) still holds
+	// pointers to the acknowledged scrapes. Left there they stay reachable for
+	// as long as the ring lives: a host that drained a full buffer after an
+	// outage would report Depth() == 0 while still holding every scrape it had
+	// buffered. Zeroing the vacated slots is what actually releases them.
+	for i := len(keep); i < len(r.entries); i++ {
+		r.entries[i] = Entry{}
 	}
 	r.entries = keep
 }

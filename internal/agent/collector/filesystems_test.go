@@ -227,3 +227,33 @@ func TestFilesystemsDoesNotCountTheRootReserveAsUsed(t *testing.T) {
 		t.Error("used + free = total, so one of them absorbed the root reserve")
 	}
 }
+
+// A filesystem reporting more free inodes than it has -- which a dynamic or
+// synthetic inode count permits -- must leave inodes_used unset rather than
+// wrap the unsigned subtraction into a number near 2^64 and store it as though
+// it had been measured. Unset means "could not compute"; the wrapped value
+// would mean "this filesystem has eighteen quintillion inodes in use".
+func TestInodesUsedUnsetWhenFreeExceedsTotal(t *testing.T) {
+	// Given: a mount whose statfs reports InodesFree above InodesTotal.
+	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+		"/": {Total: 1000, Free: 400, Used: 600, InodesTotal: 100, InodesFree: 250, DeviceID: 1},
+	}))
+
+	// When: it is collected.
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	// Then: the row is still reported, but inodes_used is absent.
+	root := fsRow(t, res.Filesystems, "/")
+	if root.InodesUsed != nil {
+		t.Errorf("inodes_used = %d, want unset when free exceeds total", root.GetInodesUsed())
+	}
+	if got := root.GetInodesTotal(); got != 100 {
+		t.Errorf("inodes_total = %d, want 100 -- the reading itself is still a fact", got)
+	}
+	if got := root.GetUsed(); got != 600 {
+		t.Errorf("used = %d, want 600 -- one unusable field must not cost the rest of the row", got)
+	}
+}

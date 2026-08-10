@@ -2,12 +2,19 @@ package collector_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
+
+// pageSize mirrors the collector's own unit for /proc/PID/stat's rss field.
+// Derived from the running kernel rather than written as 4096, so the
+// expectations below hold on a 16K or 64K page arm64 host too -- which is the
+// bug these assertions used to hide.
+var pageSize = uint64(os.Getpagesize())
 
 func procsAt(t *testing.T, c *collector.Processes, at time.Time) *collector.Result {
 	t.Helper()
@@ -54,8 +61,8 @@ func TestProcessesComputesCPUAndMemoryPerName(t *testing.T) {
 	if got := pg.GetCpuPct(); got != 100 {
 		t.Errorf("postgres cpu_pct = %v, want 100", got)
 	}
-	if got := pg.GetMemBytes(); got != 1200*4096 {
-		t.Errorf("postgres mem_bytes = %d, want %d", got, 1200*4096)
+	if got := pg.GetMemBytes(); got != 1200*pageSize {
+		t.Errorf("postgres mem_bytes = %d, want %d", got, 1200*pageSize)
 	}
 	if got := pg.GetCount(); got != 1 {
 		t.Errorf("postgres count = %d, want 1", got)
@@ -193,8 +200,8 @@ func TestProcessesCountsMemoryOfProcessesWithNoBaseline(t *testing.T) {
 	res := procsAt(t, testee, base.Add(10*time.Second))
 
 	pg := procRow(t, res.Processes, "postgres")
-	if got := pg.GetMemBytes(); got != 1200*4096 {
-		t.Errorf("postgres mem_bytes = %d, want %d -- a new process still occupies memory", got, 1200*4096)
+	if got := pg.GetMemBytes(); got != 1200*pageSize {
+		t.Errorf("postgres mem_bytes = %d, want %d -- a new process still occupies memory", got, 1200*pageSize)
 	}
 	if got := pg.GetCount(); got != 1 {
 		t.Errorf("postgres count = %d, want 1 -- a new process is still a process", got)
@@ -231,8 +238,8 @@ func TestProcessesRanksANewProcessByMemoryDespiteUnsetCPU(t *testing.T) {
 	res := procsAt(t, testee, base.Add(10*time.Second))
 
 	hog := procRow(t, res.Processes, "newhog")
-	if got := hog.GetMemBytes(); got != 100000*4096 {
-		t.Errorf("newhog mem_bytes = %d, want %d", got, 100000*4096)
+	if got := hog.GetMemBytes(); got != 100000*pageSize {
+		t.Errorf("newhog mem_bytes = %d, want %d", got, 100000*pageSize)
 	}
 	if hog.CpuPct != nil {
 		t.Errorf("newhog cpu_pct = %v with no baseline; want unset", hog.GetCpuPct())

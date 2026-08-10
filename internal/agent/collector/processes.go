@@ -19,7 +19,13 @@ import (
 const userHZ = 100.0
 
 // pageSize is the unit /proc/PID/stat field 24 (rss) counts in.
-const pageSize = 4096
+//
+// Read from the kernel rather than hardcoded to 4096. arm64 is configurable at
+// build time and RHEL and CentOS ship 64K pages there by default, so a literal
+// under-reported every process's memory by up to sixteen times on hosts the
+// agent is meant to support. os.Getpagesize is the running kernel's answer and
+// costs one call.
+var pageSize = uint64(os.Getpagesize())
 
 // topN is how many processes are reported per dimension. The union of
 // top-N-by-CPU and top-N-by-memory, so a process that is heavy in either shows

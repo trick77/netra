@@ -418,6 +418,15 @@ func TestFlushTreatsZeroAckSeqAsFailure(t *testing.T) {
 	if c.BufferDepth() != 1 {
 		t.Fatalf("BufferDepth() = %d, want 1 — a zero ack must not drain the buffer", c.BufferDepth())
 	}
+
+	// And it counts. A hub bug or a proxy returning an empty 200 is "the agent
+	// could not deliver", exactly like a network error or a 401, so it belongs
+	// in the same number. Without this the agent buffers and backs off while
+	// post_failures_total sits at zero — the one metric that would show the
+	// outage insisting nothing is wrong.
+	if got := c.ScrapeOnce(ctx).GetAgent().GetPostFailuresTotal(); got != 1 {
+		t.Errorf("post_failures_total = %d, want 1 after a zero ack_seq", got)
+	}
 }
 
 // Run must scrape and flush on every tick, and stop promptly once its context

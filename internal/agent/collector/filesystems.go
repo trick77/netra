@@ -121,7 +121,7 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 		}
 		seen[st.DeviceID] = m.mountpoint
 
-		rows = append(rows, &netrav1.FilesystemSample{
+		row := &netrav1.FilesystemSample{
 			TsMs:       ts,
 			Label:      m.mountpoint,
 			Mountpoint: m.mountpoint,
@@ -132,12 +132,22 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 			Used:        ptrTo(st.Used),
 			Free:        ptrTo(st.Free),
 			InodesTotal: ptrTo(st.InodesTotal),
-			InodesUsed:  ptrTo(st.InodesTotal - st.InodesFree),
 			// read_bytes and write_bytes are deliberately left unset. Per
 			// filesystem I/O needs the st_dev -> block device mapping, which
 			// is not available here; NULL says "could not attribute I/O to
 			// this filesystem", which is a different fact from "did no I/O".
-		})
+		}
+
+		// Guarded, like every other subtraction in this package. A filesystem
+		// reporting a dynamic or synthetic inode count can return f_ffree above
+		// f_files, and the unsigned wrap would store a number near 2^64 as
+		// though it had been measured. Unset says "could not compute", which is
+		// the honest answer.
+		if st.InodesTotal >= st.InodesFree {
+			row.InodesUsed = ptrTo(st.InodesTotal - st.InodesFree)
+		}
+
+		rows = append(rows, row)
 	}
 
 	// Deterministic order so failures read the same way twice.

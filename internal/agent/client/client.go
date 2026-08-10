@@ -356,10 +356,17 @@ func (c *Client) refreshCapabilities() {
 			merged[k] = v
 		}
 	}
-	if len(merged) == 0 {
-		return
-	}
-
+	// No early return on an empty merged set. Skipping the comparison when
+	// nothing is reported means the LAST capability can never be cleared: the
+	// metadata keeps its stale entry, the hash never moves, and the hub is
+	// never told the subsystem recovered. maps.Equal already handles the
+	// genuine no-op -- two empty maps are equal -- so the guard only ever cost
+	// correctness.
+	//
+	// It is unreachable in today's wiring, because Procs and Users store a
+	// capability unconditionally on every Collect and both are always
+	// registered. That is precisely why it had to go: it was a trap armed to
+	// fire the moment either of them is removed or made conditional.
 	if maps.Equal(merged, c.metadata.GetCapabilities()) {
 		return
 	}
@@ -504,6 +511,13 @@ func (c *Client) Flush(ctx context.Context) error {
 	if resp.GetAckSeq() == 0 {
 		slog.Warn("hub returned a zero ack_seq; treating flush as failed",
 			"buffer_depth", c.ring.Depth())
+		// Counted for the same reason the transport-error path counts: this is
+		// "the agent could not deliver", which is the question the number
+		// answers. Leaving it out meant a hub bug or a proxy returning an empty
+		// 200 produced an agent that buffered and backed off while reporting
+		// post_failures_total = 0 throughout -- the one metric that would have
+		// shown the outage insisting nothing was wrong.
+		c.postFailures++
 		c.replaying = true
 		// This failure carried no retry_after of its own, so any value left
 		// over from an earlier 503 must be cleared here too — the same rule
