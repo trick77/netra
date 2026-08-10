@@ -24,7 +24,7 @@ func sensorRow(t *testing.T, rows []*netrav1.SensorSample, chip, label string) *
 
 // Temperatures are millidegrees in sysfs and degrees in the schema.
 func TestSensorsReadsEveryLabelledInput(t *testing.T) {
-	testee := collector.NewSensors("testdata/hwmon/sys", time.Minute, time.Second)
+	testee := collector.NewSensors("testdata/hwmon/sys", time.Second)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -58,7 +58,7 @@ func TestSensorsReadsEveryLabelledInput(t *testing.T) {
 // The two fixture trees hold the same two chips with their hwmon numbers
 // swapped. Every identity must survive.
 func TestSensorsIdentityIsChipAndLabelNotHwmonNumber(t *testing.T) {
-	before := collector.NewSensors("testdata/hwmon/sys", time.Minute, time.Second)
+	before := collector.NewSensors("testdata/hwmon/sys", time.Second)
 	res, err := before.Collect(context.Background())
 	if err != nil {
 		t.Fatalf("Collect before: %v", err)
@@ -68,7 +68,7 @@ func TestSensorsIdentityIsChipAndLabelNotHwmonNumber(t *testing.T) {
 	}
 
 	// Same hardware, renumbered directories -- nvme is now hwmon0.
-	after := collector.NewSensors("testdata/hwmon-renumbered/sys", time.Minute, time.Second)
+	after := collector.NewSensors("testdata/hwmon-renumbered/sys", time.Second)
 	res, err = after.Collect(context.Background())
 	if err != nil {
 		t.Fatalf("Collect after: %v", err)
@@ -110,7 +110,7 @@ func TestSensorsSkipsUnlabelledInputs(t *testing.T) {
 	write("temp2_label", "Ambient\n") // labelled
 	write("temp2_input", "25000\n")
 
-	testee := collector.NewSensors(root, time.Minute, time.Second)
+	testee := collector.NewSensors(root, time.Second)
 	res, err := testee.Collect(context.Background())
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -136,7 +136,7 @@ func TestSensorsSkipsChipsWithoutAName(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	testee := collector.NewSensors(root, time.Minute, time.Second)
+	testee := collector.NewSensors(root, time.Second)
 	res, err := testee.Collect(context.Background())
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -150,7 +150,7 @@ func TestSensorsSkipsChipsWithoutAName(t *testing.T) {
 // not a failure -- most VPSes have none, and an error every 60s would be noise
 // the operator learns to ignore.
 func TestSensorsReportsNothingWhenHwmonIsAbsent(t *testing.T) {
-	testee := collector.NewSensors(t.TempDir(), time.Minute, time.Second)
+	testee := collector.NewSensors(t.TempDir(), time.Second)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -165,7 +165,7 @@ func TestSensorsReportsNothingWhenHwmonIsAbsent(t *testing.T) {
 // ambiguous absence: the hub cannot otherwise tell a host with no hwmon from
 // one whose collector never ran.
 func TestSensorsReportsItsAvailabilityAsACapability(t *testing.T) {
-	absent := collector.NewSensors(t.TempDir(), time.Minute, time.Second)
+	absent := collector.NewSensors(t.TempDir(), time.Second)
 	if _, err := absent.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestSensorsReportsItsAvailabilityAsACapability(t *testing.T) {
 		t.Errorf("capabilities = %v, want sensors=absent", caps)
 	}
 
-	present := collector.NewSensors("testdata/hwmon/sys", time.Minute, time.Second)
+	present := collector.NewSensors("testdata/hwmon/sys", time.Second)
 	if _, err := present.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}

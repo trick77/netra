@@ -36,7 +36,7 @@ func netRow(t *testing.T, rows []*netrav1.NetSample, iface string) *netrav1.NetS
 // by coincidence.
 func TestNetworkComputesRatesPerInterface(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewNetwork("testdata/netdev/first", time.Minute)
+	testee := collector.NewNetwork("testdata/netdev/first")
 
 	res := netAt(t, testee, base)
 	if len(res.Nets) != 0 {
@@ -75,7 +75,7 @@ func TestNetworkComputesRatesPerInterface(t *testing.T) {
 // same for the default bridge.
 func TestNetworkExcludesLoopbackAndContainerInterfaces(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewNetwork("testdata/netdev/first", time.Minute)
+	testee := collector.NewNetwork("testdata/netdev/first")
 	netAt(t, testee, base)
 
 	testee.SetProcRootForTest("testdata/netdev/second")
@@ -97,7 +97,7 @@ func TestNetworkExcludesLoopbackAndContainerInterfaces(t *testing.T) {
 // A reboot resets the counters. No row rather than a negative rate or a spike.
 func TestNetworkEmitsNoRowAfterACounterReset(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewNetwork("testdata/netdev/second", time.Minute)
+	testee := collector.NewNetwork("testdata/netdev/second")
 	netAt(t, testee, base)
 
 	testee.SetProcRootForTest("testdata/netdev/first")
@@ -110,7 +110,7 @@ func TestNetworkEmitsNoRowAfterACounterReset(t *testing.T) {
 
 // An unreadable /proc/net/dev is an error, not an empty result.
 func TestNetworkReportsAnUnreadableNetDev(t *testing.T) {
-	testee := collector.NewNetwork(t.TempDir(), time.Minute)
+	testee := collector.NewNetwork(t.TempDir())
 
 	res, err := testee.Collect(context.Background())
 	if err == nil {

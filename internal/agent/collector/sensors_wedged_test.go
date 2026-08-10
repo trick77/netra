@@ -62,7 +62,7 @@ func wedgedHwmon(t *testing.T) string {
 // attempts instead of 20.
 func TestSensorsBacksOffAWedgedPathInsteadOfRereadingIt(t *testing.T) {
 	root := wedgedHwmon(t)
-	testee := collector.NewSensors(root, time.Minute, 50*time.Millisecond)
+	testee := collector.NewSensors(root, 50*time.Millisecond)
 
 	const scrapes = 20
 	attempts := 0
@@ -109,7 +109,7 @@ func TestSensorsBacksOffAWedgedPathInsteadOfRereadingIt(t *testing.T) {
 // and reporting a hardware fault that way would hide it.
 func TestSensorsReportsDegradedWhenAPathIsWedged(t *testing.T) {
 	root := wedgedHwmon(t)
-	testee := collector.NewSensors(root, time.Minute, 50*time.Millisecond)
+	testee := collector.NewSensors(root, 50*time.Millisecond)
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -148,7 +148,7 @@ func TestSensorsRecoversAfterATransientTimeout(t *testing.T) {
 		t.Skipf("mkfifo unavailable: %v", err)
 	}
 
-	testee := collector.NewSensors(root, time.Minute, 50*time.Millisecond)
+	testee := collector.NewSensors(root, 50*time.Millisecond)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -208,9 +208,9 @@ func TestBaselineCollectorsDeclareThemselves(t *testing.T) {
 		name string
 		col  any
 	}{
-		{"systemd", collector.NewSystemd(time.Minute, nil)},
-		{"mdraid", collector.NewMdraid("/sys", time.Minute)},
-		{"packages", collector.NewPackages("/var/lib/dpkg/status", "/lib/apk/db/installed", time.Minute)},
+		{"systemd", collector.NewSystemd(nil)},
+		{"mdraid", collector.NewMdraid("/sys")},
+		{"packages", collector.NewPackages("/var/lib/dpkg/status", "/lib/apk/db/installed")},
 		{"smart", collector.NewSmart(time.Hour, nil)},
 	} {
 		b, ok := c.col.(collector.BaselineEmitter)
@@ -245,7 +245,7 @@ func TestSensorsClearsTheBackoffWhenAWedgedPathDisappears(t *testing.T) {
 		t.Skipf("mkfifo unavailable: %v", err)
 	}
 
-	testee := collector.NewSensors(root, time.Minute, 50*time.Millisecond)
+	testee := collector.NewSensors(root, 50*time.Millisecond)
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("first Collect: %v", err)

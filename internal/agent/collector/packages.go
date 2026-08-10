@@ -23,7 +23,6 @@ import (
 type Packages struct {
 	dpkgPath string
 	apkPath  string
-	interval time.Duration
 
 	now func() time.Time
 
@@ -47,8 +46,8 @@ const dailyFloor = 24 * time.Hour
 // NewPackages builds a Packages collector. dpkgPath and apkPath are the
 // database files (normally /var/lib/dpkg/status and /lib/apk/db/installed);
 // whichever exists decides the format.
-func NewPackages(dpkgPath, apkPath string, interval time.Duration) *Packages {
-	return &Packages{dpkgPath: dpkgPath, apkPath: apkPath, interval: interval, now: time.Now}
+func NewPackages(dpkgPath, apkPath string) *Packages {
+	return &Packages{dpkgPath: dpkgPath, apkPath: apkPath, now: time.Now}
 }
 
 // EmitsBaseline implements BaselineEmitter, keeping this collector out of the
@@ -66,9 +65,6 @@ func (p *Packages) EmitsBaseline() bool { return true }
 
 // Name implements Collector.
 func (p *Packages) Name() string { return "packages" }
-
-// Interval implements Collector.
-func (p *Packages) Interval() time.Duration { return p.interval }
 
 // SetClockForTest replaces the clock used for the daily floor.
 func (p *Packages) SetClockForTest(fn func() time.Time) { p.now = fn }

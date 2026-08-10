@@ -27,21 +27,17 @@ import (
 // scrape after start produces nothing.
 type PerCoreCPU struct {
 	procRoot string
-	interval time.Duration
 	prev     map[uint32]cpuTimes
 }
 
 // NewPerCoreCPU builds a per-core CPU collector reading from procRoot
 // (normally "/proc").
-func NewPerCoreCPU(procRoot string, interval time.Duration) *PerCoreCPU {
-	return &PerCoreCPU{procRoot: procRoot, interval: interval}
+func NewPerCoreCPU(procRoot string) *PerCoreCPU {
+	return &PerCoreCPU{procRoot: procRoot}
 }
 
 // Name implements Collector.
 func (p *PerCoreCPU) Name() string { return "percpu" }
-
-// Interval implements Collector.
-func (p *PerCoreCPU) Interval() time.Duration { return p.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree so a
 // test can simulate the passage of time between two scrapes.
@@ -118,7 +114,7 @@ func (p *PerCoreCPU) read() (map[uint32]cpuTimes, error) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) < 8 || !strings.HasPrefix(fields[0], "cpu") {
+		if len(fields) == 0 || !strings.HasPrefix(fields[0], "cpu") {
 			continue
 		}
 		// "cpu" alone is the aggregate; only "cpuN" is a core.
@@ -133,23 +129,11 @@ func (p *PerCoreCPU) read() (map[uint32]cpuTimes, error) {
 			continue
 		}
 
-		values := make([]uint64, 0, 10)
-		for _, raw := range fields[1:] {
-			v, err := strconv.ParseUint(raw, 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("parse %s %s: %w", path, fields[0], err)
-			}
-			values = append(values, v)
+		times, err := parseCPUTimes(fields[1:])
+		if err != nil {
+			return nil, fmt.Errorf("parse %s %s: %w", path, fields[0], err)
 		}
-		for len(values) < 10 {
-			values = append(values, 0)
-		}
-
-		out[uint32(id)] = cpuTimes{
-			user: values[0], nice: values[1], system: values[2], idle: values[3],
-			iowait: values[4], irq: values[5], softirq: values[6], steal: values[7],
-			guest: values[8], guestNice: values[9],
-		}
+		out[uint32(id)] = times
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)

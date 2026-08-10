@@ -21,8 +21,7 @@ type capabilityCollector struct {
 	value string
 }
 
-func (capabilityCollector) Name() string            { return "capability" }
-func (capabilityCollector) Interval() time.Duration { return time.Minute }
+func (capabilityCollector) Name() string { return "capability" }
 func (capabilityCollector) Collect(context.Context) (*collector.Result, error) {
 	return &collector.Result{}, nil
 }
@@ -175,7 +174,7 @@ func TestCapabilityChangeFlipsMetadataHashAndRequestsResend(t *testing.T) {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	c := client.New(cfg, []collector.Collector{
-		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewLoad(cfg.ProcRoot),
 		cap,
 	})
 	ctx := context.Background()

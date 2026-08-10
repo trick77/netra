@@ -17,8 +17,7 @@ import (
 // the real Addresses collector does when an address is removed.
 type inventoryCollector struct{ sets [][]string }
 
-func (*inventoryCollector) Name() string            { return "inventory" }
-func (*inventoryCollector) Interval() time.Duration { return time.Minute }
+func (*inventoryCollector) Name() string { return "inventory" }
 
 func (c *inventoryCollector) Collect(context.Context) (*collector.Result, error) {
 	if len(c.sets) == 0 {
@@ -81,8 +80,7 @@ func TestFlushSendsTheNewestInventorySetNotTheUnion(t *testing.T) {
 // slipping must not take the whole agent down with a nil dereference.
 type nilResultCollector struct{}
 
-func (nilResultCollector) Name() string            { return "nilresult" }
-func (nilResultCollector) Interval() time.Duration { return time.Minute }
+func (nilResultCollector) Name() string { return "nilresult" }
 func (nilResultCollector) Collect(context.Context) (*collector.Result, error) {
 	return nil, nil //nolint:nilnil // deliberately the contract violation under test
 }
@@ -98,7 +96,7 @@ func TestScrapeSurvivesACollectorReturningNoResultAndNoError(t *testing.T) {
 	c := client.NewWithInterval(cfg,
 		[]collector.Collector{
 			nilResultCollector{},
-			collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
+			collector.NewMemory(cfg.ProcRoot),
 		},
 		time.Millisecond)
 
@@ -120,8 +118,7 @@ type rearmCollector struct {
 	resends  int
 }
 
-func (*rearmCollector) Name() string            { return "rearm" }
-func (*rearmCollector) Interval() time.Duration { return time.Minute }
+func (*rearmCollector) Name() string { return "rearm" }
 
 func (c *rearmCollector) Collect(context.Context) (*collector.Result, error) {
 	if c.reported {

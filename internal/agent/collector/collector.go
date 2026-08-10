@@ -2,12 +2,18 @@
 //
 // Every collector is independent: one that cannot run reports why and is
 // skipped, and the agent keeps posting everything else.
+//
+// There is ONE cadence. The scrape loop runs every collector on every tick, at
+// the fixed config.ScrapeInterval, and a collector that needs to run less often
+// gates ITSELF -- Smart against its own interval, so smartctl does not spin up
+// sleeping drives once a minute, and Packages against the database's mtime with
+// a daily floor. The interface carried an Interval() method for a while that
+// nothing ever read; it described a schedule that did not exist, which is worse
+// than no schedule at all. Self-gating is only safe for a collector that writes
+// its own table and leaves no host_samples column NULL by skipping.
 package collector
 
-import (
-	"context"
-	"time"
-)
+import "context"
 
 // Collector fills in the fields of a HostSample it is responsible for.
 //
@@ -17,10 +23,6 @@ import (
 type Collector interface {
 	// Name identifies the collector in logs and in collector_samples.
 	Name() string
-
-	// Interval is how often this collector should run. Slow collectors use a
-	// longer interval than the scrape loop so they never stall it.
-	Interval() time.Duration
 
 	// Collect reads the current values and returns them.
 	//

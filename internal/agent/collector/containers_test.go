@@ -44,7 +44,7 @@ func containerRow(t *testing.T, rows []*netrav1.ContainerSample, key string) *ne
 // files.
 func TestContainersSubtractsPageCacheFromMemory(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", time.Minute,
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
 		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", Project: "proj", Service: "web"}))
 
 	containersAt(t, testee, base)
@@ -66,7 +66,7 @@ func TestContainersSubtractsPageCacheFromMemory(t *testing.T) {
 // 50% of one core.
 func TestContainersComputesCPUFromUsageMicroseconds(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", time.Minute,
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
 		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
 
 	res := containersAt(t, testee, base)
@@ -100,7 +100,7 @@ func TestContainersComputesCPUFromUsageMicroseconds(t *testing.T) {
 // goes blank and the old series is orphaned.
 func TestContainersIdentityIsComposeProjectAndService(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", time.Minute,
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
 		fakeLister(collector.ContainerMeta{
 			ID: "abc123", Name: "proj-web-1", Image: "nginx:1", Project: "proj", Service: "web",
 		}))
@@ -125,7 +125,7 @@ func TestContainersIdentityIsComposeProjectAndService(t *testing.T) {
 // across restarts of the same container, which the id is not.
 func TestContainersFallsBackToTheContainerName(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", time.Minute,
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
 		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "standalone"}))
 
 	containersAt(t, testee, base)
@@ -140,7 +140,7 @@ func TestContainersFallsBackToTheContainerName(t *testing.T) {
 // derived from it would be fiction.
 func TestContainersLeavesMemLimitUnsetWhenUnlimited(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", time.Minute,
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
 		fakeLister(collector.ContainerMeta{ID: "def456", Name: "unlimited"}))
 
 	containersAt(t, testee, base)
@@ -166,7 +166,7 @@ func TestContainersReportsMetricsWithoutTheDockerSocket(t *testing.T) {
 	failing := func(context.Context) ([]collector.ContainerMeta, error) {
 		return nil, errors.New("dial /var/run/docker.sock: no such file")
 	}
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", time.Minute, failing)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", failing)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -186,7 +186,7 @@ func TestContainersReportsMetricsWithoutTheDockerSocket(t *testing.T) {
 // A host with no containers is the common case for a plain VPS. Absent, not
 // broken.
 func TestContainersReportsNothingWithNoContainers(t *testing.T) {
-	testee := collector.NewContainers(t.TempDir(), time.Minute, fakeLister())
+	testee := collector.NewContainers(t.TempDir(), fakeLister())
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {

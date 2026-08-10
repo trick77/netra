@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
@@ -35,7 +34,7 @@ func fsRow(t *testing.T, rows []*netrav1.FilesystemSample, label string) *netrav
 }
 
 func TestFilesystemsReportsUsagePerMount(t *testing.T) {
-	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+	testee := collector.NewFilesystems("testdata/mounts", fakeStatfs(map[string]collector.FsStat{
 		"/":            {Total: 1000, Free: 400, Used: 600, InodesTotal: 100, InodesFree: 60, DeviceID: 1},
 		"/data":        {Total: 2000, Free: 500, Used: 1500, InodesTotal: 200, InodesFree: 50, DeviceID: 2},
 		"/run":         {Total: 500, Free: 250, Used: 250, InodesTotal: 50, InodesFree: 25, DeviceID: 3},
@@ -71,7 +70,7 @@ func TestFilesystemsReportsUsagePerMount(t *testing.T) {
 // an st_dev. Counting both would overstate the host's disk usage by the size
 // of the bind mount -- and a container host has many.
 func TestFilesystemsDedupesBindMountsByDeviceID(t *testing.T) {
-	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+	testee := collector.NewFilesystems("testdata/mounts", fakeStatfs(map[string]collector.FsStat{
 		"/":               {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
 		"/var/lib/docker": {Total: 1000, Free: 400, Used: 600, DeviceID: 1}, // same device
 		"/data":           {Total: 2000, Free: 500, Used: 1500, DeviceID: 2},
@@ -98,7 +97,7 @@ func TestFilesystemsDedupesBindMountsByDeviceID(t *testing.T) {
 // meaningless. tmpfs is deliberately NOT excluded: a full tmpfs really does
 // break things.
 func TestFilesystemsExcludesPseudoFilesystemsButKeepsTmpfs(t *testing.T) {
-	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+	testee := collector.NewFilesystems("testdata/mounts", fakeStatfs(map[string]collector.FsStat{
 		"/":    {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
 		"/run": {Total: 500, Free: 250, Used: 250, DeviceID: 3},
 	}))
@@ -124,7 +123,7 @@ func TestFilesystemsExcludesPseudoFilesystemsButKeepsTmpfs(t *testing.T) {
 // attribute I/O to this filesystem" is a different fact from "did no I/O", and
 // a rollup averaging zeros in would understate every host.
 func TestFilesystemsLeavesIOUnsetRatherThanZero(t *testing.T) {
-	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+	testee := collector.NewFilesystems("testdata/mounts", fakeStatfs(map[string]collector.FsStat{
 		"/": {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
 	}))
 
@@ -145,7 +144,7 @@ func TestFilesystemsLeavesIOUnsetRatherThanZero(t *testing.T) {
 // that vanished between reading the table and the call -- must not cost the
 // other filesystems their reading.
 func TestFilesystemsSkipsAnUnstatableMount(t *testing.T) {
-	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+	testee := collector.NewFilesystems("testdata/mounts", fakeStatfs(map[string]collector.FsStat{
 		"/": {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
 		// /broken deliberately absent from the table: statfs will error.
 	}))
@@ -166,7 +165,7 @@ func TestFilesystemsSkipsAnUnstatableMount(t *testing.T) {
 // arrives as "/mnt/my\040disk", and passing that to statfs unescaped would
 // fail on every such mount.
 func TestFilesystemsUnescapesMountpoints(t *testing.T) {
-	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+	testee := collector.NewFilesystems("testdata/mounts", fakeStatfs(map[string]collector.FsStat{
 		"/mnt/my disk": {Total: 300, Free: 100, Used: 200, DeviceID: 4},
 	}))
 
@@ -184,7 +183,7 @@ func TestFilesystemsUnescapesMountpoints(t *testing.T) {
 
 // An unreadable /proc/mounts is an error, not an empty result.
 func TestFilesystemsReportsAnUnreadableMountTable(t *testing.T) {
-	testee := collector.NewFilesystems(t.TempDir(), time.Minute, fakeStatfs(nil))
+	testee := collector.NewFilesystems(t.TempDir(), fakeStatfs(nil))
 
 	res, err := testee.Collect(context.Background())
 	if err == nil {
@@ -207,7 +206,7 @@ func TestFilesystemsReportsAnUnreadableMountTable(t *testing.T) {
 // 1000 total, 50 reserved: 400 available to anyone, 450 not holding data, so
 // used is 550 and free is 400. Their sum is 950, and that is correct.
 func TestFilesystemsDoesNotCountTheRootReserveAsUsed(t *testing.T) {
-	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+	testee := collector.NewFilesystems("testdata/mounts", fakeStatfs(map[string]collector.FsStat{
 		"/": {Total: 1000, Free: 400, Used: 550, DeviceID: 1},
 	}))
 
@@ -235,7 +234,7 @@ func TestFilesystemsDoesNotCountTheRootReserveAsUsed(t *testing.T) {
 // would mean "this filesystem has eighteen quintillion inodes in use".
 func TestInodesUsedUnsetWhenFreeExceedsTotal(t *testing.T) {
 	// Given: a mount whose statfs reports InodesFree above InodesTotal.
-	testee := collector.NewFilesystems("testdata/mounts", time.Minute, fakeStatfs(map[string]collector.FsStat{
+	testee := collector.NewFilesystems("testdata/mounts", fakeStatfs(map[string]collector.FsStat{
 		"/": {Total: 1000, Free: 400, Used: 600, InodesTotal: 100, InodesFree: 250, DeviceID: 1},
 	}))
 

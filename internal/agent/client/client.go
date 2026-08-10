@@ -177,8 +177,13 @@ func capacityFor(window, interval time.Duration) int {
 		// to get less of one. config.Load errors on the same coupling, so a
 		// quiet downgrade here would be the odd one out.
 		slog.Warn("buffer capacity clamped; the effective buffered window is shorter than NETRA_BUFFER_WINDOW",
-			"requested_slots", capacity, "max_slots", maxBufferSlots,
-			"interval", interval, "effective_window", time.Duration(maxBufferSlots)*interval)
+			// The window the operator actually asked for, alongside the slot
+			// count it worked out to. Logging only the derived slot count under
+			// the name "requested" asked them to reverse the arithmetic to find
+			// out which setting to change.
+			"requested_window", window, "would_need_slots", capacity,
+			"max_slots", maxBufferSlots, "interval", interval,
+			"effective_window", time.Duration(maxBufferSlots)*interval)
 		capacity = maxBufferSlots
 	}
 	return capacity

@@ -86,16 +86,15 @@ func SystemUnits(ctx context.Context) ([]Unit, error) {
 // dashboards -- how many services exist and how many are failed -- ride
 // host_samples, where they are cheap.
 type Systemd struct {
-	interval time.Duration
-	lister   UnitLister
+	lister UnitLister
 
 	prev        map[string]Unit
 	unavailable bool
 }
 
 // NewSystemd builds a Systemd collector.
-func NewSystemd(interval time.Duration, lister UnitLister) *Systemd {
-	return &Systemd{interval: interval, lister: lister}
+func NewSystemd(lister UnitLister) *Systemd {
+	return &Systemd{lister: lister}
 }
 
 // SetListerForTest swaps the unit source, so a test can change what systemd
@@ -110,9 +109,6 @@ func (s *Systemd) EmitsBaseline() bool { return true }
 
 // Name implements Collector.
 func (s *Systemd) Name() string { return "systemd" }
-
-// Interval implements Collector.
-func (s *Systemd) Interval() time.Duration { return s.interval }
 
 // Capabilities implements CapabilityReporter.
 func (s *Systemd) Capabilities() map[string]string {

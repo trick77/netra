@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 )
@@ -16,7 +15,7 @@ import (
 // transition is worth storing (§5.1 rule 4), which is why mdraid appears in
 // §5.2's list and in no §5.3 row.
 func TestMdraidEmitsAnEventOnFirstSighting(t *testing.T) {
-	testee := collector.NewMdraid("testdata/mdraid/clean/sys", time.Minute)
+	testee := collector.NewMdraid("testdata/mdraid/clean/sys")
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -60,7 +59,7 @@ func TestMdraidEmitsAnEventOnFirstSighting(t *testing.T) {
 // deliberately avoided, and bury the transitions that matter under weeks of
 // identical rows.
 func TestMdraidEmitsNothingWhileTheArrayIsUnchanged(t *testing.T) {
-	testee := collector.NewMdraid("testdata/mdraid/clean/sys", time.Minute)
+	testee := collector.NewMdraid("testdata/mdraid/clean/sys")
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("first Collect: %v", err)
@@ -80,7 +79,7 @@ func TestMdraidEmitsNothingWhileTheArrayIsUnchanged(t *testing.T) {
 // The transition IS the data. A degradation must produce an event the moment
 // it appears, carrying enough detail to act on without querying the host.
 func TestMdraidEmitsAnEventWhenTheArrayDegrades(t *testing.T) {
-	testee := collector.NewMdraid("testdata/mdraid/clean/sys", time.Minute)
+	testee := collector.NewMdraid("testdata/mdraid/clean/sys")
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
@@ -120,7 +119,7 @@ func TestMdraidEmitsAnEventWhenTheArrayDegrades(t *testing.T) {
 // Recovery is a transition too. An array that comes back must say so, or the
 // last thing the operator ever heard was that it broke.
 func TestMdraidEmitsAnEventWhenTheArrayRecovers(t *testing.T) {
-	testee := collector.NewMdraid("testdata/mdraid/degraded/sys", time.Minute)
+	testee := collector.NewMdraid("testdata/mdraid/degraded/sys")
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
@@ -137,7 +136,7 @@ func TestMdraidEmitsAnEventWhenTheArrayRecovers(t *testing.T) {
 
 // A host with no md arrays is the common case. Absent, not broken.
 func TestMdraidReportsNothingWithNoArrays(t *testing.T) {
-	testee := collector.NewMdraid(t.TempDir(), time.Minute)
+	testee := collector.NewMdraid(t.TempDir())
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {

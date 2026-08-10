@@ -47,7 +47,6 @@ type kernelGauges struct {
 // free of a failure mode it does not otherwise have.
 type KernelStat struct {
 	procRoot string
-	interval time.Duration
 
 	// now is a seam so tests can drive elapsed time exactly.
 	now func() time.Time
@@ -57,15 +56,12 @@ type KernelStat struct {
 }
 
 // NewKernelStat builds a KernelStat collector reading from procRoot.
-func NewKernelStat(procRoot string, interval time.Duration) *KernelStat {
-	return &KernelStat{procRoot: procRoot, interval: interval, now: time.Now}
+func NewKernelStat(procRoot string) *KernelStat {
+	return &KernelStat{procRoot: procRoot, now: time.Now}
 }
 
 // Name implements Collector.
 func (k *KernelStat) Name() string { return "kernelstat" }
-
-// Interval implements Collector.
-func (k *KernelStat) Interval() time.Duration { return k.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree so a
 // test can simulate the passage of time between two scrapes.

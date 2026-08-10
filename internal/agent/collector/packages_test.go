@@ -23,7 +23,7 @@ func pkgRow(t *testing.T, rows []*netrav1.HostPackage, name string) *netrav1.Hos
 }
 
 func TestPackagesParsesDpkgStatus(t *testing.T) {
-	testee := collector.NewPackages("testdata/packages/dpkg/status", "", time.Hour)
+	testee := collector.NewPackages("testdata/packages/dpkg/status", "")
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -50,7 +50,7 @@ func TestPackagesParsesDpkgStatus(t *testing.T) {
 // config remains. Reporting it as installed would list packages the host does
 // not have.
 func TestPackagesExcludesRemovedButConfiguredPackages(t *testing.T) {
-	testee := collector.NewPackages("testdata/packages/dpkg/status", "", time.Hour)
+	testee := collector.NewPackages("testdata/packages/dpkg/status", "")
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -66,7 +66,7 @@ func TestPackagesExcludesRemovedButConfiguredPackages(t *testing.T) {
 // A multiarch host carries the same package name for two architectures, with
 // independent versions. Keying on name alone would silently drop one.
 func TestPackagesKeepsBothArchitecturesOfOneName(t *testing.T) {
-	testee := collector.NewPackages("testdata/packages/dpkg/status", "", time.Hour)
+	testee := collector.NewPackages("testdata/packages/dpkg/status", "")
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -78,7 +78,7 @@ func TestPackagesKeepsBothArchitecturesOfOneName(t *testing.T) {
 }
 
 func TestPackagesParsesApkInstalled(t *testing.T) {
-	testee := collector.NewPackages("", "testdata/packages/apk/installed", time.Hour)
+	testee := collector.NewPackages("", "testdata/packages/apk/installed")
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -108,8 +108,7 @@ func TestPackagesParsesApkInstalled(t *testing.T) {
 func TestPackagesReportsUnsupportedFormatWhenNoDatabaseExists(t *testing.T) {
 	testee := collector.NewPackages(
 		filepath.Join(t.TempDir(), "status"),
-		filepath.Join(t.TempDir(), "installed"),
-		time.Hour)
+		filepath.Join(t.TempDir(), "installed"))
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -127,7 +126,7 @@ func TestPackagesReportsUnsupportedFormatWhenNoDatabaseExists(t *testing.T) {
 // daily floor must not be re-parsed. Re-reading a 20 MB status file every 60s
 // is pure waste.
 func TestPackagesSkipsReparsingAnUnchangedDatabase(t *testing.T) {
-	testee := collector.NewPackages("testdata/packages/dpkg/status", "", time.Hour)
+	testee := collector.NewPackages("testdata/packages/dpkg/status", "")
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee.SetClockForTest(func() time.Time { return base })
 
@@ -153,7 +152,7 @@ func TestPackagesSkipsReparsingAnUnchangedDatabase(t *testing.T) {
 // A host that installs nothing still confirms its inventory once a day, so a
 // hub that lost a row does not wait for the next apt-get to notice.
 func TestPackagesReparsesAfterTheDailyFloor(t *testing.T) {
-	testee := collector.NewPackages("testdata/packages/dpkg/status", "", time.Hour)
+	testee := collector.NewPackages("testdata/packages/dpkg/status", "")
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee.SetClockForTest(func() time.Time { return base })
 
@@ -180,7 +179,7 @@ func TestPackagesReparsesAfterTheDailyFloor(t *testing.T) {
 // back WITHOUT a burst of phantom install events derived against nothing.
 func TestResendInventoryReparsesWithoutInventingEvents(t *testing.T) {
 	// Given: a collector that has parsed and is inside its daily floor.
-	testee := collector.NewPackages("testdata/packages/dpkg/status", "", time.Hour)
+	testee := collector.NewPackages("testdata/packages/dpkg/status", "")
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee.SetClockForTest(func() time.Time { return base })
 
@@ -246,7 +245,7 @@ Architecture: amd64
 Version: 1.0
 `, base)
 
-	testee := collector.NewPackages(path, "", time.Hour)
+	testee := collector.NewPackages(path, "")
 	testee.SetClockForTest(func() time.Time { return base })
 
 	res, err := testee.Collect(context.Background())

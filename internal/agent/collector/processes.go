@@ -62,7 +62,6 @@ type procStat struct {
 type Processes struct {
 	procRoot string
 	pidHost  bool
-	interval time.Duration
 
 	now func() time.Time
 
@@ -72,15 +71,12 @@ type Processes struct {
 
 // NewProcesses builds a Processes collector. pidHost reports whether the agent
 // was given the host's PID namespace.
-func NewProcesses(procRoot string, pidHost bool, interval time.Duration) *Processes {
-	return &Processes{procRoot: procRoot, pidHost: pidHost, interval: interval, now: time.Now}
+func NewProcesses(procRoot string, pidHost bool) *Processes {
+	return &Processes{procRoot: procRoot, pidHost: pidHost, now: time.Now}
 }
 
 // Name implements Collector.
 func (p *Processes) Name() string { return "processes" }
-
-// Interval implements Collector.
-func (p *Processes) Interval() time.Duration { return p.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree.
 func (p *Processes) SetProcRootForTest(root string) { p.procRoot = root }
@@ -296,14 +292,16 @@ func (p *Processes) read() (map[procKey]procStat, error) {
 // by splitting the whole line -- a process named "(evil) (thing)" would
 // otherwise shift every subsequent field.
 func parseProcStat(line string) (procStat, uint64, bool) {
-	open := strings.IndexByte(line, '(')
-	close := strings.LastIndexByte(line, ')')
-	if open < 0 || close < 0 || close < open {
+	// Not named open/close: close shadows the builtin, which makes the next
+	// person reading this stop and check whether it was meant to.
+	lparen := strings.IndexByte(line, '(')
+	rparen := strings.LastIndexByte(line, ')')
+	if lparen < 0 || rparen < 0 || rparen < lparen {
 		return procStat{}, 0, false
 	}
 
-	name := line[open+1 : close]
-	fields := strings.Fields(line[close+1:])
+	name := line[lparen+1 : rparen]
+	fields := strings.Fields(line[rparen+1:])
 	// state(0) .. rss(21): 22 fields follow comm.
 	if len(fields) < 22 {
 		return procStat{}, 0, false

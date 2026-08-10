@@ -45,7 +45,6 @@ type diskCounters struct {
 // to zero would report the disk as idle during the busiest moment it had.
 type DiskIO struct {
 	procRoot string
-	interval time.Duration
 
 	now func() time.Time
 
@@ -54,15 +53,12 @@ type DiskIO struct {
 }
 
 // NewDiskIO builds a DiskIO collector reading from procRoot (normally "/proc").
-func NewDiskIO(procRoot string, interval time.Duration) *DiskIO {
-	return &DiskIO{procRoot: procRoot, interval: interval, now: time.Now}
+func NewDiskIO(procRoot string) *DiskIO {
+	return &DiskIO{procRoot: procRoot, now: time.Now}
 }
 
 // Name implements Collector.
 func (d *DiskIO) Name() string { return "diskio" }
-
-// Interval implements Collector.
-func (d *DiskIO) Interval() time.Duration { return d.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree.
 func (d *DiskIO) SetProcRootForTest(root string) { d.procRoot = root }
@@ -173,18 +169,33 @@ func resetSince(p, c diskCounters) bool {
 // summing the series gets twice the real number. Loop and ram devices are not
 // physical storage and would add a series per mounted snap or image.
 func reportable(name string) bool {
+	// dm-, md and zd are all VIRTUAL devices stacked on top of real ones, and
+	// every byte they move also crosses a member device that IS reported.
+	// Counting them as well doubles the host's throughput for anyone summing
+	// the series.
+	//
+	// md and zd used to be excluded by accident rather than by this rule: the
+	// trailing-digit test below, written to drop sda1 and vdb2, fired on the 0
+	// of md0 and zd0 too. That produced the right answer for the wrong reason
+	// and no reader could tell it was deliberate -- so an array's state lives
+	// in the mdraid collector's events, and its I/O in its members', by
+	// decision now rather than by coincidence.
 	switch {
 	case strings.HasPrefix(name, "loop"), strings.HasPrefix(name, "ram"),
-		strings.HasPrefix(name, "zram"), strings.HasPrefix(name, "dm-"):
+		strings.HasPrefix(name, "zram"), strings.HasPrefix(name, "dm-"),
+		strings.HasPrefix(name, "md"), strings.HasPrefix(name, "zd"):
 		return false
 	}
 
-	// nvme0n1 and mmcblk0 are whole devices whose names END in a digit;
-	// their partitions add a "p<N>" suffix (nvme0n1p1, mmcblk0p1). The
+	// nvme0n1, mmcblk0 and nbd0 are whole devices whose names END in a digit;
+	// their partitions add a "p<N>" suffix (nvme0n1p1, mmcblk0p1, nbd0p1). The
 	// trailing-digit rule below would drop the device itself, which on an SD
 	// card or eMMC host is the only disk it has -- leaving disk_io_samples
-	// empty for every Raspberry Pi and ARM board in the fleet.
-	if strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "mmcblk") {
+	// empty for every Raspberry Pi and ARM board in the fleet. nbd is real
+	// remote storage rather than a stacked layer, so unlike md and zd above it
+	// double-counts nothing and belongs in the series.
+	if strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "mmcblk") ||
+		strings.HasPrefix(name, "nbd") {
 		if i := strings.LastIndex(name, "p"); i > 0 {
 			if _, err := strconv.Atoi(name[i+1:]); err == nil {
 				return false

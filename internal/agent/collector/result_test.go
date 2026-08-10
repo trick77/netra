@@ -3,7 +3,6 @@ package collector_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -39,7 +38,7 @@ func collectInto(c collector.Collector, sample *netrav1.HostSample) error {
 // unset field means the subsystem is absent (spec 5.1 rule 3).
 func TestFailingCollectorReturnsNoPartialResult(t *testing.T) {
 	// Given: a collector pointed at a tree with no meminfo in it.
-	testee := collector.NewMemory(t.TempDir(), time.Minute)
+	testee := collector.NewMemory(t.TempDir())
 
 	// When: it collects.
 	res, err := testee.Collect(context.Background())
@@ -58,7 +57,7 @@ func TestFailingCollectorReturnsNoPartialResult(t *testing.T) {
 // rather than an error, which the agent would log as a fault every restart.
 func TestCollectorWithoutBaselineReturnsEmptyResultNotError(t *testing.T) {
 	// Given: a delta-based collector that has never run.
-	testee := collector.NewCPU("testdata/proc1", time.Minute)
+	testee := collector.NewCPU("testdata/proc1")
 
 	// When: it collects for the first time.
 	res, err := testee.Collect(context.Background())

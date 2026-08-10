@@ -82,8 +82,7 @@ func (rec *recorder) last() *netrav1.IngestRequest {
 // failingCollector always errors, simulating an unreadable sensor.
 type failingCollector struct{}
 
-func (failingCollector) Name() string            { return "failing" }
-func (failingCollector) Interval() time.Duration { return time.Minute }
+func (failingCollector) Name() string { return "failing" }
 func (failingCollector) Collect(context.Context) (*collector.Result, error) {
 	return nil, errors.New("sensor unreadable")
 }
@@ -97,8 +96,8 @@ func newClient(t *testing.T, url string) *client.Client {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	collectors := []collector.Collector{
-		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewMemory(cfg.ProcRoot),
+		collector.NewLoad(cfg.ProcRoot),
 	}
 	return client.New(cfg, collectors)
 }
@@ -246,8 +245,7 @@ func TestFlushRejectsUnauthorized(t *testing.T) {
 // 64-core host carries 65 of them per scrape.
 type wideCollector struct{ cores int }
 
-func (wideCollector) Name() string            { return "wide" }
-func (wideCollector) Interval() time.Duration { return time.Minute }
+func (wideCollector) Name() string { return "wide" }
 func (w wideCollector) Collect(context.Context) (*collector.Result, error) {
 	rows := make([]*netrav1.CpuCoreSample, 0, w.cores)
 	ts := time.Now().UnixMilli()
@@ -278,8 +276,8 @@ func newDeepBufferClient(t *testing.T, url string) *client.Client {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	collectors := []collector.Collector{
-		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewMemory(cfg.ProcRoot),
+		collector.NewLoad(cfg.ProcRoot),
 		wideCollector{cores: 64},
 	}
 	return client.NewWithInterval(cfg, collectors, time.Millisecond)
@@ -442,7 +440,7 @@ func TestRunFlushesOnEveryTickAndStopsOnCancel(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -496,7 +494,7 @@ func TestRunFlushesTheBufferOnShutdown(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -605,7 +603,7 @@ func TestRunBacksOffOnTransientFailureAndStopsOnCancel(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -643,7 +641,7 @@ func TestRunRetriesSlowlyOnUnauthorizedAndStopsOnCancel(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -694,7 +692,7 @@ func TestFlushFailsOnInvalidHubURL(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.New(cfg, collectors)
 	ctx := context.Background()
 
@@ -716,7 +714,7 @@ func TestScrapeOnceSkipsFailingCollector(t *testing.T) {
 	}
 	collectors := []collector.Collector{
 		failingCollector{},
-		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewMemory(cfg.ProcRoot),
 	}
 	c := client.New(cfg, collectors)
 
@@ -825,7 +823,7 @@ func TestRunHonoursHubRetryAfterInsteadOfOwnBackoff(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -933,7 +931,7 @@ func TestRunKeepsScrapingWhileBackingOffFlush(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 10*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1081,7 +1079,7 @@ func TestPrimeDoesNotConsumeABaselineCollectorsFirstScrape(t *testing.T) {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	// A unit that is already failed before the agent ever starts.
-	systemd := collector.NewSystemd(config.ScrapeInterval, func(context.Context) ([]collector.Unit, error) {
+	systemd := collector.NewSystemd(func(context.Context) ([]collector.Unit, error) {
 		return []collector.Unit{
 			{Name: "broken.service", Active: "failed", SubState: "failed"},
 		}, nil
@@ -1148,9 +1146,8 @@ type countingCollector struct {
 	calls    int
 }
 
-func (c *countingCollector) Name() string            { return "counting" }
-func (c *countingCollector) Interval() time.Duration { return config.ScrapeInterval }
-func (c *countingCollector) EmitsBaseline() bool     { return c.baseline }
+func (c *countingCollector) Name() string        { return "counting" }
+func (c *countingCollector) EmitsBaseline() bool { return c.baseline }
 
 func (c *countingCollector) Collect(context.Context) (*collector.Result, error) {
 	c.calls++
@@ -1186,7 +1183,7 @@ func TestPrimeDoesNotConsumeThePackageInventory(t *testing.T) {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	c := client.New(cfg, []collector.Collector{
-		collector.NewPackages(dpkg, "", config.ScrapeInterval),
+		collector.NewPackages(dpkg, ""),
 	})
 
 	// The agent's real startup order, from main.go.

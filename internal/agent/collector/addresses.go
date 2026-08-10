@@ -6,7 +6,6 @@ import (
 	"net"
 	"slices"
 	"strings"
-	"time"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
@@ -65,23 +64,19 @@ func SystemIfaces() ([]Iface, error) {
 // and Network must name an interface identically or an address and its traffic
 // cannot be related.
 type Addresses struct {
-	interval time.Duration
-	lister   IfaceLister
+	lister IfaceLister
 
 	// prev is the last reported set, so an unchanged host reports nothing.
 	prev []string
 }
 
 // NewAddresses builds an Addresses collector.
-func NewAddresses(interval time.Duration, lister IfaceLister) *Addresses {
-	return &Addresses{interval: interval, lister: lister}
+func NewAddresses(lister IfaceLister) *Addresses {
+	return &Addresses{lister: lister}
 }
 
 // Name implements Collector.
 func (a *Addresses) Name() string { return "addresses" }
-
-// Interval implements Collector.
-func (a *Addresses) Interval() time.Duration { return a.interval }
 
 // ResendInventory implements InventoryResender.
 //

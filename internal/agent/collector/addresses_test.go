@@ -3,7 +3,6 @@ package collector_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
@@ -26,7 +25,7 @@ func addrRow(t *testing.T, rows []*netrav1.HostAddress, addr string) *netrav1.Ho
 
 // IPv4 and IPv6 are treated identically throughout (spec §5.2).
 func TestAddressesReportsBothFamilies(t *testing.T) {
-	testee := collector.NewAddresses(time.Minute, fakeIfaces(
+	testee := collector.NewAddresses(fakeIfaces(
 		collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24", "2001:db8::1/64"}},
 	))
 
@@ -59,7 +58,7 @@ func TestAddressesReportsBothFamilies(t *testing.T) {
 // without redeploying every agent in the fleet -- an agent that classified
 // would freeze today's definition of "private" into every host.
 func TestAddressesDoesNotClassifyScope(t *testing.T) {
-	testee := collector.NewAddresses(time.Minute, fakeIfaces(
+	testee := collector.NewAddresses(fakeIfaces(
 		collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"192.168.1.10/24", "8.8.8.8/32"}},
 	))
 
@@ -86,7 +85,7 @@ func TestAddressesDoesNotClassifyScope(t *testing.T) {
 // agree on which interfaces exist or an address and its traffic cannot be
 // joined on iface.
 func TestAddressesExcludesTheSameInterfacesAsNetwork(t *testing.T) {
-	testee := collector.NewAddresses(time.Minute, fakeIfaces(
+	testee := collector.NewAddresses(fakeIfaces(
 		collector.Iface{Name: "lo", Index: 1, Addrs: []string{"127.0.0.1/8"}},
 		collector.Iface{Name: "veth99", Index: 5, Addrs: []string{"172.17.0.2/16"}},
 		collector.Iface{Name: "docker0", Index: 3, Addrs: []string{"172.17.0.1/16"}},
@@ -112,7 +111,7 @@ func TestAddressesExcludesTheSameInterfacesAsNetwork(t *testing.T) {
 // nothing rather than resending an identical set every 60s.
 func TestAddressesReportsNothingWhenUnchanged(t *testing.T) {
 	lister := fakeIfaces(collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24"}})
-	testee := collector.NewAddresses(time.Minute, lister)
+	testee := collector.NewAddresses(lister)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -136,14 +135,14 @@ func TestAddressesReportsNothingWhenUnchanged(t *testing.T) {
 // were removed.
 func TestAddressesReportsTheWholeSetWhenAnythingChanges(t *testing.T) {
 	first := collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24"}}
-	testee := collector.NewAddresses(time.Minute, fakeIfaces(first))
+	testee := collector.NewAddresses(fakeIfaces(first))
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("first Collect: %v", err)
 	}
 
 	// A second address appears on the same interface.
-	testee = collector.NewAddresses(time.Minute, fakeIfaces(
+	testee = collector.NewAddresses(fakeIfaces(
 		collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24", "10.0.0.6/24"}},
 	))
 	res, err := testee.Collect(context.Background())
@@ -162,7 +161,7 @@ func TestAddressesReportsTheWholeSetWhenAnythingChanges(t *testing.T) {
 // forever, since the hub replaces inventory and returns early on an empty set.
 func TestResendInventoryReportsAnUnchangedSetAgain(t *testing.T) {
 	// Given: a collector that has already reported its set.
-	testee := collector.NewAddresses(time.Minute, fakeIfaces(
+	testee := collector.NewAddresses(fakeIfaces(
 		collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24"}},
 	))
 	if _, err := testee.Collect(context.Background()); err != nil {

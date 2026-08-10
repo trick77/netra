@@ -3,7 +3,6 @@ package collector_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 )
@@ -17,7 +16,7 @@ import (
 // reported the aggregate line per core, would land on the same number twice.
 func TestPerCoreCPUReportsPerCoreBusyPercentages(t *testing.T) {
 	// Given: a collector that has taken one baseline reading.
-	testee := collector.NewPerCoreCPU("testdata/percpu/first", time.Minute)
+	testee := collector.NewPerCoreCPU("testdata/percpu/first")
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -63,7 +62,7 @@ func TestPerCoreCPUReportsPerCoreBusyPercentages(t *testing.T) {
 // would collide with the CPU collector during the merge, where two collectors
 // setting the same field makes the result depend on registration order.
 func TestPerCoreCPUContributesNoHostFields(t *testing.T) {
-	testee := collector.NewPerCoreCPU("testdata/percpu/first", time.Minute)
+	testee := collector.NewPerCoreCPU("testdata/percpu/first")
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
@@ -81,7 +80,7 @@ func TestPerCoreCPUContributesNoHostFields(t *testing.T) {
 // A core that vanishes between scrapes (offlined, or hotplugged out) must not
 // produce a row derived from a baseline that no longer describes anything.
 func TestPerCoreCPUSkipsCoresMissingFromTheCurrentRead(t *testing.T) {
-	testee := collector.NewPerCoreCPU("testdata/percpu/second", time.Minute)
+	testee := collector.NewPerCoreCPU("testdata/percpu/second")
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
@@ -106,7 +105,7 @@ func TestPerCoreCPUSkipsCoresMissingFromTheCurrentRead(t *testing.T) {
 // no interval to compute a percentage over. It is skipped this scrape and
 // reported on the next one.
 func TestPerCoreCPUSkipsNewlyAppearedCores(t *testing.T) {
-	testee := collector.NewPerCoreCPU("testdata/percpu/onecore", time.Minute)
+	testee := collector.NewPerCoreCPU("testdata/percpu/onecore")
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
@@ -129,7 +128,7 @@ func TestPerCoreCPUSkipsNewlyAppearedCores(t *testing.T) {
 // An unreadable /proc/stat is an error, not an empty result: the caller must
 // be able to tell "no cores on this host" from "could not read the file".
 func TestPerCoreCPUReportsAnUnreadableProcStat(t *testing.T) {
-	testee := collector.NewPerCoreCPU(t.TempDir(), time.Minute)
+	testee := collector.NewPerCoreCPU(t.TempDir())
 
 	res, err := testee.Collect(context.Background())
 	if err == nil {

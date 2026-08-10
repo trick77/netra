@@ -58,6 +58,51 @@ type smartctlDevice struct {
 	NvmeSmartHealthInformationLog map[string]json.RawMessage `json:"nvme_smart_health_information_log"`
 }
 
+// nvmeAttrs maps the NVMe health log keys netra reports onto synthetic
+// attr_ids, in the order they are emitted.
+//
+// SYNTHETIC because NVMe has no attribute ids: the health log is a fixed
+// struct of named fields, where ATA has a per-model table of numbered
+// attributes. The two have to share smart_attributes, so the names need
+// numbers.
+//
+// The range starts at 1000 for two reasons. ATA attribute ids are 1-255, so
+// nothing here can collide with a real one whatever drive turns up. And the
+// hub's column is SMALLINT, which its insert casts to int16 -- so the ids must
+// also stay well under 32767 or they would wrap negative on the way into the
+// database.
+//
+// Only fields an operator would act on. The health log also carries cumulative
+// data_units_read/written and host_reads/writes, which are throughput
+// accounting rather than health, and belong in disk_io_samples if anywhere.
+var nvmeAttrs = []struct {
+	key string
+	id  uint32
+}{
+	// Bitfield: any non-zero bit is the drive telling the host it is in
+	// trouble. First because it is the one field that is a verdict rather
+	// than a reading.
+	{"critical_warning", 1000},
+	// Percent of rated write endurance consumed. Passes 100 before the drive
+	// refuses writes, so it is the field that gives warning rather than news.
+	{"percentage_used", 1001},
+	// Remaining spare blocks, and the threshold the drive itself considers
+	// critical. Reported as a pair: the percentage means nothing without the
+	// line it is being compared against, which varies per model.
+	{"available_spare", 1002},
+	{"available_spare_threshold", 1003},
+	// Uncorrected data-integrity errors. Non-zero is always worth a look.
+	{"media_errors", 1004},
+	// Power lost without a clean shutdown -- context for media_errors, and a
+	// PSU or host problem in its own right when it climbs.
+	{"unsafe_shutdowns", 1005},
+	{"power_on_hours", 1006},
+	{"power_cycles", 1007},
+	// Degrees Celsius in smartctl's JSON, unlike the raw log's Kelvin.
+	{"temperature", 1008},
+	{"num_err_log_entries", 1009},
+}
+
 // Smart reports SMART attributes per drive.
 //
 // Runs on a long interval (1h by default) rather than the scrape interval: the
@@ -158,9 +203,6 @@ func (s *Smart) EmitsBaseline() bool { return true }
 // Name implements Collector.
 func (s *Smart) Name() string { return "smart" }
 
-// Interval implements Collector.
-func (s *Smart) Interval() time.Duration { return s.interval }
-
 // Capabilities implements CapabilityReporter.
 //
 // Missing device access is reported rather than treated as failure: an agent
@@ -180,6 +222,50 @@ func (s *Smart) fail() {
 	s.lastRun, s.hasRun = s.now(), true
 	s.failures++
 	s.unavailable = true
+}
+
+// nvmeRows turns an NVMe drive's health log into attribute rows.
+//
+// Without this the collector was blind to NVMe entirely: the health log was
+// unmarshalled and then never read, so an all-NVMe host -- most modern servers
+// -- ran smartctl against every drive on the interval, spun them up, and
+// emitted nothing at all.
+//
+// Normalized is deliberately left UNSET. It is ATA's 1-253 vendor scale
+// against a failure threshold, and NVMe has no equivalent; inventing one from
+// the raw value would be this collector asserting a health verdict it has no
+// basis for. Unset means "not measured", which is this codebase's rule and the
+// honest answer.
+//
+// A key the drive does not publish, or publishes as something other than a
+// number -- temperature_sensors is an array on some firmware -- is skipped
+// rather than defaulted. A missing field is an absent fact, and a zero would
+// read as a measured one.
+func nvmeRows(ts int64, device string, d smartctlDevice) []*netrav1.SmartAttribute {
+	if len(d.NvmeSmartHealthInformationLog) == 0 {
+		return nil
+	}
+
+	rows := make([]*netrav1.SmartAttribute, 0, len(nvmeAttrs))
+	for _, attr := range nvmeAttrs {
+		raw, ok := d.NvmeSmartHealthInformationLog[attr.key]
+		if !ok {
+			continue
+		}
+		var v int64
+		if err := json.Unmarshal(raw, &v); err != nil {
+			continue
+		}
+		rows = append(rows, &netrav1.SmartAttribute{
+			TsMs:   ts,
+			Device: device,
+			Model:  d.ModelName,
+			Serial: d.SerialNumber,
+			AttrId: attr.id,
+			Raw:    ptrTo(v),
+		})
+	}
+	return rows
 }
 
 // Collect implements Collector.
@@ -240,6 +326,7 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 				Normalized: ptrTo(uint32(attr.Value)),
 			})
 		}
+		rows = append(rows, nvmeRows(ts, name, d)...)
 	}
 
 	// Deterministic order so failures read the same way twice.

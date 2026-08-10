@@ -2,14 +2,13 @@ package collector_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
 func TestMemoryReadsMeminfo(t *testing.T) {
-	c := collector.NewMemory("testdata/proc1", time.Minute)
+	c := collector.NewMemory("testdata/proc1")
 
 	var s netrav1.HostSample
 	if err := collectInto(c, &s); err != nil {
@@ -38,7 +37,7 @@ func TestMemoryReadsMeminfo(t *testing.T) {
 // A host with no swap must report NULL, not 0: "swap is fine" and "there is
 // no swap" are different facts and an alert rule has to tell them apart.
 func TestMemoryAbsentSwapIsUnset(t *testing.T) {
-	c := collector.NewMemory("testdata/noswap", time.Minute)
+	c := collector.NewMemory("testdata/noswap")
 
 	var s netrav1.HostSample
 	if err := collectInto(c, &s); err != nil {
@@ -59,7 +58,7 @@ func TestMemoryAbsentSwapIsUnset(t *testing.T) {
 
 // ZFS ARC is only present on hosts running ZFS.
 func TestMemoryAbsentZfsArcIsUnset(t *testing.T) {
-	c := collector.NewMemory("testdata/proc1", time.Minute)
+	c := collector.NewMemory("testdata/proc1")
 
 	var s netrav1.HostSample
 	if err := collectInto(c, &s); err != nil {

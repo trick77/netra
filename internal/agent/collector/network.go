@@ -33,7 +33,6 @@ type netCounters struct {
 // notice. An interface whose counters went backwards emits no row.
 type Network struct {
 	procRoot string
-	interval time.Duration
 
 	now func() time.Time
 
@@ -43,15 +42,12 @@ type Network struct {
 
 // NewNetwork builds a Network collector reading from procRoot (normally
 // "/proc").
-func NewNetwork(procRoot string, interval time.Duration) *Network {
-	return &Network{procRoot: procRoot, interval: interval, now: time.Now}
+func NewNetwork(procRoot string) *Network {
+	return &Network{procRoot: procRoot, now: time.Now}
 }
 
 // Name implements Collector.
 func (n *Network) Name() string { return "network" }
-
-// Interval implements Collector.
-func (n *Network) Interval() time.Duration { return n.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree.
 func (n *Network) SetProcRootForTest(root string) { n.procRoot = root }

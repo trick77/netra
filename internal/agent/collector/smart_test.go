@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
+	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
 const scanJSON = `{"devices":[{"name":"/dev/sda","type":"sat"}]}`
@@ -337,5 +338,173 @@ func TestSmartBacksOffOnRepeatedFailures(t *testing.T) {
 	if calls != before {
 		t.Errorf("scan calls = %d, want %d -- a permanently unavailable host must not be probed every minute",
 			calls, before)
+	}
+}
+
+const nvmeScanJSON = `{"devices":[{"name":"/dev/nvme0","type":"nvme"}]}`
+
+// A real smartctl NVMe report: no ata_smart_attributes table at all, and a
+// temperature_sensors array alongside the scalars.
+const nvmeDeviceJSON = `{
+  "model_name": "Samsung SSD 990 PRO 2TB",
+  "serial_number": "S7HENL0X123456",
+  "nvme_smart_health_information_log": {
+    "critical_warning": 0,
+    "temperature": 41,
+    "available_spare": 100,
+    "available_spare_threshold": 10,
+    "percentage_used": 3,
+    "data_units_read": 55432198,
+    "power_cycles": 412,
+    "power_on_hours": 8921,
+    "unsafe_shutdowns": 17,
+    "media_errors": 2,
+    "num_err_log_entries": 5,
+    "temperature_sensors": [41, 52]
+  }
+}`
+
+func smartRow(t *testing.T, rows []*netrav1.SmartAttribute, id uint32) *netrav1.SmartAttribute {
+	t.Helper()
+	for _, r := range rows {
+		if r.GetAttrId() == id {
+			return r
+		}
+	}
+	t.Fatalf("no row for attr_id %d in %d rows", id, len(rows))
+	return nil
+}
+
+// An NVMe drive publishes a fixed health log instead of the ATA attribute
+// table, and the collector used to unmarshal it and then never read it -- so
+// an all-NVMe host, which is most modern servers, ran smartctl against every
+// drive on the interval and emitted nothing at all.
+func TestSmartReportsTheNvmeHealthLog(t *testing.T) {
+	// Given: a host whose only drive is NVMe.
+	testee := collector.NewSmart(time.Hour, fakeSmartctl(nvmeScanJSON, nvmeDeviceJSON))
+
+	// When: it is collected.
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	// Then: the health fields arrive as attributes on the drive.
+	if len(res.Smart) == 0 {
+		t.Fatal("no SMART rows for an NVMe drive")
+	}
+	for _, r := range res.Smart {
+		if got := r.GetDevice(); got != "nvme0" {
+			t.Errorf("device = %q, want nvme0", got)
+		}
+		if got := r.GetModel(); got != "Samsung SSD 990 PRO 2TB" {
+			t.Errorf("model = %q, want the drive's model", got)
+		}
+		// ATA ids are 1-255, so nothing here may collide with a real one --
+		// and the hub's column is SMALLINT, so nothing may approach 32767.
+		if id := r.GetAttrId(); id < 1000 || id > 32767 {
+			t.Errorf("attr_id = %d, want a synthetic id in [1000, 32767]", id)
+		}
+		// NVMe has no 1-253 vendor scale, and inventing one would be the
+		// collector asserting a health verdict it has no basis for.
+		if r.Normalized != nil {
+			t.Errorf("attr_id %d has normalized = %d, want unset for NVMe",
+				r.GetAttrId(), r.GetNormalized())
+		}
+	}
+
+	if got := smartRow(t, res.Smart, 1001).GetRaw(); got != 3 {
+		t.Errorf("percentage_used raw = %d, want 3", got)
+	}
+	if got := smartRow(t, res.Smart, 1004).GetRaw(); got != 2 {
+		t.Errorf("media_errors raw = %d, want 2", got)
+	}
+	if got := smartRow(t, res.Smart, 1005).GetRaw(); got != 17 {
+		t.Errorf("unsafe_shutdowns raw = %d, want 17", got)
+	}
+	// critical_warning is zero and must still be reported: "the drive says it
+	// is fine" is a measurement, and its absence would read as an unread drive.
+	if got := smartRow(t, res.Smart, 1000).GetRaw(); got != 0 {
+		t.Errorf("critical_warning raw = %d, want 0", got)
+	}
+}
+
+// A field the drive does not publish, or publishes as something other than a
+// number, is an absent fact. Skipping beats defaulting: a zero would read as a
+// measured value.
+func TestSmartSkipsNvmeFieldsItCannotRead(t *testing.T) {
+	// Given: a drive publishing only two of the fields netra reports, one of
+	// them as an array rather than a scalar.
+	const partial = `{
+	  "model_name": "Sparse NVMe",
+	  "nvme_smart_health_information_log": {
+	    "percentage_used": 7,
+	    "temperature": [40, 45]
+	  }
+	}`
+	testee := collector.NewSmart(time.Hour, fakeSmartctl(nvmeScanJSON, partial))
+
+	// When: it is collected.
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	// Then: only the readable scalar is reported.
+	if len(res.Smart) != 1 {
+		t.Fatalf("rows = %d, want 1 -- absent and unreadable fields must be skipped", len(res.Smart))
+	}
+	if got := res.Smart[0].GetAttrId(); got != 1001 {
+		t.Errorf("attr_id = %d, want 1001 (percentage_used)", got)
+	}
+	if got := res.Smart[0].GetRaw(); got != 7 {
+		t.Errorf("raw = %d, want 7", got)
+	}
+}
+
+// A host with both drive kinds must report both, under ids that cannot
+// collide: ATA attribute ids run 1-255 and the synthetic NVMe ones start at
+// 1000, so one drive's temperature can never overwrite the other's.
+func TestSmartReportsAtaAndNvmeDrivesTogether(t *testing.T) {
+	// Given: a host with one SATA and one NVMe drive.
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		for _, a := range args {
+			switch a {
+			case "--scan":
+				return []byte(`{"devices":[
+					{"name":"/dev/sda","type":"sat"},
+					{"name":"/dev/nvme0","type":"nvme"}]}`), nil
+			case "/dev/sda":
+				return []byte(deviceJSON), nil
+			case "/dev/nvme0":
+				return []byte(nvmeDeviceJSON), nil
+			}
+		}
+		return nil, nil
+	}
+	testee := collector.NewSmart(time.Hour, run)
+
+	// When: it is collected.
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	// Then: both drives are present, each with its own id space.
+	byDevice := map[string]int{}
+	for _, r := range res.Smart {
+		byDevice[r.GetDevice()]++
+		if r.GetDevice() == "sda" && r.GetAttrId() >= 1000 {
+			t.Errorf("sda carries synthetic attr_id %d, want only ATA ids", r.GetAttrId())
+		}
+		if r.GetDevice() == "nvme0" && r.GetAttrId() < 1000 {
+			t.Errorf("nvme0 carries ATA attr_id %d, want only synthetic ids", r.GetAttrId())
+		}
+	}
+	if byDevice["sda"] != 3 {
+		t.Errorf("sda rows = %d, want 3", byDevice["sda"])
+	}
+	if byDevice["nvme0"] == 0 {
+		t.Error("nvme0 rows = 0, want its health log reported alongside the SATA drive")
 	}
 }

@@ -47,37 +47,43 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// No cadence is threaded through here. The scrape loop runs every
+	// collector on every tick at config.ScrapeInterval, and the two that must
+	// run less often gate themselves: Smart against cfg.SmartInterval below,
+	// Packages against its database's mtime with a daily floor. Handing each
+	// constructor an interval that nothing read described a schedule that did
+	// not exist.
 	collectors := []collector.Collector{
-		collector.NewCPU(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewPerCoreCPU(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewKernelStat(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewProcs(cfg.ProcRoot, cfg.PidHost, config.ScrapeInterval),
-		collector.NewNetstat(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewUsers(cfg.UtmpPath, config.ScrapeInterval),
+		collector.NewCPU(cfg.ProcRoot),
+		collector.NewPerCoreCPU(cfg.ProcRoot),
+		collector.NewMemory(cfg.ProcRoot),
+		collector.NewLoad(cfg.ProcRoot),
+		collector.NewKernelStat(cfg.ProcRoot),
+		collector.NewProcs(cfg.ProcRoot, cfg.PidHost),
+		collector.NewNetstat(cfg.ProcRoot),
+		collector.NewUsers(cfg.UtmpPath),
 
 		// Group 1: no privileges, no dependencies.
-		collector.NewDiskIO(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewSensors(cfg.SysRoot, config.ScrapeInterval, cfg.SensorsTimeout),
-		collector.NewMdraid(cfg.SysRoot, config.ScrapeInterval),
+		collector.NewDiskIO(cfg.ProcRoot),
+		collector.NewSensors(cfg.SysRoot, cfg.SensorsTimeout),
+		collector.NewMdraid(cfg.SysRoot),
 
 		// Group 2: needs network_mode: host to see the host's interfaces
 		// rather than the container's.
-		collector.NewNetwork(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewAddresses(config.ScrapeInterval, collector.SystemIfaces),
+		collector.NewNetwork(cfg.ProcRoot),
+		collector.NewAddresses(collector.SystemIfaces),
 
 		// Group 3: needs a mount.
-		collector.NewContainers(cfg.CgroupRoot, config.ScrapeInterval, collector.SystemDockerContainers),
-		collector.NewFilesystems(cfg.ProcRoot, config.ScrapeInterval, collector.SystemStatfs),
-		collector.NewSystemd(config.ScrapeInterval, collector.SystemUnits),
-		collector.NewPackages(cfg.DpkgStatus, cfg.ApkInstalled, config.ScrapeInterval),
+		collector.NewContainers(cfg.CgroupRoot, collector.SystemDockerContainers),
+		collector.NewFilesystems(cfg.ProcRoot, collector.SystemStatfs),
+		collector.NewSystemd(collector.SystemUnits),
+		collector.NewPackages(cfg.DpkgStatus, cfg.ApkInstalled),
 
 		// Group 4: privileged, opt-in. SMART gates itself to cfg.SmartInterval
 		// internally -- the scrape loop runs every collector on every tick, and
 		// waking sleeping drives once a minute would shorten their life.
 		collector.NewSmart(cfg.SmartInterval, collector.SystemSmartctl),
-		collector.NewProcesses(cfg.ProcRoot, cfg.PidHost, config.ScrapeInterval),
+		collector.NewProcesses(cfg.ProcRoot, cfg.PidHost),
 	}
 
 	c := client.New(cfg, collectors)

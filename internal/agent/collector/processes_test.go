@@ -47,7 +47,7 @@ func procRow(t *testing.T, rows []*netrav1.ProcessSample, name string) *netrav1.
 // lands on a number the test is not looking for.
 func TestProcessesComputesCPUAndMemoryPerName(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/first", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/first", true)
 
 	res := procsAt(t, testee, base)
 	if len(res.Processes) != 0 {
@@ -85,7 +85,7 @@ func TestProcessesComputesCPUAndMemoryPerName(t *testing.T) {
 // previous reading for this process and it simply has no rate yet.
 func TestProcessesTreatsARecycledPIDAsANewProcess(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/first", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/first", true)
 	procsAt(t, testee, base)
 
 	// PID 100 is now python3 with a different starttime: the kernel reused the
@@ -122,7 +122,7 @@ func TestProcessesTreatsARecycledPIDAsANewProcess(t *testing.T) {
 // cardinality for data whose PIDs are meaningless a minute later.
 func TestProcessesAggregatesByName(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/multi/first", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/multi/first", true)
 	procsAt(t, testee, base)
 
 	testee.SetProcRootForTest("testdata/processes/multi/second")
@@ -147,7 +147,7 @@ func TestProcessesAggregatesByName(t *testing.T) {
 // would describe the container rather than the host. That is wrong data rather
 // than missing data, so it reports a capability and no rows.
 func TestProcessesReportsNamespacedWithoutPidHost(t *testing.T) {
-	testee := collector.NewProcesses("testdata/processes/first", false, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/first", false)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -171,7 +171,7 @@ func TestProcessesReportsNamespacedWithoutPidHost(t *testing.T) {
 // any moment on a busy host. It must be skipped, not fail the whole scrape.
 func TestProcessesSkipsAProcessThatVanishes(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/second", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/second", true)
 	procsAt(t, testee, base)
 
 	// The first tree has both PIDs; the recycled tree drops none, so use a
@@ -198,7 +198,7 @@ func TestProcessesSkipsAProcessThatVanishes(t *testing.T) {
 // since the last scrape contributed nothing at all.
 func TestProcessesCountsMemoryOfProcessesWithNoBaseline(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/gone", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/gone", true)
 	procsAt(t, testee, base)
 
 	// The second tree adds postgres, which the first scrape never saw.
@@ -235,7 +235,7 @@ func TestProcessesCountsMemoryOfProcessesWithNoBaseline(t *testing.T) {
 // discard something and the test can tell that it discarded the right rows.
 func TestProcessesRanksANewProcessByMemoryDespiteUnsetCPU(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/topn/first", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/topn/first", true)
 	procsAt(t, testee, base)
 
 	// The second tree advances all twelve and adds newhog, which the first

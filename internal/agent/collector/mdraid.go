@@ -34,15 +34,14 @@ type arrayState struct {
 // when it changes. A first sighting emits one event to establish the baseline,
 // so the hub knows the array exists and what state it started in.
 type Mdraid struct {
-	sysRoot  string
-	interval time.Duration
+	sysRoot string
 
 	prev map[string]arrayState
 }
 
 // NewMdraid builds an Mdraid collector reading from sysRoot (normally "/sys").
-func NewMdraid(sysRoot string, interval time.Duration) *Mdraid {
-	return &Mdraid{sysRoot: sysRoot, interval: interval}
+func NewMdraid(sysRoot string) *Mdraid {
+	return &Mdraid{sysRoot: sysRoot}
 }
 
 // EmitsBaseline implements BaselineEmitter, keeping this collector out of the
@@ -53,9 +52,6 @@ func (m *Mdraid) EmitsBaseline() bool { return true }
 
 // Name implements Collector.
 func (m *Mdraid) Name() string { return "mdraid" }
-
-// Interval implements Collector.
-func (m *Mdraid) Interval() time.Duration { return m.interval }
 
 // SetSysRootForTest repoints the collector at a different fixture tree.
 func (m *Mdraid) SetSysRootForTest(root string) { m.sysRoot = root }

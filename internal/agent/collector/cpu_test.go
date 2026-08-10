@@ -3,7 +3,6 @@ package collector_test
 import (
 	"math"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
@@ -12,7 +11,7 @@ import (
 // The first scrape has no previous snapshot to diff against, so it must
 // report nothing rather than a fabricated value.
 func TestCPUFirstCollectYieldsNoValue(t *testing.T) {
-	c := collector.NewCPU("testdata/proc1", time.Minute)
+	c := collector.NewCPU("testdata/proc1")
 
 	var sample netrav1.HostSample
 	if err := collectInto(c, &sample); err != nil {
@@ -24,7 +23,7 @@ func TestCPUFirstCollectYieldsNoValue(t *testing.T) {
 }
 
 func TestCPUSecondCollectComputesDelta(t *testing.T) {
-	c := collector.NewCPU("testdata/proc1", time.Minute)
+	c := collector.NewCPU("testdata/proc1")
 
 	var first netrav1.HostSample
 	if err := collectInto(c, &first); err != nil {
@@ -58,7 +57,7 @@ func TestCPUSecondCollectComputesDelta(t *testing.T) {
 // Counters reset to zero on reboot. A naive delta would produce a negative
 // or an enormous spike; the collector must emit nothing instead.
 func TestCPUCounterResetProducesNoValue(t *testing.T) {
-	c := collector.NewCPU("testdata/proc2", time.Minute)
+	c := collector.NewCPU("testdata/proc2")
 
 	var first netrav1.HostSample
 	if err := collectInto(c, &first); err != nil {
@@ -76,12 +75,9 @@ func TestCPUCounterResetProducesNoValue(t *testing.T) {
 	}
 }
 
-func TestCPUNameAndInterval(t *testing.T) {
-	c := collector.NewCPU("testdata/proc1", 30*time.Second)
+func TestCPUName(t *testing.T) {
+	c := collector.NewCPU("testdata/proc1")
 	if c.Name() != "cpu" {
 		t.Fatalf("Name() = %q, want %q", c.Name(), "cpu")
-	}
-	if c.Interval() != 30*time.Second {
-		t.Fatalf("Interval() = %v, want 30s", c.Interval())
 	}
 }
