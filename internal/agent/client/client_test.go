@@ -471,6 +471,125 @@ func TestRunFlushesOnEveryTickAndStopsOnCancel(t *testing.T) {
 	}
 }
 
+// Shutdown must not throw away what is buffered.
+//
+// Run used to return on ctx.Done and let the process exit, taking the ring
+// with it -- including the scrape taken seconds earlier. A rolling image
+// update across a fleet silently dropped the last minute of history from every
+// host, which is exactly the gap the ring exists to prevent.
+func TestRunFlushesTheBufferOnShutdown(t *testing.T) {
+	// Given: a hub that is unreachable, so a backlog accumulates...
+	var reachable bool
+	rec := &recorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !reachable {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		rec.handler(t).ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for c.BufferDepth() < 2 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if c.BufferDepth() < 2 {
+		t.Fatalf("BufferDepth() = %d, want a backlog before shutdown", c.BufferDepth())
+	}
+
+	// When: the hub comes back an instant before SIGTERM arrives.
+	reachable = true
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return within 2s of context cancellation")
+	}
+
+	// Then: the backlog was delivered on the way out, not discarded.
+	if rec.count() == 0 {
+		t.Fatal("no request reached the hub; the buffer was discarded on shutdown")
+	}
+	if c.BufferDepth() != 0 {
+		t.Errorf("BufferDepth() = %d after shutdown, want 0", c.BufferDepth())
+	}
+}
+
+// A backlog needs more than one POST, because Flush drains at most
+// maxBatchRows per request. Waiting a whole scrape interval between batches
+// stretched recovery out and made the hub invalidate its aggregates once per
+// batch rather than once per recovery -- for no reason, since the hub has
+// just demonstrated it is up by accepting one.
+func TestRunDrainsABacklogWithinOneTick(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	// Given: a collector whose single scrape already exceeds maxBatchRows, so
+	// every buffered scrape needs a POST of its own -- and a tick interval long
+	// enough that a second tick cannot be what drains the backlog.
+	const tick = 200 * time.Millisecond
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: 6 * time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	c := client.NewWithInterval(cfg,
+		[]collector.Collector{wideCollector{cores: client.MaxBatchRowsForTest}}, tick)
+	ctx := context.Background()
+
+	// And: three scrapes waiting when the loop starts.
+	for range 3 {
+		c.ScrapeOnce(ctx)
+	}
+	if c.BufferDepth() != 3 {
+		t.Fatalf("BufferDepth() = %d, want 3", c.BufferDepth())
+	}
+
+	// When: Run gets ONE tick.
+	runCtx, cancel := context.WithCancel(ctx)
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(runCtx) }()
+
+	// The tick adds a fourth scrape and must then clear all four. Waiting well
+	// under two ticks, so a pass cannot come from the loop going round again.
+	deadline := time.Now().Add(tick + tick/2)
+	for c.BufferDepth() > 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	depth := c.BufferDepth()
+	cancel()
+	<-errCh
+
+	// Then: the backlog is gone, and it took one POST per scrape to do it.
+	if depth != 0 {
+		t.Errorf("BufferDepth() = %d after one tick, want 0 -- a partial drain must not wait for the next tick",
+			depth)
+	}
+	if got := rec.count(); got < 4 {
+		t.Errorf("requests = %d, want at least 4 -- one per oversized scrape", got)
+	}
+}
+
 // A transient flush failure must not stop the loop: Run backs off with
 // jitter and keeps retrying, and still exits promptly once the context is
 // cancelled mid-backoff rather than waiting out the full sleep.

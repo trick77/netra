@@ -88,10 +88,21 @@ func (p *Processes) SetProcRootForTest(root string) { p.procRoot = root }
 // SetClockForTest replaces the clock used to measure the scrape interval.
 func (p *Processes) SetClockForTest(fn func() time.Time) { p.now = fn }
 
+// processTableCapability is this collector's capability key.
+//
+// NOT "processes", which the Procs collector owns and the spec pins to it
+// (`procs ... reports processes=namespaced`). Both wrote that key, and
+// refreshCapabilities merges into one map in registration order, so whichever
+// collector ran later silently overwrote the other -- leaving the hub unable
+// to tell whether the process COUNT on the host row or the per-name process
+// TABLE was the thing unavailable, which is the entire purpose of a
+// capability. They are separate subsystems and now say so separately.
+const processTableCapability = "process_table"
+
 // Capabilities implements CapabilityReporter.
 func (p *Processes) Capabilities() map[string]string {
 	if !p.pidHost {
-		return map[string]string{"processes": "namespaced"}
+		return map[string]string{processTableCapability: "namespaced"}
 	}
 	return nil
 }

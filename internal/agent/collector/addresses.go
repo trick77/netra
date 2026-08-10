@@ -83,6 +83,15 @@ func (a *Addresses) Name() string { return "addresses" }
 // Interval implements Collector.
 func (a *Addresses) Interval() time.Duration { return a.interval }
 
+// ResendInventory implements InventoryResender.
+//
+// Forgetting the last reported set is the whole re-arm: the comparison below
+// then finds nothing to compare against and emits the current addresses in
+// full. Without it, a scrape carrying an address change that the ring dropped
+// left the hub serving the previous set forever -- this collector only speaks
+// when something changes, and from its point of view nothing had.
+func (a *Addresses) ResendInventory() { a.prev = nil }
+
 // Collect implements Collector.
 func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 	ifaces, err := a.lister()

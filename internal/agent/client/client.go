@@ -200,8 +200,33 @@ func (c *Client) BufferCapacity() int { return c.ring.Capacity() }
 func (c *Client) ScrapeOnce(ctx context.Context) *netrav1.HostSample {
 	scrape := c.collect(ctx)
 	c.seq++
+
+	// Add overwrites the oldest entry when the ring is full, and that entry
+	// may have been the one carrying an inventory set. The inventory
+	// collectors have already advanced their own state, so unless they are
+	// told, the set is simply lost -- see collector.InventoryResender.
+	dropped := c.ring.Dropped()
 	c.ring.Add(c.seq, scrape)
+	if c.ring.Dropped() != dropped {
+		c.resendInventory()
+	}
+
 	return scrape.Host
+}
+
+// resendInventory asks the whole-set collectors to report again, because a
+// buffered scrape was discarded before the hub could see it.
+//
+// Called on both ways a scrape can be lost: the ring overflowing, and the
+// buffer being dumped after the hub rejects the token. Cheap and idempotent --
+// it only clears a "last reported" marker, so calling it on a scrape that
+// happened to carry no inventory costs one redundant set on the next scrape.
+func (c *Client) resendInventory() {
+	for _, col := range c.collectors {
+		if r, ok := col.(collector.InventoryResender); ok {
+			r.ResendInventory()
+		}
+	}
 }
 
 // Prime runs the delta-based collectors once without buffering or sending the
@@ -484,6 +509,10 @@ func (c *Client) Flush(ctx context.Context) error {
 			// avoiding. math.MaxUint64 is above every sequence number the agent
 			// can issue.
 			c.ring.AckThrough(math.MaxUint64)
+			// Everything just discarded may have included an inventory set the
+			// hub never saw. Once the token is fixed the agent must report it
+			// again rather than assume the hub has it.
+			c.resendInventory()
 			c.replaying = false
 			c.retryAfter = 0
 			return err
@@ -630,6 +659,57 @@ func parseRetryAfter(resp *http.Response) time.Duration {
 // hub has rejected the token. A revoked agent must not hammer the hub.
 const unauthorizedRetry = 5 * time.Minute
 
+// maxDrainBatches is how many POSTs one tick may make while a backlog lasts.
+//
+// The ring holds at most MaxBufferWindow/ScrapeInterval slots -- 360 at the 6h
+// maximum -- and maxBatchRows is 20000, so even a 64-core host's worst case of
+// ~23,000 buffered rows clears in two. Four leaves headroom for a host whose
+// per-scrape row count is larger than anything measured, while still bounding
+// how long this goroutine can stay away from ScrapeOnce and ctx.Done: Client's
+// fields are not mutex-guarded, so everything has to stay on this one
+// goroutine, and an unbounded drain loop would starve the scrape it exists to
+// preserve.
+const maxDrainBatches = 4
+
+// shutdownFlushTimeout bounds the last flush on the way out.
+//
+// Short on purpose. A container runtime sends SIGTERM and then SIGKILL, and
+// Docker's default grace period is 10 seconds -- an agent still trying to
+// reach an unreachable hub when that expires is killed mid-request and has
+// achieved nothing but delaying the shutdown. Five seconds leaves room for the
+// runtime's own teardown.
+const shutdownFlushTimeout = 5 * time.Second
+
+// flushOnShutdown makes one last attempt to deliver what is buffered.
+//
+// Without it a SIGTERM discarded the whole ring, including the scrape taken
+// seconds earlier: a rolling image update across a fleet silently dropped the
+// last minute of history from every host, which is the gap the ring exists to
+// prevent.
+//
+// It runs on its own context because the one Run was given is already
+// cancelled -- that is why we are here -- and a cancelled context cannot carry
+// a request. Best-effort by construction: the process is going away either
+// way, so a failure is logged and the samples are lost exactly as they were
+// before, rather than holding up the shutdown.
+func (c *Client) flushOnShutdown() {
+	depth := c.ring.Depth()
+	if depth == 0 {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownFlushTimeout)
+	defer cancel()
+
+	if err := c.Flush(ctx); err != nil {
+		slog.Warn("final flush on shutdown failed; buffered samples are lost",
+			"err", err, "buffer_depth", depth)
+		return
+	}
+	slog.Info("flushed buffered samples on shutdown",
+		"sent", depth-c.ring.Depth(), "remaining", c.ring.Depth())
+}
+
 // Run scrapes and flushes on the fixed scrape interval until ctx is
 // cancelled. The cadence never changes for the lifetime of the process.
 func (c *Client) Run(ctx context.Context) error {
@@ -655,6 +735,7 @@ func (c *Client) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			c.flushOnShutdown()
 			return ctx.Err()
 		case <-ticker.C:
 			c.ScrapeOnce(ctx)
@@ -663,7 +744,26 @@ func (c *Client) Run(ctx context.Context) error {
 				continue
 			}
 
-			if err := c.Flush(ctx); err != nil {
+			// Flush drains at most maxBatchRows per POST, so a backlog needs
+			// more than one. Waiting a whole scrape interval between batches
+			// stretched recovery across minutes and made the hub invalidate
+			// aggregates once per batch instead of once per recovery, for no
+			// reason: the hub just accepted a batch, so it is plainly up.
+			//
+			// Bounded by maxDrainBatches rather than looping until empty. The
+			// ring keeps growing at one scrape per tick, and an unbounded loop
+			// here would hold this goroutine -- the only one Client's unguarded
+			// fields are safe on -- away from ScrapeOnce and from ctx.Done for
+			// as long as the backlog took to accumulate.
+			err := c.Flush(ctx)
+			for range maxDrainBatches - 1 {
+				if err != nil || c.ring.Depth() == 0 || ctx.Err() != nil {
+					break
+				}
+				err = c.Flush(ctx)
+			}
+
+			if err != nil {
 				if errors.Is(err, ErrUnauthorized) {
 					// Retry slowly: a revoked agent must not hammer the hub.
 					slog.Error("hub rejected the agent token; retrying slowly", "err", err)

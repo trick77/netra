@@ -156,8 +156,14 @@ func TestProcessesReportsNamespacedWithoutPidHost(t *testing.T) {
 	if len(res.Processes) != 0 {
 		t.Errorf("rows = %d, want 0 without pid: host", len(res.Processes))
 	}
-	if got := testee.Capabilities()["processes"]; got != "namespaced" {
+	// Under its own key, not "processes" -- that one belongs to the Procs
+	// collector, and two collectors writing it meant whichever ran later
+	// silently overwrote the other in the merged capability map.
+	if got := testee.Capabilities()["process_table"]; got != "namespaced" {
 		t.Errorf("capability = %q, want namespaced", got)
+	}
+	if _, ok := testee.Capabilities()["processes"]; ok {
+		t.Error(`Processes reports the "processes" key, which Procs owns -- the two would overwrite each other`)
 	}
 }
 

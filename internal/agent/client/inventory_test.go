@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -108,5 +109,110 @@ func TestScrapeSurvivesACollectorReturningNoResultAndNoError(t *testing.T) {
 	}
 	if s.MemTotal == nil {
 		t.Error("the surviving collector's fields are missing from the sample")
+	}
+}
+
+// rearmCollector reports a fixed set ONCE and then stays quiet, the way the
+// real Addresses and Packages collectors do, and counts how often the agent
+// asks it to report again.
+type rearmCollector struct {
+	reported bool
+	resends  int
+}
+
+func (*rearmCollector) Name() string            { return "rearm" }
+func (*rearmCollector) Interval() time.Duration { return time.Minute }
+
+func (c *rearmCollector) Collect(context.Context) (*collector.Result, error) {
+	if c.reported {
+		return &collector.Result{}, nil
+	}
+	c.reported = true
+	return &collector.Result{Addresses: []*netrav1.HostAddress{
+		{Iface: "eth0", Address: "10.0.0.1", Family: 4},
+	}}, nil
+}
+
+func (c *rearmCollector) ResendInventory() {
+	c.reported = false
+	c.resends++
+}
+
+// An inventory set the ring dropped is gone unless the collector is told.
+//
+// Inventory collectors advance their own "already reported" state at collect
+// time, so a scrape overwritten by the ring takes its set with it: the
+// collector will not report it again, and the hub cannot notice because it
+// stores inventory by replacement and returns early on an empty set. A static
+// host would then serve a stale address list indefinitely.
+func TestRingOverflowRearmsTheInventoryCollectors(t *testing.T) {
+	// Given: a two-slot ring and a hub that cannot be reached, so nothing
+	// drains and the third scrape must overwrite the first.
+	cfg := config.Config{
+		HubURL:       "http://127.0.0.1:1",
+		Token:        "nta_test",
+		BufferWindow: 2 * time.Millisecond,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	col := &rearmCollector{}
+	c := client.NewWithInterval(cfg, []collector.Collector{col}, time.Millisecond)
+	if c.BufferCapacity() != 2 {
+		t.Fatalf("BufferCapacity() = %d, want 2 for this test's arithmetic", c.BufferCapacity())
+	}
+	ctx := context.Background()
+
+	// When: two scrapes fill the ring without dropping anything.
+	c.ScrapeOnce(ctx)
+	c.ScrapeOnce(ctx)
+	if col.resends != 0 {
+		t.Fatalf("resends = %d before any drop, want 0", col.resends)
+	}
+
+	// And: a third overwrites the oldest.
+	c.ScrapeOnce(ctx)
+
+	// Then: the collector was asked to report its set again -- once per
+	// dropped scrape, since each drop can take an inventory set with it.
+	if col.resends != 1 {
+		t.Fatalf("resends = %d after the ring dropped a scrape, want 1", col.resends)
+	}
+	c.ScrapeOnce(ctx)
+	if col.resends != 2 {
+		t.Errorf("resends = %d after a second drop, want 2", col.resends)
+	}
+}
+
+// A 401 discards the WHOLE buffer, which may have held an inventory set the
+// hub never saw. Once the token is fixed the agent must report it again rather
+// than assume it landed.
+func TestUnauthorizedBufferDumpRearmsTheInventoryCollectors(t *testing.T) {
+	// Given: a hub that rejects the token.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_revoked",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	col := &rearmCollector{}
+	c := client.NewWithInterval(cfg, []collector.Collector{col}, time.Millisecond)
+	ctx := context.Background()
+
+	// When: the scrape carrying the inventory is flushed and rejected.
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush succeeded against a 401, want an error")
+	}
+
+	// Then: the buffer is gone and the collector knows to report again.
+	if c.BufferDepth() != 0 {
+		t.Fatalf("BufferDepth() = %d, want 0 — a 401 drops the whole buffer", c.BufferDepth())
+	}
+	if col.resends != 1 {
+		t.Errorf("resends = %d after the buffer was dumped, want 1", col.resends)
 	}
 }

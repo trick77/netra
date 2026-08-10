@@ -85,6 +85,20 @@ func (p *Packages) Capabilities() map[string]string {
 	return nil
 }
 
+// ResendInventory implements InventoryResender.
+//
+// Only the re-read gate is cleared, not prev. Clearing the gate makes the next
+// Collect parse and emit the full inventory again; keeping prev means the diff
+// still compares against what was really installed last time, so a re-arm
+// produces the inventory without a burst of phantom install events.
+//
+// Without this, an inventory the ring dropped waited out the daily floor --
+// up to 24 hours during which the hub served whatever it had before, because
+// it stores packages by replacement and returns early on an empty set.
+func (p *Packages) ResendInventory() {
+	p.lastParse, p.lastMtime = time.Time{}, time.Time{}
+}
+
 // Collect implements Collector.
 func (p *Packages) Collect(_ context.Context) (*Result, error) {
 	path, format := p.database()

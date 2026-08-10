@@ -53,6 +53,29 @@ type CapabilityReporter interface {
 	Capabilities() map[string]string
 }
 
+// InventoryResender is implemented by collectors that report a WHOLE SET on
+// change rather than a value every scrape.
+//
+// Those collectors advance their own "last reported" state at collect time and
+// then say nothing until something actually changes. That is right while every
+// scrape reaches the hub, and silently wrong when one does not: if the scrape
+// carrying the set is dropped -- the ring overflowing during a long outage, or
+// the whole buffer being discarded after the hub rejects the token -- the
+// change is gone. The collector believes it reported it, so it will not report
+// it again. Packages would wait out its daily floor; Addresses would wait for
+// an address to change, which on a static host is never. The hub cannot
+// recover either: it stores inventory by replacement and returns early on an
+// empty set, so it keeps serving the row it already had.
+//
+// The agent therefore tells these collectors when a buffered scrape was lost,
+// and they re-arm: the next Collect reports the current set again whether or
+// not it changed.
+type InventoryResender interface {
+	// ResendInventory discards the "already reported" state, so the next
+	// Collect emits the full current set.
+	ResendInventory()
+}
+
 // BaselineEmitter is implemented by collectors whose FIRST Collect returns
 // data rather than a warm-up reading.
 //

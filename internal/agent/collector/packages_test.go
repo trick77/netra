@@ -171,6 +171,52 @@ func TestPackagesReparsesAfterTheDailyFloor(t *testing.T) {
 	}
 }
 
+// An inventory the ring dropped must not wait out the daily floor.
+//
+// The hub stores packages by replacement and returns early on an empty set, so
+// for up to 24 hours it would go on serving whatever it held before -- while
+// this collector, having already advanced its own re-read gate, believed it
+// had reported. Re-arming clears the gate but keeps prev, so the set comes
+// back WITHOUT a burst of phantom install events derived against nothing.
+func TestResendInventoryReparsesWithoutInventingEvents(t *testing.T) {
+	// Given: a collector that has parsed and is inside its daily floor.
+	testee := collector.NewPackages("testdata/packages/dpkg/status", "", time.Hour)
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee.SetClockForTest(func() time.Time { return base })
+
+	first, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+	if len(first.Packages) == 0 {
+		t.Fatal("first scrape reported no packages")
+	}
+
+	testee.SetClockForTest(func() time.Time { return base.Add(time.Hour) })
+	if res, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("second Collect: %v", err)
+	} else if len(res.Packages) != 0 {
+		t.Fatalf("packages = %d inside the floor, want 0", len(res.Packages))
+	}
+
+	// When: the agent says the reported inventory never reached the hub.
+	testee.ResendInventory()
+
+	// Then: the full set is parsed and reported again, with no events.
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect after ResendInventory: %v", err)
+	}
+	if len(res.Packages) != len(first.Packages) {
+		t.Errorf("packages = %d after a re-arm, want %d -- the whole set",
+			len(res.Packages), len(first.Packages))
+	}
+	if len(res.PackageEvents) != 0 {
+		t.Errorf("package events = %d after a re-arm, want 0 -- nothing was installed",
+			len(res.PackageEvents))
+	}
+}
+
 // Events are derived from two inventories rather than from the package
 // manager's logs, which differ per distribution, rotate, and are frequently
 // absent in a container.

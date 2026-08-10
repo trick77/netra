@@ -154,3 +154,40 @@ func TestAddressesReportsTheWholeSetWhenAnythingChanges(t *testing.T) {
 		t.Errorf("addresses = %d, want both reported, not just the new one", len(res.Addresses))
 	}
 }
+
+// Reporting on change alone is only safe while every scrape reaches the hub.
+// When the ring drops the scrape carrying a set, the agent re-arms this
+// collector, and it must then report the current addresses again even though
+// nothing about them changed -- otherwise a static host serves a stale list
+// forever, since the hub replaces inventory and returns early on an empty set.
+func TestResendInventoryReportsAnUnchangedSetAgain(t *testing.T) {
+	// Given: a collector that has already reported its set.
+	testee := collector.NewAddresses(time.Minute, fakeIfaces(
+		collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24"}},
+	))
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if len(res.Addresses) != 0 {
+		t.Fatalf("addresses = %d on an unchanged scrape, want 0", len(res.Addresses))
+	}
+
+	// When: the agent says the reported set never reached the hub.
+	testee.ResendInventory()
+
+	// Then: the next scrape carries it again, unchanged.
+	res, err = testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect after ResendInventory: %v", err)
+	}
+	if len(res.Addresses) != 1 {
+		t.Fatalf("addresses = %d after a re-arm, want 1", len(res.Addresses))
+	}
+	if got := res.Addresses[0].GetAddress(); got != "10.0.0.5" {
+		t.Errorf("address = %q, want 10.0.0.5", got)
+	}
+}
