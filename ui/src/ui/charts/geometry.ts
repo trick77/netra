@@ -16,6 +16,13 @@ function scaleX(i: number, n: number, w: number, pad: number): number {
 }
 
 // Inverted on purpose: SVG y grows downward, data value grows upward.
+//
+// The `max === min` guard centers a degenerate range at mid-height. That
+// is a defensible choice for `linePath`, where a flat *line* of identical
+// non-zero values reads fine centred. It is the wrong choice for a
+// *stack* (see `stackY` below): a stack's zero has a fixed, meaningful
+// position -- the baseline -- so `stackBands` deliberately does not route
+// through this function's degenerate branch.
 function scaleY(
   v: number,
   min: number,
@@ -26,6 +33,19 @@ function scaleY(
   if (max === min) return h / 2;
   const t = (v - min) / (max - min);
   return pad + (1 - t) * (h - 2 * pad);
+}
+
+// Value-to-y mapping for stacked bands only. An all-zero stack (`max === 0`,
+// since `max` is the largest running total across all points) must sit on
+// the baseline, not float at mid-chart -- a host genuinely idling at 0 %
+// drawing a band at h/2 would read as "about half loaded", which is worse
+// than drawing nothing. When `max` is positive, `v = 0` already maps to the
+// baseline through the normal formula (t = 0 -> y = h - pad), so this only
+// special-cases the fully-degenerate case that `scaleY` would otherwise
+// mishandle.
+function stackY(v: number, max: number, h: number, pad: number): number {
+  if (max === 0) return h - pad;
+  return pad + (1 - v / max) * (h - 2 * pad);
 }
 
 function point(x: number, y: number): string {
@@ -82,6 +102,12 @@ export function linePath(
 /**
  * Closes a `linePath` subpath into a filled area by dropping straight down
  * to the chart's bottom edge at both ends and closing the shape.
+ *
+ * `w` is unused and kept only to match the brief's signature that later
+ * tasks build against. Do not "fix" that by closing the area to `0`/`w`:
+ * this function closes to the subpath's own first/last x on purpose, so a
+ * gap between subpaths stays a gap instead of being bridged by the fill --
+ * exactly the hole `linePath` splits the data to preserve.
  */
 export function areaPath(sub: string, w: number, h: number): string {
   const coords = sub.match(/-?\d+\.?\d*,-?\d+\.?\d*/g) ?? [];
@@ -127,10 +153,10 @@ export function stackBands(
     const top = prefix[k + 1];
 
     const topPts = top.map((v, i) =>
-      point(scaleX(i, n, w, pad), scaleY(v, 0, max, h, pad)),
+      point(scaleX(i, n, w, pad), stackY(v, max, h, pad)),
     );
     const bottomPts = bottom.map((v, i) =>
-      point(scaleX(i, n, w, pad), scaleY(v, 0, max, h, pad)),
+      point(scaleX(i, n, w, pad), stackY(v, max, h, pad)),
     );
 
     const d =
