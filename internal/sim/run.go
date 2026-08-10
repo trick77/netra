@@ -417,19 +417,31 @@ type window struct {
 	to   time.Time
 }
 
-// refreshSegments splits the backfill into the ranges the aggregates are
-// materialised over: weekly across the coarse region, daily across the recent
-// raw one.
+// coarseRefreshSegment is how much backfill is posted before the aggregates
+// are materialised over it.
 //
-// Weekly rather than daily throughout because refresh_continuous_aggregate
-// plans and locks per call: ninety days times nine aggregate pairs times two
-// tiers is over sixteen hundred calls whose overhead dwarfs the inserts they
-// are materialising.
+// It is deliberately well under rawRetention rather than equal to it. Every
+// row written in the coarse region is ALREADY older than the 7-day drop
+// threshold at the moment it is inserted, so the only thing standing between
+// it and the retention job is how long it sits unmaterialised. A 7-day
+// segment left exactly zero margin: a retention job firing mid-backfill would
+// delete chunks before the 5m tier ever read them, the 1h tier would inherit
+// the hole, and the run would still report "backfill complete" with no raw
+// rows left to rebuild from.
+const coarseRefreshSegment = 2 * 24 * time.Hour
+
+// refreshSegments splits the backfill into the ranges the aggregates are
+// materialised over: two-day chunks across the coarse region, daily across
+// the recent raw one.
+//
+// Coarser than per-day everywhere because refresh_continuous_aggregate plans
+// and locks per call, and finer than the retention threshold for the reason
+// above. The inserts dominate a run's wall clock either way.
 func refreshSegments(from, to time.Time) []window {
 	var out []window
 	coarseEnd := to.Add(-rawRetention)
 	for ts := from; ts.Before(coarseEnd); {
-		next := ts.Add(7 * 24 * time.Hour)
+		next := ts.Add(coarseRefreshSegment)
 		if next.After(coarseEnd) {
 			next = coarseEnd
 		}
@@ -474,11 +486,21 @@ var places = map[string]place{
 
 // siteFor turns a profile's location into the site the hub should file it
 // under.
+//
+// The site and provider NAMES carry the same sim- prefix the hostnames do,
+// and that is a safety property rather than labelling. EnsureSite matches an
+// existing site by (name, provider), so unprefixed names would let a run
+// aimed at a real hub attach four invented hosts to a REAL site -- and every
+// per-site rollup and map marker for that site would then mix invented data
+// with production data. --fresh deletes hosts only, so those rows would
+// survive and the tool could not undo it. The facility field keeps the
+// unprefixed name, so the site still reads correctly wherever it is
+// displayed.
 func siteFor(p *Profile) SiteSpec {
 	pl := places[p.Location]
 	return SiteSpec{
-		Name:        p.Facility,
-		Provider:    p.Provider,
+		Name:        HostnamePrefix + p.Facility,
+		Provider:    HostnamePrefix + p.Provider,
 		Facility:    p.Facility,
 		CountryCode: pl.country,
 		Timezone:    pl.timezone,

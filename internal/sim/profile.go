@@ -192,6 +192,19 @@ type ProcessSpec struct {
 	Count   uint32
 }
 
+// runsCollector reports whether this host runs the named collector, which is
+// the same list collector_samples is generated from. Every family a profile
+// emits must have its collector here, or the health table contradicts the
+// data table.
+func (p *Profile) runsCollector(name string) bool {
+	for _, c := range p.Collectors {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Metadata renders the profile's static facts as the block the hub stores on
 // the hosts row. The fingerprint is synthetic but stable per profile, so a
 // re-run does not look like the token was copied to a different machine.

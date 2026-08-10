@@ -75,11 +75,28 @@ type Generator struct {
 	agentStart time.Time
 }
 
+// liveHorizon is how far past the backfill window discrete events are
+// scheduled.
+//
+// Without it --live is silent: the schedule is laid out once over [from,to)
+// with `to` pinned at start-up, and every live instant is at or after `to`, so
+// nothing is ever due again. A process left running overnight wrote one
+// baseline row per unit and then no event at all, which makes the events UI
+// -- the thing most likely to be developed against a live simulator -- look
+// permanently empty. Events past `to` cost nothing in a backfill-only run:
+// the grid never reaches them.
+const liveHorizon = 90 * 24 * time.Hour
+
 // NewGenerator prepares a host for the window [from,to). The window bounds
 // matter beyond iteration: the slow ramps -- a filesystem filling, a drive
 // accumulating power-on hours, reallocated sectors appearing -- are
 // interpolated across it, so the same profile tells a different story over a
 // day than over three months.
+//
+// Ramps use [from,to); the event schedule deliberately runs further, to
+// to+liveHorizon. A ramp past `to` would be extrapolation, and ramp() clamps
+// it instead -- a filesystem that reached 91% full stays there in live mode
+// rather than marching past 100%.
 func NewGenerator(p *Profile, seed uint64, from, to time.Time) *Generator {
 	sig := newSignal(seed ^ hashString(p.Hostname))
 	return &Generator{
@@ -87,7 +104,7 @@ func NewGenerator(p *Profile, seed uint64, from, to time.Time) *Generator {
 		sig:   sig,
 		from:  from,
 		to:    to,
-		sched: newSchedule(p, sig, from, to),
+		sched: newSchedule(p, sig, from, to.Add(liveHorizon)),
 		// Booted before the window opens, so uptime is never a number that
 		// implies the host came up exactly when the simulator started.
 		boot:       from.Add(-37*24*time.Hour - 4*time.Hour),
@@ -114,12 +131,17 @@ func (g *Generator) Scrape(ts time.Time, opt Options) *Scrape {
 	if opt.Smart {
 		s.Smart = g.smart(ts)
 	}
-	if opt.Processes {
+	// Gated on the profile as well as the instant. A host that emits process
+	// rows without listing the collector that produces them is a state no
+	// real fleet can reach, and a read-side query joining process data to
+	// collector health would report the collector as absent while the rows
+	// sit right there.
+	if opt.Processes && g.p.runsCollector("processes") {
 		s.Processes = g.processes(ts, cpu)
 	}
 	if opt.Inventory {
 		s.Addresses = g.addresses()
-		s.Packages = g.packages()
+		s.Packages = g.packages(ts)
 	}
 
 	for _, e := range g.sched.due(ts) {
@@ -581,18 +603,54 @@ func (g *Generator) addresses() []*netrav1.HostAddress {
 	return out
 }
 
-func (g *Generator) packages() []*netrav1.HostPackage {
-	out := make([]*netrav1.HostPackage, 0, len(g.p.Packages))
-	for _, p := range g.p.Packages {
-		out = append(out, &netrav1.HostPackage{
+// packages renders the inventory AS OF ts: the profile's static set, with the
+// versions the upgrade events have moved on, plus everything installed since
+// the window opened.
+//
+// Replaying the events rather than returning the static list is what keeps
+// host_packages and package_events telling the same story. A static list
+// leaves the inventory reporting the original version of every package the
+// event log says was upgraded, and missing every package it says was
+// installed.
+func (g *Generator) packages(ts time.Time) []*netrav1.HostPackage {
+	versions, installed := g.sched.packageStateAt(ts)
+
+	render := func(p PackageSpec) *netrav1.HostPackage {
+		version := p.Version
+		if v, ok := versions[p.Name]; ok {
+			version = v
+		}
+		arch := p.Arch
+		if arch == "" {
+			arch = g.pkgArch()
+		}
+		return &netrav1.HostPackage{
 			Name:      p.Name,
-			Version:   p.Version,
-			Arch:      p.Arch,
+			Version:   version,
+			Arch:      arch,
 			Format:    g.p.PkgFormat,
 			SizeBytes: proto.Uint64(p.Size),
-		})
+		}
+	}
+
+	out := make([]*netrav1.HostPackage, 0, len(g.p.Packages)+len(installed))
+	for _, p := range g.p.Packages {
+		out = append(out, render(p))
+	}
+	for _, p := range installed {
+		out = append(out, render(p))
 	}
 	return out
+}
+
+// pkgArch is the architecture an installed package inherits, taken from the
+// inventory rather than from Profile.Arch: the package manager's name for it
+// ("amd64", "x86_64") is not always Go's.
+func (g *Generator) pkgArch() string {
+	if len(g.p.Packages) > 0 {
+		return g.p.Packages[0].Arch
+	}
+	return g.p.Arch
 }
 
 func (g *Generator) hasSpinningDisk() bool {

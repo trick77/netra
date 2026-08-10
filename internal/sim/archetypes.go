@@ -108,7 +108,7 @@ func rpi5() *Profile {
 		Collectors: []string{
 			"cpu", "percpu", "memory", "load", "kernelstat", "procs", "netstat",
 			"users", "diskio", "sensors", "network", "addresses", "containers",
-			"filesystems", "systemd", "packages",
+			"filesystems", "systemd", "packages", "processes",
 		},
 		Capabilities: map[string]string{
 			"smart":     "no-device-access",
@@ -187,7 +187,7 @@ func nvmeVPS() *Profile {
 		Collectors: []string{
 			"cpu", "percpu", "memory", "load", "kernelstat", "procs", "netstat",
 			"users", "diskio", "network", "addresses", "containers",
-			"filesystems", "systemd", "packages",
+			"filesystems", "systemd", "packages", "processes",
 		},
 		Capabilities: map[string]string{
 			"sensors": "absent",
@@ -373,7 +373,7 @@ func minimalVPS() *Profile {
 		},
 		Collectors: []string{
 			"cpu", "percpu", "memory", "load", "kernelstat", "procs", "netstat",
-			"users", "diskio", "network", "addresses", "filesystems", "packages",
+			"users", "diskio", "network", "addresses", "filesystems", "packages", "processes",
 		},
 		Capabilities: map[string]string{
 			"containers": "no-docker-socket",

@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
@@ -139,6 +141,11 @@ func packageChanges(p *Profile, s signal, from, to time.Time) []timedEvent {
 		return nil
 	}
 
+	// The running version of anything already upgraded. Without it a package
+	// upgraded twice reports the same from_version both times, and the second
+	// event claims to start from a version the first one already replaced.
+	current := map[string]string{}
+
 	var evs []timedEvent
 	for i, at := 0, from.Add(packageUpgradeInterval); at.Before(to); i, at = i+1, at.Add(packageUpgradeInterval) {
 		// Upgrade runs land in the small hours, like the timer that drives
@@ -147,48 +154,86 @@ func packageChanges(p *Profile, s signal, from, to time.Time) []timedEvent {
 		for j := range 3 {
 			key := fmt.Sprintf("%s/pkg/%d/%d", p.Hostname, i, j)
 			pkg := p.Packages[int(s.unit(key, at)*float64(len(p.Packages)))%len(p.Packages)]
+
+			from := pkg.Version
+			if v, ok := current[pkg.Name]; ok {
+				from = v
+			}
+			to := bumpVersion(from)
+			current[pkg.Name] = to
+
 			// Spaced by more than the coarse grid step: three upgrades 40
 			// seconds apart all land in one slot, share a timestamp, and any
 			// two that picked the same package collapse into one row.
 			evs = append(evs, timedEvent{ts: at.Add(time.Duration(j) * 7 * time.Minute), pkg: &netrav1.PackageEvent{
 				Name:        pkg.Name,
 				Action:      "upgrade",
-				FromVersion: pkg.Version,
-				ToVersion:   bumpVersion(pkg.Version),
+				FromVersion: from,
+				ToVersion:   to,
 			}})
 		}
 	}
 
-	// One install, halfway through, so the table is not all upgrades.
-	mid := from.Add(to.Sub(from) / 2)
-	evs = append(evs, timedEvent{ts: mid, pkg: &netrav1.PackageEvent{
-		Name: "ncdu", Action: "install", ToVersion: "1.19-1",
-	}})
+	// Installs too, so package_events is not all upgrades. Periodic rather
+	// than one at the window's midpoint: the schedule now runs past the
+	// backfill into the live horizon, and a midpoint of that span would put
+	// the only install somewhere nobody ever sees.
+	for i, at := 0, from.Add(packageInstallInterval); at.Before(to); i, at = i+1, at.Add(packageInstallInterval) {
+		pkg := installablePackages[i%len(installablePackages)]
+		evs = append(evs, timedEvent{ts: at.Truncate(24 * time.Hour).Add(21*time.Hour + 3*time.Minute), pkg: &netrav1.PackageEvent{
+			Name: pkg.Name, Action: "install", ToVersion: pkg.Version,
+		}})
+	}
 	return evs
 }
 
-// mdraidTrouble degrades and rebuilds the array once in the window. The
-// rebuild follows rather than being left open: a permanently degraded array
-// is a fixture, not a history.
+// packageInstallInterval is how often somebody installs something new.
+const packageInstallInterval = 26 * 24 * time.Hour
+
+// installablePackages are the packages that get installed during a run. They
+// are deliberately NOT in packageNames: the point is that they appear in the
+// inventory only after their install event, so the two halves agree.
+var installablePackages = []PackageSpec{
+	{Name: "ncdu", Version: "1.19-1", Size: 61440},
+	{Name: "ripgrep", Version: "13.0.0-4", Size: 1892352},
+	{Name: "tmux", Version: "3.3a-3", Size: 495616},
+	{Name: "ncftp", Version: "3.2.6-1", Size: 372736},
+}
+
+// mdraidInterval is how often the array has a bad day. Rare enough to be an
+// incident, frequent enough that a 90-day window contains one or two.
+const mdraidInterval = 47 * 24 * time.Hour
+
+// mdraidTrouble degrades and rebuilds the array, repeatedly, across the
+// window. The rebuild always follows: a permanently degraded array is a
+// fixture, not a history.
+//
+// Repeating rather than placing one incident somewhere in the span, because
+// the span now includes the live horizon -- a single incident positioned as a
+// fraction of it could fall entirely outside the backfill and never be seen.
 func mdraidTrouble(p *Profile, s signal, from, to time.Time) []timedEvent {
 	if p.Mdraid == "" {
 		return nil
 	}
 
-	span := to.Sub(from)
-	if span < 48*time.Hour {
-		return nil
+	var evs []timedEvent
+	for i, at := 0, from.Add(mdraidInterval/3); at.Before(to); i, at = i+1, at.Add(mdraidInterval) {
+		at := at.Add(time.Duration(s.unit(fmt.Sprintf("%s/mdraid/%d", p.Hostname, i), from) * float64(mdraidInterval) * 0.4))
+		rebuilt := at.Add(11 * time.Hour)
+		if !rebuilt.Before(to) {
+			break
+		}
+		evs = append(evs, mdraidIncident(p.Mdraid, at, rebuilt)...)
 	}
-	at := from.Add(time.Duration(s.unit(p.Hostname+"/mdraid", from) * float64(span) * 0.7)).Add(span / 6)
-	rebuilt := at.Add(11 * time.Hour)
-	if !rebuilt.Before(to) {
-		return nil
-	}
+	return evs
+}
 
+// mdraidIncident is one degrade, resync and recovery.
+func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 	return []timedEvent{
 		{ts: at, event: &netrav1.Event{
 			Type:       "mdraid",
-			Subject:    p.Mdraid,
+			Subject:    array,
 			DetailJson: `{"level":"raid10","state":"degraded","degraded":1,"disks":4,"failed":"sdc"}`,
 		}},
 		// Well clear of the degrade rather than 90 seconds after it: on the
@@ -197,12 +242,12 @@ func mdraidTrouble(p *Profile, s signal, from, to time.Time) []timedEvent {
 		// (host_id, ts, type, subject).
 		{ts: at.Add(25 * time.Minute), event: &netrav1.Event{
 			Type:       "mdraid",
-			Subject:    p.Mdraid,
+			Subject:    array,
 			DetailJson: `{"level":"raid10","state":"recovering","degraded":1,"disks":4,"resync_pct":0.4}`,
 		}},
 		{ts: rebuilt, event: &netrav1.Event{
 			Type:       "mdraid",
-			Subject:    p.Mdraid,
+			Subject:    array,
 			DetailJson: `{"level":"raid10","state":"clean","degraded":0,"disks":4}`,
 		}},
 	}
@@ -212,8 +257,61 @@ func mdraidTrouble(p *Profile, s signal, from, to time.Time) []timedEvent {
 // crude on purpose: the value only has to differ from the one before it and
 // look like a Debian version, and a real version comparator here would be a
 // second implementation of something nothing reads back.
+//
+// It increments an existing suffix rather than appending another, so a
+// package upgraded three times reads 1.2.3+deb12u3 and not
+// 1.2.3+deb12u1+deb12u1+deb12u1.
 func bumpVersion(v string) string {
-	return v + "+deb12u1"
+	const suffix = "+deb12u"
+	if i := strings.LastIndex(v, suffix); i >= 0 {
+		if n, err := strconv.Atoi(v[i+len(suffix):]); err == nil {
+			return v[:i] + suffix + strconv.Itoa(n+1)
+		}
+	}
+	return v + suffix + "1"
+}
+
+// packageStateAt replays the package events up to ts into the inventory they
+// imply: the current version of anything upgraded, and everything installed
+// since the window opened.
+//
+// The two have to agree. store.UpsertHostPackages exists to keep the
+// inventory and the event log consistent, so a fixture whose events say
+// "installed ncdu 45 days ago" while its inventory has never heard of ncdu
+// is a state no real hub can produce -- and it is the state anyone developing
+// the inventory UI would be developing against.
+func (sc *schedule) packageStateAt(ts time.Time) (versions map[string]string, installed []PackageSpec) {
+	versions = map[string]string{}
+	seen := map[string]bool{}
+
+	for _, e := range sc.events {
+		if e.ts.After(ts) {
+			break
+		}
+		if e.pkg == nil {
+			continue
+		}
+		name := e.pkg.GetName()
+		versions[name] = e.pkg.GetToVersion()
+		if e.pkg.GetAction() == "install" && !seen[name] {
+			seen[name] = true
+			installed = append(installed, PackageSpec{
+				Name:    name,
+				Version: e.pkg.GetToVersion(),
+				Size:    sizeOfInstallable(name),
+			})
+		}
+	}
+	return versions, installed
+}
+
+func sizeOfInstallable(name string) uint64 {
+	for _, p := range installablePackages {
+		if p.Name == name {
+			return p.Size
+		}
+	}
+	return 0
 }
 
 // fingerprint derives a stable synthetic machine-id hash for a hostname. The

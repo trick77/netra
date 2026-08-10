@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -64,13 +66,31 @@ func (h *Hub) EnsureHost(ctx context.Context, hostname string, siteID *int32) (i
 		return 0, "", err
 	}
 	for _, existing := range hosts {
-		if existing.Hostname == hostname {
-			token, err := h.RotateToken(ctx, existing.ID)
-			if err != nil {
-				return 0, "", err
-			}
-			return existing.ID, token, nil
+		if existing.Hostname != hostname {
+			continue
 		}
+		// The site is reported, not corrected: the admin API has no way to
+		// move a host between sites, and the unique index is on
+		// (site_id, hostname), so a host created under an older site keeps
+		// it. Silently writing the new history against the old site while
+		// logging the new site_id was actively misleading.
+		if siteID != nil && (existing.SiteID == nil || *existing.SiteID != *siteID) {
+			slog.Warn("existing simulated host is filed under a different site; "+
+				"its history will be written there. Re-run with --fresh to move it",
+				"hostname", hostname, "existing_site_id", existing.SiteID, "wanted_site_id", *siteID)
+		}
+		// Rotating is the only way to get a usable token: the plaintext is
+		// shown once at creation and is not readable back. It also revokes
+		// whatever token was in use, so a netra-sim --live running elsewhere
+		// against this hub starts getting 401s from here on.
+		slog.Warn("rotating the token of an existing simulated host; "+
+			"any netra-sim --live already running against this hub will lose its credential",
+			"hostname", hostname, "id", existing.ID)
+		token, err := h.RotateToken(ctx, existing.ID)
+		if err != nil {
+			return 0, "", err
+		}
+		return existing.ID, token, nil
 	}
 	return h.CreateHost(ctx, hostname, siteID)
 }
@@ -121,10 +141,12 @@ func (h *Hub) DeleteHost(ctx context.Context, id int32, hostname string) error {
 	return h.adminJSON(ctx, http.MethodDelete, fmt.Sprintf("/api/v1/hosts/%d", id), nil, nil)
 }
 
-// checkSimulated refuses to touch a host the simulator did not create.
-func checkSimulated(hostname string) error {
-	if !strings.HasPrefix(hostname, HostnamePrefix) {
-		return fmt.Errorf("refusing to touch %q: netra-sim only manages hosts named %s*", hostname, HostnamePrefix)
+// checkSimulated refuses to touch anything the simulator did not create. It
+// covers sites and providers as well as hosts: a site is matched by name, so
+// an unguarded EnsureSite would silently adopt a real one.
+func checkSimulated(name string) error {
+	if !strings.HasPrefix(name, HostnamePrefix) {
+		return fmt.Errorf("refusing to touch %q: netra-sim only manages records named %s*", name, HostnamePrefix)
 	}
 	return nil
 }
@@ -132,6 +154,9 @@ func checkSimulated(hostname string) error {
 // EnsureProvider returns the id of a provider with this name, creating it if
 // it does not exist.
 func (h *Hub) EnsureProvider(ctx context.Context, name string) (int32, error) {
+	if err := checkSimulated(name); err != nil {
+		return 0, err
+	}
 	var list []struct {
 		ID   int32  `json:"id"`
 		Name string `json:"name"`
@@ -169,6 +194,9 @@ type SiteSpec struct {
 // creating and describing it if it does not exist. The coordinates are filled
 // in because a site without them is invisible to anything that draws a map.
 func (h *Hub) EnsureSite(ctx context.Context, spec SiteSpec) (int32, error) {
+	if err := checkSimulated(spec.Name); err != nil {
+		return 0, err
+	}
 	providerID, err := h.EnsureProvider(ctx, spec.Provider)
 	if err != nil {
 		return 0, err
@@ -209,14 +237,74 @@ func (h *Hub) EnsureSite(ctx context.Context, spec SiteSpec) (int32, error) {
 	return out.ID, nil
 }
 
+// ingestAttempts is how many times a batch is posted before the run gives up.
+//
+// A 503 from the hub is not a failure the caller should inherit: it means
+// storage is briefly unavailable -- a Postgres hiccup, a retention job
+// dropping a chunk, the pool momentarily exhausted -- and the response
+// carries retry_after_s precisely so the client waits and re-posts, which is
+// what the real agent does. Aborting instead threw away a ninety-day backfill
+// forty minutes in, over a condition the protocol defines as transient.
+const ingestAttempts = 4
+
+// maxRetryAfter bounds what the hub can ask the simulator to wait, so a
+// mistaken large value cannot stall a run indefinitely.
+const maxRetryAfter = 2 * time.Minute
+
 // Ingest posts one batch as an agent would: a marshalled protobuf body with a
-// bearer token.
+// bearer token, retrying while the hub says the failure is transient.
 func (h *Hub) Ingest(ctx context.Context, token string, req *netrav1.IngestRequest) (*netrav1.IngestResponse, error) {
 	raw, err := proto.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)
 	}
 
+	var lastErr error
+	for attempt := range ingestAttempts {
+		if attempt > 0 {
+			wait := retryAfter(lastErr)
+			slog.Warn("ingest failed, retrying", "attempt", attempt, "in", wait.String(), "err", lastErr)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+
+		resp, err := h.postIngest(ctx, token, raw, req.GetSeq())
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+
+		var retry retryableError
+		if !errors.As(err, &retry) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("ingest: giving up after %d attempts: %w", ingestAttempts, lastErr)
+}
+
+// retryableError marks a failure the hub told us to come back from, carrying
+// the delay it asked for.
+type retryableError struct {
+	err   error
+	after time.Duration
+}
+
+func (e retryableError) Error() string { return e.err.Error() }
+func (e retryableError) Unwrap() error { return e.err }
+
+// retryAfter is the delay the hub asked for, or a default when it named none.
+func retryAfter(err error) time.Duration {
+	var retry retryableError
+	if errors.As(err, &retry) && retry.after > 0 {
+		return min(retry.after, maxRetryAfter)
+	}
+	return 5 * time.Second
+}
+
+func (h *Hub) postIngest(ctx context.Context, token string, raw []byte, seq uint64) (*netrav1.IngestResponse, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, h.baseURL+ingestPath, bytes.NewReader(raw))
 	if err != nil {
 		return nil, err
@@ -226,7 +314,9 @@ func (h *Hub) Ingest(ctx context.Context, token string, req *netrav1.IngestReque
 
 	resp, err := h.hc.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("post ingest: %w", err)
+		// A connection that failed mid-run is the same class of problem as a
+		// 503: the hub may simply be restarting.
+		return nil, retryableError{err: fmt.Errorf("post ingest: %w", err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -234,19 +324,31 @@ func (h *Hub) Ingest(ctx context.Context, token string, req *netrav1.IngestReque
 	if err != nil {
 		return nil, fmt.Errorf("read ingest response: %w", err)
 	}
+
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("ingest: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		failure := fmt.Errorf("ingest: %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			return nil, failure
+		}
+		// The 503 body is a protobuf carrying retry_after_s. It is only
+		// trusted when it says so in the content type, so a proxy's HTML
+		// error page cannot dictate how long the simulator sleeps.
+		var status netrav1.IngestResponse
+		if strings.HasPrefix(resp.Header.Get("Content-Type"), "application/x-protobuf") {
+			_ = proto.Unmarshal(body, &status)
+		}
+		return nil, retryableError{err: failure, after: time.Duration(status.GetRetryAfterS()) * time.Second}
 	}
 
 	var out netrav1.IngestResponse
 	if err := proto.Unmarshal(body, &out); err != nil {
 		return nil, fmt.Errorf("unmarshal ingest response: %w", err)
 	}
-	if out.GetAckSeq() != req.GetSeq() {
+	if out.GetAckSeq() != seq {
 		// The hub echoes the sequence once the whole batch is stored, so a
 		// mismatch means it did not. Treating it as success would leave a
 		// hole in the history that nothing later notices.
-		return nil, fmt.Errorf("ingest: hub acked seq %d, sent %d", out.GetAckSeq(), req.GetSeq())
+		return nil, fmt.Errorf("ingest: hub acked seq %d, sent %d", out.GetAckSeq(), seq)
 	}
 	return &out, nil
 }

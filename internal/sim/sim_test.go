@@ -241,6 +241,64 @@ func TestRefreshSegmentsTileTheWindowWithoutGaps(t *testing.T) {
 	}
 }
 
+// Tiling in wall-clock time is not enough: refresh_continuous_aggregate
+// materialises only the buckets that fall ENTIRELY inside its window, so a
+// segment boundary in the middle of a bucket leaves that bucket to nobody.
+// A 90-day run lost 18 hourly buckets that way, one per boundary.
+func TestEveryBucketIsCoveredBySomeRefreshWindow(t *testing.T) {
+	// An origin deliberately off every bucket boundary.
+	to := time.Date(2026, 8, 10, 8, 31, 0, 0, time.UTC)
+	from := to.Add(-90 * 24 * time.Hour)
+
+	for _, bucket := range []time.Duration{tier5m, tier1h} {
+		covered := map[int64]bool{}
+		for _, seg := range refreshSegments(from, to) {
+			f, e := bucketWindow(seg.from, seg.to, bucket)
+			for ts := f; ts.Before(e); ts = ts.Add(bucket) {
+				covered[ts.Unix()] = true
+			}
+		}
+
+		for ts := from.Truncate(bucket); ts.Before(to); ts = ts.Add(bucket) {
+			if !covered[ts.Unix()] {
+				t.Fatalf("%s bucket at %s is materialised by no refresh window", bucket, ts.UTC())
+			}
+		}
+	}
+}
+
+// A window shorter than one bucket is rejected outright by TimescaleDB with
+// "refresh window too small", which aborted a short run after all its data
+// had already been ingested.
+func TestARefreshWindowAlwaysCoversAtLeastOneWholeBucket(t *testing.T) {
+	to := time.Date(2026, 8, 10, 13, 50, 0, 0, time.UTC)
+
+	for _, backfill := range []time.Duration{45 * time.Minute, 20 * time.Minute, 2 * time.Minute} {
+		from := to.Add(-backfill)
+		for _, seg := range refreshSegments(from, to) {
+			for _, bucket := range []time.Duration{tier5m, tier1h} {
+				f, e := bucketWindow(seg.from, seg.to, bucket)
+				if e.Sub(f) < bucket {
+					t.Errorf("--backfill %s: %s window [%s,%s) is under one bucket", backfill, bucket, f, e)
+				}
+				if !f.Truncate(bucket).Equal(f) || !e.Truncate(bucket).Equal(e) {
+					t.Errorf("--backfill %s: %s window [%s,%s) is not bucket-aligned", backfill, bucket, f, e)
+				}
+			}
+		}
+	}
+}
+
+// The coarse refresh segment must stay clear of the raw retention threshold:
+// every row in that region is already older than the drop threshold when it
+// is written, so the segment width is the entire margin.
+func TestTheCoarseRefreshSegmentLeavesMarginAgainstRetention(t *testing.T) {
+	if coarseRefreshSegment >= rawRetention {
+		t.Fatalf("coarse segment %s is not shorter than raw retention %s: raw chunks can be "+
+			"dropped before they are ever materialised", coarseRefreshSegment, rawRetention)
+	}
+}
+
 func TestTheGridIsCoarseOnlyOutsideTheRawRetentionWindow(t *testing.T) {
 	if got := gridStep(testTo.Add(-30*24*time.Hour), testTo); got != 5*time.Minute {
 		t.Errorf("30 days back: step %s, want 5m", got)
@@ -488,6 +546,203 @@ func TestSplittingAnOversizedBatchStillDeliversTheMetadata(t *testing.T) {
 		if seq != uint64(i+1) {
 			t.Errorf("post %d used seq %d, want %d", i, seq, i+1)
 		}
+	}
+}
+
+// The inventory and the event log are two halves of the same answer.
+// store.UpsertHostPackages exists to keep them consistent, so a fixture whose
+// events say a package was installed while its inventory has never heard of
+// it is a state no real hub can produce.
+func TestTheInventoryAgreesWithThePackageEvents(t *testing.T) {
+	p := Fleet()[1]
+	g := NewGenerator(p, 1, testFrom, testTo)
+
+	// Walk the window so the schedule's cursor passes every event, then read
+	// the inventory as of the end.
+	for ts := testFrom; ts.Before(testTo); ts = ts.Add(6 * time.Hour) {
+		g.Scrape(ts, Options{})
+	}
+	inventory := map[string]string{}
+	for _, pkg := range g.packages(testTo) {
+		inventory[pkg.GetName()] = pkg.GetVersion()
+	}
+
+	var checked int
+	for _, e := range g.sched.events {
+		if e.pkg == nil || e.ts.After(testTo) {
+			continue
+		}
+		name, want := e.pkg.GetName(), e.pkg.GetToVersion()
+		got, present := inventory[name]
+		if !present {
+			t.Errorf("%s %s at %s, but it is absent from the inventory",
+				e.pkg.GetAction(), name, e.ts.Format(time.RFC3339))
+			continue
+		}
+		// Only the LAST event for a package fixes its version; earlier ones
+		// are superseded.
+		if last := lastEventFor(g.sched, name, testTo); last == want && got != want {
+			t.Errorf("%s was %s %s -> %s, but the inventory still reports %s",
+				name, e.pkg.GetAction(), e.pkg.GetFromVersion(), want, got)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no package events in the window; the test proves nothing")
+	}
+}
+
+func lastEventFor(sc *schedule, name string, until time.Time) string {
+	var version string
+	for _, e := range sc.events {
+		if e.ts.After(until) {
+			break
+		}
+		if e.pkg != nil && e.pkg.GetName() == name {
+			version = e.pkg.GetToVersion()
+		}
+	}
+	return version
+}
+
+// A package upgraded twice must not report the same from_version both times,
+// and its version must not grow a second suffix.
+func TestRepeatedUpgradesChainTheirVersions(t *testing.T) {
+	v := "1.2.3-1"
+	for range 3 {
+		v = bumpVersion(v)
+	}
+	if v != "1.2.3-1+deb12u3" {
+		t.Errorf("three upgrades produced %q, want 1.2.3-1+deb12u3", v)
+	}
+}
+
+// Every family a profile emits must have its collector in the list
+// collector_samples is built from, or the health table contradicts the data
+// table.
+func TestAProfileNeverEmitsAFamilyItsCollectorListDoesNotCover(t *testing.T) {
+	opt := Options{Smart: true, Processes: true, Collectors: true, Inventory: true}
+
+	for _, p := range Fleet() {
+		s := NewGenerator(p, 1, testFrom, testTo).Scrape(testTo.Add(-time.Hour), opt)
+
+		for _, check := range []struct {
+			collector string
+			emitted   bool
+		}{
+			{"processes", len(s.Processes) > 0},
+			{"smart", len(s.Smart) > 0},
+			{"sensors", len(s.Sensors) > 0},
+			{"containers", len(s.Containers) > 0},
+			{"filesystems", len(s.Filesystems) > 0},
+			{"diskio", len(s.Disks) > 0},
+			{"network", len(s.Nets) > 0},
+		} {
+			if check.emitted && !p.runsCollector(check.collector) {
+				t.Errorf("%s emits %s rows but does not list the %s collector",
+					p.Name, check.collector, check.collector)
+			}
+		}
+	}
+}
+
+// The prefix guard has to cover sites and providers, not just hosts:
+// EnsureSite matches an existing site BY NAME, so an unguarded run against a
+// real hub would attach its invented hosts to a real site.
+func TestSitesAndProvidersCarryTheSimulatorPrefix(t *testing.T) {
+	for _, p := range Fleet() {
+		spec := siteFor(p)
+		if !strings.HasPrefix(spec.Name, HostnamePrefix) {
+			t.Errorf("%s: site %q would match a real site of the same name", p.Name, spec.Name)
+		}
+		if !strings.HasPrefix(spec.Provider, HostnamePrefix) {
+			t.Errorf("%s: provider %q is unprefixed", p.Name, spec.Provider)
+		}
+	}
+
+	hub := NewHub("http://127.0.0.1:1", "token")
+	if _, err := hub.EnsureSite(t.Context(), SiteSpec{Name: "ZRH2", Provider: "sim-Init7"}); err == nil {
+		t.Error("EnsureSite accepted an unprefixed site name")
+	}
+	if _, err := hub.EnsureProvider(t.Context(), "Init7"); err == nil {
+		t.Error("EnsureProvider accepted an unprefixed provider name")
+	}
+}
+
+// A 503 carries retry_after_s precisely so the client waits and re-posts.
+// Treating it as fatal threw away a ninety-day backfill over a condition the
+// protocol defines as transient.
+func TestATransientHubFailureIsRetriedRatherThanKillingTheRun(t *testing.T) {
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var req netrav1.IngestRequest
+		_ = proto.Unmarshal(raw, &req)
+		attempts++
+
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		if attempts == 1 {
+			// One second, so the test does not sit through the default.
+			out, _ := proto.Marshal(&netrav1.IngestResponse{RetryAfterS: 1})
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write(out)
+			return
+		}
+		out, _ := proto.Marshal(&netrav1.IngestResponse{AckSeq: req.GetSeq()})
+		_, _ = w.Write(out)
+	}))
+	defer srv.Close()
+
+	hub := NewHub(srv.URL, "admin")
+	resp, err := hub.Ingest(t.Context(), "nta_x", &netrav1.IngestRequest{Seq: 1})
+	if err != nil {
+		t.Fatalf("a 503 with retry_after_s killed the run: %v", err)
+	}
+	if resp.GetAckSeq() != 1 {
+		t.Errorf("acked seq %d, want 1", resp.GetAckSeq())
+	}
+	if attempts != 2 {
+		t.Errorf("hub saw %d attempts, want 2", attempts)
+	}
+}
+
+// A permanent failure must still be fatal: retrying a 401 forever would hang
+// a run behind a token that is never coming back.
+func TestAPermanentFailureIsNotRetried(t *testing.T) {
+	var attempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts++
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	if _, err := NewHub(srv.URL, "admin").Ingest(t.Context(), "nta_x", &netrav1.IngestRequest{Seq: 1}); err == nil {
+		t.Fatal("a 401 was treated as success")
+	}
+	if attempts != 1 {
+		t.Errorf("a 401 was retried %d times; it can never succeed", attempts)
+	}
+}
+
+// Live mode runs past the backfill window, and the schedule has to run with
+// it: a process left running overnight that never emits another event makes
+// the events UI look permanently empty.
+func TestLiveModeStillHasEventsAfterTheBackfillWindowEnds(t *testing.T) {
+	p := Fleet()[2]
+	g := NewGenerator(p, 1, testFrom, testTo)
+
+	// Consume everything inside the backfill window first.
+	for ts := testFrom; ts.Before(testTo); ts = ts.Add(30 * time.Minute) {
+		g.Scrape(ts, Options{})
+	}
+
+	var events int
+	for ts := testTo; ts.Before(testTo.Add(30 * 24 * time.Hour)); ts = ts.Add(30 * time.Minute) {
+		s := g.Scrape(ts, Options{})
+		events += len(s.Events) + len(s.SystemdEvents) + len(s.PackageEvents)
+	}
+	if events == 0 {
+		t.Error("no discrete event in 30 days of live mode; the event tables would stay frozen")
 	}
 }
 
