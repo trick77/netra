@@ -22,6 +22,10 @@ import (
 // ON CONFLICT. Batches are one scrape deep, so the row count per statement is
 // small and the difference does not matter here; bulk backfill paths in later
 // plans may revisit this.
+//
+// Sent through execBatch like every family in families.go, so this path cannot
+// quietly opt out of the poison-row quarantine that keeps an unstorable row
+// from wedging a host's ring buffer forever.
 func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*netrav1.HostSample) (int64, error) {
 	if len(samples) == 0 {
 		return 0, nil
@@ -104,19 +108,7 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 		)
 	}
 
-	results := s.pool.SendBatch(ctx, batch)
-	defer func() { _ = results.Close() }()
-
-	var inserted int64
-	for range samples {
-		tag, err := results.Exec()
-		if err != nil {
-			return 0, fmt.Errorf("insert host sample: %w", err)
-		}
-		inserted += tag.RowsAffected()
-	}
-
-	return inserted, nil
+	return execBatch(ctx, s.pool, batch, "host sample")
 }
 
 // UpsertHostCurrent keeps the denormalised latest snapshot fresh so the host
@@ -199,7 +191,6 @@ func (s *Store) InsertAgentSamples(ctx context.Context, hostID int32, samples []
 		ON CONFLICT (host_id, ts) DO NOTHING`
 
 	batch := &pgx.Batch{}
-	queued := 0
 	for _, m := range samples {
 		a := m.GetAgent()
 		if a == nil {
@@ -212,25 +203,12 @@ func (s *Store) InsertAgentSamples(ctx context.Context, hostID int32, samples []
 			u64(a.BufferDroppedTotal), u64(a.PostFailuresTotal),
 			u32(a.PostLatencyMs),
 		)
-		queued++
 	}
-	if queued == 0 {
+	if batch.Len() == 0 {
 		return 0, nil
 	}
 
-	results := s.pool.SendBatch(ctx, batch)
-	defer func() { _ = results.Close() }()
-
-	var inserted int64
-	for range queued {
-		tag, err := results.Exec()
-		if err != nil {
-			return 0, fmt.Errorf("insert agent sample: %w", err)
-		}
-		inserted += tag.RowsAffected()
-	}
-
-	return inserted, nil
+	return execBatch(ctx, s.pool, batch, "agent sample")
 }
 
 // f64 and u64 map an unset protobuf optional to a SQL NULL. Returning the
@@ -278,6 +256,18 @@ func (s *Store) MetadataHash(ctx context.Context, hostID int32) ([]byte, error) 
 // exactly what spec §7.2 asks the hub to catch: a compose file (and its
 // token) copied to a second host. The request is still accepted and stored —
 // flagging, not rejecting, is the specified behaviour.
+//
+// hostname is NOT written here, on purpose. The operator names a host when they
+// create it, and that name is what rotate and delete are reasoned about in the
+// UI. Letting the agent overwrite it renamed the row out from under them — and
+// worse, could not be stored at all in the common case: every host created
+// through the UI has site_id NULL, hosts_site_id_hostname_key is NULLS NOT
+// DISTINCT, so two cloned VMs both reporting `raspberrypi` (or two agents both
+// reporting nothing, writing ”) collide on 23505. This statement has no
+// poisonRow quarantine, so that 23505 became a 503, and the agent answers a 503
+// by re-sending the IDENTICAL batch — a permanent wedge on that host. The
+// fingerprint warning above already covers the case reading the reported
+// hostname was implicitly guarding.
 func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md *netrav1.Metadata) error {
 	var storedFingerprint *string
 	if err := s.pool.QueryRow(ctx,
@@ -294,12 +284,11 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 
 	_, err := s.pool.Exec(ctx, `
 		UPDATE hosts SET
-			hostname      = $2,
-			fingerprint   = $3,
-			host_type     = NULLIF($4, ''),
-			agent_version = $5,
-			go_version    = $6,
-			build_commit  = $7,
+			fingerprint   = $2,
+			host_type     = NULLIF($3, ''),
+			agent_version = $4,
+			go_version    = $5,
+			build_commit  = $6,
 			-- NULLIF on every field the agent may legitimately leave unset.
 			-- BuildMetadata does not populate kernel, cpu_model, cores or
 			-- memory_total at all today, so without this every metadata save
@@ -307,23 +296,23 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 			-- 0 B RAM" as though it had been measured. An unset field reaches
 			-- the database as NULL; that invariant is stated in both
 			-- collector.go's package doc and the HostSample proto comment.
-			kernel        = NULLIF($8, ''),
-			os_name       = NULLIF($9, ''),
-			arch          = NULLIF($10, ''),
-			cpu_model     = NULLIF($11, ''),
-			cores         = NULLIF($12, 0),
-			threads       = NULLIF($13, 0),
-			memory_total  = NULLIF($14, 0::BIGINT),
-			metadata_hash = $15,
+			kernel        = NULLIF($7, ''),
+			os_name       = NULLIF($8, ''),
+			arch          = NULLIF($9, ''),
+			cpu_model     = NULLIF($10, ''),
+			cores         = NULLIF($11, 0),
+			threads       = NULLIF($12, 0),
+			memory_total  = NULLIF($13, 0::BIGINT),
+			metadata_hash = $14,
 			-- The column is NOT NULL DEFAULT '{}', so an agent reporting no
 			-- capabilities writes an empty object. Unlike the sample columns,
 			-- absence here is not a distinct fact worth preserving: no
 			-- collector reporting a capability and every collector reporting
 			-- that it is fine are both "nothing to flag".
-			capabilities  = $16
+			capabilities  = $15
 		WHERE id = $1`,
 		hostID,
-		md.GetHostname(), md.GetFingerprint(), md.GetHostType(),
+		md.GetFingerprint(), md.GetHostType(),
 		md.GetAgentVersion(), md.GetGoVersion(), md.GetBuildCommit(),
 		md.GetKernel(), md.GetOsName(), md.GetArch(), md.GetCpuModel(),
 		int32(md.GetCores()), int32(md.GetThreads()), int64(md.GetMemoryTotal()),

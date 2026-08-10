@@ -103,11 +103,8 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("ingesting backfilled batch", "host_id", hostID, "seq", req.GetSeq())
 	}
 
-	samples, dropped := filterPlausibleTimestamps(req.GetHostSamples())
-	if dropped > 0 {
-		slog.Warn("dropped samples with implausible timestamps",
-			"host_id", hostID, "dropped", dropped)
-	}
+	samples, dropped := filterByTs(req.GetHostSamples(), time.Now().Add(maxPlausibleFuture))
+	logDropped(hostID, "host sample", dropped)
 
 	if _, err := h.store.InsertHostSamples(ctx, hostID, samples); err != nil {
 		slog.Error("insert host samples", "host_id", hostID, "err", err)
@@ -117,23 +114,25 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Immediately after the host samples it summarises, and BEFORE anything
+	// below that can 503 out of the handler -- storeFamilies and the
+	// agent_samples insert both can. host_current is the cache "last seen"
+	// reads from, so a host whose samples have just landed must not read as
+	// stale in the UI while its data is in fact arriving on every retry.
+	// Anywhere further down and that guarantee only covers the failures that
+	// happen to come after it.
+	if s := latest(samples); s != nil {
+		if err := h.store.UpsertHostCurrent(ctx, hostID, s); err != nil {
+			slog.Error("upsert host_current", "host_id", hostID, "err", err)
+		}
+	}
+
 	if err := h.storeFamilies(ctx, hostID, &req); err != nil {
 		slog.Error("insert per-entity families", "host_id", hostID, "err", err)
 		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
 			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
 		})
 		return
-	}
-
-	// Ahead of the agent_samples insert below, which can 503 out of the
-	// handler. host_current is the cache "last seen" reads from, and the host
-	// samples it summarises have just been written -- so if agent_samples is
-	// the only thing broken, the host must not read as stale while its data is
-	// in fact arriving on every retry.
-	if s := latest(samples); s != nil {
-		if err := h.store.UpsertHostCurrent(ctx, hostID, s); err != nil {
-			slog.Error("upsert host_current", "host_id", hostID, "err", err)
-		}
 	}
 
 	// A 503 rather than a logged-and-ignored failure, unlike host_current
@@ -165,32 +164,11 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// filterPlausibleTimestamps drops samples whose ts_ms is more than
-// maxPlausibleFuture ahead of now, or before minPlausibleTs. It returns the
-// surviving samples (in original order, never nil unless the input was
-// empty) and the number dropped. Filtering per-sample rather than failing
-// the whole batch keeps a single poisoned sample from stalling the rest of
-// a host's ingest.
-func filterPlausibleTimestamps(samples []*netrav1.HostSample) ([]*netrav1.HostSample, int) {
-	if len(samples) == 0 {
-		return samples, 0
-	}
-
-	future := time.Now().Add(maxPlausibleFuture)
-	out := make([]*netrav1.HostSample, 0, len(samples))
-	dropped := 0
-	for _, s := range samples {
-		if !plausibleTs(s.GetTsMs(), future) {
-			dropped++
-			continue
-		}
-		out = append(out, s)
-	}
-	return out, dropped
-}
-
-// plausibleTs is the bounds check both families share, so the two filters
-// cannot drift apart on what counts as a poison timestamp.
+// plausibleTs is the bounds check every family shares, so no two of them can
+// drift apart on what counts as a poison timestamp. Host samples go through
+// filterByTs in families.go like everything else -- dropping a poisoned sample
+// individually rather than failing the batch keeps one bad timestamp from
+// stalling the rest of a host's ingest.
 func plausibleTs(tsMs int64, future time.Time) bool {
 	ts := time.UnixMilli(tsMs).UTC()
 	return !ts.Before(minPlausibleTs) && !ts.After(future)

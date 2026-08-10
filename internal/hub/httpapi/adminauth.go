@@ -3,7 +3,6 @@ package httpapi
 import (
 	"crypto/subtle"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -23,9 +22,15 @@ func RequireAdmin(token string, redirectToLogin bool, next http.Handler) http.Ha
 		// caller. config.Load rejects an empty NETRA_ADMIN_TOKEN, but NewRouter
 		// takes a Config by value and test code builds literals directly, so
 		// that guard is one struct literal away from being bypassed.
-		bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		//
+		// bearer() is the ingest path's parser, shared so the hub has ONE
+		// definition of a valid Authorization header. It requires the "Bearer "
+		// prefix; the TrimPrefix this replaces left a header without one
+		// untouched, so a bare `Authorization: <token>` authenticated here and
+		// was rejected on /api/agent/.
+		presented := bearer(r)
 		authorized := token != "" &&
-			(subtle.ConstantTimeCompare([]byte(bearer), []byte(token)) == 1 ||
+			(subtle.ConstantTimeCompare([]byte(presented), []byte(token)) == 1 ||
 				validSession(token, r, time.Now()))
 		if authorized {
 			next.ServeHTTP(w, r)

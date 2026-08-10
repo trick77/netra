@@ -42,73 +42,73 @@ func (h *IngestHandler) storeFamilies(ctx context.Context, hostID int32, req *ne
 	// would make the agent re-send the identical batch forever.
 	future := time.Now().Add(maxPlausibleFuture)
 
-	cores, dropped := filterCpuCores(req.GetCpuCores(), future)
+	cores, dropped := filterByTs(req.GetCpuCores(), future)
 	logDropped(hostID, "cpu core", dropped)
 	if _, err := h.store.InsertCpuCoreSamples(ctx, hostID, cores); err != nil {
 		return fmt.Errorf("cpu cores: %w", err)
 	}
 
-	disks, dropped := filterDiskIo(req.GetDiskIo(), future)
+	disks, dropped := filterByTs(req.GetDiskIo(), future)
 	logDropped(hostID, "disk io", dropped)
 	if _, err := h.store.InsertDiskIoSamples(ctx, hostID, disks); err != nil {
 		return fmt.Errorf("disk io: %w", err)
 	}
 
-	sensors, dropped := filterSensors(req.GetSensors(), future)
+	sensors, dropped := filterByTs(req.GetSensors(), future)
 	logDropped(hostID, "sensor", dropped)
 	if _, err := h.store.InsertSensorSamples(ctx, hostID, sensors); err != nil {
 		return fmt.Errorf("sensors: %w", err)
 	}
 
-	nets, dropped := filterNet(req.GetNet(), future)
+	nets, dropped := filterByTs(req.GetNet(), future)
 	logDropped(hostID, "net", dropped)
 	if _, err := h.store.InsertNetSamples(ctx, hostID, nets); err != nil {
 		return fmt.Errorf("net: %w", err)
 	}
 
-	containers, dropped := filterContainers(req.GetContainers(), future)
+	containers, dropped := filterByTs(req.GetContainers(), future)
 	logDropped(hostID, "container", dropped)
 	if _, err := h.store.InsertContainerSamples(ctx, hostID, containers); err != nil {
 		return fmt.Errorf("containers: %w", err)
 	}
 
-	filesystems, dropped := filterFilesystems(req.GetFilesystems(), future)
+	filesystems, dropped := filterByTs(req.GetFilesystems(), future)
 	logDropped(hostID, "filesystem", dropped)
 	if _, err := h.store.InsertFilesystemSamples(ctx, hostID, filesystems); err != nil {
 		return fmt.Errorf("filesystems: %w", err)
 	}
 
-	smart, dropped := filterSmart(req.GetSmart(), future)
+	smart, dropped := filterByTs(req.GetSmart(), future)
 	logDropped(hostID, "smart", dropped)
 	if _, err := h.store.InsertSmartAttributes(ctx, hostID, smart); err != nil {
 		return fmt.Errorf("smart: %w", err)
 	}
 
-	processes, dropped := filterProcesses(req.GetProcesses(), future)
+	processes, dropped := filterByTs(req.GetProcesses(), future)
 	logDropped(hostID, "process", dropped)
 	if _, err := h.store.InsertProcessSamples(ctx, hostID, processes); err != nil {
 		return fmt.Errorf("processes: %w", err)
 	}
 
-	collectors, dropped := filterCollectors(req.GetCollectors(), future)
+	collectors, dropped := filterByTs(req.GetCollectors(), future)
 	logDropped(hostID, "collector", dropped)
 	if _, err := h.store.InsertCollectorSamples(ctx, hostID, collectors); err != nil {
 		return fmt.Errorf("collectors: %w", err)
 	}
 
-	events, dropped := filterEvents(req.GetEvents(), future)
+	events, dropped := filterByTs(req.GetEvents(), future)
 	logDropped(hostID, "event", dropped)
 	if _, err := h.store.InsertEvents(ctx, hostID, events); err != nil {
 		return fmt.Errorf("events: %w", err)
 	}
 
-	unitEvents, dropped := filterUnitEvents(req.GetSystemdEvents(), future)
+	unitEvents, dropped := filterByTs(req.GetSystemdEvents(), future)
 	logDropped(hostID, "systemd unit event", dropped)
 	if _, err := h.store.InsertSystemdUnitEvents(ctx, hostID, unitEvents); err != nil {
 		return fmt.Errorf("systemd events: %w", err)
 	}
 
-	pkgEvents, dropped := filterPackageEvents(req.GetPackageEvents(), future)
+	pkgEvents, dropped := filterByTs(req.GetPackageEvents(), future)
 	logDropped(hostID, "package event", dropped)
 	if _, err := h.store.InsertPackageEvents(ctx, hostID, pkgEvents); err != nil {
 		return fmt.Errorf("package events: %w", err)
@@ -133,69 +133,23 @@ func logDropped(hostID int32, family string, n int) {
 	}
 }
 
-// filterByTs is the shared bounds check. Generic over the row type because
-// every family answers the same question about its own ts_ms, and writing the
-// loop a dozen times invites one of them drifting.
-func filterByTs[T any](rows []T, future time.Time, ts func(T) int64) ([]T, int) {
+// filterByTs is the shared bounds check, over every row type that carries a
+// ts_ms. Constrained on the generated getter rather than taking a func(T) int64
+// so a family cannot be added without one -- the twelve identical accessor
+// wrappers this replaces were exactly the drift risk they were written to
+// prevent.
+func filterByTs[T interface{ GetTsMs() int64 }](rows []T, future time.Time) ([]T, int) {
 	if len(rows) == 0 {
 		return rows, 0
 	}
 	out := make([]T, 0, len(rows))
 	dropped := 0
 	for _, r := range rows {
-		if !plausibleTs(ts(r), future) {
+		if !plausibleTs(r.GetTsMs(), future) {
 			dropped++
 			continue
 		}
 		out = append(out, r)
 	}
 	return out, dropped
-}
-
-func filterCpuCores(rows []*netrav1.CpuCoreSample, f time.Time) ([]*netrav1.CpuCoreSample, int) {
-	return filterByTs(rows, f, func(r *netrav1.CpuCoreSample) int64 { return r.GetTsMs() })
-}
-
-func filterDiskIo(rows []*netrav1.DiskIoSample, f time.Time) ([]*netrav1.DiskIoSample, int) {
-	return filterByTs(rows, f, func(r *netrav1.DiskIoSample) int64 { return r.GetTsMs() })
-}
-
-func filterSensors(rows []*netrav1.SensorSample, f time.Time) ([]*netrav1.SensorSample, int) {
-	return filterByTs(rows, f, func(r *netrav1.SensorSample) int64 { return r.GetTsMs() })
-}
-
-func filterNet(rows []*netrav1.NetSample, f time.Time) ([]*netrav1.NetSample, int) {
-	return filterByTs(rows, f, func(r *netrav1.NetSample) int64 { return r.GetTsMs() })
-}
-
-func filterContainers(rows []*netrav1.ContainerSample, f time.Time) ([]*netrav1.ContainerSample, int) {
-	return filterByTs(rows, f, func(r *netrav1.ContainerSample) int64 { return r.GetTsMs() })
-}
-
-func filterFilesystems(rows []*netrav1.FilesystemSample, f time.Time) ([]*netrav1.FilesystemSample, int) {
-	return filterByTs(rows, f, func(r *netrav1.FilesystemSample) int64 { return r.GetTsMs() })
-}
-
-func filterSmart(rows []*netrav1.SmartAttribute, f time.Time) ([]*netrav1.SmartAttribute, int) {
-	return filterByTs(rows, f, func(r *netrav1.SmartAttribute) int64 { return r.GetTsMs() })
-}
-
-func filterProcesses(rows []*netrav1.ProcessSample, f time.Time) ([]*netrav1.ProcessSample, int) {
-	return filterByTs(rows, f, func(r *netrav1.ProcessSample) int64 { return r.GetTsMs() })
-}
-
-func filterCollectors(rows []*netrav1.CollectorSample, f time.Time) ([]*netrav1.CollectorSample, int) {
-	return filterByTs(rows, f, func(r *netrav1.CollectorSample) int64 { return r.GetTsMs() })
-}
-
-func filterEvents(rows []*netrav1.Event, f time.Time) ([]*netrav1.Event, int) {
-	return filterByTs(rows, f, func(r *netrav1.Event) int64 { return r.GetTsMs() })
-}
-
-func filterUnitEvents(rows []*netrav1.SystemdUnitEvent, f time.Time) ([]*netrav1.SystemdUnitEvent, int) {
-	return filterByTs(rows, f, func(r *netrav1.SystemdUnitEvent) int64 { return r.GetTsMs() })
-}
-
-func filterPackageEvents(rows []*netrav1.PackageEvent, f time.Time) ([]*netrav1.PackageEvent, int) {
-	return filterByTs(rows, f, func(r *netrav1.PackageEvent) int64 { return r.GetTsMs() })
 }

@@ -164,6 +164,14 @@ func resetSchema(ctx context.Context, s *Store) error {
 	if _, err := conn.Exec(ctx, `SET SESSION timescaledb.restoring = 'off'`); err != nil && lastErr == nil {
 		return fmt.Errorf("resume timescaledb background jobs (session): %w", err)
 	}
+
+	// lock_timeout is a session GUC set above on a POOLED connection, so it
+	// outlives this reset and every later query drawn on the same connection
+	// inherits it -- a test doing legitimate slow work would fail with 55P03
+	// for no reason it could see. Reset for the same reason restoring is.
+	if _, err := conn.Exec(ctx, `SET SESSION lock_timeout = DEFAULT`); err != nil && lastErr == nil {
+		return fmt.Errorf("reset lock_timeout: %w", err)
+	}
 	var dbName string
 	if err := conn.QueryRow(ctx, `SELECT current_database()`).Scan(&dbName); err == nil {
 		_, _ = conn.Exec(ctx, fmt.Sprintf(
