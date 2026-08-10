@@ -35,3 +35,36 @@ func TestIntegrationUnschedulePolicyJobsReportsAFailure(t *testing.T) {
 		t.Errorf("err = %v, want it to name what failed", err)
 	}
 }
+
+// Unscheduling must be repeatable.
+//
+// It runs after EVERY Migrate, and several tests migrate twice against one
+// store -- so a second pass that failed, or that tripped over
+// stop_background_workers() having already stopped them, would surface as a
+// migration failure in whichever test happened to migrate twice.
+func TestIntegrationUnschedulePolicyJobsIsRepeatable(t *testing.T) {
+	ctx := context.Background()
+
+	s := OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		if err := s.unschedulePolicyJobs(ctx); err != nil {
+			t.Fatalf("unschedulePolicyJobs, pass %d: %v", attempt, err)
+		}
+	}
+
+	var stillScheduled int
+	if err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM timescaledb_information.jobs
+		 WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate',
+		                     'netra_prune_discrete_events')
+		   AND scheduled`).Scan(&stillScheduled); err != nil {
+		t.Fatalf("count scheduled jobs: %v", err)
+	}
+	if stillScheduled != 0 {
+		t.Errorf("%d jobs are still scheduled after three passes", stillScheduled)
+	}
+}

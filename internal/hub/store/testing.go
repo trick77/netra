@@ -21,6 +21,12 @@ const deadlockSQLState = "40P01"
 // holding a lock resetSchema needs — so both are retried the same way.
 const lockNotAvailableSQLState = "55P03"
 
+// internalErrorSQLState is Postgres's catch-all XX000, which is what
+// TimescaleDB raises when one of its own catalog scans loses a race with a
+// background worker. It is far too broad to retry on its own -- see
+// isSchedulerRaceError, which pairs it with the message.
+const internalErrorSQLState = "XX000"
+
 // resetSchemaRetries is the number of times resetSchema retries the schema
 // reset after a retryable lock error before giving up.
 const resetSchemaRetries = 5
@@ -249,16 +255,95 @@ func isRetryableLockError(err error) bool {
 // Nothing is lost: no test depends on a policy running on its own. The ones
 // that need aggregate data call refresh_continuous_aggregate directly, which
 // is unaffected.
+// The scheduler must be STOPPED BEFORE the jobs are altered, and the ordering
+// is the whole point of the two statements below.
+//
+// Migrate has just reinstalled the extension and created 48 jobs, and
+// TimescaleDB dispatches new ones within seconds. Every job the scheduler
+// picks up makes it UPDATE that job's row in
+// _timescaledb_internal.bgw_job_stat -- last_start, next_start, total_runs.
+// alter_job reads and writes the same row through TimescaleDB's own catalog
+// scan rather than an ordinary MVCC read, so a scan landing mid-update sees
+// two versions of a row whose primary key guarantees one:
+//
+//	ERROR: more than one bgw job stat found (SQLSTATE XX000)
+//
+// and its sibling on the write side, "tuple concurrently updated". Both are
+// races against the scheduler, not corruption -- the PK on bgw_job_stat.job_id
+// makes genuinely duplicated rows impossible.
+//
+// resetSchema already established that stop_background_workers() is the part
+// of timescaledb_pre_restore() that actually stops an in-flight worker; it is
+// called directly here rather than through the wrapper because the wrapper
+// also sets timescaledb.restoring, which is session state on a pooled
+// connection and would have to be unset on the same connection to avoid
+// wedging the next test.
+//
+// With the workers stopped the jobs cannot run at all, so the alter_job pass
+// that follows is really about the `scheduled` FLAG, which
+// TestIntegrationTestDatabaseHasItsPolicyJobsUnscheduled asserts on and which
+// survives into any session that inspects this database.
+const stopWorkers = `SELECT _timescaledb_functions.stop_background_workers()`
+
+// unscheduleAttempts is how many times the alter_job pass runs in TOTAL.
+//
+// A worker already dispatched when stop_background_workers() lands can still
+// be mid-update, exactly as resetSchema's own retry loop exists for. Three,
+// for the reason DeleteHost uses three: the contending party is gone by the
+// time the retry runs.
+const unscheduleAttempts = 3
+
 func (s *Store) unschedulePolicyJobs(ctx context.Context) error {
-	// The job ids are not stable across runs, so they are selected rather than
-	// hardcoded. alter_job returns a record, hence the SELECT rather than CALL.
-	if _, err := s.pool.Exec(ctx, `
-		SELECT alter_job(job_id, scheduled => false)
-		  FROM timescaledb_information.jobs
-		 WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate',
-		                     'netra_prune_discrete_events')`,
-	); err != nil {
-		return fmt.Errorf("unschedule policy jobs: %w", err)
+	// Both failure paths carry the same "unschedule policy jobs" prefix: it is
+	// one operation from a caller's point of view, and
+	// TestIntegrationUnschedulePolicyJobsReportsAFailure asserts on that
+	// prefix precisely so a refactor here cannot quietly change what a
+	// failing test database says about itself.
+	if _, err := s.pool.Exec(ctx, stopWorkers); err != nil {
+		return fmt.Errorf("unschedule policy jobs: stop background workers: %w", err)
 	}
-	return nil
+
+	var err error
+	for attempt := 1; attempt <= unscheduleAttempts; attempt++ {
+		// The job ids are not stable across runs, so they are selected rather
+		// than hardcoded. alter_job returns a record, hence the SELECT rather
+		// than CALL.
+		_, err = s.pool.Exec(ctx, `
+			SELECT alter_job(job_id, scheduled => false)
+			  FROM timescaledb_information.jobs
+			 WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate',
+			                     'netra_prune_discrete_events')`)
+		if err == nil {
+			return nil
+		}
+		// Anything that is not the scheduler race will not change on a retry,
+		// and a closed pool must fail now rather than after three backoffs.
+		if !isSchedulerRaceError(err) || attempt == unscheduleAttempts {
+			break
+		}
+		time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+	}
+	return fmt.Errorf("unschedule policy jobs: %w", err)
+}
+
+// isSchedulerRaceError reports whether err is alter_job losing a race with a
+// TimescaleDB background worker writing the same bgw_job_stat row.
+//
+// Retrying alter_job is always safe: setting scheduled => false twice is the
+// same as setting it once, and the losing statement changed nothing.
+//
+// Matched on SQLSTATE and message rather than SQLSTATE alone, because XX000 is
+// Postgres's catch-all internal error -- widening this to every XX000 would
+// turn a genuine TimescaleDB bug into three silent retries and a delay.
+func isSchedulerRaceError(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	if pgErr.Code == deadlockSQLState || pgErr.Code == lockNotAvailableSQLState {
+		return true
+	}
+	return pgErr.Code == internalErrorSQLState &&
+		(strings.Contains(pgErr.Message, "more than one bgw job stat") ||
+			strings.Contains(pgErr.Message, "tuple concurrently updated"))
 }
