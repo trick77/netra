@@ -157,12 +157,16 @@ func TestRotateTokenInvalidatesTheOldToken(t *testing.T) {
 		t.Fatalf("CreateHost: %v", err)
 	}
 
-	second, err := svc.RotateToken(ctx, host.ID)
+	name, second, err := svc.RotateToken(ctx, host.ID)
 	if err != nil {
 		t.Fatalf("RotateToken: %v", err)
 	}
 	if second == first {
 		t.Fatal("rotation returned the same token")
+	}
+	// The UI heads the token page with this rather than listing every host.
+	if name != "web01" {
+		t.Errorf("hostname = %q, want %q", name, "web01")
 	}
 
 	a := auth.NewAuthenticator(s.Pool())
@@ -188,7 +192,7 @@ func TestRotateTokenInvalidatesTheOldToken(t *testing.T) {
 func TestRotateTokenOnUnknownHostIsNotFound(t *testing.T) {
 	svc, _ := newService(t)
 
-	if _, err := svc.RotateToken(context.Background(), 4242); !errors.Is(err, admin.ErrNotFound) {
+	if _, _, err := svc.RotateToken(context.Background(), 4242); !errors.Is(err, admin.ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -205,7 +209,7 @@ func TestRotateTokenOnUnknownHostLeavesOtherHostsAlone(t *testing.T) {
 		t.Fatalf("CreateHost: %v", err)
 	}
 
-	if _, err := svc.RotateToken(ctx, host.ID+1000); !errors.Is(err, admin.ErrNotFound) {
+	if _, _, err := svc.RotateToken(ctx, host.ID+1000); !errors.Is(err, admin.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 

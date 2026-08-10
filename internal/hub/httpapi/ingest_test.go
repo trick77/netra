@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -376,14 +377,16 @@ func TestIntegrationIngestAgentSampleFailureStillRefreshesHostCurrent(t *testing
 	srv, token, s := newFixture(t)
 	ctx := context.Background()
 
-	// Break only agent_samples, and only for writes: a constraint no row can
-	// satisfy fails every insert while leaving the table, its continuous
-	// aggregates, host_samples and host_current intact. That isolates the one
-	// failing insert rather than simulating a dead pool.
-	if _, err := s.Pool().Exec(ctx,
-		`ALTER TABLE agent_samples ADD CONSTRAINT reject_every_insert CHECK (false) NOT VALID`); err != nil {
-		t.Fatalf("break agent_samples: %v", err)
-	}
+	// Break only agent_samples, and only for writes, leaving the table, its
+	// continuous aggregates, host_samples and host_current intact. That
+	// isolates the one failing insert rather than simulating a dead pool.
+	//
+	// A trigger raising a class 53 SQLSTATE, NOT a CHECK constraint. This
+	// insert goes through execBatch, and a CHECK violation is 23514 -- class
+	// 23, which poisonRow correctly treats as a row that will fail identically
+	// forever and quarantines rather than retrying. This test is about the
+	// TRANSIENT case, which is the one that must 503.
+	breakTableTransiently(t, s, "agent_samples")
 
 	ts := time.Now().Add(-time.Minute).UnixMilli()
 
@@ -623,5 +626,226 @@ func TestIntegrationIngestCpuCoreStorageFailureReturns503(t *testing.T) {
 	decodeBody(t, resp, &out)
 	if out.RetryAfterS == 0 {
 		t.Fatal("RetryAfterS = 0, want non-zero on a storage-failure 503")
+	}
+}
+
+// Two hosts reporting the SAME hostname must both keep ingesting.
+//
+// The regression this pins: SaveMetadata used to write `hostname = $2` from the
+// agent. Every host created through the UI has site_id NULL and
+// hosts_site_id_hostname_key is NULLS NOT DISTINCT, so the second host's
+// metadata save raised 23505 -- and that statement has no poisonRow
+// quarantine, so it became a 503. The agent answers a 503 by re-sending the
+// IDENTICAL batch, which wedges that host permanently.
+//
+// Two cloned VMs, two Raspberry Pis both called `raspberrypi`, or two agents
+// that report no hostname at all (both writing ”) all reach this.
+func TestIntegrationIngestTwoHostsReportingOneHostnameBothSucceed(t *testing.T) {
+	ctx := context.Background()
+
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	h := httpapi.NewIngestHandler(auth.NewAuthenticator(s.Pool()), s)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	// Both with site_id NULL, which is what the UI's create form produces.
+	tokenA := newHostWithToken(t, s, "alpha")
+	tokenB := newHostWithToken(t, s, "beta")
+
+	for _, tc := range []struct {
+		name  string
+		token string
+		hash  []byte
+	}{
+		{"first host", tokenA, []byte{1, 1, 1, 1, 1, 1, 1, 1}},
+		{"second host", tokenB, []byte{2, 2, 2, 2, 2, 2, 2, 2}},
+	} {
+		resp := post(t, srv, tc.token, &netrav1.IngestRequest{
+			Seq:          1,
+			MetadataHash: tc.hash,
+			Metadata:     &netrav1.Metadata{Hostname: "raspberrypi", AgentVersion: "0.1.0"},
+		})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200 -- a shared reported hostname must not wedge a host",
+				tc.name, resp.StatusCode)
+		}
+	}
+
+	// And the operator's names survive: the agent does not get to rename the
+	// row they created.
+	rows, err := s.Pool().Query(ctx, `SELECT coalesce(hostname, '') FROM hosts ORDER BY hostname`)
+	if err != nil {
+		t.Fatalf("query hosts: %v", err)
+	}
+	defer rows.Close()
+
+	var names []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		names = append(names, n)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate: %v", err)
+	}
+	if len(names) != 2 || names[0] != "alpha" || names[1] != "beta" {
+		t.Errorf("hostnames = %v, want [alpha beta] -- the operator named these, not the agent", names)
+	}
+
+	// The rest of the metadata still lands, so dropping hostname did not
+	// silently drop the save.
+	var agentVersion *string
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT agent_version FROM hosts WHERE hostname = 'beta'`).Scan(&agentVersion); err != nil {
+		t.Fatalf("query agent_version: %v", err)
+	}
+	if agentVersion == nil || *agentVersion != "0.1.0" {
+		t.Errorf("agent_version = %v, want 0.1.0", agentVersion)
+	}
+}
+
+// host_current must be refreshed before ANY write that can 503, not just
+// before the agent_samples insert.
+//
+// TestIntegrationIngestAgentSampleFailureStillRefreshesHostCurrent covers the
+// insert that comes last. This covers storeFamilies, which used to run BETWEEN
+// the host_samples insert and the host_current upsert -- so a single broken
+// family left the host reading "never seen" in the UI while its samples were in
+// fact landing on every retry.
+func TestIntegrationIngestFamilyFailureStillRefreshesHostCurrent(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+
+	// One family only, transiently -- see breakTableTransiently on why this is
+	// not a CHECK constraint.
+	breakTableTransiently(t, s, "net_samples")
+
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq:         1,
+		HostSamples: []*netrav1.HostSample{{TsMs: ts, CpuTotal: proto.Float64(42)}},
+		Net:         []*netrav1.NetSample{{TsMs: ts, Iface: "eth0", RxBytes: proto.Float64(1)}},
+	})
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 -- a lost family must be retried", resp.StatusCode)
+	}
+
+	var lastSeen time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT last_seen FROM host_current`).Scan(&lastSeen); err != nil {
+		t.Fatalf("query host_current: %v -- want a row, not a host frozen as stale", err)
+	}
+	want := time.UnixMilli(ts).UTC()
+	if lastSeen.Sub(want).Abs() > time.Second {
+		t.Fatalf("host_current.last_seen = %v, want ~%v", lastSeen, want)
+	}
+}
+
+// newHostWithToken registers a host with no site and returns its plaintext
+// token, the shape the UI's create form produces.
+func newHostWithToken(t *testing.T, s *store.Store, hostname string) string {
+	t.Helper()
+	ctx := context.Background()
+
+	var hostID int32
+	if err := s.Pool().QueryRow(ctx,
+		`INSERT INTO hosts (hostname) VALUES ($1) RETURNING id`, hostname).Scan(&hostID); err != nil {
+		t.Fatalf("insert host %s: %v", hostname, err)
+	}
+
+	plain, hash, err := auth.Mint()
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO tokens (host_id, token_hash) VALUES ($1, $2)`, hostID, hash); err != nil {
+		t.Fatalf("insert token: %v", err)
+	}
+	return plain
+}
+
+// breakTableTransiently makes every INSERT into table fail with a SQLSTATE the
+// hub must treat as retryable, leaving every other table alone.
+//
+// Class 53 (insufficient resources) is deliberate. poisonRow quarantines only
+// classes 22 and 23 -- rows Postgres will refuse identically forever -- and
+// retries everything else, so a CHECK constraint (23514) models a poisoned row
+// rather than a database that is briefly unavailable. A trigger also fires on a
+// hypertable's chunks, which is what these tables are.
+func breakTableTransiently(t *testing.T, s *store.Store, table string) {
+	t.Helper()
+	ctx := context.Background()
+
+	fn := table + "_reject"
+	if _, err := s.Pool().Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger AS $$
+		BEGIN
+			RAISE EXCEPTION 'simulated transient storage failure' USING ERRCODE = '53100';
+		END;
+		$$ LANGUAGE plpgsql`, fn)); err != nil {
+		t.Fatalf("create %s: %v", fn, err)
+	}
+	if _, err := s.Pool().Exec(ctx, fmt.Sprintf(
+		`CREATE TRIGGER %s BEFORE INSERT ON %s FOR EACH ROW EXECUTE FUNCTION %s()`,
+		fn, table, fn)); err != nil {
+		t.Fatalf("break %s: %v", table, err)
+	}
+}
+
+// An agent_samples row Postgres will never accept is DROPPED, not retried
+// forever.
+//
+// This is the behaviour routing the insert through execBatch buys. The agent
+// answers a 503 by re-sending the IDENTICAL batch and its ring buffer only
+// drops a prefix the hub acknowledged, so 503ing a row that fails the same way
+// every time wedges that host permanently. Class 22 and 23 are exactly the
+// errors that will not change on a retry; the transient case above still 503s.
+func TestIntegrationIngestUnstorableAgentSampleIsQuarantinedNotRetriedForever(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+
+	if _, err := s.Pool().Exec(ctx,
+		`ALTER TABLE agent_samples ADD CONSTRAINT reject_every_insert CHECK (false) NOT VALID`); err != nil {
+		t.Fatalf("break agent_samples: %v", err)
+	}
+
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	resp := post(t, srv, token, &netrav1.IngestRequest{
+		Seq: 1,
+		HostSamples: []*netrav1.HostSample{
+			{
+				TsMs:     ts,
+				CpuTotal: proto.Float64(42),
+				Agent:    &netrav1.AgentSample{ScrapeDurationMs: proto.Uint32(7)},
+			},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 -- a row that can never be stored must not wedge the host",
+			resp.StatusCode)
+	}
+
+	var out netrav1.IngestResponse
+	decodeBody(t, resp, &out)
+	if out.AckSeq != 1 {
+		t.Fatalf("AckSeq = %d, want 1 -- the batch has to be acked or it is replayed forever", out.AckSeq)
+	}
+
+	// The host sample itself still landed: quarantine drops the unstorable row,
+	// not the batch around it.
+	var count int
+	if err := s.Pool().QueryRow(ctx, `SELECT count(*) FROM host_samples`).Scan(&count); err != nil {
+		t.Fatalf("query host_samples: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("host_samples rows = %d, want 1", count)
 	}
 }

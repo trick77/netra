@@ -20,14 +20,13 @@
 {{if .HubURLConfigured}}
   <p><strong>Check <code>{{.HubURL}}</code> is the address agents reach this
   hub on</strong> before running the command. It comes from
-  <code>NETRA_HUB_URL</code>, and the line above pipes that host to
-  <code>sh</code> and sends it this token — so a stale value hands both to
-  whoever owns that name.</p>
+  <code>NETRA_HUB_URL</code>, and the line above sends this token to whoever
+  answers on that name — so a stale value hands a live credential to a stranger.</p>
 {{else}}
-  <p><strong><code>NETRA_HUB_URL</code> is not set, so the URL above is a
-  placeholder.</strong> Replace both occurrences with the address agents reach
-  this hub on. As written the command would pipe a stranger's script to
-  <code>sh</code> and send them this token.</p>
+  <p><strong><code>NETRA_HUB_URL</code> is not set, so the address after
+  <code>--hub-url</code> is a placeholder.</strong> Replace it with the address
+  agents reach this hub on. As written the command would send this token to
+  whoever owns that name.</p>
 {{end}}
 </div>
 

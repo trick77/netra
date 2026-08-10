@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/trick77/netra/internal/buildinfo"
@@ -28,6 +29,11 @@ func (h *healthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	status := http.StatusOK
 
 	if err := h.store.Pool().Ping(r.Context()); err != nil {
+		// Logged, not returned: the body stays a fixed shape the compose
+		// healthcheck can rely on and leaks no DSN or host name, but the one
+		// place an operator goes to ask "why is the hub unhealthy" has to be
+		// able to answer it.
+		slog.Warn("health: database ping failed", "err", err)
 		body["status"] = "degraded"
 		body["database"] = "unreachable"
 		status = http.StatusServiceUnavailable

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -151,46 +152,51 @@ func (s *Service) CreateHost(ctx context.Context, hostname string, siteID *int32
 }
 
 // RotateToken mints a replacement token for a host and revokes every previous
-// one, returning the new plaintext.
+// one, returning the host's name and the new plaintext.
 //
 // The delete and the insert share a transaction because tokens has no UNIQUE
 // constraint on host_id: an insert-only rotation would leave the old token
 // live -- silently, since the new one works and nothing looks wrong -- and a
 // delete that committed alone would lock the agent out with no replacement.
 // Neither half is correct without the other.
-func (s *Service) RotateToken(ctx context.Context, hostID int32) (string, error) {
+//
+// The hostname comes back because the existence check has to read the row
+// anyway, and the UI needs the name to head the token page. Returning it here
+// is what lets that page stop listing every host to find one.
+func (s *Service) RotateToken(ctx context.Context, hostID int32) (string, string, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return "", fmt.Errorf("begin: %w", err)
+		return "", "", fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var exists bool
-	if err := tx.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM hosts WHERE id = $1)`, hostID).Scan(&exists); err != nil {
-		return "", fmt.Errorf("check host: %w", err)
+	var hostname string
+	err = tx.QueryRow(ctx,
+		`SELECT coalesce(hostname, '') FROM hosts WHERE id = $1`, hostID).Scan(&hostname)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", ErrNotFound
 	}
-	if !exists {
-		return "", ErrNotFound
+	if err != nil {
+		return "", "", fmt.Errorf("check host: %w", err)
 	}
 
 	plain, hash, err := auth.Mint()
 	if err != nil {
-		return "", fmt.Errorf("mint: %w", err)
+		return "", "", fmt.Errorf("mint: %w", err)
 	}
 
 	if _, err := tx.Exec(ctx, `DELETE FROM tokens WHERE host_id = $1`, hostID); err != nil {
-		return "", fmt.Errorf("revoke old tokens: %w", err)
+		return "", "", fmt.Errorf("revoke old tokens: %w", err)
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO tokens (host_id, token_hash) VALUES ($1, $2)`, hostID, hash); err != nil {
-		return "", fmt.Errorf("insert token: %w", err)
+		return "", "", fmt.Errorf("insert token: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return "", fmt.Errorf("commit: %w", err)
+		return "", "", fmt.Errorf("commit: %w", err)
 	}
-	return plain, nil
+	return hostname, plain, nil
 }
 
 // DeleteHost removes a host. Its tokens and samples go with it through the
