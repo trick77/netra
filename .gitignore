@@ -4,5 +4,5 @@ bin/
 coverage/
 .claude/
 internal/hub/web/dist/*
-!internal/hub/web/dist/index.html
+!internal/hub/web/dist/.gitkeep
 ui/node_modules/

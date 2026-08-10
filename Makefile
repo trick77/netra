@@ -41,6 +41,11 @@ build: build-hub build-agent
 
 ui:
 	cd ui && npm ci && npm run build
+	@# vite build (emptyOutDir: true) wipes the whole dist/ directory before
+	@# writing, including the tracked, empty dist/.gitkeep -- recreate it so
+	@# the working tree matches the index and `make ui` never leaves the repo
+	@# dirty.
+	touch internal/hub/web/dist/.gitkeep
 
 ui-test:
 	cd ui && npm ci && npm run test

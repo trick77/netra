@@ -12,9 +12,17 @@ import (
 	"strings"
 )
 
-// distFS holds the built SPA. dist/ is generated, and .gitignore excludes it,
-// so a checkout without `make ui` will fail to compile here rather than
-// silently serving nothing.
+// distFS holds the built SPA. dist/ is generated and .gitignore excludes its
+// contents, keeping only a tracked, empty dist/.gitkeep. That file exists
+// solely so `//go:embed all:dist` -- resolved at compile time -- has
+// something to embed on a fresh checkout; without it `go build ./...` and
+// `go test ./...` fail outright with "pattern all:dist: no matching files
+// found". A real index.html is deliberately NOT tracked here (an earlier
+// version of this file committed one as a placeholder, but `make ui`
+// overwrites it on every build, leaving the working tree permanently dirty).
+// The consequence is that distFS may contain nothing at all on a checkout
+// that hasn't run `make ui`; see TestHandlerDoesNotPanic in
+// embed_internal_test.go for the one thing asserted about that case.
 //
 //go:embed all:dist
 var distFS embed.FS
