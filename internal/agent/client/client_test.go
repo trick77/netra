@@ -626,10 +626,11 @@ func TestRunDrainsABacklogWithinOneTick(t *testing.T) {
 	srv := httptest.NewServer(rec.handler(t))
 	t.Cleanup(srv.Close)
 
-	// Given: a collector whose single scrape already exceeds maxBatchRows, so
-	// every buffered scrape needs a POST of its own -- and a tick interval long
-	// enough that a second tick cannot be what drains the backlog.
-	const tick = 200 * time.Millisecond
+	// Given: a collector emitting just over half maxBatchRows per scrape, so no
+	// two scrapes can share a batch and each needs a POST of its own -- half
+	// the marshalling of a full-size scrape, which matters because CI runs this
+	// under the race detector.
+	const tick = time.Second
 	cfg := config.Config{
 		HubURL:       srv.URL,
 		Token:        "nta_test",
@@ -637,7 +638,7 @@ func TestRunDrainsABacklogWithinOneTick(t *testing.T) {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	c := client.NewWithInterval(cfg,
-		[]collector.Collector{wideCollector{cores: client.MaxBatchRowsForTest}}, tick)
+		[]collector.Collector{wideCollector{cores: client.MaxBatchRowsForTest / 2}}, tick)
 	ctx := context.Background()
 
 	// And: two scrapes waiting when the loop starts. The tick adds a third, so
@@ -656,8 +657,9 @@ func TestRunDrainsABacklogWithinOneTick(t *testing.T) {
 	go func() { errCh <- c.Run(runCtx) }()
 
 	// Waiting strictly less than two ticks, so a pass cannot come from the loop
-	// going round again -- that is the whole claim. The margin inside one tick
-	// is for three POSTs of ~20,000 protos each on a loaded CI box.
+	// going round again -- that is the whole claim. The rest of the window is
+	// margin: the drain itself takes a fraction of a tick, so a loaded CI box
+	// has room without the assertion ever becoming true for the wrong reason.
 	deadline := time.Now().Add(2*tick - tick/5)
 	for c.BufferDepth() > 0 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
