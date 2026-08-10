@@ -9,19 +9,26 @@ import (
 	"time"
 
 	"github.com/trick77/netra/internal/hub/admin"
+	"github.com/trick77/netra/internal/hub/read"
 )
 
 type adminHandler struct {
 	svc *admin.Service
 }
 
-// NewAdminHandler serves the host and token endpoints of spec 8's admin
-// section. It is mounted behind RequireAdmin, never on its own.
-func NewAdminHandler(svc *admin.Service) http.Handler {
+// NewAdminHandler serves ALL of spec 8's /api/v1: the admin operations here,
+// and the read endpoints readHandler registers on the same mux.
+//
+// One mux for both halves is not tidiness. NewRouter mounts "/api/v1/" once,
+// and http.ServeMux panics at startup on a duplicate pattern -- so a separate
+// read mount, or a second "GET /api/v1/hosts" beside the one below, would
+// take the hub down on boot rather than at request time.
+//
+// It is mounted behind RequireAdmin, never on its own.
+func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time) http.Handler {
 	h := &adminHandler{svc: svc}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/hosts", http.HandlerFunc(h.list))
 	mux.Handle("POST /api/v1/hosts", http.HandlerFunc(h.create))
 	mux.Handle("POST /api/v1/hosts/{id}/token", http.HandlerFunc(h.rotate))
 	mux.Handle("DELETE /api/v1/hosts/{id}", http.HandlerFunc(h.delete))
@@ -31,6 +38,8 @@ func NewAdminHandler(svc *admin.Service) http.Handler {
 	mux.Handle("GET /api/v1/providers", http.HandlerFunc(h.listProviders))
 	mux.Handle("POST /api/v1/providers", http.HandlerFunc(h.createProvider))
 	mux.Handle("PATCH /api/v1/providers/{id}", http.HandlerFunc(h.patchProvider))
+
+	(&readHandler{svc: rd, now: now}).register(mux)
 	return mux
 }
 
@@ -41,25 +50,6 @@ type hostJSON struct {
 	Hostname string     `json:"hostname"`
 	SiteID   *int32     `json:"site_id"`
 	LastSeen *time.Time `json:"last_seen"`
-}
-
-func (h *adminHandler) list(w http.ResponseWriter, r *http.Request) {
-	hosts, err := h.svc.ListHosts(r.Context())
-	if err != nil {
-		writeAdminError(w, r, err)
-		return
-	}
-
-	out := make([]hostJSON, 0, len(hosts))
-	for _, host := range hosts {
-		out = append(out, hostJSON{
-			ID:       host.ID,
-			Hostname: host.Hostname,
-			SiteID:   host.SiteID,
-			LastSeen: host.LastSeen,
-		})
-	}
-	writeJSON(w, http.StatusOK, out)
 }
 
 func (h *adminHandler) create(w http.ResponseWriter, r *http.Request) {

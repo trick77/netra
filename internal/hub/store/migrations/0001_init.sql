@@ -656,6 +656,64 @@ CREATE TABLE IF NOT EXISTS package_events (
 CREATE INDEX IF NOT EXISTS package_events_host_id_ts_idx
     ON package_events (host_id, ts DESC);
 
+-- ------------------------------------------ retention for the event tables
+
+-- events, systemd_unit_events and package_events are the three tables in this
+-- file with no retention at all, and they are plain Postgres tables rather
+-- than hypertables, so add_retention_policy cannot be pointed at them.
+--
+-- That was sized on "a unit changes state a handful of times a month", which
+-- held until the agent began emitting a failed-unit baseline on restart: the
+-- baseline is bounded, but a crash-looping agent re-emits it every restart
+-- into a table nothing prunes. events has the identical problem for the same
+-- reason -- an mdraid array that flaps writes a row per transition -- and is
+-- included here rather than left as the next surprise.
+--
+-- PRUNED, NOT CONVERTED. Turning them into hypertables would buy chunk drops
+-- these row volumes do not need, and would cost the composite foreign keys
+-- systemd_unit_events uses to keep one host's units off another host's
+-- events. A DELETE on an indexed ts is the cheaper answer at this size.
+--
+-- 90 days matches the 1h tier: an event is the thing a metric chart is read
+-- ALONGSIDE, and an event log that expired before the series it explains
+-- would leave a spike with no cause.
+CREATE OR REPLACE PROCEDURE netra_prune_discrete_events(job_id INTEGER, config JSONB)
+LANGUAGE plpgsql AS $$
+DECLARE
+    -- Read from the job's config rather than hardcoded, so the horizon can be
+    -- changed with alter_job on a running hub instead of a schema edit.
+    horizon INTERVAL := coalesce((config ->> 'retention')::INTERVAL, INTERVAL '90 days');
+    cutoff  TIMESTAMPTZ := now() - horizon;
+BEGIN
+    -- Separate statements, in dependency order, each committing on its own:
+    -- one transaction spanning all three would hold row locks on every event
+    -- table for the length of the slowest delete.
+    DELETE FROM systemd_unit_events WHERE ts < cutoff;
+    COMMIT;
+    DELETE FROM package_events WHERE ts < cutoff;
+    COMMIT;
+    DELETE FROM events WHERE ts < cutoff;
+    COMMIT;
+END;
+$$;
+
+-- add_job has no if_not_exists, unlike every other Timescale registration in
+-- this file, and this migration re-runs from the top whenever it fails
+-- part-way (see the header). An unguarded call would therefore register a
+-- second, third and fourth copy of the same job. The DO block is what keeps
+-- the statement individually re-runnable.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM timescaledb_information.jobs
+         WHERE proc_name = 'netra_prune_discrete_events'
+    ) THEN
+        PERFORM add_job('netra_prune_discrete_events', INTERVAL '1 day',
+                        config => '{"retention": "90 days"}'::jsonb);
+    END IF;
+END;
+$$;
+
 -- --------------------------------------------------------------- per-core CPU
 
 -- All cores, always -- ~800 series at target scale, which the earlier
@@ -1090,7 +1148,7 @@ SELECT host_id,
        max(cpu_pct)   AS cpu_pct_max,
        avg(mem_used)  AS mem_used_avg,
        max(mem_used)  AS mem_used_max,
-       max(mem_limit) AS mem_limit,
+       max(mem_limit) AS mem_limit_max,
        avg(net_rx)    AS net_rx_avg,
        max(net_rx)    AS net_rx_max,
        avg(net_tx)    AS net_tx_avg,
@@ -1114,7 +1172,7 @@ SELECT host_id,
        max(cpu_pct_max)  AS cpu_pct_max,
        avg(mem_used_avg) AS mem_used_avg,
        max(mem_used_max) AS mem_used_max,
-       max(mem_limit)    AS mem_limit,
+       max(mem_limit_max) AS mem_limit_max,
        avg(net_rx_avg)   AS net_rx_avg,
        max(net_rx_max)   AS net_rx_max,
        avg(net_tx_avg)   AS net_tx_avg,
@@ -1187,16 +1245,31 @@ SELECT set_chunk_time_interval('filesystem_samples', INTERVAL '1 day');
 CREATE INDEX IF NOT EXISTS filesystem_samples_fs_id_host_id_idx
     ON filesystem_samples (fs_id, host_id);
 
+-- total_max and inodes_total_max, NOT total and inodes_total. An aggregate
+-- column carrying the raw column's own name is a bucket statistic wearing an
+-- instantaneous reading's clothes: max(total) over five minutes differs from
+-- the raw total exactly when a filesystem is resized down mid-bucket, and a
+-- reader who asked for "total" has no way to notice.
+--
+-- It is also what makes the read API's tier guarantee true rather than nearly
+-- true. Every value column must be named differently at every tier, so a
+-- client that ignores which tier answered gets a key it does not recognise
+-- instead of a plausible number -- see internal/hub/read/metrics.go and
+-- TestIntegrationNoValueColumnNameIsSharedBetweenTiers, which enumerates every
+-- family and fails if a new aggregate reintroduces one.
+--
+-- The exemptions are last() columns and monotonic counters, where the bucket
+-- value IS the raw quantity. They are listed in that test with the reason.
 CREATE MATERIALIZED VIEW IF NOT EXISTS filesystem_samples_5m
     WITH (timescaledb.continuous) AS
 SELECT host_id,
        fs_id,
        time_bucket(INTERVAL '5 minutes', ts) AS bucket,
-       max(total)         AS total,
+       max(total)         AS total_max,
        avg(used)          AS used_avg,
        max(used)          AS used_max,
        min(free)          AS free_min,
-       max(inodes_total)  AS inodes_total,
+       max(inodes_total)  AS inodes_total_max,
        max(inodes_used)   AS inodes_used_max,
        avg(read_bytes)    AS read_bytes_avg,
        max(read_bytes)    AS read_bytes_max,
@@ -1213,11 +1286,11 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS filesystem_samples_1h
 SELECT host_id,
        fs_id,
        time_bucket(INTERVAL '1 hour', bucket) AS bucket,
-       max(total)            AS total,
+       max(total_max)        AS total_max,
        avg(used_avg)         AS used_avg,
        max(used_max)         AS used_max,
        min(free_min)         AS free_min,
-       max(inodes_total)     AS inodes_total,
+       max(inodes_total_max) AS inodes_total_max,
        max(inodes_used_max)  AS inodes_used_max,
        avg(read_bytes_avg)   AS read_bytes_avg,
        max(read_bytes_max)   AS read_bytes_max,

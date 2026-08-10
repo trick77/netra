@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>netra — Stage 1D Read API</title>
+<style>
+:root{--bg:#0f1115;--panel:#161920;--panel2:#1b1f28;--fg:#e6e8ee;--muted:#9aa3b2;--line:#2a2f3a;--accent:#5aa9e6;--accent2:#7ee0c0;--warn:#e6b45a}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:56px 28px 96px}
+h1{font-size:34px;line-height:1.2;margin:0 0 6px;letter-spacing:-.02em}
+h2{font-size:23px;margin:52px 0 14px;padding-top:20px;border-top:1px solid var(--line);letter-spacing:-.01em}
+h3{font-size:17.5px;margin:30px 0 10px;color:var(--accent2)}
+h4{font-size:16px;margin:22px 0 8px;color:var(--accent2)}
+p{margin:12px 0}
+a{color:var(--accent);text-decoration:none;border-bottom:1px solid rgba(90,169,230,.35)}
+ul,ol{padding-left:22px;margin:12px 0}
+li{margin:6px 0}
+hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+code{background:var(--panel2);padding:2px 6px;border-radius:5px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--accent2)}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;overflow:auto;margin:16px 0}
+pre code{background:none;padding:0;color:var(--fg);font-size:12.5px;line-height:1.55}
+table{border-collapse:collapse;width:100%;margin:18px 0;font-size:13.5px;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+th{background:var(--panel2);font-weight:600;color:var(--muted);white-space:nowrap}
+tr:nth-child(even) td{background:rgba(255,255,255,.015)}
+blockquote{margin:18px 0;padding:12px 18px;border-left:3px solid var(--accent);background:rgba(90,169,230,.07);border-radius:0 8px 8px 0}
+blockquote p{margin:4px 0}
+strong{color:#fff;font-weight:620}
+.meta{color:var(--muted);font-size:13.5px;margin-bottom:34px}
+</style></head>
+<body><div class="wrap">
+<h1>Stage 1D — the Read API</h1>
+<p class="meta">2026-08-10 · branch <code>stage1d-read-api</code> · one PR · closes Stage 1</p>
+
+<p><strong>Goal:</strong> make the twenty collectors' data readable by something other than <code>psql</code>. Every endpoint but one is a straightforward projection; <code>/metrics</code> is not, and it is specified first because the rest depends on nothing.</p>
+
+<blockquote><p><strong>The load-bearing decision.</strong> With <code>step</code> omitted the hub picks a storage tier. A client that cannot tell 1h buckets from raw samples will draw them on the same axis and be wrong without ever erroring. The response therefore names the tier <em>and</em> makes the confusion structurally impossible — see “Why column arrays”.</p></blockquote>
+
+<h2>Endpoints</h2>
+<table>
+<tr><th>Route</th><th>Source</th><th>Note</th></tr>
+<tr><td><code>GET /api/v1/hosts</code></td><td><code>hosts</code> ⋈ <code>host_current</code></td><td>Already exists; widened with the four <code>host_current</code> gauges. Never touches a hypertable.</td></tr>
+<tr><td><code>GET /api/v1/hosts/{id}</code></td><td><code>hosts</code>, <code>host_current</code></td><td>Full metadata <strong>including <code>capabilities</code></strong>.</td></tr>
+<tr><td><code>GET /api/v1/hosts/{id}/containers</code></td><td><code>containers</code></td><td rowspan="5">Dimension projections. Each returns <code>[]</code>, never <code>null</code>, for a host with none.</td></tr>
+<tr><td><code>GET …/filesystems</code></td><td><code>filesystems</code></td></tr>
+<tr><td><code>GET …/addresses</code></td><td><code>host_addresses</code></td></tr>
+<tr><td><code>GET …/packages</code></td><td><code>host_packages</code></td></tr>
+<tr><td><code>GET …/units</code></td><td><code>systemd_units</code> ⋈ last <code>systemd_unit_events</code></td></tr>
+<tr><td><code>GET …/metrics?family=&amp;from=&amp;to=&amp;step=</code></td><td>tier-selected</td><td>Below.</td></tr>
+<tr><td><code>GET /api/v1/events?host=&amp;since=&amp;type=</code></td><td><code>events</code></td><td>Uses <code>events_host_id_ts_idx</code>.</td></tr>
+</table>
+
+<p>All of it mounts on the <strong>existing</strong> <code>adminHandler</code> mux behind <code>RequireAdmin</code>. A second <code>/api/v1/</code> mount, or a second <code>GET /api/v1/hosts</code>, panics <code>http.ServeMux</code> at startup rather than at request time.</p>
+
+<h2>Capabilities are not decoration</h2>
+<p><code>GET /hosts/{id}</code> returns <code>hosts.capabilities</code> verbatim. This is how “this host has no <code>hwmon</code>” is told apart from “the sensors collector never ran”. Without it every <code>NULL</code> in every other response is ambiguous in exactly the way the agent went to trouble to avoid, and the read API would quietly undo a decision the collectors already paid for.</p>
+
+<h2>/metrics — the response shape</h2>
+<pre><code>{
+  "family": "cpu_core",
+  "tier":   "5m",
+  "step_s": 300,
+  "window":           { "from": "…", "to": "…" },
+  "requested_window": { "from": "…", "to": "…" },
+  "warnings": ["the 5m tier materialises with a 10m lag; window.to was clamped"],
+  "key_columns": ["core"],
+  "columns":     ["busy_avg", "busy_max"],
+  "series": [
+    { "key": {"core": "0"}, "points": [[1754800000000, 4.1, 9.7], …] }
+  ]
+}</code></pre>
+
+<h4>Why column arrays</h4>
+<p>At the raw tier the column is <code>busy</code>. At 5m it is <code>busy_avg</code> and <code>busy_max</code>. The names <em>differ per tier by construction</em>, so a client that ignores <code>tier</code> still cannot silently plot a 1h mean as if it were a 60s sample — it gets a key it does not recognise instead of a number that looks fine. Every family inherits the property: <code>cpu_total</code> → <code>cpu_total_avg</code>/<code>cpu_total_max</code>, <code>used</code> → <code>used_avg</code>/<code>used_max</code>. Row arrays keep it compact for the chart the UI will draw; the header carries the names once.</p>
+<p><strong>The exceptions are enumerated, not assumed.</strong> A column may keep one name across tiers only where the bucket value <em>is</em> the raw quantity: <code>last()</code> columns (<code>uptime_s</code>, <code>boot_time_s</code>, <code>error_code</code>, …) and <code>max()</code> of a monotonic counter (<code>buffer_dropped_total</code>). <code>TestIntegrationNoValueColumnNameIsSharedBetweenTiers</code> walks every family against that list and fails on anything else — which is how <code>filesystem_samples</code>' <code>total</code> and <code>inodes_total</code> and <code>container_samples</code>' <code>mem_limit</code> were caught. All three were <code>max()</code> of a <em>capacity</em> wearing the raw column's name, and a capacity resized down mid-bucket is exactly where a bucket maximum and a reading part company. They are now <code>total_max</code>, <code>inodes_total_max</code> and <code>mem_limit_max</code>.</p>
+<p><strong>A value carries its column's type</strong>, which is not always a number: <code>family=collector</code> yields <code>ok</code> as a boolean and <code>error_code</code> as a string beside the numeric <code>duration_ms</code>. <code>columns</code> is the authority on what each position holds.</p>
+
+<h4>Why two windows</h4>
+<p><code>window</code> is what the response <strong>actually covers</strong>; <code>requested_window</code> is the echo. They differ at both edges, and each difference is a real fact the client must not have to guess:</p>
+<ul>
+<li><strong>Leading edge — retention.</strong> <code>window.from = max(requested.from, now − retention(tier))</code>. A <code>from</code> older than the tier's retention does not error; it returns the part that still exists and says so.</li>
+<li><strong>Trailing edge — materialisation lag.</strong> Every continuous aggregate in <code>0001_init.sql</code> is <code>materialized_only = true</code> (verified against TimescaleDB 2.29.1), so the 5m tier is fresh only to <code>now − 10m</code> and the 1h tier to <code>now − 1h</code> — the <code>end_offset</code> of each refresh policy. <code>window.to</code> is clamped to that horizon.</li>
+</ul>
+<p>The SQL is clamped to <code>window</code>, not to the request, which buys a contract worth having: <strong>a missing point inside <code>window</code> means the host reported nothing — never that the hub lagged.</strong> Raw tiers have no materialisation lag and are clamped on the leading edge only.</p>
+
+<h2>Tier selection</h2>
+<p>Retention on <code>from</code>, <strong>not</strong> span. Span alone gets the raw-only families wrong.</p>
+<pre><code>tiers(family)              // fine → coarse, per family
+pick the FIRST tier T where now - from &lt;= retention(T)
+if none                    // from predates even the coarsest
+    use the coarsest, clamp window.from, warn</code></pre>
+<table>
+<tr><th>Family</th><th>Tiers</th><th>Retention</th></tr>
+<tr><td><code>host</code>, <code>agent</code>, <code>cpu_core</code>, <code>disk_io</code>, <code>sensor</code>, <code>net</code>, <code>collector</code>, <code>container</code>, <code>filesystem</code></td><td>raw, 5m, 1h</td><td>7d / 30d / 90d</td></tr>
+<tr><td><code>smart</code></td><td>raw only</td><td>90d</td></tr>
+<tr><td><code>process</code></td><td>raw only</td><td>48h</td></tr>
+</table>
+<p>The two raw-only families are why the rule is per-family: <code>family=smart&amp;from=60d ago</code> must answer <strong>raw</strong> despite a span far past 7 days, because there is no 5m tier to fall back to — and <code>family=process</code> can never cover more than 48h whatever is asked.</p>
+
+<h4>Explicit <code>step</code></h4>
+<p><code>step</code> is a Go duration. It selects the <strong>coarsest tier whose own step is ≤ the request</strong>, so <code>step=10m</code> resolves to 5m rather than 400ing on a value that is not a tier. Below 60s it clamps to raw; a family without that tier clamps to its finest. <code>step_s</code> in the response is always the tier's real step, never the request's. An explicit <code>step</code> overrides range-based selection but <strong>not</strong> the window clamps — asking for raw over 60 days returns 7 days of raw and says so.</p>
+
+<h4>Boundary cases, written first</h4>
+<ol>
+<li>A range straddling 7 days — <code>from = 7d+1m</code> ago, <code>to = now</code> → 5m, deterministically, on the <code>from</code> edge not the midpoint.</li>
+<li>A range longer than raw retention but wholly inside it… is impossible, and the test says so: span ≤ age always.</li>
+<li><code>from</code> older than every tier's retention (100d) → 1h, <code>window.from</code> clamped to <code>now−90d</code>, one warning.</li>
+<li><code>family=process&amp;from=7d</code> ago → raw, <code>window.from</code> clamped to <code>now−48h</code>.</li>
+<li><code>from &gt; to</code> → 400. <code>to</code> in the future → clamped to <code>now</code>.</li>
+<li>Unknown <code>family</code> → 400 naming the valid ones.</li>
+</ol>
+<p>Selection is a pure function over <code>(family, from, to, step, now)</code>, so all of the above are table tests with no database. Two integration tests then pin the Go constants to the schema: every <code>policy_retention</code> interval must equal the tier's declared retention, and every <code>policy_refresh_continuous_aggregate</code> <code>end_offset</code> must equal its declared lag. Editing <code>0001</code> without editing the selector fails the build.</p>
+
+<h2>Filesystem fullness</h2>
+<p><code>used</code> and <code>free</code> <strong>do not sum to</strong> <code>total</code> — the gap is the root reserve, which is neither. The read API therefore exposes <code>used</code>, <code>free</code> and <code>total</code> and computes no percentage at all. Any consumer's fullness is <code>used / (used + free)</code>, as <code>df</code>'s <code>Use%</code>. A percentage at the 5m or 1h tier would be worse than absent: <code>used_max / (used_max + free_min)</code> is a worst-case composite of two different instants, not the maximum of the true ratio.</p>
+
+<h2>Folded in</h2>
+<h3>1 · Retention for the discrete-event tables</h3>
+<p><code>systemd_unit_events</code>, <code>package_events</code> and — the same problem, unasked — <code>events</code> are plain tables with no retention. Sizing assumed “a unit changes state a handful of times a month”, which stopped holding when agents began emitting a failed-unit baseline on restart: a crash-looping agent writes to a table nothing prunes.</p>
+<p><strong>Decision: prune, do not hypertable-ise.</strong> Converting costs the composite foreign keys, moves every pinned policy count, and buys chunk-drop performance these row volumes do not need. Instead a <code>CREATE OR REPLACE PROCEDURE netra_prune_discrete_events</code> plus a daily <code>add_job</code>, horizon 90 days to match the 1h tier. <code>add_job</code> has no <code>if_not_exists</code>, so it is guarded by a <code>DO</code> block that checks <code>timescaledb_information.jobs</code> — <code>0001</code> must stay individually re-runnable. The job's <code>proc_name</code> joins the two policy names <code>unschedulePolicyJobs</code> already suppresses, so it cannot deadlock the suite the way #26 fixed.</p>
+<h3>2 · Coverage floors</h3>
+<p>Raised off 75%, deliberately, as the plan said to once the collector packages landed. Set from the measured number <em>after</em> this PR is green, one to two points under it — the gate's 0.05 grace is float-formatting slack, not headroom.</p>
+<h3>3 · The plan document</h3>
+<p><code>2026-08-07-next-phases.md</code> has every 1C box unticked; it is the file that tells the next session where things stand, so a stale one is worse than none. 1C ticks, 1D ticks, and the note that <strong>systemd (D-Bus) was the spec'd design all along</strong> — the <code>systemctl</code> implementation was the deviation, which is reassuring rather than incidental. <code>custom_samples</code> and <code>geocode_cache</code> stay <strong>unticked</strong>: neither table exists. The two migration-checksum items stay unticked too; they are open debts, not deliverables.</p>
+
+<h2>Verification</h2>
+<pre><code>NETRA_TEST_DSN=postgres://netra:netra@127.0.0.1:5432/netra_test go test -count=1 -p 1 ./...
+hack/coverage-gate.sh hub &amp;&amp; hack/coverage-gate.sh agent
+hack/patch-coverage.sh</code></pre>
+<p>Fixture tests only. Aggregate-tier tests must <code>CALL refresh_continuous_aggregate(…)</code> explicitly: every view is <code>WITH NO DATA</code> and <code>OpenTest</code> unschedules the refresh policies, so insert-then-query returns zero rows otherwise.</p>
+</div></body></html>

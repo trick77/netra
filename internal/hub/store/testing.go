@@ -233,6 +233,11 @@ func isRetryableLockError(err error) bool {
 // that protection ends when Migrate reinstalls the extension and creates these
 // jobs. This closes the remaining window: the test body itself.
 //
+// netra_prune_discrete_events is in the list for the same reason: it DELETEs
+// from events, systemd_unit_events and package_events, which a test that
+// deletes a host is simultaneously cascading through. It is netra's own job
+// rather than one of Timescale's, but the scheduler treats it identically.
+//
 // UNSCHEDULED, not deleted. Several tests count the policies to prove the
 // migration registered them (rollup_test.go, group1rollup_test.go), and
 // deleting the jobs would make those tests pass for the wrong reason -- or
@@ -250,7 +255,8 @@ func (s *Store) unschedulePolicyJobs(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, `
 		SELECT alter_job(job_id, scheduled => false)
 		  FROM timescaledb_information.jobs
-		 WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate')`,
+		 WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate',
+		                     'netra_prune_discrete_events')`,
 	); err != nil {
 		return fmt.Errorf("unschedule policy jobs: %w", err)
 	}
