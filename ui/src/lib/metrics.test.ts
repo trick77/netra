@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { column, hasGaps, seriesValues, windowNotice } from "./metrics";
+import { column, hasGaps, seriesCells, seriesValues, windowNotice } from "./metrics";
 
 const raw = {
   family: "cpu_core",
@@ -171,6 +171,52 @@ describe("metrics", () => {
       expect(notice).toMatch(/retention/i);
       expect(notice).toMatch(/truncat/i);
       expect(notice?.match(/truncat/gi)?.length).toBe(1);
+    });
+  });
+
+  // internal/hub/read/metrics.go's Series.Points is [][]any, not [][]number:
+  // family=collector is the family that proves a column is not always
+  // numeric -- ok is a boolean and error_code is a string, sitting beside a
+  // numeric duration_ms in the same row.
+  describe("non-numeric columns (family=collector)", () => {
+    const collector = {
+      family: "collector",
+      tier: "raw",
+      step_s: 60,
+      window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+      requested_window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+      warnings: [],
+      key_columns: ["collector"],
+      columns: ["ok", "error_code", "duration_ms"],
+      series: [
+        {
+          key: { collector: "smart" },
+          points: [
+            [1, true, null, 12],
+            [2, false, "conn_refused", null],
+          ],
+        },
+      ],
+      truncated: false,
+    } as const;
+
+    it("seriesValues() rejects a boolean cell rather than passing it through as a number", () => {
+      expect(() => seriesValues(collector as never, 0, "ok")).toThrowError(/ok/);
+      expect(() => seriesValues(collector as never, 0, "ok")).toThrowError(/boolean/);
+    });
+
+    it("seriesValues() rejects a string cell rather than passing it through as a number", () => {
+      expect(() => seriesValues(collector as never, 0, "error_code")).toThrowError(/error_code/);
+      expect(() => seriesValues(collector as never, 0, "error_code")).toThrowError(/string/);
+    });
+
+    it("seriesCells() returns the raw boolean and string cells intact, nulls included", () => {
+      expect(seriesCells(collector as never, 0, "ok")).toEqual([true, false]);
+      expect(seriesCells(collector as never, 0, "error_code")).toEqual([null, "conn_refused"]);
+    });
+
+    it("seriesValues() still works normally for a genuinely numeric column on the same response", () => {
+      expect(seriesValues(collector as never, 0, "duration_ms")).toEqual([12, null]);
     });
   });
 });

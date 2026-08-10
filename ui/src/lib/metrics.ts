@@ -1,41 +1,15 @@
-// TODO(task-4-types): replace this structural type with the shared one from
-// ui/src/lib/api.ts once that module lands. Field shapes are taken verbatim
-// from internal/hub/read/metrics.go's Result and tier.go's Window, which is
-// what the /metrics endpoint actually serializes.
-export interface MetricsWindow {
-  from: string;
-  to: string;
-}
+import type { MetricsResponse } from "./api";
 
-export interface MetricsSeries {
-  key: Record<string, string>;
-  // Each point is [unixMillis, ...values], one value per entry of
-  // MetricsResponse.columns, in that order. A value can be null -- the
-  // host reported nothing for that column at that timestamp -- and must
-  // never be coerced to 0 or dropped.
-  points: (number | null)[][];
-}
-
-export interface MetricsResponse {
-  family: string;
-  tier: string;
-  step_s: number;
-  // window is what the response actually covers; requested_window is the
-  // echo of what was asked. They differ at the leading edge (retention) and
-  // the trailing edge (materialization lag of the 5m/1h continuous
-  // aggregates).
-  window: MetricsWindow;
-  requested_window: MetricsWindow;
-  warnings: string[];
-  key_columns: string[];
-  // Column names differ per tier BY CONSTRUCTION: a base name like "busy"
-  // becomes "busy_avg" at the 5m tier and "busy_max" at the 1h tier. This is
-  // deliberate -- a client that ignores tier gets a key it does not
-  // recognise rather than a number that looks fine and is wrong.
-  columns: string[];
-  series: MetricsSeries[];
-  truncated: boolean;
-}
+// MetricsResponse (and its satellite MetricsWindow/MetricsSeries types) is
+// owned by ./api.ts, which transcribes internal/hub/read/metrics.go's Result
+// verbatim, including `Points [][]any` -- a point's cells are `unknown[]`,
+// not `number[]`, because a column is not always numeric. family=collector
+// is the case that proves it: at raw it yields `ok` as a boolean and
+// `error_code` as a string beside a numeric column. This module used to
+// carry its own copy of the response shape typed as
+// `points: (number | null)[][]`, which made seriesValues() lie to the
+// compiler for exactly that family. One definition of the wire shape lives
+// in ./api.ts now; this module only interprets it.
 
 /**
  * Thrown by column() when a base name has no match in the response's tier.
@@ -77,20 +51,56 @@ export function column(res: MetricsResponse, base: string): number {
 }
 
 /**
- * Extracts one series' values for a base column, resolved against the
- * response's tier. Nulls pass through untouched -- a null means the host
- * reported nothing for that point, which must survive to the chart layer so
- * it can break the line rather than show a fabricated value.
+ * Thrown by seriesValues() when a resolved column holds a cell that is
+ * neither a number nor null. Named so a caller who asked for numbers and
+ * got, say, collector's boolean `ok` or string `error_code` sees exactly
+ * which column and which type broke the claim, rather than a fabricated
+ * NaN or a silently wrong chart.
+ */
+export class NonNumericColumnError extends Error {
+  constructor(base: string, cell: unknown) {
+    super(`column '${base}' is not numeric: found a ${typeof cell} (${JSON.stringify(cell)})`);
+    this.name = "NonNumericColumnError";
+  }
+}
+
+/**
+ * Extracts one series' raw cells for a base column, resolved against the
+ * response's tier, with no type claim about what a cell holds. This is the
+ * accessor for columns that are legitimately not numbers -- family=collector
+ * renders `ok` as a boolean and `error_code` as a string on purpose, and a
+ * table cell for either wants the real value, not a number cast onto it.
+ */
+export function seriesCells(res: MetricsResponse, seriesIndex: number, base: string): unknown[] {
+  const idx = column(res, base);
+  const series = res.series[seriesIndex];
+  // +1: points[0] is the timestamp, values start at index 1.
+  return series.points.map((point) => point[idx + 1]);
+}
+
+/**
+ * Extracts one series' NUMERIC values for a base column, resolved against
+ * the response's tier. Nulls pass through untouched -- a null means the
+ * host reported nothing for that point, which must survive to the chart
+ * layer so it can break the line rather than show a fabricated value.
+ *
+ * A cell that is neither a number nor null throws NonNumericColumnError
+ * rather than being coerced or passed through as null. Returning null for
+ * it would conflate two different facts -- "the host reported nothing" and
+ * "this column is not a number" -- and refusing exactly that conflation is
+ * why this module exists. A caller with a genuinely non-numeric column
+ * (collector's `ok`/`error_code`) wants seriesCells(), not this function.
  */
 export function seriesValues(
   res: MetricsResponse,
   seriesIndex: number,
   base: string,
 ): (number | null)[] {
-  const idx = column(res, base);
-  const series = res.series[seriesIndex];
-  // +1: points[0] is the timestamp, values start at index 1.
-  return series.points.map((point) => point[idx + 1] as number | null);
+  return seriesCells(res, seriesIndex, base).map((cell) => {
+    if (cell === null) return null;
+    if (typeof cell === "number") return cell;
+    throw new NonNumericColumnError(base, cell);
+  });
 }
 
 /** True when any value in the series is null -- the host reported nothing. */
