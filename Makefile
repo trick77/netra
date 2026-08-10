@@ -10,7 +10,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS = -s -w -X github.com/trick77/netra/internal/buildinfo.version=$(VERSION) \
                 -X github.com/trick77/netra/internal/buildinfo.commit=$(COMMIT)
 
-.PHONY: test test-integration test-shell build build-hub build-agent proto fmt vet check
+.PHONY: test test-integration test-shell build build-hub build-agent build-sim proto fmt vet check
 
 test:
 	$(GO) test ./...
@@ -44,6 +44,13 @@ build-hub:
 
 build-agent:
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/netra-agent ./cmd/netra-agent
+
+# netra-sim fills a hub with a fake fleet for development. Deliberately NOT
+# part of `build`, of either Containerfile, or of the release workflow: it
+# registers hosts, mints tokens and writes three months of invented history,
+# none of which belongs anywhere near a production hub.
+build-sim:
+	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/netra-sim ./cmd/netra-sim
 
 proto:
 	$(GO) run github.com/bufbuild/buf/cmd/buf@v1.47.2 generate
