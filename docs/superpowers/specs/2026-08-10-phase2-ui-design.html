@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>netra — Phase 2 Web UI Design Specification</title>
+<style>
+:root{color-scheme:light dark;
+ --bg:#f7f5f0;--surface:#fffdf9;--surface-2:#faf8f3;--border:#e7e2d8;--border-strong:#cfc9bb;
+ --ink:#1f1e1a;--ink-2:#4d4a42;--muted:#807c72;--accent:#b4531f;--accent-soft:#fbeee5;
+ --s1:#2a78d6;--s2:#1baf7a;--ok:#0ca30c;--warn:#fab219;--crit:#d03b3b;
+ --font-sans:"Anthropic Sans",system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+ --font-serif:"Anthropic Serif",Georgia,"Times New Roman",serif;
+ --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+@media (prefers-color-scheme:dark){:root{
+ --bg:#1f1f1e;--surface:#1b1b1a;--surface-2:#2c2c2a;--border:#323230;--border-strong:#454540;
+ --ink:#faf9f5;--ink-2:#c9c6bd;--muted:#9c9a92;--accent:#d97757;--accent-soft:#2e211a;
+ --s1:#3987e5;--s2:#199e70;}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans);
+ font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:56px 28px 96px}
+h1{font-family:var(--font-serif);font-size:34px;line-height:1.2;margin:0 0 8px;letter-spacing:-.02em}
+h2{font-family:var(--font-serif);font-size:24px;margin:52px 0 14px;padding-top:22px;
+ border-top:1px solid var(--border);letter-spacing:-.01em}
+h3{font-size:17px;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:14px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+p{margin:12px 0;color:var(--ink-2)}
+strong{color:var(--ink);font-weight:600}
+ul,ol{padding-left:22px;margin:12px 0;color:var(--ink-2)}
+li{margin:6px 0}
+hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+code{font-family:var(--font-mono);font-size:.84em;background:var(--surface-2);
+ border:1px solid var(--border);border-radius:4px;padding:.08em .38em;color:var(--ink)}
+pre.code{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+ padding:14px 16px;overflow-x:auto;margin:16px 0}
+pre.code code{background:none;border:0;padding:0;font-size:12.5px;line-height:1.6}
+.tw{overflow-x:auto;margin:18px 0;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);color:var(--muted);
+ font-weight:500;text-transform:uppercase;letter-spacing:.05em;font-size:12px;white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--ink-2);vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+.meta{color:var(--muted);font-size:14px;margin:0 0 28px}
+</style></head>
+<body><div class="wrap"><h1>netra — Phase 2 Web UI Design Specification</h1>
+<p><strong>Date:</strong> 2026-08-10 <strong>Status:</strong> Approved for planning <strong>Phase:</strong> 2 (Stage 2, &quot;Web UI&quot;) <strong>Supersedes:</strong> the three-line Web UI bullet in <code>2026-08-07-next-phases.md</code> §Stage 2</p>
+<hr>
+<h2>1. Why this exists</h2>
+<p>Phase 1 shipped agents, ingest, the full schema and a token-gated read API. It shipped no UI beyond a minimal <code>html/template</code> host-management page, and <code>ui.go</code> says so explicitly: <em>&quot;no JavaScript, no build step and no design system. The phase-2 UI owns those decisions.&quot;</em> This spec makes them.</p>
+<p>The stated goal is <strong>cohesion</strong>: one button style, one input style, one chart component — not a new treatment per page. Every decision below exists to make the <em>cheap</em> path also the consistent one.</p>
+<h3>Scope</h3>
+<p>In: the design system, the fleet overview, host detail and its tabs, the events page, settings, host management, login, and the anchors the Stage 3 LLM feature will attach to.</p>
+<p>Out: the alerting engine (Stage 2, separate), OIDC itself (Stage 2, separate), geocoding and the map (Stage 2), LLM diagnostics (Stage 3). This spec designs <em>around</em> them so they attach without redesign.</p>
+<hr>
+<h2>2. Stack</h2>
+<p>Mirrors <code>../music</code>, which matches netra&#x27;s deployment shape — one static binary, one container, no asset deploy.</p>
+<div class="tw"><table><thead><tr><th>Choice</th><th>Value</th></tr></thead><tbody><tr><td>Framework</td><td>React 19 + TypeScript, Vite</td></tr><tr><td>Location</td><td><code>ui/</code>, built to <code>internal/hub/web/dist</code></td></tr><tr><td>Embedding</td><td><code>//go:embed</code> in <code>internal/hub/web/embed.go</code>, served with <code>public, max-age=31536000, immutable</code></td></tr><tr><td>Styling</td><td>Tailwind v4 <code>@theme</code> block as a CSS-variable registry + hand-written class layer. <strong>No utility classes in components</strong> — this is how music works and it is deliberate</td></tr><tr><td>Data</td><td>plain <code>fetch</code> against the existing JSON read API. No data-fetching library</td></tr><tr><td>Routing</td><td>hand-rolled, as music&#x27;s <code>src/router.ts</code></td></tr><tr><td>Charts</td><td>hand-written inline SVG. No charting library</td></tr><tr><td>Icons</td><td><code>lucide-react</code>, wrapped in one <code>Icon</code> component</td></tr><tr><td>Tests</td><td>Vitest + Testing Library</td></tr></tbody></table></div>
+<p><strong>Why no chart library.</strong> Every chart in this spec is one of four shapes (sparkline, stacked sparkline, up/down sparkline, small-multiple line/area). Hand-written SVG is a few hundred lines total, has no bundle cost, themes from CSS variables for free, and cannot drift from the design system. A library would be more code, not less.</p>
+<hr>
+<h2>3. Design system</h2>
+<h3>3.1 Fonts</h3>
+<p>music&#x27;s licensed Anthropic Sans and Anthropic Serif, self-hosted, same <code>@font-face</code> mechanics and the same <code>--font-sans</code> / <code>--font-serif</code> variable names. Serif is reserved for page and section titles; sans is everything else; <code>--font-mono</code> for versions, addresses, commands and identifiers.</p>
+<h3>3.2 Palette — direction &quot;Clay&quot;</h3>
+<p>music&#x27;s tokens ported. Dark values are music&#x27;s verbatim; the light peer is derived, since music has no light theme.</p>
+<pre class="code" data-lang="css"><code>/* dark */
+--bg:#1f1f1e; --surface:#1b1b1a; --surface-2:#2c2c2a; --raised:#363632;
+--border:#323230; --border-strong:#454540;
+--ink:#faf9f5; --ink-2:#c9c6bd; --muted:#9c9a92;
+--accent:#d97757; --accent-fill:#c25f34; --accent-soft:#2e211a;
+--grid:#2a2a28; --axis:#454540;
+
+/* light */
+--bg:#f7f5f0; --surface:#fffdf9; --surface-2:#faf8f3; --raised:#fffdf9;
+--border:#e7e2d8; --border-strong:#cfc9bb;
+--ink:#1f1e1a; --ink-2:#4d4a42; --muted:#807c72;
+--accent:#b4531f; --accent-fill:#c25f34; --accent-soft:#fbeee5;
+--grid:#eeeae1; --axis:#cfc9bb;</code></pre>
+<h3>3.3 The accent/critical rule — load-bearing</h3>
+<p>The clay accent <code>#c25f34</code> and the critical red <code>#d03b3b</code> measure <strong>ΔE 7.2 at normal vision and 2.2 under deuteranopia</strong>. They are not reliably distinguishable, and no re-stepping fixes it — pushing critical all the way to pink reaches only ΔE 13.5, still under the 15 floor. This was measured, not estimated.</p>
+<p>Therefore, two rules, both mandatory:</p>
+<ol><li><strong>Severity is never carried by colour alone.</strong> Every status wears a dot <em>and</em> a word (&quot;unhealthy&quot;, &quot;96 %&quot;, &quot;silent&quot;). This is what preserves meaning when accent and critical read as the same hue.</li><li><strong>The accent never appears as a data or severity fill.</strong> Meters, chart bands, chart lines and status marks draw only from the series palette and the status palette. Clay is chrome: brand, links, active nav, focus ring, primary button.</li></ol>
+<h3>3.4 Series palette — validated, orange-free</h3>
+<div class="tw"><table><thead><tr><th>Slot</th><th>Light</th><th>Dark</th><th>Used for</th></tr></thead><tbody><tr><td>1</td><td><code>#2a78d6</code></td><td><code>#3987e5</code></td><td>cpu_user, mem_used, rx</td></tr><tr><td>2</td><td><code>#1baf7a</code></td><td><code>#199e70</code></td><td>cpu_system, buffers, tx</td></tr><tr><td>3</td><td><code>#4a3aa7</code></td><td><code>#9085e9</code></td><td>cpu_iowait, cached</td></tr><tr><td>4</td><td><code>#e87ba4</code></td><td><code>#d55181</code></td><td>cpu_steal, ZFS ARC</td></tr></tbody></table></div>
+<p>This order clears every colourblindness gate in both themes on the adjacent pairlist (stacked areas, lines). <strong>Cap: three series in any all-pairs form</strong> (scatter, unordered marks) — four does not clear the floors.</p>
+<p>Orange never appears in a chart, which is also what keeps the clay accent from impersonating data.</p>
+<h3>3.5 Status palette — fixed, never themed, never a series</h3>
+<p><code>good #0ca30c</code> · <code>warning #fab219</code> · <code>serious #ec835a</code> · <code>critical #d03b3b</code></p>
+<h3>3.6 Type scale — role → size, mandatory</h3>
+<p>The previous scale had six steps and no mapping, and 11 px drifted into content. Fixed:</p>
+<div class="tw"><table><thead><tr><th>Role</th><th>Token</th><th>Size</th><th>Used for</th></tr></thead><tbody><tr><td>Display</td><td><code>--text-display</code></td><td>28px</td><td>host name on detail, hero figure in a stat tile. One per view</td></tr><tr><td>Title</td><td><code>--text-title</code></td><td>20px</td><td>section headings, brand. Serif</td></tr><tr><td>Body</td><td><code>--text-body</code></td><td>16px</td><td>running prose only</td></tr><tr><td>UI</td><td><code>--text-ui</code></td><td>15px</td><td><strong>default</strong>. buttons, inputs, primary cell values, host names</td></tr><tr><td>Label</td><td><code>--text-label</code></td><td>14px</td><td>secondary content you still read: site, mount, timestamps, hints, table headers, notes</td></tr><tr><td>Micro</td><td><code>--text-micro</code></td><td>12px</td><td><strong>three uses only</strong>: badges/pills, chart axis ticks, uppercase eyebrow labels</td></tr></tbody></table></div>
+<p><strong>12 px is the floor</strong> at any nesting depth. The test: <em>if you expect the reader to read it, it is Label or larger.</em> A role not in this table gets no size of its own.</p>
+<h3>3.7 Other tokens</h3>
+<p>Spacing <code>4/8/12/16/24/32</code>. Radii <code>--radius-sm 5px</code>, <code>--radius-ui 8px</code>, <code>--radius-pill</code>. Weight is a claim about importance and must be earned: peer values get identical treatment and are distinguished non-typographically (see traffic, §4.2).</p>
+<h3>3.8 Primitives — the whole inventory</h3>
+<p><code>Button</code> (primary · secondary · ghost · danger) · <code>Input</code>/<code>Select</code> (one <code>.ctl</code> class) · <code>Segmented</code> · <code>Card</code> · <code>Table</code> · <code>Tabs</code> · <code>Badge</code>/<code>StatusDot</code> · <code>Meter</code> · <code>StatTile</code> · <code>Sparkline</code> · <code>StackedSparkline</code> · <code>UpDownSparkline</code> · <code>ChartPanel</code> · <code>Drawer</code> · <code>AttentionBand</code> · <code>EmptyState</code>.</p>
+<p><strong>Nothing outside this list gets bespoke styling.</strong> A new visual need is a new primitive with a name, or it is one of these.</p>
+<hr>
+<h2>4. Fleet overview</h2>
+<h3>4.1 Structure, top to bottom</h3>
+<ol><li><strong>Attention band</strong> — present only when something is wrong (§4.3)</li><li><strong>Stat tiles</strong> — hosts reporting, containers, fleet traffic</li><li><strong>Entity tabs</strong> — <code>Hosts</code> / <code>Containers</code> (what you are looking at)</li><li><strong>Toolbar</strong> — filter, scope select, time range, view toggle (how densely)</li><li><strong>The list</strong> — table or cards</li><li><strong>All-hosts overlay</strong> — two shared-axis charts (§4.4)</li></ol>
+<h3>4.2 The host row</h3>
+<p>Columns: <strong>Host · CPU · Memory · Traffic · Disk · Uptime</strong>.</p>
+<div class="tw"><table><thead><tr><th>Column</th><th>Mark</th><th>Rationale</th></tr></thead><tbody><tr><td>Host</td><td>status dot + name + site</td><td>site is Label, not Micro</td></tr><tr><td>CPU</td><td><strong>stacked sparkline</strong> — user/system/iowait/steal</td><td>the silhouette is <code>cpu_total</code>; the bands say what kind of busy. 60 % of iowait is a disk problem; 60 % of steal is the neighbour</td></tr><tr><td>Memory</td><td><strong>stacked sparkline</strong> — used/buffers/cached/ZFS ARC</td><td>free is the gap to the ceiling, <strong>never a band</strong> — stacking free makes every host look full. ARC as its own band stops ZFS hosts reading as alarming</td></tr><tr><td>Traffic</td><td><strong>up/down sparkline</strong> — rx above zero, tx below</td><td>asymmetry is visible as a shape. Both rates in <strong>identical</strong> type; only the arrow distinguishes them</td></tr><tr><td>Disk</td><td><strong>meter</strong> + mount name + <code>+N</code></td><td>usage is near-flat over 24 h, so a sparkline carries nothing; &quot;how close to full&quot; is the question</td></tr><tr><td>Uptime</td><td>value, coloured below 300 s</td><td>a host that rebooted 4 minutes ago is the most interesting row on the page</td></tr></tbody></table></div>
+<p><strong>Sparklines are non-negotiable.</strong> Beszel ships none and Grafana&#x27;s fleet dashboard uses bar-gauges; both were considered and rejected. A bar shows one instant, a sparkline shows the last 24 hours in the same 112 px, and recent history is half of what an overview is for. Disk is the single exception, for the reason above.</p>
+<p><strong>Disk shows the fullest filesystem, named.</strong> Summing is wrong — a 503 GB root at 68 % and a 7.8 TB array at 88 % average to a number that would hide a root at 99 %. Root-only is worse. The percentage is <code>used / (used + free)</code> — <code>df</code>&#x27;s <code>Use%</code> — so it agrees with what an operator sees over SSH. The API deliberately computes no percentage (<code>used + free ≠ total</code>, the gap is the root reserve), so the UI owns this definition and states it in the column-header tooltip.</p>
+<p>Because a stacked sparkline puts four series in 112 px, <strong>the hover tooltip carrying band names and values is required</strong>, not optional.</p>
+<h3>4.3 The attention band</h3>
+<ul><li><strong>Absent when nothing is wrong.</strong> Not a green &quot;all clear&quot; card — a permanently present banner is one people stop reading. Replaced by one quiet line: <em>&quot;All 19 hosts reporting · nothing needs attention · checked 41 s ago&quot;</em>, which still confirms the check ran.</li><li><strong>No dismiss, no acknowledge.</strong> It clears when the condition clears. Dismissal would let the UI show all-clear while something is broken — the one lie a monitoring tool must not tell. Acknowledgement belongs to the alerting engine.</li><li><strong>Sorted by each host&#x27;s worst condition</strong>, not by condition count.</li><li><strong>Grouped per host past two conditions</strong> — worst shown, <code>+N more</code> expandable. A cascading host (disk full → services failing → load climbing) otherwise floods the band and buries a second host that is quietly starting to fail. <strong>This is presentation, not suppression: everything is still recorded.</strong></li><li><strong>Header counts both</strong>: &quot;6 on 3 hosts&quot; — conditions alone hide concentration, hosts alone hide severity.</li><li><strong>Truncation is always stated</strong> (&quot;+4 more hosts →&quot;). Silent truncation reads as completeness.</li><li>Each row links to the host and carries the <code>✦ Explain</code> anchor (§8).</li></ul>
+<h3>4.4 The all-hosts overlay</h3>
+<p>Two charts below the list — CPU and memory, every host on shared axes, de-emphasised, only the outlier labelled. The column ranks who is highest <em>now</em>; the overlay shows who is behaving <em>differently</em>. Grafana&#x27;s fleet dashboard does exactly this, and it is the one structural idea from the research that netra was missing.</p>
+<h3>4.5 Views</h3>
+<p>Two independent axes:</p>
+<ul><li><strong>Entity</strong> (tabs): <code>Hosts</code> / <code>Containers</code>. The <strong>container overview</strong> is fleet-wide — the same container row plus a Host column, so &quot;every <code>postgres</code> in the fleet&quot; and &quot;everything on this host&quot; are one component, and both link to container detail (§5.3).</li><li><strong>Density</strong> (toolbar toggle): <code>Table</code> / <code>Cards</code>, remembered per browser, defaulted in Settings. <strong>Both render from one column definition</strong> (Beszel&#x27;s approach) — a row and a card from the same source, so they cannot drift. Hidden in Containers view; a card grid of 247 containers is not useful.</li></ul>
+<p>Below the mobile breakpoint, <strong>Cards is automatic</strong>, not a preference — a six-column table does not survive 390 px.</p>
+<hr>
+<h2>5. Host detail</h2>
+<h3>5.1 Shell</h3>
+<p>A header that never changes across tabs — hostname (Display, serif), site · OS · kernel · arch, status badge, time range, actions — then the tab bar:</p>
+<p><code>Overview · Graphs · Containers · Filesystems · Network · Packages · Units · Events</code></p>
+<p>The <strong>Alerts</strong> tab joins this bar when the Stage 2 alerting engine lands (§6); phase 2 ships the other eight. The bar is built to take a ninth without relayout.</p>
+<ul><li><strong>Every tab is a URL</strong> (<code>/hosts/{id}/graphs</code>). Reload keeps its place; the diagnosis drawer&#x27;s evidence links deep-link into the tab holding the data.</li><li><strong>The time range is shared state</strong> across tabs.</li><li>Tabs <strong>wrap to a second line</strong> at narrow widths. No horizontal scroll, no &quot;More ▾&quot; — a hidden tab is an unused tab.</li><li><strong>Overview is a summary, not a duplicate</strong>: two or three facts from each tab plus the &quot;Needs attention&quot; card. It must not grow until the tabs are pointless.</li></ul>
+<h3>5.2 Tabs</h3>
+<p><strong>Overview</strong> — processor (stacked area, full legend), memory (meter + legend, swap shown as &quot;none&quot; when absent, never 0), disk (per-filesystem rows with absolute bytes, not ratios), system facts, temperature, collector capabilities, needs-attention.</p>
+<p><strong>Graphs</strong> — small multiples: one <code>ChartPanel</code> component, N instances, uniform size, one range control driving all of them, grouped <code>System</code> / <code>Network</code> / <code>Storage</code>. System: device availability, uptime, load averages, context switches, interrupts, running processes, users logged in, total processes. Network: TCP statistics, TCP connections, IP fragmentation, UDP statistics. Adding a family later is data, not design.</p>
+<p><strong>Containers · Filesystems · Network · Packages · Units</strong> — the <em>inventory family</em>: one searchable-list component, differing only in columns, each showing <code>first_seen</code>/<code>last_seen</code> where the schema has them. Packages&#x27; &quot;changed in the last 30 days&quot; filter is the &quot;what changed before this broke&quot; timeline.</p>
+<p>Containers specifically: identity is <strong>compose project + service</strong>, never the container ID (which changes on every <code>compose up -d</code> and would orphan all history). Memory is the cgroup figure with <code>cache</code> and <code>inactive_file</code> subtracted — it reads lower than <code>docker stats</code>, and that is correct. The bar is against the container&#x27;s limit; a container with no limit shows &quot;no limit&quot;, never the host total.</p>
+<p><strong>Alerts</strong> — rules applying to this host (inherited or overridden, muted state) plus firing/resolved history. <em>What is currently firing also appears on Overview</em>, because current state must not sit behind a tab.</p>
+<p><strong>Events</strong> — this host&#x27;s slice of the events log.</p>
+<h3>5.3 Container detail</h3>
+<p>Containers are the only sub-entity with a time series of their own, so they get a page rather than a row expansion. Reached from either container list (fleet or host).</p>
+<p>Header: <code>project/service</code> (Display), host as a link, image, status badge, time range. Then <strong>four small multiples from the same <code>ChartPanel</code> component the Graphs tab uses</strong> — CPU, memory against <code>mem_limit</code>, network (rx/tx), disk I/O (read/write) — because a container is just another entity with a time series and deserves no bespoke chart.</p>
+<p>Then two cards: <strong>Identity</strong> (<code>container_key</code>, <code>name</code>, <code>image</code>, host, <code>is_agent</code>, last sample) and <strong>Not collected</strong> (§11).</p>
+<p>A container with no <code>mem_limit</code> shows &quot;no limit&quot; rather than a bar against the host total.</p>
+<hr>
+<h2>6. Events, and what an alert is</h2>
+<p><strong>An event is an instant; an alert is an interval.</strong> This distinction drives the model.</p>
+<p>If alerts are just events, &quot;what is wrong right now&quot; means scanning backwards pairing <code>fired</code> with <code>resolved</code> — and a single lost resolve event (dropped batch, agent restart) produces a permanent phantom alarm with no way to clear it.</p>
+<p>The model, when the Stage 2 engine lands:</p>
+<ol><li><code>alert_rules</code> — configuration</li><li><code>alerts</code> — instances with state: <code>rule_id</code>, <code>host_id</code>, <code>state</code>, <code>started_at</code>, <code>resolved_at</code>, <code>last_seen</code>. One indexed query answers &quot;firing now&quot;</li><li>transitions written into the existing <code>events</code> table, so the timeline stays unified</li></ol>
+<p>Alerts and Events are then two projections of one history: Events is the log, Alerts is the current-state index.</p>
+<p><strong>Sequencing: phase 2 ships Events only.</strong> netra has no alerting engine today; threshold crossings go straight to <code>events</code>, so the attention band reads from events for now. The Alerts pages land with the engine that defines them. The band&#x27;s contract does not change when its source does — it only gets more reliable.</p>
+<p><strong>The Events page</strong> carries search, host, type, severity and time-range filters. Type is a chip, not a colour: only critical and warning carry a status dot. A package upgrade is not a colour-coded emergency.</p>
+<hr>
+<h2>7. Correctness rules the UI must honour</h2>
+<p>These come from the read API&#x27;s contract. Each is cheap to implement and expensive to retrofit.</p>
+<ol><li><strong>Gaps render as gaps.</strong> A missing point inside <code>window</code> means <em>the host reported nothing</em>. Charts must break the line — never interpolate across a hole. Interpolation converts &quot;agent was down&quot; into &quot;CPU was steady&quot;, which is the exact failure netra exists to prevent. Applies to sparklines too.</li><li><strong>Show the window you got, not the one you asked for.</strong> <code>window</code> and <code>requested_window</code> differ at the leading edge (retention) and the trailing edge (materialisation lag: the 5m tier is fresh only to <code>now−10m</code>, the 1h tier to <code>now−1h</code>). Ask 90 days of <code>process</code> and you get 48 hours. The range control states the actual coverage, or people will read retention as data loss.</li><li><strong>Read <code>tier</code> and <code>columns</code>; never index points positionally without them.</strong> Column names differ per tier by construction (<code>busy</code> → <code>busy_avg</code>/<code>busy_max</code>), and <code>family=collector</code> returns a bool and a string beside numbers.</li><li><strong><code>?columns=</code> is tier-specific</strong> — pin <code>step</code>, or read <code>columns</code> off an unfiltered response first.</li><li><strong>Absent ≠ zero.</strong> <code>NULL</code> swap means no swap; render &quot;none&quot;. <code>swap_used = 0</code> means swap exists and is unused.</li><li><strong>Unavailable collectors say so.</strong> A capability that is off renders an explicit &quot;not collected&quot; panel with the reason — never an empty chart. Currently applies to IP statistics, ICMP statistics and ICMP informational (§11).</li><li><strong>Polling is 60 s</strong>, aligned to the scrape interval, paused when the tab is hidden. Sub-minute realtime is a permanent non-goal; faster polling is pure waste.</li></ol>
+<hr>
+<h2>8. LLM anchors (Stage 3, designed for now)</h2>
+<p>Phase 2 builds <strong>no LLM feature</strong>. It builds the two anchors so Stage 3 attaches without redesign:</p>
+<ul><li>an event/attention row that can carry an action</li><li>a chart that can report a brushed time range</li></ul>
+<p>The Stage 3 shape, specified here so those anchors are the right ones:</p>
+<ul><li><strong>Anchored, not floating.</strong> <code>✦ Explain</code> on an event, and brush-a-range on a chart. A chat box makes the user supply the context they needed the answer to find.</li><li><strong>Tool-calling over the read API</strong>, not prompt-stuffing. Stage 1D already shipped the tool surface; the model fetches what it needs and the call log comes free.</li><li><strong>The call log is the trust mechanism.</strong> Every answer ends in the requests it made, each clickable. Prose without provenance is worse than nothing at 3 a.m.</li><li><strong>&quot;What I could not check&quot; is a required section</strong> — the <em>never silently degrade</em> promise applied to the reasoning layer.</li><li><strong>Generated content never sits inline with facts</strong> — own surface, dashed-outline affordance, always labelled.</li><li><strong>It must not become a reason to collect more.</strong> The argv guard stands; the LLM feature does not get to relax it.</li><li>Explicit opt-in, visible indicator, configurable base URL so a local model is first-class. Reuse music&#x27;s <code>internal/llm</code> (stdlib-only, OpenAI-compatible, tool-calling; non-streaming) and <code>studio/loop.go</code>&#x27;s <code>runResearch</code>/<code>runTurn</code> pair.</li></ul>
+<hr>
+<h2>9. Cross-cutting</h2>
+<div class="tw"><table><thead><tr><th>Concern</th><th>Decision</th></tr></thead><tbody><tr><td><strong>Theme</strong></td><td>Light / Dark / System in Settings → Appearance. System follows the OS live</td></tr><tr><td><strong>Auth</strong></td><td>This spec designs the login page and the authenticated shell; the OIDC integration itself is separate Stage 2 work. OIDC replaces the admin-token→session-cookie exchange. Rotating <code>NETRA_ADMIN_TOKEN</code> invalidating every session must survive the transition</td></tr><tr><td><strong>Host management</strong></td><td>Phase 1&#x27;s create/rotate/delete plus the token-shown-once and the paste-ready <code>setup-agent.sh</code> line are absorbed into this UI, not left as a separate page</td></tr><tr><td><strong>Empty state</strong></td><td>A fresh hub has zero hosts; that screen <em>is</em> the onboarding, and leads directly into host creation</td></tr><tr><td><strong>Units</strong></td><td>Network in bits/s (<code>Mb/s</code>, <code>Gb/s</code>); storage and memory in bytes (<code>GB</code>, <code>TB</code>, decimal). One formatter module, no ad-hoc call sites</td></tr><tr><td><strong>Timestamps</strong></td><td>Browser-local by default, with the site&#x27;s timezone (<code>sites.timezone</code>) shown alongside on host detail. Durations relative (&quot;2 h 14 m&quot;), absolute on hover</td></tr><tr><td><strong>URL state</strong></td><td>Time range, filters and selected tab live in the URL — links are shareable and reload-safe</td></tr><tr><td><strong>Mobile</strong></td><td>Cards automatic below the breakpoint; tabs wrap; no horizontal page scroll</td></tr><tr><td><strong>Agent version</strong></td><td>Column with a drift arrow — grey for update available, red for security. A version-change event already exists</td></tr><tr><td><strong>Language</strong></td><td>English only. No i18n layer</td></tr><tr><td><strong>Accessibility</strong></td><td>Focus ring on every control, <code>/</code> focuses filter, tab order follows reading order, no colour-only meaning anywhere</td></tr></tbody></table></div>
+<hr>
+<h2>10. Data coverage</h2>
+<p><strong>Included in phase 2 beyond what the pages above imply:</strong></p>
+<ul><li><strong>Agent self-telemetry</strong> (<code>agent_samples</code>) — <code>buffer_depth</code>, <code>buffer_dropped_total</code>, <code>post_failures_total</code>, <code>post_latency_ms</code>. <code>buffer_dropped_total &gt; 0</code> means <strong>data has been lost</strong>; that is arguably the most important number netra produces and it currently surfaces nowhere. Shown on host detail and raised into the attention band when non-zero.</li><li><strong>Disk <code>await</code></strong> (<code>r_await_ms</code>, <code>w_await_ms</code>, <code>io_util_pct</code>) — how you tell a busy disk from a failing one.</li><li><strong>Filesystem inodes</strong> (<code>inodes_total</code>, <code>inodes_used</code>) — inode exhaustion presents as &quot;disk full&quot; with free space showing, and nothing else in the UI would explain it.</li></ul>
+<p><strong>Collected, deliberately deferred</strong> (listed so they are deferred rather than forgotten): per-core CPU as a heatmap, SMART attribute values (only threshold events surface today), <code>forks_per_s</code>, <code>boot_time_s</code>, top-N processes, per-interface breakdowns beyond the Network tab, <code>host_addresses</code> subnet queries, sites/providers management, the geo map, and global search across hosts/containers/packages.</p>
+<hr>
+<h2>11. Known gaps this UI exposes</h2>
+<p>Three requested graph families have <strong>no data behind them</strong>. The UI renders them as explicit &quot;not collected&quot; panels until they land:</p>
+<div class="tw"><table><thead><tr><th>Family</th><th>Status</th></tr></thead><tbody><tr><td>TCP statistics</td><td>✅ present</td></tr><tr><td>IP fragmentation</td><td>✅ present (<code>ip_frag_*</code>, <code>ip_reasm_*</code>, + IPv6 mirror)</td></tr><tr><td><strong>IP statistics</strong></td><td>❌ only fragmentation/reassembly exist; <code>InReceives</code>/<code>InDelivers</code>/<code>OutRequests</code> are never parsed</td></tr><tr><td><strong>ICMP statistics</strong></td><td>❌ no ICMP columns anywhere in <code>0001_init.sql</code></td></tr><tr><td><strong>ICMP informational</strong></td><td>❌ same gap</td></tr></tbody></table></div>
+<p>Closing them is agent work (<code>/proc/net/snmp</code> already contains the <code>Icmp</code> and <code>Ip</code> rows — more parsing, no new privileges) plus schema columns plus the three tier views. Two cautions: schema edits go into <code>0001_init.sql</code>, and the migration runner matches by filename with <strong>no checksum</strong>, so an edited <code>0001</code> is silently skipped on an existing DB.</p>
+<p><strong>Container health, restart count, state and labels are also absent.</strong> Spec §6.2 says the agent reads health and labels from the Docker socket, but neither reaches the hub: <code>ContainerSample</code> on the wire carries <code>container_key</code>, <code>name</code>, <code>image</code>, <code>is_agent</code> and the six metrics, and the <code>containers</code> table stores only the first four. So the UI must not render a health badge or a restart count.</p>
+<p>Until that lands, container state is <strong>derived from what is collected</strong>, and labelled as such: a container that stops appearing in samples is silent, memory approaching <code>mem_limit</code> is a warning, and a gap in its series is a restart. The badge says what was measured, never what was inferred. Adding real health is a proto field, a schema column and an ingest path — worth doing, but it is agent work, not UI work.</p>
+<hr>
+<h2>12. Testing</h2>
+<ul><li><strong>Unit</strong> (Vitest): the formatter module (units, durations, tier-aware column lookup); the chart geometry functions; tier/window clamping display logic.</li><li><strong>Component</strong>: each primitive renders in both themes; the attention band is absent when empty; a metrics response with a hole renders a broken line, not an interpolated one; a <code>NULL</code> swap renders &quot;none&quot;, not 0.</li><li><strong>Contract</strong>: fixtures captured from the real read API, including the tier-specific column names, so a schema change that renames a column fails a UI test.</li><li><strong>Coverage</strong>: <code>ui/</code> joins <code>hack/coverage-floors</code> at the same discipline as the Go packages.</li></ul>
+<hr>
+<h2>13. Open items</h2>
+<p>None blocking. Deliberately deferred to their owning stage: alerting engine vocabulary (§6), OIDC mechanics (§9), the map, and the LLM feature itself (§8).</p></div></body></html>
