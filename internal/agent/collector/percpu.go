@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -131,7 +132,14 @@ func (p *PerCoreCPU) read() (map[uint32]cpuTimes, error) {
 
 		times, err := parseCPUTimes(fields[1:])
 		if err != nil {
-			return nil, fmt.Errorf("parse %s %s: %w", path, fields[0], err)
+			// Skipped, not fatal -- the same rule as the id parse above, and
+			// for the same reason: one odd line must not cost every other
+			// core its reading. This used to fail the whole read for a short
+			// line, which is exactly the coupling splitting CPU and
+			// PerCoreCPU into two collectors exists to avoid.
+			slog.Warn("skipping an unparseable cpu line",
+				"path", path, "cpu", fields[0], "err", err)
+			continue
 		}
 		out[uint32(id)] = times
 	}

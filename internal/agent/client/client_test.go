@@ -555,12 +555,14 @@ func TestRunDrainsABacklogWithinOneTick(t *testing.T) {
 		[]collector.Collector{wideCollector{cores: client.MaxBatchRowsForTest}}, tick)
 	ctx := context.Background()
 
-	// And: three scrapes waiting when the loop starts.
-	for range 3 {
+	// And: two scrapes waiting when the loop starts. The tick adds a third, so
+	// the drain needs three POSTs -- more than one, and inside
+	// maxDrainBatches with room to spare.
+	for range 2 {
 		c.ScrapeOnce(ctx)
 	}
-	if c.BufferDepth() != 3 {
-		t.Fatalf("BufferDepth() = %d, want 3", c.BufferDepth())
+	if c.BufferDepth() != 2 {
+		t.Fatalf("BufferDepth() = %d, want 2", c.BufferDepth())
 	}
 
 	// When: Run gets ONE tick.
@@ -568,23 +570,25 @@ func TestRunDrainsABacklogWithinOneTick(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- c.Run(runCtx) }()
 
-	// The tick adds a fourth scrape and must then clear all four. Waiting well
-	// under two ticks, so a pass cannot come from the loop going round again.
-	deadline := time.Now().Add(tick + tick/2)
+	// Waiting strictly less than two ticks, so a pass cannot come from the loop
+	// going round again -- that is the whole claim. The margin inside one tick
+	// is for three POSTs of ~20,000 protos each on a loaded CI box.
+	deadline := time.Now().Add(2*tick - tick/5)
 	for c.BufferDepth() > 0 && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	depth := c.BufferDepth()
+	requests := rec.count()
 	cancel()
 	<-errCh
 
 	// Then: the backlog is gone, and it took one POST per scrape to do it.
 	if depth != 0 {
-		t.Errorf("BufferDepth() = %d after one tick, want 0 -- a partial drain must not wait for the next tick",
+		t.Errorf("BufferDepth() = %d within one tick, want 0 -- a partial drain must not wait for the next tick",
 			depth)
 	}
-	if got := rec.count(); got < 4 {
-		t.Errorf("requests = %d, want at least 4 -- one per oversized scrape", got)
+	if requests < 3 {
+		t.Errorf("requests = %d, want at least 3 -- one per oversized scrape", requests)
 	}
 }
 

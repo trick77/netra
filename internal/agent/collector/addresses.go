@@ -78,6 +78,19 @@ func NewAddresses(lister IfaceLister) *Addresses {
 // Name implements Collector.
 func (a *Addresses) Name() string { return "addresses" }
 
+// EmitsBaseline implements BaselineEmitter, keeping this collector out of the
+// agent's startup priming.
+//
+// For the same reason Packages is kept out, and it was the more common failure
+// of the two. Its first Collect IS the address set; priming consumed it into a
+// discarded result and left prev populated, so the first real scrape reported
+// nothing. Every later scrape reported nothing too, because from this
+// collector's point of view nothing had changed -- and the hub cannot fill the
+// gap either, since UpsertHostAddresses returns early on an empty set. A
+// freshly enrolled host with a static address therefore had no addresses at
+// the hub at all, indefinitely.
+func (a *Addresses) EmitsBaseline() bool { return true }
+
 // ResendInventory implements InventoryResender.
 //
 // Forgetting the last reported set is the whole re-arm: the comparison below

@@ -138,3 +138,45 @@ func TestPerCoreCPUReportsAnUnreadableProcStat(t *testing.T) {
 		t.Errorf("Collect returned %+v alongside an error; want nil", res)
 	}
 }
+
+// One odd cpuN line must not cost every other core its reading.
+//
+// The fixture's cpu1 has three values where a core line has at least seven.
+// Failing the whole read on it is the coupling that splitting CPU and
+// PerCoreCPU into separate collectors exists to avoid -- just moved one level
+// down, from between the collectors to between the cores.
+//
+// cpu2 is the other half: seven values rather than the usual eight, because
+// steal arrived in 2.6.11 and some emulated /proc trees still omit it. A
+// missing TRAILING counter is genuinely zero, not a malformed line, and must
+// be read rather than rejected.
+func TestPerCoreCPUSkipsAnOddLineAndKeepsTheOtherCores(t *testing.T) {
+	// Given: two scrapes of a /proc/stat with one truncated core line and one
+	// core reporting no steal column.
+	testee := collector.NewPerCoreCPU("testdata/percpu/shortline-first")
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+
+	// When: the second scrape gives it an interval to rate over.
+	testee.SetProcRootForTest("testdata/percpu/shortline-second")
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v -- one unparseable core line must not fail the read", err)
+	}
+
+	// Then: the readable cores are reported and the odd one is simply absent.
+	busy := map[uint32]bool{}
+	for _, r := range res.Cores {
+		busy[r.GetCore()] = true
+	}
+	if !busy[0] {
+		t.Error("core 0 missing; a truncated line on another core must not cost it its reading")
+	}
+	if !busy[2] {
+		t.Error("core 2 missing; a line without the steal column is readable, not malformed")
+	}
+	if busy[1] {
+		t.Error("core 1 reported; its line is too short to read")
+	}
+}

@@ -190,3 +190,16 @@ func TestResendInventoryReportsAnUnchangedSetAgain(t *testing.T) {
 		t.Errorf("address = %q, want 10.0.0.5", got)
 	}
 }
+
+// This collector's first Collect is DATA, not a warm-up reading, so the
+// agent's startup priming must skip it -- see TestPrimeDoesNotConsumeTheFirst
+// AddressSet in the client package for the behaviour this flag drives.
+func TestAddressesEmitsABaseline(t *testing.T) {
+	testee := collector.NewAddresses(fakeIfaces(
+		collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24"}},
+	))
+
+	if !testee.EmitsBaseline() {
+		t.Error("EmitsBaseline() = false; priming would discard the only address set the agent reports")
+	}
+}

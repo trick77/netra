@@ -27,6 +27,14 @@ type cpuTimes struct {
 // more; reading by index from the front keeps every layout working.
 const cpuTimeFields = 8
 
+// minCPUTimeFields is how many must actually be present.
+//
+// Seven, not eight. steal arrived in 2.6.11 and some emulated /proc trees still
+// omit it, and a missing trailing counter is genuinely zero rather than a
+// malformed line -- the kernel does not skip columns in the middle. Requiring
+// all eight would reject a line the collector can read perfectly well.
+const minCPUTimeFields = 7
+
 // parseCPUTimes reads the counters from an already-split cpu line, given the
 // fields AFTER the "cpu"/"cpuN" label.
 //
@@ -35,13 +43,19 @@ const cpuTimeFields = 8
 // not cost the host its aggregate utilisation, which is why they are two
 // collectors -- but the column layout is one fact and was written out twice.
 func parseCPUTimes(values []string) (cpuTimes, error) {
-	if len(values) < cpuTimeFields {
-		return cpuTimes{}, fmt.Errorf("want at least %d fields, got %d", cpuTimeFields, len(values))
+	if len(values) < minCPUTimeFields {
+		return cpuTimes{}, fmt.Errorf("want at least %d fields, got %d", minCPUTimeFields, len(values))
+	}
+	if len(values) > cpuTimeFields {
+		// guest and guest_nice, and whatever a later kernel appends. Read past
+		// deliberately: the kernel already counts guest inside user and nice
+		// guest inside nice, so they are not separate time.
+		values = values[:cpuTimeFields]
 	}
 
 	var n [cpuTimeFields]uint64
-	for i := range n {
-		v, err := strconv.ParseUint(values[i], 10, 64)
+	for i, raw := range values {
+		v, err := strconv.ParseUint(raw, 10, 64)
 		if err != nil {
 			return cpuTimes{}, err
 		}

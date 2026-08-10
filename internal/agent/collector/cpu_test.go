@@ -81,3 +81,33 @@ func TestCPUName(t *testing.T) {
 		t.Fatalf("Name() = %q, want %q", c.Name(), "cpu")
 	}
 }
+
+// steal arrived in 2.6.11 and some emulated /proc trees still omit it. A
+// missing TRAILING counter is genuinely zero, not a malformed line -- the
+// kernel does not skip columns in the middle -- so the line must be read
+// rather than rejected, leaving the host with no CPU utilisation at all.
+func TestCPUReadsALineWithoutTheStealColumn(t *testing.T) {
+	// Given: a /proc/stat whose cpu line stops at softirq.
+	c := collector.NewCPU("testdata/percpu/shortline-first")
+
+	var first netrav1.HostSample
+	if err := collectInto(c, &first); err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+
+	// When: a second scrape gives it an interval.
+	c.SetProcRootForTest("testdata/percpu/shortline-second")
+	var second netrav1.HostSample
+	if err := collectInto(c, &second); err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+
+	// Then: utilisation is reported, with steal read as the zero it is.
+	if second.CpuTotal == nil {
+		t.Fatal("CpuTotal is unset; a cpu line without steal is readable, not malformed")
+	}
+	if second.CpuSteal == nil || second.GetCpuSteal() != 0 {
+		t.Errorf("CpuSteal = %v, want 0 -- an absent trailing counter has not moved",
+			second.CpuSteal)
+	}
+}
