@@ -4,11 +4,12 @@ import { getHosts, getMetrics, ApiError } from "./api";
 function mockFetch(status: number, body: unknown) {
   return vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { "content-type": "application/json" },
-      }),
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { "content-type": "application/json" },
+        }),
     ),
   );
 }

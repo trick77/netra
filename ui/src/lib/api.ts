@@ -248,6 +248,11 @@ export type MetricsParams = {
   columns?: string[];
 };
 
-export function getMetrics(hostId: number | string, params: MetricsParams): Promise<MetricsResponse> {
-  return request<MetricsResponse>(`/api/v1/hosts/${hostId}/metrics${toQueryString(params)}`);
+export function getMetrics(
+  hostId: number | string,
+  params: MetricsParams,
+): Promise<MetricsResponse> {
+  return request<MetricsResponse>(
+    `/api/v1/hosts/${hostId}/metrics${toQueryString(params)}`,
+  );
 }

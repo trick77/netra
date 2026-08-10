@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { bytes, bitrate, percent, duration, relative, absolute } from "./format";
+import {
+  bytes,
+  bitrate,
+  percent,
+  duration,
+  relative,
+  absolute,
+} from "./format";
 
 describe("format", () => {
   // Network is bits, storage is bytes. Mixing them is the classic

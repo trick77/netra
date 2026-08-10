@@ -17,7 +17,9 @@ import type { MetricsResponse } from "./api";
  */
 export class UnknownColumnError extends Error {
   constructor(base: string, tier: string, available: readonly string[]) {
-    super(`column '${base}' not in tier '${tier}'; has: ${available.join(", ")}`);
+    super(
+      `column '${base}' not in tier '${tier}'; has: ${available.join(", ")}`,
+    );
     this.name = "UnknownColumnError";
   }
 }
@@ -59,7 +61,9 @@ export function column(res: MetricsResponse, base: string): number {
  */
 export class NonNumericColumnError extends Error {
   constructor(base: string, cell: unknown) {
-    super(`column '${base}' is not numeric: found a ${typeof cell} (${JSON.stringify(cell)})`);
+    super(
+      `column '${base}' is not numeric: found a ${typeof cell} (${JSON.stringify(cell)})`,
+    );
     this.name = "NonNumericColumnError";
   }
 }
@@ -71,7 +75,11 @@ export class NonNumericColumnError extends Error {
  * renders `ok` as a boolean and `error_code` as a string on purpose, and a
  * table cell for either wants the real value, not a number cast onto it.
  */
-export function seriesCells(res: MetricsResponse, seriesIndex: number, base: string): unknown[] {
+export function seriesCells(
+  res: MetricsResponse,
+  seriesIndex: number,
+  base: string,
+): unknown[] {
   const idx = column(res, base);
   const series = res.series[seriesIndex];
   // +1: points[0] is the timestamp, values start at index 1.
@@ -175,7 +183,9 @@ export function windowNotice(res: MetricsResponse): string | null {
     }
   }
 
-  const warningsMentionTruncation = res.warnings.some((w) => /truncat/i.test(w));
+  const warningsMentionTruncation = res.warnings.some((w) =>
+    /truncat/i.test(w),
+  );
   if (res.truncated && !warningsMentionTruncation) {
     parts.push("the result was truncated at the point limit and is incomplete");
   }

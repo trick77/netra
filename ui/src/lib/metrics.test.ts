@@ -1,20 +1,43 @@
 import { describe, expect, it } from "vitest";
-import { column, hasGaps, seriesCells, seriesValues, windowNotice } from "./metrics";
+import {
+  column,
+  hasGaps,
+  seriesCells,
+  seriesValues,
+  windowNotice,
+} from "./metrics";
 
 const raw = {
   family: "cpu_core",
   tier: "raw",
   step_s: 60,
   window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
-  requested_window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+  requested_window: {
+    from: "2026-08-09T14:00:00Z",
+    to: "2026-08-10T14:00:00Z",
+  },
   warnings: [],
   key_columns: ["core"],
   columns: ["busy"],
-  series: [{ key: { core: "0" }, points: [[1, 4.1], [2, null], [3, 5.0]] }],
+  series: [
+    {
+      key: { core: "0" },
+      points: [
+        [1, 4.1],
+        [2, null],
+        [3, 5.0],
+      ],
+    },
+  ],
   truncated: false,
 } as const;
 
-const fiveMin = { ...raw, tier: "5m", step_s: 300, columns: ["busy_avg", "busy_max"] } as const;
+const fiveMin = {
+  ...raw,
+  tier: "5m",
+  step_s: 300,
+  columns: ["busy_avg", "busy_max"],
+} as const;
 
 describe("metrics", () => {
   // Column names differ per tier BY CONSTRUCTION -- that is the guarantee
@@ -25,7 +48,9 @@ describe("metrics", () => {
   });
 
   it("throws a named error when the tier has no such column", () => {
-    expect(() => column(raw as never, "nonexistent")).toThrowError(/nonexistent/);
+    expect(() => column(raw as never, "nonexistent")).toThrowError(
+      /nonexistent/,
+    );
   });
 
   // A null inside the window means the host reported nothing. It must survive
@@ -39,7 +64,10 @@ describe("metrics", () => {
     const clamped = {
       ...raw,
       window: { from: "2026-08-08T14:00:00Z", to: "2026-08-10T14:00:00Z" },
-      requested_window: { from: "2026-05-12T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+      requested_window: {
+        from: "2026-05-12T14:00:00Z",
+        to: "2026-08-10T14:00:00Z",
+      },
     };
     expect(windowNotice(clamped as never)).toMatch(/retention|available/i);
     expect(windowNotice(raw as never)).toBeNull();
@@ -82,9 +110,14 @@ describe("metrics", () => {
       const laggy = {
         ...fiveMin,
         window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T13:50:00Z" },
-        requested_window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+        requested_window: {
+          from: "2026-08-09T14:00:00Z",
+          to: "2026-08-10T14:00:00Z",
+        },
       };
-      expect(windowNotice(laggy as never)).toMatch(/materializ|available|fresh/i);
+      expect(windowNotice(laggy as never)).toMatch(
+        /materializ|available|fresh/i,
+      );
     });
 
     // internal/hub/read/tier.go:165-171 clamps `to` down to `now` whenever the
@@ -96,7 +129,10 @@ describe("metrics", () => {
       const futureClamped = {
         ...raw,
         window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
-        requested_window: { from: "2026-08-09T14:00:00Z", to: "2026-08-11T00:00:00Z" },
+        requested_window: {
+          from: "2026-08-09T14:00:00Z",
+          to: "2026-08-11T00:00:00Z",
+        },
       };
       const notice = windowNotice(futureClamped as never);
       expect(notice).not.toBeNull();
@@ -111,7 +147,10 @@ describe("metrics", () => {
       const serverWarned = {
         ...raw,
         window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
-        requested_window: { from: "2026-08-01T14:00:00Z", to: "2026-08-11T00:00:00Z" },
+        requested_window: {
+          from: "2026-08-01T14:00:00Z",
+          to: "2026-08-11T00:00:00Z",
+        },
         warnings: [
           "from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists",
           "to was in the future and was clamped to now",
@@ -160,7 +199,10 @@ describe("metrics", () => {
       const both = {
         ...raw,
         window: { from: "2026-08-08T14:00:00Z", to: "2026-08-10T14:00:00Z" },
-        requested_window: { from: "2026-05-12T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+        requested_window: {
+          from: "2026-05-12T14:00:00Z",
+          to: "2026-08-10T14:00:00Z",
+        },
         warnings: [
           "from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists",
           "the result reached the 200000-point limit and is truncated; narrow the window or ask for fewer columns",
@@ -184,7 +226,10 @@ describe("metrics", () => {
       tier: "raw",
       step_s: 60,
       window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
-      requested_window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+      requested_window: {
+        from: "2026-08-09T14:00:00Z",
+        to: "2026-08-10T14:00:00Z",
+      },
       warnings: [],
       key_columns: ["collector"],
       columns: ["ok", "error_code", "duration_ms"],
@@ -201,22 +246,36 @@ describe("metrics", () => {
     } as const;
 
     it("seriesValues() rejects a boolean cell rather than passing it through as a number", () => {
-      expect(() => seriesValues(collector as never, 0, "ok")).toThrowError(/ok/);
-      expect(() => seriesValues(collector as never, 0, "ok")).toThrowError(/boolean/);
+      expect(() => seriesValues(collector as never, 0, "ok")).toThrowError(
+        /ok/,
+      );
+      expect(() => seriesValues(collector as never, 0, "ok")).toThrowError(
+        /boolean/,
+      );
     });
 
     it("seriesValues() rejects a string cell rather than passing it through as a number", () => {
-      expect(() => seriesValues(collector as never, 0, "error_code")).toThrowError(/error_code/);
-      expect(() => seriesValues(collector as never, 0, "error_code")).toThrowError(/string/);
+      expect(() =>
+        seriesValues(collector as never, 0, "error_code"),
+      ).toThrowError(/error_code/);
+      expect(() =>
+        seriesValues(collector as never, 0, "error_code"),
+      ).toThrowError(/string/);
     });
 
     it("seriesCells() returns the raw boolean and string cells intact, nulls included", () => {
       expect(seriesCells(collector as never, 0, "ok")).toEqual([true, false]);
-      expect(seriesCells(collector as never, 0, "error_code")).toEqual([null, "conn_refused"]);
+      expect(seriesCells(collector as never, 0, "error_code")).toEqual([
+        null,
+        "conn_refused",
+      ]);
     });
 
     it("seriesValues() still works normally for a genuinely numeric column on the same response", () => {
-      expect(seriesValues(collector as never, 0, "duration_ms")).toEqual([12, null]);
+      expect(seriesValues(collector as never, 0, "duration_ms")).toEqual([
+        12,
+        null,
+      ]);
     });
   });
 });
