@@ -102,8 +102,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # internal/sim is in `packages` but deliberately NOT in `coverpkg`:
+          # its tests should run, but the simulator is a development tool
+          # whose files must stay out of the coverage report. In coverpkg it
+          # would drag the hub's floor down with code no shipped binary
+          # contains; absent from the report entirely, it is also invisible to
+          # the diff-cover patch gate.
           - component: hub
-            packages: ./internal/hub/... ./internal/buildinfo/... ./internal/gen/... ./cmd/netra/...
+            packages: ./internal/hub/... ./internal/buildinfo/... ./internal/gen/... ./internal/sim/... ./cmd/netra/...
             coverpkg: ./internal/hub/...,./internal/buildinfo/...,./internal/gen/...,./cmd/netra/...
           - component: agent
             packages: ./internal/agent/... ./cmd/netra-agent/...
