@@ -26,6 +26,19 @@ var templateFS embed.FS
 // use -- a guess would be worse than an obvious gap.
 const hubURLPlaceholder = "https://netra.example.com"
 
+// setupScriptURL is where setup-agent.sh actually lives, and it is deliberately
+// NOT derived from hubURL.
+//
+// The hub serves no /setup-agent.sh: it embeds templates and nothing else, and
+// Traefik publishes only PathPrefix(/api/agent/). Rendering the hub's own name
+// as the curl source produced a command that could not work and failed
+// dangerously -- on loopback /setup-agent.sh falls through to the UI mount and
+// 303s to /login, which `curl -fsSL` FOLLOWS to a 200, so -f never trips and an
+// HTML login page is piped to sh.
+//
+// This is the URL setup-agent.sh's own header documents.
+const setupScriptURL = "https://raw.githubusercontent.com/trick77/netra/master/setup-agent.sh"
+
 type uiHandler struct {
 	svc        *admin.Service
 	adminToken string
@@ -161,7 +174,7 @@ func (h *uiHandler) rotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.svc.RotateToken(r.Context(), id)
+	hostname, token, err := h.svc.RotateToken(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, admin.ErrNotFound) {
 			h.uiError(w, r, "That host no longer exists.")
@@ -172,7 +185,16 @@ func (h *uiHandler) rotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.renderToken(w, h.hostnameOf(r, id), token, true)
+	// RotateToken read the row to check it exists, so the name comes back with
+	// the token rather than costing a second query -- this used to list every
+	// host and scan the slice for one id. A host with no name yet still needs a
+	// heading, and the id is what rotate and delete act on, so it is the right
+	// thing to fall back to.
+	if hostname == "" {
+		hostname = fmt.Sprintf("host %d", id)
+	}
+
+	h.renderToken(w, hostname, token, true)
 }
 
 func (h *uiHandler) delete(w http.ResponseWriter, r *http.Request) {
@@ -190,26 +212,13 @@ func (h *uiHandler) delete(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// hostnameOf resolves a host id to its name for display. A failure here is
-// cosmetic -- the token still has to be shown -- so it degrades to the id
-// rather than losing the one thing the operator came for.
-func (h *uiHandler) hostnameOf(r *http.Request, id int32) string {
-	hosts, err := h.svc.ListHosts(r.Context())
-	if err != nil {
-		return fmt.Sprintf("host %d", id)
-	}
-	for _, host := range hosts {
-		if host.ID == id {
-			return host.Hostname
-		}
-	}
-	return fmt.Sprintf("host %d", id)
-}
-
 // renderToken shows a freshly minted token exactly once, with the command
 // that consumes it. That command is the whole point of the page: setup-agent.sh
 // already accepts --token, so the operator copies one line instead of
 // transcribing a secret into a flag by hand.
+//
+// The script comes from setupScriptURL and the hub's own name appears only
+// after --hub-url. See setupScriptURL on why those are two different things.
 func (h *uiHandler) renderToken(w http.ResponseWriter, hostname, token string, rotated bool) {
 	hubURL := h.hubURL
 	if hubURL == "" {
@@ -222,14 +231,15 @@ func (h *uiHandler) renderToken(w http.ResponseWriter, hostname, token string, r
 		"Token":    token,
 		"Rotated":  rotated,
 		"SetupCommand": fmt.Sprintf(
-			"curl -fsSL %s/setup-agent.sh | sh -s -- \\\n  --hub-url %s --token %s",
-			hubURL, hubURL, token),
+			"curl -fsSL %s | sh -s -- \\\n  --hub-url %s --token %s",
+			setupScriptURL, hubURL, token),
 		"HubURL": hubURL,
-		// The page asks the operator to confirm this URL either way. Set or
-		// unset, the command pipes that host to sh and hands it a live token,
-		// so a stale NETRA_HUB_URL is as dangerous as a missing one -- and
-		// compose defaults it, which means "configured" is not evidence that
-		// anyone checked it.
+		// The page asks the operator to confirm this URL either way. The script
+		// source is no longer operator-configurable, but --hub-url still is:
+		// set or unset, the command hands that host a live token, so a stale
+		// NETRA_HUB_URL is as dangerous as a missing one -- and compose
+		// defaults it, which means "configured" is not evidence that anyone
+		// checked it.
 		"HubURLConfigured": h.hubURL != "",
 	})
 }

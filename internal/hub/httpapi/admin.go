@@ -95,7 +95,7 @@ func (h *adminHandler) rotate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.svc.RotateToken(r.Context(), id)
+	_, token, err := h.svc.RotateToken(r.Context(), id)
 	if err != nil {
 		writeAdminError(w, r, err)
 		return

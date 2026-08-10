@@ -27,10 +27,16 @@ type Site struct {
 	Timezone    *string
 }
 
-// SitePatch carries the fields of a site to change. Every field is a pointer
-// so an omitted one is distinguishable from one explicitly being set: this is
-// what makes "a manual lat/lon is never overwritten by a geocode result"
-// enforceable rather than aspirational.
+// SitePatch carries the fields of a site to change. A nil field is left alone,
+// which is what makes "a manual lat/lon is never overwritten by a geocode
+// result" enforceable rather than aspirational: a caller that says nothing
+// about latitude cannot move it.
+//
+// The converse does NOT hold, and the pointers should not be read as implying
+// it. JSON `null` and an omitted key both decode to nil, so no nullable column
+// can be CLEARED through this type -- there is no way to say "unset the
+// facility". Adding one needs a presence-aware decode (json.RawMessage per
+// field, or a decoded map of the keys actually present), not another pointer.
 type SitePatch struct {
 	ProviderID  *int32
 	Name        *string
@@ -147,6 +153,8 @@ func (s *Service) ListSites(ctx context.Context) ([]Site, error) {
 // move them. That is spec 8's rule about a manual coordinate surviving a
 // geocode result, and it has to hold here because the phase-2 geocoder will
 // patch through this same method.
+//
+// A field can be set but not cleared -- see SitePatch.
 func (s *Service) PatchSite(ctx context.Context, id int32, patch SitePatch) error {
 	var (
 		sets []string

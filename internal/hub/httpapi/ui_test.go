@@ -114,15 +114,36 @@ func TestIntegrationUICreateUsesTheConfiguredHubURL(t *testing.T) {
 
 	body := readBody(t, postForm(t, srv, "/ui/hosts", url.Values{"hostname": {"web01"}}))
 
-	if !strings.Contains(body, "https://netra.example.com") {
-		t.Error("the setup command does not use the configured hub URL")
+	if !strings.Contains(body, "--hub-url https://netra.example.com") {
+		t.Error("the setup command does not pass the configured hub URL to --hub-url")
 	}
 }
 
-// The command pipes the hub URL to sh and hands it a live token, so the page
-// must ask the operator to confirm that URL — set or unset. compose defaults
-// NETRA_HUB_URL from NETRA_HOSTNAME, which means "configured" is not evidence
-// that anyone checked it.
+// The rendered command must curl the script from where it actually lives.
+//
+// It used to be built as "<hubURL>/setup-agent.sh", and the hub serves no such
+// route: it embeds templates and nothing else, and Traefik publishes only
+// PathPrefix(/api/agent/). On loopback that path falls through to the UI mount
+// and 303s to /login, which `curl -fsSL` FOLLOWS to a 200 — so -f never trips
+// and an HTML login page gets piped to sh.
+func TestIntegrationUISetupCommandCurlsTheRealScriptURL(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+
+	body := readBody(t, postForm(t, srv, "/ui/hosts", url.Values{"hostname": {"web01"}}))
+
+	const want = "https://raw.githubusercontent.com/trick77/netra/master/setup-agent.sh"
+	if !strings.Contains(body, want) {
+		t.Errorf("the setup command does not curl %s: %s", want, body)
+	}
+	if strings.Contains(body, "netra.example.com/setup-agent.sh") {
+		t.Error("the setup command still curls a path the hub does not serve")
+	}
+}
+
+// The command hands a live token to whatever answers on the hub URL, so the
+// page must ask the operator to confirm that URL — set or unset. compose
+// defaults NETRA_HUB_URL from NETRA_HOSTNAME, which means "configured" is not
+// evidence that anyone checked it.
 func TestIntegrationUITokenPageAlwaysAsksToConfirmTheHubURL(t *testing.T) {
 	srv, _ := newAdminFixture(t)
 

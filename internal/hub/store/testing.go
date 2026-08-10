@@ -164,10 +164,25 @@ func resetSchema(ctx context.Context, s *Store) error {
 	if _, err := conn.Exec(ctx, `SET SESSION timescaledb.restoring = 'off'`); err != nil && lastErr == nil {
 		return fmt.Errorf("resume timescaledb background jobs (session): %w", err)
 	}
+
 	var dbName string
 	if err := conn.QueryRow(ctx, `SELECT current_database()`).Scan(&dbName); err == nil {
 		_, _ = conn.Exec(ctx, fmt.Sprintf(
 			`ALTER DATABASE %s SET timescaledb.restoring = 'off'`, quoteIdentifier(dbName)))
+	}
+
+	// lock_timeout is a session GUC set above on a POOLED connection, so it
+	// outlives this reset and every later query drawn on the same connection
+	// inherits it -- a test doing legitimate slow work would fail with 55P03
+	// for no reason it could see. Reset for the same reason restoring is.
+	//
+	// LAST, after the ALTER DATABASE above. That statement takes a lock on
+	// pg_database, its error is deliberately discarded, and the 5s bound set
+	// at the top of the retry loop is the only thing keeping it from waiting
+	// forever when another test binary holds that lock. Resetting the GUC
+	// before it runs would hand an ignored statement an unbounded wait.
+	if _, err := conn.Exec(ctx, `SET SESSION lock_timeout = DEFAULT`); err != nil && lastErr == nil {
+		return fmt.Errorf("reset lock_timeout: %w", err)
 	}
 
 	if lastErr == nil {
