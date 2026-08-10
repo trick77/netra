@@ -268,6 +268,11 @@ func (s *Store) MetadataHash(ctx context.Context, hostID int32) ([]byte, error) 
 // by re-sending the IDENTICAL batch — a permanent wedge on that host. The
 // fingerprint warning above already covers the case reading the reported
 // hostname was implicitly guarding.
+//
+// So Metadata.hostname is received and deliberately NOT read. The spec lists it
+// among the metadata contents (§7.4) but nowhere asks the hub to record it over
+// the name the admin API assigned, and hosts.hostname is that name. A missing
+// assignment here is the point, not an omission.
 func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md *netrav1.Metadata) error {
 	var storedFingerprint *string
 	if err := s.pool.QueryRow(ctx,

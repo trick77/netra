@@ -50,6 +50,29 @@ func TestRequireAdminWithNoConfiguredTokenDeniesEverything(t *testing.T) {
 	}
 }
 
+// A bare `Authorization: <token>` with no "Bearer " prefix must NOT
+// authenticate.
+//
+// It used to, because RequireAdmin parsed the header with
+// strings.TrimPrefix, which returns a header lacking the prefix unchanged.
+// The agent path has always required the prefix, so the hub had two
+// definitions of a valid header and the admin one was the looser. The spec
+// specifies Authorization: Bearer $NETRA_ADMIN_TOKEN; this pins that the
+// shared parser is not "simplified" back to a TrimPrefix.
+func TestRequireAdminRejectsATokenWithNoBearerPrefix(t *testing.T) {
+	h := httpapi.RequireAdmin("s3cret", false, okHandler())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
+	req.Header.Set("Authorization", "s3cret")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 — the correct token without \"Bearer \" is not a credential", rec.Code)
+	}
+}
+
 func TestRequireAdminRejectsAWrongBearer(t *testing.T) {
 	h := httpapi.RequireAdmin("s3cret", false, okHandler())
 
