@@ -22,9 +22,15 @@ func TestHandlerServesIndexForUnknownPath(t *testing.T) {
 	}
 }
 
-// Fingerprinted assets are immutable; index.html must never be, or a deploy
-// leaves browsers pinned to the previous build forever.
-func TestAssetsAreImmutableAndIndexIsNot(t *testing.T) {
+// index.html must never be cached, or a deploy never reaches a browser that
+// already has the previous build.
+//
+// The assets/ immutable-caching half of this behaviour is covered separately
+// in embed_internal_test.go, against a synthetic fs.FS: the real embedded
+// dist/ tree only ever contains the committed placeholder index.html in this
+// package's test environment, so there is no fingerprinted asset here to
+// request.
+func TestIndexIsNeverCached(t *testing.T) {
 	rec := httptest.NewRecorder()
 	web.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {

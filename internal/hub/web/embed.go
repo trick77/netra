@@ -30,6 +30,14 @@ func Handler() http.Handler {
 	if err != nil {
 		panic("web: dist not embedded: " + err.Error())
 	}
+	return handlerFor(sub)
+}
+
+// handlerFor implements the routing logic against an arbitrary fs.FS, so
+// tests can exercise the assets/ immutable-caching branch with a synthetic
+// filesystem instead of a real Vite build. Handler is the thin wrapper that
+// supplies the embedded dist/ tree.
+func handlerFor(sub fs.FS) http.Handler {
 	files := http.FileServer(http.FS(sub))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
