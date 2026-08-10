@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  ABSENT,
   bytes,
   bitrate,
   percent,
   duration,
   relative,
+  relativeMs,
   absolute,
+  absoluteMs,
 } from "./format";
 
 describe("format", () => {
@@ -63,5 +66,43 @@ describe("format", () => {
     // Fixed instant, fixed zone: the output must be deterministic and
     // must not depend on the machine's local timezone.
     expect(absolute("2026-08-10T13:59:19Z", "UTC")).toContain("2026");
+  });
+
+  // Host.last_seen (api.ts) is `string | null`; relative/absolute must
+  // accept the null a caller will actually hand them, and render it the
+  // same way every other absent value renders, not force a separate guard
+  // at every call site.
+  it("relative and absolute render null as the absent marker", () => {
+    expect(relative(null)).toBe(ABSENT);
+    expect(absolute(null)).toBe(ABSENT);
+  });
+
+  // An unparseable date must render as absent, not as a fabricated
+  // "NaN d ago" -- that string looks like a duration but is not one.
+  it("relative renders an unparseable date as absent, not NaN d ago", () => {
+    expect(relative("garbage")).toBe(ABSENT);
+    expect(relative("garbage")).not.toMatch(/NaN/);
+  });
+
+  it("absolute renders an unparseable date as absent", () => {
+    expect(absolute("garbage")).toBe(ABSENT);
+  });
+
+  it("ABSENT is exported so call sites share one absent marker", () => {
+    expect(ABSENT).toBe("—");
+  });
+
+  // relativeMs/absoluteMs are the epoch-millis counterparts consumed by
+  // metrics.ts's seriesTimestamps(), the one timestamp shape in the read
+  // API that is not an ISO string.
+  it("relativeMs and absoluteMs format an epoch-millisecond instant", () => {
+    const now = new Date("2026-08-10T14:00:00Z");
+    expect(relativeMs(now.getTime() - 41_000, now)).toBe("41 s ago");
+    expect(absoluteMs(now.getTime(), "UTC")).toContain("2026");
+  });
+
+  it("relativeMs and absoluteMs render null as absent", () => {
+    expect(relativeMs(null)).toBe(ABSENT);
+    expect(absoluteMs(null)).toBe(ABSENT);
   });
 });

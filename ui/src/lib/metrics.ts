@@ -10,6 +10,30 @@ import type { MetricsResponse } from "./api";
 // `points: (number | null)[][]`, which made seriesValues() lie to the
 // compiler for exactly that family. One definition of the wire shape lives
 // in ./api.ts now; this module only interprets it.
+//
+// --- Error strategy ---
+//
+// Three different strategies coexist across this module and its neighbours;
+// this is the one place stating which is which, for a Wave 2 author wiring
+// up a chart or table without having read every function's doc comment:
+//
+//   - api.ts throws ApiError for a failed HTTP request/response -- a
+//     network or server-side failure, always surfaced before any render
+//     begins. Guard the fetch call itself (getMetrics, getHosts, ...).
+//   - This module throws UnknownColumnError / SeriesIndexError /
+//     NonNumericColumnError from column() / seriesCells() / seriesValues().
+//     These fire DURING render, from a caller-supplied base name or
+//     seriesIndex the response doesn't actually have. They are programmer
+//     errors -- a typo'd column, a stale index, a numeric accessor pointed
+//     at a non-numeric column -- so they belong behind a component-level
+//     error boundary, not a try/catch a user-facing message is built from.
+//   - format.ts never throws: null and unparseable input both become
+//     ABSENT ("—"). A formatter call never needs a boundary.
+//   - windowNotice() (below) never throws either: it returns null for
+//     "nothing to say". Treat null as "no banner", not as an error.
+//
+// Rule of thumb: a throw means "put this behind an error boundary"; a
+// null/ABSENT return means "render it as-is".
 
 /**
  * Thrown by column() when a base name has no match in the response's tier.
@@ -69,6 +93,23 @@ export class NonNumericColumnError extends Error {
 }
 
 /**
+ * Thrown by seriesCells() / seriesTimestamps() when seriesIndex is out of
+ * range for the response. Named so this is distinguishable from a bare
+ * TypeError on `undefined.points`, matching UnknownColumnError and
+ * NonNumericColumnError, its two neighbours in this file, which are both
+ * named for the same reason: a caller catching by class or reading a stack
+ * trace should not have to guess which invariant broke.
+ */
+export class SeriesIndexError extends Error {
+  constructor(seriesIndex: number, length: number) {
+    super(
+      `series index ${seriesIndex} out of range: response has ${length} series`,
+    );
+    this.name = "SeriesIndexError";
+  }
+}
+
+/**
  * Extracts one series' raw cells for a base column, resolved against the
  * response's tier, with no type claim about what a cell holds. This is the
  * accessor for columns that are legitimately not numbers -- family=collector
@@ -82,8 +123,32 @@ export function seriesCells(
 ): unknown[] {
   const idx = column(res, base);
   const series = res.series[seriesIndex];
+  if (series === undefined) {
+    throw new SeriesIndexError(seriesIndex, res.series.length);
+  }
   // +1: points[0] is the timestamp, values start at index 1.
   return series.points.map((point) => point[idx + 1]);
+}
+
+/**
+ * Extracts one series' timestamps as epoch milliseconds. This is the one
+ * timestamp shape in the whole read API that is NOT an ISO string:
+ * internal/hub/read/metrics.go:198 emits `point[0]` as `ts.UnixMilli()`,
+ * while every other timestamp field (Host.last_seen, Event.ts,
+ * MetricsWindow.from/to) is RFC 3339. A caller building an x-axis wants
+ * this function, not seriesCells(res, i, ...) reinterpreted as a date --
+ * and must feed the result to format.ts's *Ms formatters (relativeMs,
+ * absoluteMs), not relative()/absolute(), which parse ISO strings.
+ */
+export function seriesTimestamps(
+  res: MetricsResponse,
+  seriesIndex: number,
+): number[] {
+  const series = res.series[seriesIndex];
+  if (series === undefined) {
+    throw new SeriesIndexError(seriesIndex, res.series.length);
+  }
+  return series.points.map((point) => point[0] as number);
 }
 
 /**

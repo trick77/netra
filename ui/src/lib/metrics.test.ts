@@ -3,7 +3,9 @@ import {
   column,
   hasGaps,
   seriesCells,
+  seriesTimestamps,
   seriesValues,
+  SeriesIndexError,
   windowNotice,
 } from "./metrics";
 
@@ -58,6 +60,41 @@ describe("metrics", () => {
   // point both turn "agent was down" into a measurement.
   it("preserves nulls rather than coercing them", () => {
     expect(seriesValues(raw as never, 0, "busy")).toEqual([4.1, null, 5.0]);
+  });
+
+  describe("seriesTimestamps", () => {
+    it("extracts point[0] as epoch milliseconds", () => {
+      const withRealTimestamps = {
+        ...raw,
+        series: [
+          {
+            key: { core: "0" },
+            points: [
+              [1_754_755_200_000, 4.1],
+              [1_754_755_260_000, null],
+            ],
+          },
+        ],
+      };
+      expect(seriesTimestamps(withRealTimestamps as never, 0)).toEqual([
+        1_754_755_200_000, 1_754_755_260_000,
+      ]);
+    });
+
+    it("throws a named error for an out-of-range series index", () => {
+      expect(() => seriesTimestamps(raw as never, 5)).toThrowError(
+        SeriesIndexError,
+      );
+      expect(() => seriesTimestamps(raw as never, 5)).toThrowError(/5/);
+    });
+  });
+
+  describe("seriesCells bounds checking", () => {
+    it("throws a named error for an out-of-range series index instead of a bare TypeError", () => {
+      expect(() => seriesCells(raw as never, 5, "busy")).toThrowError(
+        SeriesIndexError,
+      );
+    });
   });
 
   it("reports when the served window is shorter than the requested one", () => {

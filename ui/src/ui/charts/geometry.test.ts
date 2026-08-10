@@ -1,70 +1,122 @@
 import { describe, expect, it } from "vitest";
-import { areaPath, linePath, mirrorPaths, stackBands } from "./geometry";
+import {
+  areaPath,
+  extent,
+  linePath,
+  mirrorPaths,
+  stackBands,
+} from "./geometry";
 
 describe("geometry", () => {
+  describe("extent", () => {
+    // The exact footgun this function exists to prevent: Math.min/Math.max
+    // coerce null to 0 via Number(null), so Math.min(...[5, null, 3]) is 0 --
+    // a null silently becomes the floor of the y-scale.
+    it("ignores nulls rather than letting them coerce to 0", () => {
+      expect(extent([5, null, 3])).toEqual({ min: 3, max: 5 });
+    });
+
+    it("returns a defined extent for an all-null array", () => {
+      expect(extent([null, null])).toEqual({ min: 0, max: 0 });
+    });
+
+    it("returns a defined extent for an empty array", () => {
+      expect(extent([])).toEqual({ min: 0, max: 0 });
+    });
+
+    it("finds the min and max of a normal series", () => {
+      expect(extent([4, 1, 9, 2])).toEqual({ min: 1, max: 9 });
+    });
+  });
+
   describe("linePath", () => {
     // The single most important behaviour in the chart layer: a null splits
     // the line into separate subpaths so SVG draws a hole, not a bridge.
     it("splits the line at nulls instead of interpolating", () => {
-      const subs = linePath([1, 2, null, 4, 5], 100, 20, 0, 5);
-      expect(subs).toHaveLength(2);
-      expect(subs[0].startsWith("M")).toBe(true);
-      expect(subs[1].startsWith("M")).toBe(true);
+      const { paths } = linePath([1, 2, null, 4, 5], 100, 20, 0, 5);
+      expect(paths).toHaveLength(2);
+      expect(paths[0]!.startsWith("M")).toBe(true);
+      expect(paths[1]!.startsWith("M")).toBe(true);
     });
 
     it("emits one subpath when there are no gaps", () => {
-      expect(linePath([1, 2, 3], 100, 20, 0, 3)).toHaveLength(1);
+      expect(linePath([1, 2, 3], 100, 20, 0, 3).paths).toHaveLength(1);
     });
 
-    // A lone point between two gaps cannot be a line. It is rendered as a dot
-    // by the component, not as an empty <path>.
-    it("drops runs of a single point rather than emitting a zero-length path", () => {
-      expect(linePath([null, 2, null], 100, 20, 0, 5)).toHaveLength(0);
+    // A lone point between two gaps cannot be a line, but it is real data
+    // and must not vanish -- it comes back in `points` so the component can
+    // render it as a dot instead of losing it to an empty chart.
+    it("returns a lone point as a point, not a dropped index", () => {
+      const { paths, points } = linePath([null, 2, null], 100, 20, 0, 5);
+      expect(paths).toHaveLength(0);
+      expect(points).toHaveLength(1);
+    });
+
+    it("returns every isolated point of a flapping series, not just the first", () => {
+      const { paths, points } = linePath([1, null, 2, null, 3], 100, 20, 0, 5);
+      expect(paths).toHaveLength(0);
+      expect(points).toHaveLength(3);
     });
 
     it("returns an empty array for empty input", () => {
-      expect(linePath([], 100, 20, 0, 5)).toEqual([]);
+      expect(linePath([], 100, 20, 0, 5)).toEqual({ paths: [], points: [] });
     });
 
     it("returns an empty array when every value is null", () => {
-      expect(linePath([null, null, null], 100, 20, 0, 5)).toEqual([]);
+      expect(linePath([null, null, null], 100, 20, 0, 5)).toEqual({
+        paths: [],
+        points: [],
+      });
     });
 
-    it("drops a single surviving point surrounded by leading and trailing nulls", () => {
-      expect(linePath([null, null, 3, null, null], 100, 20, 0, 5)).toHaveLength(
+    it("returns a single point for one surviving value surrounded by leading and trailing nulls", () => {
+      const { paths, points } = linePath(
+        [null, null, 3, null, null],
+        100,
+        20,
         0,
+        5,
       );
+      expect(paths).toHaveLength(0);
+      expect(points).toHaveLength(1);
     });
 
     it("keeps a leading run intact even when nulls trail it", () => {
-      const subs = linePath([1, 2, 3, null, null], 100, 20, 0, 3);
-      expect(subs).toHaveLength(1);
+      const { paths } = linePath([1, 2, 3, null, null], 100, 20, 0, 3);
+      expect(paths).toHaveLength(1);
     });
 
     it("keeps a trailing run intact even when nulls lead it", () => {
-      const subs = linePath([null, null, 1, 2, 3], 100, 20, 0, 3);
-      expect(subs).toHaveLength(1);
+      const { paths } = linePath([null, null, 1, 2, 3], 100, 20, 0, 3);
+      expect(paths).toHaveLength(1);
     });
 
-    it("splits into as many subpaths as unbroken runs of two or more", () => {
-      // run [1,2] (len2, kept), lone 5 (dropped), run [9,9,9] (len3, kept)
-      const subs = linePath([1, 2, null, 5, null, 9, 9, 9], 100, 20, 0, 10);
-      expect(subs).toHaveLength(2);
+    it("splits into as many subpaths as unbroken runs of two or more, and reports the lone point separately", () => {
+      // run [1,2] (len2, kept), lone 5 (dropped to points), run [9,9,9] (len3, kept)
+      const { paths, points } = linePath(
+        [1, 2, null, 5, null, 9, 9, 9],
+        100,
+        20,
+        0,
+        10,
+      );
+      expect(paths).toHaveLength(2);
+      expect(points).toHaveLength(1);
     });
 
     // SVG's y-axis grows downward: a higher data value must map to a
     // *smaller* y coordinate, or every chart in the product renders upside
     // down.
     it("maps a higher value to a smaller y coordinate", () => {
-      const [sub] = linePath([0, 10], 100, 20, 0, 10);
-      const points = sub
+      const [sub] = linePath([0, 10], 100, 20, 0, 10).paths;
+      const points = sub!
         .slice(1)
         .trim()
         .split(/L|,/)
         .map((n) => parseFloat(n))
         .filter((n) => !Number.isNaN(n));
       const [, y0, , y1] = points;
-      expect(y1).toBeLessThan(y0);
+      expect(y1).toBeLessThan(y0!);
     });
 
     // A literal 0 is a real, collected measurement -- distinct from `null`,
@@ -72,19 +124,19 @@ describe("geometry", () => {
     // truthiness check would silently drop the 0 and no other test here
     // would notice, because most fixtures don't happen to include one.
     it("keeps a literal 0 in the middle of a run and plots it at the baseline", () => {
-      const subs = linePath([0, 5, 10], 100, 20, 0, 10);
-      expect(subs).toHaveLength(1);
-      const y0 = subs[0]!.match(/-?\d+\.?\d*,(-?\d+\.?\d*)/)![1];
+      const { paths } = linePath([0, 5, 10], 100, 20, 0, 10);
+      expect(paths).toHaveLength(1);
+      const y0 = paths[0]!.match(/-?\d+\.?\d*,(-?\d+\.?\d*)/)![1];
       // 0 is the minimum of the [0, 10] domain, so it maps to the bottom
       // edge of the chart (y = h = 20), not to the top or to being dropped.
       expect(parseFloat(y0!)).toBe(20);
     });
 
     it("rounds coordinates to one decimal place", () => {
-      const [sub] = linePath([1, 2, 3], 33, 17, 0, 3);
-      const numbers = sub.match(/-?\d+\.?\d*/g) ?? [];
+      const [sub] = linePath([1, 2, 3], 33, 17, 0, 3).paths;
+      const numbers = sub!.match(/-?\d+\.?\d*/g) ?? [];
       for (const n of numbers) {
-        const decimals = n.includes(".") ? n.split(".")[1].length : 0;
+        const decimals = n.includes(".") ? n.split(".")[1]!.length : 0;
         expect(decimals).toBeLessThanOrEqual(1);
       }
     });
@@ -92,12 +144,30 @@ describe("geometry", () => {
 
   describe("areaPath", () => {
     it("closes a line subpath down to the baseline", () => {
-      const [sub] = linePath([1, 2, 3], 100, 20, 0, 3);
-      const area = areaPath(sub, 100, 20);
-      expect(area.startsWith("M")).toBe(true);
-      expect(area.endsWith("Z")).toBe(true);
+      const { paths } = linePath([1, 2, 3], 100, 20, 0, 3);
+      const [area] = areaPath(paths, 100, 20);
+      expect(area!.startsWith("M")).toBe(true);
+      expect(area!.endsWith("Z")).toBe(true);
       // Closes down to the bottom edge of the chart.
       expect(area).toContain("20");
+    });
+
+    it("returns one fill per subpath rather than bridging the gap between them", () => {
+      const { paths } = linePath([1, 2, null, 4, 5], 100, 20, 0, 5);
+      const areas = areaPath(paths, 100, 20);
+      expect(areas).toHaveLength(2);
+      for (const area of areas) {
+        expect(area.startsWith("M")).toBe(true);
+        expect(area.endsWith("Z")).toBe(true);
+      }
+    });
+
+    it("closes to h - pad, not h, so the fill does not overflow the plot box", () => {
+      const { paths } = linePath([1, 2, 3], 100, 20, 0, 3, 5);
+      const [area] = areaPath(paths, 100, 20, 5);
+      // baseline is h - pad = 15, and must not also contain the unpadded 20.
+      expect(area).toContain("15");
+      expect(area).not.toMatch(/,20(\D|$)/);
     });
   });
 
@@ -137,6 +207,28 @@ describe("geometry", () => {
 
     it("returns an empty array when the series contain no points", () => {
       expect(stackBands([[]], 100, 20, 10)).toEqual([]);
+    });
+
+    // A null in ANY series at an index makes the running total undefined
+    // for every band at that index -- v ?? 0 would fabricate that series as
+    // reporting zero and draw a band as if it were really idle.
+    it("breaks every band at an index where any series is null, instead of drawing a band at zero", () => {
+      const bands = stackBands(
+        [
+          [1, 1, null, 1, 1],
+          [2, 2, 2, 2, 2],
+        ],
+        100,
+        20,
+        10,
+      );
+      expect(bands).toHaveLength(2);
+      for (const band of bands) {
+        // Two disjoint M...Z segments -- the gap at index 1 split it, it
+        // was not bridged.
+        expect(band.match(/M/g)).toHaveLength(2);
+        expect(band.match(/Z/g)).toHaveLength(2);
+      }
     });
 
     // A host genuinely idling at 0 across every series must draw a band
@@ -192,6 +284,30 @@ describe("geometry", () => {
     it("places the midline at half the chart height", () => {
       const { mid } = mirrorPaths([1, 1], [1, 1], 100, 40, 10);
       expect(mid).toBe(20);
+    });
+
+    it("breaks the fill at a null instead of drawing it as zero", () => {
+      const { up } = mirrorPaths(
+        [5, 5, null, 5, 5],
+        [1, 1, 1, 1, 1],
+        100,
+        20,
+        10,
+      );
+      expect(up.match(/M/g)).toHaveLength(2);
+    });
+
+    it("lets an out-of-range value escape the plot box rather than clamping it, matching linePath", () => {
+      const { up, mid } = mirrorPaths([20, 20], [], 100, 20, 10);
+      const ys = [...up.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
+        parseFloat(m[1]!),
+      );
+      // v = 20 against max = 10 is double scale: it must overshoot the
+      // midline by more than the usable half-height, not clamp to its edge.
+      const usable = mid;
+      for (const y of ys) {
+        if (y !== mid) expect(y).toBeLessThan(mid - usable * 0.99);
+      }
     });
   });
 });

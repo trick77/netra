@@ -2,7 +2,10 @@
 // vendors advertise capacity -- binary (1024-based) units would silently
 // disagree with every spec sheet the numbers get compared against.
 
-const ABSENT = "—";
+// Exported so every call site renders the same absent marker instead of
+// each inventing its own dash (or worse, a hardcoded "-" that silently
+// stops matching this one when this changes).
+export const ABSENT = "—";
 
 function round(n: number, digits: number): number {
   const f = 10 ** digits;
@@ -88,9 +91,19 @@ export function duration(seconds: number | null): string {
  * Age of `iso` relative to `now`, at the same two-unit precision as
  * `duration`. `now` is injectable so tests are deterministic instead of
  * racing the system clock.
+ *
+ * Accepts `null` -- every numeric formatter above absorbs `null` into
+ * `ABSENT`, and a date field on the wire is just as often absent
+ * (`Host.last_seen: string | null`); rejecting `null` here would force
+ * every call site to guard it separately and invent its own dash. An
+ * unparseable string (`new Date(iso)` yielding `Invalid Date`) is treated
+ * the same way rather than rendered as `"NaN d ago"`, which is not a
+ * unit-bearing quantity and communicates nothing to the reader.
  */
-export function relative(iso: string, now: Date = new Date()): string {
+export function relative(iso: string | null, now: Date = new Date()): string {
+  if (iso === null) return ABSENT;
   const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return ABSENT;
   const seconds = Math.max(0, Math.round((now.getTime() - then) / 1000));
   return `${duration(seconds)} ago`;
 }
@@ -98,9 +111,47 @@ export function relative(iso: string, now: Date = new Date()): string {
 /**
  * Fixed-instant rendering for hover titles, where the reader wants the
  * exact wall-clock time rather than an age that keeps ticking.
+ *
+ * Accepts `null` and an unparseable string for the same reason `relative`
+ * does -- see its doc comment.
  */
-export function absolute(iso: string, tz?: string): string {
+export function absolute(iso: string | null, tz?: string): string {
+  if (iso === null) return ABSENT;
   const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return ABSENT;
+  return date.toLocaleString("en-GB", {
+    timeZone: tz,
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+/**
+ * Age of an epoch-millisecond instant relative to `now`, for the one
+ * timestamp shape in the read API that is NOT an ISO string: metrics.ts's
+ * `seriesTimestamps()` returns epoch millis, transcribing
+ * internal/hub/read/metrics.go:198's `ts.UnixMilli()` verbatim. Kept as a
+ * separate function from `relative` rather than widening `relative` to
+ * accept `string | number`: a single signature accepting both shapes
+ * invites a caller passing an epoch-millis number where an ISO string was
+ * expected (`new Date(1700000000000 as unknown as string)` parses to
+ * `Invalid Date` silently) with no type error to catch the mistake.
+ */
+export function relativeMs(ms: number | null, now: Date = new Date()): string {
+  if (ms === null || !Number.isFinite(ms)) return ABSENT;
+  const seconds = Math.max(0, Math.round((now.getTime() - ms) / 1000));
+  return `${duration(seconds)} ago`;
+}
+
+/** Fixed-instant counterpart to `relativeMs`, for the same epoch-millis x-axis values. */
+export function absoluteMs(ms: number | null, tz?: string): string {
+  if (ms === null || !Number.isFinite(ms)) return ABSENT;
+  const date = new Date(ms);
   return date.toLocaleString("en-GB", {
     timeZone: tz,
     year: "numeric",
