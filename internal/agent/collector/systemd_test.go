@@ -211,3 +211,48 @@ func TestSystemdReportsUnavailableAsACapability(t *testing.T) {
 		t.Errorf("capability = %q, want unavailable", got)
 	}
 }
+
+// A scrape carrying a unit's transition can be lost -- the ring overflowing
+// during a hub outage, or the whole buffer being dumped after a 401. This
+// collector only speaks on change and the last event IS the state, so without
+// a re-arm the hub keeps serving "active" for a unit that failed, forever.
+func TestSystemdResendInventoryReArmsTheFailedBaseline(t *testing.T) {
+	// Given: a collector that has already reported a healthy host.
+	testee := collector.NewSystemd(fakeUnits(
+		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
+		collector.Unit{Name: "nginx.service", Active: "active", SubState: "running"},
+	))
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("baseline Collect: %v", err)
+	}
+
+	// And: nginx fails, in a scrape the agent never delivered.
+	testee.SetListerForTest(fakeUnits(
+		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
+		collector.Unit{Name: "nginx.service", Active: "failed", SubState: "failed"},
+	))
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("lost Collect: %v", err)
+	}
+
+	// When: the agent tells it that scrape was lost, and it scrapes again.
+	var resender collector.InventoryResender = testee
+	resender.ResendInventory()
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect after re-arm: %v", err)
+	}
+
+	// Then: the failure is reported again -- and only the failure, not every
+	// loaded unit.
+	if len(res.SystemdEvents) != 1 {
+		t.Fatalf("events after re-arm = %d, want 1 (the failed unit only)", len(res.SystemdEvents))
+	}
+	if got := res.SystemdEvents[0].GetUnitName(); got != "nginx.service" {
+		t.Errorf("unit = %q, want nginx.service", got)
+	}
+	if got := res.SystemdEvents[0].GetState(); got != "failed" {
+		t.Errorf("state = %q, want failed", got)
+	}
+}

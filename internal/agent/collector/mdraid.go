@@ -53,6 +53,16 @@ func (m *Mdraid) EmitsBaseline() bool { return true }
 // Name implements Collector.
 func (m *Mdraid) Name() string { return "mdraid" }
 
+// ResendInventory implements InventoryResender.
+//
+// Forgetting the last seen states is the whole re-arm: the next Collect finds
+// nothing to compare against and re-reports every array. This collector is
+// event-based precisely so that the LAST event is the state, so a scrape
+// carrying "md0 went degraded" that the ring dropped left the hub serving
+// "clean" permanently -- the array never changes again, so neither does the
+// event.
+func (m *Mdraid) ResendInventory() { m.prev = nil }
+
 // SetSysRootForTest repoints the collector at a different fixture tree.
 func (m *Mdraid) SetSysRootForTest(root string) { m.sysRoot = root }
 

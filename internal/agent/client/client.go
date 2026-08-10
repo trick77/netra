@@ -131,6 +131,12 @@ type Client struct {
 	// there is somewhere for the set to go. Latched rather than acted on at
 	// the moment of loss -- see resendInventory.
 	inventoryLost bool
+
+	// tokenRejected records that the MOST RECENT POST was rejected with a 401.
+	// Read only by flushOnShutdown, to skip a request the hub has already said
+	// it will refuse. Any other outcome clears it: a 503 or a transport error
+	// says nothing about the token.
+	tokenRejected bool
 }
 
 // New builds a Client scraping at the fixed config.ScrapeInterval. Buffer
@@ -526,6 +532,15 @@ func (c *Client) Flush(ctx context.Context) error {
 		// not deliver", which is the question this number answers.
 		c.postFailures++
 
+		// The flag means "the attempt that just happened was refused for the
+		// token", so anything else clears it. A transport error or a 503 says
+		// nothing about the token, and an operator who fixed a revoked token
+		// into a hub that is briefly down would otherwise still lose the
+		// buffer on shutdown. Defaulting to attempting costs at most
+		// shutdownFlushTimeout; defaulting to skipping costs the buffer the
+		// whole mechanism exists to save.
+		c.tokenRejected = errors.Is(err, ErrUnauthorized)
+
 		if errors.Is(err, ErrUnauthorized) {
 			// The token is gone. Replaying forever would hammer the hub for
 			// nothing, so the buffer is dropped and the operator has to act.
@@ -563,6 +578,10 @@ func (c *Client) Flush(ctx context.Context) error {
 		c.replaying = true
 		return err
 	}
+
+	// The hub answered, so whatever the answer says about this batch, the
+	// token itself was accepted.
+	c.tokenRejected = false
 
 	// Sequence numbers start at 1 (c.seq is incremented before the first
 	// Add), so a genuine ack is never 0. A zero ack_seq means the hub sent a
@@ -756,6 +775,15 @@ func (c *Client) flushOnShutdown() {
 	if depth == 0 {
 		return
 	}
+	if c.tokenRejected {
+		// The hub has already refused this token, and nothing about a SIGTERM
+		// changes that. Posting anyway is a guaranteed 401 that costs up to
+		// shutdownFlushTimeout of shutdown latency on every restart of a
+		// revoked agent -- and on a fleet redeploy, one such request per host.
+		slog.Warn("skipping the final flush; the hub has rejected this agent's token",
+			"buffer_depth", depth)
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownFlushTimeout)
 	defer cancel()
@@ -765,8 +793,12 @@ func (c *Client) flushOnShutdown() {
 	// only the first batch and lose the rest -- which is the loss this function
 	// exists to prevent, just smaller.
 	if err := c.drain(ctx); err != nil {
-		slog.Warn("final flush on shutdown failed; buffered samples are lost",
-			"err", err, "buffer_depth", depth)
+		// "sent" as well as "lost": drain makes up to maxDrainBatches POSTs,
+		// so a failure on the second one still delivered the first. Reporting
+		// only the loss would say the whole buffer was dropped when most of it
+		// arrived.
+		slog.Warn("final flush on shutdown failed; the rest of the buffer is lost",
+			"err", err, "sent", depth-c.ring.Depth(), "lost", c.ring.Depth())
 		return
 	}
 	slog.Info("flushed buffered samples on shutdown",

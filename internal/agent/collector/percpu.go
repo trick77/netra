@@ -112,6 +112,15 @@ func (p *PerCoreCPU) read() (map[uint32]cpuTimes, error) {
 
 	out := make(map[uint32]cpuTimes)
 
+	// Skipped lines are counted and reported ONCE per read rather than warned
+	// about individually. A malformed /proc/stat -- an emulated or lxcfs tree,
+	// say -- is malformed on every scrape, so a warning per line per scrape is
+	// an unbounded log every 60s for the life of the agent, saying the same
+	// thing each time.
+	var skipped int
+	var firstSkip string
+	var firstSkipErr error
+
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -137,14 +146,22 @@ func (p *PerCoreCPU) read() (map[uint32]cpuTimes, error) {
 			// core its reading. This used to fail the whole read for a short
 			// line, which is exactly the coupling splitting CPU and
 			// PerCoreCPU into two collectors exists to avoid.
-			slog.Warn("skipping an unparseable cpu line",
-				"path", path, "cpu", fields[0], "err", err)
+			skipped++
+			if firstSkipErr == nil {
+				firstSkip, firstSkipErr = fields[0], err
+			}
 			continue
 		}
 		out[uint32(id)] = times
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	if skipped > 0 {
+		slog.Warn("skipped unparseable cpu lines",
+			"path", path, "skipped", skipped, "cores", len(out),
+			"first", firstSkip, "err", firstSkipErr)
 	}
 
 	return out, nil

@@ -531,6 +531,91 @@ func TestRunFlushesTheBufferOnShutdown(t *testing.T) {
 	}
 }
 
+// A revoked agent must not spend its shutdown grace period on a request the
+// hub has already said it will refuse. One 401 costs up to
+// shutdownFlushTimeout of latency per restart, and one per host on a fleet
+// redeploy.
+func TestShutdownSkipsTheFinalFlushAfterA401(t *testing.T) {
+	// Given: a hub that rejects the token, and an agent that has heard it.
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush succeeded against a 401, want an error")
+	}
+	c.ScrapeOnce(ctx)
+	before := requests.Load()
+
+	// When: the agent shuts down with that scrape still buffered.
+	runCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := c.Run(runCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() returned %v, want context.Canceled", err)
+	}
+
+	// Then: it did not post again.
+	if got := requests.Load() - before; got != 0 {
+		t.Errorf("requests during shutdown = %d, want 0 after a 401", got)
+	}
+}
+
+// The skip is armed by the LAST attempt, not by any 401 ever seen. An operator
+// who fixes a revoked token into a hub that is briefly down must not then lose
+// the buffer on shutdown: a 503 says nothing about the token, and attempting
+// costs at most the shutdown timeout where a wrong skip costs the samples.
+func TestShutdownStillFlushesWhenA401WasFollowedByATransientFailure(t *testing.T) {
+	// Given: an agent that saw a 401, then a 503, and now a healthy hub.
+	var status atomic.Int64
+	status.Store(http.StatusUnauthorized)
+	rec := &recorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if code := int(status.Load()); code != http.StatusOK {
+			w.WriteHeader(code)
+			return
+		}
+		rec.handler(t).ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush succeeded against a 401, want an error")
+	}
+
+	status.Store(http.StatusServiceUnavailable)
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush succeeded against a 503, want an error")
+	}
+
+	// When: the hub recovers and the agent shuts down.
+	status.Store(http.StatusOK)
+	runCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := c.Run(runCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() returned %v, want context.Canceled", err)
+	}
+
+	// Then: the buffer was delivered, not skipped.
+	if rec.count() == 0 {
+		t.Fatal("no request on shutdown; a 503 after a 401 must not arm the skip")
+	}
+	if c.BufferDepth() != 0 {
+		t.Errorf("BufferDepth() = %d after shutdown, want 0", c.BufferDepth())
+	}
+}
+
 // A backlog needs more than one POST, because Flush drains at most
 // maxBatchRows per request. Waiting a whole scrape interval between batches
 // stretched recovery out and made the hub invalidate its aggregates once per

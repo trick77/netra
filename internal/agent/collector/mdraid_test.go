@@ -146,3 +146,39 @@ func TestMdraidReportsNothingWithNoArrays(t *testing.T) {
 		t.Errorf("events = %d, want 0", len(res.Events))
 	}
 }
+
+// The same loss the inventory collectors re-arm for. An array's transition
+// lives in one scrape, and a dropped scrape leaves the hub serving the array's
+// previous state permanently, because from this collector's point of view
+// nothing changed afterwards.
+func TestMdraidResendInventoryReEmitsEveryArray(t *testing.T) {
+	// Given: a collector that has already reported what it found.
+	testee := collector.NewMdraid("testdata/mdraid/clean/sys")
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("baseline Collect: %v", err)
+	}
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if len(res.Events) != 0 {
+		t.Fatalf("events on an unchanged scrape = %d, want 0", len(res.Events))
+	}
+
+	// When: the agent tells it a buffered scrape was lost.
+	var resender collector.InventoryResender = testee
+	resender.ResendInventory()
+
+	res, err = testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect after re-arm: %v", err)
+	}
+
+	// Then: every array's state is reported again.
+	if len(res.Events) != 1 {
+		t.Fatalf("events after re-arm = %d, want 1", len(res.Events))
+	}
+	if got := res.Events[0].GetSubject(); got != "md0" {
+		t.Errorf("subject = %q, want md0", got)
+	}
+}
