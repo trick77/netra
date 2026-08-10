@@ -120,9 +120,22 @@ export function hasGaps(vals: readonly (number | null)[]): boolean {
  * in a test). That fallback is tier-aware: it never asserts materialization
  * for the raw tier, since raw has no such mechanism.
  *
- * truncated is folded in unconditionally: a truncated series must never
- * render as if it were complete, independent of whether the window also
- * moved.
+ * truncated is folded in too, but NOT unconditionally: internal/hub/read/
+ * metrics.go:146-150 already appends its own truncation warning ("the
+ * result reached the N-point limit and is truncated; narrow the window or
+ * ask for fewer columns") into res.warnings whenever it sets
+ * res.truncated, and that append happens on every real code path that
+ * produces a truncated response -- there is no way to observe
+ * truncated: true from the actual hub without that warning also being
+ * present. Appending our own sentence on top of the pass-through above
+ * would print the same fact twice. The guard below only synthesizes a
+ * truncation sentence when truncated is set but no warning mentions it --
+ * a combination the real server cannot produce, kept purely as a defensive
+ * fallback for a hand-built or malformed response (e.g. a test fixture, or
+ * a future server bug) so truncation is never silently unreported. Do not
+ * remove the guard and "helpfully" make this unconditional again: doing so
+ * reintroduces the duplicate-sentence bug on every genuine truncated
+ * response.
  */
 export function windowNotice(res: MetricsResponse): string | null {
   const parts: string[] = [];
@@ -152,7 +165,8 @@ export function windowNotice(res: MetricsResponse): string | null {
     }
   }
 
-  if (res.truncated) {
+  const warningsMentionTruncation = res.warnings.some((w) => /truncat/i.test(w));
+  if (res.truncated && !warningsMentionTruncation) {
     parts.push("the result was truncated at the point limit and is incomplete");
   }
 

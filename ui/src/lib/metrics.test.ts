@@ -126,23 +126,51 @@ describe("metrics", () => {
 
     // Truncation is a point-limit cut -- exactly the "chart is silently
     // wrong" failure this module exists to catch -- and must never be
-    // dropped from the notice, independent of whether the window also moved.
-    it("reports a truncated result even when the window matches exactly", () => {
-      const truncated = { ...raw, truncated: true };
+    // dropped from the notice. internal/hub/read/metrics.go:146-150 ALWAYS
+    // appends its own truncation warning into res.warnings on the code path
+    // that sets res.truncated, so this fixture -- truncated: true WITH the
+    // server's own truncation warning present -- is what a real hub
+    // response looks like. It must appear exactly once, not twice: the
+    // client passes warnings through verbatim and must not also append its
+    // own copy of a fact the server already stated.
+    it("reports a truncated result exactly once, using the server's own warning", () => {
+      const truncated = {
+        ...raw,
+        warnings: [
+          "the result reached the 200000-point limit and is truncated; narrow the window or ask for fewer columns",
+        ],
+        truncated: true,
+      };
+      const notice = windowNotice(truncated as never);
+      expect(notice).toMatch(/truncat/i);
+      expect(notice?.match(/truncat/gi)?.length).toBe(1);
+    });
+
+    // A response with truncated: true and NO warning mentioning it cannot
+    // happen from the real hub (metrics.go always pairs the two), but is
+    // kept as a defensive fallback: a hand-built response, a future server
+    // bug, or a client-side mock should still surface truncation rather than
+    // silently rendering an incomplete series as complete.
+    it("still reports truncation defensively when no warning mentions it", () => {
+      const truncated = { ...raw, warnings: [], truncated: true };
       expect(windowNotice(truncated as never)).toMatch(/truncat/i);
     });
 
-    it("combines a passed-through server warning with the truncated notice", () => {
+    it("combines a passed-through server warning with the server's truncation warning, without duplicating it", () => {
       const both = {
         ...raw,
         window: { from: "2026-08-08T14:00:00Z", to: "2026-08-10T14:00:00Z" },
         requested_window: { from: "2026-05-12T14:00:00Z", to: "2026-08-10T14:00:00Z" },
-        warnings: ["from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists"],
+        warnings: [
+          "from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists",
+          "the result reached the 200000-point limit and is truncated; narrow the window or ask for fewer columns",
+        ],
         truncated: true,
       };
       const notice = windowNotice(both as never);
       expect(notice).toMatch(/retention/i);
       expect(notice).toMatch(/truncat/i);
+      expect(notice?.match(/truncat/gi)?.length).toBe(1);
     });
   });
 });
