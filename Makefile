@@ -10,7 +10,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS = -s -w -X github.com/trick77/netra/internal/buildinfo.version=$(VERSION) \
                 -X github.com/trick77/netra/internal/buildinfo.commit=$(COMMIT)
 
-.PHONY: test test-integration test-shell build build-hub build-agent build-sim proto fmt vet check
+.PHONY: test test-integration test-shell build build-hub build-agent build-sim proto fmt vet check ui ui-test
 
 test:
 	$(GO) test ./...
@@ -39,7 +39,13 @@ test-shell:
 
 build: build-hub build-agent
 
-build-hub:
+ui:
+	cd ui && npm ci && npm run build
+
+ui-test:
+	cd ui && npm ci && npm run test
+
+build-hub: ui
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/netra ./cmd/netra
 
 build-agent:
