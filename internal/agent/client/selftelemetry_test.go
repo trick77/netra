@@ -21,12 +21,17 @@ type capabilityCollector struct {
 	value string
 }
 
-func (capabilityCollector) Name() string            { return "capability" }
-func (capabilityCollector) Interval() time.Duration { return time.Minute }
+func (capabilityCollector) Name() string { return "capability" }
 func (capabilityCollector) Collect(context.Context) (*collector.Result, error) {
 	return &collector.Result{}, nil
 }
+
+// An empty value means "nothing to report", the way a recovered collector
+// behaves: every reporter in the tree returns nil once it is healthy again.
 func (c *capabilityCollector) Capabilities() map[string]string {
+	if c.value == "" {
+		return nil
+	}
 	return map[string]string{c.key: c.value}
 }
 
@@ -169,7 +174,7 @@ func TestCapabilityChangeFlipsMetadataHashAndRequestsResend(t *testing.T) {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	c := client.New(cfg, []collector.Collector{
-		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewLoad(cfg.ProcRoot),
 		cap,
 	})
 	ctx := context.Background()
@@ -191,6 +196,64 @@ func TestCapabilityChangeFlipsMetadataHashAndRequestsResend(t *testing.T) {
 
 	if string(first) == string(second) {
 		t.Error("metadata hash unchanged after a capability changed, want it to differ")
+	}
+}
+
+// Recovery is a capability change too, including when it empties the map.
+//
+// refreshCapabilities used to return early on an empty merged set, so the LAST
+// capability could never be cleared: the metadata kept its stale entry, the
+// hash never moved, and the hub went on reporting a degraded subsystem for the
+// life of the process. Recovery has to propagate as readily as failure.
+func TestRecoveringTheLastCapabilityClearsItFromMetadata(t *testing.T) {
+	rec := &recorder{
+		// Ask for metadata every time, so each request carries the current map
+		// rather than only its hash.
+		respond: func(req *netrav1.IngestRequest) *netrav1.IngestResponse {
+			return &netrav1.IngestResponse{AckSeq: req.GetSeq(), RequestMetadata: true}
+		},
+	}
+	srv := httptest.NewServer(rec.handler(t))
+	defer srv.Close()
+
+	// Given: the only capability reporter on the host is degraded.
+	cap := &capabilityCollector{key: "sensors", value: "degraded"}
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	c := client.New(cfg, []collector.Collector{cap})
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("second Flush: %v", err)
+	}
+	if got := rec.last().GetMetadata().GetCapabilities()["sensors"]; got != "degraded" {
+		t.Fatalf("capabilities[sensors] = %q, want %q before recovery", got, "degraded")
+	}
+	degraded := rec.last().GetMetadataHash()
+
+	// When: the sensor comes back and the collector reports nothing.
+	cap.value = ""
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("third Flush: %v", err)
+	}
+
+	// Then: the hash moved, and the capability is gone from the metadata.
+	if string(rec.last().GetMetadataHash()) == string(degraded) {
+		t.Error("metadata hash unchanged after the last capability cleared, want it to differ")
+	}
+	if got, ok := rec.last().GetMetadata().GetCapabilities()["sensors"]; ok {
+		t.Errorf("capabilities[sensors] = %q, want it absent once the sensor recovered", got)
 	}
 }
 

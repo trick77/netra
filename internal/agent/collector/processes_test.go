@@ -2,12 +2,19 @@ package collector_test
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
+
+// pageSize mirrors the collector's own unit for /proc/PID/stat's rss field.
+// Derived from the running kernel rather than written as 4096, so the
+// expectations below hold on a 16K or 64K page arm64 host too -- which is the
+// bug these assertions used to hide.
+var pageSize = uint64(os.Getpagesize())
 
 func procsAt(t *testing.T, c *collector.Processes, at time.Time) *collector.Result {
 	t.Helper()
@@ -40,7 +47,7 @@ func procRow(t *testing.T, rows []*netrav1.ProcessSample, name string) *netrav1.
 // lands on a number the test is not looking for.
 func TestProcessesComputesCPUAndMemoryPerName(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/first", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/first", true)
 
 	res := procsAt(t, testee, base)
 	if len(res.Processes) != 0 {
@@ -54,8 +61,8 @@ func TestProcessesComputesCPUAndMemoryPerName(t *testing.T) {
 	if got := pg.GetCpuPct(); got != 100 {
 		t.Errorf("postgres cpu_pct = %v, want 100", got)
 	}
-	if got := pg.GetMemBytes(); got != 1200*4096 {
-		t.Errorf("postgres mem_bytes = %d, want %d", got, 1200*4096)
+	if got := pg.GetMemBytes(); got != 1200*pageSize {
+		t.Errorf("postgres mem_bytes = %d, want %d", got, 1200*pageSize)
 	}
 	if got := pg.GetCount(); got != 1 {
 		t.Errorf("postgres count = %d, want 1", got)
@@ -78,7 +85,7 @@ func TestProcessesComputesCPUAndMemoryPerName(t *testing.T) {
 // previous reading for this process and it simply has no rate yet.
 func TestProcessesTreatsARecycledPIDAsANewProcess(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/first", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/first", true)
 	procsAt(t, testee, base)
 
 	// PID 100 is now python3 with a different starttime: the kernel reused the
@@ -115,7 +122,7 @@ func TestProcessesTreatsARecycledPIDAsANewProcess(t *testing.T) {
 // cardinality for data whose PIDs are meaningless a minute later.
 func TestProcessesAggregatesByName(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/multi/first", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/multi/first", true)
 	procsAt(t, testee, base)
 
 	testee.SetProcRootForTest("testdata/processes/multi/second")
@@ -140,7 +147,7 @@ func TestProcessesAggregatesByName(t *testing.T) {
 // would describe the container rather than the host. That is wrong data rather
 // than missing data, so it reports a capability and no rows.
 func TestProcessesReportsNamespacedWithoutPidHost(t *testing.T) {
-	testee := collector.NewProcesses("testdata/processes/first", false, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/first", false)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -149,8 +156,14 @@ func TestProcessesReportsNamespacedWithoutPidHost(t *testing.T) {
 	if len(res.Processes) != 0 {
 		t.Errorf("rows = %d, want 0 without pid: host", len(res.Processes))
 	}
-	if got := testee.Capabilities()["processes"]; got != "namespaced" {
+	// Under its own key, not "processes" -- that one belongs to the Procs
+	// collector, and two collectors writing it meant whichever ran later
+	// silently overwrote the other in the merged capability map.
+	if got := testee.Capabilities()["process_table"]; got != "namespaced" {
 		t.Errorf("capability = %q, want namespaced", got)
+	}
+	if _, ok := testee.Capabilities()["processes"]; ok {
+		t.Error(`Processes reports the "processes" key, which Procs owns -- the two would overwrite each other`)
 	}
 }
 
@@ -158,7 +171,7 @@ func TestProcessesReportsNamespacedWithoutPidHost(t *testing.T) {
 // any moment on a busy host. It must be skipped, not fail the whole scrape.
 func TestProcessesSkipsAProcessThatVanishes(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/second", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/second", true)
 	procsAt(t, testee, base)
 
 	// The first tree has both PIDs; the recycled tree drops none, so use a
@@ -185,7 +198,7 @@ func TestProcessesSkipsAProcessThatVanishes(t *testing.T) {
 // since the last scrape contributed nothing at all.
 func TestProcessesCountsMemoryOfProcessesWithNoBaseline(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/gone", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/gone", true)
 	procsAt(t, testee, base)
 
 	// The second tree adds postgres, which the first scrape never saw.
@@ -193,8 +206,8 @@ func TestProcessesCountsMemoryOfProcessesWithNoBaseline(t *testing.T) {
 	res := procsAt(t, testee, base.Add(10*time.Second))
 
 	pg := procRow(t, res.Processes, "postgres")
-	if got := pg.GetMemBytes(); got != 1200*4096 {
-		t.Errorf("postgres mem_bytes = %d, want %d -- a new process still occupies memory", got, 1200*4096)
+	if got := pg.GetMemBytes(); got != 1200*pageSize {
+		t.Errorf("postgres mem_bytes = %d, want %d -- a new process still occupies memory", got, 1200*pageSize)
 	}
 	if got := pg.GetCount(); got != 1 {
 		t.Errorf("postgres count = %d, want 1 -- a new process is still a process", got)
@@ -222,7 +235,7 @@ func TestProcessesCountsMemoryOfProcessesWithNoBaseline(t *testing.T) {
 // discard something and the test can tell that it discarded the right rows.
 func TestProcessesRanksANewProcessByMemoryDespiteUnsetCPU(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewProcesses("testdata/processes/topn/first", true, time.Minute)
+	testee := collector.NewProcesses("testdata/processes/topn/first", true)
 	procsAt(t, testee, base)
 
 	// The second tree advances all twelve and adds newhog, which the first
@@ -231,8 +244,8 @@ func TestProcessesRanksANewProcessByMemoryDespiteUnsetCPU(t *testing.T) {
 	res := procsAt(t, testee, base.Add(10*time.Second))
 
 	hog := procRow(t, res.Processes, "newhog")
-	if got := hog.GetMemBytes(); got != 100000*4096 {
-		t.Errorf("newhog mem_bytes = %d, want %d", got, 100000*4096)
+	if got := hog.GetMemBytes(); got != 100000*pageSize {
+		t.Errorf("newhog mem_bytes = %d, want %d", got, 100000*pageSize)
 	}
 	if hog.CpuPct != nil {
 		t.Errorf("newhog cpu_pct = %v with no baseline; want unset", hog.GetCpuPct())

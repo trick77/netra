@@ -82,8 +82,7 @@ func (rec *recorder) last() *netrav1.IngestRequest {
 // failingCollector always errors, simulating an unreadable sensor.
 type failingCollector struct{}
 
-func (failingCollector) Name() string            { return "failing" }
-func (failingCollector) Interval() time.Duration { return time.Minute }
+func (failingCollector) Name() string { return "failing" }
 func (failingCollector) Collect(context.Context) (*collector.Result, error) {
 	return nil, errors.New("sensor unreadable")
 }
@@ -97,8 +96,8 @@ func newClient(t *testing.T, url string) *client.Client {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	collectors := []collector.Collector{
-		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewMemory(cfg.ProcRoot),
+		collector.NewLoad(cfg.ProcRoot),
 	}
 	return client.New(cfg, collectors)
 }
@@ -246,8 +245,7 @@ func TestFlushRejectsUnauthorized(t *testing.T) {
 // 64-core host carries 65 of them per scrape.
 type wideCollector struct{ cores int }
 
-func (wideCollector) Name() string            { return "wide" }
-func (wideCollector) Interval() time.Duration { return time.Minute }
+func (wideCollector) Name() string { return "wide" }
 func (w wideCollector) Collect(context.Context) (*collector.Result, error) {
 	rows := make([]*netrav1.CpuCoreSample, 0, w.cores)
 	ts := time.Now().UnixMilli()
@@ -278,8 +276,8 @@ func newDeepBufferClient(t *testing.T, url string) *client.Client {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	collectors := []collector.Collector{
-		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
-		collector.NewLoad(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewMemory(cfg.ProcRoot),
+		collector.NewLoad(cfg.ProcRoot),
 		wideCollector{cores: 64},
 	}
 	return client.NewWithInterval(cfg, collectors, time.Millisecond)
@@ -418,6 +416,15 @@ func TestFlushTreatsZeroAckSeqAsFailure(t *testing.T) {
 	if c.BufferDepth() != 1 {
 		t.Fatalf("BufferDepth() = %d, want 1 — a zero ack must not drain the buffer", c.BufferDepth())
 	}
+
+	// And it counts. A hub bug or a proxy returning an empty 200 is "the agent
+	// could not deliver", exactly like a network error or a 401, so it belongs
+	// in the same number. Without this the agent buffers and backs off while
+	// post_failures_total sits at zero — the one metric that would show the
+	// outage insisting nothing is wrong.
+	if got := c.ScrapeOnce(ctx).GetAgent().GetPostFailuresTotal(); got != 1 {
+		t.Errorf("post_failures_total = %d, want 1 after a zero ack_seq", got)
+	}
 }
 
 // Run must scrape and flush on every tick, and stop promptly once its context
@@ -433,7 +440,7 @@ func TestRunFlushesOnEveryTickAndStopsOnCancel(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -462,6 +469,216 @@ func TestRunFlushesOnEveryTickAndStopsOnCancel(t *testing.T) {
 	}
 }
 
+// Shutdown must not throw away what is buffered.
+//
+// Run used to return on ctx.Done and let the process exit, taking the ring
+// with it -- including the scrape taken seconds earlier. A rolling image
+// update across a fleet silently dropped the last minute of history from every
+// host, which is exactly the gap the ring exists to prevent.
+func TestRunFlushesTheBufferOnShutdown(t *testing.T) {
+	// Given: a hub that is unreachable, so a backlog accumulates...
+	var reachable bool
+	rec := &recorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !reachable {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		rec.handler(t).ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
+	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for c.BufferDepth() < 2 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	if c.BufferDepth() < 2 {
+		t.Fatalf("BufferDepth() = %d, want a backlog before shutdown", c.BufferDepth())
+	}
+
+	// When: the hub comes back an instant before SIGTERM arrives.
+	reachable = true
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() returned %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run() did not return within 2s of context cancellation")
+	}
+
+	// Then: the backlog was delivered on the way out, not discarded.
+	if rec.count() == 0 {
+		t.Fatal("no request reached the hub; the buffer was discarded on shutdown")
+	}
+	if c.BufferDepth() != 0 {
+		t.Errorf("BufferDepth() = %d after shutdown, want 0", c.BufferDepth())
+	}
+}
+
+// A revoked agent must not spend its shutdown grace period on a request the
+// hub has already said it will refuse. One 401 costs up to
+// shutdownFlushTimeout of latency per restart, and one per host on a fleet
+// redeploy.
+func TestShutdownSkipsTheFinalFlushAfterA401(t *testing.T) {
+	// Given: a hub that rejects the token, and an agent that has heard it.
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush succeeded against a 401, want an error")
+	}
+	c.ScrapeOnce(ctx)
+	before := requests.Load()
+
+	// When: the agent shuts down with that scrape still buffered.
+	runCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := c.Run(runCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() returned %v, want context.Canceled", err)
+	}
+
+	// Then: it did not post again.
+	if got := requests.Load() - before; got != 0 {
+		t.Errorf("requests during shutdown = %d, want 0 after a 401", got)
+	}
+}
+
+// The skip is armed by the LAST attempt, not by any 401 ever seen. An operator
+// who fixes a revoked token into a hub that is briefly down must not then lose
+// the buffer on shutdown: a 503 says nothing about the token, and attempting
+// costs at most the shutdown timeout where a wrong skip costs the samples.
+func TestShutdownStillFlushesWhenA401WasFollowedByATransientFailure(t *testing.T) {
+	// Given: an agent that saw a 401, then a 503, and now a healthy hub.
+	var status atomic.Int64
+	status.Store(http.StatusUnauthorized)
+	rec := &recorder{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if code := int(status.Load()); code != http.StatusOK {
+			w.WriteHeader(code)
+			return
+		}
+		rec.handler(t).ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := newClient(t, srv.URL)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush succeeded against a 401, want an error")
+	}
+
+	status.Store(http.StatusServiceUnavailable)
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err == nil {
+		t.Fatal("Flush succeeded against a 503, want an error")
+	}
+
+	// When: the hub recovers and the agent shuts down.
+	status.Store(http.StatusOK)
+	runCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := c.Run(runCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() returned %v, want context.Canceled", err)
+	}
+
+	// Then: the buffer was delivered, not skipped.
+	if rec.count() == 0 {
+		t.Fatal("no request on shutdown; a 503 after a 401 must not arm the skip")
+	}
+	if c.BufferDepth() != 0 {
+		t.Errorf("BufferDepth() = %d after shutdown, want 0", c.BufferDepth())
+	}
+}
+
+// A backlog needs more than one POST, because Flush drains at most
+// maxBatchRows per request. Waiting a whole scrape interval between batches
+// stretched recovery out and made the hub invalidate its aggregates once per
+// batch rather than once per recovery -- for no reason, since the hub has
+// just demonstrated it is up by accepting one.
+func TestRunDrainsABacklogWithinOneTick(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	// Given: a collector emitting just over half maxBatchRows per scrape, so no
+	// two scrapes can share a batch and each needs a POST of its own -- half
+	// the marshalling of a full-size scrape, which matters because CI runs this
+	// under the race detector.
+	const tick = time.Second
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: 6 * time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	c := client.NewWithInterval(cfg,
+		[]collector.Collector{wideCollector{cores: client.MaxBatchRowsForTest / 2}}, tick)
+	ctx := context.Background()
+
+	// And: two scrapes waiting when the loop starts. The tick adds a third, so
+	// the drain needs three POSTs -- more than one, and inside
+	// maxDrainBatches with room to spare.
+	for range 2 {
+		c.ScrapeOnce(ctx)
+	}
+	if c.BufferDepth() != 2 {
+		t.Fatalf("BufferDepth() = %d, want 2", c.BufferDepth())
+	}
+
+	// When: Run gets ONE tick.
+	runCtx, cancel := context.WithCancel(ctx)
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(runCtx) }()
+
+	// Waiting strictly less than two ticks, so a pass cannot come from the loop
+	// going round again -- that is the whole claim. The rest of the window is
+	// margin: the drain itself takes a fraction of a tick, so a loaded CI box
+	// has room without the assertion ever becoming true for the wrong reason.
+	deadline := time.Now().Add(2*tick - tick/5)
+	for c.BufferDepth() > 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	depth := c.BufferDepth()
+	requests := rec.count()
+	cancel()
+	<-errCh
+
+	// Then: the backlog is gone, and it took one POST per scrape to do it.
+	if depth != 0 {
+		t.Errorf("BufferDepth() = %d within one tick, want 0 -- a partial drain must not wait for the next tick",
+			depth)
+	}
+	if requests < 3 {
+		t.Errorf("requests = %d, want at least 3 -- one per oversized scrape", requests)
+	}
+}
+
 // A transient flush failure must not stop the loop: Run backs off with
 // jitter and keeps retrying, and still exits promptly once the context is
 // cancelled mid-backoff rather than waiting out the full sleep.
@@ -477,7 +694,7 @@ func TestRunBacksOffOnTransientFailureAndStopsOnCancel(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -515,7 +732,7 @@ func TestRunRetriesSlowlyOnUnauthorizedAndStopsOnCancel(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -566,7 +783,7 @@ func TestFlushFailsOnInvalidHubURL(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.New(cfg, collectors)
 	ctx := context.Background()
 
@@ -588,7 +805,7 @@ func TestScrapeOnceSkipsFailingCollector(t *testing.T) {
 	}
 	collectors := []collector.Collector{
 		failingCollector{},
-		collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval),
+		collector.NewMemory(cfg.ProcRoot),
 	}
 	c := client.New(cfg, collectors)
 
@@ -697,7 +914,7 @@ func TestRunHonoursHubRetryAfterInsteadOfOwnBackoff(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -805,7 +1022,7 @@ func TestRunKeepsScrapingWhileBackingOffFlush(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../collector/testdata/proc1",
 	}
-	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
 	c := client.NewWithInterval(cfg, collectors, 10*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -953,7 +1170,7 @@ func TestPrimeDoesNotConsumeABaselineCollectorsFirstScrape(t *testing.T) {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	// A unit that is already failed before the agent ever starts.
-	systemd := collector.NewSystemd(config.ScrapeInterval, func(context.Context) ([]collector.Unit, error) {
+	systemd := collector.NewSystemd(func(context.Context) ([]collector.Unit, error) {
 		return []collector.Unit{
 			{Name: "broken.service", Active: "failed", SubState: "failed"},
 		}, nil
@@ -1020,9 +1237,8 @@ type countingCollector struct {
 	calls    int
 }
 
-func (c *countingCollector) Name() string            { return "counting" }
-func (c *countingCollector) Interval() time.Duration { return config.ScrapeInterval }
-func (c *countingCollector) EmitsBaseline() bool     { return c.baseline }
+func (c *countingCollector) Name() string        { return "counting" }
+func (c *countingCollector) EmitsBaseline() bool { return c.baseline }
 
 func (c *countingCollector) Collect(context.Context) (*collector.Result, error) {
 	c.calls++
@@ -1058,7 +1274,7 @@ func TestPrimeDoesNotConsumeThePackageInventory(t *testing.T) {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	c := client.New(cfg, []collector.Collector{
-		collector.NewPackages(dpkg, "", config.ScrapeInterval),
+		collector.NewPackages(dpkg, ""),
 	})
 
 	// The agent's real startup order, from main.go.

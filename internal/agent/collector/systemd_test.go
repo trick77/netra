@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 )
@@ -17,7 +16,7 @@ func fakeUnits(units ...collector.Unit) collector.UnitLister {
 // cost nothing -- rather than forcing every dashboard to count rows in an
 // event table.
 func TestSystemdReportsTheSummaryOnTheHostRow(t *testing.T) {
-	testee := collector.NewSystemd(time.Minute, fakeUnits(
+	testee := collector.NewSystemd(fakeUnits(
 		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
 		collector.Unit{Name: "nginx.service", Active: "active", SubState: "running"},
 		collector.Unit{Name: "broken.service", Active: "failed", SubState: "failed"},
@@ -51,7 +50,7 @@ func TestSystemdReportsTheSummaryOnTheHostRow(t *testing.T) {
 // all of them would write a few hundred unprunable rows per host on every
 // agent restart.
 func TestSystemdEmitsABaselineOfFailedUnitsOnTheFirstScrape(t *testing.T) {
-	testee := collector.NewSystemd(time.Minute, fakeUnits(
+	testee := collector.NewSystemd(fakeUnits(
 		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
 		collector.Unit{Name: "nginx.service", Active: "failed", SubState: "failed"},
 		collector.Unit{Name: "cleanup.service", Active: "inactive", SubState: "dead"},
@@ -81,7 +80,7 @@ func TestSystemdEmitsABaselineOfFailedUnitsOnTheFirstScrape(t *testing.T) {
 // A healthy unit that fails LATER must still produce an event: the baseline
 // restriction applies only to the first scrape, not to transitions.
 func TestSystemdEmitsAnEventWhenAUnitFailsAfterAHealthyBaseline(t *testing.T) {
-	testee := collector.NewSystemd(time.Minute, fakeUnits(
+	testee := collector.NewSystemd(fakeUnits(
 		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
 	))
 	res, err := testee.Collect(context.Background())
@@ -108,7 +107,7 @@ func TestSystemdEmitsAnEventWhenAUnitFailsAfterAHealthyBaseline(t *testing.T) {
 // whatever state it landed in -- an installed-and-started service is news even
 // though a healthy unit present at startup is not.
 func TestSystemdEmitsAnEventForAUnitThatAppearsLater(t *testing.T) {
-	testee := collector.NewSystemd(time.Minute, fakeUnits(
+	testee := collector.NewSystemd(fakeUnits(
 		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
 	))
 	if _, err := testee.Collect(context.Background()); err != nil {
@@ -134,7 +133,7 @@ func TestSystemdEmitsAnEventForAUnitThatAppearsLater(t *testing.T) {
 
 func TestSystemdEmitsNothingWhileUnitsAreUnchanged(t *testing.T) {
 	lister := fakeUnits(collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"})
-	testee := collector.NewSystemd(time.Minute, lister)
+	testee := collector.NewSystemd(lister)
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
@@ -153,7 +152,7 @@ func TestSystemdEmitsNothingWhileUnitsAreUnchanged(t *testing.T) {
 // The transition IS the data: a service failing must produce an event the
 // moment it does, and exactly once.
 func TestSystemdEmitsAnEventWhenAUnitFails(t *testing.T) {
-	testee := collector.NewSystemd(time.Minute, fakeUnits(
+	testee := collector.NewSystemd(fakeUnits(
 		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
 	))
 	if _, err := testee.Collect(context.Background()); err != nil {
@@ -197,7 +196,7 @@ func TestSystemdEmitsAnEventWhenAUnitFails(t *testing.T) {
 // systemd. That is not a failure, and it must be distinguishable from a host
 // with zero services.
 func TestSystemdReportsUnavailableAsACapability(t *testing.T) {
-	testee := collector.NewSystemd(time.Minute, func(context.Context) ([]collector.Unit, error) {
+	testee := collector.NewSystemd(func(context.Context) ([]collector.Unit, error) {
 		return nil, errors.New("exec: systemctl: executable file not found in $PATH")
 	})
 
@@ -210,5 +209,50 @@ func TestSystemdReportsUnavailableAsACapability(t *testing.T) {
 	}
 	if got := testee.Capabilities()["systemd"]; got != "unavailable" {
 		t.Errorf("capability = %q, want unavailable", got)
+	}
+}
+
+// A scrape carrying a unit's transition can be lost -- the ring overflowing
+// during a hub outage, or the whole buffer being dumped after a 401. This
+// collector only speaks on change and the last event IS the state, so without
+// a re-arm the hub keeps serving "active" for a unit that failed, forever.
+func TestSystemdResendInventoryReArmsTheFailedBaseline(t *testing.T) {
+	// Given: a collector that has already reported a healthy host.
+	testee := collector.NewSystemd(fakeUnits(
+		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
+		collector.Unit{Name: "nginx.service", Active: "active", SubState: "running"},
+	))
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("baseline Collect: %v", err)
+	}
+
+	// And: nginx fails, in a scrape the agent never delivered.
+	testee.SetListerForTest(fakeUnits(
+		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
+		collector.Unit{Name: "nginx.service", Active: "failed", SubState: "failed"},
+	))
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("lost Collect: %v", err)
+	}
+
+	// When: the agent tells it that scrape was lost, and it scrapes again.
+	var resender collector.InventoryResender = testee
+	resender.ResendInventory()
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect after re-arm: %v", err)
+	}
+
+	// Then: the failure is reported again -- and only the failure, not every
+	// loaded unit.
+	if len(res.SystemdEvents) != 1 {
+		t.Fatalf("events after re-arm = %d, want 1 (the failed unit only)", len(res.SystemdEvents))
+	}
+	if got := res.SystemdEvents[0].GetUnitName(); got != "nginx.service" {
+		t.Errorf("unit = %q, want nginx.service", got)
+	}
+	if got := res.SystemdEvents[0].GetState(); got != "failed" {
+		t.Errorf("state = %q, want failed", got)
 	}
 }

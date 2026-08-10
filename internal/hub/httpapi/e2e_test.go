@@ -62,8 +62,8 @@ func TestIntegrationAgentToHubRoundTrip(t *testing.T) {
 		ProcRoot:     "../../../internal/agent/collector/testdata/proc1",
 	}
 	c := client.New(cfg, []collector.Collector{
-		collector.NewMemory(cfg.ProcRoot, agentconfig.ScrapeInterval),
-		collector.NewLoad(cfg.ProcRoot, agentconfig.ScrapeInterval),
+		collector.NewMemory(cfg.ProcRoot),
+		collector.NewLoad(cfg.ProcRoot),
 	})
 
 	c.ScrapeOnce(ctx)
@@ -155,7 +155,7 @@ func TestIntegrationEndToEndPerCoreCPUReachesTheDatabase(t *testing.T) {
 		BufferWindow: time.Hour,
 		ProcRoot:     "../../../internal/agent/collector/testdata/percpu/first",
 	}
-	percpu := collector.NewPerCoreCPU(cfg.ProcRoot, agentconfig.ScrapeInterval)
+	percpu := collector.NewPerCoreCPU(cfg.ProcRoot)
 	c := client.New(cfg, []collector.Collector{percpu})
 
 	// The first scrape is the baseline: a rate has nothing to average over

@@ -19,7 +19,13 @@ import (
 const userHZ = 100.0
 
 // pageSize is the unit /proc/PID/stat field 24 (rss) counts in.
-const pageSize = 4096
+//
+// Read from the kernel rather than hardcoded to 4096. arm64 is configurable at
+// build time and RHEL and CentOS ship 64K pages there by default, so a literal
+// under-reported every process's memory by up to sixteen times on hosts the
+// agent is meant to support. os.Getpagesize is the running kernel's answer and
+// costs one call.
+var pageSize = uint64(os.Getpagesize())
 
 // topN is how many processes are reported per dimension. The union of
 // top-N-by-CPU and top-N-by-memory, so a process that is heavy in either shows
@@ -56,7 +62,6 @@ type procStat struct {
 type Processes struct {
 	procRoot string
 	pidHost  bool
-	interval time.Duration
 
 	now func() time.Time
 
@@ -66,15 +71,12 @@ type Processes struct {
 
 // NewProcesses builds a Processes collector. pidHost reports whether the agent
 // was given the host's PID namespace.
-func NewProcesses(procRoot string, pidHost bool, interval time.Duration) *Processes {
-	return &Processes{procRoot: procRoot, pidHost: pidHost, interval: interval, now: time.Now}
+func NewProcesses(procRoot string, pidHost bool) *Processes {
+	return &Processes{procRoot: procRoot, pidHost: pidHost, now: time.Now}
 }
 
 // Name implements Collector.
 func (p *Processes) Name() string { return "processes" }
-
-// Interval implements Collector.
-func (p *Processes) Interval() time.Duration { return p.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree.
 func (p *Processes) SetProcRootForTest(root string) { p.procRoot = root }
@@ -82,10 +84,21 @@ func (p *Processes) SetProcRootForTest(root string) { p.procRoot = root }
 // SetClockForTest replaces the clock used to measure the scrape interval.
 func (p *Processes) SetClockForTest(fn func() time.Time) { p.now = fn }
 
+// processTableCapability is this collector's capability key.
+//
+// NOT "processes", which the Procs collector owns and the spec pins to it
+// (`procs ... reports processes=namespaced`). Both wrote that key, and
+// refreshCapabilities merges into one map in registration order, so whichever
+// collector ran later silently overwrote the other -- leaving the hub unable
+// to tell whether the process COUNT on the host row or the per-name process
+// TABLE was the thing unavailable, which is the entire purpose of a
+// capability. They are separate subsystems and now say so separately.
+const processTableCapability = "process_table"
+
 // Capabilities implements CapabilityReporter.
 func (p *Processes) Capabilities() map[string]string {
 	if !p.pidHost {
-		return map[string]string{"processes": "namespaced"}
+		return map[string]string{processTableCapability: "namespaced"}
 	}
 	return nil
 }
@@ -279,14 +292,16 @@ func (p *Processes) read() (map[procKey]procStat, error) {
 // by splitting the whole line -- a process named "(evil) (thing)" would
 // otherwise shift every subsequent field.
 func parseProcStat(line string) (procStat, uint64, bool) {
-	open := strings.IndexByte(line, '(')
-	close := strings.LastIndexByte(line, ')')
-	if open < 0 || close < 0 || close < open {
+	// Not named open/close: close shadows the builtin, which makes the next
+	// person reading this stop and check whether it was meant to.
+	lparen := strings.IndexByte(line, '(')
+	rparen := strings.LastIndexByte(line, ')')
+	if lparen < 0 || rparen < 0 || rparen < lparen {
 		return procStat{}, 0, false
 	}
 
-	name := line[open+1 : close]
-	fields := strings.Fields(line[close+1:])
+	name := line[lparen+1 : rparen]
+	fields := strings.Fields(line[rparen+1:])
 	// state(0) .. rss(21): 22 fields follow comm.
 	if len(fields) < 22 {
 		return procStat{}, 0, false

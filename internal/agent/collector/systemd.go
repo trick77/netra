@@ -86,16 +86,15 @@ func SystemUnits(ctx context.Context) ([]Unit, error) {
 // dashboards -- how many services exist and how many are failed -- ride
 // host_samples, where they are cheap.
 type Systemd struct {
-	interval time.Duration
-	lister   UnitLister
+	lister UnitLister
 
 	prev        map[string]Unit
 	unavailable bool
 }
 
 // NewSystemd builds a Systemd collector.
-func NewSystemd(interval time.Duration, lister UnitLister) *Systemd {
-	return &Systemd{interval: interval, lister: lister}
+func NewSystemd(lister UnitLister) *Systemd {
+	return &Systemd{lister: lister}
 }
 
 // SetListerForTest swaps the unit source, so a test can change what systemd
@@ -111,8 +110,15 @@ func (s *Systemd) EmitsBaseline() bool { return true }
 // Name implements Collector.
 func (s *Systemd) Name() string { return "systemd" }
 
-// Interval implements Collector.
-func (s *Systemd) Interval() time.Duration { return s.interval }
+// ResendInventory implements InventoryResender.
+//
+// Forgetting the last seen units re-arms the baseline path in Collect, which
+// re-reports the units that are FAILED -- the same bounded set an agent
+// restart emits, not every loaded unit. Without it, a scrape carrying
+// "nginx.service went failed" that the ring dropped left the hub serving
+// "active" permanently: this collector is event-based precisely so the last
+// event is the state, and from its point of view nothing changed afterwards.
+func (s *Systemd) ResendInventory() { s.prev = nil }
 
 // Capabilities implements CapabilityReporter.
 func (s *Systemd) Capabilities() map[string]string {

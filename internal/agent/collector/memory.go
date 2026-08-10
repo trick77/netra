@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
@@ -17,19 +16,15 @@ import (
 // size from the SPL kstat when ZFS is loaded.
 type Memory struct {
 	procRoot string
-	interval time.Duration
 }
 
 // NewMemory builds a Memory collector reading from procRoot.
-func NewMemory(procRoot string, interval time.Duration) *Memory {
-	return &Memory{procRoot: procRoot, interval: interval}
+func NewMemory(procRoot string) *Memory {
+	return &Memory{procRoot: procRoot}
 }
 
 // Name implements Collector.
 func (m *Memory) Name() string { return "memory" }
-
-// Interval implements Collector.
-func (m *Memory) Interval() time.Duration { return m.interval }
 
 // Collect implements Collector.
 func (m *Memory) Collect(_ context.Context) (*Result, error) {

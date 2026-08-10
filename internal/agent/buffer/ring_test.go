@@ -119,3 +119,64 @@ func TestRingPreservesPerFamilyRowsAcrossReplay(t *testing.T) {
 		t.Errorf("busy = %v, want 12.5", got)
 	}
 }
+
+// A ring that says it is holding nothing must actually be holding nothing.
+//
+// Depth() counts the live window; the backing array is what the garbage
+// collector sees. Add used to slide the window forward with entries[1:] and
+// AckThrough used to compact in place, and neither cleared the slots it left
+// behind -- so a host that buffered through an outage and then drained kept
+// every scrape, each one a host row plus every per-entity row measured with
+// it, for the life of the process.
+func TestDrainedRingRetainsNoScrapes(t *testing.T) {
+	// Given: a ring filled past capacity, so both the overflow path and the
+	// ack path have left slots behind.
+	r := buffer.New(3)
+	for seq := uint64(1); seq <= 6; seq++ {
+		r.Add(seq, sample(int64(seq)*100))
+	}
+	if r.Dropped() != 3 {
+		t.Fatalf("Dropped() = %d, want 3", r.Dropped())
+	}
+	if got := r.RetainedScrapesForTest(); got != 3 {
+		t.Fatalf("after overflow the backing array holds %d scrapes, want 3 -- "+
+			"a dropped scrape must not stay reachable", got)
+	}
+
+	// When: the hub acknowledges everything.
+	r.AckThrough(6)
+
+	// Then: nothing is held, by either measure.
+	if r.Depth() != 0 {
+		t.Fatalf("Depth() = %d, want 0", r.Depth())
+	}
+	if got := r.RetainedScrapesForTest(); got != 0 {
+		t.Errorf("backing array still holds %d scrapes after a full ack, want 0", got)
+	}
+}
+
+// A partial ack must release exactly what it acknowledged and keep the rest.
+// The compaction is in place, so an off-by-one here either strands an
+// acknowledged scrape or drops one the hub never confirmed.
+func TestPartialAckReleasesOnlyAckedScrapes(t *testing.T) {
+	// Given: four buffered scrapes.
+	r := buffer.New(4)
+	for seq := uint64(1); seq <= 4; seq++ {
+		r.Add(seq, sample(int64(seq)*100))
+	}
+
+	// When: the hub acknowledges the first two.
+	r.AckThrough(2)
+
+	// Then: two remain, and only two are reachable.
+	if r.Depth() != 2 {
+		t.Fatalf("Depth() = %d, want 2", r.Depth())
+	}
+	if got := r.RetainedScrapesForTest(); got != 2 {
+		t.Errorf("backing array holds %d scrapes, want 2", got)
+	}
+	pending := r.Pending()
+	if pending[0].Seq != 3 || pending[1].Seq != 4 {
+		t.Errorf("remaining seqs = %d,%d, want 3,4", pending[0].Seq, pending[1].Seq)
+	}
+}

@@ -3,7 +3,6 @@ package collector_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 )
@@ -17,7 +16,7 @@ import (
 // reported the aggregate line per core, would land on the same number twice.
 func TestPerCoreCPUReportsPerCoreBusyPercentages(t *testing.T) {
 	// Given: a collector that has taken one baseline reading.
-	testee := collector.NewPerCoreCPU("testdata/percpu/first", time.Minute)
+	testee := collector.NewPerCoreCPU("testdata/percpu/first")
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -63,7 +62,7 @@ func TestPerCoreCPUReportsPerCoreBusyPercentages(t *testing.T) {
 // would collide with the CPU collector during the merge, where two collectors
 // setting the same field makes the result depend on registration order.
 func TestPerCoreCPUContributesNoHostFields(t *testing.T) {
-	testee := collector.NewPerCoreCPU("testdata/percpu/first", time.Minute)
+	testee := collector.NewPerCoreCPU("testdata/percpu/first")
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
@@ -81,7 +80,7 @@ func TestPerCoreCPUContributesNoHostFields(t *testing.T) {
 // A core that vanishes between scrapes (offlined, or hotplugged out) must not
 // produce a row derived from a baseline that no longer describes anything.
 func TestPerCoreCPUSkipsCoresMissingFromTheCurrentRead(t *testing.T) {
-	testee := collector.NewPerCoreCPU("testdata/percpu/second", time.Minute)
+	testee := collector.NewPerCoreCPU("testdata/percpu/second")
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
@@ -106,7 +105,7 @@ func TestPerCoreCPUSkipsCoresMissingFromTheCurrentRead(t *testing.T) {
 // no interval to compute a percentage over. It is skipped this scrape and
 // reported on the next one.
 func TestPerCoreCPUSkipsNewlyAppearedCores(t *testing.T) {
-	testee := collector.NewPerCoreCPU("testdata/percpu/onecore", time.Minute)
+	testee := collector.NewPerCoreCPU("testdata/percpu/onecore")
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("baseline: %v", err)
 	}
@@ -129,7 +128,7 @@ func TestPerCoreCPUSkipsNewlyAppearedCores(t *testing.T) {
 // An unreadable /proc/stat is an error, not an empty result: the caller must
 // be able to tell "no cores on this host" from "could not read the file".
 func TestPerCoreCPUReportsAnUnreadableProcStat(t *testing.T) {
-	testee := collector.NewPerCoreCPU(t.TempDir(), time.Minute)
+	testee := collector.NewPerCoreCPU(t.TempDir())
 
 	res, err := testee.Collect(context.Background())
 	if err == nil {
@@ -137,5 +136,47 @@ func TestPerCoreCPUReportsAnUnreadableProcStat(t *testing.T) {
 	}
 	if res != nil {
 		t.Errorf("Collect returned %+v alongside an error; want nil", res)
+	}
+}
+
+// One odd cpuN line must not cost every other core its reading.
+//
+// The fixture's cpu1 has three values where a core line has at least seven.
+// Failing the whole read on it is the coupling that splitting CPU and
+// PerCoreCPU into separate collectors exists to avoid -- just moved one level
+// down, from between the collectors to between the cores.
+//
+// cpu2 is the other half: seven values rather than the usual eight, because
+// steal arrived in 2.6.11 and some emulated /proc trees still omit it. A
+// missing TRAILING counter is genuinely zero, not a malformed line, and must
+// be read rather than rejected.
+func TestPerCoreCPUSkipsAnOddLineAndKeepsTheOtherCores(t *testing.T) {
+	// Given: two scrapes of a /proc/stat with one truncated core line and one
+	// core reporting no steal column.
+	testee := collector.NewPerCoreCPU("testdata/percpu/shortline-first")
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+
+	// When: the second scrape gives it an interval to rate over.
+	testee.SetProcRootForTest("testdata/percpu/shortline-second")
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v -- one unparseable core line must not fail the read", err)
+	}
+
+	// Then: the readable cores are reported and the odd one is simply absent.
+	busy := map[uint32]bool{}
+	for _, r := range res.Cores {
+		busy[r.GetCore()] = true
+	}
+	if !busy[0] {
+		t.Error("core 0 missing; a truncated line on another core must not cost it its reading")
+	}
+	if !busy[2] {
+		t.Error("core 2 missing; a line without the steal column is readable, not malformed")
+	}
+	if busy[1] {
+		t.Error("core 1 reported; its line is too short to read")
 	}
 }

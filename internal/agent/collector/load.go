@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
@@ -19,19 +18,15 @@ import (
 // an agent that is crash-looping on a machine that never rebooted.
 type Load struct {
 	procRoot string
-	interval time.Duration
 }
 
 // NewLoad builds a Load collector reading from procRoot.
-func NewLoad(procRoot string, interval time.Duration) *Load {
-	return &Load{procRoot: procRoot, interval: interval}
+func NewLoad(procRoot string) *Load {
+	return &Load{procRoot: procRoot}
 }
 
 // Name implements Collector.
 func (l *Load) Name() string { return "load" }
-
-// Interval implements Collector.
-func (l *Load) Interval() time.Duration { return l.interval }
 
 // Collect implements Collector.
 func (l *Load) Collect(_ context.Context) (*Result, error) {

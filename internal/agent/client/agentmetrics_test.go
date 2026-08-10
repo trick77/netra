@@ -104,7 +104,7 @@ func TestPostFailuresTotalAccumulatesAndSurvivesRecovery(t *testing.T) {
 		ProcRoot:     "../collector/testdata/proc1",
 	}
 	c := client.NewWithInterval(cfg,
-		[]collector.Collector{collector.NewMemory(cfg.ProcRoot, config.ScrapeInterval)},
+		[]collector.Collector{collector.NewMemory(cfg.ProcRoot)},
 		time.Millisecond)
 	ctx := context.Background()
 

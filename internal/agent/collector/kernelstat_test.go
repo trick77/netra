@@ -22,7 +22,7 @@ func fixedClock(start time.Time, step time.Duration) func() time.Time {
 
 func newKernelStat(t *testing.T, root string, clock func() time.Time) *collector.KernelStat {
 	t.Helper()
-	k := collector.NewKernelStat(root, time.Minute)
+	k := collector.NewKernelStat(root)
 	if clock != nil {
 		k.SetClockForTest(clock)
 	}
@@ -227,19 +227,16 @@ func TestKernelStatCounterAppearingLateProducesNoRate(t *testing.T) {
 	}
 }
 
-func TestKernelStatNameAndInterval(t *testing.T) {
-	k := collector.NewKernelStat("testdata/proc1", 90*time.Second)
+func TestKernelStatName(t *testing.T) {
+	k := collector.NewKernelStat("testdata/proc1")
 
 	if got := k.Name(); got != "kernelstat" {
 		t.Errorf("Name() = %q, want %q", got, "kernelstat")
 	}
-	if got := k.Interval(); got != 90*time.Second {
-		t.Errorf("Interval() = %v, want 90s", got)
-	}
 }
 
 func TestKernelStatMissingProcRootIsAnError(t *testing.T) {
-	k := collector.NewKernelStat(t.TempDir(), time.Minute)
+	k := collector.NewKernelStat(t.TempDir())
 
 	var sample netrav1.HostSample
 	if err := collectInto(k, &sample); err == nil {

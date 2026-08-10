@@ -30,7 +30,6 @@ import (
 // and only those are mirrored here.
 type Netstat struct {
 	procRoot string
-	interval time.Duration
 
 	now func() time.Time
 
@@ -41,15 +40,12 @@ type Netstat struct {
 }
 
 // NewNetstat builds a Netstat collector reading from procRoot.
-func NewNetstat(procRoot string, interval time.Duration) *Netstat {
-	return &Netstat{procRoot: procRoot, interval: interval, now: time.Now}
+func NewNetstat(procRoot string) *Netstat {
+	return &Netstat{procRoot: procRoot, now: time.Now}
 }
 
 // Name implements Collector.
 func (n *Netstat) Name() string { return "netstat" }
-
-// Interval implements Collector.
-func (n *Netstat) Interval() time.Duration { return n.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree.
 func (n *Netstat) SetProcRootForTest(root string) { n.procRoot = root }

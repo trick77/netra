@@ -23,7 +23,6 @@ import (
 type Packages struct {
 	dpkgPath string
 	apkPath  string
-	interval time.Duration
 
 	now func() time.Time
 
@@ -47,8 +46,8 @@ const dailyFloor = 24 * time.Hour
 // NewPackages builds a Packages collector. dpkgPath and apkPath are the
 // database files (normally /var/lib/dpkg/status and /lib/apk/db/installed);
 // whichever exists decides the format.
-func NewPackages(dpkgPath, apkPath string, interval time.Duration) *Packages {
-	return &Packages{dpkgPath: dpkgPath, apkPath: apkPath, interval: interval, now: time.Now}
+func NewPackages(dpkgPath, apkPath string) *Packages {
+	return &Packages{dpkgPath: dpkgPath, apkPath: apkPath, now: time.Now}
 }
 
 // EmitsBaseline implements BaselineEmitter, keeping this collector out of the
@@ -67,9 +66,6 @@ func (p *Packages) EmitsBaseline() bool { return true }
 // Name implements Collector.
 func (p *Packages) Name() string { return "packages" }
 
-// Interval implements Collector.
-func (p *Packages) Interval() time.Duration { return p.interval }
-
 // SetClockForTest replaces the clock used for the daily floor.
 func (p *Packages) SetClockForTest(fn func() time.Time) { p.now = fn }
 
@@ -83,6 +79,20 @@ func (p *Packages) Capabilities() map[string]string {
 		return map[string]string{"packages": "unsupported-format"}
 	}
 	return nil
+}
+
+// ResendInventory implements InventoryResender.
+//
+// Only the re-read gate is cleared, not prev. Clearing the gate makes the next
+// Collect parse and emit the full inventory again; keeping prev means the diff
+// still compares against what was really installed last time, so a re-arm
+// produces the inventory without a burst of phantom install events.
+//
+// Without this, an inventory the ring dropped waited out the daily floor --
+// up to 24 hours during which the hub served whatever it had before, because
+// it stores packages by replacement and returns early on an empty set.
+func (p *Packages) ResendInventory() {
+	p.lastParse, p.lastMtime = time.Time{}, time.Time{}
 }
 
 // Collect implements Collector.

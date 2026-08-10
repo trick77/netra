@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
@@ -27,7 +26,7 @@ func TestUsersCountsOnlyUserProcess(t *testing.T) {
 		{"glibc arm64", "testdata/utmp/glibc-arm64.utmp", 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			u := collector.NewUsers(tc.file, time.Minute)
+			u := collector.NewUsers(tc.file)
 
 			var sample netrav1.HostSample
 			if err := collectInto(u, &sample); err != nil {
@@ -55,7 +54,7 @@ func TestUsersParsesWithThePinnedRecordSize(t *testing.T) {
 		{"testdata/utmp/glibc-amd64.utmp", 384},
 		{"testdata/utmp/glibc-arm64.utmp", 400},
 	} {
-		u := collector.NewUsers(tc.file, time.Minute)
+		u := collector.NewUsers(tc.file)
 		u.SetRecordSizesForTest(tc.recordSize)
 
 		var sample netrav1.HostSample
@@ -73,7 +72,7 @@ func TestUsersParsesWithThePinnedRecordSize(t *testing.T) {
 // may be reading an arm64 host's utmp layout, or a glibc build a musl file.
 // Forcing the wrong size must fail loudly rather than return a number.
 func TestUsersWrongRecordSizeIsRejectedNotMiscounted(t *testing.T) {
-	u := collector.NewUsers("testdata/utmp/glibc-arm64.utmp", time.Minute)
+	u := collector.NewUsers("testdata/utmp/glibc-arm64.utmp")
 	u.SetRecordSizesForTest(384) // the file is 400-byte records
 
 	var sample netrav1.HostSample
@@ -94,7 +93,7 @@ func TestUsersWrongRecordSizeIsRejectedNotMiscounted(t *testing.T) {
 // without the bind mount sees no file. Neither is an error, and neither may
 // report zero sessions as though it had looked.
 func TestUsersMissingFileLeavesFieldUnsetAndReportsCapability(t *testing.T) {
-	u := collector.NewUsers(t.TempDir()+"/absent-utmp", time.Minute)
+	u := collector.NewUsers(t.TempDir() + "/absent-utmp")
 
 	var sample netrav1.HostSample
 	if err := collectInto(u, &sample); err != nil {
@@ -117,7 +116,7 @@ func TestUsersEmptyFileCountsZero(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	u := collector.NewUsers(path, time.Minute)
+	u := collector.NewUsers(path)
 
 	var sample netrav1.HostSample
 	if err := collectInto(u, &sample); err != nil {
@@ -149,7 +148,7 @@ func TestUsersTruncatedTrailingRecordIsRefused(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	u := collector.NewUsers(path, time.Minute)
+	u := collector.NewUsers(path)
 	u.SetRecordSizesForTest(384)
 
 	var sample netrav1.HostSample
@@ -188,7 +187,7 @@ func TestUsersAmbiguousFileLengthPicksTheValidLayout(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	u := collector.NewUsers(path, time.Minute)
+	u := collector.NewUsers(path)
 
 	var sample netrav1.HostSample
 	if err := collectInto(u, &sample); err != nil {
@@ -218,7 +217,7 @@ func TestUsersImplausibleRecordsReportUnsupportedFormat(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	u := collector.NewUsers(path, time.Minute)
+	u := collector.NewUsers(path)
 
 	var sample netrav1.HostSample
 	if err := collectInto(u, &sample); err != nil {
@@ -293,17 +292,14 @@ func cstring(b []byte) string {
 	return string(b)
 }
 
-func TestUsersNameAndInterval(t *testing.T) {
-	u := collector.NewUsers("testdata/utmp/glibc-amd64.utmp", 90*time.Second)
+func TestUsersName(t *testing.T) {
+	u := collector.NewUsers("testdata/utmp/glibc-amd64.utmp")
 
 	if got := u.Name(); got != "users" {
 		t.Errorf("Name() = %q, want %q", got, "users")
 	}
-	if got := u.Interval(); got != 90*time.Second {
-		t.Errorf("Interval() = %v, want 90s", got)
-	}
 }
 
 func TestUsersImplementsCapabilityReporter(t *testing.T) {
-	var _ collector.CapabilityReporter = collector.NewUsers("x", time.Minute)
+	var _ collector.CapabilityReporter = collector.NewUsers("x")
 }

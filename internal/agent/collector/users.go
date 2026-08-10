@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"sync"
-	"time"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
@@ -87,8 +86,7 @@ var utmpRecordSizes = []int{384, 400}
 // the bind mount sees no file. Both report a capability and leave the field
 // unset.
 type Users struct {
-	path     string
-	interval time.Duration
+	path string
 
 	// recordSizes are the sizeof(struct utmp) candidates to try, in order. A
 	// field rather than the package variable directly so a test can pin a
@@ -100,15 +98,12 @@ type Users struct {
 }
 
 // NewUsers builds a Users collector reading the utmp file at path.
-func NewUsers(path string, interval time.Duration) *Users {
-	return &Users{path: path, interval: interval, recordSizes: utmpRecordSizes}
+func NewUsers(path string) *Users {
+	return &Users{path: path, recordSizes: utmpRecordSizes}
 }
 
 // Name implements Collector.
 func (u *Users) Name() string { return "users" }
-
-// Interval implements Collector.
-func (u *Users) Interval() time.Duration { return u.interval }
 
 // SetPathForTest repoints the collector at a fixture file.
 func (u *Users) SetPathForTest(path string) { u.path = path }

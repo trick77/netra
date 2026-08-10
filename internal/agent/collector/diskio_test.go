@@ -47,7 +47,7 @@ func diskRow(t *testing.T, rows []*netrav1.DiskIoSample, device string) *netrav1
 // the test is not looking for rather than passing by coincidence.
 func TestDiskIOComputesRatesPerDevice(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewDiskIO("testdata/diskstats/first", time.Minute)
+	testee := collector.NewDiskIO("testdata/diskstats/first")
 
 	// The first scrape is the baseline: a rate needs a previous reading.
 	res := diskioAt(t, testee, base)
@@ -88,7 +88,7 @@ func TestDiskIOComputesRatesPerDevice(t *testing.T) {
 // and would add a series per mounted snap or image.
 func TestDiskIOReportsWholeDevicesOnly(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewDiskIO("testdata/diskstats/first", time.Minute)
+	testee := collector.NewDiskIO("testdata/diskstats/first")
 	diskioAt(t, testee, base)
 
 	testee.SetProcRootForTest("testdata/diskstats/second")
@@ -104,6 +104,14 @@ func TestDiskIOReportsWholeDevicesOnly(t *testing.T) {
 			t.Error("loop0 reported; loop devices are not physical storage")
 		case "mmcblk0p1":
 			t.Error("mmcblk0p1 reported; a partition's I/O is already counted in mmcblk0")
+		case "nbd0p1":
+			t.Error("nbd0p1 reported; a partition's I/O is already counted in nbd0")
+		// Stacked virtual devices. Every byte they move also crosses a member
+		// device that IS reported, so counting them doubles the host.
+		case "md0":
+			t.Error("md0 reported; an array's I/O is already counted in its members")
+		case "zd0":
+			t.Error("zd0 reported; a zvol's I/O is already counted in the pool's vdevs")
 		}
 	}
 	// mmcblk0 is a WHOLE device whose name ends in a digit, like nvme0n1.
@@ -112,8 +120,14 @@ func TestDiskIOReportsWholeDevicesOnly(t *testing.T) {
 	if !seen["mmcblk0"] {
 		t.Error("mmcblk0 not reported; it is a whole device, not a partition")
 	}
-	if len(res.Disks) != 3 {
-		t.Errorf("devices = %d, want 3 (sda, nvme0n1 and mmcblk0)", len(res.Disks))
+	// nbd0 ends in a digit too, and unlike md0 and zd0 it is real remote
+	// storage stacked on nothing -- so it double-counts no one and must be
+	// reported.
+	if !seen["nbd0"] {
+		t.Error("nbd0 not reported; a network block device is real storage, not a stacked layer")
+	}
+	if len(res.Disks) != 4 {
+		t.Errorf("devices = %d, want 4 (sda, nvme0n1, mmcblk0 and nbd0)", len(res.Disks))
 	}
 }
 
@@ -122,7 +136,7 @@ func TestDiskIOReportsWholeDevicesOnly(t *testing.T) {
 // report the disk as idle during the busiest moment it had.
 func TestDiskIOEmitsNoRowAfterACounterReset(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewDiskIO("testdata/diskstats/second", time.Minute)
+	testee := collector.NewDiskIO("testdata/diskstats/second")
 	diskioAt(t, testee, base)
 
 	testee.SetProcRootForTest("testdata/diskstats/reset")
@@ -137,7 +151,7 @@ func TestDiskIOEmitsNoRowAfterACounterReset(t *testing.T) {
 // rather than poisoning the collector permanently.
 func TestDiskIORecoversAfterAReset(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewDiskIO("testdata/diskstats/second", time.Minute)
+	testee := collector.NewDiskIO("testdata/diskstats/second")
 	diskioAt(t, testee, base)
 
 	testee.SetProcRootForTest("testdata/diskstats/reset")
@@ -156,7 +170,7 @@ func TestDiskIORecoversAfterAReset(t *testing.T) {
 // in the same clock tick, which a millisecond-interval test does routinely.
 func TestDiskIOEmitsNoRowWhenNoTimePassed(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewDiskIO("testdata/diskstats/first", time.Minute)
+	testee := collector.NewDiskIO("testdata/diskstats/first")
 	diskioAt(t, testee, base)
 
 	testee.SetProcRootForTest("testdata/diskstats/second")
@@ -172,7 +186,7 @@ func TestDiskIOEmitsNoRowWhenNoTimePassed(t *testing.T) {
 // rather than as the absence of one.
 func TestDiskIOLeavesAwaitUnsetWithNoOperations(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewDiskIO("testdata/diskstats/first", time.Minute)
+	testee := collector.NewDiskIO("testdata/diskstats/first")
 	diskioAt(t, testee, base)
 
 	// nvme0n1 advances reads by 10 and writes by 5 in the second fixture, so
@@ -190,7 +204,7 @@ func TestDiskIOLeavesAwaitUnsetWithNoOperations(t *testing.T) {
 // An unreadable /proc/diskstats is an error, not an empty result: the caller
 // must be able to tell "no block devices" from "could not read the file".
 func TestDiskIOReportsAnUnreadableDiskstats(t *testing.T) {
-	testee := collector.NewDiskIO(t.TempDir(), time.Minute)
+	testee := collector.NewDiskIO(t.TempDir())
 
 	res, err := testee.Collect(context.Background())
 	if err == nil {

@@ -10,7 +10,7 @@ import (
 
 func newNetstat(t *testing.T, root string, clock func() time.Time) *collector.Netstat {
 	t.Helper()
-	n := collector.NewNetstat(root, time.Minute)
+	n := collector.NewNetstat(root)
 	if clock != nil {
 		n.SetClockForTest(clock)
 	}
@@ -250,21 +250,18 @@ func TestNetstatSignedCounterDoesNotAbortTheLine(t *testing.T) {
 	}
 }
 
-func TestNetstatNameAndInterval(t *testing.T) {
-	n := collector.NewNetstat("testdata/proc1", 90*time.Second)
+func TestNetstatName(t *testing.T) {
+	n := collector.NewNetstat("testdata/proc1")
 
 	if got := n.Name(); got != "netstat" {
 		t.Errorf("Name() = %q, want %q", got, "netstat")
-	}
-	if got := n.Interval(); got != 90*time.Second {
-		t.Errorf("Interval() = %v, want 90s", got)
 	}
 }
 
 // Every one of these files can legitimately be missing. None of them is worth
 // failing a scrape over.
 func TestNetstatAllFilesAbsentIsNotAnError(t *testing.T) {
-	n := collector.NewNetstat(t.TempDir(), time.Minute)
+	n := collector.NewNetstat(t.TempDir())
 
 	var sample netrav1.HostSample
 	if err := collectInto(n, &sample); err != nil {

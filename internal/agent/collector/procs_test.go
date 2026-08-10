@@ -2,7 +2,6 @@ package collector_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
@@ -11,7 +10,7 @@ import (
 // The fixture holds five numeric PID directories plus "self" and "net", which
 // are directories in /proc that are not processes.
 func TestProcsCountsNumericDirentsOnly(t *testing.T) {
-	p := collector.NewProcs("testdata/procpids", true, time.Minute)
+	p := collector.NewProcs("testdata/procpids", true)
 
 	var sample netrav1.HostSample
 	if err := collectInto(p, &sample); err != nil {
@@ -30,7 +29,7 @@ func TestProcsCountsNumericDirentsOnly(t *testing.T) {
 // the host's process count would look entirely plausible on a dashboard,
 // which is exactly what makes it worth refusing.
 func TestProcsUnsetWhenProcOneCommMatchesSelf(t *testing.T) {
-	p := collector.NewProcs("testdata/procpids-namespaced", false, time.Minute)
+	p := collector.NewProcs("testdata/procpids-namespaced", false)
 
 	var sample netrav1.HostSample
 	if err := collectInto(p, &sample); err != nil {
@@ -52,7 +51,7 @@ func TestProcsUnsetWhenTooFewProcessesToBeAHost(t *testing.T) {
 	writeFile(t, dir+"/1/comm", "sh\n")
 	writeFile(t, dir+"/7/comm", "netra-agent\n")
 
-	p := collector.NewProcs(dir, false, time.Minute)
+	p := collector.NewProcs(dir, false)
 
 	var sample netrav1.HostSample
 	if err := collectInto(p, &sample); err != nil {
@@ -74,7 +73,7 @@ func TestProcsTrustsPidHostConfigOverHeuristics(t *testing.T) {
 	writeFile(t, dir+"/self/comm", "netra-agent\n")
 
 	// Both the comm check and the low-count check would say "namespaced".
-	p := collector.NewProcs(dir, true, time.Minute)
+	p := collector.NewProcs(dir, true)
 
 	var sample netrav1.HostSample
 	if err := collectInto(p, &sample); err != nil {
@@ -95,7 +94,7 @@ func TestProcsTrustsPidHostConfigOverHeuristics(t *testing.T) {
 // and "namespaced" would send the operator off to add pid: host, which fixes
 // none of them.
 func TestProcsUnreadableProcRootIsUnsetNotZero(t *testing.T) {
-	p := collector.NewProcs("testdata/does-not-exist", false, time.Minute)
+	p := collector.NewProcs("testdata/does-not-exist", false)
 
 	var sample netrav1.HostSample
 	if err := collectInto(p, &sample); err != nil {
@@ -113,8 +112,8 @@ func TestProcsUnreadableProcRootIsUnsetNotZero(t *testing.T) {
 // The two unset reasons must stay distinguishable end to end: the same
 // collector reports namespaced only when it could actually read the tree.
 func TestProcsUnreadableAndNamespacedReportDifferentCauses(t *testing.T) {
-	unreadable := collector.NewProcs("testdata/does-not-exist", false, time.Minute)
-	namespaced := collector.NewProcs("testdata/procpids-namespaced", false, time.Minute)
+	unreadable := collector.NewProcs("testdata/does-not-exist", false)
+	namespaced := collector.NewProcs("testdata/procpids-namespaced", false)
 
 	var sample netrav1.HostSample
 	if err := collectInto(unreadable, &sample); err != nil {
@@ -134,7 +133,7 @@ func TestProcsUnreadableAndNamespacedReportDifferentCauses(t *testing.T) {
 // Capabilities is read by the client on every scrape while the collector may
 // still be writing to it. Handing out the live map would race.
 func TestProcsCapabilitiesReturnsACopy(t *testing.T) {
-	p := collector.NewProcs("testdata/procpids", true, time.Minute)
+	p := collector.NewProcs("testdata/procpids", true)
 
 	var sample netrav1.HostSample
 	if err := collectInto(p, &sample); err != nil {
@@ -149,19 +148,16 @@ func TestProcsCapabilitiesReturnsACopy(t *testing.T) {
 	}
 }
 
-func TestProcsNameAndInterval(t *testing.T) {
-	p := collector.NewProcs("testdata/procpids", false, 90*time.Second)
+func TestProcsName(t *testing.T) {
+	p := collector.NewProcs("testdata/procpids", false)
 
 	if got := p.Name(); got != "procs" {
 		t.Errorf("Name() = %q, want %q", got, "procs")
-	}
-	if got := p.Interval(); got != 90*time.Second {
-		t.Errorf("Interval() = %v, want 90s", got)
 	}
 }
 
 // The interface is optional, so the wiring that looks for it has to actually
 // find it on this type.
 func TestProcsImplementsCapabilityReporter(t *testing.T) {
-	var _ collector.CapabilityReporter = collector.NewProcs("testdata/procpids", false, time.Minute)
+	var _ collector.CapabilityReporter = collector.NewProcs("testdata/procpids", false)
 }

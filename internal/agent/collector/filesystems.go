@@ -58,21 +58,17 @@ type StatfsFunc func(mountpoint string) (FsStat, error)
 // have, and a container host has many.
 type Filesystems struct {
 	procRoot string
-	interval time.Duration
 	statfs   StatfsFunc
 }
 
 // NewFilesystems builds a Filesystems collector. procRoot supplies the mount
 // table (/proc/mounts).
-func NewFilesystems(procRoot string, interval time.Duration, statfs StatfsFunc) *Filesystems {
-	return &Filesystems{procRoot: procRoot, interval: interval, statfs: statfs}
+func NewFilesystems(procRoot string, statfs StatfsFunc) *Filesystems {
+	return &Filesystems{procRoot: procRoot, statfs: statfs}
 }
 
 // Name implements Collector.
 func (f *Filesystems) Name() string { return "filesystems" }
-
-// Interval implements Collector.
-func (f *Filesystems) Interval() time.Duration { return f.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree.
 func (f *Filesystems) SetProcRootForTest(root string) { f.procRoot = root }
@@ -99,9 +95,10 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 	ts := time.Now().UnixMilli()
 	rows := make([]*netrav1.FilesystemSample, 0, len(mounts))
 
-	// seen maps st_dev to the mountpoint already reported for it, so a bind
-	// mount is skipped rather than counted a second time.
-	seen := make(map[uint64]string, len(mounts))
+	// seen holds the st_dev of every filesystem already reported, so a bind
+	// mount is skipped rather than counted a second time. A set rather than a
+	// map to the winning mountpoint: nothing ever read that mountpoint back.
+	seen := make(map[uint64]struct{}, len(mounts))
 
 	for _, m := range mounts {
 		st, err := f.statfs(m.mountpoint)
@@ -119,9 +116,9 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 		if _, dup := seen[st.DeviceID]; dup {
 			continue
 		}
-		seen[st.DeviceID] = m.mountpoint
+		seen[st.DeviceID] = struct{}{}
 
-		rows = append(rows, &netrav1.FilesystemSample{
+		row := &netrav1.FilesystemSample{
 			TsMs:       ts,
 			Label:      m.mountpoint,
 			Mountpoint: m.mountpoint,
@@ -132,12 +129,22 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 			Used:        ptrTo(st.Used),
 			Free:        ptrTo(st.Free),
 			InodesTotal: ptrTo(st.InodesTotal),
-			InodesUsed:  ptrTo(st.InodesTotal - st.InodesFree),
 			// read_bytes and write_bytes are deliberately left unset. Per
 			// filesystem I/O needs the st_dev -> block device mapping, which
 			// is not available here; NULL says "could not attribute I/O to
 			// this filesystem", which is a different fact from "did no I/O".
-		})
+		}
+
+		// Guarded, like every other subtraction in this package. A filesystem
+		// reporting a dynamic or synthetic inode count can return f_ffree above
+		// f_files, and the unsigned wrap would store a number near 2^64 as
+		// though it had been measured. Unset says "could not compute", which is
+		// the honest answer.
+		if st.InodesTotal >= st.InodesFree {
+			row.InodesUsed = ptrTo(st.InodesTotal - st.InodesFree)
+		}
+
+		rows = append(rows, row)
 	}
 
 	// Deterministic order so failures read the same way twice.
@@ -148,10 +155,12 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 	return &Result{Filesystems: rows}, nil
 }
 
+// mountEntry is the one field of a /proc/mounts line this collector uses after
+// parsing. The device and the filesystem type decide whether a line is kept,
+// which readMounts settles as it reads; carrying them further only invited the
+// question of what they were for.
 type mountEntry struct {
-	device     string
 	mountpoint string
-	fsType     string
 }
 
 // readMounts parses /proc/mounts, dropping pseudo-filesystems.
@@ -175,11 +184,7 @@ func (f *Filesystems) readMounts() ([]mountEntry, error) {
 			continue
 		}
 		// Mountpoints are octal-escaped in /proc/mounts: a space is \040.
-		out = append(out, mountEntry{
-			device:     fields[0],
-			mountpoint: unescapeMount(fields[1]),
-			fsType:     fields[2],
-		})
+		out = append(out, mountEntry{mountpoint: unescapeMount(fields[1])})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)

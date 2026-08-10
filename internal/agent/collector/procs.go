@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
@@ -37,7 +36,6 @@ const minPlausibleProcs = 5
 // plausible-looking wrong number.
 type Procs struct {
 	procRoot string
-	interval time.Duration
 
 	// pidHost is the operator's own statement, from NETRA_PID_HOST. The setup
 	// script knows whether it rendered pid: host, so on a script-installed
@@ -50,15 +48,12 @@ type Procs struct {
 
 // NewProcs builds a Procs collector reading from procRoot. pidHost carries
 // what the operator configured, and is trusted over the heuristics.
-func NewProcs(procRoot string, pidHost bool, interval time.Duration) *Procs {
-	return &Procs{procRoot: procRoot, pidHost: pidHost, interval: interval}
+func NewProcs(procRoot string, pidHost bool) *Procs {
+	return &Procs{procRoot: procRoot, pidHost: pidHost}
 }
 
 // Name implements Collector.
 func (p *Procs) Name() string { return "procs" }
-
-// Interval implements Collector.
-func (p *Procs) Interval() time.Duration { return p.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree.
 func (p *Procs) SetProcRootForTest(root string) { p.procRoot = root }

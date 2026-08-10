@@ -35,19 +35,31 @@ type dockerContainer struct {
 // stats: the /containers/{id}/stats endpoint streams, costs the daemon real
 // work per container, and reports the same numbers cgroup v2 already has --
 // which is why the socket stays an enrichment rather than a dependency.
+// dockerClient is built ONCE and reused for the life of the process.
+//
+// It used to be constructed inside SystemDockerContainers, which leaked a file
+// descriptor per scrape. The response body is fully decoded, so the unix-socket
+// connection goes back into that call's own idle pool -- and a hand-built
+// http.Transport has IdleConnTimeout zero, meaning never reaped. Nothing closed
+// the transport either, so every scrape stranded one connection to
+// /var/run/docker.sock for the life of the agent: 1440 a day, on exactly the
+// hosts the container collector exists for.
+//
+// One shared client keeps a single connection alive and reuses it, which is
+// also what the daemon would prefer.
+var dockerClient = &http.Client{
+	Timeout: 5 * time.Second,
+	Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", dockerSocket)
+		},
+	},
+}
+
 func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 	if _, err := os.Stat(dockerSocket); err != nil {
 		return nil, fmt.Errorf("docker socket unavailable: %w", err)
-	}
-
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, "unix", dockerSocket)
-			},
-		},
 	}
 
 	// The host part is ignored for a unix socket but must be present and
@@ -58,7 +70,7 @@ func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 		return nil, fmt.Errorf("build docker request: %w", err)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := dockerClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("query docker: %w", err)
 	}

@@ -8,19 +8,69 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
-// cpuTimes holds the fields of the aggregate "cpu" line in /proc/stat.
+// cpuTimes holds the fields of a "cpu" or "cpuN" line in /proc/stat.
+//
+// guest and guest_nice are read past but not kept. The kernel already counts
+// guest time inside user and nice guest inside nice, so they are not separate
+// time -- and nothing here reports them on their own. Storing them invited a
+// future reader to add them to total() and double-count.
 type cpuTimes struct {
 	user, nice, system, idle, iowait, irq, softirq, steal uint64
-	guest, guestNice                                      uint64
 }
 
-// total excludes guest and guestNice: the kernel already counts guest time
-// inside user, and nice guest inside nice, so adding them double-counts.
+// cpuTimeFields is how many values a cpu line carries that this package reads:
+// user through steal. Newer kernels append guest and guest_nice, and may append
+// more; reading by index from the front keeps every layout working.
+const cpuTimeFields = 8
+
+// minCPUTimeFields is how many must actually be present.
+//
+// Seven, not eight. steal arrived in 2.6.11 and some emulated /proc trees still
+// omit it, and a missing trailing counter is genuinely zero rather than a
+// malformed line -- the kernel does not skip columns in the middle. Requiring
+// all eight would reject a line the collector can read perfectly well.
+const minCPUTimeFields = 7
+
+// parseCPUTimes reads the counters from an already-split cpu line, given the
+// fields AFTER the "cpu"/"cpuN" label.
+//
+// Shared by CPU and PerCoreCPU, which parse the same columns out of the same
+// file. They deliberately read it separately -- an unparseable cpuN line must
+// not cost the host its aggregate utilisation, which is why they are two
+// collectors -- but the column layout is one fact and was written out twice.
+func parseCPUTimes(values []string) (cpuTimes, error) {
+	if len(values) < minCPUTimeFields {
+		return cpuTimes{}, fmt.Errorf("want at least %d fields, got %d", minCPUTimeFields, len(values))
+	}
+	if len(values) > cpuTimeFields {
+		// guest and guest_nice, and whatever a later kernel appends. Read past
+		// deliberately: the kernel already counts guest inside user and nice
+		// guest inside nice, so they are not separate time.
+		values = values[:cpuTimeFields]
+	}
+
+	var n [cpuTimeFields]uint64
+	for i, raw := range values {
+		v, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return cpuTimes{}, err
+		}
+		n[i] = v
+	}
+
+	return cpuTimes{
+		user: n[0], nice: n[1], system: n[2], idle: n[3],
+		iowait: n[4], irq: n[5], softirq: n[6], steal: n[7],
+	}, nil
+}
+
+// total is every counted jiffy. It excludes guest and guest_nice for the
+// reason cpuTimes gives: the kernel has already counted them inside user and
+// nice, so adding them double-counts.
 func (c cpuTimes) total() uint64 {
 	return c.user + c.nice + c.system + c.idle +
 		c.iowait + c.irq + c.softirq + c.steal
@@ -36,20 +86,16 @@ func (c cpuTimes) busy() uint64 {
 // scrape after start produces nothing.
 type CPU struct {
 	procRoot string
-	interval time.Duration
 	prev     *cpuTimes
 }
 
 // NewCPU builds a CPU collector reading from procRoot (normally "/proc").
-func NewCPU(procRoot string, interval time.Duration) *CPU {
-	return &CPU{procRoot: procRoot, interval: interval}
+func NewCPU(procRoot string) *CPU {
+	return &CPU{procRoot: procRoot}
 }
 
 // Name implements Collector.
 func (c *CPU) Name() string { return "cpu" }
-
-// Interval implements Collector.
-func (c *CPU) Interval() time.Duration { return c.interval }
 
 // SetProcRootForTest repoints the collector at a different fixture tree so a
 // test can simulate the passage of time between two scrapes.
@@ -70,10 +116,16 @@ func (c *CPU) Collect(_ context.Context) (*Result, error) {
 		return &Result{}, nil
 	}
 
+	// Ordered so the comparison happens BEFORE the subtraction. It was the
+	// other way round, which was correct only because the wrapped value was
+	// then discarded -- a reader had to prove that to themselves to be sure.
+	if cur.total() < prev.total() {
+		// Counters went backwards: a reboot between the two scrapes.
+		return &Result{}, nil
+	}
 	totalDelta := cur.total() - prev.total()
-	if cur.total() < prev.total() || totalDelta == 0 {
-		// Counters went backwards (reboot) or did not move. Either way there
-		// is no meaningful percentage to report.
+	if totalDelta == 0 {
+		// The counters did not move, so there is no interval to average over.
 		return &Result{}, nil
 	}
 
@@ -111,27 +163,15 @@ func (c *CPU) read() (cpuTimes, error) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) < 8 || fields[0] != "cpu" {
+		if len(fields) == 0 || fields[0] != "cpu" {
 			continue
 		}
 
-		values := make([]uint64, 0, 10)
-		for _, raw := range fields[1:] {
-			v, err := strconv.ParseUint(raw, 10, 64)
-			if err != nil {
-				return cpuTimes{}, fmt.Errorf("parse %s: %w", path, err)
-			}
-			values = append(values, v)
+		times, err := parseCPUTimes(fields[1:])
+		if err != nil {
+			return cpuTimes{}, fmt.Errorf("parse %s: %w", path, err)
 		}
-		for len(values) < 10 {
-			values = append(values, 0)
-		}
-
-		return cpuTimes{
-			user: values[0], nice: values[1], system: values[2], idle: values[3],
-			iowait: values[4], irq: values[5], softirq: values[6], steal: values[7],
-			guest: values[8], guestNice: values[9],
-		}, nil
+		return times, nil
 	}
 	if err := scanner.Err(); err != nil {
 		return cpuTimes{}, fmt.Errorf("read %s: %w", path, err)

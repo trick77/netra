@@ -3,7 +3,6 @@ package collector_test
 import (
 	"math"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
@@ -12,7 +11,7 @@ import (
 // The first scrape has no previous snapshot to diff against, so it must
 // report nothing rather than a fabricated value.
 func TestCPUFirstCollectYieldsNoValue(t *testing.T) {
-	c := collector.NewCPU("testdata/proc1", time.Minute)
+	c := collector.NewCPU("testdata/proc1")
 
 	var sample netrav1.HostSample
 	if err := collectInto(c, &sample); err != nil {
@@ -24,7 +23,7 @@ func TestCPUFirstCollectYieldsNoValue(t *testing.T) {
 }
 
 func TestCPUSecondCollectComputesDelta(t *testing.T) {
-	c := collector.NewCPU("testdata/proc1", time.Minute)
+	c := collector.NewCPU("testdata/proc1")
 
 	var first netrav1.HostSample
 	if err := collectInto(c, &first); err != nil {
@@ -58,7 +57,7 @@ func TestCPUSecondCollectComputesDelta(t *testing.T) {
 // Counters reset to zero on reboot. A naive delta would produce a negative
 // or an enormous spike; the collector must emit nothing instead.
 func TestCPUCounterResetProducesNoValue(t *testing.T) {
-	c := collector.NewCPU("testdata/proc2", time.Minute)
+	c := collector.NewCPU("testdata/proc2")
 
 	var first netrav1.HostSample
 	if err := collectInto(c, &first); err != nil {
@@ -76,12 +75,39 @@ func TestCPUCounterResetProducesNoValue(t *testing.T) {
 	}
 }
 
-func TestCPUNameAndInterval(t *testing.T) {
-	c := collector.NewCPU("testdata/proc1", 30*time.Second)
+func TestCPUName(t *testing.T) {
+	c := collector.NewCPU("testdata/proc1")
 	if c.Name() != "cpu" {
 		t.Fatalf("Name() = %q, want %q", c.Name(), "cpu")
 	}
-	if c.Interval() != 30*time.Second {
-		t.Fatalf("Interval() = %v, want 30s", c.Interval())
+}
+
+// steal arrived in 2.6.11 and some emulated /proc trees still omit it. A
+// missing TRAILING counter is genuinely zero, not a malformed line -- the
+// kernel does not skip columns in the middle -- so the line must be read
+// rather than rejected, leaving the host with no CPU utilisation at all.
+func TestCPUReadsALineWithoutTheStealColumn(t *testing.T) {
+	// Given: a /proc/stat whose cpu line stops at softirq.
+	c := collector.NewCPU("testdata/percpu/shortline-first")
+
+	var first netrav1.HostSample
+	if err := collectInto(c, &first); err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+
+	// When: a second scrape gives it an interval.
+	c.SetProcRootForTest("testdata/percpu/shortline-second")
+	var second netrav1.HostSample
+	if err := collectInto(c, &second); err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+
+	// Then: utilisation is reported, with steal read as the zero it is.
+	if second.CpuTotal == nil {
+		t.Fatal("CpuTotal is unset; a cpu line without steal is readable, not malformed")
+	}
+	if second.CpuSteal == nil || second.GetCpuSteal() != 0 {
+		t.Errorf("CpuSteal = %v, want 0 -- an absent trailing counter has not moved",
+			second.CpuSteal)
 	}
 }

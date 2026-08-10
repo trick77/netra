@@ -31,8 +31,7 @@ const milliDegrees = 1000.0
 // reports a different physical sensor from one minute to the next, so the
 // resulting series is not a measurement of anything.
 type Sensors struct {
-	sysRoot  string
-	interval time.Duration
+	sysRoot string
 
 	// readTimeout bounds a single sysfs read. A wedged driver blocks read(2)
 	// indefinitely, and without a deadline that stalls the whole scrape loop --
@@ -73,22 +72,23 @@ type wedgedPath struct {
 	retryAt uint64
 }
 
-// maxWedgedBackoff caps the doubling at 1024 scrapes -- about seventeen hours
-// at the 60s cadence. A path is never abandoned entirely, so a sensor that
-// comes back after a firmware reset or a rebind is picked up again without an
-// agent restart.
-const maxWedgedBackoff = 1024
+// wedgedBackoffShifts caps the doubling at 2^10 = 1024 scrapes -- about
+// seventeen hours at the 60s cadence. A path is never abandoned entirely, so a
+// sensor that comes back after a firmware reset or a rebind is picked up again
+// without an agent restart.
+//
+// Expressed as the shift rather than as the ceiling, because the shift is what
+// the arithmetic actually uses. A separate ceiling constant had to be clamped
+// against afterwards, and that clamp could never fire.
+const wedgedBackoffShifts = 10
 
 // NewSensors builds a Sensors collector reading from sysRoot (normally "/sys").
-func NewSensors(sysRoot string, interval, readTimeout time.Duration) *Sensors {
-	return &Sensors{sysRoot: sysRoot, interval: interval, readTimeout: readTimeout}
+func NewSensors(sysRoot string, readTimeout time.Duration) *Sensors {
+	return &Sensors{sysRoot: sysRoot, readTimeout: readTimeout}
 }
 
 // Name implements Collector.
 func (s *Sensors) Name() string { return "sensors" }
-
-// Interval implements Collector.
-func (s *Sensors) Interval() time.Duration { return s.interval }
 
 // Capabilities implements CapabilityReporter.
 //
@@ -252,10 +252,7 @@ func (s *Sensors) markWedged(path string) {
 	}
 	w.failures++
 
-	backoff := uint64(1) << min(w.failures-1, 10)
-	if backoff > maxWedgedBackoff {
-		backoff = maxWedgedBackoff
-	}
+	backoff := uint64(1) << min(w.failures-1, wedgedBackoffShifts)
 	w.retryAt = s.scrapes + backoff
 
 	slog.Warn("hwmon read timed out; backing off this path",

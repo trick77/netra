@@ -6,7 +6,6 @@ import (
 	"net"
 	"slices"
 	"strings"
-	"time"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
@@ -65,23 +64,41 @@ func SystemIfaces() ([]Iface, error) {
 // and Network must name an interface identically or an address and its traffic
 // cannot be related.
 type Addresses struct {
-	interval time.Duration
-	lister   IfaceLister
+	lister IfaceLister
 
 	// prev is the last reported set, so an unchanged host reports nothing.
 	prev []string
 }
 
 // NewAddresses builds an Addresses collector.
-func NewAddresses(interval time.Duration, lister IfaceLister) *Addresses {
-	return &Addresses{interval: interval, lister: lister}
+func NewAddresses(lister IfaceLister) *Addresses {
+	return &Addresses{lister: lister}
 }
 
 // Name implements Collector.
 func (a *Addresses) Name() string { return "addresses" }
 
-// Interval implements Collector.
-func (a *Addresses) Interval() time.Duration { return a.interval }
+// EmitsBaseline implements BaselineEmitter, keeping this collector out of the
+// agent's startup priming.
+//
+// For the same reason Packages is kept out, and it was the more common failure
+// of the two. Its first Collect IS the address set; priming consumed it into a
+// discarded result and left prev populated, so the first real scrape reported
+// nothing. Every later scrape reported nothing too, because from this
+// collector's point of view nothing had changed -- and the hub cannot fill the
+// gap either, since UpsertHostAddresses returns early on an empty set. A
+// freshly enrolled host with a static address therefore had no addresses at
+// the hub at all, indefinitely.
+func (a *Addresses) EmitsBaseline() bool { return true }
+
+// ResendInventory implements InventoryResender.
+//
+// Forgetting the last reported set is the whole re-arm: the comparison below
+// then finds nothing to compare against and emits the current addresses in
+// full. Without it, a scrape carrying an address change that the ring dropped
+// left the hub serving the previous set forever -- this collector only speaks
+// when something changes, and from its point of view nothing had.
+func (a *Addresses) ResendInventory() { a.prev = nil }
 
 // Collect implements Collector.
 func (a *Addresses) Collect(_ context.Context) (*Result, error) {

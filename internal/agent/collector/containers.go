@@ -50,7 +50,6 @@ type containerCounters struct {
 // whenever an image is bumped.
 type Containers struct {
 	cgroupRoot string
-	interval   time.Duration
 	lister     ContainerLister
 
 	now func() time.Time
@@ -64,15 +63,12 @@ type Containers struct {
 // NewContainers builds a Containers collector. cgroupRoot is the mounted
 // cgroup v2 hierarchy; lister may be nil when the Docker socket is not
 // available.
-func NewContainers(cgroupRoot string, interval time.Duration, lister ContainerLister) *Containers {
-	return &Containers{cgroupRoot: cgroupRoot, interval: interval, lister: lister, now: time.Now}
+func NewContainers(cgroupRoot string, lister ContainerLister) *Containers {
+	return &Containers{cgroupRoot: cgroupRoot, lister: lister, now: time.Now}
 }
 
 // Name implements Collector.
 func (c *Containers) Name() string { return "containers" }
-
-// Interval implements Collector.
-func (c *Containers) Interval() time.Duration { return c.interval }
 
 // SetCgroupRootForTest repoints the collector at a different fixture tree.
 func (c *Containers) SetCgroupRootForTest(root string) { c.cgroupRoot = root }

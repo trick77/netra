@@ -3,14 +3,13 @@ package collector_test
 import (
 	"math"
 	"testing"
-	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
 func TestLoadReadsLoadavgAndUptime(t *testing.T) {
-	c := collector.NewLoad("testdata/proc1", time.Minute)
+	c := collector.NewLoad("testdata/proc1")
 
 	var s netrav1.HostSample
 	if err := collectInto(c, &s); err != nil {
@@ -33,7 +32,7 @@ func TestLoadReadsLoadavgAndUptime(t *testing.T) {
 }
 
 func TestLoadMissingFileIsAnError(t *testing.T) {
-	c := collector.NewLoad("testdata/does-not-exist", time.Minute)
+	c := collector.NewLoad("testdata/does-not-exist")
 
 	var s netrav1.HostSample
 	if err := collectInto(c, &s); err == nil {
