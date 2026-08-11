@@ -1,0 +1,346 @@
+import { useEffect, useState } from "react";
+import {
+  ApiError,
+  getContainers,
+  getHosts,
+  getSites,
+  type Container,
+  type Host,
+  type Site,
+} from "../../lib/api";
+import { ABSENT, bitrate, relative } from "../../lib/format";
+import { Input } from "../../ui/Control";
+import { Segmented } from "../../ui/Segmented";
+import { StatTile } from "../../ui/StatTile";
+import { Tabs } from "../../ui/Tabs";
+import { AttentionBand, type Condition } from "./AttentionBand";
+import { AllHostsOverlay, fromHostRows } from "./AllHostsOverlay";
+import { FleetContainers, type ContainerRow } from "./FleetContainers";
+import { HostCards } from "./HostCards";
+import { HostTable } from "./HostTable";
+import { hostStatus, type HostRow, type Range } from "./hostColumns";
+
+/** What you are looking at (spec 4.5's first axis). */
+export type Entity = "hosts" | "containers";
+/** How densely (spec 4.5's second axis). Independent of the entity. */
+export type Density = "table" | "cards";
+
+/** Spec 4.5: density is remembered per browser and defaulted in Settings.
+ * Exported so Settings (Task 19) writes the same key rather than a second
+ * one that silently disagrees with this page. */
+export const DENSITY_KEY = "netra.fleet.density";
+
+/**
+ * Joins the fleet list to its site names and produces the rows both the
+ * table and the card grid render from.
+ *
+ * `GET /api/v1/hosts` carries `site_id` and no name; the per-host detail
+ * call that does carry one would be an N+1 across the whole fleet, so the
+ * site list is fetched once and joined here by id.
+ *
+ * Every chart series comes back EMPTY. The trend columns need per-host
+ * metrics (three families each), and no polling hook exists yet -- Wave 5
+ * owns that. An empty series renders as a gap in the sparkline and as the
+ * absent marker beside it, which is the truth: not fetched is not zero. The
+ * moment a metrics fetch lands, it fills these fields and nothing else on
+ * this page changes.
+ */
+export function buildHostRows(hosts: Host[], sites: Site[]): HostRow[] {
+  const siteNames = new Map(sites.map((site) => [site.id, site.name]));
+  return hosts.map((host) => ({
+    ...host,
+    site_name:
+      host.site_id === null ? null : (siteNames.get(host.site_id) ?? null),
+    cpu: [],
+    mem: [],
+    rx: [],
+    tx: [],
+    // The fullest filesystem needs family=filesystem per host, which is not
+    // fetched here (see above). null is the row type's own way of saying so,
+    // and the disk cell renders the absent marker for it; the alternative,
+    // pct: 0, would draw an empty disk nobody measured.
+    fullest: null,
+  }));
+}
+
+function readStoredDensity(): Density | null {
+  try {
+    const stored = window.localStorage.getItem(DENSITY_KEY);
+    return stored === "cards" || stored === "table" ? stored : null;
+  } catch {
+    // Storage can be unavailable (private mode, blocked cookies). A
+    // remembered preference is a nicety; losing it must not blank the page.
+    return null;
+  }
+}
+
+const RANGES: { value: Range; label: string }[] = [
+  { value: "1h", label: "1h" },
+  { value: "6h", label: "6h" },
+  { value: "24h", label: "24h" },
+];
+
+const DENSITIES: { value: Density; label: string }[] = [
+  { value: "table", label: "Table" },
+  { value: "cards", label: "Cards" },
+];
+
+export interface FleetPageProps {
+  /** Injected rows. When omitted the page fetches its own. */
+  rows?: readonly HostRow[];
+  /** Injected containers. When omitted the page fetches its own. */
+  containers?: readonly ContainerRow[];
+  /**
+   * Conditions for the attention band. Nothing computes these yet -- the
+   * alerting engine is a separate Stage 2 workstream -- so the default is
+   * "nothing is wrong", which renders the quiet all-clear line rather than
+   * a permanent green banner (spec 4.3).
+   */
+  conditions?: Condition[];
+  entity?: Entity;
+  density?: Density;
+  /**
+   * When the fleet was last read, for the all-clear line. Spec 4.3: the
+   * quiet line exists to confirm the check RAN, so a page handed its data
+   * from outside (Wave 5's poller, or a test) must be able to say when.
+   */
+  checkedAt?: string | null;
+  /** Injectable so tests are deterministic instead of racing the clock. */
+  now?: Date;
+}
+
+export function FleetPage({
+  rows,
+  containers,
+  conditions = [],
+  entity: initialEntity = "hosts",
+  density: initialDensity,
+  checkedAt: injectedCheckedAt,
+  now = new Date(),
+}: FleetPageProps) {
+  const [entity, setEntity] = useState<Entity>(initialEntity);
+  const [density, setDensity] = useState<Density>(
+    () => initialDensity ?? readStoredDensity() ?? "table",
+  );
+  const [range, setRange] = useState<Range>("24h");
+  const [filter, setFilter] = useState("");
+
+  const [fetchedRows, setFetchedRows] = useState<HostRow[] | null>(null);
+  const [fetchedContainers, setFetchedContainers] = useState<
+    ContainerRow[] | null
+  >(null);
+  const [error, setError] = useState<string | null>(null);
+  const [containerError, setContainerError] = useState<string | null>(null);
+  const [fetchedCheckedAt, setFetchedCheckedAt] = useState<string | null>(null);
+
+  const injected = rows !== undefined;
+
+  useEffect(() => {
+    if (injected) return;
+    let live = true;
+    void (async () => {
+      let hosts: Host[];
+      try {
+        const [fetchedHosts, sites] = await Promise.all([
+          getHosts(),
+          getSites(),
+        ]);
+        hosts = fetchedHosts;
+        if (!live) return;
+        setFetchedRows(buildHostRows(hosts, sites));
+        setFetchedCheckedAt(new Date().toISOString());
+      } catch (err) {
+        if (!live) return;
+        setError(describe(err));
+        return;
+      }
+      // There is no fleet-wide container endpoint, only the per-host one, so
+      // the fleet list is a fan-out -- and it is caught separately: a failing
+      // container call must not claim the host list that already rendered
+      // could not be loaded. Containers simply stay unknown.
+      try {
+        const perHost = await Promise.all(
+          hosts.map(async (host) => {
+            const list = await getContainers(host.id);
+            return list.map((container: Container) => ({
+              ...container,
+              host_id: host.id,
+              hostname: host.hostname,
+            }));
+          }),
+        );
+        if (!live) return;
+        setFetchedContainers(perHost.flat());
+      } catch (err) {
+        if (!live) return;
+        setContainerError(describe(err));
+      }
+    })();
+    return () => {
+      // Wave 5's usePoll will own refresh; this only stops a late response
+      // from writing into an unmounted page.
+      live = false;
+    };
+  }, [injected]);
+
+  const checkedAt = injectedCheckedAt ?? fetchedCheckedAt;
+  const hostRows = rows ?? fetchedRows ?? [];
+  const containerRows = containers ?? fetchedContainers ?? [];
+  // Distinguishes "this fleet runs no containers" from "not fetched yet":
+  // the tile may only say 0 for the first.
+  const containersKnown =
+    containers !== undefined || fetchedContainers !== null;
+
+  const needle = filter.trim().toLowerCase();
+  const visibleHosts = hostRows.filter(
+    (row) =>
+      needle === "" ||
+      row.hostname.toLowerCase().includes(needle) ||
+      (row.site_name ?? "").toLowerCase().includes(needle),
+  );
+  const visibleContainers = containerRows.filter(
+    (row) =>
+      needle === "" ||
+      (row.name ?? "").toLowerCase().includes(needle) ||
+      (row.image ?? "").toLowerCase().includes(needle) ||
+      row.hostname.toLowerCase().includes(needle),
+  );
+
+  const reporting = hostRows.filter(
+    (row) => hostStatus(row, now).severity === "ok",
+  ).length;
+
+  return (
+    <>
+      {error !== null ? (
+        <p className="note" role="alert">
+          The fleet could not be loaded: {error}
+        </p>
+      ) : null}
+      {containerError !== null ? (
+        <p className="note" role="alert">
+          The hosts loaded, but their containers did not: {containerError}
+        </p>
+      ) : null}
+
+      {conditions.length > 0 ? (
+        <AttentionBand conditions={conditions} />
+      ) : (
+        // Not a green "all clear" card: a permanently present banner is one
+        // people stop reading. One quiet line that still confirms the check
+        // ran (spec 4.3).
+        <p className="allclear">
+          All {reporting} host{reporting === 1 ? "" : "s"} reporting · nothing
+          needs attention
+          {checkedAt === null ? "" : ` · checked ${relative(checkedAt, now)}`}
+        </p>
+      )}
+
+      <div className="tiles">
+        <StatTile
+          label="Hosts reporting"
+          value={reporting}
+          detail={`of ${hostRows.length} known`}
+        />
+        <StatTile
+          label="Containers"
+          value={containersKnown ? containerRows.length : ABSENT}
+          detail="across the fleet"
+        />
+        <StatTile
+          label="Fleet traffic"
+          value={fleetTraffic(hostRows)}
+          detail="inbound + outbound, latest sample"
+        />
+      </div>
+
+      <Tabs
+        items={[
+          { id: "hosts", label: "Hosts", href: "#/" },
+          { id: "containers", label: "Containers", href: "#/?view=containers" },
+        ]}
+        active={entity}
+        // Hand-rolled routing arrives in Wave 5; until then the tab is local
+        // state and the href is what makes it bookmarkable once it does.
+        onChange={(id) => setEntity(id as Entity)}
+      />
+
+      <div className="toolbar">
+        <Input
+          type="search"
+          value={filter}
+          placeholder={
+            entity === "hosts" ? "Filter hosts" : "Filter containers"
+          }
+          aria-label={entity === "hosts" ? "Filter hosts" : "Filter containers"}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+        <div className="spacer" />
+        <Segmented options={RANGES} value={range} onChange={setRange} />
+        {/* Density is a hosts-only axis: a card grid of 247 containers is
+            not useful (spec 4.5). */}
+        {entity === "hosts" ? (
+          <Segmented
+            options={DENSITIES}
+            value={density}
+            onChange={(next) => {
+              setDensity(next);
+              try {
+                window.localStorage.setItem(DENSITY_KEY, next);
+              } catch {
+                // See readStoredDensity: an unavailable store costs the
+                // preference, never the page.
+              }
+            }}
+          />
+        ) : null}
+      </div>
+
+      {entity === "hosts" ? (
+        density === "table" ? (
+          <HostTable rows={visibleHosts} range={range} />
+        ) : (
+          <HostCards rows={visibleHosts} range={range} />
+        )
+      ) : (
+        <FleetContainers rows={visibleContainers} showHost />
+      )}
+
+      {/* The overlay compares hosts, so it belongs to the host view: under a
+          container list it would answer a question nobody asked. */}
+      {entity === "hosts" ? (
+        <AllHostsOverlay hosts={fromHostRows(visibleHosts)} />
+      ) : null}
+    </>
+  );
+}
+
+// An ApiError's status is the difference between "the hub said no" and "the
+// browser could not reach it", and the reader needs to know which.
+function describe(err: unknown): string {
+  return err instanceof ApiError
+    ? `${err.message} (HTTP ${err.status})`
+    : String(err);
+}
+
+// Sums the latest inbound and outbound rate across the fleet. A fleet whose
+// hosts have reported no rate at all has an UNKNOWN throughput, not a
+// throughput of nothing, so this returns the absent marker rather than
+// "0 b/s" -- which would read as a fleet with the network down.
+function fleetTraffic(rows: readonly HostRow[]): string {
+  let total = 0;
+  let any = false;
+  for (const row of rows) {
+    for (const series of [row.rx, row.tx]) {
+      // `== null` covers both an empty series and a trailing gap: a host
+      // that stopped reporting contributes nothing to the fleet total
+      // rather than its last known rate, which would keep counting traffic
+      // for a host that is down.
+      const last = series.at(-1);
+      if (last == null) continue;
+      any = true;
+      total += last;
+    }
+  }
+  return any ? bitrate(total) : ABSENT;
+}

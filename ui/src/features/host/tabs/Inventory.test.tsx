@@ -1,0 +1,233 @@
+import { describe, expect, it } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import type {
+  Address,
+  Container,
+  Filesystem,
+  Pkg,
+  Unit,
+} from "../../../lib/api";
+import {
+  Containers,
+  Filesystems,
+  Inventory,
+  Network,
+  Packages,
+  Units,
+  changedSince,
+} from "./Inventory";
+
+const containers: Container[] = [
+  {
+    id: 41,
+    container_key: "netra/hub",
+    name: "netra-hub-1",
+    image: "netra:0.4",
+    is_agent: false,
+  },
+  {
+    id: 42,
+    container_key: "shop/web",
+    name: "shop-web-1",
+    image: "nginx:1.27",
+    is_agent: false,
+  },
+];
+
+const filesystems: Filesystem[] = [
+  { id: 1, label: "/", mountpoint: "/", device_id: 3 },
+  { id: 2, label: "data", mountpoint: "/srv/data", device_id: 4 },
+];
+
+const addresses: Address[] = [
+  {
+    iface: "eth0",
+    if_index: 2,
+    address: "192.0.2.10/24",
+    family: 4,
+    scope: "global",
+    vrf: null,
+    description: null,
+    first_seen: "2026-07-01T00:00:00Z",
+    last_seen: "2026-08-10T00:00:00Z",
+  },
+];
+
+function pkg(over: Partial<Pkg> = {}): Pkg {
+  return {
+    name: "openssl",
+    version: "3.0.13",
+    arch: "amd64",
+    format: "deb",
+    size_bytes: 2_000_000,
+    first_seen: "2026-01-01T00:00:00Z",
+    last_seen: "2026-08-10T00:00:00Z",
+    ...over,
+  };
+}
+
+const units: Unit[] = [
+  {
+    id: 1,
+    unit_name: "ssh.service",
+    state: "active",
+    substate: "running",
+    since: "2026-08-01T00:00:00Z",
+  },
+  {
+    id: 2,
+    unit_name: "cron.service",
+    state: "failed",
+    substate: "dead",
+    since: "2026-08-09T00:00:00Z",
+  },
+];
+
+describe("Inventory", () => {
+  it("is one component parameterised by columns", () => {
+    render(
+      <Inventory
+        label="Things"
+        columns={[
+          { key: "n", header: "Name", cell: (r: { n: string }) => r.n },
+        ]}
+        rows={[{ n: "alpha" }, { n: "beta" }]}
+        rowKey={(r) => r.n}
+        searchText={(r) => r.n}
+      />,
+    );
+    expect(
+      screen.getByRole("columnheader", { name: "Name" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("row")).toHaveLength(3);
+  });
+
+  it("filters on the search box", async () => {
+    render(
+      <Inventory
+        label="Things"
+        columns={[
+          { key: "n", header: "Name", cell: (r: { n: string }) => r.n },
+        ]}
+        rows={[{ n: "alpha" }, { n: "beta" }]}
+        rowKey={(r) => r.n}
+        searchText={(r) => r.n}
+      />,
+    );
+    await userEvent.type(screen.getByRole("searchbox"), "alp");
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(screen.queryByText("beta")).toBeNull();
+  });
+
+  it("offers an empty state rather than an empty table", () => {
+    render(
+      <Inventory
+        label="Things"
+        columns={[
+          { key: "n", header: "Name", cell: (r: { n: string }) => r.n },
+        ]}
+        rows={[]}
+        rowKey={(r) => r.n}
+        searchText={(r) => r.n}
+      />,
+    );
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: /nothing/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("Containers", () => {
+  it("identifies a container by compose project and service, never by its id", () => {
+    render(<Containers rows={containers} />);
+    const row = screen.getByRole("row", { name: /shop/ });
+    expect(within(row).getByText("shop")).toBeInTheDocument();
+    expect(within(row).getByText("web")).toBeInTheDocument();
+    // The Docker id changes on every `compose up -d`; showing it invites
+    // people to key on it, which orphans all history.
+    expect(row.textContent).not.toContain("42");
+  });
+
+  it("carries no first_seen/last_seen columns, because the schema has none", () => {
+    render(<Containers rows={containers} />);
+    expect(
+      screen.queryByRole("columnheader", { name: /first seen/i }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("columnheader", { name: /last seen/i }),
+    ).toBeNull();
+  });
+});
+
+describe("Filesystems", () => {
+  it("lists label and mountpoint without inventing timestamps", () => {
+    render(<Filesystems rows={filesystems} />);
+    expect(screen.getByText("/srv/data")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: /last seen/i }),
+    ).toBeNull();
+  });
+});
+
+describe("Network", () => {
+  it("shows first and last seen, which the schema does have", () => {
+    render(<Network rows={addresses} />);
+    expect(
+      screen.getByRole("columnheader", { name: /first seen/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("columnheader", { name: /last seen/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("192.0.2.10/24")).toBeInTheDocument();
+  });
+});
+
+describe("Packages", () => {
+  const now = new Date("2026-08-10T00:00:00Z");
+  const rows = [
+    pkg({ name: "openssl", first_seen: "2026-08-05T00:00:00Z" }),
+    pkg({
+      name: "vim",
+      first_seen: "2026-01-01T00:00:00Z",
+      last_seen: "2026-08-10T00:00:00Z",
+    }),
+  ];
+
+  it("filters to what changed in the last 30 days", async () => {
+    render(<Packages rows={rows} now={now} />);
+    expect(screen.getByText("vim")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: /30 days/i }));
+    expect(screen.getByText("openssl")).toBeInTheDocument();
+    expect(screen.queryByText("vim")).toBeNull();
+  });
+
+  it("counts a package as changed when it first appeared inside the window", () => {
+    expect(
+      changedSince(pkg({ first_seen: "2026-08-05T00:00:00Z" }), now, 30),
+    ).toBe(true);
+    expect(
+      changedSince(pkg({ first_seen: "2026-01-01T00:00:00Z" }), now, 30),
+    ).toBe(false);
+  });
+});
+
+describe("Units", () => {
+  it("shows since, the only timestamp the schema carries for a unit", () => {
+    render(<Units rows={units} />);
+    expect(
+      screen.getByRole("columnheader", { name: /since/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: /first seen/i }),
+    ).toBeNull();
+  });
+
+  it("gives a failed unit a dot and the word", () => {
+    render(<Units rows={units} />);
+    const row = screen.getByRole("row", { name: /cron/ });
+    expect(within(row).getByText("failed")).toBeInTheDocument();
+  });
+});

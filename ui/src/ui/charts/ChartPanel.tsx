@@ -70,6 +70,11 @@ export function ChartPanel({
   // 43" -- absent is absent, never the last number we happen to have.
   const latest = series[0]?.values.at(-1) ?? null;
   const nowText = fmt ? fmt(latest) : (latest?.toString() ?? ABSENT);
+  // A formatter that already carries its own unit -- percent(), bytes(),
+  // bitrate() all do -- must not have `unit` printed after it: percent()
+  // with unit="%" rendered "12 % %". `unit` stays for a raw number, which
+  // has no unit of its own.
+  const showUnit = unit !== undefined && fmt === undefined;
   // With more than one series the headline is series[0]'s alone, so it says
   // whose it is. A Network panel printing rx's number under a bare unit
   // reads as the panel's total.
@@ -83,7 +88,7 @@ export function ChartPanel({
           {nowLabel ? `${nowLabel} ` : ""}
           {nowText}
         </span>
-        {unit && <span className="u">{unit}</span>}
+        {showUnit && <span className="u">{unit}</span>}
       </div>
       <div className="chartwrap">
         <Overlay

@@ -98,7 +98,13 @@ export type HostRow = Host & {
 const SCRAPE_INTERVAL_S = 60;
 const STALE_THRESHOLD_S = 3 * SCRAPE_INTERVAL_S;
 
-function hostStatus(
+// Exported, because the fleet page's "N hosts reporting" tile asks the same
+// question this column answers and had reimplemented it. Two definitions of
+// "reporting" is exactly the disagreement this file exists to prevent: the
+// tile would say 19 of 19 while a row beside it showed a host offline, with
+// nothing to tell a user which was right.
+
+export function hostStatus(
   host: Host,
   now: Date = new Date(),
 ): { severity: "ok" | "critical"; label: string } {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   column,
   hasGaps,
+  optionalValues,
   seriesCells,
   seriesTimestamps,
   seriesValues,
@@ -314,5 +315,31 @@ describe("metrics", () => {
         null,
       ]);
     });
+  });
+});
+
+describe("optionalValues", () => {
+  // A page rendering N panels across families cannot know which columns the
+  // answering tier carries. seriesValues throws for an absent one, and there
+  // is no error boundary in this app, so one missing column took the whole
+  // render down: a blank page instead of one panel reading "not collected".
+  it("returns an empty series for a column this tier does not carry", () => {
+    expect(() => seriesValues(raw as never, 0, "iowait")).toThrow();
+    expect(optionalValues(raw as never, 0, "iowait")).toEqual([]);
+  });
+
+  // [] and [null, null] are different facts: the first says the tier does
+  // not carry the column, the second says the host reported nothing. They
+  // draw differently -- a not-collected panel versus a hole in a line.
+  it("still reports the host's own gaps as nulls when the column is present", () => {
+    expect(optionalValues(raw as never, 0, "busy")).toEqual([4.1, null, 5.0]);
+  });
+
+  it("treats a null response as no data rather than throwing", () => {
+    expect(optionalValues(null, 0, "busy")).toEqual([]);
+  });
+
+  it("returns an empty series for a series index that does not exist", () => {
+    expect(optionalValues(raw as never, 9, "busy")).toEqual([]);
   });
 });

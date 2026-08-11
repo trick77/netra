@@ -103,4 +103,20 @@ describe("ChartPanel", () => {
     // specifically rather than on the panel as a whole.
     expect(document.querySelector(".now")?.textContent).toContain("rx");
   });
+
+  // percent(), bytes() and bitrate() all carry their own unit, so printing
+  // the panel's unit after one of them rendered "12 % %".
+  it("does not print the unit twice when the formatter carries one", () => {
+    render(
+      <ChartPanel
+        title="CPU"
+        unit="%"
+        fmt={(v) => (v === null ? "none" : `${v} %`)}
+        series={[{ name: "busy", color: "var(--s1)", values: [12] }]}
+      />,
+    );
+
+    expect(document.querySelector(".now")?.textContent).toBe("12 %");
+    expect(document.querySelector(".u")).toBeNull();
+  });
 });

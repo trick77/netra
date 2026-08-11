@@ -501,6 +501,70 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+/* Identifier face — container keys, images, paths. --font-mono because these
+   are strings a reader compares character by character, not prose; .tnum is
+   tabular figures and would be the wrong tool. */
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* A shell command the reader is meant to copy. .ai-cmd above is the inline
+   peer of this, scoped to the drawer; both take their face and ground from
+   the same tokens, and this one is the block form: a command that wraps is
+   a command that gets mis-pasted. */
+.cmd {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  color: var(--ink);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* One labelled control in Settings, as a fieldset so the label and its
+   options are a group to a screen reader rather than a heading followed by
+   loose radio buttons. */
+.setting {
+  border: 0;
+  padding: 0;
+  margin: 0 0 var(--space-5);
+}
+.setting legend {
+  font-size: var(--text-label);
+  font-weight: 500;
+  color: var(--ink);
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+
+/* The SPA login card. Narrow on purpose: one field and one button, centred,
+   with nothing else on the page to look at. */
+.login {
+  max-width: 380px;
+  margin: 12vh auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Secondary line under a title or a control -- the "what this means" text. */
+.sub {
+  font-size: var(--text-label);
+  color: var(--muted);
+}
+
+/* A failure the user must read, so it carries the status ink rather than the
+   mark colour (see --st-crit-text), and a word always precedes it in the
+   markup: the colour is never the message. */
+.error {
+  font-size: var(--text-label);
+  color: var(--st-crit-text);
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));

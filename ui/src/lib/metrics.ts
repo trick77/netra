@@ -176,6 +176,38 @@ export function seriesValues(
   });
 }
 
+/**
+ * seriesValues for a column that may legitimately not be there.
+ *
+ * seriesValues throws when the answering tier has no such column, which is
+ * the right default -- a page asking for a column it needs and getting
+ * nothing back has a bug worth surfacing. But a page rendering N panels
+ * across families does not know in advance which columns this tier answered
+ * with, and one absent column would take the whole render down: there is no
+ * error boundary in this app, so a thrown ColumnNotFoundError mid-render is
+ * a blank page rather than one panel reading "no data".
+ *
+ * Returning [] rather than a series of nulls is deliberate. [] means "this
+ * tier does not carry this column", which a panel renders as its
+ * not-collected state; a series of nulls would mean "the host reported
+ * nothing", which is a different fact and a different mark on the chart.
+ *
+ * The three names checked are the raw column and the rollup tiers'
+ * suffixed peers, matching column()'s own resolution order.
+ */
+export function optionalValues(
+  res: MetricsResponse | null,
+  seriesIndex: number,
+  base: string,
+): (number | null)[] {
+  if (res === null) return [];
+  const known = [base, `${base}_avg`, `${base}_max`].some((name) =>
+    res.columns.includes(name),
+  );
+  if (!known || res.series[seriesIndex] === undefined) return [];
+  return seriesValues(res, seriesIndex, base);
+}
+
 /** True when any value in the series is null -- the host reported nothing. */
 export function hasGaps(vals: readonly (number | null)[]): boolean {
   return vals.some((v) => v === null);
