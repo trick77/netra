@@ -104,19 +104,22 @@ describe("ChartPanel", () => {
     expect(document.querySelector(".now")?.textContent).toContain("rx");
   });
 
-  // percent(), bytes() and bitrate() all carry their own unit, so printing
-  // the panel's unit after one of them rendered "12 % %".
-  it("does not print the unit twice when the formatter carries one", () => {
+  // A formatter carrying a magnitude still needs the panel's unit to say
+  // what KIND of quantity it is: bytes() renders "1.2 MB" for a link doing
+  // 1.2 MB/s, and only "B/s" makes that a rate rather than a total.
+  // (A formatter that prints its own unit must simply not be given one --
+  // that contract is on the prop, not enforced here.)
+  it("prints the unit beside a formatted value", () => {
     render(
       <ChartPanel
-        title="CPU"
-        unit="%"
-        fmt={(v) => (v === null ? "none" : `${v} %`)}
-        series={[{ name: "busy", color: "var(--s1)", values: [12] }]}
+        title="Interface throughput"
+        unit="B/s"
+        fmt={(v) => (v === null ? "none" : `${v} MB`)}
+        series={[{ name: "rx", color: "var(--s1)", values: [12] }]}
       />,
     );
 
-    expect(document.querySelector(".now")?.textContent).toBe("12 %");
-    expect(document.querySelector(".u")).toBeNull();
+    expect(document.querySelector(".now")?.textContent).toBe("12 MB");
+    expect(document.querySelector(".u")?.textContent).toBe("B/s");
   });
 });

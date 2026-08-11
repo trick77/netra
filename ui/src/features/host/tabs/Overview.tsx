@@ -9,7 +9,11 @@ import type {
   MetricsResponse,
   Unit,
 } from "../../../lib/api";
-import { griddedValues, optionalValues } from "../../../lib/metrics";
+import {
+  carriesColumn,
+  griddedValues,
+  optionalValues,
+} from "../../../lib/metrics";
 import {
   ABSENT,
   bytes,
@@ -253,12 +257,21 @@ export function Overview({
       {/* Overlay (inside ChartPanel) renders the full legend itself once a
           panel carries two or more bands, so none is built here. */}
       <section aria-label="Processor">
+        {/* No unit prop: percent() prints one already, and passing both
+            rendered "12 % %". See ChartPanel's unit prop. */}
         <ChartPanel
           title="Processor"
-          unit="%"
           series={cpuBands}
           max={100}
           fmt={(n) => percent(n)}
+          // An empty band list is a tier that does not carry the columns --
+          // cpu_user/system/iowait/steal live only in raw -- and an empty
+          // chart asserts the host reported nothing. Say which it is.
+          unavailable={
+            cpuBands.length === 0
+              ? "The per-state CPU columns are stored only at full resolution. Choose a shorter range to see them."
+              : undefined
+          }
         />
       </section>
 
@@ -269,10 +282,20 @@ export function Overview({
           max={memTotal}
           formatValue={(value, max) => `${bytes(value)} of ${bytes(max)}`}
         />
-        {/* A NULL swap_total means the host has no swap at all; 0 would
-            mean it has swap and none of it is in use. Rendering the first
-            as a zero-length bar would assert the second. */}
-        {swapTotal === null ? (
+        {/* Three states, not two. swap_total lives only in the raw table
+            (0001_init.sql) -- the 5m and 1h rollups do not carry it -- so at
+            any range above an hour the value is missing because the TIER
+            has no such column, not because the host has no swap. Collapsing
+            those told a host with 8 GB of swap in use that it had none: an
+            absent column rendered as a positive fact about the machine. */}
+        {!carriesColumn(hostMetrics, "swap_total") ? (
+          <div className="mrow">
+            <div>
+              <div className="lab">swap</div>
+            </div>
+            <div className="val">not at this resolution</div>
+          </div>
+        ) : swapTotal === null ? (
           // Meter's absent state renders the em-dash marker and its
           // noLimit state says "no limit" -- the container-limit wording.
           // Neither is the fact here, which is that this host has no swap

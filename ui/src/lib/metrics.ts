@@ -183,6 +183,29 @@ export function seriesValues(
 }
 
 /**
+ * Whether the answering tier carries this column at all.
+ *
+ * "The column is not in this tier" and "the host reported nothing" are
+ * different facts that both arrive as an empty or null-filled series, and
+ * telling them apart is the difference between a panel saying "not at this
+ * resolution" and one asserting something about the host. swap_total is the
+ * case that proves it: it exists only in the raw table, so at 5m a host with
+ * 8 GB of swap in use rendered as "swap: none".
+ *
+ * The suffixes match column()'s resolution order, so this answers for the
+ * same name column() would resolve.
+ */
+export function carriesColumn(
+  res: MetricsResponse | null,
+  base: string,
+): boolean {
+  if (res === null) return false;
+  return [base, `${base}_avg`, `${base}_max`, `${base}_min`].some((name) =>
+    res.columns.includes(name),
+  );
+}
+
+/**
  * seriesValues for a column that may legitimately not be there.
  *
  * seriesValues throws when the answering tier has no such column, which is

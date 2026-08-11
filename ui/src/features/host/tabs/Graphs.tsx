@@ -3,7 +3,12 @@
 // control -- the header's -- driving all of them. Adding a family later is
 // a row in PANELS, not a new component.
 import type { MetricsResponse } from "../../../lib/api";
-import { griddedValues, seriesCells, windowNotice } from "../../../lib/metrics";
+import {
+  carriesColumn,
+  griddedValues,
+  seriesCells,
+  windowNotice,
+} from "../../../lib/metrics";
 import { ABSENT, bytes, duration, percent } from "../../../lib/format";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
 
@@ -226,8 +231,9 @@ const STORAGE: PanelSpec[] = [
     fmt: count,
   },
   {
+    // No unit: percent() prints one already, and passing both rendered
+    // "12 % %". See ChartPanel's unit prop.
     title: "Disk utilisation",
-    unit: "%",
     source: "diskIo",
     bases: [{ base: "io_util_pct", label: "utilisation" }],
     max: 100,
@@ -300,6 +306,20 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
   return bands;
 }
 
+// Names the columns this tier is missing, because "not collected" without a
+// reason is indistinguishable from a bug -- and the usual reason here is
+// recoverable by the reader: most per-state columns exist only at full
+// resolution, so a shorter range brings them back.
+function missingReason(spec: PanelSpec, res: MetricsResponse): string {
+  const missing = spec.bases
+    .map((b) => b.base)
+    .filter((base) => !carriesColumn(res, base));
+  if (missing.length === 0) {
+    return `The host reported no ${spec.title.toLowerCase()} samples in this window.`;
+  }
+  return `${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not stored at the ${res.tier} resolution. Choose a shorter range to see this panel.`;
+}
+
 function Panel({
   spec,
   res,
@@ -308,6 +328,18 @@ function Panel({
   res: MetricsResponse | null;
 }) {
   const series = bandsFor(spec, res);
+  // An empty band list has two causes and they are not the same fact: this
+  // tier does not carry the columns (the rollups drop most per-state
+  // columns), or nothing has been fetched yet. Either way an empty chart
+  // asserts "the host reported nothing", which spec 7.6 forbids -- so the
+  // panel says which one it is instead of drawing a blank box.
+  const unavailable =
+    series.length > 0
+      ? undefined
+      : res === null
+        ? "No data has been read for this family yet."
+        : missingReason(spec, res);
+
   // No legend is built here: Overlay (inside ChartPanel) already renders
   // one as soon as a panel carries two or more bands, which is exactly the
   // point at which colour alone stops carrying identity.
@@ -319,6 +351,7 @@ function Panel({
       max={spec.max}
       fmt={spec.fmt}
       notice={res ? windowNotice(res) : null}
+      unavailable={unavailable}
     />
   );
 }

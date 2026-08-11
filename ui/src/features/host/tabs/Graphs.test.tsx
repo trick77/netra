@@ -39,6 +39,22 @@ const sparseHost = response({
   ],
 });
 
+// The tier carries load1/5/15 and the host reported nothing for them in this
+// window: a real chart with a hole, not a not-collected panel.
+const silentHost = response({
+  family: "host",
+  columns: ["uptime_s", "load1", "load5", "load15"],
+  series: [
+    {
+      key: {},
+      points: [
+        [1_754_784_000_000, 3600, null, null, null],
+        [1_754_784_060_000, 3660, null, null, null],
+      ],
+    },
+  ],
+});
+
 const fullHost = response({
   family: "host",
   columns: ["uptime_s", "load1", "load5", "load15", "ctxt_per_s"],
@@ -70,9 +86,41 @@ describe("Graphs", () => {
       expect(panel).toHaveTextContent("Not collected");
       expect(panel).toHaveTextContent(reason);
     }
-    // Exactly those three -- an unavailable panel is a schema statement,
-    // not a loading state.
-    expect(screen.getAllByText("Not collected")).toHaveLength(3);
+    // The three §11 panels are the ones whose reason is a SCHEMA statement:
+    // the columns do not exist anywhere, at any tier, so no range brings
+    // them back. Other panels may also be unavailable in a given window --
+    // an empty chart would assert the host reported nothing (spec §7.6) --
+    // but they say something different and recoverable.
+    for (const reason of Object.values(UNAVAILABLE)) {
+      expect(screen.getByText(reason)).toBeInTheDocument();
+    }
+  });
+
+  // The failure this replaces: a panel whose columns this tier does not
+  // carry drew an empty box under its title, which asserts that the host
+  // reported nothing rather than that the resolution cannot answer.
+  it("names the columns a tier is missing instead of drawing a blank panel", () => {
+    render(<Graphs host={sparseHost} />);
+
+    // More than the three schema gaps: this tier is missing columns of its
+    // own, and each of those panels says which ones and that a shorter
+    // range brings them back.
+    expect(screen.getAllByText("Not collected").length).toBeGreaterThan(3);
+    expect(
+      screen.getAllByText(/not stored at the .* resolution/).length,
+    ).toBeGreaterThan(0);
+  });
+
+  // An all-null series is NOT the same case: the tier carries the column and
+  // the host reported nothing in this window. That draws a real chart with a
+  // hole in it and an absent headline, never a not-collected panel, because
+  // the two statements are about different things.
+  it("draws a chart with a hole when the column exists and the host was silent", () => {
+    render(<Graphs host={silentHost} />);
+
+    expect(
+      screen.getByRole("region", { name: /Load averages chart/ }),
+    ).toBeInTheDocument();
   });
 
   it("draws every panel at the same size", () => {
@@ -85,10 +133,16 @@ describe("Graphs", () => {
     expect(sizes.size).toBe(1);
   });
 
+  // A tier that carries some of a panel's columns and not others still
+  // draws: the point is that it must not throw, and must not silently drop
+  // the panel either.
   it("survives a tier that does not carry a panel's columns", () => {
     render(<Graphs host={sparseHost} />);
-    const panel = screen.getByRole("region", { name: /Load averages chart/ });
-    expect(panel).toHaveTextContent("—");
+
+    const panel = screen.getByRole("region", {
+      name: /Load averages(, not collected| chart)/,
+    });
+    expect(panel).toBeInTheDocument();
   });
 
   it("plots the collector family's boolean ok column instead of throwing on it", () => {
