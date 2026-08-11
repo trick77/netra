@@ -6,3 +6,4 @@ coverage/
 internal/hub/web/dist/*
 !internal/hub/web/dist/.gitkeep
 ui/node_modules/
+.playwright-mcp/
