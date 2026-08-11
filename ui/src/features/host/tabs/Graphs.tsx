@@ -350,7 +350,11 @@ function Panel({
       series={series}
       max={spec.max}
       fmt={spec.fmt}
-      notice={res ? windowNotice(res) : null}
+      // No per-panel notice: the window statement is about the RANGE, not
+      // about any one chart, and repeating it under twenty panels made it
+      // twenty pieces of noise nobody reads. It is rendered once, above the
+      // grid (spec 7.2 puts it on the range control).
+      notice={null}
       unavailable={unavailable}
     />
   );
@@ -391,8 +395,24 @@ function Group({
 }
 
 export function Graphs(props: GraphsProps) {
+  // One line for the whole tab, deduplicated: every family answering the
+  // same clamped window says the same sentence, and saying it once is the
+  // difference between a statement and wallpaper.
+  const notices = [
+    ...new Set(
+      [props.host, props.net, props.diskIo, props.filesystem, props.collector]
+        .map((res) => (res ? windowNotice(res) : null))
+        .filter((n): n is string => n !== null),
+    ),
+  ];
+
   return (
     <div>
+      {notices.map((notice) => (
+        <p className="note" key={notice}>
+          {notice}
+        </p>
+      ))}
       <Group title="System" specs={SYSTEM} sources={props} />
       <Group
         title="Network"

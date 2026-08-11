@@ -13,6 +13,7 @@ import {
   rotateHostToken,
   type Host,
   type Site,
+  getConfig,
 } from "../../lib/api";
 
 /**
@@ -137,6 +138,11 @@ export function HostAdminPage() {
   const [rotating, setRotating] = useState<number | null>(null);
 
   const [minted, setMinted] = useState<Minted | null>(null);
+  // Seeded from the hub's own NETRA_HUB_URL when it is set, and only from
+  // the placeholder when it is not. It used to be the placeholder always, so
+  // an operator who had configured their hub URL retyped it by hand on every
+  // mint -- while the configured value, which the retired token.gohtml used
+  // to render, was read by nothing at all.
   const [hubURL, setHubURL] = useState(HUB_URL_PLACEHOLDER);
   // Delete is two-click rather than window.confirm: a native dialog is not
   // stylable, not testable, and easy to dismiss by reflex on the wrong row.
@@ -160,6 +166,16 @@ export function HostAdminPage() {
     getSites()
       .then(setSites)
       .catch(() => setSites([]));
+    // An unset NETRA_HUB_URL comes back as "" and the placeholder stands --
+    // a guess would be worse than an obvious gap, because a wrong hostname
+    // in that command sends an agent token to whoever owns the name.
+    getConfig()
+      .then(({ hub_url }) => {
+        if (hub_url !== "") setHubURL(hub_url);
+      })
+      .catch(() => {
+        // The placeholder already says it is one, and the field is editable.
+      });
   }, [refresh]);
 
   async function onCreate() {

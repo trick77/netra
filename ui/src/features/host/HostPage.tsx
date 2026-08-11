@@ -265,7 +265,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
 
   if (error !== null) {
     return (
-      <div className="host">
+      <div className="hostpage">
         <p className="note">This host could not be loaded: {error}</p>
         <Button variant="secondary" onClick={refresh}>
           Try again
@@ -276,7 +276,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
 
   if (host === null) {
     return (
-      <div className="host">
+      <div className="hostpage">
         <p className="note">Loading…</p>
       </div>
     );
@@ -285,7 +285,11 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
   const status = hostStatus(host);
 
   return (
-    <div className="host">
+    // "hostpage", NOT "host": .host is the host CELL -- a flex row with a
+    // gap, used in the fleet and container lists -- and wearing it here laid
+    // the header, the tab bar and the entire small-multiples grid out side
+    // by side in a 359px strip down the right of the page.
+    <div className="hostpage">
       {/* The header is identical on every tab -- it is what you are
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">

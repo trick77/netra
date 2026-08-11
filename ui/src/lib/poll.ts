@@ -53,19 +53,25 @@ export function usePoll<T>(
     // the newer one's. Without it, switching hosts twice quickly leaves the
     // first host's data on the second host's page.
     let cancelled = false;
+    // Two runs can be in flight inside ONE effect run: revealing the tab
+    // fires an immediate refresh while the interval's request is still
+    // outstanding. Without a sequence the slower of the two lands last and
+    // writes an older snapshot over a newer one.
+    let latest = 0;
 
     async function run() {
+      const seq = ++latest;
       try {
         const next = await fnRef.current();
-        if (!cancelled) {
+        if (!cancelled && seq === latest) {
           setData(next);
           setError(null);
         }
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || seq !== latest) return;
         setError(err instanceof Error ? err : new Error(String(err)));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && seq === latest) setLoading(false);
       }
     }
 

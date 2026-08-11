@@ -37,8 +37,21 @@ const HOST_TABS = new Set<HostTab>([
   "events",
 ]);
 
+// decodeURIComponent throws URIError on a malformed escape, and /hosts/50%
+// is a URL a browser will happily send. There is no error boundary in this
+// app, so the throw during render was a white page -- in place of the "no
+// such page" state that exists for precisely this. An undecodable segment is
+// passed through raw: it will not match a route, which is the answer.
+function decodeSegment(part: string): string {
+  try {
+    return decodeURIComponent(part);
+  } catch {
+    return part;
+  }
+}
+
 export function parseRoute(pathname: string): Route {
-  const parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const parts = pathname.split("/").filter(Boolean).map(decodeSegment);
 
   if (parts.length === 0) return { name: "fleet" };
 

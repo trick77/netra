@@ -47,28 +47,35 @@ export function Table<T>({ columns, rows, rowKey }: TableProps<T>) {
     };
   };
 
+  // The wrapper is what keeps a wide table from widening the PAGE. Without
+  // it the Events and Inventory tables push the document sideways below the
+  // mobile breakpoint, which moves the nav and every other element on the
+  // page with them; the rule existed in the stylesheet with nothing emitting
+  // the class.
   return (
-    <table>
-      <thead>
-        <tr>
-          {columns.map((col) => (
-            <th key={col.key} scope="col" style={cellStyle(col)}>
-              {col.header}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row, index) => (
-          <tr key={rowKey ? rowKey(row, index) : index}>
+    <div className="tablewrap">
+      <table>
+        <thead>
+          <tr>
             {columns.map((col) => (
-              <td key={col.key} style={cellStyle(col)}>
-                {col.cell(row)}
-              </td>
+              <th key={col.key} scope="col" style={cellStyle(col)}>
+                {col.header}
+              </th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={rowKey ? rowKey(row, index) : index}>
+              {columns.map((col) => (
+                <td key={col.key} style={cellStyle(col)}>
+                  {col.cell(row)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

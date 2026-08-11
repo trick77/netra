@@ -205,4 +205,24 @@ describe("Graphs", () => {
     expect(screen.getByText("sda read")).toBeInTheDocument();
     expect(screen.getByText("sdb write")).toBeInTheDocument();
   });
+
+  // The window statement is about the RANGE, not about any one chart.
+  // Repeated under twenty panels it was twenty pieces of noise nobody reads
+  // -- spec §7.2 puts it on the range control, once.
+  it("states a clamped window once for the tab, not once per panel", () => {
+    const clamped = response({
+      family: "host",
+      columns: ["uptime_s"],
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:50:00Z" },
+      requested_window: {
+        from: "2026-08-10T00:00:00Z",
+        to: "2026-08-10T01:00:00Z",
+      },
+      series: [{ key: {}, points: [[1_754_784_000_000, 3600]] }],
+    });
+
+    render(<Graphs host={clamped} />);
+
+    expect(screen.getAllByText(/was clamped to/)).toHaveLength(1);
+  });
 });

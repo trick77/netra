@@ -1039,6 +1039,13 @@ tbody tr:last-child td {
 tbody tr:hover {
   background: var(--surface-2);
 }
+/* The host detail page's own wrapper. It exists so the page never reaches
+   for .host, which is the host CELL below: a flex row, which laid this
+   page's header, tabs and chart grid out side by side. */
+.hostpage {
+  display: block;
+}
+
 .host {
   display: flex;
   align-items: center;
@@ -1204,12 +1211,12 @@ svg.spark {
 }
 
 /* ── Below the mobile breakpoint ───────────────────────────────────────
-   Cards are automatic here, not a preference (spec §4.5): a six-column
-   host table does not survive 390px, and a stored "table" choice must not
-   be able to produce a page that scrolls sideways. The table is hidden by
-   CSS rather than unmounted so nothing about the component tree depends on
-   a viewport width -- the card grid is always rendered, and one of the two
-   is shown. */
+   Cards are automatic here, not a preference (spec §4.5): a six-column host
+   table does not survive 390px, and a stored "table" choice must not be able
+   to produce a page that scrolls sideways. The switch itself is in
+   FleetPage's useIsNarrow, not in this file: rendering both and hiding one
+   would put every host in the DOM twice, which a screen reader reads twice.
+   What lives here is everything else that has to give at this width. */
 @media (max-width: 640px) {
   .app {
     padding: 0 var(--space-3) 64px;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  carriesColumn,
   column,
   griddedValues,
   hasGaps,
@@ -360,6 +361,24 @@ describe("column and the rollup suffixes", () => {
 
     expect(column(fs as never, "free")).toBe(2);
   });
+
+  // The three resolvers must agree on the candidate list. They briefly did
+  // not -- column() learned _min while optionalValues did not -- and the
+  // result was that carriesColumn said "free is here", the meter drew, and
+  // the values behind it came back empty: every host's disk went blank
+  // while the code deciding whether to draw it insisted the column existed.
+  it("resolves the same names in column, optionalValues and carriesColumn", () => {
+    const fs = {
+      ...raw,
+      tier: "5m",
+      columns: ["used_avg", "free_min"],
+      series: [{ key: {}, points: [[1, 10, 90]] }],
+    };
+
+    expect(carriesColumn(fs as never, "free")).toBe(true);
+    expect(optionalValues(fs as never, 0, "free")).toEqual([90]);
+    expect(column(fs as never, "free")).toBe(1);
+  });
 });
 
 describe("seriesOnGrid", () => {
@@ -441,6 +460,35 @@ describe("seriesOnGrid", () => {
     };
 
     expect(griddedValues(res as never, 0, "busy")).toHaveLength(2);
+  });
+
+  // Only the rollup tiers are bucket-aligned: at raw, read/metrics.go
+  // selects bare s.ts, so samples land wherever the agent's clock and the
+  // collection latency put them. Flooring sent a sample 50ms short of a
+  // boundary into the previous bucket, overwrote the sample already there,
+  // and left the bucket it belonged in empty -- a one-minute hole drawn for
+  // a host that never missed a scrape.
+  it("does not fabricate a gap from samples that drift inside their bucket", () => {
+    const t = Date.parse("2026-08-10T00:00:00Z");
+    const res = {
+      ...raw,
+      step_s: 60,
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:04:00Z" },
+      columns: ["busy"],
+      series: [
+        {
+          key: {},
+          points: [
+            [t, 1],
+            [t + 59_950, 2],
+            [t + 119_900, 3],
+            [t + 179_850, 4],
+          ],
+        },
+      ],
+    };
+
+    expect(griddedValues(res as never, 0, "busy")).toEqual([1, 2, 3, 4]);
   });
 
   it("returns an empty series when the tier does not carry the column", () => {

@@ -20,6 +20,7 @@ import { HostCards } from "./HostCards";
 import { HostTable } from "./HostTable";
 import type { HostRow, Range } from "./hostColumns";
 import { isReporting } from "../../lib/host";
+import { buildRows } from "./hostTrends";
 
 /** What you are looking at (spec 4.5's first axis). */
 export type Entity = "hosts" | "containers";
@@ -39,29 +40,16 @@ export const DENSITY_KEY = "netra.fleet.density";
  * call that does carry one would be an N+1 across the whole fleet, so the
  * site list is fetched once and joined here by id.
  *
- * Every chart series comes back EMPTY. The trend columns need per-host
- * metrics (three families each), and no polling hook exists yet -- Wave 5
- * owns that. An empty series renders as a gap in the sparkline and as the
- * absent marker beside it, which is the truth: not fetched is not zero. The
- * moment a metrics fetch lands, it fills these fields and nothing else on
- * this page changes.
+ * The chart series come back empty here: this path has the host list and
+ * the site names, not the per-host metrics. App's poll fetches those and
+ * builds the same rows with them (see hostTrends).
  */
 export function buildHostRows(hosts: Host[], sites: Site[]): HostRow[] {
-  const siteNames = new Map(sites.map((site) => [site.id, site.name]));
-  return hosts.map((host) => ({
-    ...host,
-    site_name:
-      host.site_id === null ? null : (siteNames.get(host.site_id) ?? null),
-    cpu: [],
-    mem: [],
-    rx: [],
-    tx: [],
-    // The fullest filesystem needs family=filesystem per host, which is not
-    // fetched here (see above). null is the row type's own way of saying so,
-    // and the disk cell renders the absent marker for it; the alternative,
-    // pct: 0, would draw an empty disk nobody measured.
-    fullest: null,
-  }));
+  // One builder, in hostTrends: this page's self-fetching path and App's
+  // polling path must not be able to disagree about what a row is. Without
+  // trends every series is empty, which renders as a gap and as the absent
+  // marker -- the truth, since not fetched is not zero.
+  return buildRows(hosts, sites, new Map());
 }
 
 /**

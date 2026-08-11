@@ -30,7 +30,7 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Ha
 
 	// The admin API answers 401 to an unauthenticated caller; the UI sends it
 	// to a login page instead. Both accept the same credential.
-	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc, rd, time.Now)))
+	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc, rd, time.Now, cfg.HubURL)))
 
 	// /login and /logout sit outside RequireAdmin: this is where an
 	// unauthenticated browser is sent, so gating them would loop.

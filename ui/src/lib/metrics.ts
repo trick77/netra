@@ -67,15 +67,22 @@ export class UnknownColumnError extends Error {
  * fully-suffixed name as base, e.g. column(res, "cpu_total_max"), which
  * matches on the exact-name branch above.
  */
+// The names a base column can answer to, in resolution order: the raw
+// column first, then the rollup tiers' suffixed peers.
+//
+// _min belongs here because the schema's convention is wider than avg/max:
+// 0001_init.sql rolls filesystem `free` up as min(free) AS free_min, and only
+// as that. It is ONE list because it was briefly three -- column() learned
+// _min while optionalValues and carriesColumn did not, so `free` resolved
+// everywhere except where the chart actually read it, and every host's disk
+// meter went blank while the code that decided whether to draw one said the
+// column was there.
+function candidates(base: string): string[] {
+  return [base, `${base}_avg`, `${base}_max`, `${base}_min`];
+}
+
 export function column(res: MetricsResponse, base: string): number {
-  // _min is in the list because the schema's convention is wider than
-  // avg/max: 0001_init.sql rolls filesystem `free` up as min(free) AS
-  // free_min, and only as that. Without it, `free` resolved at raw and
-  // vanished at 5m and 1h -- so a root filesystem at 97% showed "— free" and
-  // the disk-full warning, which skips a row whose free is null, never
-  // fired. Switching the range to 1h made the same host suddenly critical.
-  const candidates = [base, `${base}_avg`, `${base}_max`, `${base}_min`];
-  for (const name of candidates) {
+  for (const name of candidates(base)) {
     const idx = res.columns.indexOf(name);
     if (idx !== -1) return idx;
   }
@@ -200,9 +207,7 @@ export function carriesColumn(
   base: string,
 ): boolean {
   if (res === null) return false;
-  return [base, `${base}_avg`, `${base}_max`, `${base}_min`].some((name) =>
-    res.columns.includes(name),
-  );
+  return candidates(base).some((name) => res.columns.includes(name));
 }
 
 /**
@@ -230,10 +235,8 @@ export function optionalValues(
   base: string,
 ): (number | null)[] {
   if (res === null) return [];
-  const known = [base, `${base}_avg`, `${base}_max`].some((name) =>
-    res.columns.includes(name),
-  );
-  if (!known || res.series[seriesIndex] === undefined) return [];
+  if (!carriesColumn(res, base)) return [];
+  if (res.series[seriesIndex] === undefined) return [];
   return seriesValues(res, seriesIndex, base);
 }
 
@@ -283,11 +286,18 @@ export function seriesOnGrid(
 
   const byBucket = new Map<number, number | null>();
   for (let i = 0; i < timestamps.length; i++) {
-    // Floor to the bucket rather than trusting the timestamp to be exactly
-    // on it: raw samples land wherever the agent's clock put them, and only
-    // the rollup tiers are aligned.
-    const bucket = Math.floor((timestamps[i]! - from) / stepMs);
-    byBucket.set(bucket, values[i] ?? null);
+    // ROUND to the nearest bucket, not floor. Only the rollup tiers are
+    // aligned -- read/metrics.go selects bare s.ts at the raw tier, so a
+    // sample lands wherever the agent's clock and the collection latency put
+    // it. Flooring sent a sample 50ms short of a boundary into the previous
+    // bucket, where it overwrote the sample already there and left the
+    // bucket it should have occupied empty: a one-minute hole drawn for a
+    // host that never missed a scrape.
+    const bucket = Math.round((timestamps[i]! - from) / stepMs);
+    // First writer wins. Two samples genuinely inside one bucket means the
+    // host reported faster than the step asked for; keeping the earlier one
+    // matches the order the response arrived in, and neither is a gap.
+    if (!byBucket.has(bucket)) byBucket.set(bucket, values[i] ?? null);
   }
 
   const count = Math.ceil((to - from) / stepMs);

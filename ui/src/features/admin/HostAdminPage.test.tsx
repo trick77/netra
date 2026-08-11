@@ -14,6 +14,7 @@ vi.mock("../../lib/api", async () => {
     ...actual,
     getHosts: vi.fn(),
     getSites: vi.fn(),
+    getConfig: vi.fn(),
     createHost: vi.fn(),
     rotateHostToken: vi.fn(),
     deleteHost: vi.fn(),
@@ -54,6 +55,7 @@ beforeEach(() => {
   localStorage.clear();
   getHosts.mockResolvedValue([]);
   getSites.mockResolvedValue([site]);
+  vi.mocked(api.getConfig).mockResolvedValue({ hub_url: "" });
 });
 
 describe("HostAdminPage", () => {
@@ -225,5 +227,35 @@ describe("HostAdminPage", () => {
 
     expect(rotateHostToken).toHaveBeenCalledTimes(1);
     release({ id: host.id, token: "t" });
+  });
+
+  // The browser reaches the hub on loopback, so it cannot know the name
+  // agents post to; only the hub does. Without this the operator retyped
+  // their hub URL by hand on every mint, and NETRA_HUB_URL was read by
+  // nothing at all.
+  it("seeds the setup command with the hub's configured URL", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.getConfig).mockResolvedValue({
+      hub_url: "https://netra.example.org",
+    });
+    createHost.mockResolvedValue({
+      id: 8,
+      hostname: "db-01",
+      site_id: null,
+      last_seen: null,
+      token: "tok_abcdef",
+    });
+    render(<HostAdminPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add the first host" }),
+    );
+    await user.type(screen.getByLabelText("Hostname"), "db-01");
+    await user.click(screen.getByRole("button", { name: "Create host" }));
+
+    const command = await screen.findByTestId("setup-command");
+    expect(command.textContent).toContain(
+      "--hub-url https://netra.example.org",
+    );
   });
 });

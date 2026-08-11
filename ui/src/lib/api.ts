@@ -263,6 +263,14 @@ export function getSites(): Promise<Site[]> {
   return request<Site[]>("/api/v1/sites");
 }
 
+// NETRA_HUB_URL as the hub itself has it, or "" when it is unset. The
+// browser reaches the hub on loopback, so window.location says nothing about
+// the name agents post to; only the hub knows it, and the setup command is
+// wrong without it.
+export function getConfig(): Promise<{ hub_url: string }> {
+  return request<{ hub_url: string }>("/api/v1/config");
+}
+
 export function getProviders(): Promise<Provider[]> {
   return request<Provider[]>("/api/v1/providers");
 }

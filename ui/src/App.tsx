@@ -25,10 +25,14 @@ import { rangeWindow, type Range } from "./lib/range";
 import { EmptyState } from "./ui/EmptyState";
 import {
   FleetPage,
-  buildHostRows,
   type Density,
   type Entity,
 } from "./features/fleet/FleetPage";
+import {
+  buildRows,
+  fetchHostTrends,
+  type HostTrends,
+} from "./features/fleet/hostTrends";
 import { HostPage, type HostTab } from "./features/host/HostPage";
 import { ContainerPage } from "./features/container/ContainerPage";
 import {
@@ -134,14 +138,27 @@ function useDelegatedNavigation(go: Go) {
     const href = anchor.getAttribute("href");
     if (href === null || anchor.hasAttribute("download")) return;
     if (anchor.target && anchor.target !== "_self") return;
-    // Absolute and off-origin URLs belong to the browser. A relative one
-    // resolves against the current page, which is exactly what routing it
-    // means.
-    const url = new URL(href, window.location.origin);
+    // Resolved against the CURRENT document, not the origin: a relative href
+    // means "from here", and resolving "?entity=containers" against the root
+    // would send it to the wrong page.
+    const url = new URL(href, window.location.href);
     if (url.origin !== window.location.origin) return;
 
+    // A hash on the page you are already on is the browser's job -- that is
+    // how an in-page jump works. Routing it dropped the fragment and
+    // navigated instead: this wave's own skip link threw a keyboard user
+    // onto the fleet overview from any other page, and did nothing at all on
+    // the fleet overview itself.
+    if (
+      url.hash !== "" &&
+      url.pathname === window.location.pathname &&
+      url.search === window.location.search
+    ) {
+      return;
+    }
+
     event.preventDefault();
-    go(url.pathname + url.search);
+    go(url.pathname + url.search + url.hash);
   };
 }
 
@@ -228,18 +245,50 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   const params = new URLSearchParams(search);
   const entity: Entity =
     params.get("entity") === "containers" ? "containers" : "hosts";
+  // Both directions, not just one: ?view=table used to be ignored whenever
+  // the recipient's browser remembered "cards", which is exactly the case a
+  // shared link exists to override.
+  const viewParam = params.get("view");
   const density: Density =
-    params.get("view") === "cards" ? "cards" : loadView();
+    viewParam === "cards" || viewParam === "table" ? viewParam : loadView();
   const range = rangeFromSearch(search, loadRange());
 
-  const poll = usePoll(async () => {
-    const [hosts, sites] = await Promise.all([getHosts(), getSites()]);
-    return { hosts, sites, at: new Date().toISOString() };
-  }, POLL_MS);
+  const poll = usePoll(
+    async () => {
+      const [hosts, sites] = await Promise.all([getHosts(), getSites()]);
+      // The trends are a fan-out -- three families per host -- because the
+      // read API is per-host by construction and this page's whole premise
+      // is the last 24 hours rather than one instant. Settled
+      // independently: one host answering 500 costs that host's sparklines,
+      // not the fleet's.
+      const settled = await Promise.allSettled(
+        hosts.map(
+          async (host) =>
+            [host.id, await fetchHostTrends(host.id, range)] as const,
+        ),
+      );
+      const trends = new Map(
+        settled
+          .filter(
+            (r): r is PromiseFulfilledResult<readonly [number, HostTrends]> =>
+              r.status === "fulfilled",
+          )
+          .map((r) => r.value),
+      );
+      return { hosts, sites, trends, at: new Date().toISOString() };
+    },
+    POLL_MS,
+    [range],
+  );
   useAuthRedirect(poll.error, go, { name: "fleet" });
 
   const rows = useMemo(
-    () => buildHostRows(poll.data?.hosts ?? [], poll.data?.sites ?? []),
+    () =>
+      buildRows(
+        poll.data?.hosts ?? [],
+        poll.data?.sites ?? [],
+        poll.data?.trends ?? new Map(),
+      ),
     [poll.data],
   );
 
