@@ -223,3 +223,51 @@ export function buildRows(
     };
   });
 }
+
+/**
+ * Per-container CPU and memory over the same window, keyed by container_key.
+ *
+ * The container lists were the one place in the app showing a fleet of
+ * things over time with no time in them: names, images and a host, and
+ * nothing about what any of them was doing. family=container carries
+ * cpu_pct, mem_used and mem_limit per container, so the rows can say it.
+ */
+export interface ContainerTrend {
+  cpu: (number | null)[];
+  mem: (number | null)[];
+  /** The container's own ceiling, or null when it runs unlimited. */
+  memLimit: number | null;
+}
+
+export async function fetchContainerTrends(
+  hostId: number,
+  range: Range,
+  now?: Date,
+): Promise<Map<string, ContainerTrend>> {
+  const window = rangeWindow(range, now);
+  const res = await orNull(
+    getMetrics(hostId, {
+      family: "container",
+      from: window.from,
+      to: window.to,
+      step: window.step,
+    }),
+  );
+
+  const trends = new Map<string, ContainerTrend>();
+  if (res === null) return trends;
+
+  res.series.forEach((series, index) => {
+    // The keySpec's NAME is "container" (internal/hub/read/family.go), not
+    // the SQL expression behind it. Reading series[0] instead would chart a
+    // neighbouring container under this one's name.
+    const key = series.key.container;
+    if (key === undefined) return;
+    trends.set(key, {
+      cpu: griddedValues(res, index, "cpu_pct"),
+      mem: griddedValues(res, index, "mem_used"),
+      memLimit: lastNumber(griddedValues(res, index, "mem_limit")),
+    });
+  });
+  return trends;
+}

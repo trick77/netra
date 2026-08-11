@@ -30,6 +30,7 @@ import {
 } from "./features/fleet/FleetPage";
 import {
   buildRows,
+  fetchContainerTrends,
   fetchHostTrends,
   type HostTrends,
 } from "./features/fleet/hostTrends";
@@ -284,13 +285,25 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       // its rows, so the Containers tab sat empty claiming no host in the
       // fleet had ever reported one.
       const perHost = await Promise.allSettled(
-        hosts.map(async (host) =>
-          (await getContainers(host.id)).map((container) => ({
-            ...container,
-            host_id: host.id,
-            hostname: host.hostname,
-          })),
-        ),
+        hosts.map(async (host) => {
+          // The list and its metrics together: a container row with no
+          // trend renders as text, which is what the whole list was before.
+          const [list, trends] = await Promise.all([
+            getContainers(host.id),
+            fetchContainerTrends(host.id, range),
+          ]);
+          return list.map((container) => {
+            const trend = trends.get(container.container_key);
+            return {
+              ...container,
+              host_id: host.id,
+              hostname: host.hostname,
+              cpu: trend?.cpu ?? [],
+              mem: trend?.mem ?? [],
+              mem_limit_bytes: trend?.memLimit ?? null,
+            };
+          });
+        }),
       );
       const containers = perHost
         .filter((r) => r.status === "fulfilled")

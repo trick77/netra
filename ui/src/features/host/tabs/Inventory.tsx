@@ -18,6 +18,8 @@ import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column } from "../../../ui/Table";
 import { Meter } from "../../../ui/Meter";
+import { Sparkline } from "../../../ui/charts/Sparkline";
+import { rangeLabel, type Range } from "../../../lib/range";
 import { griddedValues } from "../../../lib/metrics";
 
 export interface InventoryProps<T> {
@@ -125,18 +127,107 @@ const CONTAINER_COLUMNS: Column<Container>[] = [
   },
 ];
 
-export function Containers({ rows }: { rows: readonly Container[] }) {
+type ContainerWithTrend = Container & {
+  cpu?: (number | null)[];
+  mem?: (number | null)[];
+  memLimit?: number | null;
+};
+
+export function Containers({
+  rows,
+  metrics = null,
+  range = "24h",
+}: {
+  rows: readonly Container[];
+  /** A family=container response for this host. */
+  metrics?: MetricsResponse | null;
+  range?: Range;
+}) {
+  // The same trends the fleet's container list shows, for the same reason: a
+  // list of containers with no time in it says what is there and nothing
+  // about what any of it is doing.
+  const byKey = new Map(
+    (metrics?.series ?? []).map((series, index) => [
+      series.key.container,
+      {
+        cpu: griddedValues(metrics, index, "cpu_pct"),
+        mem: griddedValues(metrics, index, "mem_used"),
+        memLimit: lastValue(griddedValues(metrics, index, "mem_limit")),
+      },
+    ]),
+  );
+
+  const charted: ContainerWithTrend[] = rows.map((row) => ({
+    ...row,
+    ...byKey.get(row.container_key),
+  }));
+
+  // Shared ceilings across the list, so the column can be read down rather
+  // than each row filling its own box regardless of magnitude.
+  let cpuMax = 0;
+  let memMax = 0;
+  for (const row of charted) {
+    for (const v of row.cpu ?? []) if (v !== null && v > cpuMax) cpuMax = v;
+    for (const v of row.mem ?? []) if (v !== null && v > memMax) memMax = v;
+  }
+
+  const columns: Column<ContainerWithTrend>[] = [...CONTAINER_COLUMNS];
+  if (metrics !== null) {
+    columns.push({
+      key: "cpu",
+      header: "CPU",
+      cell: (row) =>
+        !row.cpu?.length ? (
+          ABSENT
+        ) : (
+          <Sparkline
+            values={row.cpu}
+            min={0}
+            max={cpuMax || 1}
+            color="var(--s1)"
+            label={`CPU trend, ${rangeLabel(range)}`}
+          />
+        ),
+    });
+    columns.push({
+      key: "memory",
+      header: "Memory",
+      cell: (row) =>
+        !row.mem?.length ? (
+          ABSENT
+        ) : (
+          <Sparkline
+            values={row.mem}
+            min={0}
+            // Its own limit when it has one; the list's largest otherwise.
+            max={row.memLimit ?? memMax ?? 1}
+            color="var(--s2)"
+            label={`Memory trend, ${rangeLabel(range)}`}
+          />
+        ),
+    });
+  }
+
   return (
     <Inventory
       label="Containers"
-      columns={CONTAINER_COLUMNS}
-      rows={rows}
+      columns={columns}
+      rows={charted}
       rowKey={(row) => row.container_key}
       searchText={(row) =>
         [row.container_key, row.name, row.image].filter(Boolean).join(" ")
       }
     />
   );
+}
+
+/** The latest non-null value, or null when the series never reported. */
+function lastValue(values: readonly (number | null)[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && v !== undefined) return v;
+  }
+  return null;
 }
 
 // --- Filesystems ----------------------------------------------------------

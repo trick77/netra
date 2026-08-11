@@ -14,6 +14,16 @@ export interface SparklineProps {
   /** Accessible name for the chart; a chart is an image and needs one. */
   label?: string;
   pad?: number;
+  /**
+   * Axis floor and ceiling. Omitted, the line is scaled to its own extent,
+   * which is right for a lone chart and wrong for a column of them: every
+   * row would fill its box regardless of magnitude, so an idle container and
+   * a saturated one would draw the identical silhouette. A caller rendering
+   * a LIST passes a shared pair; the host list's CPU column does the same
+   * thing with its fixed 100.
+   */
+  min?: number;
+  max?: number;
 }
 
 export function Sparkline({
@@ -23,9 +33,20 @@ export function Sparkline({
   color = "var(--s1)",
   label = "trend sparkline",
   pad = 2,
+  min,
+  max,
 }: SparklineProps) {
-  const { min, max } = extent(values);
-  const { paths, points } = linePath(values, width, height, min, max, pad);
+  const auto = extent(values);
+  const floor = min ?? auto.min;
+  const ceiling = max ?? auto.max;
+  const { paths, points } = linePath(
+    values,
+    width,
+    height,
+    floor,
+    ceiling,
+    pad,
+  );
   const areas = areaPath(paths, width, height, pad).filter((d) => d !== "");
 
   return (

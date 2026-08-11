@@ -417,6 +417,7 @@ export function FleetPage({
           rows={visibleContainers}
           showHost
           loaded={containersKnown}
+          range={range}
         />
       )}
     </>
