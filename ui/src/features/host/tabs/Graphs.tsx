@@ -3,6 +3,7 @@
 // control -- the header's -- driving all of them. Adding a family later is
 // a row in PANELS, not a new component.
 import type { MetricsResponse } from "../../../lib/api";
+import type { Range } from "../../../lib/range";
 import {
   carriesColumn,
   griddedValues,
@@ -268,6 +269,9 @@ export interface GraphsProps {
   diskIo?: MetricsResponse | null;
   filesystem?: MetricsResponse | null;
   collector?: MetricsResponse | null;
+  /** The page's range and setter, passed to each panel's enlarged view. */
+  range?: Range;
+  onRangeChange?: (range: Range) => void;
 }
 
 function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
@@ -323,9 +327,13 @@ function missingReason(spec: PanelSpec, res: MetricsResponse): string {
 function Panel({
   spec,
   res,
+  range,
+  onRangeChange,
 }: {
   spec: PanelSpec;
   res: MetricsResponse | null;
+  range?: Range;
+  onRangeChange?: (range: Range) => void;
 }) {
   const series = bandsFor(spec, res);
   // An empty band list has two causes and they are not the same fact: this
@@ -356,6 +364,11 @@ function Panel({
       // grid (spec 7.2 puts it on the range control).
       notice={null}
       unavailable={unavailable}
+      // The answered window and the page's range, so the enlarged view has
+      // a real time axis and the control to widen it without closing.
+      window={res?.window ?? null}
+      range={range}
+      onRangeChange={onRangeChange}
     />
   );
 }
@@ -371,6 +384,7 @@ function Group({
   sources: GraphsProps;
   extra?: string[];
 }) {
+  const { range, onRangeChange } = sources;
   return (
     <>
       <h3 className="grouphead">{title}</h3>
@@ -380,6 +394,8 @@ function Group({
             key={spec.title}
             spec={spec}
             res={sources[spec.source] ?? null}
+            range={range}
+            onRangeChange={onRangeChange}
           />
         ))}
         {(extra ?? []).map((missing) => (

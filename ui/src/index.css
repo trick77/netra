@@ -1206,6 +1206,117 @@ svg.spark {
 .chartwrap {
   position: relative;
 }
+/* The chart itself is the button that enlarges it, so the button must add
+   nothing of its own: no chrome, no padding, no focus-time layout shift.
+   Only the pointer and the focus ring say it is pressable. */
+.chartwrap.as-button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+/* ── Enlarged chart ───────────────────────────────────────────────── */
+.cd-back {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+  z-index: 20;
+}
+.cd {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-ui);
+  box-shadow: var(--shadow-drawer);
+  padding: var(--space-5);
+  max-width: min(1000px, 100%);
+  max-height: 100%;
+  overflow: auto;
+}
+.cd > header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.cd > header h3 {
+  font-family: var(--font-serif);
+  font-size: var(--text-title);
+}
+.cd > header .spacer {
+  margin-left: auto;
+}
+.cd-chart {
+  display: flex;
+  gap: var(--space-2);
+}
+/* The axis labels sit beside the plot and share its height, so a label can
+   never drift from the gridline it names. */
+.cd-y {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  font-size: var(--text-micro);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  height: 320px;
+}
+.cd-x {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-micro);
+  color: var(--muted);
+  margin-top: var(--space-1);
+}
+.cd-stats {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: var(--space-4);
+  font-size: var(--text-label);
+}
+.cd-stats th,
+.cd-stats td {
+  text-align: right;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.cd-stats thead th {
+  color: var(--muted);
+  font-weight: 500;
+}
+/* A row header is a NAME, not a column label: the global th rule uppercases
+   and letter-spaces, which turned the load average "1m" into "1 M". */
+.cd-stats th[scope="row"] {
+  text-align: left;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* The first column holds those names, so its header sits over them. */
+.cd-stats thead th:first-child {
+  text-align: left;
+}
+.cd-stats th[scope="row"] i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+}
 /* Charts carry explicit width/height attributes so they have an intrinsic
    size in a table cell, and a viewBox so they can be scaled. This is what
    lets them scale: below the width they were drawn at they shrink to fit

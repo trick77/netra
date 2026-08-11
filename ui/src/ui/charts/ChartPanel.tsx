@@ -5,10 +5,13 @@
 // no columns in the schema at all, and netra's collector contract is that
 // something which cannot run says why -- this panel is where that
 // contract reaches the UI.
+import { useState } from "react";
 import { ABSENT } from "../../lib/format";
 import { extent } from "./geometry";
 import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
+import { ChartDetail } from "./ChartDetail";
+import type { Range } from "../../lib/range";
 
 /** A single plotted series. Re-exported as `Band` because that is the name
  * the task brief uses for ChartPanel's `series` prop. */
@@ -35,6 +38,12 @@ export interface ChartPanelProps {
   width?: number;
   height?: number;
   highlight?: string;
+  /** The answered window, passed through to the enlarged view's time axis. */
+  window?: { from: string; to: string } | null;
+  /** The page's range and setter, so the enlarged view can carry the same
+   * control. Without them it simply shows the window it was given. */
+  range?: Range;
+  onRangeChange?: (range: Range) => void;
 }
 
 export function ChartPanel({
@@ -48,7 +57,11 @@ export function ChartPanel({
   width = 260,
   height = 64,
   highlight,
+  window: answered = null,
+  range,
+  onRangeChange,
 }: ChartPanelProps) {
+  const [enlarged, setEnlarged] = useState(false);
   if (unavailable !== undefined) {
     return (
       <section className="smp na" aria-label={`${title}, not collected`}>
@@ -96,7 +109,15 @@ export function ChartPanel({
         </span>
         {unit !== undefined && <span className="u">{unit}</span>}
       </div>
-      <div className="chartwrap">
+      {/* A button, not a div with a click handler: opening the enlarged view
+          has to work from the keyboard, and the chart is the affordance --
+          a separate "expand" icon would be a second thing to find. */}
+      <button
+        type="button"
+        className="chartwrap as-button"
+        onClick={() => setEnlarged(true)}
+        aria-label={`Enlarge ${title}`}
+      >
         <Overlay
           series={series}
           max={effectiveMax}
@@ -105,8 +126,21 @@ export function ChartPanel({
           highlight={highlight}
           label={`${title} over time`}
         />
-      </div>
+      </button>
       {notice && <p className="note">{notice}</p>}
+      {enlarged && (
+        <ChartDetail
+          title={title}
+          unit={unit}
+          series={series}
+          max={max}
+          fmt={fmt}
+          window={answered}
+          range={range}
+          onRangeChange={onRangeChange}
+          onClose={() => setEnlarged(false)}
+        />
+      )}
     </section>
   );
 }

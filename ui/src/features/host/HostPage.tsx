@@ -362,6 +362,8 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
           diskIo={data.diskIoMetrics}
           filesystem={data.filesystemMetrics}
           collector={data.collectorMetrics}
+          range={range}
+          onRangeChange={setRange}
         />
       )}
       {tab === "containers" && (

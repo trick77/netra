@@ -282,6 +282,7 @@ export function Overview({
           series={cpuBands}
           max={100}
           fmt={(n) => percent(n)}
+          window={hostMetrics?.window ?? null}
           // An empty band list is a tier that does not carry the columns --
           // cpu_user/system/iowait/steal live only in raw -- and an empty
           // chart asserts the host reported nothing. Say which it is.

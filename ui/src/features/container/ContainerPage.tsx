@@ -265,12 +265,18 @@ export function ContainerPage({
           title="CPU"
           fmt={(n) => percent(n)}
           notice={notice}
+          window={metrics.window}
+          range={range}
+          onRangeChange={onRangeChange}
           series={[band("cpu", "var(--s1)", sampled?.cpu ?? empty)]}
         />
         <ChartPanel
           title="Memory"
           fmt={bytes}
           notice={notice}
+          window={metrics.window}
+          range={range}
+          onRangeChange={onRangeChange}
           max={memLimit ?? undefined}
           series={[band("used", "var(--s2)", sampled?.memUsed ?? empty)]}
         />
@@ -278,6 +284,9 @@ export function ContainerPage({
           title="Network"
           fmt={perSecond}
           notice={notice}
+          window={metrics.window}
+          range={range}
+          onRangeChange={onRangeChange}
           series={[
             band("rx", "var(--s1)", sampled?.netRx ?? empty),
             band("tx", "var(--s3)", sampled?.netTx ?? empty),
@@ -287,6 +296,9 @@ export function ContainerPage({
           title="Disk I/O"
           fmt={perSecond}
           notice={notice}
+          window={metrics.window}
+          range={range}
+          onRangeChange={onRangeChange}
           series={[
             band("read", "var(--s2)", sampled?.ioRead ?? empty),
             band("write", "var(--s4)", sampled?.ioWrite ?? empty),
