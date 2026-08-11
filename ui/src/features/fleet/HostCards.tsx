@@ -1,6 +1,9 @@
-import { Server } from "lucide-react";
-import { EmptyState } from "../../ui/EmptyState";
 import { hostColumns, type HostRow, type Range } from "./hostColumns";
+import { FleetEmptyState } from "./fleetEmptyState";
+
+// The one column a card renders as its header rather than as a tile -- a
+// card names itself at the top instead of in a first cell.
+const HEADER_COLUMN_KEY = "host";
 
 export interface HostCardsProps {
   rows: readonly HostRow[];
@@ -24,24 +27,27 @@ export interface HostCardsProps {
  */
 export function HostCards({ rows, range }: HostCardsProps) {
   if (rows.length === 0) {
-    // Same empty state as the table's, deliberately: which density toggle a
-    // browser happens to remember must not change what an empty fleet says.
-    return (
-      <EmptyState
-        icon={Server}
-        title="No hosts yet"
-        body="Once an agent reports in, its host appears here."
-      />
-    );
+    // The table's empty state, not a copy of it.
+    return <FleetEmptyState />;
   }
 
-  const [host, ...metrics] = hostColumns(range);
+  // The header column is found by key, never by position: a column added at
+  // the front of hostColumns would otherwise silently become the card title
+  // instead of a tile.
+  const columns = hostColumns(range);
+  const host = columns.find((col) => col.key === HEADER_COLUMN_KEY);
+  const metrics = columns.filter((col) => col.key !== HEADER_COLUMN_KEY);
 
   return (
     <div className="cards">
       {rows.map((row) => (
-        <article className="hcard" key={row.id}>
-          <header>{host!.cell(row)}</header>
+        // The article carries the hostname as its accessible name. The
+        // table gets its structure free from <th scope="col">; an unnamed
+        // article gives a screen-reader user a nameless region holding a
+        // nameless div -- and cards are automatic below the mobile
+        // breakpoint, so this is not an opt-in path anyone chose.
+        <article className="hcard" key={row.id} aria-label={row.hostname}>
+          <header>{host?.cell(row)}</header>
           <div className="grid">
             {metrics.map((col) => (
               <div className="m" key={col.key}>

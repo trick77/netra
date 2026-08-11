@@ -110,12 +110,29 @@ describe("AttentionBand", () => {
     expect(whos[0]).toHaveTextContent("b");
   });
 
-  it("does not render a flat row for a host past the two-condition grouping threshold", () => {
+  it("keeps a host's other conditions behind the disclosure rather than flat in the band", () => {
     render(<AttentionBand conditions={fourOnOneHost()} />);
-    // Only the worst condition's "what" text should show at the top level;
-    // the other three stay behind the "+3 more" disclosure.
-    expect(screen.getByText("disk full")).toBeInTheDocument();
-    expect(screen.queryByText("service down")).not.toBeInTheDocument();
+
+    // Only the worst condition shows at the top level. The other three sit
+    // inside the closed <details>: present in the DOM, since grouping is
+    // presentation and never suppression, but not visible and not reachable
+    // by a screen reader until the disclosure is opened.
+    expect(screen.getByText("disk full")).toBeVisible();
+    expect(screen.getByText("service down")).not.toBeVisible();
+  });
+
+  // The rows must be inside the element the summary controls. Rendered as
+  // siblings of it, the summary announced itself expanded while the thing it
+  // disclosed was empty, and the revealed rows had no programmatic
+  // relationship to the control that revealed them.
+  it("discloses the hidden conditions from inside the details element", () => {
+    render(<AttentionBand conditions={fourOnOneHost()} />);
+
+    const details = document.querySelector("details")!;
+    expect(details.querySelectorAll(".attn-sub")).toHaveLength(3);
+
+    details.setAttribute("open", "");
+    expect(screen.getByText("service down")).toBeVisible();
   });
 
   it("has no dismiss or acknowledge control", () => {

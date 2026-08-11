@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { stackBands } from "../../ui/charts/geometry";
 import { hostColumns, type HostRow } from "./hostColumns";
+import { ABSENT } from "../../lib/format";
 
 function makeRow(overrides: Partial<HostRow> = {}): HostRow {
   return {
@@ -77,6 +78,56 @@ describe("hostColumns", () => {
     });
   });
 
+  describe("cpu cell", () => {
+    // Without a ceiling StackedSparkline auto-scales each host to its own
+    // running total, so an idle host and a saturated one draw the identical
+    // silhouette and the rows stop being comparable -- the one thing a fleet
+    // list is for. Two rows an order of magnitude apart must not render the
+    // same path data.
+    it("scales every host's stack to 100, not to its own peak", () => {
+      const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
+      const idle = render(
+        <>
+          {cpuCol.cell(
+            makeRow({
+              cpu: [{ name: "user", color: "var(--s1)", values: [1, 2, 3] }],
+            }),
+          )}
+        </>,
+      );
+      const idlePaths = idle.container.innerHTML;
+      idle.unmount();
+
+      const busy = render(
+        <>
+          {cpuCol.cell(
+            makeRow({
+              cpu: [{ name: "user", color: "var(--s1)", values: [30, 60, 90] }],
+            }),
+          )}
+        </>,
+      );
+
+      expect(busy.container.innerHTML).not.toBe(idlePaths);
+    });
+  });
+
+  describe("disk cell", () => {
+    // A host that has reported no filesystems has no fullest one. The row
+    // type used to forbid saying so, and the only expressible stand-in was
+    // pct: 0 -- an empty, healthy, green bar where "never collected"
+    // belongs, absent rendered as a fact.
+    it("renders the absent marker, not an empty meter, when nothing was collected", () => {
+      const diskCol = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const { container } = render(
+        <>{diskCol.cell(makeRow({ fullest: null }))}</>,
+      );
+
+      expect(container.querySelector(".meter")).not.toBeInTheDocument();
+      expect(container.textContent).toBe(ABSENT);
+    });
+  });
+
   describe("uptime cell", () => {
     it("carries the warning severity, as a badge with a dot and a word, when uptime is under 300s", () => {
       const cols = hostColumns("1h");
@@ -86,7 +137,11 @@ describe("hostColumns", () => {
       const badge = container.querySelector(".badge");
       expect(badge).toHaveClass("st-warn");
       expect(badge?.querySelector(".dot")).toBeInTheDocument();
-      expect(badge).toHaveTextContent(/./); // a word, not just a dot
+      // A WORD, not merely non-empty text. The dot is aria-hidden, so a
+      // screen reader hearing "1 m 40 s" cannot tell this row from a healthy
+      // host's "266 d 6 h", and a deuteranope sees only a hue change: the
+      // state would ride on colour alone. A duration is not a severity.
+      expect(badge).toHaveTextContent(/rebooted/i);
     });
 
     it("does not warn at exactly 300s", () => {

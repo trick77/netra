@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Badge, type Severity } from "../../ui/Badge";
 import { relative } from "../../lib/format";
 
@@ -138,8 +138,17 @@ function ConditionSubRow({ c }: { c: Condition }) {
   );
 }
 
+// `since` alone collides: one evaluation pass writes several conditions for
+// a host with the same timestamp, which is the normal case rather than the
+// edge one. `what` cannot help -- it is a ReactNode, and String() on an
+// element is "[object Object]" for every one of them. The position within
+// this host's own list is what actually distinguishes them, and it is stable
+// for as long as the list is.
+function subRowKey(c: Condition, index: number): string {
+  return `${c.since}#${index}`;
+}
+
 function HostRow({ group, action }: { group: HostGroup; action?: ReactNode }) {
-  const [expanded, setExpanded] = useState(false);
   const rest = group.conditions.filter((c) => c !== group.worst);
   // Above the threshold, everything but the worst condition hides behind
   // an explicit disclosure -- one cascading failure on a single host must
@@ -155,22 +164,26 @@ function HostRow({ group, action }: { group: HostGroup; action?: ReactNode }) {
         <Badge severity={group.worst.severity}>{group.worst.severity}</Badge>
         <span className="what">{group.worst.what}</span>
         <span className="since">{relative(group.worst.since)}</span>
-        {grouped ? (
-          <details onToggle={(e) => setExpanded(e.currentTarget.open)}>
-            <summary className="more">+{rest.length} more</summary>
-          </details>
-        ) : null}
         {action}
       </div>
-      {!grouped &&
-        rest.map((c) => (
-          <ConditionSubRow key={c.since + String(c.what)} c={c} />
-        ))}
-      {grouped &&
-        expanded &&
-        rest.map((c) => (
-          <ConditionSubRow key={c.since + String(c.what)} c={c} />
-        ))}
+      {/* The disclosed rows live INSIDE the <details>, which is the whole
+          contract of the element: the summary announces itself expanded and
+          the thing it controls is what opens. They used to sit outside it,
+          so a keyboard or screen-reader user got "+2 more, expanded" and an
+          empty element, with the revealed rows floating as unrelated
+          siblings. <details> also owns the open state itself -- the mirrored
+          useState it replaced was a second copy of a fact the DOM already
+          had. */}
+      {grouped ? (
+        <details>
+          <summary className="more">+{rest.length} more</summary>
+          {rest.map((c, i) => (
+            <ConditionSubRow key={subRowKey(c, i)} c={c} />
+          ))}
+        </details>
+      ) : (
+        rest.map((c, i) => <ConditionSubRow key={subRowKey(c, i)} c={c} />)
+      )}
     </>
   );
 }

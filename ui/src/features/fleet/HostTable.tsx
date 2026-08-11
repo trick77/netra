@@ -1,6 +1,5 @@
-import { Server } from "lucide-react";
-import { EmptyState } from "../../ui/EmptyState";
 import { Table } from "../../ui/Table";
+import { FleetEmptyState } from "./fleetEmptyState";
 import { hostColumns, type HostRow, type Range } from "./hostColumns";
 
 export interface HostTableProps {
@@ -22,15 +21,8 @@ export interface HostTableProps {
 export function HostTable({ rows, range }: HostTableProps) {
   if (rows.length === 0) {
     // An empty <table> renders as a bare header rail, which reads as a
-    // loading glitch rather than as "this hub has no hosts yet". The fleet
-    // page's own empty state is the onboarding path, so it says so.
-    return (
-      <EmptyState
-        icon={Server}
-        title="No hosts yet"
-        body="Once an agent reports in, its host appears here."
-      />
-    );
+    // loading glitch rather than as "this hub has no hosts yet".
+    return <FleetEmptyState />;
   }
 
   return (

@@ -72,9 +72,17 @@ export type HostRow = Host & {
   site_name: string | null;
   cpu: Band[];
   mem: Band[];
-  rx: number[];
-  tx: number[];
-  fullest: { mount: string; pct: number; others: number };
+  // (number | null)[], matching Band.values, because an agent outage inside
+  // the window is a hole in these series too. Typed number[] the row could
+  // not express one, and UpDownSparkline -- which already breaks each side
+  // at its own gaps -- would have drawn a straight line across it: "the host
+  // was down" rendered as "traffic was steady".
+  rx: (number | null)[];
+  tx: (number | null)[];
+  // null when the host has reported no filesystems at all. Non-nullable, the
+  // only way to say "never collected" was pct: 0, which renders as an empty,
+  // healthy, green disk -- absent read as a fact.
+  fullest: { mount: string; pct: number; others: number } | null;
 };
 
 // internal/agent/config/config.go: ScrapeInterval = 60s is the agent's
@@ -115,10 +123,20 @@ function HostCell({ row }: { row: HostRow }) {
   );
 }
 
+// The stack is scaled to 100, never to its own running total. Without a
+// ceiling StackedSparkline auto-scales each host to its own peak, so a host
+// idling at 3% and one saturated at 90% draw the identical silhouette
+// touching the top of the box -- the rows stop being comparable, which is
+// what a fleet list is for. It is the same always-full reading MemoryCell
+// below carries its own ceiling to avoid; the spec's silhouette is
+// cpu_total, not cpu_total normalised to itself.
+const CPU_PERCENT_MAX = 100;
+
 function CpuCell({ row, range }: { row: HostRow; range: Range }) {
   return (
     <StackedSparkline
       bands={row.cpu}
+      max={CPU_PERCENT_MAX}
       label={`CPU trend, ${RANGE_LABEL[range]}`}
     />
   );
@@ -152,8 +170,11 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   );
 }
 
-function lastValue(values: number[]): number | null {
-  return values.length > 0 ? values[values.length - 1]! : null;
+// The value at the latest bucket, trailing null included -- never the last
+// value that happened to be a number. A host that stopped reporting must
+// read as absent, not as its final rate frozen in place.
+function lastValue(values: (number | null)[]): number | null {
+  return values.length > 0 ? (values[values.length - 1] ?? null) : null;
 }
 
 // Both rates render in identical type, weighted only by an arrow glyph --
@@ -190,6 +211,12 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 // single pre-picked summary, not a list, so there is nothing here to sum:
 // the row's assembler already did the picking.
 function DiskCell({ row }: { row: HostRow }) {
+  if (row.fullest === null) {
+    // A host that has reported no filesystems has no fullest one. Drawing a
+    // meter anyway would put an empty green bar where "never collected"
+    // belongs, which reads as a fact rather than as an absence.
+    return <>{ABSENT}</>;
+  }
   const { mount, pct, others } = row.fullest;
   const label = others > 0 ? `${mount} +${others}` : mount;
   return <Meter value={pct} max={100} label={label} />;
@@ -204,7 +231,12 @@ const UPTIME_WARNING_THRESHOLD_S = 300;
 function UptimeCell({ row }: { row: HostRow }) {
   const text = duration(row.uptime_s);
   if (row.uptime_s !== null && row.uptime_s < UPTIME_WARNING_THRESHOLD_S) {
-    return <Badge severity="warning">{text}</Badge>;
+    // "rebooted", not the duration alone. Badge's dot is aria-hidden, so a
+    // screen reader hearing "1 m 40 s" cannot tell this row from a healthy
+    // host's "266 d 6 h", and a deuteranope sees only a hue change -- the
+    // state would ride on colour alone, which is precisely what pairing a
+    // dot with a WORD is supposed to prevent. A duration is not a severity.
+    return <Badge severity="warning">rebooted {text} ago</Badge>;
   }
   return <>{text}</>;
 }

@@ -463,6 +463,44 @@ a {
   padding: 1px 8px;
 }
 
+/* Host cell — the Host column's content, rendered by hostColumns and shown
+   both as a table cell and as a card header. The card-header hooks .hcard
+   .hn/.hs are scoped to the card, so a cell rendered in the table would go
+   unstyled; these classes carry the same look in both places. */
+.host-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.host-cell-name {
+  font-weight: 500;
+  font-size: var(--text-ui);
+}
+.host-cell-site {
+  font-size: var(--text-label);
+  color: var(--muted);
+}
+
+/* Traffic cell — the up/down sparkline with both rates beneath it. Both
+   rates render in identical type on purpose: netra cannot know whether a
+   host is meant to push or pull more, so weighting one would assert a
+   direction that is not true. */
+.traffic-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.traffic-rates {
+  display: flex;
+  gap: var(--space-3);
+  font-size: var(--text-label);
+  color: var(--ink-2);
+}
+.rate {
+  font-variant-numeric: tabular-nums;
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));

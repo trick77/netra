@@ -93,4 +93,26 @@ describe("HostCards", () => {
     expect(document.querySelectorAll(".hcard")).toHaveLength(0);
     expect(screen.getByText(/no hosts/i)).toBeInTheDocument();
   });
+
+  // The table gets its structure free from <th scope="col">; an unnamed
+  // <article> gives a screen-reader user a nameless region holding a
+  // nameless div. Cards are automatic below the mobile breakpoint, so this
+  // is not a path anyone opted into.
+  it("names each card after its host", () => {
+    render(<HostCards rows={[makeRow({ hostname: "web-01" })]} range="24h" />);
+
+    expect(screen.getByRole("article", { name: "web-01" })).toBeInTheDocument();
+  });
+
+  // The header column is found by key. Selected by position, a column added
+  // at the front of hostColumns would silently become the card title
+  // instead of a tile -- a column disappearing from the grid without anyone
+  // touching this file.
+  it("puts the Host column in the header and every other column in the grid", () => {
+    render(<HostCards rows={[makeRow()]} range="24h" />);
+
+    const header = document.querySelector(".hcard > header")!;
+    expect(header.querySelector(".host-cell-name")).toBeInTheDocument();
+    expect(header.querySelectorAll(".m")).toHaveLength(0);
+  });
 });
