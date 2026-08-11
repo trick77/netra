@@ -325,58 +325,63 @@ export function HostAdminPage() {
             </div>
           ) : null}
 
-          <table>
-            <thead>
-              <tr>
-                <th>Host</th>
-                <th>Site</th>
-                <th>Last seen</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {hosts.map((host) => (
-                <tr key={host.id}>
-                  <td>{host.hostname}</td>
-                  <td>{siteName(host.site_id) ?? "none"}</td>
-                  <td>
-                    {/* A host with a token but no agent yet has never
+          {/* Same wrapper the Table primitive uses: a wide table must
+              scroll inside its own box rather than widening the page and
+              taking the nav with it. */}
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Host</th>
+                  <th>Site</th>
+                  <th>Last seen</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hosts.map((host) => (
+                  <tr key={host.id}>
+                    <td>{host.hostname}</td>
+                    <td>{siteName(host.site_id) ?? "none"}</td>
+                    <td>
+                      {/* A host with a token but no agent yet has never
                         reported, which is a different fact from "the age is
                         unknown" -- and on this page it is the expected state
                         right after creation. */}
-                    {host.last_seen === null
-                      ? "never"
-                      : relative(host.last_seen)}
-                  </td>
-                  <td>
-                    <div className="toolbar">
-                      <Button
-                        small
-                        busy={rotating === host.id}
-                        disabled={rotating !== null}
-                        onClick={() => void onRotate(host)}
-                      >
-                        Rotate token
-                      </Button>
-                      {confirming === host.id ? (
+                      {host.last_seen === null
+                        ? "never"
+                        : relative(host.last_seen)}
+                    </td>
+                    <td>
+                      <div className="toolbar">
                         <Button
                           small
-                          variant="danger"
-                          onClick={() => void onDelete(host)}
+                          busy={rotating === host.id}
+                          disabled={rotating !== null}
+                          onClick={() => void onRotate(host)}
                         >
-                          Confirm delete
+                          Rotate token
                         </Button>
-                      ) : (
-                        <Button small onClick={() => setConfirming(host.id)}>
-                          Delete
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                        {confirming === host.id ? (
+                          <Button
+                            small
+                            variant="danger"
+                            onClick={() => void onDelete(host)}
+                          >
+                            Confirm delete
+                          </Button>
+                        ) : (
+                          <Button small onClick={() => setConfirming(host.id)}>
+                            Delete
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       ) : null}
     </div>

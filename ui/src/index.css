@@ -675,6 +675,10 @@ a {
   border: 1px solid var(--border);
   border-radius: var(--radius-ui);
   padding: var(--space-3) var(--space-4) 10px;
+  /* A grid item defaults to min-width:auto, which is its CONTENT's width --
+     so a panel holding a 520px chart refused to shrink below 520px and the
+     whole page scrolled sideways at 390px. */
+  min-width: 0;
 }
 .smp .t {
   display: flex;
@@ -1161,6 +1165,11 @@ svg.spark {
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-4) 0;
+  /* Wraps rather than overflowing: the header carries a name, four facts, a
+     badge, a range control and an action, which do not fit on one line at
+     390px -- and a header that pushes the page sideways moves every element
+     on it, including the nav. */
+  flex-wrap: wrap;
 }
 .hosthead h1 {
   font-family: var(--font-serif);
@@ -1173,6 +1182,14 @@ svg.spark {
 }
 .chartwrap {
   position: relative;
+}
+/* Charts carry explicit width/height attributes so they have an intrinsic
+   size in a table cell, and a viewBox so they can be scaled. This is what
+   lets them scale: below the width they were drawn at they shrink to fit
+   rather than pushing the page wider than the screen. */
+svg.spark {
+  max-width: 100%;
+  height: auto;
 }
 .axislab {
   font-size: var(--text-micro);
@@ -1234,6 +1251,9 @@ svg.spark {
      and a horizontal scroller hides its own overflow. */
   .tabs {
     flex-wrap: wrap;
+  }
+  .hosthead h1 {
+    flex: 1 1 100%;
   }
   .topnav {
     flex-wrap: wrap;
