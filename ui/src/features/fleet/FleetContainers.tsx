@@ -4,6 +4,8 @@ import { Table, type Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
 import { ABSENT } from "../../lib/format";
 import type { Container } from "../../lib/api";
+import { Sparkline } from "../../ui/charts/Sparkline";
+import { rangeLabel, type Range } from "../../lib/range";
 
 /**
  * A container as the fleet sees it: what `GET /api/v1/hosts/{id}/containers`
@@ -16,7 +18,39 @@ import type { Container } from "../../lib/api";
 export type ContainerRow = Container & {
   host_id: number;
   hostname: string;
+  /** CPU percent and memory bytes over the window, when they have been
+   * fetched. Absent (not empty) when nobody asked for them: an empty series
+   * draws a gap, which is the truth for a container that reported nothing,
+   * and the wrong thing to say about a list that never requested metrics. */
+  cpu?: (number | null)[];
+  mem?: (number | null)[];
+  /** The container's own memory ceiling, or null when it runs unlimited. */
+  mem_limit_bytes?: number | null;
 };
+
+/**
+ * The shared ceilings for a list's trend columns.
+ *
+ * Computed across every row rather than per row, because a column of
+ * independently scaled sparklines compares nothing: each one fills its own
+ * box, so the busiest container and the idlest draw the same picture. CPU is
+ * a percentage that can exceed 100 (a container using two cores reports
+ * 200), so the ceiling is the list's own peak rather than a fixed 100.
+ */
+export function trendScales(rows: readonly ContainerRow[]): {
+  cpuMax: number;
+  memMax: number;
+} {
+  let cpuMax = 0;
+  let memMax = 0;
+  for (const row of rows) {
+    for (const v of row.cpu ?? []) if (v !== null && v > cpuMax) cpuMax = v;
+    for (const v of row.mem ?? []) if (v !== null && v > memMax) memMax = v;
+  }
+  // A zero ceiling would divide by zero in the geometry; 1 draws a flat line
+  // on the floor, which is what "nothing happened" looks like.
+  return { cpuMax: cpuMax || 1, memMax: memMax || 1 };
+}
 
 /**
  * The one container column definition, parameterised by whether the Host
@@ -32,7 +66,24 @@ export type ContainerRow = Container & {
  */
 export function containerColumns({
   showHost = false,
-}: { showHost?: boolean } = {}): Column<ContainerRow>[] {
+  cpuMax,
+  memMax,
+  range = "24h",
+}: {
+  showHost?: boolean;
+  /** Only for the charts' accessible names -- this file never resolves a
+   * range into a query. */
+  range?: Range;
+  /**
+   * Shared ceilings for the sparklines, computed across the whole list by
+   * `trendScales` below. Per-row auto-scaling would draw an idle container
+   * and a saturated one with the identical silhouette -- the same reading
+   * the host list's CPU column carries a fixed ceiling to avoid -- and a
+   * list exists to be compared down its columns.
+   */
+  cpuMax?: number;
+  memMax?: number;
+} = {}): Column<ContainerRow>[] {
   const columns: Column<ContainerRow>[] = [
     {
       key: "container",
@@ -61,6 +112,49 @@ export function containerColumns({
     // tabular figures, for columns of digits that must line up.
     cell: (row) => <span className="mono">{row.image ?? ABSENT}</span>,
   });
+
+  // The trend columns appear only when someone fetched the metrics. A list
+  // that did not ask for them renders as it always did rather than growing
+  // two columns of permanent gaps.
+  if (cpuMax !== undefined || memMax !== undefined) {
+    columns.push({
+      key: "cpu",
+      header: "CPU",
+      cell: (row) =>
+        row.cpu === undefined || row.cpu.length === 0 ? (
+          ABSENT
+        ) : (
+          <Sparkline
+            values={row.cpu}
+            max={cpuMax}
+            min={0}
+            color="var(--s1)"
+            label={`CPU trend, ${rangeLabel(range)}`}
+          />
+        ),
+    });
+    columns.push({
+      key: "memory",
+      header: "Memory",
+      cell: (row) =>
+        row.mem === undefined || row.mem.length === 0 ? (
+          ABSENT
+        ) : (
+          <Sparkline
+            values={row.mem}
+            // Against its OWN limit when it has one -- that is what "how
+            // close to being killed" means -- and against the list's
+            // largest container when it does not, so the unlimited ones
+            // stay comparable with each other.
+            max={row.mem_limit_bytes ?? memMax}
+            min={0}
+            color="var(--s2)"
+            label={`Memory trend, ${rangeLabel(range)}`}
+          />
+        ),
+    });
+  }
+
   return columns;
 }
 
@@ -92,12 +186,15 @@ export interface FleetContainersProps {
   showHost?: boolean;
   /** False while the container fan-out has not answered yet. */
   loaded?: boolean;
+  /** Passed through to the charts' accessible names. */
+  range?: Range;
 }
 
 export function FleetContainers({
   rows,
   showHost,
   loaded = true,
+  range = "24h",
 }: FleetContainersProps) {
   if (rows.length === 0) {
     // An empty <table> renders as a bare header rail, which reads as a
@@ -122,9 +219,15 @@ export function FleetContainers({
     );
   }
 
+  // The trend columns appear only when the rows carry trends, and their
+  // ceilings are shared across the list so the sparklines can be compared
+  // down the column.
+  const charted = rows.some((row) => row.cpu !== undefined);
+  const scales = charted ? trendScales(rows) : {};
+
   return (
     <Table
-      columns={containerColumns({ showHost })}
+      columns={containerColumns({ showHost, range, ...scales })}
       rows={rows}
       // Two hosts can run the same container_key, so identity is the pair.
       rowKey={(row) => `${row.host_id}:${row.container_key}`}

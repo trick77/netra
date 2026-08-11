@@ -95,4 +95,39 @@ describe("FleetContainers", () => {
 
     expect(screen.getByText(/no host in this fleet/i)).toBeInTheDocument();
   });
+
+  // A column of independently scaled sparklines compares nothing: each row
+  // fills its own box, so the busiest container and the idlest draw the
+  // same picture. The ceiling is shared across the list.
+  it("scales every row's CPU against the list's peak, not its own", () => {
+    const busy = makeRow({
+      container_key: "web/api",
+      cpu: [10, 90],
+      mem: [1, 2],
+    });
+    const idle = makeRow({
+      container_key: "web/cron",
+      cpu: [1, 2],
+      mem: [1, 2],
+    });
+
+    const { container } = render(
+      <FleetContainers rows={[busy, idle]} showHost loaded />,
+    );
+
+    const paths = [...container.querySelectorAll("path[data-line]")].map((p) =>
+      p.getAttribute("d"),
+    );
+    // Four charts (two rows x CPU+memory); the two CPU lines must differ.
+    expect(paths.length).toBeGreaterThanOrEqual(4);
+    expect(paths[0]).not.toBe(paths[2]);
+  });
+
+  // A list nobody fetched metrics for renders as it always did, rather than
+  // growing two columns of permanent gaps.
+  it("shows no trend columns when the rows carry no trends", () => {
+    render(<FleetContainers rows={[makeRow()]} showHost loaded />);
+
+    expect(screen.queryByRole("columnheader", { name: "CPU" })).toBeNull();
+  });
 });

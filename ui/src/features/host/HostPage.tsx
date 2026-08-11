@@ -89,6 +89,7 @@ interface TabData {
   netMetrics: MetricsResponse | null;
   diskIoMetrics: MetricsResponse | null;
   collectorMetrics: MetricsResponse | null;
+  containerMetrics: MetricsResponse | null;
   containers: Container[] | null;
   filesystems: Filesystem[] | null;
   addresses: Address[] | null;
@@ -105,6 +106,7 @@ const NO_DATA: TabData = {
   netMetrics: null,
   diskIoMetrics: null,
   collectorMetrics: null,
+  containerMetrics: null,
   containers: null,
   filesystems: null,
   addresses: null,
@@ -226,8 +228,15 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             collectorMetrics,
           };
         }
-        case "containers":
-          return { containers: await orNull(getContainers(hostId)) };
+        case "containers": {
+          // The list and its metrics, so the tab can show what each
+          // container is doing rather than only that it exists.
+          const [containers, containerMetrics] = await Promise.all([
+            orNull(getContainers(hostId)),
+            metrics("container"),
+          ]);
+          return { containers, containerMetrics };
+        }
         case "filesystems": {
           // The inventory row carries a label, a mountpoint and a device id
           // and nothing else -- size, used and free live in the metrics
@@ -355,7 +364,13 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
           collector={data.collectorMetrics}
         />
       )}
-      {tab === "containers" && <Containers rows={data.containers ?? []} />}
+      {tab === "containers" && (
+        <Containers
+          rows={data.containers ?? []}
+          metrics={data.containerMetrics ?? null}
+          range={range}
+        />
+      )}
       {tab === "filesystems" && (
         <Filesystems
           rows={data.filesystems ?? []}
