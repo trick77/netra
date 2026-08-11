@@ -14,7 +14,6 @@ import { Segmented } from "../../ui/Segmented";
 import { StatTile } from "../../ui/StatTile";
 import { Tabs } from "../../ui/Tabs";
 import { AttentionBand, type Condition } from "./AttentionBand";
-import { AllHostsOverlay, fromHostRows } from "./AllHostsOverlay";
 import { FleetContainers, type ContainerRow } from "./FleetContainers";
 import { HostCards } from "./HostCards";
 import { HostTable } from "./HostTable";
@@ -420,12 +419,6 @@ export function FleetPage({
           loaded={containersKnown}
         />
       )}
-
-      {/* The overlay compares hosts, so it belongs to the host view: under a
-          container list it would answer a question nobody asked. */}
-      {entity === "hosts" ? (
-        <AllHostsOverlay hosts={fromHostRows(visibleHosts)} />
-      ) : null}
     </>
   );
 }
