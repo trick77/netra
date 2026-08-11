@@ -247,3 +247,41 @@ describe("filesystemRows", () => {
     });
   });
 });
+
+describe("Overview processor panel", () => {
+  // The rollup tiers carry cpu_total and not the four per-state columns, so
+  // above an hour this -- the headline chart on the page -- had nothing to
+  // draw and rendered as not-collected, while the fleet row for the same
+  // host drew a silhouette from the total. The two must not disagree about
+  // whether a host's CPU can be drawn.
+  it("draws the total as one band when the tier has no per-state breakdown", () => {
+    render(
+      <Overview
+        host={host}
+        filesystemMetrics={null}
+        agentMetrics={null}
+        sensorMetrics={null}
+        containers={null}
+        units={null}
+        hostMetrics={response({
+          family: "host",
+          tier: "5m",
+          columns: ["cpu_total_avg"],
+          series: [
+            {
+              key: {},
+              points: [
+                [1_754_784_000_000, 30],
+                [1_754_784_300_000, 35],
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+
+    const panel = screen.getByRole("region", { name: "Processor chart" });
+    expect(panel).toBeInTheDocument();
+    expect(screen.queryByText("Not collected")).toBeNull();
+  });
+});

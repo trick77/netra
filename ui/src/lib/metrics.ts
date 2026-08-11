@@ -203,10 +203,14 @@ export function seriesValues(
  * same name column() would resolve.
  */
 export function carriesColumn(
-  res: MetricsResponse | null,
+  res: MetricsResponse | null | undefined,
   base: string,
 ): boolean {
-  if (res === null) return false;
+  // `== null`, covering undefined: these come from optional props, and a
+  // caller that simply does not have this family yet passes nothing at all.
+  // Reading .columns off it threw during render, with no error boundary
+  // under it -- a blank page for a missing prop.
+  if (res == null) return false;
   return candidates(base).some((name) => res.columns.includes(name));
 }
 
@@ -230,11 +234,11 @@ export function carriesColumn(
  * suffixed peers, matching column()'s own resolution order.
  */
 export function optionalValues(
-  res: MetricsResponse | null,
+  res: MetricsResponse | null | undefined,
   seriesIndex: number,
   base: string,
 ): (number | null)[] {
-  if (res === null) return [];
+  if (res == null) return [];
   if (!carriesColumn(res, base)) return [];
   if (res.series[seriesIndex] === undefined) return [];
   return seriesValues(res, seriesIndex, base);
@@ -314,11 +318,11 @@ export function seriesOnGrid(
  * them up again.
  */
 export function griddedValues(
-  res: MetricsResponse | null,
+  res: MetricsResponse | null | undefined,
   seriesIndex: number,
   base: string,
 ): (number | null)[] {
-  if (res === null) return [];
+  if (res == null) return [];
   const values = optionalValues(res, seriesIndex, base);
   if (values.length === 0) return [];
   return seriesOnGrid(res, values, seriesTimestamps(res, seriesIndex));

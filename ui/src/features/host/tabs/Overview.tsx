@@ -72,7 +72,10 @@ export interface FilesystemRow {
  * that stays true at every tier.
  */
 export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
-  if (res === null) return [];
+  // `== null`, not `=== null`: these props are optional, so a caller that
+  // simply does not have this family yet passes undefined -- and reading
+  // .series off it threw during render, with no error boundary under it.
+  if (res == null) return [];
   return res.series.map((series, index) => ({
     label: series.key.filesystem ?? ABSENT,
     total: latest(res, "total", index),
@@ -227,13 +230,28 @@ export function Overview({
   units,
   now,
 }: OverviewProps) {
-  const cpuBands: Band[] = CPU_BANDS.map((band) => ({
+  const perState: Band[] = CPU_BANDS.map((band) => ({
     name: band.name,
     color: band.color,
     // On the window grid, so an outage is a hole in the silhouette rather
     // than a line drawn straight across it.
     values: griddedValues(hostMetrics, 0, band.base),
   })).filter((band) => band.values.length > 0);
+
+  // The rollup tiers carry cpu_total and not the breakdown, so above an hour
+  // the four bands are simply absent -- and this is the headline chart on
+  // the page. One true band beats a not-collected panel where a silhouette
+  // is available: the fleet row for this same host does exactly this, and
+  // the two must not disagree about whether a host's CPU can be drawn. A
+  // breakdown cannot be recovered from a total, so it is labelled for what
+  // it is rather than split into four invented ones.
+  const total = griddedValues(hostMetrics, 0, "cpu_total");
+  const cpuBands: Band[] =
+    perState.length > 0
+      ? perState
+      : total.length > 0
+        ? [{ name: "busy", color: "var(--s1)", values: total }]
+        : [];
 
   const memTotal = latest(hostMetrics, "mem_total") ?? host.memory_total;
   const memUsed = latest(hostMetrics, "mem_used") ?? host.mem_used;
@@ -269,7 +287,7 @@ export function Overview({
           // chart asserts the host reported nothing. Say which it is.
           unavailable={
             cpuBands.length === 0
-              ? "The per-state CPU columns are stored only at full resolution. Choose a shorter range to see them."
+              ? "The host reported no processor samples in this window."
               : undefined
           }
         />
