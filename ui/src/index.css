@@ -1161,11 +1161,27 @@ svg.spark {
   font-variant-numeric: tabular-nums;
 }
 
+/* Two columns that PACK rather than align.
+   As a grid, every row was as tall as its taller card and the shorter one
+   left a hole -- a 119px Processor beside a 204px Memory, with 85px of
+   nothing under it. Multi-column flow lets each card take its own height
+   and the next one start immediately; the columns end at different points,
+   which is the trade for no wasted space.
+   The consequence to know: visual order becomes column-major (down the left,
+   then down the right) while the DOM order a screen reader follows stays
+   as written. Cards are independent sections, so neither order misleads. */
 .grid2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
-  align-items: start;
+  columns: 2;
+  column-gap: var(--space-4);
+}
+.grid2 > * {
+  /* A card must not be split across the column break. */
+  break-inside: avoid;
+  /* Column flow has no row gap of its own; the margin is the gap, and
+     inline-block stops the margin collapsing through the break. */
+  display: inline-block;
+  width: 100%;
+  margin-bottom: var(--space-4);
 }
 .hosthead {
   display: flex;
