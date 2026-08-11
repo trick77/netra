@@ -83,9 +83,9 @@ func rpi5() *Profile {
 			{Label: "boot-firmware", Mountpoint: "/boot/firmware", DeviceID: 64768, Total: 512 * mib, InodesTotal: 0, UsedStart: 0.15, UsedEnd: 0.16},
 		},
 		Containers: []ContainerSpec{
-			{Key: "netra_agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest", IsAgent: true, MemLimit: 128 * mib, CPUBase: 1.1, MemBase: 38 * mib},
-			{Key: "home_mosquitto", Name: "home-mosquitto-1", Image: "eclipse-mosquitto:2", MemLimit: 256 * mib, CPUBase: 0.6, MemBase: 21 * mib},
-			{Key: "home_zigbee2mqtt", Name: "home-zigbee2mqtt-1", Image: "koenkk/zigbee2mqtt:latest", MemLimit: 512 * mib, CPUBase: 3.4, MemBase: 174 * mib},
+			{Key: "netra/agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest", IsAgent: true, MemLimit: 128 * mib, CPUBase: 1.1, MemBase: 38 * mib},
+			{Key: "home/mosquitto", Name: "home-mosquitto-1", Image: "eclipse-mosquitto:2", MemLimit: 256 * mib, CPUBase: 0.6, MemBase: 21 * mib},
+			{Key: "home/zigbee2mqtt", Name: "home-zigbee2mqtt-1", Image: "koenkk/zigbee2mqtt:latest", MemLimit: 512 * mib, CPUBase: 3.4, MemBase: 174 * mib},
 		},
 		Units: []string{
 			"ssh.service", "systemd-timesyncd.service", "docker.service",
@@ -154,12 +154,12 @@ func nvmeVPS() *Profile {
 			{Label: "root", Mountpoint: "/", DeviceID: 66305, Total: 160 * gib, InodesTotal: 10485760, UsedStart: 0.52, UsedEnd: 0.79},
 		},
 		Containers: []ContainerSpec{
-			{Key: "netra_agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest", IsAgent: true, MemLimit: 128 * mib, CPUBase: 0.8, MemBase: 34 * mib},
-			{Key: "netra_hub", Name: "netra-hub-1", Image: "ghcr.io/trick77/netra:latest", MemLimit: 512 * mib, CPUBase: 4.2, MemBase: 210 * mib},
-			{Key: "netra_timescaledb", Name: "netra-timescaledb-1", Image: "timescale/timescaledb:latest-pg17", MemLimit: 4 * gib, CPUBase: 11.5, MemBase: 2100 * mib},
-			{Key: "netra_traefik", Name: "netra-traefik-1", Image: "traefik:v3.1", MemLimit: 256 * mib, CPUBase: 1.3, MemBase: 62 * mib},
-			{Key: "web_caddy", Name: "web-caddy-1", Image: "caddy:2-alpine", MemLimit: 256 * mib, CPUBase: 0.9, MemBase: 44 * mib},
-			{Key: "web_redis", Name: "web-redis-1", Image: "redis:7-alpine", MemLimit: 512 * mib, CPUBase: 2.1, MemBase: 130 * mib},
+			{Key: "netra/agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest", IsAgent: true, MemLimit: 128 * mib, CPUBase: 0.8, MemBase: 34 * mib},
+			{Key: "netra/hub", Name: "netra-hub-1", Image: "ghcr.io/trick77/netra:latest", MemLimit: 512 * mib, CPUBase: 4.2, MemBase: 210 * mib},
+			{Key: "netra/timescaledb", Name: "netra-timescaledb-1", Image: "timescale/timescaledb:latest-pg17", MemLimit: 4 * gib, CPUBase: 11.5, MemBase: 2100 * mib},
+			{Key: "netra/traefik", Name: "netra-traefik-1", Image: "traefik:v3.1", MemLimit: 256 * mib, CPUBase: 1.3, MemBase: 62 * mib},
+			{Key: "web/caddy", Name: "web-caddy-1", Image: "caddy:2-alpine", MemLimit: 256 * mib, CPUBase: 0.9, MemBase: 44 * mib},
+			{Key: "web/redis", Name: "web-redis-1", Image: "redis:7-alpine", MemLimit: 512 * mib, CPUBase: 2.1, MemBase: 130 * mib},
 		},
 		Units: []string{
 			"ssh.service", "docker.service", "systemd-resolved.service",
@@ -292,7 +292,7 @@ func smartBaremetal() *Profile {
 	// One package-manager container per service, plus a per-core sensor tree.
 	for i := range 12 {
 		p.Containers = append(p.Containers, ContainerSpec{
-			Key:      fmt.Sprintf("lab_worker%02d", i+1),
+			Key:      fmt.Sprintf("lab/worker%02d", i+1),
 			Name:     fmt.Sprintf("lab-worker%02d-1", i+1),
 			Image:    "ghcr.io/trick77/lab-worker:2.4",
 			MemLimit: 2 * gib,
@@ -301,7 +301,7 @@ func smartBaremetal() *Profile {
 		})
 	}
 	p.Containers = append([]ContainerSpec{{
-		Key: "netra_agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest",
+		Key: "netra/agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest",
 		IsAgent: true, MemLimit: 128 * mib, CPUBase: 1.5, MemBase: 44 * mib,
 	}}, p.Containers...)
 

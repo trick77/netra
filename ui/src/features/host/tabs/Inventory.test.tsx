@@ -5,9 +5,11 @@ import type {
   Address,
   Container,
   Filesystem,
+  MetricsResponse,
   Pkg,
   Unit,
 } from "../../../lib/api";
+import { ABSENT } from "../../../lib/format";
 import {
   Containers,
   Filesystems,
@@ -229,5 +231,52 @@ describe("Units", () => {
     render(<Units rows={units} />);
     const row = screen.getByRole("row", { name: /cron/ });
     expect(within(row).getByText("failed")).toBeInTheDocument();
+  });
+});
+
+describe("Filesystems", () => {
+  const rows = [
+    { id: 1, label: "root", mountpoint: "/", device_id: null },
+    { id: 2, label: "data", mountpoint: "/data", device_id: null },
+  ];
+
+  const metrics = {
+    family: "filesystem",
+    tier: "raw",
+    step_s: 60,
+    window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:02:00Z" },
+    requested_window: {
+      from: "2026-08-10T00:00:00Z",
+      to: "2026-08-10T00:02:00Z",
+    },
+    warnings: [],
+    key_columns: ["filesystem"],
+    columns: ["total", "used", "free"],
+    series: [
+      {
+        key: { filesystem: "root" },
+        points: [[Date.parse("2026-08-10T00:00:00Z"), 110, 68, 32]],
+      },
+    ],
+    truncated: false,
+  } as unknown as MetricsResponse;
+
+  // The inventory row carries a label and a mountpoint and nothing else, so
+  // the tab answered none of the question anyone opens it for. The sizes
+  // come from the metrics family, joined by label.
+  it("joins the sizes in from the metrics family", () => {
+    render(<Filesystems rows={rows} metrics={metrics} />);
+
+    expect(screen.getByText("68 B")).toBeInTheDocument();
+    expect(screen.getByText("32 B")).toBeInTheDocument();
+  });
+
+  // A filesystem the metrics did not answer for is not an empty disk.
+  it("renders the absent marker for a filesystem with no samples", () => {
+    render(<Filesystems rows={rows} metrics={metrics} />);
+
+    const dataRow = screen.getByText("data").closest("tr")!;
+    expect(dataRow.textContent).toContain(ABSENT);
+    expect(dataRow.querySelector(".meter")).toBeNull();
   });
 });

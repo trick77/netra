@@ -78,4 +78,21 @@ describe("FleetContainers", () => {
 
     expect(screen.getByText("agent")).toBeInTheDocument();
   });
+
+  // "None reported" and "not read yet" are different facts, and only the
+  // first is a statement about the fleet. Saying it while the fan-out had
+  // never run told an operator their fleet ran no containers when nobody
+  // had looked.
+  it("does not claim the fleet runs no containers before they are read", () => {
+    render(<FleetContainers rows={[]} showHost loaded={false} />);
+
+    expect(screen.queryByText(/no host in this fleet/i)).toBeNull();
+    expect(screen.getByText(/not read yet/i)).toBeInTheDocument();
+  });
+
+  it("says the fleet runs none once they have been read", () => {
+    render(<FleetContainers rows={[]} showHost loaded />);
+
+    expect(screen.getByText(/no host in this fleet/i)).toBeInTheDocument();
+  });
 });

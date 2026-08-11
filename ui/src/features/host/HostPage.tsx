@@ -228,8 +228,17 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
         }
         case "containers":
           return { containers: await orNull(getContainers(hostId)) };
-        case "filesystems":
-          return { filesystems: await orNull(getFilesystems(hostId)) };
+        case "filesystems": {
+          // The inventory row carries a label, a mountpoint and a device id
+          // and nothing else -- size, used and free live in the metrics
+          // family. Fetching both is what makes this tab answer the question
+          // anyone opens it for: how full is that disk.
+          const [filesystems, filesystemMetrics] = await Promise.all([
+            orNull(getFilesystems(hostId)),
+            metrics("filesystem"),
+          ]);
+          return { filesystems, filesystemMetrics };
+        }
         case "network":
           return { addresses: await orNull(getAddresses(hostId)) };
         case "packages":
@@ -347,7 +356,12 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
         />
       )}
       {tab === "containers" && <Containers rows={data.containers ?? []} />}
-      {tab === "filesystems" && <Filesystems rows={data.filesystems ?? []} />}
+      {tab === "filesystems" && (
+        <Filesystems
+          rows={data.filesystems ?? []}
+          metrics={data.filesystemMetrics ?? null}
+        />
+      )}
       {tab === "network" && <Network rows={data.addresses ?? []} />}
       {tab === "packages" && <Packages rows={data.packages ?? []} />}
       {tab === "units" && <Units rows={data.units ?? []} />}

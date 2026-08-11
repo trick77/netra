@@ -856,3 +856,24 @@ func TestTheMetadataHashIsStable(t *testing.T) {
 		t.Errorf("metadata hash is %d bytes, the wire field is 8", len(a))
 	}
 }
+
+// Every container key the simulator emits must be compose project/service,
+// the shape a real agent produces (internal/agent/collector/containers.go:
+// `m.Project + "/" + m.Service`). They were written with an underscore for a
+// while, which no agent has ever sent -- so the UI, which splits on the
+// slash to name the project, correctly showed no project for every row in
+// the fleet. A simulator shaped differently from the wire tests the wrong
+// thing, quietly.
+func TestEveryContainerKeyIsComposeProjectAndService(t *testing.T) {
+	for _, profile := range Fleet() {
+		for _, container := range profile.Containers {
+			project, service, ok := strings.Cut(container.Key, "/")
+			if !ok || project == "" || service == "" {
+				t.Errorf(
+					"%s: container key %q is not project/service; a real agent never emits this",
+					profile.Hostname, container.Key,
+				)
+			}
+		}
+	}
+}
