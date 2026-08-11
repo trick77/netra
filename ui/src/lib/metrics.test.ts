@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   column,
+  griddedValues,
   hasGaps,
   optionalValues,
   seriesCells,
@@ -341,5 +342,109 @@ describe("optionalValues", () => {
 
   it("returns an empty series for a series index that does not exist", () => {
     expect(optionalValues(raw as never, 9, "busy")).toEqual([]);
+  });
+});
+
+describe("column and the rollup suffixes", () => {
+  // The schema rolls `free` up as min(free) AS free_min and only as that
+  // (0001_init.sql). Resolving avg/max alone made the column exist at raw
+  // and disappear at 5m and 1h -- a root filesystem at 97% reading "— free"
+  // with no warning raised, and the same host turning critical the moment
+  // someone changed the range to 1h.
+  it("resolves a column the schema only rolls up as a minimum", () => {
+    const fs = {
+      ...raw,
+      tier: "5m",
+      columns: ["used_avg", "used_max", "free_min"],
+    };
+
+    expect(column(fs as never, "free")).toBe(2);
+  });
+});
+
+describe("seriesOnGrid", () => {
+  // The read API emits only the rows that exist, so an outage is a MISSING
+  // point, not a null cell -- and the geometry breaks a line only on an
+  // explicit null. Without this, a host down for three hours inside a 24h
+  // window came back short and drew one unbroken line across the gap.
+  it("inserts a null for every bucket the response has no row for", () => {
+    const res = {
+      ...raw,
+      step_s: 3600,
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T05:00:00Z" },
+      columns: ["busy"],
+      series: [
+        {
+          key: {},
+          points: [
+            [Date.parse("2026-08-10T00:00:00Z"), 1],
+            [Date.parse("2026-08-10T01:00:00Z"), 2],
+            // 02:00 and 03:00 missing -- the host was down
+            [Date.parse("2026-08-10T04:00:00Z"), 5],
+          ],
+        },
+      ],
+    };
+
+    expect(griddedValues(res as never, 0, "busy")).toEqual([
+      1,
+      2,
+      null,
+      null,
+      5,
+    ]);
+  });
+
+  // Two series of different lengths in one panel were each spread across
+  // their own length, so they were misaligned in time against each other
+  // inside a single chart.
+  it("puts two ragged series on the same grid, so they line up", () => {
+    const res = {
+      ...raw,
+      step_s: 3600,
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T03:00:00Z" },
+      columns: ["busy"],
+      series: [
+        {
+          key: { core: "0" },
+          points: [
+            [Date.parse("2026-08-10T00:00:00Z"), 1],
+            [Date.parse("2026-08-10T01:00:00Z"), 2],
+            [Date.parse("2026-08-10T02:00:00Z"), 3],
+          ],
+        },
+        {
+          key: { core: "1" },
+          points: [[Date.parse("2026-08-10T02:00:00Z"), 9]],
+        },
+      ],
+    };
+
+    expect(griddedValues(res as never, 0, "busy")).toEqual([1, 2, 3]);
+    expect(griddedValues(res as never, 1, "busy")).toEqual([null, null, 9]);
+  });
+
+  // The hub clamps what it can serve, so the grid is the ANSWERED window:
+  // drawing the requested span would pad the difference with gaps nobody
+  // asked about.
+  it("builds the grid from the answered window, not the requested one", () => {
+    const res = {
+      ...raw,
+      step_s: 3600,
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T02:00:00Z" },
+      requested_window: {
+        from: "2026-07-10T00:00:00Z",
+        to: "2026-08-10T02:00:00Z",
+      },
+      columns: ["busy"],
+      series: [{ key: {}, points: [[Date.parse("2026-08-10T00:00:00Z"), 1]] }],
+    };
+
+    expect(griddedValues(res as never, 0, "busy")).toHaveLength(2);
+  });
+
+  it("returns an empty series when the tier does not carry the column", () => {
+    expect(griddedValues(raw as never, 0, "iowait")).toEqual([]);
+    expect(griddedValues(null, 0, "busy")).toEqual([]);
   });
 });

@@ -1,0 +1,156 @@
+import { useCallback, useEffect, useState } from "react";
+import { isRange, type Range } from "./range";
+import type { HostTab } from "../features/host/HostPage";
+
+/**
+ * A path router, not a hash one.
+ *
+ * The hub serves index.html for every path that is not a real file
+ * (internal/hub/web/embed.go), which is what makes real URLs work: a reload
+ * of /hosts/3/graphs comes back as the app rather than a 404. Hash routing
+ * would have made every deep link a fragment the server never sees, and the
+ * diagnosis drawer's evidence links are meant to point at the tab holding
+ * the data.
+ *
+ * It is about sixty lines because that is all this app needs. A router
+ * library would bring a matcher, a data layer and a transition model, none
+ * of which appear in the spec.
+ */
+export type Route =
+  | { name: "fleet" }
+  | { name: "host"; hostId: string; tab: HostTab }
+  | { name: "container"; hostId: string; key: string }
+  | { name: "events" }
+  | { name: "settings" }
+  | { name: "admin" }
+  | { name: "login" }
+  | { name: "notFound"; path: string };
+
+const HOST_TABS = new Set<HostTab>([
+  "overview",
+  "graphs",
+  "containers",
+  "filesystems",
+  "network",
+  "packages",
+  "units",
+  "events",
+]);
+
+export function parseRoute(pathname: string): Route {
+  const parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+
+  if (parts.length === 0) return { name: "fleet" };
+
+  if (parts[0] === "hosts" && parts[1] !== undefined) {
+    const hostId = parts[1];
+    const tab = parts[2];
+    // A bare /hosts/3 is the host page on its default tab rather than a 404:
+    // it is the URL a human types, and the one an external link is most
+    // likely to carry.
+    if (tab === undefined) return { name: "host", hostId, tab: "overview" };
+    if (HOST_TABS.has(tab as HostTab)) {
+      return { name: "host", hostId, tab: tab as HostTab };
+    }
+    return { name: "notFound", path: pathname };
+  }
+
+  if (parts[0] === "containers" && parts[1] && parts[2]) {
+    return { name: "container", hostId: parts[1], key: parts[2] };
+  }
+
+  if (parts.length === 1) {
+    if (parts[0] === "events") return { name: "events" };
+    if (parts[0] === "settings") return { name: "settings" };
+    if (parts[0] === "login") return { name: "login" };
+  }
+  if (parts[0] === "admin" && parts[1] === "hosts" && parts.length === 2) {
+    return { name: "admin" };
+  }
+
+  return { name: "notFound", path: pathname };
+}
+
+export function routePath(route: Route): string {
+  switch (route.name) {
+    case "fleet":
+      return "/";
+    case "host":
+      return `/hosts/${encodeURIComponent(route.hostId)}/${route.tab}`;
+    case "container":
+      return `/containers/${encodeURIComponent(route.hostId)}/${encodeURIComponent(route.key)}`;
+    case "events":
+      return "/events";
+    case "settings":
+      return "/settings";
+    case "admin":
+      return "/admin/hosts";
+    case "login":
+      return "/login";
+    case "notFound":
+      return route.path;
+  }
+}
+
+export interface Location {
+  route: Route;
+  /** The query string, "?" included, or "" — pages own their own filters and
+   * round-trip them through here (spec §9: filters live in the URL, so a
+   * filtered view is a link someone can send). */
+  search: string;
+  navigate: (to: string, options?: { replace?: boolean }) => void;
+}
+
+export function useLocation(): Location {
+  const read = () => window.location.pathname + window.location.search;
+  const [href, setHref] = useState(read);
+
+  useEffect(() => {
+    // Back and forward are navigation the app did not initiate, so the
+    // component tree has to be told. Without this, the address bar moves and
+    // the page does not.
+    const onPop = () => setHref(read());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const navigate = useCallback(
+    (to: string, options?: { replace?: boolean }) => {
+      // replace, for a change that is not a place: a filter edit or a range
+      // change should not put an entry in the history for every keystroke,
+      // or Back becomes an undo of typing rather than a way out of the page.
+      if (options?.replace) window.history.replaceState(null, "", to);
+      else window.history.pushState(null, "", to);
+      setHref(to);
+    },
+    [],
+  );
+
+  const [pathname, search] = splitHref(href);
+  return { route: parseRoute(pathname), search, navigate };
+}
+
+function splitHref(href: string): [string, string] {
+  const i = href.indexOf("?");
+  return i === -1 ? [href, ""] : [href.slice(0, i), href.slice(i)];
+}
+
+/**
+ * Reads a range out of a query string, falling back rather than trusting it.
+ * The URL is user-editable and is also whatever an old link happens to
+ * carry; an unrecognised range must not reach a page that would resolve it
+ * into an Invalid Date.
+ */
+export function rangeFromSearch(search: string, fallback: Range): Range {
+  const value = new URLSearchParams(search).get("range");
+  return isRange(value) ? value : fallback;
+}
+
+/** Writes one query parameter, preserving the others and dropping empties. */
+export function withParam(search: string, key: string, value: string): string {
+  const params = new URLSearchParams(search);
+  if (value === "") params.delete(key);
+  else params.set(key, value);
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}

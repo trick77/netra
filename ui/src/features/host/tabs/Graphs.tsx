@@ -3,11 +3,7 @@
 // control -- the header's -- driving all of them. Adding a family later is
 // a row in PANELS, not a new component.
 import type { MetricsResponse } from "../../../lib/api";
-import {
-  optionalValues,
-  seriesCells,
-  windowNotice,
-} from "../../../lib/metrics";
+import { griddedValues, seriesCells, windowNotice } from "../../../lib/metrics";
 import { ABSENT, bytes, duration, percent } from "../../../lib/format";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
 
@@ -284,9 +280,14 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
           .join(" ")
       : "";
     for (const { base, label } of spec.bases) {
+      // griddedValues, not optionalValues: the response carries only the
+      // buckets that exist, so an outage arrives as a SHORTER series rather
+      // than as nulls, and the geometry breaks a line only on a null. Drawn
+      // straight from the response, three hours of a host being down became
+      // one unbroken line across the hole.
       const values = spec.boolean
         ? booleanValues(res, index, base)
-        : optionalValues(res, index, base);
+        : griddedValues(res, index, base);
       if (values.length === 0) continue;
       bands.push({
         name: prefix ? `${prefix} ${label}` : label,

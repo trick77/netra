@@ -18,7 +18,7 @@ vi.mock("../../lib/api", () => ({
 }));
 
 import * as api from "../../lib/api";
-import { HostPage, HOST_TABS, hostTabHref, rangeWindow } from "./HostPage";
+import { HostPage, HOST_TABS, hostTabHref } from "./HostPage";
 
 const host: HostDetail = {
   id: 7,
@@ -84,15 +84,6 @@ describe("hostTabHref", () => {
   it("is the URL contract Wave 5's router has to honour", () => {
     expect(hostTabHref(7, "graphs")).toBe("/hosts/7/graphs");
     expect(hostTabHref("7", "overview")).toBe("/hosts/7/overview");
-  });
-});
-
-describe("rangeWindow", () => {
-  it("resolves a relative range to absolute times, because the hub rejects relative ones", () => {
-    const now = new Date("2026-08-10T12:00:00Z");
-    const w = rangeWindow("24h", now);
-    expect(w.to).toBe("2026-08-10T12:00:00.000Z");
-    expect(w.from).toBe("2026-08-09T12:00:00.000Z");
   });
 });
 

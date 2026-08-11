@@ -13,28 +13,14 @@ import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
 import { ABSENT, bitrate, duration } from "../../lib/format";
 import type { Host } from "../../lib/api";
+import { hostStatus } from "../../lib/host";
+import { rangeLabel, type Range } from "../../lib/range";
 
-// No RangePicker/time-range type exists yet elsewhere in the codebase (no
-// earlier task in the plan defines one). Defined here, provisionally, for
-// the one thing this file actually needs it for: an accurate accessible
-// label on each trend chart ("CPU trend, last 1h"). Whichever task wires
-// up range selection can widen or relocate this without touching the
-// column contract -- Column<HostRow> does not mention Range.
-//
-// These are relative labels only, never sent to the API as-is: the hub
-// rejects relative time strings outright (confirmed against a live
-// instance -- `from=-24h` returns `invalid: from must be RFC 3339 or unix
-// milliseconds`). Whatever resolves a `Range` into an actual
-// `getMetrics()` call must convert it to an absolute RFC 3339 or
-// epoch-millis pair first; this file never does that conversion itself,
-// it only labels a chart that's already been handed absolute-time series.
-export type Range = "1h" | "6h" | "24h";
-
-const RANGE_LABEL: Record<Range, string> = {
-  "1h": "last 1h",
-  "6h": "last 6h",
-  "24h": "last 24h",
-};
+// The range is only ever a label here: this file never resolves one into a
+// getMetrics() call, it labels a chart that has already been handed
+// absolute-time series. The resolution -- and the fact that the hub rejects
+// relative strings outright -- lives in lib/range.
+export type { Range };
 
 /**
  * The view-model both renderers consume. `Host` as the read API actually
@@ -85,45 +71,19 @@ export type HostRow = Host & {
   fullest: { mount: string; pct: number; others: number } | null;
 };
 
-// internal/agent/config/config.go: ScrapeInterval = 60s is the agent's
-// fixed report cadence. No server-side "online"/"offline" status field
-// exists yet (grepped internal/hub for stale/offline/heartbeat -- nothing
-// there computes one), so this mirrors the product's own definition of
-// "down" instead of inventing a separate one: the design spec's alerting
-// rule is host-down = no POST within 3x the scrape interval. Using
-// anything else here (an earlier draft used 2x) would have the fleet list
-// call a host offline while the alerting engine still considers it up --
-// two views of the same state disagreeing with no way for a user to tell
-// which is right.
-const SCRAPE_INTERVAL_S = 60;
-const STALE_THRESHOLD_S = 3 * SCRAPE_INTERVAL_S;
-
-// Exported, because the fleet page's "N hosts reporting" tile asks the same
-// question this column answers and had reimplemented it. Two definitions of
-// "reporting" is exactly the disagreement this file exists to prevent: the
-// tile would say 19 of 19 while a row beside it showed a host offline, with
-// nothing to tell a user which was right.
-
-export function hostStatus(
-  host: Host,
-  now: Date = new Date(),
-): { severity: "ok" | "critical"; label: string } {
-  if (host.last_seen === null) {
-    return { severity: "critical", label: "offline" };
-  }
-  const ageMs = now.getTime() - new Date(host.last_seen).getTime();
-  if (!Number.isFinite(ageMs) || ageMs > STALE_THRESHOLD_S * 1000) {
-    return { severity: "critical", label: "offline" };
-  }
-  return { severity: "ok", label: "online" };
-}
-
 function HostCell({ row }: { row: HostRow }) {
   const status = hostStatus(row);
   return (
     <div className="host-cell">
       <Badge severity={status.severity}>{status.label}</Badge>
-      <div className="host-cell-name">{row.hostname}</div>
+      {/* The hostname is the way into the host page, and it is an anchor
+          rather than a row click handler: middle-click, copy-link and
+          bookmark all have to work, and a row-wide handler would swallow
+          the text selection someone needs to read an id off the screen.
+          The fleet list had no link into detail at all. */}
+      <a className="host-cell-name" href={`/hosts/${row.id}/overview`}>
+        {row.hostname}
+      </a>
       <div className="host-cell-site">{row.site_name ?? ABSENT}</div>
     </div>
   );
@@ -143,7 +103,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
     <StackedSparkline
       bands={row.cpu}
       max={CPU_PERCENT_MAX}
-      label={`CPU trend, ${RANGE_LABEL[range]}`}
+      label={`CPU trend, ${rangeLabel(range)}`}
     />
   );
 }
@@ -171,7 +131,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
     <StackedSparkline
       bands={row.mem}
       max={row.mem_total}
-      label={`Memory trend, ${RANGE_LABEL[range]}`}
+      label={`Memory trend, ${rangeLabel(range)}`}
     />
   );
 }
@@ -197,7 +157,7 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
       <UpDownSparkline
         up={row.rx}
         down={row.tx}
-        label={`Traffic trend, ${RANGE_LABEL[range]}`}
+        label={`Traffic trend, ${rangeLabel(range)}`}
       />
       <div className="traffic-rates">
         <span className="rate" aria-label={`inbound ${bitrate(rx)}`}>

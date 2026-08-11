@@ -18,7 +18,8 @@ import { AllHostsOverlay, fromHostRows } from "./AllHostsOverlay";
 import { FleetContainers, type ContainerRow } from "./FleetContainers";
 import { HostCards } from "./HostCards";
 import { HostTable } from "./HostTable";
-import { hostStatus, type HostRow, type Range } from "./hostColumns";
+import type { HostRow, Range } from "./hostColumns";
+import { isReporting } from "../../lib/host";
 
 /** What you are looking at (spec 4.5's first axis). */
 export type Entity = "hosts" | "containers";
@@ -107,22 +108,49 @@ export interface FleetPageProps {
   checkedAt?: string | null;
   /** Injectable so tests are deterministic instead of racing the clock. */
   now?: Date;
+  /**
+   * The controlled half of this page's state. Each of these is optional and
+   * each falls back to the internal state below, because the page is also
+   * rendered on its own in tests: passing them hands the URL the authority
+   * instead, which is what makes a filtered, ranged view a link someone can
+   * send (spec 9).
+   */
+  range?: Range;
+  onRangeChange?: (range: Range) => void;
+  onEntityChange?: (entity: Entity) => void;
+  onDensityChange?: (density: Density) => void;
 }
 
 export function FleetPage({
   rows,
   containers,
   conditions = [],
-  entity: initialEntity = "hosts",
-  density: initialDensity,
+  entity: controlledEntity = "hosts",
+  density: controlledDensity,
   checkedAt: injectedCheckedAt,
   now = new Date(),
+  range: controlledRange,
+  onRangeChange,
+  onEntityChange,
+  onDensityChange,
 }: FleetPageProps) {
-  const [entity, setEntity] = useState<Entity>(initialEntity);
-  const [density, setDensity] = useState<Density>(
-    () => initialDensity ?? readStoredDensity() ?? "table",
+  const [localEntity, setLocalEntity] = useState<Entity>(controlledEntity);
+  const [localDensity, setLocalDensity] = useState<Density>(
+    () => controlledDensity ?? readStoredDensity() ?? "table",
   );
-  const [range, setRange] = useState<Range>("24h");
+  const [localRange, setLocalRange] = useState<Range>(controlledRange ?? "24h");
+
+  // Controlled when the caller supplies both the value and the setter,
+  // uncontrolled otherwise. Half a pair is a value that cannot change, so
+  // the setter is what decides.
+  const entity = onEntityChange ? controlledEntity : localEntity;
+  const setEntity = onEntityChange ?? setLocalEntity;
+  const density = onDensityChange
+    ? (controlledDensity ?? localDensity)
+    : localDensity;
+  const setDensity = onDensityChange ?? setLocalDensity;
+  const range = onRangeChange ? (controlledRange ?? localRange) : localRange;
+  const setRange = onRangeChange ?? setLocalRange;
   const [filter, setFilter] = useState("");
 
   const [fetchedRows, setFetchedRows] = useState<HostRow[] | null>(null);
@@ -158,23 +186,36 @@ export function FleetPage({
       // the fleet list is a fan-out -- and it is caught separately: a failing
       // container call must not claim the host list that already rendered
       // could not be loaded. Containers simply stay unknown.
-      try {
-        const perHost = await Promise.all(
-          hosts.map(async (host) => {
-            const list = await getContainers(host.id);
-            return list.map((container: Container) => ({
-              ...container,
-              host_id: host.id,
-              hostname: host.hostname,
-            }));
-          }),
-        );
-        if (!live) return;
-        setFetchedContainers(perHost.flat());
-      } catch (err) {
-        if (!live) return;
-        setContainerError(describe(err));
-      }
+      // allSettled, not all: one host answering 500 must not take every
+      // other host's containers off the page. A rejected batch left the
+      // whole list empty and the tile reading "-", which says the fleet runs
+      // no containers rather than that one host could not be asked.
+      const settled = await Promise.allSettled(
+        hosts.map(async (host) => {
+          const list = await getContainers(host.id);
+          return list.map((container: Container) => ({
+            ...container,
+            host_id: host.id,
+            hostname: host.hostname,
+          }));
+        }),
+      );
+      if (!live) return;
+      const rows = settled
+        .filter(
+          (r): r is PromiseFulfilledResult<ContainerRow[]> =>
+            r.status === "fulfilled",
+        )
+        .flatMap((r) => r.value);
+      const failed = settled.filter((r) => r.status === "rejected").length;
+      setFetchedContainers(rows);
+      // Partial data must say it is partial: a list quietly missing three
+      // hosts' containers looks exactly like three hosts running none.
+      setContainerError(
+        settled.some((r) => r.status === "rejected")
+          ? `${failed} host${failed === 1 ? "" : "s"} could not be asked for containers`
+          : null,
+      );
     })();
     return () => {
       // Wave 5's usePoll will own refresh; this only stops a late response
@@ -206,9 +247,7 @@ export function FleetPage({
       row.hostname.toLowerCase().includes(needle),
   );
 
-  const reporting = hostRows.filter(
-    (row) => hostStatus(row, now).severity === "ok",
-  ).length;
+  const reporting = hostRows.filter((row) => isReporting(row, now)).length;
 
   return (
     <>
@@ -256,8 +295,12 @@ export function FleetPage({
 
       <Tabs
         items={[
-          { id: "hosts", label: "Hosts", href: "#/" },
-          { id: "containers", label: "Containers", href: "#/?view=containers" },
+          { id: "hosts", label: "Hosts", href: "/" },
+          {
+            id: "containers",
+            label: "Containers",
+            href: "/?entity=containers",
+          },
         ]}
         active={entity}
         // Hand-rolled routing arrives in Wave 5; until then the tab is local

@@ -9,7 +9,7 @@ import type {
   MetricsResponse,
   Unit,
 } from "../../../lib/api";
-import { optionalValues } from "../../../lib/metrics";
+import { griddedValues, optionalValues } from "../../../lib/metrics";
 import {
   ABSENT,
   bytes,
@@ -226,7 +226,9 @@ export function Overview({
   const cpuBands: Band[] = CPU_BANDS.map((band) => ({
     name: band.name,
     color: band.color,
-    values: optionalValues(hostMetrics, 0, band.base),
+    // On the window grid, so an outage is a hole in the silhouette rather
+    // than a line drawn straight across it.
+    values: griddedValues(hostMetrics, 0, band.base),
   })).filter((band) => band.values.length > 0);
 
   const memTotal = latest(hostMetrics, "mem_total") ?? host.memory_total;

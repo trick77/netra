@@ -68,7 +68,13 @@ export class UnknownColumnError extends Error {
  * matches on the exact-name branch above.
  */
 export function column(res: MetricsResponse, base: string): number {
-  const candidates = [base, `${base}_avg`, `${base}_max`];
+  // _min is in the list because the schema's convention is wider than
+  // avg/max: 0001_init.sql rolls filesystem `free` up as min(free) AS
+  // free_min, and only as that. Without it, `free` resolved at raw and
+  // vanished at 5m and 1h -- so a root filesystem at 97% showed "— free" and
+  // the disk-full warning, which skips a row whose free is null, never
+  // fired. Switching the range to 1h made the same host suddenly critical.
+  const candidates = [base, `${base}_avg`, `${base}_max`, `${base}_min`];
   for (const name of candidates) {
     const idx = res.columns.indexOf(name);
     if (idx !== -1) return idx;
@@ -206,6 +212,83 @@ export function optionalValues(
   );
   if (!known || res.series[seriesIndex] === undefined) return [];
   return seriesValues(res, seriesIndex, base);
+}
+
+/**
+ * Places a series on the window's own time grid, inserting a null for every
+ * bucket the response has no row for.
+ *
+ * This is the difference between a chart that tells the truth about an
+ * outage and one that lies about it. internal/hub/read/metrics.go emits only
+ * the rows that exist: a bucket where the host reported nothing is a MISSING
+ * POINT, not a null cell. The chart geometry breaks a line only on an
+ * explicit null and spreads whatever array it is handed evenly across the
+ * width -- so a host down from 03:00 to 06:00 inside a 24h window came back
+ * as 216 points instead of 252 and drew one unbroken line straight across
+ * the gap. "The agent was down" rendered as "CPU was steady", which is the
+ * single failure the whole gap rule exists to prevent.
+ *
+ * Putting every series on the same grid also fixes a quieter one: two series
+ * of different lengths in one panel (two filesystems, or rx with 200 points
+ * and tx with 190) were each spread across their own length, so they were
+ * misaligned in time against each other inside a single chart.
+ *
+ * The grid comes from the ANSWERED window and step, never the requested
+ * ones: the hub clamps what it can serve, and drawing the requested span
+ * would pad the difference with fabricated gaps.
+ */
+export function seriesOnGrid(
+  res: MetricsResponse,
+  values: readonly (number | null)[],
+  timestamps: readonly number[],
+): (number | null)[] {
+  const stepMs = res.step_s * 1000;
+  const from = Date.parse(res.window.from);
+  const to = Date.parse(res.window.to);
+  if (
+    !Number.isFinite(stepMs) ||
+    stepMs <= 0 ||
+    !Number.isFinite(from) ||
+    !Number.isFinite(to) ||
+    to <= from
+  ) {
+    // Nothing to place them on. Returning the values untouched is the same
+    // chart as before this function existed, which is better than an empty
+    // one built from a window nobody could parse.
+    return [...values];
+  }
+
+  const byBucket = new Map<number, number | null>();
+  for (let i = 0; i < timestamps.length; i++) {
+    // Floor to the bucket rather than trusting the timestamp to be exactly
+    // on it: raw samples land wherever the agent's clock put them, and only
+    // the rollup tiers are aligned.
+    const bucket = Math.floor((timestamps[i]! - from) / stepMs);
+    byBucket.set(bucket, values[i] ?? null);
+  }
+
+  const count = Math.ceil((to - from) / stepMs);
+  const out: (number | null)[] = new Array(count).fill(null);
+  for (const [bucket, value] of byBucket) {
+    if (bucket >= 0 && bucket < count) out[bucket] = value;
+  }
+  return out;
+}
+
+/**
+ * seriesOnGrid for a base column: the common case, and the one that keeps a
+ * caller from having to fetch values and timestamps separately just to line
+ * them up again.
+ */
+export function griddedValues(
+  res: MetricsResponse | null,
+  seriesIndex: number,
+  base: string,
+): (number | null)[] {
+  if (res === null) return [];
+  const values = optionalValues(res, seriesIndex, base);
+  if (values.length === 0) return [];
+  return seriesOnGrid(res, values, seriesTimestamps(res, seriesIndex));
 }
 
 /** True when any value in the series is null -- the host reported nothing. */

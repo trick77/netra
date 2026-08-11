@@ -2,24 +2,29 @@ import { useState } from "react";
 import { Card } from "../../ui/Card";
 import { Segmented } from "../../ui/Segmented";
 import { applyTheme, loadTheme, type ThemePref } from "../../lib/theme";
+import { isRange, RANGES, type Range } from "../../lib/range";
+import { DENSITY_KEY } from "../fleet/FleetPage";
 
 /** Density of the fleet overview (spec §4.5). Below the mobile breakpoint
  * cards are automatic and this preference does not apply. */
 export type OverviewView = "table" | "cards";
 
-/** The time ranges the range control offers. Kept as opaque keys rather than
- * durations: the read API clamps what it can actually serve (spec §7.2), so
- * a key is a request, never a promise about coverage. */
-export type RangeKey = "1h" | "6h" | "24h" | "7d" | "30d";
+/** The stored default range. It is lib/range's type and deliberately the
+ * whole union: this value is handed to whichever page the user opens next,
+ * so a default the receiving page has never heard of is exactly the failure
+ * one shared type prevents. A page still chooses which options to offer. */
+export type RangeKey = Range;
 
 // Same "netra." namespace as lib/theme.ts's key, so one browser's netra
 // preferences are greppable in devtools as a group.
-export const VIEW_KEY = "netra.view";
+// FleetPage owns this key and exports it precisely so this page writes the
+// same one. Settings used to write "netra.view" while the fleet page read
+// "netra.fleet.density", so choosing Cards here changed nothing at all: the
+// overview came back as a table on every reload.
+export const VIEW_KEY = DENSITY_KEY;
 export const RANGE_KEY = "netra.range";
 
 const VIEWS: OverviewView[] = ["table", "cards"];
-const RANGES: RangeKey[] = ["1h", "6h", "24h", "7d", "30d"];
-
 const RANGE_LABELS: Record<RangeKey, string> = {
   "1h": "1 h",
   "6h": "6 h",
@@ -34,14 +39,29 @@ const RANGE_LABELS: Record<RangeKey, string> = {
  * an error worth surfacing -- it is a preference, and the default is a
  * perfectly good answer.
  */
+// Every read is guarded: localStorage throws outright in Safari with
+// cookies blocked and in some private modes, and these run inside useState
+// initialisers -- an unguarded throw there renders nothing at all. Losing a
+// preference is acceptable; losing the page is not.
+function stored(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
 export function loadView(): OverviewView {
-  const v = localStorage.getItem(VIEW_KEY);
+  const v = stored(VIEW_KEY);
   return VIEWS.includes(v as OverviewView) ? (v as OverviewView) : "table";
 }
 
 export function loadRange(): RangeKey {
-  const v = localStorage.getItem(RANGE_KEY);
-  return RANGES.includes(v as RangeKey) ? (v as RangeKey) : "24h";
+  // isRange, not a membership test on a local list: the stored value comes
+  // from a place the user can edit, and an unrecognised one must fall back
+  // rather than reach a page as a range nothing can resolve.
+  const value = stored(RANGE_KEY);
+  return isRange(value) ? value : "24h";
 }
 
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
@@ -88,13 +108,24 @@ export function SettingsPage() {
     setTheme(next);
   }
 
+  // The write is guarded for the same reason the read is: a store that
+  // refuses to save costs the preference, never the click.
+  function remember(key: string, value: string) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      // See stored(): an unavailable store is a lost preference, not a
+      // broken page.
+    }
+  }
+
   function chooseView(next: OverviewView) {
-    localStorage.setItem(VIEW_KEY, next);
+    remember(VIEW_KEY, next);
     setView(next);
   }
 
   function chooseRange(next: RangeKey) {
-    localStorage.setItem(RANGE_KEY, next);
+    remember(RANGE_KEY, next);
     setRange(next);
   }
 

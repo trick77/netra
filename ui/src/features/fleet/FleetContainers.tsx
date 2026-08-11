@@ -44,7 +44,9 @@ export function containerColumns({
     columns.push({
       key: "host",
       header: "Host",
-      cell: (row) => <a href={`#/hosts/${row.host_id}`}>{row.hostname}</a>,
+      cell: (row) => (
+        <a href={`/hosts/${row.host_id}/overview`}>{row.hostname}</a>
+      ),
     });
   }
   columns.push({
@@ -72,7 +74,7 @@ function NameCell({ row }: { row: ContainerRow }) {
       <div>
         <a
           className="name"
-          href={`#/containers/${row.host_id}/${row.container_key}`}
+          href={`/containers/${row.host_id}/${encodeURIComponent(row.container_key)}`}
         >
           {row.name ?? ABSENT}
         </a>

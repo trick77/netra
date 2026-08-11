@@ -26,6 +26,8 @@ import { Button } from "../../ui/Button";
 import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { ABSENT, relative } from "../../lib/format";
+import { hostStatus } from "../../lib/host";
+import { rangeWindow, type Range } from "../../lib/range";
 import { Events } from "./tabs/Events";
 import { Graphs } from "./tabs/Graphs";
 import {
@@ -69,61 +71,15 @@ export function hostTabHref(hostId: number | string, tab: HostTab): string {
   return `/hosts/${hostId}/${tab}`;
 }
 
-export type HostRange = "1h" | "6h" | "24h" | "7d";
-
-const RANGE_OPTIONS: { value: HostRange; label: string }[] = [
+// The windows this page OFFERS. The type and the resolution are lib/range's:
+// the hub rejects relative times outright, and one module converting them
+// means one place to be wrong.
+const RANGE_OPTIONS: { value: Range; label: string }[] = [
   { value: "1h", label: "1h" },
   { value: "6h", label: "6h" },
   { value: "24h", label: "24h" },
   { value: "7d", label: "7d" },
 ];
-
-// Seconds of history, and the step to ask for. The step is pinned per
-// range because ?columns= is tier-specific (spec §7.4): an unpinned step
-// lets the hub pick a tier, and a column name pinned for one tier is not
-// the column name of another.
-const RANGE_SPEC: Record<HostRange, { seconds: number; step: string }> = {
-  "1h": { seconds: 3600, step: "60s" },
-  "6h": { seconds: 6 * 3600, step: "5m" },
-  "24h": { seconds: 24 * 3600, step: "5m" },
-  "7d": { seconds: 7 * 24 * 3600, step: "1h" },
-};
-
-/**
- * Resolves a relative range into the absolute window the hub demands. The
- * read API rejects relative times outright -- `from=-24h` answers
- * "from must be RFC 3339 or unix milliseconds" -- so the conversion
- * happens here, once, rather than at each call site.
- *
- * What comes back from the hub is the window it COULD serve, which the
- * charts state via windowNotice(); this is only what we asked for.
- */
-export function rangeWindow(
-  range: HostRange,
-  now: Date = new Date(),
-): { from: string; to: string; step: string } {
-  const { seconds, step } = RANGE_SPEC[range];
-  return {
-    from: new Date(now.getTime() - seconds * 1000).toISOString(),
-    to: now.toISOString(),
-    step,
-  };
-}
-
-// A host that has not reported for five scrape intervals is stale rather
-// than merely late.
-const STALE_AFTER_MS = 5 * 60 * 1000;
-
-function hostStatus(host: HostDetail): {
-  severity: "ok" | "serious";
-  word: string;
-} {
-  if (host.last_seen === null)
-    return { severity: "serious", word: "never seen" };
-  const age = Date.now() - new Date(host.last_seen).getTime();
-  if (age > STALE_AFTER_MS) return { severity: "serious", word: "stale" };
-  return { severity: "ok", word: "reporting" };
-}
 
 interface TabData {
   hostMetrics: MetricsResponse | null;
@@ -184,7 +140,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
   const [error, setError] = useState<string | null>(null);
   // The time range is shared state across tabs: it lives here, above the
   // tab body, so switching tabs never resets it.
-  const [range, setRange] = useState<HostRange>("6h");
+  const [range, setRange] = useState<Range>("6h");
   const [data, setData] = useState<TabData>(NO_DATA);
   const [reloads, setReloads] = useState(0);
 
@@ -339,7 +295,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             .map((part) => part ?? ABSENT)
             .join(" · ")}
         </span>
-        <Badge severity={status.severity}>{status.word}</Badge>
+        <Badge severity={status.severity}>{status.label}</Badge>
         <span className="meta">
           last seen{" "}
           {host.last_seen === null ? ABSENT : relative(host.last_seen)}

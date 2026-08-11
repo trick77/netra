@@ -14,15 +14,12 @@ import { EmptyState } from "../../ui/EmptyState";
 import { Input, Select } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import type { Event } from "../../lib/api";
+import type { Range } from "../../lib/range";
 import { ABSENT, absolute, relative } from "../../lib/format";
 
-// Declared locally, as hostColumns.tsx declares its own and for the reason
-// its comment gives: no shared time-range type exists yet, and the task that
-// resolves a range into the absolute from/to the hub demands (it rejects
-// relative strings outright) is the one that gets to unify them. The log
-// reaches back further than a metrics chart does -- events are sparse, and
-// "what happened this week" is the question this page is asked.
-export type Range = "1h" | "24h" | "7d" | "30d";
+// The windows this page OFFERS: the log reaches back further than a metrics
+// chart does, because events are sparse and "what happened this week" is the
+// question this page is asked. The type itself is lib/range's.
 
 const RANGES: { value: Range; label: string }[] = [
   { value: "1h", label: "1h" },

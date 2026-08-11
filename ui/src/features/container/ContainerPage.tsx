@@ -14,18 +14,16 @@ import type { Container, MetricsResponse } from "../../lib/api";
 import {
   hasGaps,
   seriesTimestamps,
-  seriesValues,
+  griddedValues,
   windowNotice,
 } from "../../lib/metrics";
 import { ABSENT, bytes, percent, relativeMs } from "../../lib/format";
+import type { Range } from "../../lib/range";
 
-// Declared locally, exactly as hostColumns.tsx declares its own and for the
-// same stated reason: no shared time-range type exists yet, and Wave 5 --
-// which turns a range into the absolute from/to the hub demands -- is the
-// task that gets to unify them. Duplicating a three-member union costs less
-// than coupling this page to the fleet feature mid-wave.
-export type Range = "1h" | "6h" | "24h";
-
+// The windows this page OFFERS. The type is lib/range's, so a range chosen
+// anywhere else -- Settings' stored default, a link from the host page --
+// can still be handed here; a container's series are the same metrics
+// families the host Graphs tab draws, so the same three windows fit.
 const RANGES: { value: Range; label: string }[] = [
   { value: "1h", label: "1h" },
   { value: "6h", label: "6h" },
@@ -163,14 +161,19 @@ const KEY = "container";
 function read(res: MetricsResponse, containerKey: string): Sampled | null {
   const i = res.series.findIndex((s) => s.key[KEY] === containerKey);
   if (i === -1) return null;
+  // griddedValues, not seriesValues: the response carries only the buckets
+  // that exist, so a container that stopped reporting arrives as a shorter
+  // series and the geometry, which breaks a line only on a null, drew one
+  // straight across the hole. "The container was gone" must not render as
+  // "its memory was flat".
   return {
-    cpu: seriesValues(res, i, "cpu_pct"),
-    memUsed: seriesValues(res, i, "mem_used"),
-    memLimit: seriesValues(res, i, "mem_limit"),
-    netRx: seriesValues(res, i, "net_rx"),
-    netTx: seriesValues(res, i, "net_tx"),
-    ioRead: seriesValues(res, i, "io_read"),
-    ioWrite: seriesValues(res, i, "io_write"),
+    cpu: griddedValues(res, i, "cpu_pct"),
+    memUsed: griddedValues(res, i, "mem_used"),
+    memLimit: griddedValues(res, i, "mem_limit"),
+    netRx: griddedValues(res, i, "net_rx"),
+    netTx: griddedValues(res, i, "net_tx"),
+    ioRead: griddedValues(res, i, "io_read"),
+    ioWrite: griddedValues(res, i, "io_write"),
     timestamps: seriesTimestamps(res, i),
   };
 }

@@ -62,7 +62,7 @@ describe("FleetContainers", () => {
 
     expect(screen.getByRole("link", { name: /postgres/ })).toHaveAttribute(
       "href",
-      "#/containers/7/9f2c1ab3",
+      "/containers/7/9f2c1ab3",
     );
   });
 

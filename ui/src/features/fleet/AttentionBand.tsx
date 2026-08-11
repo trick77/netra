@@ -158,7 +158,7 @@ function HostRow({ group, action }: { group: HostGroup; action?: ReactNode }) {
   return (
     <>
       <div className="attn-row">
-        <a className="who" href={`#/hosts/${group.hostId}`}>
+        <a className="who" href={`/hosts/${group.hostId}/overview`}>
           {group.hostname}
         </a>
         <Badge severity={group.worst.severity}>{group.worst.severity}</Badge>
