@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ChartPanel } from "./ChartPanel";
+import { ABSENT } from "../../lib/format";
 
 describe("ChartPanel", () => {
   it("draws one path per unbroken run, so a gap is a hole", () => {
@@ -65,5 +66,41 @@ describe("ChartPanel", () => {
       />,
     );
     expect(screen.queryByText(/not collected/i)).not.toBeInTheDocument();
+  });
+
+  // A host that stopped reporting two buckets ago draws its hole correctly.
+  // The headline used to filter the nulls out and print the last value that
+  // ever arrived, in bold, beside that hole -- "the agent is down" rendered
+  // as "CPU is at 43".
+  it("reports the latest bucket as absent when the series ends in a gap", () => {
+    render(
+      <ChartPanel
+        title="CPU"
+        series={[
+          { name: "busy", color: "var(--s1)", values: [42, 43, null, null] },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText("43")).toBeNull();
+    expect(screen.getByText(ABSENT)).toBeInTheDocument();
+  });
+
+  // With one series the unit says everything; with several, series[0]'s
+  // number under a bare unit reads as the panel's total.
+  it("names the series the headline belongs to when there is more than one", () => {
+    render(
+      <ChartPanel
+        title="Network"
+        series={[
+          { name: "rx", color: "var(--s1)", values: [10] },
+          { name: "tx", color: "var(--s2)", values: [90] },
+        ]}
+      />,
+    );
+
+    // The legend names every series too, so this asserts on the headline
+    // specifically rather than on the panel as a whole.
+    expect(document.querySelector(".now")?.textContent).toContain("rx");
   });
 });

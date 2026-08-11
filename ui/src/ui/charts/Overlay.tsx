@@ -4,7 +4,7 @@
 // per series independently would normalise a 2% series and a 200% series
 // to look identical, which is exactly the comparison this component exists
 // to make possible.
-import { extent, linePath } from "./geometry";
+import { dotPath, extent, linePath } from "./geometry";
 
 export interface OverlaySeries {
   name: string;
@@ -18,6 +18,13 @@ export interface OverlaySeries {
 export interface OverlayProps {
   series: OverlaySeries[];
   max: number;
+  /** Axis floor. Optional, and it exists because `max` alone is half an
+   * axis: a caller declaring a ceiling of 100 for a panel whose data sits
+   * at 88-92 got a derived floor of 88, so a four-point swing filled a
+   * third of the box and two panels sharing `max` still could not be
+   * compared. Omitted, the floor is still derived from the data, which is
+   * right for a free-scaled chart. */
+  min?: number;
   width?: number;
   height?: number;
   pad?: number;
@@ -27,25 +34,18 @@ export interface OverlayProps {
   label?: string;
 }
 
-// See Sparkline.tsx's dotPath() for why an isolated point is drawn as a
-// two-arc circle path tagged data-line/data-point rather than a <circle>.
-// Duplicated here (not extracted to a shared helper) because this task's
-// file ownership is exactly the five chart components plus their tests --
-// no new shared module is in scope.
-function dotPath(x: number, y: number, r = 1.5): string {
-  return `M${x - r},${y} A${r},${r} 0 1,0 ${x + r},${y} A${r},${r} 0 1,0 ${x - r},${y} Z`;
-}
-
 export function Overlay({
   series,
   max,
+  min,
   width = 260,
   height = 64,
   pad = 2,
   highlight,
   label = "overlaid metrics chart",
 }: OverlayProps) {
-  const { min } = extent(series.flatMap((s) => s.values));
+  const { min: autoMin } = extent(series.flatMap((s) => s.values));
+  const effectiveMin = min ?? autoMin;
 
   return (
     <>
@@ -62,7 +62,7 @@ export function Overlay({
             s.values,
             width,
             height,
-            min,
+            effectiveMin,
             max,
             pad,
           );

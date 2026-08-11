@@ -62,15 +62,27 @@ export function ChartPanel({
   const { max: autoMax } = extent(series.flatMap((s) => s.values));
   const effectiveMax = max ?? autoMax;
 
-  const lastNumeric =
-    series[0]?.values.filter((v): v is number => v !== null).at(-1) ?? null;
-  const nowText = fmt ? fmt(lastNumeric) : (lastNumeric?.toString() ?? ABSENT);
+  // The value at the LATEST bucket, trailing nulls included. Filtering the
+  // nulls out first and taking the last survivor reported the last value
+  // that ever arrived: a host that stopped reporting two buckets ago drew
+  // its hole correctly and then printed "43" in bold beside it as the
+  // current reading. "The agent is down" must never render as "CPU is at
+  // 43" -- absent is absent, never the last number we happen to have.
+  const latest = series[0]?.values.at(-1) ?? null;
+  const nowText = fmt ? fmt(latest) : (latest?.toString() ?? ABSENT);
+  // With more than one series the headline is series[0]'s alone, so it says
+  // whose it is. A Network panel printing rx's number under a bare unit
+  // reads as the panel's total.
+  const nowLabel = series.length > 1 ? series[0]?.name : undefined;
 
   return (
     <section className="smp" aria-label={`${title} chart`}>
       <div className="t">
         <h4>{title}</h4>
-        <span className="now">{nowText}</span>
+        <span className="now">
+          {nowLabel ? `${nowLabel} ` : ""}
+          {nowText}
+        </span>
         {unit && <span className="u">{unit}</span>}
       </div>
       <div className="chartwrap">

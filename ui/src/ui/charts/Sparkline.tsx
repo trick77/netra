@@ -2,7 +2,7 @@
 // where the fill closes, where the axis floor/ceiling sits) comes from
 // geometry.ts verbatim -- this component only turns that output into SVG
 // markup and never recomputes or "fixes up" a coordinate itself.
-import { areaPath, extent, linePath } from "./geometry";
+import { areaPath, dotPath, extent, linePath } from "./geometry";
 
 export interface SparklineProps {
   values: (number | null)[];
@@ -14,19 +14,6 @@ export interface SparklineProps {
   /** Accessible name for the chart; a chart is an image and needs one. */
   label?: string;
   pad?: number;
-}
-
-// A lone surviving point between two gaps (or at an array edge) cannot be a
-// line segment, but linePath() still returns it -- dropping it would turn a
-// host flapping every other minute into a blank chart. Rendered as a
-// two-arc circle-as-a-path (not a zero-length "M L" stroke-linecap dot,
-// which some renderers skip) so it shows up as a dot without needing a
-// second element type. Kept as `<path data-line data-point>` rather than
-// `<circle>` so a caller counting "how many runs did this gap produce" via
-// `path[data-line]` sees the isolated point counted alongside real
-// segments, the way the geometry docs describe unbroken runs.
-function dotPath(x: number, y: number, r = 1.5): string {
-  return `M${x - r},${y} A${r},${r} 0 1,0 ${x + r},${y} A${r},${r} 0 1,0 ${x - r},${y} Z`;
 }
 
 export function Sparkline({

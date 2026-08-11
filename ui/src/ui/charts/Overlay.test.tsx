@@ -48,4 +48,29 @@ describe("Overlay", () => {
       screen.getByRole("img", { name: "Two hosts, CPU busy" }),
     ).toBeInTheDocument();
   });
+
+  // max alone is half an axis. A panel declaring a ceiling of 100 whose data
+  // sits at 88-92 got a floor derived from that data, so a four-point swing
+  // filled a third of the box and two panels sharing max still could not be
+  // compared -- which is the whole reason to declare one.
+  it("honours a declared floor instead of deriving one from the data", () => {
+    const { container } = render(
+      <Overlay
+        series={[{ name: "mem", color: "var(--s1)", values: [88, 90, 92] }]}
+        min={0}
+        max={100}
+        width={100}
+        height={100}
+        pad={0}
+      />,
+    );
+
+    const ys = [
+      ...container.innerHTML.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g),
+    ].map((m) => parseFloat(m[1]!));
+    // 88..92 of a 0..100 axis occupies the top eighth of the box, not a
+    // third of it: every y sits between 8 and 12.
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(8);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(12);
+  });
 });

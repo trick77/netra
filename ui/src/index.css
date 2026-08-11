@@ -812,10 +812,15 @@ a {
   color: var(--st-crit);
   border-color: var(--border-strong);
 }
+/* --text-label, not --text-micro: micro has three enumerated uses (badges
+   and pills, chart axis ticks, uppercase eyebrow labels) and a button label
+   is none of them. The spec's own tiebreaker settles it -- if you expect the
+   reader to read it, it is Label or larger, and a button label is read by
+   definition. */
 .btn.small {
   height: 26px;
   padding: 0 10px;
-  font-size: var(--text-micro);
+  font-size: var(--text-label);
 }
 .toolbar {
   display: flex;
@@ -888,9 +893,6 @@ a {
 }
 .st-crit .dot {
   background: var(--st-crit);
-}
-.st-neutral .dot {
-  background: var(--muted);
 }
 /* Text colour: NOT the raw --st-* hue. The word beside the dot is the
    actual colour-blindness mitigation (accent and crit measure ΔE 2.2

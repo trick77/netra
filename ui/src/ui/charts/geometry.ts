@@ -340,3 +340,20 @@ export function mirrorPaths(
     mid,
   };
 }
+
+/**
+ * An isolated point -- a run of exactly one non-null value, surrounded by
+ * gaps -- drawn as a two-arc circle PATH rather than an SVG <circle>. Both
+ * chart components render these, and both tag them `data-line data-point`,
+ * so a caller counting "how many runs did this gap produce" via
+ * `path[data-line]` sees the isolated point counted alongside real segments,
+ * the way the run-splitting docs above describe.
+ *
+ * It lives here rather than in either component because it produces
+ * coordinates, which is what this module is: two byte-identical copies in
+ * Sparkline and Overlay would drift the first time the radius or the
+ * isolated-point strategy changes.
+ */
+export function dotPath(x: number, y: number, r = 1.5): string {
+  return `M${x - r},${y} A${r},${r} 0 1,0 ${x + r},${y} A${r},${r} 0 1,0 ${x - r},${y} Z`;
+}
