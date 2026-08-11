@@ -565,15 +565,24 @@ a {
   color: var(--st-crit-text);
 }
 
+/* The all-hosts overlay is a new section, not a continuation of the list
+   above it. It sat flush against whatever preceded it -- 0px against the
+   table, which is the default view, and against the card grid too. The
+   spacing belongs here rather than on each list, because there are three of
+   them (table, cards, containers) and only one thing they all run into. */
+.fleet-overlay {
+  margin-top: var(--space-6);
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: var(--space-4);
-  /* The card grid ends flush with whatever follows it -- on the overview
-     that is the all-hosts overlay, which sat against the last row of cards
-     with nothing between them. A table gets this spacing from its own
-     trailing border; a grid has none to give. */
-  margin-bottom: var(--space-6);
+  /* A card grid ends flush with whatever follows it; the spacing between a
+     list and the next section lives on .fleet-overlay below, which covers
+     the table and the container list too. This margin is for the case where
+     the cards are the LAST thing on the page. */
+  margin-bottom: var(--space-4);
 }
 .hcard {
   background: var(--surface);
