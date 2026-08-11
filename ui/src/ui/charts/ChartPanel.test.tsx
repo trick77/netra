@@ -1,0 +1,69 @@
+import { describe, expect, it } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { ChartPanel } from "./ChartPanel";
+
+describe("ChartPanel", () => {
+  it("draws one path per unbroken run, so a gap is a hole", () => {
+    const { container } = render(
+      <ChartPanel
+        title="CPU"
+        series={[{ name: "busy", color: "var(--s1)", values: [1, 2, null, 4] }]}
+      />,
+    );
+    expect(container.querySelectorAll("path[data-line]")).toHaveLength(2);
+  });
+
+  it("renders the not-collected panel instead of an empty chart", () => {
+    render(
+      <ChartPanel
+        title="ICMP statistics"
+        unavailable="no ICMP columns in the schema"
+      />,
+    );
+    expect(screen.getByText(/not collected/i)).toBeInTheDocument();
+    expect(screen.getByText(/no ICMP columns/i)).toBeInTheDocument();
+  });
+
+  it("surfaces a window notice when the served range was clamped", () => {
+    render(
+      <ChartPanel title="Processes" series={[]} notice="48 hours retained" />,
+    );
+    expect(screen.getByText(/48 hours retained/)).toBeInTheDocument();
+  });
+
+  it("shows a legend once there are two or more series", () => {
+    render(
+      <ChartPanel
+        title="Network"
+        series={[
+          { name: "rx", color: "var(--s1)", values: [1, 2, 3] },
+          { name: "tx", color: "var(--s2)", values: [1, 2, 3] },
+        ]}
+      />,
+    );
+    expect(screen.getByText("rx")).toBeInTheDocument();
+    expect(screen.getByText("tx")).toBeInTheDocument();
+  });
+
+  it("formats the latest value with the caller's formatter", () => {
+    render(
+      <ChartPanel
+        title="Memory"
+        unit="GB"
+        fmt={(n) => (n === null ? "—" : `${n} GB`)}
+        series={[{ name: "used", color: "var(--s1)", values: [1, 2, 3] }]}
+      />,
+    );
+    expect(screen.getByText("3 GB")).toBeInTheDocument();
+  });
+
+  it("does not render the unavailable box when data is present", () => {
+    render(
+      <ChartPanel
+        title="CPU"
+        series={[{ name: "busy", color: "var(--s1)", values: [1, 2, 3] }]}
+      />,
+    );
+    expect(screen.queryByText(/not collected/i)).not.toBeInTheDocument();
+  });
+});
