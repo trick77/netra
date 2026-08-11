@@ -10,7 +10,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS = -s -w -X github.com/trick77/netra/internal/buildinfo.version=$(VERSION) \
                 -X github.com/trick77/netra/internal/buildinfo.commit=$(COMMIT)
 
-.PHONY: test test-integration test-shell build build-hub build-agent build-sim proto fmt vet check
+.PHONY: test test-integration test-shell build build-hub build-agent build-sim proto fmt vet check ui ui-test
 
 test:
 	$(GO) test ./...
@@ -39,7 +39,26 @@ test-shell:
 
 build: build-hub build-agent
 
-build-hub:
+# The .gitkeep restore is glued to the build with `;` rather than following it
+# as its own recipe line, and that is the whole point: vite build
+# (emptyOutDir: true) wipes dist/ -- tracked, empty dist/.gitkeep included --
+# BEFORE it emits anything. A recipe line only runs when the previous one
+# succeeded, so a failure inside vite used to leave the tree with no .gitkeep
+# at all, and every later `go build ./...` died on
+# "pattern all:dist: no matching files found" -- an error with no visible
+# connection to the UI build. Restoring it unconditionally and then re-raising
+# the build's own status keeps a failed `make ui` failing, without taking the
+# Go build down with it.
+ui:
+	(cd ui && npm ci && npm run build); status=$$?; \
+		mkdir -p internal/hub/web/dist; \
+		touch internal/hub/web/dist/.gitkeep; \
+		exit $$status
+
+ui-test:
+	cd ui && npm ci && npm run test
+
+build-hub: ui
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/netra ./cmd/netra
 
 build-agent:
@@ -61,6 +80,6 @@ fmt:
 vet:
 	$(GO) vet ./...
 
-check: vet test test-shell
+check: vet test test-shell ui-test
 	@unformatted="$$(gofmt -l .)"; \
 	if [ -n "$$unformatted" ]; then echo "not gofmt'd:"; echo "$$unformatted"; exit 1; fi
