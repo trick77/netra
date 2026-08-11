@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -87,4 +88,21 @@ func TestHandlerDoesNotPanic(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+}
+
+// A binary built without `make ui` must say so rather than serve
+// http.FileServer's directory listing of an all-but-empty dist/, which is
+// what the fallback produced before: a 200, past every healthcheck, with a
+// file index where the UI belongs.
+func TestUnbuiltDistIsAnExplicitError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	handlerFor(fstest.MapFS{".gitkeep": {Data: nil}}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "make ui") {
+		t.Fatalf("body = %q, want it to name `make ui`", rec.Body.String())
+	}
 }

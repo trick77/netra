@@ -55,11 +55,29 @@
   --radius-pill: 999px;
 
   /* status palette — FIXED, never themed, never reused as a series colour
-     (spec §3.5). */
+     (spec §3.5). These are the MARK colours: dots, chart bands, meter fills.
+     They sit on a surface, never on top of one as text. */
   --st-ok: #0ca30c;
   --st-warn: #fab219;
   --st-serious: #ec835a;
   --st-crit: #d03b3b;
+
+  /* status INK — the same four states as text. Separate tokens because the
+     mark colours do not survive being read: --st-warn on the light --bg is
+     1.7:1, four points of what AA asks of 14px text, and serious and ok are
+     no better. Every severity carries a word (spec §3.5), so the word has to
+     be legible; these are the mark colours darkened only as far as 4.5:1
+     needs, and they are themed while the marks stay fixed. Light values here,
+     dark ones in the two dark blocks below. */
+  --st-ok-ink: #0a7d0a;
+  --st-warn-ink: #8a5a00;
+  --st-serious-ink: #a4491a;
+  --st-crit-ink: #b52a2a;
+
+  /* Filled buttons put #fff on this, which --accent-fill cannot carry:
+     4.2:1. Only .btn.primary uses it; --accent-fill keeps the focus rings
+     and borders, where nothing is read against it. */
+  --accent-fill-strong: #a94e1c;
 
   /* palette "Clay" — light (default). */
   --bg: #f7f5f0;
@@ -108,6 +126,13 @@
     --s2: #199e70;
     --s3: #9085e9;
     --s4: #d55181;
+
+    /* Dark reverses the problem: the marks are bright enough to read, but
+       --st-crit at 3.4:1 is not, so only ok and crit move. */
+    --st-ok-ink: #3fc23f;
+    --st-warn-ink: #fab219;
+    --st-serious-ink: #ec835a;
+    --st-crit-ink: #e86464;
   }
 }
 :root[data-theme="dark"] {
@@ -130,11 +155,31 @@
   --s2: #199e70;
   --s3: #9085e9;
   --s4: #d55181;
+
+  --st-ok-ink: #3fc23f;
+  --st-warn-ink: #fab219;
+  --st-serious-ink: #ec835a;
+  --st-crit-ink: #e86464;
 }
 
 /* ── Reset + base ─────────────────────────────────────────────────── */
 * {
   box-sizing: border-box;
+}
+/* Without color-scheme the browser keeps painting its own widgets light on a
+   dark page: scrollbars, select popups, date pickers, the default background
+   of form controls. The three scopes mirror the token blocks exactly, so an
+   explicit theme choice moves the native UI with it. */
+:root {
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 body {
   margin: 0;
@@ -673,8 +718,8 @@ a {
   cursor: pointer;
 }
 .btn.primary {
-  background: var(--accent-fill);
-  border-color: var(--accent-fill);
+  background: var(--accent-fill-strong);
+  border-color: var(--accent-fill-strong);
   color: #fff;
   font-weight: 600;
 }
@@ -756,16 +801,16 @@ a {
   background: var(--st-crit);
 }
 .st-ok {
-  color: var(--st-ok);
+  color: var(--st-ok-ink);
 }
 .st-warn {
-  color: var(--st-warn);
+  color: var(--st-warn-ink);
 }
 .st-serious {
-  color: var(--st-serious);
+  color: var(--st-serious-ink);
 }
 .st-crit {
-  color: var(--st-crit);
+  color: var(--st-crit-ink);
 }
 
 /* table */

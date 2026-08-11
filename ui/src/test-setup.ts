@@ -1,9 +1,5 @@
 import "@testing-library/jest-dom/vitest";
 
-// Node >= 24 ships Web Storage globals on by default; they shadow jsdom's
-// window.localStorage with a stub that has no .clear()/.getItem(). Point the
-// global back at jsdom's implementation so localStorage behaves the same in
-// tests regardless of the Node version running them.
 // Node >= 24 ships a global Web Storage implementation that jsdom's own
 // window.localStorage gets shadowed by before this file even runs (both
 // `globalThis.localStorage` and `window.localStorage` already point at

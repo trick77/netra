@@ -1,3 +1,26 @@
+# The SPA is compiled here, not on the developer's machine. internal/hub/web
+# embeds dist/ with go:embed, and dist/ is gitignored down to an empty
+# .gitkeep -- so a build stage that goes straight to `go build` produces a
+# binary whose embedded FS holds one empty file. That image starts, answers
+# /api/health, passes the compose healthcheck, and serves an http.FileServer
+# directory listing where the UI should be. Nothing anywhere reports an error.
+# This stage is what makes the released image and `make build-hub` agree.
+FROM node:22-alpine AS ui
+
+WORKDIR /src/ui
+
+# Manifests first so the npm layer survives any source edit, the same shape as
+# the go mod download layer below.
+COPY ui/package.json ui/package-lock.json ./
+RUN npm ci
+
+COPY ui/ ./
+
+# vite.config.ts writes to ../internal/hub/web/dist, i.e. /src/internal/... —
+# outside this WORKDIR on purpose, so the path matches the checkout exactly and
+# the config needs no container-specific branch.
+RUN npm run build
+
 FROM golang:1.26-alpine AS build
 
 # Both are mandatory for a release image. The Makefile derives COMMIT from
@@ -16,6 +39,10 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 COPY . .
+
+# After COPY . ., because that copies the gitignored-but-tracked empty dist/
+# and would otherwise bury the built SPA underneath it.
+COPY --from=ui /src/internal/hub/web/dist ./internal/hub/web/dist
 
 # The cache mounts are repeated here on purpose: mount contents never land in
 # the image layer, so without /go/pkg/mod the modules fetched above are gone.

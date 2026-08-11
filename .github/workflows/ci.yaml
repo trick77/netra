@@ -62,6 +62,36 @@ jobs:
             exit 1
           fi
 
+  # The SPA is embedded in the hub binary, so a TypeScript error or a failing
+  # component test is a broken release just as much as a Go compile error is —
+  # but nothing else in this file would notice. `make build` does run `make ui`
+  # (build-hub depends on it), which covers tsc and vite; it never runs the
+  # Vitest suite. This job is what makes the UI tests part of the gate rather
+  # than something run by hand.
+  ui:
+    name: Test (ui)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          # The version lives in ui/.nvmrc so the runner, the Containerfile's
+          # node stage and a developer's `nvm use` cannot drift apart.
+          node-version-file: ui/.nvmrc
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      # Runs tsc --noEmit and vite build; a type error fails here, not at
+      # release time.
+      - run: npm run build
+        working-directory: ui
+      - run: npm run test
+        working-directory: ui
+      - name: Prettier
+        run: npm run format:check
+        working-directory: ui
+
   # setup-agent.sh is the one shipped artefact that is not Go, and it is the
   # piece most likely to be wrong in a way nobody notices: it runs once, on
   # somebody else's machine, against hardware this repo has never seen.

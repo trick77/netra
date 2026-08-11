@@ -48,6 +48,20 @@ func Handler() http.Handler {
 func handlerFor(sub fs.FS) http.Handler {
 	files := http.FileServer(http.FS(sub))
 
+	// An unbuilt dist/ is a build mistake, not a request error, and it used to
+	// present as neither: with only .gitkeep embedded, the fallback below hands
+	// "/" to http.FileServer, which answers 200 and a directory listing of the
+	// one empty file. The image starts, /api/health passes, the compose
+	// healthcheck goes green, and the operator gets a file index where the UI
+	// should be. Saying so plainly, once, is worth more than any 200 here.
+	if _, err := fs.Stat(sub, "index.html"); err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w,
+				"netra: this binary was built without the web UI; run `make ui` before building, or use a released image",
+				http.StatusServiceUnavailable)
+		})
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := strings.TrimPrefix(r.URL.Path, "/")
 		if p != "" {

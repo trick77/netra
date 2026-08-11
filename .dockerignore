@@ -12,3 +12,7 @@ test/
 .env
 compose*.yaml
 deploy/
+# ui/ itself IS part of the context now -- the node stage compiles it -- but
+# node_modules is hundreds of megabytes that the stage reinstalls from the
+# lockfile anyway.
+ui/node_modules/
