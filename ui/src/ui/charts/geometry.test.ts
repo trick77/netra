@@ -209,6 +209,53 @@ describe("geometry", () => {
       expect(stackBands([[]], 100, 20, 10)).toEqual([]);
     });
 
+    // Rows reach here ragged: querySeries returns one row per series and a
+    // host that started reporting late, or a point-limit truncation that
+    // lands mid-series, leaves the later series shorter. Reading the length
+    // off series[0] made every index past the short series' end `undefined`
+    // -- neither null nor a number -- which scaled to NaN and erased the
+    // whole band from the chart, silently.
+    it("treats a missing tail in a shorter series as a gap, not as NaN", () => {
+      const bands = stackBands(
+        [
+          [1, 1, 1],
+          [2, 2],
+        ],
+        100,
+        20,
+        10,
+      );
+
+      expect(bands).toHaveLength(2);
+      for (const band of bands) {
+        expect(band).not.toContain("NaN");
+      }
+    });
+
+    // The opposite raggedness: a longer later series was truncated to
+    // series[0]'s length and its tail simply never drew. The x domain is the
+    // longest series, so index 1 of a four-point stack sits a third of the
+    // way across -- the two trailing indices are gaps (the first series has
+    // nothing there), and a gap still occupies its share of the axis.
+    it("spans the longest series rather than truncating to the first", () => {
+      const bands = stackBands(
+        [
+          [1, 1],
+          [2, 2, 2, 2],
+        ],
+        100,
+        20,
+        10,
+      );
+
+      expect(bands).toHaveLength(2);
+      for (const band of bands) {
+        expect(band).not.toContain("NaN");
+        expect(band).toContain("33.3");
+        expect(band).not.toContain("L100,");
+      }
+    });
+
     // A null in ANY series at an index makes the running total undefined
     // for every band at that index -- v ?? 0 would fabricate that series as
     // reporting zero and draw a band as if it were really idle.

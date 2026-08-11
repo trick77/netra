@@ -217,10 +217,19 @@ export function stackBands(
   pad = 0,
 ): string[] {
   if (series.length === 0) return [];
-  const n = series[0]?.length ?? 0;
+  // The longest series, not series[0]'s: rows arrive ragged. querySeries
+  // returns one row per series, and a host that started reporting late -- or
+  // a point-limit truncation landing mid-series -- leaves some of them
+  // shorter. Measuring off the first row alone read `undefined` past a short
+  // series' end, which is neither null nor a number: it slipped through the
+  // gap test, scaled to NaN, and erased that band from the chart entirely.
+  const n = series.reduce((longest, s) => Math.max(longest, s.length), 0);
   if (n === 0) return [];
 
-  const runs = splitRuns(n, (i) => series.some((s) => s[i] === null)).filter(
+  // `== null` and not `=== null`, for the same reason: past a shorter
+  // series' end there is no value at all, and a missing value is exactly as
+  // unstackable as an explicit null.
+  const runs = splitRuns(n, (i) => series.some((s) => s[i] == null)).filter(
     (run) => run.length >= 2,
   );
 
