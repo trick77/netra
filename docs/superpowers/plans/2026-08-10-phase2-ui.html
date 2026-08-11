@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>netra Phase 2 Web UI Implementation Plan</title>
+<style>
+:root{color-scheme:light dark;
+ --bg:#f7f5f0;--surface:#fffdf9;--surface-2:#faf8f3;--border:#e7e2d8;--border-strong:#cfc9bb;
+ --ink:#1f1e1a;--ink-2:#4d4a42;--muted:#807c72;--accent:#b4531f;--accent-soft:#fbeee5;
+ --s1:#2a78d6;--s2:#1baf7a;--ok:#0ca30c;--warn:#fab219;--crit:#d03b3b;
+ --font-sans:"Anthropic Sans",system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+ --font-serif:"Anthropic Serif",Georgia,"Times New Roman",serif;
+ --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+@media (prefers-color-scheme:dark){:root{
+ --bg:#1f1f1e;--surface:#1b1b1a;--surface-2:#2c2c2a;--border:#323230;--border-strong:#454540;
+ --ink:#faf9f5;--ink-2:#c9c6bd;--muted:#9c9a92;--accent:#d97757;--accent-soft:#2e211a;
+ --s1:#3987e5;--s2:#199e70;}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans);
+ font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+.wrap{max-width:900px;margin:0 auto;padding:56px 28px 96px}
+h1{font-family:var(--font-serif);font-size:34px;line-height:1.2;margin:0 0 8px;letter-spacing:-.02em}
+h2{font-family:var(--font-serif);font-size:24px;margin:52px 0 14px;padding-top:22px;
+ border-top:1px solid var(--border);letter-spacing:-.01em}
+h3{font-size:17px;margin:30px 0 10px;color:var(--accent)}
+h4{font-size:14px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+p{margin:12px 0;color:var(--ink-2)}
+strong{color:var(--ink);font-weight:600}
+ul,ol{padding-left:22px;margin:12px 0;color:var(--ink-2)}
+li{margin:6px 0}
+hr{border:0;border-top:1px solid var(--border);margin:40px 0}
+code{font-family:var(--font-mono);font-size:.84em;background:var(--surface-2);
+ border:1px solid var(--border);border-radius:4px;padding:.08em .38em;color:var(--ink)}
+pre.code{background:var(--surface);border:1px solid var(--border);border-radius:8px;
+ padding:14px 16px;overflow-x:auto;margin:16px 0}
+pre.code code{background:none;border:0;padding:0;font-size:12.5px;line-height:1.6}
+.tw{overflow-x:auto;margin:18px 0;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{text-align:left;padding:10px 14px;border-bottom:1px solid var(--border);color:var(--muted);
+ font-weight:500;text-transform:uppercase;letter-spacing:.05em;font-size:12px;white-space:nowrap}
+td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--ink-2);vertical-align:top}
+tbody tr:last-child td{border-bottom:0}
+.meta{color:var(--muted);font-size:14px;margin:0 0 28px}
+</style></head>
+<body><div class="wrap"><h1>netra Phase 2 Web UI Implementation Plan</h1>
+<p>&gt; <strong>For agentic workers:</strong> REQUIRED SUB-SKILL: Use <code>superpowers:subagent-driven-development</code> to implement this plan. Steps use checkbox (<code>- [ ]</code>) syntax for tracking. Tasks are grouped into <strong>waves</strong>; every task inside a wave may run in a <strong>parallel subagent</strong>, because no two tasks in a wave write the same file. Each wave ends with a <strong>review gate</strong> that must pass before the next wave starts.</p>
+<p><strong>Goal:</strong> Build netra&#x27;s phase-2 web UI — a React SPA embedded in the hub binary — implementing <code>docs/superpowers/specs/2026-08-10-phase2-ui-design.html</code>.</p>
+<p><strong>Architecture:</strong> <code>ui/</code> (React 19 + TypeScript + Vite) builds to <code>internal/hub/web/dist</code>, embedded with <code>go:embed</code> and served by the hub at <code>/</code> behind the existing <code>RequireAdmin</code> middleware, which already accepts the session cookie. Data comes from the phase-1 read API over <code>fetch</code>. Styling is a CSS-variable token layer plus a hand-written class layer — no utility classes in components, no CSS-in-JS, no charting library.</p>
+<p><strong>Tech Stack:</strong> React 19, TypeScript, Vite, Vitest + Testing Library, Tailwind v4 (<code>@theme</code> as a variable registry only), <code>lucide-react</code>, Go 1.26 <code>net/http</code>.</p>
+<h2>Global Constraints</h2>
+<ul><li><strong>Stacked PRs, one per wave.</strong> Wave <em>n</em> branches from wave <em>n−1</em>: <code>feat/phase2-ui-w0</code> … <code>feat/phase2-ui-w5</code>, each PR targeting the previous wave&#x27;s branch, the first targeting <code>master</code>. One PR per <strong>wave</strong>, never per task — six PRs total, not thirty.</li><li><strong>Do not block on human review.</strong> The user does not gate the loop; continue to the next wave as soon as its own review gate is satisfied. Merge the stack bottom-up at the end, or let the user merge it.</li><li><strong>Every wave gets an LLM code review before its PR opens.</strong> Run <code>superpowers:requesting-code-review</code> over that wave&#x27;s diff, fix the findings, then open the PR. A wave whose work is trivial (no new logic) may note that in the PR body instead, but no wave with substantial work skips review. This is what keeps the stack from becoming an unreviewed monolith.</li><li><strong>Parallel-safe by file ownership.</strong> Every task lists the exact files it creates. No two tasks in the same wave touch the same file. If a task needs to change a file owned by another task in the same wave, it belongs in the next wave instead.</li><li><strong>TDD.</strong> Write the failing test, watch it fail, implement minimally, watch it pass, commit.</li><li><strong>Node 22 LTS.</strong> Pinned via <code>ui/.nvmrc</code> and <code>actions/setup-node@v5</code> with <code>node-version-file</code>.</li><li><strong>No new Go dependencies.</strong> <code>go.mod</code> gains nothing; the UI is served by stdlib <code>net/http</code>.</li><li><strong>No runtime npm dependencies beyond <code>react</code>, <code>react-dom</code>, <code>lucide-react</code>.</strong> Everything else is a devDependency.</li><li><strong>12px is the type floor.</strong> Nothing renders smaller, at any nesting depth.</li><li><strong>The accent is never a data or severity fill.</strong> Meters, chart bands, chart lines and status marks draw only from <code>--s1..--s4</code> and the status palette.</li><li><strong>Severity never rides on colour alone.</strong> Every status carries a dot <em>and</em> a word.</li><li><strong>Gaps render as gaps.</strong> A <code>null</code> in a series breaks the line. Never interpolate.</li><li><strong>Absent ≠ zero.</strong> <code>null</code> renders as &quot;none&quot;, never <code>0</code>.</li><li><strong>English only.</strong> No i18n layer.</li><li><strong>Swiss orthography</strong> in any German text (there is none planned; if added, <code>ss</code> never <code>ß</code>).</li><li><strong>Commit as</strong> <code>trick77@users.noreply.github.com</code>.</li></ul>
+<hr>
+<h2>File Structure</h2>
+<pre class="code" data-lang=""><code>ui/
+  .nvmrc  package.json  tsconfig.json  vite.config.ts  index.html
+  src/
+    main.tsx                    entry, theme bootstrap
+    router.ts                   hash-free history router + URL state
+    index.css                   @theme tokens + hand-written class layer
+    fonts/                      3 licensed .woff2 files
+    lib/
+      format.ts                 units, durations, timestamps
+      api.ts                    fetch wrappers + read-API types
+      metrics.ts                tier/column access, gap handling, window clamp
+      theme.ts                  light/dark/system persistence
+    ui/
+      Button.tsx Control.tsx Segmented.tsx Badge.tsx Card.tsx
+      Table.tsx Tabs.tsx Meter.tsx StatTile.tsx EmptyState.tsx Drawer.tsx
+      charts/geometry.ts        pure path math (no React)
+      charts/Sparkline.tsx charts/StackedSparkline.tsx
+      charts/UpDownSparkline.tsx charts/ChartPanel.tsx charts/Overlay.tsx
+    features/
+      fleet/FleetPage.tsx fleet/hostColumns.tsx fleet/HostTable.tsx
+      fleet/HostCards.tsx fleet/AttentionBand.tsx fleet/FleetContainers.tsx
+      fleet/AllHostsOverlay.tsx
+      host/HostPage.tsx host/tabs/{Overview,Graphs,Inventory,Events}.tsx
+      container/ContainerPage.tsx
+      events/EventsPage.tsx
+      settings/SettingsPage.tsx
+      auth/LoginPage.tsx
+      admin/HostAdminPage.tsx
+internal/hub/web/embed.go       go:embed + SPA fallback + cache headers
+internal/hub/httpapi/router.go  MODIFIED: mount the SPA at /</code></pre>
+<p><strong>Files deleted at Wave 5</strong>, once the SPA covers their function: <code>internal/hub/httpapi/ui.go</code>, <code>internal/hub/httpapi/ui_test.go</code>, <code>internal/hub/httpapi/templates/{layout,hosts,token}.gohtml</code>. <code>templates/login.gohtml</code> and <code>session.go</code> <strong>stay</strong> — the SPA posts to the existing form-encoded <code>POST /login</code>, and the server-rendered login page remains the no-JS fallback.</p>
+<hr>
+<h2>Waves</h2>
+<div class="tw"><table><thead><tr><th>Wave</th><th>Tasks</th><th>Parallel?</th><th>Gate</th></tr></thead><tbody><tr><td>0</td><td>1–2</td><td>serial</td><td>scaffold builds and embeds</td></tr><tr><td>1</td><td>3–6</td><td><strong>4 parallel</strong></td><td>pure modules, full unit coverage</td></tr><tr><td>2</td><td>7–10</td><td><strong>4 parallel</strong></td><td>primitives render in both themes</td></tr><tr><td>3</td><td>11–14</td><td><strong>4 parallel</strong></td><td>fleet overview complete</td></tr><tr><td>4</td><td>15–19</td><td><strong>5 parallel</strong></td><td>host, container, events, settings, auth</td></tr><tr><td>5</td><td>20–22</td><td>serial</td><td>integration, cutover, CI, PR</td></tr></tbody></table></div>
+<hr>
+<h2>Wave 0 — Foundation (serial)</h2>
+<h3>Task 1: Scaffold <code>ui/</code> and embed it in the hub</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Create: <code>ui/package.json</code>, <code>ui/.nvmrc</code>, <code>ui/tsconfig.json</code>, <code>ui/vite.config.ts</code>, <code>ui/index.html</code>, <code>ui/src/main.tsx</code>, <code>ui/src/App.tsx</code></li><li>Create: <code>internal/hub/web/embed.go</code>, <code>internal/hub/web/embed_test.go</code></li><li>Modify: <code>Makefile</code>, <code>.gitignore</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>web.Handler() http.Handler</code> — serves the built SPA with SPA fallback.</li><li>Produces: <code>make ui</code> builds <code>ui/</code> into <code>internal/hub/web/dist</code>.</li></ul>
+<ul><li>[ ] <strong>Step 1: Create the Vite project files</strong></li></ul>
+<p><code>ui/package.json</code> — <strong>versions copied verbatim from <code>../music/ui/package.json</code>, not guessed.</strong> Note TypeScript 7, jsdom 30 and <code>@vitejs/plugin-react</code> 6; and <code>TZ=Europe/Zurich</code> on the test scripts, which is how music makes date-dependent tests deterministic — <code>format.test.ts</code> depends on it.</p>
+<pre class="code" data-lang="json"><code>{
+  &quot;name&quot;: &quot;netra-ui&quot;,
+  &quot;private&quot;: true,
+  &quot;type&quot;: &quot;module&quot;,
+  &quot;scripts&quot;: {
+    &quot;dev&quot;: &quot;vite&quot;,
+    &quot;build&quot;: &quot;tsc --noEmit &amp;&amp; vite build&quot;,
+    &quot;test&quot;: &quot;TZ=Europe/Zurich vitest run&quot;,
+    &quot;test:watch&quot;: &quot;TZ=Europe/Zurich vitest&quot;,
+    &quot;test:coverage&quot;: &quot;TZ=Europe/Zurich vitest run --coverage&quot;,
+    &quot;format&quot;: &quot;prettier --write &#x27;src/**/*.{ts,tsx,css}&#x27;&quot;,
+    &quot;format:check&quot;: &quot;prettier --check &#x27;src/**/*.{ts,tsx,css}&#x27;&quot;
+  },
+  &quot;dependencies&quot;: {
+    &quot;lucide-react&quot;: &quot;^1.27.0&quot;,
+    &quot;react&quot;: &quot;^19.2.8&quot;,
+    &quot;react-dom&quot;: &quot;^19.2.8&quot;
+  },
+  &quot;devDependencies&quot;: {
+    &quot;@tailwindcss/vite&quot;: &quot;^4.3.3&quot;,
+    &quot;@testing-library/jest-dom&quot;: &quot;^7.0.0&quot;,
+    &quot;@testing-library/react&quot;: &quot;^16.3.2&quot;,
+    &quot;@testing-library/user-event&quot;: &quot;^14.6.1&quot;,
+    &quot;@types/react&quot;: &quot;^19.2.17&quot;,
+    &quot;@types/react-dom&quot;: &quot;^19.2.3&quot;,
+    &quot;@vitejs/plugin-react&quot;: &quot;^6.0.4&quot;,
+    &quot;@vitest/coverage-v8&quot;: &quot;^4.1.10&quot;,
+    &quot;jsdom&quot;: &quot;^30.0.1&quot;,
+    &quot;prettier&quot;: &quot;3.9.6&quot;,
+    &quot;tailwindcss&quot;: &quot;^4.3.0&quot;,
+    &quot;typescript&quot;: &quot;^7.0.2&quot;,
+    &quot;vite&quot;: &quot;^8.1.5&quot;,
+    &quot;vitest&quot;: &quot;^4.1.7&quot;
+  }
+}</code></pre>
+<p><code>ui/.nvmrc</code>:</p>
+<pre class="code" data-lang=""><code>22</code></pre>
+<p><code>ui/vite.config.ts</code>:</p>
+<pre class="code" data-lang="ts"><code>import { defineConfig } from &quot;vite&quot;;
+import react from &quot;@vitejs/plugin-react&quot;;
+import tailwind from &quot;@tailwindcss/vite&quot;;
+
+export default defineConfig({
+  plugins: [react(), tailwind()],
+  build: { outDir: &quot;../internal/hub/web/dist&quot;, emptyOutDir: true },
+  server: { proxy: { &quot;/api&quot;: &quot;http://127.0.0.1:8080&quot;, &quot;/login&quot;: &quot;http://127.0.0.1:8080&quot; } },
+  test: { environment: &quot;jsdom&quot;, setupFiles: [&quot;./src/test-setup.ts&quot;], globals: true },
+});</code></pre>
+<p><code>ui/src/test-setup.ts</code>:</p>
+<pre class="code" data-lang="ts"><code>import &quot;@testing-library/jest-dom/vitest&quot;;</code></pre>
+<p><code>ui/index.html</code>:</p>
+<pre class="code" data-lang="html"><code>&lt;!DOCTYPE html&gt;
+&lt;html lang=&quot;en&quot;&gt;
+  &lt;head&gt;
+    &lt;meta charset=&quot;utf-8&quot; /&gt;
+    &lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot; /&gt;
+    &lt;title&gt;netra&lt;/title&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;div id=&quot;root&quot;&gt;&lt;/div&gt;
+    &lt;script type=&quot;module&quot; src=&quot;/src/main.tsx&quot;&gt;&lt;/script&gt;
+  &lt;/body&gt;
+&lt;/html&gt;</code></pre>
+<p><code>ui/src/main.tsx</code>:</p>
+<pre class="code" data-lang="tsx"><code>import { StrictMode } from &quot;react&quot;;
+import { createRoot } from &quot;react-dom/client&quot;;
+import App from &quot;./App&quot;;
+import &quot;./index.css&quot;;
+
+createRoot(document.getElementById(&quot;root&quot;)!).render(
+  &lt;StrictMode&gt;
+    &lt;App /&gt;
+  &lt;/StrictMode&gt;,
+);</code></pre>
+<p><code>ui/src/App.tsx</code> (placeholder, replaced in Wave 3):</p>
+<pre class="code" data-lang="tsx"><code>export default function App() {
+  return &lt;main&gt;netra&lt;/main&gt;;
+}</code></pre>
+<p><code>ui/src/index.css</code> (placeholder, replaced in Task 2):</p>
+<pre class="code" data-lang="css"><code>@import &quot;tailwindcss&quot;;</code></pre>
+<ul><li>[ ] <strong>Step 2: Write the failing Go test for the embed handler</strong></li></ul>
+<p><code>internal/hub/web/embed_test.go</code>:</p>
+<pre class="code" data-lang="go"><code>package web_test
+
+import (
+	&quot;net/http&quot;
+	&quot;net/http/httptest&quot;
+	&quot;testing&quot;
+
+	&quot;github.com/trick77/netra/internal/hub/web&quot;
+)
+
+// A deep link is a client-side route, not a file. The handler must answer it
+// with index.html rather than 404, or a reload of /hosts/3/graphs breaks.
+func TestHandlerServesIndexForUnknownPath(t *testing.T) {
+	rec := httptest.NewRecorder()
+	web.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, &quot;/hosts/3/graphs&quot;, nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf(&quot;status = %d, want 200&quot;, rec.Code)
+	}
+	if ct := rec.Header().Get(&quot;Content-Type&quot;); ct == &quot;&quot; {
+		t.Fatal(&quot;no content type&quot;)
+	}
+}
+
+// Fingerprinted assets are immutable; index.html must never be, or a deploy
+// leaves browsers pinned to the previous build forever.
+func TestAssetsAreImmutableAndIndexIsNot(t *testing.T) {
+	rec := httptest.NewRecorder()
+	web.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, &quot;/&quot;, nil))
+	if got := rec.Header().Get(&quot;Cache-Control&quot;); got != &quot;no-cache&quot; {
+		t.Fatalf(&quot;index Cache-Control = %q, want no-cache&quot;, got)
+	}
+}</code></pre>
+<ul><li>[ ] <strong>Step 3: Run it and watch it fail</strong></li></ul>
+<p>Run: <code>go test ./internal/hub/web/...</code> Expected: FAIL — package <code>web</code> does not exist.</p>
+<ul><li>[ ] <strong>Step 4: Implement the embed handler</strong></li></ul>
+<p><code>internal/hub/web/embed.go</code>:</p>
+<pre class="code" data-lang="go"><code>// Package web serves the phase-2 single-page UI out of the hub binary.
+//
+// The SPA is built by `make ui` into dist/ and embedded here, the same way
+// migrations and the phase-1 templates are: one binary, no asset directory to
+// deploy, no separate web server.
+package web
+
+import (
+	&quot;embed&quot;
+	&quot;io/fs&quot;
+	&quot;net/http&quot;
+	&quot;strings&quot;
+)
+
+// distFS holds the built SPA. dist/ is generated, and .gitignore excludes it,
+// so a checkout without `make ui` will fail to compile here rather than
+// silently serving nothing.
+//
+//go:embed all:dist
+var distFS embed.FS
+
+// Handler serves the SPA.
+//
+// Every path that is not a real file falls back to index.html, because the
+// router owns those paths client-side. Without the fallback, reloading
+// /hosts/3/graphs 404s -- and deep links are load-bearing: the diagnosis
+// drawer links into specific tabs.
+func Handler() http.Handler {
+	sub, err := fs.Sub(distFS, &quot;dist&quot;)
+	if err != nil {
+		panic(&quot;web: dist not embedded: &quot; + err.Error())
+	}
+	files := http.FileServer(http.FS(sub))
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimPrefix(r.URL.Path, &quot;/&quot;)
+		if p != &quot;&quot; {
+			if f, err := sub.Open(p); err == nil {
+				_ = f.Close()
+				// Vite fingerprints everything under assets/, so those are safe
+				// to pin forever. Anything else keeps the default.
+				if strings.HasPrefix(p, &quot;assets/&quot;) {
+					w.Header().Set(&quot;Cache-Control&quot;, &quot;public, max-age=31536000, immutable&quot;)
+				}
+				files.ServeHTTP(w, r)
+				return
+			}
+		}
+		// index.html must be revalidated every load or a deploy never reaches
+		// a browser that already has it.
+		w.Header().Set(&quot;Cache-Control&quot;, &quot;no-cache&quot;)
+		r2 := r.Clone(r.Context())
+		r2.URL.Path = &quot;/&quot;
+		files.ServeHTTP(w, r2)
+	})
+}</code></pre>
+<ul><li>[ ] <strong>Step 5: Build the UI and run the test</strong> (the placeholder from Step 6 must exist first if you reorder these)</li></ul>
+<p>Run:</p>
+<pre class="code" data-lang="bash"><code>cd ui &amp;&amp; npm ci &amp;&amp; npm run build &amp;&amp; cd ..
+go test ./internal/hub/web/...</code></pre>
+<p>Expected: PASS.</p>
+<ul><li>[ ] <strong>Step 6: Wire the Makefile and .gitignore</strong></li></ul>
+<p>Add to <code>Makefile</code>:</p>
+<pre class="code" data-lang="make"><code>ui:
+	cd ui &amp;&amp; npm ci &amp;&amp; npm run build
+
+ui-test:
+	cd ui &amp;&amp; npm ci &amp;&amp; npm run test
+
+build-hub: ui</code></pre>
+<p>Add to <code>.gitignore</code>:</p>
+<pre class="code" data-lang=""><code>internal/hub/web/dist/*
+!internal/hub/web/dist/index.html
+ui/node_modules/</code></pre>
+<p><strong>Then commit a placeholder <code>internal/hub/web/dist/index.html</code>:</strong></p>
+<pre class="code" data-lang="html"><code>&lt;!doctype html&gt;&lt;title&gt;netra&lt;/title&gt;&lt;p&gt;UI not built. Run &lt;code&gt;make ui&lt;/code&gt;.&lt;/p&gt;</code></pre>
+<p>This placeholder is load-bearing, not cosmetic. <code>//go:embed all:dist</code> is resolved at <strong>compile</strong> time, so a fully-ignored <code>dist/</code> makes <code>go build ./...</code> and <code>go test ./...</code> fail on a fresh checkout with <code>pattern all:dist: no matching files found</code> — including for anyone touching only Go, and including any CI job that does not run <code>make ui</code> first. One committed file keeps the tree compiling; <code>vite build</code> overwrites it with the real one.</p>
+<ul><li>[ ] <strong>Step 7: Commit</strong></li></ul>
+<pre class="code" data-lang="bash"><code>git add ui internal/hub/web Makefile .gitignore
+git commit -m &quot;feat(ui): scaffold the phase-2 SPA and embed it in the hub&quot;</code></pre>
+<hr>
+<h3>Task 2: Design tokens, fonts and the class layer</h3>
+<p><strong>Files:</strong></p>
+<ul><li>Create: <code>ui/src/fonts/SansWebVariable-TextRegular.woff2</code>, <code>ui/src/fonts/SerifWebVariable-TextRegular.woff2</code>, <code>ui/src/fonts/SerifWebVariable-TextRegularItalic.woff2</code> (copy from <code>../music/ui/src/fonts/</code>)</li><li>Modify: <code>ui/src/index.css</code></li><li>Create: <code>ui/src/lib/theme.ts</code>, <code>ui/src/lib/theme.test.ts</code></li></ul>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: every token in spec §3, as CSS custom properties on <code>:root</code> / <code>:root[data-theme=&quot;dark&quot;]</code>.</li><li>Produces: <code>applyTheme(pref: ThemePref): void</code>, <code>loadTheme(): ThemePref</code>, <code>type ThemePref = &quot;light&quot; | &quot;dark&quot; | &quot;system&quot;</code>.</li></ul>
+<ul><li>[ ] <strong>Step 1: Copy the three licensed font files</strong></li></ul>
+<pre class="code" data-lang="bash"><code>cp ../music/ui/src/fonts/*.woff2 ui/src/fonts/</code></pre>
+<ul><li>[ ] <strong>Step 2: Write <code>ui/src/index.css</code></strong></li></ul>
+<p>Transcribe spec §3.2 (both palettes), §3.4 (series), §3.5 (status), §3.6 (type scale), §3.7 (spacing, radii) into a Tailwind <code>@theme</code> block, then the hand-written class layer (<code>.btn</code>, <code>.ctl</code>, <code>.seg</code>, <code>.card</code>, <code>.badge</code>, <code>.meter</code>, <code>.tabs</code>, <code>.attn</code>, <code>.smp</code>). The reference implementation is the approved mock at <code>/private/tmp/.../scratchpad/mocks/netra-ui-directions.html</code> — copy its <code>&lt;style&gt;</code> block, keeping only the <code>[data-palette=&quot;i&quot;]</code> (Clay) rules, and drop the <code>.mockbar</code>/<code>.swap</code> rules, which are mock chrome.</p>
+<p><strong>Two things must not be transcribed wrong:</strong></p>
+<pre class="code" data-lang="css"><code>/* Light is the bare :root. Dark is BOTH the media query and the explicit
+   stamp, so the Settings toggle wins in both directions. */
+:root { --bg:#f7f5f0; /* …light… */ }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=&quot;light&quot;]) { --bg:#1f1f1e; /* …dark… */ }
+}
+:root[data-theme=&quot;dark&quot;] { --bg:#1f1f1e; /* …dark… */ }</code></pre>
+<pre class="code" data-lang="css"><code>/* Type floor. micro is 12px and has exactly three uses:
+   badges/pills, chart axis ticks, uppercase eyebrow labels. */
+--text-ui:.9375rem; --text-label:.875rem; --text-micro:.75rem;</code></pre>
+<ul><li>[ ] <strong>Step 3: Write the failing theme test</strong></li></ul>
+<p><code>ui/src/lib/theme.test.ts</code>:</p>
+<pre class="code" data-lang="ts"><code>import { describe, expect, it, beforeEach } from &quot;vitest&quot;;
+import { applyTheme, loadTheme } from &quot;./theme&quot;;
+
+describe(&quot;theme&quot;, () =&gt; {
+  beforeEach(() =&gt; {
+    localStorage.clear();
+    document.documentElement.removeAttribute(&quot;data-theme&quot;);
+  });
+
+  it(&quot;stamps an explicit choice on the root element&quot;, () =&gt; {
+    applyTheme(&quot;dark&quot;);
+    expect(document.documentElement.dataset.theme).toBe(&quot;dark&quot;);
+    expect(loadTheme()).toBe(&quot;dark&quot;);
+  });
+
+  it(&quot;removes the stamp for system, so the media query decides&quot;, () =&gt; {
+    applyTheme(&quot;dark&quot;);
+    applyTheme(&quot;system&quot;);
+    expect(document.documentElement.hasAttribute(&quot;data-theme&quot;)).toBe(false);
+    expect(loadTheme()).toBe(&quot;system&quot;);
+  });
+
+  it(&quot;defaults to system when nothing is stored&quot;, () =&gt; {
+    expect(loadTheme()).toBe(&quot;system&quot;);
+  });
+});</code></pre>
+<ul><li>[ ] <strong>Step 4: Run it and watch it fail</strong></li></ul>
+<p>Run: <code>cd ui &amp;&amp; npm run test -- theme</code> Expected: FAIL — cannot resolve <code>./theme</code>.</p>
+<ul><li>[ ] <strong>Step 5: Implement <code>ui/src/lib/theme.ts</code></strong></li></ul>
+<pre class="code" data-lang="ts"><code>export type ThemePref = &quot;light&quot; | &quot;dark&quot; | &quot;system&quot;;
+
+const KEY = &quot;netra.theme&quot;;
+
+/**
+ * Applies a theme preference.
+ *
+ * &quot;system&quot; REMOVES the stamp rather than resolving it to light or dark. The
+ * CSS carries a prefers-color-scheme block for exactly this case, so an
+ * unstamped root follows the OS live -- resolving it here would freeze the
+ * page at whatever the OS said on load.
+ */
+export function applyTheme(pref: ThemePref): void {
+  if (pref === &quot;system&quot;) document.documentElement.removeAttribute(&quot;data-theme&quot;);
+  else document.documentElement.dataset.theme = pref;
+  localStorage.setItem(KEY, pref);
+}
+
+export function loadTheme(): ThemePref {
+  const v = localStorage.getItem(KEY);
+  return v === &quot;light&quot; || v === &quot;dark&quot; ? v : &quot;system&quot;;
+}</code></pre>
+<ul><li>[ ] <strong>Step 6: Run the tests</strong></li></ul>
+<p>Run: <code>cd ui &amp;&amp; npm run test -- theme</code> Expected: PASS.</p>
+<ul><li>[ ] <strong>Step 7: Bootstrap the theme before first paint</strong></li></ul>
+<p>Add to <code>ui/src/main.tsx</code>, above <code>createRoot</code>:</p>
+<pre class="code" data-lang="tsx"><code>import { applyTheme, loadTheme } from &quot;./lib/theme&quot;;
+applyTheme(loadTheme());</code></pre>
+<ul><li>[ ] <strong>Step 8: Commit</strong></li></ul>
+<pre class="code" data-lang="bash"><code>git add ui/src
+git commit -m &quot;feat(ui): design tokens, licensed fonts and theme persistence&quot;</code></pre>
+<h3>✅ Wave 0 gate</h3>
+<ul><li>[ ] <code>make ui &amp;&amp; go build ./...</code> succeeds</li><li>[ ] <code>cd ui &amp;&amp; npm run test</code> passes</li><li>[ ] Run <code>superpowers:requesting-code-review</code> over the diff so far. Fix findings before Wave 1.</li></ul>
+<hr>
+<h2>Wave 1 — Pure modules (4 parallel subagents)</h2>
+<p>No React, no DOM beyond <code>document</code> in the theme module. These are the modules everything else imports, so they get the heaviest unit coverage.</p>
+<h3>Task 3: <code>lib/format.ts</code> — units, durations, timestamps</h3>
+<p><strong>Files:</strong> Create <code>ui/src/lib/format.ts</code>, <code>ui/src/lib/format.test.ts</code></p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>bytes(n: number | null): string</code> — decimal GB/TB, <code>&quot;—&quot;</code> for null</li><li>Produces: <code>bitrate(bitsPerSecond: number | null): string</code> — <code>Mb/s</code> / <code>Gb/s</code></li><li>Produces: <code>percent(n: number | null, digits?: number): string</code></li><li>Produces: <code>duration(seconds: number | null): string</code> — <code>&quot;266 d 6 h&quot;</code>, <code>&quot;4 m&quot;</code></li><li>Produces: <code>relative(iso: string, now?: Date): string</code> — <code>&quot;41 s ago&quot;</code></li><li>Produces: <code>absolute(iso: string, tz?: string): string</code> — for hover titles</li></ul>
+<ul><li>[ ] <strong>Step 1: Write the failing tests</strong></li></ul>
+<pre class="code" data-lang="ts"><code>import { describe, expect, it } from &quot;vitest&quot;;
+import { bytes, bitrate, percent, duration, relative } from &quot;./format&quot;;
+
+describe(&quot;format&quot;, () =&gt; {
+  // Network is bits, storage is bytes. Mixing them is the classic
+  // monitoring-UI bug and it is silent: the number still looks plausible.
+  it(&quot;formats storage in decimal bytes and network in bits&quot;, () =&gt; {
+    expect(bytes(503_000_000_000)).toBe(&quot;503 GB&quot;);
+    expect(bytes(7_800_000_000_000)).toBe(&quot;7.8 TB&quot;);
+    expect(bitrate(940_000_000)).toBe(&quot;940 Mb/s&quot;);
+    expect(bitrate(1_400_000_000)).toBe(&quot;1.4 Gb/s&quot;);
+  });
+
+  // null means &quot;not collected&quot;. Rendering it as 0 states a measurement
+  // that was never taken.
+  it(&quot;renders null as an em dash, never zero&quot;, () =&gt; {
+    expect(bytes(null)).toBe(&quot;—&quot;);
+    expect(bitrate(null)).toBe(&quot;—&quot;);
+    expect(percent(null)).toBe(&quot;—&quot;);
+    expect(duration(null)).toBe(&quot;—&quot;);
+  });
+
+  it(&quot;distinguishes zero from absent&quot;, () =&gt; {
+    expect(bytes(0)).toBe(&quot;0 B&quot;);
+    expect(percent(0)).toBe(&quot;0 %&quot;);
+  });
+
+  it(&quot;formats durations at two units of precision&quot;, () =&gt; {
+    expect(duration(266 * 86400 + 6 * 3600 + 41 * 60)).toBe(&quot;266 d 6 h&quot;);
+    expect(duration(240)).toBe(&quot;4 m&quot;);
+    expect(duration(41)).toBe(&quot;41 s&quot;);
+  });
+
+  it(&quot;formats relative times against a fixed now&quot;, () =&gt; {
+    const now = new Date(&quot;2026-08-10T14:00:00Z&quot;);
+    expect(relative(&quot;2026-08-10T13:59:19Z&quot;, now)).toBe(&quot;41 s ago&quot;);
+    expect(relative(&quot;2026-08-10T11:46:00Z&quot;, now)).toBe(&quot;2 h 14 m ago&quot;);
+  });
+});</code></pre>
+<ul><li>[ ] <strong>Step 2: Run and watch it fail</strong> — <code>cd ui &amp;&amp; npm run test -- format</code></li><li>[ ] <strong>Step 3: Implement <code>format.ts</code>.</strong> Decimal (1000-based) units throughout; two significant units for durations; <code>&quot;—&quot;</code> for every <code>null</code>.</li><li>[ ] <strong>Step 4: Run the tests</strong> — expect PASS</li><li>[ ] <strong>Step 5: Commit</strong> — <code>feat(ui): unit, duration and timestamp formatting</code></li></ul>
+<hr>
+<h3>Task 4: <code>lib/api.ts</code> — typed read-API client</h3>
+<p><strong>Files:</strong> Create <code>ui/src/lib/api.ts</code>, <code>ui/src/lib/api.test.ts</code></p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>type Host</code>, <code>type HostDetail</code>, <code>type Container</code>, <code>type Filesystem</code>, <code>type Address</code>, <code>type Pkg</code>, <code>type Unit</code>, <code>type Event</code>, <code>type MetricsResponse</code></li><li>Produces: <code>getHosts()</code>, <code>getHost(id)</code>, <code>getContainers(id)</code>, <code>getFilesystems(id)</code>, <code>getAddresses(id)</code>, <code>getPackages(id)</code>, <code>getUnits(id)</code>, <code>getEvents(params)</code>, <code>getMetrics(hostId, params)</code></li><li>Produces: <code>class ApiError extends Error { status: number }</code></li><li>Produces: <code>type MetricsResponse = { family, tier, step_s, window, requested_window, warnings, key_columns, columns, series, truncated }</code></li></ul>
+<ul><li>[ ] <strong>Step 1: Write the failing tests</strong></li></ul>
+<pre class="code" data-lang="ts"><code>import { describe, expect, it, vi, afterEach } from &quot;vitest&quot;;
+import { getHosts, getMetrics, ApiError } from &quot;./api&quot;;
+
+function mockFetch(status: number, body: unknown) {
+  return vi.stubGlobal(&quot;fetch&quot;, vi.fn(async () =&gt;
+    new Response(JSON.stringify(body), {
+      status, headers: { &quot;content-type&quot;: &quot;application/json&quot; },
+    })));
+}
+afterEach(() =&gt; vi.unstubAllGlobals());
+
+describe(&quot;api&quot;, () =&gt; {
+  it(&quot;sends credentials so the session cookie reaches RequireAdmin&quot;, async () =&gt; {
+    mockFetch(200, []);
+    await getHosts();
+    const [, init] = (fetch as unknown as vi.Mock).mock.calls[0];
+    expect(init.credentials).toBe(&quot;same-origin&quot;);
+  });
+
+  // A 401 is a routing decision (show login), not a crash. It must be
+  // distinguishable from a 500 by type, not by parsing a message.
+  it(&quot;throws ApiError carrying the status&quot;, async () =&gt; {
+    mockFetch(401, { error: &quot;unauthorized&quot; });
+    await expect(getHosts()).rejects.toMatchObject({ status: 401 });
+    await expect(getHosts()).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it(&quot;passes the metrics query through verbatim&quot;, async () =&gt; {
+    mockFetch(200, { family: &quot;host&quot;, tier: &quot;raw&quot;, columns: [], series: [] });
+    await getMetrics(1, { family: &quot;host&quot;, from: &quot;-24h&quot;, to: &quot;now&quot; });
+    const [url] = (fetch as unknown as vi.Mock).mock.calls[0];
+    expect(url).toContain(&quot;/api/v1/hosts/1/metrics?&quot;);
+    expect(url).toContain(&quot;family=host&quot;);
+  });
+});</code></pre>
+<ul><li>[ ] <strong>Step 2: Run and watch it fail</strong></li><li>[ ] <strong>Step 3: Implement <code>api.ts</code>.</strong> One <code>request&lt;T&gt;()</code> helper setting <code>credentials: &quot;same-origin&quot;</code> (the SPA is same-origin with the hub, and <code>RequireAdmin</code> already accepts the session cookie), <code>Accept: application/json</code>, throwing <code>ApiError</code> on non-2xx. Types transcribed from <code>internal/hub/read/*.go</code> JSON tags — do not guess field names, read the Go structs.</li><li>[ ] <strong>Step 4: Run the tests</strong></li><li>[ ] <strong>Step 5: Commit</strong> — <code>feat(ui): typed read-API client</code></li></ul>
+<hr>
+<h3>Task 5: <code>lib/metrics.ts</code> — tiers, columns, gaps, windows</h3>
+<p><strong>Files:</strong> Create <code>ui/src/lib/metrics.ts</code>, <code>ui/src/lib/metrics.test.ts</code></p>
+<p>This is the highest-risk module in the UI. Every rule in spec §7 lives here.</p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>column(res: MetricsResponse, base: string): number</code> — resolves a base name to its index for the response&#x27;s tier, throwing a named error if absent</li><li>Produces: <code>seriesValues(res, seriesIndex, base): (number | null)[]</code></li><li>Produces: <code>hasGaps(vals: (number | null)[]): boolean</code></li><li>Produces: <code>windowNotice(res: MetricsResponse): string | null</code> — human sentence when <code>window</code> ≠ <code>requested_window</code></li></ul>
+<ul><li>[ ] <strong>Step 1: Write the failing tests</strong></li></ul>
+<pre class="code" data-lang="ts"><code>import { describe, expect, it } from &quot;vitest&quot;;
+import { column, seriesValues, windowNotice } from &quot;./metrics&quot;;
+
+const raw = {
+  family: &quot;cpu_core&quot;, tier: &quot;raw&quot;, step_s: 60,
+  window: { from: &quot;2026-08-09T14:00:00Z&quot;, to: &quot;2026-08-10T14:00:00Z&quot; },
+  requested_window: { from: &quot;2026-08-09T14:00:00Z&quot;, to: &quot;2026-08-10T14:00:00Z&quot; },
+  warnings: [], key_columns: [&quot;core&quot;], columns: [&quot;busy&quot;],
+  series: [{ key: { core: &quot;0&quot; }, points: [[1, 4.1], [2, null], [3, 5.0]] }],
+  truncated: false,
+} as const;
+
+const fiveMin = { ...raw, tier: &quot;5m&quot;, step_s: 300, columns: [&quot;busy_avg&quot;, &quot;busy_max&quot;] } as const;
+
+describe(&quot;metrics&quot;, () =&gt; {
+  // Column names differ per tier BY CONSTRUCTION -- that is the guarantee
+  // that a client cannot silently read an average as a raw value.
+  it(&quot;resolves a base column name per tier&quot;, () =&gt; {
+    expect(column(raw as never, &quot;busy&quot;)).toBe(0);
+    expect(column(fiveMin as never, &quot;busy&quot;)).toBe(0); // busy_avg
+  });
+
+  it(&quot;throws a named error when the tier has no such column&quot;, () =&gt; {
+    expect(() =&gt; column(raw as never, &quot;nonexistent&quot;)).toThrowError(/nonexistent/);
+  });
+
+  // A null inside the window means the host reported nothing. It must survive
+  // to the chart, which breaks the line. Coercing it to 0 or dropping the
+  // point both turn &quot;agent was down&quot; into a measurement.
+  it(&quot;preserves nulls rather than coercing them&quot;, () =&gt; {
+    expect(seriesValues(raw as never, 0, &quot;busy&quot;)).toEqual([4.1, null, 5.0]);
+  });
+
+  it(&quot;reports when the served window is shorter than the requested one&quot;, () =&gt; {
+    const clamped = {
+      ...raw,
+      window: { from: &quot;2026-08-08T14:00:00Z&quot;, to: &quot;2026-08-10T14:00:00Z&quot; },
+      requested_window: { from: &quot;2026-05-12T14:00:00Z&quot;, to: &quot;2026-08-10T14:00:00Z&quot; },
+    };
+    expect(windowNotice(clamped as never)).toMatch(/retention|available/i);
+    expect(windowNotice(raw as never)).toBeNull();
+  });
+});</code></pre>
+<ul><li>[ ] <strong>Step 2: Run and watch it fail</strong></li><li>[ ] <strong>Step 3: Implement <code>metrics.ts</code>.</strong> <code>column()</code> tries the exact base first, then <code>${base}_avg</code>, then <code>${base}_max</code>, and throws <code>Error(&quot;column &#x27;x&#x27; not in tier &#x27;5m&#x27;; has: …&quot;)</code> otherwise. <code>seriesValues()</code> maps points to the resolved index and passes <code>null</code> through untouched.</li><li>[ ] <strong>Step 4: Run the tests</strong></li><li>[ ] <strong>Step 5: Commit</strong> — <code>feat(ui): tier-aware metric access with gap and window handling</code></li></ul>
+<hr>
+<h3>Task 6: <code>ui/charts/geometry.ts</code> — pure path math</h3>
+<p><strong>Files:</strong> Create <code>ui/src/ui/charts/geometry.ts</code>, <code>ui/src/ui/charts/geometry.test.ts</code></p>
+<p>Separated from the React components so the maths is unit-testable without a DOM.</p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>linePath(vals: (number|null)[], w, h, min, max, pad?): string[]</code> — <strong>an array of subpaths, one per unbroken run</strong></li><li>Produces: <code>areaPath(sub: string, w, h): string</code></li><li>Produces: <code>stackBands(series: number[][], w, h, max): string[]</code></li><li>Produces: <code>mirrorPaths(up: number[], down: number[], w, h, max): { up: string; down: string; mid: number }</code></li></ul>
+<ul><li>[ ] <strong>Step 1: Write the failing tests</strong></li></ul>
+<pre class="code" data-lang="ts"><code>import { describe, expect, it } from &quot;vitest&quot;;
+import { linePath, stackBands } from &quot;./geometry&quot;;
+
+describe(&quot;geometry&quot;, () =&gt; {
+  // The single most important behaviour in the chart layer: a null splits
+  // the line into separate subpaths so SVG draws a hole, not a bridge.
+  it(&quot;splits the line at nulls instead of interpolating&quot;, () =&gt; {
+    const subs = linePath([1, 2, null, 4, 5], 100, 20, 0, 5);
+    expect(subs).toHaveLength(2);
+    expect(subs[0].startsWith(&quot;M&quot;)).toBe(true);
+    expect(subs[1].startsWith(&quot;M&quot;)).toBe(true);
+  });
+
+  it(&quot;emits one subpath when there are no gaps&quot;, () =&gt; {
+    expect(linePath([1, 2, 3], 100, 20, 0, 3)).toHaveLength(1);
+  });
+
+  it(&quot;drops runs of a single point rather than emitting a zero-length path&quot;, () =&gt; {
+    // A lone point between two gaps cannot be a line. It is rendered as a dot
+    // by the component, not as an empty &lt;path&gt;.
+    expect(linePath([null, 2, null], 100, 20, 0, 5)).toHaveLength(0);
+  });
+
+  it(&quot;stacks bands cumulatively so the silhouette is the total&quot;, () =&gt; {
+    const bands = stackBands([[1, 1], [2, 2]], 100, 20, 10);
+    expect(bands).toHaveLength(2);
+  });
+});</code></pre>
+<ul><li>[ ] <strong>Step 2: Run and watch it fail</strong></li><li>[ ] <strong>Step 3: Implement <code>geometry.ts</code></strong> as pure functions, no React import.</li><li>[ ] <strong>Step 4: Run the tests</strong></li><li>[ ] <strong>Step 5: Commit</strong> — <code>feat(ui): chart geometry with gap-aware path splitting</code></li></ul>
+<h3>✅ Wave 1 gate</h3>
+<ul><li>[ ] <code>cd ui &amp;&amp; npm run test</code> — all four modules green</li><li>[ ] Run <code>superpowers:requesting-code-review</code> over the wave diff; fix findings</li><li>[ ] Open PR <code>feat/phase2-ui-w1</code> → <code>feat/phase2-ui-w0</code></li></ul>
+<hr>
+<h2>Wave 2 — Primitives (4 parallel subagents)</h2>
+<p>Every task here renders in both themes and is asserted against the token layer, never hardcoded colour.</p>
+<h3>Task 7: Controls — <code>Button</code>, <code>Control</code>, <code>Segmented</code></h3>
+<p><strong>Files:</strong> Create <code>ui/src/ui/Button.tsx</code>, <code>ui/src/ui/Control.tsx</code>, <code>ui/src/ui/Segmented.tsx</code>, plus <code>.test.tsx</code> for each</p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>&lt;Button variant=&quot;primary&quot;|&quot;secondary&quot;|&quot;ghost&quot;|&quot;danger&quot; busy? small?&gt;</code></li><li>Produces: <code>&lt;Input {...InputHTMLAttributes}&gt;</code>, <code>&lt;Select {...SelectHTMLAttributes}&gt;</code> — both apply <code>.ctl</code></li><li>Produces: <code>&lt;Segmented options={{value,label}[]} value onChange&gt;</code></li></ul>
+<ul><li>[ ] <strong>Step 1: Failing test</strong> — a <code>Button</code> renders its variant class, is disabled while <code>busy</code>, and shows a spinner; <code>Input</code> carries <code>.ctl</code>; <code>Segmented</code> sets <code>aria-pressed</code> on exactly one option.</li><li>[ ] <strong>Step 2: Run and watch it fail</strong></li><li>[ ] <strong>Step 3: Implement.</strong> No inline colour anywhere — class names only.</li><li>[ ] <strong>Step 4: Run tests</strong></li><li>[ ] <strong>Step 5: Commit</strong> — <code>feat(ui): button, input and segmented primitives</code></li></ul>
+<hr>
+<h3>Task 8: Surfaces — <code>Card</code>, <code>Table</code>, <code>Tabs</code>, <code>EmptyState</code></h3>
+<p><strong>Files:</strong> Create <code>ui/src/ui/Card.tsx</code>, <code>ui/src/ui/Table.tsx</code>, <code>ui/src/ui/Tabs.tsx</code>, <code>ui/src/ui/EmptyState.tsx</code>, plus tests</p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>&lt;Card title? action?&gt;</code>, <code>&lt;Table columns={Column[]} rows={T[]} /&gt;</code>, <code>type Column&lt;T&gt; = { key, header, width?, align?, cell: (row: T) =&gt; ReactNode }</code></li><li>Produces: <code>&lt;Tabs items={{id,label,badge?}[]} active onChange&gt;</code> — renders <code>&lt;a href&gt;</code> so tabs are real links</li><li>Produces: <code>&lt;EmptyState icon title body action?&gt;</code></li></ul>
+<p><strong><code>Column&lt;T&gt;</code> is the contract Task 11 and Task 12 both consume</strong> — the table row and the card are rendered from one definition, so they cannot drift.</p>
+<ul><li>[ ] <strong>Step 1: Failing test</strong> — <code>Table</code> renders one <code>&lt;tr&gt;</code> per row and applies <code>Column.align</code>; <code>Tabs</code> marks exactly one <code>aria-selected</code> and renders anchors; <code>EmptyState</code> renders its action.</li><li>[ ] <strong>Step 2: Run and watch it fail</strong></li><li>[ ] <strong>Step 3: Implement</strong></li><li>[ ] <strong>Step 4: Run tests</strong></li><li>[ ] <strong>Step 5: Commit</strong> — <code>feat(ui): card, table, tabs and empty-state primitives</code></li></ul>
+<hr>
+<h3>Task 9: Indicators — <code>Badge</code>, <code>StatusDot</code>, <code>Meter</code>, <code>StatTile</code></h3>
+<p><strong>Files:</strong> Create <code>ui/src/ui/Badge.tsx</code>, <code>ui/src/ui/Meter.tsx</code>, <code>ui/src/ui/StatTile.tsx</code>, plus tests</p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>type Severity = &quot;ok&quot; | &quot;warning&quot; | &quot;serious&quot; | &quot;critical&quot; | &quot;neutral&quot;</code></li><li>Produces: <code>&lt;Badge severity? &gt;{label}&lt;/Badge&gt;</code> — <strong>always renders a dot AND the label</strong></li><li>Produces: <code>&lt;Meter value max severity? label? /&gt;</code>, <code>&lt;Meter noLimit /&gt;</code></li><li>Produces: <code>&lt;StatTile label value unit? detail? /&gt;</code></li></ul>
+<ul><li>[ ] <strong>Step 1: Failing test</strong></li></ul>
+<pre class="code" data-lang="tsx"><code>it(&quot;never renders severity without a text label&quot;, () =&gt; {
+  render(&lt;Badge severity=&quot;critical&quot;&gt;silent&lt;/Badge&gt;);
+  expect(screen.getByText(&quot;silent&quot;)).toBeInTheDocument();
+});
+
+it(&quot;renders &#x27;no limit&#x27; rather than a bar against the host total&quot;, () =&gt; {
+  render(&lt;Meter noLimit /&gt;);
+  expect(screen.getByText(/no limit/i)).toBeInTheDocument();
+});</code></pre>
+<ul><li>[ ] <strong>Step 2: Run and watch it fail</strong></li><li>[ ] <strong>Step 3: Implement.</strong> <code>Badge</code> refuses to render a severity-only variant — the children are required by the type.</li><li>[ ] <strong>Step 4: Run tests</strong></li><li>[ ] <strong>Step 5: Commit</strong> — <code>feat(ui): badge, meter and stat-tile primitives</code></li></ul>
+<hr>
+<h3>Task 10: Charts — <code>Sparkline</code>, <code>StackedSparkline</code>, <code>UpDownSparkline</code>, <code>ChartPanel</code>, <code>Overlay</code></h3>
+<p><strong>Files:</strong> Create <code>ui/src/ui/charts/{Sparkline,StackedSparkline,UpDownSparkline,ChartPanel,Overlay}.tsx</code>, plus tests</p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: <code>geometry.ts</code> (Task 6)</li><li>Produces: <code>&lt;Sparkline values={(number|null)[]} width? height? color? /&gt;</code></li><li>Produces: <code>&lt;StackedSparkline bands={{values:number[],color:string,name:string}[]} max /&gt;</code></li><li>Produces: <code>&lt;UpDownSparkline up down max? /&gt;</code></li><li>Produces: <code>&lt;ChartPanel title unit? series={Band[]} max? fmt? notice? unavailable? /&gt;</code> — <code>unavailable</code> renders the dashed &quot;not collected&quot; panel</li><li>Produces: <code>&lt;Overlay series={{name:string,values:(number|null)[]}[]} max highlight /&gt;</code></li></ul>
+<ul><li>[ ] <strong>Step 1: Failing tests</strong></li></ul>
+<pre class="code" data-lang="tsx"><code>it(&quot;draws one path per unbroken run, so a gap is a hole&quot;, () =&gt; {
+  const { container } = render(&lt;Sparkline values={[1, 2, null, 4]} /&gt;);
+  expect(container.querySelectorAll(&quot;path[data-line]&quot;)).toHaveLength(2);
+});
+
+it(&quot;renders the not-collected panel instead of an empty chart&quot;, () =&gt; {
+  render(&lt;ChartPanel title=&quot;ICMP statistics&quot; unavailable=&quot;no ICMP columns in the schema&quot; /&gt;);
+  expect(screen.getByText(/not collected/i)).toBeInTheDocument();
+  expect(screen.getByText(/no ICMP columns/i)).toBeInTheDocument();
+});
+
+it(&quot;surfaces a window notice when the served range was clamped&quot;, () =&gt; {
+  render(&lt;ChartPanel title=&quot;Processes&quot; series={[]} notice=&quot;48 hours retained&quot; /&gt;);
+  expect(screen.getByText(/48 hours retained/)).toBeInTheDocument();
+});</code></pre>
+<ul><li>[ ] <strong>Step 2: Run and watch them fail</strong></li><li>[ ] <strong>Step 3: Implement.</strong> Every colour comes in as a <code>var(--sN)</code> string from the caller; components never choose a hue.</li><li>[ ] <strong>Step 4: Run tests</strong></li><li>[ ] <strong>Step 5: Commit</strong> — <code>feat(ui): sparkline, stacked, up/down and panel chart primitives</code></li></ul>
+<h3>✅ Wave 2 gate</h3>
+<ul><li>[ ] <code>cd ui &amp;&amp; npm run test</code> green</li><li>[ ] Grep for hardcoded hex in <code>src/ui/</code>: <code>grep -rE &quot;#[0-9a-fA-F]{6}&quot; src/ui/ | grep -v index.css</code> returns nothing</li><li>[ ] Review + PR <code>feat/phase2-ui-w2</code> → <code>…-w1</code></li></ul>
+<hr>
+<h2>Wave 3 — Fleet overview (4 parallel subagents)</h2>
+<h3>Task 11: <code>hostColumns.tsx</code> — the single column definition</h3>
+<p><strong>Files:</strong> Create <code>ui/src/features/fleet/hostColumns.tsx</code>, <code>ui/src/features/fleet/hostColumns.test.tsx</code></p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Consumes: <code>Column&lt;Host&gt;</code> (Task 8), chart primitives (Task 10), <code>format</code> (Task 3)</li><li>Produces: <code>hostColumns(range: Range): Column&lt;HostRow&gt;[]</code> — <strong>consumed by both <code>HostTable</code> (Task 12) and <code>HostCards</code> (Task 13)</strong></li><li>Produces: <code>type HostRow = Host &amp; { cpu: Band[]; mem: Band[]; rx: number[]; tx: number[]; fullest: { mount: string; pct: number; others: number } }</code></li></ul>
+<ul><li>[ ] <strong>Step 1: Failing test</strong> — the definition yields Host · CPU · Memory · Traffic · Disk · Uptime in that order; the disk cell names the fullest mount and its <code>+N</code>; uptime under 300 s carries the warning severity.</li><li>[ ] <strong>Step 2: Run and watch it fail</strong></li><li>[ ] <strong>Step 3: Implement.</strong> CPU and memory are <code>StackedSparkline</code>; traffic is <code>UpDownSparkline</code> with <strong>both rates in identical type</strong>; disk is a <code>Meter</code>.</li><li>[ ] <strong>Step 4: Run tests</strong></li><li>[ ] <strong>Step 5: Commit</strong> — <code>feat(ui): the one host column definition</code></li></ul>
+<hr>
+<h3>Task 12: <code>HostTable.tsx</code> · Task 13: <code>HostCards.tsx</code></h3>
+<p><strong>Files:</strong> Create <code>ui/src/features/fleet/HostTable.tsx</code>, <code>ui/src/features/fleet/HostCards.tsx</code>, plus tests</p>
+<p><strong>Interfaces:</strong> both consume <code>hostColumns()</code> and render nothing of their own beyond layout.</p>
+<ul><li>[ ] <strong>Step 1: Failing test</strong> — both render the same number of metric cells for the same data; <code>HostCards</code> renders a 2×2 grid per host.</li><li>[ ] <strong>Step 2–5:</strong> implement, test, commit — <code>feat(ui): table and card renderings of the host list</code></li></ul>
+<hr>
+<h3>Task 14: <code>AttentionBand.tsx</code></h3>
+<p><strong>Files:</strong> Create <code>ui/src/features/fleet/AttentionBand.tsx</code>, <code>ui/src/features/fleet/AttentionBand.test.tsx</code></p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>&lt;AttentionBand conditions={Condition[]} /&gt;</code></li><li>Produces: <code>type Condition = { hostId, hostname, severity: Severity, what: ReactNode, since: string }</code></li><li>Produces: <code>groupByHost(cs: Condition[]): HostGroup[]</code> — exported for testing</li></ul>
+<ul><li>[ ] <strong>Step 1: Failing tests</strong></li></ul>
+<pre class="code" data-lang="tsx"><code>it(&quot;renders nothing when there is nothing wrong&quot;, () =&gt; {
+  const { container } = render(&lt;AttentionBand conditions={[]} /&gt;);
+  expect(container).toBeEmptyDOMElement();
+});
+
+it(&quot;collapses a host past two conditions but still counts them all&quot;, () =&gt; {
+  render(&lt;AttentionBand conditions={fourOnOneHost} /&gt;);
+  expect(screen.getByText(/\+3 more/)).toBeInTheDocument();
+  expect(screen.getByText(/4 on 1 host/)).toBeInTheDocument();
+});
+
+it(&quot;orders hosts by their worst condition, not by how many they have&quot;, () =&gt; {
+  const groups = groupByHost([twoWarnings(&quot;a&quot;), oneCritical(&quot;b&quot;)].flat());
+  expect(groups[0].hostname).toBe(&quot;b&quot;);
+});
+
+it(&quot;has no dismiss control&quot;, () =&gt; {
+  render(&lt;AttentionBand conditions={oneCritical(&quot;a&quot;)} /&gt;);
+  expect(screen.queryByRole(&quot;button&quot;, { name: /dismiss|acknowledge/i })).toBeNull();
+});</code></pre>
+<ul><li>[ ] <strong>Step 2–5:</strong> implement, test, commit — <code>feat(ui): the attention band</code></li></ul>
+<h3>✅ Wave 3 gate</h3>
+<ul><li>[ ] Review + PR <code>feat/phase2-ui-w3</code> → <code>…-w2</code></li></ul>
+<hr>
+<h2>Wave 4 — Pages (5 parallel subagents)</h2>
+<p>Each task owns its own directory. <code>FleetPage</code>, <code>HostPage</code>, <code>ContainerPage</code>, <code>EventsPage</code>, <code>SettingsPage</code> + <code>LoginPage</code>.</p>
+<h3>Task 15: <code>FleetPage.tsx</code> — assembles Wave 3</h3>
+<p><strong>Files:</strong> Create <code>ui/src/features/fleet/FleetPage.tsx</code>, <code>ui/src/features/fleet/FleetContainers.tsx</code>, <code>ui/src/features/fleet/AllHostsOverlay.tsx</code>, plus tests</p>
+<p>Entity tabs (<code>Hosts</code> / <code>Containers</code>) select <em>what</em>; the toolbar toggle selects <em>how densely</em> and is hidden in Containers view. Stat tiles, attention band, list, then the all-hosts overlay.</p>
+<ul><li>[ ] Failing test: switching the entity tab swaps the list and the toolbar&#x27;s filter placeholder; the density toggle is absent in Containers view.</li><li>[ ] Implement, test, commit — <code>feat(ui): fleet overview with host and container views</code></li></ul>
+<h3>Task 16: <code>HostPage.tsx</code> and its tabs</h3>
+<p><strong>Files:</strong> Create <code>ui/src/features/host/HostPage.tsx</code>, <code>ui/src/features/host/tabs/{Overview,Graphs,Inventory,Events}.tsx</code>, plus tests</p>
+<p>The header never changes across tabs; the time range is shared state; every tab is a URL; the tab bar wraps rather than scrolls. <code>Graphs</code> renders small multiples grouped System / Network / Storage, with <strong>explicit <code>unavailable</code> panels for IP statistics, ICMP statistics and ICMP informational</strong> (spec §11). <code>Inventory</code> is one component parameterised by columns, serving Containers, Filesystems, Network, Packages and Units.</p>
+<ul><li>[ ] Failing test: changing tab changes <code>location.pathname</code> and preserves the range; the three unavailable panels render with reasons.</li><li>[ ] Implement, test, commit — <code>feat(ui): host detail with tabs and small multiples</code></li></ul>
+<h3>Task 17: <code>ContainerPage.tsx</code></h3>
+<p><strong>Files:</strong> Create <code>ui/src/features/container/ContainerPage.tsx</code>, plus test</p>
+<p>Four <code>ChartPanel</code>s (CPU, memory vs <code>mem_limit</code>, network, disk I/O), an Identity card, and a <strong>Not collected</strong> card stating that health, restarts, state and labels reach neither the wire nor the schema. Container state is derived and labelled as derived.</p>
+<ul><li>[ ] Failing test: with <code>mem_limit</code> null the meter renders &quot;no limit&quot;; the Not-collected card names the four missing fields.</li><li>[ ] Implement, test, commit — <code>feat(ui): container detail</code></li></ul>
+<h3>Task 18: <code>EventsPage.tsx</code></h3>
+<p><strong>Files:</strong> Create <code>ui/src/features/events/EventsPage.tsx</code>, plus test</p>
+<p>Filters: search, host, type, severity, range. Type is a chip; only critical and warning carry a status dot.</p>
+<ul><li>[ ] Failing test: a <code>package</code> event renders a neutral chip with no status dot; filters write to the URL.</li><li>[ ] Implement, test, commit — <code>feat(ui): events page with filters</code></li></ul>
+<h3>Task 19: <code>SettingsPage.tsx</code>, <code>LoginPage.tsx</code>, <code>HostAdminPage.tsx</code></h3>
+<p><strong>Files:</strong> Create <code>ui/src/features/settings/SettingsPage.tsx</code>, <code>ui/src/features/auth/LoginPage.tsx</code>, <code>ui/src/features/admin/HostAdminPage.tsx</code>, plus tests</p>
+<p>Settings: theme (Light/Dark/System), default overview view, default range. Login posts <strong>form-encoded</strong> to the existing <code>POST /login</code> so <code>session.go</code> is untouched. HostAdmin absorbs phase 1&#x27;s create/rotate/delete, the token shown once, and the paste-ready <code>setup-agent.sh</code> line; its empty state is the onboarding.</p>
+<ul><li>[ ] Failing test: choosing System removes <code>data-theme</code>; the token is displayed exactly once and is not re-fetchable; the empty state offers host creation.</li><li>[ ] Implement, test, commit — <code>feat(ui): settings, login and host administration</code></li></ul>
+<h3>✅ Wave 4 gate</h3>
+<ul><li>[ ] Review + PR <code>feat/phase2-ui-w4</code> → <code>…-w3</code></li></ul>
+<hr>
+<h2>Wave 5 — Integration and cutover (serial)</h2>
+<h3>Task 20: Router, URL state, polling, loading and error states</h3>
+<p><strong>Files:</strong> Create <code>ui/src/router.ts</code>, <code>ui/src/lib/poll.ts</code>, plus tests; Modify <code>ui/src/App.tsx</code></p>
+<p><strong>Interfaces:</strong></p>
+<ul><li>Produces: <code>usePoll&lt;T&gt;(fn: () =&gt; Promise&lt;T&gt;, ms: number): { data, error, loading, refresh }</code> — pauses on <code>document.hidden</code></li><li>Produces: routes <code>/</code>, <code>/hosts/:id/:tab?</code>, <code>/containers/:host/:key</code>, <code>/events</code>, <code>/settings</code>, <code>/admin/hosts</code>, <code>/login</code></li></ul>
+<ul><li>[ ] Failing tests: <code>usePoll</code> does not fire while the tab is hidden; a 401 from any call routes to <code>/login</code>; range and filters round-trip through the URL.</li><li>[ ] Implement, test, commit — <code>feat(ui): routing, URL state and 60s polling</code></li></ul>
+<h3>Task 21: Responsive and accessibility pass</h3>
+<p><strong>Files:</strong> Modify <code>ui/src/index.css</code>; create <code>ui/src/features/fleet/FleetPage.responsive.test.tsx</code></p>
+<p>Cards become automatic below the breakpoint (not a preference); tabs wrap; no horizontal page scroll; <code>/</code> focuses the filter; focus ring on every control.</p>
+<ul><li>[ ] Failing test: below the breakpoint <code>FleetPage</code> renders cards even when the stored preference is table.</li><li>[ ] Implement, test, commit — <code>feat(ui): responsive layout and keyboard access</code></li></ul>
+<h3>Task 22: Cutover, CI and the coverage floor</h3>
+<p><strong>Files:</strong> Modify <code>internal/hub/httpapi/router.go</code>, <code>.github/workflows/{ci,release}.yaml</code>, <code>hack/coverage-floors</code>; Delete <code>internal/hub/httpapi/ui.go</code>, <code>ui_test.go</code>, <code>templates/{layout,hosts,token}.gohtml</code></p>
+<ul><li>[ ] <strong>Step 1:</strong> Point <code>mux.Handle(&quot;/&quot;, …)</code> at <code>RequireAdmin(cfg.AdminToken, true, web.Handler())</code>, keeping <code>redirectToLogin: true</code> so a browser without a session still lands on the login page.</li><li>[ ] <strong>Step 2:</strong> Delete the three superseded templates and <code>ui.go</code>. <strong><code>templates/login.gohtml</code> and <code>session.go</code> stay</strong> — the SPA posts to the same endpoint, and the server-rendered login is the no-JS fallback. This deletion is the planned replacement the spec authorises; nothing else is removed.</li><li>[ ] <strong>Step 3:</strong> Add a <code>setup-node@v5</code> step with <code>node-version-file: ui/.nvmrc</code> plus <code>npm ci &amp;&amp; npm run test</code> to <code>ci.yaml</code>, and <code>make ui</code> before the Go build in <code>release.yaml</code>.</li><li>[ ] <strong>Step 4:</strong> Add the <code>ui/</code> coverage floor to <code>hack/coverage-floors</code>, set from the measured number with a point or two of margin, matching how the Go floors are set.</li><li>[ ] <strong>Step 5:</strong> Run <code>make check &amp;&amp; make ui &amp;&amp; go build ./...</code> and start the hub; confirm the SPA loads, a deep link reloads correctly, and a logged-out browser is redirected.</li><li>[ ] <strong>Step 6:</strong> Commit — <code>feat(ui): serve the SPA from the hub and retire the phase-1 pages</code></li></ul>
+<h3>✅ Wave 5 gate</h3>
+<ul><li>[ ] Full review of the cumulative stack</li><li>[ ] PR <code>feat/phase2-ui-w5</code> → <code>…-w4</code>; the stack is ready to merge bottom-up</li></ul>
+<hr>
+<h2>Self-review against the spec</h2>
+<div class="tw"><table><thead><tr><th>Spec section</th><th>Task</th></tr></thead><tbody><tr><td>§2 stack, embedding</td><td>1</td></tr><tr><td>§3.1–3.7 tokens, fonts, type scale</td><td>2</td></tr><tr><td>§3.8 primitives</td><td>7, 8, 9, 10</td></tr><tr><td>§4.1–4.2 overview, host row</td><td>11, 12, 13, 15</td></tr><tr><td>§4.3 attention band</td><td>14</td></tr><tr><td>§4.4 all-hosts overlay</td><td>15</td></tr><tr><td>§4.5 entity + density views</td><td>15, 21</td></tr><tr><td>§5.1–5.2 host detail, tabs</td><td>16</td></tr><tr><td>§5.3 container detail</td><td>17</td></tr><tr><td>§6 events</td><td>18</td></tr><tr><td>§7.1 gaps</td><td>6, 10</td></tr><tr><td>§7.2 windows</td><td>5, 10</td></tr><tr><td>§7.3–7.5 tiers, columns, null</td><td>5, 9</td></tr><tr><td>§7.6 unavailable collectors</td><td>10, 16, 17</td></tr><tr><td>§7.7 polling</td><td>20</td></tr><tr><td>§8 LLM anchors</td><td>14 (row action), 16 (brushable chart)</td></tr><tr><td>§9 theme, auth, units, URL, mobile, a11y</td><td>2, 19, 3, 20, 21</td></tr><tr><td>§10 agent telemetry, await, inodes</td><td>16</td></tr><tr><td>§11 schema gaps</td><td>10, 16, 17</td></tr><tr><td>§12 testing</td><td>every task</td></tr></tbody></table></div>
+<p><strong>Deliberately not built:</strong> the alerting engine, the Alerts pages, OIDC, the map, LLM diagnostics — all owned by other stages per spec §1.</p></div></body></html>
