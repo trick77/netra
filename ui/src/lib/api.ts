@@ -154,10 +154,18 @@ export type MetricsResponse = {
 
 // --- Request helper ---
 
-async function request<T>(path: string): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: { method: string; body?: unknown },
+): Promise<T> {
   const res = await fetch(path, {
     credentials: "same-origin",
-    headers: { Accept: "application/json" },
+    method: init?.method,
+    headers:
+      init?.body === undefined
+        ? { Accept: "application/json" }
+        : { Accept: "application/json", "Content-Type": "application/json" },
+    body: init?.body === undefined ? undefined : JSON.stringify(init.body),
   });
   if (!res.ok) {
     let message = res.statusText;
@@ -170,6 +178,10 @@ async function request<T>(path: string): Promise<T> {
     }
     throw new ApiError(res.status, message);
   }
+  // A 204 carries no body at all, and res.json() on an empty body throws a
+  // SyntaxError that would surface as a failed delete even though the delete
+  // succeeded. DELETE /api/v1/hosts/{id} is the case.
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -219,6 +231,73 @@ export function getPackages(id: number | string): Promise<Pkg[]> {
 
 export function getUnits(id: number | string): Promise<Unit[]> {
   return request<Unit[]>(`/api/v1/hosts/${id}/units`);
+}
+
+// internal/hub/httpapi/dimensions.go: siteJSON. Every optional column is a
+// pointer server-side so an unset one arrives as null rather than as a zero
+// reading as a fact -- 0,0 in particular is a real place, not "no
+// coordinates".
+export type Site = {
+  id: number;
+  provider_id: number | null;
+  name: string;
+  facility: string | null;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  country_code: string | null;
+  timezone: string | null;
+};
+
+// internal/hub/httpapi/dimensions.go: the providerJSON declared inside
+// listProviders.
+export type Provider = {
+  id: number;
+  name: string;
+};
+
+// The fleet list (GET /api/v1/hosts) carries site_id but no site name, and
+// the per-host detail call that does carry one would be an N+1 across the
+// fleet. Fetch this once and join client-side by site_id.
+export function getSites(): Promise<Site[]> {
+  return request<Site[]>("/api/v1/sites");
+}
+
+export function getProviders(): Promise<Provider[]> {
+  return request<Provider[]>("/api/v1/providers");
+}
+
+// The token is returned exactly once, at creation and at each rotation, and
+// is never readable again: the hub stores only its hash
+// (internal/hub/admin). A UI that loses it can only rotate, never recover.
+export type CreatedHost = {
+  id: number;
+  hostname: string;
+  site_id: number | null;
+  last_seen: string | null;
+  token: string;
+};
+
+export function createHost(
+  hostname: string,
+  siteId?: number | null,
+): Promise<CreatedHost> {
+  return request<CreatedHost>("/api/v1/hosts", {
+    method: "POST",
+    body: { hostname, site_id: siteId ?? null },
+  });
+}
+
+export function rotateHostToken(
+  id: number | string,
+): Promise<{ id: number; token: string }> {
+  return request<{ id: number; token: string }>(`/api/v1/hosts/${id}/token`, {
+    method: "POST",
+  });
+}
+
+export function deleteHost(id: number | string): Promise<void> {
+  return request<void>(`/api/v1/hosts/${id}`, { method: "DELETE" });
 }
 
 // EventsParams mirrors internal/hub/httpapi/read.go's events() query

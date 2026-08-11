@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach, type Mock } from "vitest";
-import { getHosts, getMetrics, ApiError } from "./api";
+import { getHosts, getMetrics, createHost, deleteHost, ApiError } from "./api";
 
 function mockFetch(status: number, body: unknown) {
   return vi.stubGlobal(
@@ -49,5 +49,40 @@ describe("api", () => {
     expect(url).toContain("family=host");
     expect(url).toContain("from=2026-08-10T00%3A00%3A00Z");
     expect(url).toContain("step=5m");
+  });
+
+  // DELETE /api/v1/hosts/{id} answers 204 with no body at all. Calling
+  // res.json() on that throws a SyntaxError, which would surface as a failed
+  // delete even though the host is gone.
+  it("does not try to parse a body out of a 204", async () => {
+    (globalThis.fetch as unknown as Mock) = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 204,
+      json: () =>
+        Promise.reject(new SyntaxError("Unexpected end of JSON input")),
+    });
+
+    await expect(deleteHost(7)).resolves.toBeUndefined();
+  });
+
+  // The write calls are the only ones that send a body; without the header
+  // the hub's json.Decode still works, but nothing states the content type
+  // and a proxy is free to mangle it.
+  it("sends JSON writes with a method, a body and a content type", async () => {
+    mockFetch(201, {
+      id: 4,
+      hostname: "web-04",
+      site_id: null,
+      last_seen: null,
+      token: "t",
+    });
+
+    await createHost("web-04", 3);
+
+    const [url, init] = (fetch as unknown as Mock).mock.calls[0];
+    expect(url).toBe("/api/v1/hosts");
+    expect(init.method).toBe("POST");
+    expect(init.headers["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(init.body)).toEqual({ hostname: "web-04", site_id: 3 });
   });
 });
