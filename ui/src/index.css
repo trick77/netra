@@ -73,16 +73,16 @@
   --muted: #807c72;
   --accent: #b4531f;
   /* Darkened one step from #c25f34: white-on-fill (.btn.primary) measured
-     4.22:1, under the 4.5:1 floor. #b85a30 keeps the same clay hue and
-     chroma direction and clears it at 4.62:1 -- see --on-accent below. */
+     4.22:1, under the 4.5:1 floor. #b85a30 keeps the same clay hue/chroma
+     direction and clears it at 4.62:1 — see --on-accent below. */
   --accent-fill: #b85a30;
   --accent-soft: #fbeee5;
   --grid: #eeeae1;
   --axis: #cfc9bb;
 
-  /* Text painted on --accent-fill. .btn.primary hardcoded #fff with no
-     light/dark peer and no contrast margin; on the darkened fill above it
-     measures 4.62:1. */
+  /* Text painted on --accent-fill (spec has no token for this; .btn.primary
+     hardcoded #fff with no light/dark peer and no contrast margin). White
+     on the darkened --accent-fill above measures 4.62:1. */
   --on-accent: #fff;
 
   /* status TEXT colours — light. The dot keeps the fixed hue (--st-* above);
@@ -97,11 +97,23 @@
   --st-serious-text: #c24716;
   --st-crit-text: #cf3535;
 
-  /* series palette — light (default). Orange never appears (spec §3.4). */
+  /* series palette — light (default). Orange never appears (spec §3.4).
+     s5/s6 sit in the gaps between the existing four hues (~213°, 159°,
+     249°, 337°) rather than crowding any of them: s6 ≈180° (cyan) falls
+     between s2's green and s1's blue; s5 ≈277° (violet) falls between
+     s3's purple and s4's pink. Both stay well clear of the 0–41° band
+     reserved for accent/status (accent 18°, crit 0°, serious 17°,
+     warn 41°, ok 120° also avoided). */
   --s1: #2a78d6;
   --s2: #1baf7a;
   --s3: #4a3aa7;
   --s4: #e87ba4;
+  --s5: #9b4fc9;
+  --s6: #1a9e9e;
+
+  /* drawer shadow — per-theme; the dark value read as a grey smear on the
+     light surface. */
+  --shadow-drawer: 0 18px 48px rgba(31, 30, 26, 0.16);
 }
 
 /* Dark is BOTH the media query and the explicit stamp, so the Settings
@@ -138,6 +150,10 @@
     --s2: #199e70;
     --s3: #9085e9;
     --s4: #d55181;
+    --s5: #b06fe0;
+    --s6: #2bbcbc;
+
+    --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
   }
 }
 :root[data-theme="dark"] {
@@ -166,6 +182,10 @@
   --s2: #199e70;
   --s3: #9085e9;
   --s4: #d55181;
+  --s5: #b06fe0;
+  --s6: #2bbcbc;
+
+  --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
 
 /* ── Reset + base ─────────────────────────────────────────────────── */
@@ -234,7 +254,7 @@ a {
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-ui);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-drawer);
   overflow: hidden;
 }
 .drawer > header {
@@ -443,12 +463,6 @@ a {
   padding: 1px 8px;
 }
 
-.pane {
-  display: none;
-}
-.pane.on {
-  display: block;
-}
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
@@ -529,6 +543,26 @@ a {
   border-bottom-color: var(--accent);
   font-weight: 500;
 }
+/* Host-detail tabs are real <a> links (middle-click/bookmark must work),
+   so they use aria-current="page" instead of aria-selected — see Tabs.tsx.
+   These rules mirror .tabs button exactly so both forms render identically. */
+.tabs a {
+  font-size: var(--text-label);
+  padding: 9px 13px;
+  color: var(--muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  display: inline-block;
+}
+.tabs a:hover {
+  color: var(--ink-2);
+}
+.tabs a[aria-current="page"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
 .sm {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(292px, 1fr));
@@ -589,6 +623,39 @@ a {
 }
 .grouphead:first-child {
   margin-top: 0;
+}
+
+/* Empty state — onboarding for a fresh hub with no hosts, so it needs to
+   read as intentional rather than a leftover blank area. */
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-4);
+  color: var(--muted);
+}
+.empty svg {
+  width: 32px;
+  height: 32px;
+  color: var(--muted);
+  margin-bottom: var(--space-2);
+}
+.empty h3 {
+  font-size: var(--text-title);
+  font-weight: 500;
+  color: var(--ink);
+  margin: 0;
+}
+.empty p {
+  font-size: var(--text-label);
+  color: var(--muted);
+  max-width: 40ch;
+  margin: 0;
+}
+.empty-action {
+  margin-top: var(--space-3);
 }
 
 /* ── Primitives: buttons, controls, cards, badges, tables, charts ─── */
@@ -664,6 +731,13 @@ a {
   color: var(--muted);
   font-weight: 500;
 }
+/* Card's action element (see Card.tsx) is always the last child in the
+   header and always follows the title, when present — push it to the
+   right edge instead of letting it sit against the title. Excluding h3
+   means a title-only header (no action) is unaffected. */
+.card > header > :last-child:not(h3) {
+  margin-left: auto;
+}
 .card .body {
   padding: var(--space-4);
 }
@@ -738,6 +812,16 @@ a {
   color: var(--st-crit);
   border-color: var(--border-strong);
 }
+/* --text-label, not --text-micro: micro has three enumerated uses (badges
+   and pills, chart axis ticks, uppercase eyebrow labels) and a button label
+   is none of them. The spec's own tiebreaker settles it -- if you expect the
+   reader to read it, it is Label or larger, and a button label is read by
+   definition. */
+.btn.small {
+  height: 26px;
+  padding: 0 10px;
+  font-size: var(--text-label);
+}
 .toolbar {
   display: flex;
   gap: var(--space-2);
@@ -793,6 +877,10 @@ a {
   height: 7px;
   border-radius: 50%;
   flex: none;
+  /* visible default for a neutral/unclassified badge (Badge.tsx renders
+     no st-* class for severity "neutral") — without this the dot is
+     transparent and invisible on both surfaces. */
+  background: var(--muted);
 }
 .st-ok .dot {
   background: var(--st-ok);
@@ -806,6 +894,10 @@ a {
 .st-crit .dot {
   background: var(--st-crit);
 }
+/* Text colour: NOT the raw --st-* hue. The word beside the dot is the
+   actual colour-blindness mitigation (accent and crit measure ΔE 2.2
+   under deuteranopia) and several raw hues fail 4.5:1 as body text — see
+   the --st-*-text tokens above. The dot itself keeps the true status hue. */
 .st-ok {
   color: var(--st-ok-text);
 }
