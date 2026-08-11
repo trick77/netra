@@ -55,29 +55,11 @@
   --radius-pill: 999px;
 
   /* status palette — FIXED, never themed, never reused as a series colour
-     (spec §3.5). These are the MARK colours: dots, chart bands, meter fills.
-     They sit on a surface, never on top of one as text. */
+     (spec §3.5). */
   --st-ok: #0ca30c;
   --st-warn: #fab219;
   --st-serious: #ec835a;
   --st-crit: #d03b3b;
-
-  /* status INK — the same four states as text. Separate tokens because the
-     mark colours do not survive being read: --st-warn on the light --bg is
-     1.7:1, four points of what AA asks of 14px text, and serious and ok are
-     no better. Every severity carries a word (spec §3.5), so the word has to
-     be legible; these are the mark colours darkened only as far as 4.5:1
-     needs, and they are themed while the marks stay fixed. Light values here,
-     dark ones in the two dark blocks below. */
-  --st-ok-ink: #0a7d0a;
-  --st-warn-ink: #8a5a00;
-  --st-serious-ink: #a4491a;
-  --st-crit-ink: #b52a2a;
-
-  /* Filled buttons put #fff on this, which --accent-fill cannot carry:
-     4.2:1. Only .btn.primary uses it; --accent-fill keeps the focus rings
-     and borders, where nothing is read against it. */
-  --accent-fill-strong: #a94e1c;
 
   /* palette "Clay" — light (default). */
   --bg: #f7f5f0;
@@ -90,10 +72,30 @@
   --ink-2: #4d4a42;
   --muted: #807c72;
   --accent: #b4531f;
-  --accent-fill: #c25f34;
+  /* Darkened one step from #c25f34: white-on-fill (.btn.primary) measured
+     4.22:1, under the 4.5:1 floor. #b85a30 keeps the same clay hue and
+     chroma direction and clears it at 4.62:1 -- see --on-accent below. */
+  --accent-fill: #b85a30;
   --accent-soft: #fbeee5;
   --grid: #eeeae1;
   --axis: #cfc9bb;
+
+  /* Text painted on --accent-fill. .btn.primary hardcoded #fff with no
+     light/dark peer and no contrast margin; on the darkened fill above it
+     measures 4.62:1. */
+  --on-accent: #fff;
+
+  /* status TEXT colours — light. The dot keeps the fixed hue (--st-* above);
+     the word next to it is the actual colour-blindness mitigation (spec
+     §3.3/3.5), so it must clear 4.5:1 on its own. The mark colours as text
+     do not: on the page --bg they measure warn 1.68:1, serious 2.42:1, ok
+     3.08:1, crit 4.41:1 — all four short. Each is darkened along its own
+     hue until it clears on --bg (#f7f5f0), the harder of the two grounds
+     status text lands on; on --surface every one of them is ≥4.9:1. */
+  --st-ok-text: #0a820a;
+  --st-warn-text: #956703;
+  --st-serious-text: #c24716;
+  --st-crit-text: #cf3535;
 
   /* series palette — light (default). Orange never appears (spec §3.4). */
   --s1: #2a78d6;
@@ -117,22 +119,25 @@
     --ink-2: #c9c6bd;
     --muted: #9c9a92;
     --accent: #d97757;
-    --accent-fill: #c25f34;
+    --accent-fill: #b85a30;
     --accent-soft: #2e211a;
     --grid: #2a2a28;
     --axis: #454540;
+
+    --on-accent: #fff;
+    /* status TEXT colours — dark. Measured on the page --bg (#1f1f1e): ok
+       4.92:1, warn 8.99:1, serious 6.25:1 already clear and keep their mark
+       hue exactly; only crit fails at 3.43:1 and is lightened until it
+       clears (4.55:1). */
+    --st-ok-text: #0ca30c;
+    --st-warn-text: #fab219;
+    --st-serious-text: #ec835a;
+    --st-crit-text: #d96060;
 
     --s1: #3987e5;
     --s2: #199e70;
     --s3: #9085e9;
     --s4: #d55181;
-
-    /* Dark reverses the problem: the marks are bright enough to read, but
-       --st-crit at 3.4:1 is not, so only ok and crit move. */
-    --st-ok-ink: #3fc23f;
-    --st-warn-ink: #fab219;
-    --st-serious-ink: #ec835a;
-    --st-crit-ink: #e86464;
   }
 }
 :root[data-theme="dark"] {
@@ -146,20 +151,21 @@
   --ink-2: #c9c6bd;
   --muted: #9c9a92;
   --accent: #d97757;
-  --accent-fill: #c25f34;
+  --accent-fill: #b85a30;
   --accent-soft: #2e211a;
   --grid: #2a2a28;
   --axis: #454540;
+
+  --on-accent: #fff;
+  --st-ok-text: #0ca30c;
+  --st-warn-text: #fab219;
+  --st-serious-text: #ec835a;
+  --st-crit-text: #d96060;
 
   --s1: #3987e5;
   --s2: #199e70;
   --s3: #9085e9;
   --s4: #d55181;
-
-  --st-ok-ink: #3fc23f;
-  --st-warn-ink: #fab219;
-  --st-serious-ink: #ec835a;
-  --st-crit-ink: #e86464;
 }
 
 /* ── Reset + base ─────────────────────────────────────────────────── */
@@ -718,9 +724,9 @@ a {
   cursor: pointer;
 }
 .btn.primary {
-  background: var(--accent-fill-strong);
-  border-color: var(--accent-fill-strong);
-  color: #fff;
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+  color: var(--on-accent);
   font-weight: 600;
 }
 .btn.ghost {
@@ -801,16 +807,16 @@ a {
   background: var(--st-crit);
 }
 .st-ok {
-  color: var(--st-ok-ink);
+  color: var(--st-ok-text);
 }
 .st-warn {
-  color: var(--st-warn-ink);
+  color: var(--st-warn-text);
 }
 .st-serious {
-  color: var(--st-serious-ink);
+  color: var(--st-serious-text);
 }
 .st-crit {
-  color: var(--st-crit-ink);
+  color: var(--st-crit-text);
 }
 
 /* table */
