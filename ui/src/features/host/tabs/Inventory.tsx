@@ -10,12 +10,15 @@ import type {
   Filesystem,
   Pkg,
   Unit,
+  MetricsResponse,
 } from "../../../lib/api";
 import { ABSENT, absolute, bytes, relative } from "../../../lib/format";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column } from "../../../ui/Table";
+import { Meter } from "../../../ui/Meter";
+import { griddedValues } from "../../../lib/metrics";
 
 export interface InventoryProps<T> {
   /** Names the list for assistive tech and for the empty state. */
@@ -138,25 +141,93 @@ export function Containers({ rows }: { rows: readonly Container[] }) {
 
 // --- Filesystems ----------------------------------------------------------
 
-const FILESYSTEM_COLUMNS: Column<Filesystem>[] = [
+// The inventory row carries a label, a mountpoint and a device id; size,
+// used and free live in the metrics family, so the sizes are joined in by
+// label. A filesystem the metrics have not answered for renders the absent
+// marker rather than a zero -- "not measured" is not "empty".
+type FilesystemRow = Filesystem & {
+  total: number | null;
+  used: number | null;
+  free: number | null;
+};
+
+const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
   { key: "label", header: "Label", cell: (row) => row.label },
   {
     key: "mountpoint",
     header: "Mountpoint",
     cell: (row) => row.mountpoint ?? ABSENT,
   },
+  { key: "size", header: "Size", cell: (row) => bytes(row.total) },
+  { key: "used", header: "Used", cell: (row) => bytes(row.used) },
+  { key: "free", header: "Free", cell: (row) => bytes(row.free) },
+  {
+    key: "usage",
+    header: "Usage",
+    // used / (used + free), which is df's Use% -- NOT used / total, because
+    // total includes the root reserve and would report a full disk as less
+    // full than df does. Same definition as the fleet list's disk meter.
+    cell: (row) =>
+      row.used === null || row.free === null || row.used + row.free === 0 ? (
+        ABSENT
+      ) : (
+        <Meter
+          value={(row.used / (row.used + row.free)) * 100}
+          max={100}
+          label={row.label}
+        />
+      ),
+  },
 ];
 
-export function Filesystems({ rows }: { rows: readonly Filesystem[] }) {
+export function Filesystems({
+  rows,
+  metrics = null,
+}: {
+  rows: readonly Filesystem[];
+  metrics?: MetricsResponse | null;
+}) {
+  const sizes = new Map(
+    (metrics?.series ?? []).map((series, index) => [
+      series.key.filesystem,
+      {
+        total: lastOf(metrics, index, "total"),
+        used: lastOf(metrics, index, "used"),
+        free: lastOf(metrics, index, "free"),
+      },
+    ]),
+  );
+
+  const joined: FilesystemRow[] = rows.map((row) => ({
+    ...row,
+    total: sizes.get(row.label)?.total ?? null,
+    used: sizes.get(row.label)?.used ?? null,
+    free: sizes.get(row.label)?.free ?? null,
+  }));
+
   return (
     <Inventory
       label="Filesystems"
       columns={FILESYSTEM_COLUMNS}
-      rows={rows}
+      rows={joined}
       rowKey={(row) => String(row.id)}
       searchText={(row) => `${row.label} ${row.mountpoint ?? ""}`}
     />
   );
+}
+
+/** The latest non-null value of a column, or null if it never reported. */
+function lastOf(
+  res: MetricsResponse | null,
+  index: number,
+  base: string,
+): number | null {
+  const values = griddedValues(res, index, base);
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && v !== undefined) return v;
+  }
+  return null;
 }
 
 // --- Network --------------------------------------------------------------

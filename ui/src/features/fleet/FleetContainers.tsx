@@ -90,18 +90,34 @@ function NameCell({ row }: { row: ContainerRow }) {
 export interface FleetContainersProps {
   rows: readonly ContainerRow[];
   showHost?: boolean;
+  /** False while the container fan-out has not answered yet. */
+  loaded?: boolean;
 }
 
-export function FleetContainers({ rows, showHost }: FleetContainersProps) {
+export function FleetContainers({
+  rows,
+  showHost,
+  loaded = true,
+}: FleetContainersProps) {
   if (rows.length === 0) {
     // An empty <table> renders as a bare header rail, which reads as a
     // loading glitch rather than as "nothing here" -- same reasoning as
     // HostTable's empty state.
-    return (
+    // "None reported" and "not read yet" are different facts, and only one
+    // of them is a statement about the fleet. Saying the first while the
+    // fetch had never run told an operator their fleet ran no containers
+    // when nobody had looked.
+    return loaded ? (
       <EmptyState
         icon={Boxes}
         title="No containers"
         body="No host in this fleet has reported a container."
+      />
+    ) : (
+      <EmptyState
+        icon={Boxes}
+        title="Containers not read yet"
+        body="The fleet's containers are still being fetched, one host at a time."
       />
     );
   }

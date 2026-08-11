@@ -33,6 +33,7 @@ import {
   fetchHostTrends,
   type HostTrends,
 } from "./features/fleet/hostTrends";
+import type { ContainerRow } from "./features/fleet/FleetContainers";
 import { HostPage, type HostTab } from "./features/host/HostPage";
 import { ContainerPage } from "./features/container/ContainerPage";
 import {
@@ -275,7 +276,37 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
           )
           .map((r) => r.value),
       );
-      return { hosts, sites, trends, at: new Date().toISOString() };
+
+      // The fleet-wide container list is the same shape of fan-out, and for
+      // the same reason: there is no /api/v1/containers, only the per-host
+      // route. It is fetched HERE rather than left to FleetPage, which only
+      // fetches when nothing was injected -- and this page always injects
+      // its rows, so the Containers tab sat empty claiming no host in the
+      // fleet had ever reported one.
+      const perHost = await Promise.allSettled(
+        hosts.map(async (host) =>
+          (await getContainers(host.id)).map((container) => ({
+            ...container,
+            host_id: host.id,
+            hostname: host.hostname,
+          })),
+        ),
+      );
+      const containers = perHost
+        .filter((r) => r.status === "fulfilled")
+        .flatMap((r) => (r as PromiseFulfilledResult<ContainerRow[]>).value);
+      // A host that could not be asked is not a host running nothing, so the
+      // count says how many are missing rather than quietly under-reporting.
+      const unreachable = perHost.filter((r) => r.status === "rejected").length;
+
+      return {
+        hosts,
+        sites,
+        trends,
+        containers,
+        unreachable,
+        at: new Date().toISOString(),
+      };
     },
     POLL_MS,
     [range],
@@ -310,6 +341,12 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       range={range}
       onRangeChange={(next: Range) => setParam("range", next)}
       checkedAt={poll.data?.at ?? null}
+      containers={poll.data?.containers}
+      containerError={
+        poll.data && poll.data.unreachable > 0
+          ? `${poll.data.unreachable} host${poll.data.unreachable === 1 ? "" : "s"} could not be asked for containers`
+          : null
+      }
     />
   );
 }

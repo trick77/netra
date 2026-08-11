@@ -569,6 +569,11 @@ a {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: var(--space-4);
+  /* The card grid ends flush with whatever follows it -- on the overview
+     that is the all-hosts overlay, which sat against the last row of cards
+     with nothing between them. A table gets this spacing from its own
+     trailing border; a grid has none to give. */
+  margin-bottom: var(--space-6);
 }
 .hcard {
   background: var(--surface);

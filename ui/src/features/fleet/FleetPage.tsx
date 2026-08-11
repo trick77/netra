@@ -166,6 +166,10 @@ export interface FleetPageProps {
    * instead, which is what makes a filtered, ranged view a link someone can
    * send (spec 9).
    */
+  /** Set by a caller that fetched the containers itself, when some hosts
+   * could not be asked. Partial data must say it is partial: a list quietly
+   * missing three hosts looks exactly like three hosts running none. */
+  containerError?: string | null;
   range?: Range;
   onRangeChange?: (range: Range) => void;
   onEntityChange?: (entity: Entity) => void;
@@ -179,6 +183,7 @@ export function FleetPage({
   entity: controlledEntity = "hosts",
   density: controlledDensity,
   checkedAt: injectedCheckedAt,
+  containerError: injectedContainerError,
   now = new Date(),
   range: controlledRange,
   onRangeChange,
@@ -217,7 +222,9 @@ export function FleetPage({
     ContainerRow[] | null
   >(null);
   const [error, setError] = useState<string | null>(null);
-  const [containerError, setContainerError] = useState<string | null>(null);
+  const [fetchedContainerError, setFetchedContainerError] = useState<
+    string | null
+  >(null);
   const [fetchedCheckedAt, setFetchedCheckedAt] = useState<string | null>(null);
 
   const injected = rows !== undefined;
@@ -270,7 +277,7 @@ export function FleetPage({
       setFetchedContainers(rows);
       // Partial data must say it is partial: a list quietly missing three
       // hosts' containers looks exactly like three hosts running none.
-      setContainerError(
+      setFetchedContainerError(
         settled.some((r) => r.status === "rejected")
           ? `${failed} host${failed === 1 ? "" : "s"} could not be asked for containers`
           : null,
@@ -286,6 +293,7 @@ export function FleetPage({
   const checkedAt = injectedCheckedAt ?? fetchedCheckedAt;
   const hostRows = rows ?? fetchedRows ?? [];
   const containerRows = containers ?? fetchedContainers ?? [];
+  const containerError = injectedContainerError ?? fetchedContainerError;
   // Distinguishes "this fleet runs no containers" from "not fetched yet":
   // the tile may only say 0 for the first.
   const containersKnown =
@@ -406,7 +414,11 @@ export function FleetPage({
           <HostCards rows={visibleHosts} range={range} />
         )
       ) : (
-        <FleetContainers rows={visibleContainers} showHost />
+        <FleetContainers
+          rows={visibleContainers}
+          showHost
+          loaded={containersKnown}
+        />
       )}
 
       {/* The overlay compares hosts, so it belongs to the host view: under a
