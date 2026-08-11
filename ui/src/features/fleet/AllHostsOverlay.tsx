@@ -154,7 +154,7 @@ export function AllHostsOverlay({
   const memOutlier = outlier(memHosts, memPercent);
 
   return (
-    <div className="grid2">
+    <div className="grid2 fleet-overlay">
       <section className="smp">
         <div className="t">
           <h4>CPU, all hosts</h4>

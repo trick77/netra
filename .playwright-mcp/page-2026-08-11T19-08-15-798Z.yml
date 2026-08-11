@@ -1,0 +1,47 @@
+- generic [ref=f23e3]:
+  - link "Skip to content" [ref=f23e4] [cursor=pointer]:
+    - /url: "#main"
+  - banner [ref=f23e5]:
+    - link "netra" [ref=f23e6] [cursor=pointer]:
+      - /url: /
+    - navigation [ref=f23e7]:
+      - link "Overview" [ref=f23e8] [cursor=pointer]:
+        - /url: /
+      - link "Events" [ref=f23e9] [cursor=pointer]:
+        - /url: /events
+      - link "Hosts" [ref=f23e10] [cursor=pointer]:
+        - /url: /admin/hosts
+      - link "Settings" [ref=f23e11] [cursor=pointer]:
+        - /url: /settings
+  - main [ref=f23e12]:
+    - paragraph [ref=f23e13]: All 0 hosts reporting · nothing needs attention
+    - generic [ref=f23e14]:
+      - generic [ref=f23e15]:
+        - generic [ref=f23e16]: Hosts reporting
+        - generic [ref=f23e17]: "0"
+        - generic [ref=f23e18]: of 0 known
+      - generic [ref=f23e19]:
+        - generic [ref=f23e20]: Containers
+        - generic [ref=f23e21]: —
+        - generic [ref=f23e22]: across the fleet
+      - generic [ref=f23e23]:
+        - generic [ref=f23e24]: Fleet traffic
+        - generic [ref=f23e25]: —
+        - generic [ref=f23e26]: inbound + outbound, latest sample
+    - navigation [ref=f23e27]:
+      - link "Hosts" [ref=f23e28] [cursor=pointer]:
+        - /url: /
+      - link "Containers" [ref=f23e29] [cursor=pointer]:
+        - /url: /?entity=containers
+    - generic [ref=f23e30]:
+      - searchbox "Filter hosts" [ref=f23e31]
+      - group [ref=f23e32]:
+        - button "1h" [ref=f23e33] [cursor=pointer]
+        - button "6h" [ref=f23e34] [cursor=pointer]
+        - button "24h" [pressed] [ref=f23e35] [cursor=pointer]
+      - group [ref=f23e36]:
+        - button "Table" [pressed] [ref=f23e37] [cursor=pointer]
+        - button "Cards" [ref=f23e38] [cursor=pointer]
+    - generic [ref=f23e39]:
+      - heading "No hosts yet" [level=3] [ref=f23e43]
+      - paragraph [ref=f23e44]: Once an agent reports in, its host appears here.
