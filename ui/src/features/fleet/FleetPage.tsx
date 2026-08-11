@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   getContainers,
@@ -62,6 +62,69 @@ export function buildHostRows(hosts: Host[], sites: Site[]): HostRow[] {
     // pct: 0, would draw an empty disk nobody measured.
     fullest: null,
   }));
+}
+
+/**
+ * "/" focuses the filter, the way it does in every tool where the first
+ * thing you do on a list is narrow it.
+ *
+ * It deliberately does nothing while a field already has focus -- otherwise
+ * typing a path into any input on the page would jump the cursor -- and it
+ * leaves modified keypresses alone, because ctrl+/ and the browser's own
+ * shortcuts are not ours to take.
+ */
+function useSlashToFocus() {
+  const ref = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const active = document.activeElement;
+      const typing =
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement ||
+        (active instanceof HTMLElement && active.isContentEditable);
+      if (typing) return;
+      event.preventDefault();
+      ref.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  return ref;
+}
+
+/** The mobile breakpoint, matching index.css's own. */
+const NARROW = "(max-width: 640px)";
+
+/**
+ * True below the mobile breakpoint. matchMedia rather than a resize
+ * listener, because the browser already knows the answer and re-asking it on
+ * every resize event is work for nothing; the listener fires only when the
+ * answer changes.
+ *
+ * Guarded because jsdom has no matchMedia unless a test installs one, and a
+ * missing one must mean "not narrow" rather than a thrown render.
+ */
+function useIsNarrow(): boolean {
+  const [narrow, setNarrow] = useState(
+    () => window.matchMedia?.(NARROW).matches ?? false,
+  );
+
+  useEffect(() => {
+    const query = window.matchMedia?.(NARROW);
+    if (!query) return;
+    const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    setNarrow(query.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  return narrow;
 }
 
 function readStoredDensity(): Density | null {
@@ -152,6 +215,14 @@ export function FleetPage({
   const range = onRangeChange ? (controlledRange ?? localRange) : localRange;
   const setRange = onRangeChange ?? setLocalRange;
   const [filter, setFilter] = useState("");
+  // Below the mobile breakpoint cards are automatic, not a preference (spec
+  // 4.5): a six-column host table does not survive 390px, and a stored
+  // "table" choice must not be able to produce a page that scrolls
+  // sideways. The stored preference is left alone -- it is what the browser
+  // goes back to at a width where it applies.
+  const narrow = useIsNarrow();
+  const filterRef = useSlashToFocus();
+  const effectiveDensity: Density = narrow ? "cards" : density;
 
   const [fetchedRows, setFetchedRows] = useState<HostRow[] | null>(null);
   const [fetchedContainers, setFetchedContainers] = useState<
@@ -310,6 +381,7 @@ export function FleetPage({
 
       <div className="toolbar">
         <Input
+          ref={filterRef}
           type="search"
           value={filter}
           placeholder={
@@ -325,7 +397,7 @@ export function FleetPage({
         {entity === "hosts" ? (
           <Segmented
             options={DENSITIES}
-            value={density}
+            value={effectiveDensity}
             onChange={(next) => {
               setDensity(next);
               try {
@@ -340,7 +412,7 @@ export function FleetPage({
       </div>
 
       {entity === "hosts" ? (
-        density === "table" ? (
+        effectiveDensity === "table" ? (
           <HostTable rows={visibleHosts} range={range} />
         ) : (
           <HostCards rows={visibleHosts} range={range} />

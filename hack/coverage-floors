@@ -13,3 +13,8 @@
 # turns every unrelated PR into a coverage negotiation.
 hub=86.0
 agent=84.0
+
+# The UI's floors are not here: they live in ui/vite.config.ts, because
+# coverage-gate.sh reads Go's Cobertura output and vitest measures TypeScript.
+# Same rule though -- a hard floor a couple of points under the measured
+# value, raised by measuring first, never ratcheted automatically.

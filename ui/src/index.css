@@ -1202,3 +1202,78 @@ svg.spark {
     grid-template-columns: 1fr;
   }
 }
+
+/* ── Below the mobile breakpoint ───────────────────────────────────────
+   Cards are automatic here, not a preference (spec §4.5): a six-column
+   host table does not survive 390px, and a stored "table" choice must not
+   be able to produce a page that scrolls sideways. The table is hidden by
+   CSS rather than unmounted so nothing about the component tree depends on
+   a viewport width -- the card grid is always rendered, and one of the two
+   is shown. */
+@media (max-width: 640px) {
+  .app {
+    padding: 0 var(--space-3) 64px;
+  }
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .toolbar .spacer {
+    display: none;
+  }
+  /* The tab bar wraps rather than scrolling: a hidden tab is an unused tab,
+     and a horizontal scroller hides its own overflow. */
+  .tabs {
+    flex-wrap: wrap;
+  }
+  .topnav {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .nav {
+    margin-left: 0;
+    width: 100%;
+    overflow-x: visible;
+    flex-wrap: wrap;
+  }
+}
+
+/* Wide content scrolls inside its own box; the PAGE never scrolls
+   sideways. A table that widens the document moves every other element on
+   it, including the nav. */
+.tablewrap {
+  overflow-x: auto;
+}
+
+/* Every interactive control shows where the keyboard is. :focus-visible
+   rather than :focus so a mouse click does not leave a ring behind. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent-fill);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Skip link: the fleet page puts a nav and a toolbar before its content,
+   and a keyboard user should not have to walk them on every page. Visible
+   only when focused, which is the one time it is useful. */
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  z-index: 10;
+}
+.skip:focus {
+  left: var(--space-3);
+  top: var(--space-3);
+}

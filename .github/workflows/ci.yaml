@@ -86,7 +86,10 @@ jobs:
       # release time.
       - run: npm run build
         working-directory: ui
-      - run: npm run test
+      # --coverage, because the thresholds in vite.config.ts are this half's
+      # equivalent of hack/coverage-floors: a hard floor that fails the job,
+      # not a number printed for someone to read.
+      - run: npm run test:coverage
         working-directory: ui
       - name: Prettier
         run: npm run format:check

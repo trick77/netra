@@ -68,6 +68,12 @@ export default function App() {
   return (
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <div className="app" onClick={onClick}>
+      {/* A keyboard user should not have to walk the nav and the toolbar on
+          every page to reach the thing they came for. Visible only when
+          focused, which is the one moment it is useful. */}
+      <a className="skip" href="#main">
+        Skip to content
+      </a>
       <header className="topnav">
         <a className="brand" href="/">
           netra
@@ -87,7 +93,7 @@ export default function App() {
           </NavLink>
         </nav>
       </header>
-      <main>
+      <main id="main" tabIndex={-1}>
         <Screen route={route} search={search} go={go} />
       </main>
     </div>

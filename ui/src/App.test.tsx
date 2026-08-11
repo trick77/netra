@@ -15,6 +15,10 @@ vi.mock("./lib/api", async () => {
     getHost: vi.fn(),
     getContainers: vi.fn(),
     getMetrics: vi.fn(),
+    getFilesystems: vi.fn(),
+    getAddresses: vi.fn(),
+    getPackages: vi.fn(),
+    getUnits: vi.fn(),
   };
 });
 
@@ -38,6 +42,14 @@ beforeEach(() => {
   vi.mocked(api.getHosts).mockResolvedValue([host]);
   vi.mocked(api.getSites).mockResolvedValue([]);
   vi.mocked(api.getEvents).mockResolvedValue([]);
+  // Every call the host page fans out to. A vi.fn() with no resolved value
+  // returns undefined, and the page's orNull() then reads .then on it --
+  // which surfaces as an unhandled rejection rather than a failed test.
+  vi.mocked(api.getContainers).mockResolvedValue([]);
+  vi.mocked(api.getFilesystems).mockResolvedValue([]);
+  vi.mocked(api.getAddresses).mockResolvedValue([]);
+  vi.mocked(api.getPackages).mockResolvedValue([]);
+  vi.mocked(api.getUnits).mockResolvedValue([]);
   goTo("/");
 });
 
