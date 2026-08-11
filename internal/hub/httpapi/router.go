@@ -9,6 +9,7 @@ import (
 	"github.com/trick77/netra/internal/hub/config"
 	"github.com/trick77/netra/internal/hub/read"
 	"github.com/trick77/netra/internal/hub/store"
+	"github.com/trick77/netra/internal/hub/web"
 )
 
 // NewRouter builds the hub's route table. Go 1.22 method routing is used
@@ -29,8 +30,19 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Ha
 
 	// The admin API answers 401 to an unauthenticated caller; the UI sends it
 	// to a login page instead. Both accept the same credential.
-	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc, rd, time.Now)))
-	mux.Handle("/", NewUIHandler(svc, cfg.AdminToken, cfg.HubURL))
+	mux.Handle("/api/v1/", RequireAdmin(cfg.AdminToken, false, NewAdminHandler(svc, rd, time.Now, cfg.HubURL)))
+
+	// /login and /logout sit outside RequireAdmin: this is where an
+	// unauthenticated browser is sent, so gating them would loop.
+	mux.Handle("GET /login", NewLoginHandler(cfg.AdminToken))
+	mux.Handle("POST /login", NewLoginHandler(cfg.AdminToken))
+	mux.Handle("POST /logout", NewLoginHandler(cfg.AdminToken))
+
+	// Everything else is the single-page UI, behind the same admin token as
+	// the API. redirectToLogin stays true so a browser without a session
+	// lands on the login page rather than reading a bare 401 -- the SPA
+	// itself routes a 401 the same way, and the two must agree.
+	mux.Handle("/", RequireAdmin(cfg.AdminToken, true, web.Handler()))
 
 	return mux
 }

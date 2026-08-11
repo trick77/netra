@@ -86,7 +86,10 @@ jobs:
       # release time.
       - run: npm run build
         working-directory: ui
-      - run: npm run test
+      # --coverage, because the thresholds in vite.config.ts are this half's
+      # equivalent of hack/coverage-floors: a hard floor that fails the job,
+      # not a number printed for someone to read.
+      - run: npm run test:coverage
         working-directory: ui
       - name: Prettier
         run: npm run format:check
@@ -172,6 +175,21 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install diff-cover==10.3.0
+
+      # The hub SERVES the SPA now (internal/hub/web), and its routing tests
+      # exercise that: an unknown path answers with index.html so a deep link
+      # survives a reload. Without a build, dist/ holds only .gitkeep and the
+      # handler correctly answers 503 "built without the web UI" -- so these
+      # tests would be asserting against a binary nobody ships. The agent
+      # matrix leg pays ~20s for a build it does not need; splitting the
+      # matrix to avoid that costs more in duplicated yaml than it saves.
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: ui/.nvmrc
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: make ui
+
       - run: mkdir -p coverage
       # The race detector needs cgo. This is independent of the
       # CGO_ENABLED=0 invariant used for the statically linked shipped

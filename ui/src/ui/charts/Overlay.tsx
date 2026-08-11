@@ -95,7 +95,12 @@ export function Overlay({
           );
         })}
       </svg>
-      {series.length >= 2 && (
+      {/* A legend names series; on a fleet overlay it would name all
+          nineteen of them, which is the opposite of "every host
+          de-emphasised, only the outlier labelled". `highlight` is exactly
+          the caller saying one series carries the identity, so it also says
+          the legend has no work to do. */}
+      {series.length >= 2 && highlight === undefined && (
         <div className="legend">
           {series.map((s) => (
             <span key={s.name}>

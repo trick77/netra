@@ -73,4 +73,23 @@ describe("Overlay", () => {
     expect(Math.min(...ys)).toBeGreaterThanOrEqual(8);
     expect(Math.max(...ys)).toBeLessThanOrEqual(12);
   });
+
+  // §4.4's fleet overlay is nineteen hosts with one outlier named. A legend
+  // there names all nineteen, which is the thing the de-emphasis exists to
+  // avoid; highlight is the caller saying identity is carried by the
+  // emphasis, not by a colour key.
+  it("drops the legend when one series is highlighted", () => {
+    const series = [
+      { name: "web-01", color: "var(--s1)", values: [1, 2] },
+      { name: "web-02", color: "var(--s1)", values: [3, 4] },
+    ];
+
+    const { container, rerender } = render(
+      <Overlay series={series} max={10} />,
+    );
+    expect(container.querySelector(".legend")).toBeInTheDocument();
+
+    rerender(<Overlay series={series} max={10} highlight="web-02" />);
+    expect(container.querySelector(".legend")).not.toBeInTheDocument();
+  });
 });

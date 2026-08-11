@@ -103,4 +103,23 @@ describe("ChartPanel", () => {
     // specifically rather than on the panel as a whole.
     expect(document.querySelector(".now")?.textContent).toContain("rx");
   });
+
+  // A formatter carrying a magnitude still needs the panel's unit to say
+  // what KIND of quantity it is: bytes() renders "1.2 MB" for a link doing
+  // 1.2 MB/s, and only "B/s" makes that a rate rather than a total.
+  // (A formatter that prints its own unit must simply not be given one --
+  // that contract is on the prop, not enforced here.)
+  it("prints the unit beside a formatted value", () => {
+    render(
+      <ChartPanel
+        title="Interface throughput"
+        unit="B/s"
+        fmt={(v) => (v === null ? "none" : `${v} MB`)}
+        series={[{ name: "rx", color: "var(--s1)", values: [12] }]}
+      />,
+    );
+
+    expect(document.querySelector(".now")?.textContent).toBe("12 MB");
+    expect(document.querySelector(".u")?.textContent).toBe("B/s");
+  });
 });

@@ -501,6 +501,70 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+/* Identifier face — container keys, images, paths. --font-mono because these
+   are strings a reader compares character by character, not prose; .tnum is
+   tabular figures and would be the wrong tool. */
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* A shell command the reader is meant to copy. .ai-cmd above is the inline
+   peer of this, scoped to the drawer; both take their face and ground from
+   the same tokens, and this one is the block form: a command that wraps is
+   a command that gets mis-pasted. */
+.cmd {
+  font-family: var(--font-mono);
+  font-size: var(--text-label);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  color: var(--ink);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* One labelled control in Settings, as a fieldset so the label and its
+   options are a group to a screen reader rather than a heading followed by
+   loose radio buttons. */
+.setting {
+  border: 0;
+  padding: 0;
+  margin: 0 0 var(--space-5);
+}
+.setting legend {
+  font-size: var(--text-label);
+  font-weight: 500;
+  color: var(--ink);
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+
+/* The SPA login card. Narrow on purpose: one field and one button, centred,
+   with nothing else on the page to look at. */
+.login {
+  max-width: 380px;
+  margin: 12vh auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Secondary line under a title or a control -- the "what this means" text. */
+.sub {
+  font-size: var(--text-label);
+  color: var(--muted);
+}
+
+/* A failure the user must read, so it carries the status ink rather than the
+   mark colour (see --st-crit-text), and a word always precedes it in the
+   markup: the colour is never the message. */
+.error {
+  font-size: var(--text-label);
+  color: var(--st-crit-text);
+}
+
 .cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
@@ -611,6 +675,10 @@ a {
   border: 1px solid var(--border);
   border-radius: var(--radius-ui);
   padding: var(--space-3) var(--space-4) 10px;
+  /* A grid item defaults to min-width:auto, which is its CONTENT's width --
+     so a panel holding a 520px chart refused to shrink below 520px and the
+     whole page scrolled sideways at 390px. */
+  min-width: 0;
 }
 .smp .t {
   display: flex;
@@ -975,6 +1043,13 @@ tbody tr:last-child td {
 tbody tr:hover {
   background: var(--surface-2);
 }
+/* The host detail page's own wrapper. It exists so the page never reaches
+   for .host, which is the host CELL below: a flex row, which laid this
+   page's header, tabs and chart grid out side by side. */
+.hostpage {
+  display: block;
+}
+
 .host {
   display: flex;
   align-items: center;
@@ -1090,6 +1165,11 @@ svg.spark {
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-4) 0;
+  /* Wraps rather than overflowing: the header carries a name, four facts, a
+     badge, a range control and an action, which do not fit on one line at
+     390px -- and a header that pushes the page sideways moves every element
+     on it, including the nav. */
+  flex-wrap: wrap;
 }
 .hosthead h1 {
   font-family: var(--font-serif);
@@ -1102,6 +1182,14 @@ svg.spark {
 }
 .chartwrap {
   position: relative;
+}
+/* Charts carry explicit width/height attributes so they have an intrinsic
+   size in a table cell, and a viewBox so they can be scaled. This is what
+   lets them scale: below the width they were drawn at they shrink to fit
+   rather than pushing the page wider than the screen. */
+svg.spark {
+  max-width: 100%;
+  height: auto;
 }
 .axislab {
   font-size: var(--text-micro);
@@ -1137,4 +1225,82 @@ svg.spark {
   .grid2 {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── Below the mobile breakpoint ───────────────────────────────────────
+   Cards are automatic here, not a preference (spec §4.5): a six-column host
+   table does not survive 390px, and a stored "table" choice must not be able
+   to produce a page that scrolls sideways. The switch itself is in
+   FleetPage's useIsNarrow, not in this file: rendering both and hiding one
+   would put every host in the DOM twice, which a screen reader reads twice.
+   What lives here is everything else that has to give at this width. */
+@media (max-width: 640px) {
+  .app {
+    padding: 0 var(--space-3) 64px;
+  }
+  .tiles {
+    grid-template-columns: 1fr;
+  }
+  .toolbar {
+    flex-wrap: wrap;
+  }
+  .toolbar .spacer {
+    display: none;
+  }
+  /* The tab bar wraps rather than scrolling: a hidden tab is an unused tab,
+     and a horizontal scroller hides its own overflow. */
+  .tabs {
+    flex-wrap: wrap;
+  }
+  .hosthead h1 {
+    flex: 1 1 100%;
+  }
+  .topnav {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .nav {
+    margin-left: 0;
+    width: 100%;
+    overflow-x: visible;
+    flex-wrap: wrap;
+  }
+}
+
+/* Wide content scrolls inside its own box; the PAGE never scrolls
+   sideways. A table that widens the document moves every other element on
+   it, including the nav. */
+.tablewrap {
+  overflow-x: auto;
+}
+
+/* Every interactive control shows where the keyboard is. :focus-visible
+   rather than :focus so a mouse click does not leave a ring behind. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent-fill);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Skip link: the fleet page puts a nav and a toolbar before its content,
+   and a keyboard user should not have to walk them on every page. Visible
+   only when focused, which is the one time it is useful. */
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  z-index: 10;
+}
+.skip:focus {
+  left: var(--space-3);
+  top: var(--space-3);
 }

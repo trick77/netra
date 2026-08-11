@@ -14,6 +14,11 @@ import (
 
 type adminHandler struct {
 	svc *admin.Service
+	// hubURL is NETRA_HUB_URL, or empty when it is unset. Empty is passed
+	// through as empty rather than as a guess: the UI says so and asks the
+	// operator, which is honest, where a wrong hostname in a setup command
+	// sends an agent token to whoever owns that name.
+	hubURL string
 }
 
 // NewAdminHandler serves ALL of spec 8's /api/v1: the admin operations here,
@@ -25,10 +30,18 @@ type adminHandler struct {
 // take the hub down on boot rather than at request time.
 //
 // It is mounted behind RequireAdmin, never on its own.
-func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time) http.Handler {
-	h := &adminHandler{svc: svc}
+func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time, hubURL string) http.Handler {
+	h := &adminHandler{svc: svc, hubURL: hubURL}
 
 	mux := http.NewServeMux()
+	// The SPA cannot know the address agents post to: the browser reaches
+	// this hub on loopback, so its own location says nothing about the name
+	// agents use. NETRA_HUB_URL is that name, and the host admin page needs
+	// it to render a setup command an operator can paste. Before this, the
+	// page fell back to a placeholder the operator had to retype on every
+	// mint -- and the configured value, which the retired token.gohtml used
+	// to render, was read by nothing at all.
+	mux.Handle("GET /api/v1/config", http.HandlerFunc(h.config))
 	mux.Handle("POST /api/v1/hosts", http.HandlerFunc(h.create))
 	mux.Handle("POST /api/v1/hosts/{id}/token", http.HandlerFunc(h.rotate))
 	mux.Handle("DELETE /api/v1/hosts/{id}", http.HandlerFunc(h.delete))
@@ -154,4 +167,8 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+func (h *adminHandler) config(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"hub_url": h.hubURL})
 }
