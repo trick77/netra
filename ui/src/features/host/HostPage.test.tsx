@@ -193,4 +193,23 @@ describe("HostPage", () => {
     expect(within(header).queryByText(/rebooted/)).toBeNull();
     expect(within(header).getByText("online")).toBeInTheDocument();
   });
+
+  // uptime_s is host_current's LAST REPORTED value, not a live clock: a
+  // machine that booted and then died keeps that 100 in the database for
+  // ever. Announcing "rebooted 1 m 40 s ago" beside an "offline" badge dates
+  // a stale reading to now -- the absent-as-a-fact inversion this warning
+  // exists to expose, committed by the warning itself.
+  it("says nothing about a host whose last uptime was reported days ago", async () => {
+    vi.mocked(api.getHost).mockResolvedValue({
+      ...host,
+      uptime_s: 100,
+      last_seen: new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString(),
+    });
+
+    render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
+
+    const header = await screen.findByRole("banner", { name: "Host summary" });
+    expect(within(header).getByText("offline")).toBeInTheDocument();
+    expect(within(header).queryByText(/rebooted/)).toBeNull();
+  });
 });

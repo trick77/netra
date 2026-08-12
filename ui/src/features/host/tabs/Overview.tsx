@@ -12,6 +12,7 @@ import type {
 import {
   carriesColumn,
   griddedValues,
+  latestValue,
   optionalValues,
 } from "../../../lib/metrics";
 import {
@@ -88,21 +89,13 @@ export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
   }));
 }
 
-/**
- * The value at the LATEST bucket, trailing null included -- never the last
- * value that happened to be a number.
- *
- * This used to scan backwards for the last non-null, which reported a host
- * that stopped an hour ago at the final rate it ever sent: "the agent is
- * down" rendered as "traffic is steady at 2 MB/s". The fleet's traffic cell
- * has always read the latest bucket, so the same dead host read as absent
- * there and as busy here. ChartPanel documents the rule at length for its own
- * headline value; this is the same rule, and the fleet cell's lastValue() is
- * the same function.
- */
-function lastValue(values: readonly (number | null)[]): number | null {
-  return values.length > 0 ? (values[values.length - 1] ?? null) : null;
-}
+// The latest bucket's value, trailing null included, is lib/metrics.ts's
+// latestValue(). This page used to scan backwards for the last non-null,
+// which reported a host that stopped an hour ago at the final rate it ever
+// sent: "the agent is down" rendered as "traffic is steady at 2 MB/s". The
+// fleet's traffic cell has always read the latest bucket, so the same dead
+// host read as absent there and as busy here -- which is why the rule now has
+// exactly one spelling instead of a copy per page.
 
 /**
  * A keyed family summed across its series, index by index.
@@ -520,8 +513,12 @@ export function Overview({
                   and plausibly. The fleet's traffic cell carried the same
                   bug, so the two pages agreed with each other and with
                   nothing else. */}
-              <span className="rate">↑ {byterate(lastValue(ingress))} in</span>
-              <span className="rate">↓ {byterate(lastValue(egress))} out</span>
+              <span className="rate">
+                ↑ {byterate(latestValue(ingress))} in
+              </span>
+              <span className="rate">
+                ↓ {byterate(latestValue(egress))} out
+              </span>
             </div>
           </div>
         )}

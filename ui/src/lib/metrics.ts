@@ -334,6 +334,43 @@ export function hasGaps(vals: readonly (number | null)[]): boolean {
 }
 
 /**
+ * Whether a series carries a reading at all -- any non-null value.
+ *
+ * The distinction every chart-building caller turns on: a column the
+ * answering tier does not have comes back as an empty array, and a column it
+ * has but this host never filled comes back all null. Both mean "nothing to
+ * draw", and checking only the LENGTH passes an all-null series -- which is
+ * how "the agent was down for the whole window" rendered as an empty chart
+ * with nothing saying why.
+ */
+export function hasReading(values: readonly (number | null)[]): boolean {
+  return values.some((v) => v !== null);
+}
+
+/**
+ * The value at the LATEST bucket, trailing null included -- never the last
+ * value that happened to be a number.
+ *
+ * Scanning backwards for the last non-null reports a host that stopped an
+ * hour ago at the final rate it ever sent: "the agent is down" rendered as
+ * "traffic is steady at 2 MB/s". Every headline value beside a chart --
+ * ChartPanel's own, the fleet row's traffic cell, the host overview's --
+ * reads the latest bucket, so one spelling of the rule lives here rather
+ * than a copy per call site.
+ *
+ * The counterpart -- "the last value this host ever reported" -- is a
+ * different question and must never wear this name. It is right for a
+ * configuration value such as mem_limit, which does not stop being the
+ * configured ceiling because the newest bucket has not materialised, and
+ * wrong for every rate. Its callers keep it privately, spelled
+ * lastReported() (host/tabs/Inventory.tsx) and lastNumber()
+ * (fleet/hostTrends.ts), so neither can be mistaken for this one.
+ */
+export function latestValue(values: readonly (number | null)[]): number | null {
+  return values.length > 0 ? (values[values.length - 1] ?? null) : null;
+}
+
+/**
  * Turns a window/requested_window mismatch (and a truncated result) into a
  * sentence a human can act on. Returns null when the response is complete
  * and covers exactly what was asked.

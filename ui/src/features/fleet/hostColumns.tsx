@@ -14,6 +14,7 @@ import { Overlay } from "../../ui/charts/Overlay";
 import { SPARK_WIDTH } from "../../ui/charts/size";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
 import { ABSENT, byterate } from "../../lib/format";
+import { latestValue } from "../../lib/metrics";
 import type { Host } from "../../lib/api";
 import { hostStatus } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
@@ -183,10 +184,9 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
 
 // The value at the latest bucket, trailing null included -- never the last
 // value that happened to be a number. A host that stopped reporting must
-// read as absent, not as its final rate frozen in place.
-function lastValue(values: (number | null)[]): number | null {
-  return values.length > 0 ? (values[values.length - 1] ?? null) : null;
-}
+// read as absent, not as its final rate frozen in place. lib/metrics.ts's
+// latestValue() is that rule, shared with the host overview's traffic card so
+// the two pages cannot drift apart again.
 
 // Both rates render in identical type, weighted only by an arrow glyph --
 // netra cannot know whether a given host is meant to push or pull more
@@ -195,8 +195,8 @@ function lastValue(values: (number | null)[]): number | null {
 // distinguisher, so each rate carries its own aria-label naming the
 // direction in words.
 function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
-  const rx = lastValue(row.rx);
-  const tx = lastValue(row.tx);
+  const rx = latestValue(row.rx);
+  const tx = latestValue(row.tx);
   return (
     <div className="traffic-cell">
       <UpDownSparkline

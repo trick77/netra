@@ -4,7 +4,7 @@ import {
   type MetricsResponse,
   type Site,
 } from "../../lib/api";
-import { carriesColumn, griddedValues } from "../../lib/metrics";
+import { carriesColumn, griddedValues, hasReading } from "../../lib/metrics";
 import { memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
@@ -78,9 +78,10 @@ export interface HostTrends {
  * its only caller passed an empty spec list and reached nothing but the
  * fallback.
  */
-function totalBand(res: MetricsResponse | null): Band[] {
-  if (res === null) return [];
-  const values = griddedValues(res, 0, "cpu_total");
+// Takes the already-gridded cpu_total rather than the response: the same
+// series is also what the row's status is judged from (HostTrends.reporting),
+// and one column read twice is two readings that can be made to disagree.
+function totalBand(values: (number | null)[]): Band[] {
   return values.length === 0
     ? []
     : [{ name: "busy", color: "var(--s1)", values }];
@@ -197,7 +198,7 @@ function filesystemBands(res: MetricsResponse | null): Band[] {
     }
     // A filesystem that reported nothing all window is not a flat line at
     // zero; it is a mount with no readings, and drawing it would claim one.
-    if (!values.some((v) => v !== null)) continue;
+    if (!hasReading(values)) continue;
     bands.push({
       name: res.series[i]!.key.filesystem ?? `fs ${i}`,
       color: FS_COLORS[bands.length % FS_COLORS.length]!,
@@ -276,13 +277,16 @@ export async function fetchHostTrends(
   // host page draws the same cores unnormalised, where the numbers matter
   // more than cross-host comparability.
   const perCore = perCoreBands(cores, { normalise: true });
-  const cpu = perCore.length > 0 ? perCore : totalBand(host);
+  // One series, one relation, every host -- see HostTrends.reporting. Gridded
+  // once and used twice: as the fallback silhouette for a host too large to
+  // fetch per-core, and as the series the status badge is judged from.
+  const total = griddedValues(host, 0, "cpu_total");
+  const cpu = perCore.length > 0 ? perCore : totalBand(total);
 
   return {
     cpu,
     mem: memoryBands(host),
-    // One series, one relation, every host -- see HostTrends.reporting.
-    reporting: host === null ? [] : griddedValues(host, 0, "cpu_total"),
+    reporting: total,
     rx: sumSeries(net, "rx_bytes"),
     tx: sumSeries(net, "tx_bytes"),
     fullest: fullestFilesystem(filesystem),

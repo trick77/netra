@@ -136,9 +136,7 @@ describe("HostCards", () => {
       ],
     });
 
-    const { container } = render(
-      <HostCards rows={[row]} range="1h" />,
-    );
+    const { container } = render(<HostCards rows={[row]} range="1h" />);
     const legend = container.querySelector(".legend");
 
     expect(legend).not.toBeNull();

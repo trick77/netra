@@ -325,8 +325,16 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
   }
 
   const status = hostStatus(host);
+  // Only while the host is still answering. uptime_s is host_current's LAST
+  // REPORTED value, not a live clock: a machine that booted and then died
+  // stays at "40 s" in the database forever, and rendering that as "rebooted
+  // 40 s ago" beside an "offline" badge is a stale reading dressed as a fresh
+  // one -- the same absent-as-a-fact inversion this warning exists to expose.
+  // A host the hub is not hearing from has no current uptime to state.
   const recentlyBooted =
-    host.uptime_s !== null && host.uptime_s < RECENT_BOOT_S;
+    status.severity !== "critical" &&
+    host.uptime_s !== null &&
+    host.uptime_s < RECENT_BOOT_S;
 
   return (
     // "hostpage", NOT "host": .host is the host CELL -- a flex row with a
@@ -360,7 +368,9 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             pairing a dot with a WORD prevents. A duration is not a
             severity. */}
         {recentlyBooted && (
-          <Badge severity="warning">rebooted {duration(host.uptime_s)} ago</Badge>
+          <Badge severity="warning">
+            rebooted {duration(host.uptime_s)} ago
+          </Badge>
         )}
         <span className="meta">
           last seen{" "}

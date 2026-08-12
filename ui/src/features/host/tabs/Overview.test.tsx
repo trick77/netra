@@ -380,6 +380,8 @@ describe("Overview processor panel", () => {
     const traffic = screen.getByRole("region", { name: "Traffic" });
 
     expect(traffic.textContent).not.toMatch(/MB\/s/);
-    expect(within(traffic).getAllByText(new RegExp(ABSENT)).length).toBeGreaterThan(0);
+    expect(
+      within(traffic).getAllByText(new RegExp(ABSENT)).length,
+    ).toBeGreaterThan(0);
   });
 });

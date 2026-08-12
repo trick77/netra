@@ -7,7 +7,7 @@
  * than each deriving bands from the raw columns, because "used" in
  * particular is a subtraction with several ways to get it subtly wrong.
  */
-import { griddedValues, carriesColumn } from "./metrics";
+import { griddedValues, carriesColumn, hasReading } from "./metrics";
 import type { MetricsResponse } from "./api";
 import type { Band } from "../ui/charts/StackedSparkline";
 
@@ -64,7 +64,7 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
     carriesColumn(res, "mem_free") && carriesColumn(res, "mem_total");
   const total = hasColumns ? griddedValues(res, 0, "mem_total") : [];
   const free = hasColumns ? griddedValues(res, 0, "mem_free") : [];
-  if (!reported(total) || !reported(free)) {
+  if (!hasReading(total) || !hasReading(free)) {
     // And the fallback answers to the same rule it was just given. A host
     // whose agent was down for the whole window reports nothing at all,
     // mem_used included: a lone band of nulls draws an empty chart where
@@ -72,7 +72,9 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
     // always dropped bands this way; the one-band path was checking only its
     // LENGTH, which an all-null series passes.
     const used = griddedValues(res, 0, "mem_used");
-    return reported(used) ? [{ name: "used", color: USED, values: used }] : [];
+    return hasReading(used)
+      ? [{ name: "used", color: USED, values: used }]
+      : [];
   }
   const buffers = optional(res, "mem_buffers");
   const shared = optional(res, "mem_shared");
@@ -117,7 +119,7 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
     { name: "buffers", color: BUFFERS, values: buffers },
     { name: "cached", color: CACHED, values: cached },
     { name: "shared", color: SHARED, values: shared },
-  ].filter((b) => b.values.some((v) => v !== null));
+  ].filter((b) => hasReading(b.values));
 }
 
 /**
@@ -236,17 +238,11 @@ function add(a: (number | null)[], b: (number | null)[]): (number | null)[] {
   return out;
 }
 
-/**
- * Whether a series carries a reading at all -- any non-null value.
- *
- * The distinction memoryBands() turns on: a column the answering tier does
- * not have comes back as an empty array, and a column it has but this host
- * never filled comes back all null. Both mean "nothing to compute a
- * partition from", and only the first was being checked.
- */
-function reported(values: readonly (number | null)[]): boolean {
-  return values.some((v) => v !== null);
-}
+// Whether a series carries a reading at all is lib/metrics.ts's hasReading():
+// the distinction memoryBands() turns on is that a column the answering tier
+// does not have comes back as an empty array, and a column it has but this
+// host never filled comes back all null. Both mean "nothing to compute a
+// partition from", and only the first was being checked.
 
 /**
  * The total at one index across series that may legitimately be absent.
