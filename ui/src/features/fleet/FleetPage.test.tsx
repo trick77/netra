@@ -28,6 +28,7 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     tx: [5e5, 6e5],
     fullest: { mount: "/", pct: 41, others: 1 },
     disk: [],
+    oomKills: null,
     ...overrides,
   };
 }
@@ -43,6 +44,19 @@ function makeContainer(overrides: Partial<ContainerRow> = {}): ContainerRow {
     hostname: "web-01",
     ...overrides,
   };
+}
+
+/** The Containers TAB. The Containers stat tile above it is now a link of
+ * the same name, so every query for one has to exclude the other. */
+function containersTab(): HTMLElement {
+  const nav = document.querySelector<HTMLElement>("nav.tabs")!;
+  return within(nav).getByRole("link", { name: /containers/i });
+}
+
+/** A stat tile by the href it leads to -- its accessible name is the whole
+ * tile ("Containers 22 across the fleet"), which is not worth matching on. */
+function tile(href: string): HTMLElement {
+  return document.querySelector<HTMLElement>(`a.tile[href="${href}"]`)!;
 }
 
 function renderPage(props: Parameters<typeof FleetPage>[0] = {}) {
@@ -75,7 +89,7 @@ describe("FleetPage entity tabs", () => {
     ).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/filter hosts/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("link", { name: /containers/i }));
+    await user.click(containersTab());
 
     expect(
       screen.getByPlaceholderText(/filter containers/i),
@@ -92,7 +106,7 @@ describe("FleetPage entity tabs", () => {
 
     expect(screen.getByRole("button", { name: "Cards" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("link", { name: /containers/i }));
+    await user.click(containersTab());
 
     expect(screen.queryByRole("button", { name: "Cards" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Table" })).toBeNull();
@@ -179,6 +193,22 @@ describe("FleetPage header", () => {
       .getByText("Fleet traffic")
       .closest<HTMLElement>(".tile")!;
     expect(within(tile).getByText(ABSENT)).toBeInTheDocument();
+  });
+
+  // rx_bytes/tx_bytes are BYTES per second, so bitrate() labelled this tile
+  // "Mb/s" above rows reading "MB/s" -- off by eight and entirely plausible.
+  // The third copy of that bug: #51 fixed the fleet row's traffic cell and the
+  // host overview's card, and missed the tile sitting above both.
+  it("states fleet traffic in bytes per second, like every row under it", () => {
+    renderPage({
+      rows: [makeRow({ rx: [1_000_000], tx: [1_000_000] })],
+    });
+
+    const tile = screen
+      .getByText("Fleet traffic")
+      .closest<HTMLElement>(".tile")!;
+    expect(within(tile).getByText(/2 MB\/s/)).toBeInTheDocument();
+    expect(tile.textContent).not.toMatch(/Mb\/s/);
   });
 });
 
@@ -336,5 +366,113 @@ describe("FleetPage data fetching", () => {
     render(<FleetPage now={NOW} />);
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+  });
+
+  // The band existed from the start and had nothing to render: `conditions`
+  // defaulted to [], so this page said "nothing needs attention" beside a
+  // host whose own page was showing three OOM kills in red.
+  it("derives the attention band from the rows instead of rendering an empty one", () => {
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+        ]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    expect(screen.getByText(/3 OOM kills/)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing needs attention/)).toBeNull();
+  });
+
+  it("counts the troubled hosts, not the conditions, above the band", () => {
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({
+            id: 2,
+            hostname: "db-01",
+            oomKills: 3,
+            fullest: { mount: "/var/log", pct: 97, others: 0 },
+          }),
+        ]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    // One host in trouble, two conditions on it.
+    expect(screen.getByText(/1 of 2 hosts/)).toBeInTheDocument();
+  });
+
+  // A filter is someone looking for one machine. Recomputing the band from
+  // the filtered rows would hide a critical host because its name does not
+  // match what was typed, which is exactly how an overview lies.
+  it("keeps the band whole while the list is filtered", async () => {
+    const user = userEvent.setup();
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+        ]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    await user.type(screen.getByPlaceholderText(/filter hosts/i), "web");
+    expect(screen.getByText(/3 OOM kills/)).toBeInTheDocument();
+  });
+
+  it("still shows the quiet all-clear line for a healthy fleet", () => {
+    render(
+      <FleetPage rows={[makeRow({ id: 1 })]} checkedAt={null} now={NOW} />,
+    );
+    expect(screen.getByText(/nothing needs attention/)).toBeInTheDocument();
+  });
+});
+
+describe("FleetPage stat tiles as controls", () => {
+  it("switches to the containers list when the Containers tile is clicked", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(screen.getByPlaceholderText(/filter hosts/i)).toBeInTheDocument();
+
+    await user.click(tile("/?entity=containers"));
+
+    expect(
+      screen.getByPlaceholderText(/filter containers/i),
+    ).toBeInTheDocument();
+  });
+
+  it("returns to the hosts list from the Hosts reporting tile", async () => {
+    const user = userEvent.setup();
+    renderPage({ entity: "containers" });
+
+    await user.click(tile("/"));
+
+    expect(screen.getByPlaceholderText(/filter hosts/i)).toBeInTheDocument();
+  });
+
+  // Real links, so middle-click, cmd-click and bookmarking work without this
+  // component reimplementing any of them. The hrefs match the tabs' own.
+  it("gives the navigable tiles the same hrefs as the tabs", () => {
+    renderPage();
+
+    expect(tile("/")).not.toBeNull();
+    expect(tile("/?entity=containers")).not.toBeNull();
+  });
+
+  // Fleet traffic is a rate, not a set: there is no list of it to go to, and
+  // a tile that looks clickable and does nothing is worse than an inert one.
+  it("leaves the fleet traffic tile inert", () => {
+    renderPage();
+
+    expect(screen.getByText("Fleet traffic").closest("a")).toBeNull();
   });
 });

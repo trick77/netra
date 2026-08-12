@@ -4,7 +4,12 @@ import {
   type MetricsResponse,
   type Site,
 } from "../../lib/api";
-import { carriesColumn, griddedValues, hasReading } from "../../lib/metrics";
+import {
+  carriesColumn,
+  counterIncrease,
+  griddedValues,
+  hasReading,
+} from "../../lib/metrics";
 import { memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
@@ -51,6 +56,19 @@ export interface HostTrends {
    * of them is moving and how fast -- the difference between "watch it" and
    * "act today". */
   disk: Band[];
+  /**
+   * OOM kills inside the window, or null when the window carries no usable
+   * pair of readings to difference.
+   *
+   * The INCREASE, never oom_kill_total itself: the counter is cumulative
+   * since boot, so a host that killed something a year ago would otherwise
+   * carry a permanent condition. null is "cannot say", which stays silent;
+   * 0 is the host confirming nothing happened.
+   *
+   * From the `host` family, which is fetched unconditionally below, so this
+   * costs no extra request -- the same reason `reporting` reads from it.
+   */
+  oomKills: number | null;
 }
 
 // The CPU and memory bands both moved to lib/bands.ts, which the host page
@@ -291,6 +309,7 @@ export async function fetchHostTrends(
     tx: sumSeries(net, "tx_bytes"),
     fullest: fullestFilesystem(filesystem),
     disk: filesystemBands(filesystem),
+    oomKills: counterIncrease(griddedValues(host, 0, "oom_kill_total")),
   };
 }
 
@@ -317,6 +336,10 @@ export function buildRows(
       // disks are empty.
       fullest: trend?.fullest ?? null,
       disk: trend?.disk ?? [],
+      // null, not 0: a host whose trends failed to load has not told us
+      // there were no kills, and a fleet page must not report silence it
+      // never heard.
+      oomKills: trend?.oomKills ?? null,
     };
   });
 }

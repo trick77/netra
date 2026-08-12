@@ -13,7 +13,19 @@ export interface Condition {
   hostname: string;
   severity: Severity;
   what: ReactNode;
-  since: string;
+  /**
+   * When this started, when that is genuinely known -- and null when it is
+   * not.
+   *
+   * Most conditions have no honest onset. A filesystem at 91% crossed 90 at
+   * some point netra never recorded; an OOM kill happened inside the window
+   * but the counter says only that the total moved. The obvious stand-ins --
+   * the window start, last_seen, now -- are all a timestamp the reader would
+   * take literally, and "since 5 m ago" beside a disk that has been filling
+   * for a week is worse than saying nothing. Rows with no onset simply do
+   * not carry the column.
+   */
+  since: string | null;
 }
 
 export interface HostGroup {
@@ -133,7 +145,9 @@ function ConditionSubRow({ c }: { c: Condition }) {
     <div className="attn-sub">
       <Badge severity={c.severity}>{c.severity}</Badge>
       <span className="what">{c.what}</span>
-      <span className="since">{relative(c.since)}</span>
+      {c.since === null ? null : (
+        <span className="since">{relative(c.since)}</span>
+      )}
     </div>
   );
 }
@@ -145,7 +159,7 @@ function ConditionSubRow({ c }: { c: Condition }) {
 // this host's own list is what actually distinguishes them, and it is stable
 // for as long as the list is.
 function subRowKey(c: Condition, index: number): string {
-  return `${c.since}#${index}`;
+  return `${c.since ?? "-"}#${index}`;
 }
 
 function HostRow({ group, action }: { group: HostGroup; action?: ReactNode }) {
@@ -163,7 +177,9 @@ function HostRow({ group, action }: { group: HostGroup; action?: ReactNode }) {
         </a>
         <Badge severity={group.worst.severity}>{group.worst.severity}</Badge>
         <span className="what">{group.worst.what}</span>
-        <span className="since">{relative(group.worst.since)}</span>
+        {group.worst.since === null ? null : (
+          <span className="since">{relative(group.worst.since)}</span>
+        )}
         {action}
       </div>
       {/* The disclosed rows live INSIDE the <details>, which is the whole

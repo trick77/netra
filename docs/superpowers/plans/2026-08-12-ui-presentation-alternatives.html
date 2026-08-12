@@ -1,0 +1,907 @@
+<title>Three Ways to Read a Host</title>
+<style>
+  :root {
+    --bg: #f7f5f0;
+    --surface: #fffdf9;
+    --surface-2: #faf8f3;
+    --border: #e7e2d8;
+    --border-strong: #cfc9bb;
+    --ink: #1f1e1a;
+    --ink-2: #4d4a42;
+    --muted: #807c72;
+    --accent: #b4531f;
+    --accent-soft: #fbeee5;
+    --grid: #eeeae1;
+    --track: #f4f2ee;
+    --reference: #8c8880;
+    --ok: #0a820a;
+    --warn: #956703;
+    --serious: #c2622f;
+    --crit: #cf3535;
+    --s1: #2a78d6;
+    --s2: #1baf7a;
+    --s3: #4a3aa7;
+    --s4: #c2622f;
+    --shadow: 0 1px 2px rgba(31, 30, 26, 0.06);
+    --shadow-lift: 0 6px 24px rgba(31, 30, 26, 0.1);
+
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1f1f1e;
+      --surface: #1b1b1a;
+      --surface-2: #2c2c2a;
+      --border: #323230;
+      --border-strong: #454540;
+      --ink: #faf9f5;
+      --ink-2: #c9c6bd;
+      --muted: #9c9a92;
+      --accent: #d97757;
+      --accent-soft: #2e211a;
+      --grid: #2a2a28;
+      --track: #3a3a37;
+      --reference: #6e6c66;
+      --ok: #0ca30c;
+      --warn: #fab219;
+      --serious: #ec835a;
+      --crit: #d96060;
+      --s1: #3987e5;
+      --s2: #199e70;
+      --s3: #9085e9;
+      --s4: #ec835a;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+      --shadow-lift: 0 6px 24px rgba(0, 0, 0, 0.5);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #1f1f1e;
+    --surface: #1b1b1a;
+    --surface-2: #2c2c2a;
+    --border: #323230;
+    --border-strong: #454540;
+    --ink: #faf9f5;
+    --ink-2: #c9c6bd;
+    --muted: #9c9a92;
+    --accent: #d97757;
+    --accent-soft: #2e211a;
+    --grid: #2a2a28;
+    --track: #3a3a37;
+    --reference: #6e6c66;
+    --ok: #0ca30c;
+    --warn: #fab219;
+    --serious: #ec835a;
+    --crit: #d96060;
+    --s1: #3987e5;
+    --s2: #199e70;
+    --s3: #9085e9;
+    --s4: #ec835a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-lift: 0 6px 24px rgba(0, 0, 0, 0.5);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 1.5rem 7rem;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 60rem;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4rem;
+  }
+
+  /* ---------- document chrome (my commentary) ---------- */
+  header.top {
+    padding: 4.5rem 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-width: 40rem;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(2.2rem, 5.5vw, 3.1rem);
+    line-height: 1.08;
+    letter-spacing: -0.015em;
+    margin: 0;
+    font-weight: 600;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 1.08rem;
+    color: var(--ink-2);
+    margin: 0;
+    text-wrap: pretty;
+  }
+
+  section.alt {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+  .alt-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.8rem;
+    border-bottom: 1px solid var(--border-strong);
+    padding-bottom: 0.5rem;
+  }
+  .alt-letter {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 0.15rem 0.45rem;
+    border-radius: 3px;
+  }
+  h2 {
+    font-family: var(--serif);
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .alt p {
+    margin: 0;
+    max-width: 40rem;
+    text-wrap: pretty;
+  }
+  .verdict {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.4rem 0.9rem;
+    font-size: 0.9rem;
+    align-items: baseline;
+  }
+  .verdict dt {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+    padding-top: 0.15rem;
+  }
+  .verdict dd {
+    margin: 0;
+    color: var(--ink-2);
+  }
+
+  /* ---------- the mock frame ---------- */
+  .frame {
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--bg);
+    box-shadow: var(--shadow-lift);
+    overflow: hidden;
+  }
+  .frame-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.55rem 0.8rem;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--border);
+  }
+  .dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--border-strong);
+  }
+  .frame-url {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-left: 0.5rem;
+  }
+  .scroll {
+    overflow-x: auto;
+  }
+  .screen {
+    min-width: 60rem;
+    padding: 1.1rem 1.3rem 1.6rem;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  /* ---------- shared mock UI atoms ---------- */
+  .ui-nav {
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    padding-bottom: 0.7rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 1rem;
+  }
+  .ui-brand {
+    font-family: var(--serif);
+    font-style: italic;
+    color: var(--accent);
+    font-size: 1.05rem;
+  }
+  .ui-nav a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.82rem;
+  }
+  .ui-nav a.on {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .ui-nav .spacer {
+    flex: 1;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.66rem;
+    font-weight: 650;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+  }
+  .p-crit { color: var(--crit); }
+  .p-warn { color: var(--warn); }
+  .p-ok { color: var(--ok); }
+  .p-serious { color: var(--serious); }
+
+  .mono { font-family: var(--mono); }
+  .num {
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .dim { color: var(--muted); }
+
+  .meter {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--track);
+    overflow: hidden;
+    min-width: 90px;
+  }
+  .meter i {
+    display: block;
+    height: 100%;
+  }
+
+  svg.spark { display: block; }
+
+  /* ---------- A: triage ---------- */
+  .now {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--crit);
+    background: var(--surface);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+    margin-bottom: 1.1rem;
+  }
+  .now h3 {
+    margin: 0 0 0.6rem;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--muted);
+    font-weight: 650;
+  }
+  .now ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .now li {
+    display: grid;
+    grid-template-columns: 5.5rem 1fr auto;
+    gap: 0.8rem;
+    align-items: baseline;
+  }
+  .now .when {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+  .quiet-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 0.6rem;
+    margin-bottom: 1.1rem;
+  }
+  .qtile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.6rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .qtile .k {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--muted);
+  }
+  .qtile .v {
+    font-family: var(--mono);
+    font-size: 1.05rem;
+    font-variant-numeric: tabular-nums;
+  }
+  details.fold {
+    border-top: 1px solid var(--border);
+    padding: 0.65rem 0;
+  }
+  details.fold summary {
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--ink-2);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    list-style: none;
+  }
+  details.fold summary::-webkit-details-marker { display: none; }
+  details.fold summary::before {
+    content: "▸";
+    color: var(--muted);
+    font-size: 0.7rem;
+  }
+  details.fold[open] summary::before { content: "▾"; }
+  details.fold summary .count {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--muted);
+  }
+  .fold-body {
+    padding: 0.7rem 0 0.2rem 1.1rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+    gap: 0.8rem 1.6rem;
+  }
+  .kvrow {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--grid);
+    padding: 0.25rem 0;
+  }
+
+  /* ---------- B: console ---------- */
+  .console {
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .console .hdr {
+    color: var(--muted);
+    border-bottom: 1px solid var(--border-strong);
+    padding-bottom: 0.2rem;
+    margin-bottom: 0.35rem;
+    text-transform: uppercase;
+    font-size: 0.66rem;
+    letter-spacing: 0.09em;
+  }
+  .crow {
+    display: grid;
+    grid-template-columns: 11rem 5.5rem 1fr 6rem;
+    gap: 1rem;
+    align-items: center;
+    padding: 0.12rem 0;
+    border-bottom: 1px solid var(--grid);
+  }
+  .crow:last-child { border-bottom: 0; }
+  .csect {
+    margin-bottom: 1.15rem;
+  }
+  .bar-cells {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  /* ---------- C: rail ---------- */
+  .railwrap {
+    display: grid;
+    grid-template-columns: 13rem 1fr;
+    gap: 1.2rem;
+  }
+  .rail {
+    border-right: 1px solid var(--border);
+    padding-right: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .rail .rhead {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 0.35rem;
+  }
+  .rail a {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.5rem;
+    align-items: center;
+    padding: 0.32rem 0.45rem;
+    border-radius: 5px;
+    text-decoration: none;
+    color: var(--ink-2);
+    font-size: 0.82rem;
+  }
+  .rail a.on {
+    background: var(--accent-soft);
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .rail .sub {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    color: var(--muted);
+  }
+  .secnav {
+    position: sticky;
+    top: 0;
+    display: flex;
+    gap: 1rem;
+    padding: 0.4rem 0 0.6rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0.9rem;
+    background: var(--bg);
+    font-size: 0.78rem;
+  }
+  .secnav span { color: var(--muted); }
+  .secnav span.on {
+    color: var(--ink);
+    font-weight: 600;
+    border-bottom: 2px solid var(--accent);
+    padding-bottom: 0.35rem;
+    margin-bottom: -0.6rem;
+  }
+  .band {
+    padding: 0.85rem 0;
+    border-bottom: 1px solid var(--grid);
+  }
+  .band h4 {
+    margin: 0 0 0.55rem;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--muted);
+    font-weight: 650;
+  }
+  .band-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 0.9rem;
+  }
+
+  footer {
+    border-top: 1px solid var(--border-strong);
+    padding-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+  footer h2 { margin-bottom: 0.3rem; }
+  footer ul {
+    margin: 0;
+    padding-left: 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    max-width: 40rem;
+  }
+  footer li::marker { color: var(--border-strong); }
+</style>
+
+<div class="page">
+  <header class="top">
+    <div class="eyebrow">netra · presentation study</div>
+    <h1>Three Ways to Read a Host</h1>
+    <p class="standfirst">
+      The charts are not the problem. The problem is that the host page is
+      twelve cards of equal weight in a two-column flow, so nothing is more
+      important than anything else and the reader does the triage netra should
+      have already done. Same host, same palette, same data in all three —
+      only the presentation changes.
+    </p>
+  </header>
+
+  <!-- ============================ A ============================ -->
+  <section class="alt">
+    <div class="alt-head">
+      <span class="alt-letter">A</span>
+      <h2>Triage first</h2>
+    </div>
+    <p>
+      One question governs the page: <em>does this host need me right now?</em>
+      What is wrong leads, at full size, with the time it started. Everything
+      healthy collapses into a strip of six numbers and named folds. The
+      breakdowns still exist — they are one click away and stay closed on a
+      healthy host, which is most hosts most of the time.
+    </p>
+
+    <div class="frame">
+      <div class="frame-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="frame-url">netra / hosts / sim-bare-01</span>
+      </div>
+      <div class="scroll">
+        <div class="screen">
+          <div class="ui-nav">
+            <span class="ui-brand">netra</span>
+            <a href="#" class="on">Fleet</a>
+            <a href="#">Events</a>
+            <a href="#">Settings</a>
+            <span class="spacer"></span>
+            <span class="dim mono" style="font-size: 0.7rem">1h · 6h · 24h · 7d</span>
+          </div>
+
+          <div style="display: flex; align-items: baseline; gap: 0.7rem; margin-bottom: 0.9rem">
+            <span style="font-size: 1.35rem; font-weight: 650">sim-bare-01</span>
+            <span class="dim">Debian 12 · 6.1.0-25-amd64 · 16c/32t · 137.4 GB</span>
+            <span class="spacer" style="flex: 1"></span>
+            <span class="pill p-crit">needs attention</span>
+          </div>
+
+          <div class="now">
+            <h3>Now</h3>
+            <ul>
+              <li>
+                <span class="when">04:12</span>
+                <span><strong>3 OOM kills</strong> — the kernel killed processes to reclaim memory</span>
+                <span class="pill p-crit">critical</span>
+              </li>
+              <li>
+                <span class="when">since 09:40</span>
+                <span><strong>var-log</strong> is 91 % full — 3 GB free</span>
+                <span class="pill p-warn">warning</span>
+              </li>
+              <li>
+                <span class="when">11:03</span>
+                <span><strong>nct6775 fan2</strong> reached 0 RPM inside a bucket</span>
+                <span class="pill p-serious">serious</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="quiet-strip">
+            <div class="qtile"><span class="k">CPU</span><span class="v">71 %</span></div>
+            <div class="qtile"><span class="k">Memory</span><span class="v">74.9 GB</span></div>
+            <div class="qtile"><span class="k">Traffic</span><span class="v">170 MB/s</span></div>
+            <div class="qtile"><span class="k">Disk busy</span><span class="v">38 %</span></div>
+            <div class="qtile"><span class="k">Uptime</span><span class="v">44 d</span></div>
+            <div class="qtile"><span class="k">Agent</span><span class="v" style="font-size: 0.82rem">0.4.1 · abc1234</span></div>
+          </div>
+
+          <details class="fold" open>
+            <summary>Filesystems <span class="count">6 · 1 above 90 %</span></summary>
+            <div class="fold-body">
+              <div>
+                <div class="kvrow"><span>var-log</span><span class="num">91 %</span></div>
+                <div class="meter"><i style="width: 91%; background: var(--serious)"></i></div>
+              </div>
+              <div>
+                <div class="kvrow"><span>tank-backups</span><span class="num">74 %</span></div>
+                <div class="meter"><i style="width: 74%; background: var(--warn)"></i></div>
+              </div>
+              <div>
+                <div class="kvrow"><span>root</span><span class="num">44 %</span></div>
+                <div class="meter"><i style="width: 44%; background: var(--ok)"></i></div>
+              </div>
+            </div>
+          </details>
+
+          <details class="fold">
+            <summary>Sensors <span class="count">19 temperatures · 3 fans · 5 rails</span></summary>
+          </details>
+          <details class="fold">
+            <summary>Limits <span class="count">4 gauges · all below 5 %</span></summary>
+          </details>
+          <details class="fold">
+            <summary>Containers <span class="count">13 · 0 restarting</span></summary>
+          </details>
+          <details class="fold">
+            <summary>Network <span class="count">4 interfaces · 6 addresses</span></summary>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <dl class="verdict">
+      <dt>Fixes</dt>
+      <dd>Hierarchy. A healthy host is six numbers and silence; a sick one puts the reason at the top in words, with a timestamp.</dd>
+      <dt>Costs</dt>
+      <dd>Browsing gets slower — reading a fan you have no complaint about is now a click. Needs every card to have a one-line summary worth collapsing to.</dd>
+      <dt>Best if</dt>
+      <dd>You open netra <em>because something is wrong</em>.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================ B ============================ -->
+  <section class="alt">
+    <div class="alt-head">
+      <span class="alt-letter">B</span>
+      <h2>The console</h2>
+    </div>
+    <p>
+      No cards at all. Rules instead of boxes, one monospace grid, everything
+      on one screen with no tabs and no folds. This is the density of
+      <span class="mono">htop</span> or <span class="mono">zpool status</span> —
+      the tools this data actually comes from — and it treats the reader as
+      someone who already knows what <span class="mono">tcp_tw</span> is.
+      Sparklines stay; they are the one thing a terminal cannot do.
+    </p>
+
+    <div class="frame">
+      <div class="frame-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="frame-url">netra / hosts / sim-bare-01</span>
+      </div>
+      <div class="scroll">
+        <div class="screen console">
+          <div style="display: flex; align-items: baseline; gap: 1rem; margin-bottom: 0.9rem">
+            <span style="font-size: 1.1rem; font-weight: 700">sim-bare-01</span>
+            <span class="dim">debian12 6.1.0-25-amd64 x86_64 16c/32t 137.4G up 44d</span>
+            <span style="flex: 1"></span>
+            <span class="pill p-crit">3 oom</span>
+          </div>
+
+          <div class="csect">
+            <div class="hdr">load</div>
+            <div class="crow">
+              <span>cpu</span><span class="num">70.8 %</span>
+              <span class="bar-cells">
+                <svg class="spark" width="260" height="16" viewBox="0 0 260 16" aria-hidden="true"><path d="M0 12 L30 10 L60 11 L90 7 L120 9 L150 5 L180 8 L210 4 L240 6 L260 5" fill="none" stroke="var(--s1)" stroke-width="1.3"/></svg>
+                <span class="dim">user 37 sys 18 io 12 steal 0</span>
+              </span>
+              <span class="num dim">32 cores</span>
+            </div>
+            <div class="crow">
+              <span>memory</span><span class="num">74.9 G</span>
+              <span class="bar-cells">
+                <div class="meter" style="flex: 1"><i style="width: 55%; background: var(--s1)"></i></div>
+                <span class="dim">of 137.4 G</span>
+              </span>
+              <span class="num dim">54 %</span>
+            </div>
+            <div class="crow">
+              <span>swap</span><span class="num dim">—</span>
+              <span class="dim">not configured</span><span></span>
+            </div>
+            <div class="crow">
+              <span>net</span><span class="num">170 M/s</span>
+              <span class="bar-cells">
+                <svg class="spark" width="260" height="16" viewBox="0 0 260 16" aria-hidden="true"><path d="M0 8 L40 4 L80 9 L120 3 L160 7 L200 2 L240 6 L260 5" fill="none" stroke="var(--s2)" stroke-width="1.3"/></svg>
+                <span class="dim">↑126 M/s ↓85 M/s</span>
+              </span>
+              <span class="num dim">4 ifaces</span>
+            </div>
+          </div>
+
+          <div class="csect">
+            <div class="hdr">filesystems</div>
+            <div class="crow"><span>var-log</span><span class="num">91 %</span>
+              <span class="bar-cells"><div class="meter" style="flex: 1"><i style="width:91%;background:var(--serious)"></i></div><span class="dim">31.2 G of 34.4 G</span></span>
+              <span class="num" style="color: var(--serious)">3 G free</span></div>
+            <div class="crow"><span>tank-backups</span><span class="num">74 %</span>
+              <span class="bar-cells"><div class="meter" style="flex: 1"><i style="width:74%;background:var(--warn)"></i></div><span class="dim">35 T of 47.2 T</span></span>
+              <span class="num dim">12.1 T free</span></div>
+            <div class="crow"><span>tank</span><span class="num">71 %</span>
+              <span class="bar-cells"><div class="meter" style="flex: 1"><i style="width:71%;background:var(--warn)"></i></div><span class="dim">33.5 T of 47.2 T</span></span>
+              <span class="num dim">13.6 T free</span></div>
+            <div class="crow"><span>root</span><span class="num">44 %</span>
+              <span class="bar-cells"><div class="meter" style="flex: 1"><i style="width:44%;background:var(--ok)"></i></div><span class="dim">206.8 G of 472.4 G</span></span>
+              <span class="num dim">265.1 G free</span></div>
+          </div>
+
+          <div class="csect">
+            <div class="hdr">sensors</div>
+            <div class="crow"><span>coretemp pkg0</span><span class="num">59 °C</span>
+              <span><svg class="spark" width="260" height="14" viewBox="0 0 260 14" aria-hidden="true"><path d="M0 9 L40 8 L80 6 L120 7 L160 4 L200 5 L240 3 L260 4" fill="none" stroke="var(--s4)" stroke-width="1.2"/></svg></span>
+              <span class="num dim">19 probes</span></div>
+            <div class="crow"><span>nct6775 fan2</span><span class="num" style="color: var(--serious)">0 rpm</span>
+              <span><svg class="spark" width="260" height="14" viewBox="0 0 260 14" aria-hidden="true"><path d="M0 4 L50 4 L60 4 L60 12 L80 12 L80 4 L140 4 L150 12 L170 12 L170 4 L260 4" fill="none" stroke="var(--s3)" stroke-width="1.2"/></svg></span>
+              <span class="num dim">min in bucket</span></div>
+            <div class="crow"><span>nct6775 +12V</span><span class="num">11.92 V</span>
+              <span><svg class="spark" width="260" height="14" viewBox="0 0 260 14" aria-hidden="true"><path d="M0 6 L40 7 L80 6 L120 8 L160 6 L200 7 L240 6 L260 7" fill="none" stroke="var(--s3)" stroke-width="1.2"/></svg></span>
+              <span class="num dim">3 rails</span></div>
+          </div>
+
+          <div class="csect">
+            <div class="hdr">limits</div>
+            <div class="crow"><span>conntrack</span><span class="num">3 379</span>
+              <span class="bar-cells"><div class="meter" style="flex: 1"><i style="width:2%;background:var(--ok)"></i></div><span class="dim">of 262 144</span></span>
+              <span class="num dim">1 %</span></div>
+            <div class="crow"><span>file desc</span><span class="num">3 493</span>
+              <span class="dim">no limit configured</span><span></span></div>
+            <div class="crow"><span>tcp_tw</span><span class="num">1 689</span>
+              <span class="bar-cells"><div class="meter" style="flex: 1"><i style="width:1%;background:var(--ok)"></i></div><span class="dim">of 131 072</span></span>
+              <span class="num dim">1 %</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <dl class="verdict">
+      <dt>Fixes</dt>
+      <dd>Density and scanning. Everything is on one screen with no navigation at all, and the columns line up so values compare down the page.</dd>
+      <dt>Costs</dt>
+      <dd>Unforgiving to anyone who does not already know the vocabulary. Long hosts scroll a lot. Little room for explanation when a value is absent.</dd>
+      <dt>Best if</dt>
+      <dd>netra is for you and people like you, not for a dashboard on a wall.</dd>
+    </dl>
+  </section>
+
+  <!-- ============================ C ============================ -->
+  <section class="alt">
+    <div class="alt-head">
+      <span class="alt-letter">C</span>
+      <h2>Rail and canvas</h2>
+    </div>
+    <p>
+      The fleet never leaves the screen. A persistent left rail lists hosts
+      with their one worst fact, so moving between machines is a click and not
+      a round trip through an index — and the eight tabs collapse into a sticky
+      section nav over one scrolling canvas, so the page has one scroll
+      position instead of eight.
+    </p>
+
+    <div class="frame">
+      <div class="frame-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="frame-url">netra / hosts / sim-bare-01 #storage</span>
+      </div>
+      <div class="scroll">
+        <div class="screen">
+          <div class="ui-nav">
+            <span class="ui-brand">netra</span>
+            <a href="#" class="on">Fleet</a>
+            <a href="#">Events</a>
+            <a href="#">Settings</a>
+          </div>
+
+          <div class="railwrap">
+            <nav class="rail">
+              <div class="rhead">Hosts · 4</div>
+              <a href="#" class="on"><span>sim-bare-01</span><span class="pill p-crit">3</span></a>
+              <a href="#"><span>sim-rpi5</span><span class="sub">ok</span></a>
+              <a href="#"><span>sim-vps-nvme</span><span class="pill p-warn">1</span></a>
+              <a href="#"><span>sim-vps-tiny</span><span class="sub">ok</span></a>
+              <div class="rhead" style="margin-top: 1rem">Saved</div>
+              <a href="#"><span>Needs attention</span><span class="sub">4</span></a>
+              <a href="#"><span>Disks &gt; 85 %</span><span class="sub">2</span></a>
+            </nav>
+
+            <div>
+              <div style="display: flex; align-items: baseline; gap: 0.7rem; margin-bottom: 0.5rem">
+                <span style="font-size: 1.3rem; font-weight: 650">sim-bare-01</span>
+                <span class="dim">16c/32t · 137.4 GB · up 44 d</span>
+              </div>
+
+              <div class="secnav">
+                <span>Overview</span><span class="on">Storage</span><span>Network</span>
+                <span>Sensors</span><span>Containers</span><span>Events</span>
+              </div>
+
+              <div class="band">
+                <h4>Attention</h4>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap">
+                  <span class="pill p-crit">3 OOM kills</span>
+                  <span class="pill p-warn">var-log 91 %</span>
+                  <span class="pill p-serious">fan2 stalled</span>
+                </div>
+              </div>
+
+              <div class="band">
+                <h4>Filesystems</h4>
+                <div class="band-grid">
+                  <div>
+                    <div class="kvrow"><span>var-log</span><span class="num">91 %</span></div>
+                    <div class="meter"><i style="width: 91%; background: var(--serious)"></i></div>
+                  </div>
+                  <div>
+                    <div class="kvrow"><span>tank-backups</span><span class="num">74 %</span></div>
+                    <div class="meter"><i style="width: 74%; background: var(--warn)"></i></div>
+                  </div>
+                  <div>
+                    <div class="kvrow"><span>tank</span><span class="num">71 %</span></div>
+                    <div class="meter"><i style="width: 71%; background: var(--warn)"></i></div>
+                  </div>
+                  <div>
+                    <div class="kvrow"><span>root</span><span class="num">44 %</span></div>
+                    <div class="meter"><i style="width: 44%; background: var(--ok)"></i></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="band">
+                <h4>Throughput</h4>
+                <svg class="spark" width="620" height="52" viewBox="0 0 620 52" aria-label="disk throughput">
+                  <line x1="0" y1="12" x2="620" y2="12" stroke="var(--reference)" stroke-width="1" stroke-dasharray="4 3"/>
+                  <path d="M0 40 L60 34 L120 38 L180 26 L240 32 L300 20 L360 30 L420 18 L480 28 L540 22 L620 26" fill="none" stroke="var(--s2)" stroke-width="1.6"/>
+                  <path d="M0 46 L60 44 L120 45 L180 40 L240 43 L300 38 L360 42 L420 36 L480 41 L540 39 L620 40" fill="none" stroke="var(--s4)" stroke-width="1.6"/>
+                </svg>
+              </div>
+
+              <div class="band" style="border-bottom: 0">
+                <h4>Devices</h4>
+                <div class="band-grid">
+                  <div class="kvrow"><span class="mono">nvme0n1</span><span class="num dim">0.35 ms</span></div>
+                  <div class="kvrow"><span class="mono">sda</span><span class="num dim">6.5 ms</span></div>
+                  <div class="kvrow"><span class="mono">sdb</span><span class="num dim">6.8 ms</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <dl class="verdict">
+      <dt>Fixes</dt>
+      <dd>Navigation. Comparing two hosts stops being a round trip, and one scroll position replaces eight tab states.</dd>
+      <dt>Costs</dt>
+      <dd>The rail eats horizontal room the charts want, and it needs a real answer for a fleet of 200 hosts — search, grouping, or both.</dd>
+      <dt>Best if</dt>
+      <dd>You move between hosts constantly and the fleet stays smallish.</dd>
+    </dl>
+  </section>
+
+  <footer>
+    <h2 style="font-family: var(--serif); font-size: 1.4rem">What I would change in any of them</h2>
+    <ul>
+      <li>
+        <strong>Kill the uppercase card headings.</strong> Twelve
+        <span class="mono">LETTER-SPACED CAPS</span> down a page read as twelve
+        equally loud shouts. Sentence case in the ink colour, or no heading at
+        all where the content names itself.
+      </li>
+      <li>
+        <strong>Stop boxing everything.</strong> Every card has a border, a
+        radius and a shadow, so the chrome outweighs the content. A rule and
+        whitespace separate sections just as well and cost nothing.
+      </li>
+      <li>
+        <strong>Give the eight tabs an order that means something.</strong>
+        Overview, Graphs, Containers, Filesystems, Network, Packages, Units,
+        Events is the order the code was written in, not the order anyone
+        needs them.
+      </li>
+      <li>
+        <strong>One number per card, not five.</strong> The Inventory card says
+        13 containers, 12 units, 6 filesystems — three counts nobody acts on,
+        occupying the same space as the thing that is actually broken.
+      </li>
+    </ul>
+  </footer>
+</div>
