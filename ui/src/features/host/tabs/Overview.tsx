@@ -909,11 +909,6 @@ export function Overview({
             // (buildinfo.Version and buildinfo.Commit) and served on
             // HostDetail; only the version was ever shown.
             ["Agent", agentBuild(host)],
-            // The toolchain, likewise collected and shown nowhere. It is the
-            // other half of "what is this binary": a Go version explains a
-            // whole class of runtime behaviour -- GC, timer and net
-            // differences -- that the agent's own version number cannot.
-            ["Go", host.go_version ?? ABSENT],
           ]}
         />
       </Panel>

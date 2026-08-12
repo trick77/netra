@@ -657,12 +657,6 @@ describe("Overview system card", () => {
     expect(within(system).getByText("0.4.1 · abc1234")).toBeInTheDocument();
   });
 
-  it("shows the Go toolchain the agent was built with", () => {
-    renderOverview();
-    const system = screen.getByRole("region", { name: "System" });
-    expect(within(system).getByText("go1.25")).toBeInTheDocument();
-  });
-
   // buildinfo.Commit() is "unknown" for a binary built without the ldflags
   // stamp -- a plain `go build` from a working tree. That is a fact about how
   // the agent was compiled, not a value worth printing: "0.4.1 · unknown"
