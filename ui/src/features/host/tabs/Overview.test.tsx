@@ -104,6 +104,20 @@ const fsMetrics = response({
   ],
 });
 
+const netMetrics = response({
+  family: "net",
+  key_columns: ["interface"],
+  columns: ["rx_bytes", "tx_bytes"],
+  series: [
+    {
+      key: { interface: "eth0" },
+      // Inside the response window above -- griddedValues() drops a point
+      // that falls outside it, and every rate would read as absent.
+      points: [[1_786_321_800_000, 2_000_000, 500_000]],
+    },
+  ],
+});
+
 function agentMetrics(dropped: number) {
   return response({
     family: "agent",
@@ -323,5 +337,19 @@ describe("Overview processor panel", () => {
     const panel = screen.getByRole("region", { name: "Processor chart" });
     expect(panel).toBeInTheDocument();
     expect(within(panel).queryByText("Not collected")).toBeNull();
+  });
+
+  // net_rx and net_tx are BYTES per second: network.go computes them as
+  // (rxBytes - prev) / elapsed. Rendered through bitrate() the card read 8x
+  // low and entirely plausible -- a 2 MB/s link showed as "2 Mb/s" -- and
+  // the fleet's traffic cell carried the identical bug, so nothing on screen
+  // contradicted it.
+  it("shows traffic in bytes per second, not bits", () => {
+    renderOverview({ netMetrics });
+    const traffic = screen.getByRole("region", { name: "Traffic" });
+
+    expect(within(traffic).getByText(/2 MB\/s/)).toBeInTheDocument();
+    expect(within(traffic).getByText(/500 kB\/s/)).toBeInTheDocument();
+    expect(traffic.textContent).not.toMatch(/b\/s/);
   });
 });

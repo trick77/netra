@@ -156,6 +156,104 @@ describe("memoryBands", () => {
 
     expect(memoryBands(noZfs).map((b) => b.name)).not.toContain("ARC");
   });
+
+  // An upgraded hub carries mem_free on the family for EVERY host, so the
+  // column check passed even for a host still running an agent that never
+  // sent it. All five bands then came back all-null, the trailing filter
+  // dropped every one of them, and the page said "reported no memory
+  // samples" about a host reporting perfectly well.
+  it("falls back to mem_used when the column is carried but never filled", () => {
+    const nulled = response({
+      columns: ["mem_total", "mem_free", "mem_used"],
+      series: [
+        {
+          key: {},
+          points: [
+            [t0, null, null, 400],
+            [t0 + hour, null, null, 450],
+          ],
+        },
+      ],
+    });
+
+    const bands = memoryBands(nulled);
+
+    expect(bands.map((b) => b.name)).toEqual(["used"]);
+    expect(bands[0]!.values).toEqual([400, 450]);
+  });
+
+  // The same fallback the missing-column case has always taken. Absent data
+  // and an absent column are the same fact about what can be drawn.
+  it("falls back to mem_used when the tier does not carry mem_free at all", () => {
+    const noColumn = response({
+      columns: ["mem_total", "mem_used"],
+      series: [{ key: {}, points: [[t0, 1000, 400]] }],
+    });
+
+    expect(memoryBands(noColumn).map((b) => b.name)).toEqual(["used"]);
+  });
+
+  // A kernel with no SReclaimable line is supported (memory.go,
+  // TestMemoryAbsentShmemLeavesCachedWhole) and reports it NULL for every
+  // bucket. add() returned null wherever EITHER input was null, so one
+  // all-null optional poisoned the whole cached band; the band was then
+  // dropped and counted as 0 in the remainder, moving several GB of page
+  // cache into "used" and reporting it as resident.
+  it("keeps the cached band whole when mem_sreclaimable is all null", () => {
+    const noSlab = response({
+      columns: [
+        "mem_total",
+        "mem_free",
+        "mem_buffers",
+        "mem_cached",
+        "mem_sreclaimable",
+        "mem_shared",
+      ],
+      series: [
+        {
+          key: {},
+          points: [
+            [t0, 1000, 200, 30, 100, null, 50],
+            [t0 + hour, 1000, 200, 30, 100, null, 50],
+          ],
+        },
+      ],
+    });
+
+    const bands = memoryBands(noSlab);
+    const cached = bands.find((b) => b.name === "cached");
+    const used = bands.find((b) => b.name === "used")!;
+
+    // cached survives at mem_cached's own value -- the absent slab
+    // contributes nothing rather than deleting the band.
+    expect(cached).toBeDefined();
+    expect(cached!.values).toEqual([100, 100]);
+    // And the remainder is not inflated by the 100 bytes the dropped band
+    // used to donate to it: 1000 - (200 + 30 + 100 + 50).
+    expect(used.values[0]).toBe(620);
+  });
+
+  // Both inputs null IS still null: neither said anything about that bucket,
+  // so there is no total to state. Only a ONE-sided null is a partial sum.
+  it("leaves a bucket null where both cached inputs are null", () => {
+    const gap = response({
+      columns: ["mem_total", "mem_free", "mem_cached", "mem_sreclaimable"],
+      series: [
+        {
+          key: {},
+          points: [
+            [t0, 1000, 200, null, null],
+            [t0 + hour, 1000, 200, 100, null],
+          ],
+        },
+      ],
+    });
+
+    const cached = memoryBands(gap).find((b) => b.name === "cached")!;
+
+    expect(cached.values[0]).toBeNull();
+    expect(cached.values[1]).toBe(100);
+  });
 });
 
 describe("perCoreBands", () => {

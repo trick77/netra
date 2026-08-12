@@ -615,3 +615,96 @@ func TestIntegrationMetricsColumnFilterIsTierSpecific(t *testing.T) {
 		t.Errorf("columns = %v, want [cpu_total_avg]", res.Columns)
 	}
 }
+
+// The container page at 7d and 30d, which is the only range that reaches the
+// 1h tier.
+//
+// container_samples_5m rolls up the six columns that split a container's CPU
+// and memory -- cpu_user, cpu_system, mem_anon, mem_file, mem_shmem,
+// mem_kernel -- and container_samples_1h did not. A container page at 6h and
+// 24h therefore drew the full breakdown and the SAME page at 7d silently
+// collapsed to the single cpu_pct/mem_used line, with nothing on screen
+// saying why. The host charts do not degrade that way, because
+// host_samples_1h was updated when the host samples were split; this is the
+// tier that was missed.
+//
+// avg only, never max: these are parts of a whole, and a chart stacking a max
+// of one against an avg of another composes two different instants into one
+// bar.
+func TestIntegrationMetricsHourlyContainerTierCarriesTheBreakdown(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+	id := seedHost(t, pool, "long-containers")
+
+	exec(t, pool, `
+		INSERT INTO containers (host_id, container_key, name)
+		VALUES ($1, 'proj/web', 'web-1')`, id)
+	// Forty days back, so range selection reaches past the 5m tier for 1h.
+	exec(t, pool, `
+		INSERT INTO container_samples
+		       (host_id, container_id, ts, cpu_pct, cpu_user, cpu_system,
+		        mem_used, mem_anon, mem_file, mem_shmem, mem_kernel)
+		SELECT $1, d.id, now() - INTERVAL '40 days', 30.0, 20.0, 10.0,
+		       1000, 600, 200, 100, 100
+		  FROM containers d WHERE d.host_id = $1 AND d.container_key = 'proj/web'`, id)
+	exec(t, pool, `
+		INSERT INTO container_samples
+		       (host_id, container_id, ts, cpu_pct, cpu_user, cpu_system,
+		        mem_used, mem_anon, mem_file, mem_shmem, mem_kernel)
+		SELECT $1, d.id, now() - INTERVAL '40 days' + INTERVAL '1 minute',
+		       50.0, 30.0, 20.0, 2000, 1200, 400, 200, 200
+		  FROM containers d WHERE d.host_id = $1 AND d.container_key = 'proj/web'`, id)
+
+	// Order matters: the 1h view aggregates the 5m view, so refreshing 1h
+	// first would materialise it from an empty source and leave it empty.
+	refresh(t, pool, "container_samples_5m")
+	refresh(t, pool, "container_samples_1h")
+
+	res, err := svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "container", From: now.Add(-60 * 24 * time.Hour), To: now,
+	}, now)
+	if err != nil {
+		t.Fatalf("Metrics: %v", err)
+	}
+
+	if res.Tier != read.Tier1h {
+		t.Fatalf("tier = %q, want 1h -- this test only proves anything at the coarsest tier", res.Tier)
+	}
+	if len(res.Series) != 1 || len(res.Series[0].Points) == 0 {
+		t.Fatalf("series = %+v, want one container with points", res.Series)
+	}
+
+	for _, want := range []string{
+		"cpu_user_avg", "cpu_system_avg",
+		"mem_anon_avg", "mem_file_avg", "mem_shmem_avg", "mem_kernel_avg",
+	} {
+		if !slices.Contains(res.Columns, want) {
+			t.Errorf("columns = %v, want %s -- a container page at 7d collapses to the "+
+				"single line without it", res.Columns, want)
+		}
+	}
+
+	// avg only. A _max sibling on a column a chart stacks as part of a whole
+	// is the bug the 5m tier's own comment exists to prevent.
+	for _, unwanted := range []string{
+		"cpu_user_max", "cpu_system_max",
+		"mem_anon_max", "mem_file_max", "mem_shmem_max", "mem_kernel_max",
+	} {
+		if slices.Contains(res.Columns, unwanted) {
+			t.Errorf("columns include %s; these are parts of a whole and must be avg only", unwanted)
+		}
+	}
+
+	// The values are really bucketed, not merely declared: the two samples
+	// average to 25 % system time.
+	idx := slices.Index(res.Columns, "cpu_system_avg")
+	// Points are [ts, col0, col1, ...], so the column's offset is idx + 1.
+	value := res.Series[0].Points[0][idx+1]
+	if value == nil {
+		t.Fatal("cpu_system_avg = nil, want the bucketed average")
+	}
+	if got, ok := value.(float64); !ok || got != 15 {
+		t.Errorf("cpu_system_avg = %#v, want 15 (the mean of 10 and 20)", value)
+	}
+}

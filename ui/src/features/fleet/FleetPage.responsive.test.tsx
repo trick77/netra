@@ -17,6 +17,7 @@ function row(overrides: Partial<HostRow> = {}): HostRow {
     uptime_s: 900,
     threads: null,
     cpu: [],
+    reporting: [],
     mem: [],
     rx: [],
     tx: [],

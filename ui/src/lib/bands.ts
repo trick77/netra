@@ -52,15 +52,24 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
   // absorb the entire free pool and every host would read as nearly full.
   // One true band beats five wrong ones, so this falls back to what older
   // data can actually support.
-  if (!carriesColumn(res, "mem_free") || !carriesColumn(res, "mem_total")) {
+  //
+  // The test is on the DATA, not only on the column. An upgraded hub carries
+  // mem_free on the family for every host, so carriesColumn is true even for
+  // a host still running an agent that never sends it -- all five bands then
+  // come back all-null, the trailing filter drops every one of them, and the
+  // page says "reported no memory samples" about a host reporting perfectly
+  // well. A column the tier carries but the host never filled is exactly as
+  // absent as a column the tier does not have.
+  const hasColumns =
+    carriesColumn(res, "mem_free") && carriesColumn(res, "mem_total");
+  const total = hasColumns ? griddedValues(res, 0, "mem_total") : [];
+  const free = hasColumns ? griddedValues(res, 0, "mem_free") : [];
+  if (!reported(total) || !reported(free)) {
     const used = griddedValues(res, 0, "mem_used");
     return used.length === 0
       ? []
       : [{ name: "used", color: USED, values: used }];
   }
-
-  const total = griddedValues(res, 0, "mem_total");
-  const free = griddedValues(res, 0, "mem_free");
   const buffers = optional(res, "mem_buffers");
   const shared = optional(res, "mem_shared");
   const arc = optional(res, "mem_zfs_arc");
@@ -192,7 +201,24 @@ function optional(res: MetricsResponse, base: string): (number | null)[] {
   return carriesColumn(res, base) ? griddedValues(res, 0, base) : [];
 }
 
-/** Index-wise sum of two series; a missing series contributes nothing. */
+/**
+ * Index-wise sum of two series that may each legitimately be absent -- both
+ * as a whole series and at any one index.
+ *
+ * A null on ONE side contributes nothing rather than poisoning the total, the
+ * same rule sumOptional() below already documents and for the same reason:
+ * these are optional subsystems, and mem_sreclaimable is the case that
+ * proves it. A kernel with no SReclaimable line is supported (memory.go,
+ * TestMemoryAbsentShmemLeavesCachedWhole) and reports it NULL for every
+ * bucket, so `x === null || y === null -> null` made the whole cached band
+ * null. The trailing filter then dropped it, sumOptional counted the missing
+ * band as 0 in the remainder, and several GB of page cache were reported as
+ * resident memory.
+ *
+ * Both null IS still null: neither input said anything about that bucket, so
+ * there is no total to state. That is the one case where the sum really is
+ * unknowable rather than merely partial.
+ */
 function add(a: (number | null)[], b: (number | null)[]): (number | null)[] {
   if (a.length === 0) return b;
   if (b.length === 0) return a;
@@ -201,9 +227,21 @@ function add(a: (number | null)[], b: (number | null)[]): (number | null)[] {
   for (let i = 0; i < width; i++) {
     const x = a[i] ?? null;
     const y = b[i] ?? null;
-    out.push(x === null || y === null ? null : x + y);
+    out.push(x === null && y === null ? null : (x ?? 0) + (y ?? 0));
   }
   return out;
+}
+
+/**
+ * Whether a series carries a reading at all -- any non-null value.
+ *
+ * The distinction memoryBands() turns on: a column the answering tier does
+ * not have comes back as an empty array, and a column it has but this host
+ * never filled comes back all null. Both mean "nothing to compute a
+ * partition from", and only the first was being checked.
+ */
+function reported(values: readonly (number | null)[]): boolean {
+  return values.some((v) => v !== null);
 }
 
 /**

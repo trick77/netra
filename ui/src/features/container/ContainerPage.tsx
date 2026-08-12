@@ -17,7 +17,13 @@ import {
   griddedValues,
   windowNotice,
 } from "../../lib/metrics";
-import { ABSENT, bytes, percent, relativeMs } from "../../lib/format";
+import {
+  ABSENT,
+  byterate,
+  bytes,
+  percent,
+  relativeMs,
+} from "../../lib/format";
 import type { Range } from "../../lib/range";
 
 // The windows this page OFFERS. The type is lib/range's, so a range chosen
@@ -190,14 +196,6 @@ function read(res: MetricsResponse, containerKey: string): Sampled | null {
   };
 }
 
-/** Bytes per second, not bits: net_rx/net_tx and io_read/io_write are byte
- * counters divided by the scrape interval (agent/collector/containers.go),
- * and handing them to format.ts's bitrate() would be the 8x-wrong number
- * that still looks plausible. */
-function perSecond(n: number | null): string {
-  return n === null ? ABSENT : `${bytes(n)}/s`;
-}
-
 function last(values: readonly (number | null)[]): number | null {
   return values.filter((v): v is number => v !== null).at(-1) ?? null;
 }
@@ -341,7 +339,7 @@ export function ContainerPage({
             halves read as one mass. */}
         <ChartPanel
           title="Network"
-          fmt={perSecond}
+          fmt={byterate}
           notice={notice}
           window={metrics.window}
           range={range}
@@ -354,7 +352,7 @@ export function ContainerPage({
         />
         <ChartPanel
           title="Disk I/O"
-          fmt={perSecond}
+          fmt={byterate}
           notice={notice}
           window={metrics.window}
           range={range}

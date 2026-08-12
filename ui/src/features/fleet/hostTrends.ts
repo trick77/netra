@@ -28,6 +28,21 @@ import type { HostRow } from "./hostColumns";
 export interface HostTrends {
   cpu: Band[];
   mem: Band[];
+  /**
+   * The series the row's status is judged from: cpu_total, from the `host`
+   * family, for every host without exception.
+   *
+   * Deliberately NOT `cpu[0]`, which is what the sporadic badge used to
+   * read. That is a per-core band under 32 threads and the cpu_total
+   * fallback above it, so one host was judged against the cpu_core family
+   * and the host beside it against host_samples -- two different relations,
+   * two different materialisation lags, two different gap patterns. A
+   * status column has to mean the same thing on every row of the same page.
+   *
+   * The `host` family is fetched unconditionally below, so this costs no
+   * extra request.
+   */
+  reporting: (number | null)[];
   rx: (number | null)[];
   tx: (number | null)[];
   fullest: HostRow["fullest"];
@@ -266,6 +281,8 @@ export async function fetchHostTrends(
   return {
     cpu,
     mem: memoryBands(host),
+    // One series, one relation, every host -- see HostTrends.reporting.
+    reporting: host === null ? [] : griddedValues(host, 0, "cpu_total"),
     rx: sumSeries(net, "rx_bytes"),
     tx: sumSeries(net, "tx_bytes"),
     fullest: fullestFilesystem(filesystem),
@@ -288,6 +305,7 @@ export function buildRows(
         host.site_id === null ? null : (siteNames.get(host.site_id) ?? null),
       cpu: trend?.cpu ?? [],
       mem: trend?.mem ?? [],
+      reporting: trend?.reporting ?? [],
       rx: trend?.rx ?? [],
       tx: trend?.tx ?? [],
       // null, not a zero percentage: a host whose filesystems have not been

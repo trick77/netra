@@ -85,6 +85,94 @@ describe("ChartDetail", () => {
   });
 });
 
+describe("ChartDetail y axis", () => {
+  const axisLabels = () =>
+    Array.from(document.querySelectorAll(".cd-y span")).map((el) => ({
+      top: (el as HTMLElement).style.top,
+      text: el.textContent,
+    }));
+
+  // mirrorPaths() puts the baseline at h/2 and draws egress DOWNWARD from
+  // it, so the midline is ZERO and both edges are a peak. The shared
+  // [ceiling, ceiling/2, 0] axis said the opposite -- zero at the bottom,
+  // where the largest egress actually sits -- so a saturated downlink read
+  // as an idle one. Both mirrored callers ("Interface throughput" and the
+  // container page's "Network") left the axis on.
+  it("labels a mirrored chart with zero at the midline and a peak at each edge", () => {
+    render(
+      <ChartDetail
+        title="Interface throughput"
+        series={[
+          { name: "ingress", color: "var(--s2)", values: [10, 40] },
+          { name: "egress", color: "var(--s5)", values: [5, 20] },
+        ]}
+        max={100}
+        mirrored
+        onClose={() => {}}
+      />,
+    );
+
+    expect(axisLabels()).toEqual([
+      { top: "0%", text: "100" },
+      { top: "50%", text: "0" },
+      { top: "100%", text: "100" },
+    ]);
+  });
+
+  // The axis is kept rather than hidden because both mirrored callers are
+  // rate charts carrying unit="B/s": "how much" is the question a reader
+  // enlarged them to answer, and dropping the axis answers less than
+  // labelling it correctly does.
+  it("still draws an axis for a mirrored chart rather than hiding it", () => {
+    render(
+      <ChartDetail
+        title="Network"
+        series={[{ name: "ingress", color: "var(--s2)", values: [1, 2] }]}
+        max={10}
+        mirrored
+        onClose={() => {}}
+      />,
+    );
+
+    expect(document.querySelector(".cd-y")).not.toBeNull();
+  });
+
+  // The unmirrored axis is unchanged: top is the ceiling, bottom is zero.
+  it("leaves the ordinary axis running from the ceiling down to zero", () => {
+    render(
+      <ChartDetail
+        title="Processor"
+        series={series}
+        max={100}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(axisLabels()).toEqual([
+      { top: "0%", text: "100" },
+      { top: "50%", text: "50" },
+      { top: "100%", text: "0" },
+    ]);
+  });
+
+  // hideAxis still wins: an unnormalised per-core stack runs to N x 100 and
+  // its height is a shape, not a quantity.
+  it("draws no axis at all when the caller hides it", () => {
+    render(
+      <ChartDetail
+        title="Per-core"
+        series={series}
+        max={400}
+        stacked
+        hideAxis
+        onClose={() => {}}
+      />,
+    );
+
+    expect(document.querySelector(".cd-y")).toBeNull();
+  });
+});
+
 describe("ChartPanel enlargement", () => {
   // The chart is the affordance, and it has to work from the keyboard: a
   // div with a click handler would be neither.

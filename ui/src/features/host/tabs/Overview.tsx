@@ -16,7 +16,7 @@ import {
 } from "../../../lib/metrics";
 import {
   ABSENT,
-  bitrate,
+  byterate,
   bytes,
   duration,
   percent,
@@ -508,8 +508,13 @@ export function Overview({
               label="Ingress and egress over time"
             />
             <div className="traffic-rates">
-              <span className="rate">↑ {bitrate(lastNumber(ingress))} in</span>
-              <span className="rate">↓ {bitrate(lastNumber(egress))} out</span>
+              {/* byterate, never bitrate: net_rx/net_tx are BYTES per
+                  second, so bitrate() rendered every host's traffic 8x low
+                  and plausibly. The fleet's traffic cell carried the same
+                  bug, so the two pages agreed with each other and with
+                  nothing else. */}
+              <span className="rate">↑ {byterate(lastNumber(ingress))} in</span>
+              <span className="rate">↓ {byterate(lastNumber(egress))} out</span>
             </div>
           </div>
         )}
