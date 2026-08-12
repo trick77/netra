@@ -254,6 +254,28 @@ describe("memoryBands", () => {
     expect(cached.values[0]).toBeNull();
     expect(cached.values[1]).toBe(100);
   });
+
+  // The third member of the family, and the one that decides whether the
+  // fallback is a fix or a new bug: a host whose agent was down for the whole
+  // window reports NOTHING, mem_used included. Returning a lone band of nulls
+  // draws an empty chart with no explanation, where naming the absence is the
+  // whole point -- absent must never render as a fact.
+  it("draws nothing at all for a host that reported no memory whatsoever", () => {
+    const silent = response({
+      columns: ["mem_total", "mem_free", "mem_used"],
+      series: [
+        {
+          key: {},
+          points: [
+            [t0, null, null, null],
+            [t0 + hour, null, null, null],
+          ],
+        },
+      ],
+    });
+
+    expect(memoryBands(silent)).toEqual([]);
+  });
 });
 
 describe("perCoreBands", () => {

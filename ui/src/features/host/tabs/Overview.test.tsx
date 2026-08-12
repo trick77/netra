@@ -111,9 +111,11 @@ const netMetrics = response({
   series: [
     {
       key: { interface: "eth0" },
-      // Inside the response window above -- griddedValues() drops a point
-      // that falls outside it, and every rate would read as absent.
-      points: [[1_786_321_800_000, 2_000_000, 500_000]],
+      // The FINAL bucket of the response window above. Inside the window at
+      // all, because griddedValues() drops a point that falls outside it --
+      // and in the last bucket specifically, so this test is about the
+      // formatter rather than about which bucket the card reads from.
+      points: [[1_786_323_540_000, 2_000_000, 500_000]],
     },
   ],
 });

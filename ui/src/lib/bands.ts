@@ -65,10 +65,14 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
   const total = hasColumns ? griddedValues(res, 0, "mem_total") : [];
   const free = hasColumns ? griddedValues(res, 0, "mem_free") : [];
   if (!reported(total) || !reported(free)) {
+    // And the fallback answers to the same rule it was just given. A host
+    // whose agent was down for the whole window reports nothing at all,
+    // mem_used included: a lone band of nulls draws an empty chart where
+    // naming the absence is the entire point. The five-band return below has
+    // always dropped bands this way; the one-band path was checking only its
+    // LENGTH, which an all-null series passes.
     const used = griddedValues(res, 0, "mem_used");
-    return used.length === 0
-      ? []
-      : [{ name: "used", color: USED, values: used }];
+    return reported(used) ? [{ name: "used", color: USED, values: used }] : [];
   }
   const buffers = optional(res, "mem_buffers");
   const shared = optional(res, "mem_shared");
