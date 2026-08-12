@@ -79,22 +79,28 @@ function HostCell({ row }: { row: HostRow }) {
   const status = hostStatus(row, undefined, row.cpu[0]?.values);
   return (
     <div className="host-cell">
-      {/* The hostname is the way into the host page, and it is an anchor
-          rather than a row click handler: middle-click, copy-link and
-          bookmark all have to work, and a row-wide handler would swallow
-          the text selection someone needs to read an id off the screen.
-          The fleet list had no link into detail at all. */}
-      <a className="host-cell-name" href={`/hosts/${row.id}/overview`}>
-        {row.hostname}
-      </a>
-      {/* After the name, and only when there is something to say. Healthy is
+      <div className="host-cell-top">
+        {/* The hostname is the way into the host page, and it is an anchor
+            rather than a row click handler: middle-click, copy-link and
+            bookmark all have to work, and a row-wide handler would swallow
+            the text selection someone needs to read an id off the screen.
+            The fleet list had no link into detail at all. */}
+        <a className="host-cell-name" href={`/hosts/${row.id}/overview`}>
+          {row.hostname}
+        </a>
+        {/* After the name, and only when there is something to say. Healthy is
           the overwhelming majority state, so a badge on every row spent the
           eye's first stop -- and the leftmost column -- on the word "online"
           repeated down the page. What a reader scans for is the exception,
           which is now the only thing marked. */}
-      {status.severity !== "ok" && (
-        <Badge severity={status.severity}>{status.label}</Badge>
-      )}
+        {status.severity !== "ok" && (
+          <Badge severity={status.severity}>{status.label}</Badge>
+        )}
+      </div>
+      {/* The location goes under the name rather than beside it: the two are
+          a heading and its subtitle, not two peers, and the row has the
+          vertical space. Inline, a long site name pushed the hostname off
+          the eye's scan line down the column. */}
       <div className="host-cell-site">{row.site_name ?? ABSENT}</div>
     </div>
   );
@@ -223,7 +229,10 @@ function UptimeCell({ row }: { row: HostRow }) {
     // dot with a WORD is supposed to prevent. A duration is not a severity.
     return <Badge severity="warning">rebooted {text} ago</Badge>;
   }
-  return <>{text}</>;
+  // Same type as the traffic cell's rates, in muted ink. Uptime inherited
+  // the table body's own size and full-strength colour, which made
+  // "37 d 6 h" the loudest thing in a row whose point is the charts.
+  return <span className="uptime-cell">{text}</span>;
 }
 
 export function hostColumns(range: Range): Column<HostRow>[] {

@@ -493,6 +493,14 @@ a {
    unstyled; these classes carry the same look in both places. */
 .host-cell {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+/* Name and, when there is something wrong, its badge -- one line. The
+   location sits under them. */
+.host-cell-top {
+  display: flex;
   align-items: center;
   gap: var(--space-2);
   flex-wrap: wrap;
@@ -1180,6 +1188,16 @@ svg.spark {
 .disk-cell .mrow {
   grid-template-columns: 1fr auto;
   gap: var(--space-2);
+}
+/* Uptime reads as the traffic cell's rates do -- same size, and --muted
+   rather than --ink-2: it inherited the table body's own type, which made
+   "37 d 6 h" the loudest thing in a row whose point is the charts. An uptime
+   is context for everything else on the line, not the reading anyone came
+   for. */
+.uptime-cell {
+  font-size: var(--text-label);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .mrow .lab {
   font-size: var(--text-label);
