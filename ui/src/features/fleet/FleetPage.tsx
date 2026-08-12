@@ -369,16 +369,28 @@ export function FleetPage({
       )}
 
       <div className="tiles">
+        {/* The first two tiles count a set the page can show, and sit
+            directly above the tabs that show it -- so they are the control
+            they already looked like. Their hrefs match the tabs' own, which
+            is what keeps them bookmarkable and what makes clicking one the
+            same act as clicking the tab. */}
         <StatTile
           label="Hosts reporting"
           value={reporting}
           detail={`of ${hostRows.length} known`}
+          href="/"
+          onSelect={() => setEntity("hosts")}
         />
         <StatTile
           label="Containers"
           value={containersKnown ? containerRows.length : ABSENT}
           detail="across the fleet"
+          href="/?entity=containers"
+          onSelect={() => setEntity("containers")}
         />
+        {/* No href: fleet traffic is a rate, not a set, so there is no list
+            of it to go to. A tile that looks clickable and does nothing is
+            worse than one that plainly is not. */}
         <StatTile
           label="Fleet traffic"
           value={fleetTraffic(hostRows)}

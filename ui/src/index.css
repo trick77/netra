@@ -930,6 +930,34 @@ a {
   font-size: var(--text-label);
   color: var(--muted);
 }
+/* A tile that leads somewhere. It is an <a>, so it needs the anchor colour
+   and underline undone -- the tile's own type is already the design, and a
+   blue underlined heading inside a card is not it. What marks it as
+   interactive is the hover lift and the pointer, not a link colour. */
+.tile-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+.tile-link:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+/* Keyboard focus has to be visible on its own terms: the hover treatment is
+   a background change, which a keyboard user never triggers. */
+.tile-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile-link {
+    transition: none;
+  }
+}
 
 /* controls — ONE input style, ONE button style, four variants */
 .ctl {

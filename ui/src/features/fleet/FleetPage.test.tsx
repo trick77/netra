@@ -46,6 +46,19 @@ function makeContainer(overrides: Partial<ContainerRow> = {}): ContainerRow {
   };
 }
 
+/** The Containers TAB. The Containers stat tile above it is now a link of
+ * the same name, so every query for one has to exclude the other. */
+function containersTab(): HTMLElement {
+  const nav = document.querySelector<HTMLElement>("nav.tabs")!;
+  return within(nav).getByRole("link", { name: /containers/i });
+}
+
+/** A stat tile by the href it leads to -- its accessible name is the whole
+ * tile ("Containers 22 across the fleet"), which is not worth matching on. */
+function tile(href: string): HTMLElement {
+  return document.querySelector<HTMLElement>(`a.tile[href="${href}"]`)!;
+}
+
 function renderPage(props: Parameters<typeof FleetPage>[0] = {}) {
   return render(
     <FleetPage
@@ -76,7 +89,7 @@ describe("FleetPage entity tabs", () => {
     ).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/filter hosts/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("link", { name: /containers/i }));
+    await user.click(containersTab());
 
     expect(
       screen.getByPlaceholderText(/filter containers/i),
@@ -93,7 +106,7 @@ describe("FleetPage entity tabs", () => {
 
     expect(screen.getByRole("button", { name: "Cards" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("link", { name: /containers/i }));
+    await user.click(containersTab());
 
     expect(screen.queryByRole("button", { name: "Cards" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Table" })).toBeNull();
@@ -404,5 +417,46 @@ describe("FleetPage data fetching", () => {
       <FleetPage rows={[makeRow({ id: 1 })]} checkedAt={null} now={NOW} />,
     );
     expect(screen.getByText(/nothing needs attention/)).toBeInTheDocument();
+  });
+});
+
+describe("FleetPage stat tiles as controls", () => {
+  it("switches to the containers list when the Containers tile is clicked", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(screen.getByPlaceholderText(/filter hosts/i)).toBeInTheDocument();
+
+    await user.click(tile("/?entity=containers"));
+
+    expect(
+      screen.getByPlaceholderText(/filter containers/i),
+    ).toBeInTheDocument();
+  });
+
+  it("returns to the hosts list from the Hosts reporting tile", async () => {
+    const user = userEvent.setup();
+    renderPage({ entity: "containers" });
+
+    await user.click(tile("/"));
+
+    expect(screen.getByPlaceholderText(/filter hosts/i)).toBeInTheDocument();
+  });
+
+  // Real links, so middle-click, cmd-click and bookmarking work without this
+  // component reimplementing any of them. The hrefs match the tabs' own.
+  it("gives the navigable tiles the same hrefs as the tabs", () => {
+    renderPage();
+
+    expect(tile("/")).not.toBeNull();
+    expect(tile("/?entity=containers")).not.toBeNull();
+  });
+
+  // Fleet traffic is a rate, not a set: there is no list of it to go to, and
+  // a tile that looks clickable and does nothing is worse than an inert one.
+  it("leaves the fleet traffic tile inert", () => {
+    renderPage();
+
+    expect(screen.getByText("Fleet traffic").closest("a")).toBeNull();
   });
 });
