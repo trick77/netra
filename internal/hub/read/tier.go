@@ -31,12 +31,25 @@ type tierSpec struct {
 	tsColumn string
 	// step is the distance between consecutive points.
 	step time.Duration
-	// lag is how far behind now this tier is materialised -- the end_offset
-	// of its refresh policy. Every continuous aggregate in 0001_init.sql is
+	// lag is the end_offset of this tier's refresh policy: how far back a
+	// refresh RUN reaches. Every continuous aggregate in 0001_init.sql is
 	// materialized_only = true (the TimescaleDB default since 2.13), so a
-	// query past this horizon returns nothing rather than falling through to
-	// the raw table. Zero for raw tiers, which have no materialisation step.
+	// query past the materialised horizon returns nothing rather than falling
+	// through to the raw table. Zero for raw tiers, which have no
+	// materialisation step.
 	lag time.Duration
+	// refreshEvery is the schedule_interval of that same policy: how often a
+	// run happens, and therefore how stale end_offset's reach can be.
+	//
+	// It is a separate field rather than folded into lag because every number
+	// in this struct mirrors exactly ONE value in 0001_init.sql, which is
+	// what lets TestIntegrationTierSpecsMatchTheSchema pin each of them
+	// against timescaledb_information. A single combined constant would drift
+	// silently the next time either half of the policy changed.
+	//
+	// The two are added at the point of use -- see materialisedThrough. Zero
+	// for raw tiers, which have no policy.
+	refreshEvery time.Duration
 	// retention is the interval of this tier's retention policy: data older
 	// than now - retention has been dropped.
 	//
@@ -59,11 +72,13 @@ var (
 	}
 	fiveMinuteTier = tierSpec{
 		name: Tier5m, suffix: "_5m", tsColumn: "bucket",
-		step: 5 * time.Minute, lag: 10 * time.Minute, retention: 30 * 24 * time.Hour,
+		step: 5 * time.Minute, lag: 10 * time.Minute,
+		refreshEvery: 5 * time.Minute, retention: 30 * 24 * time.Hour,
 	}
 	hourlyTier = tierSpec{
 		name: Tier1h, suffix: "_1h", tsColumn: "bucket",
-		step: time.Hour, lag: time.Hour, retention: 90 * 24 * time.Hour,
+		step: time.Hour, lag: time.Hour,
+		refreshEvery: 30 * time.Minute, retention: 90 * 24 * time.Hour,
 	}
 )
 
@@ -88,6 +103,24 @@ var (
 		step: time.Minute, lag: 0, retention: 48 * time.Hour,
 	}}
 )
+
+// materialisedThrough is the newest bucket boundary this tier can be relied on
+// to have written, given the clock.
+//
+// end_offset is how far back a refresh run reaches; schedule_interval is how
+// long it can be since the last run. Between runs, everything newer than the
+// last one is missing, so the horizon is the SUM -- reading end_offset alone
+// left every 5m and 1h window ending on buckets no run had written yet.
+//
+// Truncated to the step because an aggregate materialises whole buckets. The
+// client lays the answer on a grid of step-wide slots (seriesOnGrid), so a
+// horizon in the middle of a bucket becomes a slot nothing can fill -- and
+// every headline value on a page reads the LAST slot, which is the rule that
+// stops a dead host reporting its final rate as current. Truncate aligns to
+// the epoch, which is where time_bucket() puts its boundaries too.
+func (s tierSpec) materialisedThrough(now time.Time) time.Time {
+	return now.Add(-(s.lag + s.refreshEvery)).Truncate(s.step)
+}
 
 // Window is a half-open-in-spirit time range carried in a /metrics response.
 type Window struct {
@@ -189,13 +222,54 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 	// the refresh policy's end_offset returns nothing at all rather than
 	// falling through to the raw rows behind it.
 	if p.spec.lag > 0 {
-		fresh := now.Add(-p.spec.lag)
+		// Truncated to a whole bucket, not left at the horizon itself.
+		//
+		// An aggregate materialises whole buckets. now-lag almost always
+		// lands in the middle of one, and a window ending mid-bucket asks
+		// for a bucket that does not exist yet: the client puts the answer
+		// on a grid of step-wide slots (seriesOnGrid), so that half-bucket
+		// becomes a whole trailing slot nothing can ever fill.
+		//
+		// Every headline value on the page reads the LAST slot -- that is
+		// the rule that stops a dead host reporting its final rate as
+		// current -- so an unfillable slot meant every 5m and 1h chart
+		// showed its trend correctly and its number as absent. The fleet's
+		// traffic, the fleet-traffic tile and the host page's limits meters
+		// all read "—" together on a host that was reporting perfectly.
+		//
+		// Truncate aligns to the epoch, which is where time_bucket() puts
+		// its boundaries too, so this lands on a real bucket edge rather
+		// than one derived from the request's own timing.
+		fresh := p.spec.materialisedThrough(now)
 		if to.After(fresh) {
 			to = fresh
 			p.Warnings = append(p.Warnings, fmt.Sprintf(
-				"the %s tier materialises %s behind now; the window ends there",
-				p.spec.name, humanDuration(p.spec.lag)))
+				"the %s tier materialises %s behind now; the window ends at the last whole bucket before that",
+				p.spec.name, humanDuration(p.spec.lag+p.spec.refreshEvery)))
 		}
+	}
+
+	// Both edges onto bucket boundaries, for a relation that stores whole
+	// buckets.
+	//
+	// It is not enough to align the trailing edge. The client lays the answer
+	// on a grid anchored at `from` (seriesOnGrid), so an unaligned `from`
+	// offsets every slot from the boundaries time_bucket() actually used, and
+	// the span stops being a whole number of buckets -- which puts the
+	// unfillable trailing slot straight back. Aligning both edges makes one
+	// slot mean exactly one bucket.
+	//
+	// `from` moves EARLIER, never later, so this cannot hide a bucket the
+	// caller asked for. It can reach at most one bucket back past the
+	// retention horizon, where there are simply no rows -- a gap at the far
+	// left edge, which is true.
+	//
+	// Raw is excluded by construction: it stores samples at their own
+	// timestamps rather than in buckets, so there are no boundaries to align
+	// to and the caller's window is already exactly what it asked for.
+	if p.spec.tsColumn == "bucket" {
+		from = from.Truncate(p.spec.step)
+		to = to.Truncate(p.spec.step)
 	}
 
 	if !from.Before(to) {
