@@ -18,8 +18,5 @@ func SetSysClassNetForTest(t *testing.T, root string) {
 	t.Cleanup(func() { sysClassNet = prev })
 }
 
-// IfaceVRFForTest exposes the VRF lookup.
-func IfaceVRFForTest(name string) string { return ifaceVRF(name) }
-
 // IfaceAliasForTest exposes the alias lookup.
 func IfaceAliasForTest(name string) string { return ifaceAlias(name) }

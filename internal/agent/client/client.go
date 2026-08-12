@@ -313,13 +313,26 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 		// that is failing indistinguishable from one that was never
 		// registered -- which is exactly the question the panel exists to
 		// answer.
-		scrape.Collectors = append(scrape.Collectors, &netrav1.CollectorSample{
-			TsMs:       sample.TsMs,
-			Collector:  col.Name(),
-			DurationMs: ptr(uint32(colElapsed.Milliseconds())),
-			Ok:         err == nil,
-			ErrorCode:  errorCode(err),
-		})
+		// A scrape cancelled by shutdown makes every remaining ctx-aware
+		// collector return context.Canceled at once. Recording those would
+		// paint a fleet-wide wall of failures across the availability panel at
+		// every redeploy -- flushOnShutdown posts this scrape with a fresh
+		// context, so the rows do land. The collectors did not fail; they were
+		// never given the chance to run.
+		if ctx.Err() == nil {
+			scrape.Collectors = append(scrape.Collectors, &netrav1.CollectorSample{
+				TsMs:      sample.TsMs,
+				Collector: col.Name(),
+				// Rounded, not truncated: most procfs collectors finish in tens
+				// of microseconds, and truncating reports 0 ms for all of them
+				// while the simulator writes realistic figures -- the same panel
+				// reading differently for real and simulated hosts is the exact
+				// divergence this set out to remove.
+				DurationMs: ptr(uint32((colElapsed + 500*time.Microsecond) / time.Millisecond)),
+				Ok:         err == nil,
+				ErrorCode:  errorCode(err),
+			})
+		}
 
 		if err != nil {
 			// Nothing from a failed collector reaches the scrape. Merging a

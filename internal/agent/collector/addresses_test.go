@@ -78,49 +78,32 @@ func TestAddressesReportsAnAliasChangeOnItsOwn(t *testing.T) {
 	}
 }
 
-// A bridge port has a master too. Reporting "br0" as an interface's VRF would
-// be wrong on the far more common of the two setups, so the master's DEVTYPE
-// is what decides.
-func TestIfaceVRFIgnoresANonVRFMaster(t *testing.T) {
-	root := t.TempDir()
-	collector.SetSysClassNetForTest(t, root)
-
-	mkIface := func(name, devtype string) {
-		t.Helper()
-		dir := filepath.Join(root, name)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", name, err)
+// SystemIfaces reports no VRF at all, and that is the honest answer rather
+// than a missing feature.
+//
+// The tempting sysfs discriminator does not exist: drivers/net/vrf.c
+// registers only rtnl_link_ops.kind = "vrf" and never calls
+// SET_NETDEV_DEVTYPE, so a VRF master's uevent has no DEVTYPE line. A test
+// that writes DEVTYPE=vrf into a fixture asserts its author's assumption
+// instead of the kernel's behaviour, and passes while the production path
+// returns empty on every real host. Deciding from the ABSENCE of a DEVTYPE
+// would instead call team and macvlan masters VRFs.
+//
+// Determining it needs IFLA_INFO_KIND over rtnetlink, which this collector
+// deliberately does not speak.
+func TestSystemIfacesReportsNoVRF(t *testing.T) {
+	ifaces, err := collector.SystemIfaces()
+	if err != nil {
+		t.Fatalf("SystemIfaces: %v", err)
+	}
+	if len(ifaces) == 0 {
+		t.Skip("no interfaces on this machine")
+	}
+	for _, i := range ifaces {
+		if i.VRF != "" {
+			t.Errorf("%s reported vrf = %q; sysfs cannot identify a VRF master, so this must stay unset",
+				i.Name, i.VRF)
 		}
-		if devtype != "" {
-			body := "INTERFACE=" + name + "\nDEVTYPE=" + devtype + "\n"
-			if err := os.WriteFile(filepath.Join(dir, "uevent"), []byte(body), 0o644); err != nil {
-				t.Fatalf("write uevent: %v", err)
-			}
-		}
-	}
-	enslave := func(child, master string) {
-		t.Helper()
-		if err := os.Symlink(filepath.Join("..", master), filepath.Join(root, child, "master")); err != nil {
-			t.Fatalf("symlink master: %v", err)
-		}
-	}
-
-	mkIface("br0", "bridge")
-	mkIface("mgmt-vrf", "vrf")
-	mkIface("eth0", "")
-	mkIface("eth1", "")
-	mkIface("eth2", "")
-	enslave("eth0", "br0")
-	enslave("eth1", "mgmt-vrf")
-
-	if got := collector.IfaceVRFForTest("eth0"); got != "" {
-		t.Errorf("bridge port reported vrf = %q, want empty", got)
-	}
-	if got := collector.IfaceVRFForTest("eth1"); got != "mgmt-vrf" {
-		t.Errorf("vrf slave reported vrf = %q, want mgmt-vrf", got)
-	}
-	if got := collector.IfaceVRFForTest("eth2"); got != "" {
-		t.Errorf("unenslaved interface reported vrf = %q, want empty", got)
 	}
 }
 

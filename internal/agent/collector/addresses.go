@@ -18,9 +18,12 @@ type Iface struct {
 	Index int
 	Addrs []string // CIDR form, as net.Addr renders it
 
-	// VRF is the name of the VRF device this interface is enslaved to, and
-	// empty for the overwhelmingly common case of an interface in the default
-	// routing table.
+	// VRF is the name of the VRF device this interface is enslaved to.
+	//
+	// ALWAYS EMPTY from SystemIfaces, and deliberately so -- see vrfUnknown
+	// below. It stays on the struct because the field exists on the wire and
+	// in the schema, and a caller that can determine it (a test, or a future
+	// rtnetlink path) should be able to supply it without a signature change.
 	VRF string
 
 	// Description is the interface alias -- what SNMP calls ifAlias and what
@@ -28,9 +31,35 @@ type Iface struct {
 	Description string
 }
 
+// vrfUnknown records why HostAddress.vrf is left empty rather than filled.
+//
+// A VRF slave has a master link, but so does a bridge port and a bond slave,
+// and sysfs offers nothing that identifies the master AS a VRF. The obvious
+// discriminator does not work: drivers/net/vrf.c registers only
+// rtnl_link_ops.kind = "vrf" and never calls SET_NETDEV_DEVTYPE, so
+// /sys/class/net/<master>/uevent carries no DEVTYPE line at all. (Bridges
+// DO -- net/bridge/br_device.c declares a device_type -- which is why a
+// DEVTYPE test appears to work while only ever rejecting.)
+//
+// Deciding from the ABSENCE of a DEVTYPE would classify every master that is
+// not a bridge or a bond as a VRF, which is wrong for team, macvlan and
+// anything added later. The real answer is IFLA_INFO_KIND over rtnetlink,
+// which this collector deliberately does not speak -- net.Interfaces is the
+// whole reason there is no netlink dependency here.
+//
+// So the field is left unset, which in this codebase means "not measured"
+// rather than "no VRF". That is the honest reading, and it is what the
+// hub already stores.
+const vrfUnknown = ""
+
 // sysClassNet is where the per-interface attributes below are read from.
 // A variable so the tests can point it at a fixture tree; there is no other
 // reason to change it.
+//
+// Not derived from cfg.SysRoot, unlike Sensors and Mdraid: SystemIfaces is an
+// IfaceLister, and that signature is the injection seam every other test in
+// this package uses. Threading a root through it would change the seam for
+// one attribute read.
 var sysClassNet = "/sys/class/net"
 
 // IfaceLister enumerates the host's interfaces.
@@ -64,35 +93,11 @@ func SystemIfaces() ([]Iface, error) {
 			Name:        i.Name,
 			Index:       i.Index,
 			Addrs:       raw,
-			VRF:         ifaceVRF(i.Name),
+			VRF:         vrfUnknown,
 			Description: ifaceAlias(i.Name),
 		})
 	}
 	return out, nil
-}
-
-// ifaceVRF returns the VRF device an interface is enslaved to, or empty.
-//
-// The master link alone is not enough: a bridge port and a VRF slave both
-// have one, and reporting "br0" as an interface's VRF would be wrong in the
-// far more common case. The master's DEVTYPE is what distinguishes them.
-func ifaceVRF(name string) string {
-	master, err := os.Readlink(filepath.Join(sysClassNet, name, "master"))
-	if err != nil {
-		return ""
-	}
-	master = filepath.Base(master)
-
-	uevent, err := os.ReadFile(filepath.Join(sysClassNet, master, "uevent"))
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(uevent), "\n") {
-		if strings.TrimSpace(line) == "DEVTYPE=vrf" {
-			return master
-		}
-	}
-	return ""
 }
 
 // ifaceAlias returns the interface alias, the Linux equivalent of SNMP's

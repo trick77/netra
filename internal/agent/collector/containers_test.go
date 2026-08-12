@@ -322,6 +322,102 @@ func TestContainersSkipsNetworkForHostNetworkedContainers(t *testing.T) {
 	}
 }
 
+// Without the host's namespace to compare against, a bridged container and a
+// network_mode: host one are indistinguishable -- and the two mistakes are
+// not symmetric. Reporting nothing loses a series; guessing attributes the
+// entire machine's traffic to one container on every scrape.
+//
+// Reachable rather than theoretical: /proc/<pid>/net/dev is world-readable
+// while /proc/<pid>/ns/net needs ptrace access, so an unprivileged agent is
+// exactly the case that fails the guard and succeeds the read.
+func TestContainersFailsClosedWhenTheHostNamespaceIsUnreadable(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	// Remove PID 1's namespace link: the host's namespace becomes unknowable
+	// while the container's counters stay perfectly readable.
+	if err := os.Remove(filepath.Join(procRoot, "1", "ns", "net")); err != nil {
+		t.Fatalf("remove host ns link: %v", err)
+	}
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil || row.NetTx != nil {
+		t.Errorf("net_rx/net_tx set with the host namespace unknown; a host-networked container would report the whole machine's traffic")
+	}
+	if got := testee.Capabilities()["container_network"]; got != "no-host-netns" {
+		t.Errorf("capability = %q, want no-host-netns -- silence must be explained", got)
+	}
+}
+
+// cgroup.procs names HOST pids. Without pid: host the agent resolves them in
+// its own namespace and finds nothing, which is a deployment fact rather than
+// an absence of traffic -- so it is reported as a capability.
+func TestContainersReportsNamespacedWhenPidsDoNotResolve(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	// The PID exists in the cgroup and has a namespace, but no net/dev: the
+	// signature of looking a host PID up in the wrong namespace.
+	if err := os.Remove(filepath.Join(procRoot, "42", "net", "dev")); err != nil {
+		t.Fatalf("remove net/dev: %v", err)
+	}
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+
+	containersAt(t, testee, base)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil {
+		t.Error("net_rx set with no readable net/dev")
+	}
+	if got := testee.Capabilities()["container_network"]; got != "namespaced" {
+		t.Errorf("capability = %q, want namespaced", got)
+	}
+	// Only networking is missing; the rest of the row is fine.
+	if row.MemUsed == nil {
+		t.Error("mem_used unset; only the network read failed")
+	}
+}
+
+// A network_mode: none container has nothing but lo, and its traffic is
+// genuinely 0 rather than unmeasured -- the one case where zero is the true,
+// knowable answer.
+func TestContainersReportsZeroForAContainerWithNoInterfaces(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 0, 0)
+
+	loOnly := "Inter-|   Receive                        |  Transmit\n" +
+		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+		"    lo: 9999 1 0 0 0 0 0 0 9999 1 0 0 0 0 0 0\n"
+	devPath := filepath.Join(procRoot, "42", "net", "dev")
+	if err := os.WriteFile(devPath, []byte(loOnly), 0o644); err != nil {
+		t.Fatalf("write net/dev: %v", err)
+	}
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+
+	containersAt(t, testee, base)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx == nil || row.NetTx == nil {
+		t.Fatal("net_rx/net_tx unset for a container with no interfaces; 0 is the knowable answer here")
+	}
+	if got := row.GetNetRx(); got != 0 {
+		t.Errorf("net_rx = %v, want 0 -- lo must not be counted", got)
+	}
+}
+
 // An empty cgroup.procs means the container is stopped or restarting. There
 // is no namespace to read, which is not the same as having moved no bytes --
 // so the fields stay unset rather than reporting a zero rate.
