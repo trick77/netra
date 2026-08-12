@@ -1264,6 +1264,15 @@ svg.spark {
   font: inherit;
   color: inherit;
   cursor: pointer;
+  /* `font` is a shorthand and carries NEITHER of these, so a sortable header
+     -- which is a <button> inside the th -- fell back to the button's own UA
+     defaults and escaped the th rule above. The fleet table read
+     "Host  CPU  MEMORY  TRAFFIC  FILESYSTEM  Disk": the only two columns in
+     sentence case were the only two that sort, which looks like a typo
+     rather than a system. A header must not change shape because it happens
+     to be sortable. */
+  text-transform: inherit;
+  letter-spacing: inherit;
 }
 .th-sort::after {
   font-size: 0.9em;
