@@ -131,14 +131,14 @@ function renderOverview(over: Partial<Parameters<typeof Overview>[0]> = {}) {
 describe("Overview", () => {
   it("renders an absent swap as none, never as 0", () => {
     renderOverview();
-    const memory = screen.getByRole("region", { name: /memory/i });
+    const memory = screen.getByRole("region", { name: "Memory" });
     expect(within(memory).getByText(/none/i)).toBeInTheDocument();
     expect(within(memory).queryByText(/\b0 B\b/)).toBeNull();
   });
 
   it("distinguishes swap that exists and is unused from swap that does not exist", () => {
     renderOverview({ hostMetrics: hostMetrics(2_000_000_000, 0) });
-    const memory = screen.getByRole("region", { name: /memory/i });
+    const memory = screen.getByRole("region", { name: "Memory" });
     expect(within(memory).queryByText(/none/i)).toBeNull();
   });
 
@@ -280,8 +280,11 @@ describe("Overview processor panel", () => {
       />,
     );
 
+    // Scoped to the Processor panel: the page carries other panels now, and
+    // at this tier some of them legitimately say "Not collected". The claim
+    // here is about THIS chart falling back to a total band.
     const panel = screen.getByRole("region", { name: "Processor chart" });
     expect(panel).toBeInTheDocument();
-    expect(screen.queryByText("Not collected")).toBeNull();
+    expect(within(panel).queryByText("Not collected")).toBeNull();
   });
 });

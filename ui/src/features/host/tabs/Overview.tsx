@@ -24,6 +24,7 @@ import {
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
+import { memoryBands, perCoreBands } from "../../../lib/bands";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
 
 /**
@@ -214,6 +215,9 @@ export interface OverviewProps {
   filesystemMetrics: MetricsResponse | null;
   agentMetrics: MetricsResponse | null;
   sensorMetrics: MetricsResponse | null;
+  /** family=cpu_core for this host, one series per logical CPU. Absent on a
+   * host too large to ask for them -- see MAX_PER_CORE in hostTrends.ts. */
+  coreMetrics?: MetricsResponse | null;
   containers: Container[] | null;
   units: Unit[] | null;
   /** Injected by tests so "last reported" is deterministic. */
@@ -223,6 +227,7 @@ export interface OverviewProps {
 export function Overview({
   host,
   hostMetrics,
+  coreMetrics,
   filesystemMetrics,
   agentMetrics,
   sensorMetrics,
@@ -238,20 +243,25 @@ export function Overview({
     values: griddedValues(hostMetrics, 0, band.base),
   })).filter((band) => band.values.length > 0);
 
-  // The rollup tiers carry cpu_total and not the breakdown, so above an hour
-  // the four bands are simply absent -- and this is the headline chart on
-  // the page. One true band beats a not-collected panel where a silhouette
-  // is available: the fleet row for this same host does exactly this, and
-  // the two must not disagree about whether a host's CPU can be drawn. A
-  // breakdown cannot be recovered from a total, so it is labelled for what
-  // it is rather than split into four invented ones.
+  // The headline chart is the per-core stack, the same one the fleet row for
+  // this host draws -- the two must not disagree about the same machine.
+  // Falling back to cpu_total when there are no per-core series: one true
+  // band beats a not-collected panel where a silhouette is available.
+  //
+  // The user/system/iowait/steal breakdown is NOT the fallback any more. It
+  // answers a different question -- where the time went, rather than which
+  // core spent it -- so it has its own panel below rather than standing in
+  // for this one.
   const total = griddedValues(hostMetrics, 0, "cpu_total");
+  const perCore = perCoreBands(coreMetrics ?? null);
   const cpuBands: Band[] =
-    perState.length > 0
-      ? perState
+    perCore.length > 0
+      ? perCore
       : total.length > 0
         ? [{ name: "busy", color: "var(--s1)", values: total }]
         : [];
+
+  const memBands = memoryBands(hostMetrics);
 
   const memTotal = latest(hostMetrics, "mem_total") ?? host.memory_total;
   const memUsed = latest(hostMetrics, "mem_used") ?? host.mem_used;
@@ -283,9 +293,22 @@ export function Overview({
           max={100}
           fmt={(n) => percent(n)}
           window={hostMetrics?.window ?? null}
-          // An empty band list is a tier that does not carry the columns --
-          // cpu_user/system/iowait/steal live only in raw -- and an empty
-          // chart asserts the host reported nothing. Say which it is.
+          // Each core contributes busy/N, so the stack's top edge is the mean
+          // across cores -- cpu_total -- and 100 stays the right ceiling
+          // however many cores the host has.
+          //
+          // Stacked for the cpu_total fallback too, even though one band is
+          // not much of a stack: the mark must not change depending on
+          // whether a host happened to be small enough to ask for its cores,
+          // or two machines side by side would look like different metrics.
+          stacked={cpuBands.length > 0}
+          // Thirty-two cores would produce a thirty-two entry legend, which
+          // is longer than the chart. `highlight` is how Overlay is told that
+          // colour is not carrying identity here, and it suppresses the
+          // legend with it.
+          highlight={perCore.length > 6 ? perCore[0]!.name : undefined}
+          // An empty band list is a tier that does not carry the columns, and
+          // an empty chart asserts the host reported nothing. Say which it is.
           unavailable={
             cpuBands.length === 0
               ? "The host reported no processor samples in this window."
@@ -293,6 +316,48 @@ export function Overview({
           }
         />
       </section>
+
+      {/* The breakdown keeps its own panel rather than being displaced by the
+          per-core stack: "which core" and "doing what" are different
+          questions and a reader wants both. It used to vanish above an hour
+          because cpu_user/system/iowait/steal lived only in the raw table;
+          they reach the 5m and 1h rollups now, so this survives the range
+          control. */}
+      <ChartPanel
+        title="CPU time breakdown"
+        series={perState}
+        max={100}
+        fmt={(n) => percent(n)}
+        stacked
+        window={hostMetrics?.window ?? null}
+        unavailable={
+          perState.length === 0
+            ? "cpu_user, cpu_system, cpu_iowait and cpu_steal are not stored at this resolution."
+            : undefined
+        }
+      />
+
+      {/* The stack and the meter answer different questions and both stay:
+          the meter says how full the host is right now, the chart says how it
+          got there. The ceiling is mem_total rather than the stack's own
+          running total, so the gap at the top is free memory -- a stack
+          scaled to itself always touches the top and would report every host
+          as full. */}
+      <ChartPanel
+        title="Memory"
+        series={memBands}
+        max={memTotal ?? undefined}
+        fmt={(n) => bytes(n)}
+        stacked
+        window={hostMetrics?.window ?? null}
+        unavailable={
+          memBands.length === 0
+            ? "The host reported no memory samples in this window."
+            : memTotal === null
+              ? "The host's total memory is unknown, so there is no ceiling to draw the bands against."
+              : undefined
+        }
+      />
 
       <Panel label="Memory" title="Memory">
         <Meter

@@ -61,7 +61,8 @@ export const UNAVAILABLE: Record<string, string> = {
 // index wraps so a family with many devices still never names a hue here.
 const SERIES_VARS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
 
-type Source = "host" | "net" | "diskIo" | "filesystem" | "collector";
+type Source =
+  "host" | "net" | "diskIo" | "filesystem" | "collector" | "cpuCore";
 
 interface PanelSpec {
   title: string;
@@ -75,6 +76,16 @@ interface PanelSpec {
   fmt?: (n: number | null) => string;
   /** Read this family's columns as booleans (1 = true), not as numbers. */
   boolean?: boolean;
+  /** Draw the bands as a cumulative stack rather than as overlaid lines.
+   * Only honest where the bands really do partition something: per-core CPU
+   * (each core divided by the core count, so the stack tops out at
+   * cpu_total) and the CPU time breakdown (the states sum to busy). */
+  stacked?: boolean;
+  /** Divide every band by the number of series in the response. Per-core
+   * busy is 0-100 PER CORE, so an unnormalised stack of N cores runs to
+   * N x 100 and leaves the box; dividing by N makes the top of the stack the
+   * mean across cores, which is cpu_total. */
+  normalise?: boolean;
 }
 
 // A count or a rate has no unit prefix worth inventing, so it is printed
@@ -84,6 +95,34 @@ function count(n: number | null): string {
 }
 
 const SYSTEM: PanelSpec[] = [
+  // One band per logical CPU, each divided by the core count so the top of
+  // the stack is the mean -- cpu_total. Unnormalised, 32 cores at 50% would
+  // stack to 1600 against a ceiling of 100.
+  {
+    title: "CPU cores",
+    source: "cpuCore",
+    bases: [{ base: "busy", label: "busy" }],
+    max: 100,
+    stacked: true,
+    normalise: true,
+    fmt: (n) => (n === null ? ABSENT : `${count(n)} %`),
+  },
+  // The states partition busy time, so they stack honestly. They used to
+  // exist only in the raw table and vanish above an hour; they reach the 5m
+  // and 1h rollups now.
+  {
+    title: "CPU time breakdown",
+    source: "host",
+    bases: [
+      { base: "cpu_user", label: "user" },
+      { base: "cpu_system", label: "system" },
+      { base: "cpu_iowait", label: "iowait" },
+      { base: "cpu_steal", label: "steal" },
+    ],
+    max: 100,
+    stacked: true,
+    fmt: (n) => (n === null ? ABSENT : `${count(n)} %`),
+  },
   // "Device availability" in the spec's list; collector_samples.ok is the
   // only availability signal the schema actually holds, so that is what
   // this draws -- one band per collector, 1 when it ran, 0 when it did not.
@@ -269,6 +308,7 @@ export interface GraphsProps {
   diskIo?: MetricsResponse | null;
   filesystem?: MetricsResponse | null;
   collector?: MetricsResponse | null;
+  cpuCore?: MetricsResponse | null;
   /** The page's range and setter, passed to each panel's enlarged view. */
   range?: Range;
   onRangeChange?: (range: Range) => void;
@@ -295,9 +335,17 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
       // than as nulls, and the geometry breaks a line only on a null. Drawn
       // straight from the response, three hours of a host being down became
       // one unbroken line across the hole.
-      const values = spec.boolean
+      const raw = spec.boolean
         ? booleanValues(res, index, base)
         : griddedValues(res, index, base);
+      // Per-core busy is 0-100 PER CORE. Dividing by the response's own
+      // series count -- never the host's inventory thread count, which
+      // disagrees when a core stops reporting mid-window -- makes the stack
+      // top out at the mean across cores, i.e. cpu_total.
+      const values =
+        spec.normalise && res.series.length > 0
+          ? raw.map((v) => (v === null ? null : v / res.series.length))
+          : raw;
       if (values.length === 0) continue;
       bands.push({
         name: prefix ? `${prefix} ${label}` : label,
@@ -358,6 +406,13 @@ function Panel({
       series={series}
       max={spec.max}
       fmt={spec.fmt}
+      stacked={spec.stacked}
+      // A 32-core legend is longer than the chart it explains. `highlight`
+      // is how Overlay is told colour is not carrying identity here, and it
+      // suppresses the legend with it.
+      highlight={
+        spec.normalise && series.length > 6 ? series[0]!.name : undefined
+      }
       // No per-panel notice: the window statement is about the RANGE, not
       // about any one chart, and repeating it under twenty panels made it
       // twenty pieces of noise nobody reads. It is rendered once, above the

@@ -43,7 +43,9 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
   // data can actually support.
   if (!carriesColumn(res, "mem_free") || !carriesColumn(res, "mem_total")) {
     const used = griddedValues(res, 0, "mem_used");
-    return used.length === 0 ? [] : [{ name: "used", color: USED, values: used }];
+    return used.length === 0
+      ? []
+      : [{ name: "used", color: USED, values: used }];
   }
 
   const total = griddedValues(res, 0, "mem_total");
@@ -54,7 +56,10 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
   // Reclaimable slab is neither Buffers nor Cached, but it is cache all the
   // same and there is nothing useful to say about it on its own at this
   // size. Folding it in keeps the band count at five.
-  const cached = add(optional(res, "mem_cached"), optional(res, "mem_sreclaimable"));
+  const cached = add(
+    optional(res, "mem_cached"),
+    optional(res, "mem_sreclaimable"),
+  );
 
   const width = Math.max(total.length, free.length);
   const used: (number | null)[] = [];
