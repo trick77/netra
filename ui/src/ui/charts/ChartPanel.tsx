@@ -38,6 +38,10 @@ export interface ChartPanelProps {
   width?: number;
   height?: number;
   highlight?: string;
+  /** Draw the series as a cumulative stack instead of independent lines.
+   * Passed through to Overlay AND to the enlarged view, so clicking a
+   * stacked panel open does not silently change the mark. */
+  stacked?: boolean;
   /** The answered window, passed through to the enlarged view's time axis. */
   window?: { from: string; to: string } | null;
   /** The page's range and setter, so the enlarged view can carry the same
@@ -57,6 +61,7 @@ export function ChartPanel({
   width = 260,
   height = 64,
   highlight,
+  stacked,
   window: answered = null,
   range,
   onRangeChange,
@@ -124,6 +129,7 @@ export function ChartPanel({
           width={width}
           height={height}
           highlight={highlight}
+          stacked={stacked}
           label={`${title} over time`}
         />
       </button>
@@ -135,6 +141,7 @@ export function ChartPanel({
           series={series}
           max={max}
           fmt={fmt}
+          stacked={stacked}
           window={answered}
           range={range}
           onRangeChange={onRangeChange}

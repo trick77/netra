@@ -4,7 +4,7 @@
 // per series independently would normalise a 2% series and a 200% series
 // to look identical, which is exactly the comparison this component exists
 // to make possible.
-import { dotPath, extent, linePath } from "./geometry";
+import { dotPath, extent, linePath, stackBands } from "./geometry";
 
 export interface OverlaySeries {
   name: string;
@@ -32,6 +32,21 @@ export interface OverlayProps {
    * dimming keeps every series' shape visible instead of removing data. */
   highlight?: string;
   label?: string;
+  /**
+   * Draw the series as a cumulative stack rather than as independent lines.
+   *
+   * The maths is stackBands() from geometry.ts, the same function the fleet
+   * columns' StackedSparkline uses -- it is size-independent, so a panel and
+   * its enlarged view draw the identical mark rather than two components
+   * that have to be kept agreeing by hand. That is the property ChartDetail
+   * exists to preserve.
+   *
+   * A stack needs a real ceiling, so `max` is used verbatim and never
+   * widened to the data's own extent: a stack scaled to its own running
+   * total always touches the top, which is the always-full reading the fleet
+   * columns already carry their own ceilings to avoid.
+   */
+  stacked?: boolean;
 }
 
 export function Overlay({
@@ -43,9 +58,21 @@ export function Overlay({
   pad = 2,
   highlight,
   label = "overlaid metrics chart",
+  stacked = false,
 }: OverlayProps) {
   const { min: autoMin } = extent(series.flatMap((s) => s.values));
   const effectiveMin = min ?? autoMin;
+  // stackBands breaks every band at any index where ANY series is null: a
+  // running total is undefined there, not just the one series' value.
+  const bands = stacked
+    ? stackBands(
+        series.map((s) => s.values),
+        width,
+        height,
+        max,
+        pad,
+      )
+    : [];
 
   return (
     <>
@@ -57,43 +84,59 @@ export function Overlay({
         role="img"
         aria-label={label}
       >
-        {series.map((s) => {
-          const { paths, points } = linePath(
-            s.values,
-            width,
-            height,
-            effectiveMin,
-            max,
-            pad,
-          );
-          const dimmed = highlight !== undefined && highlight !== s.name;
-          return (
-            <g key={s.name} data-series={s.name} opacity={dimmed ? 0.35 : 1}>
-              {paths.map((d, i) => (
-                <path
-                  key={`line-${i}`}
-                  data-line
-                  d={d}
-                  fill="none"
-                  stroke={s.color}
-                  strokeWidth={1.5}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              ))}
-              {points.map((p, i) => (
-                <path
-                  key={`point-${i}`}
-                  data-line
-                  data-point
-                  d={dotPath(p.x, p.y)}
-                  fill={s.color}
-                  stroke="none"
-                />
-              ))}
-            </g>
-          );
-        })}
+        {stacked &&
+          series.map((s, i) => {
+            const dimmed = highlight !== undefined && highlight !== s.name;
+            return (
+              <path
+                key={s.name}
+                data-series={s.name}
+                data-band
+                d={bands[i] ?? ""}
+                fill={s.color}
+                stroke="none"
+                opacity={dimmed ? 0.35 : 1}
+              />
+            );
+          })}
+        {!stacked &&
+          series.map((s) => {
+            const { paths, points } = linePath(
+              s.values,
+              width,
+              height,
+              effectiveMin,
+              max,
+              pad,
+            );
+            const dimmed = highlight !== undefined && highlight !== s.name;
+            return (
+              <g key={s.name} data-series={s.name} opacity={dimmed ? 0.35 : 1}>
+                {paths.map((d, i) => (
+                  <path
+                    key={`line-${i}`}
+                    data-line
+                    d={d}
+                    fill="none"
+                    stroke={s.color}
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ))}
+                {points.map((p, i) => (
+                  <path
+                    key={`point-${i}`}
+                    data-line
+                    data-point
+                    d={dotPath(p.x, p.y)}
+                    fill={s.color}
+                    stroke="none"
+                  />
+                ))}
+              </g>
+            );
+          })}
       </svg>
       {/* A legend names series; on a fleet overlay it would name all
           nineteen of them, which is the opposite of "every host

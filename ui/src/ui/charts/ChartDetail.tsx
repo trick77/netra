@@ -20,6 +20,9 @@ export interface ChartDetailProps {
   range?: Range;
   onRangeChange?: (range: Range) => void;
   onClose: () => void;
+  /** Draw the series as a cumulative stack, matching the small panel that
+   * opened this. The mark must not change when a chart is enlarged. */
+  stacked?: boolean;
 }
 
 /**
@@ -43,6 +46,7 @@ export function ChartDetail({
   range,
   onRangeChange,
   onClose,
+  stacked,
 }: ChartDetailProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -57,7 +61,7 @@ export function ChartDetail({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const ceiling = max ?? peak(series);
+  const ceiling = max ?? peak(series, stacked);
   const format = (v: number | null) => (fmt ? fmt(v) : formatNumber(v));
 
   return (
@@ -103,6 +107,7 @@ export function ChartDetail({
             max={ceiling}
             width={900}
             height={320}
+            stacked={stacked}
             label={`${title}, enlarged`}
           />
         </div>
@@ -154,10 +159,30 @@ function formatNumber(v: number | null): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(1);
 }
 
-function peak(series: readonly OverlaySeries[]): number {
+// `stacked` is not a detail this can ignore: a stack's height at an index is
+// the SUM over the series there, so the largest single value understates it
+// and the top of the stack would be drawn outside the box. Callers here all
+// pass an explicit max today, but a derived ceiling that answers the wrong
+// question is a trap rather than a fallback.
+function peak(series: readonly OverlaySeries[], stacked = false): number {
   let max = 0;
-  for (const s of series) {
-    for (const v of s.values) if (v !== null && v > max) max = v;
+  if (stacked) {
+    const n = series.reduce(
+      (longest, s) => Math.max(longest, s.values.length),
+      0,
+    );
+    for (let i = 0; i < n; i++) {
+      // Skipping any index where a series is null, exactly as stackBands
+      // does: a running total is undefined there rather than smaller.
+      if (series.some((s) => s.values[i] == null)) continue;
+      let sum = 0;
+      for (const s of series) sum += s.values[i] as number;
+      if (sum > max) max = sum;
+    }
+  } else {
+    for (const s of series) {
+      for (const v of s.values) if (v !== null && v > max) max = v;
+    }
   }
   // A zero ceiling would divide by zero in the geometry.
   return max || 1;
