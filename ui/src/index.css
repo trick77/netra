@@ -77,6 +77,13 @@
      direction and clears it at 4.62:1 — see --on-accent below. */
   --accent-fill: #b85a30;
   --accent-soft: #fbeee5;
+  /* The unfilled part of a meter. Neutral rather than a tint of --accent:
+     the fill beside it is the FIXED status palette (ok/warn/serious/crit),
+     and a warm track behind a green or amber bar muddied both. Lighter than
+     --accent-soft was, so the empty portion reads as empty and the fill
+     carries the contrast. Its own token because --accent-soft also backs
+     the tag, the badge and the selected row, which are not meters. */
+  --track: #f4f2ee;
   --grid: #eeeae1;
   --axis: #cfc9bb;
 
@@ -147,6 +154,7 @@
     --accent: #d97757;
     --accent-fill: #b85a30;
     --accent-soft: #2e211a;
+    --track: #3a3a37;
     --grid: #2a2a28;
     --axis: #454540;
 
@@ -189,6 +197,7 @@
   --accent: #d97757;
   --accent-fill: #b85a30;
   --accent-soft: #2e211a;
+  --track: #3a3a37;
   --grid: #2a2a28;
   --axis: #454540;
 
@@ -1163,7 +1172,7 @@ svg.spark {
 .meter {
   height: 8px;
   border-radius: var(--radius-pill);
-  background: var(--accent-soft);
+  background: var(--track);
   overflow: hidden;
   display: flex;
 }

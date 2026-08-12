@@ -27,5 +27,11 @@ export const SPARK_WIDTH = 170;
    into the bands entirely. It is a stated fact about the host, so it is
    drawn in the same ink as text. */
 export const REFERENCE_STROKE = "var(--ink)";
-export const REFERENCE_DASH = "4 3";
-export const REFERENCE_WIDTH = 1;
+/* Denser dashes and a heavier stroke than a hairline. --ink is already the
+   darkest token there is, so the rule reading faint was never about the
+   colour: at 1px with 3px gaps there is barely any ink on screen, and over a
+   five-band stack on a 32px-tall sparkline it vanished into the bands. More
+   ink per unit length is the only lever left, and this is a stated ceiling
+   rather than a gridline, so it should carry the weight. */
+export const REFERENCE_DASH = "5 2";
+export const REFERENCE_WIDTH = 1.75;
