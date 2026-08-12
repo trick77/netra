@@ -544,7 +544,12 @@ a {
   display: flex;
   gap: var(--space-3);
   font-size: var(--text-label);
-  color: var(--ink-2);
+  /* --muted, matching the disk percentage in the same row (.mrow .val).
+     These are both the number BESIDE a chart -- a reading the sparkline or
+     the meter has already drawn -- and at --ink-2 the traffic rates read a
+     step louder than the disk figure they sit next to, which made two
+     equally important columns look ranked. */
+  color: var(--muted);
 }
 .rate {
   font-variant-numeric: tabular-nums;

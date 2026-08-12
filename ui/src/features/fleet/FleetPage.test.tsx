@@ -194,6 +194,22 @@ describe("FleetPage header", () => {
       .closest<HTMLElement>(".tile")!;
     expect(within(tile).getByText(ABSENT)).toBeInTheDocument();
   });
+
+  // rx_bytes/tx_bytes are BYTES per second, so bitrate() labelled this tile
+  // "Mb/s" above rows reading "MB/s" -- off by eight and entirely plausible.
+  // The third copy of that bug: #51 fixed the fleet row's traffic cell and the
+  // host overview's card, and missed the tile sitting above both.
+  it("states fleet traffic in bytes per second, like every row under it", () => {
+    renderPage({
+      rows: [makeRow({ rx: [1_000_000], tx: [1_000_000] })],
+    });
+
+    const tile = screen
+      .getByText("Fleet traffic")
+      .closest<HTMLElement>(".tile")!;
+    expect(within(tile).getByText(/2 MB\/s/)).toBeInTheDocument();
+    expect(tile.textContent).not.toMatch(/Mb\/s/);
+  });
 });
 
 describe("buildHostRows", () => {

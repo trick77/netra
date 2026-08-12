@@ -8,7 +8,7 @@ import {
   type Host,
   type Site,
 } from "../../lib/api";
-import { ABSENT, bitrate, relative } from "../../lib/format";
+import { ABSENT, byterate, relative } from "../../lib/format";
 import { Input } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import { StatTile } from "../../ui/StatTile";
@@ -490,5 +490,11 @@ function fleetTraffic(rows: readonly HostRow[]): string {
       total += last;
     }
   }
-  return any ? bitrate(total) : ABSENT;
+  // byterate, never bitrate. rx_bytes/tx_bytes are BYTES per second --
+  // network.go divides a byte delta by the elapsed seconds -- so bitrate()
+  // labelled the fleet's throughput "Mb/s" while every host row beside it
+  // said MB/s, off by a factor of eight and entirely plausible. This is the
+  // third copy of that bug: #51 fixed the fleet row's traffic cell and the
+  // host overview's traffic card and missed the tile above both of them.
+  return any ? byterate(total) : ABSENT;
 }
