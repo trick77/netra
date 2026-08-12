@@ -40,6 +40,20 @@ type containerCounters struct {
 	rbytes   uint64
 	wbytes   uint64
 	hasLimit bool
+
+	// cpu.stat's split of usage_usec. Cumulative like usage_usec, so these
+	// become percentages the same way: a delta over the interval. hasSplit
+	// is false on a kernel that does not report them, which is not the same
+	// fact as a container that spent no time in user space.
+	userUsec   uint64
+	systemUsec uint64
+	hasSplit   bool
+
+	// memory.stat's own parts. Gauges, not counters -- read straight through.
+	memAnon   uint64
+	memFile   uint64
+	memShmem  uint64
+	memKernel uint64
 }
 
 // Containers reports per-container CPU, memory and I/O from cgroup v2.
@@ -155,6 +169,20 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 			// fully-busy core is 1e6 usec per second.
 			CpuPct:  ptrTo(float64(n.cpuUsec-p.cpuUsec) / (elapsed * 1e6) * 100),
 			MemUsed: ptrTo(n.memUsed),
+			// Gauges: reported on every scrape a container survives, unlike
+			// the rates above which need a previous reading.
+			MemAnon:   ptrTo(n.memAnon),
+			MemFile:   ptrTo(n.memFile),
+			MemShmem:  ptrTo(n.memShmem),
+			MemKernel: ptrTo(n.memKernel),
+		}
+		// Same guard as usage_usec above: a cgroup recreated under one id
+		// resets these, and a negative delta is no reading rather than a
+		// negative percentage. Both scrapes must carry the split, or there is
+		// no interval to rate over.
+		if n.hasSplit && p.hasSplit && n.userUsec >= p.userUsec && n.systemUsec >= p.systemUsec {
+			row.CpuUser = ptrTo(float64(n.userUsec-p.userUsec) / (elapsed * 1e6) * 100)
+			row.CpuSystem = ptrTo(float64(n.systemUsec-p.systemUsec) / (elapsed * 1e6) * 100)
 		}
 		if n.hasLimit {
 			// "max" means unlimited. Reporting the host's total instead would
@@ -208,9 +236,28 @@ func (c *Containers) read() (map[string]containerCounters, error) {
 			return nil
 		}
 
+		cpuStat := filepath.Join(path, "cpu.stat")
+		memStat := filepath.Join(path, "memory.stat")
 		cc := containerCounters{
-			cpuUsec: readKeyedUint(filepath.Join(path, "cpu.stat"), "usage_usec"),
-			memUsed: containerMemory(path),
+			cpuUsec:  readKeyedUint(cpuStat, "usage_usec"),
+			memUsed:  containerMemory(path),
+			memAnon:  readKeyedUint(memStat, "anon"),
+			memShmem: readKeyedUint(memStat, "shmem"),
+			// slab, not slab_reclaimable + slab_unreclaimable: the kernel
+			// reports the total as its own line, and summing the two parts
+			// would double count on kernels that report all three.
+			memKernel: readKeyedUint(memStat, "slab"),
+		}
+		user, hasUser := lookupKeyedUint(cpuStat, "user_usec")
+		system, hasSystem := lookupKeyedUint(cpuStat, "system_usec")
+		cc.userUsec, cc.systemUsec = user, system
+		cc.hasSplit = hasUser && hasSystem
+
+		// `file` counts shmem inside it. Subtracting leaves the reclaimable
+		// page cache, so a chart stacking file and shmem does not draw the
+		// same pages twice.
+		if file := readKeyedUint(memStat, "file"); file >= cc.memShmem {
+			cc.memFile = file - cc.memShmem
 		}
 		if raw := strings.TrimSpace(readFileString(filepath.Join(path, "memory.max"))); raw != "" && raw != "max" {
 			if v, err := strconv.ParseUint(raw, 10, 64); err == nil {
@@ -285,9 +332,20 @@ func readUint(path string) uint64 {
 
 // readKeyedUint reads "key value" lines, as cpu.stat and memory.stat use.
 func readKeyedUint(path, key string) uint64 {
+	v, _ := lookupKeyedUint(path, key)
+	return v
+}
+
+// lookupKeyedUint is readKeyedUint plus whether the key was actually there.
+//
+// The distinction matters for cpu.stat's user_usec and system_usec: a kernel
+// that does not report them is not a container that spent no time in user
+// space. The first must reach the database as NULL; the second is a reading
+// of zero, and an operator hunting a busy service needs to tell them apart.
+func lookupKeyedUint(path, key string) (uint64, bool) {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0
+		return 0, false
 	}
 	defer func() { _ = f.Close() }()
 
@@ -297,12 +355,12 @@ func readKeyedUint(path, key string) uint64 {
 		if len(fields) == 2 && fields[0] == key {
 			v, err := strconv.ParseUint(fields[1], 10, 64)
 			if err != nil {
-				return 0
+				return 0, false
 			}
-			return v
+			return v, true
 		}
 	}
-	return 0
+	return 0, false
 }
 
 // readIOStat sums rbytes and wbytes across every device in io.stat. A

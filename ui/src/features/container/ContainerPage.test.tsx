@@ -187,13 +187,15 @@ describe("ContainerPage", () => {
   });
 
   // Two series on one axis cannot be told apart by colour alone, so each
-  // two-series panel names its bands.
-  it("legends the two-series panels", () => {
+  // multi-series panel names its bands. The network panel is ingress/egress
+  // now rather than rx/tx: the direction is the point of that chart, and
+  // "rx" is the kernel's word for it rather than the reader's.
+  it("legends the multi-series panels", () => {
     renderPage();
 
     const legends = [...document.querySelectorAll(".legend")];
-    expect(legends).toHaveLength(2);
-    expect(legends.map((l) => l.textContent)).toEqual(["rxtx", "readwrite"]);
+    expect(legends.map((l) => l.textContent)).toContain("ingressegress");
+    expect(legends.map((l) => l.textContent)).toContain("readwrite");
   });
 
   it("shows 'no limit' rather than a bar when mem_limit is null", () => {

@@ -65,3 +65,35 @@ func TestPerCoreBusyAveragesToTheHostsCpuTotal(t *testing.T) {
 			"agree with the host's own number", ratio)
 	}
 }
+
+// The container breakdown must be a split of the numbers beside it, not two
+// more independent signals. A chart stacks cpu_user and cpu_system against
+// cpu_pct, and the four memory parts against mem_used -- if they merely sit
+// near those totals, the breakdown and the total describe different
+// containers.
+func TestContainerBreakdownIsASplitOfItsTotals(t *testing.T) {
+	for _, p := range Fleet() {
+		g := NewGenerator(p, 1, testFrom, testTo)
+		for _, at := range []time.Time{testFrom, testFrom.Add(53 * time.Hour), testTo.Add(-time.Minute)} {
+			for _, c := range g.Scrape(at, Options{}).Containers {
+				parts := c.GetMemAnon() + c.GetMemFile() + c.GetMemShmem() + c.GetMemKernel()
+				if parts != c.GetMemUsed() {
+					t.Errorf("%s %s: memory parts sum to %d, want mem_used %d",
+						p.Hostname, c.GetContainerKey(), parts, c.GetMemUsed())
+				}
+				// round2 is applied to each half, so the sum may differ from
+				// the total by a hundredth without either being wrong.
+				diff := c.GetCpuUser() + c.GetCpuSystem() - c.GetCpuPct()
+				if diff > 0.011 || diff < -0.011 {
+					t.Errorf("%s %s: user + system = %v, want cpu_pct %v",
+						p.Hostname, c.GetContainerKey(),
+						c.GetCpuUser()+c.GetCpuSystem(), c.GetCpuPct())
+				}
+				if c.GetCpuUser() < 0 || c.GetCpuSystem() < 0 {
+					t.Errorf("%s %s: negative split, user %v system %v",
+						p.Hostname, c.GetContainerKey(), c.GetCpuUser(), c.GetCpuSystem())
+				}
+			}
+		}
+	}
+}

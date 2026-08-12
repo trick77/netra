@@ -1171,6 +1171,16 @@ CREATE TABLE IF NOT EXISTS container_samples (
     net_tx       DOUBLE PRECISION,
     io_read      DOUBLE PRECISION,
     io_write     DOUBLE PRECISION,
+    -- cgroup v2's own splits of the two numbers above. cpu_user and
+    -- cpu_system sum to cpu_pct; the four mem_ columns are memory.stat's
+    -- parts, with mem_file already net of mem_shmem so a stack of them does
+    -- not draw the same pages twice.
+    cpu_user     DOUBLE PRECISION,
+    cpu_system   DOUBLE PRECISION,
+    mem_anon     BIGINT,
+    mem_file     BIGINT,
+    mem_shmem    BIGINT,
+    mem_kernel   BIGINT,
     PRIMARY KEY (host_id, ts, container_id),
     FOREIGN KEY (container_id, host_id) REFERENCES containers (id, host_id) ON DELETE CASCADE
 );
@@ -1196,6 +1206,15 @@ SELECT host_id,
        avg(mem_used)  AS mem_used_avg,
        max(mem_used)  AS mem_used_max,
        max(mem_limit) AS mem_limit_max,
+       -- avg only, and for the reason the host tiers give: these are parts
+       -- of a whole, and a chart stacking a max of one against an avg of
+       -- another composes two different instants into one bar.
+       avg(cpu_user)   AS cpu_user_avg,
+       avg(cpu_system) AS cpu_system_avg,
+       avg(mem_anon)   AS mem_anon_avg,
+       avg(mem_file)   AS mem_file_avg,
+       avg(mem_shmem)  AS mem_shmem_avg,
+       avg(mem_kernel) AS mem_kernel_avg,
        avg(net_rx)    AS net_rx_avg,
        max(net_rx)    AS net_rx_max,
        avg(net_tx)    AS net_tx_avg,

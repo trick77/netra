@@ -376,6 +376,37 @@ message ContainerSample {
   optional double net_tx = 10;
   optional double io_read = 11;
   optional double io_write = 12;
+
+  // --- cgroup v2 cpu.stat and memory.stat, the parts cpu_pct and mem_used
+  // --- flatten away ---
+  //
+  // cpu_pct is derived from usage_usec and says how much CPU a container
+  // took, not what it was doing with it. These two split that: a service
+  // pinned in system time is doing syscalls or contending on the kernel,
+  // which is a different problem from one pinned in user time, and the
+  // difference decides where an operator looks next. Percentages over the
+  // scrape interval, like cpu_pct, so they sum to it.
+  optional double cpu_user = 13;
+  optional double cpu_system = 14;
+
+  // mem_used is memory.current minus the page cache -- one number that
+  // cannot distinguish a container holding 2 GB of heap from one that read
+  // 2 GB of files. These are memory.stat's own parts, and they answer
+  // whether a limit needs raising or a workload needs fixing.
+  //
+  // anon is the unreclaimable part: heap and stacks, what an OOM kill is
+  // actually about.
+  optional uint64 mem_anon = 15;
+  // file is the page cache the container caused, reclaimable under pressure.
+  optional uint64 mem_file = 16;
+  // shmem is tmpfs and shared segments. Counted inside `file` by the kernel,
+  // and reported separately here because it is NOT reclaimable the way the
+  // rest of the page cache is -- a chart that stacks the two double counts.
+  optional uint64 mem_shmem = 17;
+  // kernel slab attributed to this cgroup: dentries, inodes, socket buffers.
+  // Invisible in mem_used and the usual reason a limit is hit by a container
+  // whose heap looks small.
+  optional uint64 mem_kernel = 18;
 }
 
 // FilesystemSample is one mounted filesystem, deduplicated by st_dev so a bind

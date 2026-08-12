@@ -469,14 +469,37 @@ func (g *Generator) containers(ts time.Time, cpu float64) []*netrav1.ContainerSa
 		if c.MemLimit > 0 && mem > c.MemLimit {
 			mem = c.MemLimit
 		}
+		cpu := round2(clamp(g.sig.daily(key+"/cpu", ts, c.CPUBase, 0.7, 0.3)*busy, 0, 100*float64(g.p.Threads)))
+		// user and system are a SPLIT of cpu_pct, not two more signals: a
+		// chart stacks them against it, so they have to sum to it. The share
+		// varies per container and over the day -- a proxy lives in system
+		// time, a compiler in user -- but it is always a share.
+		systemShare := clamp(g.sig.daily(key+"/sys", ts, 0.3, 0.5, 0.2), 0.05, 0.8)
+		system := round2(cpu * systemShare)
+
+		// memory.stat's parts, carved out of the same mem_used the container
+		// already reports rather than generated beside it -- anon plus the
+		// caches has to BE the number, or the breakdown and the total would
+		// describe different containers.
+		shmem := uint64(float64(mem) * 0.05)
+		kernel := uint64(float64(mem) * 0.04)
+		file := uint64(float64(mem) * clamp(g.sig.daily(key+"/file", ts, 0.22, 0.4, 0.2), 0.05, 0.5))
+		anon := mem - shmem - kernel - file
+
 		out = append(out, &netrav1.ContainerSample{
 			TsMs:         ts.UnixMilli(),
 			ContainerKey: c.Key,
 			Name:         c.Name,
 			Image:        c.Image,
 			IsAgent:      c.IsAgent,
-			CpuPct:       proto.Float64(round2(clamp(g.sig.daily(key+"/cpu", ts, c.CPUBase, 0.7, 0.3)*busy, 0, 100*float64(g.p.Threads)))),
+			CpuPct:       proto.Float64(cpu),
+			CpuUser:      proto.Float64(round2(cpu - system)),
+			CpuSystem:    proto.Float64(system),
 			MemUsed:      proto.Uint64(mem),
+			MemAnon:      proto.Uint64(anon),
+			MemFile:      proto.Uint64(file),
+			MemShmem:     proto.Uint64(shmem),
+			MemKernel:    proto.Uint64(kernel),
 			MemLimit:     proto.Uint64(c.MemLimit),
 			NetRx:        proto.Float64(round2(g.sig.daily(key+"/rx", ts, 90*1024, 1.0, 0.5) * busy)),
 			NetTx:        proto.Float64(round2(g.sig.daily(key+"/tx", ts, 64*1024, 1.0, 0.5) * busy)),
