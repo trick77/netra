@@ -4,7 +4,12 @@
 // component's only job is to hand it the right `max` and turn its output
 // into SVG paths.
 import { stackBands } from "./geometry";
-import { SPARK_WIDTH } from "./size";
+import {
+  REFERENCE_DASH,
+  REFERENCE_STROKE,
+  REFERENCE_WIDTH,
+  SPARK_WIDTH,
+} from "./size";
 
 export interface Band {
   name: string;
@@ -108,10 +113,9 @@ export function StackedSparkline({
             x2={width}
             y1={referenceY}
             y2={referenceY}
-            stroke="var(--muted)"
-            strokeWidth={1}
-            strokeDasharray="3 2"
-            opacity={0.7}
+            stroke={REFERENCE_STROKE}
+            strokeWidth={REFERENCE_WIDTH}
+            strokeDasharray={REFERENCE_DASH}
           />
         )}
         {paths.map(

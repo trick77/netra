@@ -29,12 +29,14 @@ export function UpDownSparkline({
   width = SPARK_WIDTH,
   height = 32,
   pad = 2,
-  // Green above the axis, blue below. The convention every traffic graph an
-  // operator has already read follows it -- inbound is the green half -- and
-  // these were the other way round, so a familiar chart said the unfamiliar
-  // thing.
+  // Green above the axis, purple below. Inbound is the green half in every
+  // traffic graph an operator has already read, and these started out the
+  // other way round. Purple rather than blue for the lower half: against the
+  // green above it, blue-vs-green separates by CVD dE 9 and reads as one
+  // mass at a glance, where purple is 20 -- and the two halves of this chart
+  // are the one comparison it exists to make.
   upColor = "var(--s2)",
-  downColor = "var(--s1)",
+  downColor = "var(--s5)",
   label = "up/down traffic chart",
 }: UpDownSparklineProps) {
   const effectiveMax = max ?? Math.max(extent(up).max, extent(down).max);

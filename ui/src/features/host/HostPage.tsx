@@ -192,6 +192,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             containers,
             units,
             coreMetrics,
+            netMetrics,
           ] = await Promise.all([
             metrics("host"),
             metrics("filesystem"),
@@ -202,6 +203,9 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             // The headline Processor chart is a per-core stack, the same one
             // the fleet row for this host draws.
             metrics("cpu_core"),
+            // Traffic: the overview summarised every subsystem except the
+            // one most likely to explain a problem.
+            metrics("net"),
           ]);
           return {
             hostMetrics,
@@ -211,6 +215,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             containers,
             units,
             coreMetrics,
+            netMetrics,
           };
         }
         case "graphs": {
@@ -362,6 +367,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
           agentMetrics={data.agentMetrics}
           sensorMetrics={data.sensorMetrics}
           coreMetrics={data.coreMetrics}
+          netMetrics={data.netMetrics}
           containers={data.containers}
           units={data.units}
         />

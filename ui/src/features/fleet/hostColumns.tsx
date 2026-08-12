@@ -10,8 +10,9 @@ import type { Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
+import { Sparkline } from "../../ui/charts/Sparkline";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
-import { ABSENT, bitrate, duration } from "../../lib/format";
+import { ABSENT, bitrate } from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
@@ -69,6 +70,8 @@ export type HostRow = Host & {
   // only way to say "never collected" was pct: 0, which renders as an empty,
   // healthy, green disk -- absent read as a fact.
   fullest: { mount: string; pct: number; others: number } | null;
+  /** The fullest filesystem's Use% over the window. */
+  disk: (number | null)[];
 };
 
 function HostCell({ row }: { row: HostRow }) {
@@ -203,6 +206,26 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 // 88% average to a number that hides a root at 99%). `fullest` is a
 // single pre-picked summary, not a list, so there is nothing here to sum:
 // the row's assembler already did the picking.
+// Free-scaled to 0-100 with a fixed ceiling, like CPU: a disk at 40% and one
+// at 95% must not draw the same silhouette, which is exactly what a
+// self-scaled sparkline would do.
+function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
+  if (row.disk.length === 0) return <>{ABSENT}</>;
+  return (
+    <Sparkline
+      values={row.disk}
+      min={0}
+      max={100}
+      // No area fill: usage sits between 40% and 95%, so a mass anchored at
+      // zero fills the cell for every host and four disks 40 points apart
+      // draw the same block. The line's height is what distinguishes them.
+      fill={false}
+      color="var(--s7)"
+      label={`Filesystem usage trend, ${rangeLabel(range)}`}
+    />
+  );
+}
+
 function DiskCell({ row }: { row: HostRow }) {
   if (row.fullest === null) {
     // A host that has reported no filesystems has no fullest one. Drawing a
@@ -223,27 +246,12 @@ function DiskCell({ row }: { row: HostRow }) {
   );
 }
 
-// Uptime under 300s is the most interesting row on the page (a host that
-// rebooted four minutes ago), so it carries the warning severity -- but
-// never colour alone: Badge always pairs its dot with a word, here the
-// duration text itself.
-const UPTIME_WARNING_THRESHOLD_S = 300;
-
-function UptimeCell({ row }: { row: HostRow }) {
-  const text = duration(row.uptime_s);
-  if (row.uptime_s !== null && row.uptime_s < UPTIME_WARNING_THRESHOLD_S) {
-    // "rebooted", not the duration alone. Badge's dot is aria-hidden, so a
-    // screen reader hearing "1 m 40 s" cannot tell this row from a healthy
-    // host's "266 d 6 h", and a deuteranope sees only a hue change -- the
-    // state would ride on colour alone, which is precisely what pairing a
-    // dot with a WORD is supposed to prevent. A duration is not a severity.
-    return <Badge severity="warning">rebooted {text} ago</Badge>;
-  }
-  // Same type as the traffic cell's rates, in muted ink. Uptime inherited
-  // the table body's own size and full-strength colour, which made
-  // "37 d 6 h" the loudest thing in a row whose point is the charts.
-  return <span className="uptime-cell">{text}</span>;
-}
+// The Uptime column and its cell are gone from this list. Uptime is a fact
+// about a host, not a reading to scan a fleet by: it is the same number all
+// day and the row's job is what changed. It still leads the host page's
+// System card, where a reader has asked about one machine. The "rebooted
+// N minutes ago" warning it carried lives on there too, as the header's own
+// status.
 
 export function hostColumns(range: Range): Column<HostRow>[] {
   return [
@@ -269,6 +277,11 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       cell: (row) => <TrafficCell row={row} range={range} />,
     },
     {
+      key: "diskTrend",
+      header: "Filesystem",
+      cell: (row) => <DiskTrendCell row={row} range={range} />,
+    },
+    {
       key: "disk",
       header: "Disk",
       cell: (row) => <DiskCell row={row} />,
@@ -276,12 +289,6 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       // Sorting on bytes would put the biggest disk first rather than the
       // one closest to filling up, which is what this column is for.
       sortValue: (row) => row.fullest?.pct ?? null,
-    },
-    {
-      key: "uptime",
-      header: "Uptime",
-      cell: (row) => <UptimeCell row={row} />,
-      sortValue: (row) => row.uptime_s,
     },
   ];
 }

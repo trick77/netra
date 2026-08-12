@@ -1382,14 +1382,34 @@ svg.spark {
 /* The axis labels sit beside the plot and share its height, so a label can
    never drift from the gridline it names. */
 .cd-y {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: flex-end;
+  /* Labels are placed at the value they name rather than spread evenly:
+     with a reference line the plot carries headroom above it, so an evenly
+     spread top label would sit above the number it claims to mark. */
+  position: relative;
   font-size: var(--text-micro);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   height: 320px;
+  /* Wide enough for the longest label this axis draws, because the spans are
+     absolutely positioned and so contribute nothing to the container's own
+     width: at 5.5em "137.4 GB" wrapped onto two lines and read as a
+     truncated number. */
+  width: 7em;
+}
+.cd-y span {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* A reference rule's own label, in the same type as the axis that names the
+   same value in the enlarged view -- one fact, one appearance, wherever a
+   reader meets it. */
+.ref-label {
+  font-size: var(--text-micro);
+  fill: var(--muted);
 }
 .cd-x {
   display: flex;

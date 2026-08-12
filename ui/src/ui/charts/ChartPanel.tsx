@@ -47,6 +47,11 @@ export interface ChartPanelProps {
   legend?: boolean;
   /** A value to mark with a dashed rule, e.g. a host's total memory. */
   reference?: number;
+  /** Draw the series as mirrored in/out pairs about a midline. */
+  mirrored?: boolean;
+  /** What the reference rule is, drawn at the line. The small panel has no
+   * axis, so without this the rule is unnamed there. */
+  referenceLabel?: string;
   /** Hide the enlarged view's y axis. For a stack whose height is a shape
    * rather than a quantity -- unnormalised per-core CPU runs to N x 100 --
    * an axis would put a number on something that does not mean one. */
@@ -73,6 +78,8 @@ export function ChartPanel({
   stacked,
   legend,
   reference,
+  referenceLabel,
+  mirrored,
   hideAxis,
   window: answered = null,
   range,
@@ -150,6 +157,8 @@ export function ChartPanel({
           stacked={stacked}
           legend={legend}
           reference={reference}
+          referenceLabel={referenceLabel}
+          mirrored={mirrored}
           label={`${title} over time`}
         />
       </button>
@@ -164,6 +173,10 @@ export function ChartPanel({
           stacked={stacked}
           legend={legend}
           reference={reference}
+          // No label in the enlarged view: it has a y axis, and that axis
+          // already names the reference at the height it sits. Only the
+          // small panel, which has no axis, needs the rule to say what it is.
+          mirrored={mirrored}
           hideAxis={hideAxis}
           window={answered}
           range={range}

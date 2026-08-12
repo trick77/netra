@@ -29,6 +29,11 @@ export interface ChartDetailProps {
   legend?: boolean;
   /** A value to mark with a dashed rule, e.g. a host's total memory. */
   reference?: number;
+  /** Draw the series as mirrored in/out pairs about a midline. */
+  mirrored?: boolean;
+  /** What the reference rule is, drawn at the line. The small panel has no
+   * axis, so without this the rule is unnamed there. */
+  referenceLabel?: string;
   /** Hide the y axis. A stack whose height is a shape rather than a
    * quantity -- unnormalised per-core CPU runs to N x 100 -- must not carry
    * an axis putting a number on it. */
@@ -59,6 +64,8 @@ export function ChartDetail({
   stacked,
   legend,
   reference,
+  referenceLabel,
+  mirrored,
   hideAxis,
 }: ChartDetailProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -107,13 +114,23 @@ export function ChartDetail({
         </header>
 
         <div className="cd-chart">
-          {/* The y axis is drawn from the same ceiling the line is scaled
-              to, so the labels cannot disagree with the shape. */}
+          {/* The axis is drawn from the same ceiling the shape is scaled to,
+              so the labels cannot disagree with it -- EXCEPT when a
+              reference is given. Then the ceiling carries headroom above the
+              reference so the rule is visible, and labelling that padded
+              number puts a quantity on screen that does not exist: a 137.4 GB
+              host read "148.4 GB". The labels then step from the reference,
+              positioned where they actually fall. */}
           {!hideAxis && (
             <div className="cd-y">
-              <span>{format(ceiling)}</span>
-              <span>{format(ceiling / 2)}</span>
-              <span>{format(0)}</span>
+              {(reference === undefined
+                ? [1, 0.5, 0]
+                : [reference / ceiling, reference / ceiling / 2, 0]
+              ).map((fraction, i) => (
+                <span key={i} style={{ top: `${(1 - fraction) * 100}%` }}>
+                  {format(fraction * ceiling)}
+                </span>
+              ))}
             </div>
           )}
           <Overlay
@@ -125,6 +142,8 @@ export function ChartDetail({
             stacked={stacked}
             legend={legend}
             reference={reference}
+            referenceLabel={referenceLabel}
+            mirrored={mirrored}
             label={`${title}, enlarged`}
           />
         </div>

@@ -31,6 +31,11 @@ export interface HostTrends {
   rx: (number | null)[];
   tx: (number | null)[];
   fullest: HostRow["fullest"];
+  /** The fullest filesystem's usage over the window, as df's Use%. The
+   * meter beside it says how full that disk is now; this says whether it
+   * got there this morning or three weeks ago -- which is the difference
+   * between "watch it" and "act today". */
+  disk: (number | null)[];
 }
 
 // The CPU and memory bands both moved to lib/bands.ts, which the host page
@@ -134,6 +139,49 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
   };
 }
 
+/**
+ * The fullest filesystem's Use% over the whole window.
+ *
+ * Same filesystem fullestFilesystem() names, and the same definition --
+ * used / (used + free), never used / total, since total includes the root
+ * reserve. Picking the series by its LAST reading rather than per bucket:
+ * a chart that switched filesystems mid-window whenever another one
+ * overtook would draw a line no single disk ever followed.
+ */
+function fullestSeries(res: MetricsResponse | null): (number | null)[] {
+  if (res === null || res.series.length === 0) return [];
+  if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return [];
+
+  let best = -1;
+  let bestPct = -1;
+  for (let i = 0; i < res.series.length; i++) {
+    const used = lastNumber(griddedValues(res, i, "used"));
+    const free = lastNumber(griddedValues(res, i, "free"));
+    if (used === null || free === null || used + free === 0) continue;
+    const pct = (used / (used + free)) * 100;
+    if (pct > bestPct) {
+      bestPct = pct;
+      best = i;
+    }
+  }
+  if (best === -1) return [];
+
+  const used = griddedValues(res, best, "used");
+  const free = griddedValues(res, best, "free");
+  const width = Math.max(used.length, free.length);
+  const out: (number | null)[] = [];
+  for (let i = 0; i < width; i++) {
+    const u = used[i] ?? null;
+    const f = free[i] ?? null;
+    // A gap is a gap: the host reported nothing for that bucket, which is
+    // not the same as the disk being empty.
+    out.push(
+      u === null || f === null || u + f === 0 ? null : (u / (u + f)) * 100,
+    );
+  }
+  return out;
+}
+
 function lastNumber(values: readonly (number | null)[]): number | null {
   for (let i = values.length - 1; i >= 0; i--) {
     const v = values[i];
@@ -218,6 +266,7 @@ export async function fetchHostTrends(
     rx: sumSeries(net, "rx_bytes"),
     tx: sumSeries(net, "tx_bytes"),
     fullest: fullestFilesystem(filesystem),
+    disk: fullestSeries(filesystem),
   };
 }
 
@@ -242,6 +291,7 @@ export function buildRows(
       // read has no fullest one, and an empty green meter would say its
       // disks are empty.
       fullest: trend?.fullest ?? null,
+      disk: trend?.disk ?? [],
     };
   });
 }

@@ -59,7 +59,19 @@ export const UNAVAILABLE: Record<string, string> = {
 
 // Colours are token references (index.css owns the palette); the series
 // index wraps so a family with many devices still never names a hue here.
-const SERIES_VARS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
+// Eight, not four. The throughput panel draws two series per interface, so
+// four wrapped after the second one and bond0 and enp1s0f1 came out the same
+// colour in the same chart.
+const SERIES_VARS = [
+  "var(--s1)",
+  "var(--s2)",
+  "var(--s3)",
+  "var(--s4)",
+  "var(--s5)",
+  "var(--s6)",
+  "var(--s7)",
+  "var(--s8)",
+];
 
 type Source =
   "host" | "net" | "diskIo" | "filesystem" | "collector" | "cpuCore";
@@ -84,6 +96,9 @@ interface PanelSpec {
   /** Hide the enlarged view's y axis, for a stack whose height is a shape
    * rather than a quantity. */
   hideAxis?: boolean;
+  /** Draw the bases as mirrored pairs about a midline -- in above, out
+   * below. Only meaningful when the bases come in twos, in that order. */
+  mirrored?: boolean;
 }
 
 // A count or a rate has no unit prefix worth inventing, so it is printed
@@ -189,13 +204,19 @@ const SYSTEM: PanelSpec[] = [
 
 const NETWORK: PanelSpec[] = [
   {
+    // Ingress and egress, not rx and tx: the direction is the point of this
+    // chart, and "rx" is the kernel's word for it rather than the reader's.
     title: "Interface throughput",
     unit: "B/s",
     source: "net",
     bases: [
-      { base: "rx_bytes", label: "rx" },
-      { base: "tx_bytes", label: "tx" },
+      { base: "rx_bytes", label: "ingress" },
+      { base: "tx_bytes", label: "egress" },
     ],
+    // Mirrored about a midline, the way the fleet row has always drawn
+    // traffic: two lines climbing one axis make a reader compare shapes to
+    // answer "which way is this going".
+    mirrored: true,
     fmt: bytes,
   },
   {
@@ -406,6 +427,7 @@ function Panel({
       max={spec.max}
       fmt={spec.fmt}
       stacked={spec.stacked}
+      mirrored={spec.mirrored}
       // A 32-core legend is longer than the chart it explains. Suppressed
       // with legend, not highlight: the latter also dims every other series
       // to 35% and washed the whole stack out.

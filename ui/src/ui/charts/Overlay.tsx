@@ -4,7 +4,8 @@
 // per series independently would normalise a 2% series and a 200% series
 // to look identical, which is exactly the comparison this component exists
 // to make possible.
-import { dotPath, extent, linePath, stackBands } from "./geometry";
+import { dotPath, extent, linePath, mirrorPaths, stackBands } from "./geometry";
+import { REFERENCE_DASH, REFERENCE_STROKE, REFERENCE_WIDTH } from "./size";
 
 export interface OverlaySeries {
   name: string;
@@ -61,6 +62,22 @@ export interface OverlayProps {
    * Without it a stack scaled to a ceiling cannot answer "is this host
    * nearly full", because nothing says what the top of the box means. */
   reference?: number;
+  /** What the reference rule is. Drawn at the line, because a dashed rule
+   * with no name is a mystery: a reader has to guess whether it is a
+   * ceiling, a threshold or a mean. */
+  referenceLabel?: string;
+  /**
+   * Draw the series as mirrored pairs about a midline -- ingress above,
+   * egress below -- rather than as independent lines.
+   *
+   * Series arrive in pairs: (0,1) is one interface's in and out, (2,3) the
+   * next. Traffic has a direction, and a chart that draws both directions as
+   * two lines climbing the same axis makes a reader compare shapes to answer
+   * "which way is this going", which the midline answers at a glance. The
+   * fleet row has always drawn it this way; this is how everything else
+   * catches up.
+   */
+  mirrored?: boolean;
 }
 
 export function Overlay({
@@ -75,6 +92,8 @@ export function Overlay({
   stacked = false,
   legend = true,
   reference,
+  referenceLabel,
+  mirrored = false,
 }: OverlayProps) {
   const { min: autoMin } = extent(series.flatMap((s) => s.values));
   const effectiveMin = min ?? autoMin;
@@ -109,19 +128,74 @@ export function Overlay({
         aria-label={label}
       >
         {referenceY !== null && (
-          <line
-            data-reference
-            x1={0}
-            x2={width}
-            y1={referenceY}
-            y2={referenceY}
-            stroke="var(--muted)"
-            strokeWidth={1}
-            strokeDasharray="4 3"
-            opacity={0.7}
-          />
+          <>
+            <line
+              data-reference
+              x1={0}
+              x2={width}
+              y1={referenceY}
+              y2={referenceY}
+              stroke={REFERENCE_STROKE}
+              strokeWidth={REFERENCE_WIDTH}
+              strokeDasharray={REFERENCE_DASH}
+            />
+            {referenceLabel !== undefined && (
+              <text
+                data-reference-label
+                className="ref-label"
+                x={width - 4}
+                y={referenceY - 5}
+                textAnchor="end"
+              >
+                {referenceLabel}
+              </text>
+            )}
+          </>
         )}
-        {stacked &&
+        {mirrored &&
+          Array.from({ length: Math.ceil(series.length / 2) }, (_, p) => {
+            const up = series[p * 2];
+            const down = series[p * 2 + 1];
+            if (up === undefined) return null;
+            const paths = mirrorPaths(
+              up.values,
+              down?.values ?? [],
+              width,
+              height,
+              max,
+              pad,
+            );
+            return (
+              <g key={up.name} data-series={up.name} data-mirror>
+                <path
+                  d={paths.up}
+                  fill={up.color}
+                  fillOpacity={0.45}
+                  stroke={up.color}
+                  strokeWidth={1.25}
+                />
+                {down !== undefined && (
+                  <path
+                    d={paths.down}
+                    fill={down.color}
+                    fillOpacity={0.45}
+                    stroke={down.color}
+                    strokeWidth={1.25}
+                  />
+                )}
+                <line
+                  x1={0}
+                  x2={width}
+                  y1={paths.mid}
+                  y2={paths.mid}
+                  stroke="var(--border)"
+                  strokeWidth={1}
+                />
+              </g>
+            );
+          })}
+        {!mirrored &&
+          stacked &&
           series.map((s, i) => {
             const dimmed = highlight !== undefined && highlight !== s.name;
             return (
@@ -144,7 +218,8 @@ export function Overlay({
               />
             );
           })}
-        {!stacked &&
+        {!mirrored &&
+          !stacked &&
           series.map((s) => {
             const { paths, points } = linePath(
               s.values,

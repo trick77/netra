@@ -16,6 +16,7 @@ import {
 } from "../../../lib/metrics";
 import {
   ABSENT,
+  bitrate,
   bytes,
   duration,
   percent,
@@ -27,6 +28,7 @@ import { Meter } from "../../../ui/Meter";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
 import { Sparkline } from "../../../ui/charts/Sparkline";
+import { UpDownSparkline } from "../../../ui/charts/UpDownSparkline";
 
 /**
  * column() in lib/metrics.ts THROWS for a column the answering tier does
@@ -84,6 +86,48 @@ export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
     used: latest(res, "used", index),
     free: latest(res, "free", index),
   }));
+}
+
+/** The latest known reading, or null when the series has none. */
+function lastNumber(values: readonly (number | null)[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && v !== undefined) return v;
+  }
+  return null;
+}
+
+/**
+ * A keyed family summed across its series, index by index.
+ *
+ * A null anywhere in a bucket makes that bucket's total unknowable rather
+ * than smaller, so the sum is null there too: counting it as zero draws a
+ * dip that never happened.
+ */
+function sumInterfaces(
+  res: MetricsResponse | null | undefined,
+  base: string,
+): (number | null)[] {
+  if (res == null || res.series.length === 0) return [];
+  const columns = res.series.map((_, i) => griddedValues(res, i, base));
+  const width = columns.reduce((w, c) => Math.max(w, c.length), 0);
+  const out: (number | null)[] = [];
+  for (let i = 0; i < width; i++) {
+    let total = 0;
+    let known = false;
+    let unknown = false;
+    for (const column of columns) {
+      const v = column[i];
+      if (v === undefined) continue;
+      if (v === null) unknown = true;
+      else {
+        total += v;
+        known = true;
+      }
+    }
+    out.push(unknown || !known ? null : total);
+  }
+  return out;
 }
 
 export interface Attention {
@@ -219,6 +263,8 @@ export interface OverviewProps {
   /** family=cpu_core for this host, one series per logical CPU. Absent on a
    * host too large to ask for them -- see MAX_PER_CORE in hostTrends.ts. */
   coreMetrics?: MetricsResponse | null;
+  /** family=net for this host, one series per interface. */
+  netMetrics?: MetricsResponse | null;
   containers: Container[] | null;
   units: Unit[] | null;
   /** Injected by tests so "last reported" is deterministic. */
@@ -229,6 +275,7 @@ export function Overview({
   host,
   hostMetrics,
   coreMetrics,
+  netMetrics,
   filesystemMetrics,
   agentMetrics,
   sensorMetrics,
@@ -269,6 +316,13 @@ export function Overview({
         : [];
 
   const memBands = memoryBands(hostMetrics);
+
+  // A host's traffic is the sum over its interfaces, and a null anywhere in
+  // a bucket makes that bucket's total unknowable rather than smaller --
+  // counting it as zero would draw a dip that never happened. Same rule the
+  // fleet row uses, so the two agree about one host.
+  const ingress = sumInterfaces(netMetrics, "rx_bytes");
+  const egress = sumInterfaces(netMetrics, "tx_bytes");
 
   const memTotal = latest(hostMetrics, "mem_total") ?? host.memory_total;
   const memUsed = latest(hostMetrics, "mem_used") ?? host.mem_used;
@@ -363,6 +417,7 @@ export function Overview({
         // than as the top border of the plot.
         max={memTotal === null ? undefined : memTotal * 1.08}
         reference={memTotal ?? undefined}
+        referenceLabel={memTotal === null ? undefined : bytes(memTotal)}
         fmt={(n) => bytes(n)}
         stacked
         window={hostMetrics?.window ?? null}
@@ -414,6 +469,32 @@ export function Overview({
             max={swapTotal}
             formatValue={(value, max) => `${bytes(value)} of ${bytes(max)}`}
           />
+        )}
+      </Panel>
+
+      {/* Ingress above the line, egress below -- the same mark the fleet row
+          draws, because a reader moving between them should not have to
+          re-learn the chart. There was no traffic card on this page at all:
+          the only network chart lived in the Graphs tab, so the overview
+          summarised every subsystem except the one most likely to explain a
+          problem. */}
+      <Panel label="Traffic" title="Traffic">
+        {ingress.length === 0 && egress.length === 0 ? (
+          <p className="note">No interface samples in this window.</p>
+        ) : (
+          <div className="traffic-cell">
+            <UpDownSparkline
+              up={ingress}
+              down={egress}
+              width={260}
+              height={64}
+              label="Ingress and egress over time"
+            />
+            <div className="traffic-rates">
+              <span className="rate">↑ {bitrate(lastNumber(ingress))} in</span>
+              <span className="rate">↓ {bitrate(lastNumber(egress))} out</span>
+            </div>
+          </div>
         )}
       </Panel>
 

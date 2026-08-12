@@ -38,20 +38,26 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     rx: [1e6, 2e6, 1.5e6],
     tx: [5e5, 6e5, 4e5],
     fullest: { mount: "/data", pct: 88, others: 2 },
+    disk: [],
     ...overrides,
   };
 }
 
 describe("hostColumns", () => {
-  it("yields Host, CPU, Memory, Traffic, Disk, Uptime in that exact order", () => {
+  // Uptime is gone: it is a fact about a host rather than a reading to scan
+  // a fleet by -- the same number all day, where the row's job is what
+  // changed. It still leads the host page's System card. Filesystem takes
+  // its place beside Disk, because how full a disk is now and how fast it
+  // got there are different questions and the meter only answers one.
+  it("yields Host, CPU, Memory, Traffic, Filesystem, Disk in that exact order", () => {
     const cols = hostColumns("1h");
     expect(cols.map((c) => c.header)).toEqual([
       "Host",
       "CPU",
       "Memory",
       "Traffic",
+      "Filesystem",
       "Disk",
-      "Uptime",
     ]);
   });
 
@@ -127,48 +133,6 @@ describe("hostColumns", () => {
 
       expect(container.querySelector(".meter")).not.toBeInTheDocument();
       expect(container.textContent).toBe(ABSENT);
-    });
-  });
-
-  describe("uptime cell", () => {
-    it("carries the warning severity, as a badge with a dot and a word, when uptime is under 300s", () => {
-      const cols = hostColumns("1h");
-      const uptimeCol = cols.find((c) => c.header === "Uptime")!;
-      const row = makeRow({ uptime_s: 240 });
-      const { container } = render(<>{uptimeCol.cell(row)}</>);
-      const badge = container.querySelector(".badge");
-      expect(badge).toHaveClass("st-warn");
-      expect(badge?.querySelector(".dot")).toBeInTheDocument();
-      // A WORD, not merely non-empty text. The dot is aria-hidden, so a
-      // screen reader hearing "1 m 40 s" cannot tell this row from a healthy
-      // host's "266 d 6 h", and a deuteranope sees only a hue change: the
-      // state would ride on colour alone. A duration is not a severity.
-      expect(badge).toHaveTextContent(/rebooted/i);
-    });
-
-    it("does not warn at exactly 300s", () => {
-      const cols = hostColumns("1h");
-      const uptimeCol = cols.find((c) => c.header === "Uptime")!;
-      const row = makeRow({ uptime_s: 300 });
-      const { container } = render(<>{uptimeCol.cell(row)}</>);
-      expect(container.querySelector(".badge.st-warn")).not.toBeInTheDocument();
-    });
-
-    it("warns one second under the 300s boundary", () => {
-      const cols = hostColumns("1h");
-      const uptimeCol = cols.find((c) => c.header === "Uptime")!;
-      const row = makeRow({ uptime_s: 299 });
-      const { container } = render(<>{uptimeCol.cell(row)}</>);
-      expect(container.querySelector(".badge.st-warn")).toBeInTheDocument();
-    });
-
-    it("renders the absent marker with no badge when uptime is unknown", () => {
-      const cols = hostColumns("1h");
-      const uptimeCol = cols.find((c) => c.header === "Uptime")!;
-      const row = makeRow({ uptime_s: null });
-      const { container } = render(<>{uptimeCol.cell(row)}</>);
-      expect(container.querySelector(".badge")).not.toBeInTheDocument();
-      expect(screen.getByText("—")).toBeInTheDocument();
     });
   });
 
