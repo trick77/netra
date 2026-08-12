@@ -341,6 +341,23 @@ export function Overview({
   const failedUnits = (units ?? []).filter((u) => u.state === "failed").length;
   const capabilities = Object.entries(host.capabilities);
 
+  // The sensor family carries fans, voltages, currents and power alongside
+  // temperatures now, and only temperatures have a `temp` column -- so
+  // mapping the whole family here would fill a panel headed "Temperature"
+  // with a dozen rows reading "nct6775 fan1 —", burying the readings it
+  // exists to show under ones it cannot render.
+  //
+  // The original index is carried through the filter because latest() reads
+  // by position in the unfiltered series list.
+  //
+  // kind defaults to temperature: an agent predating the field sends none,
+  // and that is the only kind it could have meant.
+  const temperatureSeries = (sensorMetrics?.series ?? [])
+    .map((series, index) => ({ series, index }))
+    .filter(
+      ({ series }) => (series.key.kind ?? "temperature") === "temperature",
+    );
+
   return (
     <div className="grid2">
       {/* Overlay (inside ChartPanel) renders the full legend itself once a
@@ -593,7 +610,7 @@ export function Overview({
       </Panel>
 
       <Panel label="Temperature" title="Temperature">
-        {sensorMetrics === null || sensorMetrics.series.length === 0 ? (
+        {temperatureSeries.length === 0 ? (
           <p className="note">No sensor readings in this window.</p>
         ) : (
           // A temperature is only interesting as a movement. One number says
@@ -601,7 +618,7 @@ export function Overview({
           // been 48 all day or climbing for an hour -- so every sensor gets
           // its recent history beside its reading.
           <div className="sensor-list">
-            {sensorMetrics.series.map((series, index) => {
+            {temperatureSeries.map(({ series, index }) => {
               const name =
                 [series.key.chip, series.key.label].filter(Boolean).join(" ") ||
                 ABSENT;

@@ -233,8 +233,12 @@ func TestIntegrationMetricsJoinsTheDimensionForItsKey(t *testing.T) {
 		t.Fatalf("Metrics: %v", err)
 	}
 
-	if !slices.Equal(res.KeyColumns, []string{"chip", "label"}) {
-		t.Fatalf("key_columns = %v, want [chip label]", res.KeyColumns)
+	// kind joined the key when the collector learned to read fans, voltages
+	// and power: it identifies the series rather than measuring anything, and
+	// a client needs it to know a 1200 RPM fan does not share an axis with a
+	// 45 degree package.
+	if !slices.Equal(res.KeyColumns, []string{"chip", "label", "kind"}) {
+		t.Fatalf("key_columns = %v, want [chip label kind]", res.KeyColumns)
 	}
 	if len(res.Series) != 1 {
 		t.Fatalf("got %d series, want 1", len(res.Series))
@@ -242,6 +246,11 @@ func TestIntegrationMetricsJoinsTheDimensionForItsKey(t *testing.T) {
 	key := res.Series[0].Key
 	if key["chip"] != "coretemp" || key["label"] != "Package id 0" {
 		t.Errorf("key = %v, want the joined chip and label rather than a surrogate id", key)
+	}
+	// The row was inserted without a kind, as an agent predating the column
+	// would send it. temperature is the only kind such an agent could mean.
+	if key["kind"] != "temperature" {
+		t.Errorf("kind = %q, want temperature to be the default", key["kind"])
 	}
 	// The surrogate id identifies the series; it never appears as a value.
 	if slices.Contains(res.Columns, "sensor_id") {

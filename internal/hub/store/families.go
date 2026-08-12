@@ -281,10 +281,19 @@ func (s *Store) resolveSensorIDs(ctx context.Context, hostID int32, rows []*netr
 		}
 		seen[key] = true
 
+		// An empty kind means an agent predating the field, and temperature
+		// is the only kind such an agent could have sent. Defaulted here
+		// rather than left to the column default so an UPDATE of an existing
+		// row is equally well-defined.
+		kind := r.GetKind()
+		if kind == "" {
+			kind = "temperature"
+		}
+
 		id, ok, err := s.resolveOne(ctx, "sensor", r.GetChip()+"/"+r.GetLabel(), `
-			INSERT INTO sensors (host_id, chip, label) VALUES ($1, $2, $3)
-			ON CONFLICT (host_id, chip, label) DO UPDATE SET chip = EXCLUDED.chip
-			RETURNING id`, hostID, r.GetChip(), r.GetLabel())
+			INSERT INTO sensors (host_id, chip, label, kind) VALUES ($1, $2, $3, $4)
+			ON CONFLICT (host_id, chip, label) DO UPDATE SET kind = EXCLUDED.kind
+			RETURNING id`, hostID, r.GetChip(), r.GetLabel(), kind)
 		if err != nil {
 			return nil, err
 		}
@@ -308,8 +317,8 @@ func (s *Store) InsertSensorSamples(ctx context.Context, hostID int32, rows []*n
 	}
 
 	const stmt = `
-		INSERT INTO sensor_samples (host_id, ts, sensor_id, temp)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO sensor_samples (host_id, ts, sensor_id, temp, value)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (host_id, ts, sensor_id) DO NOTHING`
 
 	batch := &pgx.Batch{}
@@ -318,7 +327,7 @@ func (s *Store) InsertSensorSamples(ctx context.Context, hostID int32, rows []*n
 		if !ok {
 			continue
 		}
-		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), id, r.Temp)
+		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), id, r.Temp, r.Value)
 	}
 	return execBatch(ctx, s.pool, batch, "sensor sample")
 }

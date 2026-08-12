@@ -616,7 +616,13 @@ CREATE TABLE IF NOT EXISTS sensors (
     id      INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     host_id INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
     chip    TEXT NOT NULL,
-    label   TEXT NOT NULL
+    label   TEXT NOT NULL,
+    -- What the sensor measures: temperature, fan, voltage, current, power.
+    -- Charting a 1200 RPM fan on the same axis as a 45 degree package is the
+    -- mistake this exists to prevent. Defaulted rather than NOT NULL: an
+    -- agent predating the field sends nothing, and temperature is the only
+    -- kind such an agent could have meant.
+    kind    TEXT NOT NULL DEFAULT 'temperature'
 );
 
 -- A unique index rather than a table constraint, for the reason given in the
@@ -1031,7 +1037,13 @@ CREATE TABLE IF NOT EXISTS sensor_samples (
     host_id   INTEGER NOT NULL REFERENCES hosts (id) ON DELETE CASCADE,
     ts        TIMESTAMPTZ NOT NULL,
     sensor_id INTEGER NOT NULL,
+    -- Temperature in Celsius, unchanged and still what existing panels read.
+    -- NULL for every non-temperature kind.
     temp      DOUBLE PRECISION,
+    -- The reading in the kind's own unit. Set for EVERY kind, duplicating
+    -- temp for temperatures on purpose: one column a reader can chart
+    -- without first knowing which kind it asked for.
+    value     DOUBLE PRECISION,
     PRIMARY KEY (host_id, ts, sensor_id),
     -- Composite rather than sensor_id alone, so the sensor is required to
     -- belong to the host on the same row. Every other Group 1 table's
@@ -1059,7 +1071,12 @@ SELECT host_id,
        sensor_id,
        time_bucket(INTERVAL '5 minutes', ts) AS bucket,
        avg(temp) AS temp_avg,
-       max(temp) AS temp_max
+       max(temp) AS temp_max,
+       avg(value) AS value_avg,
+       max(value) AS value_max,
+       -- A fan's failure is its MINIMUM, not its peak: a stopped fan inside a
+       -- five-minute bucket is invisible in both the average and the maximum.
+       min(value) AS value_min
   FROM sensor_samples
  GROUP BY host_id, sensor_id, bucket
 WITH NO DATA;
@@ -1072,7 +1089,10 @@ SELECT host_id,
        sensor_id,
        time_bucket(INTERVAL '1 hour', bucket) AS bucket,
        avg(temp_avg) AS temp_avg,
-       max(temp_max) AS temp_max
+       max(temp_max) AS temp_max,
+       avg(value_avg) AS value_avg,
+       max(value_max) AS value_max,
+       min(value_min) AS value_min
   FROM sensor_samples_5m
  GROUP BY host_id, sensor_id, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;
