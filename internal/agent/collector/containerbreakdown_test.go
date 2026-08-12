@@ -1,10 +1,13 @@
 package collector_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
+	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
 // cpu_pct says how much CPU a container took; it cannot say what for. A
@@ -110,5 +113,104 @@ func TestContainersKeepsFileWholeWithoutAShmemLine(t *testing.T) {
 	}
 	if got := row.GetMemAnon(); got != 104857600 {
 		t.Errorf("mem_anon = %d, want 104857600", got)
+	}
+}
+
+// memStatFixture builds a one-container cgroup tree whose memory.stat is
+// exactly the body given, so a test can say "this kernel has no slab line"
+// rather than "this kernel has a slab line reading zero". Built in a TempDir
+// because the point of each of these is one line's ABSENCE, and a checked-in
+// fixture per missing line would be a directory of near-identical trees.
+func memStatFixture(t *testing.T, memStat string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	scope := filepath.Join(root, "system.slice", "docker-abc123.scope")
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("mkdir scope: %v", err)
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(scope, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("cpu.stat", "usage_usec 1000000\n")
+	write("memory.current", "1000\n")
+	write("memory.stat", memStat)
+	write("memory.max", "max\n")
+	write("io.stat", "8:0 rbytes=0 wbytes=0\n")
+	write("cgroup.procs", "\n")
+	return root
+}
+
+// breakdownOf scrapes the fixture twice -- the collector needs a previous
+// reading before it emits a row at all -- and returns the container's row.
+func breakdownOf(t *testing.T, memStat string) *netrav1.ContainerSample {
+	t.Helper()
+
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	root := memStatFixture(t, memStat)
+	testee := collector.NewContainers(root, noProcRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
+
+	containersAt(t, testee, base)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+	return containerRow(t, res.Containers, "proj/web")
+}
+
+// A kernel with no `slab` line is not a container holding zero bytes of
+// kernel slab -- and the difference is not academic: it is exactly the
+// container being OOM-killed BY kernel slab whose chart would assert it was
+// using none. The memory fields were read with readKeyedUint (missing -> 0)
+// while cpu_user and cpu_system, eight lines below, already used
+// lookupKeyedUint for precisely this reason.
+func TestContainersLeavesAbsentMemoryStatKeysUnset(t *testing.T) {
+	// A kernel reporting only anon: no file, no shmem, no slab.
+	row := breakdownOf(t, "anon 104857600\ninactive_file 0\n")
+
+	if row.MemKernel != nil {
+		t.Errorf("mem_kernel = %d, want absent with no slab line", *row.MemKernel)
+	}
+	if row.MemShmem != nil {
+		t.Errorf("mem_shmem = %d, want absent with no shmem line", *row.MemShmem)
+	}
+	if row.MemFile != nil {
+		t.Errorf("mem_file = %d, want absent with no file line", *row.MemFile)
+	}
+	// anon was reported, so it is a reading and must survive.
+	if got := row.GetMemAnon(); got != 104857600 {
+		t.Errorf("mem_anon = %d, want 104857600", got)
+	}
+}
+
+// No `shmem` line means there is no shmem for the kernel to have counted
+// inside `file`, so file is whole -- the same rule memory.go follows for the
+// host's Cached (TestMemoryAbsentShmemLeavesCachedWhole). Absent must not
+// cost the subtrahend AND the minuend.
+func TestContainersKeepsFileWholeWhenOnlyShmemIsAbsent(t *testing.T) {
+	row := breakdownOf(t, "anon 104857600\nfile 805306368\ninactive_file 0\n")
+
+	if got, want := row.GetMemFile(), uint64(805306368); got != want {
+		t.Errorf("mem_file = %d, want %d whole with no shmem line", got, want)
+	}
+	if row.MemShmem != nil {
+		t.Errorf("mem_shmem = %d, want absent with no shmem line", *row.MemShmem)
+	}
+}
+
+// A `file` smaller than its own `shmem` is a kernel disagreeing with itself
+// across two lines. The subtraction cannot be made, and the else-branch of
+// the guard used to leave mem_file at its zero value -- a measurement of zero
+// page cache that nobody took, drawn by the chart as one.
+func TestContainersLeavesFileUnsetWhenItIsSmallerThanShmem(t *testing.T) {
+	row := breakdownOf(t, "anon 104857600\nfile 1048576\nshmem 67108864\ninactive_file 0\n")
+
+	if row.MemFile != nil {
+		t.Errorf("mem_file = %d, want absent when file < shmem", *row.MemFile)
+	}
+	// shmem itself was reported and stands on its own.
+	if got, want := row.GetMemShmem(), uint64(67108864); got != want {
+		t.Errorf("mem_shmem = %d, want %d", got, want)
 	}
 }

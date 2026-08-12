@@ -151,6 +151,21 @@ export function ChartPanel({
         <Overlay
           series={series}
           max={effectiveMax}
+          // A stack is scaled from ZERO -- stackBands() has no min at all,
+          // it divides a running total by `max` -- so the reference rule has
+          // to be placed against the same floor. Without this, Overlay fell
+          // back to the data's own derived minimum: the dashed mem_total rule
+          // landed at the wrong height and the gap above the stack, which is
+          // the whole reading ("how much memory is free"), misstated it. The
+          // enlarged view has always passed min={0} and was already right,
+          // so the small panel and the chart it opened disagreed.
+          //
+          // Scoped to the stacked case rather than passed unconditionally:
+          // effectiveMin also feeds linePath() for the non-stacked panels,
+          // where auto-scaling off the data's floor is deliberate -- a
+          // temperature series between 44 and 47 degrees must not be drawn
+          // as a flat line pinned to the bottom of a 0-47 box.
+          min={stacked ? 0 : undefined}
           width={width}
           height={height}
           highlight={highlight}

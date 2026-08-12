@@ -123,12 +123,9 @@ export function ChartDetail({
               positioned where they actually fall. */}
           {!hideAxis && (
             <div className="cd-y">
-              {(reference === undefined
-                ? [1, 0.5, 0]
-                : [reference / ceiling, reference / ceiling / 2, 0]
-              ).map((fraction, i) => (
-                <span key={i} style={{ top: `${(1 - fraction) * 100}%` }}>
-                  {format(fraction * ceiling)}
+              {axisLabels(ceiling, reference, mirrored).map((label, i) => (
+                <span key={i} style={{ top: `${(1 - label.fraction) * 100}%` }}>
+                  {format(label.value)}
                 </span>
               ))}
             </div>
@@ -188,6 +185,52 @@ export function ChartDetail({
       </div>
     </div>
   );
+}
+
+/**
+ * The three y-axis labels, as a position in the plot box and the value that
+ * belongs at it.
+ *
+ * The mirrored case gets its own axis rather than `hideAxis`, and the reason
+ * is what the chart is for: both mirrored callers -- the Graphs tab's
+ * "Interface throughput" and the container page's "Network" -- are rate
+ * charts carrying unit="B/s", so "how much" is exactly the question a reader
+ * enlarged them to answer. Dropping the axis answers less than labelling it
+ * correctly does.
+ *
+ * What it must say is set by mirrorPaths() (geometry.ts): the baseline is
+ * h/2, ingress is drawn UPWARD from it and egress DOWNWARD, both scaled
+ * against the same max. So the midline is zero and BOTH edges are a peak of
+ * `ceiling`. The shared [ceiling, ceiling/2, 0] axis claimed the opposite --
+ * zero at the bottom, where the largest egress actually sits -- which read a
+ * saturated downlink as an idle one.
+ *
+ * `reference` is not combined with `mirrored`: no caller passes both, and a
+ * ceiling padded for a reference rule means something different on each of
+ * the two half-axes. The mirrored case is taken first rather than guessed at.
+ */
+function axisLabels(
+  ceiling: number,
+  reference: number | undefined,
+  mirrored: boolean | undefined,
+): { fraction: number; value: number }[] {
+  if (mirrored) {
+    // Top and bottom are both +ceiling -- a magnitude away from the midline
+    // in either direction -- and the midline is zero.
+    return [
+      { fraction: 1, value: ceiling },
+      { fraction: 0.5, value: 0 },
+      { fraction: 0, value: ceiling },
+    ];
+  }
+  const fractions =
+    reference === undefined
+      ? [1, 0.5, 0]
+      : [reference / ceiling, reference / ceiling / 2, 0];
+  return fractions.map((fraction) => ({
+    fraction,
+    value: fraction * ceiling,
+  }));
 }
 
 function formatNumber(v: number | null): string {

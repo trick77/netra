@@ -341,6 +341,7 @@ describe("buildRows", () => {
     const trends: HostTrends = {
       cpu: [{ name: "busy", color: "var(--s1)", values: [1, 2] }],
       mem: [],
+      reporting: [1, 2],
       rx: [10],
       tx: [20],
       fullest: { mount: "/", pct: 50, others: 0 },

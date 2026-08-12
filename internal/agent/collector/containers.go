@@ -51,10 +51,20 @@ type containerCounters struct {
 	hasSplit   bool
 
 	// memory.stat's own parts. Gauges, not counters -- read straight through.
+	//
+	// Each carries its own has* flag for the reason cpu.stat's split does: a
+	// kernel that does not report a line is not a container holding zero
+	// bytes of it. A container being OOM-killed by kernel slab on a kernel
+	// with no `slab` line must not have its chart assert "0 bytes of kernel
+	// slab" -- that is a measurement nobody took, and absent is not zero.
 	memAnon   uint64
+	hasAnon   bool
 	memFile   uint64
+	hasFile   bool
 	memShmem  uint64
+	hasShmem  bool
 	memKernel uint64
+	hasKernel bool
 
 	// rxBytes and txBytes are summed across the container's own network
 	// namespace. hasNet is false when there was no namespace to read -- a
@@ -230,12 +240,23 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 			// fully-busy core is 1e6 usec per second.
 			CpuPct:  ptrTo(float64(n.cpuUsec-p.cpuUsec) / (elapsed * 1e6) * 100),
 			MemUsed: ptrTo(n.memUsed),
-			// Gauges: reported on every scrape a container survives, unlike
-			// the rates above which need a previous reading.
-			MemAnon:   ptrTo(n.memAnon),
-			MemFile:   ptrTo(n.memFile),
-			MemShmem:  ptrTo(n.memShmem),
-			MemKernel: ptrTo(n.memKernel),
+		}
+		// Gauges: reported on every scrape a container survives, unlike the
+		// rates above which need a previous reading -- but only where the
+		// kernel actually reported the line. An unset field reaches the
+		// database as NULL, which the charts draw as a gap; a zero would be
+		// drawn as a measurement.
+		if n.hasAnon {
+			row.MemAnon = ptrTo(n.memAnon)
+		}
+		if n.hasFile {
+			row.MemFile = ptrTo(n.memFile)
+		}
+		if n.hasShmem {
+			row.MemShmem = ptrTo(n.memShmem)
+		}
+		if n.hasKernel {
+			row.MemKernel = ptrTo(n.memKernel)
 		}
 		// Same guard as usage_usec above: a cgroup recreated under one id
 		// resets these, and a negative delta is no reading rather than a
@@ -312,15 +333,19 @@ func (c *Containers) read() (map[string]containerCounters, error) {
 		cpuStat := filepath.Join(path, "cpu.stat")
 		memStat := filepath.Join(path, "memory.stat")
 		cc := containerCounters{
-			cpuUsec:  readKeyedUint(cpuStat, "usage_usec"),
-			memUsed:  containerMemory(path),
-			memAnon:  readKeyedUint(memStat, "anon"),
-			memShmem: readKeyedUint(memStat, "shmem"),
-			// slab, not slab_reclaimable + slab_unreclaimable: the kernel
-			// reports the total as its own line, and summing the two parts
-			// would double count on kernels that report all three.
-			memKernel: readKeyedUint(memStat, "slab"),
+			cpuUsec: readKeyedUint(cpuStat, "usage_usec"),
+			memUsed: containerMemory(path),
 		}
+		// lookupKeyedUint throughout, never readKeyedUint: every one of these
+		// is a line a kernel may simply not have, and readKeyedUint's missing
+		// -> 0 would store that absence as a measured zero.
+		cc.memAnon, cc.hasAnon = lookupKeyedUint(memStat, "anon")
+		cc.memShmem, cc.hasShmem = lookupKeyedUint(memStat, "shmem")
+		// slab, not slab_reclaimable + slab_unreclaimable: the kernel
+		// reports the total as its own line, and summing the two parts
+		// would double count on kernels that report all three.
+		cc.memKernel, cc.hasKernel = lookupKeyedUint(memStat, "slab")
+
 		user, hasUser := lookupKeyedUint(cpuStat, "user_usec")
 		system, hasSystem := lookupKeyedUint(cpuStat, "system_usec")
 		cc.userUsec, cc.systemUsec = user, system
@@ -329,8 +354,22 @@ func (c *Containers) read() (map[string]containerCounters, error) {
 		// `file` counts shmem inside it. Subtracting leaves the reclaimable
 		// page cache, so a chart stacking file and shmem does not draw the
 		// same pages twice.
-		if file := readKeyedUint(memStat, "file"); file >= cc.memShmem {
-			cc.memFile = file - cc.memShmem
+		//
+		// Three cases, and only the third is absent. No `file` line at all is
+		// nothing to report. A `file` line with no `shmem` line is file
+		// WHOLE -- there is no shmem for the kernel to have counted inside
+		// it, the same rule memory.go follows for the host's Cached
+		// (TestMemoryAbsentShmemLeavesCachedWhole). A `file` smaller than
+		// `shmem` is the kernel disagreeing with itself across two lines, not
+		// a container holding zero bytes of page cache, so it reports nothing
+		// rather than falling through to a zero drawn as a measurement.
+		if file, ok := lookupKeyedUint(memStat, "file"); ok {
+			switch {
+			case !cc.hasShmem:
+				cc.memFile, cc.hasFile = file, true
+			case file >= cc.memShmem:
+				cc.memFile, cc.hasFile = file-cc.memShmem, true
+			}
 		}
 		if raw := strings.TrimSpace(readFileString(filepath.Join(path, "memory.max"))); raw != "" && raw != "max" {
 			if v, err := strconv.ParseUint(raw, 10, 64); err == nil {

@@ -13,7 +13,8 @@ import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
 import { Overlay } from "../../ui/charts/Overlay";
 import { SPARK_WIDTH } from "../../ui/charts/size";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
-import { ABSENT, bitrate } from "../../lib/format";
+import { ABSENT, byterate } from "../../lib/format";
+import { latestValue } from "../../lib/metrics";
 import type { Host } from "../../lib/api";
 import { hostStatus } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
@@ -60,6 +61,10 @@ export type HostRow = Host & {
   site_name: string | null;
   cpu: Band[];
   mem: Band[];
+  /** cpu_total from the `host` family, for every host -- the one series the
+   * status badge is judged from. See HostTrends.reporting for why it is not
+   * `cpu[0]`. */
+  reporting: (number | null)[];
   // (number | null)[], matching Band.values, because an agent outage inside
   // the window is a hole in these series too. Typed number[] the row could
   // not express one, and UpDownSparkline -- which already breaks each side
@@ -76,11 +81,15 @@ export type HostRow = Host & {
 };
 
 function HostCell({ row }: { row: HostRow }) {
-  // The CPU series is this host's own recent history, so a host that answers
-  // now but keeps dropping scrapes reads as sporadic rather than healthy --
-  // the gaps are already visible in its sparkline, and this says the same
-  // thing in a word.
-  const status = hostStatus(row, undefined, row.cpu[0]?.values);
+  // Judged from row.reporting -- cpu_total, from the `host` family -- and
+  // never from row.cpu[0], which is a per-core band under 32 threads and the
+  // cpu_total fallback above it. Reading cpu[0] judged one host against
+  // cpu_core and its neighbour against host_samples: two relations with
+  // different materialisation lags, so the badge meant a different thing on
+  // adjacent rows of the same page. A host that answers now but keeps
+  // dropping scrapes reads as sporadic rather than healthy; the gaps are
+  // already visible in its sparkline, and this says the same thing in a word.
+  const status = hostStatus(row, undefined, row.reporting);
   return (
     <div className="host-cell">
       <div className="host-cell-top">
@@ -162,6 +171,12 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
       // edge of the box rather than as the host's ceiling.
       max={row.mem_total * MEM_HEADROOM}
       reference={row.mem_total}
+      // Five bands, five hues, and nothing else on the row saying which is
+      // which -- used, ARC, buffers, cached and shared would carry their
+      // identity on colour alone without this. The CPU cell beside it
+      // deliberately does NOT opt in: thirty-two cores have no identity a
+      // legend could carry, and the list was taller than the row.
+      legend
       label={`Memory trend, ${rangeLabel(range)}`}
     />
   );
@@ -169,10 +184,9 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
 
 // The value at the latest bucket, trailing null included -- never the last
 // value that happened to be a number. A host that stopped reporting must
-// read as absent, not as its final rate frozen in place.
-function lastValue(values: (number | null)[]): number | null {
-  return values.length > 0 ? (values[values.length - 1] ?? null) : null;
-}
+// read as absent, not as its final rate frozen in place. lib/metrics.ts's
+// latestValue() is that rule, shared with the host overview's traffic card so
+// the two pages cannot drift apart again.
 
 // Both rates render in identical type, weighted only by an arrow glyph --
 // netra cannot know whether a given host is meant to push or pull more
@@ -181,8 +195,8 @@ function lastValue(values: (number | null)[]): number | null {
 // distinguisher, so each rate carries its own aria-label naming the
 // direction in words.
 function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
-  const rx = lastValue(row.rx);
-  const tx = lastValue(row.tx);
+  const rx = latestValue(row.rx);
+  const tx = latestValue(row.tx);
   return (
     <div className="traffic-cell">
       <UpDownSparkline
@@ -190,12 +204,17 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         down={row.tx}
         label={`Traffic trend, ${rangeLabel(range)}`}
       />
+      {/* byterate, never bitrate: rx_bytes/tx_bytes are BYTES per second
+          (internal/agent/collector/network.go divides a byte delta by the
+          elapsed seconds), and bitrate() drew every rate on this page 8x
+          low. The host overview's Traffic card had the identical bug, which
+          is why nothing on screen contradicted it. */}
       <div className="traffic-rates">
-        <span className="rate" aria-label={`inbound ${bitrate(rx)}`}>
-          <span aria-hidden="true">↑</span> {bitrate(rx)}
+        <span className="rate" aria-label={`inbound ${byterate(rx)}`}>
+          <span aria-hidden="true">↑</span> {byterate(rx)}
         </span>
-        <span className="rate" aria-label={`outbound ${bitrate(tx)}`}>
-          <span aria-hidden="true">↓</span> {bitrate(tx)}
+        <span className="rate" aria-label={`outbound ${byterate(tx)}`}>
+          <span aria-hidden="true">↓</span> {byterate(tx)}
         </span>
       </div>
     </div>
@@ -253,9 +272,14 @@ function DiskCell({ row }: { row: HostRow }) {
 // The Uptime column and its cell are gone from this list. Uptime is a fact
 // about a host, not a reading to scan a fleet by: it is the same number all
 // day and the row's job is what changed. It still leads the host page's
-// System card, where a reader has asked about one machine. The "rebooted
-// N minutes ago" warning it carried lives on there too, as the header's own
-// status.
+// System card, where a reader has asked about one machine.
+//
+// The "rebooted N minutes ago" warning it carried went with it, and the
+// comment here used to claim it survived "as the header's own status" --
+// which it did not: hostStatus() has no reboot branch and nothing on any
+// page said the word. It is now a real badge in the host page header
+// (HostPage.tsx, RECENT_BOOT_S), which is where a reader who has asked
+// about one machine can act on it.
 
 export function hostColumns(range: Range): Column<HostRow>[] {
   return [

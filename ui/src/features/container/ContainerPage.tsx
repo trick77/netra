@@ -13,11 +13,12 @@ import { ChartPanel, type Band } from "../../ui/charts/ChartPanel";
 import type { Container, MetricsResponse } from "../../lib/api";
 import {
   hasGaps,
+  hasReading,
   seriesTimestamps,
   griddedValues,
   windowNotice,
 } from "../../lib/metrics";
-import { ABSENT, bytes, percent, relativeMs } from "../../lib/format";
+import { ABSENT, byterate, bytes, percent, relativeMs } from "../../lib/format";
 import type { Range } from "../../lib/range";
 
 // The windows this page OFFERS. The type is lib/range's, so a range chosen
@@ -190,14 +191,6 @@ function read(res: MetricsResponse, containerKey: string): Sampled | null {
   };
 }
 
-/** Bytes per second, not bits: net_rx/net_tx and io_read/io_write are byte
- * counters divided by the scrape interval (agent/collector/containers.go),
- * and handing them to format.ts's bitrate() would be the 8x-wrong number
- * that still looks plausible. */
-function perSecond(n: number | null): string {
-  return n === null ? ABSENT : `${bytes(n)}/s`;
-}
-
 function last(values: readonly (number | null)[]): number | null {
   return values.filter((v): v is number => v !== null).at(-1) ?? null;
 }
@@ -255,14 +248,14 @@ export function ContainerPage({
   // A band whose column the answering tier does not carry comes back empty,
   // and one the container never reported comes back all null. Neither is a
   // band: in a STACK the second is worse than useless, because stackBands
-  // breaks every band at any index where any series is null.
-  const present = (values: (number | null)[]) =>
-    values.length > 0 && values.some((v) => v !== null);
+  // breaks every band at any index where any series is null. hasReading() is
+  // that test, shared with lib/bands.ts so the host's memory stack and this
+  // one drop a band on the same rule.
 
   const cpuSplit = [
     band("user", "var(--s1)", sampled?.cpuUser ?? empty),
     band("system", "var(--s7)", sampled?.cpuSystem ?? empty),
-  ].filter((b) => present(b.values));
+  ].filter((b) => hasReading(b.values));
   const cpuBands =
     cpuSplit.length > 1
       ? cpuSplit
@@ -273,7 +266,7 @@ export function ContainerPage({
     band("file", "var(--s2)", sampled?.memFile ?? empty),
     band("shmem", "var(--s4)", sampled?.memShmem ?? empty),
     band("kernel", "var(--s8)", sampled?.memKernel ?? empty),
-  ].filter((b) => present(b.values));
+  ].filter((b) => hasReading(b.values));
   const memBands =
     memSplit.length > 1
       ? memSplit
@@ -341,7 +334,7 @@ export function ContainerPage({
             halves read as one mass. */}
         <ChartPanel
           title="Network"
-          fmt={perSecond}
+          fmt={byterate}
           notice={notice}
           window={metrics.window}
           range={range}
@@ -354,7 +347,7 @@ export function ContainerPage({
         />
         <ChartPanel
           title="Disk I/O"
-          fmt={perSecond}
+          fmt={byterate}
           notice={notice}
           window={metrics.window}
           range={range}

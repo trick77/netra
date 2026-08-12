@@ -39,6 +39,23 @@ export interface StackedSparklineProps {
    * edge, where it would be indistinguishable from a border.
    */
   reference?: number;
+  /**
+   * Whether to name every band underneath the chart.
+   *
+   * OFF by default, and that default is the 32-core CPU cell: a 32-thread
+   * host produced a legend five times taller than the chart it explained and
+   * pushed every other column of the fleet row off the screen. Thirty-two
+   * cores cannot each own a hue anyway, so there is no identity there for a
+   * legend to carry -- the shape is the whole message.
+   *
+   * But it is a per-CALLER decision, not a property of sparklines. Removing
+   * the legend outright to fix the CPU cell also stripped the five-band
+   * memory cell in the same row, where used/ARC/buffers/cached/shared are
+   * five distinct hues that DO carry identity -- and identity on colour alone
+   * is exactly what a legend exists to prevent. Five nameable bands opt in;
+   * thirty-two unnameable ones do not.
+   */
+  legend?: boolean;
 }
 
 // stackBands() needs the largest RUNNING TOTAL across bands (sum over all
@@ -78,6 +95,7 @@ export function StackedSparkline({
   pad = 2,
   label = "stacked chart",
   reference,
+  legend = false,
 }: StackedSparklineProps) {
   const effectiveMax = max ?? maxRunningTotal(bands);
   // Where the reference sits in the plot box. Null when there is nothing to
@@ -141,11 +159,23 @@ export function StackedSparkline({
             ),
         )}
       </svg>
-      {/* No legend. A sparkline is a shape in a table cell, read at a glance
-          alongside four other columns -- a list of band names under it is a
-          second thing to read that answers a question nobody asked there,
-          and at 32 cores it was taller than the row. The host page's charts
-          are where the bands get named. */}
+      {/* Off unless the caller asks. A sparkline is a shape in a table cell,
+          read at a glance alongside four other columns, and at 32 cores a
+          list of band names under it was taller than the row itself. Where
+          the bands are few and separately coloured -- the memory cell's five
+          -- the names are the only thing keeping identity off colour alone,
+          so that caller opts in. `bands.length >= 2` because a single band
+          has nothing to distinguish it from. */}
+      {legend && bands.length >= 2 && (
+        <div className="legend">
+          {bands.map((b) => (
+            <span key={b.name}>
+              <i style={{ background: b.color }} />
+              {b.name}
+            </span>
+          ))}
+        </div>
+      )}
     </>
   );
 }

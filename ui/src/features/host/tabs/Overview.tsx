@@ -12,11 +12,12 @@ import type {
 import {
   carriesColumn,
   griddedValues,
+  latestValue,
   optionalValues,
 } from "../../../lib/metrics";
 import {
   ABSENT,
-  bitrate,
+  byterate,
   bytes,
   duration,
   percent,
@@ -88,14 +89,13 @@ export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
   }));
 }
 
-/** The latest known reading, or null when the series has none. */
-function lastNumber(values: readonly (number | null)[]): number | null {
-  for (let i = values.length - 1; i >= 0; i--) {
-    const v = values[i];
-    if (v !== null && v !== undefined) return v;
-  }
-  return null;
-}
+// The latest bucket's value, trailing null included, is lib/metrics.ts's
+// latestValue(). This page used to scan backwards for the last non-null,
+// which reported a host that stopped an hour ago at the final rate it ever
+// sent: "the agent is down" rendered as "traffic is steady at 2 MB/s". The
+// fleet's traffic cell has always read the latest bucket, so the same dead
+// host read as absent there and as busy here -- which is why the rule now has
+// exactly one spelling instead of a copy per page.
 
 /**
  * A keyed family summed across its series, index by index.
@@ -508,8 +508,17 @@ export function Overview({
               label="Ingress and egress over time"
             />
             <div className="traffic-rates">
-              <span className="rate">↑ {bitrate(lastNumber(ingress))} in</span>
-              <span className="rate">↓ {bitrate(lastNumber(egress))} out</span>
+              {/* byterate, never bitrate: net_rx/net_tx are BYTES per
+                  second, so bitrate() rendered every host's traffic 8x low
+                  and plausibly. The fleet's traffic cell carried the same
+                  bug, so the two pages agreed with each other and with
+                  nothing else. */}
+              <span className="rate">
+                ↑ {byterate(latestValue(ingress))} in
+              </span>
+              <span className="rate">
+                ↓ {byterate(latestValue(egress))} out
+              </span>
             </div>
           </div>
         )}

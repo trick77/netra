@@ -153,4 +153,63 @@ describe("HostPage", () => {
       host: 7,
     });
   });
+
+  // The fleet list's Uptime column carried a "rebooted N ago" warning. When
+  // that column was removed, the comment left in its place claimed the
+  // warning "lives on there too, as the header's own status" -- and nothing
+  // did: hostStatus() has no reboot branch and grepping "rebooted" matched
+  // only the comment asserting it. This is that warning, restored where the
+  // comment said it was.
+  it("warns in the header about a host that rebooted minutes ago", async () => {
+    vi.mocked(api.getHost).mockResolvedValue({ ...host, uptime_s: 100 });
+
+    render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
+
+    const header = await screen.findByRole("banner", { name: "Host summary" });
+    expect(within(header).getByText(/rebooted .* ago/)).toBeInTheDocument();
+  });
+
+  // "rebooted", not the duration alone. Badge's dot is aria-hidden, so a
+  // screen reader hearing "1 m 40 s" cannot tell this host from one up for
+  // "266 d 6 h", and a deuteranope sees only a hue change -- the state would
+  // ride on colour alone. A duration is not a severity.
+  it("says the word rather than colouring a bare duration", async () => {
+    vi.mocked(api.getHost).mockResolvedValue({ ...host, uptime_s: 100 });
+
+    render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
+
+    const badge = await screen.findByText(/rebooted/);
+    expect(badge.textContent).toMatch(/rebooted 1 m 40 s ago/);
+    expect(badge.className).toContain("badge");
+  });
+
+  // A host up for a day is the overwhelmingly common case, and a badge on
+  // every header would spend the reader's first stop on a non-event. It also
+  // must not displace the reporting status beside it.
+  it("says nothing about a host that has been up for a day", async () => {
+    render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
+
+    const header = await screen.findByRole("banner", { name: "Host summary" });
+    expect(within(header).queryByText(/rebooted/)).toBeNull();
+    expect(within(header).getByText("online")).toBeInTheDocument();
+  });
+
+  // uptime_s is host_current's LAST REPORTED value, not a live clock: a
+  // machine that booted and then died keeps that 100 in the database for
+  // ever. Announcing "rebooted 1 m 40 s ago" beside an "offline" badge dates
+  // a stale reading to now -- the absent-as-a-fact inversion this warning
+  // exists to expose, committed by the warning itself.
+  it("says nothing about a host whose last uptime was reported days ago", async () => {
+    vi.mocked(api.getHost).mockResolvedValue({
+      ...host,
+      uptime_s: 100,
+      last_seen: new Date(Date.now() - 3 * 24 * 3600 * 1000).toISOString(),
+    });
+
+    render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
+
+    const header = await screen.findByRole("banner", { name: "Host summary" });
+    expect(within(header).getByText("offline")).toBeInTheDocument();
+    expect(within(header).queryByText(/rebooted/)).toBeNull();
+  });
 });

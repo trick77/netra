@@ -25,7 +25,7 @@ import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
-import { ABSENT, relative } from "../../lib/format";
+import { ABSENT, duration, relative } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
 import { rangeWindow, type Range } from "../../lib/range";
 import { Events } from "./tabs/Events";
@@ -138,6 +138,12 @@ export interface HostPageProps {
   tab: HostTab;
   onTabChange: (tab: HostTab) => void;
 }
+
+// A host that came up inside the last five minutes is the most interesting
+// thing its header can say -- an unannounced reboot explains gaps in every
+// chart below it -- so it carries the warning severity. The same threshold
+// the fleet list's Uptime cell used before that column was removed.
+const RECENT_BOOT_S = 300;
 
 export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
   const [host, setHost] = useState<HostDetail | null>(null);
@@ -319,6 +325,16 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
   }
 
   const status = hostStatus(host);
+  // Only while the host is still answering. uptime_s is host_current's LAST
+  // REPORTED value, not a live clock: a machine that booted and then died
+  // stays at "40 s" in the database forever, and rendering that as "rebooted
+  // 40 s ago" beside an "offline" badge is a stale reading dressed as a fresh
+  // one -- the same absent-as-a-fact inversion this warning exists to expose.
+  // A host the hub is not hearing from has no current uptime to state.
+  const recentlyBooted =
+    status.severity !== "critical" &&
+    host.uptime_s !== null &&
+    host.uptime_s < RECENT_BOOT_S;
 
   return (
     // "hostpage", NOT "host": .host is the host CELL -- a flex row with a
@@ -336,6 +352,26 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             .join(" · ")}
         </span>
         <Badge severity={status.severity}>{status.label}</Badge>
+        {/* Beside the reporting status, not instead of it: the two answer
+            different questions, and a host can be online AND four minutes
+            into a boot it did not announce. This warning used to live in the
+            fleet list's Uptime cell; when that column was removed the comment
+            left behind claimed it had moved to "the header's own status",
+            which was not true of any code -- hostStatus() has no reboot
+            branch. This is that warning, restored where the comment said it
+            was.
+
+            "rebooted", not the duration alone. Badge's dot is aria-hidden, so
+            a screen reader hearing "1 m 40 s" cannot tell this host from one
+            up for "266 d 6 h", and a deuteranope sees only a hue change --
+            the state would ride on colour alone, which is precisely what
+            pairing a dot with a WORD prevents. A duration is not a
+            severity. */}
+        {recentlyBooted && (
+          <Badge severity="warning">
+            rebooted {duration(host.uptime_s)} ago
+          </Badge>
+        )}
         <span className="meta">
           last seen{" "}
           {host.last_seen === null ? ABSENT : relative(host.last_seen)}

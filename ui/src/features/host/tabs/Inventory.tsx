@@ -152,7 +152,7 @@ export function Containers({
       {
         cpu: griddedValues(metrics, index, "cpu_pct"),
         mem: griddedValues(metrics, index, "mem_used"),
-        memLimit: lastValue(griddedValues(metrics, index, "mem_limit")),
+        memLimit: lastReported(griddedValues(metrics, index, "mem_limit")),
       },
     ]),
   );
@@ -221,8 +221,13 @@ export function Containers({
   );
 }
 
-/** The latest non-null value, or null when the series never reported. */
-function lastValue(values: readonly (number | null)[]): number | null {
+/** The latest non-null value, or null when the series never reported.
+ *
+ * NOT lib/metrics.ts's latestValue(), which is the LATEST BUCKET including a
+ * trailing null. The two answer different questions and only this one is
+ * right for mem_limit: a configured ceiling does not stop being the ceiling
+ * because the newest bucket has not materialised yet. */
+function lastReported(values: readonly (number | null)[]): number | null {
   for (let i = values.length - 1; i >= 0; i--) {
     const v = values[i];
     if (v !== null && v !== undefined) return v;

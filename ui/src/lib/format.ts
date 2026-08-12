@@ -53,6 +53,27 @@ export function bitrate(bitsPerSecond: number | null): string {
   return scale(bitsPerSecond, ["b/s", "kb/s", "Mb/s", "Gb/s", "Tb/s"]);
 }
 
+/**
+ * Network and disk throughput, in BYTES per second -- the counterpart to
+ * `bitrate` and, for netra, the far commoner of the two.
+ *
+ * Every rate the agent reports is bytes: internal/agent/collector/network.go
+ * computes net_rx/net_tx as (rxBytes - prev) / elapsed, and the container
+ * collector does the same for its own counters. Handing one of those to
+ * `bitrate` is precisely the 8x-wrong-but-plausible number that function's
+ * doc comment warns about, and both traffic call sites did it -- the fleet
+ * row's cell and the host overview's Traffic card, which is why one page
+ * agreeing with another proved nothing.
+ *
+ * It lives here rather than beside a call site so there is exactly one
+ * spelling of "bytes per second" in the app. A local copy was how the two
+ * traffic cells stayed wrong while the container page was right.
+ */
+export function byterate(bytesPerSecond: number | null): string {
+  if (bytesPerSecond === null) return ABSENT;
+  return `${bytes(bytesPerSecond)}/s`;
+}
+
 export function percent(n: number | null, digits = 0): string {
   if (n === null) return ABSENT;
   return `${round(n, digits)} %`;

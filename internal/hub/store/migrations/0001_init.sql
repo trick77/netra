@@ -1359,6 +1359,19 @@ SELECT host_id,
        avg(mem_used_avg) AS mem_used_avg,
        max(mem_used_max) AS mem_used_max,
        max(mem_limit_max) AS mem_limit_max,
+       -- The same six the 5m tier rolls up, and for the same reason they are
+       -- avg only there: they are parts of a whole. Missing here, a container
+       -- page answered from this tier -- 7d and 30d -- carried no split at
+       -- all and silently collapsed to the single cpu_pct/mem_used line,
+       -- while 6h and 24h showed the breakdown. host_samples_1h was updated
+       -- when the host charts were split; this one was not, so the container
+       -- charts degraded with the range and the host charts did not.
+       avg(cpu_user_avg)   AS cpu_user_avg,
+       avg(cpu_system_avg) AS cpu_system_avg,
+       avg(mem_anon_avg)   AS mem_anon_avg,
+       avg(mem_file_avg)   AS mem_file_avg,
+       avg(mem_shmem_avg)  AS mem_shmem_avg,
+       avg(mem_kernel_avg) AS mem_kernel_avg,
        avg(net_rx_avg)   AS net_rx_avg,
        max(net_rx_max)   AS net_rx_max,
        avg(net_tx_avg)   AS net_tx_avg,

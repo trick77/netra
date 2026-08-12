@@ -122,4 +122,77 @@ describe("ChartPanel", () => {
     expect(document.querySelector(".now")?.textContent).toBe("12 MB");
     expect(document.querySelector(".u")?.textContent).toBe("B/s");
   });
+
+  // stackBands() scales from ZERO -- it divides a running total by `max`,
+  // with no min at all -- so the reference rule has to be placed against the
+  // same floor. Without min={0} the small panel used the data's own derived
+  // minimum, and the dashed mem_total rule landed at the wrong height: the
+  // gap between the stack and the rule IS the free-memory reading, so it
+  // misstated exactly what the chart is for. The enlarged view always passed
+  // min={0}, so a panel and the chart it opened disagreed.
+  it("places a stacked panel's reference rule against the same zero floor the stack is scaled from", () => {
+    const { container } = render(
+      <ChartPanel
+        title="Memory"
+        stacked
+        // A floor well above zero is what made the bug visible: with the
+        // data's own minimum the rule moved, with zero it does not.
+        series={[{ name: "used", color: "var(--s1)", values: [800, 900] }]}
+        max={1000}
+        reference={1000}
+        height={64}
+      />,
+    );
+
+    const rule = container.querySelector("svg [data-reference]")!;
+    // height - pad - (reference / max) * (height - 2 * pad), pad = 2:
+    // 64 - 2 - 1 * 60 = 2. A derived floor of 800 would put it at 2 as well
+    // only by coincidence, so the mid-scale case below is the real check.
+    expect(Number(rule.getAttribute("y1"))).toBeCloseTo(2, 5);
+  });
+
+  it("keeps the rule where zero-scaling puts it, not where the data floor would", () => {
+    const { container } = render(
+      <ChartPanel
+        title="Memory"
+        stacked
+        series={[{ name: "used", color: "var(--s1)", values: [800, 900] }]}
+        max={1000}
+        reference={500}
+        height={64}
+      />,
+    );
+
+    const rule = container.querySelector("svg [data-reference]")!;
+    // Scaled from zero: 64 - 2 - 0.5 * 60 = 32, the midline.
+    // Scaled from the data's floor of 800 the fraction would be negative and
+    // the rule would fall off the bottom of the box entirely.
+    expect(Number(rule.getAttribute("y1"))).toBeCloseTo(32, 5);
+  });
+
+  // Scoped to the stacked case on purpose: effectiveMin also feeds
+  // linePath(), where auto-scaling off the data's floor is deliberate. A
+  // temperature series between 44 and 47 degrees must not be redrawn as a
+  // flat line pinned to the bottom of a 0-47 box.
+  it("leaves an unstacked panel auto-scaling off its own data floor", () => {
+    const { container } = render(
+      <ChartPanel
+        title="Temperature"
+        series={[{ name: "cpu", color: "var(--s1)", values: [44, 47] }]}
+        max={47}
+        height={64}
+      />,
+    );
+
+    const paths = Array.from(
+      container.querySelectorAll("svg path[data-line]"),
+    ).map((el) => el.getAttribute("d") ?? "");
+    // The line spans the box rather than sitting flat near its top: with a
+    // floor of 44 the two points are the extremes of the plot area.
+    const ys = paths
+      .join(" ")
+      .match(/-?\d+(?:\.\d+)?,(-?\d+(?:\.\d+)?)/g)!
+      .map((pair) => Number(pair.split(",")[1]));
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(50);
+  });
 });

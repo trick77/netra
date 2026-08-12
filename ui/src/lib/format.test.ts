@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   ABSENT,
-  bytes,
-  bitrate,
-  percent,
-  duration,
-  relative,
-  relativeMs,
   absolute,
   absoluteMs,
+  bitrate,
+  byterate,
+  bytes,
+  duration,
+  percent,
+  relative,
+  relativeMs,
 } from "./format";
 
 describe("format", () => {
@@ -104,5 +105,26 @@ describe("format", () => {
   it("relativeMs and absoluteMs render null as absent", () => {
     expect(relativeMs(null)).toBe(ABSENT);
     expect(absoluteMs(null)).toBe(ABSENT);
+  });
+
+  // The counterpart to bitrate, and the one netra almost always wants: every
+  // rate the agent reports is BYTES per second. Handing one to bitrate() is
+  // the 8x-wrong-but-plausible number bitrate's own doc comment warns about,
+  // and both traffic cells did exactly that.
+  it("byterate scales bytes per second and never divides by eight", () => {
+    expect(byterate(1_200_000)).toBe("1.2 MB/s");
+    expect(byterate(950)).toBe("950 B/s");
+    expect(byterate(1_500_000_000)).toBe("1.5 GB/s");
+  });
+
+  // The whole point of keeping the two apart: the same number must not read
+  // the same way through both.
+  it("byterate and bitrate disagree by a factor of eight in unit, not value", () => {
+    expect(byterate(1_000_000)).toBe("1 MB/s");
+    expect(bitrate(1_000_000)).toBe("1 Mb/s");
+  });
+
+  it("byterate renders null as absent", () => {
+    expect(byterate(null)).toBe(ABSENT);
   });
 });

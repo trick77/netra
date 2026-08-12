@@ -35,6 +35,7 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
       { name: "cached", color: "var(--s3)", values: [5e8, 5e8, 5e8] },
       { name: "arc", color: "var(--s4)", values: [2e8, 2e8, 2e8] },
     ],
+    reporting: [10, 12, 11],
     rx: [1e6, 2e6, 1.5e6],
     tx: [5e5, 6e5, 4e5],
     fullest: { mount: "/data", pct: 88, others: 2 },
@@ -220,9 +221,72 @@ describe("hostColumns", () => {
       expect(rxEl!.getAttribute("aria-label")).toMatch(/inbound/i);
       expect(txEl!.getAttribute("aria-label")).toMatch(/outbound/i);
     });
+
+    // rx_bytes and tx_bytes are BYTES per second -- network.go divides a
+    // byte delta by the elapsed seconds. Rendered through bitrate() they
+    // read 8x low and entirely plausible: 1 MB/s showed as "1 Mb/s". The
+    // host overview's Traffic card had the identical bug, so the two pages
+    // agreed with each other and with nothing else.
+    it("renders traffic in bytes per second, not bits", () => {
+      const cols = hostColumns("1h");
+      const trafficCol = cols.find((c) => c.header === "Traffic")!;
+      const row = makeRow({ rx: [1e6, 2e6], tx: [5e5, 1e6] });
+      const { container } = render(<>{trafficCol.cell(row)}</>);
+
+      expect(container.textContent).toContain("2 MB/s");
+      expect(container.textContent).toContain("1 MB/s");
+      expect(container.textContent).not.toMatch(/b\/s/);
+    });
   });
 
   describe("memory cell", () => {
+    // Removing the sparkline legend was aimed at the 32-core CPU cell, where
+    // a 32-entry list was taller than the row and thirty-two cores have no
+    // identity a legend could carry anyway. It also stripped this cell,
+    // where five separately-coloured bands were left carrying their identity
+    // on colour alone -- which is the one thing a legend exists to prevent.
+    it("names its five bands rather than leaving identity to colour alone", () => {
+      const cols = hostColumns("1h");
+      const memCol = cols.find((c) => c.header === "Memory")!;
+      const row = makeRow({
+        mem_total: 16_000_000_000,
+        mem: [
+          { name: "used", color: "var(--s1)", values: [3e9, 3e9] },
+          { name: "ARC", color: "var(--s7)", values: [2e8, 2e8] },
+          { name: "buffers", color: "var(--s2)", values: [1e8, 1e8] },
+          { name: "cached", color: "var(--s8)", values: [5e8, 5e8] },
+          { name: "shared", color: "var(--s4)", values: [5e7, 5e7] },
+        ],
+      });
+
+      const { container } = render(<>{memCol.cell(row)}</>);
+      const legend = container.querySelector(".legend");
+
+      expect(legend).not.toBeNull();
+      for (const name of ["used", "ARC", "buffers", "cached", "shared"]) {
+        expect(legend!.textContent).toContain(name);
+      }
+    });
+
+    // The caller that motivated removing it stays legend-free: thirty-two
+    // hairlines cannot each own a hue, and the list was five times taller
+    // than the chart it explained.
+    it("leaves the per-core CPU cell without one", () => {
+      const cols = hostColumns("1h");
+      const cpuCol = cols.find((c) => c.header === "CPU")!;
+      const row = makeRow({
+        cpu: Array.from({ length: 32 }, (_, i) => ({
+          name: `core ${i}`,
+          color: `hsl(${i * 9} 60% 50%)`,
+          values: [1, 2],
+        })),
+      });
+
+      const { container } = render(<>{cpuCol.cell(row)}</>);
+
+      expect(container.querySelector(".legend")).toBeNull();
+    });
+
     it("scales the stack against mem_total, not the sum of its bands, so free is the gap to the top", () => {
       const cols = hostColumns("1h");
       const memCol = cols.find((c) => c.header === "Memory")!;
@@ -308,13 +372,7 @@ describe("hostColumns", () => {
       const hostCol = cols.find((c) => c.header === "Host")!;
       const row = makeRow({
         last_seen: new Date(Date.now() - 10_000).toISOString(),
-        cpu: [
-          {
-            name: "core 0",
-            color: "var(--s1)",
-            values: [10, null, 12, null, 11, null, 9, 10, 11, 12],
-          },
-        ],
+        reporting: [10, null, 12, null, 11, null, 9, 10, 11, 12],
       });
       const { container } = render(<>{hostCol.cell(row)}</>);
       expect(screen.getByText("sporadic")).toBeInTheDocument();
@@ -328,16 +386,59 @@ describe("hostColumns", () => {
       const hostCol = cols.find((c) => c.header === "Host")!;
       const row = makeRow({
         last_seen: new Date(Date.now() - 10_000).toISOString(),
+        reporting: [10, 11, 12, 11, 10, 11, 12, null, null],
+      });
+      render(<>{hostCol.cell(row)}</>);
+      expect(screen.queryByText("sporadic")).toBeNull();
+    });
+
+    // The badge used to read row.cpu[0], which is a per-core band under 32
+    // threads and the cpu_total fallback above it -- so one host was judged
+    // against the cpu_core family and its neighbour against host_samples.
+    // Two relations, two materialisation lags, one column claiming to mean
+    // the same thing on every row.
+    it("judges sporadic from the reporting series, never from the CPU bands", () => {
+      const cols = hostColumns("1h");
+      const hostCol = cols.find((c) => c.header === "Host")!;
+      // A gappy per-core band beside a clean cpu_total series: the host is
+      // reporting fine, and only the cpu_core tier lags.
+      const row = makeRow({
+        last_seen: new Date(Date.now() - 10_000).toISOString(),
         cpu: [
           {
             name: "core 0",
             color: "var(--s1)",
-            values: [10, 11, 12, 11, 10, 11, 12, null, null],
+            values: [10, null, 12, null, 11, null, 9, null, 11, null],
           },
         ],
+        reporting: [10, 11, 12, 11, 10, 11, 12, 11, 10, 11],
       });
+
       render(<>{hostCol.cell(row)}</>);
+
       expect(screen.queryByText("sporadic")).toBeNull();
+    });
+
+    // And the converse, so the test above cannot pass by the badge simply
+    // never appearing.
+    it("marks sporadic from the reporting series even when the CPU bands are clean", () => {
+      const cols = hostColumns("1h");
+      const hostCol = cols.find((c) => c.header === "Host")!;
+      const row = makeRow({
+        last_seen: new Date(Date.now() - 10_000).toISOString(),
+        cpu: [
+          {
+            name: "core 0",
+            color: "var(--s1)",
+            values: [10, 11, 12, 11, 10, 11, 12, 11, 10, 11],
+          },
+        ],
+        reporting: [10, null, 12, null, 11, null, 9, 10, 11, 12],
+      });
+
+      render(<>{hostCol.cell(row)}</>);
+
+      expect(screen.getByText("sporadic")).toBeInTheDocument();
     });
 
     it("reads offline at 181s since last_seen, just past 3x the scrape interval", () => {

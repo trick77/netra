@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import type { HostDetail, MetricsResponse } from "../../../lib/api";
+import { ABSENT } from "../../../lib/format";
 import { Overview, filesystemRows } from "./Overview";
 
 const host: HostDetail = {
@@ -100,6 +101,22 @@ const fsMetrics = response({
           100, 40,
         ],
       ],
+    },
+  ],
+});
+
+const netMetrics = response({
+  family: "net",
+  key_columns: ["interface"],
+  columns: ["rx_bytes", "tx_bytes"],
+  series: [
+    {
+      key: { interface: "eth0" },
+      // The FINAL bucket of the response window above. Inside the window at
+      // all, because griddedValues() drops a point that falls outside it --
+      // and in the last bucket specifically, so this test is about the
+      // formatter rather than about which bucket the card reads from.
+      points: [[1_786_323_540_000, 2_000_000, 500_000]],
     },
   ],
 });
@@ -323,5 +340,48 @@ describe("Overview processor panel", () => {
     const panel = screen.getByRole("region", { name: "Processor chart" });
     expect(panel).toBeInTheDocument();
     expect(within(panel).queryByText("Not collected")).toBeNull();
+  });
+
+  // net_rx and net_tx are BYTES per second: network.go computes them as
+  // (rxBytes - prev) / elapsed. Rendered through bitrate() the card read 8x
+  // low and entirely plausible -- a 2 MB/s link showed as "2 Mb/s" -- and
+  // the fleet's traffic cell carried the identical bug, so nothing on screen
+  // contradicted it.
+  it("shows traffic in bytes per second, not bits", () => {
+    renderOverview({ netMetrics });
+    const traffic = screen.getByRole("region", { name: "Traffic" });
+
+    expect(within(traffic).getByText(/2 MB\/s/)).toBeInTheDocument();
+    expect(within(traffic).getByText(/500 kB\/s/)).toBeInTheDocument();
+    expect(traffic.textContent).not.toMatch(/b\/s/);
+  });
+
+  // A host that stopped reporting must read as absent, never as the last
+  // rate it ever sent. This card scanned backwards for the last non-null,
+  // so a dead agent's traffic sat frozen at its final value -- while the
+  // fleet's traffic cell, reading the latest bucket, showed the same host as
+  // absent. "The agent is down" must not render as "traffic is steady".
+  it("reads a host that stopped reporting as absent, not as its last known rate", () => {
+    const stale = response({
+      family: "net",
+      key_columns: ["interface"],
+      columns: ["rx_bytes", "tx_bytes"],
+      series: [
+        {
+          key: { interface: "eth0" },
+          // A real reading early in the window and nothing since: every
+          // later bucket grids to null.
+          points: [[1_786_321_800_000, 2_000_000, 500_000]],
+        },
+      ],
+    });
+
+    renderOverview({ netMetrics: stale });
+    const traffic = screen.getByRole("region", { name: "Traffic" });
+
+    expect(traffic.textContent).not.toMatch(/MB\/s/);
+    expect(
+      within(traffic).getAllByText(new RegExp(ABSENT)).length,
+    ).toBeGreaterThan(0);
   });
 });
