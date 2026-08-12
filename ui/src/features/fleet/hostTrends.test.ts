@@ -47,32 +47,64 @@ function serve(byFamily: Record<string, MetricsResponse | Error>) {
 }
 
 describe("fetchHostTrends", () => {
-  it("stacks the four CPU states when the tier carries them", async () => {
+  // The fleet CPU sparkline is a per-core stack, normalised so its top edge
+  // is cpu_total. It is NOT the user/system/iowait/steal breakdown any more:
+  // that answers where the time went rather than which core spent it, and it
+  // has its own panel on the host page.
+  it("stacks one band per core, normalised so the top is cpu_total", async () => {
     serve({
-      host: response({
-        columns: ["cpu_user", "cpu_system", "cpu_iowait", "cpu_steal"],
+      cpu_core: response({
+        family: "cpu_core",
+        key_columns: ["core"],
+        columns: ["busy"],
         series: [
-          {
-            key: {},
-            points: [
-              [t0, 10, 5, 1, 0],
-              [t0 + hour, 12, 4, 1, 0],
-              [t0 + 2 * hour, 11, 6, 2, 0],
-            ],
-          },
+          { key: { core: "0" }, points: [[t0, 80]] },
+          { key: { core: "1" }, points: [[t0, 20]] },
         ],
       }),
     });
 
-    const trends = await fetchHostTrends(1, "1h");
+    const trends = await fetchHostTrends(1, "1h", undefined, 2);
 
-    expect(trends.cpu.map((b) => b.name)).toEqual([
-      "user",
-      "system",
-      "iowait",
-      "steal",
-    ]);
-    expect(trends.cpu[0]!.values).toEqual([10, 12, 11]);
+    expect(trends.cpu.map((b) => b.name)).toEqual(["core 0", "core 1"]);
+    expect(trends.cpu[0]!.values[0]).toBe(40);
+  });
+
+  // The read API has no aggregate-across-keys mode, so asking a 128-thread
+  // host for its cores would ship 128 series per host per fleet render. Those
+  // hosts get cpu_total, which the host family carries anyway.
+  it("does not ask a very large host for one series per core", async () => {
+    serve({
+      host: response({
+        columns: ["cpu_total"],
+        series: [{ key: {}, points: [[t0, 30]] }],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h", undefined, 128);
+
+    expect(getMetrics.mock.calls.map((c) => c[1].family)).not.toContain(
+      "cpu_core",
+    );
+    expect(trends.cpu).toHaveLength(1);
+    expect(trends.cpu[0]!.name).toBe("busy");
+  });
+
+  // A host whose thread count nobody knows is exactly the case the guard is
+  // for: an unbounded fetch on a host of unknown size.
+  it("does not ask for cores when the host size is unknown", async () => {
+    serve({
+      host: response({
+        columns: ["cpu_total"],
+        series: [{ key: {}, points: [[t0, 30]] }],
+      }),
+    });
+
+    await fetchHostTrends(1, "1h", undefined, null);
+
+    expect(getMetrics.mock.calls.map((c) => c[1].family)).not.toContain(
+      "cpu_core",
+    );
   });
 
   // The 5m and 1h rollups carry cpu_total and not the breakdown. One true
@@ -92,6 +124,47 @@ describe("fetchHostTrends", () => {
 
     expect(trends.cpu).toHaveLength(1);
     expect(trends.cpu[0]!.name).toBe("busy");
+  });
+
+  // The memory stack is a partition of mem_total with used derived as the
+  // remainder: mem_used cannot be the bottom band because it already
+  // contains the ARC and the unreclaimable shmem pages, so stacking those on
+  // top of it draws the same bytes twice. lib/bands.ts owns the arithmetic
+  // and its own tests; this pins that the fleet row asks for it at all --
+  // every band base here has to be a column name the schema really has, and
+  // one that does not resolve is indistinguishable on screen from a host
+  // that reported nothing.
+  it("builds the memory partition rather than a single used band", async () => {
+    serve({
+      host: response({
+        columns: [
+          "mem_total",
+          "mem_free",
+          "mem_buffers",
+          "mem_cached",
+          "mem_shared",
+          "mem_zfs_arc",
+        ],
+        series: [{ key: {}, points: [[t0, 1000, 200, 30, 100, 50, 100]] }],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.mem.map((b) => b.name)).toEqual([
+      "used",
+      "ARC",
+      "buffers",
+      "cached",
+      "shared",
+    ]);
+    // The stack is mem_total minus free, never more: free is the gap to the
+    // top rather than a band.
+    const stack = trends.mem.reduce(
+      (sum, b) => sum + (b.values[0] as number),
+      0,
+    );
+    expect(stack).toBe(800);
   });
 
   // A host's traffic is the sum over its interfaces, and a null in any of
@@ -127,6 +200,50 @@ describe("fetchHostTrends", () => {
 
     expect(trends.rx).toEqual([105, 205, null]);
     expect(trends.tx).toEqual([11, 21, 31]);
+  });
+
+  // Every mount, not just the worst one: a root sitting flat at 40% while a
+  // log volume climbs into trouble is exactly the case a single line for the
+  // fullest filesystem hides.
+  it("draws one line per filesystem, each on df's own percentage", async () => {
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem"],
+        columns: ["used", "free", "total"],
+        series: [
+          { key: { filesystem: "root" }, points: [[t0, 68, 32, 110]] },
+          { key: { filesystem: "data" }, points: [[t0, 88, 12, 110]] },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.disk.map((b) => b.name)).toEqual(["root", "data"]);
+    expect(trends.disk[0]!.values[0]).toBe(68);
+    expect(trends.disk[1]!.values[0]).toBe(88);
+    // Each mount keeps its own hue, so a reader can follow one line across
+    // the window rather than losing it where two cross.
+    expect(trends.disk[0]!.color).not.toBe(trends.disk[1]!.color);
+  });
+
+  // A mount that reported nothing all window is not a flat line at zero: it
+  // is a filesystem with no readings, and drawing one would claim otherwise.
+  it("leaves out a filesystem that reported nothing", async () => {
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem"],
+        columns: ["used", "free"],
+        series: [
+          { key: { filesystem: "root" }, points: [[t0, 68, 32]] },
+          { key: { filesystem: "ghost" }, points: [[t0, null, null]] },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.disk.map((b) => b.name)).toEqual(["root"]);
   });
 
   // used / (used + free) is df's Use%, which is the number the operator has
@@ -200,6 +317,7 @@ describe("buildRows", () => {
     mem_used: null,
     mem_total: null,
     uptime_s: null,
+    threads: null,
   };
   const site = { id: 3, name: "zrh1" } as Site;
 
@@ -226,6 +344,7 @@ describe("buildRows", () => {
       rx: [10],
       tx: [20],
       fullest: { mount: "/", pct: 50, others: 0 },
+      disk: [],
     };
 
     const rows = buildRows([host], [site], new Map([[1, trends]]));

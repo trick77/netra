@@ -176,24 +176,29 @@ func TestIntegrationInsertHostSamplesAllColumnsRoundTrip(t *testing.T) {
 	hostID := seedHost(t, s)
 
 	sample := &netrav1.HostSample{
-		TsMs:         1_700_000_000_000,
-		CpuTotal:     proto.Float64(1.1),
-		CpuUser:      proto.Float64(2.2),
-		CpuSystem:    proto.Float64(3.3),
-		CpuIowait:    proto.Float64(4.4),
-		CpuSteal:     proto.Float64(5.5),
-		CpuIdle:      proto.Float64(6.6),
-		MemTotal:     proto.Uint64(10),
-		MemUsed:      proto.Uint64(11),
-		MemAvailable: proto.Uint64(12),
-		MemBuffcache: proto.Uint64(13),
-		MemZfsArc:    proto.Uint64(14),
-		SwapTotal:    proto.Uint64(15),
-		SwapUsed:     proto.Uint64(16),
-		Load1:        proto.Float64(7.7),
-		Load5:        proto.Float64(8.8),
-		Load15:       proto.Float64(9.9),
-		UptimeS:      proto.Uint64(17),
+		TsMs:            1_700_000_000_000,
+		CpuTotal:        proto.Float64(1.1),
+		CpuUser:         proto.Float64(2.2),
+		CpuSystem:       proto.Float64(3.3),
+		CpuIowait:       proto.Float64(4.4),
+		CpuSteal:        proto.Float64(5.5),
+		CpuIdle:         proto.Float64(6.6),
+		MemTotal:        proto.Uint64(10),
+		MemUsed:         proto.Uint64(11),
+		MemAvailable:    proto.Uint64(12),
+		MemBuffcache:    proto.Uint64(13),
+		MemZfsArc:       proto.Uint64(14),
+		MemFree:         proto.Uint64(18),
+		MemBuffers:      proto.Uint64(19),
+		MemCached:       proto.Uint64(20),
+		MemShared:       proto.Uint64(21),
+		MemSreclaimable: proto.Uint64(22),
+		SwapTotal:       proto.Uint64(15),
+		SwapUsed:        proto.Uint64(16),
+		Load1:           proto.Float64(7.7),
+		Load5:           proto.Float64(8.8),
+		Load15:          proto.Float64(9.9),
+		UptimeS:         proto.Uint64(17),
 	}
 
 	if _, err := s.InsertHostSamples(ctx, hostID, []*netrav1.HostSample{sample}); err != nil {
@@ -203,6 +208,7 @@ func TestIntegrationInsertHostSamplesAllColumnsRoundTrip(t *testing.T) {
 	var (
 		cpuTotal, cpuUser, cpuSystem, cpuIowait, cpuSteal, cpuIdle float64
 		memTotal, memUsed, memAvailable, memBuffcache, memZfsArc   int64
+		memFree, memBuffers, memCached, memShared, memSreclaimable int64
 		swapTotal, swapUsed                                        int64
 		load1, load5, load15                                       float64
 		uptimeS                                                    int64
@@ -210,11 +216,13 @@ func TestIntegrationInsertHostSamplesAllColumnsRoundTrip(t *testing.T) {
 	if err := s.Pool().QueryRow(ctx, `
 		SELECT cpu_total, cpu_user, cpu_system, cpu_iowait, cpu_steal, cpu_idle,
 		       mem_total, mem_used, mem_available, mem_buffcache, mem_zfs_arc,
+		       mem_free, mem_buffers, mem_cached, mem_shared, mem_sreclaimable,
 		       swap_total, swap_used,
 		       load1, load5, load15, uptime_s
 		  FROM host_samples WHERE host_id = $1`, hostID).Scan(
 		&cpuTotal, &cpuUser, &cpuSystem, &cpuIowait, &cpuSteal, &cpuIdle,
 		&memTotal, &memUsed, &memAvailable, &memBuffcache, &memZfsArc,
+		&memFree, &memBuffers, &memCached, &memShared, &memSreclaimable,
 		&swapTotal, &swapUsed,
 		&load1, &load5, &load15, &uptimeS,
 	); err != nil {
@@ -237,6 +245,11 @@ func TestIntegrationInsertHostSamplesAllColumnsRoundTrip(t *testing.T) {
 		{"mem_available", float64(memAvailable), 12},
 		{"mem_buffcache", float64(memBuffcache), 13},
 		{"mem_zfs_arc", float64(memZfsArc), 14},
+		{"mem_free", float64(memFree), 18},
+		{"mem_buffers", float64(memBuffers), 19},
+		{"mem_cached", float64(memCached), 20},
+		{"mem_shared", float64(memShared), 21},
+		{"mem_sreclaimable", float64(memSreclaimable), 22},
 		{"swap_total", float64(swapTotal), 15},
 		{"swap_used", float64(swapUsed), 16},
 		{"load1", load1, 7.7},

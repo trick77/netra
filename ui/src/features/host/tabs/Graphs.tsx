@@ -59,9 +59,22 @@ export const UNAVAILABLE: Record<string, string> = {
 
 // Colours are token references (index.css owns the palette); the series
 // index wraps so a family with many devices still never names a hue here.
-const SERIES_VARS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
+// Eight, not four. The throughput panel draws two series per interface, so
+// four wrapped after the second one and bond0 and enp1s0f1 came out the same
+// colour in the same chart.
+const SERIES_VARS = [
+  "var(--s1)",
+  "var(--s2)",
+  "var(--s3)",
+  "var(--s4)",
+  "var(--s5)",
+  "var(--s6)",
+  "var(--s7)",
+  "var(--s8)",
+];
 
-type Source = "host" | "net" | "diskIo" | "filesystem" | "collector";
+type Source =
+  "host" | "net" | "diskIo" | "filesystem" | "collector" | "cpuCore";
 
 interface PanelSpec {
   title: string;
@@ -75,6 +88,17 @@ interface PanelSpec {
   fmt?: (n: number | null) => string;
   /** Read this family's columns as booleans (1 = true), not as numbers. */
   boolean?: boolean;
+  /** Draw the bands as a cumulative stack rather than as overlaid lines.
+   * Only honest where the bands really do partition something: per-core CPU
+   * (each core divided by the core count, so the stack tops out at
+   * cpu_total) and the CPU time breakdown (the states sum to busy). */
+  stacked?: boolean;
+  /** Hide the enlarged view's y axis, for a stack whose height is a shape
+   * rather than a quantity. */
+  hideAxis?: boolean;
+  /** Draw the bases as mirrored pairs about a midline -- in above, out
+   * below. Only meaningful when the bases come in twos, in that order. */
+  mirrored?: boolean;
 }
 
 // A count or a rate has no unit prefix worth inventing, so it is printed
@@ -84,6 +108,36 @@ function count(n: number | null): string {
 }
 
 const SYSTEM: PanelSpec[] = [
+  // One band per logical CPU, each divided by the core count so the top of
+  // the stack is the mean -- cpu_total. Unnormalised, 32 cores at 50% would
+  // stack to 1600 against a ceiling of 100.
+  {
+    title: "CPU cores",
+    source: "cpuCore",
+    bases: [{ base: "busy", label: "busy" }],
+    stacked: true,
+    // No ceiling and no axis: each band is one core's real utilisation, so
+    // the stack runs to cores x 100. Every number a reader sees is the
+    // number that core reported, which is the point of this panel.
+    hideAxis: true,
+    fmt: (n) => (n === null ? ABSENT : `${count(n)} %`),
+  },
+  // The states partition busy time, so they stack honestly. They used to
+  // exist only in the raw table and vanish above an hour; they reach the 5m
+  // and 1h rollups now.
+  {
+    title: "CPU time breakdown",
+    source: "host",
+    bases: [
+      { base: "cpu_user", label: "user" },
+      { base: "cpu_system", label: "system" },
+      { base: "cpu_iowait", label: "iowait" },
+      { base: "cpu_steal", label: "steal" },
+    ],
+    max: 100,
+    stacked: true,
+    fmt: (n) => (n === null ? ABSENT : `${count(n)} %`),
+  },
   // "Device availability" in the spec's list; collector_samples.ok is the
   // only availability signal the schema actually holds, so that is what
   // this draws -- one band per collector, 1 when it ran, 0 when it did not.
@@ -150,13 +204,19 @@ const SYSTEM: PanelSpec[] = [
 
 const NETWORK: PanelSpec[] = [
   {
+    // Ingress and egress, not rx and tx: the direction is the point of this
+    // chart, and "rx" is the kernel's word for it rather than the reader's.
     title: "Interface throughput",
     unit: "B/s",
     source: "net",
     bases: [
-      { base: "rx_bytes", label: "rx" },
-      { base: "tx_bytes", label: "tx" },
+      { base: "rx_bytes", label: "ingress" },
+      { base: "tx_bytes", label: "egress" },
     ],
+    // Mirrored about a midline, the way the fleet row has always drawn
+    // traffic: two lines climbing one axis make a reader compare shapes to
+    // answer "which way is this going".
+    mirrored: true,
     fmt: bytes,
   },
   {
@@ -269,6 +329,7 @@ export interface GraphsProps {
   diskIo?: MetricsResponse | null;
   filesystem?: MetricsResponse | null;
   collector?: MetricsResponse | null;
+  cpuCore?: MetricsResponse | null;
   /** The page's range and setter, passed to each panel's enlarged view. */
   range?: Range;
   onRangeChange?: (range: Range) => void;
@@ -299,6 +360,13 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
         ? booleanValues(res, index, base)
         : griddedValues(res, index, base);
       if (values.length === 0) continue;
+      // A band with no readings at all is dropped rather than drawn empty.
+      // On a STACKED panel this is not cosmetic: stackBands() breaks every
+      // band at any index where any series is null, so one all-null series
+      // blanks the entire chart -- which is what a bare metal host's
+      // cpu_steal (correctly NULL, there is no hypervisor) did to the CPU
+      // time breakdown.
+      if (spec.stacked && values.every((v) => v === null)) continue;
       bands.push({
         name: prefix ? `${prefix} ${label}` : label,
         color: SERIES_VARS[bands.length % SERIES_VARS.length],
@@ -358,6 +426,13 @@ function Panel({
       series={series}
       max={spec.max}
       fmt={spec.fmt}
+      stacked={spec.stacked}
+      mirrored={spec.mirrored}
+      // A 32-core legend is longer than the chart it explains. Suppressed
+      // with legend, not highlight: the latter also dims every other series
+      // to 35% and washed the whole stack out.
+      legend={series.length <= 6}
+      hideAxis={spec.hideAxis}
       // No per-panel notice: the window statement is about the RANGE, not
       // about any one chart, and repeating it under twenty panels made it
       // twenty pieces of noise nobody reads. It is rendered once, above the

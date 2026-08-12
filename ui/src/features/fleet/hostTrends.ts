@@ -5,6 +5,7 @@ import {
   type Site,
 } from "../../lib/api";
 import { carriesColumn, griddedValues } from "../../lib/metrics";
+import { memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import type { HostRow } from "./hostColumns";
@@ -30,51 +31,44 @@ export interface HostTrends {
   rx: (number | null)[];
   tx: (number | null)[];
   fullest: HostRow["fullest"];
+  /** Every filesystem's usage over the window, as df's Use%, one band each.
+   * The meter beside it says how full the worst one is now; these say which
+   * of them is moving and how fast -- the difference between "watch it" and
+   * "act today". */
+  disk: Band[];
 }
 
-// The stacked CPU bands, in the order they stack. At raw resolution the hub
-// carries all four; the 5m and 1h rollups carry cpu_total only, so a longer
-// range draws one band instead of four. Falling back to cpu_total is the
-// honest answer -- inventing the breakdown from a total is not.
-const CPU_BANDS = [
-  { base: "cpu_user", name: "user", color: "var(--s1)" },
-  { base: "cpu_system", name: "system", color: "var(--s2)" },
-  { base: "cpu_iowait", name: "iowait", color: "var(--s3)" },
-  { base: "cpu_steal", name: "steal", color: "var(--s4)" },
-];
+// The CPU and memory bands both moved to lib/bands.ts, which the host page
+// reads too: the fleet row and the detail page show the same host, and a
+// reader moving between them is entitled to the same shape. What used to sit
+// here as two literal band lists could not express either chart any more --
+// the CPU stack is now per-core, and the memory stack derives its "used" band
+// by subtraction rather than reading a column.
+//
+// The user/system/iowait/steal breakdown that used to live here is not lost:
+// it answers a different question (where the time went, not which core spent
+// it) and it has its own panel on the host page.
 
-// Memory stacks used + buffers + cached + ARC against mem_total, never with
-// free as a band: stacking free makes every host look full, which is the one
-// reading this column exists to avoid.
-const MEM_BANDS = [
-  { base: "mem_used", name: "used", color: "var(--s1)" },
-  { base: "mem_buffers", name: "buffers", color: "var(--s2)" },
-  { base: "mem_cached", name: "cached", color: "var(--s3)" },
-  { base: "mem_arc", name: "ARC", color: "var(--s4)" },
-];
-
-function bandsFrom(
-  res: MetricsResponse | null,
-  specs: readonly { base: string; name: string; color: string }[],
-  fallback?: { base: string; name: string; color: string },
-): Band[] {
+/**
+ * The one-band fallback: cpu_total as a single silhouette.
+ *
+ * Drawn when a host has no per-core series -- too many threads to ask for
+ * them, or a tier that does not carry them. One true band beats a
+ * not-collected cell where a silhouette is available, and the fleet row and
+ * the host page must not disagree about whether a host's CPU can be drawn.
+ *
+ * This was a general bandsFrom(res, specs, fallback) building N bands from a
+ * list of column names. Nothing needs that any more -- the CPU stack is
+ * per-core and the memory stack derives its bottom band by subtraction -- so
+ * its only caller passed an empty spec list and reached nothing but the
+ * fallback.
+ */
+function totalBand(res: MetricsResponse | null): Band[] {
   if (res === null) return [];
-  const bands = specs
-    .map((spec) => ({
-      name: spec.name,
-      color: spec.color,
-      values: griddedValues(res, 0, spec.base),
-    }))
-    .filter((band) => band.values.length > 0);
-
-  if (bands.length > 0 || fallback === undefined) return bands;
-
-  // This tier carries the total but not the breakdown. One band is a true
-  // silhouette; four fabricated ones would not be.
-  const values = griddedValues(res, 0, fallback.base);
+  const values = griddedValues(res, 0, "cpu_total");
   return values.length === 0
     ? []
-    : [{ name: fallback.name, color: fallback.color, values }];
+    : [{ name: "busy", color: "var(--s1)", values }];
 }
 
 /**
@@ -143,6 +137,61 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
   };
 }
 
+// One hue per filesystem, cycling. A host with more mounts than this has
+// more than a fleet row could name anyway -- the column's question is "is
+// any of them climbing", and the meter beside it names the one that matters.
+const FS_COLORS = [
+  "var(--s7)",
+  "var(--s1)",
+  "var(--s2)",
+  "var(--s5)",
+  "var(--s3)",
+  "var(--s8)",
+];
+
+/**
+ * Every filesystem's Use% over the window, one band each.
+ *
+ * All of them, not just the fullest: a host's root can sit flat at 40% while
+ * a log volume climbs into trouble, and one line for the worst mount hides
+ * which of them is moving. It also jumps between filesystems whenever
+ * another overtakes, drawing a line no single disk ever followed.
+ *
+ * df's Use% throughout -- used / (used + free), never used / total, since
+ * total includes the root reserve. The same definition the meter beside it
+ * and fullestFilesystem() use, so nothing on the row can disagree.
+ */
+function filesystemBands(res: MetricsResponse | null): Band[] {
+  if (res === null || res.series.length === 0) return [];
+  if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return [];
+
+  const bands: Band[] = [];
+  for (let i = 0; i < res.series.length; i++) {
+    const used = griddedValues(res, i, "used");
+    const free = griddedValues(res, i, "free");
+    const width = Math.max(used.length, free.length);
+    const values: (number | null)[] = [];
+    for (let j = 0; j < width; j++) {
+      const u = used[j] ?? null;
+      const f = free[j] ?? null;
+      // A gap is a gap: the host reported nothing for that bucket, which is
+      // not the same as the disk being empty.
+      values.push(
+        u === null || f === null || u + f === 0 ? null : (u / (u + f)) * 100,
+      );
+    }
+    // A filesystem that reported nothing all window is not a flat line at
+    // zero; it is a mount with no readings, and drawing it would claim one.
+    if (!values.some((v) => v !== null)) continue;
+    bands.push({
+      name: res.series[i]!.key.filesystem ?? `fs ${i}`,
+      color: FS_COLORS[bands.length % FS_COLORS.length]!,
+      values,
+    });
+  }
+  return bands;
+}
+
 function lastNumber(values: readonly (number | null)[]): number | null {
   for (let i = values.length - 1; i >= 0; i--) {
     const v = values[i];
@@ -162,10 +211,26 @@ async function orNull(
   }
 }
 
+/**
+ * Above this many cores the per-core stack is not drawn.
+ *
+ * Not a legibility limit -- thirty-two hairlines in a 120x32 box still read
+ * as an activity band. It is a transfer limit: the read API has no
+ * aggregate-across-keys mode, so a 128-core host would ship 128 series per
+ * host per fleet render on top of the fan-out this page already costs.
+ * Those hosts fall back to cpu_total, which the host family carries anyway,
+ * so the row costs nothing extra and still shows a true silhouette.
+ */
+const MAX_PER_CORE = 32;
+
 export async function fetchHostTrends(
   hostId: number,
   range: Range,
   now?: Date,
+  /** The host's logical CPU count, deciding whether the per-core stack is
+   * worth fetching. Unknown means don't: an unbounded fetch on a host whose
+   * size nobody knows is exactly the case this guard is for. */
+  threads?: number | null,
 ): Promise<HostTrends> {
   const window = rangeWindow(range, now);
   const ask = (family: string) =>
@@ -178,24 +243,33 @@ export async function fetchHostTrends(
       }),
     );
 
-  const [host, net, filesystem] = await Promise.all([
+  const wantCores =
+    threads !== null && threads !== undefined && threads <= MAX_PER_CORE;
+  const [host, net, filesystem, cores] = await Promise.all([
     ask("host"),
     ask("net"),
     ask("filesystem"),
+    wantCores ? ask("cpu_core") : Promise.resolve(null),
   ]);
 
+  // Per-core when the host is small enough to ask for it, and cpu_total
+  // otherwise. Never the user/system/iowait/steal breakdown here: that is a
+  // different question -- where the time went, rather than which core spent
+  // it -- and it has its own panel on the host page.
+  // Normalised here and only here: a 4-core and a 32-core host share one
+  // 0-100 cell in this list, so the stack has to top out at cpu_total. The
+  // host page draws the same cores unnormalised, where the numbers matter
+  // more than cross-host comparability.
+  const perCore = perCoreBands(cores, { normalise: true });
+  const cpu = perCore.length > 0 ? perCore : totalBand(host);
+
   return {
-    cpu: bandsFrom(host, CPU_BANDS, {
-      base: "cpu_total",
-      name: "busy",
-      color: "var(--s1)",
-    }),
-    // No fallback for memory: mem_total is the chart's ceiling rather than
-    // a band, so a rolled-up tier simply draws fewer bands.
-    mem: bandsFrom(host, MEM_BANDS),
+    cpu,
+    mem: memoryBands(host),
     rx: sumSeries(net, "rx_bytes"),
     tx: sumSeries(net, "tx_bytes"),
     fullest: fullestFilesystem(filesystem),
+    disk: filesystemBands(filesystem),
   };
 }
 
@@ -220,6 +294,7 @@ export function buildRows(
       // read has no fullest one, and an empty green meter would say its
       // disks are empty.
       fullest: trend?.fullest ?? null,
+      disk: trend?.disk ?? [],
     };
   });
 }

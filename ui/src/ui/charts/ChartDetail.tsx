@@ -20,6 +20,24 @@ export interface ChartDetailProps {
   range?: Range;
   onRangeChange?: (range: Range) => void;
   onClose: () => void;
+  /** Draw the series as a cumulative stack, matching the small panel that
+   * opened this. The mark must not change when a chart is enlarged. */
+  stacked?: boolean;
+  /** Whether the chart names its series above it. Off for the per-core
+   * stack: 32 entries squeezed the 900px plot into a corner, and the stats
+   * table below already names every series beside its colour. */
+  legend?: boolean;
+  /** A value to mark with a dashed rule, e.g. a host's total memory. */
+  reference?: number;
+  /** Draw the series as mirrored in/out pairs about a midline. */
+  mirrored?: boolean;
+  /** What the reference rule is, drawn at the line. The small panel has no
+   * axis, so without this the rule is unnamed there. */
+  referenceLabel?: string;
+  /** Hide the y axis. A stack whose height is a shape rather than a
+   * quantity -- unnormalised per-core CPU runs to N x 100 -- must not carry
+   * an axis putting a number on it. */
+  hideAxis?: boolean;
 }
 
 /**
@@ -43,6 +61,12 @@ export function ChartDetail({
   range,
   onRangeChange,
   onClose,
+  stacked,
+  legend,
+  reference,
+  referenceLabel,
+  mirrored,
+  hideAxis,
 }: ChartDetailProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -57,7 +81,7 @@ export function ChartDetail({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const ceiling = max ?? peak(series);
+  const ceiling = max ?? peak(series, stacked);
   const format = (v: number | null) => (fmt ? fmt(v) : formatNumber(v));
 
   return (
@@ -90,19 +114,36 @@ export function ChartDetail({
         </header>
 
         <div className="cd-chart">
-          {/* The y axis is drawn from the same ceiling the line is scaled
-              to, so the labels cannot disagree with the shape. */}
-          <div className="cd-y">
-            <span>{format(ceiling)}</span>
-            <span>{format(ceiling / 2)}</span>
-            <span>{format(0)}</span>
-          </div>
+          {/* The axis is drawn from the same ceiling the shape is scaled to,
+              so the labels cannot disagree with it -- EXCEPT when a
+              reference is given. Then the ceiling carries headroom above the
+              reference so the rule is visible, and labelling that padded
+              number puts a quantity on screen that does not exist: a 137.4 GB
+              host read "148.4 GB". The labels then step from the reference,
+              positioned where they actually fall. */}
+          {!hideAxis && (
+            <div className="cd-y">
+              {(reference === undefined
+                ? [1, 0.5, 0]
+                : [reference / ceiling, reference / ceiling / 2, 0]
+              ).map((fraction, i) => (
+                <span key={i} style={{ top: `${(1 - fraction) * 100}%` }}>
+                  {format(fraction * ceiling)}
+                </span>
+              ))}
+            </div>
+          )}
           <Overlay
             series={series}
             min={0}
             max={ceiling}
             width={900}
             height={320}
+            stacked={stacked}
+            legend={legend}
+            reference={reference}
+            referenceLabel={referenceLabel}
+            mirrored={mirrored}
             label={`${title}, enlarged`}
           />
         </div>
@@ -154,10 +195,30 @@ function formatNumber(v: number | null): string {
   return Number.isInteger(v) ? String(v) : v.toFixed(1);
 }
 
-function peak(series: readonly OverlaySeries[]): number {
+// `stacked` is not a detail this can ignore: a stack's height at an index is
+// the SUM over the series there, so the largest single value understates it
+// and the top of the stack would be drawn outside the box. Callers here all
+// pass an explicit max today, but a derived ceiling that answers the wrong
+// question is a trap rather than a fallback.
+function peak(series: readonly OverlaySeries[], stacked = false): number {
   let max = 0;
-  for (const s of series) {
-    for (const v of s.values) if (v !== null && v > max) max = v;
+  if (stacked) {
+    const n = series.reduce(
+      (longest, s) => Math.max(longest, s.values.length),
+      0,
+    );
+    for (let i = 0; i < n; i++) {
+      // Skipping any index where a series is null, exactly as stackBands
+      // does: a running total is undefined there rather than smaller.
+      if (series.some((s) => s.values[i] == null)) continue;
+      let sum = 0;
+      for (const s of series) sum += s.values[i] as number;
+      if (sum > max) max = sum;
+    }
+  } else {
+    for (const s of series) {
+      for (const v of s.values) if (v !== null && v > max) max = v;
+    }
   }
   // A zero ceiling would divide by zero in the geometry.
   return max || 1;

@@ -36,6 +36,7 @@ const host: api.Host = {
   mem_used: null,
   mem_total: null,
   uptime_s: null,
+  threads: null,
 };
 
 const site: api.Site = {

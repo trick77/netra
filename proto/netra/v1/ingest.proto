@@ -206,6 +206,31 @@ message HostSample {
   // stores it under the same natural key. It lands in its own table because
   // agent uptime and host uptime are different facts (spec 5.3).
   optional AgentSample agent = 54;
+
+  // --- /proc/meminfo, the fields that make a stacked memory chart honest ---
+  //
+  // mem_used above is MemTotal - MemAvailable, which already contains the ZFS
+  // ARC and the unreclaimable shmem slice of the page cache. Stacking bands
+  // on top of it therefore counts the same bytes twice. These five exist so a
+  // chart can partition mem_total instead: free + buffers + cached + shared +
+  // sreclaimable are measured, and "used" is whatever is left over.
+  //
+  // Appended here rather than beside mem_buffcache because field numbers are
+  // never renumbered -- the numbering follows arrival order throughout this
+  // message.
+  optional uint64 mem_free = 55;
+  optional uint64 mem_buffers = 56;
+  // Cached MINUS Shmem. /proc/meminfo's Cached includes the tmpfs pages that
+  // Shmem counts, so storing both verbatim would double-count them in a
+  // stack. Splitting it here rather than in the UI keeps the invariant
+  // mem_buffcache == mem_buffers + mem_cached + mem_shared true in the
+  // database, where it can be asserted.
+  optional uint64 mem_cached = 57;
+  optional uint64 mem_shared = 58;
+  // Reclaimable slab. Not part of Buffers or Cached, and counted as available
+  // by the kernel, so a stack that omits it under-reports the cache rather
+  // than over-reporting memory pressure.
+  optional uint64 mem_sreclaimable = 59;
 }
 
 // AgentSample is the agent's telemetry about itself for one scrape.
@@ -351,6 +376,37 @@ message ContainerSample {
   optional double net_tx = 10;
   optional double io_read = 11;
   optional double io_write = 12;
+
+  // --- cgroup v2 cpu.stat and memory.stat, the parts cpu_pct and mem_used
+  // --- flatten away ---
+  //
+  // cpu_pct is derived from usage_usec and says how much CPU a container
+  // took, not what it was doing with it. These two split that: a service
+  // pinned in system time is doing syscalls or contending on the kernel,
+  // which is a different problem from one pinned in user time, and the
+  // difference decides where an operator looks next. Percentages over the
+  // scrape interval, like cpu_pct, so they sum to it.
+  optional double cpu_user = 13;
+  optional double cpu_system = 14;
+
+  // mem_used is memory.current minus the page cache -- one number that
+  // cannot distinguish a container holding 2 GB of heap from one that read
+  // 2 GB of files. These are memory.stat's own parts, and they answer
+  // whether a limit needs raising or a workload needs fixing.
+  //
+  // anon is the unreclaimable part: heap and stacks, what an OOM kill is
+  // actually about.
+  optional uint64 mem_anon = 15;
+  // file is the page cache the container caused, reclaimable under pressure.
+  optional uint64 mem_file = 16;
+  // shmem is tmpfs and shared segments. Counted inside `file` by the kernel,
+  // and reported separately here because it is NOT reclaimable the way the
+  // rest of the page cache is -- a chart that stacks the two double counts.
+  optional uint64 mem_shmem = 17;
+  // kernel slab attributed to this cgroup: dentries, inodes, socket buffers.
+  // Invisible in mem_used and the usual reason a limit is hit by a container
+  // whose heap looks small.
+  optional uint64 mem_kernel = 18;
 }
 
 // FilesystemSample is one mounted filesystem, deduplicated by st_dev so a bind

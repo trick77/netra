@@ -89,6 +89,7 @@ interface TabData {
   netMetrics: MetricsResponse | null;
   diskIoMetrics: MetricsResponse | null;
   collectorMetrics: MetricsResponse | null;
+  coreMetrics: MetricsResponse | null;
   containerMetrics: MetricsResponse | null;
   containers: Container[] | null;
   filesystems: Filesystem[] | null;
@@ -106,6 +107,7 @@ const NO_DATA: TabData = {
   netMetrics: null,
   diskIoMetrics: null,
   collectorMetrics: null,
+  coreMetrics: null,
   containerMetrics: null,
   containers: null,
   filesystems: null,
@@ -189,6 +191,8 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             sensorMetrics,
             containers,
             units,
+            coreMetrics,
+            netMetrics,
           ] = await Promise.all([
             metrics("host"),
             metrics("filesystem"),
@@ -196,6 +200,12 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             metrics("sensor"),
             orNull(getContainers(hostId)),
             orNull(getUnits(hostId)),
+            // The headline Processor chart is a per-core stack, the same one
+            // the fleet row for this host draws.
+            metrics("cpu_core"),
+            // Traffic: the overview summarised every subsystem except the
+            // one most likely to explain a problem.
+            metrics("net"),
           ]);
           return {
             hostMetrics,
@@ -204,6 +214,8 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             sensorMetrics,
             containers,
             units,
+            coreMetrics,
+            netMetrics,
           };
         }
         case "graphs": {
@@ -213,12 +225,14 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             diskIoMetrics,
             filesystemMetrics,
             collectorMetrics,
+            coreMetrics,
           ] = await Promise.all([
             metrics("host"),
             metrics("net"),
             metrics("disk_io"),
             metrics("filesystem"),
             metrics("collector"),
+            metrics("cpu_core"),
           ]);
           return {
             hostMetrics,
@@ -226,6 +240,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             diskIoMetrics,
             filesystemMetrics,
             collectorMetrics,
+            coreMetrics,
           };
         }
         case "containers": {
@@ -351,6 +366,8 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
           filesystemMetrics={data.filesystemMetrics}
           agentMetrics={data.agentMetrics}
           sensorMetrics={data.sensorMetrics}
+          coreMetrics={data.coreMetrics}
+          netMetrics={data.netMetrics}
           containers={data.containers}
           units={data.units}
         />
@@ -362,6 +379,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
           diskIo={data.diskIoMetrics}
           filesystem={data.filesystemMetrics}
           collector={data.collectorMetrics}
+          cpuCore={data.coreMetrics}
           range={range}
           onRangeChange={setRange}
         />

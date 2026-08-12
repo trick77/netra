@@ -110,6 +110,20 @@
   --s4: #e87ba4;
   --s5: #9b4fc9;
   --s6: #1a9e9e;
+  /* Orange and yellow, the two hues the series ramp never had. The memory
+     stack needs five bands that stay apart at 32px tall, and blue/aqua/
+     violet/magenta alone read as one muddy mass at that size. Validated as a
+     set with s1 and s2: worst adjacent CVD dE 9.1, worst adjacent
+     normal-vision dE 19.6. Three of them sit under 3:1 on the light surface,
+     which is why every chart using them carries a legend. */
+  --s7: #eb6834;
+  --s8: #eda100;
+  /* The per-core sweep computes its own hues -- there is no fixed set of
+     steps to name when the ramp has to subdivide to fit the host -- but
+     saturation and lightness stay here so the ramp still follows the theme
+     instead of being frozen in a .ts file. */
+  --chart-saturation: 65%;
+  --chart-lightness: 50%;
 
   /* drawer shadow — per-theme; the dark value read as a grey smear on the
      light surface. */
@@ -152,6 +166,12 @@
     --s4: #d55181;
     --s5: #b06fe0;
     --s6: #2bbcbc;
+    --s7: #d95926;
+    --s8: #c98500;
+    /* Lifted on the dark surface: the same hues at 50% L sit too close to
+       the background to read as distinct bands. */
+    --chart-saturation: 62%;
+    --chart-lightness: 58%;
 
     --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
   }
@@ -184,6 +204,10 @@
   --s4: #d55181;
   --s5: #b06fe0;
   --s6: #2bbcbc;
+  --s7: #d95926;
+  --s8: #c98500;
+  --chart-saturation: 62%;
+  --chart-lightness: 58%;
 
   --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
@@ -468,6 +492,14 @@ a {
    .hn/.hs are scoped to the card, so a cell rendered in the table would go
    unstyled; these classes carry the same look in both places. */
 .host-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+/* Name and, when there is something wrong, its badge -- one line. The
+   location sits under them. */
+.host-cell-top {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -1150,6 +1182,94 @@ svg.spark {
 .mrow:last-child {
   border-bottom: 0;
 }
+/* The fleet's disk cell: a percentage needs nowhere near the 92px the host
+   page's byte counts do, and the fixed column left it stranded away from its
+   own bar. `auto` sizes it to the number it holds. */
+.disk-cell .mrow {
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2);
+}
+/* The host page's filesystem list. Every mount carries a bar, not just the
+   fullest one: a card that lists six filesystems as text makes a reader
+   compare six pairs of numbers to find the one in trouble, which is the
+   comparison a bar does at a glance. The value column sizes to its text --
+   "331.7 MB used · 737.8 MB free · 1.1 GB size" does not fit 92px. */
+.fs-list .mrow {
+  grid-template-columns: 1fr auto;
+  gap: var(--space-3);
+}
+
+/* Sortable column headers. The arrow is a pseudo-element so it stays out of
+   the header's textContent -- the column name is read by tests and by the
+   card grid, and neither wants an arrow glued to it. Dimmed until the column
+   is the one being sorted on, so the header row does not read as six
+   competing controls. */
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.th-sort::after {
+  font-size: 0.9em;
+  opacity: 0.35;
+}
+.th-sort[data-sort="none"]::after {
+  content: "\2195";
+}
+.th-sort[data-sort="asc"]::after {
+  content: "\2191";
+  opacity: 1;
+}
+.th-sort[data-sort="desc"]::after {
+  content: "\2193";
+  opacity: 1;
+}
+.th-sort:hover::after {
+  opacity: 0.7;
+}
+
+/* Temperature rows: name, trend, reading. The sparkline sits between the two
+   because it is the reason the row is worth a line -- a number alone cannot
+   say whether 48 °C is steady or climbing. */
+.sensor-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.sensor-row:last-child {
+  border-bottom: 0;
+}
+.sensor-row .lab {
+  font-size: var(--text-label);
+  color: var(--ink-2);
+}
+.sensor-row .val {
+  font-size: var(--text-label);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 4ch;
+}
+
+/* Uptime reads as the traffic cell's rates do -- same size, and --muted
+   rather than --ink-2: it inherited the table body's own type, which made
+   "37 d 6 h" the loudest thing in a row whose point is the charts. An uptime
+   is context for everything else on the line, not the reading anyone came
+   for. */
+.uptime-cell {
+  font-size: var(--text-label);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .mrow .lab {
   font-size: var(--text-label);
   color: var(--ink-2);
@@ -1262,14 +1382,34 @@ svg.spark {
 /* The axis labels sit beside the plot and share its height, so a label can
    never drift from the gridline it names. */
 .cd-y {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: flex-end;
+  /* Labels are placed at the value they name rather than spread evenly:
+     with a reference line the plot carries headroom above it, so an evenly
+     spread top label would sit above the number it claims to mark. */
+  position: relative;
   font-size: var(--text-micro);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   height: 320px;
+  /* Wide enough for the longest label this axis draws, because the spans are
+     absolutely positioned and so contribute nothing to the container's own
+     width: at 5.5em "137.4 GB" wrapped onto two lines and read as a
+     truncated number. */
+  width: 7em;
+}
+.cd-y span {
+  position: absolute;
+  right: 0;
+  transform: translateY(-50%);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* A reference rule's own label, in the same type as the axis that names the
+   same value in the enlarged view -- one fact, one appearance, wherever a
+   reader meets it. */
+.ref-label {
+  font-size: var(--text-micro);
+  fill: var(--muted);
 }
 .cd-x {
   display: flex;

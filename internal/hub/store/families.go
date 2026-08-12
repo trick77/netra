@@ -382,8 +382,10 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 	const stmt = `
 		INSERT INTO container_samples (
 			host_id, ts, container_id, cpu_pct, mem_used, mem_limit,
-			net_rx, net_tx, io_read, io_write
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			net_rx, net_tx, io_read, io_write,
+			cpu_user, cpu_system, mem_anon, mem_file, mem_shmem, mem_kernel
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+		          $11, $12, $13, $14, $15, $16)
 		ON CONFLICT (host_id, ts, container_id) DO NOTHING`
 
 	batch := &pgx.Batch{}
@@ -394,7 +396,10 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 		}
 		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), id,
 			r.CpuPct, int64OrNil(r.MemUsed), int64OrNil(r.MemLimit),
-			r.NetRx, r.NetTx, r.IoRead, r.IoWrite)
+			r.NetRx, r.NetTx, r.IoRead, r.IoWrite,
+			r.CpuUser, r.CpuSystem,
+			int64OrNil(r.MemAnon), int64OrNil(r.MemFile),
+			int64OrNil(r.MemShmem), int64OrNil(r.MemKernel))
 	}
 	return execBatch(ctx, s.pool, batch, "container sample")
 }

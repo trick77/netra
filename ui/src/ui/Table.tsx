@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from "react";
+import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
 /**
  * A single column definition shared by Table (this file) and, in later
@@ -26,6 +26,16 @@ export interface Column<T> {
   /** Table-only text alignment; ignored by the card grid. */
   align?: "left" | "center" | "right";
   cell: (row: T) => ReactNode;
+  /**
+   * Makes this column sortable, and says what to sort on.
+   *
+   * A separate accessor rather than reading the cell: a cell is a sparkline,
+   * a badge or a meter, and none of those has an order. Returning null puts
+   * a row in the "unknown" group, which always sorts last regardless of
+   * direction -- a host with no uptime reading is not the shortest-lived
+   * host on the page, and flipping the arrow must not promote it to the top.
+   */
+  sortValue?: (row: T) => string | number | null;
 }
 
 export interface TableProps<T> {
@@ -38,7 +48,52 @@ export interface TableProps<T> {
   rowKey?: (row: T, index: number) => string | number;
 }
 
+type SortState = { key: string; dir: "asc" | "desc" };
+
 export function Table<T>({ columns, rows, rowKey }: TableProps<T>) {
+  // Uncontrolled: every caller wants the same click-to-sort behaviour, and
+  // threading identical state through each of them buys nothing.
+  const [sort, setSort] = useState<SortState | null>(null);
+
+  const sorted = useMemo(() => {
+    if (sort === null) return rows;
+    const col = columns.find((c) => c.key === sort.key);
+    if (col?.sortValue === undefined) return rows;
+    const read = col.sortValue;
+    const sign = sort.dir === "asc" ? 1 : -1;
+    // Sorting a COPY: mutating the caller's array in place would reorder
+    // state it still owns, and React would not know it had changed.
+    return [...rows].sort((a, b) => {
+      const x = read(a);
+      const y = read(b);
+      // Unknown sorts last in BOTH directions -- see sortValue's doc.
+      if (x === null && y === null) return 0;
+      if (x === null) return 1;
+      if (y === null) return -1;
+      if (typeof x === "string" || typeof y === "string") {
+        // localeCompare with numeric: "host-2" before "host-10", which is
+        // what a reader scanning hostnames expects.
+        return (
+          sign *
+          String(x).localeCompare(String(y), undefined, { numeric: true })
+        );
+      }
+      return sign * (x - y);
+    });
+  }, [rows, columns, sort]);
+
+  const toggle = (key: string) =>
+    setSort((prev) =>
+      prev === null || prev.key !== key
+        ? { key, dir: "asc" }
+        : prev.dir === "asc"
+          ? { key, dir: "desc" }
+          : // Third click clears it, back to the order the caller gave --
+            // which for the fleet is the server's own ordering, and is a
+            // state a reader otherwise cannot get back to without a reload.
+            null,
+    );
+
   const cellStyle = (col: Column<T>): CSSProperties | undefined => {
     if (!col.width && !col.align) return undefined;
     return {
@@ -58,14 +113,42 @@ export function Table<T>({ columns, rows, rowKey }: TableProps<T>) {
         <thead>
           <tr>
             {columns.map((col) => (
-              <th key={col.key} scope="col" style={cellStyle(col)}>
-                {col.header}
+              <th
+                key={col.key}
+                scope="col"
+                style={cellStyle(col)}
+                aria-sort={
+                  sort?.key === col.key
+                    ? sort.dir === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : undefined
+                }
+              >
+                {col.sortValue === undefined ? (
+                  col.header
+                ) : (
+                  <button
+                    type="button"
+                    className="th-sort"
+                    // The arrow is drawn by CSS from this attribute rather
+                    // than rendered as a text node: it is decoration, the
+                    // state it shows is already on the th as aria-sort, and
+                    // as a DOM node it lands inside the header's own
+                    // textContent -- where every test and the card grid
+                    // reading a column name would find "Host".
+                    data-sort={sort?.key === col.key ? sort.dir : "none"}
+                    onClick={() => toggle(col.key)}
+                  >
+                    {col.header}
+                  </button>
+                )}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => (
+          {sorted.map((row, index) => (
             <tr key={rowKey ? rowKey(row, index) : index}>
               {columns.map((col) => (
                 <td key={col.key} style={cellStyle(col)}>

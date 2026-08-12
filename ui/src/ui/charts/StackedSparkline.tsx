@@ -4,6 +4,12 @@
 // component's only job is to hand it the right `max` and turn its output
 // into SVG paths.
 import { stackBands } from "./geometry";
+import {
+  REFERENCE_DASH,
+  REFERENCE_STROKE,
+  REFERENCE_WIDTH,
+  SPARK_WIDTH,
+} from "./size";
 
 export interface Band {
   name: string;
@@ -21,6 +27,18 @@ export interface StackedSparklineProps {
   height?: number;
   pad?: number;
   label?: string;
+  /**
+   * A value to mark with a dashed rule across the chart -- for memory, the
+   * host's total RAM.
+   *
+   * Without it a stack scaled to a ceiling is uninterpretable: the shape
+   * says how the parts move but not whether the host is nearly full or
+   * barely touched, because nothing on screen says what the top of the box
+   * means. The caller is expected to leave headroom (a max slightly above
+   * the reference) so the rule lands inside the plot rather than on its
+   * edge, where it would be indistinguishable from a border.
+   */
+  reference?: number;
 }
 
 // stackBands() needs the largest RUNNING TOTAL across bands (sum over all
@@ -55,12 +73,21 @@ function maxRunningTotal(bands: Band[]): number {
 export function StackedSparkline({
   bands,
   max,
-  width = 120,
+  width = SPARK_WIDTH,
   height = 32,
   pad = 2,
   label = "stacked chart",
+  reference,
 }: StackedSparklineProps) {
   const effectiveMax = max ?? maxRunningTotal(bands);
+  // Where the reference sits in the plot box. Null when there is nothing to
+  // mark, or when it would land outside -- a rule drawn off the edge is a
+  // rule nobody can read.
+  const referenceY =
+    reference === undefined || effectiveMax <= 0
+      ? null
+      : height - pad - (reference / effectiveMax) * (height - 2 * pad);
+
   const paths = stackBands(
     bands.map((b) => b.values),
     width,
@@ -79,6 +106,18 @@ export function StackedSparkline({
         role="img"
         aria-label={label}
       >
+        {referenceY !== null && (
+          <line
+            data-reference
+            x1={0}
+            x2={width}
+            y1={referenceY}
+            y2={referenceY}
+            stroke={REFERENCE_STROKE}
+            strokeWidth={REFERENCE_WIDTH}
+            strokeDasharray={REFERENCE_DASH}
+          />
+        )}
         {paths.map(
           (d, i) =>
             d !== "" && (
@@ -87,21 +126,26 @@ export function StackedSparkline({
                 data-band
                 d={d}
                 fill={bands[i]!.color}
-                stroke="none"
+                // Dimmed fill, solid edge -- the pattern every tool that draws
+                // a many-band stack well uses. Without it thirty-two bands are
+                // one mass of colour: the fill says how much, and the crisp
+                // edge is what separates each band from its neighbour. The
+                // stroke outlines the whole polygon, and since a band's floor
+                // IS the band below it, that single attribute draws every
+                // separator in the stack.
+                fillOpacity={0.55}
+                stroke={bands[i]!.color}
+                strokeWidth={1}
+                strokeLinejoin="round"
               />
             ),
         )}
       </svg>
-      {bands.length >= 2 && (
-        <div className="legend">
-          {bands.map((b) => (
-            <span key={b.name}>
-              <i style={{ background: b.color }} />
-              {b.name}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* No legend. A sparkline is a shape in a table cell, read at a glance
+          alongside four other columns -- a list of band names under it is a
+          second thing to read that answers a question nobody asked there,
+          and at 32 cores it was taller than the row. The host page's charts
+          are where the bands get named. */}
     </>
   );
 }

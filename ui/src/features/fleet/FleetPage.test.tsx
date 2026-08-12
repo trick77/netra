@@ -20,11 +20,13 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     mem_used: 4_000_000_000,
     mem_total: 16_000_000_000,
     uptime_s: 864_000,
+    threads: null,
     cpu: [{ name: "user", color: "var(--s1)", values: [10, 12] }],
     mem: [{ name: "used", color: "var(--s1)", values: [3e9, 4e9] }],
     rx: [1e6, 2e6],
     tx: [5e5, 6e5],
     fullest: { mount: "/", pct: 41, others: 1 },
+    disk: [],
     ...overrides,
   };
 }
@@ -190,6 +192,7 @@ describe("buildHostRows", () => {
       mem_used: 4e9,
       mem_total: 16e9,
       uptime_s: 100,
+      threads: null,
     },
     {
       id: 2,
@@ -200,6 +203,7 @@ describe("buildHostRows", () => {
       mem_used: null,
       mem_total: null,
       uptime_s: null,
+      threads: null,
     },
   ];
   const sites: Site[] = [
@@ -252,6 +256,7 @@ describe("FleetPage data fetching", () => {
                 mem_used: null,
                 mem_total: null,
                 uptime_s: 10,
+                threads: null,
               },
             ];
       return new Response(JSON.stringify(body), {
@@ -296,6 +301,7 @@ describe("FleetPage data fetching", () => {
                     mem_used: null,
                     mem_total: null,
                     uptime_s: 10,
+                    threads: null,
                   },
                 ],
           ),

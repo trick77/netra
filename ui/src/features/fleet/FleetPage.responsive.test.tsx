@@ -15,11 +15,13 @@ function row(overrides: Partial<HostRow> = {}): HostRow {
     mem_used: null,
     mem_total: null,
     uptime_s: 900,
+    threads: null,
     cpu: [],
     mem: [],
     rx: [],
     tx: [],
     fullest: null,
+    disk: [],
     ...overrides,
   };
 }

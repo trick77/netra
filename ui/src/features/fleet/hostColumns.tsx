@@ -10,8 +10,10 @@ import type { Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
+import { Overlay } from "../../ui/charts/Overlay";
+import { SPARK_WIDTH } from "../../ui/charts/size";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
-import { ABSENT, bitrate, duration } from "../../lib/format";
+import { ABSENT, bitrate } from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
@@ -69,21 +71,40 @@ export type HostRow = Host & {
   // only way to say "never collected" was pct: 0, which renders as an empty,
   // healthy, green disk -- absent read as a fact.
   fullest: { mount: string; pct: number; others: number } | null;
+  /** Every filesystem's Use% over the window, one band each. */
+  disk: Band[];
 };
 
 function HostCell({ row }: { row: HostRow }) {
-  const status = hostStatus(row);
+  // The CPU series is this host's own recent history, so a host that answers
+  // now but keeps dropping scrapes reads as sporadic rather than healthy --
+  // the gaps are already visible in its sparkline, and this says the same
+  // thing in a word.
+  const status = hostStatus(row, undefined, row.cpu[0]?.values);
   return (
     <div className="host-cell">
-      <Badge severity={status.severity}>{status.label}</Badge>
-      {/* The hostname is the way into the host page, and it is an anchor
-          rather than a row click handler: middle-click, copy-link and
-          bookmark all have to work, and a row-wide handler would swallow
-          the text selection someone needs to read an id off the screen.
-          The fleet list had no link into detail at all. */}
-      <a className="host-cell-name" href={`/hosts/${row.id}/overview`}>
-        {row.hostname}
-      </a>
+      <div className="host-cell-top">
+        {/* The hostname is the way into the host page, and it is an anchor
+            rather than a row click handler: middle-click, copy-link and
+            bookmark all have to work, and a row-wide handler would swallow
+            the text selection someone needs to read an id off the screen.
+            The fleet list had no link into detail at all. */}
+        <a className="host-cell-name" href={`/hosts/${row.id}/overview`}>
+          {row.hostname}
+        </a>
+        {/* After the name, and only when there is something to say. Healthy is
+          the overwhelming majority state, so a badge on every row spent the
+          eye's first stop -- and the leftmost column -- on the word "online"
+          repeated down the page. What a reader scans for is the exception,
+          which is now the only thing marked. */}
+        {status.severity !== "ok" && (
+          <Badge severity={status.severity}>{status.label}</Badge>
+        )}
+      </div>
+      {/* The location goes under the name rather than beside it: the two are
+          a heading and its subtitle, not two peers, and the row has the
+          vertical space. Inline, a long site name pushed the hostname off
+          the eye's scan line down the column. */}
       <div className="host-cell-site">{row.site_name ?? ABSENT}</div>
     </div>
   );
@@ -118,6 +139,12 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
 // "scales the stack against mem_total" test, which proves this by
 // recomputing stackBands() with the same max and diffing the rendered
 // path data against it.
+// Scaled to mem_total the stack says how the parts move but not whether the
+// host is nearly full, because nothing on screen says what the top of the box
+// means. The dashed rule says it -- and it needs room above the stack to be
+// visible as a rule.
+const MEM_HEADROOM = 1.08;
+
 function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   if (row.mem_total === null) {
     // No known ceiling means no scale to draw the stack against. Drawing
@@ -130,7 +157,11 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   return (
     <StackedSparkline
       bands={row.mem}
-      max={row.mem_total}
+      // A little headroom above total, so the dashed rule marking it lands
+      // inside the plot instead of on the border, where it would read as the
+      // edge of the box rather than as the host's ceiling.
+      max={row.mem_total * MEM_HEADROOM}
+      reference={row.mem_total}
       label={`Memory trend, ${rangeLabel(range)}`}
     />
   );
@@ -176,6 +207,29 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 // 88% average to a number that hides a root at 99%). `fullest` is a
 // single pre-picked summary, not a list, so there is nothing here to sum:
 // the row's assembler already did the picking.
+// Free-scaled to 0-100 with a fixed ceiling, like CPU: a disk at 40% and one
+// at 95% must not draw the same silhouette, which is exactly what a
+// self-scaled sparkline would do.
+function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
+  if (row.disk.length === 0) return <>{ABSENT}</>;
+  return (
+    <Overlay
+      series={row.disk}
+      min={0}
+      max={100}
+      width={SPARK_WIDTH}
+      height={32}
+      // Lines rather than filled areas, and no legend: usage sits between
+      // 40% and 95%, so masses anchored at zero would pile into one solid
+      // block, and naming six mounts under a 32px chart is the same
+      // row-height problem the CPU column already solved by not naming
+      // thirty-two cores.
+      legend={false}
+      label={`Filesystem usage trend, ${rangeLabel(range)}`}
+    />
+  );
+}
+
 function DiskCell({ row }: { row: HostRow }) {
   if (row.fullest === null) {
     // A host that has reported no filesystems has no fullest one. Drawing a
@@ -185,31 +239,32 @@ function DiskCell({ row }: { row: HostRow }) {
   }
   const { mount, pct, others } = row.fullest;
   const label = others > 0 ? `${mount} +${others}` : mount;
-  return <Meter value={pct} max={100} label={label} />;
+  // Meter's own row reserves a fixed 92px for its value, which is sized for
+  // the host page's "108.9 GB of 137.4 GB" and leaves a percentage floating
+  // half a column away from the bar it belongs to. Scoped here rather than
+  // changed in .mrow, which that panel still needs.
+  return (
+    <div className="disk-cell">
+      <Meter value={pct} max={100} label={label} />
+    </div>
+  );
 }
 
-// Uptime under 300s is the most interesting row on the page (a host that
-// rebooted four minutes ago), so it carries the warning severity -- but
-// never colour alone: Badge always pairs its dot with a word, here the
-// duration text itself.
-const UPTIME_WARNING_THRESHOLD_S = 300;
-
-function UptimeCell({ row }: { row: HostRow }) {
-  const text = duration(row.uptime_s);
-  if (row.uptime_s !== null && row.uptime_s < UPTIME_WARNING_THRESHOLD_S) {
-    // "rebooted", not the duration alone. Badge's dot is aria-hidden, so a
-    // screen reader hearing "1 m 40 s" cannot tell this row from a healthy
-    // host's "266 d 6 h", and a deuteranope sees only a hue change -- the
-    // state would ride on colour alone, which is precisely what pairing a
-    // dot with a WORD is supposed to prevent. A duration is not a severity.
-    return <Badge severity="warning">rebooted {text} ago</Badge>;
-  }
-  return <>{text}</>;
-}
+// The Uptime column and its cell are gone from this list. Uptime is a fact
+// about a host, not a reading to scan a fleet by: it is the same number all
+// day and the row's job is what changed. It still leads the host page's
+// System card, where a reader has asked about one machine. The "rebooted
+// N minutes ago" warning it carried lives on there too, as the header's own
+// status.
 
 export function hostColumns(range: Range): Column<HostRow>[] {
   return [
-    { key: "host", header: "Host", cell: (row) => <HostCell row={row} /> },
+    {
+      key: "host",
+      header: "Host",
+      cell: (row) => <HostCell row={row} />,
+      sortValue: (row) => row.hostname,
+    },
     {
       key: "cpu",
       header: "CPU",
@@ -225,11 +280,19 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       header: "Traffic",
       cell: (row) => <TrafficCell row={row} range={range} />,
     },
-    { key: "disk", header: "Disk", cell: (row) => <DiskCell row={row} /> },
     {
-      key: "uptime",
-      header: "Uptime",
-      cell: (row) => <UptimeCell row={row} />,
+      key: "diskTrend",
+      header: "Filesystem",
+      cell: (row) => <DiskTrendCell row={row} range={range} />,
+    },
+    {
+      key: "disk",
+      header: "Disk",
+      cell: (row) => <DiskCell row={row} />,
+      // The fullest filesystem's percentage -- the number the cell shows.
+      // Sorting on bytes would put the biggest disk first rather than the
+      // one closest to filling up, which is what this column is for.
+      sortValue: (row) => row.fullest?.pct ?? null,
     },
   ];
 }

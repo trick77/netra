@@ -143,6 +143,12 @@ type Sampled = {
   netTx: (number | null)[];
   ioRead: (number | null)[];
   ioWrite: (number | null)[];
+  cpuUser: (number | null)[];
+  cpuSystem: (number | null)[];
+  memAnon: (number | null)[];
+  memFile: (number | null)[];
+  memShmem: (number | null)[];
+  memKernel: (number | null)[];
   timestamps: number[];
 };
 
@@ -174,6 +180,12 @@ function read(res: MetricsResponse, containerKey: string): Sampled | null {
     netTx: griddedValues(res, i, "net_tx"),
     ioRead: griddedValues(res, i, "io_read"),
     ioWrite: griddedValues(res, i, "io_write"),
+    cpuUser: griddedValues(res, i, "cpu_user"),
+    cpuSystem: griddedValues(res, i, "cpu_system"),
+    memAnon: griddedValues(res, i, "mem_anon"),
+    memFile: griddedValues(res, i, "mem_file"),
+    memShmem: griddedValues(res, i, "mem_shmem"),
+    memKernel: griddedValues(res, i, "mem_kernel"),
     timestamps: seriesTimestamps(res, i),
   };
 }
@@ -240,6 +252,33 @@ export function ContainerPage({
   ): Band => ({ name, color, values });
   const empty: (number | null)[] = [];
 
+  // A band whose column the answering tier does not carry comes back empty,
+  // and one the container never reported comes back all null. Neither is a
+  // band: in a STACK the second is worse than useless, because stackBands
+  // breaks every band at any index where any series is null.
+  const present = (values: (number | null)[]) =>
+    values.length > 0 && values.some((v) => v !== null);
+
+  const cpuSplit = [
+    band("user", "var(--s1)", sampled?.cpuUser ?? empty),
+    band("system", "var(--s7)", sampled?.cpuSystem ?? empty),
+  ].filter((b) => present(b.values));
+  const cpuBands =
+    cpuSplit.length > 1
+      ? cpuSplit
+      : [band("cpu", "var(--s1)", sampled?.cpu ?? empty)];
+
+  const memSplit = [
+    band("anon", "var(--s1)", sampled?.memAnon ?? empty),
+    band("file", "var(--s2)", sampled?.memFile ?? empty),
+    band("shmem", "var(--s4)", sampled?.memShmem ?? empty),
+    band("kernel", "var(--s8)", sampled?.memKernel ?? empty),
+  ].filter((b) => present(b.values));
+  const memBands =
+    memSplit.length > 1
+      ? memSplit
+      : [band("used", "var(--s2)", sampled?.memUsed ?? empty)];
+
   return (
     <>
       <div className="hosthead">
@@ -261,6 +300,11 @@ export function ContainerPage({
       {/* .sm is index.css's small-multiples grid; .smp is what ChartPanel
           renders into it. */}
       <div className="sm">
+        {/* The split when the kernel reported it, the total when it did not.
+            user and system sum to cpu_pct, so stacking them says the same
+            thing the one line said plus where the time went -- a service
+            pinned in system time is contending on the kernel, which is a
+            different problem from one pinned in user time. */}
         <ChartPanel
           title="CPU"
           fmt={(n) => percent(n)}
@@ -268,8 +312,14 @@ export function ContainerPage({
           window={metrics.window}
           range={range}
           onRangeChange={onRangeChange}
-          series={[band("cpu", "var(--s1)", sampled?.cpu ?? empty)]}
+          stacked={cpuBands.length > 1}
+          series={cpuBands}
         />
+        {/* memory.stat's parts rather than one number: a container holding
+            2 GB of heap and one that read 2 GB of files look identical in
+            mem_used, and only the first is a limit that needs raising. The
+            limit is the ceiling and its own dashed rule, so "how close is
+            this to being OOM-killed" is answerable from the chart. */}
         <ChartPanel
           title="Memory"
           fmt={bytes}
@@ -277,9 +327,18 @@ export function ContainerPage({
           window={metrics.window}
           range={range}
           onRangeChange={onRangeChange}
-          max={memLimit ?? undefined}
-          series={[band("used", "var(--s2)", sampled?.memUsed ?? empty)]}
+          max={memLimit === null ? undefined : memLimit * 1.08}
+          reference={memLimit ?? undefined}
+          referenceLabel={memLimit === null ? undefined : bytes(memLimit)}
+          stacked={memBands.length > 1}
+          series={memBands}
         />
+        {/* Mirrored about a midline, ingress above and egress below, like
+            every other traffic chart in the app -- two lines climbing one
+            axis make a reader compare shapes to answer which way the traffic
+            is going. Green over purple for the same reason the fleet row
+            uses them: against green, blue separates by CVD dE 9 and the two
+            halves read as one mass. */}
         <ChartPanel
           title="Network"
           fmt={perSecond}
@@ -287,9 +346,10 @@ export function ContainerPage({
           window={metrics.window}
           range={range}
           onRangeChange={onRangeChange}
+          mirrored
           series={[
-            band("rx", "var(--s1)", sampled?.netRx ?? empty),
-            band("tx", "var(--s3)", sampled?.netTx ?? empty),
+            band("ingress", "var(--s2)", sampled?.netRx ?? empty),
+            band("egress", "var(--s5)", sampled?.netTx ?? empty),
           ]}
         />
         <ChartPanel

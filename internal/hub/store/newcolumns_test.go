@@ -36,6 +36,15 @@ func TestIntegrationNewHostColumnsRoundTrip(t *testing.T) {
 		ProcsBlocked: proto.Uint32(105),
 		BootTimeS:    proto.Uint64(1_699_000_106),
 
+		// The memory partition's parts. Distinct values, like everything
+		// else here: they are appended at the end of a 59-placeholder
+		// INSERT, which is exactly where a transposed pair hides.
+		MemFree:         proto.Uint64(201),
+		MemBuffers:      proto.Uint64(202),
+		MemCached:       proto.Uint64(203),
+		MemShared:       proto.Uint64(204),
+		MemSreclaimable: proto.Uint64(205),
+
 		ProcessesTotal: proto.Uint32(107),
 		UsersLoggedIn:  proto.Uint32(108),
 		ServicesTotal:  proto.Uint32(109),
@@ -124,14 +133,19 @@ func TestIntegrationNewHostColumnsRoundTrip(t *testing.T) {
 	}
 
 	intCols := map[string]int64{
-		"procs_running":   104,
-		"procs_blocked":   105,
-		"boot_time_s":     1_699_000_106,
-		"processes_total": 107,
-		"users_logged_in": 108,
-		"services_total":  109,
-		"services_failed": 110,
-		"tcp_curr_estab":  117,
+		"procs_running":    104,
+		"procs_blocked":    105,
+		"boot_time_s":      1_699_000_106,
+		"processes_total":  107,
+		"users_logged_in":  108,
+		"services_total":   109,
+		"services_failed":  110,
+		"tcp_curr_estab":   117,
+		"mem_free":         201,
+		"mem_buffers":      202,
+		"mem_cached":       203,
+		"mem_shared":       204,
+		"mem_sreclaimable": 205,
 	}
 	for col, want := range intCols {
 		var got *int64

@@ -16,6 +16,7 @@ import {
 } from "../../../lib/metrics";
 import {
   ABSENT,
+  bitrate,
   bytes,
   duration,
   percent,
@@ -24,7 +25,10 @@ import {
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
+import { memoryBands, perCoreBands } from "../../../lib/bands";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
+import { Sparkline } from "../../../ui/charts/Sparkline";
+import { UpDownSparkline } from "../../../ui/charts/UpDownSparkline";
 
 /**
  * column() in lib/metrics.ts THROWS for a column the answering tier does
@@ -82,6 +86,48 @@ export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
     used: latest(res, "used", index),
     free: latest(res, "free", index),
   }));
+}
+
+/** The latest known reading, or null when the series has none. */
+function lastNumber(values: readonly (number | null)[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && v !== undefined) return v;
+  }
+  return null;
+}
+
+/**
+ * A keyed family summed across its series, index by index.
+ *
+ * A null anywhere in a bucket makes that bucket's total unknowable rather
+ * than smaller, so the sum is null there too: counting it as zero draws a
+ * dip that never happened.
+ */
+function sumInterfaces(
+  res: MetricsResponse | null | undefined,
+  base: string,
+): (number | null)[] {
+  if (res == null || res.series.length === 0) return [];
+  const columns = res.series.map((_, i) => griddedValues(res, i, base));
+  const width = columns.reduce((w, c) => Math.max(w, c.length), 0);
+  const out: (number | null)[] = [];
+  for (let i = 0; i < width; i++) {
+    let total = 0;
+    let known = false;
+    let unknown = false;
+    for (const column of columns) {
+      const v = column[i];
+      if (v === undefined) continue;
+      if (v === null) unknown = true;
+      else {
+        total += v;
+        known = true;
+      }
+    }
+    out.push(unknown || !known ? null : total);
+  }
+  return out;
 }
 
 export interface Attention {
@@ -214,6 +260,11 @@ export interface OverviewProps {
   filesystemMetrics: MetricsResponse | null;
   agentMetrics: MetricsResponse | null;
   sensorMetrics: MetricsResponse | null;
+  /** family=cpu_core for this host, one series per logical CPU. Absent on a
+   * host too large to ask for them -- see MAX_PER_CORE in hostTrends.ts. */
+  coreMetrics?: MetricsResponse | null;
+  /** family=net for this host, one series per interface. */
+  netMetrics?: MetricsResponse | null;
   containers: Container[] | null;
   units: Unit[] | null;
   /** Injected by tests so "last reported" is deterministic. */
@@ -223,6 +274,8 @@ export interface OverviewProps {
 export function Overview({
   host,
   hostMetrics,
+  coreMetrics,
+  netMetrics,
   filesystemMetrics,
   agentMetrics,
   sensorMetrics,
@@ -236,22 +289,40 @@ export function Overview({
     // On the window grid, so an outage is a hole in the silhouette rather
     // than a line drawn straight across it.
     values: griddedValues(hostMetrics, 0, band.base),
-  })).filter((band) => band.values.length > 0);
+    // An all-null band is not a band, and in a STACK it is actively
+    // destructive: stackBands() breaks every band at any index where any
+    // series is null, because a running total is undefined there. A bare
+    // metal host reports cpu_steal as NULL in every bucket -- correctly, it
+    // has no hypervisor to steal from -- and that one empty series erased
+    // the whole chart, legend still listing four states above a blank box.
+  })).filter((band) => band.values.some((v) => v !== null));
 
-  // The rollup tiers carry cpu_total and not the breakdown, so above an hour
-  // the four bands are simply absent -- and this is the headline chart on
-  // the page. One true band beats a not-collected panel where a silhouette
-  // is available: the fleet row for this same host does exactly this, and
-  // the two must not disagree about whether a host's CPU can be drawn. A
-  // breakdown cannot be recovered from a total, so it is labelled for what
-  // it is rather than split into four invented ones.
+  // The headline chart is the per-core stack, the same one the fleet row for
+  // this host draws -- the two must not disagree about the same machine.
+  // Falling back to cpu_total when there are no per-core series: one true
+  // band beats a not-collected panel where a silhouette is available.
+  //
+  // The user/system/iowait/steal breakdown is NOT the fallback any more. It
+  // answers a different question -- where the time went, rather than which
+  // core spent it -- so it has its own panel below rather than standing in
+  // for this one.
   const total = griddedValues(hostMetrics, 0, "cpu_total");
+  const perCore = perCoreBands(coreMetrics ?? null);
   const cpuBands: Band[] =
-    perState.length > 0
-      ? perState
+    perCore.length > 0
+      ? perCore
       : total.length > 0
         ? [{ name: "busy", color: "var(--s1)", values: total }]
         : [];
+
+  const memBands = memoryBands(hostMetrics);
+
+  // A host's traffic is the sum over its interfaces, and a null anywhere in
+  // a bucket makes that bucket's total unknowable rather than smaller --
+  // counting it as zero would draw a dip that never happened. Same rule the
+  // fleet row uses, so the two agree about one host.
+  const ingress = sumInterfaces(netMetrics, "rx_bytes");
+  const egress = sumInterfaces(netMetrics, "tx_bytes");
 
   const memTotal = latest(hostMetrics, "mem_total") ?? host.memory_total;
   const memUsed = latest(hostMetrics, "mem_used") ?? host.mem_used;
@@ -280,12 +351,31 @@ export function Overview({
         <ChartPanel
           title="Processor"
           series={cpuBands}
-          max={100}
+          // No ceiling for the per-core stack: the bands are each core's real
+          // utilisation, so the stack runs to cores x 100 and the height is a
+          // shape rather than a quantity. The cpu_total fallback is a
+          // percentage of the host and keeps the 0-100 axis.
+          max={perCore.length > 0 ? undefined : 100}
+          hideAxis={perCore.length > 0}
           fmt={(n) => percent(n)}
           window={hostMetrics?.window ?? null}
-          // An empty band list is a tier that does not carry the columns --
-          // cpu_user/system/iowait/steal live only in raw -- and an empty
-          // chart asserts the host reported nothing. Say which it is.
+          // Each core contributes busy/N, so the stack's top edge is the mean
+          // across cores -- cpu_total -- and 100 stays the right ceiling
+          // however many cores the host has.
+          //
+          // Stacked for the cpu_total fallback too, even though one band is
+          // not much of a stack: the mark must not change depending on
+          // whether a host happened to be small enough to ask for its cores,
+          // or two machines side by side would look like different metrics.
+          stacked={cpuBands.length > 0}
+          // No legend once the bands are cores: thirty-two entries are
+          // longer than the chart, and the enlarged view's table already
+          // names every core beside its colour. This used to suppress the
+          // legend by passing `highlight`, which ALSO dims every other series
+          // to 35% -- the whole stack went pale to hide a list.
+          legend={perCore.length <= 6}
+          // An empty band list is a tier that does not carry the columns, and
+          // an empty chart asserts the host reported nothing. Say which it is.
           unavailable={
             cpuBands.length === 0
               ? "The host reported no processor samples in this window."
@@ -293,6 +383,52 @@ export function Overview({
           }
         />
       </section>
+
+      {/* The breakdown keeps its own panel rather than being displaced by the
+          per-core stack: "which core" and "doing what" are different
+          questions and a reader wants both. It used to vanish above an hour
+          because cpu_user/system/iowait/steal lived only in the raw table;
+          they reach the 5m and 1h rollups now, so this survives the range
+          control. */}
+      <ChartPanel
+        title="CPU time breakdown"
+        series={perState}
+        max={100}
+        fmt={(n) => percent(n)}
+        stacked
+        window={hostMetrics?.window ?? null}
+        unavailable={
+          perState.length === 0
+            ? "cpu_user, cpu_system, cpu_iowait and cpu_steal are not stored at this resolution."
+            : undefined
+        }
+      />
+
+      {/* The stack and the meter answer different questions and both stay:
+          the meter says how full the host is right now, the chart says how it
+          got there. The ceiling is mem_total rather than the stack's own
+          running total, so the gap at the top is free memory -- a stack
+          scaled to itself always touches the top and would report every host
+          as full. */}
+      <ChartPanel
+        title="Memory"
+        series={memBands}
+        // Headroom above total so the rule marking it reads as a rule rather
+        // than as the top border of the plot.
+        max={memTotal === null ? undefined : memTotal * 1.08}
+        reference={memTotal ?? undefined}
+        referenceLabel={memTotal === null ? undefined : bytes(memTotal)}
+        fmt={(n) => bytes(n)}
+        stacked
+        window={hostMetrics?.window ?? null}
+        unavailable={
+          memBands.length === 0
+            ? "The host reported no memory samples in this window."
+            : memTotal === null
+              ? "The host's total memory is unknown, so there is no ceiling to draw the bands against."
+              : undefined
+        }
+      />
 
       <Panel label="Memory" title="Memory">
         <Meter
@@ -336,22 +472,64 @@ export function Overview({
         )}
       </Panel>
 
+      {/* Ingress above the line, egress below -- the same mark the fleet row
+          draws, because a reader moving between them should not have to
+          re-learn the chart. There was no traffic card on this page at all:
+          the only network chart lived in the Graphs tab, so the overview
+          summarised every subsystem except the one most likely to explain a
+          problem. */}
+      <Panel label="Traffic" title="Traffic">
+        {ingress.length === 0 && egress.length === 0 ? (
+          <p className="note">No interface samples in this window.</p>
+        ) : (
+          <div className="traffic-cell">
+            <UpDownSparkline
+              up={ingress}
+              down={egress}
+              width={260}
+              height={64}
+              label="Ingress and egress over time"
+            />
+            <div className="traffic-rates">
+              <span className="rate">↑ {bitrate(lastNumber(ingress))} in</span>
+              <span className="rate">↓ {bitrate(lastNumber(egress))} out</span>
+            </div>
+          </div>
+        )}
+      </Panel>
+
       <Panel label="Disk" title="Disk">
         {filesystems.length === 0 ? (
           <p className="note">No filesystem samples in this window.</p>
         ) : (
-          <>
-            <Facts
-              rows={filesystems.map((fs) => [
-                fs.label,
-                `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`,
-              ])}
-            />
+          <div className="fs-list">
+            {filesystems.map((fs) => (
+              <Meter
+                key={fs.label}
+                label={fs.label}
+                // df's Use%: used / (used + free), never used / total. total
+                // includes the root reserve, which is neither in use nor
+                // allocatable, so dividing by it reports a full disk as less
+                // full than df does -- and df's number is the one the
+                // operator has already seen over SSH. Same definition the
+                // fleet's disk column uses, so the two cannot disagree about
+                // one filesystem.
+                value={fs.used}
+                max={
+                  fs.used === null || fs.free === null
+                    ? null
+                    : fs.used + fs.free
+                }
+                formatValue={() =>
+                  `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`
+                }
+              />
+            ))}
             <p className="note">
               Bytes as measured: used and free do not sum to size, and the
               difference is the root reserve.
             </p>
-          </>
+          </div>
         )}
       </Panel>
 
@@ -418,15 +596,39 @@ export function Overview({
         {sensorMetrics === null || sensorMetrics.series.length === 0 ? (
           <p className="note">No sensor readings in this window.</p>
         ) : (
-          <Facts
-            rows={sensorMetrics.series.map((series, index) => {
+          // A temperature is only interesting as a movement. One number says
+          // 48 °C, which a reader cannot judge without knowing whether it has
+          // been 48 all day or climbing for an hour -- so every sensor gets
+          // its recent history beside its reading.
+          <div className="sensor-list">
+            {sensorMetrics.series.map((series, index) => {
+              const name =
+                [series.key.chip, series.key.label].filter(Boolean).join(" ") ||
+                ABSENT;
               const value = latest(sensorMetrics, "temp", index);
-              return [
-                [series.key.chip, series.key.label].filter(Boolean).join(" "),
-                value === null ? ABSENT : `${Math.round(value)} °C`,
-              ];
+              const history = griddedValues(sensorMetrics, index, "temp");
+              return (
+                <div className="sensor-row" key={`${name}-${index}`}>
+                  <span className="lab">{name}</span>
+                  {/* Free-scaled to its own extent, deliberately: these sit
+                      in one list but a CPU package and an NVMe drive do not
+                      share a sensible axis, and a shared one would flatten
+                      every sensor against the hottest. The question here is
+                      "is this one moving", not "which is hottest". */}
+                  <Sparkline
+                    values={history}
+                    width={110}
+                    height={24}
+                    color="var(--s7)"
+                    label={`${name} temperature trend`}
+                  />
+                  <span className="val">
+                    {value === null ? ABSENT : `${Math.round(value)} °C`}
+                  </span>
+                </div>
+              );
             })}
-          />
+          </div>
         )}
       </Panel>
 

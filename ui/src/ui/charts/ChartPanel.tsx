@@ -38,6 +38,24 @@ export interface ChartPanelProps {
   width?: number;
   height?: number;
   highlight?: string;
+  /** Draw the series as a cumulative stack instead of independent lines.
+   * Passed through to Overlay AND to the enlarged view, so clicking a
+   * stacked panel open does not silently change the mark. */
+  stacked?: boolean;
+  /** Whether the chart names its series underneath. Off for the per-core
+   * stack, where the list is longer than the chart. */
+  legend?: boolean;
+  /** A value to mark with a dashed rule, e.g. a host's total memory. */
+  reference?: number;
+  /** Draw the series as mirrored in/out pairs about a midline. */
+  mirrored?: boolean;
+  /** What the reference rule is, drawn at the line. The small panel has no
+   * axis, so without this the rule is unnamed there. */
+  referenceLabel?: string;
+  /** Hide the enlarged view's y axis. For a stack whose height is a shape
+   * rather than a quantity -- unnormalised per-core CPU runs to N x 100 --
+   * an axis would put a number on something that does not mean one. */
+  hideAxis?: boolean;
   /** The answered window, passed through to the enlarged view's time axis. */
   window?: { from: string; to: string } | null;
   /** The page's range and setter, so the enlarged view can carry the same
@@ -57,6 +75,12 @@ export function ChartPanel({
   width = 260,
   height = 64,
   highlight,
+  stacked,
+  legend,
+  reference,
+  referenceLabel,
+  mirrored,
+  hideAxis,
   window: answered = null,
   range,
   onRangeChange,
@@ -76,7 +100,13 @@ export function ChartPanel({
     );
   }
 
-  const { max: autoMax } = extent(series.flatMap((s) => s.values));
+  // A stack is as tall as the running TOTAL at an index, so the largest
+  // single value understates it and the top of the stack would be drawn
+  // outside the box. Only matters when no explicit ceiling is given, which
+  // is the unnormalised per-core chart: N cores stack to N x 100.
+  const autoMax = stacked
+    ? runningTotalMax(series)
+    : extent(series.flatMap((s) => s.values)).max;
   const effectiveMax = max ?? autoMax;
 
   // The value at the LATEST bucket, trailing nulls included. Filtering the
@@ -124,6 +154,11 @@ export function ChartPanel({
           width={width}
           height={height}
           highlight={highlight}
+          stacked={stacked}
+          legend={legend}
+          reference={reference}
+          referenceLabel={referenceLabel}
+          mirrored={mirrored}
           label={`${title} over time`}
         />
       </button>
@@ -135,6 +170,14 @@ export function ChartPanel({
           series={series}
           max={max}
           fmt={fmt}
+          stacked={stacked}
+          legend={legend}
+          reference={reference}
+          // No label in the enlarged view: it has a y axis, and that axis
+          // already names the reference at the height it sits. Only the
+          // small panel, which has no axis, needs the rule to say what it is.
+          mirrored={mirrored}
+          hideAxis={hideAxis}
           window={answered}
           range={range}
           onRangeChange={onRangeChange}
@@ -143,4 +186,24 @@ export function ChartPanel({
       )}
     </section>
   );
+}
+
+/**
+ * The largest running total across a stack's series -- what stackBands()
+ * scales against. Indices where any series is null are skipped, matching
+ * stackBands' own gap rule: a running total is undefined there.
+ */
+function runningTotalMax(series: readonly Band[]): number {
+  const n = series.reduce(
+    (longest, s) => Math.max(longest, s.values.length),
+    0,
+  );
+  let best = 0;
+  for (let i = 0; i < n; i++) {
+    if (series.some((s) => s.values[i] == null)) continue;
+    let sum = 0;
+    for (const s of series) sum += s.values[i] as number;
+    if (sum > best) best = sum;
+  }
+  return best;
 }

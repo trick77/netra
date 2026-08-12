@@ -53,7 +53,13 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 			udp6_in_errors_per_s, udp6_rcvbuf_errors_per_s,
 			udp6_sndbuf_errors_per_s, udp6_no_ports_per_s,
 			ip6_reasm_reqds_per_s, ip6_reasm_fails_per_s,
-			ip6_frag_fails_per_s, ip6_frag_creates_per_s
+			ip6_frag_fails_per_s, ip6_frag_creates_per_s,
+			-- Appended rather than grouped with the other mem_ columns
+			-- above, for the same reason the proto appends its field
+			-- numbers: inserting them in the middle would renumber forty
+			-- placeholders, and a transposed pair in a statement this long
+			-- is invisible until a chart reads the wrong metric.
+			mem_free, mem_buffers, mem_cached, mem_shared, mem_sreclaimable
 		) VALUES (
 			$1, $2,
 			$3, $4, $5, $6, $7, $8,
@@ -75,7 +81,8 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 			$47, $48,
 			$49, $50,
 			$51, $52,
-			$53, $54
+			$53, $54,
+			$55, $56, $57, $58, $59
 		)
 		ON CONFLICT (host_id, ts) DO NOTHING`
 
@@ -105,6 +112,8 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 			f64(m.Udp6SndbufErrorsPerS), f64(m.Udp6NoPortsPerS),
 			f64(m.Ip6ReasmReqdsPerS), f64(m.Ip6ReasmFailsPerS),
 			f64(m.Ip6FragFailsPerS), f64(m.Ip6FragCreatesPerS),
+			u64(m.MemFree), u64(m.MemBuffers), u64(m.MemCached),
+			u64(m.MemShared), u64(m.MemSreclaimable),
 		)
 	}
 

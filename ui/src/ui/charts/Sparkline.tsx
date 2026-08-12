@@ -3,6 +3,7 @@
 // geometry.ts verbatim -- this component only turns that output into SVG
 // markup and never recomputes or "fixes up" a coordinate itself.
 import { areaPath, dotPath, extent, linePath } from "./geometry";
+import { SPARK_WIDTH } from "./size";
 
 export interface SparklineProps {
   values: (number | null)[];
@@ -24,17 +25,28 @@ export interface SparklineProps {
    */
   min?: number;
   max?: number;
+  /**
+   * Whether to fill the area under the line.
+   *
+   * On by default -- for a rate that rests at zero the filled mass IS the
+   * reading. Off for a series that never goes near its floor: filesystem
+   * usage lives between 40% and 95%, so an area anchored at zero floods the
+   * cell and four hosts 40 points apart draw the same solid block. The
+   * line's height is the information there.
+   */
+  fill?: boolean;
 }
 
 export function Sparkline({
   values,
-  width = 120,
+  width = SPARK_WIDTH,
   height = 32,
   color = "var(--s1)",
   label = "trend sparkline",
   pad = 2,
   min,
   max,
+  fill = true,
 }: SparklineProps) {
   const auto = extent(values);
   const floor = min ?? auto.min;
@@ -58,16 +70,17 @@ export function Sparkline({
       role="img"
       aria-label={label}
     >
-      {areas.map((d, i) => (
-        <path
-          key={`area-${i}`}
-          data-area
-          d={d}
-          fill={color}
-          fillOpacity={0.15}
-          stroke="none"
-        />
-      ))}
+      {fill &&
+        areas.map((d, i) => (
+          <path
+            key={`area-${i}`}
+            data-area
+            d={d}
+            fill={color}
+            fillOpacity={0.15}
+            stroke="none"
+          />
+        ))}
       {paths.map((d, i) => (
         <path
           key={`line-${i}`}

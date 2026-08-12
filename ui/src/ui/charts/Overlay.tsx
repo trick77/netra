@@ -4,7 +4,8 @@
 // per series independently would normalise a 2% series and a 200% series
 // to look identical, which is exactly the comparison this component exists
 // to make possible.
-import { dotPath, extent, linePath } from "./geometry";
+import { dotPath, extent, linePath, mirrorPaths, stackBands } from "./geometry";
+import { REFERENCE_DASH, REFERENCE_STROKE, REFERENCE_WIDTH } from "./size";
 
 export interface OverlaySeries {
   name: string;
@@ -32,6 +33,51 @@ export interface OverlayProps {
    * dimming keeps every series' shape visible instead of removing data. */
   highlight?: string;
   label?: string;
+  /**
+   * Draw the series as a cumulative stack rather than as independent lines.
+   *
+   * The maths is stackBands() from geometry.ts, the same function the fleet
+   * columns' StackedSparkline uses -- it is size-independent, so a panel and
+   * its enlarged view draw the identical mark rather than two components
+   * that have to be kept agreeing by hand. That is the property ChartDetail
+   * exists to preserve.
+   *
+   * A stack needs a real ceiling, so `max` is used verbatim and never
+   * widened to the data's own extent: a stack scaled to its own running
+   * total always touches the top, which is the always-full reading the fleet
+   * columns already carry their own ceilings to avoid.
+   */
+  stacked?: boolean;
+  /**
+   * Whether to name every series underneath the chart.
+   *
+   * On by default -- with two or more series colour alone cannot carry
+   * identity. Off for the per-core stack, where a 32-entry legend is taller
+   * than the chart and crushes it. Suppressing it via `highlight` was the
+   * first attempt and was worse than the legend: highlight DIMS every other
+   * series to 35%, so the whole stack went pale to hide a list.
+   */
+  legend?: boolean;
+  /** A value to mark with a dashed rule -- for memory, the host's total RAM.
+   * Without it a stack scaled to a ceiling cannot answer "is this host
+   * nearly full", because nothing says what the top of the box means. */
+  reference?: number;
+  /** What the reference rule is. Drawn at the line, because a dashed rule
+   * with no name is a mystery: a reader has to guess whether it is a
+   * ceiling, a threshold or a mean. */
+  referenceLabel?: string;
+  /**
+   * Draw the series as mirrored pairs about a midline -- ingress above,
+   * egress below -- rather than as independent lines.
+   *
+   * Series arrive in pairs: (0,1) is one interface's in and out, (2,3) the
+   * next. Traffic has a direction, and a chart that draws both directions as
+   * two lines climbing the same axis makes a reader compare shapes to answer
+   * "which way is this going", which the midline answers at a glance. The
+   * fleet row has always drawn it this way; this is how everything else
+   * catches up.
+   */
+  mirrored?: boolean;
 }
 
 export function Overlay({
@@ -43,9 +89,33 @@ export function Overlay({
   pad = 2,
   highlight,
   label = "overlaid metrics chart",
+  stacked = false,
+  legend = true,
+  reference,
+  referenceLabel,
+  mirrored = false,
 }: OverlayProps) {
   const { min: autoMin } = extent(series.flatMap((s) => s.values));
   const effectiveMin = min ?? autoMin;
+  // stackBands breaks every band at any index where ANY series is null: a
+  // running total is undefined there, not just the one series' value.
+  const referenceY =
+    reference === undefined || max <= effectiveMin
+      ? null
+      : height -
+        pad -
+        ((reference - effectiveMin) / (max - effectiveMin)) *
+          (height - 2 * pad);
+
+  const bands = stacked
+    ? stackBands(
+        series.map((s) => s.values),
+        width,
+        height,
+        max,
+        pad,
+      )
+    : [];
 
   return (
     <>
@@ -57,50 +127,143 @@ export function Overlay({
         role="img"
         aria-label={label}
       >
-        {series.map((s) => {
-          const { paths, points } = linePath(
-            s.values,
-            width,
-            height,
-            effectiveMin,
-            max,
-            pad,
-          );
-          const dimmed = highlight !== undefined && highlight !== s.name;
-          return (
-            <g key={s.name} data-series={s.name} opacity={dimmed ? 0.35 : 1}>
-              {paths.map((d, i) => (
+        {referenceY !== null && (
+          <>
+            <line
+              data-reference
+              x1={0}
+              x2={width}
+              y1={referenceY}
+              y2={referenceY}
+              stroke={REFERENCE_STROKE}
+              strokeWidth={REFERENCE_WIDTH}
+              strokeDasharray={REFERENCE_DASH}
+            />
+            {referenceLabel !== undefined && (
+              <text
+                data-reference-label
+                className="ref-label"
+                x={width - 4}
+                y={referenceY - 5}
+                textAnchor="end"
+              >
+                {referenceLabel}
+              </text>
+            )}
+          </>
+        )}
+        {mirrored &&
+          Array.from({ length: Math.ceil(series.length / 2) }, (_, p) => {
+            const up = series[p * 2];
+            const down = series[p * 2 + 1];
+            if (up === undefined) return null;
+            const paths = mirrorPaths(
+              up.values,
+              down?.values ?? [],
+              width,
+              height,
+              max,
+              pad,
+            );
+            return (
+              <g key={up.name} data-series={up.name} data-mirror>
                 <path
-                  key={`line-${i}`}
-                  data-line
-                  d={d}
-                  fill="none"
-                  stroke={s.color}
-                  strokeWidth={1.5}
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                  d={paths.up}
+                  fill={up.color}
+                  fillOpacity={0.45}
+                  stroke={up.color}
+                  strokeWidth={1.25}
                 />
-              ))}
-              {points.map((p, i) => (
-                <path
-                  key={`point-${i}`}
-                  data-line
-                  data-point
-                  d={dotPath(p.x, p.y)}
-                  fill={s.color}
-                  stroke="none"
+                {down !== undefined && (
+                  <path
+                    d={paths.down}
+                    fill={down.color}
+                    fillOpacity={0.45}
+                    stroke={down.color}
+                    strokeWidth={1.25}
+                  />
+                )}
+                <line
+                  x1={0}
+                  x2={width}
+                  y1={paths.mid}
+                  y2={paths.mid}
+                  stroke="var(--border)"
+                  strokeWidth={1}
                 />
-              ))}
-            </g>
-          );
-        })}
+              </g>
+            );
+          })}
+        {!mirrored &&
+          stacked &&
+          series.map((s, i) => {
+            const dimmed = highlight !== undefined && highlight !== s.name;
+            return (
+              <path
+                key={s.name}
+                data-series={s.name}
+                data-band
+                d={bands[i] ?? ""}
+                fill={s.color}
+                // Dimmed fill with a solid edge, matching StackedSparkline so
+                // a fleet row and the host page draw the same mark. The edge
+                // is what keeps a many-band stack legible: a band's floor is
+                // the band below it, so stroking each polygon draws every
+                // separator in the stack.
+                fillOpacity={0.55}
+                stroke={s.color}
+                strokeWidth={1.25}
+                strokeLinejoin="round"
+                opacity={dimmed ? 0.35 : 1}
+              />
+            );
+          })}
+        {!mirrored &&
+          !stacked &&
+          series.map((s) => {
+            const { paths, points } = linePath(
+              s.values,
+              width,
+              height,
+              effectiveMin,
+              max,
+              pad,
+            );
+            const dimmed = highlight !== undefined && highlight !== s.name;
+            return (
+              <g key={s.name} data-series={s.name} opacity={dimmed ? 0.35 : 1}>
+                {paths.map((d, i) => (
+                  <path
+                    key={`line-${i}`}
+                    data-line
+                    d={d}
+                    fill="none"
+                    stroke={s.color}
+                    strokeWidth={1.5}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                ))}
+                {points.map((p, i) => (
+                  <path
+                    key={`point-${i}`}
+                    data-line
+                    data-point
+                    d={dotPath(p.x, p.y)}
+                    fill={s.color}
+                    stroke="none"
+                  />
+                ))}
+              </g>
+            );
+          })}
       </svg>
       {/* A legend names series; on a fleet overlay it would name all
           nineteen of them, which is the opposite of "every host
           de-emphasised, only the outlier labelled". `highlight` is exactly
           the caller saying one series carries the identity, so it also says
           the legend has no work to do. */}
-      {series.length >= 2 && highlight === undefined && (
+      {legend && series.length >= 2 && highlight === undefined && (
         <div className="legend">
           {series.map((s) => (
             <span key={s.name}>

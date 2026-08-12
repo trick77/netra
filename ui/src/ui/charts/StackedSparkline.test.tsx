@@ -24,10 +24,13 @@ describe("StackedSparkline", () => {
     });
   });
 
-  it("requires a legend for two or more bands", () => {
+  // A sparkline is a shape in a table cell, read at a glance beside four
+  // other columns. A list of band names under it answers a question nobody
+  // asks there, and at 32 cores it was taller than the row itself.
+  it("names no bands: a sparkline carries a shape, not a key", () => {
     render(<StackedSparkline bands={bands} />);
-    expect(screen.getByText("A")).toBeInTheDocument();
-    expect(screen.getByText("B")).toBeInTheDocument();
+    expect(screen.queryByText("A")).toBeNull();
+    expect(screen.queryByText("B")).toBeNull();
   });
 
   it("computes the max as the largest running total across bands, not the largest single value", () => {

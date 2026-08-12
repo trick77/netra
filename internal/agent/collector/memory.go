@@ -57,6 +57,43 @@ func (m *Memory) Collect(_ context.Context) (*Result, error) {
 		sample.MemBuffcache = &v
 	}
 
+	// The fields a stacked memory chart needs. mem_used above is
+	// MemTotal - MemAvailable, which already contains the ZFS ARC and the
+	// unreclaimable shmem pages, so bands cannot be stacked on top of it
+	// without counting the same bytes twice. Reported separately, they let a
+	// chart partition MemTotal and derive "used" as the remainder instead.
+	//
+	// Each is read with the two-value form: an absent key means the kernel
+	// does not report that field, which must reach the database as NULL. The
+	// zero-value reads above are the older, looser style and are left alone
+	// because mem_buffcache's meaning depends on them summing.
+	if free, ok := values["MemFree"]; ok {
+		sample.MemFree = &free
+	}
+	if v, ok := values["Buffers"]; ok {
+		sample.MemBuffers = &v
+	}
+	// Shmem is counted inside Cached, so the two are separated here rather
+	// than in the reader: storing both verbatim would double-count tmpfs in
+	// any stack built from them. Guarded the same way mem_used guards
+	// total >= available -- an unexpected ordering reports nothing rather
+	// than an underflowed number.
+	if shmem, ok := values["Shmem"]; ok {
+		sample.MemShared = &shmem
+		if cached >= shmem {
+			v := cached - shmem
+			sample.MemCached = &v
+		}
+	} else if cached > 0 {
+		// No Shmem line (very old kernels): Cached is already the whole
+		// cache, with nothing to subtract.
+		v := cached
+		sample.MemCached = &v
+	}
+	if v, ok := values["SReclaimable"]; ok {
+		sample.MemSreclaimable = &v
+	}
+
 	// Swap absent is not swap empty. A SwapTotal of zero means the host has
 	// no swap configured, so both fields stay unset and reach the hub as NULL.
 	if swapTotal, ok := values["SwapTotal"]; ok && swapTotal > 0 {
