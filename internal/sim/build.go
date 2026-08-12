@@ -203,13 +203,59 @@ func (g *Generator) hostSample(ts time.Time, cpu float64) *netrav1.HostSample {
 	h.CpuIowait = proto.Float64(round2(iowait))
 	h.CpuIdle = proto.Float64(round2(clamp(100-cpu-steal, 0, 100)))
 
-	memFrac := clamp(g.sig.daily("mem", ts, p.MemUsedFrac, 0.16, 0.04), 0.05, 0.97)
-	used := uint64(float64(p.MemoryTotal) * memFrac)
-	buffcache := uint64(float64(p.MemoryTotal) * 0.17)
+	// Memory is generated as a PARTITION of MemoryTotal, not as independent
+	// fractions. The old model drew mem_used from a daily signal and
+	// buffcache as a flat 17% that was never carved out of it, so the two
+	// could sum past 100% of the host's RAM -- a stacked chart fed from that
+	// draws a host as fuller than full. Every part below is subtracted from
+	// the same budget, and free is whatever is left.
+	total := float64(p.MemoryTotal)
+
+	// ARC is memory the host really is holding, so it comes out of the
+	// budget before free does. Computed here rather than with the other
+	// optional subsystems below because the partition has to account for it.
+	var arc uint64
+	if p.ZFSArc > 0 {
+		arc = uint64(float64(p.ZFSArc) * clamp(g.sig.daily("arc", ts, 0.86, 0.1, 0.05), 0.2, 1))
+	}
+
+	shared := uint64(total * clamp(g.sig.daily("shmem", ts, 0.02, 0.4, 0.2), 0.002, 0.06))
+	buffers := uint64(total * clamp(g.sig.daily("buffers", ts, 0.03, 0.3, 0.2), 0.005, 0.07))
+	cached := uint64(total * clamp(g.sig.daily("cached", ts, 0.12, 0.35, 0.15), 0.02, 0.30))
+	sreclaimable := uint64(total * clamp(g.sig.daily("slab", ts, 0.02, 0.3, 0.2), 0.003, 0.05))
+
+	// The anonymous, unreclaimable part -- what MemUsedFrac has always
+	// meant. Held back so the parts above plus this one never claim the
+	// whole of RAM: a host at literally zero free is a different and much
+	// rarer state than a busy one, and inventing it every scrape would make
+	// the free gap at the top of the stack meaningless.
+	const ceiling = 0.98
+	parts := float64(arc + shared + buffers + cached + sreclaimable)
+	anon := total * clamp(g.sig.daily("mem", ts, p.MemUsedFrac, 0.16, 0.04), 0.05, 0.97)
+	if anon+parts > total*ceiling {
+		anon = clamp(total*ceiling-parts, 0, total)
+	}
+	free := uint64(total - anon - parts)
+
+	// mem_used and mem_available keep the meanings the real collector gives
+	// them: available is free plus what the kernel can reclaim, and used is
+	// total minus available. So used covers the anonymous pages, the ARC and
+	// shmem -- which is exactly why it cannot be the bottom band of a stack
+	// built from the other parts, and why the chart derives its used band as
+	// the remainder instead.
+	available := free + buffers + cached + sreclaimable
 	h.MemTotal = proto.Uint64(p.MemoryTotal)
-	h.MemUsed = proto.Uint64(used)
-	h.MemBuffcache = proto.Uint64(buffcache)
-	h.MemAvailable = proto.Uint64(p.MemoryTotal - used)
+	h.MemAvailable = proto.Uint64(available)
+	h.MemUsed = proto.Uint64(p.MemoryTotal - available)
+	h.MemFree = proto.Uint64(free)
+	h.MemBuffers = proto.Uint64(buffers)
+	h.MemCached = proto.Uint64(cached)
+	h.MemShared = proto.Uint64(shared)
+	h.MemSreclaimable = proto.Uint64(sreclaimable)
+	// The same invariant the agent maintains: buffcache is the sum of its
+	// three parts, so the old single band and the new stack cannot disagree
+	// about the same host.
+	h.MemBuffcache = proto.Uint64(buffers + cached + shared)
 
 	// Absent subsystems stay unset. A host with no swap reporting
 	// swap_total = 0 is indistinguishable from a host whose swap collector
@@ -220,7 +266,7 @@ func (g *Generator) hostSample(ts time.Time, cpu float64) *netrav1.HostSample {
 		h.SwapUsed = proto.Uint64(uint64(float64(p.SwapTotal) * swapFrac))
 	}
 	if p.ZFSArc > 0 {
-		h.MemZfsArc = proto.Uint64(uint64(float64(p.ZFSArc) * clamp(g.sig.daily("arc", ts, 0.86, 0.1, 0.05), 0.2, 1)))
+		h.MemZfsArc = proto.Uint64(arc)
 	}
 
 	// Load follows CPU, averaged backwards over the window each figure
@@ -333,7 +379,13 @@ func (g *Generator) cores(ts time.Time, cpu float64) []*netrav1.CpuCoreSample {
 		// Cores are not uniformly loaded: one or two carry the interrupt
 		// work and the rest idle, which is what makes a per-core heatmap
 		// worth looking at.
-		bias := 0.55 + 1.4*g.sig.unit(key+"/bias", ts.Truncate(time.Hour))
+		// Mean 1, not 1.25. The bias used to run 0.55..1.95, so the average
+		// core was busier than the host's own cpu_total -- harmless while
+		// nothing added the cores up, but the per-core stack's top edge IS
+		// the mean, and it would have sat a quarter above the number the
+		// meter and the host page show for the same instant. The spread is
+		// unchanged: one or two cores still carry the interrupt work.
+		bias := 0.4 + 1.2*g.sig.unit(key+"/bias", ts.Truncate(time.Hour))
 		busy := clamp(cpu*bias+g.sig.jitter(key, ts)*6, 0, 100)
 		out = append(out, &netrav1.CpuCoreSample{
 			TsMs: ts.UnixMilli(),
