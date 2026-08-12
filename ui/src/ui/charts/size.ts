@@ -20,6 +20,12 @@ export const SPARK_WIDTH = 170;
  * different things depending on which chart a reader happened to be
  * looking at.
  */
-export const REFERENCE_STROKE = "var(--ink-2)";
+/* --ink, not --ink-2. The rule marks the host's total RAM, which is the one
+   thing on a memory chart that says whether a stack is nearly full or barely
+   touched -- at secondary ink over a five-band stack it read as a chart
+   gridline rather than as the ceiling, and on the fleet row it disappeared
+   into the bands entirely. It is a stated fact about the host, so it is
+   drawn in the same ink as text. */
+export const REFERENCE_STROKE = "var(--ink)";
 export const REFERENCE_DASH = "4 3";
 export const REFERENCE_WIDTH = 1;
