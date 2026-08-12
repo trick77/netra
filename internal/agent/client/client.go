@@ -12,6 +12,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -303,7 +304,23 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 
 	start := time.Now()
 	for _, col := range c.collectors {
+		colStart := time.Now()
 		res, err := col.Collect(ctx)
+		colElapsed := time.Since(colStart)
+
+		// Every collector reports its own health, on every scrape, whether it
+		// worked or not. Recording it only on success would make a collector
+		// that is failing indistinguishable from one that was never
+		// registered -- which is exactly the question the panel exists to
+		// answer.
+		scrape.Collectors = append(scrape.Collectors, &netrav1.CollectorSample{
+			TsMs:       sample.TsMs,
+			Collector:  col.Name(),
+			DurationMs: ptr(uint32(colElapsed.Milliseconds())),
+			Ok:         err == nil,
+			ErrorCode:  errorCode(err),
+		})
+
 		if err != nil {
 			// Nothing from a failed collector reaches the scrape. Merging a
 			// partial result would store fields the collector never finished
@@ -367,6 +384,35 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 // but forgotten here would be collected and then silently dropped before it
 // ever reached the ring -- TestScrapeCarriesEveryFamilyFromAResult walks the
 // struct reflectively so a missed line fails rather than ships.
+// errorCode reduces a collector's error to a short, stable token.
+//
+// The raw error text is deliberately not sent. It carries paths, device names
+// and errno strings that differ per host and per scrape, and the column is
+// rolled up with last() into both aggregate tiers -- so a free-text message
+// would make "why is this collector failing" unanswerable across a fleet
+// while the aggregates filled with one-off strings.
+//
+// Returns nil on success: the proto says a collector that failed once must
+// not read as broken forever, so this clears on recovery rather than latching.
+func errorCode(err error) *string {
+	if err == nil {
+		return nil
+	}
+
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return ptr("timeout")
+	case errors.Is(err, context.Canceled):
+		return ptr("canceled")
+	case errors.Is(err, os.ErrPermission):
+		return ptr("permission-denied")
+	case errors.Is(err, os.ErrNotExist):
+		return ptr("not-found")
+	default:
+		return ptr("error")
+	}
+}
+
 func appendFamilies(s *buffer.Scrape, res *collector.Result) {
 	s.Cores = append(s.Cores, res.Cores...)
 	s.Disks = append(s.Disks, res.Disks...)
@@ -396,7 +442,8 @@ func countRows(s *buffer.Scrape) int {
 		len(s.Cores) + len(s.Disks) + len(s.Sensors) + len(s.Nets) +
 		len(s.Containers) + len(s.Filesystems) + len(s.Smart) +
 		len(s.Processes) + len(s.Events) + len(s.SystemdEvents) +
-		len(s.PackageEvents) + len(s.Addresses) + len(s.Packages)
+		len(s.PackageEvents) + len(s.Addresses) + len(s.Packages) +
+		len(s.Collectors)
 }
 
 // refreshCapabilities re-reads what each collector reports about its own
@@ -485,6 +532,7 @@ func (c *Client) Flush(ctx context.Context) error {
 		req.Events = append(req.Events, s.Events...)
 		req.SystemdEvents = append(req.SystemdEvents, s.SystemdEvents...)
 		req.PackageEvents = append(req.PackageEvents, s.PackageEvents...)
+		req.Collectors = append(req.Collectors, s.Collectors...)
 
 		// Inventory is a WHOLE SET, not a time series: the hub replaces what
 		// it holds with what arrives, deleting anything the set omits. So the

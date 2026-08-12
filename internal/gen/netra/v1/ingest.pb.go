@@ -519,9 +519,9 @@ type HostSample struct {
 	// USER_PROCESS records in /var/run/utmp. Unset when utmp is absent, which
 	// is the normal case on a host with no utmp writer.
 	UsersLoggedIn *uint32 `protobuf:"varint,26,opt,name=users_logged_in,json=usersLoggedIn,proto3,oneof" json:"users_logged_in,omitempty"`
-	// systemd unit summary. The fields land here so host_samples matches spec
-	// 5.3; the collector that fills them is a later phase, until which they
-	// stay NULL.
+	// systemd unit summary (spec 5.3), filled by the Systemd collector. Both
+	// stay NULL on a host with no systemd, which is the honest reading: a host
+	// that runs no units is not a host with zero failed units.
 	ServicesTotal  *uint32 `protobuf:"varint,27,opt,name=services_total,json=servicesTotal,proto3,oneof" json:"services_total,omitempty"`
 	ServicesFailed *uint32 `protobuf:"varint,28,opt,name=services_failed,json=servicesFailed,proto3,oneof" json:"services_failed,omitempty"`
 	// --- /proc/net/snmp, Tcp: ---
@@ -1056,16 +1056,18 @@ type AgentSample struct {
 	// is left unset -- never zeroed -- when the last flush failed, so an outage
 	// reads as "no measurement" rather than "instantaneous".
 	PostLatencyMs *uint32 `protobuf:"varint,2,opt,name=post_latency_ms,json=postLatencyMs,proto3,oneof" json:"post_latency_ms,omitempty"`
-	// Set by the Self collector in a later phase.
-	UptimeS            *uint64 `protobuf:"varint,3,opt,name=uptime_s,json=uptimeS,proto3,oneof" json:"uptime_s,omitempty"`
+	// The AGENT's uptime, not the host's. The two differ exactly when the
+	// agent restarted alone -- which also means its ring buffer was lost.
+	UptimeS *uint64 `protobuf:"varint,3,opt,name=uptime_s,json=uptimeS,proto3,oneof" json:"uptime_s,omitempty"`
+	// Sys rather than Alloc: what the process took from the OS is what an
+	// operator sees in ps, whereas Alloc is Go's live heap and understates it.
 	RssBytes           *uint64 `protobuf:"varint,4,opt,name=rss_bytes,json=rssBytes,proto3,oneof" json:"rss_bytes,omitempty"`
 	Goroutines         *uint32 `protobuf:"varint,5,opt,name=goroutines,proto3,oneof" json:"goroutines,omitempty"`
 	BufferDepth        *uint32 `protobuf:"varint,6,opt,name=buffer_depth,json=bufferDepth,proto3,oneof" json:"buffer_depth,omitempty"`
 	BufferDroppedTotal *uint64 `protobuf:"varint,7,opt,name=buffer_dropped_total,json=bufferDroppedTotal,proto3,oneof" json:"buffer_dropped_total,omitempty"`
-	// Set by the Self collector in a later phase.
-	PostFailuresTotal *uint64 `protobuf:"varint,8,opt,name=post_failures_total,json=postFailuresTotal,proto3,oneof" json:"post_failures_total,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	PostFailuresTotal  *uint64 `protobuf:"varint,8,opt,name=post_failures_total,json=postFailuresTotal,proto3,oneof" json:"post_failures_total,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AgentSample) Reset() {

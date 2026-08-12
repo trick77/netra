@@ -622,12 +622,10 @@ func (g *Generator) processes(ts time.Time, cpu float64) []*netrav1.ProcessSampl
 
 // collectorHealth reports each collector's own duration and success.
 //
-// The real agent never sends these: CollectorSample is defined in the proto
-// and wired all the way through the hub, but nothing in internal/agent ever
-// populates IngestRequest.collectors, so collector_samples and its two
-// continuous aggregates are permanently empty in production. They are filled
-// here on purpose, so every table in the schema has data behind it. This is a
-// DELIBERATE divergence from agent behaviour.
+// The real agent sends these too: its scrape loop times each collector from
+// the outside and fills IngestRequest.collectors, because a collector cannot
+// time itself. The shape here mirrors that -- a duration per collector, ok,
+// and a short error token that clears on recovery rather than latching.
 func (g *Generator) collectorHealth(ts time.Time) []*netrav1.CollectorSample {
 	out := make([]*netrav1.CollectorSample, 0, len(g.p.Collectors))
 	for _, name := range g.p.Collectors {

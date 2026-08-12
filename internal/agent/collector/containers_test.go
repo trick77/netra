@@ -3,6 +3,9 @@ package collector_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -10,8 +13,87 @@ import (
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
+// noProcRoot points the network read at a tree that does not exist, so the
+// tests that predate per-container networking keep exercising exactly the
+// cgroup paths they were written for.
+const noProcRoot = "testdata/proc-absent"
+
 func fakeLister(metas ...collector.ContainerMeta) collector.ContainerLister {
 	return func(context.Context) ([]collector.ContainerMeta, error) { return metas, nil }
+}
+
+// netFixture builds a cgroup tree with one container plus the /proc tree its
+// network counters are read through.
+//
+// Built in a TempDir rather than checked in because the namespace identity is
+// a symlink whose target ("net:[...]") is not a path -- a dangling link by
+// design, which does not belong in the repository.
+func netFixture(t *testing.T, pid, hostNS, containerNS string, rx, tx uint64) (cgroupRoot, procRoot string) {
+	t.Helper()
+
+	root := t.TempDir()
+	cgroupRoot = filepath.Join(root, "cgroup")
+	procRoot = filepath.Join(root, "proc")
+
+	scope := filepath.Join(cgroupRoot, "system.slice", "docker-abc123.scope")
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("mkdir scope: %v", err)
+	}
+	write := func(dir, name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write(scope, "cpu.stat", "usage_usec 1000000\n")
+	write(scope, "memory.current", "1000\n")
+	write(scope, "memory.stat", "inactive_file 0\n")
+	write(scope, "memory.max", "max\n")
+	write(scope, "io.stat", "8:0 rbytes=0 wbytes=0\n")
+	if pid != "" {
+		write(scope, "cgroup.procs", pid+"\n")
+	} else {
+		write(scope, "cgroup.procs", "\n")
+	}
+
+	link := func(nsPath, target string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(nsPath), 0o755); err != nil {
+			t.Fatalf("mkdir ns: %v", err)
+		}
+		if err := os.Symlink(target, nsPath); err != nil {
+			t.Fatalf("symlink %s: %v", nsPath, err)
+		}
+	}
+	link(filepath.Join(procRoot, "1", "ns", "net"), hostNS)
+
+	if pid != "" {
+		link(filepath.Join(procRoot, pid, "ns", "net"), containerNS)
+		netDir := filepath.Join(procRoot, pid, "net")
+		if err := os.MkdirAll(netDir, 0o755); err != nil {
+			t.Fatalf("mkdir net: %v", err)
+		}
+		// Header lines, then lo (which must be skipped) and eth0.
+		body := "Inter-|   Receive                        |  Transmit\n" +
+			" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+			"    lo: 9999 1 0 0 0 0 0 0 9999 1 0 0 0 0 0 0\n" +
+			fmt.Sprintf("  eth0: %d 10 0 0 0 0 0 0 %d 10 0 0 0 0 0 0\n", rx, tx)
+		write(netDir, "dev", body)
+	}
+
+	return cgroupRoot, procRoot
+}
+
+// advanceNet rewrites the fixture's counters for the second scrape.
+func advanceNet(t *testing.T, procRoot, pid string, rx, tx uint64) {
+	t.Helper()
+	body := "Inter-|   Receive                        |  Transmit\n" +
+		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+		"    lo: 9999 1 0 0 0 0 0 0 9999 1 0 0 0 0 0 0\n" +
+		fmt.Sprintf("  eth0: %d 10 0 0 0 0 0 0 %d 10 0 0 0 0 0 0\n", rx, tx)
+	if err := os.WriteFile(filepath.Join(procRoot, pid, "net", "dev"), []byte(body), 0o644); err != nil {
+		t.Fatalf("rewrite net/dev: %v", err)
+	}
 }
 
 func containersAt(t *testing.T, c *collector.Containers, at time.Time) *collector.Result {
@@ -44,7 +126,7 @@ func containerRow(t *testing.T, rows []*netrav1.ContainerSample, key string) *ne
 // files.
 func TestContainersSubtractsPageCacheFromMemory(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", Project: "proj", Service: "web"}))
 
 	containersAt(t, testee, base)
@@ -66,7 +148,7 @@ func TestContainersSubtractsPageCacheFromMemory(t *testing.T) {
 // 50% of one core.
 func TestContainersComputesCPUFromUsageMicroseconds(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
 
 	res := containersAt(t, testee, base)
@@ -100,7 +182,7 @@ func TestContainersComputesCPUFromUsageMicroseconds(t *testing.T) {
 // goes blank and the old series is orphaned.
 func TestContainersIdentityIsComposeProjectAndService(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{
 			ID: "abc123", Name: "proj-web-1", Image: "nginx:1", Project: "proj", Service: "web",
 		}))
@@ -125,7 +207,7 @@ func TestContainersIdentityIsComposeProjectAndService(t *testing.T) {
 // across restarts of the same container, which the id is not.
 func TestContainersFallsBackToTheContainerName(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "standalone"}))
 
 	containersAt(t, testee, base)
@@ -140,7 +222,7 @@ func TestContainersFallsBackToTheContainerName(t *testing.T) {
 // derived from it would be fiction.
 func TestContainersLeavesMemLimitUnsetWhenUnlimited(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{ID: "def456", Name: "unlimited"}))
 
 	containersAt(t, testee, base)
@@ -166,7 +248,7 @@ func TestContainersReportsMetricsWithoutTheDockerSocket(t *testing.T) {
 	failing := func(context.Context) ([]collector.ContainerMeta, error) {
 		return nil, errors.New("dial /var/run/docker.sock: no such file")
 	}
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", failing)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -183,10 +265,86 @@ func TestContainersReportsMetricsWithoutTheDockerSocket(t *testing.T) {
 	}
 }
 
+// net_rx and net_tx were on the wire and in the schema from the start, and
+// the hub inserted them, but the collector never set either -- cgroup v2 has
+// no network counters. They came out NULL for every real host while the
+// container page rendered a panel for them.
+//
+// The counters live in the container's own network namespace, reached via its
+// cgroup.procs, which keeps the socket an enrichment rather than a dependency.
+func TestContainersReportsNetworkFromTheContainerNamespace(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	// 1000 -> 3000 bytes over 10s = 200 B/s, and lo's 9999 is excluded.
+	if got := row.GetNetRx(); got != 200 {
+		t.Errorf("net_rx = %v, want 200", got)
+	}
+	if got := row.GetNetTx(); got != 100 {
+		t.Errorf("net_tx = %v, want 100", got)
+	}
+}
+
+// A network_mode: host container's /proc/<pid>/net/dev IS the host's file.
+// Counting it would attribute the whole machine's traffic to one container,
+// and those bytes are already reported once by the Network collector.
+func TestContainersSkipsNetworkForHostNetworkedContainers(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	const hostNS = "net:[4026531992]"
+	// Same namespace as PID 1: this container shares the host's network.
+	cgroupRoot, procRoot := netFixture(t, "42", hostNS, hostNS, 1000, 500)
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil {
+		t.Errorf("net_rx = %v for a host-networked container; want unset", row.GetNetRx())
+	}
+	if row.NetTx != nil {
+		t.Errorf("net_tx = %v for a host-networked container; want unset", row.GetNetTx())
+	}
+	// The rest of the row still reports: only networking is unknowable here.
+	if row.MemUsed == nil {
+		t.Error("mem_used unset; the host-network guard must not suppress the whole row")
+	}
+}
+
+// An empty cgroup.procs means the container is stopped or restarting. There
+// is no namespace to read, which is not the same as having moved no bytes --
+// so the fields stay unset rather than reporting a zero rate.
+func TestContainersLeavesNetworkUnsetWithoutARunningProcess(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "", "net:[4026531992]", "", 0, 0)
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+
+	containersAt(t, testee, base)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil || row.NetTx != nil {
+		t.Errorf("net_rx/net_tx set with no process in the cgroup; want unset")
+	}
+}
+
 // A host with no containers is the common case for a plain VPS. Absent, not
 // broken.
 func TestContainersReportsNothingWithNoContainers(t *testing.T) {
-	testee := collector.NewContainers(t.TempDir(), fakeLister())
+	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister())
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {

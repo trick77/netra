@@ -4,11 +4,107 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/trick77/netra/internal/agent/client"
+	"github.com/trick77/netra/internal/agent/config"
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
+
+// procFixture writes the three files BuildMetadata reads its hardware facts
+// from, and returns the root to point NETRA_PROC_ROOT at.
+func procFixture(t *testing.T, cpuinfo, meminfo, osrelease string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "sys", "kernel"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	write := func(rel, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, rel), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	write("cpuinfo", cpuinfo)
+	write("meminfo", meminfo)
+	write(filepath.Join("sys", "kernel", "osrelease"), osrelease)
+
+	return root
+}
+
+// kernel, cpu_model, cores and memory_total are all displayed on the host
+// page's System facts panel, and BuildMetadata set none of them -- so the
+// panel was blank on every host while the columns sat NULL in `hosts`.
+func TestBuildMetadataReportsTheHostHardwareFacts(t *testing.T) {
+	// Two sockets of two physical cores, hyper-threaded to eight processors:
+	// the case where cores and threads genuinely differ.
+	cpuinfo := ""
+	for i := range 8 {
+		cpuinfo += "processor\t: " + strconv.Itoa(i) + "\n" +
+			"model name\t: Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz\n" +
+			"physical id\t: " + strconv.Itoa(i/4) + "\n" +
+			"core id\t: " + strconv.Itoa((i%4)/2) + "\n\n"
+	}
+	root := procFixture(t, cpuinfo, "MemTotal:       16384000 kB\nMemFree: 100 kB\n", "6.8.0-45-generic\n")
+
+	md := client.BuildMetadata(config.Config{ProcRoot: root})
+
+	if got := md.GetKernel(); got != "6.8.0-45-generic" {
+		t.Errorf("kernel = %q, want 6.8.0-45-generic", got)
+	}
+	if got := md.GetCpuModel(); got != "Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz" {
+		t.Errorf("cpu_model = %q", got)
+	}
+	// Four distinct (physical id, core id) pairs, not the eight processors.
+	if got := md.GetCores(); got != 4 {
+		t.Errorf("cores = %d, want 4 physical cores rather than 8 threads", got)
+	}
+	if got := md.GetMemoryTotal(); got != 16384000*1024 {
+		t.Errorf("memory_total = %d, want %d bytes", got, uint64(16384000)*1024)
+	}
+}
+
+// Most ARM kernels report neither physical id nor core id. Counting the
+// processor entries is right there: threads and cores are the same thing.
+func TestBuildMetadataCountsProcessorsWhenTopologyIsAbsent(t *testing.T) {
+	cpuinfo := "processor\t: 0\nModel\t: Raspberry Pi 5 Model B Rev 1.0\n\n" +
+		"processor\t: 1\nModel\t: Raspberry Pi 5 Model B Rev 1.0\n\n"
+	root := procFixture(t, cpuinfo, "MemTotal: 8000 kB\n", "6.6.31+rpt-rpi-2712\n")
+
+	md := client.BuildMetadata(config.Config{ProcRoot: root})
+
+	if got := md.GetCores(); got != 2 {
+		t.Errorf("cores = %d, want 2", got)
+	}
+	if got := md.GetCpuModel(); got != "Raspberry Pi 5 Model B Rev 1.0" {
+		t.Errorf("cpu_model = %q", got)
+	}
+}
+
+// An unreadable /proc leaves the facts empty rather than inventing them. A
+// wrong CPU model on a host page is indistinguishable from a right one.
+func TestBuildMetadataLeavesHardwareFactsEmptyWhenProcIsUnreadable(t *testing.T) {
+	md := client.BuildMetadata(config.Config{ProcRoot: filepath.Join(t.TempDir(), "absent")})
+
+	if md.GetKernel() != "" {
+		t.Errorf("kernel = %q, want empty", md.GetKernel())
+	}
+	if md.GetCpuModel() != "" {
+		t.Errorf("cpu_model = %q, want empty", md.GetCpuModel())
+	}
+	if md.GetCores() != 0 {
+		t.Errorf("cores = %d, want 0", md.GetCores())
+	}
+	if md.GetMemoryTotal() != 0 {
+		t.Errorf("memory_total = %d, want 0", md.GetMemoryTotal())
+	}
+	// The facts that do not come from /proc still report.
+	if md.GetThreads() == 0 {
+		t.Error("threads = 0; it comes from the runtime, not /proc")
+	}
+}
 
 // A metadata block that cannot be marshalled must NOT hash to a fixed value.
 //

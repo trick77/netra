@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -15,7 +17,21 @@ type Iface struct {
 	Name  string
 	Index int
 	Addrs []string // CIDR form, as net.Addr renders it
+
+	// VRF is the name of the VRF device this interface is enslaved to, and
+	// empty for the overwhelmingly common case of an interface in the default
+	// routing table.
+	VRF string
+
+	// Description is the interface alias -- what SNMP calls ifAlias and what
+	// `ip link set <if> alias <text>` writes. Empty unless an operator set one.
+	Description string
 }
+
+// sysClassNet is where the per-interface attributes below are read from.
+// A variable so the tests can point it at a fixture tree; there is no other
+// reason to change it.
+var sysClassNet = "/sys/class/net"
 
 // IfaceLister enumerates the host's interfaces.
 //
@@ -44,9 +60,49 @@ func SystemIfaces() ([]Iface, error) {
 		for _, a := range addrs {
 			raw = append(raw, a.String())
 		}
-		out = append(out, Iface{Name: i.Name, Index: i.Index, Addrs: raw})
+		out = append(out, Iface{
+			Name:        i.Name,
+			Index:       i.Index,
+			Addrs:       raw,
+			VRF:         ifaceVRF(i.Name),
+			Description: ifaceAlias(i.Name),
+		})
 	}
 	return out, nil
+}
+
+// ifaceVRF returns the VRF device an interface is enslaved to, or empty.
+//
+// The master link alone is not enough: a bridge port and a VRF slave both
+// have one, and reporting "br0" as an interface's VRF would be wrong in the
+// far more common case. The master's DEVTYPE is what distinguishes them.
+func ifaceVRF(name string) string {
+	master, err := os.Readlink(filepath.Join(sysClassNet, name, "master"))
+	if err != nil {
+		return ""
+	}
+	master = filepath.Base(master)
+
+	uevent, err := os.ReadFile(filepath.Join(sysClassNet, master, "uevent"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(uevent), "\n") {
+		if strings.TrimSpace(line) == "DEVTYPE=vrf" {
+			return master
+		}
+	}
+	return ""
+}
+
+// ifaceAlias returns the interface alias, the Linux equivalent of SNMP's
+// ifAlias. Absent on most interfaces, which reads as empty.
+func ifaceAlias(name string) string {
+	raw, err := os.ReadFile(filepath.Join(sysClassNet, name, "ifalias"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 // Addresses reports the host's IP addresses.
@@ -131,10 +187,12 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 			}
 
 			rows = append(rows, &netrav1.HostAddress{
-				Iface:   i.Name,
-				IfIndex: ptrTo(uint32(i.Index)),
-				Address: ip.String(),
-				Family:  family,
+				Iface:       i.Name,
+				IfIndex:     ptrTo(uint32(i.Index)),
+				Address:     ip.String(),
+				Family:      family,
+				Vrf:         i.VRF,
+				Description: i.Description,
 			})
 		}
 	}
@@ -148,9 +206,14 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 		return strings.Compare(x.GetAddress(), y.GetAddress())
 	})
 
+	// The VRF and the alias are part of what is being reported, so they are
+	// part of what counts as a change. Keying on iface and address alone
+	// would leave an operator's `ip link set ... alias` unreported until some
+	// unrelated address moved, and the hub serving the old text meanwhile.
 	fingerprint := make([]string, 0, len(rows))
 	for _, r := range rows {
-		fingerprint = append(fingerprint, r.GetIface()+" "+r.GetAddress())
+		fingerprint = append(fingerprint,
+			r.GetIface()+" "+r.GetAddress()+" "+r.GetVrf()+" "+r.GetDescription())
 	}
 
 	if slices.Equal(fingerprint, a.prev) {
