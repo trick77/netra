@@ -50,7 +50,12 @@ const MEM_BANDS = [
   { base: "mem_used", name: "used", color: "var(--s1)" },
   { base: "mem_buffers", name: "buffers", color: "var(--s2)" },
   { base: "mem_cached", name: "cached", color: "var(--s3)" },
-  { base: "mem_arc", name: "ARC", color: "var(--s4)" },
+  // mem_zfs_arc, which is what 0001_init.sql calls it. This read "mem_arc"
+  // for as long as the column existed, and candidates() in lib/metrics.ts
+  // only tries the _avg/_max/_min suffixes -- never an alias -- so the base
+  // resolved to nothing, bandsFrom() dropped the empty band, and the ARC
+  // band was silently absent on the only hosts that have one.
+  { base: "mem_zfs_arc", name: "ARC", color: "var(--s4)" },
 ];
 
 function bandsFrom(

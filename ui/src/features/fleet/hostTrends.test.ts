@@ -94,6 +94,43 @@ describe("fetchHostTrends", () => {
     expect(trends.cpu[0]!.name).toBe("busy");
   });
 
+  // Every memory band base must be a column name the schema actually has.
+  // There was no memory fixture here at all, and MEM_BANDS asked for
+  // mem_buffers, mem_cached and mem_arc -- none of which exist. bandsFrom()
+  // drops a band whose values come back empty, so the column rendered a lone
+  // mem_used band for as long as it has existed while its own comment
+  // claimed four. Naming the real columns is the whole point of this test:
+  // a base that does not resolve is indistinguishable, on screen, from a
+  // host that reported nothing.
+  it("resolves every memory band against the column names the schema uses", async () => {
+    serve({
+      host: response({
+        columns: ["mem_used", "mem_buffcache", "mem_zfs_arc", "mem_total"],
+        series: [
+          {
+            key: {},
+            points: [
+              [t0, 100, 20, 8, 1000],
+              [t0 + hour, 110, 22, 9, 1000],
+            ],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.mem.map((b) => b.name)).toContain("ARC");
+    // Trailing null: the fixture's window is three hours and the series
+    // carries two points, so griddedValues() pads the bucket nobody
+    // reported rather than shortening the band.
+    expect(trends.mem.find((b) => b.name === "ARC")!.values).toEqual([
+      8,
+      9,
+      null,
+    ]);
+  });
+
   // A host's traffic is the sum over its interfaces, and a null in any of
   // them makes the bucket's total unknowable rather than smaller. Counting
   // it as zero would draw a dip that never happened.
