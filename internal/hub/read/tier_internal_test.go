@@ -84,13 +84,23 @@ func TestTierSelectionClampsToTheMaterialisationHorizon(t *testing.T) {
 		age  time.Duration
 		lag  time.Duration
 	}{
-		{"5m tier lags ten minutes", 10 * day, 10 * time.Minute},
-		{"1h tier lags an hour", 60 * day, time.Hour},
+		// end_offset PLUS schedule_interval, the pair 0001_init.sql actually
+		// sets: a bucket is materialised by a refresh RUN, so end_offset is
+		// how far back a run reaches and schedule_interval is how stale that
+		// reach can be between runs.
+		{"5m tier lags its 10m offset plus its 5m schedule", 10 * day, 15 * time.Minute},
+		{"1h tier lags its 1h offset plus its 30m schedule", 60 * day, 90 * time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := mustPlan(t, "host", testNow.Add(-tc.age), testNow, 0, false)
 
-			if want := testNow.Add(-tc.lag); !p.Window.To.Equal(want) {
+			// Truncated to a whole bucket after the lag is subtracted -- an
+			// aggregate materialises whole buckets, so a window ending
+			// mid-bucket asks for one that does not exist yet. At the 1h
+			// tier the two differ: 12:00 less 90m is 10:30, whose whole
+			// bucket is 10:00. See TestTierSelectionClampsToAWholeBucket.
+			want := testNow.Add(-tc.lag).Truncate(p.Step)
+			if !p.Window.To.Equal(want) {
 				t.Errorf("window.to = %v, want %v", p.Window.To, want)
 			}
 			if !p.Requested.To.Equal(testNow) {
@@ -100,6 +110,48 @@ func TestTierSelectionClampsToTheMaterialisationHorizon(t *testing.T) {
 				t.Errorf("warnings = %q, want one naming the lag", p.Warnings)
 			}
 		})
+	}
+}
+
+// The trailing clamp lands on a whole bucket, not on now-lag.
+//
+// An aggregate materialises whole buckets, and now-lag almost always falls in
+// the middle of one. A window ending mid-bucket asks for a bucket that does
+// not exist yet: the client lays the answer on a grid of step-wide slots, so
+// the half-bucket becomes a trailing slot nothing can fill -- and every
+// headline value on the page reads the LAST slot. The symptom was every 5m
+// and 1h chart drawing its trend correctly beside an absent number, on hosts
+// that were reporting perfectly.
+//
+// testNow above is deliberately on the hour, which cannot tell truncation
+// from no truncation; this uses a clock that is not.
+func TestTierSelectionClampsToAWholeBucket(t *testing.T) {
+	// 12:07:33 -> minus the 5m tier's fifteen minutes is 11:52:33, whose
+	// whole bucket is 11:50:00.
+	now := time.Date(2026, 8, 10, 12, 7, 33, 0, time.UTC)
+
+	f, err := lookupFamily("host")
+	if err != nil {
+		t.Fatalf("lookupFamily: %v", err)
+	}
+	// Not mustPlan, which pins `now` to testNow -- the whole point here is a
+	// clock that does not sit on a bucket boundary.
+	p, err := planQuery(f, Window{From: now.Add(-10 * day), To: now}, 0, false, now)
+	if err != nil {
+		t.Fatalf("planQuery: %v", err)
+	}
+	if p.Tier != Tier5m {
+		t.Fatalf("tier = %q, want %q", p.Tier, Tier5m)
+	}
+
+	want := time.Date(2026, 8, 10, 11, 50, 0, 0, time.UTC)
+	if !p.Window.To.Equal(want) {
+		t.Errorf("window.to = %v, want %v (the last whole bucket)", p.Window.To, want)
+	}
+	// The span has to be a whole number of buckets, or the grid the client
+	// builds from it has a slot the server never intended.
+	if rem := p.Window.To.Sub(p.Window.From) % p.Step; rem != 0 {
+		t.Errorf("window spans %v, which is not a whole number of %v buckets", p.Window.To.Sub(p.Window.From), p.Step)
 	}
 }
 
