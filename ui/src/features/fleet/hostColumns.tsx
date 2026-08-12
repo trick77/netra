@@ -10,7 +10,8 @@ import type { Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
-import { Sparkline } from "../../ui/charts/Sparkline";
+import { Overlay } from "../../ui/charts/Overlay";
+import { SPARK_WIDTH } from "../../ui/charts/size";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
 import { ABSENT, bitrate } from "../../lib/format";
 import type { Host } from "../../lib/api";
@@ -70,8 +71,8 @@ export type HostRow = Host & {
   // only way to say "never collected" was pct: 0, which renders as an empty,
   // healthy, green disk -- absent read as a fact.
   fullest: { mount: string; pct: number; others: number } | null;
-  /** The fullest filesystem's Use% over the window. */
-  disk: (number | null)[];
+  /** Every filesystem's Use% over the window, one band each. */
+  disk: Band[];
 };
 
 function HostCell({ row }: { row: HostRow }) {
@@ -212,15 +213,18 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
   if (row.disk.length === 0) return <>{ABSENT}</>;
   return (
-    <Sparkline
-      values={row.disk}
+    <Overlay
+      series={row.disk}
       min={0}
       max={100}
-      // No area fill: usage sits between 40% and 95%, so a mass anchored at
-      // zero fills the cell for every host and four disks 40 points apart
-      // draw the same block. The line's height is what distinguishes them.
-      fill={false}
-      color="var(--s7)"
+      width={SPARK_WIDTH}
+      height={32}
+      // Lines rather than filled areas, and no legend: usage sits between
+      // 40% and 95%, so masses anchored at zero would pile into one solid
+      // block, and naming six mounts under a 32px chart is the same
+      // row-height problem the CPU column already solved by not naming
+      // thirty-two cores.
+      legend={false}
       label={`Filesystem usage trend, ${rangeLabel(range)}`}
     />
   );

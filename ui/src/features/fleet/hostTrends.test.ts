@@ -202,6 +202,50 @@ describe("fetchHostTrends", () => {
     expect(trends.tx).toEqual([11, 21, 31]);
   });
 
+  // Every mount, not just the worst one: a root sitting flat at 40% while a
+  // log volume climbs into trouble is exactly the case a single line for the
+  // fullest filesystem hides.
+  it("draws one line per filesystem, each on df's own percentage", async () => {
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem"],
+        columns: ["used", "free", "total"],
+        series: [
+          { key: { filesystem: "root" }, points: [[t0, 68, 32, 110]] },
+          { key: { filesystem: "data" }, points: [[t0, 88, 12, 110]] },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.disk.map((b) => b.name)).toEqual(["root", "data"]);
+    expect(trends.disk[0]!.values[0]).toBe(68);
+    expect(trends.disk[1]!.values[0]).toBe(88);
+    // Each mount keeps its own hue, so a reader can follow one line across
+    // the window rather than losing it where two cross.
+    expect(trends.disk[0]!.color).not.toBe(trends.disk[1]!.color);
+  });
+
+  // A mount that reported nothing all window is not a flat line at zero: it
+  // is a filesystem with no readings, and drawing one would claim otherwise.
+  it("leaves out a filesystem that reported nothing", async () => {
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem"],
+        columns: ["used", "free"],
+        series: [
+          { key: { filesystem: "root" }, points: [[t0, 68, 32]] },
+          { key: { filesystem: "ghost" }, points: [[t0, null, null]] },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.disk.map((b) => b.name)).toEqual(["root"]);
+  });
+
   // used / (used + free) is df's Use%, which is the number the operator has
   // already seen over SSH. used / total is not: total includes the root
   // reserve, so it reports a full disk as less full than df does.

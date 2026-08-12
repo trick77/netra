@@ -31,11 +31,11 @@ export interface HostTrends {
   rx: (number | null)[];
   tx: (number | null)[];
   fullest: HostRow["fullest"];
-  /** The fullest filesystem's usage over the window, as df's Use%. The
-   * meter beside it says how full that disk is now; this says whether it
-   * got there this morning or three weeks ago -- which is the difference
-   * between "watch it" and "act today". */
-  disk: (number | null)[];
+  /** Every filesystem's usage over the window, as df's Use%, one band each.
+   * The meter beside it says how full the worst one is now; these say which
+   * of them is moving and how fast -- the difference between "watch it" and
+   * "act today". */
+  disk: Band[];
 }
 
 // The CPU and memory bands both moved to lib/bands.ts, which the host page
@@ -139,47 +139,59 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
   };
 }
 
+// One hue per filesystem, cycling. A host with more mounts than this has
+// more than a fleet row could name anyway -- the column's question is "is
+// any of them climbing", and the meter beside it names the one that matters.
+const FS_COLORS = [
+  "var(--s7)",
+  "var(--s1)",
+  "var(--s2)",
+  "var(--s5)",
+  "var(--s3)",
+  "var(--s8)",
+];
+
 /**
- * The fullest filesystem's Use% over the whole window.
+ * Every filesystem's Use% over the window, one band each.
  *
- * Same filesystem fullestFilesystem() names, and the same definition --
- * used / (used + free), never used / total, since total includes the root
- * reserve. Picking the series by its LAST reading rather than per bucket:
- * a chart that switched filesystems mid-window whenever another one
- * overtook would draw a line no single disk ever followed.
+ * All of them, not just the fullest: a host's root can sit flat at 40% while
+ * a log volume climbs into trouble, and one line for the worst mount hides
+ * which of them is moving. It also jumps between filesystems whenever
+ * another overtakes, drawing a line no single disk ever followed.
+ *
+ * df's Use% throughout -- used / (used + free), never used / total, since
+ * total includes the root reserve. The same definition the meter beside it
+ * and fullestFilesystem() use, so nothing on the row can disagree.
  */
-function fullestSeries(res: MetricsResponse | null): (number | null)[] {
+function filesystemBands(res: MetricsResponse | null): Band[] {
   if (res === null || res.series.length === 0) return [];
   if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return [];
 
-  let best = -1;
-  let bestPct = -1;
+  const bands: Band[] = [];
   for (let i = 0; i < res.series.length; i++) {
-    const used = lastNumber(griddedValues(res, i, "used"));
-    const free = lastNumber(griddedValues(res, i, "free"));
-    if (used === null || free === null || used + free === 0) continue;
-    const pct = (used / (used + free)) * 100;
-    if (pct > bestPct) {
-      bestPct = pct;
-      best = i;
+    const used = griddedValues(res, i, "used");
+    const free = griddedValues(res, i, "free");
+    const width = Math.max(used.length, free.length);
+    const values: (number | null)[] = [];
+    for (let j = 0; j < width; j++) {
+      const u = used[j] ?? null;
+      const f = free[j] ?? null;
+      // A gap is a gap: the host reported nothing for that bucket, which is
+      // not the same as the disk being empty.
+      values.push(
+        u === null || f === null || u + f === 0 ? null : (u / (u + f)) * 100,
+      );
     }
+    // A filesystem that reported nothing all window is not a flat line at
+    // zero; it is a mount with no readings, and drawing it would claim one.
+    if (!values.some((v) => v !== null)) continue;
+    bands.push({
+      name: res.series[i]!.key.filesystem ?? `fs ${i}`,
+      color: FS_COLORS[bands.length % FS_COLORS.length]!,
+      values,
+    });
   }
-  if (best === -1) return [];
-
-  const used = griddedValues(res, best, "used");
-  const free = griddedValues(res, best, "free");
-  const width = Math.max(used.length, free.length);
-  const out: (number | null)[] = [];
-  for (let i = 0; i < width; i++) {
-    const u = used[i] ?? null;
-    const f = free[i] ?? null;
-    // A gap is a gap: the host reported nothing for that bucket, which is
-    // not the same as the disk being empty.
-    out.push(
-      u === null || f === null || u + f === 0 ? null : (u / (u + f)) * 100,
-    );
-  }
-  return out;
+  return bands;
 }
 
 function lastNumber(values: readonly (number | null)[]): number | null {
@@ -266,7 +278,7 @@ export async function fetchHostTrends(
     rx: sumSeries(net, "rx_bytes"),
     tx: sumSeries(net, "tx_bytes"),
     fullest: fullestFilesystem(filesystem),
-    disk: fullestSeries(filesystem),
+    disk: filesystemBands(filesystem),
   };
 }
 
