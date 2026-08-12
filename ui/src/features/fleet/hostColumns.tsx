@@ -78,6 +78,10 @@ export type HostRow = Host & {
   fullest: { mount: string; pct: number; others: number } | null;
   /** Every filesystem's Use% over the window, one band each. */
   disk: Band[];
+  /** OOM kills inside the window -- the increase, never the cumulative
+   * counter. null is "cannot say", which the attention band stays silent
+   * about; 0 is the host confirming nothing happened. */
+  oomKills: number | null;
 };
 
 function HostCell({ row }: { row: HostRow }) {

@@ -28,6 +28,7 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     tx: [5e5, 6e5],
     fullest: { mount: "/", pct: 41, others: 1 },
     disk: [],
+    oomKills: null,
     ...overrides,
   };
 }
@@ -336,5 +337,72 @@ describe("FleetPage data fetching", () => {
     render(<FleetPage now={NOW} />);
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+  });
+
+  // The band existed from the start and had nothing to render: `conditions`
+  // defaulted to [], so this page said "nothing needs attention" beside a
+  // host whose own page was showing three OOM kills in red.
+  it("derives the attention band from the rows instead of rendering an empty one", () => {
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+        ]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    expect(screen.getByText(/3 OOM kills/)).toBeInTheDocument();
+    expect(screen.queryByText(/nothing needs attention/)).toBeNull();
+  });
+
+  it("counts the troubled hosts, not the conditions, above the band", () => {
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({
+            id: 2,
+            hostname: "db-01",
+            oomKills: 3,
+            fullest: { mount: "/var/log", pct: 97, others: 0 },
+          }),
+        ]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    // One host in trouble, two conditions on it.
+    expect(screen.getByText(/1 of 2 hosts/)).toBeInTheDocument();
+  });
+
+  // A filter is someone looking for one machine. Recomputing the band from
+  // the filtered rows would hide a critical host because its name does not
+  // match what was typed, which is exactly how an overview lies.
+  it("keeps the band whole while the list is filtered", async () => {
+    const user = userEvent.setup();
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+        ]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    await user.type(screen.getByPlaceholderText(/filter hosts/i), "web");
+    expect(screen.getByText(/3 OOM kills/)).toBeInTheDocument();
+  });
+
+  it("still shows the quiet all-clear line for a healthy fleet", () => {
+    render(
+      <FleetPage rows={[makeRow({ id: 1 })]} checkedAt={null} now={NOW} />,
+    );
+    expect(screen.getByText(/nothing needs attention/)).toBeInTheDocument();
   });
 });

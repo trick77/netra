@@ -14,6 +14,7 @@ import { Segmented } from "../../ui/Segmented";
 import { StatTile } from "../../ui/StatTile";
 import { Tabs } from "../../ui/Tabs";
 import { AttentionBand, type Condition } from "./AttentionBand";
+import { fleetConditions, hostsNeedingAttention } from "./conditions";
 import { FleetContainers, type ContainerRow } from "./FleetContainers";
 import { HostCards } from "./HostCards";
 import { HostTable } from "./HostTable";
@@ -142,10 +143,16 @@ export interface FleetPageProps {
   /** Injected containers. When omitted the page fetches its own. */
   containers?: readonly ContainerRow[];
   /**
-   * Conditions for the attention band. Nothing computes these yet -- the
-   * alerting engine is a separate Stage 2 workstream -- so the default is
-   * "nothing is wrong", which renders the quiet all-clear line rather than
-   * a permanent green banner (spec 4.3).
+   * Conditions for the attention band.
+   *
+   * Derived from the rows by default -- see conditions.ts. It used to
+   * default to [], with a note that computing them was a separate alerting
+   * workstream, which meant the band was dead code and this page said
+   * "nothing needs attention" beside a host whose own page was showing three
+   * OOM kills in red.
+   *
+   * Still injectable, for tests and for a future alerting engine that will
+   * know things a row cannot.
    */
   conditions?: Condition[];
   entity?: Entity;
@@ -178,7 +185,7 @@ export interface FleetPageProps {
 export function FleetPage({
   rows,
   containers,
-  conditions = [],
+  conditions: injectedConditions,
   entity: controlledEntity = "hosts",
   density: controlledDensity,
   checkedAt: injectedCheckedAt,
@@ -314,6 +321,12 @@ export function FleetPage({
   );
 
   const reporting = hostRows.filter((row) => isReporting(row, now)).length;
+  // Derived from the rows unless a caller supplied its own. Computed over
+  // hostRows rather than visibleHosts on purpose: a filter is someone
+  // looking for one machine, and hiding a critical host because its name
+  // does not match what was typed is exactly how an overview lies.
+  const shown = injectedConditions ?? fleetConditions(hostRows, now);
+  const troubled = hostsNeedingAttention(shown);
 
   return (
     <>
@@ -328,8 +341,22 @@ export function FleetPage({
         </p>
       ) : null}
 
-      {conditions.length > 0 ? (
-        <AttentionBand conditions={conditions} />
+      {shown.length > 0 ? (
+        <>
+          {/* The count above the band, in the same place the all-clear line
+              sits when there is nothing wrong -- so the page answers "how
+              much of my fleet is in trouble" in one line whichever state it
+              is in, rather than only when the answer is none. */}
+          <p className="allclear">
+            <strong>
+              {troubled} of {hostRows.length} host
+              {hostRows.length === 1 ? "" : "s"}
+            </strong>{" "}
+            need{troubled === 1 ? "s" : ""} attention
+            {checkedAt === null ? "" : ` · checked ${relative(checkedAt, now)}`}
+          </p>
+          <AttentionBand conditions={shown} />
+        </>
       ) : (
         // Not a green "all clear" card: a permanently present banner is one
         // people stop reading. One quiet line that still confirms the check

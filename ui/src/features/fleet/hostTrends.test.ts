@@ -346,6 +346,7 @@ describe("buildRows", () => {
       tx: [20],
       fullest: { mount: "/", pct: 50, others: 0 },
       disk: [],
+      oomKills: 0,
     };
 
     const rows = buildRows([host], [site], new Map([[1, trends]]));

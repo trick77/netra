@@ -26,6 +26,7 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     tx: [5e5, 6e5],
     fullest: { mount: "/data", pct: 88, others: 2 },
     disk: [],
+    oomKills: null,
     ...overrides,
   };
 }
