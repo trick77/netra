@@ -394,7 +394,13 @@ export function FleetPage({
         <StatTile
           label="Fleet traffic"
           value={fleetTraffic(hostRows)}
-          detail="inbound + outbound, latest sample"
+          // ingress + egress, the words this app already uses for the two
+          // directions: Graphs.tsx names its bands that ("not rx and tx --
+          // the direction is the point of this chart"), and both traffic
+          // sparklines announce themselves as "Ingress and egress over time".
+          // "inbound + outbound" was a third spelling of the same pair, on
+          // the one tile summarising all of them.
+          detail="ingress + egress, latest sample"
         />
       </div>
 
