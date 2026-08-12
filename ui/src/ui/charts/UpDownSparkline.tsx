@@ -28,8 +28,12 @@ export function UpDownSparkline({
   width = 120,
   height = 32,
   pad = 2,
-  upColor = "var(--s1)",
-  downColor = "var(--s2)",
+  // Green above the axis, blue below. The convention every traffic graph an
+  // operator has already read follows it -- inbound is the green half -- and
+  // these were the other way round, so a familiar chart said the unfamiliar
+  // thing.
+  upColor = "var(--s2)",
+  downColor = "var(--s1)",
   label = "up/down traffic chart",
 }: UpDownSparklineProps) {
   const effectiveMax = max ?? Math.max(extent(up).max, extent(down).max);

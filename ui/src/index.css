@@ -110,6 +110,14 @@
   --s4: #e87ba4;
   --s5: #9b4fc9;
   --s6: #1a9e9e;
+  /* Orange and yellow, the two hues the series ramp never had. The memory
+     stack needs five bands that stay apart at 32px tall, and blue/aqua/
+     violet/magenta alone read as one muddy mass at that size. Validated as a
+     set with s1 and s2: worst adjacent CVD dE 9.1, worst adjacent
+     normal-vision dE 19.6. Three of them sit under 3:1 on the light surface,
+     which is why every chart using them carries a legend. */
+  --s7: #eb6834;
+  --s8: #eda100;
 
   /* drawer shadow — per-theme; the dark value read as a grey smear on the
      light surface. */
@@ -152,6 +160,8 @@
     --s4: #d55181;
     --s5: #b06fe0;
     --s6: #2bbcbc;
+    --s7: #d95926;
+    --s8: #c98500;
 
     --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
   }
@@ -184,6 +194,8 @@
   --s4: #d55181;
   --s5: #b06fe0;
   --s6: #2bbcbc;
+  --s7: #d95926;
+  --s8: #c98500;
 
   --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
 }

@@ -42,6 +42,9 @@ export interface ChartPanelProps {
    * Passed through to Overlay AND to the enlarged view, so clicking a
    * stacked panel open does not silently change the mark. */
   stacked?: boolean;
+  /** Whether the chart names its series underneath. Off for the per-core
+   * stack, where the list is longer than the chart. */
+  legend?: boolean;
   /** The answered window, passed through to the enlarged view's time axis. */
   window?: { from: string; to: string } | null;
   /** The page's range and setter, so the enlarged view can carry the same
@@ -62,6 +65,7 @@ export function ChartPanel({
   height = 64,
   highlight,
   stacked,
+  legend,
   window: answered = null,
   range,
   onRangeChange,
@@ -130,6 +134,7 @@ export function ChartPanel({
           height={height}
           highlight={highlight}
           stacked={stacked}
+          legend={legend}
           label={`${title} over time`}
         />
       </button>
@@ -142,6 +147,7 @@ export function ChartPanel({
           max={max}
           fmt={fmt}
           stacked={stacked}
+          legend={legend}
           window={answered}
           range={range}
           onRangeChange={onRangeChange}

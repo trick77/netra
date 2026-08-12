@@ -47,6 +47,16 @@ export interface OverlayProps {
    * columns already carry their own ceilings to avoid.
    */
   stacked?: boolean;
+  /**
+   * Whether to name every series underneath the chart.
+   *
+   * On by default -- with two or more series colour alone cannot carry
+   * identity. Off for the per-core stack, where a 32-entry legend is taller
+   * than the chart and crushes it. Suppressing it via `highlight` was the
+   * first attempt and was worse than the legend: highlight DIMS every other
+   * series to 35%, so the whole stack went pale to hide a list.
+   */
+  legend?: boolean;
 }
 
 export function Overlay({
@@ -59,6 +69,7 @@ export function Overlay({
   highlight,
   label = "overlaid metrics chart",
   stacked = false,
+  legend = true,
 }: OverlayProps) {
   const { min: autoMin } = extent(series.flatMap((s) => s.values));
   const effectiveMin = min ?? autoMin;
@@ -94,7 +105,15 @@ export function Overlay({
                 data-band
                 d={bands[i] ?? ""}
                 fill={s.color}
-                stroke="none"
+                // Dimmed fill with a solid edge, matching StackedSparkline so
+                // a fleet row and the host page draw the same mark. The edge
+                // is what keeps a many-band stack legible: a band's floor is
+                // the band below it, so stroking each polygon draws every
+                // separator in the stack.
+                fillOpacity={0.55}
+                stroke={s.color}
+                strokeWidth={1.25}
+                strokeLinejoin="round"
                 opacity={dimmed ? 0.35 : 1}
               />
             );
@@ -143,7 +162,7 @@ export function Overlay({
           de-emphasised, only the outlier labelled". `highlight` is exactly
           the caller saying one series carries the identity, so it also says
           the legend has no work to do. */}
-      {series.length >= 2 && highlight === undefined && (
+      {legend && series.length >= 2 && highlight === undefined && (
         <div className="legend">
           {series.map((s) => (
             <span key={s.name}>

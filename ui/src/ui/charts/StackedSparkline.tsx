@@ -99,7 +99,17 @@ export function StackedSparkline({
                 data-band
                 d={d}
                 fill={bands[i]!.color}
-                stroke="none"
+                // Dimmed fill, solid edge -- the pattern every tool that draws
+                // a many-band stack well uses. Without it thirty-two bands are
+                // one mass of colour: the fill says how much, and the crisp
+                // edge is what separates each band from its neighbour. The
+                // stroke outlines the whole polygon, and since a band's floor
+                // IS the band below it, that single attribute draws every
+                // separator in the stack.
+                fillOpacity={0.55}
+                stroke={bands[i]!.color}
+                strokeWidth={1}
+                strokeLinejoin="round"
               />
             ),
         )}

@@ -414,12 +414,10 @@ function Panel({
       max={spec.max}
       fmt={spec.fmt}
       stacked={spec.stacked}
-      // A 32-core legend is longer than the chart it explains. `highlight`
-      // is how Overlay is told colour is not carrying identity here, and it
-      // suppresses the legend with it.
-      highlight={
-        spec.normalise && series.length > 6 ? series[0]!.name : undefined
-      }
+      // A 32-core legend is longer than the chart it explains. Suppressed
+      // with `legend`, not `highlight`: the latter also dims every other
+      // series to 35% and washed the whole stack out.
+      legend={!(spec.normalise && series.length > 6)}
       // No per-panel notice: the window statement is about the RANGE, not
       // about any one chart, and repeating it under twenty panels made it
       // twenty pieces of noise nobody reads. It is rendered once, above the

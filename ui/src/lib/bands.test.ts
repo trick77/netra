@@ -195,13 +195,46 @@ describe("perCoreBands", () => {
   });
 
   // Colour cannot carry identity across thirty-two bands; all it can do is
-  // keep neighbours apart.
-  it("alternates two colours so adjacent cores stay separable", () => {
+  // keep neighbours apart. Two alternating tokens gave the stack no internal
+  // structure, and a single-hue light-to-dark ramp fails the palette
+  // validator's adjacent-lightness check outright -- 0.047 apart over eight
+  // steps, and it read as a blob of blues. Hue is the only channel with the
+  // range, so every band gets its own.
+  it("gives every core a distinct hue rather than a repeating pair", () => {
     const colors = perCoreBands(cores).map((b) => b.color);
 
-    expect(colors[0]).toBe(colors[2]);
-    expect(colors[1]).toBe(colors[3]);
-    expect(colors[0]).not.toBe(colors[1]);
+    expect(new Set(colors).size).toBe(colors.length);
+    for (const c of colors) expect(c).toMatch(/^hsl\(/);
+  });
+
+  // The sweep has to subdivide to fit the host: 32 cores land about 9 degrees
+  // apart, 4 cores about 95. Either way no two neighbours share a hue, which
+  // is the whole job.
+  it("spreads the sweep across however many cores the host has", () => {
+    const hueOf = (c: string) => Number(/^hsl\((\d+(?:\.\d+)?)/.exec(c)![1]);
+    const four = perCoreBands(cores).map((b) => hueOf(b.color));
+
+    expect(new Set(four).size).toBe(4);
+    // Adjacent cores are far enough apart to tell without a legend.
+    for (let i = 1; i < four.length; i++) {
+      const gap = Math.abs(four[i]! - four[i - 1]!);
+      expect(Math.min(gap, 360 - gap)).toBeGreaterThan(20);
+    }
+  });
+
+  // A single-core host must not divide by zero working out its position in
+  // the sweep.
+  it("colours a single-core host without dividing by zero", () => {
+    const one = response({
+      family: "cpu_core",
+      key_columns: ["core"],
+      columns: ["busy"],
+      series: [{ key: { core: "0" }, points: [[t0, 50]] }],
+    });
+
+    const bands = perCoreBands(one);
+    expect(bands).toHaveLength(1);
+    expect(bands[0]!.color).toMatch(/^hsl\(\d+(\.\d+)? 65% 50%\)$/);
   });
 
   it("has nothing to draw for a host that reported no cores", () => {

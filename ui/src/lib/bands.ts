@@ -11,11 +11,22 @@ import { griddedValues, carriesColumn } from "./metrics";
 import type { MetricsResponse } from "./api";
 import type { Band } from "../ui/charts/StackedSparkline";
 
-/** Colours are token references; index.css owns the palette. */
+/**
+ * The memory bands, in the order they stack.
+ *
+ * Colours are token references; index.css owns the palette. The order is the
+ * validated categorical order -- blue, orange, aqua, yellow, magenta -- and
+ * not the s1..s5 sequence, which put blue, aqua, violet and magenta next to
+ * each other and read as one muddy mass in a 32px cell. Orange and yellow are
+ * the two hues that ramp never had, and they are most of why this chart is
+ * legible at fleet-row size. Yellow and orange are deliberately NOT adjacent
+ * in the stack: that is the one pair in this set that fails the separation
+ * floors.
+ */
 const USED = "var(--s1)";
-const ARC = "var(--s5)";
+const ARC = "var(--s7)";
 const BUFFERS = "var(--s2)";
-const CACHED = "var(--s3)";
+const CACHED = "var(--s8)";
 const SHARED = "var(--s4)";
 
 /**
@@ -122,14 +133,42 @@ export function perCoreBands(res: MetricsResponse | null): Band[] {
         // The key names the core, so a hovered band is identifiable even
         // though thirty-two of them cannot each own a hue.
         name: `core ${series.key.core ?? i}`,
-        // Two alternating tokens rather than a cycle of six: with this many
-        // bands colour cannot carry identity, and all it has left to do is
-        // keep neighbours apart.
-        color: i % 2 === 0 ? "var(--s1)" : "var(--s6)",
+        color: coreColor(i, n),
         values,
       };
     })
     .filter((b) => b.values.length > 0);
+}
+
+/**
+ * The colour of one core's band in a stack of `n`.
+ *
+ * A spectrum sweep, and deliberately NOT a design token or a single-hue ramp.
+ * Both of those were tried and both are unreadable here:
+ *
+ * - Two alternating tokens gave a 32-band stack no internal structure at all.
+ * - A one-hue light-to-dark ramp -- the textbook answer for ordered bands --
+ *   puts adjacent steps 0.047 apart in L across eight steps, let alone
+ *   thirty-two. The palette validator fails it outright, and on screen it is
+ *   a blob of blues.
+ *
+ * Hue is the only channel with enough range to separate this many neighbours,
+ * which is what every tool that draws this chart well does. It encodes nothing
+ * -- core 7 is not "hotter" than core 3 for being further round the wheel --
+ * and nobody reads a core's identity off its colour. The job is purely to keep
+ * one band distinguishable from the next, and the hairline stroke each band
+ * carries does the rest.
+ *
+ * Raw HSL rather than a var(): the ramp has to subdivide to fit the host, so
+ * there is no fixed set of steps to name, and mid-lightness saturated hues sit
+ * legibly on both the light and the dark surface.
+ */
+function coreColor(i: number, n: number): string {
+  // Violet through blue, teal, green and yellow to red -- the long way round,
+  // so even 32 cores land ~9 degrees apart. n === 1 takes the first hue rather
+  // than dividing by zero.
+  const hue = n <= 1 ? 265 : 265 - (285 * i) / (n - 1);
+  return `hsl(${((hue % 360) + 360) % 360} 65% 50%)`;
 }
 
 function optional(res: MetricsResponse, base: string): (number | null)[] {

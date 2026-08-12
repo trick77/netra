@@ -308,11 +308,12 @@ export function Overview({
           // whether a host happened to be small enough to ask for its cores,
           // or two machines side by side would look like different metrics.
           stacked={cpuBands.length > 0}
-          // Thirty-two cores would produce a thirty-two entry legend, which
-          // is longer than the chart. `highlight` is how Overlay is told that
-          // colour is not carrying identity here, and it suppresses the
-          // legend with it.
-          highlight={perCore.length > 6 ? perCore[0]!.name : undefined}
+          // No legend once the bands are cores: thirty-two entries are
+          // longer than the chart, and the enlarged view's table already
+          // names every core beside its colour. This used to suppress the
+          // legend by passing `highlight`, which ALSO dims every other series
+          // to 35% -- the whole stack went pale to hide a list.
+          legend={perCore.length <= 6}
           // An empty band list is a tier that does not carry the columns, and
           // an empty chart asserts the host reported nothing. Say which it is.
           unavailable={

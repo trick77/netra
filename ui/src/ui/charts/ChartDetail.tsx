@@ -23,6 +23,10 @@ export interface ChartDetailProps {
   /** Draw the series as a cumulative stack, matching the small panel that
    * opened this. The mark must not change when a chart is enlarged. */
   stacked?: boolean;
+  /** Whether the chart names its series above it. Off for the per-core
+   * stack: 32 entries squeezed the 900px plot into a corner, and the stats
+   * table below already names every series beside its colour. */
+  legend?: boolean;
 }
 
 /**
@@ -47,6 +51,7 @@ export function ChartDetail({
   onRangeChange,
   onClose,
   stacked,
+  legend,
 }: ChartDetailProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -108,6 +113,7 @@ export function ChartDetail({
             width={900}
             height={320}
             stacked={stacked}
+            legend={legend}
             label={`${title}, enlarged`}
           />
         </div>
