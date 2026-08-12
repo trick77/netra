@@ -226,6 +226,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             filesystemMetrics,
             collectorMetrics,
             coreMetrics,
+            agentMetrics,
           ] = await Promise.all([
             metrics("host"),
             metrics("net"),
@@ -233,6 +234,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             metrics("filesystem"),
             metrics("collector"),
             metrics("cpu_core"),
+            metrics("agent"),
           ]);
           return {
             hostMetrics,
@@ -241,6 +243,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
             filesystemMetrics,
             collectorMetrics,
             coreMetrics,
+            agentMetrics,
           };
         }
         case "containers": {
@@ -380,6 +383,7 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
           filesystem={data.filesystemMetrics}
           collector={data.collectorMetrics}
           cpuCore={data.coreMetrics}
+          agent={data.agentMetrics}
           range={range}
           onRangeChange={setRange}
         />
