@@ -31,6 +31,7 @@ const host: api.Host = {
   mem_used: 1,
   mem_total: 8,
   uptime_s: 900,
+  threads: null,
 };
 
 function goTo(path: string) {

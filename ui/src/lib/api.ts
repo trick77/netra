@@ -33,6 +33,10 @@ export type Host = {
   mem_used: number | null;
   mem_total: number | null;
   uptime_s: number | null;
+  // Inventory rather than a gauge, and on the list because the CPU sparkline
+  // is a per-core stack: the page has to know how many logical CPUs a host
+  // has before deciding to ask for one series per core.
+  threads: number | null;
 };
 
 // internal/hub/read/host.go: HostDetail (embeds HostSummary)

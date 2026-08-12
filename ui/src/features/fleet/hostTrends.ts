@@ -5,6 +5,7 @@ import {
   type Site,
 } from "../../lib/api";
 import { carriesColumn, griddedValues } from "../../lib/metrics";
+import { memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import type { HostRow } from "./hostColumns";
@@ -32,31 +33,16 @@ export interface HostTrends {
   fullest: HostRow["fullest"];
 }
 
-// The stacked CPU bands, in the order they stack. At raw resolution the hub
-// carries all four; the 5m and 1h rollups carry cpu_total only, so a longer
-// range draws one band instead of four. Falling back to cpu_total is the
-// honest answer -- inventing the breakdown from a total is not.
-const CPU_BANDS = [
-  { base: "cpu_user", name: "user", color: "var(--s1)" },
-  { base: "cpu_system", name: "system", color: "var(--s2)" },
-  { base: "cpu_iowait", name: "iowait", color: "var(--s3)" },
-  { base: "cpu_steal", name: "steal", color: "var(--s4)" },
-];
-
-// Memory stacks used + buffers + cached + ARC against mem_total, never with
-// free as a band: stacking free makes every host look full, which is the one
-// reading this column exists to avoid.
-const MEM_BANDS = [
-  { base: "mem_used", name: "used", color: "var(--s1)" },
-  { base: "mem_buffers", name: "buffers", color: "var(--s2)" },
-  { base: "mem_cached", name: "cached", color: "var(--s3)" },
-  // mem_zfs_arc, which is what 0001_init.sql calls it. This read "mem_arc"
-  // for as long as the column existed, and candidates() in lib/metrics.ts
-  // only tries the _avg/_max/_min suffixes -- never an alias -- so the base
-  // resolved to nothing, bandsFrom() dropped the empty band, and the ARC
-  // band was silently absent on the only hosts that have one.
-  { base: "mem_zfs_arc", name: "ARC", color: "var(--s4)" },
-];
+// The CPU and memory bands both moved to lib/bands.ts, which the host page
+// reads too: the fleet row and the detail page show the same host, and a
+// reader moving between them is entitled to the same shape. What used to sit
+// here as two literal band lists could not express either chart any more --
+// the CPU stack is now per-core, and the memory stack derives its "used" band
+// by subtraction rather than reading a column.
+//
+// The user/system/iowait/steal breakdown that used to live here is not lost:
+// it answers a different question (where the time went, not which core spent
+// it) and it has its own panel on the host page.
 
 function bandsFrom(
   res: MetricsResponse | null,
@@ -167,10 +153,26 @@ async function orNull(
   }
 }
 
+/**
+ * Above this many cores the per-core stack is not drawn.
+ *
+ * Not a legibility limit -- thirty-two hairlines in a 120x32 box still read
+ * as an activity band. It is a transfer limit: the read API has no
+ * aggregate-across-keys mode, so a 128-core host would ship 128 series per
+ * host per fleet render on top of the fan-out this page already costs.
+ * Those hosts fall back to cpu_total, which the host family carries anyway,
+ * so the row costs nothing extra and still shows a true silhouette.
+ */
+const MAX_PER_CORE = 32;
+
 export async function fetchHostTrends(
   hostId: number,
   range: Range,
   now?: Date,
+  /** The host's logical CPU count, deciding whether the per-core stack is
+   * worth fetching. Unknown means don't: an unbounded fetch on a host whose
+   * size nobody knows is exactly the case this guard is for. */
+  threads?: number | null,
 ): Promise<HostTrends> {
   const window = rangeWindow(range, now);
   const ask = (family: string) =>
@@ -183,21 +185,32 @@ export async function fetchHostTrends(
       }),
     );
 
-  const [host, net, filesystem] = await Promise.all([
+  const wantCores =
+    threads !== null && threads !== undefined && threads <= MAX_PER_CORE;
+  const [host, net, filesystem, cores] = await Promise.all([
     ask("host"),
     ask("net"),
     ask("filesystem"),
+    wantCores ? ask("cpu_core") : Promise.resolve(null),
   ]);
 
+  // Per-core when the host is small enough to ask for it, and cpu_total
+  // otherwise. Never the user/system/iowait/steal breakdown here: that is a
+  // different question -- where the time went, rather than which core spent
+  // it -- and it has its own panel on the host page.
+  const perCore = perCoreBands(cores);
+  const cpu =
+    perCore.length > 0
+      ? perCore
+      : bandsFrom(host, [], {
+          base: "cpu_total",
+          name: "busy",
+          color: "var(--s1)",
+        });
+
   return {
-    cpu: bandsFrom(host, CPU_BANDS, {
-      base: "cpu_total",
-      name: "busy",
-      color: "var(--s1)",
-    }),
-    // No fallback for memory: mem_total is the chart's ceiling rather than
-    // a band, so a rolled-up tier simply draws fewer bands.
-    mem: bandsFrom(host, MEM_BANDS),
+    cpu,
+    mem: memoryBands(host),
     rx: sumSeries(net, "rx_bytes"),
     tx: sumSeries(net, "tx_bytes"),
     fullest: fullestFilesystem(filesystem),

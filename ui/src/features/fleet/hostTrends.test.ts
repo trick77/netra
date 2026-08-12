@@ -47,32 +47,64 @@ function serve(byFamily: Record<string, MetricsResponse | Error>) {
 }
 
 describe("fetchHostTrends", () => {
-  it("stacks the four CPU states when the tier carries them", async () => {
+  // The fleet CPU sparkline is a per-core stack, normalised so its top edge
+  // is cpu_total. It is NOT the user/system/iowait/steal breakdown any more:
+  // that answers where the time went rather than which core spent it, and it
+  // has its own panel on the host page.
+  it("stacks one band per core, normalised so the top is cpu_total", async () => {
     serve({
-      host: response({
-        columns: ["cpu_user", "cpu_system", "cpu_iowait", "cpu_steal"],
+      cpu_core: response({
+        family: "cpu_core",
+        key_columns: ["core"],
+        columns: ["busy"],
         series: [
-          {
-            key: {},
-            points: [
-              [t0, 10, 5, 1, 0],
-              [t0 + hour, 12, 4, 1, 0],
-              [t0 + 2 * hour, 11, 6, 2, 0],
-            ],
-          },
+          { key: { core: "0" }, points: [[t0, 80]] },
+          { key: { core: "1" }, points: [[t0, 20]] },
         ],
       }),
     });
 
-    const trends = await fetchHostTrends(1, "1h");
+    const trends = await fetchHostTrends(1, "1h", undefined, 2);
 
-    expect(trends.cpu.map((b) => b.name)).toEqual([
-      "user",
-      "system",
-      "iowait",
-      "steal",
-    ]);
-    expect(trends.cpu[0]!.values).toEqual([10, 12, 11]);
+    expect(trends.cpu.map((b) => b.name)).toEqual(["core 0", "core 1"]);
+    expect(trends.cpu[0]!.values[0]).toBe(40);
+  });
+
+  // The read API has no aggregate-across-keys mode, so asking a 128-thread
+  // host for its cores would ship 128 series per host per fleet render. Those
+  // hosts get cpu_total, which the host family carries anyway.
+  it("does not ask a very large host for one series per core", async () => {
+    serve({
+      host: response({
+        columns: ["cpu_total"],
+        series: [{ key: {}, points: [[t0, 30]] }],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h", undefined, 128);
+
+    expect(getMetrics.mock.calls.map((c) => c[1].family)).not.toContain(
+      "cpu_core",
+    );
+    expect(trends.cpu).toHaveLength(1);
+    expect(trends.cpu[0]!.name).toBe("busy");
+  });
+
+  // A host whose thread count nobody knows is exactly the case the guard is
+  // for: an unbounded fetch on a host of unknown size.
+  it("does not ask for cores when the host size is unknown", async () => {
+    serve({
+      host: response({
+        columns: ["cpu_total"],
+        series: [{ key: {}, points: [[t0, 30]] }],
+      }),
+    });
+
+    await fetchHostTrends(1, "1h", undefined, null);
+
+    expect(getMetrics.mock.calls.map((c) => c[1].family)).not.toContain(
+      "cpu_core",
+    );
   });
 
   // The 5m and 1h rollups carry cpu_total and not the breakdown. One true
@@ -94,41 +126,45 @@ describe("fetchHostTrends", () => {
     expect(trends.cpu[0]!.name).toBe("busy");
   });
 
-  // Every memory band base must be a column name the schema actually has.
-  // There was no memory fixture here at all, and MEM_BANDS asked for
-  // mem_buffers, mem_cached and mem_arc -- none of which exist. bandsFrom()
-  // drops a band whose values come back empty, so the column rendered a lone
-  // mem_used band for as long as it has existed while its own comment
-  // claimed four. Naming the real columns is the whole point of this test:
-  // a base that does not resolve is indistinguishable, on screen, from a
-  // host that reported nothing.
-  it("resolves every memory band against the column names the schema uses", async () => {
+  // The memory stack is a partition of mem_total with used derived as the
+  // remainder: mem_used cannot be the bottom band because it already
+  // contains the ARC and the unreclaimable shmem pages, so stacking those on
+  // top of it draws the same bytes twice. lib/bands.ts owns the arithmetic
+  // and its own tests; this pins that the fleet row asks for it at all --
+  // every band base here has to be a column name the schema really has, and
+  // one that does not resolve is indistinguishable on screen from a host
+  // that reported nothing.
+  it("builds the memory partition rather than a single used band", async () => {
     serve({
       host: response({
-        columns: ["mem_used", "mem_buffcache", "mem_zfs_arc", "mem_total"],
-        series: [
-          {
-            key: {},
-            points: [
-              [t0, 100, 20, 8, 1000],
-              [t0 + hour, 110, 22, 9, 1000],
-            ],
-          },
+        columns: [
+          "mem_total",
+          "mem_free",
+          "mem_buffers",
+          "mem_cached",
+          "mem_shared",
+          "mem_zfs_arc",
         ],
+        series: [{ key: {}, points: [[t0, 1000, 200, 30, 100, 50, 100]] }],
       }),
     });
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.mem.map((b) => b.name)).toContain("ARC");
-    // Trailing null: the fixture's window is three hours and the series
-    // carries two points, so griddedValues() pads the bucket nobody
-    // reported rather than shortening the band.
-    expect(trends.mem.find((b) => b.name === "ARC")!.values).toEqual([
-      8,
-      9,
-      null,
+    expect(trends.mem.map((b) => b.name)).toEqual([
+      "used",
+      "ARC",
+      "buffers",
+      "cached",
+      "shared",
     ]);
+    // The stack is mem_total minus free, never more: free is the gap to the
+    // top rather than a band.
+    const stack = trends.mem.reduce(
+      (sum, b) => sum + (b.values[0] as number),
+      0,
+    );
+    expect(stack).toBe(800);
   });
 
   // A host's traffic is the sum over its interfaces, and a null in any of
@@ -237,6 +273,7 @@ describe("buildRows", () => {
     mem_used: null,
     mem_total: null,
     uptime_s: null,
+    threads: null,
   };
   const site = { id: 3, name: "zrh1" } as Site;
 

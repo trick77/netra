@@ -266,7 +266,13 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       const settled = await Promise.allSettled(
         hosts.map(
           async (host) =>
-            [host.id, await fetchHostTrends(host.id, range)] as const,
+            [
+              host.id,
+              // threads, not cores: the per-core samples are one per logical
+              // CPU (the N in /proc/stat's cpuN), and on an SMT host the two
+              // differ by a factor of two.
+              await fetchHostTrends(host.id, range, undefined, host.threads),
+            ] as const,
         ),
       );
       const trends = new Map(

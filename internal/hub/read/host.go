@@ -26,6 +26,12 @@ type HostSummary struct {
 	MemUsed  *int64     `json:"mem_used"`
 	MemTotal *int64     `json:"mem_total"`
 	UptimeS  *int64     `json:"uptime_s"`
+	// Threads is inventory rather than a gauge, and it is here because the
+	// fleet list's CPU sparkline is a per-core stack: the page has to know
+	// how many logical CPUs a host has BEFORE deciding to ask for one series
+	// per core. Without it every host would be asked blind, including the
+	// 128-thread ones the read API has no way to reduce server-side.
+	Threads *int32 `json:"threads"`
 }
 
 // HostDetail is everything the hub knows about one host that is not a time
@@ -46,8 +52,11 @@ type HostDetail struct {
 	Arch         *string `json:"arch"`
 	CPUModel     *string `json:"cpu_model"`
 	Cores        *int32  `json:"cores"`
-	Threads      *int32  `json:"threads"`
-	MemoryTotal  *int64  `json:"memory_total"`
+	// Threads is not repeated here: it moved up to HostSummary, which this
+	// embeds, when the fleet list started needing it to size its per-core
+	// CPU stack. Declaring it in both would shadow the embedded field, and
+	// the detail query would fill one while the list filled the other.
+	MemoryTotal *int64 `json:"memory_total"`
 
 	Latitude  *float64  `json:"latitude"`
 	Longitude *float64  `json:"longitude"`
@@ -70,7 +79,8 @@ type HostDetail struct {
 func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
-		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s
+		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
+		       h.threads
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
 		 ORDER BY h.hostname, h.id`)
@@ -83,7 +93,8 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 	for rows.Next() {
 		var h HostSummary
 		if err := rows.Scan(&h.ID, &h.Hostname, &h.SiteID,
-			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS); err != nil {
+			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
+			&h.Threads); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}
 		hosts = append(hosts, h)
