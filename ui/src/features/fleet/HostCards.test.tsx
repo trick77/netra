@@ -118,4 +118,52 @@ describe("HostCards", () => {
     expect(header.querySelector(".host-cell-name")).toBeInTheDocument();
     expect(header.querySelectorAll(".m")).toHaveLength(0);
   });
+
+  // The Cards view draws hostColumns()' own cells, so the fixes to the
+  // memory legend and to what the status badge is judged from reach it
+  // without this file knowing about either. That delegation is the thing
+  // worth pinning: a card and a table row show the same host, and a reader
+  // toggling between them must not see two different answers.
+  it("carries the table's band legend into the card's memory tile", () => {
+    const row = makeRow({
+      mem_total: 16_000_000_000,
+      mem: [
+        { name: "used", color: "var(--s1)", values: [3e9, 3e9] },
+        { name: "ARC", color: "var(--s7)", values: [2e8, 2e8] },
+        { name: "buffers", color: "var(--s2)", values: [1e8, 1e8] },
+        { name: "cached", color: "var(--s8)", values: [5e8, 5e8] },
+        { name: "shared", color: "var(--s4)", values: [5e7, 5e7] },
+      ],
+    });
+
+    const { container } = render(
+      <HostCards rows={[row]} range="1h" />,
+    );
+    const legend = container.querySelector(".legend");
+
+    expect(legend).not.toBeNull();
+    for (const name of ["used", "ARC", "buffers", "cached", "shared"]) {
+      expect(legend!.textContent).toContain(name);
+    }
+  });
+
+  it("judges a card's status from the reporting series, not its CPU bands", () => {
+    const row = makeRow({
+      last_seen: new Date(Date.now() - 10_000).toISOString(),
+      // Gappy per-core bands beside a clean cpu_total series: the host is
+      // reporting fine and only the cpu_core tier lags.
+      cpu: [
+        {
+          name: "core 0",
+          color: "var(--s1)",
+          values: [10, null, 12, null, 11, null, 9, null, 11, null],
+        },
+      ],
+      reporting: [10, 11, 12, 11, 10, 11, 12, 11, 10, 11],
+    });
+
+    render(<HostCards rows={[row]} range="1h" />);
+
+    expect(screen.queryByText("sporadic")).toBeNull();
+  });
 });
