@@ -11,6 +11,7 @@ import (
 	"maps"
 	"math"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -126,6 +127,16 @@ type Client struct {
 	// a success. An agent that failed ten times and then recovered must still
 	// report ten, or the history of the outage vanishes the moment it ends.
 	postFailures uint64
+
+	// hubConnectFailures counts handshakes to the hub that did not complete.
+	// Cumulative for the agent's life, like postFailures: it is what makes an
+	// outage visible, since hub_connect_ms stays NULL through one rather than
+	// spiking to the probe timeout.
+	hubConnectFailures uint64
+
+	// resolver is a seam so a test can resolve a name without touching DNS.
+	// nil means net.DefaultResolver.
+	resolver *net.Resolver
 
 	// inventoryLost records that a buffered scrape was discarded before the
 	// hub could see it, so the whole-set collectors must report again once
@@ -385,6 +396,16 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 	if c.lastPostLatency != nil {
 		agent.PostLatencyMs = ptr(uint32(c.lastPostLatency.Milliseconds()))
 	}
+
+	// The handshake probe runs HERE rather than around the post, which is why
+	// -- unlike post_latency_ms -- it does not lag a scrape: it lands in the
+	// sample it measured. Both gauges stay unset when no handshake completed,
+	// and the failure counter is what carries the outage.
+	if probe := c.probeHub(ctx); probe.probed {
+		agent.HubConnectMs = ptr(probe.minMs)
+		agent.HubConnectMaxMs = ptr(probe.maxMs)
+	}
+	agent.HubConnectFailuresTotal = ptr(c.hubConnectFailures)
 	sample.Agent = agent
 	scrape.Host = sample
 

@@ -78,16 +78,17 @@ func TestIntegrationTierSpecsMatchTheSchema(t *testing.T) {
 // mem_limit_max: a filesystem resized down mid-bucket makes the bucket
 // maximum and the reading genuinely different numbers.
 var sameQuantityAtEveryTier = map[string]string{
-	"uptime_s":             "last() over the bucket",
-	"boot_time_s":          "last() over the bucket",
-	"processes_total":      "last() over the bucket",
-	"users_logged_in":      "last() over the bucket",
-	"services_total":       "last() over the bucket",
-	"services_failed":      "last() over the bucket",
-	"error_code":           "last() over the bucket",
-	"buffer_dropped_total": "max() of a monotonic counter",
-	"post_failures_total":  "max() of a monotonic counter",
-	"oom_kill_total":       "last() over the bucket",
+	"uptime_s":                   "last() over the bucket",
+	"boot_time_s":                "last() over the bucket",
+	"processes_total":            "last() over the bucket",
+	"users_logged_in":            "last() over the bucket",
+	"services_total":             "last() over the bucket",
+	"services_failed":            "last() over the bucket",
+	"error_code":                 "last() over the bucket",
+	"buffer_dropped_total":       "max() of a monotonic counter",
+	"post_failures_total":        "max() of a monotonic counter",
+	"oom_kill_total":             "last() over the bucket",
+	"hub_connect_failures_total": "max() of a monotonic counter",
 	// Ceilings, and named _limit rather than _max precisely so that keeping
 	// one name across tiers cannot be misread as a bucket maximum. Unlike a
 	// filesystem's total, these are kernel tunables: raising one is a

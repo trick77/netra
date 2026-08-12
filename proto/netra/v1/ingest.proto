@@ -310,6 +310,32 @@ message AgentSample {
   optional uint64 buffer_dropped_total = 7;
 
   optional uint64 post_failures_total = 8;
+
+  // --- The network path to the hub, as distinct from the round trip ---
+  //
+  // post_latency_ms above is the WHOLE post: TLS, upload, the hub's handling,
+  // the Postgres write, the response unmarshal. A slow database inflates it
+  // exactly like a slow network does, so it cannot answer "is the link bad".
+  // These stop at SYN-ACK. The gap between the two is everything the hub does
+  // after accepting the connection.
+  //
+  // Measured with a TCP handshake rather than ICMP: ICMP is handled on the
+  // router slow path, routinely rate-limited and often dropped, so a red ICMP
+  // graph is as likely to mean a filter as a problem -- and a handshake to the
+  // hub's real port traverses the exact path and policy the real traffic uses,
+  // with no raw socket and no CAP_NET_RAW.
+  //
+  // Three handshakes per scrape: the MINIMUM is the best estimator of the true
+  // path RTT, being the sample least contaminated by queuing, and the spread
+  // to the maximum is jitter.
+  //
+  // Unlike post_latency_ms these do NOT lag a scrape -- the probe runs inside
+  // the scrape it is reported with. Both are unset, never zeroed, when no
+  // handshake completed: an unreachable hub has no round-trip time, and
+  // hub_connect_failures_total is what says so.
+  optional uint32 hub_connect_ms = 9;
+  optional uint32 hub_connect_max_ms = 10;
+  optional uint64 hub_connect_failures_total = 11;
 }
 
 // ProcessSample carries exactly: name, cpu_pct, mem_bytes, count. The rule

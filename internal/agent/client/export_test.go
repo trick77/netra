@@ -46,3 +46,6 @@ const MaxBatchRowsForTest = maxBatchRows
 func CountRowsForTest(s *buffer.Scrape) int { return countRows(s) }
 
 func AppendFamiliesForTest(s *buffer.Scrape, res *collector.Result) { appendFamilies(s, res) }
+
+// HubDialAddressForTest exposes the hub URL -> host:port derivation.
+func HubDialAddressForTest(raw string) (string, bool) { return hubDialAddress(raw) }

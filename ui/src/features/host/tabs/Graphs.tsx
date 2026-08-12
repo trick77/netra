@@ -74,7 +74,13 @@ const SERIES_VARS = [
 ];
 
 type Source =
-  "host" | "net" | "diskIo" | "filesystem" | "collector" | "cpuCore";
+  | "host"
+  | "net"
+  | "diskIo"
+  | "filesystem"
+  | "collector"
+  | "cpuCore"
+  | "agent";
 
 interface PanelSpec {
   title: string;
@@ -203,6 +209,23 @@ const SYSTEM: PanelSpec[] = [
 ];
 
 const NETWORK: PanelSpec[] = [
+  // The gap between the two lines is the hub, not the network.
+  //
+  // hub_connect stops at SYN-ACK, so it is the path. post_latency is the
+  // whole round trip -- TLS, upload, the hub's handling, the Postgres write
+  // -- so a slow database lifts it while the handshake stays flat. Drawn
+  // together because neither answers "where is the time going" alone.
+  {
+    title: "Hub latency",
+    unit: "ms",
+    source: "agent",
+    bases: [
+      { base: "hub_connect_ms", label: "handshake" },
+      { base: "hub_connect_max_ms", label: "handshake peak" },
+      { base: "post_latency_ms", label: "round trip" },
+    ],
+    fmt: count,
+  },
   {
     // Ingress and egress, not rx and tx: the direction is the point of this
     // chart, and "rx" is the kernel's word for it rather than the reader's.
@@ -330,6 +353,7 @@ export interface GraphsProps {
   filesystem?: MetricsResponse | null;
   collector?: MetricsResponse | null;
   cpuCore?: MetricsResponse | null;
+  agent?: MetricsResponse | null;
   /** The page's range and setter, passed to each panel's enlarged view. */
   range?: Range;
   onRangeChange?: (range: Range) => void;
@@ -491,7 +515,14 @@ export function Graphs(props: GraphsProps) {
   // difference between a statement and wallpaper.
   const notices = [
     ...new Set(
-      [props.host, props.net, props.diskIo, props.filesystem, props.collector]
+      [
+        props.host,
+        props.net,
+        props.diskIo,
+        props.filesystem,
+        props.collector,
+        props.agent,
+      ]
         .map((res) => (res ? windowNotice(res) : null))
         .filter((n): n is string => n !== null),
     ),
