@@ -15,6 +15,59 @@ import (
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 )
 
+// The kinds of sensor this collector reports, matching SensorSample.kind.
+const (
+	sensorTemperature = "temperature"
+	sensorFan         = "fan"
+	sensorVoltage     = "voltage"
+	sensorCurrent     = "current"
+	sensorPower       = "power"
+)
+
+// sensorKindOf maps an hwmon attribute file to what it measures, and reports
+// false for anything that is not a reading -- *_label, *_max, *_crit, *_alarm
+// and the chip's own name file.
+//
+// Prefix matching on the *_input suffix is what keeps this closed: a chip
+// exposing temp1_input, temp1_crit and temp1_label yields exactly one row.
+func sensorKindOf(name string) (string, bool) {
+	if !strings.HasSuffix(name, "_input") {
+		return "", false
+	}
+	switch {
+	case strings.HasPrefix(name, "temp"):
+		return sensorTemperature, true
+	case strings.HasPrefix(name, "fan"):
+		return sensorFan, true
+	case strings.HasPrefix(name, "in"):
+		// inN_input is a voltage rail. Deliberately after fan and temp so
+		// nothing else beginning with "in" is caught first.
+		return sensorVoltage, true
+	case strings.HasPrefix(name, "curr"):
+		return sensorCurrent, true
+	case strings.HasPrefix(name, "power"):
+		return sensorPower, true
+	}
+	return "", false
+}
+
+// sensorScale converts hwmon's raw integer to the kind's natural unit.
+//
+// hwmon reports in milli-units for most kinds -- millidegrees, millivolts,
+// milliamps -- but fan speed is already RPM and power is MICROwatts, so a
+// single divisor would report a 15W package as 15000W or a 1200 RPM fan as
+// 1.2. Both mistakes look plausible on a chart.
+func sensorScale(kind string) float64 {
+	switch kind {
+	case sensorFan:
+		return 1 // already RPM
+	case sensorPower:
+		return 1_000_000 // microwatts
+	default:
+		return milliDegrees // milli-units: degrees, volts, amps
+	}
+}
+
 // milliDegrees is the unit hwmon reports temperatures in.
 const milliDegrees = 1000.0
 
@@ -151,38 +204,56 @@ func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 			continue
 		}
 
+		// Every *_input in the chip, not only temperatures. A fan that has
+		// stopped and a PSU rail that has sagged are the two hardware
+		// failures a temperature reading cannot show, and both are one file
+		// away in the same directory.
 		names := make([]string, 0, len(labels))
 		for _, f := range labels {
-			if strings.HasPrefix(f.Name(), "temp") && strings.HasSuffix(f.Name(), "_label") {
+			if _, ok := sensorKindOf(f.Name()); ok {
 				names = append(names, f.Name())
 			}
 		}
 		// Deterministic order so failures read the same way twice.
 		slices.Sort(names)
 
-		for _, labelFile := range names {
-			label, err := s.readTrimmed(ctx, filepath.Join(chipDir, labelFile))
-			if err != nil || label == "" {
-				continue
-			}
+		for _, inputFile := range names {
+			kind, _ := sensorKindOf(inputFile)
 
-			// temp1_label -> temp1_input
-			inputFile := strings.TrimSuffix(labelFile, "_label") + "_input"
 			raw, err := s.readTrimmed(ctx, filepath.Join(chipDir, inputFile))
 			if err != nil {
 				continue
 			}
-			milli, err := strconv.ParseFloat(raw, 64)
+			n, err := strconv.ParseFloat(raw, 64)
 			if err != nil {
 				continue
 			}
 
-			rows = append(rows, &netrav1.SensorSample{
+			// A label is preferred but no longer required. Requiring one
+			// silently dropped most fans and rails: hwmon publishes
+			// fanN_label and inN_label far less often than tempN_label, so a
+			// label-first walk saw temperatures almost exclusively. The
+			// attribute name is a stable fallback identity within a chip.
+			label := strings.TrimSuffix(inputFile, "_input")
+			base := label
+			if named, err := s.readTrimmed(ctx, filepath.Join(chipDir, base+"_label")); err == nil && named != "" {
+				label = named
+			}
+
+			value := n / sensorScale(kind)
+
+			row := &netrav1.SensorSample{
 				TsMs:  ts,
 				Chip:  chip,
 				Label: label,
-				Temp:  ptrTo(milli / milliDegrees),
-			})
+				Kind:  kind,
+				Value: ptrTo(value),
+			}
+			if kind == sensorTemperature {
+				// Still set, and still the column existing panels read.
+				row.Temp = ptrTo(value)
+			}
+			rows = append(rows, row)
 		}
 	}
 

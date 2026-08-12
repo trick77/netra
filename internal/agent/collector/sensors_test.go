@@ -90,10 +90,20 @@ func TestSensorsIdentityIsChipAndLabelNotHwmonNumber(t *testing.T) {
 	}
 }
 
-// An input with no label cannot be identified stably -- temp3_input on its own
-// says nothing about what it measures, and its meaning changes between kernel
-// versions. Skipped rather than reported under a made-up name.
-func TestSensorsSkipsUnlabelledInputs(t *testing.T) {
+// BEHAVIOUR CHANGE: an unlabelled input is now reported under its attribute
+// name rather than skipped.
+//
+// The old rule -- a label or nothing -- was defensible while this collector
+// read temperatures only, since tempN_label is common. It does not survive
+// contact with fans and voltage rails: hwmon publishes fanN_label and
+// inN_label far less often, so requiring a label would drop most of exactly
+// the sensors added here, and a stopped fan would stay invisible.
+//
+// fan1 is not a made-up name. It is the kernel's own attribute, stable for
+// the life of the chip, and it is scoped by the chip name -- so the identity
+// is still (chip, attribute) rather than a bare guess. A label, where there
+// is one, is still preferred and still wins.
+func TestSensorsReportsUnlabelledInputsUnderTheirAttributeName(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "class", "hwmon", "hwmon0")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -115,11 +125,104 @@ func TestSensorsSkipsUnlabelledInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	if len(res.Sensors) != 1 {
-		t.Fatalf("sensors = %d, want 1 (only the labelled input)", len(res.Sensors))
+	if len(res.Sensors) != 2 {
+		t.Fatalf("sensors = %d, want 2 -- an unlabelled input is reported under its attribute name",
+			len(res.Sensors))
 	}
-	if res.Sensors[0].GetLabel() != "Ambient" {
-		t.Errorf("label = %q, want Ambient", res.Sensors[0].GetLabel())
+
+	byLabel := map[string]float64{}
+	for _, r := range res.Sensors {
+		byLabel[r.GetLabel()] = r.GetValue()
+	}
+	// The label wins where there is one.
+	if got, ok := byLabel["Ambient"]; !ok || got != 25 {
+		t.Errorf("Ambient = %v (present=%v), want 25", got, ok)
+	}
+	// And the attribute name identifies the one without.
+	if got, ok := byLabel["temp1"]; !ok || got != 50 {
+		t.Errorf("temp1 = %v (present=%v), want 50", got, ok)
+	}
+}
+
+// A fan at 1200 RPM, a rail at 12 V and a package at 45 C are three different
+// quantities, and hwmon scales them three different ways: millidegrees and
+// millivolts, but RPM raw and power in MICROwatts. One divisor for all of
+// them would report a 15 W package as 15000 W or a 1200 RPM fan as 1.2.
+func TestSensorsReportsFansVoltagesCurrentsAndPowerInTheirOwnUnits(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "class", "hwmon", "hwmon0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("name", "nct6775\n")
+	write("temp1_label", "CPU\n")
+	write("temp1_input", "45000\n") // millidegrees -> 45 C
+	write("fan1_label", "CPU Fan\n")
+	write("fan1_input", "1200\n") // already RPM
+	write("in0_label", "+12V\n")
+	write("in0_input", "12100\n")       // millivolts -> 12.1 V
+	write("curr1_input", "2500\n")      // milliamps -> 2.5 A
+	write("power1_input", "15000000\n") // microwatts -> 15 W
+	// Thresholds and alarms are not readings and must not become series.
+	write("temp1_crit", "100000\n")
+	write("temp1_max", "90000\n")
+	write("fan1_alarm", "0\n")
+
+	testee := collector.NewSensors(root, time.Second)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	type reading struct {
+		kind  string
+		value float64
+	}
+	got := map[string]reading{}
+	for _, r := range res.Sensors {
+		got[r.GetLabel()] = reading{r.GetKind(), r.GetValue()}
+	}
+
+	want := map[string]reading{
+		"CPU":     {"temperature", 45},
+		"CPU Fan": {"fan", 1200},
+		"+12V":    {"voltage", 12.1},
+		"curr1":   {"current", 2.5},
+		"power1":  {"power", 15},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("sensors = %d %v, want %d -- thresholds and alarms must not become series",
+			len(got), got, len(want))
+	}
+	for label, w := range want {
+		g, ok := got[label]
+		if !ok {
+			t.Errorf("no sensor labelled %q", label)
+			continue
+		}
+		if g.kind != w.kind {
+			t.Errorf("%s kind = %q, want %q", label, g.kind, w.kind)
+		}
+		if g.value != w.value {
+			t.Errorf("%s value = %v, want %v", label, g.value, w.value)
+		}
+	}
+
+	// temp stays populated for temperatures, and only for those: it is the
+	// column every existing panel reads.
+	for _, r := range res.Sensors {
+		if r.GetKind() == "temperature" && r.Temp == nil {
+			t.Errorf("%s is a temperature with temp unset", r.GetLabel())
+		}
+		if r.GetKind() != "temperature" && r.Temp != nil {
+			t.Errorf("%s is a %s but set temp = %v", r.GetLabel(), r.GetKind(), r.GetTemp())
+		}
 	}
 }
 

@@ -420,7 +420,27 @@ message SensorSample {
   int64 ts_ms = 1;
   string chip = 2;
   string label = 3;
+
+  // Temperature in degrees Celsius. Retained as-is: it is what every
+  // existing reader queries, and set only for kind = "temperature".
   optional double temp = 4;
+
+  // What this sensor measures, and therefore what axis it belongs on. A fan
+  // at 1200 RPM charted on the same scale as a 45 degree package temperature
+  // is the failure this field exists to prevent.
+  //
+  // One of: temperature, fan, voltage, current, power. Empty from an agent
+  // predating this field, which the hub reads as temperature -- the only
+  // kind those agents could send.
+  string kind = 5;
+
+  // The reading in the kind's own unit: degrees C, RPM, volts, amps, watts.
+  //
+  // Set for EVERY kind including temperature, where it duplicates temp. That
+  // duplication is deliberate: temp stays the column existing queries and
+  // panels use, while value is the one column a reader can chart without
+  // knowing which kind it asked for.
+  optional double value = 6;
 }
 
 // NetSample is one interface over one scrape interval. Rates, for the same

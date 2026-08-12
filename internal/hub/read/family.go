@@ -93,6 +93,10 @@ var families = map[string]*family{
 		keys: []keySpec{
 			{name: "chip", expr: "d.chip"},
 			{name: "label", expr: "d.label"},
+			// Part of the series identity, not a value: a client charting
+			// these has to know a 1200 RPM fan does not belong on the same
+			// axis as a 45 degree package.
+			{name: "kind", expr: "d.kind"},
 		},
 		join:             "JOIN sensors d ON d.id = s.sensor_id AND d.host_id = s.host_id",
 		dimensionColumns: []string{"sensor_id"},
