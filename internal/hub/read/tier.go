@@ -31,12 +31,25 @@ type tierSpec struct {
 	tsColumn string
 	// step is the distance between consecutive points.
 	step time.Duration
-	// lag is how far behind now this tier is materialised -- the end_offset
-	// of its refresh policy. Every continuous aggregate in 0001_init.sql is
+	// lag is the end_offset of this tier's refresh policy: how far back a
+	// refresh RUN reaches. Every continuous aggregate in 0001_init.sql is
 	// materialized_only = true (the TimescaleDB default since 2.13), so a
-	// query past this horizon returns nothing rather than falling through to
-	// the raw table. Zero for raw tiers, which have no materialisation step.
+	// query past the materialised horizon returns nothing rather than falling
+	// through to the raw table. Zero for raw tiers, which have no
+	// materialisation step.
 	lag time.Duration
+	// refreshEvery is the schedule_interval of that same policy: how often a
+	// run happens, and therefore how stale end_offset's reach can be.
+	//
+	// It is a separate field rather than folded into lag because every number
+	// in this struct mirrors exactly ONE value in 0001_init.sql, which is
+	// what lets TestIntegrationTierSpecsMatchTheSchema pin each of them
+	// against timescaledb_information. A single combined constant would drift
+	// silently the next time either half of the policy changed.
+	//
+	// The two are added at the point of use -- see materialisedThrough. Zero
+	// for raw tiers, which have no policy.
+	refreshEvery time.Duration
 	// retention is the interval of this tier's retention policy: data older
 	// than now - retention has been dropped.
 	//
@@ -57,28 +70,15 @@ var (
 		name: TierRaw, suffix: "", tsColumn: "ts",
 		step: time.Minute, lag: 0, retention: 7 * 24 * time.Hour,
 	}
-	// lag is end_offset PLUS schedule_interval, not end_offset alone.
-	//
-	// 0001_init.sql gives the 5m aggregates end_offset 10m with a 5m refresh
-	// schedule, and the 1h aggregates end_offset 1h with a 30m schedule. A
-	// bucket is materialised by a refresh RUN, so between runs everything
-	// newer than the last one is missing -- end_offset is how far back a run
-	// reaches, and schedule_interval is how stale that reach can be. Reading
-	// only end_offset left the window ending on buckets no run had written
-	// yet, which is empty rows at the newest end of every 5m and 1h query:
-	// the trend drew and the headline value, which reads the last bucket,
-	// read absent.
-	//
-	// The cost is five minutes of freshness at the 5m tier. The raw tier
-	// covers the last seven days at 60s and answers every short range, so
-	// nothing a reader watches live is served from here anyway.
 	fiveMinuteTier = tierSpec{
 		name: Tier5m, suffix: "_5m", tsColumn: "bucket",
-		step: 5 * time.Minute, lag: 15 * time.Minute, retention: 30 * 24 * time.Hour,
+		step: 5 * time.Minute, lag: 10 * time.Minute,
+		refreshEvery: 5 * time.Minute, retention: 30 * 24 * time.Hour,
 	}
 	hourlyTier = tierSpec{
 		name: Tier1h, suffix: "_1h", tsColumn: "bucket",
-		step: time.Hour, lag: 90 * time.Minute, retention: 90 * 24 * time.Hour,
+		step: time.Hour, lag: time.Hour,
+		refreshEvery: 30 * time.Minute, retention: 90 * 24 * time.Hour,
 	}
 )
 
@@ -103,6 +103,24 @@ var (
 		step: time.Minute, lag: 0, retention: 48 * time.Hour,
 	}}
 )
+
+// materialisedThrough is the newest bucket boundary this tier can be relied on
+// to have written, given the clock.
+//
+// end_offset is how far back a refresh run reaches; schedule_interval is how
+// long it can be since the last run. Between runs, everything newer than the
+// last one is missing, so the horizon is the SUM -- reading end_offset alone
+// left every 5m and 1h window ending on buckets no run had written yet.
+//
+// Truncated to the step because an aggregate materialises whole buckets. The
+// client lays the answer on a grid of step-wide slots (seriesOnGrid), so a
+// horizon in the middle of a bucket becomes a slot nothing can fill -- and
+// every headline value on a page reads the LAST slot, which is the rule that
+// stops a dead host reporting its final rate as current. Truncate aligns to
+// the epoch, which is where time_bucket() puts its boundaries too.
+func (s tierSpec) materialisedThrough(now time.Time) time.Time {
+	return now.Add(-(s.lag + s.refreshEvery)).Truncate(s.step)
+}
 
 // Window is a half-open-in-spirit time range carried in a /metrics response.
 type Window struct {
@@ -204,7 +222,7 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 	// the refresh policy's end_offset returns nothing at all rather than
 	// falling through to the raw rows behind it.
 	if p.spec.lag > 0 {
-		// Truncated to a whole bucket, not left at now-lag.
+		// Truncated to a whole bucket, not left at the horizon itself.
 		//
 		// An aggregate materialises whole buckets. now-lag almost always
 		// lands in the middle of one, and a window ending mid-bucket asks
@@ -222,12 +240,12 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 		// Truncate aligns to the epoch, which is where time_bucket() puts
 		// its boundaries too, so this lands on a real bucket edge rather
 		// than one derived from the request's own timing.
-		fresh := now.Add(-p.spec.lag).Truncate(p.spec.step)
+		fresh := p.spec.materialisedThrough(now)
 		if to.After(fresh) {
 			to = fresh
 			p.Warnings = append(p.Warnings, fmt.Sprintf(
 				"the %s tier materialises %s behind now; the window ends at the last whole bucket before that",
-				p.spec.name, humanDuration(p.spec.lag)))
+				p.spec.name, humanDuration(p.spec.lag+p.spec.refreshEvery)))
 		}
 	}
 

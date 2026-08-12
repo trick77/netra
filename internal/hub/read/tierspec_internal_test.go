@@ -55,6 +55,17 @@ func TestIntegrationTierSpecsMatchTheSchema(t *testing.T) {
 				assertPolicyInterval(t, ctx, s.Pool(),
 					"policy_refresh_continuous_aggregate", rel, "end_offset", spec.lag)
 			})
+
+			// The other half of the same policy. end_offset says how far back
+			// a refresh RUN reaches; schedule_interval says how long it can be
+			// since one ran, and the horizon planQuery clamps to is the sum.
+			// Pinned separately, and each field mirrors exactly one value in
+			// the migration, so lengthening the schedule without widening the
+			// horizon fails here instead of quietly handing clients buckets
+			// nothing has written yet.
+			t.Run(name+"/"+spec.name+"/refresh schedule", func(t *testing.T) {
+				assertScheduleInterval(t, ctx, s.Pool(), rel, spec.refreshEvery)
+			})
 		}
 	}
 }
@@ -207,6 +218,29 @@ func assertPolicyInterval(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}
 	if actual != want {
 		t.Errorf("%s %s = %s, but tier.go says %s", relation, key, actual, want)
+	}
+}
+
+// schedule_interval is a COLUMN of timescaledb_information.jobs, not a key
+// inside its config JSON the way end_offset is -- reading it through
+// assertPolicyInterval above returns NULL and fails on the scan rather than on
+// the comparison, which says nothing useful about the schema.
+func assertScheduleInterval(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
+	relation string, want time.Duration,
+) {
+	t.Helper()
+
+	var actual time.Duration
+	err := pool.QueryRow(ctx, `
+		SELECT schedule_interval
+		  FROM timescaledb_information.jobs
+		 WHERE proc_name = 'policy_refresh_continuous_aggregate'
+		   AND hypertable_name = $1`, relation).Scan(&actual)
+	if err != nil {
+		t.Fatalf("read schedule_interval for %s: %v", relation, err)
+	}
+	if actual != want {
+		t.Errorf("%s schedule_interval = %s, but tier.go says %s", relation, actual, want)
 	}
 }
 

@@ -87,7 +87,9 @@ func TestTierSelectionClampsToTheMaterialisationHorizon(t *testing.T) {
 		// end_offset PLUS schedule_interval, the pair 0001_init.sql actually
 		// sets: a bucket is materialised by a refresh RUN, so end_offset is
 		// how far back a run reaches and schedule_interval is how stale that
-		// reach can be between runs.
+		// reach can be between runs. tier.go keeps them as two fields, each
+		// mirroring one value in the migration, and adds them at the point of
+		// use; the horizon below is that sum.
 		{"5m tier lags its 10m offset plus its 5m schedule", 10 * day, 15 * time.Minute},
 		{"1h tier lags its 1h offset plus its 30m schedule", 60 * day, 90 * time.Minute},
 	} {
