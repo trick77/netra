@@ -92,6 +92,17 @@ type Profile struct {
 	// Mdraid names the array this host reports degrade/rebuild events for.
 	// Empty on a host with no software RAID.
 	Mdraid string
+
+	// FileMax is /proc/sys/fs/file-max, the ceiling the file-descriptor
+	// meter reads against. Zero means int64 max, which is what a great many
+	// hosts leave it at as "no practical limit" and what the UI renders as
+	// "no limit" rather than as a bar that can never move.
+	//
+	// A field rather than one constant for the whole fleet because both
+	// states have to exist in the simulated data: with every host unbounded
+	// the meter -- the reason the Limits card exists -- is never drawn at
+	// all, and the "48 231 of 262 144" path cannot be looked at.
+	FileMax uint64
 }
 
 // SensorSpec is one hwmon reading. Base is the idle value in the kind's own
@@ -112,7 +123,10 @@ type SensorSpec struct {
 	// RPM, not a temperature.
 	Kind string
 
-	// Stalls makes this sensor drop to zero for one stretch of the window.
+	// Stalls makes this sensor drop to zero on isolated scrapes scattered
+	// through the window -- the signal behind it is uncorrelated between
+	// instants, so it is a scattering of single zero readings rather than
+	// one continuous stall.
 	//
 	// Only meaningful for a fan, and the reason the fan cards exist: a fan
 	// that stops is a hardware failure no temperature reading shows until

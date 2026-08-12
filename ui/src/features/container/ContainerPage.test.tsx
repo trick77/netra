@@ -185,15 +185,39 @@ describe("ContainerPage", () => {
     expect(network).toHaveTextContent(/network namespaces/i);
   });
 
-  // Only the one value means it. Any other capability string is the
-  // collector reporting itself healthy, and an unrecognised one is not
-  // licence to blank a panel that may carry real data.
-  it("draws the network chart normally when the namespace was reachable", () => {
+  // "namespaced" is the value most easily misread as healthy -- it sounds
+  // like a description rather than a failure. It means cgroup.procs names
+  // host PIDs that the agent, running without the host PID namespace,
+  // resolves in its own and finds nothing. containers.go sets the key ONLY
+  // to record why networking produced nothing, and clears it on every scrape
+  // that works, so this value blanks the panel exactly as the other does.
+  it("explains a namespaced agent too, not only a missing host netns", () => {
     renderPage({ containerNetwork: "namespaced" });
+    const network = screen.getByLabelText("Network, not collected", {
+      selector: "section",
+    });
+    expect(network).toHaveTextContent(/PID namespace/i);
+  });
+
+  // A working collector reports no key at all, so absence -- not a
+  // particular value -- is what means "draw the chart".
+  it("draws the network chart when the agent reported no capability", () => {
+    renderPage();
     const network = screen.getByLabelText("Network chart", {
       selector: "section",
     });
     expect(network).not.toHaveTextContent(/Not collected/i);
+  });
+
+  // A value netra does not know the wording of is still the agent reporting
+  // a failure, so it blanks the panel and quotes what the agent said rather
+  // than drawing the empty chart this prop exists to prevent.
+  it("blanks the panel for an unrecognised capability value, quoting it", () => {
+    renderPage({ containerNetwork: "some-future-reason" });
+    const network = screen.getByLabelText("Network, not collected", {
+      selector: "section",
+    });
+    expect(network).toHaveTextContent(/some-future-reason/);
   });
 
   it("labels the status badge as derived", () => {

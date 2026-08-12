@@ -200,6 +200,7 @@ func nvmeVPS() *Profile {
 			"sensors": "absent",
 			"smart":   "no-device-access",
 		},
+		FileMax:  524288,
 		Packages: packages("amd64", 96),
 	}
 }
@@ -229,6 +230,12 @@ func smartBaremetal() *Profile {
 		SwapTotal: 8 * gib,
 		ZFSArc:    24 * gib,
 		Mdraid:    "md0",
+
+		// A file-max someone actually set, rather than the int64 max the
+		// rest of the fleet is left at. Without one host carrying a real
+		// ceiling the descriptor meter is "no limit" everywhere and the
+		// bar the Limits card exists to draw is never drawn.
+		FileMax: 1048576,
 
 		Drives: []DriveSpec{
 			{Device: "sda", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1M0K", PowerOnHours: 21400},

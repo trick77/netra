@@ -195,6 +195,22 @@ function last(values: readonly (number | null)[]): number | null {
   return values.filter((v): v is number => v !== null).at(-1) ?? null;
 }
 
+/**
+ * What each `container_network` capability value means, in the reader's
+ * terms rather than the kernel's. Both are failures; the wording differs
+ * because the remedies do -- one is a missing namespace mount, the other a
+ * container started without the host PID namespace.
+ *
+ * Values mirror capNetNoHostNS and capNetNamespaced in
+ * internal/agent/collector/containers.go.
+ */
+const NETWORK_UNAVAILABLE: Record<string, string> = {
+  "no-host-netns":
+    "The agent could not read this host's network namespaces, so it cannot tell a host-networked container from a bridged one and measured no container traffic.",
+  namespaced:
+    "The agent is running without the host's PID namespace, so it cannot resolve the processes that own each container's interfaces and measured no container traffic.",
+};
+
 export interface ContainerPageProps {
   container: Container;
   host: { id: number; hostname: string };
@@ -207,11 +223,19 @@ export interface ContainerPageProps {
   /**
    * The host's `container_network` capability, when it reported one.
    *
-   * "no-host-netns" means the agent could not enter the container's network
-   * namespace, so net_rx and net_tx are absent for every container on this
-   * host -- a fact about the agent's access, not about the container's
-   * traffic. Without it the Network panel is an empty chart, which claims
-   * the container sent nothing.
+   * The key is only ever present to say that per-container networking
+   * produced NOTHING -- containers.go's setCapability is documented as
+   * recording "why per-container networking produced nothing", and Collect
+   * clears it on every scrape that works. So any value here means net_rx
+   * and net_tx are absent for every container on this host, a fact about
+   * the agent's access rather than about the container's traffic. Without
+   * it the Network panel is an empty chart, which claims the container sent
+   * nothing.
+   *
+   * Both values are failures, and "namespaced" is the easier one to
+   * misread as healthy: it means cgroup.procs names host PIDs that the
+   * agent, running without the host PID namespace, resolves in its own and
+   * finds nothing.
    */
   containerNetwork?: string;
   /** Injectable so "last sample" is deterministic in tests. */
@@ -352,14 +376,20 @@ export function ContainerPage({
           onRangeChange={onRangeChange}
           mirrored
           // The agent's own explanation, in place of a chart that would
-          // otherwise read as "this container moved no traffic". Only for
-          // the one value that means it: any other capability string is
-          // the collector reporting itself healthy, and an unexpected one
-          // is not licence to blank a panel that may have real data.
+          // otherwise read as "this container moved no traffic".
+          //
+          // ANY value blanks the panel, because the key exists only to
+          // report that networking produced nothing -- a working collector
+          // reports no key at all. Matching one value left the other one,
+          // "namespaced", drawing the empty chart this prop exists to
+          // prevent. An unrecognised value still blanks it and says what
+          // the agent said: a capability netra does not know the wording of
+          // is still the agent reporting a failure.
           unavailable={
-            containerNetwork === "no-host-netns"
-              ? "The agent could not enter this host's network namespaces, so no container traffic was measured."
-              : undefined
+            containerNetwork === undefined
+              ? undefined
+              : (NETWORK_UNAVAILABLE[containerNetwork] ??
+                `The agent reported per-container networking as "${containerNetwork}", so no container traffic was measured.`)
           }
           series={[
             band("ingress", "var(--s2)", sampled?.netRx ?? empty),

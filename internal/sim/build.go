@@ -380,25 +380,81 @@ func (g *Generator) netstat(h *netrav1.HostSample, ts time.Time, cpu float64) {
 	// defaulting to: the badge must stay silent on a healthy host, and a
 	// simulator that fires it constantly would prove nothing about whether
 	// it is silent when it should be.
-	if g.sig.unit("vm.oom", ts) > 0.995 {
+	//
+	// The threshold is a probability PER SCRAPE, and the scrape count is
+	// what makes it rare -- not the wall clock. Inside the raw retention
+	// window the backfill writes a sample a minute, so 1 in 200 (0.995) is
+	// seven kills in a 24h window on every host in the fleet, which is a
+	// permanent critical badge rather than a rare event. 1 in ~14000 is
+	// about 0.1 expected kills in 24h and a couple across a 90-day
+	// backfill: usually silent, occasionally there to be looked at.
+	if g.sig.unit("vm.oom", ts) > 0.99993 {
 		g.oomKills++
 	}
 	h.OomKillTotal = proto.Uint64(g.oomKills)
 
 	// Exhaustion gauges, each well below its ceiling so the ratio the panel
 	// exists to show is legible rather than alarming.
-	h.SocketsUsed = proto.Uint32(uint32(clamp(g.sig.daily("lim.sockets", ts, 240, 0.35, 0.4), 20, 60000)))
-	h.TcpOrphan = proto.Uint32(uint32(clamp(g.sig.daily("lim.orphan", ts, 2, 1.2, 1.2), 0, 1000)))
-	h.TcpTw = proto.Uint32(uint32(clamp(g.sig.daily("lim.tw", ts, 900, 0.6, 0.5), 0, 60000)))
-	h.TcpAlloc = proto.Uint32(uint32(clamp(g.sig.daily("lim.alloc", ts, 160, 0.4, 0.4), 10, 60000)))
-	h.FdUsed = proto.Uint64(uint64(clamp(g.sig.daily("lim.fd", ts, 2200, 0.3, 0.3), 200, 500000)))
-	h.ConntrackCount = proto.Uint32(uint32(clamp(g.sig.daily("lim.ct", ts, 1800, 0.5, 0.5), 0, 200000)))
+	//
+	// Gated on the capability that covers each source, because in the real
+	// agent the capability and the sample are two halves of one statement:
+	// Limits.setCapability DELETES the key when the read succeeded and
+	// writes "unavailable" only when it failed -- in which case the fields
+	// that read would have filled are left unset. A simulated host that
+	// declares a source unavailable and then reports its numbers anyway
+	// puts the Limits card in a state no real host can be in: the agent's
+	// "unavailable" standing in for a meter whose data is in the database.
+	if g.reports(capSockets) {
+		h.SocketsUsed = proto.Uint32(uint32(clamp(g.sig.daily("lim.sockets", ts, 240, 0.35, 0.4), 20, 60000)))
+		h.TcpOrphan = proto.Uint32(uint32(clamp(g.sig.daily("lim.orphan", ts, 2, 1.2, 1.2), 0, 1000)))
+		h.TcpTw = proto.Uint32(uint32(clamp(g.sig.daily("lim.tw", ts, 900, 0.6, 0.5), 0, 60000)))
+		h.TcpAlloc = proto.Uint32(uint32(clamp(g.sig.daily("lim.alloc", ts, 160, 0.4, 0.4), 10, 60000)))
+	}
+	if g.reports(capFileDescriptors) {
+		h.FdUsed = proto.Uint64(uint64(clamp(g.sig.daily("lim.fd", ts, 2200, 0.3, 0.3), 200, 500000)))
+		// The ceiling is a sysctl: constant unless someone changes it. Read
+		// from the same file as the gauge (/proc/sys/fs/file-nr's third
+		// field), so it is absent exactly when the gauge is.
+		h.FdLimit = proto.Uint64(g.fileMax())
+	}
+	if g.reports(capConntrack) {
+		h.ConntrackCount = proto.Uint32(uint32(clamp(g.sig.daily("lim.ct", ts, 1800, 0.5, 0.5), 0, 200000)))
+		h.ConntrackLimit = proto.Uint32(262144)
+	}
 
-	// The ceilings are sysctls: constant unless someone changes them.
-	h.FdLimit = proto.Uint64(9223372036854775807)
-	h.ConntrackLimit = proto.Uint32(262144)
+	// The TCP ceilings are sysctls under /proc/sys/net/ipv4, which the agent
+	// reads whether or not /proc/net/sockstat could be opened -- so they are
+	// not gated on the sockets capability.
 	h.TcpTwLimit = proto.Uint32(131072)
 	h.TcpOrphanLimit = proto.Uint32(65536)
+}
+
+// Capability keys the limits collector reports, mirroring the constants in
+// internal/agent/collector/limits.go.
+const (
+	capSockets         = "sockets"
+	capFileDescriptors = "file_descriptors"
+	capConntrack       = "conntrack"
+)
+
+// reports is whether this profile's agent could read a source at all.
+//
+// The agent's convention, not an invented one: a key present in the
+// capability map is a collector saying it could NOT do something, and a
+// working collector reports no key.
+func (g *Generator) reports(capability string) bool {
+	_, degraded := g.p.Capabilities[capability]
+	return !degraded
+}
+
+// fileMax is the profile's /proc/sys/fs/file-max, defaulting to int64 max --
+// the "no practical limit" a great many hosts are left at, and the value the
+// UI answers with "no limit" instead of a bar against 9.2 quintillion.
+func (g *Generator) fileMax() uint64 {
+	if g.p.FileMax == 0 {
+		return math.MaxInt64
+	}
+	return g.p.FileMax
 }
 
 // agentSample is the agent's telemetry about itself. post_latency_ms lags by
@@ -418,20 +474,24 @@ func (g *Generator) agentSample(ts time.Time) *netrav1.AgentSample {
 		a.PostLatencyMs = proto.Uint32(uint32(clamp(g.sig.daily("agent.latency", ts, 38, 0.5, 0.6), 3, 5000)))
 	}
 
-	// The TCP path to the hub, and the outages on it.
+	// The TCP path to the hub, and the failures on it.
 	//
 	// Both gauges are the duration of a handshake that COMPLETED, so when
 	// the hub is unreachable there is nothing to time and they are left
 	// unset -- NULL, exactly as the real agent leaves them. The failure
 	// counter is what carries the event, and it is cumulative: it keeps
-	// climbing across the outage and then holds its new level, which is why
-	// the UI draws its per-bucket increase rather than the total.
+	// climbing and then holds its new level, which is why the UI draws its
+	// per-bucket increase rather than the total.
 	//
-	// Simulated as a real outage rather than a sprinkle of failures,
-	// because the pair is the point: during the window below, Hub latency
-	// legitimately goes blank while Hub connect failures spikes. A reader
-	// seeing only the first has no way to tell an outage from an idle
-	// agent.
+	// A sprinkle of independent failures, NOT a contiguous outage: unit()
+	// is a hash of seed+timestamp with no correlation between neighbouring
+	// instants, so this fires on isolated scrapes at about 3% of them. That
+	// exercises the pair -- a raw-tier bucket with a null latency beside a
+	// counter that stepped -- but at the 5m and 1h tiers every bucket still
+	// contains completed handshakes, so latency does not go blank there.
+	// Simulating a real outage means a run of consecutive failing scrapes,
+	// which needs a temporally correlated signal this package does not have
+	// yet.
 	if g.sig.unit("agent.hubdown", ts) > 0.97 {
 		g.hubFailures++
 	} else {
@@ -521,11 +581,17 @@ func (g *Generator) sensors(ts time.Time, cpu float64) []*netrav1.SensorSample {
 			if value < 0 {
 				value = 0
 			}
-			// A stalled fan, for a stretch of the window. The point is that
-			// it is BRIEF relative to a rollup bucket: at the 5m and 1h
-			// tiers the average and the maximum both stay comfortably in
-			// the normal range across the stall, and only value_min shows
-			// it -- which is exactly the failure the fan card reads.
+			// A stalled fan, on isolated scrapes: unit() is a hash of
+			// seed+timestamp with no correlation between neighbouring
+			// instants, so this is a single zero reading here and there
+			// rather than one continuous stall. That is enough for what the
+			// fan card is being shown: inside the fine-grained region the
+			// backfill writes a sample a minute, so a 5m bucket holding one
+			// zero and four healthy readings has an average and a maximum
+			// that look fine and a value_min of 0 -- the failure only
+			// value_min reports. In the coarse region the grid is itself 5m,
+			// so a stalled sample is the bucket's only sample and min, avg
+			// and max all read 0 together.
 			if s.Stalls && g.sig.unit(key+"/stall", ts) > 0.93 {
 				value = 0
 			}
@@ -604,7 +670,7 @@ func (g *Generator) containers(ts time.Time, cpu float64) []*netrav1.ContainerSa
 		file := uint64(float64(mem) * clamp(g.sig.daily(key+"/file", ts, 0.22, 0.4, 0.2), 0.05, 0.5))
 		anon := mem - shmem - kernel - file
 
-		out = append(out, &netrav1.ContainerSample{
+		sample := &netrav1.ContainerSample{
 			TsMs:         ts.UnixMilli(),
 			ContainerKey: c.Key,
 			Name:         c.Name,
@@ -619,11 +685,22 @@ func (g *Generator) containers(ts time.Time, cpu float64) []*netrav1.ContainerSa
 			MemShmem:     proto.Uint64(shmem),
 			MemKernel:    proto.Uint64(kernel),
 			MemLimit:     proto.Uint64(c.MemLimit),
-			NetRx:        proto.Float64(round2(g.sig.daily(key+"/rx", ts, 90*1024, 1.0, 0.5) * busy)),
-			NetTx:        proto.Float64(round2(g.sig.daily(key+"/tx", ts, 64*1024, 1.0, 0.5) * busy)),
 			IoRead:       proto.Float64(round2(g.sig.daily(key+"/ior", ts, 40*1024, 1.1, 0.6) * busy)),
 			IoWrite:      proto.Float64(round2(g.sig.daily(key+"/iow", ts, 70*1024, 1.1, 0.6) * busy)),
-		})
+		}
+
+		// Traffic only where the agent could measure it. A host reporting
+		// container_network is a host whose agent could not enter the
+		// namespaces (containers.go leaves NetRx/NetTx unset in exactly that
+		// case), and the container page now reads that capability to explain
+		// the empty Network panel -- so a simulated host that declares it and
+		// then sends bytes anyway renders "no traffic was measured" over a
+		// chart's worth of traffic.
+		if g.reports("container_network") {
+			sample.NetRx = proto.Float64(round2(g.sig.daily(key+"/rx", ts, 90*1024, 1.0, 0.5) * busy))
+			sample.NetTx = proto.Float64(round2(g.sig.daily(key+"/tx", ts, 64*1024, 1.0, 0.5) * busy))
+		}
+		out = append(out, sample)
 	}
 	return out
 }
