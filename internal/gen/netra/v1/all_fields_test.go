@@ -16,24 +16,29 @@ import (
 // covered by TestOptionalFieldsPreserveAbsentVersusZero.
 func TestHostSampleAllFieldsSet(t *testing.T) {
 	in := &netrav1.HostSample{
-		TsMs:         1_700_000_000_123,
-		CpuTotal:     proto.Float64(12.5),
-		CpuUser:      proto.Float64(5.5),
-		CpuSystem:    proto.Float64(3.5),
-		CpuIowait:    proto.Float64(1.5),
-		CpuSteal:     proto.Float64(0.5),
-		CpuIdle:      proto.Float64(76.5),
-		MemTotal:     proto.Uint64(16_000_000_000),
-		MemUsed:      proto.Uint64(8_000_000_000),
-		MemAvailable: proto.Uint64(7_000_000_000),
-		MemBuffcache: proto.Uint64(1_000_000_000),
-		MemZfsArc:    proto.Uint64(500_000_000),
-		SwapTotal:    proto.Uint64(2_000_000_000),
-		SwapUsed:     proto.Uint64(100_000_000),
-		Load1:        proto.Float64(0.1),
-		Load5:        proto.Float64(0.2),
-		Load15:       proto.Float64(0.3),
-		UptimeS:      proto.Uint64(86_400),
+		TsMs:            1_700_000_000_123,
+		CpuTotal:        proto.Float64(12.5),
+		CpuUser:         proto.Float64(5.5),
+		CpuSystem:       proto.Float64(3.5),
+		CpuIowait:       proto.Float64(1.5),
+		CpuSteal:        proto.Float64(0.5),
+		CpuIdle:         proto.Float64(76.5),
+		MemTotal:        proto.Uint64(16_000_000_000),
+		MemUsed:         proto.Uint64(8_000_000_000),
+		MemAvailable:    proto.Uint64(7_000_000_000),
+		MemBuffcache:    proto.Uint64(1_000_000_000),
+		MemZfsArc:       proto.Uint64(500_000_000),
+		MemFree:         proto.Uint64(4_000_000_000),
+		MemBuffers:      proto.Uint64(300_000_000),
+		MemCached:       proto.Uint64(600_000_000),
+		MemShared:       proto.Uint64(100_000_000),
+		MemSreclaimable: proto.Uint64(200_000_000),
+		SwapTotal:       proto.Uint64(2_000_000_000),
+		SwapUsed:        proto.Uint64(100_000_000),
+		Load1:           proto.Float64(0.1),
+		Load5:           proto.Float64(0.2),
+		Load15:          proto.Float64(0.3),
+		UptimeS:         proto.Uint64(86_400),
 	}
 
 	raw, err := proto.Marshal(in)
@@ -81,6 +86,21 @@ func TestHostSampleAllFieldsSet(t *testing.T) {
 	}
 	if got := out.GetMemZfsArc(); got != 500_000_000 {
 		t.Errorf("MemZfsArc = %v, want 500000000", got)
+	}
+	if got := out.GetMemFree(); got != 4_000_000_000 {
+		t.Errorf("MemFree = %v, want 4000000000", got)
+	}
+	if got := out.GetMemBuffers(); got != 300_000_000 {
+		t.Errorf("MemBuffers = %v, want 300000000", got)
+	}
+	if got := out.GetMemCached(); got != 600_000_000 {
+		t.Errorf("MemCached = %v, want 600000000", got)
+	}
+	if got := out.GetMemShared(); got != 100_000_000 {
+		t.Errorf("MemShared = %v, want 100000000", got)
+	}
+	if got := out.GetMemSreclaimable(); got != 200_000_000 {
+		t.Errorf("MemSreclaimable = %v, want 200000000", got)
 	}
 	if got := out.GetSwapTotal(); got != 2_000_000_000 {
 		t.Errorf("SwapTotal = %v, want 2000000000", got)
@@ -130,23 +150,28 @@ func TestHostSampleAllFieldsAbsent(t *testing.T) {
 	}
 
 	fields := map[string]bool{
-		"CpuTotal":     out.CpuTotal != nil,
-		"CpuUser":      out.CpuUser != nil,
-		"CpuSystem":    out.CpuSystem != nil,
-		"CpuIowait":    out.CpuIowait != nil,
-		"CpuSteal":     out.CpuSteal != nil,
-		"CpuIdle":      out.CpuIdle != nil,
-		"MemTotal":     out.MemTotal != nil,
-		"MemUsed":      out.MemUsed != nil,
-		"MemAvailable": out.MemAvailable != nil,
-		"MemBuffcache": out.MemBuffcache != nil,
-		"MemZfsArc":    out.MemZfsArc != nil,
-		"SwapTotal":    out.SwapTotal != nil,
-		"SwapUsed":     out.SwapUsed != nil,
-		"Load1":        out.Load1 != nil,
-		"Load5":        out.Load5 != nil,
-		"Load15":       out.Load15 != nil,
-		"UptimeS":      out.UptimeS != nil,
+		"CpuTotal":        out.CpuTotal != nil,
+		"CpuUser":         out.CpuUser != nil,
+		"CpuSystem":       out.CpuSystem != nil,
+		"CpuIowait":       out.CpuIowait != nil,
+		"CpuSteal":        out.CpuSteal != nil,
+		"CpuIdle":         out.CpuIdle != nil,
+		"MemTotal":        out.MemTotal != nil,
+		"MemUsed":         out.MemUsed != nil,
+		"MemAvailable":    out.MemAvailable != nil,
+		"MemBuffcache":    out.MemBuffcache != nil,
+		"MemZfsArc":       out.MemZfsArc != nil,
+		"MemFree":         out.MemFree != nil,
+		"MemBuffers":      out.MemBuffers != nil,
+		"MemCached":       out.MemCached != nil,
+		"MemShared":       out.MemShared != nil,
+		"MemSreclaimable": out.MemSreclaimable != nil,
+		"SwapTotal":       out.SwapTotal != nil,
+		"SwapUsed":        out.SwapUsed != nil,
+		"Load1":           out.Load1 != nil,
+		"Load5":           out.Load5 != nil,
+		"Load15":          out.Load15 != nil,
+		"UptimeS":         out.UptimeS != nil,
 	}
 	for name, present := range fields {
 		if present {

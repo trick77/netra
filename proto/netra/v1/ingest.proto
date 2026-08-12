@@ -206,6 +206,31 @@ message HostSample {
   // stores it under the same natural key. It lands in its own table because
   // agent uptime and host uptime are different facts (spec 5.3).
   optional AgentSample agent = 54;
+
+  // --- /proc/meminfo, the fields that make a stacked memory chart honest ---
+  //
+  // mem_used above is MemTotal - MemAvailable, which already contains the ZFS
+  // ARC and the unreclaimable shmem slice of the page cache. Stacking bands
+  // on top of it therefore counts the same bytes twice. These five exist so a
+  // chart can partition mem_total instead: free + buffers + cached + shared +
+  // sreclaimable are measured, and "used" is whatever is left over.
+  //
+  // Appended here rather than beside mem_buffcache because field numbers are
+  // never renumbered -- the numbering follows arrival order throughout this
+  // message.
+  optional uint64 mem_free = 55;
+  optional uint64 mem_buffers = 56;
+  // Cached MINUS Shmem. /proc/meminfo's Cached includes the tmpfs pages that
+  // Shmem counts, so storing both verbatim would double-count them in a
+  // stack. Splitting it here rather than in the UI keeps the invariant
+  // mem_buffcache == mem_buffers + mem_cached + mem_shared true in the
+  // database, where it can be asserted.
+  optional uint64 mem_cached = 57;
+  optional uint64 mem_shared = 58;
+  // Reclaimable slab. Not part of Buffers or Cached, and counted as available
+  // by the kernel, so a stack that omits it under-reports the cache rather
+  // than over-reporting memory pressure.
+  optional uint64 mem_sreclaimable = 59;
 }
 
 // AgentSample is the agent's telemetry about itself for one scrape.
