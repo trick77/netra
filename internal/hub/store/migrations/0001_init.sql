@@ -103,6 +103,16 @@ CREATE TABLE IF NOT EXISTS host_samples (
     mem_available BIGINT,
     mem_buffcache BIGINT,
     mem_zfs_arc   BIGINT,
+    -- The parts a stacked memory chart partitions mem_total into. mem_used
+    -- above is total minus available, which already contains the ARC and the
+    -- unreclaimable shmem pages, so it cannot be the bottom of a stack built
+    -- from the others. mem_cached is Cached MINUS Shmem, which is what keeps
+    -- mem_buffcache = mem_buffers + mem_cached + mem_shared true.
+    mem_free         BIGINT,
+    mem_buffers      BIGINT,
+    mem_cached       BIGINT,
+    mem_shared       BIGINT,
+    mem_sreclaimable BIGINT,
     swap_total    BIGINT,
     swap_used     BIGINT,
     load1         DOUBLE PRECISION,
@@ -188,6 +198,28 @@ SELECT host_id,
        avg(mem_used)   AS mem_used_avg,
        max(mem_used)   AS mem_used_max,
        avg(swap_used)  AS swap_used_avg,
+       -- The stacked CPU and memory charts, at every range rather than only
+       -- at 1h. The fleet's 6h and 24h ranges answer from this tier and 7d
+       -- and 30d from the 1h one, so a breakdown that lives only in the raw
+       -- table is a breakdown almost nobody ever sees.
+       --
+       -- avg and never max, deliberately: the memory chart derives "used" as
+       -- mem_total - free - buffers - cached - shared - arc, and that
+       -- subtraction is only valid if every input is the same aggregate.
+       -- Averaging is linear, so the remainder of the averages is the average
+       -- of the remainders; mixing a max into it would silently break the
+       -- partition. The same rule governs cpu_core's busy_avg.
+       avg(cpu_user)   AS cpu_user_avg,
+       avg(cpu_system) AS cpu_system_avg,
+       avg(cpu_iowait) AS cpu_iowait_avg,
+       avg(cpu_steal)  AS cpu_steal_avg,
+       avg(mem_total)        AS mem_total_avg,
+       avg(mem_free)         AS mem_free_avg,
+       avg(mem_buffers)      AS mem_buffers_avg,
+       avg(mem_cached)       AS mem_cached_avg,
+       avg(mem_shared)       AS mem_shared_avg,
+       avg(mem_sreclaimable) AS mem_sreclaimable_avg,
+       avg(mem_zfs_arc)      AS mem_zfs_arc_avg,
        avg(load1)      AS load1_avg,
        max(load1)      AS load1_max,
        last(uptime_s, ts) AS uptime_s,
@@ -273,6 +305,21 @@ SELECT host_id,
        avg(mem_used_avg)  AS mem_used_avg,
        max(mem_used_max)  AS mem_used_max,
        avg(swap_used_avg) AS swap_used_avg,
+       -- The band columns, rolled up from the 5m tier like everything else
+       -- here. Same avg-only rule as there: the memory stack's "used" is a
+       -- remainder, and it is only valid if every input is the same
+       -- aggregate.
+       avg(cpu_user_avg)   AS cpu_user_avg,
+       avg(cpu_system_avg) AS cpu_system_avg,
+       avg(cpu_iowait_avg) AS cpu_iowait_avg,
+       avg(cpu_steal_avg)  AS cpu_steal_avg,
+       avg(mem_total_avg)        AS mem_total_avg,
+       avg(mem_free_avg)         AS mem_free_avg,
+       avg(mem_buffers_avg)      AS mem_buffers_avg,
+       avg(mem_cached_avg)       AS mem_cached_avg,
+       avg(mem_shared_avg)       AS mem_shared_avg,
+       avg(mem_sreclaimable_avg) AS mem_sreclaimable_avg,
+       avg(mem_zfs_arc_avg)      AS mem_zfs_arc_avg,
        avg(load1_avg)     AS load1_avg,
        max(load1_max)     AS load1_max,
        last(uptime_s, bucket) AS uptime_s,
