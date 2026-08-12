@@ -645,3 +645,41 @@ describe("Overview OOM attention", () => {
     expect(within(attention).queryByText(/OOM/)).toBeNull();
   });
 });
+
+// "0.4.1" does not identify a build -- it is whatever was last tagged, and
+// the agent in front of you may be a rebuild or a patched branch. The commit
+// is what makes the answer exact, and it was collected and served all along
+// while only the version was shown.
+describe("Overview system card", () => {
+  it("identifies the reporting agent by version and commit", () => {
+    renderOverview();
+    const system = screen.getByRole("region", { name: "System" });
+    expect(within(system).getByText("0.4.1 · abc1234")).toBeInTheDocument();
+  });
+
+  it("shows the Go toolchain the agent was built with", () => {
+    renderOverview();
+    const system = screen.getByRole("region", { name: "System" });
+    expect(within(system).getByText("go1.25")).toBeInTheDocument();
+  });
+
+  // buildinfo.Commit() is "unknown" for a binary built without the ldflags
+  // stamp -- a plain `go build` from a working tree. That is a fact about how
+  // the agent was compiled, not a value worth printing: "0.4.1 · unknown"
+  // reads as a bug in netra.
+  it("falls back to the version alone for an unstamped build", () => {
+    renderOverview({ host: { ...host, build_commit: "unknown" } });
+    const system = screen.getByRole("region", { name: "System" });
+    expect(within(system).getByText("0.4.1")).toBeInTheDocument();
+    expect(within(system).queryByText(/unknown/)).toBeNull();
+  });
+
+  it("reads absent, never empty, when the host reported no agent at all", () => {
+    renderOverview({
+      host: { ...host, agent_version: null, build_commit: null },
+    });
+    const system = screen.getByRole("region", { name: "System" });
+    const agent = within(system).getByText("Agent").nextElementSibling;
+    expect(agent?.textContent).toBe(ABSENT);
+  });
+});

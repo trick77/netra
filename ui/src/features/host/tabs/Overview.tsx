@@ -379,6 +379,29 @@ export function needsAttention(input: {
   return out;
 }
 
+/**
+ * The reporting agent, identified exactly: its version and the commit it was
+ * built from.
+ *
+ * buildinfo.Commit() is already the SHORT sha, so nothing is truncated here
+ * -- and it is "unknown" for a binary built without the ldflags stamp, which
+ * is a real state (a `go build` from a working tree) and not a value worth
+ * printing. An unstamped build falls back to the version alone rather than
+ * reading "0.4.1 · unknown", which looks like a bug in netra rather than a
+ * fact about how that agent was compiled.
+ *
+ * A version with no commit at all is still the answer when that is all the
+ * host sent; a host that reported neither reads as absent, never as an empty
+ * string.
+ */
+function agentBuild(host: HostDetail): string {
+  const version = host.agent_version;
+  const commit = host.build_commit;
+  if (version === null) return commit ?? ABSENT;
+  if (commit === null || commit === "" || commit === "unknown") return version;
+  return `${version} · ${commit}`;
+}
+
 /** A labelled landmark around a Card, so each summary is reachable by name
  * (Card itself renders a plain div and has no labelling of its own). */
 function Panel({
@@ -875,7 +898,22 @@ export function Overview({
               "Uptime",
               duration(latest(hostMetrics, "uptime_s") ?? host.uptime_s),
             ],
-            ["Agent", host.agent_version ?? ABSENT],
+            // The exact binary that is reporting, not just its release.
+            //
+            // "0.4.1" does not identify a build: it is whatever was last
+            // tagged, and the agent in front of you may be a rebuild, a
+            // patched branch, or the same tag from before a fix landed. The
+            // commit is what makes the answer exact, and it is the first
+            // thing anyone asks when a host reports something the code is
+            // not supposed to be able to report. Both were already collected
+            // (buildinfo.Version and buildinfo.Commit) and served on
+            // HostDetail; only the version was ever shown.
+            ["Agent", agentBuild(host)],
+            // The toolchain, likewise collected and shown nowhere. It is the
+            // other half of "what is this binary": a Go version explains a
+            // whole class of runtime behaviour -- GC, timer and net
+            // differences -- that the agent's own version number cannot.
+            ["Go", host.go_version ?? ABSENT],
           ]}
         />
       </Panel>
