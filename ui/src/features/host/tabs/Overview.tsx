@@ -358,7 +358,10 @@ export function Overview({
       <ChartPanel
         title="Memory"
         series={memBands}
-        max={memTotal ?? undefined}
+        // Headroom above total so the rule marking it reads as a rule rather
+        // than as the top border of the plot.
+        max={memTotal === null ? undefined : memTotal * 1.08}
+        reference={memTotal ?? undefined}
         fmt={(n) => bytes(n)}
         stacked
         window={hostMetrics?.window ?? null}

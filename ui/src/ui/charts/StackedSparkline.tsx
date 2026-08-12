@@ -22,6 +22,18 @@ export interface StackedSparklineProps {
   height?: number;
   pad?: number;
   label?: string;
+  /**
+   * A value to mark with a dashed rule across the chart -- for memory, the
+   * host's total RAM.
+   *
+   * Without it a stack scaled to a ceiling is uninterpretable: the shape
+   * says how the parts move but not whether the host is nearly full or
+   * barely touched, because nothing on screen says what the top of the box
+   * means. The caller is expected to leave headroom (a max slightly above
+   * the reference) so the rule lands inside the plot rather than on its
+   * edge, where it would be indistinguishable from a border.
+   */
+  reference?: number;
 }
 
 // stackBands() needs the largest RUNNING TOTAL across bands (sum over all
@@ -60,8 +72,17 @@ export function StackedSparkline({
   height = 32,
   pad = 2,
   label = "stacked chart",
+  reference,
 }: StackedSparklineProps) {
   const effectiveMax = max ?? maxRunningTotal(bands);
+  // Where the reference sits in the plot box. Null when there is nothing to
+  // mark, or when it would land outside -- a rule drawn off the edge is a
+  // rule nobody can read.
+  const referenceY =
+    reference === undefined || effectiveMax <= 0
+      ? null
+      : height - pad - (reference / effectiveMax) * (height - 2 * pad);
+
   const paths = stackBands(
     bands.map((b) => b.values),
     width,
@@ -80,6 +101,19 @@ export function StackedSparkline({
         role="img"
         aria-label={label}
       >
+        {referenceY !== null && (
+          <line
+            data-reference
+            x1={0}
+            x2={width}
+            y1={referenceY}
+            y2={referenceY}
+            stroke="var(--muted)"
+            strokeWidth={1}
+            strokeDasharray="3 2"
+            opacity={0.7}
+          />
+        )}
         {paths.map(
           (d, i) =>
             d !== "" && (

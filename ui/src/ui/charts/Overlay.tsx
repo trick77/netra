@@ -57,6 +57,10 @@ export interface OverlayProps {
    * series to 35%, so the whole stack went pale to hide a list.
    */
   legend?: boolean;
+  /** A value to mark with a dashed rule -- for memory, the host's total RAM.
+   * Without it a stack scaled to a ceiling cannot answer "is this host
+   * nearly full", because nothing says what the top of the box means. */
+  reference?: number;
 }
 
 export function Overlay({
@@ -70,11 +74,20 @@ export function Overlay({
   label = "overlaid metrics chart",
   stacked = false,
   legend = true,
+  reference,
 }: OverlayProps) {
   const { min: autoMin } = extent(series.flatMap((s) => s.values));
   const effectiveMin = min ?? autoMin;
   // stackBands breaks every band at any index where ANY series is null: a
   // running total is undefined there, not just the one series' value.
+  const referenceY =
+    reference === undefined || max <= effectiveMin
+      ? null
+      : height -
+        pad -
+        ((reference - effectiveMin) / (max - effectiveMin)) *
+          (height - 2 * pad);
+
   const bands = stacked
     ? stackBands(
         series.map((s) => s.values),
@@ -95,6 +108,19 @@ export function Overlay({
         role="img"
         aria-label={label}
       >
+        {referenceY !== null && (
+          <line
+            data-reference
+            x1={0}
+            x2={width}
+            y1={referenceY}
+            y2={referenceY}
+            stroke="var(--muted)"
+            strokeWidth={1}
+            strokeDasharray="4 3"
+            opacity={0.7}
+          />
+        )}
         {stacked &&
           series.map((s, i) => {
             const dimmed = highlight !== undefined && highlight !== s.name;

@@ -135,6 +135,12 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
 // "scales the stack against mem_total" test, which proves this by
 // recomputing stackBands() with the same max and diffing the rendered
 // path data against it.
+// Scaled to mem_total the stack says how the parts move but not whether the
+// host is nearly full, because nothing on screen says what the top of the box
+// means. The dashed rule says it -- and it needs room above the stack to be
+// visible as a rule.
+const MEM_HEADROOM = 1.08;
+
 function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   if (row.mem_total === null) {
     // No known ceiling means no scale to draw the stack against. Drawing
@@ -147,7 +153,11 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   return (
     <StackedSparkline
       bands={row.mem}
-      max={row.mem_total}
+      // A little headroom above total, so the dashed rule marking it lands
+      // inside the plot instead of on the border, where it would read as the
+      // edge of the box rather than as the host's ceiling.
+      max={row.mem_total * MEM_HEADROOM}
+      reference={row.mem_total}
       label={`Memory trend, ${rangeLabel(range)}`}
     />
   );

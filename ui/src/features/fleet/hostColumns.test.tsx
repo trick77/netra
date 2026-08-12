@@ -207,6 +207,11 @@ describe("hostColumns", () => {
         ],
       });
       const { container } = render(<>{memCol.cell(row)}</>);
+      // The host's total memory is marked, so "is this host nearly full" is
+      // answerable from the chart instead of only from its shape.
+      expect(
+        container.querySelector("line[data-reference]"),
+      ).toBeInTheDocument();
       const paths = Array.from(
         container.querySelectorAll("path[data-band]"),
       ).map((p) => p.getAttribute("d"));
@@ -216,7 +221,10 @@ describe("hostColumns", () => {
         // it from one constant so a row's cells stay the same length.
         SPARK_WIDTH,
         32,
-        row.mem_total as number,
+        // Scaled to mem_total plus the headroom the total's own dashed rule
+        // needs to sit inside the plot rather than on its border. Free is
+        // still the gap between the stack and that rule.
+        (row.mem_total as number) * 1.08,
         2,
       );
       expect(paths).toEqual(expected);

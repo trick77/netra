@@ -27,6 +27,8 @@ export interface ChartDetailProps {
    * stack: 32 entries squeezed the 900px plot into a corner, and the stats
    * table below already names every series beside its colour. */
   legend?: boolean;
+  /** A value to mark with a dashed rule, e.g. a host's total memory. */
+  reference?: number;
   /** Hide the y axis. A stack whose height is a shape rather than a
    * quantity -- unnormalised per-core CPU runs to N x 100 -- must not carry
    * an axis putting a number on it. */
@@ -56,6 +58,7 @@ export function ChartDetail({
   onClose,
   stacked,
   legend,
+  reference,
   hideAxis,
 }: ChartDetailProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -121,6 +124,7 @@ export function ChartDetail({
             height={320}
             stacked={stacked}
             legend={legend}
+            reference={reference}
             label={`${title}, enlarged`}
           />
         </div>

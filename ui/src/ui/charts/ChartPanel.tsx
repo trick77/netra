@@ -45,6 +45,8 @@ export interface ChartPanelProps {
   /** Whether the chart names its series underneath. Off for the per-core
    * stack, where the list is longer than the chart. */
   legend?: boolean;
+  /** A value to mark with a dashed rule, e.g. a host's total memory. */
+  reference?: number;
   /** Hide the enlarged view's y axis. For a stack whose height is a shape
    * rather than a quantity -- unnormalised per-core CPU runs to N x 100 --
    * an axis would put a number on something that does not mean one. */
@@ -70,6 +72,7 @@ export function ChartPanel({
   highlight,
   stacked,
   legend,
+  reference,
   hideAxis,
   window: answered = null,
   range,
@@ -146,6 +149,7 @@ export function ChartPanel({
           highlight={highlight}
           stacked={stacked}
           legend={legend}
+          reference={reference}
           label={`${title} over time`}
         />
       </button>
@@ -159,6 +163,7 @@ export function ChartPanel({
           fmt={fmt}
           stacked={stacked}
           legend={legend}
+          reference={reference}
           hideAxis={hideAxis}
           window={answered}
           range={range}
