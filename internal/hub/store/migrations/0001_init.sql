@@ -159,6 +159,10 @@ CREATE TABLE IF NOT EXISTS host_samples (
     -- NULL when the conntrack module is not loaded, which is normal.
     conntrack_count  INTEGER,
     conntrack_limit  INTEGER,
+    -- The ceilings the socket gauges are read against, so each has something
+    -- to be compared to.
+    tcp_tw_limit     INTEGER,
+    tcp_orphan_limit INTEGER,
 
     -- /proc/net/snmp Tcp:. There is no tcp6_* mirror because the kernel keeps
     -- one family-agnostic TCP MIB -- these already count IPv6 connections --
@@ -331,7 +335,9 @@ SELECT host_id,
        last(fd_limit, ts) AS fd_limit,
        avg(conntrack_count) AS conntrack_count_avg,
        max(conntrack_count) AS conntrack_count_max,
-       last(conntrack_limit, ts) AS conntrack_limit
+       last(conntrack_limit, ts) AS conntrack_limit,
+       last(tcp_tw_limit, ts) AS tcp_tw_limit,
+       last(tcp_orphan_limit, ts) AS tcp_orphan_limit
   FROM host_samples
  GROUP BY host_id, bucket
 WITH NO DATA;
@@ -454,7 +460,9 @@ SELECT host_id,
        last(fd_limit, bucket) AS fd_limit,
        avg(conntrack_count_avg) AS conntrack_count_avg,
        max(conntrack_count_max) AS conntrack_count_max,
-       last(conntrack_limit, bucket) AS conntrack_limit
+       last(conntrack_limit, bucket) AS conntrack_limit,
+       last(tcp_tw_limit, bucket) AS tcp_tw_limit,
+       last(tcp_orphan_limit, bucket) AS tcp_orphan_limit
   FROM host_samples_5m
  GROUP BY host_id, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;

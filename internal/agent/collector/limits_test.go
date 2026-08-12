@@ -79,6 +79,68 @@ func TestLimitsReportsSocketFileAndConntrackUsage(t *testing.T) {
 	}
 }
 
+// Every gauge here is meant to be read against a ceiling -- that is the
+// file's stated contract -- and four of the six shipped without one. A bare
+// tcp_tw of 40000 answers nothing; beside tcp_max_tw_buckets it is the
+// difference between "busy" and "the kernel is silently dropping TIME_WAIT
+// sockets right now".
+func TestLimitsReportsTheCeilingsForTheSocketGauges(t *testing.T) {
+	root := limitsFixture(t, map[string]string{
+		"net/sockstat":                    "sockets: used 231\nTCP: inuse 12 orphan 3 tw 45 alloc 60 mem 2\n",
+		"sys/fs/file-nr":                  "1216\t0\t9223372036854775807\n",
+		"sys/net/ipv4/tcp_max_tw_buckets": "131072\n",
+		"sys/net/ipv4/tcp_max_orphans":    "65536\n",
+	})
+
+	h := collectLimits(t, root).Host
+
+	if got := h.GetTcpTwLimit(); got != 131072 {
+		t.Errorf("tcp_tw_limit = %d, want 131072", got)
+	}
+	if got := h.GetTcpOrphanLimit(); got != 65536 {
+		t.Errorf("tcp_orphan_limit = %d, want 65536", got)
+	}
+}
+
+// Collect cannot fail, so collector health reads "ok" whether every file was
+// read or none were -- which makes a NULL conntrack_count ambiguous between
+// "the module is not loaded" and "this collector read nothing". Saying which
+// is the whole rationale for CapabilityReporter.
+func TestLimitsReportsWhichSourcesItCouldNotRead(t *testing.T) {
+	// Only sockstat present: fd and conntrack are both unreadable.
+	root := limitsFixture(t, map[string]string{
+		"net/sockstat": "sockets: used 10\n",
+	})
+	testee := collector.NewLimits(root)
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	caps := testee.Capabilities()
+	if _, reported := caps["sockets"]; reported {
+		t.Errorf("sockets reported as unavailable when it was read: %v", caps)
+	}
+	if caps["file_descriptors"] != "unavailable" {
+		t.Errorf("file_descriptors = %q, want unavailable", caps["file_descriptors"])
+	}
+	if caps["conntrack"] != "unavailable" {
+		t.Errorf("conntrack = %q, want unavailable", caps["conntrack"])
+	}
+
+	// A module loaded later must clear the report rather than latch it.
+	testee.SetProcRootForTest(limitsFixture(t, map[string]string{
+		"net/sockstat":                         "sockets: used 10\n",
+		"sys/fs/file-nr":                       "100\t0\t1000\n",
+		"sys/net/netfilter/nf_conntrack_count": "5\n",
+	}))
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if got := testee.Capabilities(); len(got) != 0 {
+		t.Errorf("capabilities = %v after every source became readable; want none", got)
+	}
+}
+
 // A host doing neither NAT nor filtering has no conntrack module, which is
 // absent rather than zero connections tracked.
 func TestLimitsLeavesConntrackUnsetWhenTheModuleIsAbsent(t *testing.T) {

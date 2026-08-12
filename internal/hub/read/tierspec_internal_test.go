@@ -93,8 +93,10 @@ var sameQuantityAtEveryTier = map[string]string{
 	// filesystem's total, these are kernel tunables: raising one is a
 	// deliberate sysctl, not something that happens mid-bucket, so the last
 	// reading and the reading ARE the same number.
-	"fd_limit":        "last() over the bucket",
-	"conntrack_limit": "last() over the bucket",
+	"fd_limit":         "last() over the bucket",
+	"conntrack_limit":  "last() over the bucket",
+	"tcp_tw_limit":     "last() over the bucket",
+	"tcp_orphan_limit": "last() over the bucket",
 }
 
 // The read API's central guarantee, enumerated rather than asserted.

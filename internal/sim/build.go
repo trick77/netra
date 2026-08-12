@@ -351,6 +351,30 @@ func (g *Generator) netstat(h *netrav1.HostSample, ts time.Time, cpu float64) {
 	h.Ip6ReasmFailsPerS = proto.Float64(round2(g.sig.daily("ip6.reasmfail", ts, 0.02, 1.5, 1.5)))
 	h.Ip6FragFailsPerS = proto.Float64(round2(g.sig.daily("ip6.fragfail", ts, 0.01, 1.5, 1.5)))
 	h.Ip6FragCreatesPerS = proto.Float64(round2(g.sig.daily("ip6.fragcreate", ts, 0.5, 0.9, 0.7)))
+
+	// Memory pressure. Kept low and bursty: a host that majors-faults
+	// constantly is not the interesting default, and a flat line would make
+	// the panel look broken rather than quiet.
+	h.PgmajfaultPerS = proto.Float64(round2(g.sig.daily("vm.majfault", ts, 1.2, 1.4, 1.6)))
+	h.PswpinPerS = proto.Float64(round2(g.sig.daily("vm.swpin", ts, 0.05, 1.6, 1.8)))
+	h.PswpoutPerS = proto.Float64(round2(g.sig.daily("vm.swpout", ts, 0.03, 1.6, 1.8)))
+	// Monotonic and almost always zero: an OOM kill is an event, not a level.
+	h.OomKillTotal = proto.Uint64(0)
+
+	// Exhaustion gauges, each well below its ceiling so the ratio the panel
+	// exists to show is legible rather than alarming.
+	h.SocketsUsed = proto.Uint32(uint32(clamp(g.sig.daily("lim.sockets", ts, 240, 0.35, 0.4), 20, 60000)))
+	h.TcpOrphan = proto.Uint32(uint32(clamp(g.sig.daily("lim.orphan", ts, 2, 1.2, 1.2), 0, 1000)))
+	h.TcpTw = proto.Uint32(uint32(clamp(g.sig.daily("lim.tw", ts, 900, 0.6, 0.5), 0, 60000)))
+	h.TcpAlloc = proto.Uint32(uint32(clamp(g.sig.daily("lim.alloc", ts, 160, 0.4, 0.4), 10, 60000)))
+	h.FdUsed = proto.Uint64(uint64(clamp(g.sig.daily("lim.fd", ts, 2200, 0.3, 0.3), 200, 500000)))
+	h.ConntrackCount = proto.Uint32(uint32(clamp(g.sig.daily("lim.ct", ts, 1800, 0.5, 0.5), 0, 200000)))
+
+	// The ceilings are sysctls: constant unless someone changes them.
+	h.FdLimit = proto.Uint64(9223372036854775807)
+	h.ConntrackLimit = proto.Uint32(262144)
+	h.TcpTwLimit = proto.Uint32(131072)
+	h.TcpOrphanLimit = proto.Uint32(65536)
 }
 
 // agentSample is the agent's telemetry about itself. post_latency_ms lags by

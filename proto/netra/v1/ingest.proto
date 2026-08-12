@@ -240,6 +240,14 @@ message HostSample {
   optional uint32 conntrack_count = 70;
   optional uint32 conntrack_limit = 71;
 
+  // The ceilings for the socket gauges above, so each has something to be
+  // read against. tcp_tw pinned at tcp_max_tw_buckets means the kernel is
+  // silently dropping TIME_WAIT sockets, and tcp_orphan at tcp_max_orphans
+  // means it is resetting connections -- neither is visible in any other TCP
+  // counter, and neither is answerable from the gauge alone.
+  optional uint32 tcp_tw_limit = 72;
+  optional uint32 tcp_orphan_limit = 73;
+
   // The agent's own telemetry for this scrape. Singular, not repeated: it is
   // 1:1 with (host_id, ts), so nesting it here means it rides the existing
   // ring buffer, partial drain and backfill paths unchanged, and the hub
