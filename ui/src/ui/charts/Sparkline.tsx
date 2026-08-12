@@ -3,6 +3,7 @@
 // geometry.ts verbatim -- this component only turns that output into SVG
 // markup and never recomputes or "fixes up" a coordinate itself.
 import { areaPath, dotPath, extent, linePath } from "./geometry";
+import { SPARK_WIDTH } from "./size";
 
 export interface SparklineProps {
   values: (number | null)[];
@@ -28,7 +29,7 @@ export interface SparklineProps {
 
 export function Sparkline({
   values,
-  width = 120,
+  width = SPARK_WIDTH,
   height = 32,
   color = "var(--s1)",
   label = "trend sparkline",

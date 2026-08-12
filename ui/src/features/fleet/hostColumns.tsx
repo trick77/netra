@@ -196,7 +196,15 @@ function DiskCell({ row }: { row: HostRow }) {
   }
   const { mount, pct, others } = row.fullest;
   const label = others > 0 ? `${mount} +${others}` : mount;
-  return <Meter value={pct} max={100} label={label} />;
+  // Meter's own row reserves a fixed 92px for its value, which is sized for
+  // the host page's "108.9 GB of 137.4 GB" and leaves a percentage floating
+  // half a column away from the bar it belongs to. Scoped here rather than
+  // changed in .mrow, which that panel still needs.
+  return (
+    <div className="disk-cell">
+      <Meter value={pct} max={100} label={label} />
+    </div>
+  );
 }
 
 // Uptime under 300s is the most interesting row on the page (a host that

@@ -4,6 +4,7 @@
 // component's only job is to hand it the right `max` and turn its output
 // into SVG paths.
 import { stackBands } from "./geometry";
+import { SPARK_WIDTH } from "./size";
 
 export interface Band {
   name: string;
@@ -55,7 +56,7 @@ function maxRunningTotal(bands: Band[]): number {
 export function StackedSparkline({
   bands,
   max,
-  width = 120,
+  width = SPARK_WIDTH,
   height = 32,
   pad = 2,
   label = "stacked chart",

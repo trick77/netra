@@ -1174,6 +1174,13 @@ svg.spark {
 .mrow:last-child {
   border-bottom: 0;
 }
+/* The fleet's disk cell: a percentage needs nowhere near the 92px the host
+   page's byte counts do, and the fixed column left it stranded away from its
+   own bar. `auto` sizes it to the number it holds. */
+.disk-cell .mrow {
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2);
+}
 .mrow .lab {
   font-size: var(--text-label);
   color: var(--ink-2);

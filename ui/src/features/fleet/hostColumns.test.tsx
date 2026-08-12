@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { stackBands } from "../../ui/charts/geometry";
+import { SPARK_WIDTH } from "../../ui/charts/size";
 import { hostColumns, type HostRow } from "./hostColumns";
 import { ABSENT } from "../../lib/format";
 
@@ -211,7 +212,9 @@ describe("hostColumns", () => {
       ).map((p) => p.getAttribute("d"));
       const expected = stackBands(
         row.mem.map((b) => b.values),
-        120,
+        // The shared sparkline width, not a literal: every list chart reads
+        // it from one constant so a row's cells stay the same length.
+        SPARK_WIDTH,
         32,
         row.mem_total as number,
         2,

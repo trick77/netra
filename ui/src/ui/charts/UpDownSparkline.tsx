@@ -3,6 +3,7 @@
 // independently at its own gaps and never lets one side's null force a gap
 // on the other -- this component only supplies the shared max and colours.
 import { extent, mirrorPaths } from "./geometry";
+import { SPARK_WIDTH } from "./size";
 
 export interface UpDownSparklineProps {
   up: (number | null)[];
@@ -25,7 +26,7 @@ export function UpDownSparkline({
   up,
   down,
   max,
-  width = 120,
+  width = SPARK_WIDTH,
   height = 32,
   pad = 2,
   // Green above the axis, blue below. The convention every traffic graph an
