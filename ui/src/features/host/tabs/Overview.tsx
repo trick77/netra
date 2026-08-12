@@ -26,6 +26,7 @@ import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
+import { Sparkline } from "../../../ui/charts/Sparkline";
 
 /**
  * column() in lib/metrics.ts THROWS for a column the answering tier does
@@ -420,18 +421,34 @@ export function Overview({
         {filesystems.length === 0 ? (
           <p className="note">No filesystem samples in this window.</p>
         ) : (
-          <>
-            <Facts
-              rows={filesystems.map((fs) => [
-                fs.label,
-                `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`,
-              ])}
-            />
+          <div className="fs-list">
+            {filesystems.map((fs) => (
+              <Meter
+                key={fs.label}
+                label={fs.label}
+                // df's Use%: used / (used + free), never used / total. total
+                // includes the root reserve, which is neither in use nor
+                // allocatable, so dividing by it reports a full disk as less
+                // full than df does -- and df's number is the one the
+                // operator has already seen over SSH. Same definition the
+                // fleet's disk column uses, so the two cannot disagree about
+                // one filesystem.
+                value={fs.used}
+                max={
+                  fs.used === null || fs.free === null
+                    ? null
+                    : fs.used + fs.free
+                }
+                formatValue={() =>
+                  `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`
+                }
+              />
+            ))}
             <p className="note">
               Bytes as measured: used and free do not sum to size, and the
               difference is the root reserve.
             </p>
-          </>
+          </div>
         )}
       </Panel>
 
@@ -498,15 +515,39 @@ export function Overview({
         {sensorMetrics === null || sensorMetrics.series.length === 0 ? (
           <p className="note">No sensor readings in this window.</p>
         ) : (
-          <Facts
-            rows={sensorMetrics.series.map((series, index) => {
+          // A temperature is only interesting as a movement. One number says
+          // 48 °C, which a reader cannot judge without knowing whether it has
+          // been 48 all day or climbing for an hour -- so every sensor gets
+          // its recent history beside its reading.
+          <div className="sensor-list">
+            {sensorMetrics.series.map((series, index) => {
+              const name =
+                [series.key.chip, series.key.label].filter(Boolean).join(" ") ||
+                ABSENT;
               const value = latest(sensorMetrics, "temp", index);
-              return [
-                [series.key.chip, series.key.label].filter(Boolean).join(" "),
-                value === null ? ABSENT : `${Math.round(value)} °C`,
-              ];
+              const history = griddedValues(sensorMetrics, index, "temp");
+              return (
+                <div className="sensor-row" key={`${name}-${index}`}>
+                  <span className="lab">{name}</span>
+                  {/* Free-scaled to its own extent, deliberately: these sit
+                      in one list but a CPU package and an NVMe drive do not
+                      share a sensible axis, and a shared one would flatten
+                      every sensor against the hottest. The question here is
+                      "is this one moving", not "which is hottest". */}
+                  <Sparkline
+                    values={history}
+                    width={110}
+                    height={24}
+                    color="var(--s7)"
+                    label={`${name} temperature trend`}
+                  />
+                  <span className="val">
+                    {value === null ? ABSENT : `${Math.round(value)} °C`}
+                  </span>
+                </div>
+              );
             })}
-          />
+          </div>
         )}
       </Panel>
 

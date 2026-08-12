@@ -1189,6 +1189,42 @@ svg.spark {
   grid-template-columns: 1fr auto;
   gap: var(--space-2);
 }
+/* The host page's filesystem list. Every mount carries a bar, not just the
+   fullest one: a card that lists six filesystems as text makes a reader
+   compare six pairs of numbers to find the one in trouble, which is the
+   comparison a bar does at a glance. The value column sizes to its text --
+   "331.7 MB used · 737.8 MB free · 1.1 GB size" does not fit 92px. */
+.fs-list .mrow {
+  grid-template-columns: 1fr auto;
+  gap: var(--space-3);
+}
+
+/* Temperature rows: name, trend, reading. The sparkline sits between the two
+   because it is the reason the row is worth a line -- a number alone cannot
+   say whether 48 °C is steady or climbing. */
+.sensor-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.sensor-row:last-child {
+  border-bottom: 0;
+}
+.sensor-row .lab {
+  font-size: var(--text-label);
+  color: var(--ink-2);
+}
+.sensor-row .val {
+  font-size: var(--text-label);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 4ch;
+}
+
 /* Uptime reads as the traffic cell's rates do -- same size, and --muted
    rather than --ink-2: it inherited the table body's own type, which made
    "37 d 6 h" the loudest thing in a row whose point is the charts. An uptime
