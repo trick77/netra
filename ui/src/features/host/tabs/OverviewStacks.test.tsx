@@ -133,6 +133,41 @@ describe("Overview processor stack", () => {
     ).toHaveLength(1);
   });
 
+  // stackBands() breaks every band at any index where ANY series is null,
+  // because a running total is undefined there. A bare metal host reports
+  // cpu_steal as NULL in every bucket -- correctly, it has no hypervisor to
+  // steal from -- and that one empty series blanked the whole chart: a legend
+  // naming four states above an empty box. An all-null band is not a band.
+  it("still draws the breakdown when one state is absent on this host", () => {
+    const { container } = renderOverview({
+      hostMetrics: response({
+        family: "host",
+        columns: [
+          "cpu_total",
+          "cpu_user",
+          "cpu_system",
+          "cpu_iowait",
+          "cpu_steal",
+        ],
+        series: [
+          {
+            key: {},
+            points: [
+              [t0, 30, 20, 8, 1, null],
+              [t0 + 60_000, 32, 22, 8, 1, null],
+            ],
+          },
+        ],
+      }),
+    });
+
+    const bands = container.querySelectorAll(
+      '[aria-label="CPU time breakdown chart"] path[data-band]',
+    );
+    expect(bands).toHaveLength(3);
+    for (const b of bands) expect(b.getAttribute("d")).not.toBe("");
+  });
+
   // The breakdown is not displaced by the per-core stack: "which core" and
   // "doing what" are different questions, and a reader wants both.
   it("keeps the CPU time breakdown as its own panel", () => {

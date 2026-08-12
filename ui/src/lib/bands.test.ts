@@ -116,6 +116,38 @@ describe("memoryBands", () => {
     expect(bands[0]!.values[0]).toBe(400);
   });
 
+  // The column exists on the family whether or not a given host uses ZFS, so
+  // a machine without it reports mem_zfs_arc as NULL in every bucket. Treating
+  // that as "unknown" rather than "none" made the remainder null throughout and
+  // silently deleted the used band from every non-ZFS host -- three of the four
+  // simulator archetypes, and it looked exactly like a host that had reported
+  // nothing.
+  it("treats an absent subsystem as none, not as unknown", () => {
+    const noZfs = response({
+      columns: [
+        "mem_total",
+        "mem_free",
+        "mem_buffers",
+        "mem_cached",
+        "mem_shared",
+        "mem_zfs_arc",
+      ],
+      series: [
+        {
+          key: {},
+          points: [[t0, 1000, 200, 30, 100, 50, null]],
+        },
+      ],
+    });
+
+    const bands = memoryBands(noZfs);
+    const used = bands.find((b) => b.name === "used");
+
+    expect(used).toBeDefined();
+    expect(used!.values[0]).toBe(620);
+    expect(bands.map((b) => b.name)).not.toContain("ARC");
+  });
+
   it("drops the ARC band on a host that has no ZFS", () => {
     const noZfs = response({
       columns: ["mem_total", "mem_free", "mem_buffers"],

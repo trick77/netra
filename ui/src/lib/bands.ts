@@ -65,10 +65,24 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
   const used: (number | null)[] = [];
   for (let i = 0; i < width; i++) {
     const t = total[i] ?? null;
-    const parts = sumAt(i, [free, buffers, cached, shared, arc]);
-    // A null anywhere makes the remainder unknowable rather than smaller.
-    // Drawing zero there would claim the host had no memory in use.
-    used.push(t === null || parts === null ? null : Math.max(0, t - parts));
+    const f = free[i] ?? null;
+    // mem_total and mem_free are reported by every kernel, so a null in
+    // either means the host reported nothing for this bucket and the
+    // remainder is genuinely unknowable. Drawing zero there would claim the
+    // host had no memory in use.
+    if (t === null || f === null) {
+      used.push(null);
+      continue;
+    }
+    // The rest are subsystems a host may simply not have. A machine without
+    // ZFS reports mem_zfs_arc as NULL for every bucket -- the column exists
+    // on the family whether or not the host uses it -- and treating that as
+    // "unknown" rather than "none" made the remainder null on every non-ZFS
+    // host, which silently deleted the used band from three hosts out of
+    // four. An absent subsystem contributes nothing; it does not make the
+    // arithmetic unanswerable.
+    const parts = sumOptional(i, [buffers, cached, shared, arc]);
+    used.push(Math.max(0, t - f - parts));
   }
 
   // Bottom to top: the resident pages first, then the caches, so the
@@ -137,18 +151,20 @@ function add(a: (number | null)[], b: (number | null)[]): (number | null)[] {
 }
 
 /**
- * The total at one index across several series, or null if any of them is
- * unknown there. An absent series contributes nothing, which is different
- * from a null: a host with no ZFS has no ARC to add, while a host whose
- * sample is missing makes the whole sum unknowable.
+ * The total at one index across series that may legitimately be absent.
+ *
+ * A null contributes nothing rather than poisoning the sum. That is right
+ * here and would be wrong for a required column: these are subsystems a host
+ * may not have (no ZFS, no tmpfs worth reporting), and the columns exist on
+ * the family regardless of whether any given host uses them. The caller
+ * checks mem_total and mem_free separately, and those going null is what
+ * marks a bucket the host did not report at all.
  */
-function sumAt(i: number, series: (number | null)[][]): number | null {
+function sumOptional(i: number, series: (number | null)[][]): number {
   let total = 0;
   for (const s of series) {
     if (s.length === 0) continue;
-    const v = s[i] ?? null;
-    if (v === null) return null;
-    total += v;
+    total += s[i] ?? 0;
   }
   return total;
 }

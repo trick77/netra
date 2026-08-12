@@ -347,6 +347,13 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
           ? raw.map((v) => (v === null ? null : v / res.series.length))
           : raw;
       if (values.length === 0) continue;
+      // A band with no readings at all is dropped rather than drawn empty.
+      // On a STACKED panel this is not cosmetic: stackBands() breaks every
+      // band at any index where any series is null, so one all-null series
+      // blanks the entire chart -- which is what a bare metal host's
+      // cpu_steal (correctly NULL, there is no hypervisor) did to the CPU
+      // time breakdown.
+      if (spec.stacked && values.every((v) => v === null)) continue;
       bands.push({
         name: prefix ? `${prefix} ${label}` : label,
         color: SERIES_VARS[bands.length % SERIES_VARS.length],

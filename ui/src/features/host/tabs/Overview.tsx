@@ -241,7 +241,13 @@ export function Overview({
     // On the window grid, so an outage is a hole in the silhouette rather
     // than a line drawn straight across it.
     values: griddedValues(hostMetrics, 0, band.base),
-  })).filter((band) => band.values.length > 0);
+    // An all-null band is not a band, and in a STACK it is actively
+    // destructive: stackBands() breaks every band at any index where any
+    // series is null, because a running total is undefined there. A bare
+    // metal host reports cpu_steal as NULL in every bucket -- correctly, it
+    // has no hypervisor to steal from -- and that one empty series erased
+    // the whole chart, legend still listing four states above a blank box.
+  })).filter((band) => band.values.some((v) => v !== null));
 
   // The headline chart is the per-core stack, the same one the fleet row for
   // this host draws -- the two must not disagree about the same machine.

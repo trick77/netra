@@ -103,6 +103,12 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
     <StackedSparkline
       bands={row.cpu}
       max={CPU_PERCENT_MAX}
+      // No legend once the bands are cores. A 32-thread host listed all
+      // thirty-two of them under a 32px chart, which was taller than every
+      // other cell in the row put together. Below that a handful of bands
+      // still name themselves, which is what the mode breakdown and the
+      // cpu_total fallback want.
+      legend={row.cpu.length <= 6}
       label={`CPU trend, ${rangeLabel(range)}`}
     />
   );
