@@ -74,13 +74,7 @@ const SERIES_VARS = [
 ];
 
 type Source =
-  | "host"
-  | "net"
-  | "diskIo"
-  | "filesystem"
-  | "collector"
-  | "cpuCore"
-  | "agent";
+  "host" | "net" | "diskIo" | "filesystem" | "collector" | "cpuCore" | "agent";
 
 interface PanelSpec {
   title: string;
@@ -220,8 +214,8 @@ const NETWORK: PanelSpec[] = [
     unit: "ms",
     source: "agent",
     bases: [
-      { base: "hub_connect_ms", label: "handshake" },
-      { base: "hub_connect_max_ms", label: "handshake peak" },
+      { base: "hub_connect_us", label: "handshake" },
+      { base: "hub_connect_max_us", label: "handshake peak" },
       { base: "post_latency_ms", label: "round trip" },
     ],
     fmt: count,

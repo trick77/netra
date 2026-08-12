@@ -13,7 +13,7 @@ import (
 
 // The handshake gauges and the round trip are different measurements and must
 // stay separately storable: post_latency_ms includes TLS, the hub's handling
-// and the Postgres write, while hub_connect_ms stops at SYN-ACK.
+// and the Postgres write, while hub_connect_us stops at SYN-ACK.
 //
 // The NULL case is the one that matters. An unreachable hub has no round-trip
 // time AND no handshake time, but it does have failures -- so a row where the
@@ -45,17 +45,17 @@ func TestIntegrationHubLatencyStoresGaugesAndCounterSeparately(t *testing.T) {
 		failures   *int64
 	)
 	if err := s.Pool().QueryRow(ctx,
-		`SELECT hub_connect_ms, hub_connect_max_ms, hub_connect_failures_total
+		`SELECT hub_connect_us, hub_connect_max_us, hub_connect_failures_total
 		   FROM agent_samples WHERE host_id = $1`,
 		hostID).Scan(&connectMs, &connectMax, &failures); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 
 	if connectMs != nil {
-		t.Errorf("hub_connect_ms = %d during an outage; want NULL", *connectMs)
+		t.Errorf("hub_connect_us = %d during an outage; want NULL", *connectMs)
 	}
 	if connectMax != nil {
-		t.Errorf("hub_connect_max_ms = %d during an outage; want NULL", *connectMax)
+		t.Errorf("hub_connect_max_us = %d during an outage; want NULL", *connectMax)
 	}
 	if failures == nil {
 		t.Fatal("hub_connect_failures_total is NULL; nothing would record the outage")
@@ -82,18 +82,18 @@ func TestIntegrationHubLatencyReachesBothRollupTiers(t *testing.T) {
 	// one row per series the tier's avg, max and last are all the same number.
 	samples := []*netrav1.HostSample{
 		{TsMs: base.UnixMilli(), Agent: &netrav1.AgentSample{
-			HubConnectMs:            proto.Uint32(10),
-			HubConnectMaxMs:         proto.Uint32(30),
+			HubConnectUs:            proto.Uint32(10),
+			HubConnectMaxUs:         proto.Uint32(30),
 			HubConnectFailuresTotal: proto.Uint64(1),
 		}},
 		{TsMs: base.Add(time.Minute).UnixMilli(), Agent: &netrav1.AgentSample{
-			HubConnectMs:            proto.Uint32(50),
-			HubConnectMaxMs:         proto.Uint32(90),
+			HubConnectUs:            proto.Uint32(50),
+			HubConnectMaxUs:         proto.Uint32(90),
 			HubConnectFailuresTotal: proto.Uint64(2),
 		}},
 		{TsMs: base.Add(7 * time.Minute).UnixMilli(), Agent: &netrav1.AgentSample{
-			HubConnectMs:            proto.Uint32(20),
-			HubConnectMaxMs:         proto.Uint32(40),
+			HubConnectUs:            proto.Uint32(20),
+			HubConnectMaxUs:         proto.Uint32(40),
 			HubConnectFailuresTotal: proto.Uint64(4),
 		}},
 	}
@@ -104,16 +104,16 @@ func TestIntegrationHubLatencyReachesBothRollupTiers(t *testing.T) {
 	refreshTiers(t, s, "agent_samples")
 
 	// 5m: first bucket averages 10 and 50 to 30, peaks at 50.
-	assertHostTier(t, s, "agent_samples_5m", "hub_connect_ms_avg", hostID, []float64{30, 20})
-	assertHostTier(t, s, "agent_samples_5m", "hub_connect_ms_max", hostID, []float64{50, 20})
-	assertHostTier(t, s, "agent_samples_5m", "hub_connect_max_ms_max", hostID, []float64{90, 40})
+	assertHostTier(t, s, "agent_samples_5m", "hub_connect_us_avg", hostID, []float64{30, 20})
+	assertHostTier(t, s, "agent_samples_5m", "hub_connect_us_max", hostID, []float64{50, 20})
+	assertHostTier(t, s, "agent_samples_5m", "hub_connect_max_us_max", hostID, []float64{90, 40})
 	assertHostTier(t, s, "agent_samples_5m", "hub_connect_failures_total", hostID, []float64{2, 4})
 
 	// 1h: avg of avgs (30, 20) is 25, max of maxes is 50. max(x_avg) here
 	// would report 30 -- the busiest five minutes -- as an instantaneous peak.
-	assertHostTier(t, s, "agent_samples_1h", "hub_connect_ms_avg", hostID, []float64{25})
-	assertHostTier(t, s, "agent_samples_1h", "hub_connect_ms_max", hostID, []float64{50})
-	assertHostTier(t, s, "agent_samples_1h", "hub_connect_max_ms_max", hostID, []float64{90})
+	assertHostTier(t, s, "agent_samples_1h", "hub_connect_us_avg", hostID, []float64{25})
+	assertHostTier(t, s, "agent_samples_1h", "hub_connect_us_max", hostID, []float64{50})
+	assertHostTier(t, s, "agent_samples_1h", "hub_connect_max_us_max", hostID, []float64{90})
 	// A monotonic counter takes the largest, which is the value at the end.
 	assertHostTier(t, s, "agent_samples_1h", "hub_connect_failures_total", hostID, []float64{4})
 }

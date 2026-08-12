@@ -130,7 +130,7 @@ type Client struct {
 
 	// hubConnectFailures counts handshakes to the hub that did not complete.
 	// Cumulative for the agent's life, like postFailures: it is what makes an
-	// outage visible, since hub_connect_ms stays NULL through one rather than
+	// outage visible, since hub_connect_us stays NULL through one rather than
 	// spiking to the probe timeout.
 	hubConnectFailures uint64
 
@@ -402,8 +402,8 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 	// sample it measured. Both gauges stay unset when no handshake completed,
 	// and the failure counter is what carries the outage.
 	if probe := c.probeHub(ctx); probe.probed {
-		agent.HubConnectMs = ptr(probe.minMs)
-		agent.HubConnectMaxMs = ptr(probe.maxMs)
+		agent.HubConnectUs = ptr(probe.minUs)
+		agent.HubConnectMaxUs = ptr(probe.maxUs)
 	}
 	agent.HubConnectFailuresTotal = ptr(c.hubConnectFailures)
 	sample.Agent = agent

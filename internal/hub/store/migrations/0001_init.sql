@@ -518,8 +518,8 @@ CREATE TABLE IF NOT EXISTS agent_samples (
     -- write, so a slow database inflates it exactly like a slow network
     -- does; these stop at SYN-ACK. Both NULL when no handshake completed --
     -- hub_connect_failures_total is what records the outage.
-    hub_connect_ms       INTEGER,
-    hub_connect_max_ms   INTEGER,
+    hub_connect_us       INTEGER,
+    hub_connect_max_us   INTEGER,
     hub_connect_failures_total BIGINT,
     PRIMARY KEY (host_id, ts)
 );
@@ -541,13 +541,13 @@ SELECT host_id,
        -- averaging it would understate what was actually dropped.
        max(buffer_dropped_total) AS buffer_dropped_total,
        max(post_failures_total)  AS post_failures_total,
-       avg(hub_connect_ms)     AS hub_connect_ms_avg,
+       avg(hub_connect_us)     AS hub_connect_us_avg,
        -- The peak of the per-scrape MINIMA. Not a second-order minimum: the
        -- agent already took the best of three handshakes, so this bucket's
        -- max is the worst the path looked at its best within it.
-       max(hub_connect_ms)     AS hub_connect_ms_max,
-       avg(hub_connect_max_ms) AS hub_connect_max_ms_avg,
-       max(hub_connect_max_ms) AS hub_connect_max_ms_max,
+       max(hub_connect_us)     AS hub_connect_us_max,
+       avg(hub_connect_max_us) AS hub_connect_max_us_avg,
+       max(hub_connect_max_us) AS hub_connect_max_us_max,
        max(hub_connect_failures_total) AS hub_connect_failures_total
   FROM agent_samples
  GROUP BY host_id, bucket
@@ -567,10 +567,10 @@ SELECT host_id,
        max(buffer_depth_max)       AS buffer_depth_max,
        max(buffer_dropped_total)   AS buffer_dropped_total,
        max(post_failures_total)    AS post_failures_total,
-       avg(hub_connect_ms_avg)     AS hub_connect_ms_avg,
-       max(hub_connect_ms_max)     AS hub_connect_ms_max,
-       avg(hub_connect_max_ms_avg) AS hub_connect_max_ms_avg,
-       max(hub_connect_max_ms_max) AS hub_connect_max_ms_max,
+       avg(hub_connect_us_avg)     AS hub_connect_us_avg,
+       max(hub_connect_us_max)     AS hub_connect_us_max,
+       avg(hub_connect_max_us_avg) AS hub_connect_max_us_avg,
+       max(hub_connect_max_us_max) AS hub_connect_max_us_max,
        max(hub_connect_failures_total) AS hub_connect_failures_total
   FROM agent_samples_5m
  GROUP BY host_id, time_bucket(INTERVAL '1 hour', bucket)

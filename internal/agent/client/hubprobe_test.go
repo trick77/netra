@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http/httptest"
 	"testing"
@@ -41,14 +42,14 @@ func TestHubConnectIsMeasuredOnTheFirstScrape(t *testing.T) {
 
 	agent := c.ScrapeOnce(context.Background()).GetAgent()
 
-	if agent.HubConnectMs == nil {
-		t.Fatal("hub_connect_ms unset on the first scrape; the probe runs inside the scrape and must not lag it")
+	if agent.HubConnectUs == nil {
+		t.Fatal("hub_connect_us unset on the first scrape; the probe runs inside the scrape and must not lag it")
 	}
-	if agent.HubConnectMaxMs == nil {
-		t.Fatal("hub_connect_max_ms unset")
+	if agent.HubConnectMaxUs == nil {
+		t.Fatal("hub_connect_max_us unset")
 	}
-	if agent.GetHubConnectMaxMs() < agent.GetHubConnectMs() {
-		t.Errorf("max %d < min %d", agent.GetHubConnectMaxMs(), agent.GetHubConnectMs())
+	if agent.GetHubConnectMaxUs() < agent.GetHubConnectUs() {
+		t.Errorf("max %d < min %d", agent.GetHubConnectMaxUs(), agent.GetHubConnectUs())
 	}
 	// Contrast: the round trip genuinely cannot be known yet.
 	if agent.PostLatencyMs != nil {
@@ -68,11 +69,11 @@ func TestHubConnectUnsetNotZeroWhenTheHubIsUnreachable(t *testing.T) {
 
 	agent := c.ScrapeOnce(context.Background()).GetAgent()
 
-	if agent.HubConnectMs != nil {
-		t.Errorf("hub_connect_ms = %d for an unreachable hub; want unset", agent.GetHubConnectMs())
+	if agent.HubConnectUs != nil {
+		t.Errorf("hub_connect_us = %d for an unreachable hub; want unset", agent.GetHubConnectUs())
 	}
-	if agent.HubConnectMaxMs != nil {
-		t.Errorf("hub_connect_max_ms = %d for an unreachable hub; want unset", agent.GetHubConnectMaxMs())
+	if agent.HubConnectMaxUs != nil {
+		t.Errorf("hub_connect_max_us = %d for an unreachable hub; want unset", agent.GetHubConnectMaxUs())
 	}
 	// The counter is what makes the outage visible while the gauge is NULL.
 	if got := agent.GetHubConnectFailuresTotal(); got == 0 {
@@ -121,6 +122,94 @@ func TestHubDialAddressDefaultsThePortFromTheScheme(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%q: addr = %q, want %q", tc.url, got, tc.want)
 		}
+	}
+}
+
+// Microseconds, not milliseconds.
+//
+// A hub on the same LAN or in the same datacentre answers a SYN in 200-900us.
+// As milliseconds that truncates to 0 on every scrape -- the exact value the
+// schema calls impossible, since it claims an instantaneous connection -- and
+// min and max would both be 0, so the jitter that is half the reason for
+// three handshakes could never be seen. A loopback hub is the extreme case of
+// exactly that, so it is what this asserts against.
+func TestHubConnectHasSubMillisecondResolution(t *testing.T) {
+	srv := httptest.NewServer((&recorder{}).handler(t))
+	defer srv.Close()
+
+	c := probeClient(t, srv.URL)
+
+	agent := c.ScrapeOnce(context.Background()).GetAgent()
+
+	if agent.HubConnectUs == nil {
+		t.Fatal("hub_connect_us unset against a live loopback hub")
+	}
+	if got := agent.GetHubConnectUs(); got == 0 {
+		t.Error("hub_connect_us = 0 for a completed handshake; the unit cannot represent the latency it is measuring")
+	}
+}
+
+// A hub URL that cannot be resolved is a failure to REACH the hub, not an
+// absence of measurement. Counting it is what keeps the schema's promise that
+// a NULL gauge always has a rising counter beside it -- without it a resolver
+// outage reads as "never probed", which is what the proto comment says it is
+// not.
+func TestHubConnectCountsAResolverFailureAsAFailure(t *testing.T) {
+	c := probeClient(t, "http://hub.invalid:9999")
+	// A resolver pointed at a black hole on a port nothing answers: every
+	// lookup fails rather than returning NXDOMAIN quickly.
+	c.SetResolverForTest(&net.Resolver{
+		PreferGo: true,
+		Dial: func(context.Context, string, string) (net.Conn, error) {
+			return nil, errors.New("resolver unavailable")
+		},
+	})
+
+	agent := c.ScrapeOnce(context.Background()).GetAgent()
+
+	if agent.HubConnectUs != nil {
+		t.Errorf("hub_connect_us = %d with an unresolvable hub; want unset", agent.GetHubConnectUs())
+	}
+	if got := agent.GetHubConnectFailuresTotal(); got == 0 {
+		t.Error("hub_connect_failures_total = 0 after a resolver failure; the outage would be invisible")
+	}
+}
+
+// EVERY resolved address is a candidate, not the first.
+//
+// Pinning ips[0] made the probe disagree with the posts, which dial the
+// hostname and get the standard multi-address fallback. On a dual-stack host
+// whose IPv6 egress to the hub is blocked, every handshake would fail forever
+// -- gauges NULL, failures climbing -- while the POSTs succeeded over IPv4. A
+// permanent false outage against a healthy hub is worse than no measurement.
+func TestHubProbeFallsBackToTheSecondAddress(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	c := probeClient(t, "http://127.0.0.1:1")
+
+	// First address refuses immediately -- the shape of a family whose egress
+	// to the hub is blocked. Second is the live listener.
+	dead := "127.0.0.1:1"
+	alive := ln.Addr().String()
+
+	if _, ok := client.HandshakeForTest(c, context.Background(), []string{dead}); ok {
+		t.Fatal("a refused address reported a successful handshake")
+	}
+	if _, ok := client.HandshakeForTest(c, context.Background(), []string{dead, alive}); !ok {
+		t.Error("no fallback past a dead first address; a dual-stack host with one family blocked would report a permanent false outage")
 	}
 }
 

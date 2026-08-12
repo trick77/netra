@@ -203,7 +203,7 @@ func (s *Store) InsertAgentSamples(ctx context.Context, hostID int32, samples []
 			uptime_s, rss_bytes, goroutines,
 			scrape_duration_ms, buffer_depth,
 			buffer_dropped_total, post_failures_total, post_latency_ms,
-			hub_connect_ms, hub_connect_max_ms, hub_connect_failures_total
+			hub_connect_us, hub_connect_max_us, hub_connect_failures_total
 		) VALUES (
 			$1, $2,
 			$3, $4, $5,
@@ -225,7 +225,7 @@ func (s *Store) InsertAgentSamples(ctx context.Context, hostID int32, samples []
 			u32(a.ScrapeDurationMs), u32(a.BufferDepth),
 			u64(a.BufferDroppedTotal), u64(a.PostFailuresTotal),
 			u32(a.PostLatencyMs),
-			u32(a.HubConnectMs), u32(a.HubConnectMaxMs), u64(a.HubConnectFailuresTotal),
+			u32(a.HubConnectUs), u32(a.HubConnectMaxUs), u64(a.HubConnectFailuresTotal),
 		)
 	}
 	if batch.Len() == 0 {

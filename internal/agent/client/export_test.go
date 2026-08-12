@@ -1,6 +1,8 @@
 package client
 
 import (
+	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -49,3 +51,17 @@ func AppendFamiliesForTest(s *buffer.Scrape, res *collector.Result) { appendFami
 
 // HubDialAddressForTest exposes the hub URL -> host:port derivation.
 func HubDialAddressForTest(raw string) (string, bool) { return hubDialAddress(raw) }
+
+// SetResolverForTest points the probe's name lookup at a resolver the test
+// controls, so the resolution path can be exercised without touching DNS.
+//
+// Every probe test used a literal 127.0.0.1 URL, which short-circuits
+// LookupIPAddr entirely -- so the whole resolve-then-dial path, and this seam
+// with it, went untested and a resolver failure's accounting was wrong.
+func (c *Client) SetResolverForTest(r *net.Resolver) { c.resolver = r }
+
+// HandshakeForTest exposes one timed connect over a candidate address list,
+// so the multi-address fallback can be driven without a DNS server.
+func HandshakeForTest(c *Client, ctx context.Context, addrs []string) (time.Duration, bool) {
+	return c.handshake(ctx, addrs)
+}

@@ -23,10 +23,19 @@ const hubProbes = 3
 // 30s timeout and is what decides whether the hub is reachable.
 const hubProbeTimeout = 5 * time.Second
 
+// hubResolveTimeout bounds the name lookup.
+//
+// It needs its own bound because the probe runs on the goroutine that owns
+// the ring and the flush, and LookupIPAddr has no deadline of its own beyond
+// the context. Against a black-holed resolver the system's full retry budget
+// -- tens of seconds -- would stall the scrape loop, so a probe would have
+// cost the agent the very samples it exists to describe.
+const hubResolveTimeout = 2 * time.Second
+
 // hubLatency is one scrape's measurement of the network path to the hub.
 type hubLatency struct {
-	minMs  uint32
-	maxMs  uint32
+	minUs  uint32
+	maxUs  uint32
 	probed bool
 }
 
@@ -50,27 +59,15 @@ type hubLatency struct {
 // already carries it, observed on real traffic rather than inferred from
 // synthetic probes, at no extra packets.
 func (c *Client) probeHub(ctx context.Context) hubLatency {
-	addr, ok := hubDialAddress(c.cfg.HubURL)
+	addrs, ok := c.hubTargets(ctx)
 	if !ok {
+		// A hub URL that cannot be parsed or resolved is a failure to reach
+		// it, not an absence of measurement. Counting it is what keeps the
+		// schema's promise that a NULL gauge always has a rising counter
+		// beside it -- otherwise a resolver outage reads as "never probed".
+		c.hubConnectFailures++
 		return hubLatency{}
 	}
-
-	// Resolved OUTSIDE the timed section. DNS is a different fault with a
-	// different fix, and folding a cold-cache lookup into the handshake would
-	// report a 40ms path as 240ms once every TTL.
-	resolver := c.resolver
-	if resolver == nil {
-		resolver = net.DefaultResolver
-	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return hubLatency{}
-	}
-	ips, err := resolver.LookupIPAddr(ctx, host)
-	if err != nil || len(ips) == 0 {
-		return hubLatency{}
-	}
-	resolved := net.JoinHostPort(ips[0].IP.String(), port)
 
 	var out hubLatency
 	for range hubProbes {
@@ -78,7 +75,7 @@ func (c *Client) probeHub(ctx context.Context) hubLatency {
 			break
 		}
 
-		rtt, ok := c.handshake(ctx, resolved)
+		rtt, ok := c.handshake(ctx, addrs)
 		if !ok {
 			// A failed handshake is not a slow one. Recording it as a latency
 			// would put a 5000ms spike on the chart at the moment the link
@@ -87,12 +84,15 @@ func (c *Client) probeHub(ctx context.Context) hubLatency {
 			continue
 		}
 
-		ms := uint32(rtt.Milliseconds())
-		if !out.probed || ms < out.minMs {
-			out.minMs = ms
+		// Microseconds. A hub on the same LAN answers in 200-900us, which as
+		// milliseconds truncates to the 0 the schema calls impossible -- and
+		// would make min and max identical, so jitter could never be seen.
+		us := uint32(rtt.Microseconds())
+		if !out.probed || us < out.minUs {
+			out.minUs = us
 		}
-		if !out.probed || ms > out.maxMs {
-			out.maxMs = ms
+		if !out.probed || us > out.maxUs {
+			out.maxUs = us
 		}
 		out.probed = true
 	}
@@ -100,21 +100,74 @@ func (c *Client) probeHub(ctx context.Context) hubLatency {
 	return out
 }
 
+// hubTargets resolves the hub to every address it answers on.
+//
+// Resolution happens OUTSIDE the timed section: DNS is a different fault with
+// a different fix, and folding a cold-cache lookup into the handshake would
+// report a 40ms path as 240ms once every TTL.
+//
+// EVERY address is returned, not the first. Pinning ips[0] made the probe
+// disagree with the posts, which dial the hostname and get the standard
+// multi-address fallback: on a dual-stack host whose IPv6 egress to the hub
+// is blocked, every handshake would fail forever -- gauges NULL and the
+// failure counter climbing -- while the POSTs succeeded over IPv4. A
+// permanent false outage against a healthy hub is worse than no measurement.
+func (c *Client) hubTargets(ctx context.Context) ([]string, bool) {
+	addr, ok := hubDialAddress(c.cfg.HubURL)
+	if !ok {
+		return nil, false
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, false
+	}
+
+	resolver := c.resolver
+	if resolver == nil {
+		resolver = net.DefaultResolver
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, hubResolveTimeout)
+	defer cancel()
+
+	ips, err := resolver.LookupIPAddr(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return nil, false
+	}
+
+	out := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		out = append(out, net.JoinHostPort(ip.IP.String(), port))
+	}
+	return out, true
+}
+
 // handshake times one TCP connect and closes it immediately.
-func (c *Client) handshake(ctx context.Context, addr string) (time.Duration, bool) {
+//
+// It tries each address in turn and times only the attempt that succeeded, so
+// a blocked address family costs the measurement nothing but does not corrupt
+// it either.
+func (c *Client) handshake(ctx context.Context, addrs []string) (time.Duration, bool) {
 	dialer := net.Dialer{Timeout: hubProbeTimeout}
 
-	start := time.Now()
-	conn, err := dialer.DialContext(ctx, "tcp", addr)
-	rtt := time.Since(start)
-	if err != nil {
-		return 0, false
-	}
-	// Closed at once. One short-lived connection per host per minute is
-	// nothing, but left to accumulate it would not be.
-	_ = conn.Close()
+	for _, addr := range addrs {
+		if ctx.Err() != nil {
+			return 0, false
+		}
 
-	return rtt, true
+		start := time.Now()
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
+		rtt := time.Since(start)
+		if err != nil {
+			continue
+		}
+		// Closed at once. One short-lived connection per host per minute is
+		// nothing, but left to accumulate it would not be.
+		_ = conn.Close()
+
+		return rtt, true
+	}
+	return 0, false
 }
 
 // hubDialAddress turns the hub URL into a host:port, defaulting the port from

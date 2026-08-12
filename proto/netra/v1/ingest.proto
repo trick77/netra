@@ -329,12 +329,20 @@ message AgentSample {
   // path RTT, being the sample least contaminated by queuing, and the spread
   // to the maximum is jitter.
   //
+  // MICROSECONDS, not milliseconds, and that is not premature precision. A
+  // hub on the same LAN or in the same datacentre answers in 200-900us, which
+  // truncates to a millisecond value of 0 on every scrape -- the exact number
+  // the schema declares impossible, since it would claim an instantaneous
+  // connection. Worse, min and max would both be 0, so the jitter that is
+  // half the reason for three handshakes could never be seen. Rounding does
+  // not fix it; only resolution does.
+  //
   // Unlike post_latency_ms these do NOT lag a scrape -- the probe runs inside
   // the scrape it is reported with. Both are unset, never zeroed, when no
   // handshake completed: an unreachable hub has no round-trip time, and
   // hub_connect_failures_total is what says so.
-  optional uint32 hub_connect_ms = 9;
-  optional uint32 hub_connect_max_ms = 10;
+  optional uint32 hub_connect_us = 9;
+  optional uint32 hub_connect_max_us = 10;
   optional uint64 hub_connect_failures_total = 11;
 }
 
