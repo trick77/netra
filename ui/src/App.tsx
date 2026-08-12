@@ -445,6 +445,7 @@ function ContainerScreen({
     <ContainerPage
       container={container}
       host={{ id: poll.data.host.id, hostname: poll.data.host.hostname }}
+      containerNetwork={poll.data.host.capabilities?.container_network}
       metrics={poll.data.metrics as MetricsResponse}
       range={range}
       onRangeChange={(next: Range) =>

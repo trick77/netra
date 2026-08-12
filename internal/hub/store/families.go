@@ -592,9 +592,18 @@ func (s *Store) UpsertHostAddresses(ctx context.Context, hostID int32, rows []*n
 		return 0, nil
 	}
 
+	// NULLIF on vrf and description, matching the metadata UPDATE in
+	// ingest.go: proto3 has no absent string, so an interface with no alias
+	// and one whose alias the agent could not read both arrive as "". Stored
+	// verbatim, that '' is a measured empty description rather than an
+	// absent one, and every `?? ABSENT` downstream is dead code -- the host
+	// page rendered a column of blank cells where it meant to say "not
+	// reported". vrf gets the same treatment for the same reason and is
+	// currently '' for every row: sysfs cannot identify a VRF master, so the
+	// addresses collector writes its documented vrfUnknown.
 	const stmt = `
 		INSERT INTO host_addresses (host_id, iface, if_index, address, family, scope, vrf, description)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''))
 		ON CONFLICT (host_id, iface, address) DO UPDATE
 		   SET if_index = EXCLUDED.if_index, scope = EXCLUDED.scope,
 		       vrf = EXCLUDED.vrf, description = EXCLUDED.description,

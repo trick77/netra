@@ -184,6 +184,33 @@ describe("Network", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("192.0.2.10/24")).toBeInTheDocument();
   });
+
+  // The interface alias the agent reports. It was searchable and shown
+  // nowhere, so an operator who had labelled every NIC still got a table of
+  // bare kernel names.
+  it("shows the interface description, and the absent marker when there is none", () => {
+    render(
+      <Network
+        rows={[
+          { ...addresses[0]!, description: "uplink to core-sw1" },
+          { ...addresses[0]!, address: "192.0.2.11/24", description: null },
+        ]}
+      />,
+    );
+    expect(
+      screen.getByRole("columnheader", { name: /description/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("uplink to core-sw1")).toBeInTheDocument();
+  });
+
+  // sysfs cannot identify a VRF master -- drivers/net/vrf.c sets no DEVTYPE
+  // -- so the collector writes its documented vrfUnknown for every interface
+  // on every host. A column structurally incapable of holding a value trains
+  // people to stop reading the table.
+  it("carries no VRF column, which could never hold a value", () => {
+    render(<Network rows={addresses} />);
+    expect(screen.queryByRole("columnheader", { name: /vrf/i })).toBeNull();
+  });
 });
 
 describe("Packages", () => {

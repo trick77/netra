@@ -113,6 +113,13 @@ func rpi5() *Profile {
 		Capabilities: map[string]string{
 			"smart":     "no-device-access",
 			"processes": "namespaced",
+			// The agent runs containerised here without the host's network
+			// namespace, so per-container rx/tx cannot be measured at all.
+			// The container page reads this and says so instead of drawing
+			// an empty traffic chart, which would claim these containers
+			// moved no bytes.
+			"container_network": "no-host-netns",
+			"file_descriptors":  "unavailable",
 		},
 		Packages: packages("arm64", 64),
 	}
@@ -193,6 +200,7 @@ func nvmeVPS() *Profile {
 			"sensors": "absent",
 			"smart":   "no-device-access",
 		},
+		FileMax:  524288,
 		Packages: packages("amd64", 96),
 	}
 }
@@ -222,6 +230,12 @@ func smartBaremetal() *Profile {
 		SwapTotal: 8 * gib,
 		ZFSArc:    24 * gib,
 		Mdraid:    "md0",
+
+		// A file-max someone actually set, rather than the int64 max the
+		// rest of the fleet is left at. Without one host carrying a real
+		// ceiling the descriptor meter is "no limit" everywhere and the
+		// bar the Limits card exists to draw is never drawn.
+		FileMax: 1048576,
 
 		Drives: []DriveSpec{
 			{Device: "sda", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1M0K", PowerOnHours: 21400},
@@ -309,6 +323,23 @@ func smartBaremetal() *Profile {
 		SensorSpec{Chip: "coretemp", Label: "Package id 0", Base: 44, Swing: 22},
 		SensorSpec{Chip: "nvme", Label: "Composite", Base: 38, Swing: 11},
 		SensorSpec{Chip: "acpitz", Label: "temp1", Base: 32, Swing: 6},
+
+		// Bare metal is the only place these exist, and they are the two
+		// hardware failures a temperature cannot show: a stopped fan and a
+		// sagging rail. Base and Swing are in each kind's own unit.
+		//
+		// fan2 stalls. It is the case the whole value_min path is for --
+		// averaged over a five-minute bucket a brief stall still reads as a
+		// healthy fan, so a simulator that never stalls one cannot show
+		// whether the UI would catch a real one.
+		SensorSpec{Chip: "nct6775", Label: "fan1", Kind: "fan", Base: 1180, Swing: 900},
+		SensorSpec{Chip: "nct6775", Label: "fan2", Kind: "fan", Base: 1240, Swing: 860, Stalls: true},
+		SensorSpec{Chip: "nct6775", Label: "fan3", Kind: "fan", Base: 980, Swing: 640},
+		SensorSpec{Chip: "nct6775", Label: "+12V", Kind: "voltage", Base: 12.06, Swing: 0.22},
+		SensorSpec{Chip: "nct6775", Label: "+5V", Kind: "voltage", Base: 5.02, Swing: 0.08},
+		SensorSpec{Chip: "nct6775", Label: "Vcore", Kind: "voltage", Base: 1.19, Swing: 0.06},
+		SensorSpec{Chip: "power_meter", Label: "input", Kind: "power", Base: 78, Swing: 145},
+		SensorSpec{Chip: "power_meter", Label: "rail", Kind: "current", Base: 6.4, Swing: 11.5},
 	)
 	for i := range 16 {
 		p.Sensors = append(p.Sensors, SensorSpec{
@@ -380,6 +411,12 @@ func minimalVPS() *Profile {
 			"sensors":    "absent",
 			"smart":      "no-device-access",
 			"systemd":    "unavailable",
+			// A locked-down container host: /proc/net/nf_conntrack is not
+			// readable and the conntrack module is not loaded, so the
+			// conntrack meter has no reading to show. The capability is the
+			// answer next to it -- without one the empty meter is
+			// indistinguishable from a broken collector.
+			"conntrack": "unavailable",
 		},
 		Packages: packages("x86_64", 48),
 	}

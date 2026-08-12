@@ -43,6 +43,36 @@ export function bytes(n: number | null): string {
 }
 
 /**
+ * A plain count of things -- open descriptors, tracked connections, sockets
+ * -- grouped in threes.
+ *
+ * Deliberately NOT scale(): the exhaustion meters read "48 231 of 262 144",
+ * and rounding those to "48 k of 262 k" throws away the only digits that
+ * distinguish comfortable from nearly-full. These are cardinal counts
+ * against a kernel limit, not magnitudes on a chart axis.
+ *
+ * A narrow no-break space groups the digits, which is unambiguous in every
+ * locale -- a comma is a decimal separator to half of Europe, including
+ * where this is being read.
+ *
+ * Named cardinal rather than count because Graphs.tsx already has a local
+ * count(): a chart-tick formatter that rounds to two decimals. Two
+ * functions of that name with different rules is how a caller reaches for
+ * the wrong one, so the second spelling says what it is instead.
+ */
+export function cardinal(n: number | null): string {
+  if (n === null) return ABSENT;
+  const sign = n < 0 ? "-" : "";
+  const digits = Math.round(Math.abs(n)).toString();
+  let out = "";
+  for (let i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 === 0) out += "\u202f";
+    out += digits[i];
+  }
+  return sign + out;
+}
+
+/**
  * Network throughput, in bits per second. Kept as a distinct function from
  * `bytes` on purpose -- storage is bytes, network is bits, and collapsing
  * the two into one "size" formatter is the classic silent monitoring-UI

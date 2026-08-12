@@ -384,17 +384,26 @@ func optionsFor(ts, from, now time.Time) Options {
 		// Only inside the retention window, so months of rows are not
 		// generated for a table that keeps two days of them.
 		Processes: !ts.Before(now.Add(-processRetention)),
-		// Every five minutes: one row per collector per 5m bucket, which is
-		// the least that fills the 5m and 1h tiers at every point in the
-		// window.
+		// Every instant, which is the real agent's cadence: a collector
+		// reports its own health on each scrape.
 		//
-		// It is still the largest table in a full run -- around 1.6M rows,
-		// more than cpu_core_samples -- because a run reports 63 collectors
-		// across the fleet. That is knowingly accepted rather than
-		// overlooked: this table has no rows at all in production, so a
-		// sparser cadence would leave the one dataset it can be developed
-		// against full of gaps.
-		Collectors: ts.Truncate(coarseStep).Equal(ts),
+		// It used to be every five minutes, which is the least that fills
+		// the 5m and 1h tiers -- but the Device availability panel puts the
+		// `ok` column on the WINDOW's grid, so at the 1h and 6h ranges
+		// (raw tier, 60s step) a 5m cadence became one reading per five
+		// nulls: a row of isolated dots on the one panel whose job is
+		// showing a continuous up/down line. Production never looks like
+		// that, so neither should the dataset this is developed against.
+		//
+		// The extra cost is bounded by the raw retention window rather than
+		// the backfill: outside it gridStep is already coarseStep, so those
+		// instants are unchanged, and only the last 7 days go from 5m to
+		// 60s. On a 90-day run that is roughly a third more rows in what is
+		// already the largest table -- around 1.6M, more than
+		// cpu_core_samples, since the fleet reports 63 collectors. Knowingly
+		// accepted: this table has no rows at all in production, so the
+		// simulator is the only place its UI can be developed at all.
+		Collectors: true,
 		// Inventory describes what the host HAS rather than what it
 		// measured, so it goes out daily instead of on every scrape --
 		// re-sending it per minute would rewrite the whole package list a

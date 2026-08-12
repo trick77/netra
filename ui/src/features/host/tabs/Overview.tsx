@@ -7,11 +7,14 @@ import type {
   Container,
   HostDetail,
   MetricsResponse,
+  MetricsSeries,
   Unit,
 } from "../../../lib/api";
 import {
   carriesColumn,
+  counterIncrease,
   griddedValues,
+  hasReading,
   latestValue,
   optionalValues,
 } from "../../../lib/metrics";
@@ -19,6 +22,7 @@ import {
   ABSENT,
   byterate,
   bytes,
+  cardinal,
   duration,
   percent,
   relative,
@@ -144,6 +148,140 @@ const CPU_BANDS: { base: string; name: string; color: string }[] = [
   { base: "cpu_steal", name: "steal", color: "var(--s4)" },
 ];
 
+/**
+ * The sensor family's series, narrowed to the kinds one card is about.
+ *
+ * The original index is carried through because latest(), griddedValues()
+ * and seriesTimestamps() all read by POSITION in the unfiltered series
+ * list -- filtering the array without keeping the index reads another
+ * sensor's readings under this sensor's name.
+ *
+ * kind defaults to temperature: an agent predating the field sends none,
+ * and that is the only kind it could have meant.
+ */
+function sensorsOfKind(
+  res: MetricsResponse | null,
+  kinds: readonly string[],
+): { series: MetricsSeries; index: number }[] {
+  return (res?.series ?? [])
+    .map((series, index) => ({ series, index }))
+    .filter(({ series }) => kinds.includes(series.key.kind ?? "temperature"));
+}
+
+/**
+ * The history one sensor row draws.
+ *
+ * For a FAN this is value_min and nothing else. A fan's failure is its
+ * minimum: a fan that stalled for two minutes inside a five-minute bucket
+ * is invisible in both the average and the maximum, and the average of a
+ * stall and a spin-up is a perfectly healthy-looking number. 0001_init.sql
+ * rolls value up as min as well as avg/max specifically so this is
+ * answerable, and the column has to be named explicitly -- candidates() in
+ * lib/metrics.ts prefers _avg, so asking for the bare name here would
+ * silently hand back the one aggregate that hides the failure.
+ *
+ * value_min exists only at the 5m and 1h tiers; the raw table has a single
+ * `value` per sample, where the reading IS its own minimum. So the fallback
+ * is not a compromise -- at raw resolution there is nothing finer to ask
+ * for.
+ *
+ * Voltages, currents and power use `value` (resolving to value_avg at the
+ * rolled tiers), which is right for them: a rail sags and recovers, and the
+ * bucket's mean is the honest summary of where it sat.
+ */
+function sensorHistory(
+  res: MetricsResponse | null,
+  index: number,
+  kind: string,
+): (number | null)[] {
+  if (kind === "fan" && carriesColumn(res, "value_min")) {
+    return griddedValues(res, index, "value_min");
+  }
+  return griddedValues(res, index, "value");
+}
+
+/** The most recent non-null entry of an already-built series. The sensor
+ * rows read their number off the SAME array the sparkline draws, so the
+ * digits and the line can never disagree -- a fan reading 1180 RPM beside a
+ * line touching zero is the exact confusion these cards exist to remove. */
+function lastReading(values: readonly (number | null)[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && v !== undefined) return v;
+  }
+  return null;
+}
+
+/** Each kind in its own unit, because the reading is meaningless without
+ * it and because these share a card. Precision differs by kind: a rail at
+ * 11.9 V and one at 12.0 V are different facts, while a fan at 1183 and one
+ * at 1180 RPM are the same fact. */
+function formatSensor(kind: string, value: number | null): string {
+  if (value === null) return ABSENT;
+  switch (kind) {
+    case "fan":
+      return `${Math.round(value)} RPM`;
+    case "voltage":
+      return `${value.toFixed(2)} V`;
+    case "current":
+      return `${value.toFixed(2)} A`;
+    case "power":
+      return `${value.toFixed(1)} W`;
+    default:
+      return `${Math.round(value)} °C`;
+  }
+}
+
+/**
+ * The exhaustion gauges, each with the kernel ceiling it runs against.
+ *
+ * The RATIO is the whole point, which is why every row here has a limit and
+ * why sockets_used and tcp_alloc are absent from the list: they have no
+ * ceiling in the schema, so they cannot answer "how much headroom is left"
+ * and would only be two more numbers to scroll past.
+ *
+ * Running out of these does not present as a resource problem. accept()
+ * starts failing, conntrack silently drops new flows, and the operator sees
+ * a broken network on a host whose CPU and memory panels look fine -- so
+ * this is the one question netra answers nowhere else.
+ *
+ * `capability` names the host.capabilities key whose value explains an
+ * empty row: the agent says "conntrack: unavailable" when the module is not
+ * loaded, and that sentence next to the empty meter is the answer, where a
+ * bare em-dash is a mystery.
+ */
+const LIMITS: {
+  label: string;
+  gauge: string;
+  ceiling: string;
+  capability: string;
+}[] = [
+  {
+    label: "file descriptors",
+    gauge: "fd_used",
+    ceiling: "fd_limit",
+    capability: "file_descriptors",
+  },
+  {
+    label: "conntrack",
+    gauge: "conntrack_count",
+    ceiling: "conntrack_limit",
+    capability: "conntrack",
+  },
+  {
+    label: "TIME_WAIT sockets",
+    gauge: "tcp_tw",
+    ceiling: "tcp_tw_limit",
+    capability: "sockets",
+  },
+  {
+    label: "orphan sockets",
+    gauge: "tcp_orphan",
+    ceiling: "tcp_orphan_limit",
+    capability: "sockets",
+  },
+];
+
 // A host that has not reported for longer than this is stale rather than
 // merely late: the agent scrapes every 60s, so five missed scrapes is no
 // longer explainable by jitter.
@@ -157,6 +295,7 @@ const STALE_AFTER_MS = 5 * 60 * 1000;
 export function needsAttention(input: {
   host: HostDetail;
   agentMetrics: MetricsResponse | null;
+  hostMetrics?: MetricsResponse | null;
   filesystems: FilesystemRow[];
   units: Unit[] | null;
   now?: Date;
@@ -172,6 +311,27 @@ export function needsAttention(input: {
     out.push({
       severity: "critical",
       what: `${dropped} samples dropped before delivery — this host's history has holes`,
+    });
+  }
+
+  // The kernel killed something to stay alive. This is the one memory fact
+  // no chart can carry: mem_used is back to normal by the time anyone
+  // looks, precisely BECAUSE the kill happened, so a host that OOM-killed
+  // its database at 04:00 shows a calm memory panel at 09:00. It belongs
+  // here, as an event that occurred, and not on an axis.
+  //
+  // The increase across the window, never the raw total: oom_kill_total is
+  // cumulative since boot, so a host that killed one process a year ago
+  // would otherwise carry a permanent badge. counterIncrease returns null
+  // when no usable pair exists, which is "we cannot say" and stays silent
+  // -- distinct from 0, which is a host confirming nothing happened.
+  const oomKills = counterIncrease(
+    griddedValues(input.hostMetrics ?? null, 0, "oom_kill_total"),
+  );
+  if (oomKills !== null && oomKills > 0) {
+    out.push({
+      severity: "critical",
+      what: `${oomKills} OOM ${oomKills === 1 ? "kill" : "kills"} in this window — the kernel killed processes to reclaim memory`,
     });
   }
 
@@ -238,6 +398,73 @@ function Panel({
         {children}
       </Card>
     </section>
+  );
+}
+
+/**
+ * One card's worth of sensor rows: name, recent history, current reading.
+ *
+ * A sensor reading is only interesting as a movement. One number says
+ * 48 °C, or 1180 RPM, which a reader cannot judge without knowing whether
+ * it has been there all day or has been climbing for an hour -- so every
+ * sensor gets its history beside its value.
+ *
+ * Shared by the temperature, fan and power cards so the three read
+ * identically; the kind still decides the unit, the precision and (for
+ * fans) which aggregate is honest.
+ */
+function SensorList({
+  res,
+  rows,
+  color,
+  trend,
+  empty,
+}: {
+  res: MetricsResponse | null;
+  rows: { series: MetricsSeries; index: number }[];
+  color: string;
+  /** The word used in each sparkline's accessible label. */
+  trend: string;
+  empty: string;
+}) {
+  if (rows.length === 0) return <p className="note">{empty}</p>;
+  return (
+    <div className="sensor-list">
+      {rows.map(({ series, index }) => {
+        const kind = series.key.kind ?? "temperature";
+        const name =
+          [series.key.chip, series.key.label].filter(Boolean).join(" ") ||
+          ABSENT;
+        // Temperatures keep reading `temp`: it is the column they have
+        // always been drawn from, it is the one every historical row was
+        // written into, and an agent predating `value` filled only that.
+        const history =
+          kind === "temperature"
+            ? griddedValues(res, index, "temp")
+            : sensorHistory(res, index, kind);
+        const value = lastReading(history);
+        return (
+          <div className="sensor-row" key={`${name}-${index}`}>
+            <span className="lab">{name}</span>
+            {/* Free-scaled to its own extent, deliberately: these sit in
+                one list but a CPU package and an NVMe drive do not share a
+                sensible axis, and a shared one would flatten every sensor
+                against the largest. The question here is "is this one
+                moving", not "which is biggest" -- and across kinds it is
+                not even arithmetic: 1200 RPM and 12 V on one scale is a
+                flat line at the bottom of the card. */}
+            <Sparkline
+              values={history}
+              width={110}
+              height={24}
+              color={color}
+              label={`${name} ${trend} trend`}
+            />
+            <span className="val">{formatSensor(kind, value)}</span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -333,6 +560,7 @@ export function Overview({
   const attention = needsAttention({
     host,
     agentMetrics,
+    hostMetrics,
     filesystems,
     units,
     now,
@@ -342,21 +570,71 @@ export function Overview({
   const capabilities = Object.entries(host.capabilities);
 
   // The sensor family carries fans, voltages, currents and power alongside
-  // temperatures now, and only temperatures have a `temp` column -- so
-  // mapping the whole family here would fill a panel headed "Temperature"
-  // with a dozen rows reading "nct6775 fan1 —", burying the readings it
-  // exists to show under ones it cannot render.
+  // temperatures, and only temperatures have a `temp` column -- so mapping
+  // the whole family into one panel headed "Temperature" filled it with
+  // rows reading "nct6775 fan1 —", burying the readings it exists to show.
   //
-  // The original index is carried through the filter because latest() reads
-  // by position in the unfiltered series list.
+  // Splitting by kind rather than discarding the rest is the point of the
+  // change: a stopped fan and a sagging rail are the two hardware failures
+  // a temperature cannot show, and each kind gets its own card so a
+  // 1200 RPM fan never shares an axis with a 45 °C package.
+  const temperatureSeries = sensorsOfKind(sensorMetrics, ["temperature"]);
+  const fanSeries = sensorsOfKind(sensorMetrics, ["fan"]);
+  // Voltage, current and power share a card: they are all "the power
+  // delivery is or is not healthy", and on a typical board there are one or
+  // two of each -- three separate cards of one row would be mostly heading.
+  const powerSeries = sensorsOfKind(sensorMetrics, [
+    "voltage",
+    "current",
+    "power",
+  ]);
+
+  // How close each kernel ceiling came to being hit.
   //
-  // kind defaults to temperature: an agent predating the field sends none,
-  // and that is the only kind it could have meant.
-  const temperatureSeries = (sensorMetrics?.series ?? [])
-    .map((series, index) => ({ series, index }))
-    .filter(
-      ({ series }) => (series.key.kind ?? "temperature") === "temperature",
-    );
+  // The gauge reads the PEAK bucket where the tier has one: at 5m a mean of
+  // 40% descriptor use across five minutes can hide a moment at 99%, and
+  // the moment is the whole question -- accept() fails at the peak, not at
+  // the average. The suffixed name has to be spelled out because
+  // candidates() prefers _avg. At the raw tier there is no _max peer and
+  // the sample is itself the instant, so the bare name is exact.
+  //
+  // The ceiling is read as the last value the host ever reported rather
+  // than the latest bucket: a configured kernel limit does not stop being
+  // the limit because the newest bucket has not materialised yet. Same
+  // reasoning Inventory applies to a container's mem_limit.
+  const limitRows = LIMITS.map((limit) => {
+    const peak = `${limit.gauge}_max`;
+    const gauge = carriesColumn(hostMetrics, peak) ? peak : limit.gauge;
+    const history = griddedValues(hostMetrics, 0, gauge);
+    const capability = host.capabilities[limit.capability];
+    return {
+      ...limit,
+      // "ok" is the agent saying the collector ran; only a real reason
+      // stands in for a reading.
+      reason:
+        capability !== undefined && capability !== "ok" ? capability : null,
+      value: latestValue(history),
+      ceiling: latest(hostMetrics, limit.ceiling),
+      carried: carriesColumn(hostMetrics, limit.gauge) && hasReading(history),
+    };
+  }).map((row) => ({
+    ...row,
+    // A ceiling so high it is not a ceiling.
+    //
+    // fd_limit is /proc/sys/fs/file-max, and a great many hosts set it to
+    // int64 max as "no practical limit". Drawing 3352 against 9.2
+    // quintillion is a bar that can never move, and the number beside it is
+    // worse than useless: past Number.MAX_SAFE_INTEGER a JSON integer has
+    // already lost precision by the time it reaches this line, so
+    // 9223372036854775807 renders as ...776000 -- a figure the host never
+    // reported. Say "no limit", which is both true and what the operator
+    // means when they set it.
+    unbounded: row.ceiling !== null && row.ceiling > Number.MAX_SAFE_INTEGER,
+  }));
+
+  const limitsWorthShowing = limitRows.some(
+    (row) => row.carried || row.reason !== null,
+  );
 
   return (
     <div className="grid2">
@@ -586,6 +864,13 @@ export function Overview({
                 ? ABSENT
                 : `${host.cores} cores · ${host.threads ?? ABSENT} threads`,
             ],
+            // The machine's installed RAM, which this page never stated.
+            // memory_total was blank on every host until the agent started
+            // sending it, and its only reader since has been the memory
+            // chart's fallback denominator -- so the fact itself, the one
+            // an operator asks for first when sizing anything, was
+            // collected and never shown.
+            ["Memory", bytes(host.memory_total)],
             [
               "Uptime",
               duration(latest(hostMetrics, "uptime_s") ?? host.uptime_s),
@@ -619,44 +904,97 @@ export function Overview({
       </Panel>
 
       <Panel label="Temperature" title="Temperature">
-        {temperatureSeries.length === 0 ? (
-          <p className="note">No sensor readings in this window.</p>
-        ) : (
-          // A temperature is only interesting as a movement. One number says
-          // 48 °C, which a reader cannot judge without knowing whether it has
-          // been 48 all day or climbing for an hour -- so every sensor gets
-          // its recent history beside its reading.
-          <div className="sensor-list">
-            {temperatureSeries.map(({ series, index }) => {
-              const name =
-                [series.key.chip, series.key.label].filter(Boolean).join(" ") ||
-                ABSENT;
-              const value = latest(sensorMetrics, "temp", index);
-              const history = griddedValues(sensorMetrics, index, "temp");
-              return (
-                <div className="sensor-row" key={`${name}-${index}`}>
-                  <span className="lab">{name}</span>
-                  {/* Free-scaled to its own extent, deliberately: these sit
-                      in one list but a CPU package and an NVMe drive do not
-                      share a sensible axis, and a shared one would flatten
-                      every sensor against the hottest. The question here is
-                      "is this one moving", not "which is hottest". */}
-                  <Sparkline
-                    values={history}
-                    width={110}
-                    height={24}
-                    color="var(--s7)"
-                    label={`${name} temperature trend`}
-                  />
-                  <span className="val">
-                    {value === null ? ABSENT : `${Math.round(value)} °C`}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <SensorList
+          res={sensorMetrics}
+          rows={temperatureSeries}
+          color="var(--s7)"
+          trend="temperature"
+          empty="No temperature readings in this window."
+        />
       </Panel>
+
+      {/* Only rendered when the host actually has fans: most VMs and every
+          container host report none, and an empty "Fans" card on every
+          cloud instance in the fleet would teach people to skip the column
+          this page is made of. Same for power below. */}
+      {fanSeries.length > 0 && (
+        <Panel label="Fans" title="Fans">
+          <SensorList
+            res={sensorMetrics}
+            rows={fanSeries}
+            color="var(--s3)"
+            trend="speed"
+            empty="No fan readings in this window."
+          />
+        </Panel>
+      )}
+
+      {powerSeries.length > 0 && (
+        <Panel label="Power" title="Power">
+          <SensorList
+            res={sensorMetrics}
+            rows={powerSeries}
+            color="var(--s5)"
+            trend="reading"
+            empty="No power readings in this window."
+          />
+        </Panel>
+      )}
+
+      {/* Headroom against the kernel's own ceilings. Nothing else on this
+          page answers "am I about to hit a limit": a host at 98% of its
+          conntrack table has a perfectly calm CPU, memory and disk card,
+          and the first symptom is a network that appears broken. */}
+      {limitsWorthShowing && (
+        <Panel label="Limits" title="Limits">
+          {limitRows.map((row) =>
+            row.reason !== null ? (
+              // The capability the agent reported, in place of the meter it
+              // explains. "conntrack: unavailable" is an answer; an
+              // em-dash next to a bar that never fills is a mystery, and
+              // the reader cannot tell it from a collector that broke.
+              //
+              // Written out in Meter's own markup rather than passed INTO
+              // Meter: that component backs the memory and disk cards too,
+              // and its absent state is deliberately one thing. Same shape
+              // the swap row above uses for the same reason.
+              <div className="mrow" key={row.label}>
+                <div>
+                  <div className="lab">{row.label}</div>
+                </div>
+                <div className="val">{row.reason}</div>
+              </div>
+            ) : row.unbounded ? (
+              // The count still matters -- it is the only figure here --
+              // but there is no ratio to draw it against.
+              <div className="mrow" key={row.label}>
+                <div>
+                  <div className="lab">{row.label}</div>
+                </div>
+                <div className="val">
+                  {/* A no-break space inside "no limit": the value column
+                      is narrow, and the default break put "no" on one line
+                      and "limit" on the next. It wraps after the separator
+                      instead. */}
+                  {row.value === null
+                    ? ABSENT
+                    : `${cardinal(row.value)} · no limit`}
+                </div>
+              </div>
+            ) : (
+              <Meter
+                key={row.label}
+                label={row.label}
+                value={row.value}
+                max={row.ceiling}
+                formatValue={(value, max) =>
+                  `${cardinal(value)} of ${cardinal(max)}`
+                }
+              />
+            ),
+          )}
+        </Panel>
+      )}
 
       <Panel label="Collectors" title="Collectors">
         {capabilities.length === 0 ? (

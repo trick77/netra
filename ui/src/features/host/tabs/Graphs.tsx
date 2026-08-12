@@ -6,8 +6,11 @@ import type { MetricsResponse } from "../../../lib/api";
 import type { Range } from "../../../lib/range";
 import {
   carriesColumn,
+  counterDeltas,
   griddedValues,
   seriesCells,
+  seriesOnGrid,
+  seriesTimestamps,
   windowNotice,
 } from "../../../lib/metrics";
 import { ABSENT, bytes, duration, percent } from "../../../lib/format";
@@ -33,13 +36,24 @@ function booleanValues(
 ): (number | null)[] {
   if (res === null || !res.columns.includes(base)) return [];
   if (res.series[seriesIndex] === undefined) return [];
-  return seriesCells(res, seriesIndex, base).map((cell) => {
+  const mapped = seriesCells(res, seriesIndex, base).map((cell) => {
     if (typeof cell === "boolean") return cell ? 1 : 0;
     if (typeof cell === "number") return cell;
     // A string error_code, or anything else, is not a reading -- and a
     // gap is the honest rendering of "no reading".
     return null;
   });
+  // Onto the window's grid, exactly like every numeric band -- this path
+  // used to return the mapped cells raw, which is the one failure the grid
+  // rule exists to prevent, on the one panel where it matters most. The
+  // response carries only the buckets that exist, so a collector that
+  // stopped reporting arrives as a SHORTER series rather than as nulls, and
+  // the geometry breaks a line only on an explicit null: "this collector
+  // was down for three hours" drew an unbroken line at 1, asserting it had
+  // been up the whole time. It also left every collector's band its own
+  // length, so the bands in this panel were misaligned in time against each
+  // other while claiming to share an x axis.
+  return seriesOnGrid(res, mapped, seriesTimestamps(res, seriesIndex));
 }
 
 /**
@@ -88,6 +102,16 @@ interface PanelSpec {
   fmt?: (n: number | null) => string;
   /** Read this family's columns as booleans (1 = true), not as numbers. */
   boolean?: boolean;
+  /**
+   * These bases are cumulative totals since boot; draw the per-bucket
+   * increase instead of the running sum.
+   *
+   * A counter plotted as stored is a staircase that only ever climbs, and
+   * the reader has to differentiate it by eye to answer the only question
+   * it can answer: did this happen inside the window I am looking at. See
+   * counterDeltas() in lib/metrics.ts for what a gap and a reset do.
+   */
+  counter?: boolean;
   /** Draw the bands as a cumulative stack rather than as overlaid lines.
    * Only honest where the bands really do partition something: per-core CPU
    * (each core divided by the core count, so the stack tops out at
@@ -137,6 +161,29 @@ const SYSTEM: PanelSpec[] = [
     max: 100,
     stacked: true,
     fmt: (n) => (n === null ? ABSENT : `${count(n)} %`),
+  },
+  // What the machine had to DO to keep memory available, which the memory
+  // charts cannot show: a host sitting at a comfortable 40% used can be
+  // thrashing, because the pages it needed were evicted and fetched again.
+  // Major faults are the reads that had to hit disk; the two swap rates are
+  // the kernel paging to keep going.
+  //
+  // Three rates, one axis, honestly: all three are events per second, and
+  // they are read together -- swap-out climbing with major faults flat is
+  // reclaim doing its job, both climbing together is thrash.
+  //
+  // Not stacked. They overlap by nature (a major fault can BE a swap-in),
+  // so a stack would assert a partition that does not exist.
+  {
+    title: "Memory pressure",
+    unit: "/s",
+    source: "host",
+    bases: [
+      { base: "pgmajfault_per_s", label: "major faults" },
+      { base: "pswpin_per_s", label: "swap in" },
+      { base: "pswpout_per_s", label: "swap out" },
+    ],
+    fmt: count,
   },
   // "Device availability" in the spec's list; collector_samples.ok is the
   // only availability signal the schema actually holds, so that is what
@@ -218,6 +265,22 @@ const NETWORK: PanelSpec[] = [
       { base: "hub_connect_max_us", label: "handshake peak" },
       { base: "post_latency_ms", label: "round trip" },
     ],
+    fmt: count,
+  },
+  // The panel above goes blank during the exact event worth seeing.
+  //
+  // hub_connect_us and hub_connect_max_us are the duration of a handshake
+  // that COMPLETED; when the hub is unreachable there is no duration to
+  // report, so both are NULL by design and Hub latency correctly draws a
+  // gap. Nothing there says why. This is the counter that carries the
+  // outage, and it belongs beside that gap rather than inside it -- it is
+  // a count of events, not a time, and hanging it off an axis labelled ms
+  // would put "3" and "42 ms" on one scale.
+  {
+    title: "Hub connect failures",
+    source: "agent",
+    bases: [{ base: "hub_connect_failures_total", label: "failures" }],
+    counter: true,
     fmt: count,
   },
   {
@@ -374,9 +437,15 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
       // than as nulls, and the geometry breaks a line only on a null. Drawn
       // straight from the response, three hours of a host being down became
       // one unbroken line across the hole.
-      const values = spec.boolean
+      const gridded = spec.boolean
         ? booleanValues(res, index, base)
         : griddedValues(res, index, base);
+      // After the grid, never before: counterDeltas subtracts NEIGHBOURING
+      // buckets, so it has to run on the window's own even spacing. Applied
+      // to the raw response -- which omits the buckets a host did not
+      // report -- it would subtract across a three-hour hole and attribute
+      // every failure in it to the single bucket where reporting resumed.
+      const values = spec.counter ? counterDeltas(gridded) : gridded;
       if (values.length === 0) continue;
       // A band with no readings at all is dropped rather than drawn empty.
       // On a STACKED panel this is not cosmetic: stackBands() breaks every

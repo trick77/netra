@@ -340,7 +340,30 @@ const ADDRESS_COLUMNS: Column<Address>[] = [
     cell: (row) => FAMILY_NAME[row.family] ?? String(row.family),
   },
   { key: "scope", header: "Scope", cell: (row) => row.scope ?? ABSENT },
-  { key: "vrf", header: "VRF", cell: (row) => row.vrf ?? ABSENT },
+  // The interface alias -- ip link set dev eth0 alias "uplink to core-sw1"
+  // -- which the agent now reports. It was already searchable here and
+  // shown nowhere, so a host whose operator had labelled every NIC still
+  // presented a table of bare kernel names.
+  //
+  // Empty is ABSENT rather than a blank cell: `ip` reports no alias as an
+  // absent attribute, and the store writes it as NULL (families.go), so
+  // the distinction survives the round trip.
+  {
+    key: "description",
+    header: "Description",
+    cell: (row) => row.description ?? ABSENT,
+  },
+  // The VRF column is gone rather than blank. sysfs cannot identify a VRF
+  // master -- drivers/net/vrf.c sets no DEVTYPE -- so the addresses
+  // collector writes vrfUnknown ("") for every interface on every host, by
+  // its own documented decision (internal/agent/collector/addresses.go).
+  // A column that is structurally incapable of holding a value teaches
+  // readers that this table has nothing in it.
+  //
+  // host_addresses.vrf, the read API's field and Address.vrf all stay: the
+  // data is merely unobtainable through sysfs, and a collector that speaks
+  // rtnetlink IFLA_INFO_KIND would fill it without a schema change. It is
+  // still searchable below for the same reason.
   {
     key: "first_seen",
     header: "First seen",

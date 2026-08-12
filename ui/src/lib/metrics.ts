@@ -371,6 +371,76 @@ export function latestValue(values: readonly (number | null)[]): number | null {
 }
 
 /**
+ * The per-bucket increase of a cumulative counter.
+ *
+ * A monotonic total -- hub_connect_failures_total, oom_kill_total,
+ * buffer_dropped_total -- charted as it is stored draws a staircase that
+ * only ever climbs, so the reader has to differentiate it by eye to answer
+ * the one question it exists to answer: did this happen DURING the window I
+ * am looking at, and when. The difference between consecutive buckets is
+ * that answer.
+ *
+ * Three rules, each of which the naive subtraction gets wrong:
+ *
+ * - The result is one shorter than its input on the leading edge, so the
+ *   first bucket is null rather than the counter's absolute value. A total
+ *   of 4000 at the first bucket is 4000 events since boot, not 4000 events
+ *   in five minutes, and drawing it as the latter puts a spike at the left
+ *   edge of every chart.
+ * - A null endpoint yields null, never a jump. The host reported nothing for
+ *   that bucket, so the increase across it is unknown -- treating the gap as
+ *   zero draws a quiet period the host never confirmed, and treating the
+ *   next reading as one big step attributes an hour of failures to the
+ *   single bucket where reporting resumed.
+ * - A DECREASE yields null, not a negative rate. The counter reset: the
+ *   agent restarted, or the host rebooted. The same guard the agent applies
+ *   to its own byte counters (internal/agent/collector/containers.go), for
+ *   the same reason -- the true increase across a reset is unknowable, and
+ *   a negative "rate" is not a lower bound on it.
+ *
+ * Equal neighbours are 0, not null: the host did report, and nothing
+ * happened. That is a fact and belongs on the chart as a flat line.
+ */
+export function counterDeltas(
+  values: readonly (number | null)[],
+): (number | null)[] {
+  if (values.length === 0) return [];
+  const out: (number | null)[] = new Array(values.length).fill(null);
+  for (let i = 1; i < values.length; i++) {
+    const prev = values[i - 1];
+    const curr = values[i];
+    if (prev === null || prev === undefined) continue;
+    if (curr === null || curr === undefined) continue;
+    if (curr < prev) continue;
+    out[i] = curr - prev;
+  }
+  return out;
+}
+
+/**
+ * How much a cumulative counter grew across the whole window.
+ *
+ * Sums counterDeltas, so it inherits its rules: gaps and resets contribute
+ * nothing rather than a fabricated jump. Returns null when the window
+ * carries no usable pair at all, which is the difference between "no kills
+ * happened" and "we cannot say whether any did" -- the caller renders the
+ * first as silence and must not render the second as a clean bill of health.
+ */
+export function counterIncrease(
+  values: readonly (number | null)[],
+): number | null {
+  const deltas = counterDeltas(values);
+  let total = 0;
+  let seen = false;
+  for (const d of deltas) {
+    if (d === null) continue;
+    total += d;
+    seen = true;
+  }
+  return seen ? total : null;
+}
+
+/**
  * Turns a window/requested_window mismatch (and a truncated result) into a
  * sentence a human can act on. Returns null when the response is complete
  * and covers exactly what was asked.
