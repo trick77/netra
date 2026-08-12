@@ -49,28 +49,26 @@ export interface HostTrends {
 // it answers a different question (where the time went, not which core spent
 // it) and it has its own panel on the host page.
 
-function bandsFrom(
-  res: MetricsResponse | null,
-  specs: readonly { base: string; name: string; color: string }[],
-  fallback?: { base: string; name: string; color: string },
-): Band[] {
+/**
+ * The one-band fallback: cpu_total as a single silhouette.
+ *
+ * Drawn when a host has no per-core series -- too many threads to ask for
+ * them, or a tier that does not carry them. One true band beats a
+ * not-collected cell where a silhouette is available, and the fleet row and
+ * the host page must not disagree about whether a host's CPU can be drawn.
+ *
+ * This was a general bandsFrom(res, specs, fallback) building N bands from a
+ * list of column names. Nothing needs that any more -- the CPU stack is
+ * per-core and the memory stack derives its bottom band by subtraction -- so
+ * its only caller passed an empty spec list and reached nothing but the
+ * fallback.
+ */
+function totalBand(res: MetricsResponse | null): Band[] {
   if (res === null) return [];
-  const bands = specs
-    .map((spec) => ({
-      name: spec.name,
-      color: spec.color,
-      values: griddedValues(res, 0, spec.base),
-    }))
-    .filter((band) => band.values.length > 0);
-
-  if (bands.length > 0 || fallback === undefined) return bands;
-
-  // This tier carries the total but not the breakdown. One band is a true
-  // silhouette; four fabricated ones would not be.
-  const values = griddedValues(res, 0, fallback.base);
+  const values = griddedValues(res, 0, "cpu_total");
   return values.length === 0
     ? []
-    : [{ name: fallback.name, color: fallback.color, values }];
+    : [{ name: "busy", color: "var(--s1)", values }];
 }
 
 /**
@@ -263,14 +261,7 @@ export async function fetchHostTrends(
   // host page draws the same cores unnormalised, where the numbers matter
   // more than cross-host comparability.
   const perCore = perCoreBands(cores, { normalise: true });
-  const cpu =
-    perCore.length > 0
-      ? perCore
-      : bandsFrom(host, [], {
-          base: "cpu_total",
-          name: "busy",
-          color: "var(--s1)",
-        });
+  const cpu = perCore.length > 0 ? perCore : totalBand(host);
 
   return {
     cpu,

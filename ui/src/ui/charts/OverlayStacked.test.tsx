@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { Overlay } from "./Overlay";
 import { ChartDetail } from "./ChartDetail";
+import { ChartPanel } from "./ChartPanel";
 import { stackBands } from "./geometry";
 
 // The stacked mark exists so the host page can draw the same chart the fleet
@@ -117,5 +118,68 @@ describe("ChartDetail, stacked", () => {
     // The y-axis labels name the ceiling the geometry used.
     const top = container.querySelector(".cd-y span");
     expect(top?.textContent).toBe("35");
+  });
+});
+
+describe("ChartPanel, stacked", () => {
+  const series = [
+    { name: "a", color: "var(--s1)", values: [10, 20] },
+    { name: "b", color: "var(--s2)", values: [30, 30] },
+  ];
+
+  // Without an explicit ceiling the panel derives one, and for a stack the
+  // largest single value is the wrong question: the stack is as tall as the
+  // running TOTAL, so a peak of 30 would draw a 50-tall stack outside the
+  // box. This is what the unnormalised per-core chart relies on -- N cores
+  // stack to N x 100 and nothing declares that number in advance.
+  it("derives its ceiling from the running total, not the largest value", () => {
+    const { container } = render(
+      <ChartPanel
+        title="Stacked"
+        series={series}
+        stacked
+        width={100}
+        height={20}
+      />,
+    );
+
+    const want = stackBands(
+      series.map((s) => s.values),
+      100,
+      20,
+      50,
+      2,
+    );
+    const got = [...container.querySelectorAll("path[data-band]")].map((p) =>
+      p.getAttribute("d"),
+    );
+    expect(got).toEqual(want);
+  });
+
+  // An explicit ceiling still wins: the memory chart passes mem_total plus
+  // headroom, and deriving one from the data would lose the free gap.
+  it("prefers the ceiling it is given", () => {
+    const { container } = render(
+      <ChartPanel
+        title="Stacked"
+        series={series}
+        stacked
+        max={200}
+        width={100}
+        height={20}
+      />,
+    );
+
+    const want = stackBands(
+      series.map((s) => s.values),
+      100,
+      20,
+      200,
+      2,
+    );
+    const got = [...container.querySelectorAll("path[data-band]")].map((p) =>
+      p.getAttribute("d"),
+    );
+    expect(got).toEqual(want);
   });
 });

@@ -67,6 +67,71 @@ describe("hostColumns", () => {
     expect(hostColumns("24h")).toHaveLength(6);
   });
 
+  // The accessors are separate from the cell on purpose -- a cell is a
+  // sparkline or a meter and has no order -- so they need their own check
+  // that they read the same fact the cell shows.
+  describe("sorting", () => {
+    it("sorts hosts on the name shown, and disks on the percentage shown", () => {
+      const cols = hostColumns("1h");
+      const row = makeRow({
+        hostname: "web-01",
+        fullest: { mount: "/data", pct: 88, others: 2 },
+      });
+
+      const host = cols.find((c) => c.header === "Host")!;
+      const disk = cols.find((c) => c.header === "Disk")!;
+      expect(host.sortValue!(row)).toBe("web-01");
+      // The percentage, not bytes: sorting on size would put the biggest
+      // disk first rather than the one closest to filling up.
+      expect(disk.sortValue!(row)).toBe(88);
+    });
+
+    // Unknown must not sort as zero, or a host whose filesystems were never
+    // read would rank as the emptiest disk on the page.
+    it("gives a host with no filesystems no disk sort value at all", () => {
+      const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
+
+      expect(disk.sortValue!(makeRow({ fullest: null }))).toBeNull();
+    });
+
+    // A sparkline has no order. Offering a control that cannot sort is worse
+    // than offering none.
+    it("offers no ordering on the chart columns", () => {
+      const cols = hostColumns("1h");
+
+      for (const header of ["CPU", "Memory", "Traffic", "Filesystem"]) {
+        expect(
+          cols.find((c) => c.header === header)!.sortValue,
+        ).toBeUndefined();
+      }
+    });
+  });
+
+  describe("filesystem cell", () => {
+    // A host that reported no filesystems has no usage to draw. An empty
+    // chart would claim it reported flat zero.
+    it("renders the absent marker rather than an empty chart", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Filesystem")!;
+      const { container } = render(<>{col.cell(makeRow({ disk: [] }))}</>);
+
+      expect(container.querySelector("svg")).toBeNull();
+      expect(container.textContent).toBe(ABSENT);
+    });
+
+    it("draws one line per filesystem", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Filesystem")!;
+      const row = makeRow({
+        disk: [
+          { name: "root", color: "var(--s7)", values: [40, 41] },
+          { name: "data", color: "var(--s1)", values: [88, 89] },
+        ],
+      });
+      const { container } = render(<>{col.cell(row)}</>);
+
+      expect(container.querySelectorAll("g[data-series]")).toHaveLength(2);
+    });
+  });
+
   describe("disk cell", () => {
     it("names the fullest mount and its +N count of other filesystems", () => {
       const cols = hostColumns("1h");
