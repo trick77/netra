@@ -6,6 +6,7 @@ import {
   bitrate,
   byterate,
   bytes,
+  cardinal,
   duration,
   percent,
   relative,
@@ -126,5 +127,29 @@ describe("format", () => {
 
   it("byterate renders null as absent", () => {
     expect(byterate(null)).toBe(ABSENT);
+  });
+});
+
+describe("cardinal", () => {
+  it("groups digits in threes", () => {
+    expect(cardinal(48231)).toBe("48\u202f231");
+    expect(cardinal(262144)).toBe("262\u202f144");
+    expect(cardinal(999)).toBe("999");
+    expect(cardinal(0)).toBe("0");
+  });
+
+  // Deliberately NOT scale(): "48 k of 262 k" throws away the only digits
+  // that distinguish a comfortable descriptor table from a nearly-full one.
+  it("keeps every digit rather than scaling to a magnitude", () => {
+    expect(cardinal(1_234_567)).toBe("1\u202f234\u202f567");
+    expect(cardinal(1_234_567)).not.toContain("M");
+  });
+
+  it("renders null as absent, never as 0", () => {
+    expect(cardinal(null)).toBe(ABSENT);
+  });
+
+  it("keeps a negative sign outside the grouping", () => {
+    expect(cardinal(-4200)).toBe("-4\u202f200");
   });
 });

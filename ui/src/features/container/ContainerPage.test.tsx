@@ -171,6 +171,31 @@ describe("ContainerPage", () => {
     expect(screen.getAllByText("nginx:1.27").length).toBeGreaterThan(0);
   });
 
+  // An empty traffic chart claims this container moved no bytes. When the
+  // agent has told us it could not enter the host's network namespaces, that
+  // claim is false and the agent's own sentence is the answer.
+  it("explains an empty network chart with the capability that caused it", () => {
+    renderPage({ containerNetwork: "no-host-netns" });
+    // ChartPanel renames its own landmark in the not-collected state, so the
+    // panel announces the fact rather than presenting itself as a chart.
+    const network = screen.getByLabelText("Network, not collected", {
+      selector: "section",
+    });
+    expect(network).toHaveTextContent(/Not collected/i);
+    expect(network).toHaveTextContent(/network namespaces/i);
+  });
+
+  // Only the one value means it. Any other capability string is the
+  // collector reporting itself healthy, and an unrecognised one is not
+  // licence to blank a panel that may carry real data.
+  it("draws the network chart normally when the namespace was reachable", () => {
+    renderPage({ containerNetwork: "namespaced" });
+    const network = screen.getByLabelText("Network chart", {
+      selector: "section",
+    });
+    expect(network).not.toHaveTextContent(/Not collected/i);
+  });
+
   it("labels the status badge as derived", () => {
     renderPage();
     expect(screen.getByText(/derived from samples/i)).toBeInTheDocument();

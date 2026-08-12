@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   carriesColumn,
   column,
+  counterDeltas,
+  counterIncrease,
   griddedValues,
   hasGaps,
   optionalValues,
@@ -494,5 +496,62 @@ describe("seriesOnGrid", () => {
   it("returns an empty series when the tier does not carry the column", () => {
     expect(griddedValues(raw as never, 0, "iowait")).toEqual([]);
     expect(griddedValues(null, 0, "busy")).toEqual([]);
+  });
+});
+
+describe("counterDeltas", () => {
+  it("reports the increase between buckets, never the running total", () => {
+    expect(counterDeltas([10, 12, 12, 15])).toEqual([null, 2, 0, 3]);
+  });
+
+  // The leading edge is the trap: a counter's first bucket is its value
+  // since boot, so drawing it as an increase puts "4000 failures" in the
+  // first five minutes of every chart.
+  it("has no value for the first bucket, rather than the counter's absolute value", () => {
+    expect(counterDeltas([4000, 4001])).toEqual([null, 1]);
+  });
+
+  // A gap is unknown, not quiet, and not a jump. Both mistakes are wrong in
+  // opposite directions: zero draws a calm stretch the host never confirmed,
+  // and attributing the whole rise to the bucket where reporting resumed
+  // invents a spike that never happened.
+  it("yields nothing across a gap, in both directions", () => {
+    expect(counterDeltas([10, null, 40])).toEqual([null, null, null]);
+  });
+
+  // The agent restarted, so the true increase across the boundary is
+  // unknowable. A negative number is not a lower bound on it.
+  it("yields nothing across a counter reset rather than a negative rate", () => {
+    expect(counterDeltas([90, 95, 3, 7])).toEqual([null, 5, null, 4]);
+  });
+
+  it("distinguishes a host reporting no events from a host not reporting", () => {
+    // Equal neighbours are a real zero: the host answered and nothing
+    // happened. That is a fact and belongs on the chart.
+    expect(counterDeltas([5, 5, 5])).toEqual([null, 0, 0]);
+  });
+
+  it("handles the degenerate lengths without inventing a point", () => {
+    expect(counterDeltas([])).toEqual([]);
+    expect(counterDeltas([7])).toEqual([null]);
+  });
+});
+
+describe("counterIncrease", () => {
+  it("sums what happened inside the window", () => {
+    expect(counterIncrease([10, 12, 12, 15])).toBe(5);
+  });
+
+  // "No kills happened" and "we cannot say whether any did" are different
+  // facts, and an attention badge must not render the second as the first.
+  it("is null when no usable pair exists at all, and 0 when the host said so", () => {
+    expect(counterIncrease([])).toBeNull();
+    expect(counterIncrease([3])).toBeNull();
+    expect(counterIncrease([null, null])).toBeNull();
+    expect(counterIncrease([3, 3])).toBe(0);
+  });
+
+  it("skips a reset instead of subtracting through it", () => {
+    expect(counterIncrease([90, 95, 3, 7])).toBe(9);
   });
 });

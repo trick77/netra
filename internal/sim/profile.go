@@ -94,13 +94,33 @@ type Profile struct {
 	Mdraid string
 }
 
-// SensorSpec is one hwmon reading. Base is the idle temperature in degrees
-// Celsius and Swing how far it moves over a day under load.
+// SensorSpec is one hwmon reading. Base is the idle value in the kind's own
+// unit and Swing how far it moves over a day under load.
 type SensorSpec struct {
 	Chip  string
 	Label string
 	Base  float64
 	Swing float64
+
+	// What this sensor measures: temperature, fan, voltage, current or
+	// power. Empty means temperature, which keeps every existing spec in
+	// archetypes.go reading as it did and matches the hub's own default for
+	// an agent predating the field.
+	//
+	// The unit follows the kind -- degrees C, RPM, volts, amps, watts -- so
+	// Base and Swing are read in that unit too: a fan's Base is a four-digit
+	// RPM, not a temperature.
+	Kind string
+
+	// Stalls makes this sensor drop to zero for one stretch of the window.
+	//
+	// Only meaningful for a fan, and the reason the fan cards exist: a fan
+	// that stops is a hardware failure no temperature reading shows until
+	// the damage is done, and it is invisible in both the average and the
+	// maximum of the bucket it stalled in. Without a simulated stall the
+	// value_min path that makes it visible is never exercised against real
+	// data.
+	Stalls bool
 }
 
 // DiskSpec is one block device's I/O baseline, in bytes per second.

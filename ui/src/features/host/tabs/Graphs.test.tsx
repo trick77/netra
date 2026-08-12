@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { MetricsResponse } from "../../../lib/api";
 import { Graphs, UNAVAILABLE } from "./Graphs";
+import { ABSENT } from "../../../lib/format";
 
 function response(
   over: Partial<MetricsResponse> & { family: string },
@@ -151,6 +152,16 @@ describe("Graphs", () => {
     // that throw would happen during render with no boundary under it.
     const collector = response({
       family: "collector",
+      // Two samples and a two-minute window, so both land on the grid and
+      // the panel's headline is the last of them. The boolean path is
+      // gridded like every other band now, and a fixture reporting for two
+      // minutes of a one-hour window would correctly read absent at the
+      // latest bucket -- the host stopped reporting 58 minutes ago.
+      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:02:00Z" },
+      requested_window: {
+        from: "2025-08-10T00:00:00Z",
+        to: "2025-08-10T00:02:00Z",
+      },
       key_columns: ["collector"],
       columns: ["duration_ms", "ok", "error_code"],
       series: [
@@ -168,6 +179,79 @@ describe("Graphs", () => {
       name: /Device availability chart/,
     });
     expect(panel).toHaveTextContent("down");
+  });
+
+  // The bug this panel existed with: booleanValues() read the response's
+  // cells directly and skipped the window grid, so a collector that stopped
+  // reporting arrived as a SHORTER series rather than as nulls -- and the
+  // geometry breaks a line only on an explicit null. Three hours of a
+  // collector being down drew an unbroken line at "up", on the one panel
+  // whose entire purpose is showing that it was not.
+  it("grids the boolean column, so a collector that stopped reporting is a gap", () => {
+    const collector = response({
+      family: "collector",
+      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:10:00Z" },
+      requested_window: {
+        from: "2025-08-10T00:00:00Z",
+        to: "2025-08-10T00:10:00Z",
+      },
+      key_columns: ["collector"],
+      columns: ["duration_ms", "ok", "error_code"],
+      series: [
+        {
+          key: { collector: "smart" },
+          // Reported for the first two minutes of a ten-minute window and
+          // then nothing.
+          points: [
+            [1_754_784_000_000, 4, true, null],
+            [1_754_784_060_000, 4, true, null],
+          ],
+        },
+      ],
+    });
+    render(<Graphs host={fullHost} collector={collector} />);
+    const panel = screen.getByRole("region", {
+      name: /Device availability chart/,
+    });
+    // The latest bucket carries no reading, so the headline is the absent
+    // marker rather than the "up" it last saw eight minutes ago.
+    expect(panel).toHaveTextContent(ABSENT);
+    expect(panel).not.toHaveTextContent("up");
+  });
+
+  // Hub latency is NULL by design while the hub is unreachable -- both gauges
+  // time a handshake that completed -- so the panel correctly goes blank
+  // during the exact event worth seeing. This counter is what carries it.
+  it("draws hub connect failures as the increase per bucket, not the running total", () => {
+    const agent = response({
+      family: "agent",
+      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:03:00Z" },
+      requested_window: {
+        from: "2025-08-10T00:00:00Z",
+        to: "2025-08-10T00:03:00Z",
+      },
+      columns: ["hub_connect_failures_total"],
+      series: [
+        {
+          key: {},
+          // Cumulative since the agent started: 4000 by the first bucket,
+          // then two more failures. The headline must read 2, not 4002 --
+          // the total says how many failures the agent has ever had, which
+          // is not what a chart of this window is asking.
+          points: [
+            [1_754_784_000_000, 4000],
+            [1_754_784_060_000, 4001],
+            [1_754_784_120_000, 4002],
+          ],
+        },
+      ],
+    });
+    render(<Graphs host={fullHost} agent={agent} />);
+    const panel = screen.getByRole("region", {
+      name: /Hub connect failures chart/,
+    });
+    expect(panel).toHaveTextContent("1");
+    expect(panel).not.toHaveTextContent("4002");
   });
 
   it("carries no range control of its own — the header's drives every panel", () => {

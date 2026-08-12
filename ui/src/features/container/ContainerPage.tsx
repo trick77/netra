@@ -204,6 +204,16 @@ export interface ContainerPageProps {
   metrics: MetricsResponse;
   range: Range;
   onRangeChange: (range: Range) => void;
+  /**
+   * The host's `container_network` capability, when it reported one.
+   *
+   * "no-host-netns" means the agent could not enter the container's network
+   * namespace, so net_rx and net_tx are absent for every container on this
+   * host -- a fact about the agent's access, not about the container's
+   * traffic. Without it the Network panel is an empty chart, which claims
+   * the container sent nothing.
+   */
+  containerNetwork?: string;
   /** Injectable so "last sample" is deterministic in tests. */
   now?: Date;
 }
@@ -214,6 +224,7 @@ export function ContainerPage({
   metrics,
   range,
   onRangeChange,
+  containerNetwork,
   now = new Date(),
 }: ContainerPageProps) {
   const sampled = read(metrics, container.container_key);
@@ -340,6 +351,16 @@ export function ContainerPage({
           range={range}
           onRangeChange={onRangeChange}
           mirrored
+          // The agent's own explanation, in place of a chart that would
+          // otherwise read as "this container moved no traffic". Only for
+          // the one value that means it: any other capability string is
+          // the collector reporting itself healthy, and an unexpected one
+          // is not licence to blank a panel that may have real data.
+          unavailable={
+            containerNetwork === "no-host-netns"
+              ? "The agent could not enter this host's network namespaces, so no container traffic was measured."
+              : undefined
+          }
           series={[
             band("ingress", "var(--s2)", sampled?.netRx ?? empty),
             band("egress", "var(--s5)", sampled?.netTx ?? empty),

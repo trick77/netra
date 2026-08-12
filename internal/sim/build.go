@@ -73,6 +73,18 @@ type Generator struct {
 
 	boot       time.Time
 	agentStart time.Time
+
+	// hubFailures is cumulative across the window, like the counter it
+	// stands for: the agent reports failures since ITS start, never a
+	// per-scrape count. Held on the generator rather than derived from ts
+	// because samples are built in order and a total that only ever climbs
+	// is the property the UI's counter handling is written against -- a
+	// value recomputed per instant could go backwards and read as a reset.
+	hubFailures uint64
+
+	// oomKills is cumulative for the same reason hubFailures is: the kernel
+	// counter counts since boot and never decreases.
+	oomKills uint64
 }
 
 // liveHorizon is how far past the backfill window discrete events are
@@ -358,8 +370,20 @@ func (g *Generator) netstat(h *netrav1.HostSample, ts time.Time, cpu float64) {
 	h.PgmajfaultPerS = proto.Float64(round2(g.sig.daily("vm.majfault", ts, 1.2, 1.4, 1.6)))
 	h.PswpinPerS = proto.Float64(round2(g.sig.daily("vm.swpin", ts, 0.05, 1.6, 1.8)))
 	h.PswpoutPerS = proto.Float64(round2(g.sig.daily("vm.swpout", ts, 0.03, 1.6, 1.8)))
-	// Monotonic and almost always zero: an OOM kill is an event, not a level.
-	h.OomKillTotal = proto.Uint64(0)
+	// Monotonic and almost always flat: an OOM kill is an event, not a
+	// level. It does happen, though, and a counter pinned at zero forever
+	// meant the one thing that reads it -- the attention badge -- could
+	// never be seen working against the simulator.
+	//
+	// Cumulative since boot, so it only ever climbs, and rare enough that
+	// most windows contain no kill at all. That is the state worth
+	// defaulting to: the badge must stay silent on a healthy host, and a
+	// simulator that fires it constantly would prove nothing about whether
+	// it is silent when it should be.
+	if g.sig.unit("vm.oom", ts) > 0.995 {
+		g.oomKills++
+	}
+	h.OomKillTotal = proto.Uint64(g.oomKills)
 
 	// Exhaustion gauges, each well below its ceiling so the ratio the panel
 	// exists to show is legible rather than alarming.
@@ -393,6 +417,30 @@ func (g *Generator) agentSample(ts time.Time) *netrav1.AgentSample {
 	if g.sig.unit("agent.postok", ts) > 0.02 {
 		a.PostLatencyMs = proto.Uint32(uint32(clamp(g.sig.daily("agent.latency", ts, 38, 0.5, 0.6), 3, 5000)))
 	}
+
+	// The TCP path to the hub, and the outages on it.
+	//
+	// Both gauges are the duration of a handshake that COMPLETED, so when
+	// the hub is unreachable there is nothing to time and they are left
+	// unset -- NULL, exactly as the real agent leaves them. The failure
+	// counter is what carries the event, and it is cumulative: it keeps
+	// climbing across the outage and then holds its new level, which is why
+	// the UI draws its per-bucket increase rather than the total.
+	//
+	// Simulated as a real outage rather than a sprinkle of failures,
+	// because the pair is the point: during the window below, Hub latency
+	// legitimately goes blank while Hub connect failures spikes. A reader
+	// seeing only the first has no way to tell an outage from an idle
+	// agent.
+	if g.sig.unit("agent.hubdown", ts) > 0.97 {
+		g.hubFailures++
+	} else {
+		connect := clamp(g.sig.daily("agent.connect", ts, 900, 0.6, 0.5), 120, 40000)
+		a.HubConnectUs = proto.Uint32(uint32(connect))
+		a.HubConnectMaxUs = proto.Uint32(uint32(clamp(connect*(1.4+g.sig.unit("agent.connectmax", ts)), 150, 90000)))
+	}
+	a.HubConnectFailuresTotal = proto.Uint64(g.hubFailures)
+
 	return a
 }
 
@@ -455,13 +503,59 @@ func (g *Generator) sensors(ts time.Time, cpu float64) []*netrav1.SensorSample {
 	out := make([]*netrav1.SensorSample, 0, len(g.p.Sensors))
 	for _, s := range g.p.Sensors {
 		key := "sensor/" + s.Chip + "/" + s.Label
-		temp := s.Base + s.Swing*(cpu/100) + g.sig.jitter(key, ts)*1.4
-		out = append(out, &netrav1.SensorSample{
+		kind := s.Kind
+		if kind == "" {
+			kind = "temperature"
+		}
+
+		// Every kind rises with load, which is what makes them worth
+		// charting together on one machine: the package heats up, the fans
+		// spin up to answer it, the rails sag a little under the draw and
+		// the power figure climbs. Jitter is scaled per kind because a
+		// tenth of a volt and a tenth of an RPM are not comparable
+		// quantities.
+		value := s.Base + s.Swing*(cpu/100) + g.sig.jitter(key, ts)*1.4
+		switch kind {
+		case "fan":
+			value = s.Base + s.Swing*(cpu/100) + g.sig.jitter(key, ts)*40
+			if value < 0 {
+				value = 0
+			}
+			// A stalled fan, for a stretch of the window. The point is that
+			// it is BRIEF relative to a rollup bucket: at the 5m and 1h
+			// tiers the average and the maximum both stay comfortably in
+			// the normal range across the stall, and only value_min shows
+			// it -- which is exactly the failure the fan card reads.
+			if s.Stalls && g.sig.unit(key+"/stall", ts) > 0.93 {
+				value = 0
+			}
+		case "voltage":
+			// A rail moves in millivolts, and the sag is UNDER load, so the
+			// swing is subtracted rather than added.
+			value = s.Base - s.Swing*(cpu/100) + g.sig.jitter(key, ts)*0.02
+		case "current", "power":
+			value = s.Base + s.Swing*(cpu/100) + g.sig.jitter(key, ts)*0.6
+			if value < 0 {
+				value = 0
+			}
+		}
+
+		sample := &netrav1.SensorSample{
 			TsMs:  ts.UnixMilli(),
 			Chip:  s.Chip,
 			Label: s.Label,
-			Temp:  proto.Float64(round2(temp)),
-		})
+			Kind:  kind,
+			// Set for every kind, temperature included. The real agent
+			// writes value unconditionally and temp only for temperatures,
+			// so leaving it unset here would send simulated hosts down a
+			// different path through the UI than real ones -- the one place
+			// a simulator must not differ.
+			Value: proto.Float64(round2(value)),
+		}
+		if kind == "temperature" {
+			sample.Temp = proto.Float64(round2(value))
+		}
+		out = append(out, sample)
 	}
 	return out
 }

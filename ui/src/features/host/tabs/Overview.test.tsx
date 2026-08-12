@@ -225,6 +225,17 @@ describe("Overview", () => {
     renderOverview({
       sensorMetrics: response({
         family: "sensor",
+        // The window has to contain the point. Every sensor row now reads
+        // its number off the SAME gridded array its sparkline draws, so a
+        // fixture whose sample sits outside its own window grids to all
+        // null and the row correctly reads absent -- which is what these
+        // fixtures used to hide by taking the number from the ungridded
+        // series while the sparkline beside it drew nothing.
+        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:05:00Z" },
+        requested_window: {
+          from: "2025-08-10T00:00:00Z",
+          to: "2025-08-10T00:05:00Z",
+        },
         key_columns: ["chip", "label"],
         columns: ["temp"],
         series: [
@@ -250,6 +261,11 @@ describe("Overview", () => {
     renderOverview({
       sensorMetrics: response({
         family: "sensor",
+        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:05:00Z" },
+        requested_window: {
+          from: "2025-08-10T00:00:00Z",
+          to: "2025-08-10T00:05:00Z",
+        },
         key_columns: ["chip", "label", "kind"],
         columns: ["temp", "value"],
         series: [
@@ -273,10 +289,89 @@ describe("Overview", () => {
     const temperature = screen.getByRole("region", { name: /temperature/i });
     expect(within(temperature).getByText("nct6775 CPU")).toBeInTheDocument();
     expect(within(temperature).getByText("45 °C")).toBeInTheDocument();
-    // The non-temperature series must not appear at all -- an empty row is
-    // worse than an absent one, because it reads as a broken sensor.
+    // The non-temperature series must not appear in THIS panel -- an empty
+    // row is worse than an absent one, because it reads as a broken sensor.
     expect(within(temperature).queryByText("nct6775 CPU Fan")).toBeNull();
     expect(within(temperature).queryByText("nct6775 +12V")).toBeNull();
+
+    // They are not discarded, though: each kind gets its own card, in its
+    // own unit, on its own scale. Putting a 1200 RPM fan on the same axis as
+    // a 45 °C package is the reason they are separated rather than merged.
+    const fans = screen.getByRole("region", { name: "Fans" });
+    expect(within(fans).getByText("nct6775 CPU Fan")).toBeInTheDocument();
+    expect(within(fans).getByText("1200 RPM")).toBeInTheDocument();
+
+    const power = screen.getByRole("region", { name: "Power" });
+    expect(within(power).getByText("nct6775 +12V")).toBeInTheDocument();
+    expect(within(power).getByText("12.10 V")).toBeInTheDocument();
+  });
+
+  // A host with no fans -- every VM, every cloud instance -- must not carry
+  // an empty "Fans" card. A card that is blank on most of the fleet teaches
+  // people to stop reading this column.
+  it("omits the fan and power cards on a host that reports neither", () => {
+    renderOverview({
+      sensorMetrics: response({
+        family: "sensor",
+        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:05:00Z" },
+        requested_window: {
+          from: "2025-08-10T00:00:00Z",
+          to: "2025-08-10T00:05:00Z",
+        },
+        key_columns: ["chip", "label", "kind"],
+        columns: ["temp", "value"],
+        series: [
+          {
+            key: {
+              chip: "coretemp",
+              label: "Package id 0",
+              kind: "temperature",
+            },
+            points: [[1_754_784_000_000, 45, 45]],
+          },
+        ],
+      }),
+    });
+
+    expect(
+      screen.getByRole("region", { name: /temperature/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Fans" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Power" })).toBeNull();
+  });
+
+  // A fan's failure is its minimum. Averaged across a five-minute bucket a
+  // stall is invisible -- the mean of a stopped fan and a spin-up is a
+  // perfectly healthy number -- so the fan row must read value_min at the
+  // rolled tiers, and must not fall back to the _avg that candidates()
+  // prefers.
+  it("reads a fan from value_min, not the average that hides a stall", () => {
+    renderOverview({
+      sensorMetrics: response({
+        family: "sensor",
+        tier: "5m",
+        step_s: 300,
+        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:10:00Z" },
+        requested_window: {
+          from: "2025-08-10T00:00:00Z",
+          to: "2025-08-10T00:10:00Z",
+        },
+        key_columns: ["chip", "label", "kind"],
+        columns: ["value_avg", "value_max", "value_min"],
+        series: [
+          {
+            key: { chip: "nct6775", label: "fan2", kind: "fan" },
+            // A bucket the fan spent partly stopped: the average and the
+            // maximum both look fine, and only the minimum says so.
+            points: [[1_754_784_300_000, 1180, 1400, 0]],
+          },
+        ],
+      }),
+    });
+
+    const fans = screen.getByRole("region", { name: "Fans" });
+    expect(within(fans).getByText("0 RPM")).toBeInTheDocument();
+    expect(within(fans).queryByText("1180 RPM")).toBeNull();
   });
 
   it("reports a collector that is not running, with its reason", () => {
@@ -383,5 +478,170 @@ describe("Overview processor panel", () => {
     expect(
       within(traffic).getAllByText(new RegExp(ABSENT)).length,
     ).toBeGreaterThan(0);
+  });
+});
+
+// The exhaustion gauges. Nothing else in netra answers "am I about to hit a
+// limit", and running out does not present as a resource problem: accept()
+// starts failing and conntrack drops flows while the CPU and memory cards
+// stay calm.
+describe("Overview limits card", () => {
+  function limitsResponse(
+    over: Partial<MetricsResponse> = {},
+  ): MetricsResponse {
+    return {
+      family: "host",
+      tier: "raw",
+      step_s: 60,
+      // A one-bucket window, so the sample below IS the latest bucket. The
+      // gauge deliberately reads the latest bucket rather than the last
+      // number the host ever sent: a host that stopped reporting an hour
+      // ago must read absent, not "comfortably at 40%".
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:01:00Z" },
+      requested_window: {
+        from: "2026-08-10T00:00:00Z",
+        to: "2026-08-10T00:01:00Z",
+      },
+      warnings: [],
+      key_columns: [],
+      columns: ["fd_used", "fd_limit", "conntrack_count", "conntrack_limit"],
+      series: [
+        {
+          key: {},
+          points: [[1_786_320_000_000, 48231, 262144, 1800, 262144]],
+        },
+      ],
+      truncated: false,
+      ...over,
+    };
+  }
+
+  it("shows a gauge against its ceiling, because the ratio is the story", () => {
+    renderOverview({ hostMetrics: limitsResponse() });
+    const limits = screen.getByRole("region", { name: "Limits" });
+    // Grouped digits, not a rounded magnitude: "48 k of 262 k" throws away
+    // the only digits that separate comfortable from nearly-full.
+    expect(within(limits).getByText(/48 231 of 262 144/)).toBeInTheDocument();
+  });
+
+  // At a rolled tier the mean hides the moment that matters: accept() fails
+  // at the peak, not at the average. candidates() prefers _avg, so the peak
+  // has to be asked for by name.
+  it("reads the peak at a rolled tier, not the average", () => {
+    renderOverview({
+      hostMetrics: limitsResponse({
+        tier: "5m",
+        step_s: 300,
+        columns: ["fd_used_avg", "fd_used_max", "fd_limit"],
+        series: [
+          {
+            key: {},
+            points: [[1_786_320_000_000, 40000, 250000, 262144]],
+          },
+        ],
+      }),
+    });
+    const limits = screen.getByRole("region", { name: "Limits" });
+    expect(within(limits).getByText(/250 000 of 262 144/)).toBeInTheDocument();
+    expect(within(limits).queryByText(/40 000/)).toBeNull();
+  });
+
+  // The capability the agent reported, in place of the meter it explains.
+  // An em-dash next to a bar that never fills is indistinguishable from a
+  // broken collector.
+  // /proc/sys/fs/file-max is int64 max on a great many hosts. A bar against
+  // 9.2 quintillion can never move, and past Number.MAX_SAFE_INTEGER the
+  // figure has already lost precision in transit -- so the ratio is both
+  // useless and wrong.
+  it("says no limit rather than drawing a ratio against an unbounded ceiling", () => {
+    renderOverview({
+      hostMetrics: limitsResponse({
+        columns: ["fd_used", "fd_limit"],
+        series: [
+          {
+            key: {},
+            points: [[1_786_320_000_000, 3352, 9223372036854775807]],
+          },
+        ],
+      }),
+    });
+    const limits = screen.getByRole("region", { name: "Limits" });
+    expect(within(limits).getByText(/3 352 · no limit/)).toBeInTheDocument();
+    // The number the host never reported must not appear.
+    expect(within(limits).queryByText(/776 000/)).toBeNull();
+  });
+
+  it("says why a gauge is missing when the agent explained it", () => {
+    renderOverview({
+      host: {
+        ...host,
+        capabilities: { ...host.capabilities, conntrack: "unavailable" },
+      },
+      hostMetrics: limitsResponse(),
+    });
+    const limits = screen.getByRole("region", { name: "Limits" });
+    expect(within(limits).getByText("unavailable")).toBeInTheDocument();
+  });
+
+  // sockets_used and tcp_alloc have no ceiling in the schema, so they cannot
+  // answer the headroom question this card exists for. They are deliberately
+  // not here, and this pins that decision rather than leaving it to be
+  // "fixed" later.
+  it("carries no row for a gauge that has no ceiling", () => {
+    renderOverview({ hostMetrics: limitsResponse() });
+    const limits = screen.getByRole("region", { name: "Limits" });
+    expect(within(limits).queryByText(/sockets used|tcp alloc/i)).toBeNull();
+  });
+
+  it("is absent entirely on a host that reported no limits at all", () => {
+    renderOverview();
+    expect(screen.queryByRole("region", { name: "Limits" })).toBeNull();
+  });
+});
+
+// An OOM kill is the one memory fact no chart can carry: mem_used is back to
+// normal by the time anyone looks, precisely BECAUSE the kill happened.
+describe("Overview OOM attention", () => {
+  function oomResponse(points: (number | null)[][]): MetricsResponse {
+    return {
+      family: "host",
+      tier: "raw",
+      step_s: 60,
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:05:00Z" },
+      requested_window: {
+        from: "2026-08-10T00:00:00Z",
+        to: "2026-08-10T00:05:00Z",
+      },
+      warnings: [],
+      key_columns: [],
+      columns: ["oom_kill_total"],
+      series: [{ key: {}, points }],
+      truncated: false,
+    };
+  }
+
+  it("reports kills that happened inside the window", () => {
+    renderOverview({
+      hostMetrics: oomResponse([
+        [1_786_320_000_000, 4],
+        [1_786_320_060_000, 6],
+      ]),
+    });
+    const attention = screen.getByRole("region", { name: /attention/i });
+    expect(within(attention).getByText(/2 OOM kills/)).toBeInTheDocument();
+  });
+
+  // The counter is cumulative since boot. A host that killed something a
+  // year ago and nothing since is healthy, and must not carry a permanent
+  // badge -- which is what reading the raw total would do.
+  it("stays silent for a counter that is high but flat", () => {
+    renderOverview({
+      hostMetrics: oomResponse([
+        [1_786_320_000_000, 4000],
+        [1_786_320_060_000, 4000],
+      ]),
+    });
+    const attention = screen.getByRole("region", { name: /attention/i });
+    expect(within(attention).queryByText(/OOM/)).toBeNull();
   });
 });
