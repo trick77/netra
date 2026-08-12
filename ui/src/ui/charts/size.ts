@@ -26,12 +26,21 @@ export const SPARK_WIDTH = 170;
    gridline rather than as the ceiling, and on the fleet row it disappeared
    into the bands entirely. It is a stated fact about the host, so it is
    drawn in the same ink as text. */
-export const REFERENCE_STROKE = "var(--ink)";
-/* Denser dashes and a heavier stroke than a hairline. --ink is already the
-   darkest token there is, so the rule reading faint was never about the
-   colour: at 1px with 3px gaps there is barely any ink on screen, and over a
-   five-band stack on a 32px-tall sparkline it vanished into the bands. More
-   ink per unit length is the only lever left, and this is a stated ceiling
-   rather than a gridline, so it should carry the weight. */
-export const REFERENCE_DASH = "5 2";
-export const REFERENCE_WIDTH = 1.75;
+/*
+ * Its own token, and NOT --ink or --ink-2.
+ *
+ * Both of those inks inverture with the theme -- --ink is #1f1e1a in light and
+ * #faf9f5 in dark -- so "make the rule less prominent" and "make it darker"
+ * are the same request in light and opposite requests in dark. Reaching for
+ * --ink put a near-white rule across every memory sparkline for anyone
+ * reading in dark, which is the loudest mark on the row rather than the
+ * quietest.
+ *
+ * --reference is defined per theme to sit at the SAME low prominence in
+ * both: dim enough to read as a quiet annotation over the bands it crosses,
+ * legible enough to find. A hairline with open dashes, for the same reason
+ * -- it annotates the chart, it is not a series in it.
+ */
+export const REFERENCE_STROKE = "var(--reference)";
+export const REFERENCE_DASH = "4 3";
+export const REFERENCE_WIDTH = 1;
