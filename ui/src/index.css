@@ -1199,6 +1199,41 @@ svg.spark {
   gap: var(--space-3);
 }
 
+/* Sortable column headers. The arrow is a pseudo-element so it stays out of
+   the header's textContent -- the column name is read by tests and by the
+   card grid, and neither wants an arrow glued to it. Dimmed until the column
+   is the one being sorted on, so the header row does not read as six
+   competing controls. */
+.th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.th-sort::after {
+  font-size: 0.9em;
+  opacity: 0.35;
+}
+.th-sort[data-sort="none"]::after {
+  content: "\2195";
+}
+.th-sort[data-sort="asc"]::after {
+  content: "\2191";
+  opacity: 1;
+}
+.th-sort[data-sort="desc"]::after {
+  content: "\2193";
+  opacity: 1;
+}
+.th-sort:hover::after {
+  opacity: 0.7;
+}
+
 /* Temperature rows: name, trend, reading. The sparkline sits between the two
    because it is the reason the row is worth a line -- a number alone cannot
    say whether 48 °C is steady or climbing. */

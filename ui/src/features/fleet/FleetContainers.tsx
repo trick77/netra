@@ -89,6 +89,9 @@ export function containerColumns({
       key: "container",
       header: "Container",
       cell: (row) => <NameCell row={row} />,
+      // The displayed name, falling back to the key the cell falls back to,
+      // so the order matches what a reader sees rather than an id behind it.
+      sortValue: (row) => row.name ?? row.container_key,
     },
   ];
   if (showHost) {
@@ -98,11 +101,13 @@ export function containerColumns({
       cell: (row) => (
         <a href={`/hosts/${row.host_id}/overview`}>{row.hostname}</a>
       ),
+      sortValue: (row) => row.hostname,
     });
   }
   columns.push({
     key: "image",
     header: "Image",
+    sortValue: (row) => row.image ?? null,
     // An image with no tag on the wire is not `:latest` -- inventing one
     // would name a version the agent never reported.
     //

@@ -247,7 +247,12 @@ function UptimeCell({ row }: { row: HostRow }) {
 
 export function hostColumns(range: Range): Column<HostRow>[] {
   return [
-    { key: "host", header: "Host", cell: (row) => <HostCell row={row} /> },
+    {
+      key: "host",
+      header: "Host",
+      cell: (row) => <HostCell row={row} />,
+      sortValue: (row) => row.hostname,
+    },
     {
       key: "cpu",
       header: "CPU",
@@ -263,11 +268,20 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       header: "Traffic",
       cell: (row) => <TrafficCell row={row} range={range} />,
     },
-    { key: "disk", header: "Disk", cell: (row) => <DiskCell row={row} /> },
+    {
+      key: "disk",
+      header: "Disk",
+      cell: (row) => <DiskCell row={row} />,
+      // The fullest filesystem's percentage -- the number the cell shows.
+      // Sorting on bytes would put the biggest disk first rather than the
+      // one closest to filling up, which is what this column is for.
+      sortValue: (row) => row.fullest?.pct ?? null,
+    },
     {
       key: "uptime",
       header: "Uptime",
       cell: (row) => <UptimeCell row={row} />,
+      sortValue: (row) => row.uptime_s,
     },
   ];
 }
