@@ -209,7 +209,9 @@ func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 		// failures a temperature reading cannot show, and both are one file
 		// away in the same directory.
 		names := make([]string, 0, len(labels))
+		present := make(map[string]struct{}, len(labels))
 		for _, f := range labels {
+			present[f.Name()] = struct{}{}
 			if _, ok := sensorKindOf(f.Name()); ok {
 				names = append(names, f.Name())
 			}
@@ -234,9 +236,25 @@ func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 			// fanN_label and inN_label far less often than tempN_label, so a
 			// label-first walk saw temperatures almost exclusively. The
 			// attribute name is a stable fallback identity within a chip.
-			label := strings.TrimSuffix(inputFile, "_input")
-			base := label
-			if named, err := s.readTrimmed(ctx, filepath.Join(chipDir, base+"_label")); err == nil && named != "" {
+			//
+			// PRESENCE decides which identity is used, never a read result.
+			// Falling back when the read merely FAILS forks the sensor's
+			// history: readTrimmed returns errWedged for up to 1024 scrapes
+			// after one timeout, so a single slow read of
+			// coretemp/temp1_label would rename the series to "temp1" for
+			// most of a day, the hub would mint a second sensor_id, and the
+			// original series would stop dead beside a new one -- with
+			// nothing raised. That is exactly what this collector's identity
+			// rules exist to prevent, and a gap is the honest alternative.
+			base := strings.TrimSuffix(inputFile, "_input")
+			label := base
+			if _, hasLabel := present[base+"_label"]; hasLabel {
+				named, err := s.readTrimmed(ctx, filepath.Join(chipDir, base+"_label"))
+				if err != nil || named == "" {
+					// The label exists and could not be read. No row rather
+					// than one under a different identity.
+					continue
+				}
 				label = named
 			}
 

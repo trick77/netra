@@ -144,6 +144,60 @@ func TestSensorsReportsUnlabelledInputsUnderTheirAttributeName(t *testing.T) {
 	}
 }
 
+// PRESENCE of the label file decides the identity, never the result of
+// reading it.
+//
+// Falling back to the attribute name when the read merely FAILS forks a
+// sensor's history: readTrimmed returns errWedged for up to 1024 scrapes
+// after one timeout, so a single slow read of coretemp/temp1_label would
+// rename the series to "temp1" for most of a day. The hub mints a second
+// sensor_id on the new label, the original series stops dead beside a new
+// one, and nothing is raised -- which is the exact failure this collector's
+// identity rules exist to prevent. A gap is the honest alternative.
+func TestSensorsSkipsAnInputWhoseLabelExistsButCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "class", "hwmon", "hwmon0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	write("name", "coretemp\n")
+	write("temp1_input", "45000\n")
+	// The label file exists but is a directory, so the read fails while the
+	// dirent listing still shows it present -- the shape of a wedged or
+	// permission-denied label with the attribute itself readable.
+	if err := os.MkdirAll(filepath.Join(dir, "temp1_label"), 0o755); err != nil {
+		t.Fatalf("mkdir label: %v", err)
+	}
+	write("temp2_label", "Core 0\n")
+	write("temp2_input", "42000\n")
+
+	testee := collector.NewSensors(root, time.Second)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	for _, r := range res.Sensors {
+		if r.GetLabel() == "temp1" {
+			t.Error("an unreadable label fell back to the attribute name; that forks the sensor's history into a second series")
+		}
+	}
+	// The sibling whose label reads fine is unaffected: one bad label must
+	// not cost the chip its other sensors.
+	if len(res.Sensors) != 1 {
+		t.Fatalf("sensors = %d, want 1 (only the readable one)", len(res.Sensors))
+	}
+	if got := res.Sensors[0].GetLabel(); got != "Core 0" {
+		t.Errorf("label = %q, want Core 0", got)
+	}
+}
+
 // A fan at 1200 RPM, a rail at 12 V and a package at 45 C are three different
 // quantities, and hwmon scales them three different ways: millidegrees and
 // millivolts, but RPM raw and power in MICROwatts. One divisor for all of

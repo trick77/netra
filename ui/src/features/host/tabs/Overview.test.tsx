@@ -225,6 +225,43 @@ describe("Overview", () => {
     expect(within(temperature).getByText("48 °C")).toBeInTheDocument();
   });
 
+  // The sensor family carries fans, voltages, currents and power now, and
+  // only temperatures have a temp column. Mapping the whole family would fill
+  // a panel headed "Temperature" with rows reading "nct6775 fan1 —", burying
+  // the readings it exists to show under ones it cannot render.
+  it("shows only temperature sensors, not the fans and rails beside them", () => {
+    renderOverview({
+      sensorMetrics: response({
+        family: "sensor",
+        key_columns: ["chip", "label", "kind"],
+        columns: ["temp", "value"],
+        series: [
+          {
+            key: { chip: "nct6775", label: "CPU", kind: "temperature" },
+            points: [[1_754_784_000_000, 45, 45]],
+          },
+          {
+            // temp is null: a fan has no temperature.
+            key: { chip: "nct6775", label: "CPU Fan", kind: "fan" },
+            points: [[1_754_784_000_000, null, 1200]],
+          },
+          {
+            key: { chip: "nct6775", label: "+12V", kind: "voltage" },
+            points: [[1_754_784_000_000, null, 12.1]],
+          },
+        ],
+      }),
+    });
+
+    const temperature = screen.getByRole("region", { name: /temperature/i });
+    expect(within(temperature).getByText("nct6775 CPU")).toBeInTheDocument();
+    expect(within(temperature).getByText("45 °C")).toBeInTheDocument();
+    // The non-temperature series must not appear at all -- an empty row is
+    // worse than an absent one, because it reads as a broken sensor.
+    expect(within(temperature).queryByText("nct6775 CPU Fan")).toBeNull();
+    expect(within(temperature).queryByText("nct6775 +12V")).toBeNull();
+  });
+
   it("reports a collector that is not running, with its reason", () => {
     renderOverview();
     expect(screen.getByText("not permitted")).toBeInTheDocument();
