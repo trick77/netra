@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -15,7 +17,50 @@ type Iface struct {
 	Name  string
 	Index int
 	Addrs []string // CIDR form, as net.Addr renders it
+
+	// VRF is the name of the VRF device this interface is enslaved to.
+	//
+	// ALWAYS EMPTY from SystemIfaces, and deliberately so -- see vrfUnknown
+	// below. It stays on the struct because the field exists on the wire and
+	// in the schema, and a caller that can determine it (a test, or a future
+	// rtnetlink path) should be able to supply it without a signature change.
+	VRF string
+
+	// Description is the interface alias -- what SNMP calls ifAlias and what
+	// `ip link set <if> alias <text>` writes. Empty unless an operator set one.
+	Description string
 }
+
+// vrfUnknown records why HostAddress.vrf is left empty rather than filled.
+//
+// A VRF slave has a master link, but so does a bridge port and a bond slave,
+// and sysfs offers nothing that identifies the master AS a VRF. The obvious
+// discriminator does not work: drivers/net/vrf.c registers only
+// rtnl_link_ops.kind = "vrf" and never calls SET_NETDEV_DEVTYPE, so
+// /sys/class/net/<master>/uevent carries no DEVTYPE line at all. (Bridges
+// DO -- net/bridge/br_device.c declares a device_type -- which is why a
+// DEVTYPE test appears to work while only ever rejecting.)
+//
+// Deciding from the ABSENCE of a DEVTYPE would classify every master that is
+// not a bridge or a bond as a VRF, which is wrong for team, macvlan and
+// anything added later. The real answer is IFLA_INFO_KIND over rtnetlink,
+// which this collector deliberately does not speak -- net.Interfaces is the
+// whole reason there is no netlink dependency here.
+//
+// So the field is left unset, which in this codebase means "not measured"
+// rather than "no VRF". That is the honest reading, and it is what the
+// hub already stores.
+const vrfUnknown = ""
+
+// sysClassNet is where the per-interface attributes below are read from.
+// A variable so the tests can point it at a fixture tree; there is no other
+// reason to change it.
+//
+// Not derived from cfg.SysRoot, unlike Sensors and Mdraid: SystemIfaces is an
+// IfaceLister, and that signature is the injection seam every other test in
+// this package uses. Threading a root through it would change the seam for
+// one attribute read.
+var sysClassNet = "/sys/class/net"
 
 // IfaceLister enumerates the host's interfaces.
 //
@@ -44,9 +89,25 @@ func SystemIfaces() ([]Iface, error) {
 		for _, a := range addrs {
 			raw = append(raw, a.String())
 		}
-		out = append(out, Iface{Name: i.Name, Index: i.Index, Addrs: raw})
+		out = append(out, Iface{
+			Name:        i.Name,
+			Index:       i.Index,
+			Addrs:       raw,
+			VRF:         vrfUnknown,
+			Description: ifaceAlias(i.Name),
+		})
 	}
 	return out, nil
+}
+
+// ifaceAlias returns the interface alias, the Linux equivalent of SNMP's
+// ifAlias. Absent on most interfaces, which reads as empty.
+func ifaceAlias(name string) string {
+	raw, err := os.ReadFile(filepath.Join(sysClassNet, name, "ifalias"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 // Addresses reports the host's IP addresses.
@@ -131,10 +192,12 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 			}
 
 			rows = append(rows, &netrav1.HostAddress{
-				Iface:   i.Name,
-				IfIndex: ptrTo(uint32(i.Index)),
-				Address: ip.String(),
-				Family:  family,
+				Iface:       i.Name,
+				IfIndex:     ptrTo(uint32(i.Index)),
+				Address:     ip.String(),
+				Family:      family,
+				Vrf:         i.VRF,
+				Description: i.Description,
 			})
 		}
 	}
@@ -148,9 +211,14 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 		return strings.Compare(x.GetAddress(), y.GetAddress())
 	})
 
+	// The VRF and the alias are part of what is being reported, so they are
+	// part of what counts as a change. Keying on iface and address alone
+	// would leave an operator's `ip link set ... alias` unreported until some
+	// unrelated address moved, and the hub serving the old text meanwhile.
 	fingerprint := make([]string, 0, len(rows))
 	for _, r := range rows {
-		fingerprint = append(fingerprint, r.GetIface()+" "+r.GetAddress())
+		fingerprint = append(fingerprint,
+			r.GetIface()+" "+r.GetAddress()+" "+r.GetVrf()+" "+r.GetDescription())
 	}
 
 	if slices.Equal(fingerprint, a.prev) {

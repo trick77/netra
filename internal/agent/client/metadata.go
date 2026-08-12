@@ -1,12 +1,15 @@
 package client
 
 import (
+	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,10 +21,19 @@ import (
 )
 
 // BuildMetadata gathers the static facts about this host and agent.
+//
+// The four hardware facts -- kernel, cpu_model, cores, memory_total -- are
+// read from procRoot rather than a syscall so that the same fixture trees
+// every collector is tested against work here too, and so the function stays
+// buildable off Linux.
+//
+// Each is left empty when it cannot be read. The hub stores NULL, which is
+// the truth: the alternative of inventing a plausible default would put a
+// wrong CPU model on a host page with no way to tell it from a right one.
 func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 	hostname, _ := os.Hostname()
 
-	return &netrav1.Metadata{
+	md := &netrav1.Metadata{
 		AgentVersion: buildinfo.Version(),
 		GoVersion:    buildinfo.GoVersion(),
 		BuildCommit:  buildinfo.Commit(),
@@ -35,6 +47,118 @@ func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 		HostType:     cfg.HostType,
 		Fingerprint:  fingerprint(),
 	}
+
+	md.Kernel = readKernelRelease(cfg.ProcRoot)
+	md.CpuModel, md.Cores = readCPUInfo(cfg.ProcRoot)
+	md.MemoryTotal = readMemTotal(cfg.ProcRoot)
+
+	return md
+}
+
+// readKernelRelease returns the running kernel version, as uname -r reports
+// it. /proc/sys/kernel/osrelease is the same string the syscall returns.
+func readKernelRelease(procRoot string) string {
+	raw, err := os.ReadFile(filepath.Join(procRoot, "sys", "kernel", "osrelease"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+// readCPUInfo returns the CPU model string and the number of PHYSICAL cores.
+//
+// Cores is deliberately not runtime.NumCPU(): that is threads, which the
+// metadata already carries separately. On a hyper-threaded host the two
+// differ by a factor of two, and reporting threads as cores would make every
+// per-core reading look half as loaded as it is.
+//
+// Physical cores are counted as distinct (physical id, core id) pairs, which
+// is what makes a dual-socket machine come out right rather than counting one
+// socket's cores twice. Kernels that report neither field -- most ARM -- fall
+// back to the processor count, where threads and cores are the same thing.
+func readCPUInfo(procRoot string) (model string, cores uint32) {
+	f, err := os.Open(filepath.Join(procRoot, "cpuinfo"))
+	if err != nil {
+		return "", 0
+	}
+	defer func() { _ = f.Close() }()
+
+	seen := make(map[string]struct{})
+	processors := 0
+	physicalID, coreID := "", ""
+
+	flush := func() {
+		if physicalID != "" || coreID != "" {
+			seen[physicalID+"/"+coreID] = struct{}{}
+		}
+		physicalID, coreID = "", ""
+	}
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			// Blank line ends one processor block.
+			flush()
+			continue
+		}
+
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+
+		switch key {
+		case "processor":
+			processors++
+		case "model name", "Model":
+			// x86 uses "model name"; some ARM kernels use "Model". First one
+			// wins -- every processor block repeats the same string.
+			if model == "" {
+				model = value
+			}
+		case "physical id":
+			physicalID = value
+		case "core id":
+			coreID = value
+		}
+	}
+	flush()
+
+	if len(seen) > 0 {
+		return model, uint32(len(seen))
+	}
+	return model, uint32(processors)
+}
+
+// readMemTotal returns MemTotal from /proc/meminfo in bytes.
+func readMemTotal(procRoot string) uint64 {
+	f, err := os.Open(filepath.Join(procRoot, "meminfo"))
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = f.Close() }()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		key, rest, ok := strings.Cut(scanner.Text(), ":")
+		if !ok || key != "MemTotal" {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return 0
+		}
+		v, err := strconv.ParseUint(fields[0], 10, 64)
+		if err != nil {
+			return 0
+		}
+		// meminfo reports kB.
+		return v * 1024
+	}
+	return 0
 }
 
 // HashMetadata reduces a metadata block to the 8 bytes sent on every POST.

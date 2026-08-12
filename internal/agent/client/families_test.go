@@ -120,6 +120,7 @@ func TestFlushSendsEveryBufferedFamily(t *testing.T) {
 		"PackageEvents": "PackageEvents",
 		"Addresses":     "Addresses",
 		"Packages":      "Packages",
+		"Collectors":    "Collectors",
 	}
 
 	families := sliceFields(st)

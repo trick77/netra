@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
@@ -54,6 +55,14 @@ type containerCounters struct {
 	memFile   uint64
 	memShmem  uint64
 	memKernel uint64
+
+	// rxBytes and txBytes are summed across the container's own network
+	// namespace. hasNet is false when there was no namespace to read -- a
+	// stopped container, or one sharing the host's -- which is different from
+	// a container that genuinely moved no bytes.
+	rxBytes uint64
+	txBytes uint64
+	hasNet  bool
 }
 
 // Containers reports per-container CPU, memory and I/O from cgroup v2.
@@ -64,6 +73,7 @@ type containerCounters struct {
 // whenever an image is bumped.
 type Containers struct {
 	cgroupRoot string
+	procRoot   string
 	lister     ContainerLister
 
 	now func() time.Time
@@ -72,13 +82,25 @@ type Containers struct {
 	prevAt time.Time
 
 	socketAbsent bool
+
+	// hostNetNS identifies the host's network namespace, resolved once.
+	// Empty when it could not be read, which makes per-container networking
+	// unmeasurable rather than unguarded -- see containerNet.
+	hostNetNS     string
+	hostNetNSOnce sync.Once
+
+	mu sync.Mutex
+	// netCapability explains why per-container networking is absent, or is
+	// empty when it is working.
+	netCapability string
 }
 
 // NewContainers builds a Containers collector. cgroupRoot is the mounted
-// cgroup v2 hierarchy; lister may be nil when the Docker socket is not
+// cgroup v2 hierarchy, procRoot the mounted /proc that per-container network
+// counters are read through; lister may be nil when the Docker socket is not
 // available.
-func NewContainers(cgroupRoot string, lister ContainerLister) *Containers {
-	return &Containers{cgroupRoot: cgroupRoot, lister: lister, now: time.Now}
+func NewContainers(cgroupRoot, procRoot string, lister ContainerLister) *Containers {
+	return &Containers{cgroupRoot: cgroupRoot, procRoot: procRoot, lister: lister, now: time.Now}
 }
 
 // Name implements Collector.
@@ -87,18 +109,53 @@ func (c *Containers) Name() string { return "containers" }
 // SetCgroupRootForTest repoints the collector at a different fixture tree.
 func (c *Containers) SetCgroupRootForTest(root string) { c.cgroupRoot = root }
 
+// SetProcRootForTest repoints the collector at a different fixture tree.
+func (c *Containers) SetProcRootForTest(root string) { c.procRoot = root }
+
 // SetClockForTest replaces the clock used to measure the scrape interval.
 func (c *Containers) SetClockForTest(fn func() time.Time) { c.now = fn }
 
+// Capability values reported by Containers for per-container networking.
+const (
+	// capNetNamespaced: cgroup.procs names host PIDs, and without pid: host
+	// the agent resolves them in its own namespace and finds nothing.
+	capNetNamespaced = "namespaced"
+
+	// capNetNoHostNS: /proc/1/ns/net or the container's own is unreadable, so
+	// a host-networked container cannot be told from a bridged one.
+	capNetNoHostNS = "no-host-netns"
+)
+
 // Capabilities implements CapabilityReporter.
 func (c *Containers) Capabilities() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var out map[string]string
 	if c.socketAbsent {
 		// Metrics still arrive from cgroup v2; only the names and compose
 		// labels are missing. Saying so distinguishes "no containers" from
 		// "containers whose identity we cannot resolve".
-		return map[string]string{"containers": "no-docker-socket"}
+		out = map[string]string{"containers": "no-docker-socket"}
 	}
-	return nil
+	if c.netCapability != "" {
+		if out == nil {
+			out = make(map[string]string, 1)
+		}
+		// Separate key from "containers": CPU, memory and I/O are fine in
+		// every case this reports, and only networking is missing.
+		out["container_network"] = c.netCapability
+	}
+	return out
+}
+
+// setCapability records why per-container networking produced nothing. Reset
+// each scrape by Collect, so a container that starts reporting again clears
+// it rather than leaving the agent looking permanently broken.
+func (c *Containers) setCapability(value string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.netCapability = value
 }
 
 // Collect implements Collector.
@@ -117,6 +174,10 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 	} else {
 		c.socketAbsent = true
 	}
+
+	// Cleared before the walk so a capability reflects THIS scrape. A host
+	// that gains pid: host on restart must stop reporting "namespaced".
+	c.setCapability("")
 
 	cur, err := c.read()
 	if err != nil {
@@ -195,6 +256,18 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 		if n.wbytes >= p.wbytes {
 			row.IoWrite = ptrTo(float64(n.wbytes-p.wbytes) / elapsed)
 		}
+		// Both namespaces must have been readable, or the delta spans a gap
+		// rather than an interval. A counter that went backwards means the
+		// namespace was replaced -- a restart -- so no row rather than a
+		// negative rate, matching Network's handling of the same case.
+		if n.hasNet && p.hasNet {
+			if n.rxBytes >= p.rxBytes {
+				row.NetRx = ptrTo(float64(n.rxBytes-p.rxBytes) / elapsed)
+			}
+			if n.txBytes >= p.txBytes {
+				row.NetTx = ptrTo(float64(n.txBytes-p.txBytes) / elapsed)
+			}
+		}
 
 		rows = append(rows, row)
 	}
@@ -265,6 +338,7 @@ func (c *Containers) read() (map[string]containerCounters, error) {
 			}
 		}
 		cc.rbytes, cc.wbytes = readIOStat(filepath.Join(path, "io.stat"))
+		cc.rxBytes, cc.txBytes, cc.hasNet = c.containerNet(path)
 
 		out[id] = cc
 		return nil
@@ -392,4 +466,161 @@ func readIOStat(path string) (rbytes, wbytes uint64) {
 		}
 	}
 	return rbytes, wbytes
+}
+
+// containerNet sums the bytes moved inside one container's own network
+// namespace, and reports false when there is no such namespace to read.
+//
+// The counters come from /proc/<pid>/net/dev, reached through the container's
+// own cgroup.procs rather than the Docker socket. That keeps the split this
+// collector is built on: the socket supplies names, cgroup v2 supplies every
+// metric, so a host that declines to mount the socket still gets numbers.
+//
+// A container sharing the host's namespace -- network_mode: host -- is
+// deliberately reported as having no measurement. Its /proc/<pid>/net/dev IS
+// the host's file, so counting it would attribute the entire machine's
+// traffic to one container, and those same bytes are already reported once by
+// the Network collector.
+func (c *Containers) containerNet(cgroupDir string) (rx, tx uint64, ok bool) {
+	pid, ok := firstPID(filepath.Join(cgroupDir, "cgroup.procs"))
+	if !ok {
+		// No processes in the cgroup: the container is stopped or restarting.
+		return 0, 0, false
+	}
+
+	// FAIL CLOSED. Without the host's namespace to compare against there is no
+	// way to tell a bridged container from a network_mode: host one, and the
+	// two failure modes are not symmetric: reporting nothing loses a series,
+	// while guessing attributes the ENTIRE machine's traffic to one container
+	// on every scrape -- bytes the Network collector already reports once.
+	//
+	// The asymmetry is reachable rather than theoretical. /proc/<pid>/net/dev
+	// is world-readable while /proc/<pid>/ns/net needs ptrace access, so an
+	// unprivileged agent is exactly the case that fails the guard and
+	// succeeds the read.
+	host := c.hostNetNamespace()
+	if host == "" {
+		c.setCapability(capNetNoHostNS)
+		return 0, 0, false
+	}
+
+	ns, nsOK := readNamespace(filepath.Join(c.procRoot, pid, "ns", "net"))
+	if !nsOK {
+		c.setCapability(capNetNoHostNS)
+		return 0, 0, false
+	}
+	if ns == host {
+		// network_mode: host. Its net/dev IS the host's file.
+		return 0, 0, false
+	}
+
+	rx, tx, ok = sumNetDev(filepath.Join(c.procRoot, pid, "net", "dev"))
+	if !ok {
+		// The cgroup named a PID that /proc does not have. That is the
+		// signature of a PID namespace: cgroup.procs reports host PIDs, so
+		// without pid: host the agent looks them up in its own namespace and
+		// finds nothing. Saying so distinguishes it from "no traffic".
+		c.setCapability(capNetNamespaced)
+	}
+	return rx, tx, ok
+}
+
+// hostNetNamespace resolves the host's network namespace once. PID 1 is the
+// host's init whenever /proc is the host's, which is the same mount this
+// collector already needs in order to read per-container counters at all.
+//
+// Empty when it cannot be read, which callers must treat as "cannot measure"
+// rather than "no guard needed" -- see containerNet.
+func (c *Containers) hostNetNamespace() string {
+	c.hostNetNSOnce.Do(func() {
+		if ns, ok := readNamespace(filepath.Join(c.procRoot, "1", "ns", "net")); ok {
+			c.hostNetNS = ns
+		}
+	})
+	return c.hostNetNS
+}
+
+// readNamespace returns the "net:[4026531992]" identity behind a namespace
+// symlink. Comparing two of these is how processes are told to share a
+// namespace, and it needs no privilege beyond reading the link.
+func readNamespace(path string) (string, bool) {
+	target, err := os.Readlink(path)
+	if err != nil {
+		return "", false
+	}
+	return target, true
+}
+
+// firstPID returns the first entry of a cgroup.procs file. Any process in the
+// cgroup will do: they all share the container's namespaces, which is the
+// only property being used here.
+func firstPID(path string) (string, bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = f.Close() }()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		pid := strings.TrimSpace(scanner.Text())
+		if pid == "" {
+			continue
+		}
+		if _, err := strconv.ParseUint(pid, 10, 64); err != nil {
+			continue
+		}
+		return pid, true
+	}
+	return "", false
+}
+
+// sumNetDev totals receive and transmit bytes across a namespace's
+// interfaces, skipping only loopback.
+//
+// It deliberately does NOT apply reportableIface. That list exists to stop
+// the HOST double-counting container traffic it already sees on a real
+// interface -- veth, br- and docker0 carry the same bytes twice. Inside a
+// container's own namespace there is no such duplication: eth0 is the
+// container's only path to the network, and excluding it by prefix would
+// report zero for every container on a bridge.
+func sumNetDev(path string) (rx, tx uint64, ok bool) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, false
+	}
+	defer func() { _ = f.Close() }()
+
+	// Readable is what makes the answer known. A network_mode: none container
+	// has nothing but lo, and its traffic is genuinely 0 rather than
+	// unmeasured -- the one case where zero is the true, knowable answer.
+	// Requiring a parsed non-lo line instead would report it as NULL.
+	ok = true
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		colon := strings.IndexByte(line, ':')
+		if colon < 0 {
+			// One of the two header lines.
+			continue
+		}
+		if strings.TrimSpace(line[:colon]) == "lo" {
+			continue
+		}
+
+		fields := strings.Fields(line[colon+1:])
+		// 8 receive columns then 8 transmit columns.
+		if len(fields) < 16 {
+			continue
+		}
+		r, rerr := strconv.ParseUint(fields[0], 10, 64)
+		t, terr := strconv.ParseUint(fields[8], 10, 64)
+		if rerr != nil || terr != nil {
+			continue
+		}
+		rx += r
+		tx += t
+	}
+	return rx, tx, ok
 }

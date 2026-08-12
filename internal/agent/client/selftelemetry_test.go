@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,103 @@ func TestScrapeOnceStampsScrapeDuration(t *testing.T) {
 	}
 	if sample.GetAgent().BufferDepth == nil {
 		t.Error("BufferDepth = nil, want it set on every scrape")
+	}
+}
+
+// collector_samples, both its continuous aggregates and the host page's
+// device-availability panel all existed while nothing in internal/agent ever
+// populated IngestRequest.collectors -- the tables were fed only by the
+// simulator, so the panel was blank on every real host.
+//
+// A collector cannot time itself, so the scrape loop measures it: the health
+// row is built outside the collector, which is why this family has no
+// counterpart on collector.Result.
+func TestScrapeReportsEveryCollectorsOwnHealth(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	defer srv.Close()
+
+	c := client.NewWithInterval(
+		config.Config{HubURL: srv.URL, Token: "nta_test", BufferWindow: time.Hour},
+		[]collector.Collector{&capabilityCollector{key: "k"}, failingCollector{}},
+		time.Minute,
+	)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.requests) != 1 {
+		t.Fatalf("requests = %d, want 1", len(rec.requests))
+	}
+	rows := rec.requests[0].GetCollectors()
+	if len(rows) != 2 {
+		t.Fatalf("collector rows = %d, want one per registered collector", len(rows))
+	}
+
+	byName := map[string]*netrav1.CollectorSample{}
+	for _, r := range rows {
+		byName[r.GetCollector()] = r
+	}
+
+	ok, found := byName["capability"]
+	if !found {
+		t.Fatal("no row for the healthy collector")
+	}
+	if !ok.GetOk() {
+		t.Error("healthy collector reported ok = false")
+	}
+	if ok.ErrorCode != nil {
+		t.Errorf("healthy collector carries error_code %q; it must be unset", ok.GetErrorCode())
+	}
+	if ok.DurationMs == nil {
+		t.Error("healthy collector carries no duration")
+	}
+
+	bad, found := byName["failing"]
+	if !found {
+		t.Fatal("no row for the failing collector -- a collector that fails must still report health")
+	}
+	if bad.GetOk() {
+		t.Error("failing collector reported ok = true")
+	}
+	if bad.GetErrorCode() == "" {
+		t.Error("failing collector carries no error_code")
+	}
+}
+
+// The raw error text never reaches the wire: it carries per-host paths and
+// errno strings, and the column is rolled up with last() into both aggregate
+// tiers, so free text would fill the aggregates with one-off values.
+func TestCollectorErrorCodeIsAShortTokenNotTheMessage(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	defer srv.Close()
+
+	c := client.NewWithInterval(
+		config.Config{HubURL: srv.URL, Token: "nta_test", BufferWindow: time.Hour},
+		[]collector.Collector{failingCollector{}},
+		time.Minute,
+	)
+	ctx := context.Background()
+
+	c.ScrapeOnce(ctx)
+	if err := c.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	got := rec.requests[0].GetCollectors()[0].GetErrorCode()
+	if strings.Contains(got, "sensor unreadable") {
+		t.Errorf("error_code = %q; the raw message must not reach the wire", got)
+	}
+	if got != "error" {
+		t.Errorf("error_code = %q, want the generic token \"error\"", got)
 	}
 }
 

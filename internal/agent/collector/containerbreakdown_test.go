@@ -13,7 +13,7 @@ import (
 // the difference decides where an operator looks next.
 func TestContainersSplitsCPUIntoUserAndSystem(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
 
 	containersAt(t, testee, base)
@@ -40,7 +40,7 @@ func TestContainersSplitsCPUIntoUserAndSystem(t *testing.T) {
 // time in user space. Zero would be a reading; absent is the truth.
 func TestContainersLeavesTheCPUSplitUnsetWhenTheKernelOmitsIt(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{ID: "def456", Project: "proj", Service: "db"}))
 
 	containersAt(t, testee, base)
@@ -65,7 +65,7 @@ func TestContainersLeavesTheCPUSplitUnsetWhenTheKernelOmitsIt(t *testing.T) {
 // they answer whether a limit needs raising or a workload needs fixing.
 func TestContainersReportsTheMemoryBreakdown(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
 
 	containersAt(t, testee, base)
@@ -97,7 +97,7 @@ func TestContainersReportsTheMemoryBreakdown(t *testing.T) {
 // than silently losing a subtraction it could not make.
 func TestContainersKeepsFileWholeWithoutAShmemLine(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup",
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{ID: "def456", Project: "proj", Service: "db"}))
 
 	containersAt(t, testee, base)

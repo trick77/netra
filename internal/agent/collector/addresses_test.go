@@ -2,6 +2,8 @@ package collector_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/trick77/netra/internal/agent/collector"
@@ -21,6 +23,111 @@ func addrRow(t *testing.T, rows []*netrav1.HostAddress, addr string) *netrav1.Ho
 	}
 	t.Fatalf("no row for %q in %d rows", addr, len(rows))
 	return nil
+}
+
+// vrf and description were on the wire and in the schema from the start, and
+// the hub wrote both columns, but the collector set neither -- so the Network
+// inventory table had two columns that were empty on every host.
+func TestAddressesReportsVRFAndDescription(t *testing.T) {
+	testee := collector.NewAddresses(fakeIfaces(
+		collector.Iface{
+			Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24"},
+			VRF: "mgmt-vrf", Description: "uplink to core",
+		},
+	))
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	row := addrRow(t, res.Addresses, "10.0.0.5")
+	if got := row.GetVrf(); got != "mgmt-vrf" {
+		t.Errorf("vrf = %q, want mgmt-vrf", got)
+	}
+	if got := row.GetDescription(); got != "uplink to core" {
+		t.Errorf("description = %q, want \"uplink to core\"", got)
+	}
+}
+
+// The alias is part of what is reported, so it is part of what counts as a
+// change. Keying the comparison on iface and address alone left an operator's
+// `ip link set ... alias` unreported until some unrelated address moved.
+func TestAddressesReportsAnAliasChangeOnItsOwn(t *testing.T) {
+	iface := collector.Iface{Name: "eth0", Index: 2, Addrs: []string{"10.0.0.5/24"}}
+
+	lister := func() ([]collector.Iface, error) { return []collector.Iface{iface}, nil }
+	testee := collector.NewAddresses(lister)
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("first Collect: %v", err)
+	}
+
+	// Only the alias changes; the address set is identical.
+	iface.Description = "now labelled"
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("second Collect: %v", err)
+	}
+	if len(res.Addresses) == 0 {
+		t.Fatal("an alias change went unreported; the hub would serve the old text indefinitely")
+	}
+	if got := addrRow(t, res.Addresses, "10.0.0.5").GetDescription(); got != "now labelled" {
+		t.Errorf("description = %q, want \"now labelled\"", got)
+	}
+}
+
+// SystemIfaces reports no VRF at all, and that is the honest answer rather
+// than a missing feature.
+//
+// The tempting sysfs discriminator does not exist: drivers/net/vrf.c
+// registers only rtnl_link_ops.kind = "vrf" and never calls
+// SET_NETDEV_DEVTYPE, so a VRF master's uevent has no DEVTYPE line. A test
+// that writes DEVTYPE=vrf into a fixture asserts its author's assumption
+// instead of the kernel's behaviour, and passes while the production path
+// returns empty on every real host. Deciding from the ABSENCE of a DEVTYPE
+// would instead call team and macvlan masters VRFs.
+//
+// Determining it needs IFLA_INFO_KIND over rtnetlink, which this collector
+// deliberately does not speak.
+func TestSystemIfacesReportsNoVRF(t *testing.T) {
+	ifaces, err := collector.SystemIfaces()
+	if err != nil {
+		t.Fatalf("SystemIfaces: %v", err)
+	}
+	if len(ifaces) == 0 {
+		t.Skip("no interfaces on this machine")
+	}
+	for _, i := range ifaces {
+		if i.VRF != "" {
+			t.Errorf("%s reported vrf = %q; sysfs cannot identify a VRF master, so this must stay unset",
+				i.Name, i.VRF)
+		}
+	}
+}
+
+// Most interfaces have no alias. Absent reads as empty, not as an error.
+func TestIfaceAliasReadsTheInterfaceAlias(t *testing.T) {
+	root := t.TempDir()
+	collector.SetSysClassNetForTest(t, root)
+
+	if err := os.MkdirAll(filepath.Join(root, "eth0"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "eth0", "ifalias"), []byte("uplink to core\n"), 0o644); err != nil {
+		t.Fatalf("write ifalias: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "eth1"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if got := collector.IfaceAliasForTest("eth0"); got != "uplink to core" {
+		t.Errorf("alias = %q, want \"uplink to core\"", got)
+	}
+	if got := collector.IfaceAliasForTest("eth1"); got != "" {
+		t.Errorf("alias = %q for an interface with none, want empty", got)
+	}
 }
 
 // IPv4 and IPv6 are treated identically throughout (spec §5.2).

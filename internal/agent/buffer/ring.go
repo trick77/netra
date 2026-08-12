@@ -29,6 +29,13 @@ type Scrape struct {
 	PackageEvents []*netrav1.PackageEvent
 	Addresses     []*netrav1.HostAddress
 	Packages      []*netrav1.HostPackage
+
+	// Collectors is the only family with no counterpart on collector.Result:
+	// a collector cannot time itself, so the scrape loop measures it from the
+	// outside and fills this in. It buffers and replays with the scrape it
+	// describes, because "the smart collector was timing out" is only useful
+	// alongside the samples that were thin because of it.
+	Collectors []*netrav1.CollectorSample
 }
 
 // Entry is one buffered scrape and its batch sequence number.

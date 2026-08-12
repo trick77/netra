@@ -136,7 +136,8 @@ CREATE TABLE IF NOT EXISTS host_samples (
     processes_total INTEGER,
     users_logged_in INTEGER,
 
-    -- systemd summary (spec 5.3). NULL until the systemd collector lands.
+    -- systemd summary (spec 5.3), from the Systemd collector. NULL on a host
+    -- with no systemd: no units is not the same fact as zero failed units.
     services_total  INTEGER,
     services_failed INTEGER,
 

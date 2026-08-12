@@ -148,9 +148,9 @@ message HostSample {
   // is the normal case on a host with no utmp writer.
   optional uint32 users_logged_in = 26;
 
-  // systemd unit summary. The fields land here so host_samples matches spec
-  // 5.3; the collector that fills them is a later phase, until which they
-  // stay NULL.
+  // systemd unit summary (spec 5.3), filled by the Systemd collector. Both
+  // stay NULL on a host with no systemd, which is the honest reading: a host
+  // that runs no units is not a host with zero failed units.
   optional uint32 services_total = 27;
   optional uint32 services_failed = 28;
 
@@ -250,22 +250,22 @@ message AgentSample {
   // reads as "no measurement" rather than "instantaneous".
   optional uint32 post_latency_ms = 2;
 
-  // Set by the Self collector in a later phase.
+  // The AGENT's uptime, not the host's. The two differ exactly when the
+  // agent restarted alone -- which also means its ring buffer was lost.
   optional uint64 uptime_s = 3;
+  // Sys rather than Alloc: what the process took from the OS is what an
+  // operator sees in ps, whereas Alloc is Go's live heap and understates it.
   optional uint64 rss_bytes = 4;
   optional uint32 goroutines = 5;
 
   optional uint32 buffer_depth = 6;
   optional uint64 buffer_dropped_total = 7;
 
-  // Set by the Self collector in a later phase.
   optional uint64 post_failures_total = 8;
 }
 
-// ProcessSample is NOT DEFINED YET, and this note is here so that when it is,
-// the decision below is already made.
-//
-// It may carry exactly: name, cpu_pct, mem_bytes, count.
+// ProcessSample carries exactly: name, cpu_pct, mem_bytes, count. The rule
+// below is why, and it holds for every future field.
 //
 // `name` is `comm` — /proc/PID/comm, or field 2 of /proc/PID/stat — which the
 // kernel caps at 15 bytes. No field may ever carry argv or the environment.
