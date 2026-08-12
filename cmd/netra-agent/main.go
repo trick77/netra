@@ -59,6 +59,8 @@ func run() error {
 		collector.NewMemory(cfg.ProcRoot),
 		collector.NewLoad(cfg.ProcRoot),
 		collector.NewKernelStat(cfg.ProcRoot),
+		collector.NewVMStat(cfg.ProcRoot),
+		collector.NewLimits(cfg.ProcRoot),
 		collector.NewProcs(cfg.ProcRoot, cfg.PidHost),
 		collector.NewNetstat(cfg.ProcRoot),
 		collector.NewUsers(cfg.UtmpPath),

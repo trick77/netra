@@ -200,6 +200,46 @@ message HostSample {
   optional double ip6_frag_fails_per_s = 52;
   optional double ip6_frag_creates_per_s = 53;
 
+  // --- /proc/vmstat, memory pressure ---
+  //
+  // What the memory gauges cannot say. mem_available reports how much memory
+  // is free; these report what the machine had to DO to keep it that way. A
+  // host can sit at a comfortable 40% used while thrashing.
+  //
+  // 55-59 are deliberately skipped: they belong to the meminfo split landing
+  // in parallel, and reusing a field number across two branches would put two
+  // different meanings on one wire tag.
+  optional double pgmajfault_per_s = 60;
+  optional double pswpin_per_s = 61;
+  optional double pswpout_per_s = 62;
+
+  // A cumulative count, not a rate. One OOM kill in a 60s interval is a
+  // discrete event an operator must see happened at all; as a per-second rate
+  // it rounds to something that reads like noise.
+  optional uint64 oom_kill_total = 63;
+
+  // --- Exhaustion gauges: how close the host is to a hard ceiling ---
+  //
+  // Every one of these has a limit beside it, which is the point. Running out
+  // does not present as a resource problem: accept() starts failing and
+  // conntrack drops new flows, so the symptom looks like a broken network.
+  optional uint32 sockets_used = 64;
+  optional uint32 tcp_orphan = 65;
+  optional uint32 tcp_tw = 66;
+  optional uint32 tcp_alloc = 67;
+  optional uint64 fd_used = 68;
+
+  // Named _limit rather than _max on purpose. netra reserves the _max suffix
+  // for a BUCKET MAXIMUM in the rollup tiers, so fd_max would read as "the
+  // peak descriptor count" beside fd_used_max -- when it is a ceiling that
+  // barely moves. Same for conntrack below.
+  optional uint64 fd_limit = 69;
+
+  // Unset when the conntrack module is not loaded, which is normal on a host
+  // doing neither NAT nor filtering. Absent, not zero.
+  optional uint32 conntrack_count = 70;
+  optional uint32 conntrack_limit = 71;
+
   // The agent's own telemetry for this scrape. Singular, not repeated: it is
   // 1:1 with (host_id, ts), so nesting it here means it rides the existing
   // ring buffer, partial drain and backfill paths unchanged, and the hub

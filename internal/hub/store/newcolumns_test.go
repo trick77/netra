@@ -50,6 +50,19 @@ func TestIntegrationNewHostColumnsRoundTrip(t *testing.T) {
 		ServicesTotal:  proto.Uint32(109),
 		ServicesFailed: proto.Uint32(110),
 
+		PgmajfaultPerS: proto.Float64(201.5),
+		PswpinPerS:     proto.Float64(202.5),
+		PswpoutPerS:    proto.Float64(203.5),
+		OomKillTotal:   proto.Uint64(220),
+		SocketsUsed:    proto.Uint32(221),
+		TcpOrphan:      proto.Uint32(222),
+		TcpTw:          proto.Uint32(223),
+		TcpAlloc:       proto.Uint32(224),
+		FdUsed:         proto.Uint64(225),
+		FdLimit:        proto.Uint64(226),
+		ConntrackCount: proto.Uint32(227),
+		ConntrackLimit: proto.Uint32(228),
+
 		TcpRetransSegsPerS:     proto.Float64(111.5),
 		TcpOutRstsPerS:         proto.Float64(112.5),
 		TcpInErrsPerS:          proto.Float64(113.5),
@@ -115,6 +128,9 @@ func TestIntegrationNewHostColumnsRoundTrip(t *testing.T) {
 		"ip6_reasm_fails_per_s":      133.5,
 		"ip6_frag_fails_per_s":       134.5,
 		"ip6_frag_creates_per_s":     135.5,
+		"pgmajfault_per_s":           201.5,
+		"pswpin_per_s":               202.5,
+		"pswpout_per_s":              203.5,
 	}
 	for col, want := range floatCols {
 		var got *float64
@@ -146,6 +162,19 @@ func TestIntegrationNewHostColumnsRoundTrip(t *testing.T) {
 		"mem_cached":       203,
 		"mem_shared":       204,
 		"mem_sreclaimable": 205,
+		// From 220 so no value is shared with the memory partition above:
+		// the point of this table is that a transposed pair fails on a named
+		// column, and two columns holding the same number would let one
+		// through.
+		"oom_kill_total":  220,
+		"sockets_used":    221,
+		"tcp_orphan":      222,
+		"tcp_tw":          223,
+		"tcp_alloc":       224,
+		"fd_used":         225,
+		"fd_limit":        226,
+		"conntrack_count": 227,
+		"conntrack_limit": 228,
 	}
 	for col, want := range intCols {
 		var got *int64

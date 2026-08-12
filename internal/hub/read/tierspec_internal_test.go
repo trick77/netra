@@ -87,6 +87,14 @@ var sameQuantityAtEveryTier = map[string]string{
 	"error_code":           "last() over the bucket",
 	"buffer_dropped_total": "max() of a monotonic counter",
 	"post_failures_total":  "max() of a monotonic counter",
+	"oom_kill_total":       "last() over the bucket",
+	// Ceilings, and named _limit rather than _max precisely so that keeping
+	// one name across tiers cannot be misread as a bucket maximum. Unlike a
+	// filesystem's total, these are kernel tunables: raising one is a
+	// deliberate sysctl, not something that happens mid-bucket, so the last
+	// reading and the reading ARE the same number.
+	"fd_limit":        "last() over the bucket",
+	"conntrack_limit": "last() over the bucket",
 }
 
 // The read API's central guarantee, enumerated rather than asserted.

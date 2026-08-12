@@ -59,7 +59,10 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 			-- numbers: inserting them in the middle would renumber forty
 			-- placeholders, and a transposed pair in a statement this long
 			-- is invisible until a chart reads the wrong metric.
-			mem_free, mem_buffers, mem_cached, mem_shared, mem_sreclaimable
+			mem_free, mem_buffers, mem_cached, mem_shared, mem_sreclaimable,
+			pgmajfault_per_s, pswpin_per_s, pswpout_per_s, oom_kill_total,
+			sockets_used, tcp_orphan, tcp_tw, tcp_alloc,
+			fd_used, fd_limit, conntrack_count, conntrack_limit
 		) VALUES (
 			$1, $2,
 			$3, $4, $5, $6, $7, $8,
@@ -82,7 +85,10 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 			$49, $50,
 			$51, $52,
 			$53, $54,
-			$55, $56, $57, $58, $59
+			$55, $56, $57, $58, $59,
+			$60, $61, $62, $63,
+			$64, $65, $66, $67,
+			$68, $69, $70, $71
 		)
 		ON CONFLICT (host_id, ts) DO NOTHING`
 
@@ -114,6 +120,9 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 			f64(m.Ip6FragFailsPerS), f64(m.Ip6FragCreatesPerS),
 			u64(m.MemFree), u64(m.MemBuffers), u64(m.MemCached),
 			u64(m.MemShared), u64(m.MemSreclaimable),
+			f64(m.PgmajfaultPerS), f64(m.PswpinPerS), f64(m.PswpoutPerS), u64(m.OomKillTotal),
+			u32(m.SocketsUsed), u32(m.TcpOrphan), u32(m.TcpTw), u32(m.TcpAlloc),
+			u64(m.FdUsed), u64(m.FdLimit), u32(m.ConntrackCount), u32(m.ConntrackLimit),
 		)
 	}
 
