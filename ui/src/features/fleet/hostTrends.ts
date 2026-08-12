@@ -198,7 +198,11 @@ export async function fetchHostTrends(
   // otherwise. Never the user/system/iowait/steal breakdown here: that is a
   // different question -- where the time went, rather than which core spent
   // it -- and it has its own panel on the host page.
-  const perCore = perCoreBands(cores);
+  // Normalised here and only here: a 4-core and a 32-core host share one
+  // 0-100 cell in this list, so the stack has to top out at cpu_total. The
+  // host page draws the same cores unnormalised, where the numbers matter
+  // more than cross-host comparability.
+  const perCore = perCoreBands(cores, { normalise: true });
   const cpu =
     perCore.length > 0
       ? perCore

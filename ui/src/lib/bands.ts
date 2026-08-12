@@ -108,27 +108,41 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
 }
 
 /**
- * One band per CPU core, each scaled so the whole stack sums to cpu_total.
+ * One band per CPU core.
  *
- * Every core reports 0-100, so a raw stack of N cores runs to N x 100 and
- * overflows a chart whose ceiling is 100. Dividing by N makes the top of the
- * stack the MEAN across cores -- which is cpu_total -- so a 4-core host and a
- * 32-core host stay comparable in a list, and the same chart agrees with the
- * number the meter shows for that instant.
+ * `normalise` decides which of two true charts this is, and the choice is
+ * forced by where it is drawn:
+ *
+ * - Normalised (the fleet list): every core is divided by the core count, so
+ *   the top of the stack is the MEAN across cores -- cpu_total -- and a
+ *   4-core and a 32-core host can share one 0-100 cell and stay comparable.
+ *   The cost is that a band's value is that core's share of the host total,
+ *   not its own utilisation: a core at 43% busy on a 32-core box reads 1.3.
+ * - Raw (the host page): each band is the core's real utilisation, so every
+ *   number in the tooltip and the stats table is the number that core
+ *   actually reported. The stack then runs to N x 100, which is why the
+ *   chart drawing it hides its y axis -- the height is a shape, not a
+ *   quantity. This is what beszel does, and it is right there: one host,
+ *   no cross-host comparison to protect, and a reader who wants to know
+ *   what core 7 is doing.
  *
  * N is the response's own series count, never the host's inventory `threads`:
  * the two disagree when a core stops reporting mid-window, and only the
  * response knows how many series it actually carries.
  */
-export function perCoreBands(res: MetricsResponse | null): Band[] {
+export function perCoreBands(
+  res: MetricsResponse | null,
+  { normalise = false }: { normalise?: boolean } = {},
+): Band[] {
   if (res === null || res.series.length === 0) return [];
   const n = res.series.length;
 
   return res.series
     .map((series, i) => {
-      const values = griddedValues(res, i, "busy").map((v) =>
-        v === null ? null : v / n,
-      );
+      const raw = griddedValues(res, i, "busy");
+      const values = normalise
+        ? raw.map((v) => (v === null ? null : v / n))
+        : raw;
       return {
         // The key names the core, so a hovered band is identifiable even
         // though thirty-two of them cannot each own a hue.
@@ -168,7 +182,10 @@ function coreColor(i: number, n: number): string {
   // so even 32 cores land ~9 degrees apart. n === 1 takes the first hue rather
   // than dividing by zero.
   const hue = n <= 1 ? 265 : 265 - (285 * i) / (n - 1);
-  return `hsl(${((hue % 360) + 360) % 360} 65% 50%)`;
+  // Saturation and lightness come from index.css so the ramp follows the
+  // theme; only the hue is computed here, because the sweep has to subdivide
+  // to fit the host and there is no fixed set of steps to name.
+  return `hsl(${((hue % 360) + 360) % 360} var(--chart-saturation) var(--chart-lightness))`;
 }
 
 function optional(res: MetricsResponse, base: string): (number | null)[] {

@@ -45,6 +45,10 @@ export interface ChartPanelProps {
   /** Whether the chart names its series underneath. Off for the per-core
    * stack, where the list is longer than the chart. */
   legend?: boolean;
+  /** Hide the enlarged view's y axis. For a stack whose height is a shape
+   * rather than a quantity -- unnormalised per-core CPU runs to N x 100 --
+   * an axis would put a number on something that does not mean one. */
+  hideAxis?: boolean;
   /** The answered window, passed through to the enlarged view's time axis. */
   window?: { from: string; to: string } | null;
   /** The page's range and setter, so the enlarged view can carry the same
@@ -66,6 +70,7 @@ export function ChartPanel({
   highlight,
   stacked,
   legend,
+  hideAxis,
   window: answered = null,
   range,
   onRangeChange,
@@ -85,7 +90,13 @@ export function ChartPanel({
     );
   }
 
-  const { max: autoMax } = extent(series.flatMap((s) => s.values));
+  // A stack is as tall as the running TOTAL at an index, so the largest
+  // single value understates it and the top of the stack would be drawn
+  // outside the box. Only matters when no explicit ceiling is given, which
+  // is the unnormalised per-core chart: N cores stack to N x 100.
+  const autoMax = stacked
+    ? runningTotalMax(series)
+    : extent(series.flatMap((s) => s.values)).max;
   const effectiveMax = max ?? autoMax;
 
   // The value at the LATEST bucket, trailing nulls included. Filtering the
@@ -148,6 +159,7 @@ export function ChartPanel({
           fmt={fmt}
           stacked={stacked}
           legend={legend}
+          hideAxis={hideAxis}
           window={answered}
           range={range}
           onRangeChange={onRangeChange}
@@ -156,4 +168,24 @@ export function ChartPanel({
       )}
     </section>
   );
+}
+
+/**
+ * The largest running total across a stack's series -- what stackBands()
+ * scales against. Indices where any series is null are skipped, matching
+ * stackBands' own gap rule: a running total is undefined there.
+ */
+function runningTotalMax(series: readonly Band[]): number {
+  const n = series.reduce(
+    (longest, s) => Math.max(longest, s.values.length),
+    0,
+  );
+  let best = 0;
+  for (let i = 0; i < n; i++) {
+    if (series.some((s) => s.values[i] == null)) continue;
+    let sum = 0;
+    for (const s of series) sum += s.values[i] as number;
+    if (sum > best) best = sum;
+  }
+  return best;
 }

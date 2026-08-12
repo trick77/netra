@@ -81,11 +81,9 @@ interface PanelSpec {
    * (each core divided by the core count, so the stack tops out at
    * cpu_total) and the CPU time breakdown (the states sum to busy). */
   stacked?: boolean;
-  /** Divide every band by the number of series in the response. Per-core
-   * busy is 0-100 PER CORE, so an unnormalised stack of N cores runs to
-   * N x 100 and leaves the box; dividing by N makes the top of the stack the
-   * mean across cores, which is cpu_total. */
-  normalise?: boolean;
+  /** Hide the enlarged view's y axis, for a stack whose height is a shape
+   * rather than a quantity. */
+  hideAxis?: boolean;
 }
 
 // A count or a rate has no unit prefix worth inventing, so it is printed
@@ -102,9 +100,11 @@ const SYSTEM: PanelSpec[] = [
     title: "CPU cores",
     source: "cpuCore",
     bases: [{ base: "busy", label: "busy" }],
-    max: 100,
     stacked: true,
-    normalise: true,
+    // No ceiling and no axis: each band is one core's real utilisation, so
+    // the stack runs to cores x 100. Every number a reader sees is the
+    // number that core reported, which is the point of this panel.
+    hideAxis: true,
     fmt: (n) => (n === null ? ABSENT : `${count(n)} %`),
   },
   // The states partition busy time, so they stack honestly. They used to
@@ -335,17 +335,9 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
       // than as nulls, and the geometry breaks a line only on a null. Drawn
       // straight from the response, three hours of a host being down became
       // one unbroken line across the hole.
-      const raw = spec.boolean
+      const values = spec.boolean
         ? booleanValues(res, index, base)
         : griddedValues(res, index, base);
-      // Per-core busy is 0-100 PER CORE. Dividing by the response's own
-      // series count -- never the host's inventory thread count, which
-      // disagrees when a core stops reporting mid-window -- makes the stack
-      // top out at the mean across cores, i.e. cpu_total.
-      const values =
-        spec.normalise && res.series.length > 0
-          ? raw.map((v) => (v === null ? null : v / res.series.length))
-          : raw;
       if (values.length === 0) continue;
       // A band with no readings at all is dropped rather than drawn empty.
       // On a STACKED panel this is not cosmetic: stackBands() breaks every
@@ -415,9 +407,10 @@ function Panel({
       fmt={spec.fmt}
       stacked={spec.stacked}
       // A 32-core legend is longer than the chart it explains. Suppressed
-      // with `legend`, not `highlight`: the latter also dims every other
-      // series to 35% and washed the whole stack out.
-      legend={!(spec.normalise && series.length > 6)}
+      // with legend, not highlight: the latter also dims every other series
+      // to 35% and washed the whole stack out.
+      legend={series.length <= 6}
+      hideAxis={spec.hideAxis}
       // No per-panel notice: the window statement is about the RANGE, not
       // about any one chart, and repeating it under twenty panels made it
       // twenty pieces of noise nobody reads. It is rendered once, above the

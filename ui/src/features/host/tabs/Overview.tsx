@@ -296,7 +296,12 @@ export function Overview({
         <ChartPanel
           title="Processor"
           series={cpuBands}
-          max={100}
+          // No ceiling for the per-core stack: the bands are each core's real
+          // utilisation, so the stack runs to cores x 100 and the height is a
+          // shape rather than a quantity. The cpu_total fallback is a
+          // percentage of the host and keeps the 0-100 axis.
+          max={perCore.length > 0 ? undefined : 100}
+          hideAxis={perCore.length > 0}
           fmt={(n) => percent(n)}
           window={hostMetrics?.window ?? null}
           // Each core contributes busy/N, so the stack's top edge is the mean

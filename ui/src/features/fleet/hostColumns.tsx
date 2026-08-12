@@ -72,10 +72,13 @@ export type HostRow = Host & {
 };
 
 function HostCell({ row }: { row: HostRow }) {
-  const status = hostStatus(row);
+  // The CPU series is this host's own recent history, so a host that answers
+  // now but keeps dropping scrapes reads as sporadic rather than healthy --
+  // the gaps are already visible in its sparkline, and this says the same
+  // thing in a word.
+  const status = hostStatus(row, undefined, row.cpu[0]?.values);
   return (
     <div className="host-cell">
-      <Badge severity={status.severity}>{status.label}</Badge>
       {/* The hostname is the way into the host page, and it is an anchor
           rather than a row click handler: middle-click, copy-link and
           bookmark all have to work, and a row-wide handler would swallow
@@ -84,6 +87,14 @@ function HostCell({ row }: { row: HostRow }) {
       <a className="host-cell-name" href={`/hosts/${row.id}/overview`}>
         {row.hostname}
       </a>
+      {/* After the name, and only when there is something to say. Healthy is
+          the overwhelming majority state, so a badge on every row spent the
+          eye's first stop -- and the leftmost column -- on the word "online"
+          repeated down the page. What a reader scans for is the exception,
+          which is now the only thing marked. */}
+      {status.severity !== "ok" && (
+        <Badge severity={status.severity}>{status.label}</Badge>
+      )}
       <div className="host-cell-site">{row.site_name ?? ABSENT}</div>
     </div>
   );
@@ -103,12 +114,6 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
     <StackedSparkline
       bands={row.cpu}
       max={CPU_PERCENT_MAX}
-      // No legend once the bands are cores. A 32-thread host listed all
-      // thirty-two of them under a 32px chart, which was taller than every
-      // other cell in the row put together. Below that a handful of bands
-      // still name themselves, which is what the mode breakdown and the
-      // cpu_total fallback want.
-      legend={row.cpu.length <= 6}
       label={`CPU trend, ${rangeLabel(range)}`}
     />
   );

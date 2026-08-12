@@ -245,14 +245,59 @@ describe("hostColumns", () => {
     // i.e. 180s) rather than a separately-invented number -- these two
     // tests pin the boundary at that 180s line, not at some other value
     // a future edit might drift to.
-    it("still reads online at 179s since last_seen, just under 3x the scrape interval", () => {
+    // Healthy is the majority state, so it carries no badge at all: a row
+    // that says "online" down the whole page spends the eye's first stop on
+    // the word that never changes. The absence of a badge IS the healthy
+    // reading, and the boundary below is still pinned at 180s.
+    it("says nothing at 179s since last_seen, just under 3x the scrape interval", () => {
       const cols = hostColumns("1h");
       const hostCol = cols.find((c) => c.header === "Host")!;
       const lastSeen = new Date(Date.now() - 179_000).toISOString();
       const row = makeRow({ last_seen: lastSeen });
       const { container } = render(<>{hostCol.cell(row)}</>);
       expect(container.querySelector(".badge.st-crit")).not.toBeInTheDocument();
-      expect(screen.getByText("online")).toBeInTheDocument();
+      expect(screen.queryByText("online")).toBeNull();
+      expect(container.querySelector(".badge")).not.toBeInTheDocument();
+    });
+
+    // Answering now, but a fifth of the window missing. "online" and
+    // "offline" are both wrong summaries of that host: one says it is fine,
+    // the other says it is gone, and the interesting state is neither.
+    it("marks a host that answers but keeps dropping scrapes as sporadic", () => {
+      const cols = hostColumns("1h");
+      const hostCol = cols.find((c) => c.header === "Host")!;
+      const row = makeRow({
+        last_seen: new Date(Date.now() - 10_000).toISOString(),
+        cpu: [
+          {
+            name: "core 0",
+            color: "var(--s1)",
+            values: [10, null, 12, null, 11, null, 9, 10, 11, 12],
+          },
+        ],
+      });
+      const { container } = render(<>{hostCol.cell(row)}</>);
+      expect(screen.getByText("sporadic")).toBeInTheDocument();
+      expect(container.querySelector(".badge.st-crit")).not.toBeInTheDocument();
+    });
+
+    // Trailing nulls are every tier materialising behind now, not a fault:
+    // the newest buckets are empty for every host on the page.
+    it("does not call a clean host sporadic for the buckets no tier has yet", () => {
+      const cols = hostColumns("1h");
+      const hostCol = cols.find((c) => c.header === "Host")!;
+      const row = makeRow({
+        last_seen: new Date(Date.now() - 10_000).toISOString(),
+        cpu: [
+          {
+            name: "core 0",
+            color: "var(--s1)",
+            values: [10, 11, 12, 11, 10, 11, 12, null, null],
+          },
+        ],
+      });
+      render(<>{hostCol.cell(row)}</>);
+      expect(screen.queryByText("sporadic")).toBeNull();
     });
 
     it("reads offline at 181s since last_seen, just past 3x the scrape interval", () => {

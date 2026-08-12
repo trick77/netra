@@ -21,17 +21,6 @@ export interface StackedSparklineProps {
   height?: number;
   pad?: number;
   label?: string;
-  /**
-   * Whether to name every band underneath the chart.
-   *
-   * On by default, because with two or more bands colour alone cannot carry
-   * identity. Off for the per-core CPU stack: a 32-thread host produced a
-   * 32-entry legend that was five times taller than the chart it explained
-   * and pushed every other column of the fleet row off the screen. Thirty-two
-   * cores cannot each own a hue anyway, so there is no identity for a legend
-   * to carry -- the shape is the whole message.
-   */
-  legend?: boolean;
 }
 
 // stackBands() needs the largest RUNNING TOTAL across bands (sum over all
@@ -70,7 +59,6 @@ export function StackedSparkline({
   height = 32,
   pad = 2,
   label = "stacked chart",
-  legend = true,
 }: StackedSparklineProps) {
   const effectiveMax = max ?? maxRunningTotal(bands);
   const paths = stackBands(
@@ -114,16 +102,11 @@ export function StackedSparkline({
             ),
         )}
       </svg>
-      {legend && bands.length >= 2 && (
-        <div className="legend">
-          {bands.map((b) => (
-            <span key={b.name}>
-              <i style={{ background: b.color }} />
-              {b.name}
-            </span>
-          ))}
-        </div>
-      )}
+      {/* No legend. A sparkline is a shape in a table cell, read at a glance
+          alongside four other columns -- a list of band names under it is a
+          second thing to read that answers a question nobody asked there,
+          and at 32 cores it was taller than the row. The host page's charts
+          are where the bands get named. */}
     </>
   );
 }

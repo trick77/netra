@@ -118,6 +118,12 @@
      which is why every chart using them carries a legend. */
   --s7: #eb6834;
   --s8: #eda100;
+  /* The per-core sweep computes its own hues -- there is no fixed set of
+     steps to name when the ramp has to subdivide to fit the host -- but
+     saturation and lightness stay here so the ramp still follows the theme
+     instead of being frozen in a .ts file. */
+  --chart-saturation: 65%;
+  --chart-lightness: 50%;
 
   /* drawer shadow — per-theme; the dark value read as a grey smear on the
      light surface. */
@@ -162,6 +168,10 @@
     --s6: #2bbcbc;
     --s7: #d95926;
     --s8: #c98500;
+    /* Lifted on the dark surface: the same hues at 50% L sit too close to
+       the background to read as distinct bands. */
+    --chart-saturation: 62%;
+    --chart-lightness: 58%;
 
     --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
   }
@@ -196,6 +206,8 @@
   --s6: #2bbcbc;
   --s7: #d95926;
   --s8: #c98500;
+  --chart-saturation: 62%;
+  --chart-lightness: 58%;
 
   --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
 }

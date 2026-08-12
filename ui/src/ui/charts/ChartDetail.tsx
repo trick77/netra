@@ -27,6 +27,10 @@ export interface ChartDetailProps {
    * stack: 32 entries squeezed the 900px plot into a corner, and the stats
    * table below already names every series beside its colour. */
   legend?: boolean;
+  /** Hide the y axis. A stack whose height is a shape rather than a
+   * quantity -- unnormalised per-core CPU runs to N x 100 -- must not carry
+   * an axis putting a number on it. */
+  hideAxis?: boolean;
 }
 
 /**
@@ -52,6 +56,7 @@ export function ChartDetail({
   onClose,
   stacked,
   legend,
+  hideAxis,
 }: ChartDetailProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -101,11 +106,13 @@ export function ChartDetail({
         <div className="cd-chart">
           {/* The y axis is drawn from the same ceiling the line is scaled
               to, so the labels cannot disagree with the shape. */}
-          <div className="cd-y">
-            <span>{format(ceiling)}</span>
-            <span>{format(ceiling / 2)}</span>
-            <span>{format(0)}</span>
-          </div>
+          {!hideAxis && (
+            <div className="cd-y">
+              <span>{format(ceiling)}</span>
+              <span>{format(ceiling / 2)}</span>
+              <span>{format(0)}</span>
+            </div>
+          )}
           <Overlay
             series={series}
             min={0}

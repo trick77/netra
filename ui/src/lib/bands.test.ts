@@ -171,18 +171,26 @@ describe("perCoreBands", () => {
     ],
   });
 
-  // Each core reports 0-100, so a raw stack of N cores runs to N x 100 and
-  // overflows a chart whose ceiling is 100. Dividing by N makes the top of
-  // the stack the mean -- which is cpu_total -- so the chart agrees with the
-  // number the meter shows, and hosts with different core counts stay
-  // comparable in a list.
+  // The fleet list draws a 4-core and a 32-core host in the same 0-100 cell,
+  // so there the stack has to top out at cpu_total -- the mean across cores.
   it("normalises by core count so the stack tops out at cpu_total", () => {
-    const bands = perCoreBands(cores);
+    const bands = perCoreBands(cores, { normalise: true });
     const top = bands.reduce((sum, b) => sum + (b.values[0] as number), 0);
 
     expect(bands).toHaveLength(4);
     expect(top).toBe(25);
     expect(bands[0]!.values[0]).toBe(20);
+  });
+
+  // The host page draws the same cores raw, because there the numbers matter
+  // more than cross-host comparability: a core at 80% must read 80, not its
+  // 20-point share of the host total. The chart drawing it hides its y axis,
+  // since the stack then runs to cores x 100.
+  it("keeps each core's real utilisation when it is not normalised", () => {
+    const bands = perCoreBands(cores);
+
+    expect(bands[0]!.values[0]).toBe(80);
+    expect(bands[1]!.values[0]).toBe(20);
   });
 
   it("names each band after the core key, not its position", () => {
@@ -234,7 +242,9 @@ describe("perCoreBands", () => {
 
     const bands = perCoreBands(one);
     expect(bands).toHaveLength(1);
-    expect(bands[0]!.color).toMatch(/^hsl\(\d+(\.\d+)? 65% 50%\)$/);
+    expect(bands[0]!.color).toMatch(
+      /^hsl\(\d+(\.\d+)? var\(--chart-saturation\) var\(--chart-lightness\)\)$/,
+    );
   });
 
   it("has nothing to draw for a host that reported no cores", () => {
