@@ -141,6 +141,29 @@ CREATE TABLE IF NOT EXISTS host_samples (
     services_total  INTEGER,
     services_failed INTEGER,
 
+    -- /proc/vmstat: what the machine had to DO to keep memory available.
+    pgmajfault_per_s DOUBLE PRECISION,
+    pswpin_per_s     DOUBLE PRECISION,
+    pswpout_per_s    DOUBLE PRECISION,
+    -- Cumulative, not a rate: one kill per interval is a discrete event.
+    oom_kill_total   BIGINT,
+
+    -- Exhaustion gauges, each with its ceiling beside it. Running out of
+    -- these presents as a broken network rather than a resource problem.
+    sockets_used     INTEGER,
+    tcp_orphan       INTEGER,
+    tcp_tw           INTEGER,
+    tcp_alloc        INTEGER,
+    fd_used          BIGINT,
+    fd_limit         BIGINT,
+    -- NULL when the conntrack module is not loaded, which is normal.
+    conntrack_count  INTEGER,
+    conntrack_limit  INTEGER,
+    -- The ceilings the socket gauges are read against, so each has something
+    -- to be compared to.
+    tcp_tw_limit     INTEGER,
+    tcp_orphan_limit INTEGER,
+
     -- /proc/net/snmp Tcp:. There is no tcp6_* mirror because the kernel keeps
     -- one family-agnostic TCP MIB -- these already count IPv6 connections --
     -- and /proc/net/snmp6 has no Tcp6 block at all. Only UDP and IP
@@ -286,7 +309,35 @@ SELECT host_id,
        max(ip6_reasm_fails_per_s) AS ip6_reasm_fails_per_s_max,
        avg(ip6_frag_fails_per_s) AS ip6_frag_fails_per_s_avg,
        max(ip6_frag_fails_per_s) AS ip6_frag_fails_per_s_max,
-       avg(ip6_frag_creates_per_s) AS ip6_frag_creates_per_s_avg
+       avg(ip6_frag_creates_per_s) AS ip6_frag_creates_per_s_avg,
+       -- Pressure rates carry a max: a five-minute mean flattens exactly the
+       -- thrashing burst these exist to show.
+       avg(pgmajfault_per_s) AS pgmajfault_per_s_avg,
+       max(pgmajfault_per_s) AS pgmajfault_per_s_max,
+       avg(pswpin_per_s) AS pswpin_per_s_avg,
+       max(pswpin_per_s) AS pswpin_per_s_max,
+       avg(pswpout_per_s) AS pswpout_per_s_avg,
+       max(pswpout_per_s) AS pswpout_per_s_max,
+       -- Monotonic: the last reading in the bucket is the running total.
+       last(oom_kill_total, ts) AS oom_kill_total,
+       -- Exhaustion gauges keep a max, which is the whole question: the peak
+       -- is what approached the ceiling, and an average hides it.
+       avg(sockets_used) AS sockets_used_avg,
+       max(sockets_used) AS sockets_used_max,
+       avg(tcp_orphan) AS tcp_orphan_avg,
+       max(tcp_orphan) AS tcp_orphan_max,
+       avg(tcp_tw) AS tcp_tw_avg,
+       max(tcp_tw) AS tcp_tw_max,
+       avg(tcp_alloc) AS tcp_alloc_avg,
+       max(tcp_alloc) AS tcp_alloc_max,
+       avg(fd_used) AS fd_used_avg,
+       max(fd_used) AS fd_used_max,
+       last(fd_limit, ts) AS fd_limit,
+       avg(conntrack_count) AS conntrack_count_avg,
+       max(conntrack_count) AS conntrack_count_max,
+       last(conntrack_limit, ts) AS conntrack_limit,
+       last(tcp_tw_limit, ts) AS tcp_tw_limit,
+       last(tcp_orphan_limit, ts) AS tcp_orphan_limit
   FROM host_samples
  GROUP BY host_id, bucket
 WITH NO DATA;
@@ -384,7 +435,34 @@ SELECT host_id,
        max(ip6_reasm_fails_per_s_max) AS ip6_reasm_fails_per_s_max,
        avg(ip6_frag_fails_per_s_avg) AS ip6_frag_fails_per_s_avg,
        max(ip6_frag_fails_per_s_max) AS ip6_frag_fails_per_s_max,
-       avg(ip6_frag_creates_per_s_avg) AS ip6_frag_creates_per_s_avg
+       avg(ip6_frag_creates_per_s_avg) AS ip6_frag_creates_per_s_avg,
+       -- Rolled up FROM the 5m tier, so each aggregate composes with its own
+       -- kind: avg of avgs, max of maxes, last of lasts. Taking max(x_avg)
+       -- here would report the busiest five minutes as if it were an
+       -- instantaneous peak.
+       avg(pgmajfault_per_s_avg) AS pgmajfault_per_s_avg,
+       max(pgmajfault_per_s_max) AS pgmajfault_per_s_max,
+       avg(pswpin_per_s_avg) AS pswpin_per_s_avg,
+       max(pswpin_per_s_max) AS pswpin_per_s_max,
+       avg(pswpout_per_s_avg) AS pswpout_per_s_avg,
+       max(pswpout_per_s_max) AS pswpout_per_s_max,
+       last(oom_kill_total, bucket) AS oom_kill_total,
+       avg(sockets_used_avg) AS sockets_used_avg,
+       max(sockets_used_max) AS sockets_used_max,
+       avg(tcp_orphan_avg) AS tcp_orphan_avg,
+       max(tcp_orphan_max) AS tcp_orphan_max,
+       avg(tcp_tw_avg) AS tcp_tw_avg,
+       max(tcp_tw_max) AS tcp_tw_max,
+       avg(tcp_alloc_avg) AS tcp_alloc_avg,
+       max(tcp_alloc_max) AS tcp_alloc_max,
+       avg(fd_used_avg) AS fd_used_avg,
+       max(fd_used_max) AS fd_used_max,
+       last(fd_limit, bucket) AS fd_limit,
+       avg(conntrack_count_avg) AS conntrack_count_avg,
+       max(conntrack_count_max) AS conntrack_count_max,
+       last(conntrack_limit, bucket) AS conntrack_limit,
+       last(tcp_tw_limit, bucket) AS tcp_tw_limit,
+       last(tcp_orphan_limit, bucket) AS tcp_orphan_limit
   FROM host_samples_5m
  GROUP BY host_id, time_bucket(INTERVAL '1 hour', bucket)
 WITH NO DATA;

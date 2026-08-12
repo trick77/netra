@@ -9,11 +9,12 @@
 #   mkdir -p /.netra                          # see "Filesystems" below
 #   docker compose up -d
 #
-# WHAT IS IMPLEMENTED TODAY (phase 1): all twenty collectors.
+# WHAT IS IMPLEMENTED TODAY (phase 1): all twenty-two collectors.
 #
 # Needing nothing but /proc and /sys — no mount, no capability, no device:
-#   CPU, per-core CPU, memory, load, kernelstat, netstat, procs, users,
-#   disk I/O (/proc/diskstats), sensors (/sys/class/hwmon), mdraid (sysfs).
+#   CPU, per-core CPU, memory, load, kernelstat, vmstat, limits, netstat,
+#   procs, users, disk I/O (/proc/diskstats), sensors (/sys/class/hwmon),
+#   mdraid (sysfs).
 #
 # Needing network_mode: host, or they see the container's namespace instead of
 # the host's:

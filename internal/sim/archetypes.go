@@ -106,7 +106,7 @@ func rpi5() *Profile {
 			{Name: "sshd", CPUBase: 0.1, MemBase: 9 * mib, Count: 3},
 		},
 		Collectors: []string{
-			"cpu", "percpu", "memory", "load", "kernelstat", "procs", "netstat",
+			"cpu", "percpu", "memory", "load", "kernelstat", "vmstat", "limits", "procs", "netstat",
 			"users", "diskio", "sensors", "network", "addresses", "containers",
 			"filesystems", "systemd", "packages", "processes",
 		},
@@ -185,7 +185,7 @@ func nvmeVPS() *Profile {
 			{Name: "sshd", CPUBase: 0.1, MemBase: 11 * mib, Count: 4},
 		},
 		Collectors: []string{
-			"cpu", "percpu", "memory", "load", "kernelstat", "procs", "netstat",
+			"cpu", "percpu", "memory", "load", "kernelstat", "vmstat", "limits", "procs", "netstat",
 			"users", "diskio", "network", "addresses", "containers",
 			"filesystems", "systemd", "packages", "processes",
 		},
@@ -280,7 +280,7 @@ func smartBaremetal() *Profile {
 			{Name: "sshd", CPUBase: 0.2, MemBase: 13 * mib, Count: 6},
 		},
 		Collectors: []string{
-			"cpu", "percpu", "memory", "load", "kernelstat", "procs", "netstat",
+			"cpu", "percpu", "memory", "load", "kernelstat", "vmstat", "limits", "procs", "netstat",
 			"users", "diskio", "sensors", "mdraid", "network", "addresses",
 			"containers", "filesystems", "systemd", "packages", "smart",
 			"processes",
@@ -372,7 +372,7 @@ func minimalVPS() *Profile {
 			{Name: "sshd", CPUBase: 0.1, MemBase: 7 * mib, Count: 2},
 		},
 		Collectors: []string{
-			"cpu", "percpu", "memory", "load", "kernelstat", "procs", "netstat",
+			"cpu", "percpu", "memory", "load", "kernelstat", "vmstat", "limits", "procs", "netstat",
 			"users", "diskio", "network", "addresses", "filesystems", "packages", "processes",
 		},
 		Capabilities: map[string]string{
