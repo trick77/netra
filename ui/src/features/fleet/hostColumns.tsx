@@ -171,12 +171,12 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
       // edge of the box rather than as the host's ceiling.
       max={row.mem_total * MEM_HEADROOM}
       reference={row.mem_total}
-      // Five bands, five hues, and nothing else on the row saying which is
-      // which -- used, ARC, buffers, cached and shared would carry their
-      // identity on colour alone without this. The CPU cell beside it
-      // deliberately does NOT opt in: thirty-two cores have no identity a
-      // legend could carry, and the list was taller than the row.
-      legend
+      // No legend, like every other cell in this row. A previous review
+      // argued the five memory bands carry identity a legend should name and
+      // turned it back on here; that is not the call. These are sparklines
+      // in a dense list -- the shape is the message, and naming five bands
+      // under a 32px chart costs more row height than the names are worth.
+      // The host page's Memory panel is where the breakdown gets named.
       label={`Memory trend, ${rangeLabel(range)}`}
     />
   );

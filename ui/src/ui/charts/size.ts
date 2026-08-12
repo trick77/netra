@@ -20,6 +20,27 @@ export const SPARK_WIDTH = 170;
  * different things depending on which chart a reader happened to be
  * looking at.
  */
-export const REFERENCE_STROKE = "var(--ink-2)";
+/* --ink, not --ink-2. The rule marks the host's total RAM, which is the one
+   thing on a memory chart that says whether a stack is nearly full or barely
+   touched -- at secondary ink over a five-band stack it read as a chart
+   gridline rather than as the ceiling, and on the fleet row it disappeared
+   into the bands entirely. It is a stated fact about the host, so it is
+   drawn in the same ink as text. */
+/*
+ * Its own token, and NOT --ink or --ink-2.
+ *
+ * Both of those inks inverture with the theme -- --ink is #1f1e1a in light and
+ * #faf9f5 in dark -- so "make the rule less prominent" and "make it darker"
+ * are the same request in light and opposite requests in dark. Reaching for
+ * --ink put a near-white rule across every memory sparkline for anyone
+ * reading in dark, which is the loudest mark on the row rather than the
+ * quietest.
+ *
+ * --reference is defined per theme to sit at the SAME low prominence in
+ * both: dim enough to read as a quiet annotation over the bands it crosses,
+ * legible enough to find. A hairline with open dashes, for the same reason
+ * -- it annotates the chart, it is not a series in it.
+ */
+export const REFERENCE_STROKE = "var(--reference)";
 export const REFERENCE_DASH = "4 3";
 export const REFERENCE_WIDTH = 1;

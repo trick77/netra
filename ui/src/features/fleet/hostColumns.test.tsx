@@ -245,7 +245,7 @@ describe("hostColumns", () => {
     // identity a legend could carry anyway. It also stripped this cell,
     // where five separately-coloured bands were left carrying their identity
     // on colour alone -- which is the one thing a legend exists to prevent.
-    it("names its five bands rather than leaving identity to colour alone", () => {
+    it("carries no band legend, like every other sparkline in the row", () => {
       const cols = hostColumns("1h");
       const memCol = cols.find((c) => c.header === "Memory")!;
       const row = makeRow({
@@ -260,11 +260,14 @@ describe("hostColumns", () => {
       });
 
       const { container } = render(<>{memCol.cell(row)}</>);
-      const legend = container.querySelector(".legend");
 
-      expect(legend).not.toBeNull();
+      // The shape is the message in a dense list; naming five bands under a
+      // 32px chart costs more row height than the names are worth, and the
+      // host page's Memory panel is where the breakdown gets named. A
+      // previous review turned this back on for the memory cell alone.
+      expect(container.querySelector(".legend")).toBeNull();
       for (const name of ["used", "ARC", "buffers", "cached", "shared"]) {
-        expect(legend!.textContent).toContain(name);
+        expect(container.textContent).not.toContain(name);
       }
     });
 

@@ -124,7 +124,7 @@ describe("HostCards", () => {
   // without this file knowing about either. That delegation is the thing
   // worth pinning: a card and a table row show the same host, and a reader
   // toggling between them must not see two different answers.
-  it("carries the table's band legend into the card's memory tile", () => {
+  it("keeps the memory tile legend-free, exactly as the table row is", () => {
     const row = makeRow({
       mem_total: 16_000_000_000,
       mem: [
@@ -137,12 +137,12 @@ describe("HostCards", () => {
     });
 
     const { container } = render(<HostCards rows={[row]} range="1h" />);
-    const legend = container.querySelector(".legend");
 
-    expect(legend).not.toBeNull();
-    for (const name of ["used", "ARC", "buffers", "cached", "shared"]) {
-      expect(legend!.textContent).toContain(name);
-    }
+    // The card renders hostColumns()' own cells, so this follows the table
+    // without HostCards knowing anything about legends -- which is the
+    // property worth pinning: a card and a table row show the same host and
+    // must not diverge on how much chrome they put under one sparkline.
+    expect(container.querySelector(".legend")).toBeNull();
   });
 
   it("judges a card's status from the reporting series, not its CPU bands", () => {
