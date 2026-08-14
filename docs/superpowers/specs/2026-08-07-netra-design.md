@@ -263,7 +263,7 @@ degradation is the specific behaviour being fixed.
 | Network | `/proc/net/dev` | 60s | `network_mode: host` |
 | Addresses | netlink | detects changes (delivered via metadata hash) | `network_mode: host` |
 | Containers | cgroup v2 files + Docker socket for metadata | 60s | `/var/run/docker.sock:ro` |
-| Filesystems | `statfs` on marker dirs | 60s | marker mounts (§6.4) |
+| Filesystems | `statfs` on marker files | 60s | marker mounts (§6.4) |
 | Sensors | `/sys/class/hwmon` | 60s | — (`/sys` is mounted ro by Docker automatically) |
 | mdraid | sysfs | 60s | — |
 | SMART | `smartctl --scan -j` + per-device collect | 1h | `SYS_RAWIO` (SATA), `SYS_ADMIN` (NVMe), `devices:` |
@@ -297,7 +297,7 @@ metrics appears only in `host_addresses`. That asymmetry is intended.
 
 **Per-filesystem I/O requires a device mapping.** `statfs` yields space and inodes only —
 never I/O counters. To populate `filesystem_samples.read_bytes` / `write_bytes`, the
-collector maps the marker directory's `st_dev` to a block device (`/sys/dev/block/<major>:<minor>`,
+collector maps the marker file's `st_dev` to a block device (`/sys/dev/block/<major>:<minor>`,
 resolving partitions to their parent device) and reads the counters from `/proc/diskstats`.
 Where that mapping fails — network filesystems, overlay, LVM stacks it cannot resolve —
 both columns are `NULL` rather than zero, per §5.1 rule 3.
@@ -396,14 +396,14 @@ to discover:
 **SMART availability is reported to the hub as a capability.** A host missing device
 access says so, rather than showing an empty panel.
 
-### 6.4 Filesystems — marker directories
+### 6.4 Filesystems — marker files
 
 `statfs()` reports the filesystem containing the path given, so the measured path must
-physically live on that filesystem. An empty **marker directory** is bind-mounted, not the
+physically live on that filesystem. An empty **marker file** is bind-mounted, not the
 data:
 
 ```bash
-mkdir -p /mnt/ark/.netra
+true >> /mnt/ark/.netra
 ```
 ```yaml
 - /mnt/ark/.netra:/netra/fs/ark:ro
@@ -414,6 +414,14 @@ least-privilege property, and the reason a `/host` root-filesystem mount was rej
 despite being more convenient.
 
 - Label is the trailing path segment (`ark`).
+- **File or directory is immaterial.** `statfs()` reads the superblock, not the object, so
+  a directory at the same path measures exactly the same filesystem. Releases up to and
+  including the first cut of `setup-agent.sh` created directories; the setup script now
+  creates files and leaves an existing directory alone rather than churn a working install.
+  Note `true >>`, not `: >>`: `:` is a POSIX *special* builtin, so a redirection error on it
+  — a directory already at that path, a full filesystem — exits a non-interactive shell and
+  takes a provisioning script down with it. `>>` rather than `>` so the command can only
+  ever create, never truncate.
 - The root filesystem needs its own marker (`/.netra` → `/netra/fs/root`); there is exactly
   one mechanism, no special case in code.
 - **Deduplicate by `st_dev`** — two markers landing on one filesystem would double-report;
@@ -425,16 +433,18 @@ despite being more convenient.
 filesystem at startup, and again only when the set changes:
 
 ```
-filesystem /mnt/backup (8.0T, ext4) is not monitored — bind-mount a marker dir
+filesystem /mnt/backup (8.0T, ext4) is not monitored — bind-mount a marker file
 to /netra/fs/<name> to enable
 ```
 
 Absent, the check is skipped silently. **Discovery never feeds metrics**; measurement is
-exclusively marker-dir `statfs`. If `/netra/fs/` is empty the agent logs a startup
+exclusively marker-file `statfs`. If `/netra/fs/` is empty the agent logs a startup
 **warning**, not a failure — a container-only host is legitimate.
 
 > **To verify during implementation:** that bind-mounting a procfs file yields live reads
-> rather than a snapshot. If it does not, drop discovery and keep pure marker-dir behaviour.
+> rather than a snapshot. If it does not, drop discovery and keep pure marker behaviour.
+> This concerns a *procfs* file specifically — a marker on a real filesystem is measured
+> with `statfs()`, which never reads the file.
 
 ### 6.5 Buffering
 
@@ -731,7 +741,7 @@ Hub variables: `NETRA_LISTEN_ADDR`, `NETRA_DB_DSN`, `NETRA_ADMIN_TOKEN`, `NETRA_
 
 `ghcr.io/trick77/netra-agent:latest`, `network_mode: host`, **no volumes for state**.
 
-Mounts: `/var/run/docker.sock:ro`; marker dirs under `/netra/fs/`; optionally
+Mounts: `/var/run/docker.sock:ro`; marker files under `/netra/fs/`; optionally
 `/proc/1/mountinfo:ro`, `/run/dbus/system_bus_socket:ro`, `/var/lib/dpkg:ro`.
 `cap_add: [SYS_RAWIO]` (+ `SYS_ADMIN` with NVMe) and explicit `devices:` for SMART.
 `pid: host` only if the process collector is enabled. Note what that grants versus what it
@@ -763,7 +773,7 @@ seen what was found and agreed.
 | Continue on an unsupported OS? | no | unrecognised distro | `--unsupported-os` |
 | Grant `SYS_ADMIN` (NVMe SMART health/wear)? | no | NVMe present, physical host | `--sys-admin` |
 | Load the `drivetemp` module and check? | yes | SATA present, no such chip, root, physical | — |
-| Write the files and create the marker directories? | yes | always | — |
+| Write the files and create the marker files? | yes | always | — |
 
 **The core is never a question.** Host CPU, memory and load come from `/proc/stat`,
 `/proc/meminfo` and `/proc/loadavg`, need no privilege, and are what the agent is *for* — a
@@ -800,7 +810,7 @@ wrapped at 76 columns in pure shell, and colour is emitted only when both stream
 terminals and `NO_COLOR` is unset.
 
 **The write gate is single, and nothing mutates before it.** One question covers
-`compose.yaml`, `.env` and every `.netra` marker directory, so declining leaves the host
+`compose.yaml`, `.env` and every `.netra` marker file, so declining leaves the host
 exactly as it was — and, in particular, `--start` does not then run `docker compose up -d`
 against a *previous* run's `compose.yaml`. `--force` is still required to overwrite an
 existing `.env`, because it holds the token.
@@ -841,7 +851,7 @@ after the operator has already answered every question.
 |---|---|
 | Preflight | **Supported OS** via `/etc/os-release` (see below); Docker present and daemon reachable; **cgroup v2** (hard fail with an explicit message on v1); `/etc/machine-id` present |
 | Package manager | Detects `dpkg` (`/var/lib/dpkg/status`) or `apk` (`/lib/apk/db/installed`) and emits the matching read-only mount. On an rpm host it **warns and disables the package collector** rather than failing — rpm's Berkeley DB/SQLite store needs librpm and is unsupported |
-| Filesystems | Reads the mount table, filters pseudo/bind/overlay mounts and everything under `/var/lib/docker`, and for each accepted filesystem creates the `.netra` marker directory and emits the matching `/netra/fs/<label>` bind mount |
+| Filesystems | Reads the mount table, filters pseudo/bind/overlay mounts and everything under `/var/lib/docker`, and for each accepted filesystem creates the `.netra` marker file and emits the matching `/netra/fs/<label>` bind mount |
 | Sensors | Offers `drivetemp` (see §6.2), then enumerates `/sys/class/hwmon/*/name` and `temp*_label` and picks the primary sensor by known CPU chip (`coretemp`, `k10temp`, `zenpower`), not hottest-wins. A tie between equally-ranked chips is **reported, never prompted** — the answer would be a guess frozen into `.env` that outlives the hardware justifying it, and the prompt count would vary with the socket count. `--primary-sensor` pins one |
 | SMART | Lists physical controllers, not partitions; distinguishes SATA from NVMe and emits the matching `devices:` entries plus `SYS_RAWIO`, adding `SYS_ADMIN` **only** when NVMe is present |
 | Optional extras | Mounts the D-Bus socket (systemd units) and the package database read-only without asking; offers `pid: host` (processes), the one thing here that grants more than it uses |

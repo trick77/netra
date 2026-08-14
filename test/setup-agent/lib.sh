@@ -103,6 +103,20 @@ assert_file_present() {
     fi
 }
 
+# assert_is_file PATH MSG — present AND a regular file.
+#
+# Separate from assert_file_present, which is -e: the marker is a FILE now, and
+# a test that only checks existence would still pass against the directory the
+# script used to create.
+assert_is_file() {
+    TESTS_RUN=$((TESTS_RUN + 1))
+    if [ -f "$1" ]; then
+        ok "$2"
+    else
+        fail "$2 (not a regular file: $1)"
+    fi
+}
+
 # run_capture CMD... — runs CMD, leaving combined output in RUN_OUT and the
 # exit status in RUN_RC. Never aborts the caller.
 run_capture() {

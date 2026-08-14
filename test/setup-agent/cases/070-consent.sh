@@ -66,8 +66,8 @@ fi
 assert_eq 0 "$RUN_RC" "declining the gate exits 0 — it is an answer, not an error"
 assert_eq "" "$(ls -A "$CWD")" "declining creates nothing in the working directory"
 assert_file_absent "$CWD/netra-agent" "the default output directory is not created"
-assert_file_absent "$ROOT/.netra" "no marker directory is created when the gate is declined"
-assert_file_absent "$ROOT/mnt/ark/.netra" "no marker directory is created when the gate is declined"
+assert_file_absent "$ROOT/.netra" "no marker file is created when the gate is declined"
+assert_file_absent "$ROOT/mnt/ark/.netra" "and none on the other filesystem either"
 assert_contains "$RUN_OUT" "Nothing was written" "the run says plainly that it wrote nothing"
 assert_contains "$RUN_OUT" "Installs nothing" \
     "the banner says up front that this installs nothing"
@@ -177,7 +177,7 @@ assert_file_absent "$TMP/out-notty/compose.yaml" "nothing is written when consen
 # --- 7. declining the write gate leaves the host exactly as it was ------------
 #
 # This is the ordering bug the single gate exists to prevent. The output
-# directory and every .netra marker directory used to be created BEFORE the
+# directory and every .netra marker used to be created BEFORE the
 # write prompts, so declining left a littered host, possibly a .env, and a
 # finish report cheerfully printing `cd <dir> && docker compose up -d`.
 ROOT=$(mkroot decline)
@@ -190,7 +190,7 @@ assert_eq 0 "$RUN_RC" "declining every prompt is not an error"
 assert_file_absent "$TMP/out-decline/compose.yaml" "a declined compose.yaml is not written"
 assert_file_absent "$TMP/out-decline/.env" "a declined .env is not written"
 assert_file_absent "$TMP/out-decline" "the output directory itself is not created either"
-assert_file_absent "$ROOT/.netra" "no marker directory is created at the filesystem root"
+assert_file_absent "$ROOT/.netra" "no marker file is created at the filesystem root"
 assert_file_absent "$ROOT/mnt/ark/.netra" "and none on the other measured filesystem"
 assert_contains "$RUN_OUT" "Nothing was written" "the run says plainly that it wrote nothing"
 # Only sayable because drivetemp was declined too (answer 2 above). The claim is
@@ -552,7 +552,7 @@ assert_contains "$YESBODY" "/var/lib/dpkg" "the package database is mounted auto
 assert_contains "$YESBODY" "system_bus_socket" "the D-Bus socket is mounted automatically"
 assert_contains "$YESBODY" "docker.sock" "the Docker socket is mounted"
 assert_contains "$YESBODY" "/netra/fs/root" "the marker mount is rendered"
-assert_file_present "$ROOT/.netra" "the marker directories are created"
+assert_is_file "$ROOT/.netra" "the marker files are created"
 
 # --- 13. --sys-admin and --pid-host grant explicitly, without prompting --------
 #
@@ -659,5 +659,190 @@ assert_not_contains "$RUN_OUT" "--yes" "--help does not offer an unattended mode
 assert_contains "$RUN_OUT" "no unattended mode" "--help says so out loud"
 assert_contains "$RUN_OUT" "--pid-host" "--help documents --pid-host"
 assert_contains "$RUN_OUT" "--unsupported-os" "--help documents --unsupported-os"
+
+# --- 18. the summary lists what THIS run changed on the host -------------------
+#
+# The finish report used to say only what was DETECTED. An operator who answered
+# yes to the write gate got no list of what now exists on the box: two files, a
+# handful of marker files, possibly a kernel module and a
+# /etc/modules-load.d entry, all of it only findable by scrolling back.
+#
+# The ledger is recorded at each mutation rather than assembled at the end, and
+# these cases are the difference: a summary written as a fixed block would pass
+# the first run below and lie on the second.
+ROOT=$(mkroot ledger)
+LOUT="$TMP/out-ledger"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$LOUT"
+assert_eq 0 "$RUN_RC" "the first run succeeds"
+LEDGER=$(flatten "$RUN_OUT")
+assert_contains "$LEDGER" "Changed on this host:" "the summary has a ledger of changes"
+assert_contains "$LEDGER" "wrote $LOUT/compose.yaml" "the compose file is listed"
+assert_contains "$LEDGER" "wrote $LOUT/.env" "the .env is listed"
+assert_contains "$LEDGER" "created the directory $LOUT" "the output directory is listed"
+assert_contains "$LEDGER" "created the marker file /.netra" "the root marker is listed"
+assert_contains "$LEDGER" "created the marker file /mnt/ark/.netra" \
+    "and so is the one on the second filesystem"
+assert_is_file "$ROOT/.netra" "the marker really is a regular file, not a directory"
+# The EMIT path, not the probe path: a report naming the fixture prefix would
+# send the operator looking somewhere that does not exist on their host.
+assert_not_contains "$LEDGER" "created the marker file $ROOT" \
+    "the marker entry names the host path, not the probed one"
+assert_contains "$LEDGER" "loaded the drivetemp kernel module" "the kernel module is listed"
+assert_contains "$LEDGER" "wrote /etc/modules-load.d/drivetemp.conf" \
+    "and so is the file that persists it"
+assert_not_contains "$RUN_OUT" "nta_x" "the ledger never prints the token"
+
+# The teeth. A ledger assembled in print_finish would repeat the first run's
+# list; this one has to report exactly what the second run did, which is
+# overwrite one derived file and nothing else.
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers ledger2 n y)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$LOUT"
+assert_eq 0 "$RUN_RC" "the re-run succeeds"
+LEDGER2=$(flatten "$RUN_OUT")
+assert_contains "$LEDGER2" "overwrote $LOUT/compose.yaml" \
+    "a compose.yaml that was already there is reported as overwritten"
+assert_not_contains "$LEDGER2" "wrote $LOUT/.env" \
+    "an .env the --force guard left alone is not reported as written"
+assert_not_contains "$LEDGER2" "created the directory" \
+    "an output directory that already existed is not reported as created"
+assert_not_contains "$LEDGER2" "created the marker file" \
+    "and neither are markers that were already there"
+# drivetemp was already loaded by the first run, so this one changed nothing
+# about it. The answers file is two lines rather than three for exactly that
+# reason: no prompt is asked.
+assert_not_contains "$LEDGER2" "loaded the drivetemp kernel module" \
+    "a module that was already loaded is not this run's change"
+
+# --- 18b. a run that changed nothing says so, in its own words -----------------
+#
+# "Nothing on this host was changed" and the declined-gate "Nothing was changed"
+# are deliberately different sentences: the second is about the whole run at the
+# point the operator declined, the first is about the ledger. Case 7b (c) above
+# pins the other one on the same path.
+ROOT=$(mkroot ledgernone)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers ledgernone n n n)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-ledgernone"
+assert_eq 0 "$RUN_RC" "declining everything is not an error"
+assert_contains "$RUN_OUT" "Nothing on this host was changed." \
+    "an untouched host is reported as untouched"
+assert_not_contains "$RUN_OUT" "Changed on this host:" \
+    "and no empty ledger header is printed"
+
+# A declined gate AFTER drivetemp was loaded still owes the operator the two
+# entries: the ledger is printed before the early return for a declined write.
+ROOT=$(mkroot ledgerdt)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers ledgerdt n y n)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-ledgerdt"
+assert_eq 0 "$RUN_RC" "declining the gate after loading the module is not an error"
+LEDGER3=$(flatten "$RUN_OUT")
+assert_contains "$LEDGER3" "loaded the drivetemp kernel module" \
+    "a declined run still lists the module it loaded"
+assert_contains "$LEDGER3" "wrote /etc/modules-load.d/drivetemp.conf" \
+    "and the file it persisted"
+assert_not_contains "$LEDGER3" "Nothing on this host was changed" \
+    "a run that loaded a kernel module never claims it changed nothing"
+# The banner names compose.yaml on every run, so this has to look for the
+# ledger's own wording rather than the filename.
+assert_not_contains "$LEDGER3" "wrote $TMP/out-ledgerdt/compose.yaml" \
+    "and lists nothing it did not write"
+
+# --- 18b2. an existing marker DIRECTORY is left exactly as it is ---------------
+#
+# The marker became a file, and every host set up before that has a directory at
+# the same path. It is an equally good bind source — statfs(2) reports the
+# filesystem a path lives on and does not care what kind of object it is — so a
+# re-run must leave it alone rather than churn a working install, and must not
+# claim it created anything.
+ROOT=$(mkroot ledgerolddir)
+mkdir -p "$ROOT/.netra"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers ledgerolddir n n y)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-olddir"
+assert_eq 0 "$RUN_RC" "a host with the old marker directory still installs"
+assert_contains "$(flatten "$RUN_OUT")" "created the marker file /mnt/ark/.netra" \
+    "the filesystem that had no marker gets a file"
+assert_not_contains "$(flatten "$RUN_OUT")" "created the marker file /.netra " \
+    "and the one that already had a directory is not reported as created"
+if [ -d "$ROOT/.netra" ]; then
+    ok "the existing marker directory is left as a directory"
+else
+    fail "the existing marker directory was replaced"
+fi
+assert_contains "$(cat "$TMP/out-olddir/compose.yaml")" "/.netra" \
+    "and it is still rendered as a bind source"
+
+# --- 18b3. a marker that cannot be created warns; it does not kill the run ----
+#
+# The code says out loud that this is a DEGRADATION, not a failure. It only is
+# one if the redirection reports its failure as a STATUS: `:` is a POSIX special
+# builtin, and a redirection error on a special builtin exits a non-interactive
+# shell outright — dash does exactly that, bash does not — so `: >>` here would
+# abort the run mid-write, after the output directory exists and before the
+# summary prints, and the warn below would be unreachable under one of the two
+# shells this suite runs.
+#
+# A dangling symlink is the portable way to make the create fail while the mount
+# point itself stays writable; on a real host it is a full filesystem, an
+# exhausted inode table, a quota or a relabelled parent.
+ROOT=$(mkroot ledgernomarker)
+ln -s /nonexistent-dir/marker "$ROOT/.netra"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers ledgernomarker n n y)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-nomarker"
+assert_eq 0 "$RUN_RC" "a marker that cannot be created is not a failed run"
+assert_contains "$(flatten "$RUN_OUT")" "could not create the marker file at /.netra" \
+    "it warns, naming the marker it could not create"
+assert_file_present "$TMP/out-nomarker/compose.yaml" \
+    "and the run carries on to write everything else"
+assert_contains "$(flatten "$RUN_OUT")" "created the marker file /mnt/ark/.netra" \
+    "the other filesystem still gets its marker"
+assert_not_contains "$(flatten "$RUN_OUT")" "created the marker file /.netra" \
+    "and the one that failed is not claimed as a change"
+
+# --- 18c. --start is a change too, and lands after the summary -----------------
+#
+# It runs after print_finish, because the report's "Starting the stack:" line
+# only makes sense ahead of the compose output. So it prints its own entry
+# rather than being left out of the ledger entirely.
+ROOT=$(mkroot ledgerstart)
+: >"$NETRA_SHIM_LOG"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+    "$SH" "$SETUP" --start --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-ledgerstart"
+assert_eq 0 "$RUN_RC" "a --start run succeeds"
+assert_contains "$(flatten "$RUN_OUT")" \
+    "started the agent from $TMP/out-ledgerstart/compose.yaml" \
+    "starting the stack is reported as a change"
+# And a declined gate never gets that line, because it never started anything.
+ROOT=$(mkroot ledgernostart)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers ledgernostart n n n)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    "$SH" "$SETUP" --start --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-ledgernostart"
+assert_not_contains "$RUN_OUT" "started the agent from" \
+    "a declined gate reports no start, because none happened"
 
 exit_case
