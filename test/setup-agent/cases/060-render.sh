@@ -58,9 +58,9 @@ else
     sed 's/^/       /' "$TMP/diff.full" >&2
 fi
 
-# The marker directories are created for the accepted mounts, on the PROBE side.
-assert_file_present "$ROOT/.netra" "the root marker directory is created under the fixture root"
-assert_file_present "$ROOT/mnt/ark/.netra" "the ark marker directory is created"
+# The marker files are created for the accepted mounts, on the PROBE side.
+assert_is_file "$ROOT/.netra" "the root marker file is created under the fixture root"
+assert_is_file "$ROOT/mnt/ark/.netra" "the ark marker file is created"
 
 # --- 2. .env ------------------------------------------------------------------
 ENVOUT=$(cat "$OUT/.env")

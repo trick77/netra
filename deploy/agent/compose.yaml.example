@@ -6,7 +6,7 @@
 #
 #   cp compose.yaml.example compose.yaml
 #   cp env.tmpl .env && $EDITOR .env          # hub URL and token; replace every __PLACEHOLDER__
-#   mkdir -p /.netra                          # see "Filesystems" below
+#   : >> /.netra                              # see "Filesystems" below
 #   docker compose up -d
 #
 # WHAT IS IMPLEMENTED TODAY (phase 1): all twenty-two collectors.
@@ -96,19 +96,26 @@ services:
     # setup-agent.sh renders the same long form, so a hand-written file and a
     # generated one stay comparable line for line.
     volumes:
-      # --- Filesystems (marker directories, §6.4) --------------------------
+      # --- Filesystems (marker files, §6.4) --------------------------------
       #
       # statfs() reports the filesystem containing the path it is given, so the
       # measured path has to physically live on that filesystem. What is mounted
-      # is therefore an EMPTY marker directory, never the data: complete
-      # disk-usage and inode metrics with zero data exposure. That least-
-      # privilege property is exactly why a single `/host` root mount was
-      # rejected despite being far more convenient to write.
+      # is therefore an EMPTY marker file, never the data: complete disk-usage
+      # and inode metrics with zero data exposure. That least-privilege property
+      # is exactly why a single `/host` root mount was rejected despite being
+      # far more convenient to write.
       #
-      # Create the markers before the first run:
+      # statfs() does not care what KIND of object the path is, only which
+      # filesystem it lives on, so a directory at the same path measures exactly
+      # the same thing. Releases before this one created directories, and
+      # setup-agent.sh leaves an existing one alone rather than churn a working
+      # install.
       #
-      #   mkdir -p /.netra
-      #   mkdir -p /mnt/ark/.netra
+      # Create the markers before the first run (`: >>` creates without ever
+      # truncating, unlike `>`):
+      #
+      #   : >> /.netra
+      #   : >> /mnt/ark/.netra
       #
       # The label is the trailing path segment of the TARGET, so /netra/fs/root
       # is labelled `root` and /netra/fs/ark is labelled `ark`. Two markers that
@@ -120,17 +127,17 @@ services:
       # like everything else. If /netra/fs/ is empty the agent logs a startup
       # warning and carries on — a container-only host is legitimate.
       #
-      # read_only here documents intent. An empty directory has nothing to
-      # protect, so it costs nothing to be explicit.
+      # read_only here documents intent. An empty file has nothing to protect,
+      # so it costs nothing to be explicit.
       - type: bind
         source: /.netra
         target: /netra/fs/root
         read_only: true
       # One extra example. Repeat this block per filesystem you want measured —
       # and DELETE it if this host has no second filesystem. A long-form bind
-      # does not create a missing source directory the way the short form does,
-      # so a source that is not there is a container startup failure, not a
-      # warning. Same rule as the `devices:` list below.
+      # does not create a missing source the way the short form does, so a
+      # source that is not there is a container startup failure, not a warning.
+      # Same rule as the `devices:` list below.
       # - type: bind
       #   source: /mnt/ark/.netra
       #   target: /netra/fs/ark
@@ -262,19 +269,21 @@ services:
       # --- OPTIONAL: filesystem discovery (awareness only) ------------------
       #
       # Exposes the host mount table and nothing else. This NEVER feeds metrics:
-      # measurement is exclusively marker-dir statfs, above. All it does is let
+      # measurement is exclusively marker-file statfs, above. All it does is let
       # the agent log one line per unmonitored filesystem at startup, and again
       # only when the set changes:
       #
       #   filesystem /mnt/backup (8.0T, ext4) is not monitored — bind-mount a
-      #   marker dir to /netra/fs/<name> to enable
+      #   marker file to /netra/fs/<name> to enable
       #
       # Absent, that check is skipped silently and nothing else changes.
       #
       # UNVERIFIED (spec §14 item 1): whether bind-mounting a procfs FILE yields
       # live reads or a one-time snapshot has not been confirmed. If it turns out
-      # to be a snapshot this mount is dropped entirely and marker directories
-      # remain the only mechanism. Treat it as provisional.
+      # to be a snapshot this mount is dropped entirely and the markers remain
+      # the only mechanism. Note this concerns a PROCFS file specifically; a
+      # marker on a real filesystem is measured with statfs(), which reads the
+      # superblock and never the file. Treat it as provisional.
       - type: bind
         source: /proc/1/mountinfo
         target: /host/mountinfo

@@ -468,7 +468,7 @@ degradation is the specific behaviour being fixed.</p>
 </tr>
 <tr>
 <td>Filesystems</td>
-<td><code>statfs</code> on marker dirs</td>
+<td><code>statfs</code> on marker files</td>
 <td>60s</td>
 <td>marker mounts (§6.4)</td>
 </tr>
@@ -535,7 +535,7 @@ no address appears only in <code>net_samples</code>; a bridge with an address bu
 metrics appears only in <code>host_addresses</code>. That asymmetry is intended.</p>
 <p><strong>Per-filesystem I/O requires a device mapping.</strong> <code>statfs</code> yields space and inodes only —
 never I/O counters. To populate <code>filesystem_samples.read_bytes</code> / <code>write_bytes</code>, the
-collector maps the marker directory&#39;s <code>st_dev</code> to a block device (<code>/sys/dev/block/&lt;major&gt;:&lt;minor&gt;</code>,
+collector maps the marker file&#39;s <code>st_dev</code> to a block device (<code>/sys/dev/block/&lt;major&gt;:&lt;minor&gt;</code>,
 resolving partitions to their parent device) and reads the counters from <code>/proc/diskstats</code>.
 Where that mapping fails — network filesystems, overlay, LVM stacks it cannot resolve —
 both columns are <code>NULL</code> rather than zero, per §5.1 rule 3.</p>
@@ -598,11 +598,11 @@ root-adjacent and should not be pasted in unconditionally)</li>
 </ul>
 <p><strong>SMART availability is reported to the hub as a capability.</strong> A host missing device
 access says so, rather than showing an empty panel.</p>
-<h3>6.4 Filesystems — marker directories</h3>
+<h3>6.4 Filesystems — marker files</h3>
 <p><code>statfs()</code> reports the filesystem containing the path given, so the measured path must
-physically live on that filesystem. An empty <strong>marker directory</strong> is bind-mounted, not the
+physically live on that filesystem. An empty <strong>marker file</strong> is bind-mounted, not the
 data:</p>
-<pre><code class="language-bash">mkdir -p /mnt/ark/.netra
+<pre><code class="language-bash">: &gt;&gt; /mnt/ark/.netra
 </code></pre>
 <pre><code class="language-yaml">- /mnt/ark/.netra:/netra/fs/ark:ro
 </code></pre>
@@ -611,24 +611,30 @@ least-privilege property, and the reason a <code>/host</code> root-filesystem mo
 despite being more convenient.</p>
 <ul>
 <li>Label is the trailing path segment (<code>ark</code>).</li>
+<li><strong>File or directory is immaterial.</strong> <code>statfs()</code> reads the superblock, not the
+object, so a directory at the same path measures exactly the same filesystem. Releases up to
+and including the first cut of <code>setup-agent.sh</code> created directories; the setup script now
+creates files and leaves an existing directory alone rather than churn a working install.</li>
 <li>The root filesystem needs its own marker (<code>/.netra</code> → <code>/netra/fs/root</code>); there is exactly
 one mechanism, no special case in code.</li>
 <li><strong>Deduplicate by <code>st_dev</code></strong> — two markers landing on one filesystem would double-report;
 keep the first, warn naming both.</li>
-<li><code>:ro</code> is documentation of intent; an empty directory has nothing to protect.</li>
+<li><code>:ro</code> is documentation of intent; an empty file has nothing to protect.</li>
 </ul>
 <p><strong>Discovery for awareness only.</strong> Optionally bind-mount <code>/proc/1/mountinfo:/host/mountinfo:ro</code>
 (exposing the mount table and nothing else). The agent then logs one line per unmonitored
 filesystem at startup, and again only when the set changes:</p>
-<pre><code>filesystem /mnt/backup (8.0T, ext4) is not monitored — bind-mount a marker dir
+<pre><code>filesystem /mnt/backup (8.0T, ext4) is not monitored — bind-mount a marker file
 to /netra/fs/&lt;name&gt; to enable
 </code></pre>
 <p>Absent, the check is skipped silently. <strong>Discovery never feeds metrics</strong>; measurement is
-exclusively marker-dir <code>statfs</code>. If <code>/netra/fs/</code> is empty the agent logs a startup
+exclusively marker-file <code>statfs</code>. If <code>/netra/fs/</code> is empty the agent logs a startup
 <strong>warning</strong>, not a failure — a container-only host is legitimate.</p>
 <blockquote>
 <p><strong>To verify during implementation:</strong> that bind-mounting a procfs file yields live reads
-rather than a snapshot. If it does not, drop discovery and keep pure marker-dir behaviour.</p>
+rather than a snapshot. If it does not, drop discovery and keep pure marker behaviour. This
+concerns a <em>procfs</em> file specifically — a marker on a real filesystem is measured with
+<code>statfs()</code>, which never reads the file.</p>
 </blockquote>
 <h3>6.5 Buffering</h3>
 <p><strong>In-memory bounded ring buffer, overwrite-oldest.</strong> No disk, no state directory, no
@@ -990,7 +996,7 @@ can be curled on the box — in phase 1 that loopback port <em>is</em> the inter
 <code>NETRA_RETENTION_RAW</code> / <code>_5M</code> / <code>_1H</code>.</p>
 <h3>Agent — documented compose</h3>
 <p><code>ghcr.io/trick77/netra-agent:latest</code>, <code>network_mode: host</code>, <strong>no volumes for state</strong>.</p>
-<p>Mounts: <code>/var/run/docker.sock:ro</code>; marker dirs under <code>/netra/fs/</code>; optionally
+<p>Mounts: <code>/var/run/docker.sock:ro</code>; marker files under <code>/netra/fs/</code>; optionally
 <code>/proc/1/mountinfo:ro</code>, <code>/run/dbus/system_bus_socket:ro</code>, <code>/var/lib/dpkg:ro</code>.
 <code>cap_add: [SYS_RAWIO]</code> (+ <code>SYS_ADMIN</code> with NVMe) and explicit <code>devices:</code> for SMART.
 <code>pid: host</code> only if the process collector is enabled.</p>

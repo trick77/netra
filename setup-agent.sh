@@ -22,7 +22,7 @@
 #                REAL host path, always, with no prefix.
 #
 # NETRA_SETUP_ROOT applies ONLY when resolving a probe variable. It must never
-# reach a string that goes into a template. Prefix a marker directory on its way
+# reach a string that goes into a template. Prefix a marker file on its way
 # into compose.yaml and the installed agent measures /tmp/fixture/mnt/ark/.netra
 # — a path that does not exist on the host — and silently reports nothing.
 #
@@ -162,7 +162,7 @@ SKIPPED_NOTES=""
 # never up front and never as a block assembled in print_finish. A summary
 # assembled at the end can only describe what the script intended, and on a
 # re-run that is a lie: compose.yaml is overwritten while .env is left alone, a
-# marker directory is created on the first run and already there on the second.
+# marker file is created on the first run and already there on the second.
 # The ledger has to be able to tell those apart, and it can only do that if the
 # entry is written where the difference is known.
 #
@@ -494,7 +494,7 @@ Writes two files. Installs nothing — Docker pulls the agent image at \`up -d\`
   $OUTPUT_DIR/compose.yaml   generated, overwritten every run
   $OUTPUT_DIR/.env           hub URL and token, never overwritten
 
-Plus empty .netra marker dirs on each measured filesystem. Nothing is written
+Plus an empty .netra marker file on each measured filesystem. Nothing is written
 until you approve the plan; nothing starts unless you pass --start.
 EOF
 }
@@ -1432,7 +1432,7 @@ detect_filesystems() {
         _df_probe=$(_p "$_df_mp")
         if [ ! -d "$_df_probe" ] || [ ! -w "$_df_probe" ]; then
             _fs_note unwritable "$_df_mp" \
-                "not writable by this user, so the .netra marker directory cannot be created. \
+                "not writable by this user, so the .netra marker file cannot be created. \
 The setup script never invokes sudo; create it yourself and re-run."
             continue
         fi
@@ -1488,7 +1488,7 @@ check_selinux() {
     if [ "$(cat "$_sel" 2>/dev/null || printf '0')" = 1 ]; then
         warn "SELinux is enforcing. Bind mounts from a container may be denied unless the" \
             "source is relabelled; add ':z' (shared) or ':Z' (private) to the mounts in the" \
-            "rendered compose.yaml, or run 'chcon -Rt container_file_t' on the marker dirs."
+            "rendered compose.yaml, or run 'chcon -t container_file_t' on the marker files."
     fi
 }
 
@@ -2230,6 +2230,19 @@ netra_write_line() {
     printf '%s\n' "$1" >"$2"
 }
 
+# netra_create_marker PATH — an empty marker file, created but never truncated.
+#
+# `>>` rather than `>`: the caller has already established that nothing is
+# there, and a redirection that can only ever create is the one to reach for
+# when the target sits in the root of somebody's data filesystem. A stray `>`
+# on a path that turned out to be a real file would empty it.
+#
+# No `touch`: this is the only place the script would need it, and check_tools
+# does not require it. A redirection is a shell builtin and cannot be missing.
+netra_create_marker() {
+    : >>"$1"
+}
+
 # ---------------------------------------------------------------------------
 # Phases
 # ---------------------------------------------------------------------------
@@ -2567,7 +2580,7 @@ print_plan() {
     step "Plan"
 
     if [ -n "$FS_MOUNTS" ]; then
-        info "  filesystems to measure (empty .netra marker dirs, no data exposure):"
+        info "  filesystems to measure (empty .netra marker files, no data exposure):"
         while IFS='|' read -r _pp_mm _pp_mp _pp_lab; do
             [ -n "$_pp_mm" ] || continue
             info "    $_pp_mp -> /netra/fs/$_pp_lab"
@@ -2612,11 +2625,11 @@ _plan_caps() {
 }
 
 # write_outputs — everything that touches the output directory and the marker
-# directories, behind ONE gate, and nothing happens before that gate.
+# files, behind ONE gate, and nothing happens before that gate.
 #
 # The ordering is the point. No mkdir of the output directory and no .netra
 # marker may move ahead of the gate: declining would then leave a host littered
-# with directories, possibly a .env, and a finish report cheerfully printing
+# with marker files, possibly a .env, and a finish report cheerfully printing
 # `cd <dir> && docker compose up -d`. With --start it is worse — docker compose
 # runs against whatever stale compose.yaml a previous run left, paired with this
 # run's fresh .env.
@@ -2658,7 +2671,7 @@ write_outputs() {
 
     # The gate. One question covering everything below it, so "no" means the
     # host is exactly as it was.
-    if ! netra_ask "Write compose.yaml and .env to $OUTPUT_DIR and create the marker directories?" y; then
+    if ! netra_ask "Write compose.yaml and .env to $OUTPUT_DIR and create the marker files?" y; then
         rm -rf "$SCRATCH_DIR"
         WROTE_OUTPUTS=0
         info ""
@@ -2708,16 +2721,23 @@ write_outputs() {
         else
             _wo_marker="$_wo_mp/.netra"
         fi
+        # -e, not -f: hosts set up before the marker became a file have a
+        # DIRECTORY at this path. It is an equally good bind source — statfs(2)
+        # reports the filesystem a path lives on and does not care what kind of
+        # object it is — so an existing one is left exactly as it is rather than
+        # replaced. Nothing is gained by churning a working install, and a
+        # rmdir/create here could only fail in interesting ways.
         _wo_marker_existed=0
-        [ ! -d "$(_p "$_wo_marker")" ] || _wo_marker_existed=1
-        # A marker directory that cannot be created is a DEGRADATION, not a
-        # failure: a read-only filesystem loses its own measurement and nothing
-        # else. Warned rather than fatal, unlike the two writes below.
-        if netra_exec mkdir -p "$(_p "$_wo_marker")"; then
-            [ "$_wo_marker_existed" = 1 ] ||
-                record_change "created the marker directory $_wo_marker"
+        [ ! -e "$(_p "$_wo_marker")" ] || _wo_marker_existed=1
+        # A marker that cannot be created is a DEGRADATION, not a failure: a
+        # read-only filesystem loses its own measurement and nothing else.
+        # Warned rather than fatal, unlike the two writes below.
+        if [ "$_wo_marker_existed" = 1 ]; then
+            :
+        elif netra_exec netra_create_marker "$(_p "$_wo_marker")"; then
+            record_change "created the marker file $_wo_marker"
         else
-            warn "could not create the marker directory at $_wo_marker, so $_wo_mp" \
+            warn "could not create the marker file at $_wo_marker, so $_wo_mp" \
                 "will not be measured."
         fi
     done <<EOF
