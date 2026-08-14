@@ -602,7 +602,7 @@ access says so, rather than showing an empty panel.</p>
 <p><code>statfs()</code> reports the filesystem containing the path given, so the measured path must
 physically live on that filesystem. An empty <strong>marker file</strong> is bind-mounted, not the
 data:</p>
-<pre><code class="language-bash">: &gt;&gt; /mnt/ark/.netra
+<pre><code class="language-bash">true &gt;&gt; /mnt/ark/.netra
 </code></pre>
 <pre><code class="language-yaml">- /mnt/ark/.netra:/netra/fs/ark:ro
 </code></pre>
@@ -614,7 +614,11 @@ despite being more convenient.</p>
 <li><strong>File or directory is immaterial.</strong> <code>statfs()</code> reads the superblock, not the
 object, so a directory at the same path measures exactly the same filesystem. Releases up to
 and including the first cut of <code>setup-agent.sh</code> created directories; the setup script now
-creates files and leaves an existing directory alone rather than churn a working install.</li>
+creates files and leaves an existing directory alone rather than churn a working install.
+Note <code>true &gt;&gt;</code>, not <code>: &gt;&gt;</code>: <code>:</code> is a POSIX <em>special</em> builtin, so a
+redirection error on it — a directory already at that path, a full filesystem — exits a
+non-interactive shell and takes a provisioning script down with it. <code>&gt;&gt;</code> rather
+than <code>&gt;</code> so the command can only ever create, never truncate.</li>
 <li>The root filesystem needs its own marker (<code>/.netra</code> → <code>/netra/fs/root</code>); there is exactly
 one mechanism, no special case in code.</li>
 <li><strong>Deduplicate by <code>st_dev</code></strong> — two markers landing on one filesystem would double-report;

@@ -403,7 +403,7 @@ physically live on that filesystem. An empty **marker file** is bind-mounted, no
 data:
 
 ```bash
-: >> /mnt/ark/.netra
+true >> /mnt/ark/.netra
 ```
 ```yaml
 - /mnt/ark/.netra:/netra/fs/ark:ro
@@ -418,6 +418,10 @@ despite being more convenient.
   a directory at the same path measures exactly the same filesystem. Releases up to and
   including the first cut of `setup-agent.sh` created directories; the setup script now
   creates files and leaves an existing directory alone rather than churn a working install.
+  Note `true >>`, not `: >>`: `:` is a POSIX *special* builtin, so a redirection error on it
+  — a directory already at that path, a full filesystem — exits a non-interactive shell and
+  takes a provisioning script down with it. `>>` rather than `>` so the command can only
+  ever create, never truncate.
 - The root filesystem needs its own marker (`/.netra` → `/netra/fs/root`); there is exactly
   one mechanism, no special case in code.
 - **Deduplicate by `st_dev`** — two markers landing on one filesystem would double-report;

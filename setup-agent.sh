@@ -2239,8 +2239,17 @@ netra_write_line() {
 #
 # No `touch`: this is the only place the script would need it, and check_tools
 # does not require it. A redirection is a shell builtin and cannot be missing.
+#
+# `true`, NOT `:`, and this is load-bearing rather than taste. `:` is a POSIX
+# SPECIAL builtin, and a redirection error on a special builtin makes a
+# non-interactive shell EXIT — dash does exactly that, bash does not. With `:`
+# here, a marker that cannot be created (ENOSPC, inode exhaustion, a quota, an
+# immutable or relabelled parent) kills the whole run mid-write under dash,
+# after the output directory has been created and before the summary prints,
+# instead of reaching the warn-and-continue the caller deliberately wrote.
+# `true` is a regular builtin, so the failure comes back as a status.
 netra_create_marker() {
-    : >>"$1"
+    true >>"$1"
 }
 
 # ---------------------------------------------------------------------------
@@ -2948,10 +2957,14 @@ start_stack() {
     # ahead of the compose output. So this entry prints itself here, in the same
     # words the ledger would have used. Errexit is armed and the compose command
     # above is not guarded, so reaching this line means it succeeded.
-    record_change "started the agent from $OUTPUT_DIR/compose.yaml"
+    #
+    # One variable for both, so the ledger entry and the printed line cannot
+    # drift apart into two different sentences for one change.
+    _ss_entry="started the agent from $OUTPUT_DIR/compose.yaml"
+    record_change "$_ss_entry"
     info ""
     info "  Also changed on this host:"
-    info "    - started the agent from $OUTPUT_DIR/compose.yaml"
+    info "    - $_ss_entry"
 }
 
 # require_tty — the whole of "there is no unattended mode", in one place.

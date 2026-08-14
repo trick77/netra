@@ -6,7 +6,7 @@
 #
 #   cp compose.yaml.example compose.yaml
 #   cp env.tmpl .env && $EDITOR .env          # hub URL and token; replace every __PLACEHOLDER__
-#   : >> /.netra                              # see "Filesystems" below
+#   true >> /.netra                           # see "Filesystems" below
 #   docker compose up -d
 #
 # WHAT IS IMPLEMENTED TODAY (phase 1): all twenty-two collectors.
@@ -111,11 +111,14 @@ services:
       # setup-agent.sh leaves an existing one alone rather than churn a working
       # install.
       #
-      # Create the markers before the first run (`: >>` creates without ever
-      # truncating, unlike `>`):
+      # Create the markers before the first run (`>>` creates without ever
+      # truncating, unlike `>`; `true` rather than `:` because `:` is a special
+      # builtin, and a redirection error on one — an existing DIRECTORY at that
+      # path, say — exits a non-interactive shell, taking a provisioning script
+      # with it):
       #
-      #   : >> /.netra
-      #   : >> /mnt/ark/.netra
+      #   true >> /.netra
+      #   true >> /mnt/ark/.netra
       #
       # The label is the trailing path segment of the TARGET, so /netra/fs/root
       # is labelled `root` and /netra/fs/ark is labelled `ark`. Two markers that

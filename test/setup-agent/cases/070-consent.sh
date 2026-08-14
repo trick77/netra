@@ -788,6 +788,36 @@ fi
 assert_contains "$(cat "$TMP/out-olddir/compose.yaml")" "/.netra" \
     "and it is still rendered as a bind source"
 
+# --- 18b3. a marker that cannot be created warns; it does not kill the run ----
+#
+# The code says out loud that this is a DEGRADATION, not a failure. It only is
+# one if the redirection reports its failure as a STATUS: `:` is a POSIX special
+# builtin, and a redirection error on a special builtin exits a non-interactive
+# shell outright — dash does exactly that, bash does not — so `: >>` here would
+# abort the run mid-write, after the output directory exists and before the
+# summary prints, and the warn below would be unreachable under one of the two
+# shells this suite runs.
+#
+# A dangling symlink is the portable way to make the create fail while the mount
+# point itself stays writable; on a real host it is a full filesystem, an
+# exhausted inode table, a quota or a relabelled parent.
+ROOT=$(mkroot ledgernomarker)
+ln -s /nonexistent-dir/marker "$ROOT/.netra"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$(answers ledgernomarker n n y)" \
+    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    "$SH" "$SETUP" --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-nomarker"
+assert_eq 0 "$RUN_RC" "a marker that cannot be created is not a failed run"
+assert_contains "$(flatten "$RUN_OUT")" "could not create the marker file at /.netra" \
+    "it warns, naming the marker it could not create"
+assert_file_present "$TMP/out-nomarker/compose.yaml" \
+    "and the run carries on to write everything else"
+assert_contains "$(flatten "$RUN_OUT")" "created the marker file /mnt/ark/.netra" \
+    "the other filesystem still gets its marker"
+assert_not_contains "$(flatten "$RUN_OUT")" "created the marker file /.netra" \
+    "and the one that failed is not claimed as a change"
+
 # --- 18c. --start is a change too, and lands after the summary -----------------
 #
 # It runs after print_finish, because the report's "Starting the stack:" line
