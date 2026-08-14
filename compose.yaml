@@ -48,7 +48,7 @@ services:
       # setup-agent.sh command in the UI: the browser reaches the hub on
       # loopback, so the hub cannot infer its own agent-facing name from that
       # request. Unset renders a placeholder rather than a wrong URL.
-      NETRA_HUB_URL: "https://${NETRA_HOSTNAME:-netra.trick77.com}"
+      NETRA_HUB_URL: "https://${NETRA_HOSTNAME:-netra.example.com}"
 
     # /api/health reports database reachability, not just process liveness, so
     # a hub that cannot reach Postgres correctly goes unhealthy instead of
@@ -82,7 +82,7 @@ services:
       # silently, with no change to this file. That directly contradicts the
       # loopback-binding rationale above. Widen this deliberately, per route,
       # or not at all.
-      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:-netra.trick77.com}`) && PathPrefix(`/api/agent/`)
+      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:-netra.example.com}`) && PathPrefix(`/api/agent/`)
       traefik.http.routers.netra.entrypoints: websecure
       # tls: "true" with no certresolver — the certificate is pre-loaded in
       # Traefik's static config, so there is no ACME challenge to run here.
