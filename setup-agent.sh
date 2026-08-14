@@ -152,6 +152,24 @@ NETRA_SETUP_ROOT="${NETRA_SETUP_ROOT:-}"
 # declined or degraded, so the operator sees what the agent will NOT collect.
 SKIPPED_NOTES=""
 
+# Newline-delimited ledger of what this run actually CHANGED on the host, for
+# the finish report. The counterpart to SKIPPED_NOTES: that one lists what the
+# agent will not collect, this one lists what now exists on the box that did
+# not before.
+#
+# THE RULE for anyone adding a mutation: record into it at the point the change
+# SUCCEEDS — inside the branch that did the work, after the command returned 0 —
+# never up front and never as a block assembled in print_finish. A summary
+# assembled at the end can only describe what the script intended, and on a
+# re-run that is a lie: compose.yaml is overwritten while .env is left alone, a
+# marker directory is created on the first run and already there on the second.
+# The ledger has to be able to tell those apart, and it can only do that if the
+# entry is written where the difference is known.
+#
+# Paths only. No value the operator gave us goes in here — the token least of
+# all.
+HOST_CHANGES=""
+
 # Set by plan_drivetemp when it has actually changed the host — the one mutation
 # that happens BEFORE the write gate, because the sensor scan has to see its
 # result. Declining the gate must not then claim "nothing was changed", which
@@ -323,6 +341,25 @@ warn_cmd() {
 
 info() {
     printf '%s\n' "$*"
+}
+
+# record_change MSG... — one line onto the HOST_CHANGES ledger. See the note on
+# the variable for WHERE this may be called from; the short version is "after
+# the mutation succeeded, and nowhere else".
+#
+# Prints NOTHING. Each phase already narrates itself as it goes, and a second
+# copy of the same line at the moment it happens would add noise to the scroll
+# while adding nothing to the report. This exists purely to survive the scroll.
+#
+# Kept to a single line per entry, like SKIPPED_NOTES and for the same reason:
+# the report is a list, and a wrapped entry would read as several changes.
+record_change() {
+    if [ -n "$HOST_CHANGES" ]; then
+        HOST_CHANGES="$HOST_CHANGES
+$*"
+    else
+        HOST_CHANGES="$*"
+    fi
 }
 
 step() {
@@ -2649,31 +2686,54 @@ write_outputs() {
     fi
     WROTE_OUTPUTS=1
 
+    # Asked BEFORE the mkdir, because afterwards the answer is always yes and
+    # the ledger would report a directory this run created on every re-run.
+    _wo_dir_existed=0
+    [ ! -d "$OUTPUT_DIR" ] || _wo_dir_existed=1
+
     netra_exec mkdir -p "$OUTPUT_DIR" ||
         die "could not create $OUTPUT_DIR. Nothing was written."
+    [ "$_wo_dir_existed" = 1 ] || record_change "created the directory $OUTPUT_DIR"
 
     # Marker directories. The mount point is a PROBE path here (so a test can
     # redirect it) and an EMIT path in compose.yaml; _p() on the way in, never on
-    # the way out.
+    # the way out. The ledger entry names the EMIT path: a fixture prefix in the
+    # report would tell the operator to look somewhere that does not exist.
     while IFS='|' read -r _wo_mm _wo_mp _wo_lab; do
         [ -n "$_wo_mm" ] || continue
+        # `/` would otherwise give //.netra, which is a legal path and an ugly
+        # line in the report.
+        if [ "$_wo_mp" = "/" ]; then
+            _wo_marker=/.netra
+        else
+            _wo_marker="$_wo_mp/.netra"
+        fi
+        _wo_marker_existed=0
+        [ ! -d "$(_p "$_wo_marker")" ] || _wo_marker_existed=1
         # A marker directory that cannot be created is a DEGRADATION, not a
         # failure: a read-only filesystem loses its own measurement and nothing
         # else. Warned rather than fatal, unlike the two writes below.
-        if [ "$_wo_mp" = "/" ]; then
-            netra_exec mkdir -p "$(_p /.netra)" ||
-                warn "could not create the marker directory at /.netra, so / will not be measured."
+        if netra_exec mkdir -p "$(_p "$_wo_marker")"; then
+            [ "$_wo_marker_existed" = 1 ] ||
+                record_change "created the marker directory $_wo_marker"
         else
-            netra_exec mkdir -p "$(_p "$_wo_mp/.netra")" ||
-                warn "could not create the marker directory at $_wo_mp/.netra, so $_wo_mp" \
-                    "will not be measured."
+            warn "could not create the marker directory at $_wo_marker, so $_wo_mp" \
+                "will not be measured."
         fi
     done <<EOF
 $FS_MOUNTS
 EOF
 
+    _wo_compose_existed=0
+    [ ! -e "$OUTPUT_DIR/compose.yaml" ] || _wo_compose_existed=1
+
     netra_exec netra_write_compose "$_wo_compose_tmpl" "$OUTPUT_DIR/compose.yaml" ||
         die "could not write $OUTPUT_DIR/compose.yaml"
+    if [ "$_wo_compose_existed" = 1 ]; then
+        record_change "overwrote $OUTPUT_DIR/compose.yaml"
+    else
+        record_change "wrote $OUTPUT_DIR/compose.yaml"
+    fi
 
     # compose.yaml is overwritten freely and .env is not (§12a). compose.yaml is
     # derived output — every byte of it comes from this run's detection — while
@@ -2684,8 +2744,17 @@ EOF
             "untouched. Its existing token and settings still apply. Re-run with --force to" \
             "overwrite it."
     else
+        _wo_env_existed=0
+        [ ! -e "$OUTPUT_DIR/.env" ] || _wo_env_existed=1
+
         netra_exec netra_write_env "$_wo_env_tmpl" "$OUTPUT_DIR/.env" ||
             die "could not write $OUTPUT_DIR/.env"
+        # The ledger names the file and never its contents: the token is in it.
+        if [ "$_wo_env_existed" = 1 ]; then
+            record_change "overwrote $OUTPUT_DIR/.env (--force)"
+        else
+            record_change "wrote $OUTPUT_DIR/.env"
+        fi
 
         # INSIDE the branch that rendered the file, and only there. Run against
         # an .env this run deliberately left alone, these checks report every
@@ -2734,6 +2803,50 @@ compose_cmd() {
     fi
 }
 
+# print_changes — the HOST_CHANGES ledger, rendered.
+#
+# The two drivetemp entries are DERIVED from DRIVETEMP_CHANGED and
+# DRIVETEMP_PERSISTED rather than recorded by plan_drivetemp, because those two
+# flags already are this truth and are maintained more carefully than a
+# record_change call could be: the first is set at the successful modprobe and
+# cleared again only when the unload actually succeeds. Recording separately
+# would give the report a second source that has to be kept in step with them,
+# and the report would be the copy that drifts.
+#
+# They come first because they happen first, and because they are the two the
+# operator is least likely to have expected.
+print_changes() {
+    _pc_list="$HOST_CHANGES"
+    if [ -n "$DRIVETEMP_PERSISTED" ]; then
+        # The literal host path, not $P_MODULESLOAD: that one is a PROBE path
+        # and carries the fixture prefix under test. plan_drivetemp prints the
+        # literal for the same reason.
+        _pc_list="wrote /etc/modules-load.d/drivetemp.conf${_pc_list:+
+$_pc_list}"
+    fi
+    if [ -n "$DRIVETEMP_CHANGED" ]; then
+        _pc_list="loaded the drivetemp kernel module${_pc_list:+
+$_pc_list}"
+    fi
+
+    info ""
+    if [ -z "$_pc_list" ]; then
+        # NOT "Nothing was changed": that sentence belongs to the declined-gate
+        # branch of write_outputs, which says it about the whole run at the
+        # point the operator declined. This one is about the ledger.
+        info "  Nothing on this host was changed."
+        return 0
+    fi
+
+    info "  Changed on this host:"
+    while IFS= read -r _pc_entry; do
+        [ -n "$_pc_entry" ] || continue
+        _wrap 76 '    - ' '      ' "$_pc_entry"
+    done <<EOF
+$_pc_list
+EOF
+}
+
 print_finish() {
     step "Summary"
     info "  os:              ${OS_PRETTY:-$OS_ID $OS_VER} [$OS_CLASS]"
@@ -2743,6 +2856,11 @@ print_finish() {
     info "  package manager: $PKGMGR${PKG_MOUNT:+ ($PKG_MOUNT)}"
     info "  primary sensor:  ${PRIMARY_SENSOR:-auto (chosen by the agent at runtime)}"
     info "  output dir:      $OUTPUT_DIR"
+
+    # BEFORE the early return on a declined gate, and before the skipped notes:
+    # a declined run can still have loaded a kernel module, and what changed
+    # outranks what was degraded.
+    print_changes
 
     if [ -n "$SKIPPED_NOTES" ]; then
         info ""
@@ -2804,6 +2922,16 @@ start_stack() {
     else
         netra_exec docker compose -f "$OUTPUT_DIR/compose.yaml" up -d
     fi
+
+    # The one change that happens AFTER the summary has already printed its
+    # ledger, because print_finish's "Starting the stack:" line only makes sense
+    # ahead of the compose output. So this entry prints itself here, in the same
+    # words the ledger would have used. Errexit is armed and the compose command
+    # above is not guarded, so reaching this line means it succeeded.
+    record_change "started the agent from $OUTPUT_DIR/compose.yaml"
+    info ""
+    info "  Also changed on this host:"
+    info "    - started the agent from $OUTPUT_DIR/compose.yaml"
 }
 
 # require_tty — the whole of "there is no unattended mode", in one place.
