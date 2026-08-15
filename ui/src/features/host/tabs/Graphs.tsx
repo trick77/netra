@@ -145,7 +145,7 @@ const SYSTEM: PanelSpec[] = [
     // the stack runs to cores x 100. Every number a reader sees is the
     // number that core reported, which is the point of this panel.
     hideAxis: true,
-    fmt: (n) => (n === null ? ABSENT : `${count(n)} %`),
+    fmt: (n) => (n === null ? ABSENT : `${count(n)}%`),
   },
   // The states partition busy time, so they stack honestly. They used to
   // exist only in the raw table and vanish above an hour; they reach the 5m
@@ -161,7 +161,7 @@ const SYSTEM: PanelSpec[] = [
     ],
     max: 100,
     stacked: true,
-    fmt: (n) => (n === null ? ABSENT : `${count(n)} %`),
+    fmt: (n) => (n === null ? ABSENT : `${count(n)}%`),
   },
   // What the machine had to DO to keep memory available, which the memory
   // charts cannot show: a host sitting at a comfortable 40% used can be

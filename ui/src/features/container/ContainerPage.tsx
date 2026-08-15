@@ -14,11 +14,19 @@ import type { Container, MetricsResponse } from "../../lib/api";
 import {
   hasGaps,
   hasReading,
+  latestValue,
   seriesTimestamps,
   griddedValues,
   windowNotice,
 } from "../../lib/metrics";
-import { ABSENT, byterate, bytes, percent, relativeMs } from "../../lib/format";
+import {
+  ABSENT,
+  byterate,
+  bytes,
+  bytesPair,
+  percent,
+  relativeMs,
+} from "../../lib/format";
 import type { Range } from "../../lib/range";
 
 // The windows this page OFFERS. The type is lib/range's, so a range chosen
@@ -368,7 +376,21 @@ export function ContainerPage({
           ranges={CONTAINER_RANGE_VALUES}
           max={memLimit === null ? undefined : memLimit * 1.08}
           reference={memLimit ?? undefined}
-          referenceLabel={memLimit === null ? undefined : bytes(memLimit)}
+          // The limit names itself in the header, beside the reading it is the
+          // limit for, rather than as text over the rule inside the plot.
+          nowFmt={(n) => bytesPair(n, memLimit)}
+          // ...and the reading it is the limit for is the container's WHOLE
+          // memory, not series[0]'s. Split into anon/file/shmem/kernel,
+          // series[0] is the anon band alone, so the header paired one of
+          // four bands against the limit -- "0.5 · 1 GB" for a container at
+          // 0.9 GB of its 1 GB, which reads as half the limit used when it is
+          // about to be OOM-killed. mem_used is the number the pair claims to
+          // be, and it is what the meter directly below already shows.
+          nowValue={
+            memSplit.length > 1
+              ? latestValue(sampled?.memUsed ?? empty)
+              : undefined
+          }
           stacked={memBands.length > 1}
           series={memBands}
         />
@@ -435,7 +457,7 @@ export function ContainerPage({
           noLimit={sampled !== null && memLimit === null}
           label="Memory against mem_limit"
           formatValue={(value, max, pct) =>
-            `${bytes(value)} of ${bytes(max)} (${percent(pct)})`
+            `${bytesPair(value, max)} (${percent(pct)})`
           }
         />
       </div>

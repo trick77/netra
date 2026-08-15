@@ -104,6 +104,62 @@ describe("ChartPanel", () => {
     expect(document.querySelector(".now")?.textContent).toContain("rx");
   });
 
+  // The header can afford to carry the ceiling with the reading; the axis,
+  // the tooltips and the stats table cannot, and they all read `fmt`.
+  it("formats the headline with nowFmt, leaving fmt for the chart", () => {
+    render(
+      <ChartPanel
+        title="Memory"
+        fmt={(v) => `${v} GiB`}
+        nowFmt={(v) => `${v} · 31 GiB`}
+        series={[
+          { name: "used", color: "var(--s1)", values: [20] },
+          { name: "cached", color: "var(--s2)", values: [4] },
+        ]}
+      />,
+    );
+
+    expect(document.querySelector(".now")?.textContent).toBe(
+      "used 20 · 31 GiB",
+    );
+  });
+
+  // The series name says WHOSE number the headline is. A headline belonging
+  // to no single series must not wear one -- the per-core CPU stack read
+  // "core 0 6 %" for a number that is the whole host's.
+  it("drops the series name when the headline is not a series'", () => {
+    render(
+      <ChartPanel
+        title="Processor"
+        fmt={(v) => `${v}%`}
+        nowValue={6}
+        series={[
+          { name: "core 0", color: "var(--s1)", values: [43] },
+          { name: "core 1", color: "var(--s2)", values: [12] },
+        ]}
+      />,
+    );
+
+    const now = document.querySelector(".now")?.textContent;
+    expect(now).toBe("6%");
+    expect(now).not.toContain("core");
+  });
+
+  // Absent is absent here too: a caller handing in null for the latest
+  // bucket must not fall back to series[0].
+  it("renders a null nowValue as absent, not series[0]'s number", () => {
+    render(
+      <ChartPanel
+        title="Processor"
+        fmt={(v) => (v === null ? ABSENT : `${v}%`)}
+        nowValue={null}
+        series={[{ name: "core 0", color: "var(--s1)", values: [43] }]}
+      />,
+    );
+
+    expect(document.querySelector(".now")?.textContent).toBe(ABSENT);
+  });
+
   // A formatter carrying a magnitude still needs the panel's unit to say
   // what KIND of quantity it is: bytes() renders "1.2 MB" for a link doing
   // 1.2 MB/s, and only "B/s" makes that a rate rather than a total.

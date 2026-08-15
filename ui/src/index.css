@@ -1539,13 +1539,6 @@ svg.spark {
   white-space: nowrap;
 }
 
-/* A reference rule's own label, in the same type as the axis that names the
-   same value in the enlarged view -- one fact, one appearance, wherever a
-   reader meets it. */
-.ref-label {
-  font-size: var(--text-micro);
-  fill: var(--muted);
-}
 .cd-x {
   display: flex;
   justify-content: space-between;
