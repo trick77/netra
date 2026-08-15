@@ -402,9 +402,9 @@ describe("peakBase", () => {
     // The reading actually changes -- 90, the peak, not 10, the mean. A test
     // that only asserted the NAME would still pass if the column resolved
     // back to the average behind it.
-    expect(seriesValues(net as never, 0, peakBase(net as never, "rx_bytes"))).toEqual([
-      90,
-    ]);
+    expect(
+      seriesValues(net as never, 0, peakBase(net as never, "rx_bytes")),
+    ).toEqual([90]);
   });
 
   // The raw table has no _max peer at all, because at raw resolution the
@@ -421,9 +421,9 @@ describe("peakBase", () => {
     };
 
     expect(peakBase(net as never, "rx_bytes")).toBe("rx_bytes");
-    expect(seriesValues(net as never, 0, peakBase(net as never, "rx_bytes"))).toEqual([
-      42,
-    ]);
+    expect(
+      seriesValues(net as never, 0, peakBase(net as never, "rx_bytes")),
+    ).toEqual([42]);
   });
 
   // Same reason carriesColumn takes `== null`: these names are resolved
