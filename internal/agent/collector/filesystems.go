@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -58,14 +59,34 @@ type StatfsFunc func(mountpoint string) (FsStat, error)
 // have, and a container host has many.
 type Filesystems struct {
 	procRoot string
+	fsMounts map[string]string
 	statfs   StatfsFunc
+
+	// warnedEmpty keeps the "nothing to measure" warning to one line rather
+	// than one per scrape, forever.
+	warnedEmpty bool
 }
 
 // NewFilesystems builds a Filesystems collector. procRoot supplies the mount
-// table (/proc/mounts).
-func NewFilesystems(procRoot string, statfs StatfsFunc) *Filesystems {
-	return &Filesystems{procRoot: procRoot, statfs: statfs}
+// table (/proc/mounts); fsMounts maps a marker label to the host mountpoint it
+// stands for, and may be nil.
+func NewFilesystems(procRoot string, fsMounts map[string]string, statfs StatfsFunc) *Filesystems {
+	return &Filesystems{procRoot: procRoot, fsMounts: fsMounts, statfs: statfs}
 }
+
+// markerPrefix is where setup-agent.sh bind-mounts the marker files.
+//
+// The agent never mounts host data. The setup script creates one empty .netra
+// marker file per measurable filesystem and bind-mounts it read-only to
+// /netra/fs/<label>, so statfs on that target reports the host filesystem
+// without the agent being able to read a byte of it.
+//
+// That path exists ONLY inside this container. It names nothing on the host --
+// no directory, no dataset, no mount -- so it must never reach a Label, a
+// Mountpoint, or anything else that leaves this collector. Reporting it is the
+// bug this prefix exists to prevent: an operator reading "/netra/fs/ark is 94%
+// full" is being shown the inside of the agent instead of their own disk.
+const markerPrefix = "/netra/fs/"
 
 // Name implements Collector.
 func (f *Filesystems) Name() string { return "filesystems" }
@@ -83,6 +104,17 @@ var virtualFsTypes = map[string]bool{
 	"hugetlbfs": true, "mqueue": true, "nsfs": true, "autofs": true,
 	"binfmt_misc": true, "rpc_pipefs": true, "selinuxfs": true,
 	"devtmpfs": true, "efivarfs": true,
+
+	// overlay and squashfs are the container's own image layers, not host
+	// storage: reporting overlay meant the agent listed a filesystem at "/"
+	// whose size was Docker's storage driver, alongside the host root that
+	// arrived properly through a marker. Its anonymous st_dev never dedupes
+	// against anything, so it survived every other guard here.
+	"overlay": true, "squashfs": true, "ramfs": true,
+
+	// Network filesystems, matching isnet() in setup-agent.sh: a dead server
+	// makes statfs block, and the scrape budget cannot absorb that.
+	"nfs": true, "nfs4": true, "cifs": true, "smb3": true, "fuse.sshfs": true,
 }
 
 // Collect implements Collector.
@@ -101,7 +133,7 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 	seen := make(map[uint64]struct{}, len(mounts))
 
 	for _, m := range mounts {
-		st, err := f.statfs(m.mountpoint)
+		st, err := f.statfs(m.target)
 		if err != nil {
 			// A mountpoint that cannot be stat'd -- an unreachable NFS
 			// server, a mount that vanished between reading the table and
@@ -120,7 +152,7 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 
 		row := &netrav1.FilesystemSample{
 			TsMs:       ts,
-			Label:      m.mountpoint,
+			Label:      m.label,
 			Mountpoint: m.mountpoint,
 			DeviceId:   ptrTo(st.DeviceID),
 			Total:      ptrTo(st.Total),
@@ -147,6 +179,13 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 		rows = append(rows, row)
 	}
 
+	if len(rows) == 0 && !f.warnedEmpty {
+		f.warnedEmpty = true
+		slog.Warn("no filesystem could be measured; disk usage and inode metrics will be missing",
+			"marker_prefix", markerPrefix,
+			"hint", "re-run setup-agent.sh: it bind-mounts one .netra marker per filesystem under "+markerPrefix)
+	}
+
 	// Deterministic order so failures read the same way twice.
 	slices.SortFunc(rows, func(a, b *netrav1.FilesystemSample) int {
 		return strings.Compare(a.GetLabel(), b.GetLabel())
@@ -155,11 +194,18 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 	return &Result{Filesystems: rows}, nil
 }
 
-// mountEntry is the one field of a /proc/mounts line this collector uses after
-// parsing. The device and the filesystem type decide whether a line is kept,
-// which readMounts settles as it reads; carrying them further only invited the
-// question of what they were for.
+// mountEntry is what one kept /proc/mounts line becomes. The device and the
+// filesystem type decide whether a line is kept, which readMounts settles as
+// it reads; carrying them further only invited the question of what they were
+// for.
+//
+// target is where the agent must call statfs. label and mountpoint are what
+// the host calls the filesystem, and are the only two that leave this package.
+// On a containerised agent they differ from target by construction -- that is
+// the whole point of the marker scheme.
 type mountEntry struct {
+	target     string
+	label      string
 	mountpoint string
 }
 
@@ -172,7 +218,7 @@ func (f *Filesystems) readMounts() ([]mountEntry, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	var out []mountEntry
+	var lines []mountLine
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -180,17 +226,91 @@ func (f *Filesystems) readMounts() ([]mountEntry, error) {
 		if len(fields) < 3 {
 			continue
 		}
-		if virtualFsTypes[fields[2]] {
-			continue
-		}
 		// Mountpoints are octal-escaped in /proc/mounts: a space is \040.
-		out = append(out, mountEntry{mountpoint: unescapeMount(fields[1])})
+		//
+		// The fstype is carried rather than acted on here, because whether it
+		// disqualifies a mount depends on whether markers are in play at all.
+		lines = append(lines, mountLine{target: unescapeMount(fields[1]), fstype: fields[2]})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	return out, nil
+	return f.name(lines), nil
+}
+
+// mountLine is one /proc/mounts row, before anything has decided what to do
+// with it.
+type mountLine struct {
+	target string
+	fstype string
+}
+
+// name turns raw mount targets into the entries the hub is told about.
+//
+// When any marker mount is present the rest of the table is dropped, rather
+// than filtered again here. setup-agent.sh already decided which filesystems
+// are worth measuring -- it rejected network shares, snap loopbacks,
+// /var/lib/docker, shadowed mounts and duplicate maj:min, with a reason for
+// each -- and re-deriving that decision from inside the container produces a
+// worse answer than the one already rendered into the compose file.
+//
+// With no marker present the whole table is used as-is, minus the
+// pseudo-filesystems: an agent running directly on a host, and the
+// fixture-driven tests, both depend on that.
+//
+// virtualFsTypes is applied ONLY there, for the same reason. A marker's
+// /proc/mounts line carries the underlying filesystem's type, so an operator
+// who passed --include-network-fs has an nfs4 marker mounted on purpose --
+// setup accepted it, told them so, and rendered the bind. Re-checking the
+// fstype here would drop it silently, second-guessing a decision this
+// collector cannot see the inputs to.
+func (f *Filesystems) name(lines []mountLine) []mountEntry {
+	markers := false
+	for _, l := range lines {
+		if strings.HasPrefix(l.target, markerPrefix) {
+			markers = true
+			break
+		}
+	}
+
+	out := make([]mountEntry, 0, len(lines))
+	for _, l := range lines {
+		t := l.target
+		if !markers {
+			if virtualFsTypes[l.fstype] {
+				continue
+			}
+			// Belt and braces on the invariant this whole file exists for.
+			// markerPrefix has a trailing slash, so a bind of the marker
+			// DIRECTORY itself (/netra/fs, no label under it) does not turn
+			// markers on -- and would then be reported here, verbatim, as a
+			// filesystem named after the inside of the container. Nothing on a
+			// host is called /netra, so dropping the whole subtree costs a real
+			// install nothing.
+			if strings.HasPrefix(t, "/netra/") || t == "/netra" {
+				continue
+			}
+			out = append(out, mountEntry{target: t, label: t, mountpoint: t})
+			continue
+		}
+		if !strings.HasPrefix(t, markerPrefix) {
+			continue
+		}
+		// Stripped FIRST, so every path out of here -- including the fallback
+		// below -- is already free of the container-internal prefix.
+		label := strings.TrimPrefix(t, markerPrefix)
+		mountpoint := f.fsMounts[label]
+		if mountpoint == "" {
+			// An agent upgraded ahead of its .env: NETRA_FS_MOUNTS is not
+			// there yet. Reporting the bare label is imperfect but honest;
+			// it is a name the operator recognises, and the next setup run
+			// replaces it with the real mountpoint.
+			mountpoint = label
+		}
+		out = append(out, mountEntry{target: t, label: label, mountpoint: mountpoint})
+	}
+	return out
 }
 
 // unescapeMount decodes the octal escapes /proc/mounts uses for characters

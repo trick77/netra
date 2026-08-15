@@ -129,6 +129,43 @@ assert_contains "$(cat "$OUT/.env")" "nta_first" "the original token is still th
 assert_contains "$RUN_OUT" "overwritten" "the finish report states the compose/.env asymmetry"
 assert_contains "$RUN_OUT" "up -d" "the finish report gives the command that applies the change"
 
+# --- 3b. a re-run repairs NETRA_FS_MOUNTS without --force ----------------------
+#
+# The one derived line in .env. An agent installed before it existed measures
+# its filesystems through /netra/fs/<label> bind mounts and, with nothing to map
+# those labels back, reports the container's own paths as the filesystem names —
+# "/netra/fs/ark is 94 % full" for a host with no netra anywhere on it.
+#
+# Fixing that must not cost the operator their token. --force replaces the whole
+# file, so requiring it here would mean re-supplying a token to correct a label.
+grep -v '^NETRA_FS_MOUNTS=' "$OUT/.env" >"$TMP/env.nofs"
+cp "$TMP/env.nofs" "$OUT/.env"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
+    --template-dir "$TEMPLATES" --output-dir "$OUT"
+assert_eq 0 "$RUN_RC" "a re-run against an .env with no NETRA_FS_MOUNTS succeeds"
+REPAIRED=$(cat "$OUT/.env")
+assert_contains "$REPAIRED" "NETRA_FS_MOUNTS=root=/" \
+    "the re-run adds the label-to-mountpoint mapping without --force"
+assert_contains "$REPAIRED" "nta_first" "and the existing token survives the repair"
+assert_not_contains "$REPAIRED" "nta_second" "the re-run still cannot replace the token"
+assert_contains "$RUN_OUT" "NETRA_FS_MOUNTS updated" \
+    "the change is stated rather than made silently"
+
+# A stale value is corrected, not appended to.
+sed 's|^NETRA_FS_MOUNTS=.*|NETRA_FS_MOUNTS=root=/wrong|' "$OUT/.env" >"$TMP/env.stale"
+cp "$TMP/env.stale" "$OUT/.env"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
+    --template-dir "$TEMPLATES" --output-dir "$OUT"
+assert_eq 0 "$RUN_RC" "a re-run against a stale NETRA_FS_MOUNTS succeeds"
+assert_not_contains "$(cat "$OUT/.env")" "root=/wrong" "the stale mapping is replaced"
+assert_eq 1 "$(grep -c '^NETRA_FS_MOUNTS=' "$OUT/.env")" \
+    "there is exactly one NETRA_FS_MOUNTS line, not one per run"
+cp "$OUT/.env" "$TMP/env.first"
+
 # --- 4. --force overwrites .env ------------------------------------------------
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
     NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
