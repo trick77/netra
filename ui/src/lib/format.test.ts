@@ -3,6 +3,7 @@ import {
   ABSENT,
   absolute,
   absoluteMs,
+  binaryBytes,
   bitrate,
   byterate,
   bytes,
@@ -47,6 +48,29 @@ describe("format", () => {
     const now = new Date("2026-08-10T14:00:00Z");
     expect(relative("2026-08-10T13:59:19Z", now)).toBe("41 s ago");
     expect(relative("2026-08-10T11:46:00Z", now)).toBe("2 h 14 m ago");
+  });
+
+  // Installed RAM is the one byte count read against a binary spec sheet.
+  // 33_260_000_000 is roughly what a 32 GiB machine reports as MemTotal;
+  // decimally that is "33.3 GB", which is above the capacity the machine
+  // actually has and ~7% above the figure on the invoice.
+  it("formats installed memory in binary units", () => {
+    expect(binaryBytes(33_260_000_000)).toBe("31 GiB");
+    expect(bytes(33_260_000_000)).toBe("33.3 GB");
+    expect(binaryBytes(8 * 1024 ** 3)).toBe("8 GiB");
+    expect(binaryBytes(1024)).toBe("1 KiB");
+    expect(binaryBytes(512)).toBe("512 B");
+  });
+
+  it("renders absent and zero memory the same way decimal bytes do", () => {
+    expect(binaryBytes(null)).toBe("—");
+    expect(binaryBytes(0)).toBe("0 B");
+  });
+
+  // The promotion guard has to move with the base, or a value just under a
+  // binary boundary renders as "1024 GiB" instead of "1 TiB".
+  it("promotes to the next binary unit rather than printing 1024", () => {
+    expect(binaryBytes(1024 ** 4 - 1)).toBe("1 TiB");
   });
 
   it("formats small byte counts below the kB threshold", () => {

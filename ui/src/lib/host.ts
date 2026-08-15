@@ -1,4 +1,5 @@
 import type { Host } from "./api";
+import { ABSENT } from "./format";
 
 /**
  * The one definition of whether a host is reporting.
@@ -122,4 +123,38 @@ export function isReporting(
   now: Date = new Date(),
 ): boolean {
   return hostStatus(host, now).severity !== "critical";
+}
+
+/**
+ * The operating system, as a name rather than as an identifier.
+ *
+ * os_name is meant to carry the distribution -- every fixture in the repo
+ * seeds it that way ("Ubuntu 24.04.1 LTS", "Debian GNU/Linux 12 (bookworm)")
+ * -- but an agent that cannot read /etc/os-release falls back to Go's GOOS,
+ * which is a build constant and always lowercase. Printing that raw put
+ * "linux" on the page: true, but written as a compiler token rather than as
+ * the name of an operating system.
+ *
+ * An explicit table, not capitalize(): capitalising GOOS gives "Darwin" for a
+ * Mac and "Freebsd" for a BSD, and those are both wrong in a way that reads
+ * as carelessness. A platform not in the table passes through untouched,
+ * which is right for a distro string and harmless for anything else.
+ *
+ * Lives here rather than privately in the Overview tab that first needed it:
+ * the host page's own header prints the same field two inches above the
+ * System card, so a private copy in one of them is exactly how the header
+ * came to read "linux" under a card reading "Linux".
+ */
+const OS_LABELS: Record<string, string> = {
+  linux: "Linux",
+  darwin: "macOS",
+  windows: "Windows",
+  freebsd: "FreeBSD",
+  openbsd: "OpenBSD",
+  netbsd: "NetBSD",
+};
+
+export function osLabel(name: string | null): string {
+  if (name === null || name === "") return ABSENT;
+  return OS_LABELS[name] ?? name;
 }
