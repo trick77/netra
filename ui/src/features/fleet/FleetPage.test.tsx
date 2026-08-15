@@ -568,3 +568,48 @@ describe("FleetPage stat tiles as controls", () => {
     expect(screen.getByText("Fleet traffic").closest("a")).toBeNull();
   });
 });
+
+// The gap between FleetPage and FleetContainers: `rows` arrives already
+// filtered, so an empty one means either "the fleet has none" or "your search
+// matched none". Only the page knows which, and the capability note must not
+// answer the second -- filtering a fleet down to nothing would otherwise reply
+// "no cgroup scopes ... re-run setup-agent.sh", turning a search term into an
+// instruction to go and reconfigure a host.
+describe("FleetPage, the container filter and the capability note", () => {
+  const broken = makeRow({
+    id: 2,
+    hostname: "web-02",
+    capabilities: { containers: "no-cgroup-scopes" },
+  });
+
+  it("explains a genuinely empty container list", async () => {
+    const user = userEvent.setup();
+    renderPage({ rows: [makeRow(), broken], containers: [] });
+    await user.click(containersTab());
+
+    expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
+  });
+
+  // A filtered list that still has rows keeps the note: there it annotates
+  // what is shown rather than standing in for it.
+  it("keeps the note on a filtered list that still has rows", async () => {
+    const user = userEvent.setup();
+    renderPage({ rows: [makeRow(), broken] });
+    await user.click(containersTab());
+    await user.type(screen.getByPlaceholderText(/filter containers/i), "post");
+
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
+  });
+
+  it("does not blame a host for a search that matched nothing", async () => {
+    const user = userEvent.setup();
+    renderPage({ rows: [makeRow(), broken] });
+    await user.click(containersTab());
+    await user.type(screen.getByPlaceholderText(/filter containers/i), "zzz");
+
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
+    expect(screen.queryByText("No containers collected")).toBeNull();
+  });
+});

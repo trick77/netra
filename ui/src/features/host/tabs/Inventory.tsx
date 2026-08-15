@@ -13,6 +13,7 @@ import type {
   MetricsResponse,
 } from "../../../lib/api";
 import { ABSENT, absolute, bytes, relative } from "../../../lib/format";
+import { hostContainerNote } from "../../../lib/containers";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
@@ -35,6 +36,11 @@ export interface InventoryProps<T> {
    * search box. The caller applies them to `rows`; this component only
    * gives them a home so every list's toolbar looks the same. */
   controls?: ReactNode;
+  /** Why this list is short, when the agent said so. Rendered above the list
+   * rather than in place of it: the two facts are "what was collected" and
+   * "what stopped the rest being collected", and a list that is partly there
+   * needs both. */
+  notice?: ReactNode;
 }
 
 export function Inventory<T>({
@@ -44,6 +50,7 @@ export function Inventory<T>({
   rowKey,
   searchText,
   controls,
+  notice,
 }: InventoryProps<T>) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -63,6 +70,7 @@ export function Inventory<T>({
         />
         {controls}
       </div>
+      {notice}
       {visible.length === 0 ? (
         <EmptyState
           icon={Inbox}
@@ -137,11 +145,17 @@ export function Containers({
   rows,
   metrics = null,
   range = "24h",
+  capabilities,
 }: {
   rows: readonly Container[];
   /** A family=container response for this host. */
   metrics?: MetricsResponse | null;
   range?: Range;
+  /** The host's own capability map. Only `containers` is read, and only to
+   * say why this list is empty or unnamed -- "This host has reported no
+   * containers" is true of a host running none and of a host whose agent
+   * cannot see the ones it runs. */
+  capabilities?: Record<string, string>;
 }) {
   // The same trends the fleet's container list shows, for the same reason: a
   // list of containers with no time in it says what is there and nothing
@@ -208,6 +222,8 @@ export function Containers({
     });
   }
 
+  const note = hostContainerNote(capabilities);
+
   return (
     <Inventory
       label="Containers"
@@ -217,6 +233,7 @@ export function Containers({
       searchText={(row) =>
         [row.container_key, row.name, row.image].filter(Boolean).join(" ")
       }
+      notice={note === null ? undefined : <p className="note">{note}</p>}
     />
   );
 }

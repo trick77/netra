@@ -161,6 +161,45 @@ describe("Containers", () => {
       screen.queryByRole("columnheader", { name: /last seen/i }),
     ).toBeNull();
   });
+
+  // "This host has reported no containers" is true of a host running none and
+  // of a host whose agent cannot see the ones it runs. Only the second is
+  // something to go and fix, and only the agent knows which it is.
+  it("says why the list is empty when the agent explained it", () => {
+    render(
+      <Containers
+        rows={[]}
+        capabilities={{ containers: "no-cgroup-scopes" }}
+      />,
+    );
+
+    expect(screen.getByText(/\/host\/sys\/fs\/cgroup/)).toBeInTheDocument();
+    expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
+    // Alongside the empty state, not instead of it: "nothing was collected"
+    // and "here is what stopped it" are both facts, and the second does not
+    // replace the first.
+    expect(screen.getByText("Nothing collected yet")).toBeInTheDocument();
+  });
+
+  // The milder value, on a list that is fully present and badly labelled.
+  it("explains raw ids on a list it has not emptied", () => {
+    render(
+      <Containers
+        rows={containers}
+        capabilities={{ containers: "no-docker-socket" }}
+      />,
+    );
+
+    expect(screen.getByText(/Docker socket/)).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /shop/ })).toBeInTheDocument();
+  });
+
+  it("stays silent when the agent reported no trouble", () => {
+    render(<Containers rows={containers} capabilities={{ smart: "absent" }} />);
+
+    expect(screen.queryByText(/Docker socket/)).toBeNull();
+    expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
+  });
 });
 
 describe("Filesystems", () => {
