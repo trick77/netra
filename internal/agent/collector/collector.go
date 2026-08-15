@@ -104,3 +104,25 @@ type BaselineEmitter interface {
 	// data that must not be discarded.
 	EmitsBaseline() bool
 }
+
+// StartupSummarizer is implemented by collectors that can say, in one line,
+// WHAT THEY ACTUALLY SAW on their first run.
+//
+// A capability answers "can this collector run", which is only useful once
+// something already suspects it cannot. This answers the question an operator
+// asks in the first ten seconds after `docker compose up -d` -- "is it seeing
+// my machine?" -- and answers it with counts rather than a verdict, because a
+// count is falsifiable against what the operator already knows. A host with
+// thirty containers whose agent reports "0 cgroup scopes, 30 containers named
+// by the docker socket" has diagnosed itself; the same host reporting nothing
+// at all took months to notice.
+//
+// The interface is optional, and the summary is emitted ONCE, at startup, after
+// priming. It is not a per-scrape channel: anything worth repeating belongs in
+// a capability or a metric.
+type StartupSummarizer interface {
+	// StartupSummary returns a short human-readable line, or "" for nothing to
+	// report. It must not repeat the collector's own name -- the caller logs
+	// that alongside it.
+	StartupSummary() string
+}
