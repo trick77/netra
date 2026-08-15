@@ -14,6 +14,7 @@ import type { Container, MetricsResponse } from "../../lib/api";
 import {
   hasGaps,
   hasReading,
+  latestValue,
   seriesTimestamps,
   griddedValues,
   windowNotice,
@@ -378,6 +379,18 @@ export function ContainerPage({
           // The limit names itself in the header, beside the reading it is the
           // limit for, rather than as text over the rule inside the plot.
           nowFmt={(n) => bytesPair(n, memLimit)}
+          // ...and the reading it is the limit for is the container's WHOLE
+          // memory, not series[0]'s. Split into anon/file/shmem/kernel,
+          // series[0] is the anon band alone, so the header paired one of
+          // four bands against the limit -- "0.5 · 1 GB" for a container at
+          // 0.9 GB of its 1 GB, which reads as half the limit used when it is
+          // about to be OOM-killed. mem_used is the number the pair claims to
+          // be, and it is what the meter directly below already shows.
+          nowValue={
+            memSplit.length > 1
+              ? latestValue(sampled?.memUsed ?? empty)
+              : undefined
+          }
           stacked={memBands.length > 1}
           series={memBands}
         />
