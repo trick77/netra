@@ -295,14 +295,98 @@ func (c *Client) resendInventory() {
 // Collectors are run here directly rather than through collect() for that
 // reason: collect() has no way to leave one out.
 func (c *Client) Prime(ctx context.Context) {
+	primed, failed, skipped := 0, 0, 0
+	ran := make([]collector.Collector, 0, len(c.collectors))
 	for _, col := range c.collectors {
 		if b, ok := col.(collector.BaselineEmitter); ok && b.EmitsBaseline() {
+			// Counted, not silently dropped: ok + failed would otherwise fall
+			// short of the total for no stated reason, and a line whose whole
+			// job is legibility must not read like collectors vanished.
+			skipped++
 			continue
 		}
+		// Recorded whether it succeeds or fails below. A collector that ran
+		// and failed has a capability worth reporting -- that is exactly the
+		// containers case -- while one that never ran does not.
+		ran = append(ran, col)
 		if _, err := col.Collect(ctx); err != nil {
 			// Priming is best-effort: the scheduled scrape reports the same
 			// failure, with somewhere to record it.
+			failed++
 			slog.Warn("priming collector failed", "collector", col.Name(), "err", err)
+			continue
+		}
+		primed++
+	}
+
+	// The capabilities are only real once the collectors have run, and the
+	// metadata hash is only useful once it includes them. Without this the
+	// hash carried by CheckHub is the capability-less one built at
+	// construction, while the hash the hub stored came from a block that had
+	// them -- two values that can never be equal, so the hub would answer "send
+	// me metadata" to every agent on every restart and re-save a block that had
+	// not changed. That is the exact behaviour CheckHub's hash exists to avoid,
+	// and without this line it was inert.
+	c.refreshCapabilities()
+	// refreshCapabilities sets sendMetadata because a capability CHANGED. On a
+	// fresh process nothing changed -- it went from "not yet asked" to "asked
+	// once" -- and this agent has told nobody anything yet. Whether the hub
+	// needs the block is the hub's answer to give, and CheckHub is about to ask
+	// it. Presuming it here is what would make the re-save unconditional.
+	c.sendMetadata = false
+
+	slog.Info("primed collectors", "ok", primed, "failed", failed,
+		"skipped", skipped, "total", len(c.collectors))
+	logStartupInventory(ran)
+}
+
+// logStartupInventory says what this agent can actually see, once, at startup.
+//
+// The agent used to log its version and its hub URL and then nothing until the
+// first scrape a minute later, which meant a collector that was mounted wrong
+// looked exactly like a collector that had nothing to report -- for as long as
+// nobody thought to query the database and count. The one case that motivated
+// this is worth stating: the container collector walked an unmounted cgroup
+// root, found nothing, raised no error because an empty walk is not one, and
+// reported zero containers on a host running thirty. Nothing anywhere said so.
+//
+// Two lines per fact at most, and only for collectors with something to say: a
+// summary of what was found, or a capability explaining what could not be. A
+// healthy agent stays quiet enough to read.
+//
+// Takes only the collectors Prime actually RAN, which is why it is a function
+// rather than a method. A baseline emitter is deliberately not primed, so at
+// this moment it has never executed and its capabilities describe a collector
+// that has not looked yet: Packages assigns p.format inside Collect and reports
+// "unsupported-format" until it does, so asking every collector would have made
+// every agent on every host -- Debian ones included -- open with a package
+// warning that is false by construction. A warning that is always there is one
+// nobody reads, and it would sit one line from the genuine no-cgroup-scopes
+// warning this function exists to surface.
+func logStartupInventory(ran []collector.Collector) {
+	for _, col := range ran {
+		if s, ok := col.(collector.StartupSummarizer); ok {
+			if summary := s.StartupSummary(); summary != "" {
+				slog.Info("collector ready", "collector", col.Name(), "saw", summary)
+			}
+		}
+		r, ok := col.(collector.CapabilityReporter)
+		if !ok {
+			continue
+		}
+		for key, value := range r.Capabilities() {
+			// Not every capability is a limitation. Procs and Users report
+			// "ok" on their SUCCESS path, unconditionally, on every Collect --
+			// so warning on the whole map made a perfectly configured agent
+			// log two limitations at every start, which is the opposite of
+			// what this function is for and buries the one that matters.
+			if value == "" || value == "ok" {
+				continue
+			}
+			// Warn, not Info: every capability left is something the operator
+			// either chose not to grant or did not realise they had not.
+			slog.Warn("collector limited", "collector", col.Name(),
+				"capability", key, "reason", value)
 		}
 	}
 }

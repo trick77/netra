@@ -145,6 +145,103 @@ function renderOverview(over: Partial<Parameters<typeof Overview>[0]> = {}) {
   );
 }
 
+// post_failures_total is cumulative for the life of the agent PROCESS and is
+// never reset by a success, so it needs the same window-relative reading as
+// oom_kill_total. Two points, so counterIncrease has a pair to difference.
+function deliveryFailures(points: [number, number][]) {
+  return response({
+    family: "agent",
+    columns: ["buffer_depth", "buffer_dropped_total", "post_failures_total"],
+    series: [{ key: {}, points: points.map(([ts, n]) => [ts, 2, 0, n]) }],
+  });
+}
+
+describe("Overview delivery failures", () => {
+  // The bug this replaced: a hub restart produced one failed post, the agent
+  // re-sent that 1 on every scrape for the rest of its life, and the page
+  // carried "1 failed deliveries to the hub" permanently -- even though the
+  // ring buffer replayed the samples and nothing was lost.
+  it("clears once the failures fall outside the window", () => {
+    renderOverview({
+      agentMetrics: deliveryFailures([
+        [1_786_320_000_000, 1],
+        [1_786_320_060_000, 1],
+      ]),
+    });
+    expect(screen.queryByText(/failed deliver/i)).toBeNull();
+  });
+
+  it("reports failures that happened inside the window", () => {
+    renderOverview({
+      agentMetrics: deliveryFailures([
+        [1_786_320_000_000, 1],
+        [1_786_320_060_000, 4],
+      ]),
+    });
+    const attention = screen.getByRole("region", { name: /needs attention/i });
+    expect(
+      within(attention).getByText(/3 failed deliveries to the hub/i),
+    ).toBeInTheDocument();
+  });
+
+  // "1 failed deliveries" was the old copy, and it was wrong twice over.
+  it("says delivery, singular, for a single failure", () => {
+    renderOverview({
+      agentMetrics: deliveryFailures([
+        [1_786_320_000_000, 0],
+        [1_786_320_060_000, 1],
+      ]),
+    });
+    expect(
+      screen.getByText(/1 failed delivery to the hub in this window/i),
+    ).toBeInTheDocument();
+  });
+
+  // The counter zeroes when the agent process restarts. counterDeltas drops
+  // a negative step, so the restart is skipped rather than counted.
+  it("does not read an agent restart as a burst of failures", () => {
+    renderOverview({
+      agentMetrics: deliveryFailures([
+        [1_786_320_000_000, 900],
+        [1_786_320_060_000, 0],
+      ]),
+    });
+    expect(screen.queryByText(/failed deliver/i)).toBeNull();
+  });
+});
+
+describe("Overview system facts", () => {
+  // GOOS is a build constant, so an agent that could not read /etc/os-release
+  // falls back to it and the page used to print the compiler's token.
+  it("names the operating system rather than printing GOOS", () => {
+    renderOverview({ host: { ...host, os_name: "linux" } });
+    const system = screen.getByRole("region", { name: "System" });
+    expect(within(system).getByText("Linux")).toBeInTheDocument();
+  });
+
+  it("does not title-case its way to Darwin and Freebsd", () => {
+    renderOverview({ host: { ...host, os_name: "darwin" } });
+    expect(
+      within(screen.getByRole("region", { name: "System" })).getByText("macOS"),
+    ).toBeInTheDocument();
+  });
+
+  // A distro string is already the right answer and must pass through.
+  it("leaves a distribution name alone", () => {
+    renderOverview({ host: { ...host, os_name: "Debian GNU/Linux 13" } });
+    expect(screen.getByText("Debian GNU/Linux 13")).toBeInTheDocument();
+  });
+
+  // ~32 GiB of MemTotal. Decimally this reads "33.3 GB", which is above the
+  // capacity the machine actually has.
+  it("states installed memory in the binary units it was sold in", () => {
+    renderOverview({ host: { ...host, memory_total: 33_260_000_000 } });
+    const system = screen.getByRole("region", { name: "System" });
+    expect(within(system).getByText("31 GiB")).toBeInTheDocument();
+    expect(within(system).queryByText(/33.3 GB/)).toBeNull();
+  });
+});
+
 describe("Overview", () => {
   it("renders an absent swap as none, never as 0", () => {
     renderOverview();
@@ -174,10 +271,29 @@ describe("Overview", () => {
     expect(within(attention).getByText(/12/)).toBeInTheDocument();
   });
 
-  it("says so when nothing is wrong rather than rendering an empty card", () => {
+  // The band is the first thing on the tab and spans the page, so a healthy
+  // host must not spend that position on a box saying nothing. One quiet line
+  // confirms the check ran instead -- the same rule the fleet band follows.
+  // .grid2 is a CSS multi-column flow, so a card placed first inside it only
+  // reaches the top of the LEFT column. The band has to be outside the grid
+  // altogether to span the page and be read first.
+  it("puts the band above the card grid, not inside it", () => {
+    const { container } = renderOverview({ agentMetrics: agentMetrics(12) });
+    const band = screen.getByRole("region", { name: /needs attention/i });
+    const grid = container.querySelector(".grid2");
+    expect(grid).not.toBeNull();
+    expect(grid?.contains(band)).toBe(false);
+    expect(
+      band.compareDocumentPosition(grid!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("says so in one line when nothing is wrong, without the band", () => {
     renderOverview();
-    const attention = screen.getByRole("region", { name: /needs attention/i });
-    expect(within(attention).getByText(/all clear/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: /needs attention/i }),
+    ).toBeNull();
+    expect(screen.getByText(/nothing needs attention/i)).toBeInTheDocument();
   });
 
   it("summarises the tabs instead of duplicating them", () => {
@@ -641,8 +757,10 @@ describe("Overview OOM attention", () => {
         [1_786_320_060_000, 4000],
       ]),
     });
-    const attention = screen.getByRole("region", { name: /attention/i });
-    expect(within(attention).queryByText(/OOM/)).toBeNull();
+    // Nothing wrong at all, so there is no band to look inside: its absence
+    // is the assertion.
+    expect(screen.queryByRole("region", { name: /attention/i })).toBeNull();
+    expect(screen.queryByText(/OOM/)).toBeNull();
   });
 });
 

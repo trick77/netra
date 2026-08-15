@@ -21,8 +21,8 @@
 #   network (/proc/net/dev), addresses.
 #
 # Needing a mount, each called out where it is configured below:
-#   containers (cgroup v2 + the Docker socket for names only), filesystems,
-#   systemd, packages.
+#   containers (the host's cgroup v2 hierarchy, plus the Docker socket for
+#   names only), filesystems, systemd, packages.
 #
 # Needing a privilege the operator grants explicitly:
 #   SMART (device access), processes (pid: host).
@@ -126,6 +126,18 @@ services:
       # the first and logs a warning naming both, rather than double-reporting
       # one filesystem under two names.
       #
+      # The TARGET is never reported. It exists only in this container, and a
+      # host has no /netra of any kind, so an agent that named a filesystem
+      # after it would be showing operators its own insides. What the hub is
+      # told is the label plus the host mount point, and the mount point comes
+      # from NETRA_FS_MOUNTS in .env — add a bind here, add its `label=/path`
+      # there, or re-run setup-agent.sh and let it write both.
+      #
+      # A marker mount also narrows what the agent measures: when any is
+      # present, it reports those filesystems and nothing else. Without that it
+      # would also report this container's own overlay image layer as a
+      # filesystem called `/`, which is Docker's storage, not the host's root.
+      #
       # The root filesystem is not a special case in code: it gets its own marker
       # like everything else. If /netra/fs/ is empty the agent logs a startup
       # warning and carries on — a container-only host is legitimate.
@@ -146,7 +158,35 @@ services:
       #   target: /netra/fs/ark
       #   read_only: true
 
-      # --- Containers -------------------------------------------------------
+      # --- Containers: the host's cgroup hierarchy ---------------------------
+      #
+      # EVERY container metric comes from here, and so does the container LIST
+      # itself. The Docker socket below supplies names, images and compose
+      # labels only, so without this mount the agent reports no containers at
+      # all -- not unnamed ones.
+      #
+      # Mounted to /host/sys/fs/cgroup rather than over the container's own
+      # /sys/fs/cgroup, for the same reason /proc/1/mountinfo lands on
+      # /host/mountinfo: the host's view gets its own path instead of shadowing
+      # the container's. It also makes a missing mount LOUD. Docker's default
+      # cgroup namespace is private, so the container's own /sys/fs/cgroup is
+      # rooted at the agent's own cgroup and holds no sibling container scopes
+      # whatsoever -- a walk of it finds nothing and raises no error, which is
+      # exactly how this went unnoticed. A path that does not exist unless the
+      # mount was granted fails visibly instead.
+      #
+      # The bind carries the host's whole hierarchy regardless of the agent's
+      # own cgroup namespace, so no `cgroup: host` is needed. If a future
+      # runtime does isolate it, add `cgroup: host` to this service.
+      #
+      # Read-only, and genuinely so: the agent reads cpu.stat, memory.stat,
+      # memory.current, memory.max, io.stat and cgroup.procs. It never writes.
+      - type: bind
+        source: /sys/fs/cgroup
+        target: /host/sys/fs/cgroup
+        read_only: true
+
+      # --- Containers: names and labels --------------------------------------
       #
       # Read-only, and used for far less than it looks like. Container CPU and
       # memory are read from cgroup v2 files directly; the socket supplies only
@@ -154,7 +194,9 @@ services:
       # list changes. Calling the Docker stats API per container per scrape is
       # the single most expensive thing a naive agent does, and this avoids it.
       #
-      # Without this mount: no container inventory and no container metrics.
+      # Without this mount: containers still report every metric, keyed by raw
+      # 64-hex id instead of compose project/service. Without the cgroup mount
+      # above: no containers at all.
       #
       # `read_only: true` here restricts the INODE, not the API. Anything that
       # can talk to the Docker socket at all can start a privileged container,

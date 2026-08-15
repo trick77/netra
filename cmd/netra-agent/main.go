@@ -77,7 +77,7 @@ func run() error {
 
 		// Group 3: needs a mount.
 		collector.NewContainers(cfg.CgroupRoot, cfg.ProcRoot, collector.SystemDockerContainers),
-		collector.NewFilesystems(cfg.ProcRoot, collector.SystemStatfs),
+		collector.NewFilesystems(cfg.ProcRoot, cfg.FsMounts, collector.SystemStatfs),
 		collector.NewSystemd(collector.SystemUnits),
 		collector.NewPackages(cfg.DpkgStatus, cfg.ApkInstalled),
 
@@ -95,6 +95,11 @@ func run() error {
 	// first scheduled scrape has one. Prime does not buffer or send anything,
 	// unlike ScrapeOnce.
 	c.Prime(ctx)
+
+	// Before Run, because Run blocks on its ticker for a full interval before
+	// the first flush -- so without this the log says nothing about a wrong URL
+	// or a revoked token until a minute after the operator stopped watching.
+	c.CheckHub(ctx)
 
 	return c.Run(ctx)
 }

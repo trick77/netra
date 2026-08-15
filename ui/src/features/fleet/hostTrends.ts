@@ -7,6 +7,7 @@ import {
 import {
   carriesColumn,
   counterIncrease,
+  fsName,
   griddedValues,
   hasReading,
 } from "../../lib/metrics";
@@ -160,7 +161,7 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
     if (used === null || free === null || used + free === 0) continue;
     measured++;
     const pct = (used / (used + free)) * 100;
-    const mount = res.series[i]!.key.filesystem ?? "?";
+    const mount = fsName(res.series[i]!.key, "?");
     if (best === null || pct > best.pct) best = { mount, pct };
   }
   if (best === null) return null;
@@ -218,7 +219,7 @@ function filesystemBands(res: MetricsResponse | null): Band[] {
     // zero; it is a mount with no readings, and drawing it would claim one.
     if (!hasReading(values)) continue;
     bands.push({
-      name: res.series[i]!.key.filesystem ?? `fs ${i}`,
+      name: fsName(res.series[i]!.key, `fs ${i}`),
       color: FS_COLORS[bands.length % FS_COLORS.length]!,
       values,
     });

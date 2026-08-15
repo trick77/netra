@@ -174,14 +174,20 @@ describe("Filesystems", () => {
 });
 
 describe("Network", () => {
-  it("shows first and last seen, which the schema does have", () => {
+  // "Last changed", not "Last seen": the agent only sends addresses when the
+  // set changes, so the column holds the time of the last change and not the
+  // last time the host was heard from. See the comment on the column.
+  it("shows first seen and last changed, which the schema does have", () => {
     render(<Network rows={addresses} />);
     expect(
       screen.getByRole("columnheader", { name: /first seen/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("columnheader", { name: /last seen/i }),
+      screen.getByRole("columnheader", { name: /last changed/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("columnheader", { name: /last seen/i }),
+    ).toBeNull();
     expect(screen.getByText("192.0.2.10/24")).toBeInTheDocument();
   });
 
