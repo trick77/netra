@@ -37,10 +37,12 @@ func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time,
 	// The SPA cannot know the address agents post to: the browser reaches
 	// this hub on loopback, so its own location says nothing about the name
 	// agents use. NETRA_HUB_URL is that name, and the host admin page needs
-	// it to render a setup command an operator can paste. Before this, the
-	// page fell back to a placeholder the operator had to retype on every
-	// mint -- and the configured value, which the retired token.gohtml used
-	// to render, was read by nothing at all.
+	// it to render a setup command an operator can paste.
+	//
+	// An unset value comes back as "" and the page renders no command at all,
+	// which is the whole reason this endpoint exists rather than letting the
+	// SPA fall back to something. It fell back to a hardcoded placeholder
+	// once, and the resulting command was complete, runnable and wrong.
 	mux.Handle("GET /api/v1/config", http.HandlerFunc(h.config))
 	mux.Handle("POST /api/v1/hosts", http.HandlerFunc(h.create))
 	mux.Handle("POST /api/v1/hosts/{id}/token", http.HandlerFunc(h.rotate))
