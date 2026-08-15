@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/trick77/netra/internal/buildinfo"
 	"github.com/trick77/netra/internal/hub/store"
+	"github.com/trick77/netra/internal/shared/buildinfo"
 )
 
 type healthHandler struct {

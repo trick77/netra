@@ -3,5 +3,5 @@ managed:
   enabled: false
 plugins:
   - remote: buf.build/protocolbuffers/go:v1.36.4
-    out: internal/gen
+    out: internal/shared/gen
     opt: paths=source_relative

@@ -7,7 +7,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/trick77/netra/internal/agent/collector"
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // collectInto runs c and merges its host row into sample.

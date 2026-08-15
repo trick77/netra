@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync"
 
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // Capability values reported by Users.

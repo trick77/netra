@@ -9,11 +9,11 @@
 #   patch-coverage.sh  "is the code I just wrote tested?"            (75% patch)
 #
 # netra is a single Go module with two components sharing one go.mod — hub
-# (internal/hub, internal/buildinfo, internal/gen) and agent (internal/agent,
+# (internal/hub, internal/shared) and agent (internal/agent,
 # cmd/). Both therefore go through the same Cobertura/diff-cover path; there
 # is no separate JS/UI stack in this repo.
 #
-# cmd/ and internal/gen are excluded from both sides, matching the exclusions
+# cmd/ and internal/shared/gen are excluded from both sides, matching the exclusions
 # hack/coverage-gate.sh already applies to the absolute floor. See the
 # diff-cover invocations below.
 #
@@ -191,7 +191,7 @@ if [[ -f coverage/hub.xml ]]; then
     < coverage/hub-rooted.xml > coverage/hub-code-only.xml
 
   # cmd/ excluded — see the agent section below for the full rationale.
-  # internal/gen is excluded for the same reason cmd/ is, and the same reason
+  # internal/shared/gen is excluded for the same reason cmd/ is, and the same reason
   # hack/coverage-gate.sh excludes it from the absolute floor: generated
   # protobuf getters are machine-written lines no reachable test would move.
   # A PR that adds a wire message adds hundreds of them, so without this the
@@ -202,10 +202,10 @@ if [[ -f coverage/hub.xml ]]; then
     --compare-branch "$BASE_REF" \
     --fail-under "$PATCH_MIN" \
     --format "markdown:coverage/hub-patch.md" \
-    --exclude '*/cmd/*' 'cmd/*' '*/internal/gen/*' 'internal/gen/*' || fail=1
+    --exclude '*/cmd/*' 'cmd/*' '*/internal/shared/gen/*' 'internal/shared/gen/*' || fail=1
   cat coverage/hub-patch.md >> "$summary" 2>/dev/null || true
   assert_matched coverage/hub-patch.md hub coverage/hub-code-only.xml "" \
-    "internal/hub/*.go" "internal/buildinfo/*.go" "internal/gen/*.go"
+    "internal/hub/*.go" "internal/shared/*.go"
 fi
 
 # --- agent ------------------------------------------------------------------

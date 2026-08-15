@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // FsStat is one filesystem's statfs result, in the terms the schema uses.

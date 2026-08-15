@@ -12,8 +12,8 @@ import (
 	"github.com/trick77/netra/internal/agent/client"
 	"github.com/trick77/netra/internal/agent/collector"
 	"github.com/trick77/netra/internal/agent/config"
-	"github.com/trick77/netra/internal/buildinfo"
-	"github.com/trick77/netra/internal/logging"
+	"github.com/trick77/netra/internal/shared/buildinfo"
+	"github.com/trick77/netra/internal/shared/logging"
 )
 
 func main() {

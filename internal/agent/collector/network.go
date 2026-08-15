@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // netCounters is one interface's line of /proc/net/dev, keeping only the

@@ -123,7 +123,7 @@ so the decision is visible rather than silent.`,
 // from, ASKED OF THE COMPILER rather than listed by hand.
 //
 // A hand-written list was wrong the day it was written: it named internal/agent
-// and cmd/netra-agent, so internal/gen/netra/v1 was never walked — and that is
+// and cmd/netra-agent, so internal/shared/gen/netra/v1 was never walked — and that is
 // the tree that matters most. Adding `string cmdline = 5;` to ProcessSample and
 // running `make proto` regenerates ingest.pb.go with a
 // `protobuf:"...name=cmdline..."` struct tag, which is a string literal this
@@ -362,7 +362,7 @@ func TestGuardDetectsTheShapesItIsMeantTo(t *testing.T) {
 // by an ANCESTOR root — so this asks whether each path is actually walked.
 // Both directions matter and each was wrong once:
 //
-//   - internal/gen/netra/v1 must be reachable, or a cmdline field added to the
+//   - internal/shared/gen/netra/v1 must be reachable, or a cmdline field added to the
 //     proto passes green. It is not under internal/agent, so only the computed
 //     roots can supply it.
 //   - internal/agent must be reachable WHOLE, not just the packages main
@@ -387,8 +387,8 @@ func TestGuardRootsCoverTheWireFormat(t *testing.T) {
 		return false
 	}
 
-	if !covered(filepath.Join("internal", "gen", "netra", "v1")) {
-		t.Error("internal/gen/netra/v1 is not walked — a cmdline field added to the proto would pass")
+	if !covered(filepath.Join("internal", "shared", "gen", "netra", "v1")) {
+		t.Error("internal/shared/gen/netra/v1 is not walked — a cmdline field added to the proto would pass")
 	}
 	if !covered(filepath.Join("internal", "agent", "collector")) {
 		t.Error("internal/agent/collector is not walked")

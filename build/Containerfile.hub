@@ -27,7 +27,7 @@ FROM golang:1.26-alpine AS build
 # `git rev-parse`, but the build context carries no .git (see .dockerignore)
 # and the builder has no git binary, so an unpassed COMMIT would stamp
 # "unknown" into a shipped binary. The defaults keep a bare `docker build`
-# working and match internal/buildinfo's own fallbacks.
+# working and match internal/shared/buildinfo's own fallbacks.
 ARG VERSION=dev
 ARG COMMIT=unknown
 
@@ -51,7 +51,7 @@ COPY --from=ui /src/internal/hub/web/dist ./internal/hub/web/dist
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -trimpath \
-      -ldflags "-s -w -X github.com/trick77/netra/internal/buildinfo.version=$VERSION -X github.com/trick77/netra/internal/buildinfo.commit=$COMMIT" \
+      -ldflags "-s -w -X github.com/trick77/netra/internal/shared/buildinfo.version=$VERSION -X github.com/trick77/netra/internal/shared/buildinfo.commit=$COMMIT" \
       -o /out/netra ./cmd/netra
 
 # Digest-pinned so the runtime contents are reproducible across rebuilds; the

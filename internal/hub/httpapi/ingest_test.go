@@ -13,10 +13,10 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/httpapi"
 	"github.com/trick77/netra/internal/hub/store"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 func newFixture(t *testing.T) (*httptest.Server, string, *store.Store) {

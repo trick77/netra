@@ -5,10 +5,10 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 # Deferred expansion (=, not :=) so VERSION and COMMIT are read when a build
 # rule runs rather than when this line is parsed. With := they expanded before
 # the assignments below existed, and -X stamped both symbols to the empty
-# string — which overrides the "dev"/"unknown" defaults in internal/buildinfo,
+# string — which overrides the "dev"/"unknown" defaults in internal/shared/buildinfo,
 # so every shipped binary reported an empty version.
-LDFLAGS = -s -w -X github.com/trick77/netra/internal/buildinfo.version=$(VERSION) \
-                -X github.com/trick77/netra/internal/buildinfo.commit=$(COMMIT)
+LDFLAGS = -s -w -X github.com/trick77/netra/internal/shared/buildinfo.version=$(VERSION) \
+                -X github.com/trick77/netra/internal/shared/buildinfo.commit=$(COMMIT)
 
 .PHONY: test test-integration test-shell build build-hub build-agent build-sim proto fmt vet check ui ui-test
 
@@ -65,7 +65,7 @@ build-agent:
 	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o bin/netra-agent ./cmd/netra-agent
 
 # netra-sim fills a hub with a fake fleet for development. Deliberately NOT
-# part of `build`, of either Containerfile, or of the release workflow: it
+# part of `build`, of either container image, or of the release workflow: it
 # registers hosts, mints tokens and writes three months of invented history,
 # none of which belongs anywhere near a production hub.
 build-sim:

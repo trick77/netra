@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/trick77/netra/internal/buildinfo"
+	"github.com/trick77/netra/internal/shared/buildinfo"
 )
 
 func TestHandleVersionFlagPrintsIdentity(t *testing.T) {

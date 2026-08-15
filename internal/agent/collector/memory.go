@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // Memory reports host memory and swap from /proc/meminfo, plus the ZFS ARC

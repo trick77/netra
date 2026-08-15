@@ -20,7 +20,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/trick77/netra/internal/sim"
+	"github.com/trick77/netra/internal/devtools/sim"
 )
 
 func main() {

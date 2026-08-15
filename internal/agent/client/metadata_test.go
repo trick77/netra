@@ -9,7 +9,7 @@ import (
 
 	"github.com/trick77/netra/internal/agent/client"
 	"github.com/trick77/netra/internal/agent/config"
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // procFixture writes the three files BuildMetadata reads its hardware facts

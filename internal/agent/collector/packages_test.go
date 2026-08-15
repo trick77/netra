@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 func pkgRow(t *testing.T, rows []*netrav1.HostPackage, name string) *netrav1.HostPackage {
