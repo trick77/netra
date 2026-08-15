@@ -383,6 +383,22 @@ describe("hostColumns", () => {
       expect(container.querySelector(".badge.st-crit")).not.toBeInTheDocument();
     });
 
+    // Leading nulls are the time before the host was reporting at all. A
+    // host added minutes ago is one real bucket at the end of a whole
+    // window's grid, and counting the emptiness in front of it badged every
+    // newly added agent sporadic for most of its first day.
+    it("does not call a just-added host sporadic for the time before it existed", () => {
+      const cols = hostColumns("24h");
+      const hostCol = cols.find((c) => c.header === "Host")!;
+      const row = makeRow({
+        last_seen: new Date(Date.now() - 10_000).toISOString(),
+        reporting: [...Array<number | null>(283).fill(null), 12],
+      });
+      const { container } = render(<>{hostCol.cell(row)}</>);
+      expect(screen.queryByText("sporadic")).toBeNull();
+      expect(container.querySelector(".badge.st-crit")).not.toBeInTheDocument();
+    });
+
     // Trailing nulls are every tier materialising behind now, not a fault:
     // the newest buckets are empty for every host on the page.
     it("does not call a clean host sporadic for the buckets no tier has yet", () => {

@@ -40,22 +40,44 @@ const SPORADIC_MISS_RATIO = 0.2;
  * Whether a series shows a host missing scrapes rather than reporting
  * cleanly.
  *
- * Trailing nulls are ignored: every tier materialises behind now (the 5m
- * aggregate by ten minutes), so the newest buckets are empty for every host
- * on the page, healthy or not. Counting those would mark the whole fleet
- * sporadic.
+ * Both edges of the window are trimmed before anything is counted, for the
+ * same reason: a null there is not a scrape the host failed to send.
+ *
+ * Trailing nulls are every tier materialising behind now (the 5m aggregate
+ * by ten minutes), so the newest buckets are empty for every host on the
+ * page, healthy or not. Counting those would mark the whole fleet sporadic.
+ *
+ * Leading nulls are the time before the host was reporting at all. The
+ * window is always the range the PAGE is on -- the read API never clamps
+ * `from` to when a host first appeared -- so a host added five minutes ago
+ * gets 24h of grid with one real bucket at the end of it. Counting the
+ * emptiness in front of it called every newly added agent sporadic on its
+ * first day, and the badge only cleared once four fifths of the range had
+ * elapsed since the host was added.
+ *
+ * The cost is that a host down for the first stretch of the window and
+ * reporting cleanly ever since reads as online. That is the right answer for
+ * a column whose wording is "gaps in the last few hours": one healed outage
+ * at the far edge is not ongoing flakiness, and a host that is down NOW is
+ * already critical by last_seen above. Telling "did not exist yet" apart
+ * from "was down" needs a first_seen on the host, which the summary the
+ * fleet reads does not carry.
  */
 export function reportsSporadically(
   values: readonly (number | null)[],
 ): boolean {
   let end = values.length;
   while (end > 0 && values[end - 1] === null) end--;
-  // Too little history to judge. Two buckets cannot distinguish a gap from
-  // a host that started reporting mid-window.
-  if (end < 5) return false;
+  let start = 0;
+  while (start < end && values[start] === null) start++;
+  // Too little history to judge, measured over the span the host was
+  // actually reporting across and not over the whole grid. Two buckets
+  // cannot distinguish a gap from a host that started reporting mid-window.
+  const span = end - start;
+  if (span < 5) return false;
   let missed = 0;
-  for (let i = 0; i < end; i++) if (values[i] === null) missed++;
-  return missed / end >= SPORADIC_MISS_RATIO;
+  for (let i = start; i < end; i++) if (values[i] === null) missed++;
+  return missed / span >= SPORADIC_MISS_RATIO;
 }
 
 export function hostStatus(
