@@ -21,26 +21,11 @@ services:
       - traefik
       - netra-internal
 
-    # Loopback only. This published port IS the interface: the read and admin
-    # API are curl'd from the box itself, and the host management UI is served
-    # on it at http://127.0.0.1:8080/. From a laptop, reach it through a
-    # tunnel — ssh -L 8080:127.0.0.1:8080 <this host> — rather than by binding
-    # 0.0.0.0 here.
-    #
-    # Binding 127.0.0.1 rather than 0.0.0.0 keeps the API and the UI off the
-    # host's public interfaces — both are gated by a single shared admin
-    # token, which is adequate for loopback and is not adequate for the
-    # internet.
-    #
-    # NETRA_BIND_ADDR carries the address AND the port together, deliberately:
-    # it exists so an operator whose host already has something on 8080 can
-    # move netra from .env instead of editing this file, and splitting it into
-    # separate IP and port variables would invite changing the port while
-    # assuming the address stays pinned. Setting it to `0.0.0.0:8080` puts the
-    # admin API and the UI on the host's public interfaces behind nothing but
-    # the shared token — the paragraph above is the argument against that.
-    ports:
-      - "${NETRA_BIND_ADDR:-127.0.0.1:8080}:8080"
+    # No `ports:`, deliberately. Traefik reaches this container over the
+    # `traefik` network on 8080 and is the only way in — nothing is published
+    # on the host, so netra cannot collide with whatever else the box runs on
+    # 8080 (Traefik's own dashboard, usually) and there is no tunnel to set up
+    # to administer it.
 
     # 512m, not unbounded. The hub is a Go process serving a handful of
     # agents; an unbounded default only means a leak takes the host down with
@@ -48,10 +33,10 @@ services:
     mem_limit: 512m
 
     environment:
-      # Container-internal, and NOT derived from NETRA_BIND_ADDR: Traefik
-      # dials this port over the `traefik` network and never sees the
-      # published one, so it stays 8080 no matter where the host binding
-      # moves. Same for the healthcheck below and the loadbalancer label.
+      # Container-internal. Traefik dials this port over the `traefik`
+      # network; nothing on the host ever binds it, so it is fixed and has no
+      # reason to be configurable. Same for the healthcheck below and the
+      # loadbalancer label.
       NETRA_LISTEN_ADDR: ":8080"
       # sslmode=disable is correct here and only here: this connection never
       # leaves the internal Docker network, and TLS between two containers on
@@ -98,21 +83,20 @@ services:
       # Required because this container sits on two networks — without it
       # Traefik picks one arbitrarily and may route to the internal address.
       traefik.docker.network: traefik
-      # PathPrefix, not Host alone. The only route that has any business being
-      # reachable from the internet is agent ingest — everything else the hub
-      # grows (the read API, the admin API that mints agent tokens and deletes
-      # hosts, and the management UI at /) is behind the same shared token and
-      # would otherwise become internet-facing the moment it was added,
-      # silently, with no change to this file. That directly contradicts the
-      # loopback-binding rationale above. Widen this deliberately, per route,
-      # or not at all.
+      # Host alone, so Traefik fronts the whole hub: agent ingest, the read
+      # API, the admin API that mints agent tokens and deletes hosts, and the
+      # management UI at /. Everything past ingest is gated on the single
+      # shared NETRA_ADMIN_TOKEN, and on this router that token is what stands
+      # between the admin API and the internet — so it is a credential, not a
+      # convenience. Generate it with `openssl rand -hex 32` and treat losing
+      # it as losing the fleet.
       #
       # `:?` rather than a default. A default here is worse than no value at
       # all: an operator who never set NETRA_HOSTNAME got a router matching a
       # domain this project does not own, compose started clean, the hub went
       # healthy, and agent ingest was unreachable with nothing anywhere saying
       # why. Now the run stops with the message below.
-      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:?set NETRA_HOSTNAME in .env — the name Traefik routes agent ingest to}`) && PathPrefix(`/api/agent/`)
+      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:?set NETRA_HOSTNAME in .env — the name Traefik routes the hub on}`)
       traefik.http.routers.netra.entrypoints: websecure
       # tls: "true" with no certresolver — the certificate is pre-loaded in
       # Traefik's static config, so there is no ACME challenge to run here.

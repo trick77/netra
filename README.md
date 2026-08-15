@@ -64,29 +64,6 @@ The hub runs its migrations on startup and reports database reachability at
 
 ### When the first start fails
 
-**`Bind for 127.0.0.1:8080 failed: port is already allocated`.** Something on
-the host already has the port. Find out what:
-
-```sh
-docker ps --format '{{.Names}}\t{{.Ports}}' | grep 8080
-sudo ss -lntp | grep 8080          # sudo, or it prints no owning process
-```
-
-The likely answer is **Traefik**, which this stack requires and which publishes
-its dashboard and API on `127.0.0.1:8080` by default. netra's default binding
-collides with its own prerequisite, so this is an ordinary first-run outcome
-rather than anything broken.
-
-Move netra rather than the incumbent: set `NETRA_BIND_ADDR` in `.env` to a free
-port, e.g. `127.0.0.1:18080`, and adjust the tunnel and `curl` commands below to
-match. Traefik reaches the container over the Docker network on 8080 either way,
-so agent ingest is unaffected. See *What is exposed* below.
-
-If neither command shows a holder, the binding belongs to a container that is
-still around from an earlier attempt — `docker compose down` removes it and
-releases the port. A binding that survives even that is a leaked `docker-proxy`,
-which only a `systemctl restart docker` clears.
-
 **`PostgreSQL Database directory appears to contain a database; Skipping
 initialization`, on a directory you are sure is empty.** It is not empty. An
 earlier `docker compose up` — including one that aborted on the port above —
@@ -122,20 +99,16 @@ apparently fresh directory ends up skipping initialisation.
 
 ### What is exposed
 
-Only `PathPrefix(/api/agent/)` is routed from the internet. Everything else —
-the management UI at `/`, the read API and the admin API that mints tokens and
-deletes hosts — is published on `127.0.0.1:8080` on the hub host and gated on
-`NETRA_ADMIN_TOKEN`. If that port is already taken on your host, move netra
-with `NETRA_BIND_ADDR` in `.env` (address and port together, e.g.
-`127.0.0.1:18080`) and adjust the commands below to match; Traefik reaches the
-container over the Docker network, so agent ingest is unaffected either way.
-From a laptop, tunnel:
+Traefik fronts the whole hub on `NETRA_HOSTNAME` — agent ingest, the read API,
+the admin API and the management UI. The container publishes no host port at
+all, so netra cannot collide with anything else on the box and there is no
+tunnel to set up: open <https://your-hostname/> and log in with
+`NETRA_ADMIN_TOKEN`.
 
-```sh
-ssh -L 8080:127.0.0.1:8080 <hub-host>
-```
-
-then open <http://127.0.0.1:8080/> and log in with `NETRA_ADMIN_TOKEN`.
+That makes the token the only thing between the internet and an API that mints
+agent tokens and deletes hosts. Generate it with `openssl rand -hex 32` — do
+not invent one — and treat it as the credential to the whole fleet. Per-user
+logins arrive with OIDC in phase 2.
 Changing that token logs every open session out — the session cookie is signed
 with a key derived from it.
 
@@ -182,10 +155,10 @@ A fresh install needs none of this.
 ## Mint an agent token
 
 Each host gets its own token, prefixed `nta_`. In the UI, add the host; or over
-the admin API — on the hub host, at whatever `NETRA_BIND_ADDR` publishes:
+the admin API:
 
 ```sh
-curl -s -X POST http://127.0.0.1:8080/api/v1/hosts \
+curl -s -X POST https://your-hostname/api/v1/hosts \
   -H "Authorization: Bearer $NETRA_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"hostname":"ark"}'
