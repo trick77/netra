@@ -3,6 +3,7 @@ package collector
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -65,13 +66,53 @@ type Filesystems struct {
 	// warnedEmpty keeps the "nothing to measure" warning to one line rather
 	// than one per scrape, forever.
 	warnedEmpty bool
+
+	// wedged holds the backoff state of mountpoints whose statfs did not
+	// return in time, keyed by target. Same shape and same reasoning as the
+	// hwmon tracking in sensors.go -- the two are deliberately not shared yet,
+	// because unifying them means changing a collector that works.
+	wedged map[string]*wedgedPath
+
+	// scrapes counts Collect calls, which is the clock the backoff is measured
+	// in -- a retry is only meaningful when a scrape actually happens.
+	scrapes uint64
+
+	// statfsTimeout bounds one statfs call. Always the statfsTimeout constant
+	// in production; a field so a test need not spend two seconds per wedged
+	// mount to watch the deadline fire.
+	statfsTimeout time.Duration
 }
+
+// statfsTimeout bounds one statfs call.
+//
+// statfs(2) is not context-aware and, against a dead NFS/CIFS server or a FUSE
+// mount whose userspace daemon has died, blocks in uninterruptible D state
+// forever. Because every collector runs serially on the one goroutine that also
+// owns the ring and the flush, that stalled the entire agent -- no samples from
+// ANY subsystem, no error, nothing but a restart to recover it.
+//
+// virtualFsTypes has carried a network-filesystem blocklist for exactly this
+// hazard, but a blocklist cannot be the guard: it is inevitably incomplete (it
+// names nfs, nfs4, cifs, smb3 and fuse.sshfs, and says nothing about
+// fuse.rclone, fuse.s3fs, glusterfs, ceph, 9p or lustre), and name() applies it
+// only when no marker is present -- so the containerised deployment, where
+// setup-agent.sh's --include-network-fs deliberately mounts a network
+// filesystem as a marker, was the case it did not cover.
+//
+// Two seconds is generous for a call that normally returns in microseconds, and
+// the cost of exceeding it is one filesystem's row for one scrape.
+const statfsTimeout = 2 * time.Second
 
 // NewFilesystems builds a Filesystems collector. procRoot supplies the mount
 // table (/proc/mounts); fsMounts maps a marker label to the host mountpoint it
 // stands for, and may be nil.
 func NewFilesystems(procRoot string, fsMounts map[string]string, statfs StatfsFunc) *Filesystems {
-	return &Filesystems{procRoot: procRoot, fsMounts: fsMounts, statfs: statfs}
+	return &Filesystems{
+		procRoot:      procRoot,
+		fsMounts:      fsMounts,
+		statfs:        statfs,
+		statfsTimeout: statfsTimeout,
+	}
 }
 
 // markerPrefix is where setup-agent.sh bind-mounts the marker files.
@@ -117,8 +158,97 @@ var virtualFsTypes = map[string]bool{
 	"nfs": true, "nfs4": true, "cifs": true, "smb3": true, "fuse.sshfs": true,
 }
 
+// statfsDeadlined calls statfs on its own goroutine and gives up on it after
+// statfsTimeout.
+//
+// The goroutine is deliberately abandoned rather than cancelled, because a
+// D-state syscall cannot be cancelled -- not by a context, not by a signal. It
+// unblocks if and when the kernel lets it, and the buffered channel inside
+// deadlined lets it send and exit even though nothing is waiting. Stranding it
+// is the price of keeping the scrape loop alive, and skipWedged is what keeps
+// that price bounded: without the backoff, a permanently dead mount would
+// strand one goroutine per scrape for the life of the agent.
+func (f *Filesystems) statfsDeadlined(ctx context.Context, target string) (FsStat, error) {
+	if f.skipWedged(target) {
+		return FsStat{}, errWedged
+	}
+	// No budget left, so nothing is started. deadlined would otherwise launch
+	// the statfs anyway and abandon it at once -- on a scrape that keeps
+	// running out of time (a slow collector ahead of this one), a dead mount
+	// would strand one goroutine EVERY scrape while never being marked wedged,
+	// since markWedged deliberately skips an expired scrape. That is exactly
+	// the unbounded accumulation the backoff exists to prevent. It also makes
+	// the healthy mounts deterministic: with an already-done context both
+	// select cases are ready, so deadlined would return a value or a deadline
+	// error at random.
+	if err := ctx.Err(); err != nil {
+		return FsStat{}, err
+	}
+
+	st, err := deadlined(ctx, f.statfsTimeout, func() (FsStat, error) {
+		return f.statfs(target)
+	})
+	if errors.Is(err, context.DeadlineExceeded) {
+		// Only if THIS call's own deadline is what expired. deadlined derives
+		// its context from the scrape's, so a scrape that has already run out
+		// of budget -- or is being torn down -- returns DeadlineExceeded here
+		// for every remaining mountpoint. Marking those would back off healthy
+		// filesystems because some earlier collector was slow, and a marker on
+		// a busy host would drift into a seventeen-hour cadence having never
+		// once blocked.
+		if ctx.Err() == nil {
+			f.markWedged(target)
+		}
+		return FsStat{}, err
+	}
+	// Cleared on any outcome that was not a timeout, including an error: a
+	// mount that returns ENOENT promptly is not wedged, it is gone.
+	f.clearWedged(target)
+
+	return st, err
+}
+
+// skipWedged reports whether this target is still inside its backoff window.
+func (f *Filesystems) skipWedged(target string) bool {
+	w := f.wedged[target]
+	return w != nil && f.scrapes < w.retryAt
+}
+
+// markWedged records a statfs that did not return in time and schedules when
+// the mountpoint may be tried again.
+func (f *Filesystems) markWedged(target string) {
+	if f.wedged == nil {
+		f.wedged = make(map[string]*wedgedPath)
+	}
+
+	w := f.wedged[target]
+	if w == nil {
+		w = &wedgedPath{}
+		f.wedged[target] = w
+	}
+	w.failures++
+
+	backoff := uint64(1) << min(w.failures-1, wedgedBackoffShifts)
+	w.retryAt = f.scrapes + backoff
+
+	slog.Warn("statfs timed out; backing off this mountpoint",
+		"mountpoint", target, "timeout", f.statfsTimeout,
+		"failures", w.failures, "skipping_scrapes", backoff)
+}
+
+// clearWedged forgets a target's backoff once it answers again, so a server
+// that comes back is not held at a seventeen-hour cadence forever.
+func (f *Filesystems) clearWedged(target string) {
+	if f.wedged[target] != nil {
+		slog.Info("mountpoint recovered", "mountpoint", target)
+		delete(f.wedged, target)
+	}
+}
+
 // Collect implements Collector.
-func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
+func (f *Filesystems) Collect(ctx context.Context) (*Result, error) {
+	f.scrapes++
+
 	mounts, err := f.readMounts()
 	if err != nil {
 		return nil, err
@@ -133,11 +263,12 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 	seen := make(map[uint64]struct{}, len(mounts))
 
 	for _, m := range mounts {
-		st, err := f.statfs(m.target)
+		st, err := f.statfsDeadlined(ctx, m.target)
 		if err != nil {
 			// A mountpoint that cannot be stat'd -- an unreachable NFS
 			// server, a mount that vanished between reading the table and
-			// this call. Skipping one filesystem must not cost the others.
+			// this call, or one whose statfs blocked past statfsTimeout.
+			// Skipping one filesystem must not cost the others.
 			continue
 		}
 		if st.Total == 0 {
@@ -177,6 +308,20 @@ func (f *Filesystems) Collect(_ context.Context) (*Result, error) {
 		}
 
 		rows = append(rows, row)
+	}
+
+	// The scrape ran out of budget before this collector measured anything.
+	// Reported as the error it is: every per-mount failure above is skipped
+	// with a continue, so an expired scrape otherwise returned an empty Result
+	// and a nil error, which collect() records as ok -- the "silently missing"
+	// state the whole deadline exists to replace, in the collector it was built
+	// for. errorCode maps this to "timeout". Guarded on having measured
+	// nothing, so a partial scrape keeps the rows it did take, and it stays
+	// ahead of warnedEmpty: that latch fires once for the life of the process,
+	// and spending it on a timeout would suppress the genuine
+	// nothing-is-mounted warning forever.
+	if len(rows) == 0 && ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 
 	if len(rows) == 0 && !f.warnedEmpty {

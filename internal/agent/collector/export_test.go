@@ -1,6 +1,11 @@
 package collector
 
-import "testing"
+import (
+	"testing"
+	"time"
+
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
+)
 
 // SetSysClassNetForTest points the per-interface sysfs reads at a fixture
 // tree for the duration of one test.
@@ -20,3 +25,17 @@ func SetSysClassNetForTest(t *testing.T, root string) {
 
 // IfaceAliasForTest exposes the alias lookup.
 func IfaceAliasForTest(name string) string { return ifaceAlias(name) }
+
+// SetStatfsTimeoutForTest shortens the per-mountpoint statfs deadline, so the
+// wedged-mount path can be exercised without spending the production two
+// seconds per blocked call.
+func (f *Filesystems) SetStatfsTimeoutForTest(d time.Duration) { f.statfsTimeout = d }
+
+// CapContainerRowsForTest and MaxContainerRowsForTest expose the container row
+// backstop, so a test can assert the bound without restating the literal --
+// which would then agree with a wrong value as readily as a right one.
+func CapContainerRowsForTest(rows []*netrav1.ContainerSample) []*netrav1.ContainerSample {
+	return capContainerRows(rows)
+}
+
+const MaxContainerRowsForTest = maxContainerRows

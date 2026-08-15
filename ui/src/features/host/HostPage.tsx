@@ -174,6 +174,31 @@ export function HostPage({
   const [data, setData] = useState<TabData>(NO_DATA);
   const [reloads, setReloads] = useState(0);
 
+  // One family at one range, for an enlarged chart that wants a different
+  // window from the page's. It resolves the window exactly the way the tab
+  // load below does -- rangeWindow, then getMetrics -- so a widened dialog
+  // and a widened page ask the hub the same question.
+  //
+  // Unlike the tab load it does NOT swallow failures into null: the dialog
+  // has a chart on screen already and can say the new range failed to load,
+  // where a tab with nothing yet can only render the absence.
+  //
+  // useCallback on hostId alone: it is passed to Graphs, which hands it to
+  // every panel, and a new identity per render would restart the fetch
+  // effect inside each open dialog.
+  const fetchFamily = useCallback(
+    (family: string, next: Range) => {
+      const window = rangeWindow(next);
+      return getMetrics(hostId, {
+        family,
+        from: window.from,
+        to: window.to,
+        step: window.step,
+      });
+    },
+    [hostId],
+  );
+
   useEffect(() => {
     let cancelled = false;
     // A different host is a different page: without this, the previous
@@ -445,7 +470,7 @@ export function HostPage({
           cpuCore={data.coreMetrics}
           agent={data.agentMetrics}
           range={range}
-          onRangeChange={setRange}
+          fetchFamily={fetchFamily}
         />
       )}
       {tab === "containers" && (

@@ -5,7 +5,7 @@
 // container with no memory limit reports mem_limit as null rather than
 // omitting the column.
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Container, MetricsResponse } from "../../lib/api";
 import { ContainerPage, deriveState, displayTitle } from "./ContainerPage";
@@ -269,7 +269,42 @@ describe("ContainerPage", () => {
 
     expect(screen.queryByText("no limit")).toBeNull();
     expect(document.querySelector(".meter")).not.toBeNull();
-    expect(screen.getByText(/of 1 GB/)).toBeInTheDocument();
+    // Scoped to the meter's own row: the Memory panel's header names the same
+    // limit now, so an unscoped query matches both.
+    const row = screen
+      .getByText("Memory against mem_limit")
+      .closest(".mrow") as HTMLElement;
+    expect(within(row).getByText(/· 1 GB/)).toBeInTheDocument();
+  });
+
+  // The header pairs a value against the limit, so the value has to be the
+  // container's WHOLE memory. Split into anon/file/shmem/kernel, series[0] is
+  // the anon band alone, and pairing it against mem_limit read as half the
+  // limit used for a container at 90% of it.
+  it("headlines the container's total memory, not the anon band", () => {
+    const split: MetricsResponse = {
+      ...LIMITED,
+      columns: [...COLUMNS, "mem_anon", "mem_file", "mem_shmem", "mem_kernel"],
+      series: [
+        {
+          key: { container: "shop/web" },
+          points: [
+            point(
+              "2026-08-10T13:59:00Z",
+              [14, 9e8, 1e9, 1.1e6, 2.1e5, 0, 4.2e5, 5e8, 3e8, 6e7, 4e7],
+            ),
+          ],
+        },
+      ],
+    };
+    renderPage({ metrics: split });
+
+    const panel = screen.getByLabelText("Memory chart", {
+      selector: "section",
+    });
+    const now = panel.querySelector(".now")?.textContent;
+    expect(now).toBe("0.9 · 1 GB");
+    expect(now).not.toContain("anon");
   });
 
   it("identifies the container by key, name, image, host and is_agent", () => {
@@ -332,7 +367,7 @@ describe("ContainerPage", () => {
 
     expect(
       screen.getByLabelText("CPU chart", { selector: "section" }),
-    ).toHaveTextContent("14 %");
+    ).toHaveTextContent("14%");
   });
 
   it("survives a container that has never been sampled", () => {

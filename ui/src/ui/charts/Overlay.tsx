@@ -68,12 +68,13 @@ export interface OverlayProps {
   legend?: boolean;
   /** A value to mark with a dashed rule -- for memory, the host's total RAM.
    * Without it a stack scaled to a ceiling cannot answer "is this host
-   * nearly full", because nothing says what the top of the box means. */
+   * nearly full", because nothing says what the top of the box means.
+   *
+   * The rule is drawn unlabelled. What it is belongs in the panel header,
+   * beside the reading it is the ceiling for -- "used 20.4 · 31 GiB" -- not
+   * floating over the plot: this is the only chart in the app that ever drew
+   * text inside its own box, and a magnitude reads as a magnitude in text. */
   reference?: number;
-  /** What the reference rule is. Drawn at the line, because a dashed rule
-   * with no name is a mystery: a reader has to guess whether it is a
-   * ceiling, a threshold or a mean. */
-  referenceLabel?: string;
   /**
    * Draw the series as mirrored pairs about a midline -- ingress above,
    * egress below -- rather than as independent lines.
@@ -100,7 +101,6 @@ export function Overlay({
   stacked = false,
   legend = true,
   reference,
-  referenceLabel,
   mirrored = false,
 }: OverlayProps) {
   const { min: autoMin } = extent(series.flatMap((s) => s.values));
@@ -136,37 +136,16 @@ export function Overlay({
         aria-label={label}
       >
         {referenceY !== null && (
-          <>
-            <line
-              data-reference
-              x1={0}
-              x2={width}
-              y1={referenceY}
-              y2={referenceY}
-              stroke={REFERENCE_STROKE}
-              strokeWidth={REFERENCE_WIDTH}
-              strokeDasharray={REFERENCE_DASH}
-            />
-            {referenceLabel !== undefined && (
-              // Below the rule when there is no room above it. The label sits
-              // 5px over the line, so a reference near the top of the plot put
-              // its baseline outside the viewBox and the text was clipped in
-              // half -- which is exactly where a reference tends to land, since
-              // a panel drawing one scales its max to sit just above it (the
-              // Memory panel uses mem_total * 1.08, putting the rule at 7% of
-              // the height). Flipping is better than shrinking the headroom:
-              // the rule has to stay clear of the top border to read as a rule.
-              <text
-                data-reference-label
-                className="ref-label"
-                x={width - 4}
-                y={referenceY < 14 ? referenceY + 12 : referenceY - 5}
-                textAnchor="end"
-              >
-                {referenceLabel}
-              </text>
-            )}
-          </>
+          <line
+            data-reference
+            x1={0}
+            x2={width}
+            y1={referenceY}
+            y2={referenceY}
+            stroke={REFERENCE_STROKE}
+            strokeWidth={REFERENCE_WIDTH}
+            strokeDasharray={REFERENCE_DASH}
+          />
         )}
         {mirrored &&
           Array.from({ length: Math.ceil(series.length / 2) }, (_, p) => {
