@@ -327,7 +327,11 @@ func (c *Client) Prime(ctx context.Context) {
 		// and failed has a capability worth reporting -- that is exactly the
 		// containers case -- while one that never ran does not.
 		ran = append(ran, col)
-		if _, err := col.Collect(ctx); err != nil {
+		// Through collectOne, exactly like the scrape loop. Prime runs every
+		// collector over the same host data, so a parser that panics on this
+		// host panics HERE first -- before the ring exists and at every start,
+		// which is the crash loop no restart policy escapes.
+		if _, err := collectOne(ctx, col); err != nil {
 			// Priming is best-effort: the scheduled scrape reports the same
 			// failure, with somewhere to record it.
 			failed++
@@ -959,10 +963,19 @@ func (c *Client) post(ctx context.Context, req *netrav1.IngestRequest) (*netrav1
 	}
 	// A body the hub will never accept, however many times it is offered. 413
 	// is the one this batching is built around -- the hub caps an ingest body
-	// at httpapi.maxBodyBytes -- and 400 is the same shape of answer for a
-	// request it cannot parse.
-	if httpResp.StatusCode == http.StatusRequestEntityTooLarge ||
-		httpResp.StatusCode == http.StatusBadRequest {
+	// at httpapi.maxBodyBytes -- and it is a property of the BYTES, so the
+	// same bytes earn it again every time.
+	//
+	// 400 deliberately does NOT belong here, however similar it looks. Both of
+	// the hub's 400 paths are transient by construction: one is "read body",
+	// returned when reading the upload fails part-way, and the other is a
+	// proto.Unmarshal failure -- and since these bytes came straight out of
+	// proto.Marshal, an unmarshal failure means the body was truncated or
+	// corrupted in transit, which a resend fixes. Treating it as permanent
+	// threw a whole batch of buffered history away over one flaky upload. A
+	// proxy with a smaller body limit answers 413 as well, so nothing the drop
+	// is for is lost by leaving 400 on the retry path.
+	if httpResp.StatusCode == http.StatusRequestEntityTooLarge {
 		return nil, &PermanentError{err: fmt.Errorf("hub returned %s", httpResp.Status)}
 	}
 

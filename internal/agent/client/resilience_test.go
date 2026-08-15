@@ -260,6 +260,47 @@ func TestPermanentlyRejectedBatchIsDroppedNotReplayed(t *testing.T) {
 	}
 }
 
+// A 400 is NOT permanent, however much it looks like one. The hub answers 400
+// when reading the upload fails part-way and when proto.Unmarshal rejects the
+// body -- and these bytes came out of proto.Marshal, so both mean the body was
+// damaged in transit. A resend fixes that; dropping loses history for nothing.
+func TestBadRequestKeepsTheBufferForARetry(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "malformed body", http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+
+	c := client.New(testConfig(srv.URL), []collector.Collector{
+		collector.NewMemory("../collector/testdata/proc1"),
+	})
+
+	c.ScrapeOnce(context.Background())
+	if err := c.Flush(context.Background()); err == nil {
+		t.Fatal("a 400 must be reported as a failure")
+	}
+	if c.BufferDepth() != 1 {
+		t.Errorf("buffer depth = %d after a 400, want 1: a truncated upload must not cost the buffer",
+			c.BufferDepth())
+	}
+}
+
+// Prime runs every collector over the same host data the scrape loop does, so
+// the panic guard has to cover it too -- otherwise the crash arrives at
+// startup, before the ring exists, and repeats on every restart.
+func TestPrimePanicIsRecovered(t *testing.T) {
+	c := client.New(testConfig("http://127.0.0.1:1"), []collector.Collector{
+		panickingCollector{},
+		collector.NewMemory("../collector/testdata/proc1"),
+	})
+
+	// The assertion is that this line returns at all.
+	c.Prime(context.Background())
+
+	if host := c.ScrapeOnce(context.Background()); host.GetMemTotal() == 0 {
+		t.Error("the collector after the panicking one never ran")
+	}
+}
+
 // A 503 is the opposite case and must keep its retry semantics -- the hub is
 // down, not refusing this body.
 func TestTransientRejectionRetainsTheBuffer(t *testing.T) {

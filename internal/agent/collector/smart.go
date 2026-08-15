@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"slices"
 	"strings"
@@ -17,13 +18,6 @@ import (
 // without smartctl installed on the machine running the tests.
 type SmartRunner func(ctx context.Context, args ...string) ([]byte, error)
 
-// SystemSmartctl is the production SmartRunner.
-//
-// Non-zero exit is NOT treated as failure: smartctl uses its exit status as a
-// bitfield -- bit 0 is a command-line error, but bits 2 and above report drive
-// conditions like "some SMART attribute is below threshold", which is exactly
-// the case netra exists to notice. Failing on those would blind the collector
-// to failing drives.
 // smartctlWaitDelay bounds how long Wait may spend after the context is done.
 //
 // The scrape deadline alone does NOT bound this call, which is the whole reason
@@ -44,12 +38,36 @@ type SmartRunner func(ctx context.Context, args ...string) ([]byte, error)
 // failure backoff is what stops it accumulating one per scrape.
 const smartctlWaitDelay = 2 * time.Second
 
+// SystemSmartctl is the production SmartRunner.
+//
+// Non-zero exit is NOT treated as failure: smartctl uses its exit status as a
+// bitfield -- bit 0 is a command-line error, but bits 2 and above report drive
+// conditions like "some SMART attribute is below threshold", which is exactly
+// the case netra exists to notice. Failing on those would blind the collector
+// to failing drives.
 func SystemSmartctl(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "smartctl", args...)
 	cmd.WaitDelay = smartctlWaitDelay
 
 	out, err := cmd.Output()
-	if len(out) > 0 {
+
+	// Output-with-content is success only when the run ENDED ON ITS OWN, in
+	// which case the rule above holds and a non-zero exit is still a reading.
+	//
+	// A run the context ended is different: the WaitDelay expiring, or a child
+	// SIGKILLed mid-write, hands back whatever the pipe happened to hold -- a
+	// half-written JSON document from a scan that never finished. Reporting
+	// that as success fed the parser a truncated body and, worse, hid the
+	// abandoned child from the caller, which backs off only on an error -- so a
+	// drive that wedges after writing its first bytes would strand one
+	// unkillable smartctl per run forever, which is exactly the accumulation
+	// smartctlWaitDelay's comment says the backoff prevents.
+	//
+	// Narrowly: err != nil AND the context is done. A scan that COMPLETED just
+	// as the scrape deadline fired still succeeds, because failing it would
+	// spend Smart's failure backoff on a reading that is perfectly good.
+	abandoned := errors.Is(err, exec.ErrWaitDelay) || (err != nil && ctx.Err() != nil)
+	if len(out) > 0 && !abandoned {
 		return out, nil
 	}
 	return out, err

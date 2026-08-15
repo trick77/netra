@@ -172,6 +172,18 @@ func (f *Filesystems) statfsDeadlined(ctx context.Context, target string) (FsSta
 	if f.skipWedged(target) {
 		return FsStat{}, errWedged
 	}
+	// No budget left, so nothing is started. deadlined would otherwise launch
+	// the statfs anyway and abandon it at once -- on a scrape that keeps
+	// running out of time (a slow collector ahead of this one), a dead mount
+	// would strand one goroutine EVERY scrape while never being marked wedged,
+	// since markWedged deliberately skips an expired scrape. That is exactly
+	// the unbounded accumulation the backoff exists to prevent. It also makes
+	// the healthy mounts deterministic: with an already-done context both
+	// select cases are ready, so deadlined would return a value or a deadline
+	// error at random.
+	if err := ctx.Err(); err != nil {
+		return FsStat{}, err
+	}
 
 	st, err := deadlined(ctx, f.statfsTimeout, func() (FsStat, error) {
 		return f.statfs(target)
@@ -296,6 +308,20 @@ func (f *Filesystems) Collect(ctx context.Context) (*Result, error) {
 		}
 
 		rows = append(rows, row)
+	}
+
+	// The scrape ran out of budget before this collector measured anything.
+	// Reported as the error it is: every per-mount failure above is skipped
+	// with a continue, so an expired scrape otherwise returned an empty Result
+	// and a nil error, which collect() records as ok -- the "silently missing"
+	// state the whole deadline exists to replace, in the collector it was built
+	// for. errorCode maps this to "timeout". Guarded on having measured
+	// nothing, so a partial scrape keeps the rows it did take, and it stays
+	// ahead of warnedEmpty: that latch fires once for the life of the process,
+	// and spending it on a timeout would suppress the genuine
+	// nothing-is-mounted warning forever.
+	if len(rows) == 0 && ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 
 	if len(rows) == 0 && !f.warnedEmpty {

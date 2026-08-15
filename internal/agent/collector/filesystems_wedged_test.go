@@ -2,6 +2,7 @@ package collector_test
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -138,8 +139,11 @@ func TestFilesystemsDoesNotMarkAMountWedgedWhenTheScrapeItselfExpired(t *testing
 	// without any of them having blocked.
 	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
-	if _, err := testee.Collect(expired); err != nil {
-		t.Fatalf("Collect: %v", err)
+	// A scrape with no budget left measures nothing, and says so: an empty
+	// Result with a nil error would be recorded as a healthy collector that
+	// simply found no filesystems.
+	if _, err := testee.Collect(expired); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Collect on an expired scrape returned %v, want a deadline error", err)
 	}
 
 	// Nothing was marked, so the next healthy scrape measures everything.
