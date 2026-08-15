@@ -488,6 +488,24 @@ function ContainerScreen({
     setParam,
   );
 
+  // One family=container response at another range, for an enlarged chart
+  // that wants a wider window than the page. Same call the poll makes, so
+  // the dialog and the page ask the hub the same question; useCallback on
+  // hostId alone because it reaches four panels and a new identity per
+  // render would restart the fetch inside any open dialog.
+  const fetchContainerMetrics = useCallback(
+    (next: Range) => {
+      const window = rangeWindow(next);
+      return getMetrics(hostId, {
+        family: "container",
+        from: window.from,
+        to: window.to,
+        step: window.step,
+      }) as Promise<MetricsResponse>;
+    },
+    [hostId],
+  );
+
   const poll = usePoll(
     async () => {
       const window = rangeWindow(range);
@@ -536,6 +554,7 @@ function ContainerScreen({
       metrics={poll.data.metrics as MetricsResponse}
       range={range}
       onRangeChange={chooseRange}
+      fetchMetrics={fetchContainerMetrics}
     />
   );
 }

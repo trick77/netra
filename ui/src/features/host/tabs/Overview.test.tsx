@@ -97,9 +97,14 @@ const fsMetrics = response({
   series: [
     {
       key: { filesystem: "/" },
+      // The FINAL bucket of the response window, for netMetrics' reason: the
+      // card reads the latest bucket, so a point outside the window is not a
+      // stale reading, it is no reading. This fixture carried a timestamp a
+      // year before its own window and went unnoticed while the card read
+      // the last value the series happened to hold.
       points: [
         [
-          1_754_784_000_000, 100_000_000_000, 40_000_000_000, 55_000_000_000,
+          1_786_323_540_000, 100_000_000_000, 40_000_000_000, 55_000_000_000,
           100, 40,
         ],
       ],
@@ -511,6 +516,66 @@ describe("filesystemRows", () => {
       used: 40_000_000_000,
       free: 55_000_000_000,
       total: 100_000_000_000,
+    });
+  });
+
+  // A filesystem that stopped being reported has no fullness NOW, and saying
+  // it does is what put one disk on the page twice: /netra/fs/ark frozen at
+  // the moment its agent was upgraded, beside the /mnt/ark that replaced it,
+  // both at 94 %, neither marked as the past.
+  //
+  // read/metrics.go emits only the rows that exist, so the retired series
+  // just ends early -- its last element is a real reading. Only the window's
+  // grid can tell "last thing it said" from "what it says now".
+  it("reports no reading for a filesystem that stopped mid-window", () => {
+    const retired = response({
+      family: "filesystem",
+      key_columns: ["filesystem", "mountpoint"],
+      columns: ["total", "used", "free"],
+      series: [
+        {
+          // The one that stopped: a reading in the first bucket of the
+          // window and nothing after it.
+          key: { filesystem: "/netra/fs/ark" },
+          points: [
+            [
+              Date.parse("2026-08-10T00:00:00Z"),
+              100_000_000_000,
+              94_000_000_000,
+              6_000_000_000,
+            ],
+          ],
+        },
+        {
+          // The one that replaced it, reporting into the final bucket.
+          key: { filesystem: "ark", mountpoint: "/mnt/ark" },
+          points: [
+            [
+              Date.parse("2026-08-10T00:59:00Z"),
+              100_000_000_000,
+              94_000_000_000,
+              6_000_000_000,
+            ],
+          ],
+        },
+      ],
+    });
+
+    const rows = filesystemRows(retired);
+    expect(rows).toHaveLength(2);
+    // Still listed -- the disk existed, and dropping the row would claim it
+    // never did. It is its NUMBERS that stop claiming to be current, which is
+    // what diskWarnings skips on.
+    expect(rows[0]).toMatchObject({
+      label: "/netra/fs/ark",
+      total: null,
+      used: null,
+      free: null,
+    });
+    expect(rows[1]).toMatchObject({
+      label: "/mnt/ark",
+      used: 94_000_000_000,
+      free: 6_000_000_000,
     });
   });
 });

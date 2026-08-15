@@ -413,39 +413,152 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 	return execBatch(ctx, s.pool, batch, "container sample")
 }
 
+// markerPrefix is where setup-agent.sh bind-mounts the .netra marker files
+// inside the agent container. It is the path the agent MEASURES through, never
+// a name a host answers to, and it must not reach this table: an operator with
+// no netra anywhere on the box was shown "/netra/fs/ark is 94 % full".
+//
+// The same string is markerPrefix in internal/agent/collector/filesystems.go,
+// where the agent stopped sending it, and the prefix that migration
+// 0002_strip_marker_prefix.sql strips from the rows that already carry it.
+// Restated rather than shared: the hub cannot import agent internals, and a
+// package for one constant would couple two binaries that otherwise only meet
+// over the wire.
+//
+// It is restated rather than left to the agent because the agent is the half
+// an operator upgrades LAST. 0002 runs once, at hub startup; ingest runs every
+// 60s. Without this, an agent still on the older image re-inserts the prefixed
+// row on its next scrape -- beside the one 0002 just renamed, measuring the
+// same disk, warning under the name that was supposed to be gone -- and the
+// migration gets no second chance to clean up after it.
+const markerPrefix = "/netra/fs/"
+
+// hostSideLabel is the label a host answers to, given what the agent sent.
+//
+// Anchored, like 0002's regexp_replace: /netra/fs/ is ten characters, and an
+// off-by-one turns `ark` into `rk`, which is wrong in a way that still looks
+// like a plausible filesystem name on the page.
+func hostSideLabel(label string) string {
+	return strings.TrimPrefix(label, markerPrefix)
+}
+
+// hostSideMountpoint is the mount point, or nothing if the agent only knew its
+// own bind target.
+//
+// Dropped rather than stripped, which is where this differs from 0002. The
+// migration turns /netra/fs/ark into `ark` because it is repairing a column in
+// place and a bare label beats a container path; but `ark` is a LABEL, and a
+// mount point is the path an operator would type into df. An agent that sends
+// only the bind target does not know that path, and saying so lets the
+// COALESCE below keep whichever real one the hub already has -- from an
+// earlier agent, or from the .env of the one that follows.
+func hostSideMountpoint(mountpoint string) string {
+	if strings.HasPrefix(mountpoint, markerPrefix) {
+		return ""
+	}
+	return mountpoint
+}
+
 // resolveFilesystemIDs upserts the filesystems named in rows and returns
-// label -> id.
+// label -> id, keyed on the label AS SENT so InsertFilesystemSamples looks its
+// rows up unchanged: what is normalised is what gets stored, not what the
+// caller passes back in.
 func (s *Store) resolveFilesystemIDs(ctx context.Context, hostID int32, rows []*netrav1.FilesystemSample) (map[string]int32, error) {
 	out := make(map[string]int32)
 	if len(rows) == 0 {
 		return out, nil
 	}
 
-	// See resolveContainerIDs on why the skip is keyed on attempts rather than
-	// on successful resolutions.
-	tried := make(map[string]bool, len(rows))
+	// One upsert per FILESYSTEM, not per label the batch happens to spell.
+	//
+	// Two spellings can arrive together: a replayed ring buffer written either
+	// side of an agent upgrade carries both /netra/fs/ark and ark, and both
+	// name one disk. Resolving as the rows come would let whichever appeared
+	// first decide the mount point, so the marker path -- the one spelling
+	// that knows no host path at all -- could silently outrank /mnt/ark on
+	// batch order. Deciding what to store before storing it removes the
+	// ordering question rather than answering it.
+	//
+	// filesystem_samples is PRIMARY KEY (host_id, ts, fs_id), so the two
+	// spellings landing on one fs_id dedupe there exactly as a replayed batch
+	// already does.
+	type upsert struct {
+		mountpoint string
+		deviceID   *int64
+	}
+	order := make([]string, 0, len(rows))
+	want := make(map[string]*upsert, len(rows))
 
 	for _, r := range rows {
-		label := r.GetLabel()
-		if label == "" || tried[label] {
+		sent := r.GetLabel()
+		// The nameless are skipped AFTER normalising, not before: a bare
+		// "/netra/fs/" strips to nothing, and inserting that would put a
+		// filesystem with no name at all in the table -- a row the page can
+		// only render as blank, carrying samples nothing can attribute.
+		label := hostSideLabel(sent)
+		if label == "" {
 			continue
 		}
-		tried[label] = true
+		u, seen := want[label]
+		if !seen {
+			u = &upsert{}
+			want[label] = u
+			order = append(order, label)
+		}
+		// Last one that actually knows wins, for both columns. An agent that
+		// does not know a value sends the zero one, and a row is never
+		// demoted by a row that knows less than it does.
+		if mp := hostSideMountpoint(r.GetMountpoint()); mp != "" {
+			u.mountpoint = mp
+		}
+		if d := int64OrNil(r.DeviceId); d != nil {
+			u.deviceID = d
+		}
+	}
 
+	// See resolveContainerIDs on why the skip is keyed on attempts rather than
+	// on successful resolutions: `order` holds each label once, so a label
+	// Postgres refuses simply gets no entry in `out` and its samples are
+	// dropped with it.
+	ids := make(map[string]int32, len(order))
+	for _, label := range order {
+		u := want[label]
+
+		// COALESCE(NULLIF(...)) rather than a bare EXCLUDED: an agent with no
+		// NETRA_FS_MOUNTS mapping yet sends no mount point, and letting that
+		// win would blank the /mnt/ark a better-informed agent established --
+		// once per scrape, for as long as the two overlap. A name the hub has
+		// is never replaced by no name, and device_id is guarded the same way
+		// for the same reason -- st_dev is reassigned across reboots, so the
+		// newest reading is the one to keep, but an absent one is not a
+		// reading.
 		id, ok, err := s.resolveOne(ctx, "filesystem", label, `
 			INSERT INTO filesystems (host_id, label, mountpoint, device_id)
 			VALUES ($1, $2, $3, $4)
 			ON CONFLICT (host_id, label) DO UPDATE
-			   SET mountpoint = EXCLUDED.mountpoint, device_id = EXCLUDED.device_id
+			   SET mountpoint = COALESCE(NULLIF(EXCLUDED.mountpoint, ''), filesystems.mountpoint),
+			       device_id  = COALESCE(EXCLUDED.device_id, filesystems.device_id)
 			RETURNING id`,
-			hostID, label, r.GetMountpoint(), int64OrNil(r.DeviceId))
+			hostID, label, u.mountpoint, u.deviceID)
 		if err != nil {
 			return nil, err
 		}
 		if !ok {
 			continue
 		}
-		out[label] = id
+		ids[label] = id
+	}
+
+	// Keyed on the label AS SENT, so InsertFilesystemSamples looks its rows up
+	// unchanged.
+	for _, r := range rows {
+		sent := r.GetLabel()
+		if sent == "" {
+			continue
+		}
+		if id, ok := ids[hostSideLabel(sent)]; ok {
+			out[sent] = id
+		}
 	}
 	return out, nil
 }

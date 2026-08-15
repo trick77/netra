@@ -22,6 +22,7 @@ import {
 import {
   ABSENT,
   binaryBytes,
+  binaryBytesPair,
   byterate,
   bytes,
   cardinal,
@@ -66,6 +67,34 @@ function latest(
   return null;
 }
 
+/**
+ * The reading in the LATEST bucket of the window, or null when the series
+ * does not reach it.
+ *
+ * latest() above answers "what did this series last say", which is right for
+ * a configured ceiling and wrong for a filesystem: a row whose agent stopped
+ * writing it keeps handing back its final measurement, and nothing
+ * downstream can tell that from a current one. That is how one disk came to
+ * warn twice under two names -- /netra/fs/ark frozen at the moment its agent
+ * was upgraded, /mnt/ark live, both at 94 %, both stated as facts about now.
+ *
+ * griddedValues, not optionalValues, and that is the whole mechanism:
+ * internal/hub/read/metrics.go emits only the rows that EXIST, so a series
+ * that stopped simply ends early and its last element is its last reading,
+ * indistinguishable from a current one. Placing it on the window's grid
+ * turns the buckets it never reached into the nulls that say so.
+ *
+ * lib/metrics.ts:latestValue is the one spelling of the rule itself; see its
+ * docstring on why the two questions must never share a name.
+ */
+function current(
+  res: MetricsResponse | null,
+  base: string,
+  seriesIndex = 0,
+): number | null {
+  return latestValue(griddedValues(res, seriesIndex, base));
+}
+
 export interface FilesystemRow {
   label: string;
   total: number | null;
@@ -93,9 +122,14 @@ export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
     // The mount point, same as the fleet row: one disk must not be called
     // /mnt/ark on one page and ark on the other.
     label: fsName(series.key, ABSENT),
-    total: latest(res, "total", index),
-    used: latest(res, "used", index),
-    free: latest(res, "free", index),
+    // current(), not latest(): a filesystem that has stopped reporting has no
+    // fullness right now, and saying otherwise is what kept a retired row on
+    // the page beside the one that replaced it. The card renders the absent
+    // marker for the nulls and diskWarnings already skips them, so the disk
+    // stays listed -- it is only its numbers that stop claiming to be current.
+    total: current(res, "total", index),
+    used: current(res, "used", index),
+    free: current(res, "free", index),
   }));
 }
 
@@ -743,6 +777,20 @@ export function Overview({
             max={perCore.length > 0 ? undefined : 100}
             hideAxis={perCore.length > 0}
             fmt={(n) => percent(n)}
+            // The host's CPU, not core 0's.
+            //
+            // A panel with more than one band headlines series[0] and names
+            // it, which is right for a Network panel -- "rx 1.2 MB/s" says
+            // whose number that is. Here series[0] is literally the first
+            // core, so the card read "core 0 6 %" beside a shape that is the
+            // whole machine, and on anything above six cores the legend is
+            // suppressed and nothing on the card said what "core 0" was.
+            //
+            // The stack cannot supply the number either: these bands are each
+            // core's real utilisation, so the top of the stack is N x 100 and
+            // not a percentage of anything. cpu_total is the mean across
+            // cores, which is what a reader means by "the CPU".
+            nowValue={perCore.length > 0 ? latestValue(total) : undefined}
             window={hostMetrics?.window ?? null}
             // Each core contributes busy/N, so the stack's top edge is the mean
             // across cores -- cpu_total -- and 100 stays the right ceiling
@@ -802,11 +850,14 @@ export function Overview({
           // than as the top border of the plot.
           max={memTotal === null ? undefined : memTotal * 1.08}
           reference={memTotal ?? undefined}
-          referenceLabel={memTotal === null ? undefined : binaryBytes(memTotal)}
           // Binary here too: the bands are read against the ceiling rule, and a
           // stack labelled decimally under a rule labelled binarily makes one
           // quantity look like two.
           fmt={(n) => binaryBytes(n)}
+          // The ceiling used to be drawn as text inside the plot, over the
+          // rule. It belongs beside the reading it is a ceiling for: the
+          // header already says how much is used, and the pair says of what.
+          nowFmt={(n) => binaryBytesPair(n, memTotal)}
           stacked
           window={hostMetrics?.window ?? null}
           unavailable={
@@ -823,9 +874,7 @@ export function Overview({
             label="used"
             value={memUsed}
             max={memTotal}
-            formatValue={(value, max) =>
-              `${binaryBytes(value)} of ${binaryBytes(max)}`
-            }
+            formatValue={(value, max) => binaryBytesPair(value, max)}
           />
           {/* Three states, not two. swap_total lives only in the raw table
             (0001_init.sql) -- the 5m and 1h rollups do not carry it -- so at
@@ -857,9 +906,7 @@ export function Overview({
               label="swap"
               value={swapUsed}
               max={swapTotal}
-              formatValue={(value, max) =>
-                `${binaryBytes(value)} of ${binaryBytes(max)}`
-              }
+              formatValue={(value, max) => binaryBytesPair(value, max)}
             />
           )}
         </Panel>

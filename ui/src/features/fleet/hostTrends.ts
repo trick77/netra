@@ -10,6 +10,7 @@ import {
   fsName,
   griddedValues,
   hasReading,
+  latestValue,
 } from "../../lib/metrics";
 import { memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
@@ -156,8 +157,17 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
   let best: { mount: string; pct: number } | null = null;
   let measured = 0;
   for (let i = 0; i < res.series.length; i++) {
-    const used = lastNumber(griddedValues(res, i, "used"));
-    const free = lastNumber(griddedValues(res, i, "free"));
+    // latestValue, not lastNumber: this picks the MAXIMUM across a host's
+    // filesystems, so a retired series is not merely a stale row here, it is
+    // one that WINS. A filesystem frozen at 94 % the moment its agent was
+    // upgraded outranks every live disk on the host, and the fleet cell then
+    // reports 94 % for a host whose real disks are at 20 % -- naming a mount
+    // that is not being measured any more.
+    //
+    // It also keeps `measured` honest: the "+N" beside the meter counts the
+    // filesystems this host HAS, not every one it has ever had.
+    const used = latestValue(griddedValues(res, i, "used"));
+    const free = latestValue(griddedValues(res, i, "free"));
     if (used === null || free === null || used + free === 0) continue;
     measured++;
     const pct = (used / (used + free)) * 100;
