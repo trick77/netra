@@ -1,6 +1,9 @@
 package collector
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // SetSysClassNetForTest points the per-interface sysfs reads at a fixture
 // tree for the duration of one test.
@@ -20,3 +23,8 @@ func SetSysClassNetForTest(t *testing.T, root string) {
 
 // IfaceAliasForTest exposes the alias lookup.
 func IfaceAliasForTest(name string) string { return ifaceAlias(name) }
+
+// SetStatfsTimeoutForTest shortens the per-mountpoint statfs deadline, so the
+// wedged-mount path can be exercised without spending the production two
+// seconds per blocked call.
+func (f *Filesystems) SetStatfsTimeoutForTest(d time.Duration) { f.statfsTimeout = d }
