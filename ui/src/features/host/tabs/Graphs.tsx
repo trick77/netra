@@ -8,6 +8,7 @@ import {
   carriesColumn,
   counterDeltas,
   griddedValues,
+  peakBase,
   seriesCells,
   seriesOnGrid,
   seriesTimestamps,
@@ -121,6 +122,13 @@ interface PanelSpec {
   fmt?: (n: number | null) => string;
   /** Read this family's columns as booleans (1 = true), not as numbers. */
   boolean?: boolean;
+  /**
+   * Resolve each base to its _max peer at the rolled-up tiers rather than
+   * letting column() take the _avg it prefers. For a rate read as a shape --
+   * traffic -- the burst IS the reading, and averaging a 60s scrape into a
+   * 5m or 1h bucket is what flattened it. See peakBase() in lib/metrics.
+   */
+  peak?: boolean;
   /**
    * These bases are cumulative totals since boot; draw the per-bucket
    * increase instead of the running sum.
@@ -316,6 +324,10 @@ const NETWORK: PanelSpec[] = [
     // traffic: two lines climbing one axis make a reader compare shapes to
     // answer "which way is this going".
     mirrored: true,
+    // Read the bucket's peak, not its mean -- see peakBase(). Unlike the
+    // fleet cell this panel draws one pair per interface and sums nothing,
+    // so the mark here is a true per-interface maximum.
+    peak: true,
     fmt: bytes,
   },
   {
@@ -465,9 +477,12 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
       // than as nulls, and the geometry breaks a line only on a null. Drawn
       // straight from the response, three hours of a host being down became
       // one unbroken line across the hole.
+      // Resolved per response, not per tier constant: the raw table has no
+      // _max peer, and there peakBase() falls back to the base name.
+      const column = spec.peak ? peakBase(res, base) : base;
       const gridded = spec.boolean
-        ? booleanValues(res, index, base)
-        : griddedValues(res, index, base);
+        ? booleanValues(res, index, column)
+        : griddedValues(res, index, column);
       // After the grid, never before: counterDeltas subtracts NEIGHBOURING
       // buckets, so it has to run on the window's own even spacing. Applied
       // to the raw response -- which omits the buckets a host did not

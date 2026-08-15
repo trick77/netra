@@ -215,6 +215,39 @@ export function carriesColumn(
 }
 
 /**
+ * The name to ask for when a chart wants the PEAK rather than the mean.
+ *
+ * column() prefers _avg by design (see candidates() above), which is right
+ * for a metric read as a level -- cpu_total, memory in use, a filesystem's
+ * fill. It is wrong for traffic. A network rate is read as a shape, and the
+ * thing an operator is looking for in that shape is the burst: 0001_init.sql
+ * materialises BOTH avg(rx_bytes) AS rx_bytes_avg and max(rx_bytes) AS
+ * rx_bytes_max at 5m and 1h, and we were plotting the average of the two
+ * every time. At the default 24h range that is a 5-minute bucket over a 60s
+ * scrape, so a one-scrape burst rendered at up to a fifth of its height; at
+ * 7d and 30d it is an average of averages over sixty samples, so the same
+ * burst rendered at roughly a sixtieth. The peak was already in the response
+ * -- rx_bytes_max ships on the wire in every rolled-up reply -- and simply
+ * never read.
+ *
+ * Resolution is by response, not by tier constant, because the raw table has
+ * no _max peer at all: at 1h the tier IS the samples, rx_bytes is already
+ * the peak of its own bucket, and asking for rx_bytes_max there would throw
+ * UnknownColumnError rather than fall back. Hence carriesColumn() first.
+ *
+ * Returns a fully-suffixed name, which is exactly the escape hatch
+ * candidates() documents: the suffixed name matches on column()'s
+ * exact-name branch and never re-enters the _avg-preferring order.
+ */
+export function peakBase(
+  res: MetricsResponse | null | undefined,
+  base: string,
+): string {
+  const peak = `${base}_max`;
+  return carriesColumn(res, peak) ? peak : base;
+}
+
+/**
  * seriesValues for a column that may legitimately not be there.
  *
  * seriesValues throws when the answering tier has no such column, which is
