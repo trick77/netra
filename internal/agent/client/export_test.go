@@ -65,3 +65,14 @@ func (c *Client) SetResolverForTest(r *net.Resolver) { c.resolver = r }
 func HandshakeForTest(c *Client, ctx context.Context, addrs []string) (time.Duration, bool) {
 	return c.handshake(ctx, addrs)
 }
+
+// SetScrapeTimeoutForTest shortens the whole-scrape deadline.
+//
+// Production is scrapeTimeout (half the 60s cadence), which no test can wait
+// out. Set before the first scrape and not mutated afterwards, exactly as the
+// production field is.
+func (c *Client) SetScrapeTimeoutForTest(d time.Duration) { c.scrapeTimeout = d }
+
+// ScrapeTimeoutForTest exposes the production deadline so a test can assert it
+// stays inside the scrape cadence without restating the arithmetic.
+const ScrapeTimeoutForTest = scrapeTimeout
