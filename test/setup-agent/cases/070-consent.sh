@@ -552,6 +552,85 @@ assert_not_contains "$RUN_OUT" "no agent token was provided" \
     "the token is not collected on a run that cannot write it"
 assert_contains "$RUN_OUT" "NETRA_LOCATION" "the values it CAN reuse are still reused"
 
+# --- 8i. --force keeps the dimensions the .env already had --------------------
+#
+# --force rewrites the WHOLE .env, and every value it cannot fill is written
+# empty. seed_from_env was deliberately not called on this path, so the values
+# the operator did not retype were destroyed:
+#
+#   setup-agent.sh --force --token X --hub-url Y
+#
+# rewrote NETRA_LOCATION=, NETRA_PROVIDER= and NETRA_HOST_TYPE= empty. Two ways
+# to reach it, and the ordinary one is interactive: netra_ask_value falls back
+# to the variable's current value, which was empty, so pressing Enter at "Where
+# is this host" ERASED it -- while every other prompt in this script treats
+# Enter as "leave it alone". The shape below is the other way: an unreadable
+# $P_TTY makes netra_ask_value return empty without printing anything at all.
+#
+# Asserted on the RESULTING .env, never on prompt strings. With NETRA_TTY
+# pointing at an unopenable path, netra_ask_value prints nothing whatever it
+# does, so a prompt-text assertion here would pass with the fix removed.
+ROOT=$(mkroot forceseed)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --token nta_first --hub-url https://first.example \
+    --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
+    --primary-sensor coretemp \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-forceseed"
+assert_eq 0 "$RUN_RC" "the first run completes"
+
+# The rotation: a new token and nothing else. Every dimension is left to the
+# prompts, which cannot be answered here.
+ROOT=$(mkroot forceseed2)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --force --token nta_second --hub-url https://second.example \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-forceseed"
+assert_eq 0 "$RUN_RC" "the --force rotation completes"
+
+FORCEENV=$(cat "$TMP/out-forceseed/.env")
+assert_contains "$FORCEENV" "NETRA_LOCATION=Zurich, CH" "--force keeps the location it was not given"
+assert_contains "$FORCEENV" "NETRA_PROVIDER=Hetzner" "--force keeps the provider"
+assert_contains "$FORCEENV" "NETRA_HOST_TYPE=bare_metal" "--force keeps the host type"
+# Nothing prompts for this one at all, so the rewrite erased it with no way for
+# the operator to put it back on the same run.
+assert_contains "$FORCEENV" "NETRA_PRIMARY_SENSOR=coretemp" "--force keeps the primary sensor"
+
+# What --force IS for still works: the flags win over the seeded values.
+assert_contains "$FORCEENV" "NETRA_TOKEN=nta_second" "--force still replaces the token"
+assert_contains "$FORCEENV" "NETRA_HUB_URL=https://second.example" "--force still replaces the hub URL"
+assert_not_contains "$FORCEENV" "nta_first" "the old token is gone"
+
+# The one value --force must NOT keep. A rotation is the main reason to pass
+# it, and a seeded token would silently answer the only question it was run to
+# ask -- so a --force run with no token writes an EMPTY one and says so, rather
+# than quietly reinstating the token being rotated away from.
+ROOT=$(mkroot forceseed3)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --force --hub-url https://third.example \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-forceseed"
+assert_eq 0 "$RUN_RC" "a --force run with no token completes"
+assert_eq "NETRA_TOKEN=" "$(grep '^NETRA_TOKEN=' "$TMP/out-forceseed/.env")" \
+    "--force never pre-fills the token from the file it is replacing"
+assert_contains "$RUN_OUT" "no agent token was provided" \
+    "and it says the token is empty rather than leaving it to be discovered"
+# The dimensions are still kept on that same run: only the secret is withheld.
+assert_contains "$(cat "$TMP/out-forceseed/.env")" "NETRA_LOCATION=Zurich, CH" \
+    "withholding the token does not withhold everything else"
+
+# A flag still beats the file, and is not re-asked: --location here must land
+# even though the .env holds a different one.
+ROOT=$(mkroot forceseed4)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --force --token nta_third --hub-url https://fourth.example \
+    --location "Bern, CH" \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-forceseed"
+assert_eq 0 "$RUN_RC" "a --force run with a location flag completes"
+assert_contains "$(cat "$TMP/out-forceseed/.env")" "NETRA_LOCATION=Bern, CH" \
+    "a flag beats the value seeded from the file"
+
 # --- 9. --token-file ----------------------------------------------------------
 #
 # A token pasted into a file by a provisioning system routinely arrives with a
