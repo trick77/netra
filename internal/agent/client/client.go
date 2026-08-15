@@ -295,11 +295,20 @@ func (c *Client) resendInventory() {
 // Collectors are run here directly rather than through collect() for that
 // reason: collect() has no way to leave one out.
 func (c *Client) Prime(ctx context.Context) {
-	primed, failed := 0, 0
+	primed, failed, skipped := 0, 0, 0
+	ran := make([]collector.Collector, 0, len(c.collectors))
 	for _, col := range c.collectors {
 		if b, ok := col.(collector.BaselineEmitter); ok && b.EmitsBaseline() {
+			// Counted, not silently dropped: ok + failed would otherwise fall
+			// short of the total for no stated reason, and a line whose whole
+			// job is legibility must not read like collectors vanished.
+			skipped++
 			continue
 		}
+		// Recorded whether it succeeds or fails below. A collector that ran
+		// and failed has a capability worth reporting -- that is exactly the
+		// containers case -- while one that never ran does not.
+		ran = append(ran, col)
 		if _, err := col.Collect(ctx); err != nil {
 			// Priming is best-effort: the scheduled scrape reports the same
 			// failure, with somewhere to record it.
@@ -311,8 +320,8 @@ func (c *Client) Prime(ctx context.Context) {
 	}
 
 	slog.Info("primed collectors", "ok", primed, "failed", failed,
-		"total", len(c.collectors))
-	c.logStartupInventory()
+		"skipped", skipped, "total", len(c.collectors))
+	logStartupInventory(ran)
 }
 
 // logStartupInventory says what this agent can actually see, once, at startup.
@@ -328,8 +337,18 @@ func (c *Client) Prime(ctx context.Context) {
 // Two lines per fact at most, and only for collectors with something to say: a
 // summary of what was found, or a capability explaining what could not be. A
 // healthy agent stays quiet enough to read.
-func (c *Client) logStartupInventory() {
-	for _, col := range c.collectors {
+//
+// Takes only the collectors Prime actually RAN, which is why it is a function
+// rather than a method. A baseline emitter is deliberately not primed, so at
+// this moment it has never executed and its capabilities describe a collector
+// that has not looked yet: Packages assigns p.format inside Collect and reports
+// "unsupported-format" until it does, so asking every collector would have made
+// every agent on every host -- Debian ones included -- open with a package
+// warning that is false by construction. A warning that is always there is one
+// nobody reads, and it would sit one line from the genuine no-cgroup-scopes
+// warning this function exists to surface.
+func logStartupInventory(ran []collector.Collector) {
+	for _, col := range ran {
 		if s, ok := col.(collector.StartupSummarizer); ok {
 			if summary := s.StartupSummary(); summary != "" {
 				slog.Info("collector ready", "collector", col.Name(), "saw", summary)
@@ -340,7 +359,15 @@ func (c *Client) logStartupInventory() {
 			continue
 		}
 		for key, value := range r.Capabilities() {
-			// Warn, not Info: every capability is something the operator
+			// Not every capability is a limitation. Procs and Users report
+			// "ok" on their SUCCESS path, unconditionally, on every Collect --
+			// so warning on the whole map made a perfectly configured agent
+			// log two limitations at every start, which is the opposite of
+			// what this function is for and buries the one that matters.
+			if value == "" || value == "ok" {
+				continue
+			}
+			// Warn, not Info: every capability left is something the operator
 			// either chose not to grant or did not realise they had not.
 			slog.Warn("collector limited", "collector", col.Name(),
 				"capability", key, "reason", value)

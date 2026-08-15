@@ -62,6 +62,12 @@ func TestCheckHubPostsASampleFreeBatchToTheIngestPath(t *testing.T) {
 	if n := len(rec.requests[0].GetHostSamples()); n != 0 {
 		t.Errorf("host samples = %d, want 0 -- the check must not invent a sample", n)
 	}
+	// The hash rides along even though the batch is empty. Without it the hub
+	// compares its stored hash against nothing, which never matches, and every
+	// agent is told to re-send metadata on every restart.
+	if len(rec.requests[0].GetMetadataHash()) == 0 {
+		t.Error("the check carried no metadata hash; the hub cannot tell it is unchanged")
+	}
 }
 
 // A hub that has no metadata for this host says so on any post, and the answer

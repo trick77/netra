@@ -32,7 +32,10 @@ import (
 // turn a recoverable outage into a fleet that has to be restarted by hand once
 // it ends. This only makes the fault legible.
 func (c *Client) CheckHub(ctx context.Context) {
-	resp, err := c.post(ctx, &netrav1.IngestRequest{})
+	// The hash rides along, empty batch or not. Without it the hub compares
+	// its stored hash against nothing, answers "send me metadata" to every
+	// agent on every restart, and re-saves a block that never changed.
+	resp, err := c.post(ctx, &netrav1.IngestRequest{MetadataHash: c.metadataHash})
 
 	switch {
 	case err == nil:

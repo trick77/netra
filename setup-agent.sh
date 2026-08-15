@@ -954,6 +954,20 @@ check_cgroup_v2() {
             "Boot with systemd.unified_cgroup_hierarchy=1 on the kernel command line and try again."
     fi
     info "  cgroup:          v2 (unified) at $P_CGROUP"
+
+    # The emitted bind hardcodes /sys/fs/cgroup as its source, because a bind
+    # source is an EMIT path and $P_CGROUP carries $NETRA_SETUP_ROOT under test.
+    # So an operator who exported NETRA_CGROUP_ROOT because their hierarchy
+    # genuinely lives elsewhere would have this script validate one path and
+    # mount another. Say so rather than let the mismatch pass unremarked; the
+    # test fixture root is not the case being warned about.
+    if [ -n "${NETRA_CGROUP_ROOT:-}" ] &&
+        [ "$NETRA_CGROUP_ROOT" != "/sys/fs/cgroup" ] &&
+        [ -z "${NETRA_SETUP_ROOT:-}" ]; then
+        warn "NETRA_CGROUP_ROOT is set to $NETRA_CGROUP_ROOT, which is the path this script" \
+            "PROBED. The compose.yaml it writes still mounts /sys/fs/cgroup, so edit the" \
+            "bind source by hand if that is not where this host's hierarchy lives."
+    fi
 }
 
 # check_machine_id — present AND non-empty.
@@ -2788,6 +2802,25 @@ EOF
         warn "$OUTPUT_DIR/.env already exists and --force was not given, so it was left" \
             "untouched. Its existing token and settings still apply. Re-run with --force to" \
             "overwrite it."
+        # The ONE case where leaving .env alone leaves the agent broken, and
+        # broken silently. NETRA_CGROUP_ROOT used to be documented as
+        # /sys/fs/cgroup, so an operator who uncommented it then pins the agent
+        # to its OWN cgroup hierarchy -- which under Docker's default private
+        # cgroup namespace contains no other container's scope. The compose
+        # this run just wrote mounts the host's tree at /host/sys/fs/cgroup and
+        # the agent's default points there, but a pinned .env overrides both,
+        # and the failure looks exactly like a host with no containers.
+        #
+        # grep on the value, not the key: an operator whose hierarchy genuinely
+        # lives elsewhere is not making this mistake.
+        if grep -qE '^[[:space:]]*NETRA_CGROUP_ROOT=/sys/fs/cgroup[[:space:]]*$' \
+            "$OUTPUT_DIR/.env" 2>/dev/null; then
+            warn "$OUTPUT_DIR/.env pins NETRA_CGROUP_ROOT=/sys/fs/cgroup, which is the" \
+                "AGENT'S OWN cgroup hierarchy and holds no other container's scope. The" \
+                "container collector will report nothing, without an error. Delete that" \
+                "line (the default is now /host/sys/fs/cgroup, where this compose.yaml" \
+                "mounts the host's tree) or set it to /host/sys/fs/cgroup."
+        fi
     else
         _wo_env_existed=0
         [ ! -e "$OUTPUT_DIR/.env" ] || _wo_env_existed=1
