@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -83,6 +84,16 @@ type RetryAfterError struct {
 func (e *RetryAfterError) Error() string { return e.err.Error() }
 func (e *RetryAfterError) Unwrap() error { return e.err }
 
+// PermanentError wraps a rejection that retrying cannot fix: the hub has
+// refused this BODY, not this moment. Flush drops the batch that earned it
+// rather than offering it again.
+type PermanentError struct {
+	err error
+}
+
+func (e *PermanentError) Error() string { return e.err.Error() }
+func (e *PermanentError) Unwrap() error { return e.err }
+
 // Client owns the scrape loop, the buffer and the HTTP conversation.
 type Client struct {
 	cfg        config.Config
@@ -95,6 +106,12 @@ type Client struct {
 	// can drive Run's ticker faster than 60s (see export_test.go). Nothing
 	// mutates it after construction.
 	interval time.Duration
+
+	// scrapeTimeout bounds one whole scrape. In production it is always the
+	// scrapeTimeout constant; it is a field for the same reason interval is,
+	// since a test cannot wait 30s to watch a wedged collector give up.
+	// Nothing mutates it after construction.
+	scrapeTimeout time.Duration
 
 	seq          uint64
 	metadata     *netrav1.Metadata
@@ -168,13 +185,14 @@ func newClient(cfg config.Config, collectors []collector.Collector, interval tim
 	md := BuildMetadata(cfg)
 
 	return &Client{
-		cfg:          cfg,
-		collectors:   collectors,
-		http:         &http.Client{Timeout: 30 * time.Second},
-		ring:         buffer.New(capacity),
-		interval:     interval,
-		metadata:     md,
-		metadataHash: HashMetadata(md),
+		cfg:           cfg,
+		collectors:    collectors,
+		http:          &http.Client{Timeout: 30 * time.Second},
+		ring:          buffer.New(capacity),
+		interval:      interval,
+		scrapeTimeout: scrapeTimeout,
+		metadata:      md,
+		metadataHash:  HashMetadata(md),
 		// The hub asks for metadata when it needs it; nothing is assumed.
 		sendMetadata: false,
 		startedAt:    time.Now(),
@@ -309,7 +327,11 @@ func (c *Client) Prime(ctx context.Context) {
 		// and failed has a capability worth reporting -- that is exactly the
 		// containers case -- while one that never ran does not.
 		ran = append(ran, col)
-		if _, err := col.Collect(ctx); err != nil {
+		// Through collectOne, exactly like the scrape loop. Prime runs every
+		// collector over the same host data, so a parser that panics on this
+		// host panics HERE first -- before the ring exists and at every start,
+		// which is the crash loop no restart policy escapes.
+		if _, err := collectOne(ctx, col); err != nil {
 			// Priming is best-effort: the scheduled scrape reports the same
 			// failure, with somewhere to record it.
 			failed++
@@ -391,16 +413,91 @@ func logStartupInventory(ran []collector.Collector) {
 	}
 }
 
+// scrapeTimeout bounds one whole scrape -- every collector, together.
+//
+// The scrape loop had no deadline of its own: Run handed collect the process's
+// SIGTERM context, which is cancelled only on the way out. Every collector
+// therefore ran on an unbounded budget, and because Client's fields are not
+// mutex-guarded everything -- scraping, flushing, the hub probe -- shares the
+// one goroutine. So a single call that never returned stopped the agent
+// completely: no samples, no flushes, and a ring that never drained, on a host
+// whose agent still looked alive. Nothing but a restart recovered it.
+//
+// Three calls could do it. syscall.Statfs against a dead NFS or FUSE server
+// blocks in uninterruptible D state; smartctl blocks in an ioctl on a drive
+// that will not answer an ATA passthrough; the systemd bus can be wedged by a
+// hung unit. Sensors already builds a deadline for exactly this hazard on sysfs
+// reads, and the Docker client carries its own -- the paths that actually leave
+// the process were the ones without.
+//
+// Half the scrape interval, so a scrape that times out has finished well before
+// the tick that follows it and the cadence never slips. The cost of the bound
+// is one collector's data for one scrape, recorded as a timeout rather than
+// silently missing.
+//
+// WHAT THIS DOES NOT DO, because it is easy to read it as more than it is: the
+// deadline only ends a collector that RETURNS when its context fires. It is
+// cancellation, not preemption -- collectOne calls Collect synchronously, so a
+// collector that blocks without consulting ctx holds this goroutine exactly as
+// before. Nothing here can change that, and moving the call onto a goroutine to
+// abandon it would race the collector's own delta state against the next
+// scrape's read of it.
+//
+// So a blocking call that ignores context must be bounded AT THE CALL SITE, and
+// each one in this agent is: statfs runs under deadlined with its own wedge
+// backoff (filesystems.go), smartctl carries a WaitDelay so Wait gives up on a
+// child the kernel will not kill (smart.go), sensors reads hwmon under
+// deadlined, and the Docker client has its own timeout. The systemd bus and the
+// hub probe do honour their contexts. A NEW collector that blocks on something
+// uncancellable needs the same treatment; this constant will not cover it.
+const scrapeTimeout = config.ScrapeInterval / 2
+
+// collectOne runs one collector under the scrape's context and converts a panic
+// into an error.
+//
+// A collector parses /proc, /sys, utmp, container labels and command output --
+// host data that can be malformed in ways no test anticipated. Without this a
+// single index-out-of-range unwound through Run and killed the process, taking
+// the whole in-memory ring with it: up to six hours of buffered samples, which
+// is precisely what the ring exists to preserve. Under restart:unless-stopped
+// the agent then crash-looped on the same input, so the loss repeated.
+//
+// Per collector rather than per scrape, so one bad parser costs one subsystem
+// rather than every reading taken beside it. The recovered value is reported
+// through the error path the caller already has, which means it lands in
+// collector_samples as that collector's failure instead of vanishing.
+func collectOne(ctx context.Context, col collector.Collector) (res *collector.Result, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Logged with the stack here rather than left to the error string:
+			// errorCode reduces this to "error" on the wire by design, so the
+			// stack has nowhere else to go, and a panic is the one collector
+			// failure worth a full trace in the journal.
+			slog.Error("collector panicked; recovering",
+				"collector", col.Name(), "panic", r, "stack", string(debug.Stack()))
+			res, err = nil, fmt.Errorf("collector %s panicked: %v", col.Name(), r)
+		}
+	}()
+	return col.Collect(ctx)
+}
+
 // collect runs every collector and returns the resulting scrape, without
 // touching the sequence counter or the ring buffer.
 func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 	sample := &netrav1.HostSample{TsMs: time.Now().UnixMilli()}
 	scrape := &buffer.Scrape{}
 
+	// The deadline covers the collectors as a group rather than each one
+	// separately. A per-collector timeout would let a host with several wedged
+	// paths spend a multiple of the interval in a single scrape, which is the
+	// same starvation arriving more slowly.
+	scrapeCtx, cancel := context.WithTimeout(ctx, c.scrapeTimeout)
+	defer cancel()
+
 	start := time.Now()
 	for _, col := range c.collectors {
 		colStart := time.Now()
-		res, err := col.Collect(ctx)
+		res, err := collectOne(scrapeCtx, col)
 		colElapsed := time.Since(colStart)
 
 		// Every collector reports its own health, on every scrape, whether it
@@ -731,6 +828,41 @@ func (c *Client) Flush(ctx context.Context) error {
 			return err
 		}
 
+		// A body the hub will never take. Retrying it is not resilience, it is
+		// a loop: the ring only drops its oldest entry to make room for a new
+		// one, so an undeliverable prefix stayed at the head forever and every
+		// later flush re-sent the identical bytes. maxBatchRows exists to keep
+		// a MULTI-scrape body inside the hub's 4 MiB cap, and the i > 0 guard
+		// in the batching above deliberately lets a single oversized scrape
+		// through on its own -- so the one case the row bound cannot cover is
+		// exactly the one that wedged. A host with a few thousand containers or
+		// processes reaches it, which is why the maxBufferSlots comment names
+		// those two families as the ones to revisit.
+		//
+		// Dropped through AckThrough(highest), the same prefix drop a success
+		// performs, so the seq accounting stays identical either way. The
+		// samples are lost -- they were never deliverable -- but the ring is
+		// free and the agent keeps reporting.
+		var permErr *PermanentError
+		if errors.As(err, &permErr) {
+			slog.Error("hub permanently rejected a batch; dropping it to unblock the buffer",
+				"err", err, "scrapes", len(samples), "rows", rows,
+				"buffer_depth", c.ring.Depth())
+			c.ring.AckThrough(highest)
+			// The dropped batch may have carried an inventory set the hub never
+			// saw, exactly as an overflow drop would. Latched, not acted on
+			// here: resendInventory runs when the ring next reaches empty.
+			c.inventoryLost = true
+			c.retryAfter = 0
+			// Backfill only if there is still buffered history BEHIND the batch
+			// just dropped. Setting it unconditionally would flag the next
+			// scrape -- fresh, live, taken after the drop -- as replayed
+			// history, and the hub would invalidate aggregate ranges for a
+			// batch that never needed it.
+			c.replaying = c.ring.Depth() > 0
+			return err
+		}
+
 		// A retry_after only applies to the failure that carried it; any
 		// other failure clears it so a stale value from an earlier 503
 		// cannot outlive its relevance.
@@ -829,6 +961,24 @@ func (c *Client) post(ctx context.Context, req *netrav1.IngestRequest) (*netrav1
 			err:   fmt.Errorf("hub returned %s", httpResp.Status),
 		}
 	}
+	// A body the hub will never accept, however many times it is offered. 413
+	// is the one this batching is built around -- the hub caps an ingest body
+	// at httpapi.maxBodyBytes -- and it is a property of the BYTES, so the
+	// same bytes earn it again every time.
+	//
+	// 400 deliberately does NOT belong here, however similar it looks. Both of
+	// the hub's 400 paths are transient by construction: one is "read body",
+	// returned when reading the upload fails part-way, and the other is a
+	// proto.Unmarshal failure -- and since these bytes came straight out of
+	// proto.Marshal, an unmarshal failure means the body was truncated or
+	// corrupted in transit, which a resend fixes. Treating it as permanent
+	// threw a whole batch of buffered history away over one flaky upload. A
+	// proxy with a smaller body limit answers 413 as well, so nothing the drop
+	// is for is lost by leaving 400 on the retry path.
+	if httpResp.StatusCode == http.StatusRequestEntityTooLarge {
+		return nil, &PermanentError{err: fmt.Errorf("hub returned %s", httpResp.Status)}
+	}
+
 	if httpResp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("hub returned %s", httpResp.Status)
 	}
