@@ -24,8 +24,31 @@ type SmartRunner func(ctx context.Context, args ...string) ([]byte, error)
 // conditions like "some SMART attribute is below threshold", which is exactly
 // the case netra exists to notice. Failing on those would blind the collector
 // to failing drives.
+// smartctlWaitDelay bounds how long Wait may spend after the context is done.
+//
+// The scrape deadline alone does NOT bound this call, which is the whole reason
+// this exists. exec.CommandContext cancels by sending SIGKILL, and a process
+// blocked in an uninterruptible ioctl -- a drive that will not answer an ATA
+// passthrough, a wedged HBA, a USB-SATA bridge that has stopped responding --
+// does not die on SIGKILL until the ioctl returns. .Output() then calls Wait,
+// which without a WaitDelay waits indefinitely both for that exit and for the
+// stdout pipe to close. So the collector never returned, collect never
+// returned, and the deadline achieved nothing on precisely the drive hang it
+// was added for.
+//
+// With a WaitDelay, Wait gives up and returns once the delay has elapsed after
+// the context is done. The child is left behind -- there is nothing else to be
+// done with a process the kernel will not kill -- exactly as the statfs
+// goroutine is left behind in filesystems.go, and for the same reason: the
+// scrape loop's liveness is worth more than the stray resource. Smart's own
+// failure backoff is what stops it accumulating one per scrape.
+const smartctlWaitDelay = 2 * time.Second
+
 func SystemSmartctl(ctx context.Context, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, "smartctl", args...).Output()
+	cmd := exec.CommandContext(ctx, "smartctl", args...)
+	cmd.WaitDelay = smartctlWaitDelay
+
+	out, err := cmd.Output()
 	if len(out) > 0 {
 		return out, nil
 	}

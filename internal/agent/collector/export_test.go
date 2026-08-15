@@ -3,6 +3,8 @@ package collector
 import (
 	"testing"
 	"time"
+
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // SetSysClassNetForTest points the per-interface sysfs reads at a fixture
@@ -28,3 +30,12 @@ func IfaceAliasForTest(name string) string { return ifaceAlias(name) }
 // wedged-mount path can be exercised without spending the production two
 // seconds per blocked call.
 func (f *Filesystems) SetStatfsTimeoutForTest(d time.Duration) { f.statfsTimeout = d }
+
+// CapContainerRowsForTest and MaxContainerRowsForTest expose the container row
+// backstop, so a test can assert the bound without restating the literal --
+// which would then agree with a wrong value as readily as a right one.
+func CapContainerRowsForTest(rows []*netrav1.ContainerSample) []*netrav1.ContainerSample {
+	return capContainerRows(rows)
+}
+
+const MaxContainerRowsForTest = maxContainerRows

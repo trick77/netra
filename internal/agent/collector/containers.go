@@ -379,7 +379,7 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 		rows = append(rows, row)
 	}
 
-	return &Result{Containers: rows}, nil
+	return &Result{Containers: capContainerRows(rows)}, nil
 }
 
 // containerKey is compose project + service, falling back to the container
@@ -766,4 +766,40 @@ func sumNetDev(path string) (rx, tx uint64, ok bool) {
 		tx += t
 	}
 	return rx, tx, ok
+}
+
+// maxContainerRows caps how many containers one scrape reports.
+//
+// This is the missing half of the ingest bound. maxBatchRows keeps a
+// MULTI-scrape body inside the hub's 4 MiB cap, but the flush deliberately lets
+// a single oversized scrape through alone rather than never flushing at all --
+// so a scrape that exceeds the cap by itself is undeliverable, and the agent now
+// drops it. Dropping beats wedging, but a host that produces one every tick
+// still reports nothing, forever. Containers was the family that could: it
+// emitted one row per cgroup scope with no bound at all, which is exactly the
+// case the maxBufferSlots comment names as the one to revisit.
+//
+// 500 is far above any host an operator runs deliberately -- Docker's own
+// practical ceiling per daemon is in the low hundreds -- and far below the
+// 20000-row batch limit, so the cap is a backstop rather than a routine
+// truncation.
+//
+// Processes solves the same problem by ranking (topByCPUAndMemory); containers
+// are not ranked, because a container is an entity an operator names and looks
+// for rather than a population to sample. Truncating the tail of a stable sort
+// keeps the same containers reported scrape after scrape, so a chart does not
+// flicker between them -- and the log line says what was left out, which
+// silently returning 500 rows would not.
+const maxContainerRows = 500
+
+// capContainerRows truncates an implausibly large container set, loudly.
+func capContainerRows(rows []*netrav1.ContainerSample) []*netrav1.ContainerSample {
+	if len(rows) <= maxContainerRows {
+		return rows
+	}
+	// rows is built in sorted-id order, so the survivors are stable across
+	// scrapes rather than an arbitrary subset that changes every minute.
+	slog.Warn("more containers than one scrape can carry; reporting a truncated set",
+		"found", len(rows), "reported", maxContainerRows)
+	return rows[:maxContainerRows]
 }

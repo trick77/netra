@@ -834,10 +834,12 @@ func (c *Client) Flush(ctx context.Context) error {
 			// here: resendInventory runs when the ring next reaches empty.
 			c.inventoryLost = true
 			c.retryAfter = 0
-			// Still a failed delivery, so Run backs off and the next batch is
-			// flagged as backfill -- the history behind this one is still
-			// replayed history.
-			c.replaying = true
+			// Backfill only if there is still buffered history BEHIND the batch
+			// just dropped. Setting it unconditionally would flag the next
+			// scrape -- fresh, live, taken after the drop -- as replayed
+			// history, and the hub would invalidate aggregate ranges for a
+			// batch that never needed it.
+			c.replaying = c.ring.Depth() > 0
 			return err
 		}
 
