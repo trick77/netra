@@ -62,22 +62,53 @@ The hub runs its migrations on startup and reports database reachability at
 `/api/health`, so it goes unhealthy rather than accepting ingest it can only
 503.
 
-### What is exposed
+### When the first start fails
 
-Only `PathPrefix(/api/agent/)` is routed from the internet. Everything else —
-the management UI at `/`, the read API and the admin API that mints tokens and
-deletes hosts — is published on `127.0.0.1:8080` on the hub host and gated on
-`NETRA_ADMIN_TOKEN`. If that port is already taken on your host, move netra
-with `NETRA_BIND_ADDR` in `.env` (address and port together, e.g.
-`127.0.0.1:18080`) and adjust the commands below to match; Traefik reaches the
-container over the Docker network, so agent ingest is unaffected either way.
-From a laptop, tunnel:
+**`PostgreSQL Database directory appears to contain a database; Skipping
+initialization`, on a directory you are sure is empty.** It is not empty. An
+earlier `docker compose up` — including one that aborted on the port above —
+already ran `initdb` there, and neither `down` nor `down -v` touches a bind
+mount. Check rather than assume:
 
 ```sh
-ssh -L 8080:127.0.0.1:8080 <hub-host>
+sudo cat data/timescaledb/PG_VERSION      # exists ⇒ initialised
 ```
 
-then open <http://127.0.0.1:8080/> and log in with `NETRA_ADMIN_TOKEN`.
+The log line just above that message settles it on its own: `database system
+was shut down at <time>` is read out of `pg_control` inside the data directory,
+so a timestamp from seconds or minutes ago is a run that wrote to *this*
+directory, not a stale one from before you cleared it.
+
+That message is also not an error on its own. A hub that starts, migrates and
+reports healthy against an already-initialised directory is working correctly;
+only run the reset below if you actually want to lose the data.
+
+**Starting the database over.** Stop the stack first — deleting `PGDATA` under
+a running postgres leaves the container writing into an unlinked directory:
+
+```sh
+docker compose down
+sudo rm -rf data/timescaledb && mkdir -p data/timescaledb
+docker compose up -d
+```
+
+The `sudo` is load-bearing. After the first start the directory is uid 70, mode
+`0700`, so a plain `rm -rf` fails partway through, leaves `PG_VERSION` behind,
+and produces exactly the message above on the next start — which is how an
+apparently fresh directory ends up skipping initialisation.
+
+### What is exposed
+
+Traefik fronts the whole hub on `NETRA_HOSTNAME` — agent ingest, the read API,
+the admin API and the management UI. The container publishes no host port at
+all, so netra cannot collide with anything else on the box and there is no
+tunnel to set up: open <https://your-hostname/> and log in with
+`NETRA_ADMIN_TOKEN`.
+
+That makes the token the only thing between the internet and an API that mints
+agent tokens and deletes hosts. Generate it with `openssl rand -hex 32` — do
+not invent one — and treat it as the credential to the whole fleet. Per-user
+logins arrive with OIDC in phase 2.
 Changing that token logs every open session out — the session cookie is signed
 with a key derived from it.
 
@@ -124,10 +155,10 @@ A fresh install needs none of this.
 ## Mint an agent token
 
 Each host gets its own token, prefixed `nta_`. In the UI, add the host; or over
-the admin API — on the hub host, at whatever `NETRA_BIND_ADDR` publishes:
+the admin API:
 
 ```sh
-curl -s -X POST http://127.0.0.1:8080/api/v1/hosts \
+curl -s -X POST https://your-hostname/api/v1/hosts \
   -H "Authorization: Bearer $NETRA_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"hostname":"ark"}'

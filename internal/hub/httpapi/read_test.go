@@ -14,7 +14,8 @@ import (
 // The read API mounts on the same /api/v1 the admin API does, so it is behind
 // the same credential. An unauthenticated caller gets 401 rather than a host
 // list -- and RequireAdmin is the ONLY thing standing between the internet and
-// this data if the Traefik PathPrefix is ever widened.
+// this data, now that Traefik routes the whole host and no PathPrefix narrows
+// what reaches the hub.
 func TestIntegrationReadEndpointsRequireTheAdminToken(t *testing.T) {
 	srv, _ := newAdminFixture(t)
 	id, _ := createHost(t, srv, "guarded")

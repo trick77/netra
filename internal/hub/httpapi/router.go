@@ -15,13 +15,12 @@ import (
 // NewRouter builds the hub's route table. Go 1.22 method routing is used
 // directly; there is no framework.
 //
-// Only /api/agent/ is routed from the internet -- see the Traefik PathPrefix
-// in compose.yaml -- and the published port is bound to 127.0.0.1 by default
-// (NETRA_BIND_ADDR). Everything mounted below outside that prefix is reachable
-// on the hub host alone under that default, and is in every case gated on
-// NETRA_ADMIN_TOKEN -- which is the only guarantee left if an operator widens
-// the binding, so it is not optional here. Widening that PathPrefix would
-// publish host creation and token minting with no other visible change.
+// Every route below is reachable from the internet: compose.yaml routes the
+// whole host through Traefik and publishes no port on the hub box. Nothing but
+// the handler's own check stands between a caller and host creation or token
+// minting, so RequireAdmin on everything outside /api/agent/ is load-bearing
+// rather than defence in depth -- do not mount a route here without deciding,
+// explicitly, which credential it answers to.
 func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Handler {
 	svc := admin.NewService(s.Pool())
 	rd := read.NewService(s.Pool())
