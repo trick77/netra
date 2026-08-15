@@ -47,9 +47,8 @@ services:
       NETRA_ADMIN_TOKEN: "${NETRA_ADMIN_TOKEN}"
       NETRA_LOG_LEVEL: "${NETRA_LOG_LEVEL:-info}"
       # The address agents post to. Used only to render a ready-to-paste
-      # setup-agent.sh command in the UI: the browser reaches the hub on
-      # loopback, so the hub cannot infer its own agent-facing name from that
-      # request.
+      # setup-agent.sh command in the UI: the hub sits behind Traefik and sees
+      # a proxied request, so it cannot infer its own public name from one.
       #
       # Safe as a bare expansion ONLY because the router rule below marks
       # NETRA_HOSTNAME required with `:?`, so compose refuses to start rather

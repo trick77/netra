@@ -1414,6 +1414,14 @@ svg.spark {
   width: 100%;
   margin-bottom: var(--space-4);
 }
+/* A card WRAPPED in a column child -- Overview's Panel puts a <section> round
+   its Card for the aria-label -- would otherwise add `.card`'s own bottom
+   margin to the one above and double every gap on the host page. A card that
+   IS the column child is matched by the rule above, not this one, so it keeps
+   its gap. */
+.grid2 > * .card {
+  margin-bottom: 0;
+}
 .hosthead {
   display: flex;
   align-items: center;
