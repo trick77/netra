@@ -5,7 +5,7 @@
 // no columns in the schema at all, and netra's collector contract is that
 // something which cannot run says why -- this panel is where that
 // contract reaches the UI.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ABSENT } from "../../lib/format";
 import { extent } from "./geometry";
 import type { OverlaySeries } from "./Overlay";
@@ -40,6 +40,15 @@ function useDetailRange(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The latest fetcher, without making it a dependency of the effect below.
+  // Both callers build it inline -- Graphs closes over `spec`, ContainerPage
+  // over which bands to pick -- so it is a new function on every render of
+  // the page, and depending on it would refire the dialog's fetch on every
+  // poll of the page behind it. Same reason and same shape as usePoll's
+  // fnRef in lib/poll.ts.
+  const fetchRef = useRef(fetchSeries);
+  fetchRef.current = fetchSeries;
+
   // Closing resets, so reopening starts from the page again rather than from
   // wherever the last look happened to end. The dialog is a question asked
   // and answered, not a second piece of page state to keep track of.
@@ -48,12 +57,24 @@ function useDetailRange(
     setRange(pageRange);
     setData(null);
     setError(null);
+    // Closed while a fetch was in flight: its resolver bails on `cancelled`
+    // below, so without this the header would still say "Loading…" the next
+    // time the dialog is opened.
+    setLoading(false);
   }, [open, pageRange]);
 
   useEffect(() => {
     // Nothing to do at the page's own range: the series already on screen
-    // are that range's, which is what makes opening the dialog free.
-    if (!open || range === undefined || range === pageRange) return;
+    // are that range's, which is what makes opening the dialog free. Coming
+    // BACK to it also ends whatever the last range said: a fetch cancelled
+    // on the way here never settles, and "could not load that range" is
+    // about a range no longer being shown.
+    if (!open || range === undefined || range === pageRange) {
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    const fetchSeries = fetchRef.current;
     if (fetchSeries === undefined) return;
 
     let cancelled = false;
@@ -78,7 +99,7 @@ function useDetailRange(
     return () => {
       cancelled = true;
     };
-  }, [open, range, pageRange, fetchSeries]);
+  }, [open, range, pageRange]);
 
   return {
     range,
