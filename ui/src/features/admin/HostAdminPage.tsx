@@ -112,9 +112,9 @@ function TokenPanel({
         <p className="note">
           <strong>Set the hub URL to get the install command.</strong> It is the
           address agents reach this hub on, which is not the address your
-          browser is using -- you are on loopback. Set <code>NETRA_HOSTNAME</code>{" "}
-          in the hub&apos;s <code>.env</code> to have it filled in here
-          automatically.
+          browser is using -- you are on loopback. Set{" "}
+          <code>NETRA_HOSTNAME</code> in the hub&apos;s <code>.env</code> to
+          have it filled in here automatically.
         </p>
       ) : (
         <>
