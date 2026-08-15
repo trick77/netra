@@ -1,13 +1,16 @@
 package client_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -1291,5 +1294,186 @@ func TestPrimeDoesNotConsumeThePackageInventory(t *testing.T) {
 	}
 	if got := pkgs[0].GetName(); got != "bash" {
 		t.Errorf("package name = %q, want bash", got)
+	}
+}
+
+// logBuf collects log output from a Run loop on its own goroutine. Guarded
+// because the test reads it while Run is still writing, and CI runs under the
+// race detector.
+type logBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logBuf) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *logBuf) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
+// captureLogs redirects the default logger for the duration of a test.
+func captureLogs(t *testing.T) *logBuf {
+	t.Helper()
+	out := &logBuf{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(out, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return out
+}
+
+// A healthy agent must say so on every cycle.
+//
+// Without this line the entire steady state was silent: an operator watching
+// docker compose logs saw the startup block and then nothing for as long as
+// the agent ran, with no way to tell an agent reporting happily from one that
+// had stopped reporting altogether.
+func TestRunLogsEverySuccessfulReport(t *testing.T) {
+	// Given: a reachable hub and a running loop.
+	logs := captureLogs(t)
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
+	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	// When: the ticker fires and the flush succeeds.
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(logs.String(), "reported to hub") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-errCh
+
+	// Then: the cycle is logged, and the line carries what an operator needs to
+	// see at a glance -- how much went out, whether anything is still buffered
+	// behind it, and how the hub is responding.
+	logged := logs.String()
+	if !strings.Contains(logged, "reported to hub") {
+		t.Fatalf("log output = %q, want a line per successful report", logged)
+	}
+	for _, want := range []string{"samples=1", "buffer_depth=0", "latency_ms="} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("log output = %q, want it to carry %s", logged, want)
+		}
+	}
+}
+
+// The success line must mean success. A failing flush already logs its own
+// warning; adding a "reported" line beside it would tell an operator the
+// opposite of what happened.
+func TestRunDoesNotLogAReportWhenTheFlushFails(t *testing.T) {
+	// Given: a hub that refuses every request.
+	logs := captureLogs(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	collectors := []collector.Collector{collector.NewMemory(cfg.ProcRoot)}
+	c := client.NewWithInterval(cfg, collectors, 5*time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(ctx) }()
+
+	// When: a tick goes by and the flush fails.
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(logs.String(), "flush failed") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-errCh
+
+	// Then: the warning is there and the success line is not.
+	logged := logs.String()
+	if !strings.Contains(logged, "flush failed") {
+		t.Fatalf("log output = %q, want the existing flush-failure warning", logged)
+	}
+	if strings.Contains(logged, "reported to hub") {
+		t.Errorf("log output = %q, want no success line when nothing was delivered", logged)
+	}
+}
+
+// One line per CYCLE, not per POST.
+//
+// A drain makes up to maxDrainBatches POSTs to clear a backlog, so logging
+// inside Flush would emit a burst of lines on the one tick that recovers --
+// and the count would say how the batching worked out rather than how much
+// history was delivered.
+func TestRunLogsOneLinePerCycleWhileDrainingABacklog(t *testing.T) {
+	// Given: the backlog setup from TestRunDrainsABacklogWithinOneTick -- each
+	// scrape needs a POST of its own, and two are waiting before the loop
+	// starts, so the tick's own scrape makes three.
+	logs := captureLogs(t)
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.handler(t))
+	t.Cleanup(srv.Close)
+
+	const tick = time.Second
+	cfg := config.Config{
+		HubURL:       srv.URL,
+		Token:        "nta_test",
+		BufferWindow: 6 * time.Hour,
+		ProcRoot:     "../collector/testdata/proc1",
+	}
+	c := client.NewWithInterval(cfg,
+		[]collector.Collector{wideCollector{cores: client.MaxBatchRowsForTest / 2}}, tick)
+	ctx := context.Background()
+
+	for range 2 {
+		c.ScrapeOnce(ctx)
+	}
+	if c.BufferDepth() != 2 {
+		t.Fatalf("BufferDepth() = %d, want 2", c.BufferDepth())
+	}
+
+	// When: Run gets ONE tick. The window stops short of two ticks so a second
+	// cycle cannot contribute a line of its own.
+	runCtx, cancel := context.WithCancel(ctx)
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.Run(runCtx) }()
+
+	deadline := time.Now().Add(2*tick - tick/5)
+	for c.BufferDepth() > 0 && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
+	}
+	logged := logs.String()
+	requests := rec.count()
+	cancel()
+	<-errCh
+
+	// Then: three POSTs, one line, and the line counts all three scrapes.
+	if requests < 3 {
+		t.Fatalf("requests = %d, want at least 3 -- one per oversized scrape", requests)
+	}
+	if got := strings.Count(logged, "reported to hub"); got != 1 {
+		t.Errorf("reported lines = %d, want exactly 1 for a backlog drained in one cycle: %q",
+			got, logged)
+	}
+	if !strings.Contains(logged, "samples=3") {
+		t.Errorf("log output = %q, want samples=3 -- the whole drain, not one batch of it", logged)
 	}
 }
