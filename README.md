@@ -66,7 +66,7 @@ The hub runs its migrations on startup and reports database reachability at
 
 **`PostgreSQL Database directory appears to contain a database; Skipping
 initialization`, on a directory you are sure is empty.** It is not empty. An
-earlier `docker compose up` — including one that aborted on the port above —
+earlier `docker compose up` — including one that aborted for any reason —
 already ran `initdb` there, and neither `down` nor `down -v` touches a bind
 mount. Check rather than assume:
 
@@ -109,6 +109,7 @@ That makes the token the only thing between the internet and an API that mints
 agent tokens and deletes hosts. Generate it with `openssl rand -hex 32` — do
 not invent one — and treat it as the credential to the whole fleet. Per-user
 logins arrive with OIDC in phase 2.
+
 Changing that token logs every open session out — the session cookie is signed
 with a key derived from it.
 

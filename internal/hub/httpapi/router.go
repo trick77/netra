@@ -26,6 +26,12 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Ha
 	rd := read.NewService(s.Pool())
 
 	mux := http.NewServeMux()
+	// The one deliberate exception to the paragraph above: /api/health
+	// answers an unauthenticated caller, from the internet included, because
+	// the compose healthcheck wgets it inside the container with no
+	// credential to present. Its body is fixed -- status, database
+	// reachability, version -- and must stay that way: anything added here is
+	// added for anonymous readers.
 	mux.Handle("GET /api/health", NewHealthHandler(s))
 	mux.Handle("POST /api/agent/v1/ingest", NewIngestHandler(a, s))
 

@@ -65,6 +65,27 @@ describe("App routing", () => {
     expect(await screen.findByText("web-01")).toBeInTheDocument();
   });
 
+  // The overview is remounted by every navigation back to it, so its first
+  // render has no data. Rendering the page anyway showed "No hosts yet" and
+  // a fleet of zeros until the request landed -- an answer about a fleet
+  // nobody had been asked about yet.
+  it("does not claim an empty fleet before the first response lands", async () => {
+    let release: (value: (typeof host)[]) => void = () => {};
+    vi.mocked(api.getHosts).mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+    );
+
+    render(<App />);
+
+    expect(screen.queryByText("No hosts yet")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+
+    release([host]);
+    expect(await screen.findByText("web-01")).toBeInTheDocument();
+  });
+
   // The hub serves index.html for any path that is not a file, so a deep
   // link is a real URL a reload must survive. This is the app's half of
   // that contract.
