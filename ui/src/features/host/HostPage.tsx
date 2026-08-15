@@ -27,7 +27,9 @@ import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { ABSENT, duration, relative } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
-import { rangeWindow, type Range } from "../../lib/range";
+import { clampRange, rangeWindow, type Range } from "../../lib/range";
+import { loadRange } from "../settings/SettingsPage";
+import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
 import { Events } from "./tabs/Events";
 import { Graphs } from "./tabs/Graphs";
 import {
@@ -71,15 +73,11 @@ export function hostTabHref(hostId: number | string, tab: HostTab): string {
   return `/hosts/${hostId}/${tab}`;
 }
 
-// The windows this page OFFERS. The type and the resolution are lib/range's:
-// the hub rejects relative times outright, and one module converting them
-// means one place to be wrong.
-const RANGE_OPTIONS: { value: Range; label: string }[] = [
-  { value: "1h", label: "1h" },
-  { value: "6h", label: "6h" },
-  { value: "24h", label: "24h" },
-  { value: "7d", label: "7d" },
-];
+// The windows this page OFFERS live in ./ranges -- the Graphs tab needs them
+// too, and importing them from here would be a cycle. Re-exported because
+// the screen above clamps a remembered range to this set before fetching:
+// clamping inside would leave the fetch on 30d while the toolbar showed 7d.
+export { RANGE_OPTIONS, RANGE_VALUES };
 
 interface TabData {
   hostMetrics: MetricsResponse | null;
@@ -137,6 +135,14 @@ export interface HostPageProps {
    * only reports which tab was asked for and never navigates itself. */
   tab: HostTab;
   onTabChange: (tab: HostTab) => void;
+  /** The range and its setter, when a screen owns them. Given both, this
+   * page is controlled: the choice lives in the URL and in the remembered
+   * preference, so it survives leaving the page. Given neither -- the
+   * standalone case -- it keeps its own, starting at the remembered
+   * default. Half a pair is a value that cannot change, so the setter is
+   * what decides. */
+  range?: Range;
+  onRangeChange?: (range: Range) => void;
 }
 
 // A host that came up inside the last five minutes is the most interesting
@@ -145,12 +151,26 @@ export interface HostPageProps {
 // the fleet list's Uptime cell used before that column was removed.
 const RECENT_BOOT_S = 300;
 
-export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
+export function HostPage({
+  hostId,
+  tab,
+  onTabChange,
+  range: controlledRange,
+  onRangeChange,
+}: HostPageProps) {
   const [host, setHost] = useState<HostDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // The time range is shared state across tabs: it lives here, above the
-  // tab body, so switching tabs never resets it.
-  const [range, setRange] = useState<Range>("6h");
+  // The time range is shared state across tabs: switching tabs never resets
+  // it. It used to be held here and hardcoded to "6h", which meant this page
+  // had never heard of the range you picked on the fleet and Settings'
+  // stored default did nothing at all. Controlled, it now lives one level up
+  // -- in the URL and in the preference -- and the guarantee about tabs is
+  // unchanged, since it still sits above the tab body either way.
+  const [localRange, setLocalRange] = useState<Range>(
+    () => controlledRange ?? clampRange(loadRange(), RANGE_VALUES),
+  );
+  const range = onRangeChange ? (controlledRange ?? localRange) : localRange;
+  const setRange = onRangeChange ?? setLocalRange;
   const [data, setData] = useState<TabData>(NO_DATA);
   const [reloads, setReloads] = useState(0);
 

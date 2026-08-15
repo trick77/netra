@@ -21,12 +21,17 @@ import { ABSENT, absolute, relative } from "../../lib/format";
 // chart does, because events are sparse and "what happened this week" is the
 // question this page is asked. The type itself is lib/range's.
 
-const RANGES: { value: Range; label: string }[] = [
+export const EVENT_RANGES: { value: Range; label: string }[] = [
   { value: "1h", label: "1h" },
   { value: "24h", label: "24h" },
   { value: "7d", label: "7d" },
   { value: "30d", label: "30d" },
 ];
+
+/** The same set as the bare values clampRange takes. */
+export const EVENT_RANGE_VALUES: readonly Range[] = EVENT_RANGES.map(
+  (o) => o.value,
+);
 
 /** Derived, never received: the events table carries type, subject and
  * detail, and no severity column at all. */
@@ -91,19 +96,35 @@ export const DEFAULT_FILTERS: EventFilters = {
 
 /** The filters as a query string, omitting anything at its default: a URL
  * that spells out every default is noise, and the absent key already means
- * the default. */
+ * the default.
+ *
+ * The RANGE is the exception and is always written. Since it became a
+ * remembered preference, an absent `range` no longer means "24h" -- it means
+ * "whatever the reader's browser remembers", which is precisely the thing a
+ * sent link exists to override. Omitting it when it happened to equal the
+ * sender's default would silently hand the recipient a different window. */
 export function filtersToQuery(filters: EventFilters): string {
   const usp = new URLSearchParams();
   for (const key of Object.keys(DEFAULT_FILTERS) as (keyof EventFilters)[]) {
+    if (key === "range") continue;
     if (filters[key] !== DEFAULT_FILTERS[key]) usp.set(key, filters[key]);
   }
+  usp.set("range", filters.range);
   return usp.toString();
 }
 
 /** The inverse. An unknown range or severity falls back to its default
  * rather than being trusted: a hand-edited URL must not be able to put the
- * page in a state its controls cannot express. */
-export function filtersFromQuery(query: string): EventFilters {
+ * page in a state its controls cannot express.
+ *
+ * `fallbackRange` is what a URL carrying no range resolves to -- the
+ * screen passes the remembered preference, already clamped to the set this
+ * page offers. It defaults to the static one so the function stays usable
+ * on its own. */
+export function filtersFromQuery(
+  query: string,
+  fallbackRange: Range = DEFAULT_FILTERS.range,
+): EventFilters {
   const usp = new URLSearchParams(query);
   const range = usp.get("range");
   const severity = usp.get("severity");
@@ -114,9 +135,9 @@ export function filtersFromQuery(query: string): EventFilters {
     severity: SEVERITIES.includes(severity as EventSeverity)
       ? (severity as EventSeverity)
       : DEFAULT_FILTERS.severity,
-    range: RANGES.some((r) => r.value === range)
+    range: EVENT_RANGES.some((r) => r.value === range)
       ? (range as Range)
-      : DEFAULT_FILTERS.range,
+      : fallbackRange,
   };
 }
 
@@ -264,7 +285,7 @@ export function EventsPage({
 
         <span className="spacer" />
         <Segmented
-          options={RANGES}
+          options={EVENT_RANGES}
           value={filters.range}
           onChange={(range) => set("range", range)}
         />

@@ -26,6 +26,44 @@ export function isRange(value: unknown): value is Range {
 }
 
 /**
+ * Resolves a range against the set a page actually OFFERS.
+ *
+ * The stored default crosses pages, and the pages disagree about which
+ * windows make sense: the fleet stops at 24h, the events log starts there.
+ * So a remembered 7d arriving at the fleet has to become something the
+ * fleet can both fetch and show as pressed -- a Segmented handed a value
+ * outside its options renders every button unpressed, which reads as "no
+ * range selected".
+ *
+ * It WIDENS: the narrowest offered range at least as wide as the one asked
+ * for, and the widest offered when the ask is wider than anything on the
+ * page. Narrowing would send a remembered 6h to the events page's 1h, and
+ * an hour of events is usually empty -- which is exactly why that page does
+ * not offer 6h in the first place. Widening lands on 24h instead, which is
+ * the answer someone asking for 6h of events wanted.
+ *
+ * The stored preference is NOT rewritten by this. Clamping is what one page
+ * displays, not a change of mind: going back to the host page must still
+ * show the 7d that was picked there.
+ */
+export function clampRange(requested: Range, offered: readonly Range[]): Range {
+  if (offered.includes(requested)) return requested;
+  // RANGES is ascending, so the first offered range at or past the asked-for
+  // one is the narrowest that is still at least as wide.
+  const asked = RANGES.indexOf(requested);
+  let widest: Range | undefined;
+  for (const range of RANGES) {
+    if (!offered.includes(range)) continue;
+    widest = range;
+    if (RANGES.indexOf(range) >= asked) return range;
+  }
+  // Nothing offered is as wide: the widest there is. `offered` empty is not
+  // a case any page produces, and falling back to the request keeps this
+  // total rather than throwing at a caller that cannot act on it.
+  return widest ?? requested;
+}
+
+/**
  * `seconds` is how far back the range reaches; `step` is the bucket the hub
  * should aggregate to, as a Go duration matching parseStep.
  *

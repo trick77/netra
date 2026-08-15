@@ -174,15 +174,19 @@ describe("App routing", () => {
   });
 
   // The fleet offers three windows; Settings can store five, and a link can
-  // carry any of them. Being handed one this page does not offer must leave
-  // the page working rather than blank -- the range still reaches the charts
-  // and their labels, it simply has no button to light up.
-  it("still renders when handed a range it does not offer", async () => {
+  // carry any of them. Being handed one this page does not offer used to
+  // leave every button unpressed, which reads as "no range selected". It is
+  // clamped to the widest this page has instead.
+  it("clamps a range it does not offer to one it can show", async () => {
     goTo("/?range=30d");
 
     render(<App />);
 
     expect(await screen.findByText("web-01")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "24h" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 
   // A toggle is a way of looking at this page, not a different place:
@@ -196,5 +200,112 @@ describe("App routing", () => {
 
     await waitFor(() => expect(window.location.search).toContain("range=1h"));
     expect(window.history.length).toBe(before);
+  });
+});
+
+/**
+ * The range used to scatter: every page fell back to its own hardcoded
+ * literal -- the host page to "6h", the fleet to "24h" -- because nothing
+ * ever wrote a choice back. Which range you got depended on where you were
+ * rather than on what you had picked.
+ */
+describe("the range sticks", () => {
+  function hostDetail() {
+    return {
+      ...host,
+      site_name: null,
+      os: null,
+      kernel: null,
+      arch: null,
+      virtualization: null,
+      agent_version: null,
+      capabilities: [],
+    } as unknown as api.HostDetail;
+  }
+
+  function noMetrics() {
+    return {
+      family: "host",
+      tier: "raw",
+      step_s: 60,
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T01:00:00Z" },
+      requested_window: {
+        from: "2026-08-10T00:00:00Z",
+        to: "2026-08-10T01:00:00Z",
+      },
+      warnings: [],
+      key_columns: [],
+      columns: [],
+      series: [],
+      truncated: false,
+    };
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.mocked(api.getHost).mockResolvedValue(hostDetail());
+    vi.mocked(api.getMetrics).mockResolvedValue(
+      noMetrics() as unknown as api.MetricsResponse,
+    );
+  });
+
+  function pressed(name: string) {
+    return screen.getByRole("button", { name }).getAttribute("aria-pressed");
+  }
+
+  it("carries a fleet choice to the host page", async () => {
+    const fleet = render(<App />);
+    await screen.findByText("web-01");
+
+    await userEvent.click(screen.getByRole("button", { name: "1h" }));
+    await waitFor(() => expect(localStorage.getItem("netra.range")).toBe("1h"));
+
+    // Unmounted, not left on screen: a second App beside the first would put
+    // two "1h" buttons in the document and the query below could not tell
+    // which page it was asking about.
+    fleet.unmount();
+    goTo("/hosts/3/graphs");
+    render(<App />);
+
+    // 6h is the literal this page used to hardcode -- the assertion is that
+    // it no longer wins over what was actually picked.
+    await waitFor(() => expect(pressed("1h")).toBe("true"));
+    expect(pressed("6h")).toBe("false");
+  });
+
+  // The host page offers 7d and the fleet does not. The fleet has to show
+  // something it can press, but the CHOICE is not overwritten -- coming back
+  // to a page that offers 7d shows 7d again, not the narrowed version some
+  // other page had to display.
+  it("shows a wider choice clamped without forgetting it", async () => {
+    localStorage.setItem("netra.range", "7d");
+
+    render(<App />);
+    await screen.findByText("web-01");
+
+    expect(pressed("24h")).toBe("true");
+    expect(localStorage.getItem("netra.range")).toBe("7d");
+  });
+
+  // A link is the one thing that must beat the preference: it exists to show
+  // someone the view you were looking at, not the view they last chose.
+  it("lets an explicit link win over the remembered choice", async () => {
+    localStorage.setItem("netra.range", "24h");
+    goTo("/?range=1h");
+
+    render(<App />);
+    await screen.findByText("web-01");
+
+    expect(pressed("1h")).toBe("true");
+  });
+
+  // The store is user-editable and also whatever an older build wrote.
+  it("falls back to the default rather than erroring on a stored nonsense", async () => {
+    localStorage.setItem("netra.range", "99y");
+
+    render(<App />);
+
+    expect(await screen.findByText("web-01")).toBeInTheDocument();
+    expect(pressed("24h")).toBe("true");
   });
 });

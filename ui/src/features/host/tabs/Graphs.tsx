@@ -15,6 +15,7 @@ import {
 } from "../../../lib/metrics";
 import { ABSENT, bytes, duration, percent } from "../../../lib/format";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
+import { RANGE_VALUES } from "../ranges";
 
 /** See Overview.tsx for why every column lookup on these pages is
  * optional: column() throws during render for a column the answering tier
@@ -531,6 +532,10 @@ function Panel({
       window={res?.window ?? null}
       range={range}
       onRangeChange={onRangeChange}
+      // Only what the host page's own picker offers: the enlarged view used
+      // to show all five, so 30d chosen here handed the page a range its
+      // toolbar had no button for and every one of them came back unpressed.
+      ranges={RANGE_VALUES}
     />
   );
 }
