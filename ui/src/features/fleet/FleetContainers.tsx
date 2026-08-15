@@ -4,6 +4,7 @@ import { Table, type Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
 import { ABSENT } from "../../lib/format";
 import type { Container } from "../../lib/api";
+import { fleetContainerNotes, type CapableHost } from "../../lib/containers";
 import { Sparkline } from "../../ui/charts/Sparkline";
 import { rangeLabel, type Range } from "../../lib/range";
 
@@ -193,6 +194,14 @@ export interface FleetContainersProps {
   loaded?: boolean;
   /** Passed through to the charts' accessible names. */
   range?: Range;
+  /**
+   * The fleet's hosts, for their `containers` capability alone. A host that
+   * reports `no-cgroup-scopes` contributes no rows at all, so nothing in
+   * `rows` can explain the gap -- the explanation has to come from the hosts
+   * the rows are missing from. Optional: a caller that has no host list gets
+   * the same view as before.
+   */
+  hosts?: readonly CapableHost[];
 }
 
 export function FleetContainers({
@@ -200,7 +209,16 @@ export function FleetContainers({
   showHost,
   loaded = true,
   range = "24h",
+  hosts,
 }: FleetContainersProps) {
+  // Only once the fan-out has answered. While it is still running the list is
+  // short for a reason that has nothing to do with any capability, and
+  // "incomplete" would be a different and wronger sentence than "not read
+  // yet".
+  const notes = loaded
+    ? fleetContainerNotes(hosts ?? [], { partial: rows.length > 0 })
+    : [];
+
   if (rows.length === 0) {
     // An empty <table> renders as a bare header rail, which reads as a
     // loading glitch rather than as "nothing here" -- same reasoning as
@@ -210,10 +228,18 @@ export function FleetContainers({
     // fetch had never run told an operator their fleet ran no containers
     // when nobody had looked.
     return loaded ? (
+      // With a capability to show, the empty state stops being a shrug. "No
+      // host has reported a container" is true of a fleet running none and of
+      // a fleet whose agents cannot see the ones it runs, and only the second
+      // is something to fix.
       <EmptyState
         icon={Boxes}
-        title="No containers"
-        body="No host in this fleet has reported a container."
+        title={notes.length > 0 ? "No containers collected" : "No containers"}
+        body={
+          notes.length > 0
+            ? notes.join(" ")
+            : "No host in this fleet has reported a container."
+        }
       />
     ) : (
       <EmptyState
@@ -231,11 +257,21 @@ export function FleetContainers({
   const scales = charted ? trendScales(rows) : {};
 
   return (
-    <Table
-      columns={containerColumns({ showHost, range, ...scales })}
-      rows={rows}
-      // Two hosts can run the same container_key, so identity is the pair.
-      rowKey={(row) => `${row.host_id}:${row.container_key}`}
-    />
+    <>
+      {/* Above the table, not below it: a list that is short by a whole host
+          looks complete, and an operator who has already read it has no
+          reason to keep scrolling. */}
+      {notes.map((note) => (
+        <p className="note" key={note}>
+          {note}
+        </p>
+      ))}
+      <Table
+        columns={containerColumns({ showHost, range, ...scales })}
+        rows={rows}
+        // Two hosts can run the same container_key, so identity is the pair.
+        rowKey={(row) => `${row.host_id}:${row.container_key}`}
+      />
+    </>
   );
 }

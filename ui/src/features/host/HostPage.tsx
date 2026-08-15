@@ -453,6 +453,9 @@ export function HostPage({
           rows={data.containers ?? []}
           metrics={data.containerMetrics ?? null}
           range={range}
+          // Why the list is empty, or why its rows are named after 64 hex
+          // digits. The agent is the only party that knows, and it said so.
+          capabilities={host.capabilities}
         />
       )}
       {tab === "filesystems" && (

@@ -113,6 +113,48 @@ func TestIntegrationHostDetailSerialisesCapabilities(t *testing.T) {
 	}
 }
 
+// The LIST carries capabilities too, and that is load-bearing rather than
+// symmetric: the fleet's container view asks this endpoint and nothing else, so
+// a host reporting `containers: no-cgroup-scopes` -- which contributes no
+// containers at all -- can only be explained there. Without this the page shows
+// a fleet that appears to run nothing and gives no reason.
+//
+// It also pins the shadowing hazard: Capabilities lives on HostSummary, which
+// HostDetail embeds. Re-declaring it on the detail would compile, serialise
+// correctly, and leave the summary's copy empty forever.
+func TestIntegrationHostListSerialisesCapabilities(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	id, _ := createHost(t, srv, "listed")
+
+	resp := doAdmin(t, srv, http.MethodGet, "/api/v1/hosts", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := readBody(t, resp)
+	if !strings.Contains(body, `"capabilities":{}`) {
+		t.Errorf("body = %s, want an empty capabilities object rather than null", body)
+	}
+
+	if _, err := s.Pool().Exec(context.Background(),
+		`UPDATE hosts SET capabilities = '{"containers":"no-cgroup-scopes"}'::jsonb WHERE id = $1`,
+		id); err != nil {
+		t.Fatalf("seed capabilities: %v", err)
+	}
+
+	resp = doAdmin(t, srv, http.MethodGet, "/api/v1/hosts", "")
+	var hosts []struct {
+		Hostname     string            `json:"hostname"`
+		Capabilities map[string]string `json:"capabilities"`
+	}
+	decodeJSON(t, resp, &hosts)
+	if len(hosts) != 1 {
+		t.Fatalf("got %d hosts, want 1", len(hosts))
+	}
+	if hosts[0].Capabilities["containers"] != "no-cgroup-scopes" {
+		t.Errorf("capabilities = %v, want containers: no-cgroup-scopes", hosts[0].Capabilities)
+	}
+}
+
 func TestIntegrationReadEndpointsAnswer404ForAnUnknownHost(t *testing.T) {
 	srv, _ := newAdminFixture(t)
 

@@ -477,6 +477,11 @@ export function FleetPage({
           showHost
           loaded={containersKnown}
           range={range}
+          // hostRows, not visibleHosts: the point of the note is a host that
+          // contributed NO container rows, and the filter is about the rows
+          // that are there. A host filtered out of the list is exactly the
+          // host whose absence still needs explaining.
+          hosts={hostRows}
         />
       )}
     </>

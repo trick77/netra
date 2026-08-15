@@ -131,3 +131,73 @@ describe("FleetContainers", () => {
     expect(screen.queryByRole("columnheader", { name: "CPU" })).toBeNull();
   });
 });
+
+// A host whose cgroup hierarchy is not mounted contributes NO rows, so nothing
+// in `rows` can explain the gap -- the explanation has to come from the hosts
+// the rows are missing from. Before this, a misconfigured fleet was
+// indistinguishable from a fleet running nothing.
+describe("FleetContainers and the containers capability", () => {
+  const broken = {
+    hostname: "db-01",
+    capabilities: { containers: "no-cgroup-scopes" },
+  };
+
+  it("explains an empty list instead of shrugging at it", () => {
+    render(<FleetContainers rows={[]} showHost loaded hosts={[broken]} />);
+
+    expect(screen.getByText("No containers collected")).toBeInTheDocument();
+    expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("No host in this fleet has reported a container."),
+    ).toBeNull();
+  });
+
+  // The generic wording is still right for a fleet that genuinely runs none.
+  it("keeps the plain empty state when no host reported a problem", () => {
+    render(
+      <FleetContainers
+        rows={[]}
+        showHost
+        loaded
+        hosts={[{ hostname: "db-01", capabilities: {} }]}
+      />,
+    );
+
+    expect(
+      screen.getByText("No host in this fleet has reported a container."),
+    ).toBeInTheDocument();
+  });
+
+  // The mixed fleet: rows present, and still short by a whole host.
+  it("says a non-empty list is incomplete, above the table", () => {
+    const { container } = render(
+      <FleetContainers
+        rows={[makeRow({ host_id: 9, hostname: "web-01" })]}
+        showHost
+        loaded
+        hosts={[broken, { hostname: "web-01", capabilities: {} }]}
+      />,
+    );
+
+    const note = screen.getByText(/This list is incomplete/);
+    expect(note).toBeInTheDocument();
+    expect(note.textContent).toContain("db-01");
+    // Above the table, not below it: a list short by a host looks complete,
+    // and nobody scrolls past a table they believe is finished.
+    const table = container.querySelector("table");
+    expect(
+      note.compareDocumentPosition(table!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  // Still fetching is a different fact from incomplete, and only one of them
+  // is a statement about the fleet.
+  it("stays quiet while the fan-out is still running", () => {
+    render(
+      <FleetContainers rows={[]} showHost loaded={false} hosts={[broken]} />,
+    );
+
+    expect(screen.getByText("Containers not read yet")).toBeInTheDocument();
+    expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
+  });
+});
