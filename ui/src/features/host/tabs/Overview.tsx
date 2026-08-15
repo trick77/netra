@@ -28,6 +28,7 @@ import {
   relative,
 } from "../../../lib/format";
 import { Badge, type Severity } from "../../../ui/Badge";
+import { isReporting } from "../../../lib/host";
 import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
@@ -573,6 +574,13 @@ export function Overview({
   // fleet row uses, so the two agree about one host.
   const ingress = sumInterfaces(netMetrics, "rx_bytes");
   const egress = sumInterfaces(netMetrics, "tx_bytes");
+  // The Traffic card's NUMBERS, as opposed to the series beside them: gauges
+  // off host_current, blanked when the host is not reporting. isReporting is
+  // the fleet list's predicate too, so a host cannot read offline there and
+  // busy here.
+  const live = isReporting(host, now);
+  const currentRx = live ? host.net_rx_bytes : null;
+  const currentTx = live ? host.net_tx_bytes : null;
 
   const memTotal = latest(hostMetrics, "mem_total") ?? host.memory_total;
   const memUsed = latest(hostMetrics, "mem_used") ?? host.mem_used;
@@ -820,9 +828,15 @@ export function Overview({
                   the RANGE -- the raw instantaneous rate at 1h, a
                   five-minute average from a quarter of an hour ago at 6h and
                   wider -- so widening the window changed what "now" meant.
-                  The sparkline still follows the range; the rates do not. */}
-              <span className="rate">↑ {byterate(host.net_rx_bytes)} in</span>
-              <span className="rate">↓ {byterate(host.net_tx_bytes)} out</span>
+                  The sparkline still follows the range; the rates do not.
+
+                  Gated on the host still reporting: the gauge is the one
+                  number here that does not go absent by itself when the
+                  agent dies -- host_current keeps the last pair it was
+                  written -- and "the agent is down" must not render as
+                  "traffic is steady". */}
+              <span className="rate">↑ {byterate(currentRx)} in</span>
+              <span className="rate">↓ {byterate(currentTx)} out</span>
             </div>
           </div>
         )}

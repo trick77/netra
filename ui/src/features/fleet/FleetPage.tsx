@@ -404,7 +404,7 @@ export function FleetPage({
             worse than one that plainly is not. */}
         <StatTile
           label="Fleet traffic"
-          value={fleetTraffic(hostRows)}
+          value={fleetTraffic(hostRows, now)}
           // ingress + egress, the words this app already uses for the two
           // directions: Graphs.tsx names its bands that ("not rx and tx --
           // the direction is the point of this chart"), and both traffic
@@ -508,10 +508,20 @@ function describe(err: unknown): string {
 // second-to-last slot, the old trailing-null check skipped that host, and it
 // silently left the fleet total until its next post. A gauge has no grid and
 // no last slot.
-function fleetTraffic(rows: readonly HostRow[]): string {
+//
+// A host that is not reporting is skipped entirely. The gauge is the one
+// thing about it that does NOT go absent when its agent dies -- host_current
+// keeps the last written pair, and the upsert's coalesce is there to make
+// sure it keeps it -- so without this the tile would count a machine that
+// has been powered off for a week at its final rate. The trailing-null check
+// this replaced did that job by accident; isReporting does it on purpose,
+// and it is the same predicate the "Hosts reporting" tile directly above
+// uses, so the two tiles cannot disagree about which hosts exist right now.
+function fleetTraffic(rows: readonly HostRow[], now: Date): string {
   let total = 0;
   let any = false;
   for (const row of rows) {
+    if (!isReporting(row, now)) continue;
     for (const rate of [row.net_rx_bytes, row.net_tx_bytes]) {
       // A host that has never reported traffic -- or whose net collector is
       // off -- contributes nothing rather than a zero, so it cannot drag the

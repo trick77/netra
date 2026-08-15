@@ -14,9 +14,8 @@ import { Overlay } from "../../ui/charts/Overlay";
 import { SPARK_WIDTH } from "../../ui/charts/size";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
 import { ABSENT, byterate } from "../../lib/format";
-import { latestValue } from "../../lib/metrics";
 import type { Host } from "../../lib/api";
-import { hostStatus } from "../../lib/host";
+import { hostStatus, isReporting } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
 
 // The range is only ever a label here: this file never resolves one into a
@@ -198,7 +197,12 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
 // The scalar has no bucket and no window, so it is the same at every range.
 // The sparkline still follows the range, which is what a sparkline is for.
 // A null is absent rather than zero: a host that stopped reporting must not
-// read as a host moving no traffic.
+// read as a host moving no traffic. The gauge is the one thing about such a
+// host that does NOT go absent on its own -- host_current keeps the last
+// pair it was written, deliberately -- so an offline host is gated back to
+// absent here. Without it the row drew a steady rate beside its own
+// "offline" badge, which is exactly the frozen-in-place reading the series
+// version was written to avoid.
 
 // Both rates render in identical type, weighted only by an arrow glyph --
 // netra cannot know whether a given host is meant to push or pull more
@@ -207,8 +211,9 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
 // distinguisher, so each rate carries its own aria-label naming the
 // direction in words.
 function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
-  const rx = row.net_rx_bytes;
-  const tx = row.net_tx_bytes;
+  const live = isReporting(row);
+  const rx = live ? row.net_rx_bytes : null;
+  const tx = live ? row.net_tx_bytes : null;
   return (
     <div className="traffic-cell">
       <UpDownSparkline

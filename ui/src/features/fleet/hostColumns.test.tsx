@@ -233,7 +233,13 @@ describe("hostColumns", () => {
     it("renders traffic in bytes per second, not bits", () => {
       const cols = hostColumns("1h");
       const trafficCol = cols.find((c) => c.header === "Traffic")!;
-      const row = makeRow({ net_rx_bytes: 2e6, net_tx_bytes: 1e6 });
+      // Reporting now: the cell blanks the rates of a host that has gone
+      // quiet, and the row fixture's last_seen is fixed in the past.
+      const row = makeRow({
+        last_seen: new Date(Date.now() - 10_000).toISOString(),
+        net_rx_bytes: 2e6,
+        net_tx_bytes: 1e6,
+      });
       const { container } = render(<>{trafficCol.cell(row)}</>);
 
       expect(container.textContent).toContain("2 MB/s");
@@ -251,6 +257,7 @@ describe("hostColumns", () => {
       const cols = hostColumns("1h");
       const trafficCol = cols.find((c) => c.header === "Traffic")!;
       const row = makeRow({
+        last_seen: new Date(Date.now() - 10_000).toISOString(),
         net_rx_bytes: 2e6,
         net_tx_bytes: 1e6,
         rx: [1e6, 9e6],
@@ -261,6 +268,27 @@ describe("hostColumns", () => {
       expect(container.textContent).toContain("2 MB/s");
       expect(container.textContent).toContain("1 MB/s");
       expect(container.textContent).not.toContain("9 MB/s");
+    });
+
+    // The gauge is the one number on this row that does not go absent on its
+    // own when the agent dies: host_current keeps the last pair it was
+    // written, and the upsert coalesces so a post carrying no net samples
+    // cannot clear it either. Ungated, the cell drew a steady rate beside
+    // this row's own "offline" badge -- "the agent is down" rendered as
+    // "traffic is steady", which is exactly what the series version's
+    // trailing-null check used to prevent.
+    it("blanks the rates of a host that stopped reporting", () => {
+      const cols = hostColumns("1h");
+      const trafficCol = cols.find((c) => c.header === "Traffic")!;
+      const row = makeRow({
+        last_seen: new Date(Date.now() - 600_000).toISOString(),
+        net_rx_bytes: 2e6,
+        net_tx_bytes: 1e6,
+      });
+      const { container } = render(<>{trafficCol.cell(row)}</>);
+
+      expect(container.textContent).not.toContain("MB/s");
+      expect(container.textContent).toContain("—");
     });
   });
 

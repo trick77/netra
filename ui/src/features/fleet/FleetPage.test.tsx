@@ -256,6 +256,48 @@ describe("FleetPage header", () => {
 
     expect(within(trafficTile()).getByText(/2 MB\/s/)).toBeInTheDocument();
   });
+
+  // The gauge does not go absent when an agent dies -- host_current keeps
+  // the last pair it was written, and the upsert coalesces so a post with no
+  // net samples cannot clear it. So a host that is not reporting is skipped
+  // here, the same way the trailing-null check used to skip it: otherwise a
+  // machine powered off a week ago keeps counting towards a tile that says
+  // "right now", and the "Hosts reporting" tile directly above contradicts
+  // it on the same screen.
+  it("leaves a host that stopped reporting out of the fleet total", () => {
+    renderPage({
+      rows: [
+        makeRow({ net_rx_bytes: 1_000_000, net_tx_bytes: 1_000_000 }),
+        makeRow({
+          id: 2,
+          hostname: "old-01",
+          last_seen: "2026-08-10T13:00:00Z",
+          net_rx_bytes: 9_000_000,
+          net_tx_bytes: 9_000_000,
+        }),
+      ],
+    });
+
+    expect(within(trafficTile()).getByText(/2 MB\/s/)).toBeInTheDocument();
+  });
+
+  // And a fleet where every host has gone quiet has an UNKNOWN throughput,
+  // not one of zero: skipping the last host must reach the absent marker
+  // rather than falling through to "0 b/s", which reads as a fleet that is
+  // up and idle.
+  it("renders an entirely offline fleet as absent, never as zero", () => {
+    renderPage({
+      rows: [
+        makeRow({
+          last_seen: "2026-08-10T13:00:00Z",
+          net_rx_bytes: 9_000_000,
+          net_tx_bytes: 9_000_000,
+        }),
+      ],
+    });
+
+    expect(within(trafficTile()).getByText(ABSENT)).toBeInTheDocument();
+  });
 });
 
 describe("buildHostRows", () => {

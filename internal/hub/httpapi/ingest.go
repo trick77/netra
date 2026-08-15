@@ -140,7 +140,16 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// written by storeFamilies below, which can 503; querying for the
 		// sum after that insert would drag this upsert past the failure path
 		// the comment above spends twenty lines keeping it in front of.
-		rx, tx := latestNetTotals(req.GetNet())
+		//
+		// Through the same bounds check every other family gets. A row the
+		// hub will not store must not reach a gauge either -- and the
+		// far-future case is the one the comment on maxPlausibleFuture calls
+		// out by name, because host_current is exactly what it poisons. The
+		// dropped count is discarded rather than logged: storeFamilies
+		// filters and logs this same family a few lines below, and warning
+		// twice about one poisoned post would read as two of them.
+		nets, _ := filterByTs(req.GetNet(), time.Now().Add(maxPlausibleFuture))
+		rx, tx := latestNetTotals(nets)
 		if err := h.store.UpsertHostCurrent(ctx, hostID, s, rx, tx); err != nil {
 			slog.Error("upsert host_current", "host_id", hostID, "err", err)
 		}
@@ -229,13 +238,10 @@ func (h *IngestHandler) reconcileMetadata(ctx context.Context, hostID int32, req
 // (internal/agent/collector/network.go), so what arrives here is traffic
 // that actually crossed something.
 //
-// Future-dated rows are NOT excluded here, unlike the ones storeFamilies
-// writes. A timestamp far enough ahead to be dropped there would have to beat
-// the host sample's own ts to win this comparison, and that sample has
-// already been through the same bound before this runs -- so a poison row
-// reaching here means the whole post was already accepted as plausible. The
-// cost of being wrong is one stale rate on one tile until the next scrape,
-// which is not worth a second copy of the clock.
+// Implausible timestamps are the CALLER's job: this compares net samples
+// only against each other, never against the host sample's ts, so a
+// far-future row would win the comparison outright no matter how sane the
+// rest of the post was. The call site filters with the shared bound first.
 func latestNetTotals(nets []*netrav1.NetSample) (rx, tx *float64) {
 	var at int64
 	var rxSum, txSum float64

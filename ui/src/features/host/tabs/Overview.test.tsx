@@ -505,6 +505,28 @@ describe("Overview processor panel", () => {
 
     expect(within(traffic).getAllByText(/9 MB\/s/).length).toBe(2);
   });
+
+  // The same rule as before the move to a gauge, now that the gauge is what
+  // could break it: host_current keeps a dead host's last pair for as long
+  // as the row exists, so the card gates on the host still reporting. A
+  // frozen rate here would sit under a header already saying "offline".
+  it("blanks the rates of a host that stopped reporting, gauge or not", () => {
+    renderOverview({
+      netMetrics,
+      host: {
+        ...host,
+        last_seen: "2026-08-10T00:00:00Z",
+        net_rx_bytes: 9_000_000,
+        net_tx_bytes: 9_000_000,
+      },
+    });
+    const traffic = screen.getByRole("region", { name: "Traffic" });
+
+    expect(traffic.textContent).not.toMatch(/MB\/s/);
+    expect(
+      within(traffic).getAllByText(new RegExp(ABSENT)).length,
+    ).toBeGreaterThan(0);
+  });
 });
 
 // The exhaustion gauges. Nothing else in netra answers "am I about to hit a
