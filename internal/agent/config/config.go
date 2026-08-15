@@ -51,6 +51,15 @@ type Config struct {
 
 	// CgroupRoot is the mounted cgroup v2 hierarchy the container collector
 	// reads. cgroup v1 is a permanent non-goal (spec §1).
+	//
+	// The default is the HOST's hierarchy bind-mounted to /host/sys/fs/cgroup,
+	// not the container's own /sys/fs/cgroup, and that is deliberate twice
+	// over. Docker's default cgroup namespace is private, so a container's
+	// own /sys/fs/cgroup is rooted at its own cgroup and contains no sibling
+	// container scopes at all -- the collector walked it, found nothing, and
+	// reported no error, because an empty walk is not a failure. Pointing the
+	// default at a path that only EXISTS when the mount was granted turns that
+	// silence into a logged collector error instead.
 	CgroupRoot string
 
 	// DpkgStatus and ApkInstalled are the package databases. Whichever exists
@@ -84,7 +93,7 @@ func Load() (Config, error) {
 		UtmpPath: envOr("NETRA_UTMP_PATH", "/var/run/utmp"),
 		PidHost:  boolEnv("NETRA_PID_HOST"),
 
-		CgroupRoot:   envOr("NETRA_CGROUP_ROOT", "/sys/fs/cgroup"),
+		CgroupRoot:   envOr("NETRA_CGROUP_ROOT", "/host/sys/fs/cgroup"),
 		DpkgStatus:   envOr("NETRA_DPKG_STATUS", "/var/lib/dpkg/status"),
 		ApkInstalled: envOr("NETRA_APK_INSTALLED", "/lib/apk/db/installed"),
 	}

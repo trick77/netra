@@ -295,6 +295,7 @@ func (c *Client) resendInventory() {
 // Collectors are run here directly rather than through collect() for that
 // reason: collect() has no way to leave one out.
 func (c *Client) Prime(ctx context.Context) {
+	primed, failed := 0, 0
 	for _, col := range c.collectors {
 		if b, ok := col.(collector.BaselineEmitter); ok && b.EmitsBaseline() {
 			continue
@@ -302,7 +303,47 @@ func (c *Client) Prime(ctx context.Context) {
 		if _, err := col.Collect(ctx); err != nil {
 			// Priming is best-effort: the scheduled scrape reports the same
 			// failure, with somewhere to record it.
+			failed++
 			slog.Warn("priming collector failed", "collector", col.Name(), "err", err)
+			continue
+		}
+		primed++
+	}
+
+	slog.Info("primed collectors", "ok", primed, "failed", failed,
+		"total", len(c.collectors))
+	c.logStartupInventory()
+}
+
+// logStartupInventory says what this agent can actually see, once, at startup.
+//
+// The agent used to log its version and its hub URL and then nothing until the
+// first scrape a minute later, which meant a collector that was mounted wrong
+// looked exactly like a collector that had nothing to report -- for as long as
+// nobody thought to query the database and count. The one case that motivated
+// this is worth stating: the container collector walked an unmounted cgroup
+// root, found nothing, raised no error because an empty walk is not one, and
+// reported zero containers on a host running thirty. Nothing anywhere said so.
+//
+// Two lines per fact at most, and only for collectors with something to say: a
+// summary of what was found, or a capability explaining what could not be. A
+// healthy agent stays quiet enough to read.
+func (c *Client) logStartupInventory() {
+	for _, col := range c.collectors {
+		if s, ok := col.(collector.StartupSummarizer); ok {
+			if summary := s.StartupSummary(); summary != "" {
+				slog.Info("collector ready", "collector", col.Name(), "saw", summary)
+			}
+		}
+		r, ok := col.(collector.CapabilityReporter)
+		if !ok {
+			continue
+		}
+		for key, value := range r.Capabilities() {
+			// Warn, not Info: every capability is something the operator
+			// either chose not to grant or did not realise they had not.
+			slog.Warn("collector limited", "collector", col.Name(),
+				"capability", key, "reason", value)
 		}
 	}
 }

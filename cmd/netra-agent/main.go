@@ -96,5 +96,10 @@ func run() error {
 	// unlike ScrapeOnce.
 	c.Prime(ctx)
 
+	// Before Run, because Run blocks on its ticker for a full interval before
+	// the first flush -- so without this the log says nothing about a wrong URL
+	// or a revoked token until a minute after the operator stopped watching.
+	c.CheckHub(ctx)
+
 	return c.Run(ctx)
 }

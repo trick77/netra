@@ -147,9 +147,15 @@ assert_contains "$ENVOUT" 'NETRA_TOKEN=nta_a&b/c\d' \
 
 # --- 3. an empty volumes block still renders valid YAML -----------------------
 #
-# Zero accepted filesystems is legitimate (§6.4, a container-only host). The
-# `volumes:` KEY lives inside the block, so an empty block removes the key
+# The `volumes:` KEY lives inside the block, so an empty block removes the key
 # entirely rather than leaving a dangling null mapping.
+#
+# This drives render_template directly rather than build_volume_block, and that
+# distinction now matters: build_volume_block emits the cgroup bind
+# unconditionally, so it can no longer return an empty block on any host
+# check_cgroup_v2 lets through. The renderer's contract is tested here anyway --
+# it is the renderer's, not that function's, and the same marker-deleting rule
+# carries cap_add, devices and pid, each of which IS routinely empty.
 NETRA_BLK_VOLUMES=""
 NETRA_BLK_DEVICES=""
 NETRA_BLK_CAP_ADD=""

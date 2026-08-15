@@ -2139,6 +2139,22 @@ build_volume_block() {
 ${FS_MOUNTS:-}
 EOF
 
+    # Unconditional, unlike everything around it: check_cgroup_v2 has already
+    # hard-failed the run on a host without unified cgroup v2, so reaching here
+    # means this host has one. It is also the mount the container collectors
+    # cannot work without -- the container LIST is the walk of this tree, not
+    # the Docker socket below.
+    #
+    # The literal, NOT $P_CGROUP: that is a PROBE path and carries
+    # $NETRA_SETUP_ROOT, and a source here is an emit path. Same rule every
+    # other bind in this function follows.
+    #
+    # The TARGET is not /sys/fs/cgroup. Docker's default cgroup namespace is
+    # private, so the agent's own /sys/fs/cgroup is rooted at its own cgroup and
+    # holds no other container's scope; giving the host's tree its own path
+    # also means a missing mount fails loudly instead of walking an empty one.
+    _bv_add "/sys/fs/cgroup" "/host/sys/fs/cgroup"
+
     if [ "${DOCKERSOCK_ENABLED:-0}" = 1 ]; then
         _bv_add "/var/run/docker.sock" "/var/run/docker.sock"
     fi

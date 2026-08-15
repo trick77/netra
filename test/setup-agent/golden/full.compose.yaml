@@ -45,6 +45,10 @@ services:
         target: /netra/fs/ark
         read_only: true
       - type: bind
+        source: "/sys/fs/cgroup"
+        target: /host/sys/fs/cgroup
+        read_only: true
+      - type: bind
         source: "/var/run/docker.sock"
         target: /var/run/docker.sock
         read_only: true

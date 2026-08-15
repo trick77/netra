@@ -251,13 +251,21 @@ answers, no compatibility promise — and is not a provisioning interface.)
 | --- | --- |
 | Nothing but `/proc` and `/sys` | CPU, per-core CPU, memory, load, kernelstat, vmstat, limits, netstat, procs, users, disk I/O, sensors, mdraid |
 | `network_mode: host` | network, addresses |
-| A mount | containers (cgroup v2 + Docker socket), filesystems (marker dirs), systemd (D-Bus socket), packages (dpkg or apk db) |
+| A mount | containers (the host's cgroup v2 hierarchy, plus the Docker socket for names), filesystems (marker dirs), systemd (D-Bus socket), packages (dpkg or apk db) |
 | An explicit privilege | SMART (`SYS_RAWIO`, plus `SYS_ADMIN` for NVMe, plus `devices:`), processes (`pid: host`) |
 
 A collector that cannot run reports **why** as a capability and is skipped. It
 never prevents the agent from starting, and an unavailable metric is left NULL
 rather than reported as 0. So a host that grants none of the optional access
 still delivers everything in the first row.
+
+Containers are the one collector whose two mounts do different jobs. The host's
+cgroup v2 hierarchy — bound to `/host/sys/fs/cgroup`, granted automatically by
+both deploy paths — supplies the container **list** and every metric. The Docker
+socket only names them: without it containers still report in full, keyed by raw
+64-hex id instead of compose `project/service`. Do not point
+`NETRA_CGROUP_ROOT` at the agent's own `/sys/fs/cgroup`; Docker's default cgroup
+namespace is private, so that tree holds no other container's scope.
 
 Two long-standing exceptions worth stating up front: the process count needs
 `pid: host` (and `NETRA_PID_HOST=1` to match), and the logged-in session count

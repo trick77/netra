@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -93,6 +94,16 @@ type Containers struct {
 
 	socketAbsent bool
 
+	// lastScopes and lastListed are what the most recent scrape actually saw:
+	// container cgroups found by the walk, and containers the Docker socket
+	// named. Kept as a PAIR because neither number means much alone -- it is
+	// the mismatch between them that identifies the failure this collector was
+	// blind to for its whole life: scopes 0 against listed 30 is a host whose
+	// cgroup hierarchy was never mounted, which an empty walk reports as
+	// success. Both are guarded by mu; see Capabilities.
+	lastScopes int
+	lastListed int
+
 	// hostNetNS identifies the host's network namespace, resolved once.
 	// Empty when it could not be read, which makes per-container networking
 	// unmeasurable rather than unguarded -- see containerNet.
@@ -134,6 +145,15 @@ const (
 	// capNetNoHostNS: /proc/1/ns/net or the container's own is unreadable, so
 	// a host-networked container cannot be told from a bridged one.
 	capNetNoHostNS = "no-host-netns"
+
+	// capNoCgroupScopes: the Docker socket named containers that the cgroup
+	// walk could not find. cgroupRoot is either unmounted or is the agent's own
+	// private-namespace hierarchy, which contains no sibling container's scope.
+	//
+	// Deliberately NOT raised when the socket named nothing: a host genuinely
+	// running no containers must not be flagged as misconfigured, and with the
+	// socket absent there is no second opinion to disagree with.
+	capNoCgroupScopes = "no-cgroup-scopes"
 )
 
 // Capabilities implements CapabilityReporter.
@@ -142,11 +162,18 @@ func (c *Containers) Capabilities() map[string]string {
 	defer c.mu.Unlock()
 
 	var out map[string]string
-	if c.socketAbsent {
+	switch {
+	case c.socketAbsent:
 		// Metrics still arrive from cgroup v2; only the names and compose
 		// labels are missing. Saying so distinguishes "no containers" from
 		// "containers whose identity we cannot resolve".
 		out = map[string]string{"containers": "no-docker-socket"}
+	case c.lastScopes == 0 && c.lastListed > 0:
+		// The reverse case, and the worse one: the socket can see containers
+		// and the cgroup walk cannot. Nothing is collected at all, so without
+		// this the fleet page would show a host that looks entirely healthy and
+		// simply has no containers.
+		out = map[string]string{"containers": capNoCgroupScopes}
 	}
 	if c.netCapability != "" {
 		if out == nil {
@@ -157,6 +184,34 @@ func (c *Containers) Capabilities() map[string]string {
 		out["container_network"] = c.netCapability
 	}
 	return out
+}
+
+// observe records what this scrape saw, for Capabilities and StartupSummary to
+// report. It is the only writer of socketAbsent: that field used to be assigned
+// straight from Collect, unguarded, while Capabilities read it under the mutex.
+func (c *Containers) observe(socketAbsent bool, scopes, listed int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.socketAbsent = socketAbsent
+	c.lastScopes = scopes
+	c.lastListed = listed
+}
+
+// StartupSummary implements StartupSummarizer.
+//
+// Both counts, always, even when they agree -- the agent saying "31 cgroup
+// scopes, 30 containers named by the socket" on the line after it starts is
+// what makes the broken case ("0 cgroup scopes, 30 containers named by the
+// socket") legible at a glance, by anyone who has ever seen the working one.
+func (c *Containers) StartupSummary() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	socket := fmt.Sprintf("%d containers named by the docker socket", c.lastListed)
+	if c.socketAbsent {
+		socket = "docker socket unavailable"
+	}
+	return fmt.Sprintf("%d cgroup scopes, %s", c.lastScopes, socket)
 }
 
 // setCapability records why per-container networking produced nothing. Reset
@@ -171,18 +226,30 @@ func (c *Containers) setCapability(value string) {
 // Collect implements Collector.
 func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 	meta := map[string]ContainerMeta{}
+	absent, listed := true, 0
 	if c.lister != nil {
 		list, err := c.lister(ctx)
 		if err != nil {
-			c.socketAbsent = true
+			// Logged on the TRANSITION only. Every message dockermeta.go builds
+			// used to die right here, discarded, so a daemon that started
+			// refusing connections was indistinguishable from one that was
+			// never mounted. Logging it every scrape would be the opposite
+			// mistake: a host that deliberately declines the socket is a
+			// supported configuration, and it must not warn once a minute
+			// forever.
+			if !c.socketAbsent {
+				slog.Warn("docker socket unreadable; containers will be keyed by id rather than compose service",
+					"err", err)
+			}
 		} else {
-			c.socketAbsent = false
+			if c.socketAbsent {
+				slog.Info("docker socket readable again", "containers", len(list))
+			}
+			absent, listed = false, len(list)
 			for _, m := range list {
 				meta[m.ID] = m
 			}
 		}
-	} else {
-		c.socketAbsent = true
 	}
 
 	// Cleared before the walk so a capability reflects THIS scrape. A host
@@ -191,8 +258,10 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 
 	cur, err := c.read()
 	if err != nil {
+		c.observe(absent, 0, listed)
 		return nil, err
 	}
+	c.observe(absent, len(cur), listed)
 
 	prev, prevAt := c.prev, c.prevAt
 	at := c.now()
@@ -318,9 +387,18 @@ func (c *Containers) read() (map[string]containerCounters, error) {
 
 	err := filepath.WalkDir(c.cgroupRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			// An unreadable subtree is not fatal: cgroups appear and vanish
-			// constantly, and one missing directory must not cost the rest.
-			return nil //nolint:nilerr // deliberate: skip, do not abort
+			// The ROOT is different from anything below it. An unreadable
+			// subtree is not fatal -- cgroups appear and vanish constantly, and
+			// one missing directory must not cost the rest -- but an unreadable
+			// root means there is no hierarchy here at all, which is a
+			// configuration fault and the one this collector spent its whole
+			// life failing to report. Swallowing it made an agent whose cgroup
+			// mount was never granted indistinguishable from a host running no
+			// containers.
+			if path == c.cgroupRoot {
+				return err
+			}
+			return nil //nolint:nilerr // deliberate: skip a subtree, not the root
 		}
 		if !d.IsDir() {
 			return nil
