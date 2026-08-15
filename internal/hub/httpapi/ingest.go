@@ -135,7 +135,13 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// a CHECK to host_samples would break that, and would need this to learn
 	// which rows actually landed.
 	if s := latest(samples); s != nil {
-		if err := h.store.UpsertHostCurrent(ctx, hostID, s); err != nil {
+		// Summed off the REQUEST, not read back from net_samples, and that
+		// is the whole reason it can happen here. The rows themselves are
+		// written by storeFamilies below, which can 503; querying for the
+		// sum after that insert would drag this upsert past the failure path
+		// the comment above spends twenty lines keeping it in front of.
+		rx, tx := latestNetTotals(req.GetNet())
+		if err := h.store.UpsertHostCurrent(ctx, hostID, s, rx, tx); err != nil {
 			slog.Error("upsert host_current", "host_id", hostID, "err", err)
 		}
 	}
@@ -204,6 +210,63 @@ func (h *IngestHandler) reconcileMetadata(ctx context.Context, hostID int32, req
 		return false, err
 	}
 	return !bytes.Equal(stored, req.GetMetadataHash()) || len(stored) == 0, nil
+}
+
+// latestNetTotals sums a host's traffic across its interfaces at the most
+// recent scrape in this post.
+//
+// One instant, not the whole batch: a post carries several scrapes, and
+// adding every interface in all of them would report a host's traffic as a
+// multiple of itself, growing with however many scrapes the agent had queued
+// while it could not reach the hub.
+//
+// The two directions are summed independently and each is nil until some
+// interface reports it. rx present with tx absent is a real shape -- the
+// fields are individually optional in NetSample -- and answering 0 for the
+// missing half would claim traffic in one direction and none in the other.
+//
+// No interface filtering: the agent already drops lo and docker0
+// (internal/agent/collector/network.go), so what arrives here is traffic
+// that actually crossed something.
+//
+// Future-dated rows are NOT excluded here, unlike the ones storeFamilies
+// writes. A timestamp far enough ahead to be dropped there would have to beat
+// the host sample's own ts to win this comparison, and that sample has
+// already been through the same bound before this runs -- so a poison row
+// reaching here means the whole post was already accepted as plausible. The
+// cost of being wrong is one stale rate on one tile until the next scrape,
+// which is not worth a second copy of the clock.
+func latestNetTotals(nets []*netrav1.NetSample) (rx, tx *float64) {
+	var at int64
+	var rxSum, txSum float64
+	var haveRx, haveTx bool
+
+	for _, n := range nets {
+		if n.GetTsMs() < at {
+			continue
+		}
+		if n.GetTsMs() > at {
+			// A newer scrape: everything totalled so far belongs to an older
+			// one and is not part of this answer.
+			at, rxSum, txSum, haveRx, haveTx = n.GetTsMs(), 0, 0, false, false
+		}
+		if n.RxBytes != nil {
+			rxSum += *n.RxBytes
+			haveRx = true
+		}
+		if n.TxBytes != nil {
+			txSum += *n.TxBytes
+			haveTx = true
+		}
+	}
+
+	if haveRx {
+		rx = &rxSum
+	}
+	if haveTx {
+		tx = &txSum
+	}
+	return rx, tx
 }
 
 func latest(samples []*netrav1.HostSample) *netrav1.HostSample {

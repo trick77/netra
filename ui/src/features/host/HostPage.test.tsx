@@ -29,6 +29,8 @@ const host: HostDetail = {
   mem_used: 4_000_000_000,
   mem_total: 8_000_000_000,
   uptime_s: 86_400,
+  net_rx_bytes: null,
+  net_tx_bytes: null,
   site_name: "Zurich",
   provider_name: "Hetzner",
   fingerprint: "fp",

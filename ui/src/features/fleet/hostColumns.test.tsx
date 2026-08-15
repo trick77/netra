@@ -38,6 +38,8 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     reporting: [10, 12, 11],
     rx: [1e6, 2e6, 1.5e6],
     tx: [5e5, 6e5, 4e5],
+    net_rx_bytes: 1.5e6,
+    net_tx_bytes: 4e5,
     fullest: { mount: "/data", pct: 88, others: 2 },
     disk: [],
     oomKills: null,
@@ -231,12 +233,34 @@ describe("hostColumns", () => {
     it("renders traffic in bytes per second, not bits", () => {
       const cols = hostColumns("1h");
       const trafficCol = cols.find((c) => c.header === "Traffic")!;
-      const row = makeRow({ rx: [1e6, 2e6], tx: [5e5, 1e6] });
+      const row = makeRow({ net_rx_bytes: 2e6, net_tx_bytes: 1e6 });
       const { container } = render(<>{trafficCol.cell(row)}</>);
 
       expect(container.textContent).toContain("2 MB/s");
       expect(container.textContent).toContain("1 MB/s");
       expect(container.textContent).not.toMatch(/b\/s/);
+    });
+
+    // The reported bug. The rates are host_current's gauges; only the
+    // sparkline comes from the series. Read off the series they moved with
+    // the RANGE -- the raw instantaneous rate at 1h, a five-minute average
+    // from a quarter of an hour ago at 6h and wider -- so the number beside
+    // a chart changed when the chart was widened. The two disagree here
+    // precisely so that reading the wrong one fails.
+    it("takes its rates from the gauge, not the end of the series", () => {
+      const cols = hostColumns("1h");
+      const trafficCol = cols.find((c) => c.header === "Traffic")!;
+      const row = makeRow({
+        net_rx_bytes: 2e6,
+        net_tx_bytes: 1e6,
+        rx: [1e6, 9e6],
+        tx: [5e5, 9e6],
+      });
+      const { container } = render(<>{trafficCol.cell(row)}</>);
+
+      expect(container.textContent).toContain("2 MB/s");
+      expect(container.textContent).toContain("1 MB/s");
+      expect(container.textContent).not.toContain("9 MB/s");
     });
   });
 

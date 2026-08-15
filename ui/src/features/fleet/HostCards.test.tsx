@@ -24,6 +24,8 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     mem: [{ name: "used", color: "var(--s1)", values: [3e9, 3.5e9, 4e9] }],
     rx: [1e6, 2e6],
     tx: [5e5, 6e5],
+    net_rx_bytes: 1.5e6,
+    net_tx_bytes: 5.5e5,
     fullest: { mount: "/data", pct: 88, others: 2 },
     disk: [],
     oomKills: null,

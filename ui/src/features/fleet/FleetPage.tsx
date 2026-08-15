@@ -411,7 +411,11 @@ export function FleetPage({
           // sparklines announce themselves as "Ingress and egress over time".
           // "inbound + outbound" was a third spelling of the same pair, on
           // the one tile summarising all of them.
-          detail="ingress + egress, latest sample"
+          // "latest sample" was only true at 1h; at the wider ranges the
+          // number was a five-minute average from a quarter of an hour ago.
+          // It is a gauge off host_current now, so "right now" is accurate
+          // at every range -- which is the point of the change.
+          detail="ingress + egress, right now"
         />
       </div>
 
@@ -487,23 +491,34 @@ function describe(err: unknown): string {
     : String(err);
 }
 
-// Sums the latest inbound and outbound rate across the fleet. A fleet whose
+// Sums the current inbound and outbound rate across the fleet. A fleet whose
 // hosts have reported no rate at all has an UNKNOWN throughput, not a
 // throughput of nothing, so this returns the absent marker rather than
 // "0 b/s" -- which would read as a fleet with the network down.
+//
+// The scalars from host_current, not the end of the sparkline series. Off
+// the series this number moved whenever the range moved: the range picks the
+// step, the step picks the storage tier, and 1h answered the raw
+// instantaneous rate where 6h and 24h answered a five-minute average that
+// had ended a quarter of an hour earlier. The tile said "latest sample" and
+// meant it at exactly one of the three settings.
+//
+// It also stopped jittering between polls at a FIXED range: on the 60s grid
+// a scrape landing more than about half a bucket before `now` fell into the
+// second-to-last slot, the old trailing-null check skipped that host, and it
+// silently left the fleet total until its next post. A gauge has no grid and
+// no last slot.
 function fleetTraffic(rows: readonly HostRow[]): string {
   let total = 0;
   let any = false;
   for (const row of rows) {
-    for (const series of [row.rx, row.tx]) {
-      // `== null` covers both an empty series and a trailing gap: a host
-      // that stopped reporting contributes nothing to the fleet total
-      // rather than its last known rate, which would keep counting traffic
-      // for a host that is down.
-      const last = series.at(-1);
-      if (last == null) continue;
+    for (const rate of [row.net_rx_bytes, row.net_tx_bytes]) {
+      // A host that has never reported traffic -- or whose net collector is
+      // off -- contributes nothing rather than a zero, so it cannot drag the
+      // fleet's throughput down towards "the network is quiet".
+      if (rate == null) continue;
       any = true;
-      total += last;
+      total += rate;
     }
   }
   // byterate, never bitrate. rx_bytes/tx_bytes are BYTES per second --

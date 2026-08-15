@@ -31,6 +31,8 @@ const host: api.Host = {
   mem_used: 1,
   mem_total: 8,
   uptime_s: 900,
+  net_rx_bytes: null,
+  net_tx_bytes: null,
   threads: null,
 };
 

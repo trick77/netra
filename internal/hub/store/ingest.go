@@ -134,20 +134,41 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 
 // UpsertHostCurrent keeps the denormalised latest snapshot fresh so the host
 // list never has to touch a hypertable.
-func (s *Store) UpsertHostCurrent(ctx context.Context, hostID int32, m *netrav1.HostSample) error {
+//
+// netRx and netTx are the host's traffic summed across its interfaces at the
+// most recent scrape, or nil when this post carried no net samples. They live
+// here rather than being read back off net_samples because the fleet's
+// traffic figure is a CURRENT RATE, and reading a rate out of a time series
+// makes it depend on the window the series was fetched over -- which is the
+// bug 0002_host_current_net.sql exists to end. A nil stores NULL, which the
+// UI renders as absent; it must never become a zero, since "no samples" and
+// "no traffic" are different facts.
+func (s *Store) UpsertHostCurrent(
+	ctx context.Context, hostID int32, m *netrav1.HostSample, netRx, netTx *float64,
+) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO host_current (host_id, last_seen, cpu_total, mem_used, mem_total, uptime_s)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO host_current (host_id, last_seen, cpu_total, mem_used, mem_total, uptime_s,
+		                          net_rx_bytes, net_tx_bytes)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (host_id) DO UPDATE SET
 			last_seen = EXCLUDED.last_seen,
 			cpu_total = EXCLUDED.cpu_total,
 			mem_used  = EXCLUDED.mem_used,
 			mem_total = EXCLUDED.mem_total,
-			uptime_s  = EXCLUDED.uptime_s
+			uptime_s  = EXCLUDED.uptime_s,
+			-- coalesce, unlike the columns above: a post can legitimately
+			-- carry host samples and no net samples (the collector failed
+			-- this scrape, or the capability is off), and overwriting a
+			-- known rate with NULL would make the fleet tile flicker to
+			-- absent and back. The other columns come from the host sample
+			-- that is always present when this runs at all.
+			net_rx_bytes = coalesce(EXCLUDED.net_rx_bytes, host_current.net_rx_bytes),
+			net_tx_bytes = coalesce(EXCLUDED.net_tx_bytes, host_current.net_tx_bytes)
 		WHERE host_current.last_seen IS NULL
 		   OR host_current.last_seen <= EXCLUDED.last_seen`,
 		hostID, time.UnixMilli(m.GetTsMs()).UTC(),
-		f64(m.CpuTotal), u64(m.MemUsed), u64(m.MemTotal), u64(m.UptimeS))
+		f64(m.CpuTotal), u64(m.MemUsed), u64(m.MemTotal), u64(m.UptimeS),
+		f64(netRx), f64(netTx))
 	if err != nil {
 		return fmt.Errorf("upsert host_current: %w", err)
 	}

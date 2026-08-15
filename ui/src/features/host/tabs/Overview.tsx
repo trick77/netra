@@ -813,13 +813,16 @@ export function Overview({
                   second, so bitrate() rendered every host's traffic 8x low
                   and plausibly. The fleet's traffic cell carried the same
                   bug, so the two pages agreed with each other and with
-                  nothing else. */}
-              <span className="rate">
-                ↑ {byterate(latestValue(ingress))} in
-              </span>
-              <span className="rate">
-                ↓ {byterate(latestValue(egress))} out
-              </span>
+                  nothing else.
+
+                  The numbers are host_current's gauges, not the end of the
+                  series drawn beside them. Off the series they moved with
+                  the RANGE -- the raw instantaneous rate at 1h, a
+                  five-minute average from a quarter of an hour ago at 6h and
+                  wider -- so widening the window changed what "now" meant.
+                  The sparkline still follows the range; the rates do not. */}
+              <span className="rate">↑ {byterate(host.net_rx_bytes)} in</span>
+              <span className="rate">↓ {byterate(host.net_tx_bytes)} out</span>
             </div>
           </div>
         )}

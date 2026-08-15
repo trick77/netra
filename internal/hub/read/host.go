@@ -26,6 +26,22 @@ type HostSummary struct {
 	MemUsed  *int64     `json:"mem_used"`
 	MemTotal *int64     `json:"mem_total"`
 	UptimeS  *int64     `json:"uptime_s"`
+	// NetRxBytes and NetTxBytes are the host's traffic summed over its
+	// interfaces at its last scrape, in bytes per second.
+	//
+	// A gauge rather than a series lookup on purpose. This is the number the
+	// fleet prints as "ingress + egress", and taking it off the end of a
+	// fetched series made it depend on the range those series were drawn
+	// over: the range picks the step, the step picks the tier, and the 5m
+	// tier answers a five-minute average that ended a quarter of an hour ago
+	// where the raw tier answers the rate now. A current rate must not change
+	// because somebody widened a chart.
+	//
+	// The names are rx/tx, matching net_samples and /proc/net/dev, which is
+	// where the agent reads them. Only what a person reads says ingress and
+	// egress.
+	NetRxBytes *float64 `json:"net_rx_bytes"`
+	NetTxBytes *float64 `json:"net_tx_bytes"`
 	// Threads is inventory rather than a gauge, and it is here because the
 	// fleet list's CPU sparkline is a per-core stack: the page has to know
 	// how many logical CPUs a host has BEFORE deciding to ask for one series
@@ -80,6 +96,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
+		       c.net_rx_bytes, c.net_tx_bytes,
 		       h.threads
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
@@ -94,6 +111,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		var h HostSummary
 		if err := rows.Scan(&h.ID, &h.Hostname, &h.SiteID,
 			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
+			&h.NetRxBytes, &h.NetTxBytes,
 			&h.Threads); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}
@@ -113,6 +131,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
+		       c.net_rx_bytes, c.net_tx_bytes,
 		       si.name, p.name,
 		       h.fingerprint, h.host_type, h.agent_version, h.go_version, h.build_commit,
 		       h.kernel, h.os_name, h.arch, h.cpu_model, h.cores, h.threads, h.memory_total,
@@ -124,6 +143,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		 WHERE h.id = $1`, hostID).Scan(
 		&h.ID, &h.Hostname, &h.SiteID,
 		&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
+		&h.NetRxBytes, &h.NetTxBytes,
 		&h.SiteName, &h.ProviderName,
 		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion, &h.BuildCommit,
 		&h.Kernel, &h.OSName, &h.Arch, &h.CPUModel, &h.Cores, &h.Threads, &h.MemoryTotal,
