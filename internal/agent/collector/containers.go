@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // ContainerMeta is what the Docker socket contributes: names and labels, never

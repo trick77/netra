@@ -12,12 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/trick77/netra/internal/buildinfo"
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/config"
 	"github.com/trick77/netra/internal/hub/httpapi"
 	"github.com/trick77/netra/internal/hub/store"
-	"github.com/trick77/netra/internal/logging"
+	"github.com/trick77/netra/internal/shared/buildinfo"
+	"github.com/trick77/netra/internal/shared/logging"
 )
 
 func main() {

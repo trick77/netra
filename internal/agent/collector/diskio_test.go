@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // diskioAt runs one scrape with the clock pinned, so the rates below are exact

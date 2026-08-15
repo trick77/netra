@@ -11,7 +11,7 @@ import (
 	"github.com/trick77/netra/internal/agent/client"
 	"github.com/trick77/netra/internal/agent/collector"
 	"github.com/trick77/netra/internal/agent/config"
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // capabilityCollector reports a capability that the test controls, so the

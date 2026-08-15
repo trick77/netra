@@ -13,7 +13,7 @@
 // seeder would skip entirely -- the parts most likely to be wrong.
 package sim
 
-import netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+import netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 
 // HostnamePrefix is the contract every simulated hostname keeps, and the only
 // thing standing between --fresh and someone's real fleet.

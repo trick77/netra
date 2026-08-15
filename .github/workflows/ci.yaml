@@ -51,6 +51,59 @@ jobs:
             esac
           done
 
+      # The agent and the hub share one go.mod, so nothing in the compiler
+      # stops a collector from importing internal/hub/store -- it would just
+      # link pgx into the agent image and every build would stay green. The
+      # tree says the boundary; this is what enforces it.
+      #
+      # One direction only, deliberately. The reverse guard would be wrong:
+      # internal/hub/httpapi/e2e_test.go legitimately drives a real agent
+      # client against the hub router, and that test is worth keeping. It does
+      # not trip this check either way -- `go list -deps` reports the binary's
+      # transitive imports and excludes test-only ones.
+      - name: Agent must not depend on hub code
+        run: |
+          # The list is captured before it is searched, so this fails CLOSED.
+          # Piped straight into grep, the guard reports only grep's status: a
+          # `go list` that failed -- a renamed cmd/ path, say -- prints nothing,
+          # grep finds no match, and the step passes having checked nothing.
+          # `set -o pipefail` does not tell the two apart either, since both
+          # failures are exit 1. An assignment does: `set -e` aborts here when
+          # go list fails, and only a real match reaches the grep below.
+          deps="$(go list -deps ./cmd/netra-agent)"
+          if printf '%s\n' "$deps" \
+               | grep -E 'netra/internal/(hub|devtools)|jackc/pgx'; then
+            echo "::error::the agent binary must not depend on hub packages or pgx"
+            exit 1
+          fi
+
+      # release.yaml is the only thing that builds the images, it runs solely
+      # on push to master, and its workflow_dispatch is unfiltered -- so there
+      # is no dry run. A typo in either `file:` path would therefore surface by
+      # breaking a real release, after the version bump. This is the cheap
+      # stand-in: assert the paths release.yaml names still exist.
+      - name: Container build files exist where release.yaml expects them
+        run: |
+          # Read the paths OUT of release.yaml rather than repeating them here.
+          # A hardcoded `test -f build/Containerfile.hub` only asserts that the
+          # files this repository ships exist -- it stays green through exactly
+          # the typo it is meant to catch, because a `file: ./build/x.hubb`
+          # never enters the check.
+          files="$(sed -nE 's|^[[:space:]]*file:[[:space:]]*\./([^[:space:]]+)[[:space:]]*$|\1|p' \
+            .github/workflows/release.yaml)"
+          # -lt, not -ne: a third image added to release.yaml is legitimate and
+          # must not fail this step. The risk being guarded is the pattern
+          # going stale and matching nothing, which would pass vacuously.
+          count="$(printf '%s\n' "$files" | grep -c . || true)"
+          if [ "$count" -lt 2 ]; then
+            echo "::error::expected at least 2 \`file:\` paths in release.yaml, found $count"
+            exit 1
+          fi
+          for f in $files; do
+            echo "release.yaml builds from $f"
+            test -f "$f" || { echo "::error::release.yaml names $f, which does not exist"; exit 1; }
+          done
+
       # gofmt is not covered by `go vet`, so it is enforced explicitly rather
       # than trusted to editors.
       - name: gofmt
@@ -75,7 +128,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v5
         with:
-          # The version lives in ui/.nvmrc so the runner, the Containerfile's
+          # The version lives in ui/.nvmrc so the runner, the hub image's
           # node stage and a developer's `nvm use` cannot drift apart.
           node-version-file: ui/.nvmrc
           cache: npm
@@ -135,15 +188,27 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # internal/sim is in `packages` but deliberately NOT in `coverpkg`:
-          # its tests should run, but the simulator is a development tool
-          # whose files must stay out of the coverage report. In coverpkg it
-          # would drag the hub's floor down with code no shipped binary
-          # contains; absent from the report entirely, it is also invisible to
-          # the diff-cover patch gate.
+          # internal/devtools/ (the fleet simulator) is in `packages` but
+          # deliberately NOT in `coverpkg`: its tests should run, but the
+          # simulator is a development tool whose files must stay out of the
+          # coverage report. In coverpkg it would drag the hub's floor down
+          # with code no shipped binary contains; absent from the report
+          # entirely, it is also invisible to the diff-cover patch gate.
+          #
+          # This is exactly why it lives under internal/devtools/ rather than
+          # internal/hub/sim/, which would otherwise be the natural home: from
+          # there `./internal/hub/...` would sweep it into coverpkg, and
+          # coverpkg has no exclusion syntax to get it back out.
+          #
+          # internal/shared/ is counted on the hub side only, even though both
+          # binaries link it -- the same treatment buildinfo and gen already
+          # had. Folding logging/ in alongside them does add it to a coverage
+          # number for the first time (it was in neither side's coverpkg
+          # before); measured cost is ~0.2pp, hub is 87.7% against an 86.0
+          # floor. Counted once on one side beats counted twice or not at all.
           - component: hub
-            packages: ./internal/hub/... ./internal/buildinfo/... ./internal/gen/... ./internal/sim/... ./cmd/netra/...
-            coverpkg: ./internal/hub/...,./internal/buildinfo/...,./internal/gen/...,./cmd/netra/...
+            packages: ./internal/hub/... ./internal/shared/... ./internal/devtools/... ./cmd/netra/...
+            coverpkg: ./internal/hub/...,./internal/shared/...,./cmd/netra/...
           - component: agent
             packages: ./internal/agent/... ./cmd/netra-agent/...
             coverpkg: ./internal/agent/...,./cmd/netra-agent/...

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // cpuTimes holds the fields of a "cpu" or "cpuN" line in /proc/stat.

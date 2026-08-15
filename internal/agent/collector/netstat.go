@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // Netstat reports IP, TCP and UDP protocol statistics from /proc/net/snmp,

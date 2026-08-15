@@ -77,7 +77,7 @@ services:
     # /api/health reports database reachability, not just process liveness, so
     # a hub that cannot reach Postgres correctly goes unhealthy instead of
     # accepting ingest it will only 503. wget is busybox's, shipped in the
-    # image for exactly this — see Containerfile.
+    # image for exactly this — see build/Containerfile.hub.
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
       interval: 60s

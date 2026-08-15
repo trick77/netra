@@ -4,7 +4,7 @@ package buffer
 import (
 	"sync"
 
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // Scrape is everything one scrape produced: the wide host row plus the

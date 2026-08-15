@@ -6,6 +6,10 @@ coverage/
 data/
 docs/
 .github/
+# The Containerfiles themselves live here now. BuildKit reads the `-f` file
+# outside these rules, so ignoring the directory costs nothing and keeps the
+# context to what `go build` actually reads.
+build/
 test/
 .git/
 *.md

@@ -16,8 +16,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/trick77/netra/internal/agent/config"
-	"github.com/trick77/netra/internal/buildinfo"
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	"github.com/trick77/netra/internal/shared/buildinfo"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // BuildMetadata gathers the static facts about this host and agent.

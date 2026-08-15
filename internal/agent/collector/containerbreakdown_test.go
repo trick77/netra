@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/trick77/netra/internal/agent/collector"
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // cpu_pct says how much CPU a container took; it cannot say what for. A

@@ -163,7 +163,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Containerfile
+          file: ./build/Containerfile.hub
           push: true
           platforms: linux/amd64
           build-args: |
@@ -196,7 +196,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Containerfile.agent
+          file: ./build/Containerfile.agent
           push: true
           platforms: linux/amd64
           build-args: |

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/trick77/netra/internal/agent/buffer"
-	netrav1 "github.com/trick77/netra/internal/gen/netra/v1"
+	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
 // sample builds a scrape carrying only a host row, which is all the ordering

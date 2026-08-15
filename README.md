@@ -247,7 +247,9 @@ Build the UI with `make ui`, not `npm run build` directly: vite's
 `emptyOutDir` wipes the tracked `internal/hub/web/dist/.gitkeep` that
 `go:embed` needs, and the make rule restores it.
 
-Container images: `Containerfile` (hub) and `Containerfile.agent`.
+Container images: `build/Containerfile.hub` and `build/Containerfile.agent`. Both
+build from the repository root as context (single `go.mod`), e.g.
+`podman build -f build/Containerfile.hub .`.
 
 ## Tests
 
