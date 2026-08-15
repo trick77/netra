@@ -31,6 +31,11 @@ function response(over: Partial<MetricsResponse>): MetricsResponse {
 
 const t0 = Date.parse("2026-08-10T00:00:00Z");
 const hour = 3_600_000;
+// The window's FINAL bucket. A filesystem's fullness is read there rather
+// than from the last value the series happens to hold, so a fixture that
+// means "this disk is 88 % full now" has to say it in the bucket that is now
+// -- t0 is three hours of window away and means "it was, once".
+const tNow = t0 + 2 * hour;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -255,9 +260,9 @@ describe("fetchHostTrends", () => {
         key_columns: ["filesystem"],
         columns: ["used", "free", "total"],
         series: [
-          { key: { filesystem: "root" }, points: [[t0, 68, 32, 110]] },
-          { key: { filesystem: "data" }, points: [[t0, 88, 12, 110]] },
-          { key: { filesystem: "boot" }, points: [[t0, 10, 90, 110]] },
+          { key: { filesystem: "root" }, points: [[tNow, 68, 32, 110]] },
+          { key: { filesystem: "data" }, points: [[tNow, 88, 12, 110]] },
+          { key: { filesystem: "boot" }, points: [[tNow, 10, 90, 110]] },
         ],
       }),
     });
@@ -279,11 +284,11 @@ describe("fetchHostTrends", () => {
         series: [
           {
             key: { filesystem: "ark", mountpoint: "/mnt/ark" },
-            points: [[t0, 94, 6, 110]],
+            points: [[tNow, 94, 6, 110]],
           },
           {
             key: { filesystem: "root", mountpoint: "" },
-            points: [[t0, 10, 90, 110]],
+            points: [[tNow, 10, 90, 110]],
           },
         ],
       }),
@@ -293,6 +298,38 @@ describe("fetchHostTrends", () => {
 
     expect(trends.fullest?.mount).toBe("/mnt/ark");
     expect(trends.disk.map((b) => b.name)).toEqual(["/mnt/ark", "root"]);
+  });
+
+  // This cell reports the MAXIMUM, so a filesystem that stopped being
+  // measured is not merely a stale row here -- it is one that WINS. The disk
+  // frozen at 94 % the moment its agent was upgraded outranked every live
+  // filesystem on the host, and the fleet said 94 % for a box whose real
+  // disks were at 20 %, naming a mount nothing measures any more.
+  //
+  // The band still draws: a chart showing a series that ends is telling the
+  // truth about it. It is the headline figure that must be about now.
+  it("ignores a filesystem that stopped reporting when picking the fullest", async () => {
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem", "mountpoint"],
+        columns: ["used", "free", "total"],
+        series: [
+          {
+            // Retired: a reading in the first bucket and nothing since.
+            key: { filesystem: "/netra/fs/ark", mountpoint: "" },
+            points: [[t0, 94, 6, 110]],
+          },
+          {
+            key: { filesystem: "ark", mountpoint: "/mnt/ark" },
+            points: [[tNow, 20, 80, 110]],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.fullest).toEqual({ mount: "/mnt/ark", pct: 20, others: 0 });
   });
 
   // Never a zero-percent meter: an empty green bar says the disks were
