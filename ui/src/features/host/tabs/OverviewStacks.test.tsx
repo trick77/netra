@@ -150,7 +150,7 @@ describe("Overview processor stack", () => {
     const panel = screen.getByRole("region", { name: "Processor chart" });
 
     const now = panel.querySelector(".now")?.textContent;
-    expect(now).toBe("30 %");
+    expect(now).toBe("30%");
     expect(now).not.toContain("core");
   });
 

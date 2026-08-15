@@ -37,7 +37,7 @@ describe("Meter", () => {
     expect(container.querySelector(".meter")).toBeInTheDocument();
     const fill = container.querySelector(".meter i") as HTMLElement;
     expect(fill.style.width).toBe("0%");
-    expect(screen.getByText("0 %")).toBeInTheDocument();
+    expect(screen.getByText("0%")).toBeInTheDocument();
     expect(screen.queryByText("—")).not.toBeInTheDocument();
   });
 
@@ -46,7 +46,7 @@ describe("Meter", () => {
   // shared formatter, not re-implementing it.
   it("formats the value text with format.ts's percent()", () => {
     render(<Meter value={1} max={3} />);
-    expect(screen.getByText("33 %")).toBeInTheDocument();
+    expect(screen.getByText("33%")).toBeInTheDocument();
   });
 
   // The bar cannot be drawn wider than its track, but the number beside it
@@ -58,7 +58,7 @@ describe("Meter", () => {
     const { container } = render(<Meter value={12} max={8} />);
     const fill = container.querySelector(".meter i") as HTMLElement;
     expect(fill.style.width).toBe("100%");
-    expect(screen.getByText("150 %")).toBeInTheDocument();
+    expect(screen.getByText("150%")).toBeInTheDocument();
   });
 
   it("passes the unclamped percentage to formatValue", () => {

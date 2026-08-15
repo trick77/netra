@@ -198,9 +198,17 @@ export function byterate(bytesPerSecond: number | null): string {
   return `${bytes(bytesPerSecond)}/s`;
 }
 
+/**
+ * A percentage, written closed up: "42%", never "42 %".
+ *
+ * The one unit in the app that does not take a space. Every other formatter
+ * here spaces its unit because the unit is a separate word measuring the
+ * number -- 503 GB, 41 s, 1.4 Gb/s. A percent sign is not that: it is part
+ * of the figure, and a gap makes it read as a symbol that wandered off.
+ */
 export function percent(n: number | null, digits = 0): string {
   if (n === null) return ABSENT;
-  return `${round(n, digits)} %`;
+  return `${round(n, digits)}%`;
 }
 
 const DURATION_UNITS: Array<[string, number]> = [

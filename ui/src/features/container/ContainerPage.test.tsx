@@ -337,7 +337,7 @@ describe("ContainerPage", () => {
 
     expect(
       screen.getByLabelText("CPU chart", { selector: "section" }),
-    ).toHaveTextContent("14 %");
+    ).toHaveTextContent("14%");
   });
 
   it("survives a container that has never been sampled", () => {

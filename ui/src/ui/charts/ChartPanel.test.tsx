@@ -131,7 +131,7 @@ describe("ChartPanel", () => {
     render(
       <ChartPanel
         title="Processor"
-        fmt={(v) => `${v} %`}
+        fmt={(v) => `${v}%`}
         nowValue={6}
         series={[
           { name: "core 0", color: "var(--s1)", values: [43] },
@@ -141,7 +141,7 @@ describe("ChartPanel", () => {
     );
 
     const now = document.querySelector(".now")?.textContent;
-    expect(now).toBe("6 %");
+    expect(now).toBe("6%");
     expect(now).not.toContain("core");
   });
 
@@ -151,7 +151,7 @@ describe("ChartPanel", () => {
     render(
       <ChartPanel
         title="Processor"
-        fmt={(v) => (v === null ? ABSENT : `${v} %`)}
+        fmt={(v) => (v === null ? ABSENT : `${v}%`)}
         nowValue={null}
         series={[{ name: "core 0", color: "var(--s1)", values: [43] }]}
       />,

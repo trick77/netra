@@ -58,13 +58,13 @@ describe("hostConditions", () => {
     expect(hostConditions(makeRow({ oomKills: null }), NOW)).toEqual([]);
   });
 
-  it("warns on a filesystem at 90 % and escalates at 95 %", () => {
+  it("warns on a filesystem at 90% and escalates at 95%", () => {
     const warn = hostConditions(
       makeRow({ fullest: { mount: "/var/log", pct: 91, others: 2 } }),
       NOW,
     );
     expect(warn[0]?.severity).toBe("warning");
-    expect(String(warn[0]?.what)).toMatch(/\/var\/log is 91 % full/);
+    expect(String(warn[0]?.what)).toMatch(/\/var\/log is 91% full/);
 
     const crit = hostConditions(
       makeRow({ fullest: { mount: "/var/log", pct: 96, others: 2 } }),

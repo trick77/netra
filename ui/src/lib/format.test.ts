@@ -37,7 +37,7 @@ describe("format", () => {
 
   it("distinguishes zero from absent", () => {
     expect(bytes(0)).toBe("0 B");
-    expect(percent(0)).toBe("0 %");
+    expect(percent(0)).toBe("0%");
   });
 
   it("formats durations at two units of precision", () => {
@@ -86,8 +86,8 @@ describe("format", () => {
   });
 
   it("percent respects an explicit digits argument", () => {
-    expect(percent(42.567, 1)).toBe("42.6 %");
-    expect(percent(42)).toBe("42 %");
+    expect(percent(42.567, 1)).toBe("42.6%");
+    expect(percent(42)).toBe("42%");
   });
 
   it("absolute renders a fixed instant for hover titles", () => {
