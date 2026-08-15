@@ -16,10 +16,16 @@ type Config struct {
 	LogLevel    string
 
 	// HubURL is the address agents post to, used only to render a
-	// ready-to-paste setup-agent.sh command in the UI. It is optional: the
-	// hub is reached on loopback by the browser and cannot infer its own
-	// public name from that request, so an unset value renders a placeholder
-	// rather than a wrong URL.
+	// ready-to-paste setup-agent.sh command in the UI. It is optional to the
+	// binary: the hub is reached on loopback by the browser and cannot infer
+	// its own public name from that request, so rather than guess, an unset
+	// value makes the UI render no setup command at all until an operator
+	// types one. A command correct except for its hostname would copy, run,
+	// succeed, and post that host's metrics to whoever owns the name.
+	//
+	// Optional here, required in compose.yaml, which derives it from
+	// NETRA_HOSTNAME and marks that `:?`. Running the binary directly with it
+	// unset is supported and degrades as described above.
 	HubURL string
 }
 
