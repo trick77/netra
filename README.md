@@ -235,7 +235,11 @@ Two things that bite:
 * Disk usage is measured through **empty marker directories** (`/.netra`,
   `/mnt/ark/.netra`, …) bind-mounted to `/netra/fs/<label>`, never by mounting
   the data. `statfs()` reports the filesystem containing the path, so this gives
-  full disk and inode metrics with zero data exposure.
+  full disk and inode metrics with zero data exposure. That target is where the
+  agent measures, never what it reports: `NETRA_FS_MOUNTS` in `.env` maps each
+  label back to the host mount point, so the hub is told `/mnt/ark` rather than
+  a path that exists only inside the container. `setup-agent.sh` writes both
+  from the same detection, and repairs the mapping on a re-run.
 
 ### Fleets
 

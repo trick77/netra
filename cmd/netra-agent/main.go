@@ -77,7 +77,7 @@ func run() error {
 
 		// Group 3: needs a mount.
 		collector.NewContainers(cfg.CgroupRoot, cfg.ProcRoot, collector.SystemDockerContainers),
-		collector.NewFilesystems(cfg.ProcRoot, collector.SystemStatfs),
+		collector.NewFilesystems(cfg.ProcRoot, cfg.FsMounts, collector.SystemStatfs),
 		collector.NewSystemd(collector.SystemUnits),
 		collector.NewPackages(cfg.DpkgStatus, cfg.ApkInstalled),
 

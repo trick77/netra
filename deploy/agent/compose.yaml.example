@@ -126,6 +126,18 @@ services:
       # the first and logs a warning naming both, rather than double-reporting
       # one filesystem under two names.
       #
+      # The TARGET is never reported. It exists only in this container, and a
+      # host has no /netra of any kind, so an agent that named a filesystem
+      # after it would be showing operators its own insides. What the hub is
+      # told is the label plus the host mount point, and the mount point comes
+      # from NETRA_FS_MOUNTS in .env — add a bind here, add its `label=/path`
+      # there, or re-run setup-agent.sh and let it write both.
+      #
+      # A marker mount also narrows what the agent measures: when any is
+      # present, it reports those filesystems and nothing else. Without that it
+      # would also report this container's own overlay image layer as a
+      # filesystem called `/`, which is Docker's storage, not the host's root.
+      #
       # The root filesystem is not a special case in code: it gets its own marker
       # like everything else. If /netra/fs/ is empty the agent logs a startup
       # warning and carries on — a container-only host is legitimate.

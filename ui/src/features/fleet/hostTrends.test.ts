@@ -267,6 +267,34 @@ describe("fetchHostTrends", () => {
     expect(trends.fullest).toEqual({ mount: "data", pct: 88, others: 2 });
   });
 
+  // A filesystem is named to an operator by its mount point -- the thing they
+  // would type into df -- and by its label only when there is no mount point
+  // to use. The label is an identifier; on a containerised agent it is derived
+  // from the marker file the agent measures through, not from the host.
+  it("names a filesystem by its mount point, falling back to the label", async () => {
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem", "mountpoint"],
+        columns: ["used", "free", "total"],
+        series: [
+          {
+            key: { filesystem: "ark", mountpoint: "/mnt/ark" },
+            points: [[t0, 94, 6, 110]],
+          },
+          {
+            key: { filesystem: "root", mountpoint: "" },
+            points: [[t0, 10, 90, 110]],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.fullest?.mount).toBe("/mnt/ark");
+    expect(trends.disk.map((b) => b.name)).toEqual(["/mnt/ark", "root"]);
+  });
+
   // Never a zero-percent meter: an empty green bar says the disks were
   // measured and are empty.
   it("reports no fullest filesystem rather than an empty meter", async () => {
