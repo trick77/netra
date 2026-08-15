@@ -66,6 +66,34 @@ function latest(
   return null;
 }
 
+/**
+ * The reading in the LATEST bucket of the window, or null when the series
+ * does not reach it.
+ *
+ * latest() above answers "what did this series last say", which is right for
+ * a configured ceiling and wrong for a filesystem: a row whose agent stopped
+ * writing it keeps handing back its final measurement, and nothing
+ * downstream can tell that from a current one. That is how one disk came to
+ * warn twice under two names -- /netra/fs/ark frozen at the moment its agent
+ * was upgraded, /mnt/ark live, both at 94 %, both stated as facts about now.
+ *
+ * griddedValues, not optionalValues, and that is the whole mechanism:
+ * internal/hub/read/metrics.go emits only the rows that EXIST, so a series
+ * that stopped simply ends early and its last element is its last reading,
+ * indistinguishable from a current one. Placing it on the window's grid
+ * turns the buckets it never reached into the nulls that say so.
+ *
+ * lib/metrics.ts:latestValue is the one spelling of the rule itself; see its
+ * docstring on why the two questions must never share a name.
+ */
+function current(
+  res: MetricsResponse | null,
+  base: string,
+  seriesIndex = 0,
+): number | null {
+  return latestValue(griddedValues(res, seriesIndex, base));
+}
+
 export interface FilesystemRow {
   label: string;
   total: number | null;
@@ -93,9 +121,14 @@ export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
     // The mount point, same as the fleet row: one disk must not be called
     // /mnt/ark on one page and ark on the other.
     label: fsName(series.key, ABSENT),
-    total: latest(res, "total", index),
-    used: latest(res, "used", index),
-    free: latest(res, "free", index),
+    // current(), not latest(): a filesystem that has stopped reporting has no
+    // fullness right now, and saying otherwise is what kept a retired row on
+    // the page beside the one that replaced it. The card renders the absent
+    // marker for the nulls and diskWarnings already skips them, so the disk
+    // stays listed -- it is only its numbers that stop claiming to be current.
+    total: current(res, "total", index),
+    used: current(res, "used", index),
+    free: current(res, "free", index),
   }));
 }
 
