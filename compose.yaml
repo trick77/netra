@@ -31,10 +31,27 @@ services:
     # host's public interfaces — both are gated by a single shared admin
     # token, which is adequate for loopback and is not adequate for the
     # internet.
+    #
+    # NETRA_BIND_ADDR carries the address AND the port together, deliberately:
+    # it exists so an operator whose host already has something on 8080 can
+    # move netra from .env instead of editing this file, and splitting it into
+    # separate IP and port variables would invite changing the port while
+    # assuming the address stays pinned. Setting it to `0.0.0.0:8080` puts the
+    # admin API and the UI on the host's public interfaces behind nothing but
+    # the shared token — the paragraph above is the argument against that.
     ports:
-      - "127.0.0.1:8080:8080"
+      - "${NETRA_BIND_ADDR:-127.0.0.1:8080}:8080"
+
+    # 512m, not unbounded. The hub is a Go process serving a handful of
+    # agents; an unbounded default only means a leak takes the host down with
+    # it. Raise this one line if the agent count grows.
+    mem_limit: 512m
 
     environment:
+      # Container-internal, and NOT derived from NETRA_BIND_ADDR: Traefik
+      # dials this port over the `traefik` network and never sees the
+      # published one, so it stays 8080 no matter where the host binding
+      # moves. Same for the healthcheck below and the loadbalancer label.
       NETRA_LISTEN_ADDR: ":8080"
       # sslmode=disable is correct here and only here: this connection never
       # leaves the internal Docker network, and TLS between two containers on
@@ -103,10 +120,28 @@ services:
     networks:
       - netra-internal
 
+    # Without a limit this container sizes itself from the WHOLE host: on a
+    # 31GB/8CPU box the image's timescaledb-tune step wrote shared_buffers =
+    # 7947MB and max_worker_processes = 27 for a database holding metrics from
+    # a couple of monitored hosts.
+    mem_limit: 2g
+
     environment:
       POSTGRES_USER: netra
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
       POSTGRES_DB: netra
+      # timescaledb-tune reads the host's /proc/meminfo, not this container's
+      # cgroup limit, so mem_limit alone would leave it tuning for memory it
+      # cannot have and being OOM-killed for using it. Keep both in step with
+      # mem_limit above; the tuner then sizes shared_buffers from the 2GB it is
+      # told about rather than from the host's total.
+      #
+      # These are read on FIRST INIT ONLY — the tune script runs from
+      # docker-entrypoint-initdb.d. On a data directory that was already
+      # initialised without them, see the upgrade note in README.md before
+      # starting with mem_limit set.
+      TS_TUNE_MEMORY: 2GB
+      TS_TUNE_NUM_CPUS: "2"
 
     # A bind mount rather than a named volume so the data is where the operator
     # expects it and `tar czf` is a backup. Create it before the first run:

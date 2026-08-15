@@ -54,7 +54,11 @@ The hub runs its migrations on startup and reports database reachability at
 Only `PathPrefix(/api/agent/)` is routed from the internet. Everything else —
 the management UI at `/`, the read API and the admin API that mints tokens and
 deletes hosts — is published on `127.0.0.1:8080` on the hub host and gated on
-`NETRA_ADMIN_TOKEN`. From a laptop, tunnel:
+`NETRA_ADMIN_TOKEN`. If that port is already taken on your host, move netra
+with `NETRA_BIND_ADDR` in `.env` (address and port together, e.g.
+`127.0.0.1:18080`) and adjust the commands below to match; Traefik reaches the
+container over the Docker network, so agent ingest is unaffected either way.
+From a laptop, tunnel:
 
 ```sh
 ssh -L 8080:127.0.0.1:8080 <hub-host>
@@ -64,12 +68,50 @@ then open <http://127.0.0.1:8080/> and log in with `NETRA_ADMIN_TOKEN`.
 Changing that token logs every open session out — the session cookie is signed
 with a key derived from it.
 
+### Memory
+
+Both containers are capped in `compose.yaml`: 512 MB for the hub, 2 GB for
+timescaledb. The database is additionally told what it has — `TS_TUNE_MEMORY`
+and `TS_TUNE_NUM_CPUS` — because `timescaledb-tune` reads the host's
+`/proc/meminfo` rather than the container's cgroup limit, and would otherwise
+size a 31 GB machine's buffer pool for a database serving a handful of agents.
+Raise all four together if your fleet outgrows them.
+
+**Upgrading an install created before those limits existed — order matters.**
+The tune step runs on first init only, so an existing `data/timescaledb` still
+carries the oversized `shared_buffers`, and Postgres under the new 2 GB cap
+either refuses to start or is OOM-killed. Once that happens
+`docker compose exec` has nothing to exec into, so fix the config *before* the
+cap takes effect.
+
+If the database holds nothing you need — it was initialised minutes ago, the
+hub never came up — the short path is to let it re-init under the new
+settings:
+
+```sh
+docker compose down
+rm -rf data/timescaledb && mkdir -p data/timescaledb
+docker compose up -d
+```
+
+Otherwise re-tune the live config first, while the container still starts under
+the old (unlimited) compose file, and only then pull this change:
+
+```sh
+docker compose exec timescaledb timescaledb-tune \
+  --conf-path=/var/lib/postgresql/data/postgresql.conf \
+  --memory=2GB --cpus=2 --yes
+docker compose restart timescaledb
+```
+
+A fresh install needs none of this.
+
 ---
 
 ## Mint an agent token
 
 Each host gets its own token, prefixed `nta_`. In the UI, add the host; or over
-the admin API:
+the admin API — on the hub host, at whatever `NETRA_BIND_ADDR` publishes:
 
 ```sh
 curl -s -X POST http://127.0.0.1:8080/api/v1/hosts \

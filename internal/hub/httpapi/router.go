@@ -16,9 +16,11 @@ import (
 // directly; there is no framework.
 //
 // Only /api/agent/ is routed from the internet -- see the Traefik PathPrefix
-// in compose.yaml -- and the published port is bound to 127.0.0.1. Everything
-// mounted below outside that prefix is reachable on the hub host alone, and
-// is additionally gated on NETRA_ADMIN_TOKEN. Widening that PathPrefix would
+// in compose.yaml -- and the published port is bound to 127.0.0.1 by default
+// (NETRA_BIND_ADDR). Everything mounted below outside that prefix is reachable
+// on the hub host alone under that default, and is in every case gated on
+// NETRA_ADMIN_TOKEN -- which is the only guarantee left if an operator widens
+// the binding, so it is not optional here. Widening that PathPrefix would
 // publish host creation and token minting with no other visible change.
 func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Handler {
 	svc := admin.NewService(s.Pool())
