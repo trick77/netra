@@ -18,6 +18,7 @@ import {
   hasReading,
   latestValue,
   optionalValues,
+  peakBase,
 } from "../../../lib/metrics";
 import {
   ABSENT,
@@ -631,8 +632,11 @@ export function Overview({
   // a bucket makes that bucket's total unknowable rather than smaller --
   // counting it as zero would draw a dip that never happened. Same rule the
   // fleet row uses, so the two agree about one host.
-  const ingress = sumInterfaces(netMetrics, "rx_bytes");
-  const egress = sumInterfaces(netMetrics, "tx_bytes");
+  // Bucket PEAK rather than bucket mean -- see peakBase(). Same choice the
+  // fleet row makes, including the per-interface summing caveat noted there,
+  // so the two still agree about one host.
+  const ingress = sumInterfaces(netMetrics, peakBase(netMetrics, "rx_bytes"));
+  const egress = sumInterfaces(netMetrics, peakBase(netMetrics, "tx_bytes"));
   // The Traffic card's NUMBERS, as opposed to the series beside them: gauges
   // off host_current, blanked when the host is not reporting. isReporting is
   // the fleet list's predicate too, so a host cannot read offline there and

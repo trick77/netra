@@ -11,6 +11,7 @@ import {
   griddedValues,
   hasReading,
   latestValue,
+  peakBase,
 } from "../../lib/metrics";
 import { memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
@@ -316,8 +317,18 @@ export async function fetchHostTrends(
     cpu,
     mem: memoryBands(host),
     reporting: total,
-    rx: sumSeries(net, "rx_bytes"),
-    tx: sumSeries(net, "tx_bytes"),
+    // The PEAK of each bucket, not its mean -- see peakBase(). A fleet row
+    // is scanned for "did this host spike", and the average hid exactly that.
+    //
+    // Summed per interface, so this is the sum of each interface's own peak
+    // rather than the peak of the summed traffic, and is therefore >= it: two
+    // interfaces that burst in different minutes of the same bucket add
+    // together here as though they had burst at once. That is the right bias
+    // for a cell answering "is there anything here to look at" -- it never
+    // hides a burst, and the interface that actually burst is one click away
+    // on the host page, where the pairs are drawn per interface.
+    rx: sumSeries(net, peakBase(net, "rx_bytes")),
+    tx: sumSeries(net, peakBase(net, "tx_bytes")),
     fullest: fullestFilesystem(filesystem),
     disk: filesystemBands(filesystem),
     oomKills: counterIncrease(griddedValues(host, 0, "oom_kill_total")),

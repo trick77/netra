@@ -7,6 +7,7 @@ import {
   griddedValues,
   hasGaps,
   optionalValues,
+  peakBase,
   seriesCells,
   seriesTimestamps,
   seriesValues,
@@ -380,6 +381,57 @@ describe("column and the rollup suffixes", () => {
     expect(carriesColumn(fs as never, "free")).toBe(true);
     expect(optionalValues(fs as never, 0, "free")).toEqual([90]);
     expect(column(fs as never, "free")).toBe(1);
+  });
+});
+
+describe("peakBase", () => {
+  // The whole point of the helper: column() prefers _avg, and for traffic
+  // that average is what flattened every burst. Asking for the peak has to
+  // return a name that column() resolves on its EXACT-name branch, or it
+  // would fall straight back into the _avg-preferring order.
+  it("when a rolled_up tier carries both peers_then resolves the max", () => {
+    const net = {
+      ...raw,
+      tier: "5m",
+      columns: ["rx_bytes_avg", "rx_bytes_max"],
+      series: [{ key: {}, points: [[1, 10, 90]] }],
+    };
+
+    expect(peakBase(net as never, "rx_bytes")).toBe("rx_bytes_max");
+    expect(column(net as never, peakBase(net as never, "rx_bytes"))).toBe(1);
+    // The reading actually changes -- 90, the peak, not 10, the mean. A test
+    // that only asserted the NAME would still pass if the column resolved
+    // back to the average behind it.
+    expect(
+      seriesValues(net as never, 0, peakBase(net as never, "rx_bytes")),
+    ).toEqual([90]);
+  });
+
+  // The raw table has no _max peer at all, because at raw resolution the
+  // sample IS the peak. Without the fallback this threw UnknownColumnError
+  // and took the whole render down -- there is no error boundary in this
+  // app -- so the 1h range would have been a blank page rather than a
+  // sharper chart.
+  it("when the tier has no max peer_then falls back to the base name", () => {
+    const net = {
+      ...raw,
+      tier: "raw",
+      columns: ["rx_bytes"],
+      series: [{ key: {}, points: [[1, 42]] }],
+    };
+
+    expect(peakBase(net as never, "rx_bytes")).toBe("rx_bytes");
+    expect(
+      seriesValues(net as never, 0, peakBase(net as never, "rx_bytes")),
+    ).toEqual([42]);
+  });
+
+  // Same reason carriesColumn takes `== null`: these names are resolved
+  // during render from a response prop that may not have arrived yet, and
+  // reading .columns off undefined is a blank page.
+  it("when the response is absent_then falls back rather than throwing", () => {
+    expect(peakBase(null, "rx_bytes")).toBe("rx_bytes");
+    expect(peakBase(undefined, "rx_bytes")).toBe("rx_bytes");
   });
 });
 
