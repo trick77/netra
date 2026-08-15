@@ -91,6 +91,24 @@ const SERIES_VARS = [
 type Source =
   "host" | "net" | "diskIo" | "filesystem" | "collector" | "cpuCore" | "agent";
 
+/**
+ * A panel's source to the family name the read API takes.
+ *
+ * Two of the seven differ (diskIo/disk_io, cpuCore/cpu_core), which is
+ * exactly why this is a table rather than a cast: the enlarged view fetches
+ * by family, and a silently wrong name is a 400 that surfaces as one chart
+ * refusing to widen.
+ */
+const FAMILY: Record<Source, string> = {
+  host: "host",
+  net: "net",
+  diskIo: "disk_io",
+  filesystem: "filesystem",
+  collector: "collector",
+  cpuCore: "cpu_core",
+  agent: "agent",
+};
+
 interface PanelSpec {
   title: string;
   unit?: string;
@@ -412,9 +430,18 @@ export interface GraphsProps {
   collector?: MetricsResponse | null;
   cpuCore?: MetricsResponse | null;
   agent?: MetricsResponse | null;
-  /** The page's range and setter, passed to each panel's enlarged view. */
+  /** The range the page is showing. It seeds each enlarged view's own
+   * picker; it is not written back from one. */
   range?: Range;
-  onRangeChange?: (range: Range) => void;
+  /**
+   * Loads ONE family at another range, for an enlarged chart alone.
+   *
+   * The page keeps fetching all seven families at the page's range, as it
+   * always has. This exists so a single dialog can ask for a longer window
+   * without dragging the other nineteen panels along -- which is what the
+   * dialog's picker did when it was wired to the page's setter.
+   */
+  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
 }
 
 function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
@@ -484,14 +511,30 @@ function Panel({
   spec,
   res,
   range,
-  onRangeChange,
+  fetchFamily,
 }: {
   spec: PanelSpec;
   res: MetricsResponse | null;
   range?: Range;
-  onRangeChange?: (range: Range) => void;
+  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
 }) {
   const series = bandsFor(spec, res);
+
+  // The same bandsFor the page uses, over a response for one family at one
+  // other range -- so an enlarged chart draws its wider window exactly as
+  // the small one drew its narrower one, counters, stacks and all. Rebuilt
+  // per render rather than memoised: useDetailRange only calls it when its
+  // own range actually differs from the page's, which is at most once per
+  // click on a picker nobody clicks in a loop.
+  const fetchSeries = fetchFamily
+    ? async (next: Range) => {
+        const answered = await fetchFamily(FAMILY[spec.source], next);
+        return {
+          series: bandsFor(spec, answered),
+          window: answered.window ?? null,
+        };
+      }
+    : undefined;
   // An empty band list has two causes and they are not the same fact: this
   // tier does not carry the columns (the rollups drop most per-state
   // columns), or nothing has been fetched yet. Either way an empty chart
@@ -528,13 +571,13 @@ function Panel({
       notice={null}
       unavailable={unavailable}
       // The answered window and the page's range, so the enlarged view has
-      // a real time axis and the control to widen it without closing.
+      // a real time axis and a picker seeded where the page is.
       window={res?.window ?? null}
       range={range}
-      onRangeChange={onRangeChange}
-      // Only what the host page's own picker offers: the enlarged view used
-      // to show all five, so 30d chosen here handed the page a range its
-      // toolbar had no button for and every one of them came back unpressed.
+      fetchSeries={fetchSeries}
+      // Only what the host page's own fetcher will serve. It used to show
+      // all five and hand the choice to the PAGE, so 30d here re-ranged a
+      // toolbar that had no button for it and left every one unpressed.
       ranges={RANGE_VALUES}
     />
   );
@@ -551,7 +594,7 @@ function Group({
   sources: GraphsProps;
   extra?: string[];
 }) {
-  const { range, onRangeChange } = sources;
+  const { range, fetchFamily } = sources;
   return (
     <>
       <h3 className="grouphead">{title}</h3>
@@ -562,7 +605,7 @@ function Group({
             spec={spec}
             res={sources[spec.source] ?? null}
             range={range}
-            onRangeChange={onRangeChange}
+            fetchFamily={fetchFamily}
           />
         ))}
         {(extra ?? []).map((missing) => (

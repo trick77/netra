@@ -5,7 +5,7 @@
 // no columns in the schema at all, and netra's collector contract is that
 // something which cannot run says why -- this panel is where that
 // contract reaches the UI.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ABSENT } from "../../lib/format";
 import { extent } from "./geometry";
 import type { OverlaySeries } from "./Overlay";
@@ -16,6 +16,81 @@ import type { Range } from "../../lib/range";
 /** A single plotted series. Re-exported as `Band` because that is the name
  * the task brief uses for ChartPanel's `series` prop. */
 export type Band = OverlaySeries;
+
+/**
+ * The enlarged view's own range, and the data for it.
+ *
+ * The whole point of this hook is that nothing it returns reaches the page.
+ * A reader who enlarges one chart and widens it is asking a question about
+ * that chart; answering it by re-ranging the twenty panels behind the dialog
+ * -- which is what wiring the dialog to the page's setter did -- refetches
+ * the entire tab and moves the toolbar under the thing being read.
+ *
+ * `series` is null until the range is actually changed, so a dialog opened
+ * and closed again costs no request at all: the panel's own data already
+ * covers the page's range.
+ */
+function useDetailRange(
+  pageRange: Range | undefined,
+  fetchSeries: ((range: Range) => Promise<DetailData>) | undefined,
+  open: boolean,
+) {
+  const [range, setRange] = useState<Range | undefined>(pageRange);
+  const [data, setData] = useState<DetailData | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Closing resets, so reopening starts from the page again rather than from
+  // wherever the last look happened to end. The dialog is a question asked
+  // and answered, not a second piece of page state to keep track of.
+  useEffect(() => {
+    if (open) return;
+    setRange(pageRange);
+    setData(null);
+    setError(null);
+  }, [open, pageRange]);
+
+  useEffect(() => {
+    // Nothing to do at the page's own range: the series already on screen
+    // are that range's, which is what makes opening the dialog free.
+    if (!open || range === undefined || range === pageRange) return;
+    if (fetchSeries === undefined) return;
+
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchSeries(range).then(
+      (next) => {
+        if (cancelled) return;
+        setData(next);
+        setLoading(false);
+      },
+      (e: unknown) => {
+        if (cancelled) return;
+        // The previous series stay on screen (see the series prop below), so
+        // this reports the failure without also blanking the chart -- an
+        // empty chart would claim the host reported nothing over the window
+        // just asked for, which is a different and much worse statement.
+        setError(e instanceof Error ? e.message : String(e));
+        setLoading(false);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [open, range, pageRange, fetchSeries]);
+
+  return {
+    range,
+    // No picker without a fetcher: buttons that cannot change anything are
+    // worse than no buttons.
+    setRange: fetchSeries === undefined ? undefined : setRange,
+    series: range === pageRange ? null : (data?.series ?? null),
+    window: range === pageRange ? null : (data?.window ?? null),
+    loading,
+    error,
+  };
+}
 
 export interface ChartPanelProps {
   title: string;
@@ -58,13 +133,37 @@ export interface ChartPanelProps {
   hideAxis?: boolean;
   /** The answered window, passed through to the enlarged view's time axis. */
   window?: { from: string; to: string } | null;
-  /** The page's range and setter, so the enlarged view can carry the same
-   * control. Without them it simply shows the window it was given. */
+  /** The range the PAGE is showing. It seeds the enlarged view's own picker
+   * and is what that picker returns to when the dialog is closed and
+   * reopened. It is never written back: enlarging a chart to look at a
+   * longer window is a question about that chart, not a decision about the
+   * page. */
   range?: Range;
-  onRangeChange?: (range: Range) => void;
-  /** The ranges the page offers, so the enlarged view cannot hand back one
-   * the page's own picker has no button for. */
+  /** The ranges to offer in the enlarged view. Defaults to every range;
+   * pages that resolve a narrower set pass it so the dialog cannot ask for a
+   * window the page's fetcher will not serve. */
   ranges?: readonly Range[];
+  /**
+   * Loads this panel's series at another range, for the enlarged view alone.
+   *
+   * The picker in the dialog used to be wired to the PAGE's setter, so
+   * widening one chart refetched all twenty panels beside it and moved the
+   * toolbar behind the dialog -- the opposite of what enlarging one chart
+   * asks for. The dialog owns its range now, and this is how it gets data
+   * for it.
+   *
+   * Without this the dialog carries no picker at all, which is right for a
+   * panel whose page cannot refetch one family on its own.
+   */
+  fetchSeries?: (range: Range) => Promise<DetailData>;
+}
+
+/** What fetchSeries answers: the bands to draw and the window they cover,
+ * already shaped -- the caller owns the response-to-bands conversion because
+ * only it knows which columns this panel plots. */
+export interface DetailData {
+  series: Band[];
+  window: { from: string; to: string } | null;
 }
 
 export function ChartPanel({
@@ -86,10 +185,11 @@ export function ChartPanel({
   hideAxis,
   window: answered = null,
   range,
-  onRangeChange,
   ranges,
+  fetchSeries,
 }: ChartPanelProps) {
   const [enlarged, setEnlarged] = useState(false);
+  const detail = useDetailRange(range, fetchSeries, enlarged);
   if (unavailable !== undefined) {
     return (
       <section className="smp na" aria-label={`${title}, not collected`}>
@@ -186,7 +286,12 @@ export function ChartPanel({
         <ChartDetail
           title={title}
           unit={unit}
-          series={series}
+          // The dialog's own data once its range has been changed, and the
+          // panel's otherwise. Keeping the previous series while a fetch is
+          // in flight is deliberate: blanking the chart to redraw it a
+          // moment later is a flicker, and an empty chart in netra asserts
+          // "the host reported nothing".
+          series={detail.series ?? series}
           max={max}
           fmt={fmt}
           stacked={stacked}
@@ -197,10 +302,14 @@ export function ChartPanel({
           // small panel, which has no axis, needs the rule to say what it is.
           mirrored={mirrored}
           hideAxis={hideAxis}
-          window={answered}
-          range={range}
-          onRangeChange={onRangeChange}
+          window={detail.window ?? answered}
+          // The dialog's range and the dialog's setter. The page's setter is
+          // deliberately not reachable from here.
+          range={detail.range}
+          onRangeChange={detail.setRange}
           ranges={ranges}
+          loading={detail.loading}
+          error={detail.error}
           onClose={() => setEnlarged(false)}
         />
       )}

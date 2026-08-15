@@ -196,6 +196,78 @@ function read(res: MetricsResponse, containerKey: string): Sampled | null {
   };
 }
 
+export interface ContainerBands {
+  cpuBands: Band[];
+  memBands: Band[];
+  netBands: Band[];
+  ioBands: Band[];
+}
+
+/**
+ * Every band this page draws, from one container's samples.
+ *
+ * Hoisted out of the component so an enlarged chart fetching its own wider
+ * window rebuilds its bands exactly as the small panel built them -- the
+ * split-versus-total fallbacks below are a real decision about what the data
+ * says, and a dialog that skipped them would draw a different chart from the
+ * one it was opened on.
+ *
+ * Overlay (below ChartPanel) legends any panel with two or more series
+ * itself, so rx/tx and read/write are named without this page drawing a
+ * legend of its own -- colour alone never carries series identity.
+ */
+function bandsFor(sampled: Sampled | null): ContainerBands {
+  const band = (
+    name: string,
+    color: string,
+    values: (number | null)[],
+  ): Band => ({ name, color, values });
+  const empty: (number | null)[] = [];
+
+  // A band whose column the answering tier does not carry comes back empty,
+  // and one the container never reported comes back all null. Neither is a
+  // band: in a STACK the second is worse than useless, because stackBands
+  // breaks every band at any index where any series is null. hasReading() is
+  // that test, shared with lib/bands.ts so the host's memory stack and this
+  // one drop a band on the same rule.
+  const cpuSplit = [
+    band("user", "var(--s1)", sampled?.cpuUser ?? empty),
+    band("system", "var(--s7)", sampled?.cpuSystem ?? empty),
+  ].filter((b) => hasReading(b.values));
+  const cpuBands =
+    cpuSplit.length > 1
+      ? cpuSplit
+      : [band("cpu", "var(--s1)", sampled?.cpu ?? empty)];
+
+  const memSplit = [
+    band("anon", "var(--s1)", sampled?.memAnon ?? empty),
+    band("file", "var(--s2)", sampled?.memFile ?? empty),
+    band("shmem", "var(--s4)", sampled?.memShmem ?? empty),
+    band("kernel", "var(--s8)", sampled?.memKernel ?? empty),
+  ].filter((b) => hasReading(b.values));
+  const memBands =
+    memSplit.length > 1
+      ? memSplit
+      : [band("used", "var(--s2)", sampled?.memUsed ?? empty)];
+
+  return {
+    cpuBands,
+    memBands,
+    // Mirrored about a midline, ingress above and egress below, like every
+    // other traffic chart in the app. Green over purple for the same reason
+    // the fleet row uses them: against green, blue separates by CVD dE 9 and
+    // the two halves read as one mass.
+    netBands: [
+      band("ingress", "var(--s2)", sampled?.netRx ?? empty),
+      band("egress", "var(--s5)", sampled?.netTx ?? empty),
+    ],
+    ioBands: [
+      band("read", "var(--s2)", sampled?.ioRead ?? empty),
+      band("write", "var(--s4)", sampled?.ioWrite ?? empty),
+    ],
+  };
+}
+
 function last(values: readonly (number | null)[]): number | null {
   return values.filter((v): v is number => v !== null).at(-1) ?? null;
 }
@@ -225,6 +297,10 @@ export interface ContainerPageProps {
   metrics: MetricsResponse;
   range: Range;
   onRangeChange: (range: Range) => void;
+  /** Loads a family=container response at another range, for an enlarged
+   * chart alone. Without it the dialogs carry no picker -- a page that
+   * cannot refetch has nothing to offer one. */
+  fetchMetrics?: (range: Range) => Promise<MetricsResponse>;
   /**
    * The host's `container_network` capability, when it reported one.
    *
@@ -253,6 +329,7 @@ export function ContainerPage({
   metrics,
   range,
   onRangeChange,
+  fetchMetrics,
   containerNetwork,
   now = new Date(),
 }: ContainerPageProps) {
@@ -275,42 +352,22 @@ export function ContainerPage({
     now,
   });
 
-  // Overlay (below ChartPanel) legends any panel with two or more series
-  // itself, so rx/tx and read/write are named without this page drawing a
-  // legend of its own -- colour alone never carries series identity.
-  const band = (
-    name: string,
-    color: string,
-    values: (number | null)[],
-  ): Band => ({ name, color, values });
-  const empty: (number | null)[] = [];
+  const { cpuBands, memBands, netBands, ioBands } = bandsFor(sampled);
 
-  // A band whose column the answering tier does not carry comes back empty,
-  // and one the container never reported comes back all null. Neither is a
-  // band: in a STACK the second is worse than useless, because stackBands
-  // breaks every band at any index where any series is null. hasReading() is
-  // that test, shared with lib/bands.ts so the host's memory stack and this
-  // one drop a band on the same rule.
-
-  const cpuSplit = [
-    band("user", "var(--s1)", sampled?.cpuUser ?? empty),
-    band("system", "var(--s7)", sampled?.cpuSystem ?? empty),
-  ].filter((b) => hasReading(b.values));
-  const cpuBands =
-    cpuSplit.length > 1
-      ? cpuSplit
-      : [band("cpu", "var(--s1)", sampled?.cpu ?? empty)];
-
-  const memSplit = [
-    band("anon", "var(--s1)", sampled?.memAnon ?? empty),
-    band("file", "var(--s2)", sampled?.memFile ?? empty),
-    band("shmem", "var(--s4)", sampled?.memShmem ?? empty),
-    band("kernel", "var(--s8)", sampled?.memKernel ?? empty),
-  ].filter((b) => hasReading(b.values));
-  const memBands =
-    memSplit.length > 1
-      ? memSplit
-      : [band("used", "var(--s2)", sampled?.memUsed ?? empty)];
+  // One family, one other range, for an enlarged chart alone -- the page
+  // keeps showing what its own picker asked for. Each panel narrows the
+  // response to THIS container and rebuilds its bands through the same
+  // bandsFor the page uses, so a widened dialog draws what the small panel
+  // drew, split bands and fallbacks included.
+  const detail = fetchMetrics
+    ? (pick: (b: ContainerBands) => Band[]) => async (next: Range) => {
+        const answered = await fetchMetrics(next);
+        return {
+          series: pick(bandsFor(read(answered, container.container_key))),
+          window: answered.window ?? null,
+        };
+      }
+    : () => undefined;
 
   return (
     <>
@@ -348,8 +405,8 @@ export function ContainerPage({
           notice={notice}
           window={metrics.window}
           range={range}
-          onRangeChange={onRangeChange}
           ranges={CONTAINER_RANGE_VALUES}
+          fetchSeries={detail((b) => b.cpuBands)}
           stacked={cpuBands.length > 1}
           series={cpuBands}
         />
@@ -364,8 +421,8 @@ export function ContainerPage({
           notice={notice}
           window={metrics.window}
           range={range}
-          onRangeChange={onRangeChange}
           ranges={CONTAINER_RANGE_VALUES}
+          fetchSeries={detail((b) => b.memBands)}
           max={memLimit === null ? undefined : memLimit * 1.08}
           reference={memLimit ?? undefined}
           referenceLabel={memLimit === null ? undefined : bytes(memLimit)}
@@ -384,8 +441,8 @@ export function ContainerPage({
           notice={notice}
           window={metrics.window}
           range={range}
-          onRangeChange={onRangeChange}
           ranges={CONTAINER_RANGE_VALUES}
+          fetchSeries={detail((b) => b.netBands)}
           mirrored
           // The agent's own explanation, in place of a chart that would
           // otherwise read as "this container moved no traffic".
@@ -403,10 +460,7 @@ export function ContainerPage({
               : (NETWORK_UNAVAILABLE[containerNetwork] ??
                 `The agent reported per-container networking as "${containerNetwork}", so no container traffic was measured.`)
           }
-          series={[
-            band("ingress", "var(--s2)", sampled?.netRx ?? empty),
-            band("egress", "var(--s5)", sampled?.netTx ?? empty),
-          ]}
+          series={netBands}
         />
         <ChartPanel
           title="Disk I/O"
@@ -414,12 +468,9 @@ export function ContainerPage({
           notice={notice}
           window={metrics.window}
           range={range}
-          onRangeChange={onRangeChange}
           ranges={CONTAINER_RANGE_VALUES}
-          series={[
-            band("read", "var(--s2)", sampled?.ioRead ?? empty),
-            band("write", "var(--s4)", sampled?.ioWrite ?? empty),
-          ]}
+          fetchSeries={detail((b) => b.ioBands)}
+          series={ioBands}
         />
       </div>
 
