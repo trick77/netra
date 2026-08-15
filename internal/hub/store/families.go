@@ -491,10 +491,14 @@ func (s *Store) resolveFilesystemIDs(ctx context.Context, hostID int32, rows []*
 
 	for _, r := range rows {
 		sent := r.GetLabel()
-		if sent == "" {
+		// The nameless are skipped AFTER normalising, not before: a bare
+		// "/netra/fs/" strips to nothing, and inserting that would put a
+		// filesystem with no name at all in the table -- a row the page can
+		// only render as blank, carrying samples nothing can attribute.
+		label := hostSideLabel(sent)
+		if label == "" {
 			continue
 		}
-		label := hostSideLabel(sent)
 		u, seen := want[label]
 		if !seen {
 			u = &upsert{}
