@@ -44,3 +44,38 @@ export const SPARK_WIDTH = 170;
 export const REFERENCE_STROKE = "var(--reference)";
 export const REFERENCE_DASH = "4 3";
 export const REFERENCE_WIDTH = 1;
+
+/**
+ * How a mirrored up/down area is drawn -- a dimmed fill with a solid edge of
+ * the same series colour.
+ *
+ * One definition, imported by both UpDownSparkline and Overlay's mirrored
+ * branch, for the same reason the reference rule above has one: the two draw
+ * the SAME reading. A fleet row's traffic cell and the host page's Interface
+ * throughput panel are both rx above the midline and tx below it, through the
+ * same mirrorPaths() geometry, and an operator scans one and then the other.
+ * They were last reconciled by hand -- the sparkline had been left at a fully
+ * opaque fill with no edge, so the same fact about the same host was two
+ * different pictures -- and a comment saying "do not retune this on one side
+ * alone" is not something a test can enforce. These constants are.
+ *
+ * Deliberately NOT shared with the stacked branches. A stack's 0.55 looks
+ * like the same kind of number, but it answers a different question: bands
+ * are layered over each other and the fill has to stay readable through the
+ * one above it, where a mirrored pair has nothing behind it and only needs
+ * to sit below its own edge. Tying them together would mean a future tune of
+ * one silently moving the other.
+ */
+export const MIRROR_FILL_OPACITY = 0.45;
+export const MIRROR_STROKE_WIDTH = 1.25;
+
+/**
+ * The rule marking a mirrored chart's midline -- where zero is.
+ *
+ * --border rather than --reference: a reference rule annotates the data (a
+ * host's total RAM), while this one is the axis the data is drawn against,
+ * and it is the same structural hairline as a card edge or a table rule.
+ * Solid, not dashed, for that reason too.
+ */
+export const AXIS_STROKE = "var(--border)";
+export const AXIS_WIDTH = 1;

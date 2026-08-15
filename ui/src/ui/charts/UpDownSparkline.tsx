@@ -1,17 +1,22 @@
 // A mirrored up/down traffic chart (e.g. inbound above the midline,
 // outbound below it). geometry.ts's mirrorPaths() already breaks each side
 // independently at its own gaps and never lets one side's null force a gap
-// on the other -- this component supplies the shared max, the colours, and
-// the mark weights.
+// on the other -- this component supplies the shared max and the colours.
 //
-// Those weights are copied from Overlay's mirrored branch, not chosen here.
-// Interface throughput plots the same rx/tx pair through the same
-// mirrorPaths() geometry, and the two are read on the same screen: a fleet
-// row's traffic cell and the throughput panel must be the same mark at two
-// sizes, or the operator has to learn the chart twice. Do not retune the
-// opacity or the stroke width on this side alone.
+// The mark weights come from size.ts, not from here. Interface throughput
+// plots the same rx/tx pair through the same mirrorPaths() geometry, and the
+// two are read on the same screen: a fleet row's traffic cell and the
+// throughput panel must be the same mark at two sizes, or the operator has
+// to learn the chart twice. Sharing the constants is what makes that true by
+// construction rather than by everyone remembering to edit both files.
 import { extent, mirrorPaths } from "./geometry";
-import { SPARK_WIDTH } from "./size";
+import {
+  AXIS_STROKE,
+  AXIS_WIDTH,
+  MIRROR_FILL_OPACITY,
+  MIRROR_STROKE_WIDTH,
+  SPARK_WIDTH,
+} from "./size";
 
 export interface UpDownSparklineProps {
   up: (number | null)[];
@@ -75,9 +80,9 @@ export function UpDownSparkline({
           data-up
           d={upPath}
           fill={upColor}
-          fillOpacity={0.45}
+          fillOpacity={MIRROR_FILL_OPACITY}
           stroke={upColor}
-          strokeWidth={1.25}
+          strokeWidth={MIRROR_STROKE_WIDTH}
         />
       )}
       {downPath !== "" && (
@@ -85,9 +90,9 @@ export function UpDownSparkline({
           data-down
           d={downPath}
           fill={downColor}
-          fillOpacity={0.45}
+          fillOpacity={MIRROR_FILL_OPACITY}
           stroke={downColor}
-          strokeWidth={1.25}
+          strokeWidth={MIRROR_STROKE_WIDTH}
         />
       )}
       {/* Drawn last, on top, and unconditionally. Once the fills are dimmed
@@ -100,8 +105,8 @@ export function UpDownSparkline({
         x2={width}
         y1={mid}
         y2={mid}
-        stroke="var(--border)"
-        strokeWidth={1}
+        stroke={AXIS_STROKE}
+        strokeWidth={AXIS_WIDTH}
       />
     </svg>
   );
