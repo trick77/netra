@@ -582,7 +582,7 @@ func TestContainersIgnoresDirectoriesThatAreNotContainerScopes(t *testing.T) {
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
-	if got := testee.StartupSummary(); got != "0 cgroup scopes, 1 containers named by the docker socket" {
+	if got := testee.StartupSummary(); got != "0 cgroup scopes, 1 container named by the docker socket" {
 		t.Errorf("StartupSummary = %q, want 0 scopes -- none of those directories is a container", got)
 	}
 }

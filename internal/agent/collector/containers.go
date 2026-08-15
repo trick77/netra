@@ -207,11 +207,13 @@ func (c *Containers) StartupSummary() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	socket := fmt.Sprintf("%d containers named by the docker socket", c.lastListed)
+	socket := fmt.Sprintf("%d %s named by the docker socket",
+		c.lastListed, plural(c.lastListed, "container", "containers"))
 	if c.socketAbsent {
 		socket = "docker socket unavailable"
 	}
-	return fmt.Sprintf("%d cgroup scopes, %s", c.lastScopes, socket)
+	return fmt.Sprintf("%d cgroup %s, %s",
+		c.lastScopes, plural(c.lastScopes, "scope", "scopes"), socket)
 }
 
 // setCapability records why per-container networking produced nothing. Reset
@@ -494,6 +496,15 @@ func containerIDFromCgroup(name string) (string, bool) {
 		return name, true
 	}
 	return "", false
+}
+
+// plural picks the form matching n. One container is not "1 containers", and a
+// line an operator is meant to read at a glance should not read like a counter.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func isHex(s string) bool {
