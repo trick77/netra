@@ -13,6 +13,7 @@ import type {
 import {
   carriesColumn,
   counterIncrease,
+  fsName,
   griddedValues,
   hasReading,
   latestValue,
@@ -86,7 +87,9 @@ export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
   // .series off it threw during render, with no error boundary under it.
   if (res == null) return [];
   return res.series.map((series, index) => ({
-    label: series.key.filesystem ?? ABSENT,
+    // The mount point, same as the fleet row: one disk must not be called
+    // /mnt/ark on one page and ark on the other.
+    label: fsName(series.key, ABSENT),
     total: latest(res, "total", index),
     used: latest(res, "used", index),
     free: latest(res, "free", index),

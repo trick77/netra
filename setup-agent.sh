@@ -2118,6 +2118,36 @@ _env_value() {
     eval "export NETRA_VAL_$1"
 }
 
+# _pct_encode STRING — percent-encode the three characters NETRA_FS_MOUNTS
+# cannot carry literally.
+#
+# The value is a `,`-joined list of `label=mountpoint`, and a mount point may
+# legitimately contain either separator (/mnt/a,b is a valid path). `%` is
+# encoded first, or the escapes written for the other two would be
+# indistinguishable from a literal `%2C` that was in the path all along.
+# internal/agent/config decodes it.
+_pct_encode() {
+    printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/,/%2C/g' -e 's/=/%3D/g'
+}
+
+# build_fs_mounts_value — the NETRA_FS_MOUNTS value: `label=mountpoint,...`.
+#
+# Walks the SAME FS_MOUNTS list that build_volume_block turns into bind mounts,
+# so the mapping and the mounts are rendered together and cannot drift apart.
+#
+# Without it the agent knows only the target it stat'd — /netra/fs/ark — and
+# that path names nothing on the host. Reporting it is what produced
+# "/netra/fs/ark is 94 % full" on a host with no netra anywhere.
+build_fs_mounts_value() {
+    NETRA_BLK_FS_MOUNTS=""
+    while IFS='|' read -r _bf_mm _bf_mp _bf_lab; do
+        [ -n "$_bf_mm" ] || continue
+        NETRA_BLK_FS_MOUNTS="${NETRA_BLK_FS_MOUNTS:+$NETRA_BLK_FS_MOUNTS,}$_bf_lab=$(_pct_encode "$_bf_mp")"
+    done <<EOF
+${FS_MOUNTS:-}
+EOF
+}
+
 # build_volume_block — the `volumes:` key AND its entries, or nothing at all.
 #
 # Long form (`type: bind` / `source:` / `target:` / `read_only: true`) rather
@@ -2237,6 +2267,9 @@ build_pid_block() {
 
 build_blocks() {
     build_volume_block
+    # Beside the volume block on purpose: both read FS_MOUNTS, and the bind
+    # mounts are meaningless to the hub without the mapping that names them.
+    build_fs_mounts_value
     build_device_block
     build_cap_block
     build_pid_block
@@ -2707,6 +2740,7 @@ write_outputs() {
     _env_value PROVIDER "$PROVIDER"
     _env_value HOST_TYPE "$HOST_TYPE"
     _env_value PID_HOST "${PID_HOST:-0}"
+    _env_value FS_MOUNTS "${NETRA_BLK_FS_MOUNTS:-}"
 
     # The gate. One question covering everything below it, so "no" means the
     # host is exactly as it was.
@@ -2802,6 +2836,15 @@ EOF
         warn "$OUTPUT_DIR/.env already exists and --force was not given, so it was left" \
             "untouched. Its existing token and settings still apply. Re-run with --force to" \
             "overwrite it."
+        # One exception, and only one: NETRA_FS_MOUNTS. It is DERIVED from the
+        # same detection that just rendered the bind mounts, exactly like
+        # compose.yaml, and it is the line that stops the agent naming a
+        # filesystem after the container path it is measured through. An .env
+        # left alone here would keep the mounts and lose their names, which is
+        # the bug this exists to fix — and demanding --force to fix it would
+        # make the operator re-supply a token to correct a label.
+        sync_fs_mounts "$OUTPUT_DIR/.env"
+
         # The ONE case where leaving .env alone leaves the agent broken, and
         # broken silently. NETRA_CGROUP_ROOT used to be documented as
         # /sys/fs/cgroup, so an operator who uncommented it then pins the agent
@@ -2848,6 +2891,63 @@ EOF
     fi
 
     rm -rf "$SCRATCH_DIR"
+}
+
+# netra_rewrite_fs_mounts FILE — replace (or append) the NETRA_FS_MOUNTS line.
+#
+# awk with ENVIRON, never `sed s///`: the value is built from mount points, and
+# a `/` in the replacement would end a sed expression early.
+#
+# The result is copied back over the original with `cat` rather than moved into
+# place. A `mv` would replace the inode, and this file holds the agent's token —
+# whatever ownership and mode the operator gave it must survive a run that only
+# came here to correct one derived line.
+netra_rewrite_fs_mounts() {
+    _rf_tmp="$SCRATCH_DIR/env.fs_mounts"
+    awk '
+        /^NETRA_FS_MOUNTS=/ {
+            print "NETRA_FS_MOUNTS=" ENVIRON["NETRA_VAL_FS_MOUNTS"]
+            seen = 1
+            next
+        }
+        { print }
+        END {
+            if (!seen) {
+                print ""
+                print "# What each measured filesystem is called on this host, added by"
+                print "# setup-agent.sh. Rendered from the same list as the bind mounts."
+                print "NETRA_FS_MOUNTS=" ENVIRON["NETRA_VAL_FS_MOUNTS"]
+            }
+        }
+    ' "$1" >"$_rf_tmp" || return 1
+    # Checked before the truncating redirect below, never after. `cat >` empties
+    # the target first, so an awk that produced nothing -- out of space, killed
+    # mid-run -- would take the agent's token with it, and recovering that costs
+    # the operator a new one.
+    [ -s "$_rf_tmp" ] || return 1
+    cat "$_rf_tmp" >"$1" || return 1
+    rm -f "$_rf_tmp"
+}
+
+# sync_fs_mounts FILE — bring one derived line of an existing .env up to date.
+#
+# Silent when the file already says the right thing, which is every re-run that
+# changed nothing about the host's filesystems.
+sync_fs_mounts() {
+    [ -f "$1" ] || return 0
+    _sf_want="${NETRA_BLK_FS_MOUNTS:-}"
+    _sf_have=$(sed -n 's/^NETRA_FS_MOUNTS=//p' "$1" | head -1)
+    if [ -n "$(sed -n '/^NETRA_FS_MOUNTS=/p' "$1")" ] && [ "$_sf_have" = "$_sf_want" ]; then
+        return 0
+    fi
+    if ! netra_exec netra_rewrite_fs_mounts "$1"; then
+        warn "could not update NETRA_FS_MOUNTS in $1. Until it is set, the agent reports" \
+            "each filesystem under its short label instead of its mount point. Set it by" \
+            "hand to: ${_sf_want:-(empty)}"
+        return 0
+    fi
+    record_change "updated NETRA_FS_MOUNTS in $1"
+    info "  filesystems:     NETRA_FS_MOUNTS updated in the existing .env"
 }
 
 # _check_env_value KEY VALUE FILE — did a value the operator gave us actually
@@ -2980,11 +3080,19 @@ EOF
     info ""
     # `cd . && ...` reads as a bug, and OUTPUT_DIR is "." whenever this ran from
     # a directory already named netra-agent.
+    # `pull` and not just `up -d`. The image tag is a moving `latest`, and
+    # `up -d` reuses whatever copy of it the host already has — so on an
+    # upgrade, the command that looks like it applied the change starts the old
+    # binary again. An operator re-running this script to pick up an agent fix
+    # would see nothing change and have no reason to suspect why.
     if [ "$OUTPUT_DIR" = "." ]; then
-        info "    $(compose_cmd) up -d"
+        info "    $(compose_cmd) pull && $(compose_cmd) up -d"
     else
-        info "    cd $OUTPUT_DIR && $(compose_cmd) up -d"
+        info "    cd $OUTPUT_DIR && $(compose_cmd) pull && $(compose_cmd) up -d"
     fi
+    info ""
+    info "  pull first: the image tag is a moving one, and up -d alone would restart the"
+    info "  copy already on this host."
     info ""
 }
 
@@ -2995,9 +3103,26 @@ start_stack() {
     # single gate exists to prevent.
     [ "${WROTE_OUTPUTS:-1}" = 1 ] || return 0
     step "Start"
+    # Pull before starting, for the same reason the finish report tells an
+    # operator to: the image tag moves, and `up -d` alone restarts the copy
+    # already on the host — so --start on a re-run to pick up an agent fix
+    # would quietly start the unfixed binary again.
+    #
+    # Fatal, and said out loud. Starting anyway would run whatever copy of the
+    # image this host already has, which on an upgrade is the binary the operator
+    # came here to replace -- but a bare non-zero exit from errexit tells them
+    # nothing about which of the two commands failed, or that everything above
+    # this step was already written.
+    _ss_pull_failed="could not pull the agent image, so nothing was started."
+    _ss_pull_failed="$_ss_pull_failed compose.yaml and .env are written and the"
+    _ss_pull_failed="$_ss_pull_failed markers are in place: fix the registry access"
+    _ss_pull_failed="$_ss_pull_failed and run '$(compose_cmd) pull &&"
+    _ss_pull_failed="$_ss_pull_failed $(compose_cmd) up -d' in $OUTPUT_DIR."
     if [ "$DOCKER_COMPOSE" = compose_v1 ]; then
+        netra_exec docker-compose -f "$OUTPUT_DIR/compose.yaml" pull || die "$_ss_pull_failed"
         netra_exec docker-compose -f "$OUTPUT_DIR/compose.yaml" up -d
     else
+        netra_exec docker compose -f "$OUTPUT_DIR/compose.yaml" pull || die "$_ss_pull_failed"
         netra_exec docker compose -f "$OUTPUT_DIR/compose.yaml" up -d
     fi
 

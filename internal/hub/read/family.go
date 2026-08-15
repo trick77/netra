@@ -119,9 +119,17 @@ var families = map[string]*family{
 	// would be worse than absent: used_max / (used_max + free_min) composes
 	// two different instants and is not the maximum of the true ratio.
 	"filesystem": {
-		name:             "filesystem",
-		table:            "filesystem_samples",
-		keys:             []keySpec{{name: "filesystem", expr: "d.label"}},
+		name:  "filesystem",
+		table: "filesystem_samples",
+		// Both names, because they are for different readers. The label is the
+		// identity -- stable, unique per host, what the inventory joins on --
+		// while the mountpoint is what an operator recognises, and a fleet
+		// page saying "/mnt/ark is 94 % full" beats one saying "ark". It is
+		// nullable, so a consumer has to fall back to the label.
+		keys: []keySpec{
+			{name: "filesystem", expr: "d.label"},
+			{name: "mountpoint", expr: "d.mountpoint"},
+		},
 		join:             "JOIN filesystems d ON d.id = s.fs_id AND d.host_id = s.host_id",
 		dimensionColumns: []string{"fs_id"},
 		tiers:            rolledUpTiers,

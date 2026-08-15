@@ -83,6 +83,11 @@ assert_contains "$ENVOUT" "NETRA_PID_HOST=1" \
     "--pid-host is recorded in .env, so the process collector need not guess"
 assert_contains "$ENVOUT" "NETRA_UTMP_PATH=/var/run/utmp" \
     "the utmp path reaches .env"
+# The mapping that keeps the container's own paths out of the hub. Its labels
+# are the same ones the bind targets in the golden compose use, and its
+# mountpoints are what this host calls those filesystems.
+assert_contains "$ENVOUT" "NETRA_FS_MOUNTS=root=/,ark=/mnt/ark" \
+    "each measured filesystem is mapped from its label to its host mount point"
 # The scrape interval is a fixed 60s constant, so there is no knob for it.
 # Matched against the ASSIGNMENTS only: the template's own header comment names
 # NETRA_INTERVAL in order to explain why it is absent.
