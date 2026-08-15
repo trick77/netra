@@ -133,7 +133,8 @@ services:
       # timescaledb-tune reads the host's /proc/meminfo, not this container's
       # cgroup limit, so mem_limit alone would leave it tuning for memory it
       # cannot have and being OOM-killed for using it. Keep both in step with
-      # mem_limit above. Expect shared_buffers ~512MB.
+      # mem_limit above; the tuner then sizes shared_buffers from the 2GB it is
+      # told about rather than from the host's total.
       #
       # These are read on FIRST INIT ONLY — the tune script runs from
       # docker-entrypoint-initdb.d. On a data directory that was already

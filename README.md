@@ -77,13 +77,30 @@ and `TS_TUNE_NUM_CPUS` — because `timescaledb-tune` reads the host's
 size a 31 GB machine's buffer pool for a database serving a handful of agents.
 Raise all four together if your fleet outgrows them.
 
-**Upgrading an install created before those limits existed:** the tune step
-runs on first init only, so an existing `data/timescaledb` still carries the
-oversized `shared_buffers` and starting it under the new 2 GB cap fails or gets
-OOM-killed. Re-tune before you restart:
+**Upgrading an install created before those limits existed — order matters.**
+The tune step runs on first init only, so an existing `data/timescaledb` still
+carries the oversized `shared_buffers`, and Postgres under the new 2 GB cap
+either refuses to start or is OOM-killed. Once that happens
+`docker compose exec` has nothing to exec into, so fix the config *before* the
+cap takes effect.
+
+If the database holds nothing you need — it was initialised minutes ago, the
+hub never came up — the short path is to let it re-init under the new
+settings:
 
 ```sh
-docker compose exec timescaledb timescaledb-tune --memory=2GB --cpus=2 --yes
+docker compose down
+rm -rf data/timescaledb && mkdir -p data/timescaledb
+docker compose up -d
+```
+
+Otherwise re-tune the live config first, while the container still starts under
+the old (unlimited) compose file, and only then pull this change:
+
+```sh
+docker compose exec timescaledb timescaledb-tune \
+  --conf-path=/var/lib/postgresql/data/postgresql.conf \
+  --memory=2GB --cpus=2 --yes
 docker compose restart timescaledb
 ```
 
