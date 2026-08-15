@@ -2551,13 +2551,32 @@ resolve_token() {
     [ "${REUSE_ENV:-0}" != 1 ] || return 0
 
     if [ ! -r "$P_TTY" ]; then
+        # A --force run over an .env that HAD a token keeps it rather than
+        # blanking it -- same rule as the prompt below, and the same reason:
+        # nothing here was told to replace it.
+        if [ -n "${FORCE_PRIOR_TOKEN:-}" ]; then
+            TOKEN="$FORCE_PRIOR_TOKEN"
+            info "  token:           kept the one already in .env (no --token given)"
+            return 0
+        fi
         warn "no agent token was provided (--token / --token-file). NETRA_TOKEN will be" \
             "written empty and the agent will refuse to start until you fill it in." \
             "Tokens are minted by the hub; the setup script cannot invent one."
         return 0
     fi
 
-    printf 'Agent token from the hub (starts with nta_, input hidden): '
+    # Enter has to mean "keep" here too. Every other prompt under --force now
+    # restores the value the .env already held, and a token prompt that alone
+    # meant "erase" would be a trap built out of the other four: run --force to
+    # correct a typo in the location, press Enter through the rest as they just
+    # taught you, and the agent stops authenticating with the old token already
+    # overwritten on disk. Rotating is still one step -- type the new token, or
+    # pass --token.
+    if [ -n "${FORCE_PRIOR_TOKEN:-}" ]; then
+        printf 'Agent token from the hub (starts with nta_, input hidden; blank keeps the current one): '
+    else
+        printf 'Agent token from the hub (starts with nta_, input hidden): '
+    fi
     # `command -v stty` guarded: a minimal container image may not ship it, and
     # a visible token is better than a failed run. The saved setting is restored
     # on every path out, including an interrupt — see the trap.
@@ -2577,44 +2596,99 @@ resolve_token() {
         IFS= read -r TOKEN <"$P_TTY" || TOKEN=""
     fi
 
-    if [ -z "$TOKEN" ]; then
+    if [ -z "$TOKEN" ] && [ -n "${FORCE_PRIOR_TOKEN:-}" ]; then
+        TOKEN="$FORCE_PRIOR_TOKEN"
+        info "  token:           kept the one already in .env (nothing entered)"
+    elif [ -z "$TOKEN" ]; then
         warn "no token entered. NETRA_TOKEN will be written empty and the agent will refuse" \
             "to start until you fill it in."
     fi
 }
 
-# seed_from_env FILE — adopt the values an existing .env already holds.
+# env_file_value FILE KEY — one key's value out of an .env, or the empty string.
+#
+# The FIRST '=' only: a hub URL may carry a query string and a token is
+# arbitrary. Trailing whitespace is stripped, inner whitespace is not --
+# "Zurich, CH" is a legitimate location. The LAST assignment wins, matching what
+# a shell sourcing the file would see.
+env_file_value() {
+    [ -r "$1" ] || return 0
+    _efv=$(sed -n "s/^[[:space:]]*${2}=//p" "$1" | sed -n '$p')
+    printf '%s' "${_efv%"${_efv##*[![:space:]]}"}"
+}
+
+# force_seeded VAR — did --force take VAR's value from the existing .env?
+#
+# The prompts are gated on an EMPTY value, so a seeded variable would have
+# nothing left to ask about -- which is right on the reuse path, where the
+# answer cannot be written anyway, and wrong under --force, where the whole
+# point is to be asked. This is what tells the two apart: a seeded value is a
+# DEFAULT (netra_ask_value restores it when the answer is empty), not an
+# answer.
+#
+# Written as a case rather than a glob test so a variable whose name is a
+# prefix of another cannot match -- the spaces are the delimiters.
+force_seeded() {
+    case " ${FORCE_SEEDED:-} " in
+        *" $1 "*) return 0 ;;
+    esac
+    return 1
+}
+
+# keeps_hint VAR — " (blank keeps X)" for a seeded prompt, otherwise nothing.
+#
+# The contract has to be ON the prompt. An operator cannot be expected to know
+# that Enter means "keep" here when it meant "skip" the last time they ran this,
+# and the value is printed because these are the non-secret dimensions -- the
+# token's equivalent hint names no value, for the obvious reason.
+keeps_hint() {
+    force_seeded "$1" || return 0
+    # Assigned literally first so shellcheck can see it, the same way
+    # netra_ask_value declares _av_def: the eval below is invisible to static
+    # analysis, and SC2154 is right to say so.
+    _kh=""
+    eval "_kh=\$$1"
+    printf ' (blank keeps %s)' "$_kh"
+}
+
+# seed_from_env FILE [KEYS] — adopt the values an existing .env already holds.
 #
 # Only fills a variable that is still EMPTY, which is what keeps the precedence
 # straight: parse_args has already applied every flag, so a flag wins, the file
 # comes next, and a prompt is the last resort for a value nobody has supplied.
 #
-# Called only when the file will be left alone. Under --force the operator is
-# replacing those values, and pre-filling them would silently answer the very
-# questions they asked to be asked -- a token rotation, most of all.
+# KEYS narrows which ones are adopted, and defaults to all of them. It exists
+# for --force, which seeds every key EXCEPT NETRA_TOKEN: there the values are
+# defaults for prompts that still get asked, and seeding the token would skip
+# its prompt entirely. See configure -- the token is held aside there instead,
+# so that Enter means "keep" at every prompt including that one.
 #
-# The token is adopted like everything else and NEVER printed. That is the whole
-# point: it is the one value an operator would otherwise retype from a password
-# manager only to have it discarded.
+# The token is adopted like everything else on the reuse path and NEVER printed.
+# That is the whole point: it is the one value an operator would otherwise
+# retype from a password manager only to have it discarded.
 seed_from_env() {
     _se_file="$1"
+    # Unquoted on purpose below: this is a list to split on whitespace.
+    _se_keys="${2:-NETRA_HUB_URL NETRA_TOKEN NETRA_LOCATION NETRA_PROVIDER NETRA_HOST_TYPE}"
     [ -r "$_se_file" ] || return 0
     _se_adopted=""
 
-    for _se_key in NETRA_HUB_URL NETRA_TOKEN NETRA_LOCATION NETRA_PROVIDER NETRA_HOST_TYPE; do
-        # The FIRST '=' only: a hub URL may carry a query string and a token is
-        # arbitrary. Trailing whitespace is stripped, inner whitespace is not --
-        # "Zurich, CH" is a legitimate location.
-        _se_val=$(sed -n "s/^[[:space:]]*${_se_key}=//p" "$_se_file" | sed -n '$p')
-        _se_val=${_se_val%"${_se_val##*[![:space:]]}"}
+    # shellcheck disable=SC2086 # deliberate word splitting: $_se_keys is a list
+    for _se_key in $_se_keys; do
+        _se_val=$(env_file_value "$_se_file" "$_se_key")
         [ -n "$_se_val" ] || continue
 
+        # Only what was actually TAKEN is reported below. A key the file holds
+        # and a flag already answered is not "reused": on the reuse path that
+        # was harmless, because the flag's value was discarded too, but under
+        # --force the flag is what gets written -- so naming it as reused
+        # would be a straight falsehood about the file being written.
         case "$_se_key" in
-            NETRA_HUB_URL) [ -n "$HUB_URL" ] || HUB_URL="$_se_val" ;;
-            NETRA_TOKEN) [ -n "$TOKEN" ] || TOKEN="$_se_val" ;;
-            NETRA_LOCATION) [ -n "$LOCATION" ] || LOCATION="$_se_val" ;;
-            NETRA_PROVIDER) [ -n "$PROVIDER" ] || PROVIDER="$_se_val" ;;
-            NETRA_HOST_TYPE) [ -n "$HOST_TYPE" ] || HOST_TYPE="$_se_val" ;;
+            NETRA_HUB_URL) [ -z "$HUB_URL" ] || continue; HUB_URL="$_se_val" ;;
+            NETRA_TOKEN) [ -z "$TOKEN" ] || continue; TOKEN="$_se_val" ;;
+            NETRA_LOCATION) [ -z "$LOCATION" ] || continue; LOCATION="$_se_val" ;;
+            NETRA_PROVIDER) [ -z "$PROVIDER" ] || continue; PROVIDER="$_se_val" ;;
+            NETRA_HOST_TYPE) [ -z "$HOST_TYPE" ] || continue; HOST_TYPE="$_se_val" ;;
         esac
         _se_adopted="$_se_adopted $_se_key"
     done
@@ -2651,6 +2725,7 @@ configure() {
     # gets the precedence right for free -- a flag beats the existing .env,
     # which beats a prompt.
     REUSE_ENV=0
+    FORCE_SEEDED=""
     if [ -e "$OUTPUT_DIR/.env" ] && [ "$FORCE" != 1 ]; then
         REUSE_ENV=1
         seed_from_env "$OUTPUT_DIR/.env"
@@ -2670,10 +2745,67 @@ configure() {
             warn "and these are EMPTY in it:${_cfg_missing}. They are not asked for here," \
                 "because this run cannot write them. Edit $OUTPUT_DIR/.env directly, or" \
                 "re-run with --force to be asked."
+    elif [ -e "$OUTPUT_DIR/.env" ]; then
+        # --force, over an .env that already exists. Every prompt below is
+        # still asked -- being asked is what --force is for -- but the answers
+        # this file already holds become their DEFAULTS, because --force
+        # rewrites the whole file and every key it cannot fill is written
+        # EMPTY.
+        #
+        # Without this, the values the operator did not retype were silently
+        # destroyed. Two ways, and the first is the ordinary one: pressing
+        # Enter at "Where is this host" meant "erase it", when every prompt in
+        # this script treats Enter as "leave it alone". The second is the
+        # suite's shape and a values file that runs out -- an unreadable
+        # $P_TTY makes netra_ask_value return empty without printing anything
+        # at all, so `--force --token X --hub-url Y` rewrote NETRA_LOCATION,
+        # NETRA_PROVIDER and NETRA_HOST_TYPE empty with nothing on screen to
+        # say it had happened.
+        #
+        # NETRA_TOKEN is NOT seeded, because seeding would skip its prompt
+        # entirely and a rotation is the main reason to pass --force. It is
+        # held aside instead, so the PROMPT still happens and an empty answer
+        # keeps the token rather than destroying it -- Enter has to mean the
+        # same thing at all five prompts. Anything else trains an operator on
+        # four prompts and then punishes them on the fifth: a --force run to
+        # correct a typo in the location, Enter through the rest, and the agent
+        # can no longer authenticate with the old token already gone from disk.
+        #
+        # Never printed, never info'd, and cleared nowhere else: resolve_token
+        # is its only reader.
+        FORCE_PRIOR_TOKEN=$(env_file_value "$OUTPUT_DIR/.env" NETRA_TOKEN)
+
+        # NETRA_PRIMARY_SENSOR is deliberately absent. It is written only when
+        # the operator states it, and detect_sensors has ALREADY run and
+        # reported by the time this executes -- so seeding it re-pinned a chip
+        # the same run had just described as auto-selected, and re-pinned it
+        # even when that chip is no longer on the host. That is the
+        # install-time guess outliving the hardware which detect_sensors' own
+        # comment exists to prevent, and --force is the one run that should be
+        # re-evaluating it. A --force run still clears the key; correcting that
+        # needs the value validated against this run's sensors, which is its
+        # own change.
+        _cfg_empty=""
+        for _cfg_var in HUB_URL LOCATION PROVIDER HOST_TYPE; do
+            eval "_cfg_val=\$$_cfg_var"
+            [ -n "$_cfg_val" ] || _cfg_empty="$_cfg_empty $_cfg_var"
+        done
+
+        seed_from_env "$OUTPUT_DIR/.env" \
+            "NETRA_HUB_URL NETRA_LOCATION NETRA_PROVIDER NETRA_HOST_TYPE"
+
+        # Seeded means "was empty before, is not now" -- which is exactly the
+        # set seed_from_env filled, and excludes anything a flag supplied. A
+        # flag is an answer, not a default, and must not be re-asked.
+        # shellcheck disable=SC2086 # deliberate word splitting: a list
+        for _cfg_var in $_cfg_empty; do
+            eval "_cfg_val=\$$_cfg_var"
+            [ -z "$_cfg_val" ] || FORCE_SEEDED="$FORCE_SEEDED $_cfg_var"
+        done
     fi
 
-    if [ -z "$HUB_URL" ] && [ "$REUSE_ENV" != 1 ]; then
-        netra_ask_value HUB_URL "Hub base URL" "https://netra.example.com"
+    if { [ -z "$HUB_URL" ] || force_seeded HUB_URL; } && [ "$REUSE_ENV" != 1 ]; then
+        netra_ask_value HUB_URL "Hub base URL$(keeps_hint HUB_URL)" "https://netra.example.com"
     fi
     if [ -z "$HUB_URL" ] && [ "$REUSE_ENV" != 1 ]; then
         # The same shape as the missing-token note below: equally fatal to the
@@ -2690,19 +2822,26 @@ configure() {
 
     resolve_token
 
-    if [ -z "$LOCATION" ] && [ "$REUSE_ENV" != 1 ]; then
-        netra_ask_value LOCATION "Where is this host (city, country)" "Zurich, CH"
+    if { [ -z "$LOCATION" ] || force_seeded LOCATION; } && [ "$REUSE_ENV" != 1 ]; then
+        netra_ask_value LOCATION "Where is this host (city, country)$(keeps_hint LOCATION)" "Zurich, CH"
     fi
-    if [ -z "$PROVIDER" ] && [ "$REUSE_ENV" != 1 ]; then
-        netra_ask_value PROVIDER "Who hosts it" "Hetzner, OVH, self-hosted"
+    if { [ -z "$PROVIDER" ] || force_seeded PROVIDER; } && [ "$REUSE_ENV" != 1 ]; then
+        netra_ask_value PROVIDER "Who hosts it$(keeps_hint PROVIDER)" "Hetzner, OVH, self-hosted"
     fi
 
     # The one validated value: the hub stores it as an enum, so a typo here is a
     # host that never groups with its siblings. Empty stays allowed - re-asking
     # forever would trap an operator who does not know what to call a container
     # host - but a non-empty answer must be one of the three.
-    if [ -z "$HOST_TYPE" ] && [ "$REUSE_ENV" != 1 ]; then
-        netra_ask_value HOST_TYPE "Host type (bare_metal, vps, vm; blank to skip)" "vps"
+    if { [ -z "$HOST_TYPE" ] || force_seeded HOST_TYPE; } && [ "$REUSE_ENV" != 1 ]; then
+        # "blank to skip" is only true when there is nothing to keep. With a
+        # seeded value blank RESTORES it, and a prompt that says otherwise is
+        # the trap this whole change exists to remove.
+        if force_seeded HOST_TYPE; then
+            netra_ask_value HOST_TYPE "Host type (bare_metal, vps, vm; blank keeps $HOST_TYPE)"
+        else
+            netra_ask_value HOST_TYPE "Host type (bare_metal, vps, vm; blank to skip)" "vps"
+        fi
     fi
     while [ -n "$HOST_TYPE" ] && ! _valid_host_type "$HOST_TYPE"; do
         warn "host type '$HOST_TYPE' is not one of bare_metal, vps, vm"
