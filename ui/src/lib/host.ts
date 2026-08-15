@@ -77,6 +77,12 @@ export function reportsSporadically(
   if (span < 5) return false;
   let missed = 0;
   for (let i = start; i < end; i++) if (values[i] === null) missed++;
+  // One gap is never "gaps in the last few hours". At the shortest span this
+  // will judge, a single miss is exactly the 0.2 ratio, so a host added
+  // twenty-five minutes ago that dropped one scrape while its agent settled
+  // would be badged sporadic on the strength of that one bucket. Two is the
+  // smallest number of misses that can be a pattern rather than an event.
+  if (missed < 2) return false;
   return missed / span >= SPORADIC_MISS_RATIO;
 }
 

@@ -96,6 +96,18 @@ describe("reportsSporadically", () => {
     ).toBe(false);
   });
 
+  // At the shortest span the rule will judge, a single missing bucket is
+  // exactly the 0.2 ratio -- so a host added minutes ago that dropped one
+  // scrape while its agent settled would have been badged on one bucket.
+  it("does not call a single missed bucket a pattern", () => {
+    expect(reportsSporadically([...nulls(283), 10, null, 10, 10, 12])).toBe(
+      false,
+    );
+    expect(reportsSporadically([...nulls(283), 10, null, 10, null, 12])).toBe(
+      true,
+    );
+  });
+
   // The minimum is measured over the span the host reported across, not
   // over the grid -- which is exactly what let the whole-grid span slip past
   // it before.
