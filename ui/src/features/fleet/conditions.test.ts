@@ -15,6 +15,8 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     mem_used: 4_000_000_000,
     mem_total: 16_000_000_000,
     uptime_s: 86_400,
+    net_rx_bytes: null,
+    net_tx_bytes: null,
     threads: 8,
     cpu: [],
     mem: [],

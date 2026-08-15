@@ -26,6 +26,11 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     mem: [{ name: "used", color: "var(--s1)", values: [3e9, 4e9] }],
     rx: [1e6, 2e6],
     tx: [5e5, 6e5],
+    // The gauges the traffic cell and the fleet tile actually read. The
+    // series above are the sparkline, which still follows the range; these
+    // do not, which is the whole point of them being separate.
+    net_rx_bytes: 1.5e6,
+    net_tx_bytes: 5.5e5,
     fullest: { mount: "/", pct: 41, others: 1 },
     disk: [],
     oomKills: null,
@@ -184,15 +189,18 @@ describe("FleetPage header", () => {
     expect(within(tile).getByText(/of 3/)).toBeInTheDocument();
   });
 
-  // Absent is not zero: with no traffic series fetched yet the fleet has an
-  // unknown throughput, not a throughput of nothing.
-  it("renders unknown fleet traffic as absent, never as zero", () => {
-    renderPage({ rows: [makeRow({ rx: [], tx: [] })] });
+  function trafficTile(): HTMLElement {
+    return screen.getByText("Fleet traffic").closest<HTMLElement>(".tile")!;
+  }
 
-    const tile = screen
-      .getByText("Fleet traffic")
-      .closest<HTMLElement>(".tile")!;
-    expect(within(tile).getByText(ABSENT)).toBeInTheDocument();
+  // Absent is not zero: a host that has reported no rate has an unknown
+  // throughput, not a throughput of nothing.
+  it("renders unknown fleet traffic as absent, never as zero", () => {
+    renderPage({
+      rows: [makeRow({ net_rx_bytes: null, net_tx_bytes: null })],
+    });
+
+    expect(within(trafficTile()).getByText(ABSENT)).toBeInTheDocument();
   });
 
   // rx_bytes/tx_bytes are BYTES per second, so bitrate() labelled this tile
@@ -201,14 +209,94 @@ describe("FleetPage header", () => {
   // host overview's card, and missed the tile sitting above both.
   it("states fleet traffic in bytes per second, like every row under it", () => {
     renderPage({
-      rows: [makeRow({ rx: [1_000_000], tx: [1_000_000] })],
+      rows: [makeRow({ net_rx_bytes: 1_000_000, net_tx_bytes: 1_000_000 })],
     });
 
-    const tile = screen
-      .getByText("Fleet traffic")
-      .closest<HTMLElement>(".tile")!;
+    const tile = trafficTile();
     expect(within(tile).getByText(/2 MB\/s/)).toBeInTheDocument();
     expect(tile.textContent).not.toMatch(/Mb\/s/);
+  });
+
+  // The reported bug. This number is a RATE, and it used to be read off the
+  // end of the fetched series -- so it changed with the range, because the
+  // range picks the step and the step picks the storage tier: the raw
+  // instantaneous rate at 1h, a five-minute average from a quarter of an hour
+  // ago at 6h and 24h. The series here disagree with the gauges precisely so
+  // that reading the wrong one fails.
+  it("reads the gauge rather than the end of the sparkline series", () => {
+    renderPage({
+      rows: [
+        makeRow({
+          net_rx_bytes: 1_000_000,
+          net_tx_bytes: 1_000_000,
+          rx: [9_000_000],
+          tx: [9_000_000],
+        }),
+      ],
+    });
+
+    expect(within(trafficTile()).getByText(/2 MB\/s/)).toBeInTheDocument();
+  });
+
+  // A gauge has no grid and no trailing bucket, so a host whose last scrape
+  // landed mid-bucket cannot silently drop out of the total. Off the series
+  // it did: the trailing-null check skipped it until its next post, and the
+  // tile jittered between polls at a fixed range.
+  it("counts a host whose series has a trailing gap", () => {
+    renderPage({
+      rows: [
+        makeRow({
+          net_rx_bytes: 1_000_000,
+          net_tx_bytes: 1_000_000,
+          rx: [1_000_000, null],
+          tx: [1_000_000, null],
+        }),
+      ],
+    });
+
+    expect(within(trafficTile()).getByText(/2 MB\/s/)).toBeInTheDocument();
+  });
+
+  // The gauge does not go absent when an agent dies -- host_current keeps
+  // the last pair it was written, and the upsert coalesces so a post with no
+  // net samples cannot clear it. So a host that is not reporting is skipped
+  // here, the same way the trailing-null check used to skip it: otherwise a
+  // machine powered off a week ago keeps counting towards a tile that says
+  // "right now", and the "Hosts reporting" tile directly above contradicts
+  // it on the same screen.
+  it("leaves a host that stopped reporting out of the fleet total", () => {
+    renderPage({
+      rows: [
+        makeRow({ net_rx_bytes: 1_000_000, net_tx_bytes: 1_000_000 }),
+        makeRow({
+          id: 2,
+          hostname: "old-01",
+          last_seen: "2026-08-10T13:00:00Z",
+          net_rx_bytes: 9_000_000,
+          net_tx_bytes: 9_000_000,
+        }),
+      ],
+    });
+
+    expect(within(trafficTile()).getByText(/2 MB\/s/)).toBeInTheDocument();
+  });
+
+  // And a fleet where every host has gone quiet has an UNKNOWN throughput,
+  // not one of zero: skipping the last host must reach the absent marker
+  // rather than falling through to "0 b/s", which reads as a fleet that is
+  // up and idle.
+  it("renders an entirely offline fleet as absent, never as zero", () => {
+    renderPage({
+      rows: [
+        makeRow({
+          last_seen: "2026-08-10T13:00:00Z",
+          net_rx_bytes: 9_000_000,
+          net_tx_bytes: 9_000_000,
+        }),
+      ],
+    });
+
+    expect(within(trafficTile()).getByText(ABSENT)).toBeInTheDocument();
   });
 });
 
@@ -223,6 +311,8 @@ describe("buildHostRows", () => {
       mem_used: 4e9,
       mem_total: 16e9,
       uptime_s: 100,
+      net_rx_bytes: 1.5e6,
+      net_tx_bytes: 5.5e5,
       threads: null,
     },
     {
@@ -234,6 +324,8 @@ describe("buildHostRows", () => {
       mem_used: null,
       mem_total: null,
       uptime_s: null,
+      net_rx_bytes: null,
+      net_tx_bytes: null,
       threads: null,
     },
   ];

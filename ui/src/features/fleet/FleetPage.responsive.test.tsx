@@ -21,6 +21,8 @@ function row(overrides: Partial<HostRow> = {}): HostRow {
     mem: [],
     rx: [],
     tx: [],
+    net_rx_bytes: null,
+    net_tx_bytes: null,
     fullest: null,
     disk: [],
     oomKills: null,

@@ -13,6 +13,8 @@ const host: HostDetail = {
   mem_used: 4_000_000_000,
   mem_total: 8_000_000_000,
   uptime_s: 86_400,
+  net_rx_bytes: 1.5e6,
+  net_tx_bytes: 4e5,
   site_name: "Zurich",
   provider_name: "Hetzner",
   fingerprint: "fp",
@@ -559,7 +561,10 @@ describe("Overview processor panel", () => {
   // the fleet's traffic cell carried the identical bug, so nothing on screen
   // contradicted it.
   it("shows traffic in bytes per second, not bits", () => {
-    renderOverview({ netMetrics });
+    renderOverview({
+      netMetrics,
+      host: { ...host, net_rx_bytes: 2_000_000, net_tx_bytes: 500_000 },
+    });
     const traffic = screen.getByRole("region", { name: "Traffic" });
 
     expect(within(traffic).getByText(/2 MB\/s/)).toBeInTheDocument();
@@ -572,6 +577,10 @@ describe("Overview processor panel", () => {
   // so a dead agent's traffic sat frozen at its final value -- while the
   // fleet's traffic cell, reading the latest bucket, showed the same host as
   // absent. "The agent is down" must not render as "traffic is steady".
+  //
+  // The rule survives the move to a gauge: host_current's columns are NULL
+  // for a host that has never reported traffic, and the upsert only ever
+  // writes them from a post that actually carried net samples.
   it("reads a host that stopped reporting as absent, not as its last known rate", () => {
     const stale = response({
       family: "net",
@@ -587,7 +596,46 @@ describe("Overview processor panel", () => {
       ],
     });
 
-    renderOverview({ netMetrics: stale });
+    renderOverview({
+      netMetrics: stale,
+      host: { ...host, net_rx_bytes: null, net_tx_bytes: null },
+    });
+    const traffic = screen.getByRole("region", { name: "Traffic" });
+
+    expect(traffic.textContent).not.toMatch(/MB\/s/);
+    expect(
+      within(traffic).getAllByText(new RegExp(ABSENT)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  // The reported bug, on this page's copy of the number. The sparkline is
+  // drawn from the series and follows the range; the rates beside it are the
+  // gauge and do not. Reading the series here made "now" mean a different
+  // instant at 1h than at 6h.
+  it("reads the gauge rather than the end of the series", () => {
+    renderOverview({
+      netMetrics,
+      host: { ...host, net_rx_bytes: 9_000_000, net_tx_bytes: 9_000_000 },
+    });
+    const traffic = screen.getByRole("region", { name: "Traffic" });
+
+    expect(within(traffic).getAllByText(/9 MB\/s/).length).toBe(2);
+  });
+
+  // The same rule as before the move to a gauge, now that the gauge is what
+  // could break it: host_current keeps a dead host's last pair for as long
+  // as the row exists, so the card gates on the host still reporting. A
+  // frozen rate here would sit under a header already saying "offline".
+  it("blanks the rates of a host that stopped reporting, gauge or not", () => {
+    renderOverview({
+      netMetrics,
+      host: {
+        ...host,
+        last_seen: "2026-08-10T00:00:00Z",
+        net_rx_bytes: 9_000_000,
+        net_tx_bytes: 9_000_000,
+      },
+    });
     const traffic = screen.getByRole("region", { name: "Traffic" });
 
     expect(traffic.textContent).not.toMatch(/MB\/s/);

@@ -141,16 +141,16 @@ func TestIntegrationUpsertHostCurrent(t *testing.T) {
 	older := &netrav1.HostSample{TsMs: 1_700_000_000_000, CpuTotal: proto.Float64(10)}
 	newer := &netrav1.HostSample{TsMs: 1_700_000_060_000, CpuTotal: proto.Float64(20)}
 
-	if err := s.UpsertHostCurrent(ctx, hostID, older); err != nil {
+	if err := s.UpsertHostCurrent(ctx, hostID, older, nil, nil); err != nil {
 		t.Fatalf("older upsert: %v", err)
 	}
-	if err := s.UpsertHostCurrent(ctx, hostID, newer); err != nil {
+	if err := s.UpsertHostCurrent(ctx, hostID, newer, nil, nil); err != nil {
 		t.Fatalf("newer upsert: %v", err)
 	}
 	// Apply the older sample again, as if it arrived late or out of order.
 	// The guard clause in UpsertHostCurrent's ON CONFLICT must keep the
 	// newer value in place.
-	if err := s.UpsertHostCurrent(ctx, hostID, older); err != nil {
+	if err := s.UpsertHostCurrent(ctx, hostID, older, nil, nil); err != nil {
 		t.Fatalf("re-applied older upsert: %v", err)
 	}
 
@@ -161,6 +161,54 @@ func TestIntegrationUpsertHostCurrent(t *testing.T) {
 	}
 	if cpu != 20 {
 		t.Fatalf("cpu_total = %v, want 20 — a stale sample must not overwrite the newer one", cpu)
+	}
+}
+
+// The traffic pair is what the fleet prints as "ingress + egress", and it is
+// a gauge here precisely so it does not depend on any window. Two properties
+// are pinned: it round-trips, and a later post carrying no net samples must
+// not blank it — the collector failing one scrape is not the host going
+// silent, and flickering the tile to absent and back would read as one.
+func TestIntegrationUpsertHostCurrentNetTotals(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	hostID := seedHost(t, s)
+
+	first := &netrav1.HostSample{TsMs: 1_700_000_000_000, CpuTotal: proto.Float64(10)}
+	second := &netrav1.HostSample{TsMs: 1_700_000_060_000, CpuTotal: proto.Float64(20)}
+
+	rx, tx := 1234.5, 678.25
+	if err := s.UpsertHostCurrent(ctx, hostID, first, &rx, &tx); err != nil {
+		t.Fatalf("first upsert: %v", err)
+	}
+
+	readBack := func() (*float64, *float64) {
+		t.Helper()
+		var gotRx, gotTx *float64
+		if err := s.Pool().QueryRow(ctx,
+			`SELECT net_rx_bytes, net_tx_bytes FROM host_current WHERE host_id = $1`,
+			hostID).Scan(&gotRx, &gotTx); err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		return gotRx, gotTx
+	}
+
+	gotRx, gotTx := readBack()
+	if gotRx == nil || *gotRx != rx || gotTx == nil || *gotTx != tx {
+		t.Fatalf("net totals = (%v, %v), want (%v, %v)", gotRx, gotTx, rx, tx)
+	}
+
+	if err := s.UpsertHostCurrent(ctx, hostID, second, nil, nil); err != nil {
+		t.Fatalf("second upsert: %v", err)
+	}
+
+	gotRx, gotTx = readBack()
+	if gotRx == nil || *gotRx != rx || gotTx == nil || *gotTx != tx {
+		t.Fatalf("net totals = (%v, %v) after a post with no net samples, want the "+
+			"previous (%v, %v) kept", gotRx, gotTx, rx, tx)
 	}
 }
 

@@ -33,6 +33,18 @@ export type Host = {
   mem_used: number | null;
   mem_total: number | null;
   uptime_s: number | null;
+  // Traffic summed over the host's interfaces at its last scrape, in bytes
+  // per second. A gauge, not the end of a series: read off a fetched series
+  // this number changed with the RANGE the charts were drawn over, because
+  // the range picks the step and the step picks the storage tier -- an
+  // instantaneous rate at 1h, a five-minute average that ended a quarter of
+  // an hour ago at 6h and 24h. What "now" means must not depend on how far
+  // back somebody is looking.
+  //
+  // rx/tx here because that is what the column and /proc/net/dev call them.
+  // Ingress and egress are what the labels say.
+  net_rx_bytes: number | null;
+  net_tx_bytes: number | null;
   // Inventory rather than a gauge, and on the list because the CPU sparkline
   // is a per-core stack: the page has to know how many logical CPUs a host
   // has before deciding to ask for one series per core.
