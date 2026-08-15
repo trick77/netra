@@ -4,7 +4,11 @@ import { Table, type Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
 import { ABSENT } from "../../lib/format";
 import type { Container } from "../../lib/api";
-import { fleetContainerNotes, type CapableHost } from "../../lib/containers";
+import {
+  fleetContainerNotes,
+  fleetContainersBlocked,
+  type CapableHost,
+} from "../../lib/containers";
 import { Sparkline } from "../../ui/charts/Sparkline";
 import { rangeLabel, type Range } from "../../lib/range";
 
@@ -247,26 +251,56 @@ export function FleetContainers({
     // of them is a statement about the fleet. Saying the first while the
     // fetch had never run told an operator their fleet ran no containers
     // when nobody had looked.
-    return loaded ? (
-      // With a capability to show, the empty state stops being a shrug. "No
-      // host has reported a container" is true of a fleet running none and of
-      // a fleet whose agents cannot see the ones it runs, and only the second
-      // is something to fix.
+    if (!loaded) {
+      return (
+        <EmptyState
+          icon={Boxes}
+          title="Containers not read yet"
+          body="The fleet's containers are still being fetched, one host at a time."
+        />
+      );
+    }
+
+    // A filter that matched nothing is not a fact about the fleet, and the
+    // fleet-wide sentence below would be answering a question nobody asked.
+    if (filteredToNothing) {
+      return (
+        <EmptyState
+          icon={Boxes}
+          title="No containers match"
+          body="No container in this fleet matches the filter."
+        />
+      );
+    }
+
+    // Only a capability that means NOTHING was collected may replace the
+    // empty state, and that is `no-cgroup-scopes` alone. A fleet of hosts
+    // with no Docker installed reports `no-docker-socket` with an empty list
+    // and is perfectly healthy -- announcing "No containers collected" over
+    // it turns a fleet that simply runs none into a fault, and throws away
+    // the only true sentence there is about it.
+    return fleetContainersBlocked(hosts ?? []) ? (
       <EmptyState
         icon={Boxes}
-        title={notes.length > 0 ? "No containers collected" : "No containers"}
-        body={
-          notes.length > 0
-            ? notes.join(" ")
-            : "No host in this fleet has reported a container."
-        }
+        title="No containers collected"
+        body={notes.join(" ")}
       />
     ) : (
-      <EmptyState
-        icon={Boxes}
-        title="Containers not read yet"
-        body="The fleet's containers are still being fetched, one host at a time."
-      />
+      <>
+        {/* Beside the empty state rather than instead of it: both facts hold
+            -- the fleet reported none, and the names would have been raw ids
+            if it had. */}
+        {notes.map((note) => (
+          <p className="note" key={note}>
+            {note}
+          </p>
+        ))}
+        <EmptyState
+          icon={Boxes}
+          title="No containers"
+          body="No host in this fleet has reported a container."
+        />
+      </>
     );
   }
 

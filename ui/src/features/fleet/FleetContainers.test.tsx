@@ -190,6 +190,47 @@ describe("FleetContainers and the containers capability", () => {
     ).toBeTruthy();
   });
 
+  // no-docker-socket means the names are missing, NOT the containers. A fleet
+  // of hosts with no Docker installed reports it alongside an empty list and
+  // is perfectly healthy -- "No containers collected" over that turns a fleet
+  // running none into a fault and drops the only true sentence about it.
+  it("does not call a Docker-less fleet a collection failure", () => {
+    render(
+      <FleetContainers
+        rows={[]}
+        showHost
+        loaded
+        hosts={[
+          {
+            hostname: "tiny",
+            capabilities: { containers: "no-docker-socket" },
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByText("No host in this fleet has reported a container."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No containers collected")).toBeNull();
+    // Beside the empty state, not instead of it: both facts hold.
+    expect(screen.getByText(/Docker socket/)).toBeInTheDocument();
+  });
+
+  // A filter is not a fact about the fleet, so the fleet-wide sentence must
+  // not be the answer to one.
+  it("answers an unmatched filter about the filter, not about the fleet", () => {
+    render(
+      <FleetContainers rows={[]} showHost loaded filtered hosts={[broken]} />,
+    );
+
+    expect(screen.getByText("No containers match")).toBeInTheDocument();
+    expect(
+      screen.queryByText("No host in this fleet has reported a container."),
+    ).toBeNull();
+    expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
+  });
+
   // Still fetching is a different fact from incomplete, and only one of them
   // is a statement about the fleet.
   it("stays quiet while the fan-out is still running", () => {

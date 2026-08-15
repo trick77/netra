@@ -65,6 +65,27 @@ function sentence(value: string, subject: string): string {
   }
 }
 
+/**
+ * Does this value mean NOTHING was collected, as opposed to collected badly?
+ *
+ * Only `no-cgroup-scopes` does. The distinction decides whether an empty list
+ * is a fault or a fact: a fleet of hosts with no Docker installed reports
+ * `no-docker-socket` and an empty list, and it is perfectly healthy -- calling
+ * that "no containers collected" turns a fleet that simply runs none into a
+ * problem, and drops the one true sentence available about it.
+ */
+function blocking(value: string): boolean {
+  return value === "no-cgroup-scopes";
+}
+
+/** Whether any host's containers are missing outright, not merely unnamed. */
+export function fleetContainersBlocked(hosts: readonly CapableHost[]): boolean {
+  return hosts.some((host) => {
+    const value = host.capabilities?.containers;
+    return value !== undefined && blocking(value);
+  });
+}
+
 /** "a", "a and b", "a, b and c" -- sorted, so the sentence is stable. */
 function names(hostnames: readonly string[]): string {
   const sorted = [...hostnames].sort();
