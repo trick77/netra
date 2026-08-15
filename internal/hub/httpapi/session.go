@@ -55,14 +55,19 @@ func newSessionCookie(adminToken string, now time.Time) *http.Cookie {
 		Name:  sessionCookieName,
 		Value: fmt.Sprintf("%d.%s", expiry, sign(sessionKey(adminToken), expiry)),
 		Path:  "/",
-		// Secure is deliberately unset: the UI is served over plain HTTP on
-		// the loopback binding, where a Secure cookie would never be sent at
-		// all. Revisit if the UI ever moves behind TLS.
+		// Secure, because the UI now moves behind TLS: Traefik fronts the
+		// whole hub on NETRA_HOSTNAME's websecure entrypoint and the
+		// container publishes no host port, so there is no plain-HTTP
+		// deployment left for this cookie to be needed on. Without the flag
+		// a browser holding a session sends it in cleartext the moment
+		// someone types http://<hostname>/ -- before any redirect to https
+		// can answer.
 		//
 		// HttpOnly keeps the session out of script. SameSite=Strict is what
 		// stops a cross-site form post from reaching the state-changing UI
 		// routes with a live session attached, which is why this stage ships
 		// no separate CSRF token.
+		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 		Expires:  expires,

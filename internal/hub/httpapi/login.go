@@ -79,7 +79,9 @@ func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
 func (h *loginHandler) logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name: sessionCookieName, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, SameSite: http.SameSiteStrictMode,
+		// Secure to match the cookie this clears: attributes that differ
+		// from the ones it was set with are not a reliable deletion.
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteStrictMode,
 	})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }

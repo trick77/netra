@@ -595,6 +595,30 @@ a {
   margin-bottom: var(--space-2);
 }
 
+/* A single labelled control -- a <label> and its input, stacked, filling the
+   box they sit in. `.setting` above is the sibling pattern for a GROUP of
+   controls, where the fieldset/legend earns its semantics; one text input
+   takes a real <label>, and a label glued to the left of its own control is
+   what a card body's plain block flow produces without this. */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-4);
+  /* A card is as wide as the page; a hostname is not. Left uncapped, the
+     input ran the full 1180px and read as a text area rather than a name. */
+  max-width: 30rem;
+}
+.field > label {
+  font-size: var(--text-label);
+  font-weight: 500;
+}
+/* box-sizing is border-box app-wide, so 100% stays inside the padding rather
+   than pushing the card wider than the page. */
+.field > .ctl {
+  width: 100%;
+}
+
 /* The SPA login card. Narrow on purpose: one field and one button, centred,
    with nothing else on the page to look at. */
 .login {
@@ -879,6 +903,13 @@ a {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-ui);
+  /* Every stacked block on a page owns its own bottom gap here (.toolbar,
+     .tiles, .cards, .setting all do). Cards used to get theirs from a
+     gapped flex parent, so two of them as plain siblings -- Settings'
+     Appearance and Defaults, or the token panel above the new-host form --
+     met at a single shared border and read as one box. `.grid2 > *` sets
+     the same value, so a card in a column flow is unchanged. */
+  margin-bottom: var(--space-4);
 }
 .card > header {
   padding: 12px var(--space-4);
@@ -903,6 +934,27 @@ a {
 }
 .card .body {
   padding: var(--space-4);
+}
+/* Everything is margin-reset at the base, which is right for a card whose
+   body is one table or one list -- and wrong for one that stacks several
+   blocks, like the token panel: its note, its headings and its two command
+   blocks all ran together into a wall. Only the elements that stack get
+   rhythm, and never the last one, so no card grows a trailing gap. */
+.card .body > h4 {
+  font-size: var(--text-label);
+  font-weight: 600;
+  margin: var(--space-4) 0 var(--space-2);
+}
+.card .body > h4:first-child {
+  margin-top: 0;
+}
+.card .body > p,
+.card .body > .cmd {
+  margin-bottom: var(--space-3);
+}
+.card .body > p:last-child,
+.card .body > .cmd:last-child {
+  margin-bottom: 0;
 }
 
 /* stat tiles */
@@ -1361,6 +1413,14 @@ svg.spark {
   display: inline-block;
   width: 100%;
   margin-bottom: var(--space-4);
+}
+/* A card WRAPPED in a column child -- Overview's Panel puts a <section> round
+   its Card for the aria-label -- would otherwise add `.card`'s own bottom
+   margin to the one above and double every gap on the host page. A card that
+   IS the column child is matched by the rule above, not this one, so it keeps
+   its gap. */
+.grid2 > * .card {
+  margin-bottom: 0;
 }
 .hosthead {
   display: flex;

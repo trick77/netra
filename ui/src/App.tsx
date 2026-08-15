@@ -348,6 +348,16 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   const setParam = (key: string, value: string) =>
     go("/" + withParam(search, key, value), { replace: true });
 
+  // The same guard HostScreen makes, for the same reason. This screen is
+  // remounted by every navigation back to it, so its first render has no
+  // data -- and an overview handed zero hosts does not look empty, it looks
+  // ANSWERED: "no hosts need attention", "0 of 0 known", the fleet's own
+  // "no hosts yet" empty state. Every one of those is a claim about a fleet
+  // nobody has asked about yet, and they were all on screen for the length
+  // of the first request before the real numbers replaced them.
+  if (poll.loading && poll.data === null)
+    return <p className="note">Loading…</p>;
+
   return (
     <FleetPage
       rows={rows}
