@@ -2,13 +2,19 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
+	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -18,7 +24,7 @@ const deadlockSQLState = "40P01"
 // lockNotAvailableSQLState is Postgres's SQLSTATE for a statement that hit
 // lock_timeout waiting for a lock, rather than being killed by deadlock
 // detection. Both are the same underlying problem — something else is
-// holding a lock resetSchema needs — so both are retried the same way.
+// holding a lock we need — so both are retried the same way.
 const lockNotAvailableSQLState = "55P03"
 
 // internalErrorSQLState is Postgres's catch-all XX000, which is what
@@ -27,16 +33,28 @@ const lockNotAvailableSQLState = "55P03"
 // isSchedulerRaceError, which pairs it with the message.
 const internalErrorSQLState = "XX000"
 
-// resetSchemaRetries is the number of times resetSchema retries the schema
-// reset after a retryable lock error before giving up.
-const resetSchemaRetries = 5
-
-// OpenTest connects to the database named by NETRA_TEST_DSN and drops the
-// public schema so each test starts from nothing.
+// OpenTest gives the test its own database, cloned from a template that was
+// migrated once per run, and drops it again on cleanup.
 //
 // Integration tests run against real TimescaleDB rather than a mock: the
 // continuous aggregates and their start_offset behaviour are the risky part
-// of this schema and a fake would verify nothing about them.
+// of this schema and a fake would verify nothing about them. That is not the
+// slow part, though -- re-running the DDL is. This schema builds 11
+// hypertables, 18 continuous aggregates and 50 policy jobs, which costs
+// roughly half a second every time, and it used to be paid once per test:
+// each OpenTest dropped the public schema and each test's Migrate rebuilt it
+// from nothing.
+//
+// `CREATE DATABASE ... TEMPLATE` copies files instead of executing DDL and
+// costs ~15ms, so the migration is paid once per run rather than 70+ times.
+// The database handed back is already migrated, which every caller's
+// subsequent Migrate() sees in schema_migrations and skips -- so callers need
+// no change, and the ones that test Migrate itself still work because Migrate
+// takes its advisory lock before it looks at what has been applied.
+//
+// A database per test also means tests stop sharing one, which was its own
+// running cost: a red run in this package usually meant another checkout was
+// pointed at the same NETRA_TEST_DSN, not a fault in the branch under test.
 func OpenTest(t *testing.T) *Store {
 	t.Helper()
 
@@ -45,161 +63,302 @@ func OpenTest(t *testing.T) *Store {
 		t.Skip("NETRA_TEST_DSN not set; skipping integration test")
 	}
 
-	ctx := context.Background()
-	s, err := Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open test database: %v", err)
+	s, err := openTestClone(t, dsn)
+	if err == nil {
+		return s
 	}
-
-	// Every test's Migrate leaves TimescaleDB's policy jobs unscheduled, so the
-	// background scheduler cannot deadlock against the test's own statements.
-	// Set here rather than by each test because a test that forgets does not
-	// fail -- it flakes, later, somewhere else. See unschedulePolicyJobs.
-	s.unscheduleJobs = true
-
-	if err := resetSchema(ctx, s); err != nil {
-		s.Close()
-		t.Fatalf("reset schema: %v", err)
+	if isInsufficientPrivilege(err) {
+		// Deliberately NOT a fallback to the old shared-database path. That
+		// path needs `timescaledb.restoring`, which is superuser-only, so a
+		// role that cannot CREATE DATABASE cannot run these tests either way
+		// -- a fallback here would only turn one clear error into a second,
+		// more confusing one further down. Say what is actually required.
+		t.Fatalf("the NETRA_TEST_DSN role cannot create databases, which these "+
+			"tests need in order to clone a migrated template per test. It also "+
+			"needs to install the timescaledb extension, so in practice it has "+
+			"to be a superuser -- the role compose.yaml and CI both use: %v", err)
 	}
-
-	t.Cleanup(s.Close)
-	return s
+	t.Fatalf("%v", err)
+	return nil
 }
 
-// resetSchema drops and recreates the public schema, giving the test a
-// database with nothing in it.
-//
-// Our migrations register TimescaleDB policy jobs (continuous-aggregate
-// refresh and retention policies), which TimescaleDB's background scheduler
-// runs on its own timetable — newly created jobs are observed to fire within
-// seconds, not at their nominal schedule_interval. A job that fires mid-reset
-// takes locks on the very hypertables and catalog rows DROP SCHEMA CASCADE is
-// removing, deadlocking against it (SQLSTATE 40P01). This is why -p 1 does
-// not help: the contention is with Timescale's background workers, not with
-// other test binaries.
-//
-// timescaledb_pre_restore() is TimescaleDB's supported switch for exactly
-// this situation (it exists so pg_restore can load a dump without racing the
-// scheduler). Verified empirically that it is load-bearing, not just the GUC
-// it also sets: forcing a policy job to run immediately (`alter_job(id,
-// next_start => now())`) while only the timescaledb.restoring GUC was set
-// via a plain ALTER DATABASE still let the job execute — the GUC alone does
-// not stop an already-dispatched worker. timescaledb_pre_restore() does stop
-// it, because it additionally calls
-// _timescaledb_functions.stop_background_workers() directly, which is the
-// part that actually matters; the same forced-job-run test with
-// timescaledb_pre_restore() left total_runs unchanged for 40s.
-//
-// timescaledb_pre_restore()/post_restore() live in the timescaledb extension
-// itself, and DROP SCHEMA CASCADE always drops the extension along with
-// everything else it owns in public — confirmed with \dx and \dn before and
-// after the drop, extension and all four of its _timescaledb_* schemas gone.
-// So the wrapper functions are only callable when the extension is currently
-// installed, which is why pre_restore is skipped on a brand-new database or
-// one straight out of a previous reset (no extension yet — Migrate() installs
-// it before the next continuous aggregate exists to endanger). Symmetrically,
-// there is no matching post_restore() call after the drop, because by then
-// the extension the function lives in is already gone. What has to be
-// cleaned up instead is the state pre_restore() left directly on this
-// session and on this database: SET SESSION timescaledb.restoring and ALTER
-// DATABASE ... SET timescaledb.restoring both remain valid statements without
-// the extension installed (the GUC class is registered once for the whole
-// cluster via shared_preload_libraries), so both are set back to 'off' before
-// returning. This matters because Migrate() runs immediately after and needs
-// a working scheduler to create the continuous aggregates in the first place
-// — TimescaleDB refuses "WITH (timescaledb.continuous)" while a session has
-// restoring on. Freshly created jobs pick up the scheduler normally once
-// Migrate() reinstalls the extension; nothing needs an explicit restart call
-// for jobs that never existed to begin with.
-//
-// Pausing the scheduler removes the routine cause of the deadlock but not
-// every possible one (a job already dispatched before stop_background_workers
-// takes effect can still be mid-flight), so the drop itself also gets a
-// short lock_timeout and a few retries on 40P01/55P03: both are transient —
-// Postgres resolves a deadlock by killing one side, and a lock_timeout just
-// means something else briefly held the lock — so the loser should just try
-// again.
-func resetSchema(ctx context.Context, s *Store) error {
-	// ONE connection for the whole reset.
-	//
-	// timescaledb_pre_restore() sets timescaledb.restoring on the SESSION that
-	// runs it, and the matching `SET SESSION ... = 'off'` below only clears it
-	// on the session that runs THAT. Both used to go through s.pool, which
-	// offers no connection affinity — so the two could land on different
-	// pooled connections, leaving the flag stuck on for the first one. The
-	// Migrate() that runs immediately afterwards then failed with
-	// TimescaleDB's refusal to create a continuous aggregate while restoring:
-	// an intermittent, ordering-dependent test failure with no obvious cause.
-	conn, err := s.pool.Acquire(ctx)
+// openTestClone builds the template if needed and clones it for this test.
+func openTestClone(t *testing.T, dsn string) (*Store, error) {
+	t.Helper()
+	ctx := context.Background()
+
+	template, err := ensureTemplateDB(ctx, dsn)
 	if err != nil {
-		return fmt.Errorf("acquire reset connection: %w", err)
+		return nil, err
 	}
-	defer conn.Release()
 
-	var extensionInstalled bool
-	if err := conn.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb')`,
-	).Scan(&extensionInstalled); err != nil {
-		return fmt.Errorf("check timescaledb extension: %w", err)
+	clone := fmt.Sprintf("netra_t_%d_%d", os.Getpid(), cloneSeq.Add(1))
+	if err := adminExec(ctx, dsn, fmt.Sprintf(
+		`CREATE DATABASE %s TEMPLATE %s`,
+		quoteIdentifier(clone), quoteIdentifier(template))); err != nil {
+		return nil, fmt.Errorf("clone template database: %w", err)
 	}
-	if extensionInstalled {
-		if _, err := conn.Exec(ctx, `SELECT timescaledb_pre_restore()`); err != nil {
-			return fmt.Errorf("pause timescaledb background jobs: %w", err)
+
+	// Registered BEFORE the pool below so it runs AFTER it -- t.Cleanup is
+	// LIFO, and DROP DATABASE fails while a connection is open. WITH (FORCE)
+	// covers the rest: TimescaleDB attaches a background worker to every
+	// database it lives in, on its own schedule, so "no connections" is never
+	// something this test can guarantee by closing its own.
+	t.Cleanup(func() {
+		_ = adminExec(context.Background(), dsn, fmt.Sprintf(
+			`DROP DATABASE IF EXISTS %s WITH (FORCE)`, quoteIdentifier(clone)))
+	})
+
+	cloneDSN, err := dsnForDatabase(dsn, clone)
+	if err != nil {
+		return nil, err
+	}
+	s, err := Open(ctx, cloneDSN)
+	if err != nil {
+		return nil, fmt.Errorf("open cloned test database: %w", err)
+	}
+
+	// Still set, still for the same reason: the clone inherits the template's
+	// already-unscheduled policy jobs, but a caller's Migrate that applies a
+	// migration the template predates would register live ones. Cheap when
+	// there is nothing to do, and a test that forgets does not fail -- it
+	// flakes, later, somewhere else. See unschedulePolicyJobs.
+	s.unscheduleJobs = true
+
+	t.Cleanup(s.Close)
+	return s, nil
+}
+
+// insufficientPrivilegeSQLState is Postgres's SQLSTATE for a refused
+// permission, which is what a role without CREATEDB gets from CREATE
+// DATABASE.
+const insufficientPrivilegeSQLState = "42501"
+
+// isInsufficientPrivilege reports whether err is Postgres refusing on
+// permissions, as opposed to anything else that can go wrong here.
+func isInsufficientPrivilege(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == insufficientPrivilegeSQLState
+}
+
+// OpenTestSibling opens a SECOND pool on the same database as s, closed on
+// cleanup.
+//
+// Tests that need one are testing what happens when the store's own pool is
+// gone -- ingest failing while the request still authenticates -- so they
+// cannot share s.pool. Re-reading NETRA_TEST_DSN used to do the job, back
+// when every test shared that one database. It silently stopped being the
+// same database when OpenTest began handing out clones: the second pool
+// connected to an unmigrated database, authentication failed on a missing
+// `tokens` table, and the test saw a 500 where it wanted the 503 its own
+// simulated storage failure should have produced.
+func OpenTestSibling(t *testing.T, s *Store) *Store {
+	t.Helper()
+
+	sibling, err := Open(context.Background(), s.dsn)
+	if err != nil {
+		t.Fatalf("open sibling pool on the test database: %v", err)
+	}
+	t.Cleanup(sibling.Close)
+	return sibling
+}
+
+// cloneSeq makes clone names unique within a process; the pid makes them
+// unique across the several test binaries a `go test ./...` runs at once.
+var cloneSeq atomic.Int64
+
+// templateBuildLockID is a fixed advisory-lock key, taken on the `postgres`
+// database while the template is checked for and built. Every test binary in
+// a run is a separate process with no shared setup hook, so without it they
+// race to create the same database and all but one fail.
+const templateBuildLockID = 0x6e657472616d6967
+
+// ensureTemplateDB returns the name of a migrated template database, building
+// it if this is the first caller to need it.
+//
+// The name carries a hash of the migration files, so editing the schema
+// yields a different template rather than silently reusing a stale one. That
+// matters more than it looks: Migrate matches by filename with no checksum,
+// so a template built from an older 0001 would be skipped by the caller's
+// Migrate and the tests would quietly run against the wrong schema.
+//
+// Old templates are left behind rather than swept. They are small, and a
+// sweep would drop the template another checkout's run is cloning from right
+// now.
+func ensureTemplateDB(ctx context.Context, dsn string) (string, error) {
+	name := templateDBName()
+
+	admin, err := adminConnect(ctx, dsn)
+	if err != nil {
+		return "", err
+	}
+	defer admin.Close(ctx)
+
+	if _, err := admin.Exec(ctx, `SELECT pg_advisory_lock($1)`, int64(templateBuildLockID)); err != nil {
+		return "", fmt.Errorf("take template build lock: %w", err)
+	}
+	defer func() {
+		_, _ = admin.Exec(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, int64(templateBuildLockID))
+	}()
+
+	var exists bool
+	if err := admin.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)`, name).Scan(&exists); err != nil {
+		return "", fmt.Errorf("look for template database: %w", err)
+	}
+	if exists {
+		return name, nil
+	}
+
+	// Built under a scratch name and renamed at the end, so a build that dies
+	// half way leaves no database under the real name for the next run to
+	// mistake for a finished template.
+	building := name + "_building"
+
+	// Everything before the migration, then everything after it, as two lists
+	// of (what, statement) rather than eight near-identical error wrappings.
+	// The ORDER inside each list is the load-bearing part, so it is what the
+	// code shows.
+	prepare := []struct{ what, sql string }{
+		{"clear partial template", fmt.Sprintf(
+			`DROP DATABASE IF EXISTS %s WITH (FORCE)`, quoteIdentifier(building))},
+		{"create template database", fmt.Sprintf(
+			`CREATE DATABASE %s`, quoteIdentifier(building))},
+	}
+	// Barring connections BEFORE evicting them, not after: TimescaleDB's
+	// scheduler reconnects on its own, and CREATE DATABASE ... TEMPLATE fails
+	// outright while any session is attached to the source. Reversing these
+	// two leaves a window the worker reliably wins. The rename is last, so the
+	// template only appears under its real name once it is complete.
+	publish := []struct{ what, sql string }{
+		{"bar connections to template", fmt.Sprintf(
+			`ALTER DATABASE %s ALLOW_CONNECTIONS false`, quoteIdentifier(building))},
+		{"evict template connections", fmt.Sprintf(
+			`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s`,
+			quoteLiteral(building))},
+		{"publish template database", fmt.Sprintf(
+			`ALTER DATABASE %s RENAME TO %s`,
+			quoteIdentifier(building), quoteIdentifier(name))},
+	}
+
+	for _, step := range prepare {
+		if _, err := admin.Exec(ctx, step.sql); err != nil {
+			return "", fmt.Errorf("%s: %w", step.what, err)
 		}
 	}
 
-	var lastErr error
-	attempts := 0
-	for attempt := 1; attempt <= resetSchemaRetries; attempt++ {
-		attempts = attempt
-		_, err := conn.Exec(ctx,
-			`SET lock_timeout = '5s'; DROP SCHEMA public CASCADE; CREATE SCHEMA public;`)
-		lastErr = err
-		if err == nil {
-			break
+	if err := migrateTemplate(ctx, dsn, building); err != nil {
+		return "", err
+	}
+
+	for _, step := range publish {
+		if _, err := admin.Exec(ctx, step.sql); err != nil {
+			return "", fmt.Errorf("%s: %w", step.what, err)
 		}
-		if !isRetryableLockError(err) {
-			break
+	}
+	return name, nil
+}
+
+// quoteLiteral single-quotes a string for a statement that cannot take a bind
+// parameter. Only used for database names this file generated itself, but
+// quoted properly regardless -- an escaping helper that is right only for its
+// current caller is the kind that breaks when the next one arrives.
+func quoteLiteral(s string) string {
+	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
+}
+
+// migrateTemplate runs the migrations once, into the freshly created template.
+func migrateTemplate(ctx context.Context, dsn, database string) error {
+	tmplDSN, err := dsnForDatabase(dsn, database)
+	if err != nil {
+		return err
+	}
+	s, err := Open(ctx, tmplDSN)
+	if err != nil {
+		return fmt.Errorf("open template database: %w", err)
+	}
+	defer s.Close()
+
+	// The whole point of the flag, and the one place it now does real work:
+	// the clones inherit whatever scheduling state this leaves behind, so the
+	// policy jobs are unscheduled once here instead of once per test.
+	s.unscheduleJobs = true
+	if err := s.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrate template database: %w", err)
+	}
+	return nil
+}
+
+// templateDBName is netra_tmpl_ followed by a hash of every migration file's
+// name and contents, so a schema edit produces a different template.
+func templateDBName() string {
+	h := sha256.New()
+	entries, err := migrationFS.ReadDir("migrations")
+	if err != nil {
+		// Cannot happen: the directory is embedded at compile time.
+		panic(fmt.Sprintf("read embedded migrations: %v", err))
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		body, err := migrationFS.ReadFile("migrations/" + n)
+		if err != nil {
+			panic(fmt.Sprintf("read embedded migration %s: %v", n, err))
 		}
-		time.Sleep(time.Duration(attempt) * 100 * time.Millisecond)
+		h.Write([]byte(n))
+		h.Write(body)
 	}
+	return "netra_tmpl_" + hex.EncodeToString(h.Sum(nil))[:12]
+}
 
-	// Always try to clear the session- and database-level restoring flag,
-	// even if the drop itself failed, so a failed reset does not wedge every
-	// later test sharing this database or this connection.
-	if _, err := conn.Exec(ctx, `SET SESSION timescaledb.restoring = 'off'`); err != nil && lastErr == nil {
-		return fmt.Errorf("resume timescaledb background jobs (session): %w", err)
+// adminConnect opens a single connection to the `postgres` database, which is
+// where CREATE/DROP DATABASE have to be issued from -- neither can run while
+// connected to the database it names.
+func adminConnect(ctx context.Context, dsn string) (*pgx.Conn, error) {
+	adminDSN, err := dsnForDatabase(dsn, "postgres")
+	if err != nil {
+		return nil, err
 	}
+	conn, err := pgx.Connect(ctx, adminDSN)
+	if err != nil {
+		return nil, fmt.Errorf("connect to the postgres database: %w", err)
+	}
+	return conn, nil
+}
 
-	var dbName string
-	if err := conn.QueryRow(ctx, `SELECT current_database()`).Scan(&dbName); err == nil {
-		_, _ = conn.Exec(ctx, fmt.Sprintf(
-			`ALTER DATABASE %s SET timescaledb.restoring = 'off'`, quoteIdentifier(dbName)))
+// adminExec runs one statement on the `postgres` database and closes the
+// connection again.
+func adminExec(ctx context.Context, dsn, sql string) error {
+	conn, err := adminConnect(ctx, dsn)
+	if err != nil {
+		return err
 	}
+	defer conn.Close(ctx)
 
-	// lock_timeout is a session GUC set above on a POOLED connection, so it
-	// outlives this reset and every later query drawn on the same connection
-	// inherits it -- a test doing legitimate slow work would fail with 55P03
-	// for no reason it could see. Reset for the same reason restoring is.
-	//
-	// LAST, after the ALTER DATABASE above. That statement takes a lock on
-	// pg_database, its error is deliberately discarded, and the 5s bound set
-	// at the top of the retry loop is the only thing keeping it from waiting
-	// forever when another test binary holds that lock. Resetting the GUC
-	// before it runs would hand an ignored statement an unbounded wait.
-	if _, err := conn.Exec(ctx, `SET SESSION lock_timeout = DEFAULT`); err != nil && lastErr == nil {
-		return fmt.Errorf("reset lock_timeout: %w", err)
+	if _, err := conn.Exec(ctx, sql); err != nil {
+		return fmt.Errorf("%s: %w", sql, err)
 	}
+	return nil
+}
 
-	if lastErr == nil {
-		return nil
+// dsnForDatabase rewrites the database name in a URL-style DSN.
+//
+// NETRA_TEST_DSN is a URL everywhere it is set (compose, CI, the README), and
+// a keyword/value DSN would fail here rather than silently connect to the
+// wrong database.
+func dsnForDatabase(dsn, database string) (string, error) {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "", fmt.Errorf("parse NETRA_TEST_DSN: %w", err)
 	}
-	if isRetryableLockError(lastErr) {
-		var pgErr *pgconn.PgError
-		errors.As(lastErr, &pgErr)
-		return fmt.Errorf("gave up after %d attempts, still hitting %s: %w", attempts, pgErr.Code, lastErr)
+	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
+		return "", fmt.Errorf("NETRA_TEST_DSN is not a postgres:// URL: %q", u.Scheme)
 	}
-	return lastErr
+	u.Path = "/" + database
+	return u.String(), nil
 }
 
 // quoteIdentifier double-quotes a Postgres identifier, doubling any
@@ -208,18 +367,6 @@ func resetSchema(ctx context.Context, s *Store) error {
 // positionally, not as a bind parameter).
 func quoteIdentifier(name string) string {
 	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
-}
-
-// isRetryableLockError reports whether err is a Postgres error resetSchema's
-// retry loop should retry: a deadlock, or a lock_timeout expiring while
-// waiting for a lock that something else (most likely a
-// still-in-flight TimescaleDB background job) is holding.
-func isRetryableLockError(err error) bool {
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) {
-		return false
-	}
-	return pgErr.Code == deadlockSQLState || pgErr.Code == lockNotAvailableSQLState
 }
 
 // unschedulePolicyJobs leaves TimescaleDB's policy jobs registered but stops
@@ -235,9 +382,10 @@ func isRetryableLockError(err error) bool {
 // test's own code to explain it. TestIntegrationGroup2TablesCascadeOnHostDelete
 // and the admin/UI host-delete tests all hit this.
 //
-// resetSchema already stops the workers for the DROP SCHEMA it performs, but
-// that protection ends when Migrate reinstalls the extension and creates these
-// jobs. This closes the remaining window: the test body itself.
+// The template is built with the workers already stopped, and a clone inherits
+// that, but the protection ends the moment a caller's Migrate applies a
+// migration the template predates and creates fresh jobs. This closes the
+// remaining window: the test body itself.
 //
 // netra_prune_discrete_events is in the list for the same reason: it DELETEs
 // from events, systemd_unit_events and package_events, which a test that
@@ -272,8 +420,11 @@ func isRetryableLockError(err error) bool {
 // races against the scheduler, not corruption -- the PK on bgw_job_stat.job_id
 // makes genuinely duplicated rows impossible.
 //
-// resetSchema already established that stop_background_workers() is the part
-// of timescaledb_pre_restore() that actually stops an in-flight worker; it is
+// stop_background_workers() is the part of timescaledb_pre_restore() that
+// actually stops an in-flight worker -- established empirically against the
+// retired shared-database reset path, where forcing a job to run while only
+// the timescaledb.restoring GUC was set still let it execute, and doing the
+// same with the workers stopped left total_runs unchanged for 40s. It is
 // called directly here rather than through the wrapper because the wrapper
 // also sets timescaledb.restoring, which is session state on a pooled
 // connection and would have to be unset on the same connection to avoid
@@ -288,7 +439,7 @@ const stopWorkers = `SELECT _timescaledb_functions.stop_background_workers()`
 // unscheduleAttempts is how many times the alter_job pass runs in TOTAL.
 //
 // A worker already dispatched when stop_background_workers() lands can still
-// be mid-update, exactly as resetSchema's own retry loop exists for. Three,
+// be mid-update. Three,
 // for the reason DeleteHost uses three: the contending party is gone by the
 // time the retry runs.
 const unscheduleAttempts = 3

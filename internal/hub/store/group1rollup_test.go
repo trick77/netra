@@ -357,7 +357,7 @@ func insertAggregateRow(t *testing.T, s *store.Store, table, dimension string, d
 //
 // The refresh policy jobs are unscheduled first. TimescaleDB's scheduler runs
 // a newly created policy within seconds rather than at its nominal
-// schedule_interval -- the same behaviour resetSchema in testing.go documents
+// schedule_interval -- the same behaviour unschedulePolicyJobs in testing.go documents
 // at length -- and a manual refresh that collides with one fails outright
 // with "concurrent refresh" (SQLSTATE 55P03) rather than waiting. With
 // fourteen aggregates now in the schema that stopped being a rare race and
@@ -390,7 +390,7 @@ const concurrentRefreshSQLState = "55P03"
 // background job dispatched before refreshTiers unscheduled it is still in
 // flight. Unscheduling removes the routine cause of the collision but cannot
 // recall a worker that has already started, which is the same residual race
-// resetSchema retries for.
+// unschedulePolicyJobs retries for.
 func refreshAggregate(t *testing.T, s *store.Store, view string) {
 	t.Helper()
 	refreshAggregateRange(t, s, view, "now() - interval '12 hours'", "now()")
