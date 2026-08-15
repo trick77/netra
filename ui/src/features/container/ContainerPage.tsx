@@ -444,8 +444,13 @@ export function ContainerPage({
           // about to be OOM-killed. mem_used is the number the pair claims to
           // be, and it is what the meter directly below already shows.
           nowValue={
-            memSplit.length > 1
-              ? latestValue(sampled?.memUsed ?? empty)
+            // memBands, not memSplit: the split and the `empty` sentinel are
+            // locals of bandsFor(), and referencing them from here compiled
+            // only while that code lived in this scope. The two say the same
+            // thing by construction -- memBands IS memSplit when the split
+            // survived, and a single "used" band when it did not.
+            memBands.length > 1
+              ? latestValue(sampled?.memUsed ?? [])
               : undefined
           }
           stacked={memBands.length > 1}
