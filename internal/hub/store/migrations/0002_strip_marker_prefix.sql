@@ -13,22 +13,42 @@
 -- the samples, the 5m rollup and the 1h rollup are all keyed by, so the whole
 -- history follows the rename with no reparenting and no refresh.
 
--- A host that already has a row under the stripped name -- an agent that was
--- reinstalled without the marker scheme, or a hand-inserted row -- would make
--- the UPDATE below violate the unique index. Drop the prefixed duplicate first.
+-- A host that already has a row under the stripped name would make the UPDATE
+-- below violate the unique index, so one of the two has to go.
 --
--- Deleted, NOT merged onto the survivor. filesystem_samples is
--- PRIMARY KEY (host_id, ts, fs_id), so repointing fs_id collides on every
--- timestamp the two rows share -- and they overlap by construction, since both
--- were being written during the same window. The FK is ON DELETE CASCADE, so
--- the duplicate's samples go with it.
-DELETE FROM filesystems f
+-- The STRIPPED one goes, never the prefixed one. A marker-less agent writes the
+-- whole mount point as the label (`/mnt/ark`), so it cannot produce `ark`; the
+-- only thing that does is an agent from THIS release that was upgraded ahead of
+-- its hub. That makes the prefixed row the one carrying the history -- months of
+-- it -- and the stripped row the one holding whatever landed since that agent
+-- restarted. Dropping the prefixed row would destroy exactly what this migration
+-- exists to preserve.
+--
+-- Deleted, NOT merged. filesystem_samples is PRIMARY KEY (host_id, ts, fs_id),
+-- so repointing fs_id collides on every timestamp the two rows share -- and they
+-- overlap by construction, since both were being written during the same window.
+-- The FK is ON DELETE CASCADE, so the loser's samples go with it.
+
+-- The stripped twin knows the real mount point, because the new agent sent it.
+-- Carry it over before deleting it: the survivor otherwise displays the bare
+-- label until the agent's next scrape, and this costs one statement.
+UPDATE filesystems f
+   SET mountpoint = g.mountpoint
+  FROM filesystems g
  WHERE f.label LIKE '/netra/fs/%'
+   AND g.host_id = f.host_id
+   AND g.label = regexp_replace(f.label, '^/netra/fs/', '')
+   AND g.mountpoint IS NOT NULL
+   AND g.mountpoint NOT LIKE '/netra/fs/%';
+
+DELETE FROM filesystems g
+ WHERE g.label NOT LIKE '/netra/fs/%'
    AND EXISTS (
        SELECT 1
-         FROM filesystems g
-        WHERE g.host_id = f.host_id
-          AND g.label = regexp_replace(f.label, '^/netra/fs/', '')
+         FROM filesystems f
+        WHERE f.host_id = g.host_id
+          AND f.label LIKE '/netra/fs/%'
+          AND regexp_replace(f.label, '^/netra/fs/', '') = g.label
    );
 
 -- regexp_replace with an anchor, never a character offset: /netra/fs/ is ten

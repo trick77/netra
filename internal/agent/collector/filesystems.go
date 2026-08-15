@@ -281,6 +281,16 @@ func (f *Filesystems) name(lines []mountLine) []mountEntry {
 			if virtualFsTypes[l.fstype] {
 				continue
 			}
+			// Belt and braces on the invariant this whole file exists for.
+			// markerPrefix has a trailing slash, so a bind of the marker
+			// DIRECTORY itself (/netra/fs, no label under it) does not turn
+			// markers on -- and would then be reported here, verbatim, as a
+			// filesystem named after the inside of the container. Nothing on a
+			// host is called /netra, so dropping the whole subtree costs a real
+			// install nothing.
+			if strings.HasPrefix(t, "/netra/") || t == "/netra" {
+				continue
+			}
 			out = append(out, mountEntry{target: t, label: t, mountpoint: t})
 			continue
 		}

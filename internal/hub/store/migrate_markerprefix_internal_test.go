@@ -79,8 +79,15 @@ func TestIntegrationMarkerPrefixIsStrippedInPlace(t *testing.T) {
 
 // filesystems is unique on (host_id, label), so a host that already carries the
 // stripped name would make the rename violate the index and fail the whole
-// migration -- taking the hub's startup with it.
-func TestIntegrationMarkerPrefixCollisionDropsThePrefixedRow(t *testing.T) {
+// migration -- taking the hub's startup with it. One of the two rows has to go,
+// and it must be the one holding the LESS history.
+//
+// A marker-less agent labels a filesystem with its whole mount point
+// (`/mnt/ark`), never `ark`, so the only thing that produces the stripped twin
+// is an agent from this release upgraded ahead of its hub. The prefixed row is
+// then the one carrying every sample from before that upgrade -- deleting it
+// would destroy exactly what this migration exists to preserve.
+func TestIntegrationMarkerPrefixCollisionKeepsTheRowWithTheHistory(t *testing.T) {
 	ctx := context.Background()
 	s := OpenTest(t)
 	if err := s.Migrate(ctx); err != nil {
@@ -99,16 +106,29 @@ func TestIntegrationMarkerPrefixCollisionDropsThePrefixedRow(t *testing.T) {
 		`INSERT INTO hosts (hostname) VALUES ('marker-collision-b') RETURNING id`).Scan(&hostB); err != nil {
 		t.Fatalf("insert host b: %v", err)
 	}
-	var survivorID, prefixedID int32
+	// The prefixed row is the old one, with the history on it. The stripped row
+	// is what the upgraded agent has been writing since it restarted.
+	var strippedID, prefixedID int32
 	if err := s.Pool().QueryRow(ctx,
 		`INSERT INTO filesystems (host_id, label, mountpoint) VALUES ($1, 'ark', '/mnt/ark')
-		 RETURNING id`, hostA).Scan(&survivorID); err != nil {
-		t.Fatalf("insert survivor: %v", err)
+		 RETURNING id`, hostA).Scan(&strippedID); err != nil {
+		t.Fatalf("insert stripped: %v", err)
 	}
 	if err := s.Pool().QueryRow(ctx,
 		`INSERT INTO filesystems (host_id, label, mountpoint) VALUES ($1, '/netra/fs/ark', '/netra/fs/ark')
 		 RETURNING id`, hostA).Scan(&prefixedID); err != nil {
 		t.Fatalf("insert prefixed: %v", err)
+	}
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO filesystem_samples (host_id, ts, fs_id, total, used, free)
+		 SELECT $1, now() - (g || ' minutes')::interval, $2, 2000, 1900, 100
+		   FROM generate_series(1, 10) g`, hostA, prefixedID); err != nil {
+		t.Fatalf("insert history: %v", err)
+	}
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO filesystem_samples (host_id, ts, fs_id, total, used, free)
+		 VALUES ($1, now(), $2, 2000, 1900, 100)`, hostA, strippedID); err != nil {
+		t.Fatalf("insert recent sample: %v", err)
 	}
 	if _, err := s.Pool().Exec(ctx,
 		`INSERT INTO filesystems (host_id, label, mountpoint) VALUES ($1, '/netra/fs/ark', '/netra/fs/ark')`,
@@ -119,24 +139,37 @@ func TestIntegrationMarkerPrefixCollisionDropsThePrefixedRow(t *testing.T) {
 	// When: the migration runs.
 	applyMarkerPrefixMigration(t, ctx, s)
 
-	// Then: host A keeps the row that already had the right name, and the
-	// duplicate is gone rather than merged -- repointing its samples would
+	// Then: host A keeps the row the history hangs off, renamed in place, and
+	// the near-empty twin is gone rather than merged -- repointing fs_id would
 	// collide on PRIMARY KEY (host_id, ts, fs_id).
 	var gone bool
 	if err := s.Pool().QueryRow(ctx,
-		`SELECT NOT EXISTS (SELECT 1 FROM filesystems WHERE id = $1)`, prefixedID).Scan(&gone); err != nil {
-		t.Fatalf("check prefixed row: %v", err)
+		`SELECT NOT EXISTS (SELECT 1 FROM filesystems WHERE id = $1)`, strippedID).Scan(&gone); err != nil {
+		t.Fatalf("check stripped row: %v", err)
 	}
 	if !gone {
-		t.Error("the prefixed duplicate survived, so the rename would have hit the unique index")
+		t.Error("the stripped duplicate survived, so the rename would have hit the unique index")
 	}
-	var mountpoint string
+	var label, mountpoint string
 	if err := s.Pool().QueryRow(ctx,
-		`SELECT mountpoint FROM filesystems WHERE id = $1`, survivorID).Scan(&mountpoint); err != nil {
+		`SELECT label, mountpoint FROM filesystems WHERE id = $1`, prefixedID).Scan(&label, &mountpoint); err != nil {
 		t.Fatalf("read survivor: %v", err)
 	}
+	if label != "ark" {
+		t.Errorf("survivor label = %q, want ark", label)
+	}
+	// Carried over from the twin before it was deleted: it is the one name of
+	// the two that a host actually answers to.
 	if mountpoint != "/mnt/ark" {
-		t.Errorf("survivor mountpoint = %q, want /mnt/ark untouched", mountpoint)
+		t.Errorf("survivor mountpoint = %q, want /mnt/ark carried over from the twin", mountpoint)
+	}
+	var samples int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM filesystem_samples WHERE fs_id = $1`, prefixedID).Scan(&samples); err != nil {
+		t.Fatalf("count samples: %v", err)
+	}
+	if samples != 10 {
+		t.Errorf("samples on the surviving filesystem = %d, want the 10 the history had", samples)
 	}
 
 	// And: host B, which had no collision, is renamed rather than deleted.

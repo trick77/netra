@@ -2870,6 +2870,11 @@ netra_rewrite_fs_mounts() {
             }
         }
     ' "$1" >"$_rf_tmp" || return 1
+    # Checked before the truncating redirect below, never after. `cat >` empties
+    # the target first, so an awk that produced nothing -- out of space, killed
+    # mid-run -- would take the agent's token with it, and recovering that costs
+    # the operator a new one.
+    [ -s "$_rf_tmp" ] || return 1
     cat "$_rf_tmp" >"$1" || return 1
     rm -f "$_rf_tmp"
 }
@@ -3053,14 +3058,21 @@ start_stack() {
     # already on the host — so --start on a re-run to pick up an agent fix
     # would quietly start the unfixed binary again.
     #
-    # Unguarded like the `up -d` below it: errexit is armed, and a host that
-    # cannot reach the registry should say so here rather than start a stale
-    # image and call the run a success.
+    # Fatal, and said out loud. Starting anyway would run whatever copy of the
+    # image this host already has, which on an upgrade is the binary the operator
+    # came here to replace -- but a bare non-zero exit from errexit tells them
+    # nothing about which of the two commands failed, or that everything above
+    # this step was already written.
+    _ss_pull_failed="could not pull the agent image, so nothing was started."
+    _ss_pull_failed="$_ss_pull_failed compose.yaml and .env are written and the"
+    _ss_pull_failed="$_ss_pull_failed markers are in place: fix the registry access"
+    _ss_pull_failed="$_ss_pull_failed and run '$(compose_cmd) pull &&"
+    _ss_pull_failed="$_ss_pull_failed $(compose_cmd) up -d' in $OUTPUT_DIR."
     if [ "$DOCKER_COMPOSE" = compose_v1 ]; then
-        netra_exec docker-compose -f "$OUTPUT_DIR/compose.yaml" pull
+        netra_exec docker-compose -f "$OUTPUT_DIR/compose.yaml" pull || die "$_ss_pull_failed"
         netra_exec docker-compose -f "$OUTPUT_DIR/compose.yaml" up -d
     else
-        netra_exec docker compose -f "$OUTPUT_DIR/compose.yaml" pull
+        netra_exec docker compose -f "$OUTPUT_DIR/compose.yaml" pull || die "$_ss_pull_failed"
         netra_exec docker compose -f "$OUTPUT_DIR/compose.yaml" up -d
     fi
 

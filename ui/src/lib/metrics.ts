@@ -517,3 +517,19 @@ export function windowNotice(res: MetricsResponse): string | null {
   if (parts.length === 0) return null;
   return parts.join("; ") + ".";
 }
+
+/**
+ * What to call a filesystem in front of an operator.
+ *
+ * The mount point, because that is the name they know it by and the one they
+ * would type into `df`. The label is the fallback: it is never empty, while
+ * the mount point is nullable, and on a containerised agent installed before
+ * the mapping existed it is the only host-side name there is.
+ *
+ * Shared rather than per-feature so the fleet row and the host page cannot
+ * call the same disk two different things -- a reader moving between them
+ * would have no way to tell it was one filesystem.
+ */
+export function fsName(key: Record<string, string>, fallback: string): string {
+  return key.mountpoint || key.filesystem || fallback;
+}

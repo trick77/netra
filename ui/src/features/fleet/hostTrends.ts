@@ -7,6 +7,7 @@ import {
 import {
   carriesColumn,
   counterIncrease,
+  fsName,
   griddedValues,
   hasReading,
 } from "../../lib/metrics";
@@ -224,18 +225,6 @@ function filesystemBands(res: MetricsResponse | null): Band[] {
     });
   }
   return bands;
-}
-
-/**
- * What to call a filesystem in front of an operator.
- *
- * The mountpoint, because that is the name they know it by and the one they
- * would type into `df`. The label is the fallback: it is never empty, while
- * the mountpoint is nullable, and on a containerised agent installed before
- * the mapping existed it is the only host-side name there is.
- */
-function fsName(key: Record<string, string>, fallback: string): string {
-  return key.mountpoint || key.filesystem || fallback;
 }
 
 function lastNumber(values: readonly (number | null)[]): number | null {
