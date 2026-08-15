@@ -4,5 +4,6 @@ sysfs /sys sysfs rw,nosuid,nodev,noexec,relatime 0 0
 /dev/sda1 /netra/fs/root ext4 ro,relatime 0 0
 /dev/sdb1 /netra/fs/ark ext4 ro,relatime 0 0
 /dev/sdc1 /netra/fs/var-log ext4 ro,relatime 0 0
+nas:/vol/backup /netra/fs/backup nfs4 ro,relatime 0 0
 tmpfs /run tmpfs rw,nosuid,nodev 0 0
 /dev/sda1 /etc/hostname ext4 rw,relatime 0 0

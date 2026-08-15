@@ -21,10 +21,12 @@ func TestFilesystemsReportsHostNamesForMarkerMounts(t *testing.T) {
 		"root":    "/",
 		"ark":     "/mnt/ark",
 		"var-log": "/var/log",
+		"backup":  "/mnt/backup",
 	}, fakeStatfs(map[string]collector.FsStat{
 		"/netra/fs/root":    {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
 		"/netra/fs/ark":     {Total: 2000, Free: 100, Used: 1900, DeviceID: 2},
 		"/netra/fs/var-log": {Total: 500, Free: 250, Used: 250, DeviceID: 3},
+		"/netra/fs/backup":  {Total: 9000, Free: 4000, Used: 5000, DeviceID: 5},
 		"/":                 {Total: 60, Free: 10, Used: 50, DeviceID: 99},
 		"/run":              {Total: 500, Free: 250, Used: 250, DeviceID: 4},
 		"/etc/hostname":     {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
@@ -36,13 +38,13 @@ func TestFilesystemsReportsHostNamesForMarkerMounts(t *testing.T) {
 		t.Fatalf("Collect: %v", err)
 	}
 
-	// Then: three rows, named the way the host names them.
-	if len(res.Filesystems) != 3 {
+	// Then: four rows, named the way the host names them.
+	if len(res.Filesystems) != 4 {
 		var got []string
 		for _, r := range res.Filesystems {
 			got = append(got, r.GetLabel())
 		}
-		t.Fatalf("labels = %v, want exactly the three marker filesystems", got)
+		t.Fatalf("labels = %v, want exactly the four marker filesystems", got)
 	}
 	ark := fsRow(t, res.Filesystems, "ark")
 	if got := ark.GetMountpoint(); got != "/mnt/ark" {
@@ -53,6 +55,16 @@ func TestFilesystemsReportsHostNamesForMarkerMounts(t *testing.T) {
 	}
 	if got := fsRow(t, res.Filesystems, "root").GetMountpoint(); got != "/" {
 		t.Errorf("root mountpoint = %q, want /", got)
+	}
+
+	// And: the nfs4 marker is reported. Its /proc/mounts line carries the
+	// underlying filesystem's type, but a marker only exists because setup
+	// accepted the mount -- an operator who passed --include-network-fs was
+	// told it would be measured, and dropping it here on the fstype would
+	// second-guess a decision this collector cannot see the inputs to.
+	backup := fsRow(t, res.Filesystems, "backup")
+	if got := backup.GetMountpoint(); got != "/mnt/backup" {
+		t.Errorf("backup mountpoint = %q, want /mnt/backup", got)
 	}
 
 	// And: nothing carries the container-internal prefix, in either field.
@@ -75,6 +87,7 @@ func TestFilesystemsDropsTheContainersOwnRoot(t *testing.T) {
 			"/netra/fs/root":    {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
 			"/netra/fs/ark":     {Total: 2000, Free: 100, Used: 1900, DeviceID: 2},
 			"/netra/fs/var-log": {Total: 500, Free: 250, Used: 250, DeviceID: 3},
+			"/netra/fs/backup":  {Total: 9000, Free: 4000, Used: 5000, DeviceID: 5},
 			"/":                 {Total: 60, Free: 10, Used: 50, DeviceID: 99},
 		}))
 
@@ -106,6 +119,7 @@ func TestFilesystemsFallsBackToTheLabelWithoutAMapping(t *testing.T) {
 			"/netra/fs/root":    {Total: 1000, Free: 400, Used: 600, DeviceID: 1},
 			"/netra/fs/ark":     {Total: 2000, Free: 100, Used: 1900, DeviceID: 2},
 			"/netra/fs/var-log": {Total: 500, Free: 250, Used: 250, DeviceID: 3},
+			"/netra/fs/backup":  {Total: 9000, Free: 4000, Used: 5000, DeviceID: 5},
 		}))
 
 	// When: it is collected.

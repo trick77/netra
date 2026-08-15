@@ -218,7 +218,7 @@ func (f *Filesystems) readMounts() ([]mountEntry, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	var targets []string
+	var lines []mountLine
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -226,17 +226,24 @@ func (f *Filesystems) readMounts() ([]mountEntry, error) {
 		if len(fields) < 3 {
 			continue
 		}
-		if virtualFsTypes[fields[2]] {
-			continue
-		}
 		// Mountpoints are octal-escaped in /proc/mounts: a space is \040.
-		targets = append(targets, unescapeMount(fields[1]))
+		//
+		// The fstype is carried rather than acted on here, because whether it
+		// disqualifies a mount depends on whether markers are in play at all.
+		lines = append(lines, mountLine{target: unescapeMount(fields[1]), fstype: fields[2]})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
-	return f.name(targets), nil
+	return f.name(lines), nil
+}
+
+// mountLine is one /proc/mounts row, before anything has decided what to do
+// with it.
+type mountLine struct {
+	target string
+	fstype string
 }
 
 // name turns raw mount targets into the entries the hub is told about.
@@ -248,20 +255,32 @@ func (f *Filesystems) readMounts() ([]mountEntry, error) {
 // each -- and re-deriving that decision from inside the container produces a
 // worse answer than the one already rendered into the compose file.
 //
-// With no marker present the whole table is used as-is: an agent running
-// directly on a host, and the fixture-driven tests, both depend on that.
-func (f *Filesystems) name(targets []string) []mountEntry {
+// With no marker present the whole table is used as-is, minus the
+// pseudo-filesystems: an agent running directly on a host, and the
+// fixture-driven tests, both depend on that.
+//
+// virtualFsTypes is applied ONLY there, for the same reason. A marker's
+// /proc/mounts line carries the underlying filesystem's type, so an operator
+// who passed --include-network-fs has an nfs4 marker mounted on purpose --
+// setup accepted it, told them so, and rendered the bind. Re-checking the
+// fstype here would drop it silently, second-guessing a decision this
+// collector cannot see the inputs to.
+func (f *Filesystems) name(lines []mountLine) []mountEntry {
 	markers := false
-	for _, t := range targets {
-		if strings.HasPrefix(t, markerPrefix) {
+	for _, l := range lines {
+		if strings.HasPrefix(l.target, markerPrefix) {
 			markers = true
 			break
 		}
 	}
 
-	out := make([]mountEntry, 0, len(targets))
-	for _, t := range targets {
+	out := make([]mountEntry, 0, len(lines))
+	for _, l := range lines {
+		t := l.target
 		if !markers {
+			if virtualFsTypes[l.fstype] {
+				continue
+			}
 			out = append(out, mountEntry{target: t, label: t, mountpoint: t})
 			continue
 		}
