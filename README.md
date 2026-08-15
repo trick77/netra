@@ -28,6 +28,13 @@ mkdir -p data/timescaledb          # bind mount for the database; no chown neede
 cp .env.example .env
 ```
 
+The data directory needs no `chown`: the timescaledb entrypoint starts as root
+and hands `PGDATA` to postgres (uid 70) itself, whoever created the directory.
+After the first start it is uid 70, mode `0700`, so backing it up needs `sudo`.
+The exception is **rootless Docker or `userns-remap`** — check with `docker info
+--format '{{.SecurityOptions}}'` — where container-root cannot chown it and you
+must `chown -R 70:70 data/timescaledb` yourself.
+
 Fill in the three values in `.env`:
 
 | Variable | How |
@@ -35,13 +42,6 @@ Fill in the three values in `.env`:
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` |
 | `NETRA_ADMIN_TOKEN` | `openssl rand -hex 32` |
 | `NETRA_HOSTNAME` | the name Traefik routes to, and the address agents post to — `NETRA_HUB_URL` is derived from it |
-
-The data directory needs no `chown`: the timescaledb entrypoint starts as root
-and hands `PGDATA` to postgres (uid 70) itself, whoever created the directory.
-After the first start it is uid 70, mode `0700`, so backing it up needs `sudo`.
-The exception is **rootless Docker or `userns-remap`** — check with `docker info
---format '{{.SecurityOptions}}'` — where container-root cannot chown it and you
-must `chown -R 70:70 data/timescaledb` yourself.
 
 All three ship empty and all three are required: `docker compose up` refuses to
 start until they are set, rather than falling back to a value that looks like it
