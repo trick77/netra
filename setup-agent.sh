@@ -2578,6 +2578,49 @@ resolve_token() {
     fi
 }
 
+# seed_from_env FILE — adopt the values an existing .env already holds.
+#
+# Only fills a variable that is still EMPTY, which is what keeps the precedence
+# straight: parse_args has already applied every flag, so a flag wins, the file
+# comes next, and a prompt is the last resort for a value nobody has supplied.
+#
+# Called only when the file will be left alone. Under --force the operator is
+# replacing those values, and pre-filling them would silently answer the very
+# questions they asked to be asked -- a token rotation, most of all.
+#
+# The token is adopted like everything else and NEVER printed. That is the whole
+# point: it is the one value an operator would otherwise retype from a password
+# manager only to have it discarded.
+seed_from_env() {
+    _se_file="$1"
+    [ -r "$_se_file" ] || return 0
+    _se_adopted=""
+
+    for _se_key in NETRA_HUB_URL NETRA_TOKEN NETRA_LOCATION NETRA_PROVIDER NETRA_HOST_TYPE; do
+        # The FIRST '=' only: a hub URL may carry a query string and a token is
+        # arbitrary. Trailing whitespace is stripped, inner whitespace is not --
+        # "Zurich, CH" is a legitimate location.
+        _se_val=$(sed -n "s/^[[:space:]]*${_se_key}=//p" "$_se_file" | sed -n '$p')
+        _se_val=${_se_val%"${_se_val##*[![:space:]]}"}
+        [ -n "$_se_val" ] || continue
+
+        case "$_se_key" in
+            NETRA_HUB_URL) [ -n "$HUB_URL" ] || HUB_URL="$_se_val" ;;
+            NETRA_TOKEN) [ -n "$TOKEN" ] || TOKEN="$_se_val" ;;
+            NETRA_LOCATION) [ -n "$LOCATION" ] || LOCATION="$_se_val" ;;
+            NETRA_PROVIDER) [ -n "$PROVIDER" ] || PROVIDER="$_se_val" ;;
+            NETRA_HOST_TYPE) [ -n "$HOST_TYPE" ] || HOST_TYPE="$_se_val" ;;
+        esac
+        _se_adopted="$_se_adopted $_se_key"
+    done
+
+    # The KEYS, never the values: NETRA_TOKEN is in this list. Naming them is
+    # what turns "nothing was asked" from something the operator has to take on
+    # trust into something they can check.
+    [ -z "$_se_adopted" ] ||
+        info "  reused from .env:${_se_adopted}"
+}
+
 # configure — everything the operator states rather than the host reveals.
 #
 # Detection cannot guess any of these, and an .env without a hub URL or a token
@@ -2589,16 +2632,24 @@ resolve_token() {
 configure() {
     step "Configuration"
 
-    # BEFORE the questions, not after the answers. write_outputs refuses to
-    # overwrite an existing .env without --force, and that refusal does not
-    # depend on anything detection found — so an operator re-running to rotate a
-    # token used to type the new one at a hidden prompt, watch the run succeed,
-    # and keep the old token, with the warning arriving only after every value
-    # had already been collected and silently dropped.
+    # BEFORE the questions, because the answer to most of them is already on
+    # disk. write_outputs refuses to overwrite an existing .env without --force,
+    # so a re-run used to ask for the hub URL, then the TOKEN at a hidden
+    # prompt, then the location and the rest -- and drop every one of them. It
+    # warned first rather than not asking, which is the same defect with better
+    # manners: nobody types a secret at a prompt in order to be told it was
+    # ignored. Re-running to pick up a new mount or a new template is the
+    # ordinary case, and it should be one command and no questions.
+    #
+    # Seeding rather than skipping, because the prompts are already gated on an
+    # empty value: a seeded variable simply has nothing to ask about. That also
+    # gets the precedence right for free -- a flag beats the existing .env,
+    # which beats a prompt.
     if [ -e "$OUTPUT_DIR/.env" ] && [ "$FORCE" != 1 ]; then
-        warn "$OUTPUT_DIR/.env already exists and --force was not given, so the values" \
-            "asked for below will NOT be written to it. Its existing token and settings" \
-            "stay in force. Re-run with --force to replace them."
+        seed_from_env "$OUTPUT_DIR/.env"
+        warn "$OUTPUT_DIR/.env already exists and --force was not given, so its values are" \
+            "REUSED and nothing below is asked. Re-run with --force to be asked again and" \
+            "replace them."
     fi
 
     if [ -z "$HUB_URL" ]; then
