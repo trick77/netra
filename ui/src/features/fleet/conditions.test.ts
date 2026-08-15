@@ -111,6 +111,18 @@ describe("hostConditions", () => {
     expect(String(c?.what)).toMatch(/sporadic/);
   });
 
+  // The band said "reporting sporadically -- gaps in the last few hours"
+  // beside a host whose agent had been running for five minutes. The gaps
+  // were real and they were the window before the host existed: the fleet
+  // page asks for its whole range regardless of when a host was added.
+  it("says nothing about a host that was only just added", () => {
+    const justAdded = makeRow({
+      reporting: [...Array<number | null>(283).fill(null), 12],
+    });
+
+    expect(hostConditions(justAdded, NOW)).toEqual([]);
+  });
+
   // No honest onset exists for most of these: a filesystem at 91 % crossed
   // 90 at some moment netra never recorded. A plausible-looking timestamp
   // would be read literally, so there is none.
