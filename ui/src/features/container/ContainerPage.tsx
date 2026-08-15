@@ -18,7 +18,14 @@ import {
   griddedValues,
   windowNotice,
 } from "../../lib/metrics";
-import { ABSENT, byterate, bytes, percent, relativeMs } from "../../lib/format";
+import {
+  ABSENT,
+  byterate,
+  bytes,
+  bytesPair,
+  percent,
+  relativeMs,
+} from "../../lib/format";
 import type { Range } from "../../lib/range";
 
 // The windows this page OFFERS. The type is lib/range's, so a range chosen
@@ -368,7 +375,9 @@ export function ContainerPage({
           ranges={CONTAINER_RANGE_VALUES}
           max={memLimit === null ? undefined : memLimit * 1.08}
           reference={memLimit ?? undefined}
-          referenceLabel={memLimit === null ? undefined : bytes(memLimit)}
+          // The limit names itself in the header, beside the reading it is the
+          // limit for, rather than as text over the rule inside the plot.
+          nowFmt={(n) => bytesPair(n, memLimit)}
           stacked={memBands.length > 1}
           series={memBands}
         />
@@ -435,7 +444,7 @@ export function ContainerPage({
           noLimit={sampled !== null && memLimit === null}
           label="Memory against mem_limit"
           formatValue={(value, max, pct) =>
-            `${bytes(value)} of ${bytes(max)} (${percent(pct)})`
+            `${bytesPair(value, max)} (${percent(pct)})`
           }
         />
       </div>

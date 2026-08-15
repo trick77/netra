@@ -123,6 +123,37 @@ describe("Overview processor stack", () => {
     ).toHaveLength(4);
   });
 
+  // The headline used to read "core 0 80 %" -- ChartPanel names series[0]
+  // when a panel carries several, and series[0] here is one arbitrary core.
+  // The number beside a chart of the whole machine has to be the whole
+  // machine's: cpu_total, 30, not core 0's 80.
+  it("headlines the host's CPU rather than core 0's", () => {
+    // The headline reads the LATEST bucket, so both fixtures have to carry
+    // one: the shared ones stop at t0 and every panel headlines an em dash.
+    const last = t0 + 60_000;
+    renderOverview({
+      hostMetrics: response({
+        family: "host",
+        columns: ["cpu_total"],
+        series: [{ key: {}, points: [[last, 30]] }],
+      }),
+      coreMetrics: response({
+        family: "cpu_core",
+        key_columns: ["core"],
+        columns: ["busy"],
+        series: [
+          { key: { core: "0" }, points: [[last, 80]] },
+          { key: { core: "1" }, points: [[last, 40]] },
+        ],
+      }),
+    });
+    const panel = screen.getByRole("region", { name: "Processor chart" });
+
+    const now = panel.querySelector(".now")?.textContent;
+    expect(now).toBe("30 %");
+    expect(now).not.toContain("core");
+  });
+
   // Falling back rather than showing a not-collected panel: a true
   // silhouette is available, and the fleet row for this host draws one.
   it("falls back to a single total band when there are no per-core series", () => {
@@ -205,6 +236,7 @@ describe("Overview memory stack", () => {
     renderOverview();
 
     const meter = screen.getByRole("region", { name: "Memory" });
-    expect(within(meter).getByText(/of/)).toBeTruthy();
+    // "20.4 · 31 GiB": a reading against the ceiling it is measured against.
+    expect(within(meter).getByText(/·/)).toBeTruthy();
   });
 });

@@ -5,7 +5,7 @@
 // container with no memory limit reports mem_limit as null rather than
 // omitting the column.
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Container, MetricsResponse } from "../../lib/api";
 import { ContainerPage, deriveState, displayTitle } from "./ContainerPage";
@@ -269,7 +269,12 @@ describe("ContainerPage", () => {
 
     expect(screen.queryByText("no limit")).toBeNull();
     expect(document.querySelector(".meter")).not.toBeNull();
-    expect(screen.getByText(/of 1 GB/)).toBeInTheDocument();
+    // Scoped to the meter's own row: the Memory panel's header names the same
+    // limit now, so an unscoped query matches both.
+    const row = screen
+      .getByText("Memory against mem_limit")
+      .closest(".mrow") as HTMLElement;
+    expect(within(row).getByText(/· 1 GB/)).toBeInTheDocument();
   });
 
   it("identifies the container by key, name, image, host and is_agent", () => {

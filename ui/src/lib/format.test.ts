@@ -4,9 +4,11 @@ import {
   absolute,
   absoluteMs,
   binaryBytes,
+  binaryBytesPair,
   bitrate,
   byterate,
   bytes,
+  bytesPair,
   cardinal,
   duration,
   percent,
@@ -151,6 +153,40 @@ describe("format", () => {
 
   it("byterate renders null as absent", () => {
     expect(byterate(null)).toBe(ABSENT);
+  });
+});
+
+describe("a value against its ceiling", () => {
+  // The reason this exists at all: formatted apart, the two halves pick
+  // their own units and the reader has to convert one before the pair means
+  // anything. Scaled against the ceiling, "0.9" is visibly a fraction of 16.
+  it("states one unit, chosen by the ceiling", () => {
+    expect(bytesPair(900_000_000, 16_000_000_000)).toBe("0.9 · 16 GB");
+    expect(`${bytes(900_000_000)} of ${bytes(16_000_000_000)}`).toBe(
+      "900 MB of 16 GB",
+    );
+  });
+
+  it("keeps memory binary, like binaryBytes", () => {
+    expect(binaryBytesPair(21_900_000_000, 33_260_000_000)).toBe(
+      "20.4 · 31 GiB",
+    );
+  });
+
+  // An absent reading is still absent next to a ceiling that is known: the
+  // host has 31 GiB whether or not it reported what it is using.
+  it("marks an absent value without losing the ceiling", () => {
+    expect(binaryBytesPair(null, 33_260_000_000)).toBe("— · 31 GiB");
+  });
+
+  // No ceiling is not a pair. The value alone is still a measurement.
+  it("falls back to the value alone when there is no ceiling", () => {
+    expect(bytesPair(1_200_000, null)).toBe("1.2 MB");
+    expect(bytesPair(null, null)).toBe("—");
+  });
+
+  it("promotes a ceiling that rounds up to the base", () => {
+    expect(bytesPair(500_000_000_000, 999_960_000_000)).toBe("0.5 · 1 TB");
   });
 });
 

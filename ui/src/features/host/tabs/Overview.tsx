@@ -22,6 +22,7 @@ import {
 import {
   ABSENT,
   binaryBytes,
+  binaryBytesPair,
   byterate,
   bytes,
   cardinal,
@@ -743,6 +744,20 @@ export function Overview({
             max={perCore.length > 0 ? undefined : 100}
             hideAxis={perCore.length > 0}
             fmt={(n) => percent(n)}
+            // The host's CPU, not core 0's.
+            //
+            // A panel with more than one band headlines series[0] and names
+            // it, which is right for a Network panel -- "rx 1.2 MB/s" says
+            // whose number that is. Here series[0] is literally the first
+            // core, so the card read "core 0 6 %" beside a shape that is the
+            // whole machine, and on anything above six cores the legend is
+            // suppressed and nothing on the card said what "core 0" was.
+            //
+            // The stack cannot supply the number either: these bands are each
+            // core's real utilisation, so the top of the stack is N x 100 and
+            // not a percentage of anything. cpu_total is the mean across
+            // cores, which is what a reader means by "the CPU".
+            nowValue={perCore.length > 0 ? latestValue(total) : undefined}
             window={hostMetrics?.window ?? null}
             // Each core contributes busy/N, so the stack's top edge is the mean
             // across cores -- cpu_total -- and 100 stays the right ceiling
@@ -802,11 +817,14 @@ export function Overview({
           // than as the top border of the plot.
           max={memTotal === null ? undefined : memTotal * 1.08}
           reference={memTotal ?? undefined}
-          referenceLabel={memTotal === null ? undefined : binaryBytes(memTotal)}
           // Binary here too: the bands are read against the ceiling rule, and a
           // stack labelled decimally under a rule labelled binarily makes one
           // quantity look like two.
           fmt={(n) => binaryBytes(n)}
+          // The ceiling used to be drawn as text inside the plot, over the
+          // rule. It belongs beside the reading it is a ceiling for: the
+          // header already says how much is used, and the pair says of what.
+          nowFmt={(n) => binaryBytesPair(n, memTotal)}
           stacked
           window={hostMetrics?.window ?? null}
           unavailable={
@@ -823,9 +841,7 @@ export function Overview({
             label="used"
             value={memUsed}
             max={memTotal}
-            formatValue={(value, max) =>
-              `${binaryBytes(value)} of ${binaryBytes(max)}`
-            }
+            formatValue={(value, max) => binaryBytesPair(value, max)}
           />
           {/* Three states, not two. swap_total lives only in the raw table
             (0001_init.sql) -- the 5m and 1h rollups do not carry it -- so at
@@ -857,9 +873,7 @@ export function Overview({
               label="swap"
               value={swapUsed}
               max={swapTotal}
-              formatValue={(value, max) =>
-                `${binaryBytes(value)} of ${binaryBytes(max)}`
-              }
+              formatValue={(value, max) => binaryBytesPair(value, max)}
             />
           )}
         </Panel>

@@ -37,9 +37,6 @@ export interface ChartDetailProps {
   reference?: number;
   /** Draw the series as mirrored in/out pairs about a midline. */
   mirrored?: boolean;
-  /** What the reference rule is, drawn at the line. The small panel has no
-   * axis, so without this the rule is unnamed there. */
-  referenceLabel?: string;
   /** Hide the y axis. A stack whose height is a shape rather than a
    * quantity -- unnormalised per-core CPU runs to N x 100 -- must not carry
    * an axis putting a number on it. */
@@ -71,7 +68,6 @@ export function ChartDetail({
   stacked,
   legend,
   reference,
-  referenceLabel,
   mirrored,
   hideAxis,
 }: ChartDetailProps) {
@@ -146,7 +142,6 @@ export function ChartDetail({
             stacked={stacked}
             legend={legend}
             reference={reference}
-            referenceLabel={referenceLabel}
             mirrored={mirrored}
             label={`${title}, enlarged`}
           />

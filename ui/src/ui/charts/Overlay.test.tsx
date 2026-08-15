@@ -19,52 +19,24 @@ describe("Overlay", () => {
     expect(b?.querySelectorAll("path[data-line]")).toHaveLength(1);
   });
 
-  // The Memory panel scales its max to mem_total * 1.08, which puts the
-  // ceiling rule at ~7% of the height -- about 4.7px on a 64px chart. The
-  // label sits 5px above the line, so its baseline landed outside the
-  // viewBox and the text rendered cut in half.
-  it("keeps a reference label inside the chart when the rule is near the top", () => {
+  // The ceiling is a rule, not a rule with a caption. It used to carry its
+  // own <text> -- the only text this app ever drew inside a chart box -- and
+  // that number now lives in the panel header beside the reading it is the
+  // ceiling for.
+  it("draws the reference rule without naming it inside the chart", () => {
     const { container } = render(
       <Overlay
         series={series}
         max={108}
         reference={100}
-        referenceLabel="31.0 GiB"
         min={0}
         height={64}
         pad={0}
       />,
     );
-    const label = container.querySelector("text[data-reference-label]");
-    const rule = container.querySelector("line[data-reference]");
-    const y = Number(label?.getAttribute("y"));
-    const ruleY = Number(rule?.getAttribute("y1"));
-    expect(ruleY).toBeLessThan(14);
-    // Flipped below the rule, and inside the box.
-    expect(y).toBeGreaterThan(ruleY);
-    expect(y).toBeLessThanOrEqual(64);
-  });
 
-  it("keeps a reference label above the rule when there is room", () => {
-    const { container } = render(
-      <Overlay
-        series={series}
-        max={100}
-        reference={20}
-        referenceLabel="31.0 GiB"
-        min={0}
-        height={64}
-        pad={0}
-      />,
-    );
-    const y = Number(
-      container.querySelector("text[data-reference-label]")?.getAttribute("y"),
-    );
-    const ruleY = Number(
-      container.querySelector("line[data-reference]")?.getAttribute("y1"),
-    );
-    expect(y).toBeLessThan(ruleY);
-    expect(y).toBeGreaterThan(0);
+    expect(container.querySelector("line[data-reference]")).not.toBeNull();
+    expect(container.querySelector("text")).toBeNull();
   });
 
   it("scales every series against one shared extent", () => {

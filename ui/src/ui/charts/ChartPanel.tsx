@@ -49,9 +49,22 @@ export interface ChartPanelProps {
   reference?: number;
   /** Draw the series as mirrored in/out pairs about a midline. */
   mirrored?: boolean;
-  /** What the reference rule is, drawn at the line. The small panel has no
-   * axis, so without this the rule is unnamed there. */
-  referenceLabel?: string;
+  /** Formats the HEADLINE only, defaulting to `fmt`. The two are separate
+   * because they answer to different neighbours: `fmt` also renders the
+   * enlarged view's axis, its tooltips and its stats table, where every
+   * number stands alone, while the headline sits beside the panel's title
+   * and can afford to carry the ceiling with it -- "used 20.4 · 31 GiB".
+   * An axis whose every tick repeated the ceiling would be unreadable. */
+  nowFmt?: (n: number | null) => string;
+  /** A headline value that is NOT series[0]'s latest.
+   *
+   * Giving it also suppresses the series name, and that is the point rather
+   * than a side effect: the label exists to say WHOSE number the headline is,
+   * so a number belonging to no single series must not wear one. The
+   * per-core CPU stack is the case -- series[0] is core 0, and headlining one
+   * arbitrary core beside a shape that is the whole machine states a fact
+   * about the host that is not true of it. */
+  nowValue?: number | null;
   /** Hide the enlarged view's y axis. For a stack whose height is a shape
    * rather than a quantity -- unnormalised per-core CPU runs to N x 100 --
    * an axis would put a number on something that does not mean one. */
@@ -81,7 +94,8 @@ export function ChartPanel({
   stacked,
   legend,
   reference,
-  referenceLabel,
+  nowFmt,
+  nowValue,
   mirrored,
   hideAxis,
   window: answered = null,
@@ -119,8 +133,13 @@ export function ChartPanel({
   // its hole correctly and then printed "43" in bold beside it as the
   // current reading. "The agent is down" must never render as "CPU is at
   // 43" -- absent is absent, never the last number we happen to have.
-  const latest = series[0]?.values.at(-1) ?? null;
-  const nowText = fmt ? fmt(latest) : (latest?.toString() ?? ABSENT);
+  // `nowValue` is already reduced by the caller and obeys the same rule: it
+  // is the latest BUCKET's value, nulls included, never the last one that
+  // happened to arrive.
+  const latest =
+    nowValue !== undefined ? nowValue : (series[0]?.values.at(-1) ?? null);
+  const format = nowFmt ?? fmt;
+  const nowText = format ? format(latest) : (latest?.toString() ?? ABSENT);
   // `unit` is printed whenever it is given, formatter or not. Suppressing it
   // for every formatted panel was an over-correction: it fixed percent()
   // with unit="%" printing "12 % %" and broke five panels whose formatter
@@ -131,7 +150,9 @@ export function ChartPanel({
   // With more than one series the headline is series[0]'s alone, so it says
   // whose it is. A Network panel printing rx's number under a bare unit
   // reads as the panel's total.
-  const nowLabel = series.length > 1 ? series[0]?.name : undefined;
+  // ...and only when the headline IS a series'. See `nowValue`.
+  const nowLabel =
+    nowValue === undefined && series.length > 1 ? series[0]?.name : undefined;
 
   return (
     <section className="smp" aria-label={`${title} chart`}>
@@ -176,7 +197,6 @@ export function ChartPanel({
           stacked={stacked}
           legend={legend}
           reference={reference}
-          referenceLabel={referenceLabel}
           mirrored={mirrored}
           label={`${title} over time`}
         />
@@ -192,9 +212,9 @@ export function ChartPanel({
           stacked={stacked}
           legend={legend}
           reference={reference}
-          // No label in the enlarged view: it has a y axis, and that axis
-          // already names the reference at the height it sits. Only the
-          // small panel, which has no axis, needs the rule to say what it is.
+          // The rule is unlabelled in both views: the enlarged view's y axis
+          // already names it at the height it sits, and the small panel names
+          // it in its header rather than inside the plot.
           mirrored={mirrored}
           hideAxis={hideAxis}
           window={answered}

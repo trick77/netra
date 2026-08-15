@@ -26,7 +26,7 @@ function round(n: number, digits: number): number {
 // The guard is written against `base` rather than a literal 1000 for that
 // reason: with base 1024 the boundary is 1024, and a hardcoded 1000 would
 // promote 1000-1023 GiB a unit early and print "1 TiB" for 1000 GiB.
-function scale(n: number, units: string[], base = 1000): string {
+function unitIndex(n: number, units: string[], base: number): number {
   const abs = Math.abs(n);
   let idx = 0;
   for (let i = units.length - 1; i >= 0; i--) {
@@ -35,20 +35,63 @@ function scale(n: number, units: string[], base = 1000): string {
       break;
     }
   }
-  let digits = idx === 0 ? 0 : 1;
-  let rounded = round(n / base ** idx, digits);
-  if (Math.abs(rounded) >= base && idx < units.length - 1) {
-    idx++;
-    digits = idx === 0 ? 0 : 1;
-    rounded = round(n / base ** idx, digits);
+  if (idx < units.length - 1) {
+    const digits = idx === 0 ? 0 : 1;
+    if (Math.abs(round(n / base ** idx, digits)) >= base) idx++;
   }
-  return `${rounded} ${units[idx]}`;
+  return idx;
 }
+
+// The magnitude alone, at a unit chosen for it or handed to it. Splitting the
+// number from its unit is what lets a pair share one: `at` renders both halves
+// of "20.4 · 31 GiB" against the same index, so the two are comparable without
+// the reader converting anything.
+function at(n: number, base: number, idx: number): string {
+  return `${round(n / base ** idx, idx === 0 ? 0 : 1)}`;
+}
+
+function scale(n: number, units: string[], base = 1000): string {
+  const idx = unitIndex(n, units, base);
+  return `${at(n, base, idx)} ${units[idx]}`;
+}
+
+/**
+ * A value and the ceiling it is measured against, sharing one unit --
+ * "20.4 · 31 GiB", "512 · 2048 MiB".
+ *
+ * Formatting each half on its own is what this exists to avoid: bytes(a) and
+ * bytes(b) pick their units independently, so a host using 900 MB of 16 GB
+ * renders "900 MB of 16 GB" -- two magnitudes a reader has to convert before
+ * they mean anything beside each other. Both halves are scaled against the
+ * CEILING's unit instead, because the ceiling is the thing the value is being
+ * judged against and it is the half that does not move.
+ *
+ * The separator is a middle dot, the same one the filesystem meters already
+ * use for "used · free · size" -- one page, one way of joining two numbers.
+ */
+function pair(
+  value: number | null,
+  total: number | null,
+  units: string[],
+  base: number,
+): string {
+  // No ceiling is not a pair. Fall back to the value alone rather than
+  // inventing a denominator or printing a bare dash: the value is still a
+  // measurement, and it is the half the reader came for.
+  if (total === null)
+    return value === null ? ABSENT : scale(value, units, base);
+  const idx = unitIndex(total, units, base);
+  const left = value === null ? ABSENT : at(value, base, idx);
+  return `${left} · ${at(total, base, idx)} ${units[idx]}`;
+}
+
+const DECIMAL_BYTES = ["B", "kB", "MB", "GB", "TB", "PB"];
+const BINARY_BYTES = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
 
 /** Storage and traffic, in bytes. Decimal: 1 kB = 1000 B. */
 export function bytes(n: number | null): string {
   if (n === null) return ABSENT;
-  return scale(n, ["B", "kB", "MB", "GB", "TB", "PB"]);
+  return scale(n, DECIMAL_BYTES);
 }
 
 /**
@@ -66,7 +109,20 @@ export function bytes(n: number | null): string {
  */
 export function binaryBytes(n: number | null): string {
   if (n === null) return ABSENT;
-  return scale(n, ["B", "KiB", "MiB", "GiB", "TiB", "PiB"], 1024);
+  return scale(n, BINARY_BYTES, 1024);
+}
+
+/** A byte count against its ceiling, decimal. See `pair`. */
+export function bytesPair(value: number | null, total: number | null): string {
+  return pair(value, total, DECIMAL_BYTES, 1000);
+}
+
+/** Memory against its ceiling, binary -- the pair form of `binaryBytes`. */
+export function binaryBytesPair(
+  value: number | null,
+  total: number | null,
+): string {
+  return pair(value, total, BINARY_BYTES, 1024);
 }
 
 /**
