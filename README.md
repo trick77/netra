@@ -24,7 +24,7 @@ config — there is no ACME resolver on netra's router.
 
 ```sh
 docker network create traefik      # external network, shared with your other stacks
-mkdir -p data/timescaledb          # bind mount; must exist first or initdb fails root-owned
+mkdir -p data/timescaledb          # bind mount for the database; no chown needed
 cp .env.example .env
 ```
 
@@ -34,7 +34,20 @@ Fill in the three values in `.env`:
 | --- | --- |
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` |
 | `NETRA_ADMIN_TOKEN` | `openssl rand -hex 32` |
-| `NETRA_HOSTNAME` | the name Traefik routes to, e.g. `netra.example.com` |
+| `NETRA_HOSTNAME` | the name Traefik routes to, and the address agents post to — `NETRA_HUB_URL` is derived from it |
+
+The data directory needs no `chown`: the timescaledb entrypoint starts as root
+and hands `PGDATA` to postgres (uid 70) itself, whoever created the directory.
+After the first start it is uid 70, mode `0700`, so backing it up needs `sudo`.
+The exception is **rootless Docker or `userns-remap`** — check with `docker info
+--format '{{.SecurityOptions}}'` — where container-root cannot chown it and you
+must `chown -R 70:70 data/timescaledb` yourself.
+
+All three ship empty and all three are required: `docker compose up` refuses to
+start until they are set, rather than falling back to a value that looks like it
+works. An unset `NETRA_HOSTNAME` in particular used to default to a domain this
+project does not own, which started cleanly, reported healthy, and left agent
+ingest unreachable with nothing anywhere saying why.
 
 **Hex, not base64.** The password is interpolated raw into `NETRA_DB_DSN`, and
 base64's `/` terminates the URL authority — a base64 password makes the hub

@@ -27,13 +27,19 @@ export const SETUP_SCRIPT_URL =
   "https://raw.githubusercontent.com/trick77/netra/master/setup-agent.sh";
 
 /**
- * The hub URL the command starts with. It is a placeholder, not a guess: the
+ * Shown in the Hub URL field's `placeholder` attribute and NOWHERE else. The
  * browser reaches this hub on loopback, so nothing this page can observe
- * reveals the address AGENTS use, and a plausible-looking wrong value would
- * be worse than an obvious gap. NETRA_HUB_URL lives server-side and the read
- * API does not expose it.
+ * reveals the address AGENTS use -- and a plausible-looking wrong value is
+ * worse than an obvious gap, because the command it renders sends an agent
+ * token to whoever owns that name.
+ *
+ * It used to seed the field as a real value, which made that gap look filled:
+ * the page rendered a complete, runnable, wrong command. As a `placeholder`
+ * attribute it is greyed, never submitted, and gone the moment the operator
+ * types -- an example the DOM itself refuses to treat as a value.
+ * NETRA_HUB_URL lives server-side; getConfig() is the only source of a real one.
  */
-export const HUB_URL_PLACEHOLDER = "https://netra.example.com";
+export const HUB_URL_EXAMPLE = "https://netra.example.com";
 
 /** A token that exists in this component's state and nowhere else. */
 type Minted = {
@@ -93,22 +99,33 @@ function TokenPanel({
       <Input
         id="hub-url"
         value={hubURL}
+        placeholder={HUB_URL_EXAMPLE}
         onChange={(e) => onHubURLChange(e.target.value)}
       />
-      <p className="note">
-        <strong>
-          <code>{HUB_URL_PLACEHOLDER}</code> is a placeholder.
-        </strong>{" "}
-        Replace it with the address agents reach this hub on. As written the
-        command below sends this token to whoever owns that name.
-      </p>
 
-      <p>
-        Run this on <code>{minted.hostname}</code>:
-      </p>
-      <pre className="cmd" data-testid="setup-command">
-        {setupCommand(hubURL, minted.token)}
-      </pre>
+      {hubURL === "" ? (
+        // No command at all until there is a hub URL to put in it. A command
+        // that is correct except for its hostname is the worst of the three
+        // states: it copies, it runs, it succeeds -- and it posts that host's
+        // metrics to a stranger. An empty field is a gap the operator closes;
+        // a filled-in guess is one they never know is there.
+        <p className="note">
+          <strong>Set the hub URL to get the install command.</strong> It is the
+          address agents reach this hub on, which is not the address your
+          browser is using -- you are on loopback. Set <code>NETRA_HOSTNAME</code>{" "}
+          in the hub&apos;s <code>.env</code> to have it filled in here
+          automatically.
+        </p>
+      ) : (
+        <>
+          <p>
+            Run this on <code>{minted.hostname}</code>:
+          </p>
+          <pre className="cmd" data-testid="setup-command">
+            {setupCommand(hubURL, minted.token)}
+          </pre>
+        </>
+      )}
 
       <Button variant="primary" onClick={onDismiss}>
         Done
@@ -138,12 +155,16 @@ export function HostAdminPage() {
   const [rotating, setRotating] = useState<number | null>(null);
 
   const [minted, setMinted] = useState<Minted | null>(null);
-  // Seeded from the hub's own NETRA_HUB_URL when it is set, and only from
-  // the placeholder when it is not. It used to be the placeholder always, so
-  // an operator who had configured their hub URL retyped it by hand on every
-  // mint -- while the configured value, which the retired token.gohtml used
-  // to render, was read by nothing at all.
-  const [hubURL, setHubURL] = useState(HUB_URL_PLACEHOLDER);
+  // The hub's own NETRA_HUB_URL, read once at mount and then left alone. Held
+  // apart from the editable field below because dismissing a token panel has
+  // to restore it: the effect that reads it runs once, so overwriting this
+  // with a constant on dismiss threw the configured value away for the rest
+  // of the session and made the operator retype it on every later mint.
+  const [configuredHubURL, setConfiguredHubURL] = useState("");
+  // What the field shows: the configured value when there is one, "" when
+  // there is not. Empty renders no install command at all rather than a
+  // runnable command with a stranger's hostname in it.
+  const [hubURL, setHubURL] = useState("");
   // Delete is two-click rather than window.confirm: a native dialog is not
   // stylable, not testable, and easy to dismiss by reflex on the wrong row.
   const [confirming, setConfirming] = useState<number | null>(null);
@@ -166,15 +187,19 @@ export function HostAdminPage() {
     getSites()
       .then(setSites)
       .catch(() => setSites([]));
-    // An unset NETRA_HUB_URL comes back as "" and the placeholder stands --
+    // An unset NETRA_HUB_URL comes back as "" and the field stays empty --
     // a guess would be worse than an obvious gap, because a wrong hostname
     // in that command sends an agent token to whoever owns the name.
     getConfig()
       .then(({ hub_url }) => {
-        if (hub_url !== "") setHubURL(hub_url);
+        if (hub_url !== "") {
+          setConfiguredHubURL(hub_url);
+          setHubURL(hub_url);
+        }
       })
       .catch(() => {
-        // The placeholder already says it is one, and the field is editable.
+        // The field stays empty and says why, and it is editable -- a failed
+        // config read costs the convenience, not the ability to install.
       });
   }, [refresh]);
 
@@ -259,7 +284,11 @@ export function HostAdminPage() {
             // Dropping the state is the whole dismissal: there is no copy
             // anywhere else to clear.
             setMinted(null);
-            setHubURL(HUB_URL_PLACEHOLDER);
+            // Back to what the hub is configured with, NOT to a constant. Any
+            // edit the operator made applied to this one install command and
+            // should not outlive it; the configured value should outlive
+            // every one of them.
+            setHubURL(configuredHubURL);
           }}
         />
       ) : null}

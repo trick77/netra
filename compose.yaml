@@ -3,7 +3,7 @@
 # Host prep before the first run:
 #
 #   mkdir -p data/timescaledb
-#   cp .env.example .env && $EDITOR .env      # set the two secrets
+#   cp .env.example .env && $EDITOR .env      # two secrets AND NETRA_HOSTNAME
 #   docker compose up -d
 #
 # Agents are configured separately, on each monitored host — see
@@ -64,8 +64,15 @@ services:
       # The address agents post to. Used only to render a ready-to-paste
       # setup-agent.sh command in the UI: the browser reaches the hub on
       # loopback, so the hub cannot infer its own agent-facing name from that
-      # request. Unset renders a placeholder rather than a wrong URL.
-      NETRA_HUB_URL: "https://${NETRA_HOSTNAME:-netra.example.com}"
+      # request.
+      #
+      # Safe as a bare expansion ONLY because the router rule below marks
+      # NETRA_HOSTNAME required with `:?`, so compose refuses to start rather
+      # than reaching this line unset. Drop that `:?` and this becomes the
+      # literal "https://", which the hub trims to "https:/" — non-empty, so
+      # the UI renders it as a configured value and hands out a setup command
+      # nobody can run.
+      NETRA_HUB_URL: "https://${NETRA_HOSTNAME}"
 
     # /api/health reports database reachability, not just process liveness, so
     # a hub that cannot reach Postgres correctly goes unhealthy instead of
@@ -99,7 +106,13 @@ services:
       # silently, with no change to this file. That directly contradicts the
       # loopback-binding rationale above. Widen this deliberately, per route,
       # or not at all.
-      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:-netra.example.com}`) && PathPrefix(`/api/agent/`)
+      #
+      # `:?` rather than a default. A default here is worse than no value at
+      # all: an operator who never set NETRA_HOSTNAME got a router matching a
+      # domain this project does not own, compose started clean, the hub went
+      # healthy, and agent ingest was unreachable with nothing anywhere saying
+      # why. Now the run stops with the message below.
+      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:?set NETRA_HOSTNAME in .env — the name Traefik routes agent ingest to}`) && PathPrefix(`/api/agent/`)
       traefik.http.routers.netra.entrypoints: websecure
       # tls: "true" with no certresolver — the certificate is pre-loaded in
       # Traefik's static config, so there is no ACME challenge to run here.
@@ -144,9 +157,29 @@ services:
       TS_TUNE_NUM_CPUS: "2"
 
     # A bind mount rather than a named volume so the data is where the operator
-    # expects it and `tar czf` is a backup. Create it before the first run:
-    # the directory must exist or Docker creates it root-owned and the
-    # container's initdb fails.
+    # expects it and `tar czf` is a backup.
+    #
+    # No host-side chown. This container declares no `user:`, so its entrypoint
+    # starts as root and chowns PGDATA to postgres (uid 70 in this Alpine-based
+    # image, NOT 1000) before dropping privileges — verified against a
+    # uid-1000-owned directory, which initdb reports as "fixing permissions on
+    # existing directory ... ok". Chowning to your own uid on the host does not
+    # help and chowning to 1000 is actively wrong.
+    #
+    # The `mkdir -p data/timescaledb` above is still worth doing: it puts the
+    # directory where you chose, with your umask, instead of letting Docker
+    # create it. The earlier claim here — that a root-owned directory makes
+    # initdb fail — was backwards; root-owned is the case the entrypoint
+    # handles best.
+    #
+    # Two consequences that ARE real:
+    #   - after first start this directory is uid 70, mode 0700, so the
+    #     `tar czf` backup above needs sudo.
+    #   - under ROOTLESS Docker or `userns-remap`, container-root is not
+    #     host-root, that chown is denied, and the entrypoint swallows the
+    #     failure (`2>/dev/null || :`) before initdb dies on a directory it
+    #     cannot write. Check with `docker info --format '{{.SecurityOptions}}'`;
+    #     if it names rootless or userns, chown this directory to 70 yourself.
     volumes:
       - ./data/timescaledb:/var/lib/postgresql/data
 
