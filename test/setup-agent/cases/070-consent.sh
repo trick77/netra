@@ -463,6 +463,95 @@ assert_contains "$RUN_OUT" "already exists and --force" "the re-run says why .en
 assert_not_contains "$RUN_OUT" "is not in the rendered .env" \
     "an .env deliberately left alone is not blamed on the template"
 
+# --- 8g. a re-run reuses the existing .env instead of asking for it ------------
+#
+# The defect: write_outputs refuses to overwrite an existing .env without
+# --force, and configure asked for every value anyway -- the hub URL, then the
+# TOKEN at a hidden prompt -- and dropped all of them. Re-running to pick up a
+# new mount is the ordinary case, so it must be one command and no questions.
+#
+# Driven with an EMPTY values file and no --token: with the bug, the run asks
+# and writes blanks; with the fix, nothing is asked because nothing is empty.
+ROOT=$(mkroot reuse)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --token nta_first --hub-url https://first.example \
+    --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-reuse"
+assert_eq 0 "$RUN_RC" "the first run completes"
+
+# The re-run: no flags carrying any value, and no tty to be asked at.
+ROOT=$(mkroot reuse2)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-reuse"
+assert_eq 0 "$RUN_RC" "the re-run completes with no values supplied"
+
+REUSEENV=$(cat "$TMP/out-reuse/.env")
+assert_contains "$REUSEENV" "NETRA_TOKEN=nta_first" "the existing token survives the re-run"
+assert_contains "$REUSEENV" "NETRA_HUB_URL=https://first.example" "the existing hub URL survives"
+assert_contains "$REUSEENV" "NETRA_LOCATION=Zurich, CH" "the existing location survives"
+
+# What the operator sees: the keys reused, and never the token itself.
+assert_contains "$RUN_OUT" "reused from .env" "the re-run says what it reused"
+assert_contains "$RUN_OUT" "NETRA_TOKEN" "the reused token is named"
+assert_not_contains "$RUN_OUT" "nta_first" "the token VALUE is never printed"
+
+# The point of the whole change: the re-run did not warn that it was about to
+# discard anything, because it asked for nothing to discard.
+assert_not_contains "$RUN_OUT" "will NOT be written" \
+    "the re-run does not announce that it is dropping the answers it collected"
+
+# --force is the opposite case: the operator is REPLACING those values, so
+# pre-filling them would silently answer the question they asked to be asked.
+# A rotated token must land.
+ROOT=$(mkroot reuse3)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --force --token nta_rotated --hub-url https://second.example \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-reuse"
+assert_eq 0 "$RUN_RC" "a --force re-run completes"
+ROTENV=$(cat "$TMP/out-reuse/.env")
+assert_contains "$ROTENV" "NETRA_TOKEN=nta_rotated" "--force replaces the token"
+assert_not_contains "$ROTENV" "nta_first" "the old token is gone"
+
+# --- 8h. a key the .env leaves EMPTY is not asked for either -------------------
+#
+# The worst shape of the original defect, and the one 8g does not reach because
+# every value there arrives by flag. A first run with NO token writes
+# NETRA_TOKEN= empty, which is an allowed path. The operator then mints a token
+# and re-runs without --force: the value is empty, so seeding cannot fill it,
+# and the old prompt would take the secret at a hidden prompt and drop it in
+# write_outputs. It must be named, not asked for.
+ROOT=$(mkroot emptyseed)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --hub-url https://first.example \
+    --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-emptyseed"
+assert_eq 0 "$RUN_RC" "a first run with no token completes"
+assert_eq "NETRA_TOKEN=" "$(grep '^NETRA_TOKEN=' "$TMP/out-emptyseed/.env")" \
+    "the first run leaves the token empty"
+
+ROOT=$(mkroot emptyseed2)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-emptyseed"
+assert_eq 0 "$RUN_RC" "the re-run completes"
+assert_contains "$RUN_OUT" "are EMPTY in it" "the empty key is named rather than asked for"
+assert_contains "$RUN_OUT" "NETRA_TOKEN" "and the token is the key named"
+# resolve_token's own "no token was provided" complaint is the observable that
+# separates skipped from attempted: reached, it fires; skipped, it cannot. (The
+# hidden prompt itself is not observable here -- the harness has no tty, so
+# resolve_token would take its no-tty branch either way, and asserting on the
+# prompt string would pass whether or not the skip works. Verified by disabling
+# the skip and watching this assertion, and only this one, go red.)
+assert_not_contains "$RUN_OUT" "no agent token was provided" \
+    "the token is not collected on a run that cannot write it"
+assert_contains "$RUN_OUT" "NETRA_LOCATION" "the values it CAN reuse are still reused"
+
 # --- 9. --token-file ----------------------------------------------------------
 #
 # A token pasted into a file by a provisioning system routinely arrives with a

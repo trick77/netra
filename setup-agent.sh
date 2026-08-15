@@ -2545,6 +2545,11 @@ resolve_token() {
     # --token and --token-file have both already been resolved by parse_args.
     [ -z "$TOKEN" ] || return 0
 
+    # An existing .env this run may not overwrite means a token typed here has
+    # nowhere to go. Prompting for a secret in order to discard it is the very
+    # thing the reuse path exists to stop; configure has already said so.
+    [ "${REUSE_ENV:-0}" != 1 ] || return 0
+
     if [ ! -r "$P_TTY" ]; then
         warn "no agent token was provided (--token / --token-file). NETRA_TOKEN will be" \
             "written empty and the agent will refuse to start until you fill it in." \
@@ -2578,6 +2583,49 @@ resolve_token() {
     fi
 }
 
+# seed_from_env FILE — adopt the values an existing .env already holds.
+#
+# Only fills a variable that is still EMPTY, which is what keeps the precedence
+# straight: parse_args has already applied every flag, so a flag wins, the file
+# comes next, and a prompt is the last resort for a value nobody has supplied.
+#
+# Called only when the file will be left alone. Under --force the operator is
+# replacing those values, and pre-filling them would silently answer the very
+# questions they asked to be asked -- a token rotation, most of all.
+#
+# The token is adopted like everything else and NEVER printed. That is the whole
+# point: it is the one value an operator would otherwise retype from a password
+# manager only to have it discarded.
+seed_from_env() {
+    _se_file="$1"
+    [ -r "$_se_file" ] || return 0
+    _se_adopted=""
+
+    for _se_key in NETRA_HUB_URL NETRA_TOKEN NETRA_LOCATION NETRA_PROVIDER NETRA_HOST_TYPE; do
+        # The FIRST '=' only: a hub URL may carry a query string and a token is
+        # arbitrary. Trailing whitespace is stripped, inner whitespace is not --
+        # "Zurich, CH" is a legitimate location.
+        _se_val=$(sed -n "s/^[[:space:]]*${_se_key}=//p" "$_se_file" | sed -n '$p')
+        _se_val=${_se_val%"${_se_val##*[![:space:]]}"}
+        [ -n "$_se_val" ] || continue
+
+        case "$_se_key" in
+            NETRA_HUB_URL) [ -n "$HUB_URL" ] || HUB_URL="$_se_val" ;;
+            NETRA_TOKEN) [ -n "$TOKEN" ] || TOKEN="$_se_val" ;;
+            NETRA_LOCATION) [ -n "$LOCATION" ] || LOCATION="$_se_val" ;;
+            NETRA_PROVIDER) [ -n "$PROVIDER" ] || PROVIDER="$_se_val" ;;
+            NETRA_HOST_TYPE) [ -n "$HOST_TYPE" ] || HOST_TYPE="$_se_val" ;;
+        esac
+        _se_adopted="$_se_adopted $_se_key"
+    done
+
+    # The KEYS, never the values: NETRA_TOKEN is in this list. Naming them is
+    # what turns "nothing was asked" from something the operator has to take on
+    # trust into something they can check.
+    [ -z "$_se_adopted" ] ||
+        info "  reused from .env:${_se_adopted}"
+}
+
 # configure — everything the operator states rather than the host reveals.
 #
 # Detection cannot guess any of these, and an .env without a hub URL or a token
@@ -2589,36 +2637,63 @@ resolve_token() {
 configure() {
     step "Configuration"
 
-    # BEFORE the questions, not after the answers. write_outputs refuses to
-    # overwrite an existing .env without --force, and that refusal does not
-    # depend on anything detection found — so an operator re-running to rotate a
-    # token used to type the new one at a hidden prompt, watch the run succeed,
-    # and keep the old token, with the warning arriving only after every value
-    # had already been collected and silently dropped.
+    # BEFORE the questions, because the answer to most of them is already on
+    # disk. write_outputs refuses to overwrite an existing .env without --force,
+    # so a re-run used to ask for the hub URL, then the TOKEN at a hidden
+    # prompt, then the location and the rest -- and drop every one of them. It
+    # warned first rather than not asking, which is the same defect with better
+    # manners: nobody types a secret at a prompt in order to be told it was
+    # ignored. Re-running to pick up a new mount or a new template is the
+    # ordinary case, and it should be one command and no questions.
+    #
+    # Seeding rather than skipping, because the prompts are already gated on an
+    # empty value: a seeded variable simply has nothing to ask about. That also
+    # gets the precedence right for free -- a flag beats the existing .env,
+    # which beats a prompt.
+    REUSE_ENV=0
     if [ -e "$OUTPUT_DIR/.env" ] && [ "$FORCE" != 1 ]; then
-        warn "$OUTPUT_DIR/.env already exists and --force was not given, so the values" \
-            "asked for below will NOT be written to it. Its existing token and settings" \
-            "stay in force. Re-run with --force to replace them."
+        REUSE_ENV=1
+        seed_from_env "$OUTPUT_DIR/.env"
+        warn "$OUTPUT_DIR/.env already exists and --force was not given, so its values are" \
+            "REUSED and nothing below is asked. Re-run with --force to be asked again and" \
+            "replace them."
+
+        # A key the file leaves EMPTY cannot be filled on this run: the answer
+        # has nowhere to be written. Asking anyway is the original defect in its
+        # worst form -- a token typed at a hidden prompt and dropped -- so the
+        # prompts are skipped and the gap is named instead. An .env written by a
+        # run that had no token is exactly this case.
+        _cfg_missing=""
+        [ -n "$HUB_URL" ] || _cfg_missing="$_cfg_missing NETRA_HUB_URL"
+        [ -n "$TOKEN" ] || _cfg_missing="$_cfg_missing NETRA_TOKEN"
+        [ -z "$_cfg_missing" ] ||
+            warn "and these are EMPTY in it:${_cfg_missing}. They are not asked for here," \
+                "because this run cannot write them. Edit $OUTPUT_DIR/.env directly, or" \
+                "re-run with --force to be asked."
     fi
 
-    if [ -z "$HUB_URL" ]; then
+    if [ -z "$HUB_URL" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value HUB_URL "Hub base URL" "https://netra.example.com"
     fi
-    if [ -z "$HUB_URL" ]; then
+    if [ -z "$HUB_URL" ] && [ "$REUSE_ENV" != 1 ]; then
         # The same shape as the missing-token note below: equally fatal to the
         # agent, so it is equally loud and reaches the finish report.
+        #
+        # Not on the reuse path, where this run writes no .env at all: "will be
+        # written empty" would be false, and the empty key has already been
+        # named with the remedy that actually applies.
         warn "no hub URL was given. NETRA_HUB_URL will be written empty and the agent will" \
             "refuse to start until you fill it in."
-    else
+    elif [ -n "$HUB_URL" ]; then
         info "  hub url:         $HUB_URL"
     fi
 
     resolve_token
 
-    if [ -z "$LOCATION" ]; then
+    if [ -z "$LOCATION" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value LOCATION "Where is this host (city, country)" "Zurich, CH"
     fi
-    if [ -z "$PROVIDER" ]; then
+    if [ -z "$PROVIDER" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value PROVIDER "Who hosts it" "Hetzner, OVH, self-hosted"
     fi
 
@@ -2626,7 +2701,7 @@ configure() {
     # host that never groups with its siblings. Empty stays allowed - re-asking
     # forever would trap an operator who does not know what to call a container
     # host - but a non-empty answer must be one of the three.
-    if [ -z "$HOST_TYPE" ]; then
+    if [ -z "$HOST_TYPE" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value HOST_TYPE "Host type (bare_metal, vps, vm; blank to skip)" "vps"
     fi
     while [ -n "$HOST_TYPE" ] && ! _valid_host_type "$HOST_TYPE"; do
