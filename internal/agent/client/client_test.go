@@ -1456,8 +1456,12 @@ func TestRunLogsOneLinePerCycleWhileDrainingABacklog(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- c.Run(runCtx) }()
 
+	// Waiting on the LINE, not on the depth: the ring empties inside the last
+	// Flush and the line is written after drain returns, so a poll that stops
+	// at BufferDepth() == 0 can read the log in the gap between the two and
+	// see no line at all.
 	deadline := time.Now().Add(2*tick - tick/5)
-	for c.BufferDepth() > 0 && time.Now().Before(deadline) {
+	for !strings.Contains(logs.String(), "reported to hub") && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	logged := logs.String()
