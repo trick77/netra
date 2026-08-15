@@ -2545,6 +2545,11 @@ resolve_token() {
     # --token and --token-file have both already been resolved by parse_args.
     [ -z "$TOKEN" ] || return 0
 
+    # An existing .env this run may not overwrite means a token typed here has
+    # nowhere to go. Prompting for a secret in order to discard it is the very
+    # thing the reuse path exists to stop; configure has already said so.
+    [ "${REUSE_ENV:-0}" != 1 ] || return 0
+
     if [ ! -r "$P_TTY" ]; then
         warn "no agent token was provided (--token / --token-file). NETRA_TOKEN will be" \
             "written empty and the agent will refuse to start until you fill it in." \
@@ -2645,31 +2650,50 @@ configure() {
     # empty value: a seeded variable simply has nothing to ask about. That also
     # gets the precedence right for free -- a flag beats the existing .env,
     # which beats a prompt.
+    REUSE_ENV=0
     if [ -e "$OUTPUT_DIR/.env" ] && [ "$FORCE" != 1 ]; then
+        REUSE_ENV=1
         seed_from_env "$OUTPUT_DIR/.env"
         warn "$OUTPUT_DIR/.env already exists and --force was not given, so its values are" \
             "REUSED and nothing below is asked. Re-run with --force to be asked again and" \
             "replace them."
+
+        # A key the file leaves EMPTY cannot be filled on this run: the answer
+        # has nowhere to be written. Asking anyway is the original defect in its
+        # worst form -- a token typed at a hidden prompt and dropped -- so the
+        # prompts are skipped and the gap is named instead. An .env written by a
+        # run that had no token is exactly this case.
+        _cfg_missing=""
+        [ -n "$HUB_URL" ] || _cfg_missing="$_cfg_missing NETRA_HUB_URL"
+        [ -n "$TOKEN" ] || _cfg_missing="$_cfg_missing NETRA_TOKEN"
+        [ -z "$_cfg_missing" ] ||
+            warn "and these are EMPTY in it:${_cfg_missing}. They are not asked for here," \
+                "because this run cannot write them. Edit $OUTPUT_DIR/.env directly, or" \
+                "re-run with --force to be asked."
     fi
 
-    if [ -z "$HUB_URL" ]; then
+    if [ -z "$HUB_URL" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value HUB_URL "Hub base URL" "https://netra.example.com"
     fi
-    if [ -z "$HUB_URL" ]; then
+    if [ -z "$HUB_URL" ] && [ "$REUSE_ENV" != 1 ]; then
         # The same shape as the missing-token note below: equally fatal to the
         # agent, so it is equally loud and reaches the finish report.
+        #
+        # Not on the reuse path, where this run writes no .env at all: "will be
+        # written empty" would be false, and the empty key has already been
+        # named with the remedy that actually applies.
         warn "no hub URL was given. NETRA_HUB_URL will be written empty and the agent will" \
             "refuse to start until you fill it in."
-    else
+    elif [ -n "$HUB_URL" ]; then
         info "  hub url:         $HUB_URL"
     fi
 
     resolve_token
 
-    if [ -z "$LOCATION" ]; then
+    if [ -z "$LOCATION" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value LOCATION "Where is this host (city, country)" "Zurich, CH"
     fi
-    if [ -z "$PROVIDER" ]; then
+    if [ -z "$PROVIDER" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value PROVIDER "Who hosts it" "Hetzner, OVH, self-hosted"
     fi
 
@@ -2677,7 +2701,7 @@ configure() {
     # host that never groups with its siblings. Empty stays allowed - re-asking
     # forever would trap an operator who does not know what to call a container
     # host - but a non-empty answer must be one of the three.
-    if [ -z "$HOST_TYPE" ]; then
+    if [ -z "$HOST_TYPE" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value HOST_TYPE "Host type (bare_metal, vps, vm; blank to skip)" "vps"
     fi
     while [ -n "$HOST_TYPE" ] && ! _valid_host_type "$HOST_TYPE"; do

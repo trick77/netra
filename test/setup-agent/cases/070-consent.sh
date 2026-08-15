@@ -516,6 +516,42 @@ ROTENV=$(cat "$TMP/out-reuse/.env")
 assert_contains "$ROTENV" "NETRA_TOKEN=nta_rotated" "--force replaces the token"
 assert_not_contains "$ROTENV" "nta_first" "the old token is gone"
 
+# --- 8h. a key the .env leaves EMPTY is not asked for either -------------------
+#
+# The worst shape of the original defect, and the one 8g does not reach because
+# every value there arrives by flag. A first run with NO token writes
+# NETRA_TOKEN= empty, which is an allowed path. The operator then mints a token
+# and re-runs without --force: the value is empty, so seeding cannot fill it,
+# and the old prompt would take the secret at a hidden prompt and drop it in
+# write_outputs. It must be named, not asked for.
+ROOT=$(mkroot emptyseed)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --hub-url https://first.example \
+    --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-emptyseed"
+assert_eq 0 "$RUN_RC" "a first run with no token completes"
+assert_eq "NETRA_TOKEN=" "$(grep '^NETRA_TOKEN=' "$TMP/out-emptyseed/.env")" \
+    "the first run leaves the token empty"
+
+ROOT=$(mkroot emptyseed2)
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-emptyseed"
+assert_eq 0 "$RUN_RC" "the re-run completes"
+assert_contains "$RUN_OUT" "are EMPTY in it" "the empty key is named rather than asked for"
+assert_contains "$RUN_OUT" "NETRA_TOKEN" "and the token is the key named"
+# resolve_token's own "no token was provided" complaint is the observable that
+# separates skipped from attempted: reached, it fires; skipped, it cannot. (The
+# hidden prompt itself is not observable here -- the harness has no tty, so
+# resolve_token would take its no-tty branch either way, and asserting on the
+# prompt string would pass whether or not the skip works. Verified by disabling
+# the skip and watching this assertion, and only this one, go red.)
+assert_not_contains "$RUN_OUT" "no agent token was provided" \
+    "the token is not collected on a run that cannot write it"
+assert_contains "$RUN_OUT" "NETRA_LOCATION" "the values it CAN reuse are still reused"
+
 # --- 9. --token-file ----------------------------------------------------------
 #
 # A token pasted into a file by a provisioning system routinely arrives with a
