@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -92,7 +94,7 @@ func openTestClone(t *testing.T, dsn string) (*Store, error) {
 		return nil, err
 	}
 
-	clone := fmt.Sprintf("netra_t_%d_%d", os.Getpid(), cloneSeq.Add(1))
+	clone := fmt.Sprintf("netra_t_%d_%s_%d", os.Getpid(), cloneRun, cloneSeq.Add(1))
 	if err := adminExec(ctx, dsn, fmt.Sprintf(
 		`CREATE DATABASE %s TEMPLATE %s`,
 		quoteIdentifier(clone), quoteIdentifier(template))); err != nil {
@@ -105,8 +107,14 @@ func openTestClone(t *testing.T, dsn string) (*Store, error) {
 	// database it lives in, on its own schedule, so "no connections" is never
 	// something this test can guarantee by closing its own.
 	t.Cleanup(func() {
-		_ = adminExec(context.Background(), dsn, fmt.Sprintf(
-			`DROP DATABASE IF EXISTS %s WITH (FORCE)`, quoteIdentifier(clone)))
+		if err := adminExec(context.Background(), dsn, fmt.Sprintf(
+			`DROP DATABASE IF EXISTS %s WITH (FORCE)`, quoteIdentifier(clone))); err != nil {
+			// Not a test failure -- the test already passed or failed on its
+			// own terms and nothing it asserted depends on the drop. But a
+			// drop that fails silently leaks a database nothing ever sweeps,
+			// so name the one that was left behind.
+			t.Logf("dropping the test database %s failed, so it is leaked: %v", clone, err)
+		}
 	})
 
 	cloneDSN, err := dsnForDatabase(dsn, clone)
@@ -167,6 +175,33 @@ func OpenTestSibling(t *testing.T, s *Store) *Store {
 // unique across the several test binaries a `go test ./...` runs at once.
 var cloneSeq atomic.Int64
 
+// cloneRun separates this process's clones from any an EARLIER run left
+// behind. The pid does not: a run killed before its cleanups ran (^C, a
+// package timeout) leaks its netra_t_ databases, Linux reuses pids, and the
+// next process handed that pid would fail its first CREATE DATABASE with a
+// bare 42P04 that names nothing explaining it.
+var cloneRun = func() string {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("read random bytes for the test database name: %v", err))
+	}
+	return hex.EncodeToString(b)
+}()
+
+// templateCache remembers a template this process has already confirmed, so
+// only the FIRST OpenTest pays for the check.
+//
+// Without it every OpenTest opens a connection to `postgres` and takes the
+// build lock just to read one row of pg_database -- 70+ times a run and,
+// more to the point, an exclusive lock every test in every binary would queue
+// behind the moment `-p 1` is dropped.
+//
+// Successes only. A failure has to stay a failure for the next caller rather
+// than be replayed from a cache, and this harness's own tests hand
+// ensureTemplateDB deliberately unusable DSNs in the same process that later
+// runs real ones.
+var templateCache sync.Map // dsn string -> template database name
+
 // templateBuildLockID is a fixed advisory-lock key, taken on the `postgres`
 // database while the template is checked for and built. Every test binary in
 // a run is a separate process with no shared setup hook, so without it they
@@ -186,6 +221,10 @@ const templateBuildLockID = 0x6e657472616d6967
 // sweep would drop the template another checkout's run is cloning from right
 // now.
 func ensureTemplateDB(ctx context.Context, dsn string) (string, error) {
+	if cached, ok := templateCache.Load(dsn); ok {
+		return cached.(string), nil
+	}
+
 	name := templateDBName()
 
 	admin, err := adminConnect(ctx, dsn)
@@ -207,6 +246,7 @@ func ensureTemplateDB(ctx context.Context, dsn string) (string, error) {
 		return "", fmt.Errorf("look for template database: %w", err)
 	}
 	if exists {
+		templateCache.Store(dsn, name)
 		return name, nil
 	}
 
@@ -256,6 +296,7 @@ func ensureTemplateDB(ctx context.Context, dsn string) (string, error) {
 			return "", fmt.Errorf("%s: %w", step.what, err)
 		}
 	}
+	templateCache.Store(dsn, name)
 	return name, nil
 }
 

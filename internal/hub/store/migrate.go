@@ -103,14 +103,19 @@ func (s *Store) Migrate(ctx context.Context) error {
 	}
 	sort.Strings(names)
 
+	// How many migrations this call actually ran, which since the test harness
+	// clones a migrated template is usually zero. See the unscheduleJobs
+	// branch below.
+	applied := 0
+
 	for _, name := range names {
-		var applied bool
+		var alreadyApplied bool
 		if err := s.pool.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = $1)`,
-			name).Scan(&applied); err != nil {
+			name).Scan(&alreadyApplied); err != nil {
 			return fmt.Errorf("check %s: %w", name, err)
 		}
-		if applied {
+		if alreadyApplied {
 			continue
 		}
 
@@ -122,13 +127,22 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err := s.applyMigration(ctx, name, string(body)); err != nil {
 			return fmt.Errorf("apply %s: %w", name, err)
 		}
+		applied++
 	}
 
-	if s.unscheduleJobs {
+	if s.unscheduleJobs && applied > 0 {
 		// Test databases only; the flag is unreachable from Open. Done HERE
 		// rather than in OpenTest because the jobs do not exist until the
 		// migrations that register them have run, and OpenTest returns before
 		// its caller migrates.
+		//
+		// Only when this call actually APPLIED something. Every test calls
+		// Migrate, but since OpenTest began handing out clones of an
+		// already-migrated template, almost every one of those calls applies
+		// nothing -- and the jobs it would be unscheduling were unscheduled
+		// once, in the template, and inherited. Running anyway meant
+		// stop_background_workers() plus alter_job across ~50 jobs on every
+		// test, to set a flag that already had the value it wanted.
 		return s.unschedulePolicyJobs(ctx)
 	}
 
