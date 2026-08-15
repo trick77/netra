@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -271,12 +270,7 @@ func TestIntegrationIngestStorageFailureReturns503(t *testing.T) {
 		t.Fatalf("insert token: %v", err)
 	}
 
-	dsn := os.Getenv("NETRA_TEST_DSN")
-	authStore, err := store.Open(ctx, dsn)
-	if err != nil {
-		t.Fatalf("open second pool for auth: %v", err)
-	}
-	t.Cleanup(authStore.Close)
+	authStore := store.OpenTestSibling(t, s)
 
 	h := httpapi.NewIngestHandler(auth.NewAuthenticator(authStore.Pool()), s)
 	srv := httptest.NewServer(h)
@@ -600,11 +594,7 @@ func TestIntegrationIngestCpuCoreStorageFailureReturns503(t *testing.T) {
 
 	// A second pool for auth, so the request still authenticates after the
 	// store's own pool is closed.
-	authStore, err := store.Open(ctx, os.Getenv("NETRA_TEST_DSN"))
-	if err != nil {
-		t.Fatalf("open second pool for auth: %v", err)
-	}
-	t.Cleanup(authStore.Close)
+	authStore := store.OpenTestSibling(t, s)
 
 	h := httpapi.NewIngestHandler(auth.NewAuthenticator(authStore.Pool()), s)
 	srv := httptest.NewServer(h)

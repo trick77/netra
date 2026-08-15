@@ -12,6 +12,12 @@ import (
 type Store struct {
 	pool *pgxpool.Pool
 
+	// dsn is what this store was opened with. Kept so a test can open a
+	// SECOND pool on the same database -- which since OpenTest began handing
+	// out a per-test clone is no longer the same thing as re-reading
+	// NETRA_TEST_DSN. See OpenTestSibling.
+	dsn string
+
 	// unscheduleJobs makes Migrate leave TimescaleDB's policy jobs registered
 	// but not RUNNING. It is set only by OpenTest, never by Open, so it cannot
 	// reach a hub: a production hub needs its retention and refresh policies to
@@ -31,7 +37,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	return &Store{pool: pool, dsn: dsn}, nil
 }
 
 // Pool exposes the pool for queries in sibling packages.

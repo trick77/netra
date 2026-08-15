@@ -182,11 +182,24 @@ Two knock-on effects, both in PR 1:
 
 ## 3. Schema
 
-Seven families have no tables yet. Per project rule, **every schema change is
-edited into `internal/hub/store/migrations/0001_init.sql` in place** — there is
-no `0002`. Each family lands in the PR of the collector that needs it, and
-`0001` stays re-runnable (`IF NOT EXISTS`, guarded `SELECT`s) so
-`TestIntegrationMigrationIsRerunnableAgainstItsOwnSchema` stays green.
+Seven families have no tables yet. Each family lands in the PR of the collector
+that needs it.
+
+> **Superseded (2026-08-15).** This section used to state the project rule that
+> every schema change is edited into `internal/hub/store/migrations/0001_init.sql`
+> in place, with no `0002`. That held while the project was pre-release and no
+> deployed schema needed preserving.
+>
+> The hub database is now live, so migrations are **forward-only**: add a new
+> numbered file (`0002_*.sql`, then `0003_*.sql`). Do not edit `0001_init.sql`.
+> `Migrate` matches migrations by FILENAME with no checksum, so a hub that has
+> already applied `0001` skips the file however it changes — an edit would
+> silently never reach production while a fresh install got it, and the two
+> would diverge with nothing reporting it.
+>
+> Migrations are applied in sorted filename order, and each one still has to be
+> re-runnable (`IF NOT EXISTS`, guarded `SELECT`s) so
+> `TestIntegrationMigrationIsRerunnableAgainstItsOwnSchema` stays green.
 
 | Family | Tables | PR |
 |---|---|---|
