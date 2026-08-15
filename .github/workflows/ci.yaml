@@ -63,7 +63,15 @@ jobs:
       # transitive imports and excludes test-only ones.
       - name: Agent must not depend on hub code
         run: |
-          if go list -deps ./cmd/netra-agent \
+          # The list is captured before it is searched, so this fails CLOSED.
+          # Piped straight into grep, the guard reports only grep's status: a
+          # `go list` that failed -- a renamed cmd/ path, say -- prints nothing,
+          # grep finds no match, and the step passes having checked nothing.
+          # `set -o pipefail` does not tell the two apart either, since both
+          # failures are exit 1. An assignment does: `set -e` aborts here when
+          # go list fails, and only a real match reaches the grep below.
+          deps="$(go list -deps ./cmd/netra-agent)"
+          if printf '%s\n' "$deps" \
                | grep -E 'netra/internal/(hub|devtools)|jackc/pgx'; then
             echo "::error::the agent binary must not depend on hub packages or pgx"
             exit 1
@@ -76,8 +84,25 @@ jobs:
       # stand-in: assert the paths release.yaml names still exist.
       - name: Container build files exist where release.yaml expects them
         run: |
-          test -f build/Containerfile.hub
-          test -f build/Containerfile.agent
+          # Read the paths OUT of release.yaml rather than repeating them here.
+          # A hardcoded `test -f build/Containerfile.hub` only asserts that the
+          # files this repository ships exist -- it stays green through exactly
+          # the typo it is meant to catch, because a `file: ./build/x.hubb`
+          # never enters the check.
+          files="$(sed -nE 's|^[[:space:]]*file:[[:space:]]*\./([^[:space:]]+)[[:space:]]*$|\1|p' \
+            .github/workflows/release.yaml)"
+          # -lt, not -ne: a third image added to release.yaml is legitimate and
+          # must not fail this step. The risk being guarded is the pattern
+          # going stale and matching nothing, which would pass vacuously.
+          count="$(printf '%s\n' "$files" | grep -c . || true)"
+          if [ "$count" -lt 2 ]; then
+            echo "::error::expected at least 2 \`file:\` paths in release.yaml, found $count"
+            exit 1
+          fi
+          for f in $files; do
+            echo "release.yaml builds from $f"
+            test -f "$f" || { echo "::error::release.yaml names $f, which does not exist"; exit 1; }
+          done
 
       # gofmt is not covered by `go vet`, so it is enforced explicitly rather
       # than trusted to editors.
