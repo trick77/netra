@@ -13,9 +13,14 @@ import (
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
-// blockingCollector never returns until its context is cancelled, which is what
-// a statfs against a dead NFS server, a smartctl on an unresponsive drive, and a
-// systemd bus call behind a hung unit all look like from the scrape loop.
+// blockingCollector never returns until its context is cancelled.
+//
+// This is a COOPERATIVE blocker, and that is the honest scope of what the
+// scrape deadline can enforce: collectOne calls Collect synchronously, so the
+// deadline ends a collector that consults ctx and nothing else. A collector
+// that blocks on an uncancellable syscall has to be bounded at its own call
+// site -- see TestFilesystemsAbandonsAWedgedMountpoint and
+// TestSystemSmartctlReturnsOnACancelledContext, which cover the two that could.
 type blockingCollector struct {
 	// released is closed when Collect returns, so a test can prove the call was
 	// abandoned rather than merely slow.

@@ -430,6 +430,22 @@ func logStartupInventory(ran []collector.Collector) {
 // the tick that follows it and the cadence never slips. The cost of the bound
 // is one collector's data for one scrape, recorded as a timeout rather than
 // silently missing.
+//
+// WHAT THIS DOES NOT DO, because it is easy to read it as more than it is: the
+// deadline only ends a collector that RETURNS when its context fires. It is
+// cancellation, not preemption -- collectOne calls Collect synchronously, so a
+// collector that blocks without consulting ctx holds this goroutine exactly as
+// before. Nothing here can change that, and moving the call onto a goroutine to
+// abandon it would race the collector's own delta state against the next
+// scrape's read of it.
+//
+// So a blocking call that ignores context must be bounded AT THE CALL SITE, and
+// each one in this agent is: statfs runs under deadlined with its own wedge
+// backoff (filesystems.go), smartctl carries a WaitDelay so Wait gives up on a
+// child the kernel will not kill (smart.go), sensors reads hwmon under
+// deadlined, and the Docker client has its own timeout. The systemd bus and the
+// hub probe do honour their contexts. A NEW collector that blocks on something
+// uncancellable needs the same treatment; this constant will not cover it.
 const scrapeTimeout = config.ScrapeInterval / 2
 
 // collectOne runs one collector under the scrape's context and converts a panic
