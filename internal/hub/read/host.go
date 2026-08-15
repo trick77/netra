@@ -59,6 +59,11 @@ type HostSummary struct {
 	// collectors already paid for. A host whose agent reported nothing carries
 	// {} rather than null, matching the column's default.
 	//
+	// The list coalesces it in SQL rather than repairing a nil map in Go,
+	// matching coalesce(h.hostname, '') one line above it: the column is NOT
+	// NULL DEFAULT '{}', so the Go branch was unreachable and could only ever
+	// be a line no test could cover.
+	//
 	// It sits on the SUMMARY, not on the detail, and that placement is the
 	// point: it used to be detail-only, on the reasoning that a per-host
 	// answer needs a per-host request. But the absences it explains are
@@ -117,7 +122,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes,
-		       h.threads, h.capabilities
+		       h.threads, coalesce(h.capabilities, '{}'::jsonb)
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
 		 ORDER BY h.hostname, h.id`)
@@ -134,13 +139,6 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 			&h.NetRxBytes, &h.NetTxBytes,
 			&h.Threads, &h.Capabilities); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
-		}
-		// Per row, and for the same reason Host() does it: the column is NOT
-		// NULL DEFAULT '{}', but a nil map renders as null, and null means "we
-		// do not know what this agent can collect" -- the ambiguity
-		// capabilities exist to remove.
-		if h.Capabilities == nil {
-			h.Capabilities = map[string]string{}
 		}
 		hosts = append(hosts, h)
 	}

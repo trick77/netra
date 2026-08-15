@@ -482,6 +482,10 @@ export function FleetPage({
           // that are there. A host filtered out of the list is exactly the
           // host whose absence still needs explaining.
           hosts={hostRows}
+          // `rows` above is already filtered, so FleetContainers cannot tell
+          // "the fleet has none" from "your search matched none" -- and the
+          // capability note must not answer the second.
+          filtered={needle !== ""}
         />
       )}
     </>

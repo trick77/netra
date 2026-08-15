@@ -202,6 +202,17 @@ export interface FleetContainersProps {
    * the same view as before.
    */
   hosts?: readonly CapableHost[];
+  /**
+   * Whether `rows` has been narrowed by the page's search box.
+   *
+   * `rows` arrives already filtered, so an empty one means either "the fleet
+   * has none" or "your search matched none" -- and this component cannot tell
+   * them apart on its own. It matters because of the capability notes below:
+   * filtering a 19-container fleet down to nothing would otherwise answer with
+   * "no cgroup scopes … re-run setup-agent.sh", turning a search term into a
+   * specific instruction to go and reconfigure a host.
+   */
+  filtered?: boolean;
 }
 
 export function FleetContainers({
@@ -210,14 +221,23 @@ export function FleetContainers({
   loaded = true,
   range = "24h",
   hosts,
+  filtered = false,
 }: FleetContainersProps) {
+  // A search that matched nothing says nothing about the fleet, so it gets no
+  // explanation of the fleet: with rows filtered away, a note would be read as
+  // the answer to "where are my containers" when the answer is "you typed a
+  // filter". Notes stay on a list that still has rows -- there they annotate
+  // what is shown rather than replacing it.
+  const filteredToNothing = filtered && rows.length === 0;
+
   // Only once the fan-out has answered. While it is still running the list is
   // short for a reason that has nothing to do with any capability, and
   // "incomplete" would be a different and wronger sentence than "not read
   // yet".
-  const notes = loaded
-    ? fleetContainerNotes(hosts ?? [], { partial: rows.length > 0 })
-    : [];
+  const notes =
+    loaded && !filteredToNothing
+      ? fleetContainerNotes(hosts ?? [], { partial: rows.length > 0 })
+      : [];
 
   if (rows.length === 0) {
     // An empty <table> renders as a bare header rail, which reads as a
