@@ -49,6 +49,17 @@ export type Host = {
   // is a per-core stack: the page has to know how many logical CPUs a host
   // has before deciding to ask for one series per core.
   threads: number | null;
+  // What each collector reported about its own availability, verbatim. On the
+  // LIST because the absences it explains are fleet-wide: a host reporting
+  // `containers: no-cgroup-scopes` contributes no containers at all, so the
+  // fleet's container list is short by a whole host and only this endpoint
+  // can say why.
+  //
+  // Optional here, unlike the Go field, which is NOT NULL DEFAULT '{}'. Every
+  // reader chains through it anyway, and the hand-built host literals in the
+  // tests predate the field -- requiring it would mean touching each of them
+  // to add {} without a single assertion changing.
+  capabilities?: Record<string, string>;
 };
 
 // internal/hub/read/host.go: HostDetail (embeds HostSummary)
@@ -73,6 +84,9 @@ export type HostDetail = Host & {
   longitude: number | null;
   created_at: string;
 
+  // Restated as required rather than inherited optional: the detail endpoint
+  // always sends it, and the host page reads it without chaining. The list's
+  // copy is the same field -- Go declares it once, on HostSummary.
   capabilities: Record<string, string>;
 };
 

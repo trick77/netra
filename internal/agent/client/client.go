@@ -1155,6 +1155,13 @@ func (c *Client) Run(ctx context.Context) error {
 				continue
 			}
 
+			// Taken after the scrape and before the drain, so the difference
+			// against the depth afterwards is what this cycle delivered.
+			// drain makes up to maxDrainBatches POSTs and returns only an
+			// error, and this is the same before/after-depth accounting
+			// flushOnShutdown already uses.
+			depth := c.ring.Depth()
+
 			if err := c.drain(ctx); err != nil {
 				if errors.Is(err, ErrUnauthorized) {
 					// Retry slowly: a revoked agent must not hammer the hub.
@@ -1194,6 +1201,28 @@ func (c *Client) Run(ctx context.Context) error {
 
 			backoff = time.Second
 			flushNotBefore = time.Time{}
+
+			// A healthy agent says so. Without this line the whole steady
+			// state was silent -- an operator watching the logs saw the
+			// startup block and then nothing, with no way to tell a reporting
+			// agent from a wedged one. One line per CYCLE, not per POST:
+			// logging inside Flush would emit up to maxDrainBatches lines a
+			// tick while a backlog drains.
+			//
+			// The sent > 0 guard covers the cycle that posted nothing because
+			// the scrape added nothing to an already-empty ring; "reported 0
+			// samples" would be a claim no request was made to support.
+			if sent := depth - c.ring.Depth(); sent > 0 {
+				args := []any{"samples", sent, "buffer_depth", c.ring.Depth()}
+				// The most recent POST's round trip, not the cycle's total: a
+				// drain that took several batches reports the last one. nil
+				// until the first success and cleared by every attempt, so the
+				// same guard the self-metrics use applies here.
+				if c.lastPostLatency != nil {
+					args = append(args, "latency_ms", c.lastPostLatency.Milliseconds())
+				}
+				slog.Info("reported to hub", args...)
+			}
 		}
 	}
 }

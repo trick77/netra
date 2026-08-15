@@ -48,6 +48,37 @@ type HostSummary struct {
 	// per core. Without it every host would be asked blind, including the
 	// 128-thread ones the read API has no way to reduce server-side.
 	Threads *int32 `json:"threads"`
+
+	// Capabilities is what each collector reported about its own
+	// availability, verbatim from hosts.capabilities.
+	//
+	// This is not decoration. It is the ONLY way to tell "this host has no
+	// hwmon" from "the sensors collector never ran" -- without it every NULL
+	// in every other response is ambiguous in exactly the way the agent went
+	// to trouble to avoid, and the read API would quietly undo a decision the
+	// collectors already paid for. A host whose agent reported nothing carries
+	// {} rather than null, matching the column's default.
+	//
+	// The list coalesces it in SQL rather than repairing a nil map in Go,
+	// matching coalesce(h.hostname, '') one line above it: the column is NOT
+	// NULL DEFAULT '{}', so the Go branch was unreachable and could only ever
+	// be a line no test could cover.
+	//
+	// It sits on the SUMMARY, not on the detail, and that placement is the
+	// point: it used to be detail-only, on the reasoning that a per-host
+	// answer needs a per-host request. But the absences it explains are
+	// fleet-wide. A host whose cgroup hierarchy is not mounted reports
+	// `containers: no-cgroup-scopes` and then contributes no containers at
+	// all, so the fleet's container list is silently short by one host --
+	// and the list endpoint is the only thing that page asks. Explaining that
+	// from the detail endpoint would mean a second fan-out across the whole
+	// fleet to render one sentence. One JSONB column per row is cheaper than
+	// one request per host.
+	//
+	// The list and the detail still differ in everything else: the detail
+	// carries the host's full inventory, its site and provider join, and its
+	// coordinates, none of which belongs on a row of a list.
+	Capabilities map[string]string `json:"capabilities"`
 }
 
 // HostDetail is everything the hub knows about one host that is not a time
@@ -77,18 +108,12 @@ type HostDetail struct {
 	Latitude  *float64  `json:"latitude"`
 	Longitude *float64  `json:"longitude"`
 	CreatedAt time.Time `json:"created_at"`
-
-	// Capabilities is what each collector reported about its own
-	// availability, verbatim from hosts.capabilities.
-	//
-	// This is not decoration, and it is the reason this endpoint exists
-	// separately from the list. It is the ONLY way to tell "this host has no
-	// hwmon" from "the sensors collector never ran" -- without it every NULL
-	// in every other response is ambiguous in exactly the way the agent went
-	// to trouble to avoid, and the read API would quietly undo a decision the
-	// collectors already paid for. A host whose agent reported nothing
-	// carries {} rather than null, matching the column's default.
-	Capabilities map[string]string `json:"capabilities"`
+	// Capabilities is not repeated here either, for the same reason as
+	// Threads: it moved up to HostSummary when the fleet's container list
+	// needed it to explain a host that reports nothing. Declaring it in both
+	// would shadow the embedded field, and the JSON would look right while
+	// HostSummary.Capabilities stayed empty for every caller that read it
+	// through the embed.
 }
 
 // ListHosts returns every host with its current gauges, ordered by hostname.
@@ -97,7 +122,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes,
-		       h.threads
+		       h.threads, coalesce(h.capabilities, '{}'::jsonb)
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
 		 ORDER BY h.hostname, h.id`)
@@ -112,7 +137,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		if err := rows.Scan(&h.ID, &h.Hostname, &h.SiteID,
 			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 			&h.NetRxBytes, &h.NetTxBytes,
-			&h.Threads); err != nil {
+			&h.Threads, &h.Capabilities); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}
 		hosts = append(hosts, h)
