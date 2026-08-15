@@ -40,10 +40,17 @@ func (c *Client) CheckHub(ctx context.Context) {
 	switch {
 	case err == nil:
 		slog.Info("hub reachable and token accepted", "hub", c.cfg.HubURL)
-		// The hub asks for metadata when it has none for this host, and the
-		// answer is as valid here as on any other post. Honouring it means the
-		// FIRST real batch carries the block, rather than the second.
-		c.sendMetadata = resp.GetRequestMetadata()
+		// The hub asks for metadata when its stored hash does not match the one
+		// this check carried, and that answer is as valid here as on any other
+		// post. Honouring it means the FIRST real batch carries the block
+		// rather than the second.
+		//
+		// Only ever set TRUE. A "no" from the hub is an answer about the hash
+		// this check sent, not permission to cancel a send something else has
+		// already decided is owed.
+		if resp.GetRequestMetadata() {
+			c.sendMetadata = true
+		}
 
 	case errors.Is(err, ErrUnauthorized):
 		// Error, not Warn: unlike an unreachable hub, this does not fix itself.

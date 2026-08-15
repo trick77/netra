@@ -319,6 +319,22 @@ func (c *Client) Prime(ctx context.Context) {
 		primed++
 	}
 
+	// The capabilities are only real once the collectors have run, and the
+	// metadata hash is only useful once it includes them. Without this the
+	// hash carried by CheckHub is the capability-less one built at
+	// construction, while the hash the hub stored came from a block that had
+	// them -- two values that can never be equal, so the hub would answer "send
+	// me metadata" to every agent on every restart and re-save a block that had
+	// not changed. That is the exact behaviour CheckHub's hash exists to avoid,
+	// and without this line it was inert.
+	c.refreshCapabilities()
+	// refreshCapabilities sets sendMetadata because a capability CHANGED. On a
+	// fresh process nothing changed -- it went from "not yet asked" to "asked
+	// once" -- and this agent has told nobody anything yet. Whether the hub
+	// needs the block is the hub's answer to give, and CheckHub is about to ask
+	// it. Presuming it here is what would make the re-save unconditional.
+	c.sendMetadata = false
+
 	slog.Info("primed collectors", "ok", primed, "failed", failed,
 		"skipped", skipped, "total", len(c.collectors))
 	logStartupInventory(ran)

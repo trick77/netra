@@ -186,6 +186,15 @@ func (c *Containers) Capabilities() map[string]string {
 	return out
 }
 
+// socketWasAbsent reports the socket state the PREVIOUS scrape left behind, so
+// the transition logging in Collect compares against it without reading a
+// mutex-guarded field bare.
+func (c *Containers) socketWasAbsent() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.socketAbsent
+}
+
 // observe records what this scrape saw, for Capabilities and StartupSummary to
 // report. It is the only writer of socketAbsent: that field used to be assigned
 // straight from Collect, unguarded, while Capabilities read it under the mutex.
@@ -229,6 +238,12 @@ func (c *Containers) setCapability(value string) {
 func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 	meta := map[string]ContainerMeta{}
 	absent, listed := true, 0
+	// Read once, under the mutex, rather than touching the field directly in
+	// the two branches below. observe() exists because this field was assigned
+	// from here unguarded while Capabilities read it under the lock; reading it
+	// here unguarded would leave the same class of access the split was meant
+	// to remove, even though every caller is on the scrape goroutine today.
+	wasAbsent := c.socketWasAbsent()
 	if c.lister != nil {
 		list, err := c.lister(ctx)
 		if err != nil {
@@ -239,12 +254,12 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 			// mistake: a host that deliberately declines the socket is a
 			// supported configuration, and it must not warn once a minute
 			// forever.
-			if !c.socketAbsent {
+			if !wasAbsent {
 				slog.Warn("docker socket unreadable; containers will be keyed by id rather than compose service",
 					"err", err)
 			}
 		} else {
-			if c.socketAbsent {
+			if wasAbsent {
 				slog.Info("docker socket readable again", "containers", len(list))
 			}
 			absent, listed = false, len(list)
