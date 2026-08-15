@@ -267,6 +267,36 @@ export function getSites(): Promise<Site[]> {
   return request<Site[]>("/api/v1/sites");
 }
 
+// POST /api/v1/sites takes name and provider_id and NOTHING else
+// (internal/hub/admin/dimensions.go: CreateSite). Facility, address,
+// coordinates, country and timezone are reachable only through patchSite, so
+// a form offering all eight at creation would be a create-then-patch pair
+// with a half-created site as its failure mode.
+export function createSite(
+  name: string,
+  providerId?: number | null,
+): Promise<Site> {
+  return request<Site>("/api/v1/sites", {
+    method: "POST",
+    body: { name, provider_id: providerId ?? null },
+  });
+}
+
+// The fields of a site to change. An omitted key is left alone -- that is
+// what keeps a manually set latitude and longitude safe from a caller that
+// only meant to set an address (internal/hub/admin/dimensions.go: PatchSite).
+//
+// The converse does NOT hold: PatchSite writes every field it is given
+// verbatim, so sending "" for a column does not clear it back to null, it
+// stores an empty string. No caller should ever send one; a field the
+// operator left blank must be omitted from the patch entirely.
+export type SitePatch = Partial<Omit<Site, "id">>;
+
+// Returns 204 with no body, which request() already handles.
+export function patchSite(id: number, patch: SitePatch): Promise<void> {
+  return request<void>(`/api/v1/sites/${id}`, { method: "PATCH", body: patch });
+}
+
 // NETRA_HUB_URL as the hub itself has it, or "" when it is unset. The
 // browser reaches the hub on loopback, so window.location says nothing about
 // the name agents post to; only the hub knows it, and the setup command is

@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   HostAdminPage,
@@ -18,6 +18,9 @@ vi.mock("../../lib/api", async () => {
     createHost: vi.fn(),
     rotateHostToken: vi.fn(),
     deleteHost: vi.fn(),
+    getProviders: vi.fn(),
+    createSite: vi.fn(),
+    patchSite: vi.fn(),
   };
 });
 
@@ -26,6 +29,9 @@ const getSites = vi.mocked(api.getSites);
 const createHost = vi.mocked(api.createHost);
 const rotateHostToken = vi.mocked(api.rotateHostToken);
 const deleteHost = vi.mocked(api.deleteHost);
+const getProviders = vi.mocked(api.getProviders);
+const createSite = vi.mocked(api.createSite);
+const patchSite = vi.mocked(api.patchSite);
 
 const host: api.Host = {
   id: 7,
@@ -56,6 +62,7 @@ beforeEach(() => {
   localStorage.clear();
   getHosts.mockResolvedValue([]);
   getSites.mockResolvedValue([site]);
+  getProviders.mockResolvedValue([]);
   vi.mocked(api.getConfig).mockResolvedValue({ hub_url: "" });
 });
 
@@ -79,7 +86,10 @@ describe("HostAdminPage", () => {
     expect(await screen.findByText("web-01")).toBeInTheDocument();
     expect(screen.getByText("never")).toBeInTheDocument();
     // The list carries site_id only; the name comes from the sites join.
-    expect(screen.getByText("zrh1")).toBeInTheDocument();
+    // Scoped to the host's own row: the Sites section below lists the same
+    // name, so an unscoped query matches in two places.
+    const row = screen.getByRole("row", { name: /web-01/ });
+    expect(within(row).getByText("zrh1")).toBeInTheDocument();
   });
 
   it("creates a host and shows the token exactly once, then loses it for good", async () => {
@@ -326,5 +336,239 @@ describe("HostAdminPage", () => {
     const second = await screen.findByTestId("setup-command");
     expect(second.textContent).toContain("--hub-url https://netra.example.org");
     expect(second.textContent).not.toContain("one-off.test");
+  });
+});
+
+describe("SitesSection", () => {
+  it("creates a site with a null provider when the hub has none", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([]);
+    createSite.mockResolvedValue({ ...site, id: 2, name: "fsn1" });
+    render(<HostAdminPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add the first site" }),
+    );
+    await user.type(screen.getByLabelText("Site name"), "fsn1");
+    await user.click(screen.getByRole("button", { name: "Create site" }));
+
+    await waitFor(() => expect(createSite).toHaveBeenCalledWith("fsn1", null));
+  });
+
+  // Provider creation has no UI either, so a picker with nothing in it is a
+  // control that reads as broken on every fresh hub.
+  it("hides the provider select when the hub has no providers", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([]);
+    render(<HostAdminPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add the first site" }),
+    );
+
+    expect(screen.getByLabelText("Site name")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
+  });
+
+  it("offers the provider select once there is a provider to pick", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([]);
+    getProviders.mockResolvedValue([{ id: 3, name: "Hetzner" }]);
+    createSite.mockResolvedValue({ ...site, id: 2, name: "fsn1" });
+    render(<HostAdminPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add the first site" }),
+    );
+    await user.type(screen.getByLabelText("Site name"), "fsn1");
+    await user.selectOptions(
+      await screen.findByLabelText("Provider"),
+      "Hetzner",
+    );
+    await user.click(screen.getByRole("button", { name: "Create site" }));
+
+    await waitFor(() => expect(createSite).toHaveBeenCalledWith("fsn1", 3));
+  });
+
+  // The unique index is on (provider_id, name). The hub's own message names
+  // the conflict, and the operator can only fix what the page tells them.
+  it("surfaces a duplicate-name conflict from the hub", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([]);
+    createSite.mockRejectedValue(
+      new api.ApiError(409, "site already exists for that provider"),
+    );
+    render(<HostAdminPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add the first site" }),
+    );
+    await user.type(screen.getByLabelText("Site name"), "zrh1");
+    await user.click(screen.getByRole("button", { name: "Create site" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "site already exists for that provider",
+    );
+  });
+
+  // The site list feeds both the sites table and the host form's dropdown. A
+  // create that did not refresh it left the operator creating a site they
+  // then could not select without reloading the page.
+  it("offers a newly created site on the host form without a reload", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([]);
+    createSite.mockResolvedValue({ ...site, id: 2, name: "fsn1" });
+    render(<HostAdminPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add the first site" }),
+    );
+    await user.type(screen.getByLabelText("Site name"), "fsn1");
+    getSites.mockResolvedValue([{ ...site, id: 2, name: "fsn1" }]);
+    await user.click(screen.getByRole("button", { name: "Create site" }));
+
+    await user.click(
+      await screen.findByRole("button", { name: "Add the first host" }),
+    );
+    const select = screen.getByLabelText("Site") as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual([
+      "No site",
+      "fsn1",
+    ]);
+  });
+
+  // PatchSite writes whatever it is given, so "" would store an empty string
+  // over a NULL rather than clear the column -- and every reader downstream
+  // tests for null. Blanking a field must therefore send nothing at all.
+  it("patches only the fields that changed, and omits one the operator blanked", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([
+      { ...site, facility: "DC15", country_code: "CH" },
+    ]);
+    patchSite.mockResolvedValue(undefined);
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.type(screen.getByLabelText("Latitude"), "47.37");
+    await user.clear(screen.getByLabelText("Facility"));
+    await user.click(screen.getByRole("button", { name: "Save site" }));
+
+    await waitFor(() =>
+      expect(patchSite).toHaveBeenCalledWith(site.id, { latitude: 47.37 }),
+    );
+  });
+
+  // Number.parseFloat("47.37N") is 47.37: a typo that silently becomes a
+  // plausible coordinate puts a marker somewhere nobody chose.
+  it("refuses a coordinate that is not a number, and sends nothing", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([site]);
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.type(screen.getByLabelText("Latitude"), "47.37N");
+    await user.click(screen.getByRole("button", { name: "Save site" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Latitude must be a number.",
+    );
+    expect(patchSite).not.toHaveBeenCalled();
+  });
+
+  // A trailing zero is what a coordinate copied out of a provider's
+  // datacenter page carries, and String(Number.parseFloat("47.370")) is
+  // "47.37" -- so a validator that round-trips the string rejects a
+  // perfectly good coordinate.
+  it("accepts a coordinate written with trailing zeros", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([site]);
+    patchSite.mockResolvedValue(undefined);
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.type(screen.getByLabelText("Latitude"), "47.370");
+    await user.type(screen.getByLabelText("Longitude"), "-8.50");
+    await user.click(screen.getByRole("button", { name: "Save site" }));
+
+    await waitFor(() =>
+      expect(patchSite).toHaveBeenCalledWith(site.id, {
+        latitude: 47.37,
+        longitude: -8.5,
+      }),
+    );
+  });
+
+  // The list feeds the sites table AND the host form's dropdown. Emptying it
+  // on a failed re-read the instant after a write succeeded reads as
+  // "everything I had is gone".
+  it("keeps the sites it has when the refresh after a write fails", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([site]);
+    patchSite.mockResolvedValue(undefined);
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.type(screen.getByLabelText("Facility"), "DC15");
+    getSites.mockRejectedValue(new api.ApiError(503, "unavailable"));
+    await user.click(screen.getByRole("button", { name: "Save site" }));
+
+    await waitFor(() => expect(patchSite).toHaveBeenCalled());
+    expect(screen.getByText("zrh1")).toBeInTheDocument();
+  });
+
+  // The hub answers 400 "no fields to update" on an empty patch, which is a
+  // true statement about the request and a confusing one about what the
+  // operator did.
+  it("sends no request at all when nothing was changed", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([site]);
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.click(screen.getByRole("button", { name: "Save site" }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Save site" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(patchSite).not.toHaveBeenCalled();
+  });
+
+  // An empty list is the onboarding copy, and it reads as "this hub is new".
+  // A failed read standing in for it invites a create the hub then rejects as
+  // a duplicate of a site the page never saw.
+  it("says the site list failed to load instead of showing the empty state", async () => {
+    getSites.mockRejectedValue(new api.ApiError(503, "database unavailable"));
+    render(<HostAdminPage />);
+
+    expect(await screen.findByText("database unavailable")).toBeInTheDocument();
+    expect(screen.queryByText("No sites yet")).not.toBeInTheDocument();
+  });
+
+  // The shape check catches "47.37N" and misses "473.7" -- a dropped decimal
+  // point being the likelier typo, and the one that lands in the sea.
+  it("refuses a coordinate that is off the globe", async () => {
+    const user = userEvent.setup();
+    getSites.mockResolvedValue([site]);
+    render(<HostAdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    await user.type(screen.getByLabelText("Latitude"), "473.7");
+    await user.click(screen.getByRole("button", { name: "Save site" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Latitude must be between -90 and 90.",
+    );
+    expect(patchSite).not.toHaveBeenCalled();
+  });
+
+  // A site with no coordinates renders "none"; 0,0 is a real place in the
+  // Gulf of Guinea and must render as a coordinate, not as an absence.
+  it("treats 0,0 as a location rather than as no location", async () => {
+    getSites.mockResolvedValue([{ ...site, latitude: 0, longitude: 0 }]);
+    render(<HostAdminPage />);
+
+    expect(await screen.findByText("0, 0")).toBeInTheDocument();
   });
 });
