@@ -16,15 +16,16 @@ import {
 import { POLL_MS, usePoll } from "./lib/poll";
 import {
   rangeFromSearch,
-  routePath,
   useLocation,
   withParam,
   type Route,
 } from "./lib/router";
-import { rangeWindow, type Range } from "./lib/range";
+import { clampRange, rangeWindow, type Range } from "./lib/range";
+import { DENSITY_KEY, RANGE_KEY, writePref } from "./lib/prefs";
 import { EmptyState } from "./ui/EmptyState";
 import {
   FleetPage,
+  FLEET_RANGE_VALUES,
   type Density,
   type Entity,
 } from "./features/fleet/FleetPage";
@@ -35,11 +36,18 @@ import {
   type HostTrends,
 } from "./features/fleet/hostTrends";
 import type { ContainerRow } from "./features/fleet/FleetContainers";
-import { HostPage, type HostTab } from "./features/host/HostPage";
-import { ContainerPage } from "./features/container/ContainerPage";
+import {
+  HostPage,
+  RANGE_VALUES as HOST_RANGE_VALUES,
+  type HostTab,
+} from "./features/host/HostPage";
+import {
+  ContainerPage,
+  CONTAINER_RANGE_VALUES,
+} from "./features/container/ContainerPage";
 import {
   EventsPage,
-  DEFAULT_FILTERS,
+  EVENT_RANGE_VALUES,
   filtersFromQuery,
   filtersToQuery,
 } from "./features/events/EventsPage";
@@ -193,7 +201,14 @@ function Screen({
     case "fleet":
       return <FleetScreen search={search} go={go} />;
     case "host":
-      return <HostScreen hostId={route.hostId} tab={route.tab} go={go} />;
+      return (
+        <HostScreen
+          hostId={route.hostId}
+          tab={route.tab}
+          search={search}
+          go={go}
+        />
+      );
     case "container":
       return (
         <ContainerScreen
@@ -240,6 +255,49 @@ function useAuthRedirect(error: Error | null, go: Go, route: Route) {
   }, [error, go, route.name]);
 }
 
+/**
+ * The range a screen should show, and the one thing to call when it changes.
+ *
+ * Three rules, in one place because every screen wants all three and the
+ * pages used to disagree about each of them:
+ *
+ * - The URL wins. An explicit ?range= is a link someone sent, and a link
+ *   exists to override what the recipient's browser happens to remember.
+ * - Otherwise the remembered choice applies. Nothing used to write it back,
+ *   so "the last range I picked" was never a thing the app knew: every page
+ *   fell back to its own hardcoded literal, and the range appeared to
+ *   scatter as you moved around.
+ * - It is then clamped to what THIS page offers, because the pages offer
+ *   different sets and the clamp has to happen before the fetch -- clamped
+ *   inside a page, the toolbar would say 24h while the hub was asked for 7d.
+ *
+ * The write is deliberately unclamped: what gets remembered is what the
+ * user actually clicked, so returning to a page that offers it shows it
+ * again rather than the narrowed version some other page had to display.
+ */
+function rangeParam(
+  search: string,
+  offered: readonly Range[],
+  setParam: (key: string, value: string) => void,
+): [Range, (next: Range) => void] {
+  const range = clampRange(rangeFromSearch(search, loadRange()), offered);
+  const chooseRange = (next: Range) => {
+    writePref(RANGE_KEY, next);
+    setParam("range", next);
+  };
+  return [range, chooseRange];
+}
+
+/**
+ * replace, not push: a range, density or filter change is a way of looking
+ * at this page, not a different place. Pushing one entry per toggle turns
+ * Back into an undo of fiddling rather than a way out of the page.
+ */
+function paramSetter(path: string, search: string, go: Go) {
+  return (key: string, value: string) =>
+    go(path + withParam(search, key, value), { replace: true });
+}
+
 function FleetScreen({ search, go }: { search: string; go: Go }) {
   // Entity, density and range all live in the URL: a fleet view someone
   // sends must arrive as the view they were looking at, not as whatever the
@@ -253,7 +311,8 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   const viewParam = params.get("view");
   const density: Density =
     viewParam === "cards" || viewParam === "table" ? viewParam : loadView();
-  const range = rangeFromSearch(search, loadRange());
+  const setParam = paramSetter("/", search, go);
+  const [range, chooseRange] = rangeParam(search, FLEET_RANGE_VALUES, setParam);
 
   const poll = usePoll(
     async () => {
@@ -342,12 +401,6 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
     [poll.data],
   );
 
-  // replace, not push: a range or a density toggle is a way of looking at
-  // this page, not a different place. Pushing one entry per toggle turns
-  // Back into an undo of fiddling rather than a way out of the page.
-  const setParam = (key: string, value: string) =>
-    go("/" + withParam(search, key, value), { replace: true });
-
   // The same guard HostScreen makes, for the same reason. This screen is
   // remounted by every navigation back to it, so its first render has no
   // data -- and an overview handed zero hosts does not look empty, it looks
@@ -366,9 +419,15 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
         setParam("entity", next === "containers" ? "containers" : "")
       }
       density={density}
-      onDensityChange={(next) => setParam("view", next)}
+      // Both halves, here rather than inside FleetPage: the preference is
+      // what makes the choice survive leaving the page, and the URL is what
+      // makes it survivable as a link. One write path for one key.
+      onDensityChange={(next) => {
+        writePref(DENSITY_KEY, next);
+        setParam("view", next);
+      }}
       range={range}
-      onRangeChange={(next: Range) => setParam("range", next)}
+      onRangeChange={chooseRange}
       checkedAt={poll.data?.at ?? null}
       containers={poll.data?.containers}
       containerError={
@@ -383,17 +442,26 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
 function HostScreen({
   hostId,
   tab,
+  search,
   go,
 }: {
   hostId: string;
   tab: HostTab;
+  search: string;
   go: Go;
 }) {
+  // The tab is the path; the range is a query parameter on it, so switching
+  // tabs carries the range along and a link to one tab can pin a window.
+  const setParam = paramSetter(`/hosts/${hostId}/${tab}`, search, go);
+  const [range, chooseRange] = rangeParam(search, HOST_RANGE_VALUES, setParam);
+
   return (
     <HostPage
       hostId={hostId}
       tab={tab}
-      onTabChange={(next: HostTab) => go(`/hosts/${hostId}/${next}`)}
+      onTabChange={(next: HostTab) => go(`/hosts/${hostId}/${next}${search}`)}
+      range={range}
+      onRangeChange={chooseRange}
     />
   );
 }
@@ -409,7 +477,16 @@ function ContainerScreen({
   search: string;
   go: Go;
 }) {
-  const range = rangeFromSearch(search, loadRange());
+  const setParam = paramSetter(
+    `/containers/${encodeURIComponent(hostId)}/${encodeURIComponent(containerKey)}`,
+    search,
+    go,
+  );
+  const [range, chooseRange] = rangeParam(
+    search,
+    CONTAINER_RANGE_VALUES,
+    setParam,
+  );
 
   const poll = usePoll(
     async () => {
@@ -458,20 +535,29 @@ function ContainerScreen({
       containerNetwork={poll.data.host.capabilities?.container_network}
       metrics={poll.data.metrics as MetricsResponse}
       range={range}
-      onRangeChange={(next: Range) =>
-        go(
-          routePath({ name: "container", hostId, key: containerKey }) +
-            withParam(search, "range", next),
-          { replace: true },
-        )
-      }
+      onRangeChange={chooseRange}
     />
   );
 }
 
 function EventsScreen({ search, go }: { search: string; go: Go }) {
+  // The same three rules rangeParam applies, spelled out here because the
+  // range arrives as one of the filters rather than on its own: the URL
+  // wins, the remembered choice is the fallback, and the result is clamped
+  // to what this page offers -- it widens, so a 6h shows as 24h here rather
+  // than collapsing to 1h and an empty log.
+  //
+  // rangeFromSearch, not filtersFromQuery's own check, for the URL half:
+  // filtersFromQuery only recognises the four ranges this page OFFERS, so a
+  // link carrying ?range=6h was discarded outright and the reader's
+  // remembered choice applied instead -- the one thing a sent link exists to
+  // override. Clamped, that link shows 24h, which is what it meant.
   const filters = useMemo(
-    () => ({ ...DEFAULT_FILTERS, ...filtersFromQuery(search) }),
+    () =>
+      filtersFromQuery(
+        search,
+        clampRange(rangeFromSearch(search, loadRange()), EVENT_RANGE_VALUES),
+      ),
     [search],
   );
 
@@ -492,9 +578,13 @@ function EventsScreen({ search, go }: { search: string; go: Go }) {
       // replace, not push: a filter edit is not a place, and pushing one
       // entry per keystroke turns Back into an undo of typing rather than a
       // way out of the page.
-      onFiltersChange={(next) =>
-        go("/events" + filtersToQuery(next), { replace: true })
-      }
+      onFiltersChange={(next) => {
+        // The range half of a filter change is also a preference, so it is
+        // remembered as well as put in the URL -- that is what carries it to
+        // the next page you open.
+        if (next.range !== filters.range) writePref(RANGE_KEY, next.range);
+        go("/events?" + filtersToQuery(next), { replace: true });
+      }}
     />
   );
 }

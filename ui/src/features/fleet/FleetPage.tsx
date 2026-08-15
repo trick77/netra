@@ -21,6 +21,7 @@ import { HostTable } from "./HostTable";
 import type { HostRow, Range } from "./hostColumns";
 import { isReporting } from "../../lib/host";
 import { buildRows } from "./hostTrends";
+import { DENSITY_KEY, readPref, writePref } from "../../lib/prefs";
 
 /** What you are looking at (spec 4.5's first axis). */
 export type Entity = "hosts" | "containers";
@@ -28,9 +29,10 @@ export type Entity = "hosts" | "containers";
 export type Density = "table" | "cards";
 
 /** Spec 4.5: density is remembered per browser and defaulted in Settings.
- * Exported so Settings (Task 19) writes the same key rather than a second
- * one that silently disagrees with this page. */
-export const DENSITY_KEY = "netra.fleet.density";
+ * The key lives in lib/prefs now and is re-exported here because Settings
+ * (Task 19) and this page's tests import it from this module -- what matters
+ * is that there is one key, not a second one that silently disagrees. */
+export { DENSITY_KEY };
 
 /**
  * Joins the fleet list to its site names and produces the rows both the
@@ -116,21 +118,30 @@ function useIsNarrow(): boolean {
 }
 
 function readStoredDensity(): Density | null {
-  try {
-    const stored = window.localStorage.getItem(DENSITY_KEY);
-    return stored === "cards" || stored === "table" ? stored : null;
-  } catch {
-    // Storage can be unavailable (private mode, blocked cookies). A
-    // remembered preference is a nicety; losing it must not blank the page.
-    return null;
-  }
+  // readPref is the guarded read (lib/prefs): storage can be unavailable
+  // (private mode, blocked cookies), and a remembered preference is a
+  // nicety -- losing it must not blank the page.
+  const stored = readPref(DENSITY_KEY);
+  return stored === "cards" || stored === "table" ? stored : null;
 }
 
-const RANGES: { value: Range; label: string }[] = [
+/**
+ * The windows this page OFFERS. Exported so the screen that fetches for it
+ * can clamp a remembered range to this set BEFORE asking the hub: clamping
+ * inside the component would leave the fetch on 7d while the toolbar showed
+ * 24h. A 30-day fan-out across every host is a rollup nobody asked for,
+ * which is why this stops at 24h.
+ */
+export const FLEET_RANGES: { value: Range; label: string }[] = [
   { value: "1h", label: "1h" },
   { value: "6h", label: "6h" },
   { value: "24h", label: "24h" },
 ];
+
+/** The same set as the bare values clampRange takes. */
+export const FLEET_RANGE_VALUES: readonly Range[] = FLEET_RANGES.map(
+  (o) => o.value,
+);
 
 const DENSITIES: { value: Density; label: string }[] = [
   { value: "table", label: "Table" },
@@ -431,21 +442,20 @@ export function FleetPage({
           onChange={(e) => setFilter(e.target.value)}
         />
         <div className="spacer" />
-        <Segmented options={RANGES} value={range} onChange={setRange} />
+        <Segmented options={FLEET_RANGES} value={range} onChange={setRange} />
         {/* Density is a hosts-only axis: a card grid of 247 containers is
             not useful (spec 4.5). */}
         {entity === "hosts" ? (
           <Segmented
             options={DENSITIES}
             value={effectiveDensity}
+            // The store write happens here only when nothing controls this
+            // page. Controlled, the screen owns both halves -- writing the
+            // preference and putting it in the URL -- and a second write
+            // from inside would be two paths to one key.
             onChange={(next) => {
               setDensity(next);
-              try {
-                window.localStorage.setItem(DENSITY_KEY, next);
-              } catch {
-                // See readStoredDensity: an unavailable store costs the
-                // preference, never the page.
-              }
+              if (onDensityChange === undefined) writePref(DENSITY_KEY, next);
             }}
           />
         ) : null}

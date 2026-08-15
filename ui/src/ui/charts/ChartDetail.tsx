@@ -19,6 +19,12 @@ export interface ChartDetailProps {
    * closing what they opened to look at. */
   range?: Range;
   onRangeChange?: (range: Range) => void;
+  /** The ranges the PAGE behind this dialog offers. It used to show all
+   * five regardless, so picking 30d over a fleet chart handed the page a
+   * range its own picker could not express -- every button underneath came
+   * back unpressed, which reads as "no range selected". Absent, all five
+   * are offered, which is right only for a page that offers all five. */
+  ranges?: readonly Range[];
   onClose: () => void;
   /** Draw the series as a cumulative stack, matching the small panel that
    * opened this. The mark must not change when a chart is enlarged. */
@@ -60,6 +66,7 @@ export function ChartDetail({
   window: answered = null,
   range,
   onRangeChange,
+  ranges = RANGES,
   onClose,
   stacked,
   legend,
@@ -103,7 +110,7 @@ export function ChartDetail({
           <div className="spacer" />
           {range !== undefined && onRangeChange !== undefined && (
             <Segmented
-              options={RANGES.map((r) => ({ value: r, label: r }))}
+              options={ranges.map((r) => ({ value: r, label: r }))}
               value={range}
               onChange={onRangeChange}
             />

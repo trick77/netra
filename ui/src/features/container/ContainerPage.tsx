@@ -25,11 +25,16 @@ import type { Range } from "../../lib/range";
 // anywhere else -- Settings' stored default, a link from the host page --
 // can still be handed here; a container's series are the same metrics
 // families the host Graphs tab draws, so the same three windows fit.
-const RANGES: { value: Range; label: string }[] = [
+export const CONTAINER_RANGES: { value: Range; label: string }[] = [
   { value: "1h", label: "1h" },
   { value: "6h", label: "6h" },
   { value: "24h", label: "24h" },
 ];
+
+/** The same set as the bare values clampRange takes. */
+export const CONTAINER_RANGE_VALUES: readonly Range[] = CONTAINER_RANGES.map(
+  (o) => o.value,
+);
 
 /** A container is silent once it has missed this many seconds of samples.
  * Three scrape intervals at the 60s default: one missed post is a hiccup,
@@ -322,7 +327,11 @@ export function ContainerPage({
         <span className="meta" title={state.why}>
           derived from samples
         </span>
-        <Segmented options={RANGES} value={range} onChange={onRangeChange} />
+        <Segmented
+          options={CONTAINER_RANGES}
+          value={range}
+          onChange={onRangeChange}
+        />
       </div>
 
       {/* .sm is index.css's small-multiples grid; .smp is what ChartPanel
@@ -340,6 +349,7 @@ export function ContainerPage({
           window={metrics.window}
           range={range}
           onRangeChange={onRangeChange}
+          ranges={CONTAINER_RANGE_VALUES}
           stacked={cpuBands.length > 1}
           series={cpuBands}
         />
@@ -355,6 +365,7 @@ export function ContainerPage({
           window={metrics.window}
           range={range}
           onRangeChange={onRangeChange}
+          ranges={CONTAINER_RANGE_VALUES}
           max={memLimit === null ? undefined : memLimit * 1.08}
           reference={memLimit ?? undefined}
           referenceLabel={memLimit === null ? undefined : bytes(memLimit)}
@@ -374,6 +385,7 @@ export function ContainerPage({
           window={metrics.window}
           range={range}
           onRangeChange={onRangeChange}
+          ranges={CONTAINER_RANGE_VALUES}
           mirrored
           // The agent's own explanation, in place of a chart that would
           // otherwise read as "this container moved no traffic".
@@ -403,6 +415,7 @@ export function ContainerPage({
           window={metrics.window}
           range={range}
           onRangeChange={onRangeChange}
+          ranges={CONTAINER_RANGE_VALUES}
           series={[
             band("read", "var(--s2)", sampled?.ioRead ?? empty),
             band("write", "var(--s4)", sampled?.ioWrite ?? empty),

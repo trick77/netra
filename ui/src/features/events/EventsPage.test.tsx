@@ -108,14 +108,25 @@ describe("filters in the URL", () => {
   });
 
   // A default carries no information, and a URL that spells out every
-  // default is unshareable noise.
-  it("writes nothing for the defaults", () => {
-    expect(filtersToQuery(DEFAULT_FILTERS)).toBe("");
+  // default is unshareable noise. The RANGE is the exception: it is a
+  // remembered preference now, so an absent range means "whatever the
+  // reader's browser remembers" rather than 24h -- and a sent link exists
+  // to override exactly that.
+  it("writes nothing but the range for the defaults", () => {
+    expect(filtersToQuery(DEFAULT_FILTERS)).toBe("range=24h");
     expect(filtersFromQuery("")).toEqual(DEFAULT_FILTERS);
   });
 
   it("ignores a range the page does not have", () => {
     expect(filtersFromQuery("range=99y").range).toBe(DEFAULT_FILTERS.range);
+  });
+
+  // The fallback is what a URL carrying no range resolves to -- the screen
+  // passes the remembered preference, already clamped to this page's set.
+  it("takes the given fallback when the URL names no range", () => {
+    expect(filtersFromQuery("", "7d").range).toBe("7d");
+    expect(filtersFromQuery("range=1h", "7d").range).toBe("1h");
+    expect(filtersFromQuery("range=99y", "7d").range).toBe("7d");
   });
 });
 

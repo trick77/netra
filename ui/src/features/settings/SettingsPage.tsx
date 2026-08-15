@@ -3,7 +3,7 @@ import { Card } from "../../ui/Card";
 import { Segmented } from "../../ui/Segmented";
 import { applyTheme, loadTheme, type ThemePref } from "../../lib/theme";
 import { isRange, RANGES, type Range } from "../../lib/range";
-import { DENSITY_KEY } from "../fleet/FleetPage";
+import { DENSITY_KEY, RANGE_KEY, readPref, writePref } from "../../lib/prefs";
 
 /** Density of the fleet overview (spec §4.5). Below the mobile breakpoint
  * cards are automatic and this preference does not apply. */
@@ -15,14 +15,14 @@ export type OverviewView = "table" | "cards";
  * one shared type prevents. A page still chooses which options to offer. */
 export type RangeKey = Range;
 
-// Same "netra." namespace as lib/theme.ts's key, so one browser's netra
-// preferences are greppable in devtools as a group.
-// FleetPage owns this key and exports it precisely so this page writes the
-// same one. Settings used to write "netra.view" while the fleet page read
+// lib/prefs owns the keys now -- one "netra." namespace, greppable in
+// devtools as a group -- and these two names are re-exported because this
+// page's tests and App.tsx import them from here. VIEW_KEY is DENSITY_KEY:
+// Settings used to write "netra.view" while the fleet page read
 // "netra.fleet.density", so choosing Cards here changed nothing at all: the
 // overview came back as a table on every reload.
 export const VIEW_KEY = DENSITY_KEY;
-export const RANGE_KEY = "netra.range";
+export { RANGE_KEY };
 
 const VIEWS: OverviewView[] = ["table", "cards"];
 const RANGE_LABELS: Record<RangeKey, string> = {
@@ -38,21 +38,12 @@ const RANGE_LABELS: Record<RangeKey, string> = {
  * build does not recognise. A value written by an older or newer build is not
  * an error worth surfacing -- it is a preference, and the default is a
  * perfectly good answer.
+ *
+ * readPref is the guarded read (lib/prefs): localStorage throws outright in
+ * Safari with cookies blocked, and these run inside useState initialisers.
  */
-// Every read is guarded: localStorage throws outright in Safari with
-// cookies blocked and in some private modes, and these run inside useState
-// initialisers -- an unguarded throw there renders nothing at all. Losing a
-// preference is acceptable; losing the page is not.
-function stored(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
 export function loadView(): OverviewView {
-  const v = stored(VIEW_KEY);
+  const v = readPref(VIEW_KEY);
   return VIEWS.includes(v as OverviewView) ? (v as OverviewView) : "table";
 }
 
@@ -60,7 +51,7 @@ export function loadRange(): RangeKey {
   // isRange, not a membership test on a local list: the stored value comes
   // from a place the user can edit, and an unrecognised one must fall back
   // rather than reach a page as a range nothing can resolve.
-  const value = stored(RANGE_KEY);
+  const value = readPref(RANGE_KEY);
   return isRange(value) ? value : "24h";
 }
 
@@ -108,24 +99,15 @@ export function SettingsPage() {
     setTheme(next);
   }
 
-  // The write is guarded for the same reason the read is: a store that
-  // refuses to save costs the preference, never the click.
-  function remember(key: string, value: string) {
-    try {
-      localStorage.setItem(key, value);
-    } catch {
-      // See stored(): an unavailable store is a lost preference, not a
-      // broken page.
-    }
-  }
-
   function chooseView(next: OverviewView) {
-    remember(VIEW_KEY, next);
+    // writePref is guarded for the same reason readPref is: a store that
+    // refuses to save costs the preference, never the click.
+    writePref(VIEW_KEY, next);
     setView(next);
   }
 
   function chooseRange(next: RangeKey) {
-    remember(RANGE_KEY, next);
+    writePref(RANGE_KEY, next);
     setRange(next);
   }
 

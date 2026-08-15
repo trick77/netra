@@ -62,6 +62,9 @@ export interface ChartPanelProps {
    * control. Without them it simply shows the window it was given. */
   range?: Range;
   onRangeChange?: (range: Range) => void;
+  /** The ranges the page offers, so the enlarged view cannot hand back one
+   * the page's own picker has no button for. */
+  ranges?: readonly Range[];
 }
 
 export function ChartPanel({
@@ -84,6 +87,7 @@ export function ChartPanel({
   window: answered = null,
   range,
   onRangeChange,
+  ranges,
 }: ChartPanelProps) {
   const [enlarged, setEnlarged] = useState(false);
   if (unavailable !== undefined) {
@@ -196,6 +200,7 @@ export function ChartPanel({
           window={answered}
           range={range}
           onRangeChange={onRangeChange}
+          ranges={ranges}
           onClose={() => setEnlarged(false)}
         />
       )}
