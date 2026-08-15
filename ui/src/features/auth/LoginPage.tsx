@@ -86,17 +86,19 @@ export function LoginPage({ onSuccess }: LoginPageProps) {
           </p>
         ) : null}
 
-        <label htmlFor="admin-token">Admin token</label>
-        <Input
-          id="admin-token"
-          name="token"
-          type="password"
-          autoComplete="current-password"
-          autoFocus
-          required
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-        />
+        <div className="field">
+          <label htmlFor="admin-token">Admin token</label>
+          <Input
+            id="admin-token"
+            name="token"
+            type="password"
+            autoComplete="current-password"
+            autoFocus
+            required
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+        </div>
 
         <Button type="submit" variant="primary" busy={busy}>
           Log in

@@ -95,13 +95,15 @@ function TokenPanel({
       <pre className="cmd">{minted.token}</pre>
 
       <h4>Install the agent</h4>
-      <label htmlFor="hub-url">Hub URL</label>
-      <Input
-        id="hub-url"
-        value={hubURL}
-        placeholder={HUB_URL_EXAMPLE}
-        onChange={(e) => onHubURLChange(e.target.value)}
-      />
+      <div className="field">
+        <label htmlFor="hub-url">Hub URL</label>
+        <Input
+          id="hub-url"
+          value={hubURL}
+          placeholder={HUB_URL_EXAMPLE}
+          onChange={(e) => onHubURLChange(e.target.value)}
+        />
+      </div>
 
       {hubURL === "" ? (
         // No command at all until there is a hub URL to put in it. A command
@@ -261,8 +263,17 @@ export function HostAdminPage() {
     sites.find((s) => s.id === id)?.name ?? null;
 
   return (
-    <div className="section">
-      <h2>Hosts</h2>
+    <>
+      {/* `.section` is a heading ROW -- a baseline flex line holding the
+          title and its hint (see EventsPage). Everything below is a sibling
+          of it, not a child: as a child it was laid out as another column of
+          that row, which put the whole page beside its own heading. */}
+      <div className="section">
+        <h2>Hosts</h2>
+        <span className="hint">
+          One agent token per host, minted when the host is created.
+        </span>
+      </div>
 
       {loadError ? (
         <p className="error" role="alert">
@@ -295,27 +306,31 @@ export function HostAdminPage() {
 
       {creating ? (
         <Card title="New host">
-          <label htmlFor="new-hostname">Hostname</label>
-          <Input
-            id="new-hostname"
-            value={hostname}
-            onChange={(e) => setHostname(e.target.value)}
-            autoFocus
-          />
+          <div className="field">
+            <label htmlFor="new-hostname">Hostname</label>
+            <Input
+              id="new-hostname"
+              value={hostname}
+              onChange={(e) => setHostname(e.target.value)}
+              autoFocus
+            />
+          </div>
 
-          <label htmlFor="new-site">Site</label>
-          <Select
-            id="new-site"
-            value={siteId}
-            onChange={(e) => setSiteId(e.target.value)}
-          >
-            <option value="">No site</option>
-            {sites.map((s) => (
-              <option key={s.id} value={String(s.id)}>
-                {s.name}
-              </option>
-            ))}
-          </Select>
+          <div className="field">
+            <label htmlFor="new-site">Site</label>
+            <Select
+              id="new-site"
+              value={siteId}
+              onChange={(e) => setSiteId(e.target.value)}
+            >
+              <option value="">No site</option>
+              {sites.map((s) => (
+                <option key={s.id} value={String(s.id)}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </div>
 
           <div className="toolbar">
             <Button
@@ -413,6 +428,6 @@ export function HostAdminPage() {
           </div>
         </>
       ) : null}
-    </div>
+    </>
   );
 }

@@ -130,8 +130,13 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="section">
-      <h2>Settings</h2>
+    <>
+      {/* A heading ROW, with the cards as its siblings -- see the same note
+          in HostAdminPage: `.section` is a baseline flex line, so a card
+          nested inside it is laid out beside the title, not under it. */}
+      <div className="section">
+        <h2>Settings</h2>
+      </div>
 
       <Card title="Appearance">
         <Setting
@@ -178,6 +183,6 @@ export function SettingsPage() {
         hub, so another browser — or the same one after clearing site data —
         starts from the defaults.
       </p>
-    </div>
+    </>
   );
 }
