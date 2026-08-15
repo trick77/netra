@@ -22,7 +22,10 @@ function round(n: number, digits: number): number {
 // zero decimals at the base unit and one decimal above it -- "503 GB" reads
 // as a measurement, "503.0 GB" reads as false precision. Rounding can push
 // a value like 999.96 GB up to "1000 GB"; when that happens, promote to the
-// next unit so the display never shows a rounded value at or above 1000.
+// next unit so the display never shows a rounded value at or above the base.
+// The guard is written against `base` rather than a literal 1000 for that
+// reason: with base 1024 the boundary is 1024, and a hardcoded 1000 would
+// promote 1000-1023 GiB a unit early and print "1 TiB" for 1000 GiB.
 function scale(n: number, units: string[], base = 1000): string {
   const abs = Math.abs(n);
   let idx = 0;

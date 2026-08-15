@@ -26,7 +26,7 @@ import { Button } from "../../ui/Button";
 import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { ABSENT, duration, relative } from "../../lib/format";
-import { hostStatus } from "../../lib/host";
+import { hostStatus, osLabel } from "../../lib/host";
 import { rangeWindow, type Range } from "../../lib/range";
 import { Events } from "./tabs/Events";
 import { Graphs } from "./tabs/Graphs";
@@ -347,7 +347,11 @@ export function HostPage({ hostId, tab, onTabChange }: HostPageProps) {
       <header className="hosthead" aria-label="Host summary">
         <h1 className="serif">{host.hostname}</h1>
         <span className="meta">
-          {[host.site_name, host.os_name, host.kernel, host.arch]
+          {/* osLabel, not host.os_name: this header sits two inches above the
+              Overview tab's System card, which names the OS through the same
+              helper. Printing the raw field here read "linux" under a card
+              reading "Linux" -- the same fact spelled two ways on one screen. */}
+          {[host.site_name, osLabel(host.os_name), host.kernel, host.arch]
             .map((part) => part ?? ABSENT)
             .join(" · ")}
         </span>

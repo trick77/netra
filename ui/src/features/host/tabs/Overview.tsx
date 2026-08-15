@@ -29,6 +29,7 @@ import {
   percent,
   relative,
 } from "../../../lib/format";
+import { osLabel } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
@@ -292,9 +293,16 @@ const LIMITS: {
 const STALE_AFTER_MS = 5 * 60 * 1000;
 
 /**
- * What is wrong right now, worst first. Current state must not sit behind
- * a tab, so this is derived here from the same responses the cards above
- * it render -- there is no second source that could disagree with them.
+ * What is wrong right now. Current state must not sit behind a tab, so this
+ * is derived here from the same responses the cards above it render -- there
+ * is no second source that could disagree with them.
+ *
+ * NOT sorted by severity, despite this list now leading the tab: the order is
+ * the order it is written in, so a reader who looks twice finds the same rows
+ * in the same places. That is the fleet's rule too -- see the note on
+ * hostConditions() in fleet/conditions.ts, which spells out why ordering
+ * within ONE host is left as written. The docstring used to claim "worst
+ * first", which no line of this function has ever done.
  */
 export function needsAttention(input: {
   host: HostDetail;
@@ -411,36 +419,6 @@ export function needsAttention(input: {
  * host sent; a host that reported neither reads as absent, never as an empty
  * string.
  */
-/**
- * The operating system, as a name rather than as an identifier.
- *
- * os_name is meant to carry the distribution -- every fixture in the repo
- * seeds it that way ("Ubuntu 24.04.1 LTS", "Debian GNU/Linux 12 (bookworm)")
- * -- but an agent that cannot read /etc/os-release falls back to Go's GOOS,
- * which is a build constant and always lowercase. Printing that raw put
- * "linux" on the page: true, but written as a compiler token rather than as
- * the name of an operating system.
- *
- * An explicit table, not capitalize(): capitalising GOOS gives "Darwin" for a
- * Mac and "Freebsd" for a BSD, and those are both wrong in a way that reads
- * as carelessness. A platform not in the table passes through untouched,
- * which is right for a distro string and harmless for anything else.
- */
-const OS_LABELS: Record<string, string> = {
-  linux: "Linux",
-  darwin: "macOS",
-  windows: "Windows",
-  freebsd: "FreeBSD",
-  openbsd: "OpenBSD",
-  netbsd: "NetBSD",
-};
-
-function osLabel(host: HostDetail): string {
-  const name = host.os_name;
-  if (name === null || name === "") return ABSENT;
-  return OS_LABELS[name] ?? name;
-}
-
 function agentBuild(host: HostDetail): string {
   const version = host.agent_version;
   const commit = host.build_commit;
@@ -951,7 +929,7 @@ export function Overview({
         <Panel label="System" title="System">
           <Facts
             rows={[
-              ["OS", osLabel(host)],
+              ["OS", osLabel(host.os_name)],
               ["Kernel", host.kernel ?? ABSENT],
               ["Architecture", host.arch ?? ABSENT],
               ["Processor", host.cpu_model ?? ABSENT],

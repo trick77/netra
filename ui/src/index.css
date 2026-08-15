@@ -475,9 +475,6 @@ a {
   margin: 0;
   padding: 0;
 }
-.attn-list .attn-row .what {
-  color: var(--ink-2);
-}
 /* The badge is this list's first column, and its three words are three
    different widths -- left to itself the sentence beside it starts at three
    different places and the rows stop reading as a column. Same job the
