@@ -46,8 +46,8 @@ function unitIndex(n: number, units: string[], base: number): number {
 // number from its unit is what lets a pair share one: `at` renders both halves
 // of "20.4 · 31 GiB" against the same index, so the two are comparable without
 // the reader converting anything.
-function at(n: number, base: number, idx: number): string {
-  return `${round(n / base ** idx, idx === 0 ? 0 : 1)}`;
+function at(n: number, base: number, idx: number): number {
+  return round(n / base ** idx, idx === 0 ? 0 : 1);
 }
 
 function scale(n: number, units: string[], base = 1000): string {
@@ -81,8 +81,19 @@ function pair(
   if (total === null)
     return value === null ? ABSENT : scale(value, units, base);
   const idx = unitIndex(total, units, base);
-  const left = value === null ? ABSENT : at(value, base, idx);
-  return `${left} · ${at(total, base, idx)} ${units[idx]}`;
+  const right = `${at(total, base, idx)} ${units[idx]}`;
+  if (value === null) return `${ABSENT} · ${right}`;
+  // A value thousands of times smaller than its ceiling rounds away at the
+  // ceiling's unit: 4 MB of swap against 8 GiB is 0.0037 GiB, which prints
+  // as "0 · 8 GiB" and says the host is not swapping. It IS swapping, and on
+  // swap that fact is the entire reading. Where the shared unit would erase
+  // the value, it keeps its own -- "3.8 MiB · 8 GiB". The pair loses the one
+  // unit it prefers, and a repeated unit is a far smaller cost than a zero
+  // that is not true.
+  const shared = at(value, base, idx);
+  if (shared === 0 && value !== 0)
+    return `${scale(value, units, base)} · ${right}`;
+  return `${shared} · ${right}`;
 }
 
 const DECIMAL_BYTES = ["B", "kB", "MB", "GB", "TB", "PB"];

@@ -185,6 +185,20 @@ describe("a value against its ceiling", () => {
     expect(bytesPair(null, null)).toBe("—");
   });
 
+  // 4 MB of swap against 8 GiB is 0.0037 GiB. Printed at the ceiling's unit
+  // that is "0 · 8 GiB", which says the host is not swapping -- and on swap,
+  // that it is swapping at all is the entire reading.
+  it("keeps a value the shared unit would round to zero", () => {
+    expect(binaryBytesPair(4_000_000, 8_589_934_592)).toBe("3.8 MiB · 8 GiB");
+    expect(bytesPair(30_000_000, 4_000_000_000)).toBe("30 MB · 4 GB");
+  });
+
+  // A true zero is not the same case: it says the host has none, and "0"
+  // against the ceiling is the clearest way to say so.
+  it("still shares the unit for a true zero", () => {
+    expect(binaryBytesPair(0, 8_589_934_592)).toBe("0 · 8 GiB");
+  });
+
   it("promotes a ceiling that rounds up to the base", () => {
     expect(bytesPair(500_000_000_000, 999_960_000_000)).toBe("0.5 · 1 TB");
   });
