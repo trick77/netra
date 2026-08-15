@@ -574,3 +574,44 @@ describe("SitesSection", () => {
     expect(await screen.findByText("0, 0")).toBeInTheDocument();
   });
 });
+
+// `.section` is a baseline flex ROW (index.css), so anything nested inside it
+// is laid out as another column beside the heading rather than under it. That
+// is how the whole Sites UI -- cards, toolbar and table -- came to render
+// sideways, long after the identical defect was fixed on `Hosts` two functions
+// away in the same file, with no test to notice the one that was missed.
+//
+// jsdom computes no flex layout, so this pins the NESTING that causes it: a
+// heading row holds a heading and at most its hint, and the section body is a
+// sibling. Every `.section` on the page is checked, because being forgotten is
+// the failure mode.
+describe("heading rows", () => {
+  it("keeps every .section a heading row, with the section body as its sibling", async () => {
+    getHosts.mockResolvedValue([host]);
+    const { container } = render(<HostAdminPage />);
+
+    // Rendered, and not empty: without this the loop below would pass on a
+    // page that has drawn nothing yet, which is no assertion at all.
+    // Twice: the host row names its site, and the Sites table lists it again.
+    expect(await screen.findAllByText("zrh1")).toHaveLength(2);
+    expect(container.querySelectorAll("table")).toHaveLength(2);
+
+    const sections = [...container.querySelectorAll(".section")];
+    expect(sections).toHaveLength(2);
+
+    for (const section of sections) {
+      // Keyed by the heading text rather than asserted bare: a failure has to
+      // say WHICH section leaked, and what leaked into it.
+      const heading = section.querySelector("h2")?.textContent;
+      const strays = [...section.children]
+        .map((el) => el.tagName)
+        .filter((tag) => tag !== "H2" && tag !== "SPAN");
+
+      expect({ heading, strays }).toEqual({ heading, strays: [] });
+      expect({
+        heading,
+        body: section.querySelector("table, .card, .toolbar"),
+      }).toEqual({ heading, body: null });
+    }
+  });
+});
