@@ -185,6 +185,20 @@ describe("HostPage", () => {
     expect(badge.className).toContain("badge");
   });
 
+  // The System card on the Overview tab names the OS through osLabel, and the
+  // header prints the same field a few centimetres above it. A private copy of
+  // the mapping in one of them is how "linux" came to sit under a card reading
+  // "Linux" -- the same fact spelled two ways on one screen.
+  it("names the operating system in the header the way the System card does", async () => {
+    vi.mocked(api.getHost).mockResolvedValue({ ...host, os_name: "linux" });
+
+    render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
+
+    const header = await screen.findByRole("banner", { name: "Host summary" });
+    expect(within(header).getByText(/Linux/)).toBeInTheDocument();
+    expect(within(header).queryByText(/·\s*linux\s*·/)).toBeNull();
+  });
+
   // A host up for a day is the overwhelmingly common case, and a badge on
   // every header would spend the reader's first stop on a non-event. It also
   // must not displace the reporting status beside it.

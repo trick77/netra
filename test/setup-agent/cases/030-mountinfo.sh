@@ -188,6 +188,15 @@ assert_contains "$NETRA_BLK_VOLUMES" 'source: "/mnt/ark/.netra"' "the ark marker
 assert_not_contains "$NETRA_BLK_VOLUMES" "$ROOT" \
     "NETRA_SETUP_ROOT never leaks into an emitted source path"
 
+# The cgroup hierarchy: unconditional, and to /host/sys/fs/cgroup rather than
+# over the container's own. Without it the container collector walks the agent's
+# own private-namespace cgroup, finds no sibling scopes, and reports nothing at
+# all -- silently, because an empty walk is not an error.
+assert_contains "$NETRA_BLK_VOLUMES" 'source: "/sys/fs/cgroup"' \
+    "the host cgroup hierarchy is always mounted"
+assert_contains "$NETRA_BLK_VOLUMES" "target: /host/sys/fs/cgroup" \
+    "the cgroup hierarchy lands on /host/sys/fs/cgroup, not /sys/fs/cgroup"
+
 # A space in the mount point survives into a quoted source rather than breaking
 # the YAML.
 mkdir -p "$ROOT/mnt/my data"

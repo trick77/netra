@@ -954,6 +954,20 @@ check_cgroup_v2() {
             "Boot with systemd.unified_cgroup_hierarchy=1 on the kernel command line and try again."
     fi
     info "  cgroup:          v2 (unified) at $P_CGROUP"
+
+    # The emitted bind hardcodes /sys/fs/cgroup as its source, because a bind
+    # source is an EMIT path and $P_CGROUP carries $NETRA_SETUP_ROOT under test.
+    # So an operator who exported NETRA_CGROUP_ROOT because their hierarchy
+    # genuinely lives elsewhere would have this script validate one path and
+    # mount another. Say so rather than let the mismatch pass unremarked; the
+    # test fixture root is not the case being warned about.
+    if [ -n "${NETRA_CGROUP_ROOT:-}" ] &&
+        [ "$NETRA_CGROUP_ROOT" != "/sys/fs/cgroup" ] &&
+        [ -z "${NETRA_SETUP_ROOT:-}" ]; then
+        warn "NETRA_CGROUP_ROOT is set to $NETRA_CGROUP_ROOT, which is the path this script" \
+            "PROBED. The compose.yaml it writes still mounts /sys/fs/cgroup, so edit the" \
+            "bind source by hand if that is not where this host's hierarchy lives."
+    fi
 }
 
 # check_machine_id — present AND non-empty.
@@ -2104,6 +2118,36 @@ _env_value() {
     eval "export NETRA_VAL_$1"
 }
 
+# _pct_encode STRING — percent-encode the three characters NETRA_FS_MOUNTS
+# cannot carry literally.
+#
+# The value is a `,`-joined list of `label=mountpoint`, and a mount point may
+# legitimately contain either separator (/mnt/a,b is a valid path). `%` is
+# encoded first, or the escapes written for the other two would be
+# indistinguishable from a literal `%2C` that was in the path all along.
+# internal/agent/config decodes it.
+_pct_encode() {
+    printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/,/%2C/g' -e 's/=/%3D/g'
+}
+
+# build_fs_mounts_value — the NETRA_FS_MOUNTS value: `label=mountpoint,...`.
+#
+# Walks the SAME FS_MOUNTS list that build_volume_block turns into bind mounts,
+# so the mapping and the mounts are rendered together and cannot drift apart.
+#
+# Without it the agent knows only the target it stat'd — /netra/fs/ark — and
+# that path names nothing on the host. Reporting it is what produced
+# "/netra/fs/ark is 94 % full" on a host with no netra anywhere.
+build_fs_mounts_value() {
+    NETRA_BLK_FS_MOUNTS=""
+    while IFS='|' read -r _bf_mm _bf_mp _bf_lab; do
+        [ -n "$_bf_mm" ] || continue
+        NETRA_BLK_FS_MOUNTS="${NETRA_BLK_FS_MOUNTS:+$NETRA_BLK_FS_MOUNTS,}$_bf_lab=$(_pct_encode "$_bf_mp")"
+    done <<EOF
+${FS_MOUNTS:-}
+EOF
+}
+
 # build_volume_block — the `volumes:` key AND its entries, or nothing at all.
 #
 # Long form (`type: bind` / `source:` / `target:` / `read_only: true`) rather
@@ -2138,6 +2182,22 @@ build_volume_block() {
     done <<EOF
 ${FS_MOUNTS:-}
 EOF
+
+    # Unconditional, unlike everything around it: check_cgroup_v2 has already
+    # hard-failed the run on a host without unified cgroup v2, so reaching here
+    # means this host has one. It is also the mount the container collectors
+    # cannot work without -- the container LIST is the walk of this tree, not
+    # the Docker socket below.
+    #
+    # The literal, NOT $P_CGROUP: that is a PROBE path and carries
+    # $NETRA_SETUP_ROOT, and a source here is an emit path. Same rule every
+    # other bind in this function follows.
+    #
+    # The TARGET is not /sys/fs/cgroup. Docker's default cgroup namespace is
+    # private, so the agent's own /sys/fs/cgroup is rooted at its own cgroup and
+    # holds no other container's scope; giving the host's tree its own path
+    # also means a missing mount fails loudly instead of walking an empty one.
+    _bv_add "/sys/fs/cgroup" "/host/sys/fs/cgroup"
 
     if [ "${DOCKERSOCK_ENABLED:-0}" = 1 ]; then
         _bv_add "/var/run/docker.sock" "/var/run/docker.sock"
@@ -2207,6 +2267,9 @@ build_pid_block() {
 
 build_blocks() {
     build_volume_block
+    # Beside the volume block on purpose: both read FS_MOUNTS, and the bind
+    # mounts are meaningless to the hub without the mapping that names them.
+    build_fs_mounts_value
     build_device_block
     build_cap_block
     build_pid_block
@@ -2482,6 +2545,11 @@ resolve_token() {
     # --token and --token-file have both already been resolved by parse_args.
     [ -z "$TOKEN" ] || return 0
 
+    # An existing .env this run may not overwrite means a token typed here has
+    # nowhere to go. Prompting for a secret in order to discard it is the very
+    # thing the reuse path exists to stop; configure has already said so.
+    [ "${REUSE_ENV:-0}" != 1 ] || return 0
+
     if [ ! -r "$P_TTY" ]; then
         warn "no agent token was provided (--token / --token-file). NETRA_TOKEN will be" \
             "written empty and the agent will refuse to start until you fill it in." \
@@ -2515,6 +2583,49 @@ resolve_token() {
     fi
 }
 
+# seed_from_env FILE — adopt the values an existing .env already holds.
+#
+# Only fills a variable that is still EMPTY, which is what keeps the precedence
+# straight: parse_args has already applied every flag, so a flag wins, the file
+# comes next, and a prompt is the last resort for a value nobody has supplied.
+#
+# Called only when the file will be left alone. Under --force the operator is
+# replacing those values, and pre-filling them would silently answer the very
+# questions they asked to be asked -- a token rotation, most of all.
+#
+# The token is adopted like everything else and NEVER printed. That is the whole
+# point: it is the one value an operator would otherwise retype from a password
+# manager only to have it discarded.
+seed_from_env() {
+    _se_file="$1"
+    [ -r "$_se_file" ] || return 0
+    _se_adopted=""
+
+    for _se_key in NETRA_HUB_URL NETRA_TOKEN NETRA_LOCATION NETRA_PROVIDER NETRA_HOST_TYPE; do
+        # The FIRST '=' only: a hub URL may carry a query string and a token is
+        # arbitrary. Trailing whitespace is stripped, inner whitespace is not --
+        # "Zurich, CH" is a legitimate location.
+        _se_val=$(sed -n "s/^[[:space:]]*${_se_key}=//p" "$_se_file" | sed -n '$p')
+        _se_val=${_se_val%"${_se_val##*[![:space:]]}"}
+        [ -n "$_se_val" ] || continue
+
+        case "$_se_key" in
+            NETRA_HUB_URL) [ -n "$HUB_URL" ] || HUB_URL="$_se_val" ;;
+            NETRA_TOKEN) [ -n "$TOKEN" ] || TOKEN="$_se_val" ;;
+            NETRA_LOCATION) [ -n "$LOCATION" ] || LOCATION="$_se_val" ;;
+            NETRA_PROVIDER) [ -n "$PROVIDER" ] || PROVIDER="$_se_val" ;;
+            NETRA_HOST_TYPE) [ -n "$HOST_TYPE" ] || HOST_TYPE="$_se_val" ;;
+        esac
+        _se_adopted="$_se_adopted $_se_key"
+    done
+
+    # The KEYS, never the values: NETRA_TOKEN is in this list. Naming them is
+    # what turns "nothing was asked" from something the operator has to take on
+    # trust into something they can check.
+    [ -z "$_se_adopted" ] ||
+        info "  reused from .env:${_se_adopted}"
+}
+
 # configure — everything the operator states rather than the host reveals.
 #
 # Detection cannot guess any of these, and an .env without a hub URL or a token
@@ -2526,36 +2637,63 @@ resolve_token() {
 configure() {
     step "Configuration"
 
-    # BEFORE the questions, not after the answers. write_outputs refuses to
-    # overwrite an existing .env without --force, and that refusal does not
-    # depend on anything detection found — so an operator re-running to rotate a
-    # token used to type the new one at a hidden prompt, watch the run succeed,
-    # and keep the old token, with the warning arriving only after every value
-    # had already been collected and silently dropped.
+    # BEFORE the questions, because the answer to most of them is already on
+    # disk. write_outputs refuses to overwrite an existing .env without --force,
+    # so a re-run used to ask for the hub URL, then the TOKEN at a hidden
+    # prompt, then the location and the rest -- and drop every one of them. It
+    # warned first rather than not asking, which is the same defect with better
+    # manners: nobody types a secret at a prompt in order to be told it was
+    # ignored. Re-running to pick up a new mount or a new template is the
+    # ordinary case, and it should be one command and no questions.
+    #
+    # Seeding rather than skipping, because the prompts are already gated on an
+    # empty value: a seeded variable simply has nothing to ask about. That also
+    # gets the precedence right for free -- a flag beats the existing .env,
+    # which beats a prompt.
+    REUSE_ENV=0
     if [ -e "$OUTPUT_DIR/.env" ] && [ "$FORCE" != 1 ]; then
-        warn "$OUTPUT_DIR/.env already exists and --force was not given, so the values" \
-            "asked for below will NOT be written to it. Its existing token and settings" \
-            "stay in force. Re-run with --force to replace them."
+        REUSE_ENV=1
+        seed_from_env "$OUTPUT_DIR/.env"
+        warn "$OUTPUT_DIR/.env already exists and --force was not given, so its values are" \
+            "REUSED and nothing below is asked. Re-run with --force to be asked again and" \
+            "replace them."
+
+        # A key the file leaves EMPTY cannot be filled on this run: the answer
+        # has nowhere to be written. Asking anyway is the original defect in its
+        # worst form -- a token typed at a hidden prompt and dropped -- so the
+        # prompts are skipped and the gap is named instead. An .env written by a
+        # run that had no token is exactly this case.
+        _cfg_missing=""
+        [ -n "$HUB_URL" ] || _cfg_missing="$_cfg_missing NETRA_HUB_URL"
+        [ -n "$TOKEN" ] || _cfg_missing="$_cfg_missing NETRA_TOKEN"
+        [ -z "$_cfg_missing" ] ||
+            warn "and these are EMPTY in it:${_cfg_missing}. They are not asked for here," \
+                "because this run cannot write them. Edit $OUTPUT_DIR/.env directly, or" \
+                "re-run with --force to be asked."
     fi
 
-    if [ -z "$HUB_URL" ]; then
+    if [ -z "$HUB_URL" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value HUB_URL "Hub base URL" "https://netra.example.com"
     fi
-    if [ -z "$HUB_URL" ]; then
+    if [ -z "$HUB_URL" ] && [ "$REUSE_ENV" != 1 ]; then
         # The same shape as the missing-token note below: equally fatal to the
         # agent, so it is equally loud and reaches the finish report.
+        #
+        # Not on the reuse path, where this run writes no .env at all: "will be
+        # written empty" would be false, and the empty key has already been
+        # named with the remedy that actually applies.
         warn "no hub URL was given. NETRA_HUB_URL will be written empty and the agent will" \
             "refuse to start until you fill it in."
-    else
+    elif [ -n "$HUB_URL" ]; then
         info "  hub url:         $HUB_URL"
     fi
 
     resolve_token
 
-    if [ -z "$LOCATION" ]; then
+    if [ -z "$LOCATION" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value LOCATION "Where is this host (city, country)" "Zurich, CH"
     fi
-    if [ -z "$PROVIDER" ]; then
+    if [ -z "$PROVIDER" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value PROVIDER "Who hosts it" "Hetzner, OVH, self-hosted"
     fi
 
@@ -2563,7 +2701,7 @@ configure() {
     # host that never groups with its siblings. Empty stays allowed - re-asking
     # forever would trap an operator who does not know what to call a container
     # host - but a non-empty answer must be one of the three.
-    if [ -z "$HOST_TYPE" ]; then
+    if [ -z "$HOST_TYPE" ] && [ "$REUSE_ENV" != 1 ]; then
         netra_ask_value HOST_TYPE "Host type (bare_metal, vps, vm; blank to skip)" "vps"
     fi
     while [ -n "$HOST_TYPE" ] && ! _valid_host_type "$HOST_TYPE"; do
@@ -2677,6 +2815,7 @@ write_outputs() {
     _env_value PROVIDER "$PROVIDER"
     _env_value HOST_TYPE "$HOST_TYPE"
     _env_value PID_HOST "${PID_HOST:-0}"
+    _env_value FS_MOUNTS "${NETRA_BLK_FS_MOUNTS:-}"
 
     # The gate. One question covering everything below it, so "no" means the
     # host is exactly as it was.
@@ -2772,6 +2911,34 @@ EOF
         warn "$OUTPUT_DIR/.env already exists and --force was not given, so it was left" \
             "untouched. Its existing token and settings still apply. Re-run with --force to" \
             "overwrite it."
+        # One exception, and only one: NETRA_FS_MOUNTS. It is DERIVED from the
+        # same detection that just rendered the bind mounts, exactly like
+        # compose.yaml, and it is the line that stops the agent naming a
+        # filesystem after the container path it is measured through. An .env
+        # left alone here would keep the mounts and lose their names, which is
+        # the bug this exists to fix — and demanding --force to fix it would
+        # make the operator re-supply a token to correct a label.
+        sync_fs_mounts "$OUTPUT_DIR/.env"
+
+        # The ONE case where leaving .env alone leaves the agent broken, and
+        # broken silently. NETRA_CGROUP_ROOT used to be documented as
+        # /sys/fs/cgroup, so an operator who uncommented it then pins the agent
+        # to its OWN cgroup hierarchy -- which under Docker's default private
+        # cgroup namespace contains no other container's scope. The compose
+        # this run just wrote mounts the host's tree at /host/sys/fs/cgroup and
+        # the agent's default points there, but a pinned .env overrides both,
+        # and the failure looks exactly like a host with no containers.
+        #
+        # grep on the value, not the key: an operator whose hierarchy genuinely
+        # lives elsewhere is not making this mistake.
+        if grep -qE '^[[:space:]]*NETRA_CGROUP_ROOT=/sys/fs/cgroup[[:space:]]*$' \
+            "$OUTPUT_DIR/.env" 2>/dev/null; then
+            warn "$OUTPUT_DIR/.env pins NETRA_CGROUP_ROOT=/sys/fs/cgroup, which is the" \
+                "AGENT'S OWN cgroup hierarchy and holds no other container's scope. The" \
+                "container collector will report nothing, without an error. Delete that" \
+                "line (the default is now /host/sys/fs/cgroup, where this compose.yaml" \
+                "mounts the host's tree) or set it to /host/sys/fs/cgroup."
+        fi
     else
         _wo_env_existed=0
         [ ! -e "$OUTPUT_DIR/.env" ] || _wo_env_existed=1
@@ -2799,6 +2966,63 @@ EOF
     fi
 
     rm -rf "$SCRATCH_DIR"
+}
+
+# netra_rewrite_fs_mounts FILE — replace (or append) the NETRA_FS_MOUNTS line.
+#
+# awk with ENVIRON, never `sed s///`: the value is built from mount points, and
+# a `/` in the replacement would end a sed expression early.
+#
+# The result is copied back over the original with `cat` rather than moved into
+# place. A `mv` would replace the inode, and this file holds the agent's token —
+# whatever ownership and mode the operator gave it must survive a run that only
+# came here to correct one derived line.
+netra_rewrite_fs_mounts() {
+    _rf_tmp="$SCRATCH_DIR/env.fs_mounts"
+    awk '
+        /^NETRA_FS_MOUNTS=/ {
+            print "NETRA_FS_MOUNTS=" ENVIRON["NETRA_VAL_FS_MOUNTS"]
+            seen = 1
+            next
+        }
+        { print }
+        END {
+            if (!seen) {
+                print ""
+                print "# What each measured filesystem is called on this host, added by"
+                print "# setup-agent.sh. Rendered from the same list as the bind mounts."
+                print "NETRA_FS_MOUNTS=" ENVIRON["NETRA_VAL_FS_MOUNTS"]
+            }
+        }
+    ' "$1" >"$_rf_tmp" || return 1
+    # Checked before the truncating redirect below, never after. `cat >` empties
+    # the target first, so an awk that produced nothing -- out of space, killed
+    # mid-run -- would take the agent's token with it, and recovering that costs
+    # the operator a new one.
+    [ -s "$_rf_tmp" ] || return 1
+    cat "$_rf_tmp" >"$1" || return 1
+    rm -f "$_rf_tmp"
+}
+
+# sync_fs_mounts FILE — bring one derived line of an existing .env up to date.
+#
+# Silent when the file already says the right thing, which is every re-run that
+# changed nothing about the host's filesystems.
+sync_fs_mounts() {
+    [ -f "$1" ] || return 0
+    _sf_want="${NETRA_BLK_FS_MOUNTS:-}"
+    _sf_have=$(sed -n 's/^NETRA_FS_MOUNTS=//p' "$1" | head -1)
+    if [ -n "$(sed -n '/^NETRA_FS_MOUNTS=/p' "$1")" ] && [ "$_sf_have" = "$_sf_want" ]; then
+        return 0
+    fi
+    if ! netra_exec netra_rewrite_fs_mounts "$1"; then
+        warn "could not update NETRA_FS_MOUNTS in $1. Until it is set, the agent reports" \
+            "each filesystem under its short label instead of its mount point. Set it by" \
+            "hand to: ${_sf_want:-(empty)}"
+        return 0
+    fi
+    record_change "updated NETRA_FS_MOUNTS in $1"
+    info "  filesystems:     NETRA_FS_MOUNTS updated in the existing .env"
 }
 
 # _check_env_value KEY VALUE FILE — did a value the operator gave us actually
@@ -2931,11 +3155,19 @@ EOF
     info ""
     # `cd . && ...` reads as a bug, and OUTPUT_DIR is "." whenever this ran from
     # a directory already named netra-agent.
+    # `pull` and not just `up -d`. The image tag is a moving `latest`, and
+    # `up -d` reuses whatever copy of it the host already has — so on an
+    # upgrade, the command that looks like it applied the change starts the old
+    # binary again. An operator re-running this script to pick up an agent fix
+    # would see nothing change and have no reason to suspect why.
     if [ "$OUTPUT_DIR" = "." ]; then
-        info "    $(compose_cmd) up -d"
+        info "    $(compose_cmd) pull && $(compose_cmd) up -d"
     else
-        info "    cd $OUTPUT_DIR && $(compose_cmd) up -d"
+        info "    cd $OUTPUT_DIR && $(compose_cmd) pull && $(compose_cmd) up -d"
     fi
+    info ""
+    info "  pull first: the image tag is a moving one, and up -d alone would restart the"
+    info "  copy already on this host."
     info ""
 }
 
@@ -2946,9 +3178,26 @@ start_stack() {
     # single gate exists to prevent.
     [ "${WROTE_OUTPUTS:-1}" = 1 ] || return 0
     step "Start"
+    # Pull before starting, for the same reason the finish report tells an
+    # operator to: the image tag moves, and `up -d` alone restarts the copy
+    # already on the host — so --start on a re-run to pick up an agent fix
+    # would quietly start the unfixed binary again.
+    #
+    # Fatal, and said out loud. Starting anyway would run whatever copy of the
+    # image this host already has, which on an upgrade is the binary the operator
+    # came here to replace -- but a bare non-zero exit from errexit tells them
+    # nothing about which of the two commands failed, or that everything above
+    # this step was already written.
+    _ss_pull_failed="could not pull the agent image, so nothing was started."
+    _ss_pull_failed="$_ss_pull_failed compose.yaml and .env are written and the"
+    _ss_pull_failed="$_ss_pull_failed markers are in place: fix the registry access"
+    _ss_pull_failed="$_ss_pull_failed and run '$(compose_cmd) pull &&"
+    _ss_pull_failed="$_ss_pull_failed $(compose_cmd) up -d' in $OUTPUT_DIR."
     if [ "$DOCKER_COMPOSE" = compose_v1 ]; then
+        netra_exec docker-compose -f "$OUTPUT_DIR/compose.yaml" pull || die "$_ss_pull_failed"
         netra_exec docker-compose -f "$OUTPUT_DIR/compose.yaml" up -d
     else
+        netra_exec docker compose -f "$OUTPUT_DIR/compose.yaml" pull || die "$_ss_pull_failed"
         netra_exec docker compose -f "$OUTPUT_DIR/compose.yaml" up -d
     fi
 

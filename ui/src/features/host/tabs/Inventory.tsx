@@ -371,7 +371,23 @@ const ADDRESS_COLUMNS: Column<Address>[] = [
   },
   {
     key: "last_seen",
-    header: "Last seen",
+    // "Last changed", not "Last seen", because that is what the column holds.
+    //
+    // The hub does bump last_seen on every upsert
+    // (families.go's UpsertHostAddresses), but the upsert only runs when the
+    // address set CHANGES: the collector compares a fingerprint against the
+    // previous scrape and returns nothing when they match, and Addresses --
+    // unlike Packages -- has no periodic floor that re-sends an unchanged set
+    // anyway. So a healthy host that keeps the same IPs never touches these
+    // rows again, and the timestamp drifts further into the past the longer
+    // it stays healthy. Headed "Last seen" that read as the host having gone
+    // quiet; it is the exact opposite.
+    //
+    // The packages table keeps "Last seen" and is not the same bug: its
+    // collector re-emits the whole inventory when the daily confirmation
+    // falls due, changed or not, so there the timestamp really is a
+    // last-seen.
+    header: "Last changed",
     cell: (row) => <When iso={row.last_seen} />,
   },
 ];

@@ -83,6 +83,11 @@ assert_contains "$ENVOUT" "NETRA_PID_HOST=1" \
     "--pid-host is recorded in .env, so the process collector need not guess"
 assert_contains "$ENVOUT" "NETRA_UTMP_PATH=/var/run/utmp" \
     "the utmp path reaches .env"
+# The mapping that keeps the container's own paths out of the hub. Its labels
+# are the same ones the bind targets in the golden compose use, and its
+# mountpoints are what this host calls those filesystems.
+assert_contains "$ENVOUT" "NETRA_FS_MOUNTS=root=/,ark=/mnt/ark" \
+    "each measured filesystem is mapped from its label to its host mount point"
 # The scrape interval is a fixed 60s constant, so there is no knob for it.
 # Matched against the ASSIGNMENTS only: the template's own header comment names
 # NETRA_INTERVAL in order to explain why it is absent.
@@ -147,9 +152,15 @@ assert_contains "$ENVOUT" 'NETRA_TOKEN=nta_a&b/c\d' \
 
 # --- 3. an empty volumes block still renders valid YAML -----------------------
 #
-# Zero accepted filesystems is legitimate (§6.4, a container-only host). The
-# `volumes:` KEY lives inside the block, so an empty block removes the key
+# The `volumes:` KEY lives inside the block, so an empty block removes the key
 # entirely rather than leaving a dangling null mapping.
+#
+# This drives render_template directly rather than build_volume_block, and that
+# distinction now matters: build_volume_block emits the cgroup bind
+# unconditionally, so it can no longer return an empty block on any host
+# check_cgroup_v2 lets through. The renderer's contract is tested here anyway --
+# it is the renderer's, not that function's, and the same marker-deleting rule
+# carries cap_add, devices and pid, each of which IS routinely empty.
 NETRA_BLK_VOLUMES=""
 NETRA_BLK_DEVICES=""
 NETRA_BLK_CAP_ADD=""

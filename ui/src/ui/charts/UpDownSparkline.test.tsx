@@ -64,6 +64,76 @@ describe("UpDownSparkline", () => {
     ).toBe("var(--s4)");
   });
 
+  // The mark itself: a dimmed fill with a solid edge of the same token, and
+  // the mirror axis. Every number here is Overlay's mirrored branch verbatim
+  // -- Interface throughput draws the same rx/tx pair, and the two are read
+  // on the same screen. These assertions exist so a divergence fails here
+  // rather than being noticed as "the fleet row looks a bit off".
+  describe("mark weights", () => {
+    it("dims the fill and strokes the same token on both sides", () => {
+      // Given a chart with an explicit colour per side
+      const { container } = render(
+        <UpDownSparkline
+          up={[1, 2]}
+          down={[1, 2]}
+          max={4}
+          upColor="var(--s3)"
+          downColor="var(--s4)"
+        />,
+      );
+
+      // When each side's path is read
+      const upPath = container.querySelector("path[data-up]");
+      const downPath = container.querySelector("path[data-down]");
+
+      // Then the fill is translucent and the edge is that same colour, solid
+      expect(upPath?.getAttribute("fill-opacity")).toBe("0.45");
+      expect(upPath?.getAttribute("stroke")).toBe("var(--s3)");
+      expect(upPath?.getAttribute("stroke-width")).toBe("1.25");
+      expect(downPath?.getAttribute("fill-opacity")).toBe("0.45");
+      expect(downPath?.getAttribute("stroke")).toBe("var(--s4)");
+      expect(downPath?.getAttribute("stroke-width")).toBe("1.25");
+    });
+
+    it("rules the mirror axis across the full width at mid-height", () => {
+      // Given a chart of a known box
+      const width = 100;
+      const height = 20;
+      const { container } = render(
+        <UpDownSparkline
+          up={[1, 2]}
+          down={[1, 2]}
+          max={4}
+          width={width}
+          height={height}
+        />,
+      );
+
+      // When the axis rule is read
+      const mid = container.querySelector("line[data-mid]");
+
+      // Then it spans the box at the midline mirrorPaths() anchors to
+      expect(mid?.getAttribute("x1")).toBe("0");
+      expect(mid?.getAttribute("x2")).toBe(String(width));
+      expect(mid?.getAttribute("y1")).toBe(String(height / 2));
+      expect(mid?.getAttribute("y2")).toBe(String(height / 2));
+      expect(mid?.getAttribute("stroke")).toBe("var(--border)");
+    });
+
+    it("still rules the axis when the host reported nothing", () => {
+      // Given a host that reported no traffic at all
+      const { container } = render(
+        <UpDownSparkline up={[null, null]} down={[null, null]} max={4} />,
+      );
+
+      // When the chart is read
+      // Then neither fill is drawn, but the axis still says where zero was
+      expect(container.querySelector("path[data-up]")).toBeNull();
+      expect(container.querySelector("path[data-down]")).toBeNull();
+      expect(container.querySelector("line[data-mid]")).not.toBeNull();
+    });
+  });
+
   it("gives the chart an accessible name", () => {
     render(
       <UpDownSparkline

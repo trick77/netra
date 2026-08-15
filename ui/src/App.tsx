@@ -541,11 +541,23 @@ function ContainerScreen({
 }
 
 function EventsScreen({ search, go }: { search: string; go: Go }) {
-  // The remembered range is the fallback for a URL that carries none,
-  // clamped to what this page offers -- it widens, so a remembered 6h shows
-  // as 24h here rather than collapsing to 1h and an empty log.
+  // The same three rules rangeParam applies, spelled out here because the
+  // range arrives as one of the filters rather than on its own: the URL
+  // wins, the remembered choice is the fallback, and the result is clamped
+  // to what this page offers -- it widens, so a 6h shows as 24h here rather
+  // than collapsing to 1h and an empty log.
+  //
+  // rangeFromSearch, not filtersFromQuery's own check, for the URL half:
+  // filtersFromQuery only recognises the four ranges this page OFFERS, so a
+  // link carrying ?range=6h was discarded outright and the reader's
+  // remembered choice applied instead -- the one thing a sent link exists to
+  // override. Clamped, that link shows 24h, which is what it meant.
   const filters = useMemo(
-    () => filtersFromQuery(search, clampRange(loadRange(), EVENT_RANGE_VALUES)),
+    () =>
+      filtersFromQuery(
+        search,
+        clampRange(rangeFromSearch(search, loadRange()), EVENT_RANGE_VALUES),
+      ),
     [search],
   );
 

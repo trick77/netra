@@ -450,3 +450,156 @@ func TestContainersReportsNothingWithNoContainers(t *testing.T) {
 		t.Errorf("rows = %d, want 0", len(res.Containers))
 	}
 }
+
+// The failure this collector was blind to for its entire life: the socket can
+// see containers and the cgroup walk cannot.
+//
+// That is what an unmounted cgroup hierarchy looks like from inside the agent,
+// and what every containerised agent looked like before the mount was added --
+// Docker's default cgroup namespace is private, so the agent's own
+// /sys/fs/cgroup holds no other container's scope. The walk found nothing,
+// which is not an error, so the agent reported perfect health and zero
+// containers on a host running thirty.
+func TestContainersReportsNoCgroupScopesWhenTheSocketDisagrees(t *testing.T) {
+	testee := collector.NewContainers(t.TempDir(), noProcRoot,
+		fakeLister(
+			collector.ContainerMeta{ID: "abc123", Name: "web"},
+			collector.ContainerMeta{ID: "def456", Name: "db"},
+		))
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Containers) != 0 {
+		t.Fatalf("rows = %d, want 0 -- there is no cgroup tree to read", len(res.Containers))
+	}
+
+	if got := testee.Capabilities()["containers"]; got != "no-cgroup-scopes" {
+		t.Errorf("capability = %q, want no-cgroup-scopes", got)
+	}
+	if got := testee.StartupSummary(); got != "0 cgroup scopes, 2 containers named by the docker socket" {
+		t.Errorf("StartupSummary = %q, want both counts side by side", got)
+	}
+}
+
+// The counterpart, and the reason the capability is gated on the mismatch
+// rather than on an empty walk: a host genuinely running no containers is not
+// misconfigured and must not be flagged as such.
+func TestContainersRaisesNoCapabilityWhenThereIsGenuinelyNothingToSee(t *testing.T) {
+	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister())
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if got, ok := testee.Capabilities()["containers"]; ok {
+		t.Errorf("capability = %q, want none -- no containers is not a fault", got)
+	}
+}
+
+// A cgroup root that does not exist at all is an ERROR, not an empty walk.
+//
+// This is what makes the default /host/sys/fs/cgroup safer than the old
+// /sys/fs/cgroup: the old path always exists, so a missing mount produced
+// silence, while a path that only exists when the mount was granted produces a
+// logged collector failure.
+func TestContainersFailsLoudlyWhenTheCgroupRootIsAbsent(t *testing.T) {
+	testee := collector.NewContainers(filepath.Join(t.TempDir(), "never-mounted"),
+		noProcRoot, fakeLister())
+
+	res, err := testee.Collect(context.Background())
+	if err == nil {
+		t.Fatal("Collect succeeded on a missing cgroup root; want an error")
+	}
+	if res != nil {
+		t.Error("Collect returned a Result alongside an error; the contract is nil")
+	}
+}
+
+// Both cgroup drivers name their directories differently, and only one of them
+// had a fixture. cgroupfs uses the bare 64-hex id; systemd uses
+// docker-<id>.scope, which the fixtures already cover.
+func TestContainersReadsTheCgroupfsDriverBareHexDirectory(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	const id = "3f2b1c8d4e5a69708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8"
+
+	build := func(usage uint64) string {
+		t.Helper()
+		root := t.TempDir()
+		dir := filepath.Join(root, "docker", id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		write := func(name, body string) {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+				t.Fatalf("write %s: %v", name, err)
+			}
+		}
+		write("cpu.stat", fmt.Sprintf("usage_usec %d\n", usage))
+		write("memory.current", "1048576\n")
+		write("memory.stat", "inactive_file 0\n")
+		return root
+	}
+
+	testee := collector.NewContainers(build(1000000), noProcRoot,
+		fakeLister(collector.ContainerMeta{ID: id, Name: "cgroupfs-driver"}))
+
+	containersAt(t, testee, base)
+	testee.SetCgroupRootForTest(build(6000000))
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "cgroupfs-driver")
+	if got := row.GetCpuPct(); got != 50 {
+		t.Errorf("cpu_pct = %v, want 50", got)
+	}
+}
+
+// Neither shape: a directory that is neither docker-<id>.scope nor 64 hex
+// characters is not a container, and counting one would invent a container the
+// host does not have. A 63-hex name and a same-length non-hex name are the two
+// ways to miss.
+func TestContainersIgnoresDirectoriesThatAreNotContainerScopes(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{
+		"user.slice",
+		"docker-abc123.slice", // right prefix, wrong suffix
+		"3f2b1c8d4e5a69708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f",  // 63 hex
+		"zzzz1c8d4e5a69708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8", // 64, not hex
+	} {
+		dir := filepath.Join(root, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "cpu.stat"), []byte("usage_usec 1\n"), 0o644); err != nil {
+			t.Fatalf("write cpu.stat: %v", err)
+		}
+	}
+
+	testee := collector.NewContainers(root, noProcRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.StartupSummary(); got != "0 cgroup scopes, 1 container named by the docker socket" {
+		t.Errorf("StartupSummary = %q, want 0 scopes -- none of those directories is a container", got)
+	}
+}
+
+// The summary states BOTH counts even when they agree, and says plainly when
+// there is no socket to compare against. It is the line that would have made an
+// unmounted hierarchy obvious on day one.
+func TestContainersStartupSummaryNamesWhatItSaw(t *testing.T) {
+	failing := func(context.Context) ([]collector.ContainerMeta, error) {
+		return nil, errors.New("dial /var/run/docker.sock: no such file")
+	}
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing)
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.StartupSummary(); got != "2 cgroup scopes, docker socket unavailable" {
+		t.Errorf("StartupSummary = %q, want the scope count and the socket's absence", got)
+	}
+}

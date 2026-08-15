@@ -3,7 +3,9 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -42,6 +44,16 @@ type Config struct {
 	// /var/run/utmp, or a test using a fixture, can point at it.
 	UtmpPath string
 
+	// FsMounts maps a marker label to the host mountpoint it stands for --
+	// {"root": "/", "ark": "/mnt/ark"}. Rendered by setup-agent.sh from the
+	// same FS_MOUNTS list that produced the bind mounts, so the two cannot
+	// disagree.
+	//
+	// Without it the filesystem collector can only report the label, and the
+	// container-side path it is attached to (/netra/fs/ark) names nothing on
+	// the host at all.
+	FsMounts map[string]string
+
 	// PidHost records whether the container was started with pid: host.
 	//
 	// The process collector can only guess otherwise, and every guess has a
@@ -51,6 +63,15 @@ type Config struct {
 
 	// CgroupRoot is the mounted cgroup v2 hierarchy the container collector
 	// reads. cgroup v1 is a permanent non-goal (spec §1).
+	//
+	// The default is the HOST's hierarchy bind-mounted to /host/sys/fs/cgroup,
+	// not the container's own /sys/fs/cgroup, and that is deliberate twice
+	// over. Docker's default cgroup namespace is private, so a container's
+	// own /sys/fs/cgroup is rooted at its own cgroup and contains no sibling
+	// container scopes at all -- the collector walked it, found nothing, and
+	// reported no error, because an empty walk is not a failure. Pointing the
+	// default at a path that only EXISTS when the mount was granted turns that
+	// silence into a logged collector error instead.
 	CgroupRoot string
 
 	// DpkgStatus and ApkInstalled are the package databases. Whichever exists
@@ -83,8 +104,9 @@ func Load() (Config, error) {
 		LogLevel: envOr("NETRA_LOG_LEVEL", "info"),
 		UtmpPath: envOr("NETRA_UTMP_PATH", "/var/run/utmp"),
 		PidHost:  boolEnv("NETRA_PID_HOST"),
+		FsMounts: fsMounts(os.Getenv("NETRA_FS_MOUNTS")),
 
-		CgroupRoot:   envOr("NETRA_CGROUP_ROOT", "/sys/fs/cgroup"),
+		CgroupRoot:   envOr("NETRA_CGROUP_ROOT", "/host/sys/fs/cgroup"),
 		DpkgStatus:   envOr("NETRA_DPKG_STATUS", "/var/lib/dpkg/status"),
 		ApkInstalled: envOr("NETRA_APK_INSTALLED", "/lib/apk/db/installed"),
 	}
@@ -145,6 +167,71 @@ func boolEnv(key string) bool {
 	default:
 		return false
 	}
+}
+
+// fsMounts parses `label=mountpoint,label=mountpoint` as rendered by
+// setup-agent.sh.
+//
+// A malformed entry is skipped, never fatal. The worst case it causes is a
+// filesystem reported under its label instead of its mountpoint; an agent that
+// refuses to start over it would cost the operator every other metric on the
+// host as well.
+//
+// A mountpoint may legitimately contain the separators, so setup-agent.sh
+// percent-encodes , and = (and % itself) on the way out; this undoes that.
+func fsMounts(v string) map[string]string {
+	if v == "" {
+		return nil
+	}
+	out := make(map[string]string)
+	for _, pair := range strings.Split(v, ",") {
+		label, mountpoint, ok := strings.Cut(pair, "=")
+		if !ok || label == "" || mountpoint == "" {
+			slog.Warn("NETRA_FS_MOUNTS entry is not label=mountpoint, ignoring it",
+				"entry", pair)
+			continue
+		}
+		out[label] = pctDecode(mountpoint)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// pctDecode undoes the %2C / %3D / %25 encoding setup-agent.sh applies to a
+// mountpoint. An incomplete or non-hex escape is left as written rather than
+// dropped: it came from a real path, and mangling it further helps nobody.
+func pctDecode(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) {
+			if hi, ok := hexVal(s[i+1]); ok {
+				if lo, ok2 := hexVal(s[i+2]); ok2 {
+					b.WriteByte(hi<<4 | lo)
+					i += 2
+					continue
+				}
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+func hexVal(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
 }
 
 func durationOr(key string, fallback time.Duration) (time.Duration, error) {

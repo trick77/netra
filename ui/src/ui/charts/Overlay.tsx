@@ -5,7 +5,15 @@
 // to look identical, which is exactly the comparison this component exists
 // to make possible.
 import { dotPath, extent, linePath, mirrorPaths, stackBands } from "./geometry";
-import { REFERENCE_DASH, REFERENCE_STROKE, REFERENCE_WIDTH } from "./size";
+import {
+  AXIS_STROKE,
+  AXIS_WIDTH,
+  MIRROR_FILL_OPACITY,
+  MIRROR_STROKE_WIDTH,
+  REFERENCE_DASH,
+  REFERENCE_STROKE,
+  REFERENCE_WIDTH,
+} from "./size";
 
 export interface OverlaySeries {
   name: string;
@@ -140,11 +148,19 @@ export function Overlay({
               strokeDasharray={REFERENCE_DASH}
             />
             {referenceLabel !== undefined && (
+              // Below the rule when there is no room above it. The label sits
+              // 5px over the line, so a reference near the top of the plot put
+              // its baseline outside the viewBox and the text was clipped in
+              // half -- which is exactly where a reference tends to land, since
+              // a panel drawing one scales its max to sit just above it (the
+              // Memory panel uses mem_total * 1.08, putting the rule at 7% of
+              // the height). Flipping is better than shrinking the headroom:
+              // the rule has to stay clear of the top border to read as a rule.
               <text
                 data-reference-label
                 className="ref-label"
                 x={width - 4}
-                y={referenceY - 5}
+                y={referenceY < 14 ? referenceY + 12 : referenceY - 5}
                 textAnchor="end"
               >
                 {referenceLabel}
@@ -167,29 +183,35 @@ export function Overlay({
             );
             return (
               <g key={up.name} data-series={up.name} data-mirror>
+                {/* Weights from size.ts, shared with UpDownSparkline: the
+                    fleet row's traffic cell draws this same rx/tx pair and
+                    the two are read on the same screen. */}
                 <path
+                  data-up
                   d={paths.up}
                   fill={up.color}
-                  fillOpacity={0.45}
+                  fillOpacity={MIRROR_FILL_OPACITY}
                   stroke={up.color}
-                  strokeWidth={1.25}
+                  strokeWidth={MIRROR_STROKE_WIDTH}
                 />
                 {down !== undefined && (
                   <path
+                    data-down
                     d={paths.down}
                     fill={down.color}
-                    fillOpacity={0.45}
+                    fillOpacity={MIRROR_FILL_OPACITY}
                     stroke={down.color}
-                    strokeWidth={1.25}
+                    strokeWidth={MIRROR_STROKE_WIDTH}
                   />
                 )}
                 <line
+                  data-mid
                   x1={0}
                   x2={width}
                   y1={paths.mid}
                   y2={paths.mid}
-                  stroke="var(--border)"
-                  strokeWidth={1}
+                  stroke={AXIS_STROKE}
+                  strokeWidth={AXIS_WIDTH}
                 />
               </g>
             );

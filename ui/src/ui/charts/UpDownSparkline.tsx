@@ -1,9 +1,22 @@
 // A mirrored up/down traffic chart (e.g. inbound above the midline,
 // outbound below it). geometry.ts's mirrorPaths() already breaks each side
 // independently at its own gaps and never lets one side's null force a gap
-// on the other -- this component only supplies the shared max and colours.
+// on the other -- this component supplies the shared max and the colours.
+//
+// The mark weights come from size.ts, not from here. Interface throughput
+// plots the same rx/tx pair through the same mirrorPaths() geometry, and the
+// two are read on the same screen: a fleet row's traffic cell and the
+// throughput panel must be the same mark at two sizes, or the operator has
+// to learn the chart twice. Sharing the constants is what makes that true by
+// construction rather than by everyone remembering to edit both files.
 import { extent, mirrorPaths } from "./geometry";
-import { SPARK_WIDTH } from "./size";
+import {
+  AXIS_STROKE,
+  AXIS_WIDTH,
+  MIRROR_FILL_OPACITY,
+  MIRROR_STROKE_WIDTH,
+  SPARK_WIDTH,
+} from "./size";
 
 export interface UpDownSparklineProps {
   up: (number | null)[];
@@ -40,14 +53,11 @@ export function UpDownSparkline({
   label = "up/down traffic chart",
 }: UpDownSparklineProps) {
   const effectiveMax = max ?? Math.max(extent(up).max, extent(down).max);
-  const { up: upPath, down: downPath } = mirrorPaths(
-    up,
-    down,
-    width,
-    height,
-    effectiveMax,
-    pad,
-  );
+  const {
+    up: upPath,
+    down: downPath,
+    mid,
+  } = mirrorPaths(up, down, width, height, effectiveMax, pad);
 
   return (
     <svg
@@ -58,12 +68,46 @@ export function UpDownSparkline({
       role="img"
       aria-label={label}
     >
+      {/* One closed polygon carrying both a dimmed fill and an opaque stroke
+          of the same token -- the house pattern for every other chart here,
+          and the reason a fully opaque fill read as two blocks of colour
+          rather than a silhouette. Because mirrorPaths() closes each run to
+          the midline, the stroke also traces the drop at each run's ends;
+          that is true of the throughput panel too, and the axis rule below
+          covers it. */}
       {upPath !== "" && (
-        <path data-up d={upPath} fill={upColor} stroke="none" />
+        <path
+          data-up
+          d={upPath}
+          fill={upColor}
+          fillOpacity={MIRROR_FILL_OPACITY}
+          stroke={upColor}
+          strokeWidth={MIRROR_STROKE_WIDTH}
+        />
       )}
       {downPath !== "" && (
-        <path data-down d={downPath} fill={downColor} stroke="none" />
+        <path
+          data-down
+          d={downPath}
+          fill={downColor}
+          fillOpacity={MIRROR_FILL_OPACITY}
+          stroke={downColor}
+          strokeWidth={MIRROR_STROKE_WIDTH}
+        />
       )}
+      {/* Drawn last, on top, and unconditionally. Once the fills are dimmed
+          the mirror axis is what says where zero is, and a host reporting
+          nothing shows a bare rule rather than an empty box -- "axis, no
+          data" instead of "the chart failed to render". */}
+      <line
+        data-mid
+        x1={0}
+        x2={width}
+        y1={mid}
+        y2={mid}
+        stroke={AXIS_STROKE}
+        strokeWidth={AXIS_WIDTH}
+      />
     </svg>
   );
 }

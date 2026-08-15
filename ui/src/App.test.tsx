@@ -301,6 +301,24 @@ describe("the range sticks", () => {
     expect(pressed("1h")).toBe("true");
   });
 
+  // The events page reads its range as one of the filters rather than on its
+  // own, and its own parser only recognises the four windows it OFFERS -- so
+  // a link carrying 6h was discarded outright and the reader's remembered
+  // choice applied instead, which is the one thing a sent link exists to
+  // override. Every other page honours the same 6h (clamped); this one
+  // silently dropped it.
+  it("lets a link win on the events page too, clamping rather than discarding", async () => {
+    localStorage.setItem("netra.range", "30d");
+    goTo("/events?range=6h");
+
+    render(<App />);
+    await screen.findByRole("button", { name: "24h" });
+
+    // 24h, not 30d: the link asked for 6h, which this page widens to 24h.
+    expect(pressed("24h")).toBe("true");
+    expect(pressed("30d")).toBe("false");
+  });
+
   // The store is user-editable and also whatever an older build wrote.
   it("falls back to the default rather than erroring on a stored nonsense", async () => {
     localStorage.setItem("netra.range", "99y");
