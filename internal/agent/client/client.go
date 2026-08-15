@@ -1064,8 +1064,10 @@ func (c *Client) Run(ctx context.Context) error {
 			// samples" would be a claim no request was made to support.
 			if sent := depth - c.ring.Depth(); sent > 0 {
 				args := []any{"samples", sent, "buffer_depth", c.ring.Depth()}
-				// nil until the first successful POST, and cleared by every
-				// attempt -- the same guard the self-metrics use.
+				// The most recent POST's round trip, not the cycle's total: a
+				// drain that took several batches reports the last one. nil
+				// until the first success and cleared by every attempt, so the
+				// same guard the self-metrics use applies here.
 				if c.lastPostLatency != nil {
 					args = append(args, "latency_ms", c.lastPostLatency.Milliseconds())
 				}
