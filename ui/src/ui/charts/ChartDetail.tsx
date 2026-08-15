@@ -14,11 +14,20 @@ export interface ChartDetailProps {
    * rather than guessed -- a chart with invented times is worse than one
    * with none. */
   window?: { from: string; to: string } | null;
-  /** The page's range and its setter. Given both, the dialog carries the
-   * same control the page has, so a reader can widen the window without
-   * closing what they opened to look at. */
+  /** THIS DIALOG's range and its setter, owned by the panel that opened it.
+   * Given both, the dialog carries a picker, so a reader can widen the
+   * window without closing what they opened to look at -- and without
+   * re-ranging the page behind them, which is what this control used to do.
+   * Closing the dialog returns it to the page's range. */
   range?: Range;
   onRangeChange?: (range: Range) => void;
+  /** A fetch for another range is in flight. The chart keeps showing the
+   * range it already had while this is true. */
+  loading?: boolean;
+  /** Why the range just asked for could not be loaded. The chart keeps the
+   * range it had rather than blanking, so this is a line of text beside a
+   * real chart, not an error state replacing one. */
+  error?: string | null;
   /** The ranges the PAGE behind this dialog offers. It used to show all
    * five regardless, so picking 30d over a fleet chart handed the page a
    * range its own picker could not express -- every button underneath came
@@ -64,6 +73,8 @@ export function ChartDetail({
   range,
   onRangeChange,
   ranges = RANGES,
+  loading = false,
+  error = null,
   onClose,
   stacked,
   legend,
@@ -110,6 +121,19 @@ export function ChartDetail({
               value={range}
               onChange={onRangeChange}
             />
+          )}
+          {/* Beside the picker rather than over the chart: the chart is
+              still showing real data for the range it had, and covering it
+              would hide the thing the dialog was opened to read. */}
+          {loading && (
+            <span className="note" role="status">
+              Loading…
+            </span>
+          )}
+          {error !== null && !loading && (
+            <span className="note" role="status">
+              Could not load that range.
+            </span>
           )}
           <button className="btn ghost" onClick={onClose} aria-label="Close">
             Close
