@@ -62,6 +62,64 @@ The hub runs its migrations on startup and reports database reachability at
 `/api/health`, so it goes unhealthy rather than accepting ingest it can only
 503.
 
+### When the first start fails
+
+**`Bind for 127.0.0.1:8080 failed: port is already allocated`.** Something on
+the host already has the port. Find out what:
+
+```sh
+docker ps --format '{{.Names}}\t{{.Ports}}' | grep 8080
+sudo ss -lntp | grep 8080          # sudo, or it prints no owning process
+```
+
+The likely answer is **Traefik**, which this stack requires and which publishes
+its dashboard and API on `127.0.0.1:8080` by default. netra's default binding
+collides with its own prerequisite, so this is an ordinary first-run outcome
+rather than anything broken.
+
+Move netra rather than the incumbent: set `NETRA_BIND_ADDR` in `.env` to a free
+port, e.g. `127.0.0.1:18080`, and adjust the tunnel and `curl` commands below to
+match. Traefik reaches the container over the Docker network on 8080 either way,
+so agent ingest is unaffected. See *What is exposed* below.
+
+If neither command shows a holder, the binding belongs to a container that is
+still around from an earlier attempt — `docker compose down` removes it and
+releases the port. A binding that survives even that is a leaked `docker-proxy`,
+which only a `systemctl restart docker` clears.
+
+**`PostgreSQL Database directory appears to contain a database; Skipping
+initialization`, on a directory you are sure is empty.** It is not empty. An
+earlier `docker compose up` — including one that aborted on the port above —
+already ran `initdb` there, and neither `down` nor `down -v` touches a bind
+mount. Check rather than assume:
+
+```sh
+sudo cat data/timescaledb/PG_VERSION      # exists ⇒ initialised
+```
+
+The log line just above that message settles it on its own: `database system
+was shut down at <time>` is read out of `pg_control` inside the data directory,
+so a timestamp from seconds or minutes ago is a run that wrote to *this*
+directory, not a stale one from before you cleared it.
+
+That message is also not an error on its own. A hub that starts, migrates and
+reports healthy against an already-initialised directory is working correctly;
+only run the reset below if you actually want to lose the data.
+
+**Starting the database over.** Stop the stack first — deleting `PGDATA` under
+a running postgres leaves the container writing into an unlinked directory:
+
+```sh
+docker compose down
+sudo rm -rf data/timescaledb && mkdir -p data/timescaledb
+docker compose up -d
+```
+
+The `sudo` is load-bearing. After the first start the directory is uid 70, mode
+`0700`, so a plain `rm -rf` fails partway through, leaves `PG_VERSION` behind,
+and produces exactly the message above on the next start — which is how an
+apparently fresh directory ends up skipping initialisation.
+
 ### What is exposed
 
 Only `PathPrefix(/api/agent/)` is routed from the internet. Everything else —
