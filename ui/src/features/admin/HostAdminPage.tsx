@@ -352,8 +352,15 @@ function SitesSection({
     editing === null ? undefined : sites.find((s) => s.id === editing);
 
   return (
-    <div className="section">
-      <h2>Sites</h2>
+    <>
+      {/* A heading ROW, with the cards, the toolbar and the table as its
+          siblings -- the same note as on `Hosts` below. `.section` is a
+          baseline flex line, so everything nested inside it was laid out as
+          another column of that row: the whole Sites UI sat beside its own
+          title instead of under it. */}
+      <div className="section">
+        <h2>Sites</h2>
+      </div>
 
       {readError ? (
         <p className="error" role="alert">
@@ -608,7 +615,7 @@ function SitesSection({
           </div>
         </Card>
       ) : null}
-    </div>
+    </>
   );
 }
 
