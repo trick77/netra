@@ -21,6 +21,7 @@ import {
 } from "../../../lib/metrics";
 import {
   ABSENT,
+  binaryBytes,
   byterate,
   bytes,
   cardinal,
@@ -338,11 +339,24 @@ export function needsAttention(input: {
     });
   }
 
-  const failures = latest(input.agentMetrics, "post_failures_total");
+  // The increase across the window, for the same reason as the OOM block
+  // above: post_failures_total is cumulative for the whole life of the agent
+  // PROCESS and is deliberately never reset by a success (see the comment on
+  // postFailures in internal/agent/client/client.go), and the agent re-sends
+  // it on every scrape. Read with latest() it was the permanent badge the OOM
+  // comment warns about -- one hub restart pinned "1 failed deliveries" to
+  // the page forever, even though the ring buffer replayed those samples the
+  // moment the hub came back and nothing was actually lost.
+  //
+  // counterDeltas drops a negative step, so the counter going back to zero on
+  // an agent restart is skipped rather than counted as a huge recovery.
+  const failures = counterIncrease(
+    griddedValues(input.agentMetrics, 0, "post_failures_total"),
+  );
   if (failures !== null && failures > 0) {
     out.push({
       severity: "warning",
-      what: `${failures} failed deliveries to the hub`,
+      what: `${failures} failed ${failures === 1 ? "delivery" : "deliveries"} to the hub in this window`,
     });
   }
 
@@ -397,6 +411,36 @@ export function needsAttention(input: {
  * host sent; a host that reported neither reads as absent, never as an empty
  * string.
  */
+/**
+ * The operating system, as a name rather than as an identifier.
+ *
+ * os_name is meant to carry the distribution -- every fixture in the repo
+ * seeds it that way ("Ubuntu 24.04.1 LTS", "Debian GNU/Linux 12 (bookworm)")
+ * -- but an agent that cannot read /etc/os-release falls back to Go's GOOS,
+ * which is a build constant and always lowercase. Printing that raw put
+ * "linux" on the page: true, but written as a compiler token rather than as
+ * the name of an operating system.
+ *
+ * An explicit table, not capitalize(): capitalising GOOS gives "Darwin" for a
+ * Mac and "Freebsd" for a BSD, and those are both wrong in a way that reads
+ * as carelessness. A platform not in the table passes through untouched,
+ * which is right for a distro string and harmless for anything else.
+ */
+const OS_LABELS: Record<string, string> = {
+  linux: "Linux",
+  darwin: "macOS",
+  windows: "Windows",
+  freebsd: "FreeBSD",
+  openbsd: "OpenBSD",
+  netbsd: "NetBSD",
+};
+
+function osLabel(host: HostDetail): string {
+  const name = host.os_name;
+  if (name === null || name === "") return ABSENT;
+  return OS_LABELS[name] ?? name;
+}
+
 function agentBuild(host: HostDetail): string {
   const version = host.agent_version;
   const commit = host.build_commit;
@@ -663,393 +707,423 @@ export function Overview({
   );
 
   return (
-    <div className="grid2">
-      {/* Overlay (inside ChartPanel) renders the full legend itself once a
-          panel carries two or more bands, so none is built here. */}
-      <section aria-label="Processor">
-        {/* No unit prop: percent() prints one already, and passing both
-            rendered "12 % %". See ChartPanel's unit prop. */}
-        <ChartPanel
-          title="Processor"
-          series={cpuBands}
-          // No ceiling for the per-core stack: the bands are each core's real
-          // utilisation, so the stack runs to cores x 100 and the height is a
-          // shape rather than a quantity. The cpu_total fallback is a
-          // percentage of the host and keeps the 0-100 axis.
-          max={perCore.length > 0 ? undefined : 100}
-          hideAxis={perCore.length > 0}
-          fmt={(n) => percent(n)}
-          window={hostMetrics?.window ?? null}
-          // Each core contributes busy/N, so the stack's top edge is the mean
-          // across cores -- cpu_total -- and 100 stays the right ceiling
-          // however many cores the host has.
-          //
-          // Stacked for the cpu_total fallback too, even though one band is
-          // not much of a stack: the mark must not change depending on
-          // whether a host happened to be small enough to ask for its cores,
-          // or two machines side by side would look like different metrics.
-          stacked={cpuBands.length > 0}
-          // No legend once the bands are cores: thirty-two entries are
-          // longer than the chart, and the enlarged view's table already
-          // names every core beside its colour. This used to suppress the
-          // legend by passing `highlight`, which ALSO dims every other series
-          // to 35% -- the whole stack went pale to hide a list.
-          legend={perCore.length <= 6}
-          // An empty band list is a tier that does not carry the columns, and
-          // an empty chart asserts the host reported nothing. Say which it is.
-          unavailable={
-            cpuBands.length === 0
-              ? "The host reported no processor samples in this window."
-              : undefined
-          }
-        />
-      </section>
+    <>
+      {/* Above the cards, not among them.
+          .grid2 is a CSS multi-column flow, so a card placed first in it only
+          reaches the top of the LEFT column -- what is wrong with the host sat
+          eighth, below the disk meters, at the width of half the page. It is
+          the one thing on this tab that must be read before anything else, so
+          it is lifted out of the flow entirely and spans the page.
 
-      {/* The breakdown keeps its own panel rather than being displaced by the
+          Present only when something is wrong, the same rule the fleet band
+          follows: a permanently visible "All clear" box in the best position
+          on the page is a box people stop reading, and it costs that position
+          on every healthy host. When there is nothing to say, one quiet line
+          says the check ran. */}
+      {attention.length === 0 ? (
+        <p className="allclear">Nothing needs attention on this host</p>
+      ) : (
+        <section className="attn" aria-label="Needs attention">
+          <header>
+            <h3>
+              {attention.length} thing{attention.length === 1 ? "" : "s"} need
+              {attention.length === 1 ? "s" : ""} attention
+            </h3>
+          </header>
+          <ul className="attn-list">
+            {attention.map((a, index) => (
+              <li className="attn-row" key={index}>
+                <Badge severity={a.severity}>{a.severity}</Badge>
+                <span className="what">{a.what}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <div className="grid2">
+        {/* Overlay (inside ChartPanel) renders the full legend itself once a
+          panel carries two or more bands, so none is built here. */}
+        <section aria-label="Processor">
+          {/* No unit prop: percent() prints one already, and passing both
+            rendered "12 % %". See ChartPanel's unit prop. */}
+          <ChartPanel
+            title="Processor"
+            series={cpuBands}
+            // No ceiling for the per-core stack: the bands are each core's real
+            // utilisation, so the stack runs to cores x 100 and the height is a
+            // shape rather than a quantity. The cpu_total fallback is a
+            // percentage of the host and keeps the 0-100 axis.
+            max={perCore.length > 0 ? undefined : 100}
+            hideAxis={perCore.length > 0}
+            fmt={(n) => percent(n)}
+            window={hostMetrics?.window ?? null}
+            // Each core contributes busy/N, so the stack's top edge is the mean
+            // across cores -- cpu_total -- and 100 stays the right ceiling
+            // however many cores the host has.
+            //
+            // Stacked for the cpu_total fallback too, even though one band is
+            // not much of a stack: the mark must not change depending on
+            // whether a host happened to be small enough to ask for its cores,
+            // or two machines side by side would look like different metrics.
+            stacked={cpuBands.length > 0}
+            // No legend once the bands are cores: thirty-two entries are
+            // longer than the chart, and the enlarged view's table already
+            // names every core beside its colour. This used to suppress the
+            // legend by passing `highlight`, which ALSO dims every other series
+            // to 35% -- the whole stack went pale to hide a list.
+            legend={perCore.length <= 6}
+            // An empty band list is a tier that does not carry the columns, and
+            // an empty chart asserts the host reported nothing. Say which it is.
+            unavailable={
+              cpuBands.length === 0
+                ? "The host reported no processor samples in this window."
+                : undefined
+            }
+          />
+        </section>
+
+        {/* The breakdown keeps its own panel rather than being displaced by the
           per-core stack: "which core" and "doing what" are different
           questions and a reader wants both. It used to vanish above an hour
           because cpu_user/system/iowait/steal lived only in the raw table;
           they reach the 5m and 1h rollups now, so this survives the range
           control. */}
-      <ChartPanel
-        title="CPU time breakdown"
-        series={perState}
-        max={100}
-        fmt={(n) => percent(n)}
-        stacked
-        window={hostMetrics?.window ?? null}
-        unavailable={
-          perState.length === 0
-            ? "cpu_user, cpu_system, cpu_iowait and cpu_steal are not stored at this resolution."
-            : undefined
-        }
-      />
+        <ChartPanel
+          title="CPU time breakdown"
+          series={perState}
+          max={100}
+          fmt={(n) => percent(n)}
+          stacked
+          window={hostMetrics?.window ?? null}
+          unavailable={
+            perState.length === 0
+              ? "cpu_user, cpu_system, cpu_iowait and cpu_steal are not stored at this resolution."
+              : undefined
+          }
+        />
 
-      {/* The stack and the meter answer different questions and both stay:
+        {/* The stack and the meter answer different questions and both stay:
           the meter says how full the host is right now, the chart says how it
           got there. The ceiling is mem_total rather than the stack's own
           running total, so the gap at the top is free memory -- a stack
           scaled to itself always touches the top and would report every host
           as full. */}
-      <ChartPanel
-        title="Memory"
-        series={memBands}
-        // Headroom above total so the rule marking it reads as a rule rather
-        // than as the top border of the plot.
-        max={memTotal === null ? undefined : memTotal * 1.08}
-        reference={memTotal ?? undefined}
-        referenceLabel={memTotal === null ? undefined : bytes(memTotal)}
-        fmt={(n) => bytes(n)}
-        stacked
-        window={hostMetrics?.window ?? null}
-        unavailable={
-          memBands.length === 0
-            ? "The host reported no memory samples in this window."
-            : memTotal === null
-              ? "The host's total memory is unknown, so there is no ceiling to draw the bands against."
-              : undefined
-        }
-      />
-
-      <Panel label="Memory" title="Memory">
-        <Meter
-          label="used"
-          value={memUsed}
-          max={memTotal}
-          formatValue={(value, max) => `${bytes(value)} of ${bytes(max)}`}
+        <ChartPanel
+          title="Memory"
+          series={memBands}
+          // Headroom above total so the rule marking it reads as a rule rather
+          // than as the top border of the plot.
+          max={memTotal === null ? undefined : memTotal * 1.08}
+          reference={memTotal ?? undefined}
+          referenceLabel={memTotal === null ? undefined : binaryBytes(memTotal)}
+          // Binary here too: the bands are read against the ceiling rule, and a
+          // stack labelled decimally under a rule labelled binarily makes one
+          // quantity look like two.
+          fmt={(n) => binaryBytes(n)}
+          stacked
+          window={hostMetrics?.window ?? null}
+          unavailable={
+            memBands.length === 0
+              ? "The host reported no memory samples in this window."
+              : memTotal === null
+                ? "The host's total memory is unknown, so there is no ceiling to draw the bands against."
+                : undefined
+          }
         />
-        {/* Three states, not two. swap_total lives only in the raw table
+
+        <Panel label="Memory" title="Memory">
+          <Meter
+            label="used"
+            value={memUsed}
+            max={memTotal}
+            formatValue={(value, max) =>
+              `${binaryBytes(value)} of ${binaryBytes(max)}`
+            }
+          />
+          {/* Three states, not two. swap_total lives only in the raw table
             (0001_init.sql) -- the 5m and 1h rollups do not carry it -- so at
             any range above an hour the value is missing because the TIER
             has no such column, not because the host has no swap. Collapsing
             those told a host with 8 GB of swap in use that it had none: an
             absent column rendered as a positive fact about the machine. */}
-        {!carriesColumn(hostMetrics, "swap_total") ? (
-          <div className="mrow">
-            <div>
-              <div className="lab">swap</div>
+          {!carriesColumn(hostMetrics, "swap_total") ? (
+            <div className="mrow">
+              <div>
+                <div className="lab">swap</div>
+              </div>
+              <div className="val">not at this resolution</div>
             </div>
-            <div className="val">not at this resolution</div>
-          </div>
-        ) : swapTotal === null ? (
-          // Meter's absent state renders the em-dash marker and its
-          // noLimit state says "no limit" -- the container-limit wording.
-          // Neither is the fact here, which is that this host has no swap
-          // configured at all, so the row is written out in Meter's own
-          // markup with the one word that is true.
-          <div className="mrow">
-            <div>
-              <div className="lab">swap</div>
+          ) : swapTotal === null ? (
+            // Meter's absent state renders the em-dash marker and its
+            // noLimit state says "no limit" -- the container-limit wording.
+            // Neither is the fact here, which is that this host has no swap
+            // configured at all, so the row is written out in Meter's own
+            // markup with the one word that is true.
+            <div className="mrow">
+              <div>
+                <div className="lab">swap</div>
+              </div>
+              <div className="val">none</div>
             </div>
-            <div className="val">none</div>
-          </div>
-        ) : (
-          <Meter
-            label="swap"
-            value={swapUsed}
-            max={swapTotal}
-            formatValue={(value, max) => `${bytes(value)} of ${bytes(max)}`}
-          />
-        )}
-      </Panel>
+          ) : (
+            <Meter
+              label="swap"
+              value={swapUsed}
+              max={swapTotal}
+              formatValue={(value, max) =>
+                `${binaryBytes(value)} of ${binaryBytes(max)}`
+              }
+            />
+          )}
+        </Panel>
 
-      {/* Ingress above the line, egress below -- the same mark the fleet row
+        {/* Ingress above the line, egress below -- the same mark the fleet row
           draws, because a reader moving between them should not have to
           re-learn the chart. There was no traffic card on this page at all:
           the only network chart lived in the Graphs tab, so the overview
           summarised every subsystem except the one most likely to explain a
           problem. */}
-      <Panel label="Traffic" title="Traffic">
-        {ingress.length === 0 && egress.length === 0 ? (
-          <p className="note">No interface samples in this window.</p>
-        ) : (
-          <div className="traffic-cell">
-            <UpDownSparkline
-              up={ingress}
-              down={egress}
-              width={260}
-              height={64}
-              label="Ingress and egress over time"
-            />
-            <div className="traffic-rates">
-              {/* byterate, never bitrate: net_rx/net_tx are BYTES per
+        <Panel label="Traffic" title="Traffic">
+          {ingress.length === 0 && egress.length === 0 ? (
+            <p className="note">No interface samples in this window.</p>
+          ) : (
+            <div className="traffic-cell">
+              <UpDownSparkline
+                up={ingress}
+                down={egress}
+                width={260}
+                height={64}
+                label="Ingress and egress over time"
+              />
+              <div className="traffic-rates">
+                {/* byterate, never bitrate: net_rx/net_tx are BYTES per
                   second, so bitrate() rendered every host's traffic 8x low
                   and plausibly. The fleet's traffic cell carried the same
                   bug, so the two pages agreed with each other and with
                   nothing else. */}
-              <span className="rate">
-                ↑ {byterate(latestValue(ingress))} in
-              </span>
-              <span className="rate">
-                ↓ {byterate(latestValue(egress))} out
-              </span>
+                <span className="rate">
+                  ↑ {byterate(latestValue(ingress))} in
+                </span>
+                <span className="rate">
+                  ↓ {byterate(latestValue(egress))} out
+                </span>
+              </div>
             </div>
-          </div>
-        )}
-      </Panel>
+          )}
+        </Panel>
 
-      <Panel label="Disk" title="Disk">
-        {filesystems.length === 0 ? (
-          <p className="note">No filesystem samples in this window.</p>
-        ) : (
-          <div className="fs-list">
-            {filesystems.map((fs) => (
-              <Meter
-                key={fs.label}
-                label={fs.label}
-                // df's Use%: used / (used + free), never used / total. total
-                // includes the root reserve, which is neither in use nor
-                // allocatable, so dividing by it reports a full disk as less
-                // full than df does -- and df's number is the one the
-                // operator has already seen over SSH. Same definition the
-                // fleet's disk column uses, so the two cannot disagree about
-                // one filesystem.
-                value={fs.used}
-                max={
-                  fs.used === null || fs.free === null
-                    ? null
-                    : fs.used + fs.free
-                }
-                formatValue={() =>
-                  `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`
-                }
-              />
-            ))}
-            <p className="note">
-              Bytes as measured: used and free do not sum to size, and the
-              difference is the root reserve.
-            </p>
-          </div>
-        )}
-      </Panel>
+        <Panel label="Disk" title="Disk">
+          {filesystems.length === 0 ? (
+            <p className="note">No filesystem samples in this window.</p>
+          ) : (
+            <div className="fs-list">
+              {filesystems.map((fs) => (
+                <Meter
+                  key={fs.label}
+                  label={fs.label}
+                  // df's Use%: used / (used + free), never used / total. total
+                  // includes the root reserve, which is neither in use nor
+                  // allocatable, so dividing by it reports a full disk as less
+                  // full than df does -- and df's number is the one the
+                  // operator has already seen over SSH. Same definition the
+                  // fleet's disk column uses, so the two cannot disagree about
+                  // one filesystem.
+                  value={fs.used}
+                  max={
+                    fs.used === null || fs.free === null
+                      ? null
+                      : fs.used + fs.free
+                  }
+                  formatValue={() =>
+                    `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`
+                  }
+                />
+              ))}
+              <p className="note">
+                Bytes as measured: used and free do not sum to size, and the
+                difference is the root reserve.
+              </p>
+            </div>
+          )}
+        </Panel>
 
-      <Panel label="Needs attention" title="Needs attention">
-        {attention.length === 0 ? (
-          <p className="allclear">All clear</p>
-        ) : (
-          <ul className="ai-list">
-            {attention.map((a, index) => (
-              <li key={index}>
-                <Badge severity={a.severity}>{a.severity}</Badge> {a.what}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
+        <Panel label="System" title="System">
+          <Facts
+            rows={[
+              ["OS", osLabel(host)],
+              ["Kernel", host.kernel ?? ABSENT],
+              ["Architecture", host.arch ?? ABSENT],
+              ["Processor", host.cpu_model ?? ABSENT],
+              [
+                "Cores",
+                host.cores === null
+                  ? ABSENT
+                  : `${host.cores} cores · ${host.threads ?? ABSENT} threads`,
+              ],
+              // The machine's installed RAM, which this page never stated.
+              // memory_total was blank on every host until the agent started
+              // sending it, and its only reader since has been the memory
+              // chart's fallback denominator -- so the fact itself, the one
+              // an operator asks for first when sizing anything, was
+              // collected and never shown.
+              ["Memory", binaryBytes(host.memory_total)],
+              [
+                "Uptime",
+                duration(latest(hostMetrics, "uptime_s") ?? host.uptime_s),
+              ],
+              // The exact binary that is reporting, not just its release.
+              //
+              // "0.4.1" does not identify a build: it is whatever was last
+              // tagged, and the agent in front of you may be a rebuild, a
+              // patched branch, or the same tag from before a fix landed. The
+              // commit is what makes the answer exact, and it is the first
+              // thing anyone asks when a host reports something the code is
+              // not supposed to be able to report. Both were already collected
+              // (buildinfo.Version and buildinfo.Commit) and served on
+              // HostDetail; only the version was ever shown.
+              ["Agent", agentBuild(host)],
+            ]}
+          />
+        </Panel>
 
-      <Panel label="System" title="System">
-        <Facts
-          rows={[
-            ["OS", host.os_name ?? ABSENT],
-            ["Kernel", host.kernel ?? ABSENT],
-            ["Architecture", host.arch ?? ABSENT],
-            ["Processor", host.cpu_model ?? ABSENT],
-            [
-              "Cores",
-              host.cores === null
-                ? ABSENT
-                : `${host.cores} cores · ${host.threads ?? ABSENT} threads`,
-            ],
-            // The machine's installed RAM, which this page never stated.
-            // memory_total was blank on every host until the agent started
-            // sending it, and its only reader since has been the memory
-            // chart's fallback denominator -- so the fact itself, the one
-            // an operator asks for first when sizing anything, was
-            // collected and never shown.
-            ["Memory", bytes(host.memory_total)],
-            [
-              "Uptime",
-              duration(latest(hostMetrics, "uptime_s") ?? host.uptime_s),
-            ],
-            // The exact binary that is reporting, not just its release.
-            //
-            // "0.4.1" does not identify a build: it is whatever was last
-            // tagged, and the agent in front of you may be a rebuild, a
-            // patched branch, or the same tag from before a fix landed. The
-            // commit is what makes the answer exact, and it is the first
-            // thing anyone asks when a host reports something the code is
-            // not supposed to be able to report. Both were already collected
-            // (buildinfo.Version and buildinfo.Commit) and served on
-            // HostDetail; only the version was ever shown.
-            ["Agent", agentBuild(host)],
-          ]}
-        />
-      </Panel>
+        <Panel label="Inventory" title="Inventory">
+          <Facts
+            rows={[
+              [
+                "Containers",
+                containers === null
+                  ? ABSENT
+                  : `${containers.length} containers`,
+              ],
+              [
+                "Units",
+                units === null
+                  ? ABSENT
+                  : `${units.length} units · ${failedUnits} failed`,
+              ],
+              [
+                "Filesystems",
+                filesystems.length === 0
+                  ? ABSENT
+                  : `${filesystems.length} mounted`,
+              ],
+            ]}
+          />
+        </Panel>
 
-      <Panel label="Inventory" title="Inventory">
-        <Facts
-          rows={[
-            [
-              "Containers",
-              containers === null ? ABSENT : `${containers.length} containers`,
-            ],
-            [
-              "Units",
-              units === null
-                ? ABSENT
-                : `${units.length} units · ${failedUnits} failed`,
-            ],
-            [
-              "Filesystems",
-              filesystems.length === 0
-                ? ABSENT
-                : `${filesystems.length} mounted`,
-            ],
-          ]}
-        />
-      </Panel>
+        <Panel label="Temperature" title="Temperature">
+          <SensorList
+            res={sensorMetrics}
+            rows={temperatureSeries}
+            color="var(--s7)"
+            trend="temperature"
+            empty="No temperature readings in this window."
+          />
+        </Panel>
 
-      <Panel label="Temperature" title="Temperature">
-        <SensorList
-          res={sensorMetrics}
-          rows={temperatureSeries}
-          color="var(--s7)"
-          trend="temperature"
-          empty="No temperature readings in this window."
-        />
-      </Panel>
-
-      {/* Only rendered when the host actually has fans: most VMs and every
+        {/* Only rendered when the host actually has fans: most VMs and every
           container host report none, and an empty "Fans" card on every
           cloud instance in the fleet would teach people to skip the column
           this page is made of. Same for power below. */}
-      {fanSeries.length > 0 && (
-        <Panel label="Fans" title="Fans">
-          <SensorList
-            res={sensorMetrics}
-            rows={fanSeries}
-            color="var(--s3)"
-            trend="speed"
-            empty="No fan readings in this window."
-          />
-        </Panel>
-      )}
+        {fanSeries.length > 0 && (
+          <Panel label="Fans" title="Fans">
+            <SensorList
+              res={sensorMetrics}
+              rows={fanSeries}
+              color="var(--s3)"
+              trend="speed"
+              empty="No fan readings in this window."
+            />
+          </Panel>
+        )}
 
-      {powerSeries.length > 0 && (
-        <Panel label="Power" title="Power">
-          <SensorList
-            res={sensorMetrics}
-            rows={powerSeries}
-            color="var(--s5)"
-            trend="reading"
-            empty="No power readings in this window."
-          />
-        </Panel>
-      )}
+        {powerSeries.length > 0 && (
+          <Panel label="Power" title="Power">
+            <SensorList
+              res={sensorMetrics}
+              rows={powerSeries}
+              color="var(--s5)"
+              trend="reading"
+              empty="No power readings in this window."
+            />
+          </Panel>
+        )}
 
-      {/* Headroom against the kernel's own ceilings. Nothing else on this
+        {/* Headroom against the kernel's own ceilings. Nothing else on this
           page answers "am I about to hit a limit": a host at 98% of its
           conntrack table has a perfectly calm CPU, memory and disk card,
           and the first symptom is a network that appears broken. */}
-      {limitsWorthShowing && (
-        <Panel label="Limits" title="Limits">
-          {limitRows.map((row) =>
-            row.reason !== null ? (
-              // The capability the agent reported, in place of the meter it
-              // explains. "conntrack: unavailable" is an answer; an
-              // em-dash next to a bar that never fills is a mystery, and
-              // the reader cannot tell it from a collector that broke.
-              //
-              // Written out in Meter's own markup rather than passed INTO
-              // Meter: that component backs the memory and disk cards too,
-              // and its absent state is deliberately one thing. Same shape
-              // the swap row above uses for the same reason.
-              <div className="mrow" key={row.label}>
-                <div>
-                  <div className="lab">{row.label}</div>
+        {limitsWorthShowing && (
+          <Panel label="Limits" title="Limits">
+            {limitRows.map((row) =>
+              row.reason !== null ? (
+                // The capability the agent reported, in place of the meter it
+                // explains. "conntrack: unavailable" is an answer; an
+                // em-dash next to a bar that never fills is a mystery, and
+                // the reader cannot tell it from a collector that broke.
+                //
+                // Written out in Meter's own markup rather than passed INTO
+                // Meter: that component backs the memory and disk cards too,
+                // and its absent state is deliberately one thing. Same shape
+                // the swap row above uses for the same reason.
+                <div className="mrow" key={row.label}>
+                  <div>
+                    <div className="lab">{row.label}</div>
+                  </div>
+                  <div className="val">{row.reason}</div>
                 </div>
-                <div className="val">{row.reason}</div>
-              </div>
-            ) : row.unbounded ? (
-              // The count still matters -- it is the only figure here --
-              // but there is no ratio to draw it against.
-              <div className="mrow" key={row.label}>
-                <div>
-                  <div className="lab">{row.label}</div>
-                </div>
-                <div className="val">
-                  {/* A no-break space inside "no limit": the value column
+              ) : row.unbounded ? (
+                // The count still matters -- it is the only figure here --
+                // but there is no ratio to draw it against.
+                <div className="mrow" key={row.label}>
+                  <div>
+                    <div className="lab">{row.label}</div>
+                  </div>
+                  <div className="val">
+                    {/* A no-break space inside "no limit": the value column
                       is narrow, and the default break put "no" on one line
                       and "limit" on the next. It wraps after the separator
                       instead. */}
-                  {row.value === null
-                    ? ABSENT
-                    : `${cardinal(row.value)} · no limit`}
+                    {row.value === null
+                      ? ABSENT
+                      : `${cardinal(row.value)} · no limit`}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <Meter
-                key={row.label}
-                label={row.label}
-                value={row.value}
-                max={row.ceiling}
-                formatValue={(value, max) =>
-                  `${cardinal(value)} of ${cardinal(max)}`
-                }
-              />
-            ),
+              ) : (
+                <Meter
+                  key={row.label}
+                  label={row.label}
+                  value={row.value}
+                  max={row.ceiling}
+                  formatValue={(value, max) =>
+                    `${cardinal(value)} of ${cardinal(max)}`
+                  }
+                />
+              ),
+            )}
+          </Panel>
+        )}
+
+        <Panel label="Collectors" title="Collectors">
+          {capabilities.length === 0 ? (
+            <p className="note">The agent reported no capabilities.</p>
+          ) : (
+            <Facts
+              rows={capabilities.map(([name, state]) => [
+                name,
+                // The reason is the value the agent sent; a collector that
+                // cannot run says why rather than showing an empty chart.
+                state === "ok" ? (
+                  <Badge severity="ok">ok</Badge>
+                ) : (
+                  <span>{state}</span>
+                ),
+              ])}
+            />
           )}
         </Panel>
-      )}
-
-      <Panel label="Collectors" title="Collectors">
-        {capabilities.length === 0 ? (
-          <p className="note">The agent reported no capabilities.</p>
-        ) : (
-          <Facts
-            rows={capabilities.map(([name, state]) => [
-              name,
-              // The reason is the value the agent sent; a collector that
-              // cannot run says why rather than showing an empty chart.
-              state === "ok" ? (
-                <Badge severity="ok">ok</Badge>
-              ) : (
-                <span>{state}</span>
-              ),
-            ])}
-          />
-        )}
-      </Panel>
-    </div>
+      </div>
+    </>
   );
 }

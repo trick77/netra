@@ -1,6 +1,12 @@
 // Decimal (1000-based) units throughout, matching how disks, links and
 // vendors advertise capacity -- binary (1024-based) units would silently
 // disagree with every spec sheet the numbers get compared against.
+//
+// Installed memory is the one exception, and it is the same argument rather
+// than a break from it: RAM is the one component whose spec sheet is written
+// in binary units. A 32 GiB machine reports ~33.3e9 bytes of MemTotal, and
+// rendering that decimally says "33.3 GB" beside a box everyone calls a 32 GB
+// box. See binaryBytes.
 
 // Exported so every call site renders the same absent marker instead of
 // each inventing its own dash (or worse, a hardcoded "-" that silently
@@ -17,29 +23,47 @@ function round(n: number, digits: number): number {
 // as a measurement, "503.0 GB" reads as false precision. Rounding can push
 // a value like 999.96 GB up to "1000 GB"; when that happens, promote to the
 // next unit so the display never shows a rounded value at or above 1000.
-function scale(n: number, units: string[]): string {
+function scale(n: number, units: string[], base = 1000): string {
   const abs = Math.abs(n);
   let idx = 0;
   for (let i = units.length - 1; i >= 0; i--) {
-    if (abs >= 1000 ** i) {
+    if (abs >= base ** i) {
       idx = i;
       break;
     }
   }
   let digits = idx === 0 ? 0 : 1;
-  let rounded = round(n / 1000 ** idx, digits);
-  if (Math.abs(rounded) >= 1000 && idx < units.length - 1) {
+  let rounded = round(n / base ** idx, digits);
+  if (Math.abs(rounded) >= base && idx < units.length - 1) {
     idx++;
     digits = idx === 0 ? 0 : 1;
-    rounded = round(n / 1000 ** idx, digits);
+    rounded = round(n / base ** idx, digits);
   }
   return `${rounded} ${units[idx]}`;
 }
 
-/** Storage and memory, in bytes. Decimal: 1 kB = 1000 B. */
+/** Storage and traffic, in bytes. Decimal: 1 kB = 1000 B. */
 export function bytes(n: number | null): string {
   if (n === null) return ABSENT;
   return scale(n, ["B", "kB", "MB", "GB", "TB", "PB"]);
+}
+
+/**
+ * Installed memory, in bytes. Binary: 1 KiB = 1024 B.
+ *
+ * Only for RAM, and only because RAM is bought in binary units. /proc/meminfo
+ * reports MemTotal in KiB, the agent multiplies it up to real bytes, and the
+ * operator compares the result against the "32 GB" on the invoice -- which is
+ * 32 GiB. Rendered decimally the same byte count reads 33.3 GB: not wrong,
+ * but ~7% above every figure it will be checked against, and above the
+ * machine's own capacity besides.
+ *
+ * Disks and links keep bytes(): those really are sold decimally, and this
+ * would disagree with their spec sheets in the opposite direction.
+ */
+export function binaryBytes(n: number | null): string {
+  if (n === null) return ABSENT;
+  return scale(n, ["B", "KiB", "MiB", "GiB", "TiB", "PiB"], 1024);
 }
 
 /**

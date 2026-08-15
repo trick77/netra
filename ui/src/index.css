@@ -466,6 +466,25 @@ a {
   font-size: var(--text-label);
   font-variant-numeric: tabular-nums;
 }
+/* The host page's band lists conditions for ONE host, so it has no who-column
+   and no host grouping -- the rows are the fleet band's rows with the severity
+   badge where the hostname sits. The list markup stays a real list so a screen
+   reader announces how many things are wrong before reading them. */
+.attn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.attn-list .attn-row .what {
+  color: var(--ink-2);
+}
+/* The badge is this list's first column, and its three words are three
+   different widths -- left to itself the sentence beside it starts at three
+   different places and the rows stop reading as a column. Same job the
+   fleet band's min-width on .who does. */
+.attn-list .attn-row .badge {
+  min-width: 82px;
+}
 .allclear {
   font-size: var(--text-label);
   color: var(--muted);

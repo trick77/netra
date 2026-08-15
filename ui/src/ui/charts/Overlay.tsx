@@ -140,11 +140,19 @@ export function Overlay({
               strokeDasharray={REFERENCE_DASH}
             />
             {referenceLabel !== undefined && (
+              // Below the rule when there is no room above it. The label sits
+              // 5px over the line, so a reference near the top of the plot put
+              // its baseline outside the viewBox and the text was clipped in
+              // half -- which is exactly where a reference tends to land, since
+              // a panel drawing one scales its max to sit just above it (the
+              // Memory panel uses mem_total * 1.08, putting the rule at 7% of
+              // the height). Flipping is better than shrinking the headroom:
+              // the rule has to stay clear of the top border to read as a rule.
               <text
                 data-reference-label
                 className="ref-label"
                 x={width - 4}
-                y={referenceY - 5}
+                y={referenceY < 14 ? referenceY + 12 : referenceY - 5}
                 textAnchor="end"
               >
                 {referenceLabel}
