@@ -58,6 +58,40 @@ describe("hostConditions", () => {
     expect(hostConditions(makeRow({ oomKills: null }), NOW)).toEqual([]);
   });
 
+  // The other half of the disagreement this module exists to end: a host page
+  // listing "nginx.service failed" beside a fleet row that showed nothing,
+  // because the band had no notion of a unit at all.
+  it("raises failed units", () => {
+    const [c] = hostConditions(makeRow({ services_failed: 3 }), NOW);
+    expect(c?.severity).toBe("warning");
+    expect(String(c?.what)).toMatch(/3 failed units/);
+  });
+
+  it("counts one failed unit in the singular", () => {
+    const [c] = hostConditions(makeRow({ services_failed: 1 }), NOW);
+    expect(String(c?.what)).toMatch(/1 failed unit\b/);
+  });
+
+  // One row however many are broken -- the host's own page names them, this
+  // one answers whether the host is worth opening.
+  it("says it once, not once per unit", () => {
+    expect(hostConditions(makeRow({ services_failed: 8 }), NOW)).toHaveLength(
+      1,
+    );
+  });
+
+  // 0 is the host confirming its units are fine. null is a host that has
+  // never reported a unit -- no systemd collector, or nothing heard yet --
+  // and reporting that as an all-clear would be netra vouching for something
+  // it has never looked at. Both stay silent, for different reasons.
+  it("stays silent for no failures and for a host it has never looked at", () => {
+    expect(hostConditions(makeRow({ services_failed: 0 }), NOW)).toEqual([]);
+    expect(hostConditions(makeRow({ services_failed: null }), NOW)).toEqual([]);
+    expect(
+      hostConditions(makeRow({ services_failed: undefined }), NOW),
+    ).toEqual([]);
+  });
+
   it("warns on a filesystem at 90% and escalates at 95%", () => {
     const warn = hostConditions(
       makeRow({ fullest: { mount: "/var/log", pct: 91, others: 2 } }),

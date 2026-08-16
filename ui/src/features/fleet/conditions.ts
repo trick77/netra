@@ -81,6 +81,29 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
     });
   }
 
+  // One condition for the whole set, never one per unit. The host's own page
+  // names each failed unit, because that is the page you open to find out
+  // WHICH one; a fleet row answers whether this host is worth opening, and
+  // eight unit names would bury the next host in the band. Same reasoning as
+  // the fullest-filesystem rule below.
+  //
+  // null is a host with no systemd at all, or one not yet heard from, and
+  // stays silent -- netra has not looked, which is not the same as nothing
+  // being wrong. 0 is the host confirming its units are fine, which is also
+  // silence, but earned. The agent draws that line itself; the hub carries it.
+  if (
+    row.services_failed !== null &&
+    row.services_failed !== undefined &&
+    row.services_failed > 0
+  ) {
+    out.push({
+      ...base,
+      severity: "warning",
+      what: `${row.services_failed} failed ${row.services_failed === 1 ? "unit" : "units"}`,
+      since: null,
+    });
+  }
+
   // df's Use%, already computed as used / (used + free) by fullestFilesystem.
   // Only the fullest one: the row carries a single pre-picked summary, and a
   // second mount at 91% is not a second thing to do -- the disk column

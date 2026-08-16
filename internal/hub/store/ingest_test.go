@@ -164,6 +164,60 @@ func TestIntegrationUpsertHostCurrent(t *testing.T) {
 	}
 }
 
+// The fleet band's failed-unit count. Two properties, matching the net pair
+// below: it round-trips, and a later post whose systemd collector produced
+// nothing must not blank it -- one failed scrape is not the host losing
+// systemd, and blinking "3 failed units" out and back would read as one.
+//
+// The third property is the one that made this a column rather than a query
+// over systemd_unit_events: an explicit 0 has to survive as 0 and not become
+// null. A healthy host emits no unit events at all, so anything derived from
+// that log cannot tell "every unit is fine" from "nobody has looked".
+func TestIntegrationUpsertHostCurrentServicesFailed(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	hostID := seedHost(t, s)
+
+	failed := func(ts int64, n *uint32) *netrav1.HostSample {
+		return &netrav1.HostSample{TsMs: ts, ServicesFailed: n}
+	}
+	read := func() *int32 {
+		var got *int32
+		if err := s.Pool().QueryRow(ctx,
+			`SELECT services_failed FROM host_current WHERE host_id = $1`,
+			hostID).Scan(&got); err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		return got
+	}
+
+	if err := s.UpsertHostCurrent(ctx, hostID, failed(1_700_000_000_000, proto.Uint32(3)), nil, nil); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if got := read(); got == nil || *got != 3 {
+		t.Fatalf("services_failed = %v, want 3", got)
+	}
+
+	// The systemd collector failed this scrape: no summary, so no claim.
+	if err := s.UpsertHostCurrent(ctx, hostID, failed(1_700_000_060_000, nil), nil, nil); err != nil {
+		t.Fatalf("upsert without summary: %v", err)
+	}
+	if got := read(); got == nil || *got != 3 {
+		t.Fatalf("services_failed = %v, want 3 — a missing summary must not blank a known count", got)
+	}
+
+	// The units recovered. Zero is a real answer and must replace the 3.
+	if err := s.UpsertHostCurrent(ctx, hostID, failed(1_700_000_120_000, proto.Uint32(0)), nil, nil); err != nil {
+		t.Fatalf("upsert zero: %v", err)
+	}
+	if got := read(); got == nil || *got != 0 {
+		t.Fatalf("services_failed = %v, want 0 — a recovered host says so, it does not fall silent", got)
+	}
+}
+
 // The traffic pair is what the fleet prints as "ingress + egress", and it is
 // a gauge here precisely so it does not depend on any window. Two properties
 // are pinned: it round-trips, and a later post carrying no net samples must
