@@ -1,198 +1,40 @@
 import { Boxes } from "lucide-react";
 import { EmptyState } from "../../ui/EmptyState";
-import { Table, type Column } from "../../ui/Table";
-import { Badge } from "../../ui/Badge";
-import { ABSENT } from "../../lib/format";
-import type { Container } from "../../lib/api";
+import { Table } from "../../ui/Table";
+import {
+  containerColumns,
+  trendScales,
+  type ContainerRow,
+} from "../container/columns";
 import {
   fleetContainerNotes,
   fleetContainersBlocked,
   type CapableHost,
 } from "../../lib/containers";
-import { Sparkline } from "../../ui/charts/Sparkline";
-import { rangeLabel, type Range } from "../../lib/range";
+import { type Range } from "../../lib/range";
 
-/**
- * A container as the fleet sees it: what `GET /api/v1/hosts/{id}/containers`
- * returns plus the host it came from. The host is carried on the row rather
- * than looked up while rendering -- there is no fleet-wide container
- * endpoint (only the per-host one), so whoever fanned the calls out already
- * knows which host each response belongs to and is the only party that
- * cannot get it wrong.
- */
-export type ContainerRow = Container & {
-  host_id: number;
-  hostname: string;
-  /** CPU percent and memory bytes over the window, when they have been
-   * fetched. Absent (not empty) when nobody asked for them: an empty series
-   * draws a gap, which is the truth for a container that reported nothing,
-   * and the wrong thing to say about a list that never requested metrics. */
-  cpu?: (number | null)[];
-  mem?: (number | null)[];
-  /** The container's own memory ceiling, or null when it runs unlimited. */
-  mem_limit_bytes?: number | null;
-};
-
-/**
- * The shared ceilings for a list's trend columns.
- *
- * Computed across every row rather than per row, because a column of
- * independently scaled sparklines compares nothing: each one fills its own
- * box, so the busiest container and the idlest draw the same picture. CPU is
- * a percentage that can exceed 100 (a container using two cores reports
- * 200), so the ceiling is the list's own peak rather than a fixed 100.
- */
-export function trendScales(rows: readonly ContainerRow[]): {
-  cpuMax: number;
-  memMax: number;
-} {
-  let cpuMax = 0;
-  let memMax = 0;
-  for (const row of rows) {
-    for (const v of row.cpu ?? []) if (v !== null && v > cpuMax) cpuMax = v;
-    for (const v of row.mem ?? []) if (v !== null && v > memMax) memMax = v;
-  }
-  // A zero ceiling would divide by zero in the geometry; 1 draws a flat line
-  // on the floor, which is what "nothing happened" looks like.
-  return { cpuMax: cpuMax || 1, memMax: memMax || 1 };
-}
-
-/**
- * The one container column definition, parameterised by whether the Host
- * column is present. Spec 4.5: the fleet-wide container overview is "the
- * same container row plus a Host column", so "every postgres in the fleet"
- * and "everything on this host" must be one component -- the host-detail
- * Inventory tab renders this same list with `showHost: false`.
- *
- * There is deliberately no state, health, restart-count or uptime column:
- * none of those reach the wire or the schema (container_samples carries CPU
- * and memory only). A column showing "running" for every row would be an
- * assertion netra cannot make.
- */
-export function containerColumns({
-  showHost = false,
-  cpuMax,
-  memMax,
-  range = "24h",
-}: {
-  showHost?: boolean;
-  /** Only for the charts' accessible names -- this file never resolves a
-   * range into a query. */
-  range?: Range;
-  /**
-   * Shared ceilings for the sparklines, computed across the whole list by
-   * `trendScales` below. Per-row auto-scaling would draw an idle container
-   * and a saturated one with the identical silhouette -- the same reading
-   * the host list's CPU column carries a fixed ceiling to avoid -- and a
-   * list exists to be compared down its columns.
-   */
-  cpuMax?: number;
-  memMax?: number;
-} = {}): Column<ContainerRow>[] {
-  const columns: Column<ContainerRow>[] = [
-    {
-      key: "container",
-      header: "Container",
-      cell: (row) => <NameCell row={row} />,
-      // The displayed name, falling back to the key the cell falls back to,
-      // so the order matches what a reader sees rather than an id behind it.
-      sortValue: (row) => row.name ?? row.container_key,
-    },
-  ];
-  if (showHost) {
-    columns.push({
-      key: "host",
-      header: "Host",
-      cell: (row) => (
-        <a href={`/hosts/${row.host_id}/overview`}>{row.hostname}</a>
-      ),
-      sortValue: (row) => row.hostname,
-    });
-  }
-  columns.push({
-    key: "image",
-    header: "Image",
-    sortValue: (row) => row.image ?? null,
-    // An image with no tag on the wire is not `:latest` -- inventing one
-    // would name a version the agent never reported.
-    //
-    // `.mono` is an identifier face (spec 3.1: --font-mono for versions,
-    // addresses, commands and identifiers). index.css does not define it
-    // yet -- see the task report. `.tnum` would be wrong here: that is
-    // tabular figures, for columns of digits that must line up.
-    cell: (row) => <span className="mono">{row.image ?? ABSENT}</span>,
-  });
-
-  // The trend columns appear only when someone fetched the metrics. A list
-  // that did not ask for them renders as it always did rather than growing
-  // two columns of permanent gaps.
-  if (cpuMax !== undefined || memMax !== undefined) {
-    columns.push({
-      key: "cpu",
-      header: "CPU",
-      cell: (row) =>
-        row.cpu === undefined || row.cpu.length === 0 ? (
-          ABSENT
-        ) : (
-          <Sparkline
-            values={row.cpu}
-            max={cpuMax}
-            min={0}
-            color="var(--s1)"
-            label={`CPU trend, ${rangeLabel(range)}`}
-          />
-        ),
-    });
-    columns.push({
-      key: "memory",
-      header: "Memory",
-      cell: (row) =>
-        row.mem === undefined || row.mem.length === 0 ? (
-          ABSENT
-        ) : (
-          <Sparkline
-            values={row.mem}
-            // Against its OWN limit when it has one -- that is what "how
-            // close to being killed" means -- and against the list's
-            // largest container when it does not, so the unlimited ones
-            // stay comparable with each other.
-            max={row.mem_limit_bytes ?? memMax}
-            min={0}
-            color="var(--s2)"
-            label={`Memory trend, ${rangeLabel(range)}`}
-          />
-        ),
-    });
-  }
-
-  return columns;
-}
-
-// The container_key is the stable identity (it survives a rename); the name
-// is what an operator reads. A container with no name still has a key, so
-// the key is always shown rather than being a fallback that silently
-// changes what the primary line means from row to row.
-function NameCell({ row }: { row: ContainerRow }) {
-  return (
-    <div className="host">
-      <div>
-        <a
-          className="name"
-          href={`/containers/${row.host_id}/${encodeURIComponent(row.container_key)}`}
-        >
-          {row.name ?? ABSENT}
-        </a>
-        <div className="site mono">{row.container_key}</div>
-      </div>
-      {/* netra's own agent runs as a container on most hosts; unlabelled it
-          reads as a workload someone deployed. */}
-      {row.is_agent ? <Badge>agent</Badge> : null}
-    </div>
-  );
-}
+// The row shape and the column set live in features/container/columns, with
+// the page they link to. This file is the fleet's framing around them: the
+// three empty states, the capability notes, and the grouping by host.
+//
+// Re-exported because App and FleetPage build these rows and scale them, and
+// moving one definition should not move every import of it.
+export {
+  trendScales,
+  containerColumns,
+  type ContainerRow,
+} from "../container/columns";
 
 export interface FleetContainersProps {
   rows: readonly ContainerRow[];
+  /**
+   * Adds the Host column.
+   *
+   * Off by default and unset by the fleet page, because this list groups by
+   * host: the hostname is already the group header, and already a link to
+   * that host, so a Host column repeats it on every row. The prop stays for
+   * a caller that wants the flat reading.
+   */
   showHost?: boolean;
   /** False while the container fan-out has not answered yet. */
   loaded?: boolean;
@@ -221,7 +63,7 @@ export interface FleetContainersProps {
 
 export function FleetContainers({
   rows,
-  showHost,
+  showHost = false,
   loaded = true,
   range = "24h",
   hosts,
@@ -325,7 +167,52 @@ export function FleetContainers({
         rows={rows}
         // Two hosts can run the same container_key, so identity is the pair.
         rowKey={(row) => `${row.host_id}:${row.container_key}`}
+        groupBy={BY_HOST}
       />
+    </>
+  );
+}
+
+// Hoisted, not an inline literal: Table memoises the partition on the
+// groupBy identity, so a stable object is what lets that memo hold. (It
+// still misses once a sort is active: Table's sort memo also depends on
+// `columns`, and the call below builds a fresh array every render.) Neither
+// half closes over anything, so there is nothing to capture.
+//
+// Grouped by host_id, never by hostname: two hosts in different sites may
+// share a hostname (see HostTable), and grouping on the name would merge two
+// machines into one group and file one host's containers under the other
+// host's link. It is the same reason rowKey is a pair.
+//
+// ORDERED by hostname, though, which is a different question from identity.
+// On the id, the groups came out in registration order under headings that
+// read as names -- and the Hosts tab of the same page is alphabetical, because
+// the read API sorts it that way (internal/hub/read/host.go: ORDER BY
+// h.hostname, h.id). Two tabs of one page ordering the same hosts differently
+// makes the second one look arbitrary, and more so with every host added.
+const BY_HOST = {
+  key: (row: ContainerRow) => String(row.host_id),
+  order: (_key: string, group: readonly ContainerRow[]) => group[0].hostname,
+  label: (_key: string, group: readonly ContainerRow[]) => (
+    <HostGroup rows={group} />
+  ),
+};
+
+/** A group header that is also the way into the host it names. */
+function HostGroup({ rows }: { rows: readonly ContainerRow[] }) {
+  // Every row in the group carries the same host by construction, so the
+  // first one is as good as any -- and a group is never empty.
+  const { host_id, hostname } = rows[0];
+  return (
+    <>
+      <a href={`/hosts/${host_id}/overview`}>{hostname}</a>
+      {/* A real text node, not a CSS ::before: the separator is the only
+          thing between two facts, and read aloud "db-011 container" is not
+          the sentence. */}
+      <span className="groupcount">
+        {" · "}
+        {rows.length} container{rows.length === 1 ? "" : "s"}
+      </span>
     </>
   );
 }

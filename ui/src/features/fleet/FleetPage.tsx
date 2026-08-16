@@ -474,7 +474,9 @@ export function FleetPage({
       ) : (
         <FleetContainers
           rows={visibleContainers}
-          showHost
+          // No showHost: the list groups by host, so every row already sits
+          // under its hostname -- and under a link to it. A Host column
+          // beside that repeats the group header on every single row.
           loaded={containersKnown}
           range={range}
           // hostRows, not visibleHosts: the point of the note is a host that
