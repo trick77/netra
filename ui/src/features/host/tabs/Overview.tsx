@@ -2,7 +2,7 @@
 // what needs attention. It is deliberately a summary -- every card here
 // answers "is this worth opening the tab for?", and none of them
 // reproduces the tab's own content.
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import type {
   Container,
   HostDetail,
@@ -563,11 +563,18 @@ function Facts({
 }) {
   return (
     <dl className={wide ? "kv wide" : "kv"}>
+      {/* Fragment, not a `display: contents` div. The div was invisible in
+        every sense but the one that mattered: display affects box generation,
+        not selector matching, so each dt was the only dt under its own
+        wrapper and `.kv dt:last-of-type` matched EVERY row -- no card built
+        here drew the separators .kv specifies, while ContainerPage, which
+        writes its dt/dd out by hand as direct children, drew them normally.
+        The same class, two appearances, decided by which file you were in. */}
       {rows.map(([key, value]) => (
-        <div key={key} style={{ display: "contents" }}>
+        <Fragment key={key}>
           <dt>{key}</dt>
           <dd>{value}</dd>
-        </div>
+        </Fragment>
       ))}
     </dl>
   );
