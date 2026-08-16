@@ -1138,7 +1138,7 @@ export function Overview({
 
       <div className="grid2">
         {/* First card in the flow, so it takes the top of the LEFT column.
-          Ingress above the line, egress below -- the same mark the fleet row
+          In above the line, out below -- the same mark the fleet row
           draws, because a reader moving between them should not have to
           re-learn the chart. There was no traffic card on this page at all:
           the only network chart lived in the Graphs tab, so the overview
@@ -1150,7 +1150,7 @@ export function Overview({
           ) : (
             <div className="traffic-cell">
               <Enlargeable
-                // Ingress and egress, not rx and tx: the direction is the
+                // "in" and "out", not rx and tx: the direction is the
                 // point of this chart, and "rx" is the kernel's word for it
                 // rather than the reader's. The wire and the schema keep
                 // rx/tx.
@@ -1162,8 +1162,8 @@ export function Overview({
                 className="inline"
                 unit="B/s"
                 series={[
-                  { name: "ingress", color: UP_COLOR, values: ingress },
-                  { name: "egress", color: DOWN_COLOR, values: egress },
+                  { name: "in", color: UP_COLOR, values: ingress },
+                  { name: "out", color: DOWN_COLOR, values: egress },
                 ]}
                 mirrored
                 fmt={bytes}
@@ -1204,7 +1204,7 @@ export function Overview({
                   down={egress}
                   width={260}
                   height={64}
-                  label="Ingress and egress over time"
+                  label="Traffic in and out over time"
                 />
               </Enlargeable>
               <div className="traffic-rates">

@@ -304,14 +304,16 @@ const NETWORK: PanelSpec[] = [
     fmt: count,
   },
   {
-    // Ingress and egress, not rx and tx: the direction is the point of this
+    // "in" and "out", not rx and tx: the direction is the point of this
     // chart, and "rx" is the kernel's word for it rather than the reader's.
+    // (It read "ingress"/"egress" until an operator pointed out that an
+    // interface has an in and an out; the schema and the wire are unchanged.)
     title: "Interface throughput",
     unit: "B/s",
     source: "net",
     bases: [
-      { base: "rx_bytes", label: "ingress" },
-      { base: "tx_bytes", label: "egress" },
+      { base: "rx_bytes", label: "in" },
+      { base: "tx_bytes", label: "out" },
     ],
     // Mirrored about a midline, the way the fleet row has always drawn
     // traffic: two lines climbing one axis make a reader compare shapes to
