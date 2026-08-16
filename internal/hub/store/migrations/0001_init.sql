@@ -164,6 +164,11 @@ CREATE TABLE IF NOT EXISTS host_samples (
     tcp_tw_limit     INTEGER,
     tcp_orphan_limit INTEGER,
 
+    -- The IP and ICMP MIBs are NOT here: they live in host_snmp_samples,
+    -- added by 0003. A continuous aggregate cannot gain a column, so putting
+    -- them here would have meant recreating this table's two rollups and
+    -- losing every host metric's rolled-up history past raw retention.
+    --
     -- /proc/net/snmp Tcp:. There is no tcp6_* mirror because the kernel keeps
     -- one family-agnostic TCP MIB -- these already count IPv6 connections --
     -- and /proc/net/snmp6 has no Tcp6 block at all. Only UDP and IP

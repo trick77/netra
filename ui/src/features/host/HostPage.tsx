@@ -81,6 +81,7 @@ export { RANGE_OPTIONS, RANGE_VALUES };
 
 interface TabData {
   hostMetrics: MetricsResponse | null;
+  hostSnmpMetrics: MetricsResponse | null;
   filesystemMetrics: MetricsResponse | null;
   agentMetrics: MetricsResponse | null;
   sensorMetrics: MetricsResponse | null;
@@ -99,6 +100,7 @@ interface TabData {
 
 const NO_DATA: TabData = {
   hostMetrics: null,
+  hostSnmpMetrics: null,
   filesystemMetrics: null,
   agentMetrics: null,
   sensorMetrics: null,
@@ -272,6 +274,7 @@ export function HostPage({
         case "graphs": {
           const [
             hostMetrics,
+            hostSnmpMetrics,
             netMetrics,
             diskIoMetrics,
             filesystemMetrics,
@@ -280,6 +283,11 @@ export function HostPage({
             agentMetrics,
           ] = await Promise.all([
             metrics("host"),
+            // The IP and ICMP MIBs live in their own family because they live
+            // in their own table -- see 0003_host_snmp_samples.sql. orNull
+            // means a hub too old to answer it blanks those three panels and
+            // nothing else.
+            metrics("host_snmp"),
             metrics("net"),
             metrics("disk_io"),
             metrics("filesystem"),
@@ -289,6 +297,7 @@ export function HostPage({
           ]);
           return {
             hostMetrics,
+            hostSnmpMetrics,
             netMetrics,
             diskIoMetrics,
             filesystemMetrics,
@@ -463,6 +472,7 @@ export function HostPage({
       {tab === "graphs" && (
         <Graphs
           host={data.hostMetrics}
+          hostSnmp={data.hostSnmpMetrics}
           net={data.netMetrics}
           diskIo={data.diskIoMetrics}
           filesystem={data.filesystemMetrics}
