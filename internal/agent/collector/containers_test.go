@@ -394,6 +394,92 @@ func TestContainersReportsNamespacedWhenPidsDoNotResolve(t *testing.T) {
 	}
 }
 
+// The socket's own answer, and the whole reason it is preferred: this fixture
+// has NO namespace links at all, which is what a real host looks like to an
+// agent without CAP_SYS_PTRACE -- readlink on /proc/<pid>/ns/net is denied for
+// a non-dumpable target even when the uids match, and no-new-privileges makes
+// every target non-dumpable. The counters are still read, because
+// /proc/<pid>/net/dev never needed the capability.
+func TestContainersMeasuresABridgedContainerWithoutReadingNamespaces(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	// Both links gone: the guard this replaces cannot run at all now.
+	if err := os.Remove(filepath.Join(procRoot, "1", "ns", "net")); err != nil {
+		t.Fatalf("remove host ns link: %v", err)
+	}
+	if err := os.Remove(filepath.Join(procRoot, "42", "ns", "net")); err != nil {
+		t.Fatalf("remove container ns link: %v", err)
+	}
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", NetworkMode: "bridge"}), true)
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx == nil || row.NetTx == nil {
+		t.Fatal("net_rx/net_tx unset; the socket said bridge, so no namespace read was needed")
+	}
+	// (3000-1000)/10 and (1500-500)/10.
+	if got := row.GetNetRx(); got != 200 {
+		t.Errorf("net_rx = %v, want 200", got)
+	}
+	if got := row.GetNetTx(); got != 100 {
+		t.Errorf("net_tx = %v, want 100", got)
+	}
+	if got := testee.Capabilities()["container_network"]; got != "" {
+		t.Errorf("capability = %q, want none -- nothing failed", got)
+	}
+}
+
+// network_mode: host, on the socket's word. Its net/dev IS the host's file, and
+// the Network collector already reports those bytes once.
+func TestContainersSkipsAHostNetworkedContainerOnTheSocketsWord(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	// The namespaces DIFFER here, so a fixture-driven comparison would have
+	// called this bridged. The socket's answer overrides it.
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", NetworkMode: "host"}), true)
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil || row.NetTx != nil {
+		t.Error("a host-networked container reported traffic; those bytes are the machine's")
+	}
+	if got := testee.Capabilities()["container_network"]; got != "" {
+		t.Errorf("capability = %q, want none -- this is a deliberate skip, not a failure", got)
+	}
+}
+
+// A sidecar joining a peer's namespace. The peer reports the same counters
+// under its own key, so measuring both would double every byte.
+func TestContainersSkipsAContainerSharingAPeersNamespace(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{
+			ID: "abc123", Name: "web", NetworkMode: "container:deadbeef",
+		}), true)
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil || row.NetTx != nil {
+		t.Error("a sidecar reported its peer's traffic; the peer already reports it")
+	}
+}
+
 // The other half of the pair above: the SAME unreadable PID, on a host that
 // does have the PID namespace. There the remaining cause is the ptrace access
 // check -- readlink on /proc/<pid>/ns/net needs PTRACE_MODE_READ_FSCRED, which

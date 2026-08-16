@@ -26,6 +26,14 @@ type ContainerMeta struct {
 	Project string // compose project label
 	Service string // compose service label
 	IsAgent bool
+
+	// NetworkMode is HostConfig.NetworkMode as the daemon reports it: "host",
+	// "bridge", "none", a user-defined network's name, or "container:<id>".
+	//
+	// Empty when the socket is absent, which is a THIRD state rather than a
+	// default -- see containerNet, which falls back to comparing namespace
+	// links only when it has no answer here.
+	NetworkMode string
 }
 
 // ContainerLister returns the containers currently running.
@@ -295,7 +303,7 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 	// that gains pid: host on restart must stop reporting "namespaced".
 	c.setCapability("")
 
-	cur, err := c.read()
+	cur, err := c.read(meta)
 	if err != nil {
 		c.observe(absent, 0, listed)
 		return nil, err
@@ -421,7 +429,7 @@ func containerKey(m ContainerMeta, id string) string {
 }
 
 // read walks the cgroup v2 hierarchy for container scopes.
-func (c *Containers) read() (map[string]containerCounters, error) {
+func (c *Containers) read(meta map[string]ContainerMeta) (map[string]containerCounters, error) {
 	out := make(map[string]containerCounters)
 
 	err := filepath.WalkDir(c.cgroupRoot, func(path string, d os.DirEntry, err error) error {
@@ -494,7 +502,7 @@ func (c *Containers) read() (map[string]containerCounters, error) {
 			}
 		}
 		cc.rbytes, cc.wbytes = readIOStat(filepath.Join(path, "io.stat"))
-		cc.rxBytes, cc.txBytes, cc.hasNet = c.containerNet(path)
+		cc.rxBytes, cc.txBytes, cc.hasNet = c.containerNet(path, meta[id].NetworkMode)
 
 		out[id] = cc
 		return nil
@@ -641,28 +649,44 @@ func readIOStat(path string) (rbytes, wbytes uint64) {
 // collector is built on: the socket supplies names, cgroup v2 supplies every
 // metric, so a host that declines to mount the socket still gets numbers.
 //
-// A container sharing the host's namespace -- network_mode: host -- is
-// deliberately reported as having no measurement. Its /proc/<pid>/net/dev IS
-// the host's file, so counting it would attribute the entire machine's
-// traffic to one container, and those same bytes are already reported once by
-// the Network collector.
-func (c *Containers) containerNet(cgroupDir string) (rx, tx uint64, ok bool) {
+// A container sharing another namespace -- network_mode: host, or
+// network_mode: "container:<id>" -- is deliberately reported as having no
+// measurement. Its /proc/<pid>/net/dev is somebody ELSE's file, so counting it
+// would report the same bytes twice: for host networking those bytes are the
+// whole machine's and the Network collector already has them, and for a shared
+// container namespace the container that owns it reports them itself.
+//
+// networkMode is HostConfig.NetworkMode when the Docker socket answered, and
+// empty when it did not. It is preferred over comparing namespace links
+// because the comparison is not reachable on a stock install: readlink on
+// /proc/<pid>/ns/net goes through ptrace_may_access, which requires
+// CAP_SYS_PTRACE for a non-dumpable target EVEN WHEN THE UIDS MATCH, and
+// `security_opt: no-new-privileges` makes the targets non-dumpable. Measured
+// on a live host: every container denied, root-owned ones included, and only
+// --cap-add SYS_PTRACE lifted it. The counters themselves never needed the
+// capability -- /proc/<pid>/net/dev is world-readable -- so asking for it to
+// answer a question the socket already answers would have been a large
+// privilege for nothing.
+func (c *Containers) containerNet(cgroupDir, networkMode string) (rx, tx uint64, ok bool) {
 	pid, ok := firstPID(filepath.Join(cgroupDir, "cgroup.procs"))
 	if !ok {
 		// No processes in the cgroup: the container is stopped or restarting.
 		return 0, 0, false
 	}
 
-	// FAIL CLOSED. Without the host's namespace to compare against there is no
-	// way to tell a bridged container from a network_mode: host one, and the
-	// two failure modes are not symmetric: reporting nothing loses a series,
-	// while guessing attributes the ENTIRE machine's traffic to one container
-	// on every scrape -- bytes the Network collector already reports once.
-	//
-	// The asymmetry is reachable rather than theoretical. /proc/<pid>/net/dev
-	// is world-readable while /proc/<pid>/ns/net needs ptrace access, so an
-	// unprivileged agent is exactly the case that fails the guard and
-	// succeeds the read.
+	if networkMode != "" {
+		if sharesForeignNetNS(networkMode) {
+			return 0, 0, false
+		}
+		return c.readNetDev(pid)
+	}
+
+	// NO SOCKET: fall back to comparing namespace links, and FAIL CLOSED.
+	// Without the host's namespace to compare against there is no way to tell
+	// a bridged container from a network_mode: host one, and the two failure
+	// modes are not symmetric: reporting nothing loses a series, while
+	// guessing attributes the ENTIRE machine's traffic to one container on
+	// every scrape -- bytes the Network collector already reports once.
 	host := c.hostNetNamespace()
 	if host == "" {
 		c.setCapability(c.netFailure())
@@ -679,11 +703,32 @@ func (c *Containers) containerNet(cgroupDir string) (rx, tx uint64, ok bool) {
 		return 0, 0, false
 	}
 
+	return c.readNetDev(pid)
+}
+
+// sharesForeignNetNS reports whether a HostConfig.NetworkMode names a namespace
+// this container did not get to itself.
+//
+// "host" is the machine's own, already counted once by the Network collector.
+// "container:<id>" is a sidecar joining a peer, and the peer reports the same
+// counters under its own key -- attributing them to both would double every
+// byte a sidecar's pod moves. Everything else ("bridge", "none", or a
+// user-defined network's name) is the container's own namespace, and "none"
+// legitimately measures as zero: an interface list of nothing but lo is a
+// knowable answer rather than a missing one.
+func sharesForeignNetNS(networkMode string) bool {
+	return networkMode == "host" || strings.HasPrefix(networkMode, "container:")
+}
+
+// readNetDev sums one PID's interface counters, naming the reason when the file
+// is not there to read.
+func (c *Containers) readNetDev(pid string) (rx, tx uint64, ok bool) {
 	rx, tx, ok = sumNetDev(filepath.Join(c.procRoot, pid, "net", "dev"))
 	if !ok {
-		// The cgroup named a PID that /proc does not have. Same two candidates
-		// as above, and the same answer: say which one on the operator's own
-		// statement rather than guessing.
+		// The cgroup named a PID that /proc does not have -- so either this
+		// agent has no host PID namespace, or the process exited during the
+		// scrape. Say which on the operator's own statement rather than
+		// guessing, since the errno is identical.
 		c.setCapability(c.netFailure())
 	}
 	return rx, tx, ok

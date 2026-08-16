@@ -27,6 +27,22 @@ type dockerContainer struct {
 	Names  []string          `json:"Names"`
 	Image  string            `json:"Image"`
 	Labels map[string]string `json:"Labels"`
+
+	// HostConfig.NetworkMode answers "is this container on the host's network
+	// namespace" directly, which is the only question containerNet needed the
+	// namespace links for. It arrives in the SAME response as the fields
+	// above -- no extra request, no extra daemon work -- and it is the
+	// daemon's own statement rather than an inference from two readlinks.
+	//
+	// It matters because the inference is not reachable on a stock install:
+	// readlink on /proc/<pid>/ns/net goes through ptrace_may_access, and a
+	// non-dumpable target requires CAP_SYS_PTRACE even when the uids match.
+	// `security_opt: no-new-privileges` makes netra's own targets
+	// non-dumpable, so every container read was denied -- measured on a live
+	// host, where only --cap-add SYS_PTRACE lifted it.
+	HostConfig struct {
+		NetworkMode string `json:"NetworkMode"`
+	} `json:"HostConfig"`
 }
 
 // SystemDockerContainers is the production ContainerLister.
@@ -100,7 +116,8 @@ func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 			Service: c.Labels["com.docker.compose.service"],
 			// So the hub can exclude the agent from "what is running here"
 			// without every UI hard-coding an image name.
-			IsAgent: strings.Contains(c.Image, "netra-agent"),
+			IsAgent:     strings.Contains(c.Image, "netra-agent"),
+			NetworkMode: c.HostConfig.NetworkMode,
 		})
 	}
 

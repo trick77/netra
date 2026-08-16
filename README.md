@@ -256,7 +256,7 @@ answers, no compatibility promise — and is not a provisioning interface.)
 | --- | --- |
 | Nothing but `/proc` and `/sys` | CPU, per-core CPU, memory, load, kernelstat, vmstat, limits, netstat, procs, users, disk I/O, sensors, mdraid |
 | `network_mode: host` | network, addresses |
-| A mount | containers (the host's cgroup v2 hierarchy, plus the Docker socket for names), filesystems (marker dirs), systemd (D-Bus socket), packages (dpkg or apk db) |
+| A mount | containers (the host's cgroup v2 hierarchy, plus the Docker socket for names **and** for per-container `net_rx`/`net_tx`), filesystems (marker dirs), systemd (D-Bus socket), packages (dpkg or apk db) |
 | `pid: host` | processes, procs, and per-container `net_rx`/`net_tx` |
 | An explicit privilege | SMART (`SYS_RAWIO`, plus `SYS_ADMIN` for NVMe, plus `devices:`) |
 
@@ -281,6 +281,21 @@ reached through the host PID its `cgroup.procs` names, and an agent confined to
 its own PID namespace cannot resolve that PID — so every container on the host
 reports no traffic. It was opt-in until it became clear that declining it
 silently switched off a metric nothing mentioned.
+
+The namespace alone is not enough to tell a `network_mode: host` container from
+a bridged one, and that distinction matters because a host-networked container's
+`/proc/<pid>/net/dev` *is* the host's file — counting it would attribute the
+whole machine's traffic to one container. netra reads
+`HostConfig.NetworkMode` from the Docker socket to answer it, which is why the
+socket now earns per-container networking as well as names. The alternative,
+comparing `/proc/<pid>/ns/net` against PID 1's, needs `CAP_SYS_PTRACE`: that
+readlink goes through `ptrace_may_access`, which requires the capability for a
+non-dumpable target *even when the uids match*, and `no-new-privileges` makes
+every target non-dumpable. The counters themselves never needed it —
+`/proc/<pid>/net/dev` is world-readable — so netra does not ask for a capability
+to answer a question the socket already answers. A host that declines the socket
+falls back to the namespace comparison and reports a capability if it is denied,
+rather than silently reporting nothing.
 
 The namespace makes every process's `/proc` entry readable to the container,
 `cmdline` and `environ` included. netra reads neither — process names come from

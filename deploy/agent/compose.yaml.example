@@ -191,7 +191,7 @@ services:
         target: /host/sys/fs/cgroup
         read_only: true
 
-      # --- Containers: names and labels --------------------------------------
+      # --- Containers: names, labels, and the network mode --------------------
       #
       # Read-only, and used for far less than it looks like. Container CPU and
       # memory are read from cgroup v2 files directly; the socket supplies only
@@ -199,9 +199,22 @@ services:
       # list changes. Calling the Docker stats API per container per scrape is
       # the single most expensive thing a naive agent does, and this avoids it.
       #
-      # Without this mount: containers still report every metric, keyed by raw
-      # 64-hex id instead of compose project/service. Without the cgroup mount
-      # above: no containers at all.
+      # It also supplies HostConfig.NetworkMode, in the SAME response as the
+      # names — no extra call. That is what tells a network_mode: host container
+      # from a bridged one, and the distinction is not cosmetic: a host-networked
+      # container's /proc/<pid>/net/dev IS the host's file, so counting it would
+      # attribute the whole machine's traffic to one container. The alternative
+      # is comparing /proc/<pid>/ns/net against PID 1's, which needs
+      # CAP_SYS_PTRACE — ptrace_may_access requires it for a non-dumpable target
+      # even when the uids match, and no-new-privileges above makes every target
+      # non-dumpable. netra will not ask for that capability to answer a question
+      # this socket already answers.
+      #
+      # Without this mount: containers still report CPU, memory and I/O, keyed by
+      # raw 64-hex id instead of compose project/service, and per-container
+      # networking falls back to the namespace comparison — which reports a
+      # capability rather than nothing when it is denied. Without the cgroup
+      # mount above: no containers at all.
       #
       # `read_only: true` here restricts the INODE, not the API. Anything that
       # can talk to the Docker socket at all can start a privileged container,
@@ -398,6 +411,12 @@ services:
     #                resolve in its own namespace. Without this, EVERY container
     #                on the host reports no network traffic, and the host's
     #                capabilities say container_network=namespaced.
+    #
+    #                Telling a network_mode: host container from a bridged one
+    #                is a separate question, answered from the Docker socket's
+    #                HostConfig.NetworkMode rather than by comparing namespace
+    #                links — that comparison would need CAP_SYS_PTRACE, which
+    #                netra deliberately does not ask for. See the socket mount.
     #
     # That second one is why this section no longer says "opt-in". Leaving the
     # namespace out silently zeroed container networking for every container on
