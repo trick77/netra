@@ -22,7 +22,9 @@ describe("ChartPanel", () => {
       />,
     );
     expect(screen.getByText(/not collected/i)).toBeInTheDocument();
-    expect(screen.getByText(/neither the wire nor the schema/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/neither the wire nor the schema/i),
+    ).toBeInTheDocument();
   });
 
   it("surfaces a window notice when the served range was clamped", () => {

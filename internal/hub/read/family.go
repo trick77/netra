@@ -23,8 +23,9 @@ type family struct {
 	// table is the RAW relation. A tier's relation is table + tierSpec.suffix,
 	// which is the naming convention 0001_init.sql follows without exception.
 	table string
-	// keys is what splits the family into series. Empty for the two
-	// host-level families, which have exactly one series each.
+	// keys is what splits the family into series. Empty for the three
+	// host-level families (host, host_snmp, agent), which have exactly one
+	// series each.
 	keys []keySpec
 	// join is the dimension join, or empty when the key columns live on the
 	// sample relation itself.

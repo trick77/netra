@@ -142,9 +142,20 @@ describe("Graphs", () => {
   it("leaves the IP and ICMP panels empty when the host_snmp family is absent", () => {
     render(<Graphs host={fullHost} />);
 
-    expect(
-      screen.getByRole("heading", { name: "IP statistics" }),
-    ).toBeInTheDocument();
+    // Not merely present: each of the three says it has nothing to draw,
+    // which is the whole point -- a blank chart would assert the host
+    // reported zeroes.
+    for (const title of [
+      "IP statistics",
+      "ICMP statistics",
+      "ICMP informational",
+    ]) {
+      expect(
+        screen.getByRole("region", { name: `${title}, not collected` }),
+      ).toHaveTextContent("No data has been read for this family yet.");
+    }
+    // And the family it does have still draws, so one absent fetch does not
+    // take the rest of the Network group with it.
     expect(
       screen.getByRole("heading", { name: "IP fragmentation" }),
     ).toBeInTheDocument();
