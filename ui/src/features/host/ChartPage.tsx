@@ -12,7 +12,7 @@ import { ChevronLeft } from "lucide-react";
 import { getMetrics, type MetricsResponse } from "../../lib/api";
 import { rangeWindow, type Range } from "../../lib/range";
 import { RANGE_VALUES } from "./ranges";
-import { bandsFor, specForSlug } from "./tabs/Graphs";
+import { bandsFor, familyFor, specForSlug, type Family } from "./chartSpecs";
 import { Chart, type ChartSeries } from "../../ui/charts/Chart";
 import {
   mirroredTicks,
@@ -41,7 +41,7 @@ export interface ChartPageProps {
   onRangeChange: (range: Range) => void;
   onBack: () => void;
   /** Injectable for tests and for the harness; defaults to the real API. */
-  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
+  fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
 }
 
 export function ChartPage({
@@ -55,7 +55,7 @@ export function ChartPage({
   const spec = specForSlug(slug);
 
   const load = useCallback(
-    (family: string, next: Range) => {
+    (family: Family, next: Range) => {
       if (fetchFamily) return fetchFamily(family, next);
       const window = rangeWindow(next);
       return getMetrics(hostId, {
@@ -103,7 +103,7 @@ function ChartView({
   range: Range;
   onRangeChange: (range: Range) => void;
   onBack: () => void;
-  load: (family: string, range: Range) => Promise<MetricsResponse>;
+  load: (family: Family, range: Range) => Promise<MetricsResponse>;
 }) {
   const [res, setRes] = useState<MetricsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +117,7 @@ function ChartView({
   useEffect(() => {
     let live = true;
     setLoading(true);
-    load(spec.source, range)
+    load(familyFor(spec), range)
       .then((next) => {
         if (!live) return;
         setRes(next);
@@ -128,7 +128,7 @@ function ChartView({
     return () => {
       live = false;
     };
-  }, [load, spec.source, range]);
+  }, [load, spec, range]);
 
   // The page has room for the pair: mean as the line, peak as the envelope.
   // The panel this was opened from draws the peak alone, which is right at
@@ -344,7 +344,7 @@ function RangeStrip({
   spec: Spec;
   active: Range;
   onPick: (range: Range) => void;
-  load: (family: string, range: Range) => Promise<MetricsResponse>;
+  load: (family: Family, range: Range) => Promise<MetricsResponse>;
 }) {
   const [byRange, setByRange] = useState<Record<string, MetricsResponse>>({});
 
@@ -354,7 +354,7 @@ function RangeStrip({
     // draws ONE chart: the tab it was opened from mounts twenty-odd panels,
     // and five requests each would be a hundred.
     RANGE_VALUES.forEach((r) => {
-      load(spec.source, r)
+      load(familyFor(spec), r)
         .then((res) => {
           if (live) setByRange((prev) => ({ ...prev, [r]: res }));
         })
@@ -365,7 +365,7 @@ function RangeStrip({
     return () => {
       live = false;
     };
-  }, [load, spec.source]);
+  }, [load, spec]);
 
   return (
     <div className="strip" role="group" aria-label="Range">
