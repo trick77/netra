@@ -127,6 +127,30 @@ function When({ iso }: { iso: string | null }) {
 // for the project/service split and is imported and tested as such.
 export { composeIdentity };
 
+// Hoisted for the same reason FleetContainers hoists its own: Table
+// memoises the partition on the groupBy identity, and a fresh object every
+// render recomputes it every render.
+//
+// By compose project: on one host, what belongs together is a stack. A
+// container whose key has no slash has no project -- the agent could not read
+// the Docker socket -- and "" puts it in Table's trailing unnamed group
+// rather than in among the named stacks.
+const BY_PROJECT = {
+  key: (row: ContainerRow) => {
+    const { project } = composeIdentity(row.container_key);
+    return project === ABSENT ? "" : project;
+  },
+  label: (key: string, group: readonly ContainerRow[]) => (
+    <>
+      <span>{key === "" ? "No compose project" : key}</span>
+      <span className="groupcount">
+        {" · "}
+        {group.length} container{group.length === 1 ? "" : "s"}
+      </span>
+    </>
+  ),
+};
+
 export function Containers({
   rows,
   host,
@@ -201,25 +225,7 @@ export function Containers({
         [row.container_key, row.name, row.image].filter(Boolean).join(" ")
       }
       notice={note === null ? undefined : <p className="note">{note}</p>}
-      // By compose project: on one host, what belongs together is a stack.
-      // A container whose key has no slash has no project -- the agent could
-      // not read the Docker socket -- and "" puts it in Table's trailing
-      // unnamed group rather than in among the named stacks.
-      groupBy={{
-        key: (row) => {
-          const { project } = composeIdentity(row.container_key);
-          return project === ABSENT ? "" : project;
-        },
-        label: (key, group) => (
-          <>
-            <span>{key === "" ? "No compose project" : key}</span>
-            <span className="groupcount">
-              {" · "}
-              {group.length} container{group.length === 1 ? "" : "s"}
-            </span>
-          </>
-        ),
-      }}
+      groupBy={BY_PROJECT}
     />
   );
 }

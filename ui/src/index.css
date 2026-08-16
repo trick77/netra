@@ -1761,7 +1761,10 @@ tbody:first-of-type .grouprow th {
   border-bottom: 0;
 }
 .mem-cell .val {
-  font-size: var(--text-micro);
+  /* --text-label, like .uptime-cell and .traffic-cell .rate: the same job
+     -- a quiet secondary reading inside a table cell -- and --text-micro
+     has only its three sanctioned uses (spec 3.6). */
+  font-size: var(--text-label);
 }
 
 /* Every interactive control shows where the keyboard is. :focus-visible

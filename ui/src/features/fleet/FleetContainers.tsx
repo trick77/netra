@@ -167,19 +167,26 @@ export function FleetContainers({
         rows={rows}
         // Two hosts can run the same container_key, so identity is the pair.
         rowKey={(row) => `${row.host_id}:${row.container_key}`}
-        // By host_id, never by hostname: two hosts in different sites may
-        // share a hostname (see HostTable), and grouping on the name would
-        // merge two machines into one group and file one host's containers
-        // under the other host's link. It is the same reason rowKey above is
-        // a pair.
-        groupBy={{
-          key: (row) => String(row.host_id),
-          label: (_key, group) => <HostGroup rows={group} />,
-        }}
+        groupBy={BY_HOST}
       />
     </>
   );
 }
+
+// Hoisted, not an inline literal: Table memoises the partition on the
+// groupBy identity, and a fresh object every render recomputes it every
+// render. Neither half closes over anything, so there is nothing to capture.
+//
+// By host_id, never by hostname: two hosts in different sites may share a
+// hostname (see HostTable), and grouping on the name would merge two
+// machines into one group and file one host's containers under the other
+// host's link. It is the same reason rowKey is a pair.
+const BY_HOST = {
+  key: (row: ContainerRow) => String(row.host_id),
+  label: (_key: string, group: readonly ContainerRow[]) => (
+    <HostGroup rows={group} />
+  ),
+};
 
 /** A group header that is also the way into the host it names. */
 function HostGroup({ rows }: { rows: readonly ContainerRow[] }) {
