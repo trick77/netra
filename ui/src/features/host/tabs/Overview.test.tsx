@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
-import { Overview, filesystemRows } from "./Overview";
+import { Overview, filesystemRows, needsAttention } from "./Overview";
+import { DISK_WARN_PCT, DISK_CRIT_PCT } from "../../fleet/conditions";
+import { STALE_THRESHOLD_MS } from "../../../lib/host";
 
 const host: HostDetail = {
   id: 7,
@@ -1025,5 +1027,98 @@ describe("Overview system card", () => {
     const system = screen.getByRole("region", { name: "System" });
     const agent = within(system).getByText("Agent").nextElementSibling;
     expect(agent?.textContent).toBe(ABSENT);
+  });
+});
+
+// The two facts this page and the fleet band have to agree on. Both used to
+// be written twice -- the severity as a different word, the thresholds as
+// bare numbers -- and both are now single-sourced. These tests pin the
+// agreement rather than the constants: they import the same values the fleet
+// band imports, so a threshold that moves has to move on both pages or one
+// of these fails.
+describe("needsAttention agrees with the fleet band", () => {
+  const quiet = {
+    agentMetrics: null,
+    hostMetrics: null,
+    filesystems: [],
+    units: null,
+  };
+
+  it("calls a host that has never reported critical, the fleet's word for it", () => {
+    // Given a host the hub has never heard from
+    const testee = needsAttention({
+      ...quiet,
+      host: { ...host, last_seen: null },
+    });
+
+    // Then it is critical -- hostConditions() rates the same fact critical
+    expect(testee).toEqual([{ severity: "critical", what: "never reported" }]);
+  });
+
+  it("calls a host that stopped reporting critical too", () => {
+    // Given a host last seen well beyond the stale cutoff
+    const testee = needsAttention({
+      ...quiet,
+      host: { ...host, last_seen: "2026-08-10T00:00:00Z" },
+      now: new Date("2026-08-10T01:00:00Z"),
+    });
+
+    // Then the one condition is critical
+    expect(testee).toHaveLength(1);
+    expect(testee[0].severity).toBe("critical");
+    expect(testee[0].what).toMatch(/last reported/);
+  });
+
+  // The gap that survived the first pass at this: both pages said "critical"
+  // but disagreed about WHEN, this one at five minutes and hostStatus() at
+  // three. A host four minutes silent had its own header call it offline and
+  // this panel call it fine. Judged against the shared constant, so a change
+  // to the alerting rule cannot move one page without the other.
+  it("goes stale on the same threshold the header and the fleet use", () => {
+    const lastSeen = new Date("2026-08-10T01:00:00Z");
+    const justBefore = new Date(lastSeen.getTime() + STALE_THRESHOLD_MS);
+    const justAfter = new Date(lastSeen.getTime() + STALE_THRESHOLD_MS + 1000);
+    const at = (now: Date) =>
+      needsAttention({
+        ...quiet,
+        host: { ...host, last_seen: lastSeen.toISOString() },
+        now,
+      });
+
+    // Given a host exactly at the threshold, nothing is wrong yet
+    expect(at(justBefore)).toEqual([]);
+    // and one second past it, the panel agrees with the header
+    expect(at(justAfter)).toHaveLength(1);
+    expect(at(justAfter)[0].severity).toBe("critical");
+  });
+
+  it("warns and criticals on the same disk thresholds the fleet uses", () => {
+    // Given four filesystems straddling both shared thresholds. used/free are
+    // the only inputs -- Use% is used/(used+free), never total.
+    const fs = (label: string, pct: number) => ({
+      label,
+      total: 100,
+      used: pct,
+      free: 100 - pct,
+    });
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      now: new Date(host.last_seen as string),
+      filesystems: [
+        fs("just-under", DISK_WARN_PCT - 1),
+        fs("at-warn", DISK_WARN_PCT),
+        fs("under-crit", DISK_CRIT_PCT - 1),
+        fs("at-crit", DISK_CRIT_PCT),
+      ],
+    });
+
+    // Then the boundaries fall exactly where fleet/conditions.ts puts them:
+    // below warn is silent, at warn is a warning, at crit is critical.
+    expect(testee.map((a) => a.severity)).toEqual([
+      "warning",
+      "warning",
+      "critical",
+    ]);
   });
 });
