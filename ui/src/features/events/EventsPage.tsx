@@ -16,6 +16,7 @@ import { Segmented } from "../../ui/Segmented";
 import type { Event } from "../../lib/api";
 import type { Range } from "../../lib/range";
 import { ABSENT, absolute, relative } from "../../lib/format";
+import { KNOWN_EVENT_TYPES, mdraidSeverity, messageOf } from "./message";
 
 // The windows this page OFFERS: the log reaches back further than a metrics
 // chart does, because events are sparse and "what happened this week" is the
@@ -39,10 +40,14 @@ export type EventSeverity = "critical" | "warning" | "info";
 
 const SEVERITIES: EventSeverity[] = ["critical", "warning", "info"];
 
-// The states an emitter puts in its own detail JSON. mdraid is the only
-// emitter today (agent/collector/mdraid.go marshals the array state), so
-// this is deliberately small: a table of invented severities for types the
-// hub never emits would be a taxonomy nobody wrote.
+// The states an emitter puts in its own detail JSON.
+//
+// Deliberately small. It was small originally because mdraid was the only
+// emitter (agent/collector/mdraid.go marshals the array state) and a table of
+// invented severities for types the hub never emits would be a taxonomy nobody
+// wrote. It stays small for the same reason under the wider log: the hub now
+// also sends package and unit events, and the ones that are serious say so
+// outright in a `severity` key rather than relying on a word matched here.
 const CRITICAL_STATES = ["degraded", "failed", "faulty"];
 const WARNING_STATES = ["recovering", "resync", "resyncing", "rebuilding"];
 
@@ -61,6 +66,13 @@ function detailOf(event: Event): Record<string, unknown> | null {
  * state word it reported decides. Everything else is info -- a package
  * upgrade is a fact, not an emergency, and colouring it as one is how a log
  * stops being read.
+ *
+ * mdraid is asked separately, and BEFORE the table above, because for mdraid
+ * the table has never once fired. The words in it -- degraded, faulty,
+ * recovering, rebuilding -- are not values sysfs `array_state` can take, and
+ * that is the field the collector puts in `state`. The kernel calls a raid1
+ * with one disk left `clean`, so every real degraded array this log has ever
+ * shown was rendered as "info". See mdraidSeverity.
  */
 export function severityOf(event: Event): EventSeverity {
   const detail = detailOf(event);
@@ -68,6 +80,9 @@ export function severityOf(event: Event): EventSeverity {
 
   const declared = detail["severity"];
   if (declared === "critical" || declared === "warning") return declared;
+
+  const array = mdraidSeverity(event);
+  if (array !== null) return array;
 
   const state = detail["state"];
   if (typeof state === "string") {
@@ -162,9 +177,15 @@ export function applyFilters(
       return false;
     }
     if (needle === "") return true;
-    return [event.subject ?? "", event.type, event.hostname].some((field) =>
-      field.toLowerCase().includes(needle),
-    );
+    // The message is searched as well as the subject, so a version string or
+    // a systemd state word is findable -- those live only in the detail JSON,
+    // and the row shows them.
+    return [
+      event.subject ?? "",
+      event.type,
+      event.hostname,
+      messageOf(event),
+    ].some((field) => field.toLowerCase().includes(needle));
   });
 }
 
@@ -210,11 +231,20 @@ export function EventsPage({
   const set = <K extends keyof EventFilters>(key: K, value: EventFilters[K]) =>
     onFiltersChange({ ...filters, [key]: value });
 
-  // The types on offer are the types that arrived, plus whichever one is
-  // selected -- a hardcoded list would offer filters that match nothing.
+  // The types on offer are the ones the hub is known to emit, plus any that
+  // actually arrived.
+  //
+  // The known set has to be there. Filtering by type narrows the RESPONSE, so
+  // a list built from the response alone empties itself: pick "package" and
+  // the server returns package rows only, so "mdraid" and "unit" disappear
+  // from the dropdown and there is no way back to them without clearing the
+  // filter first. Deriving from the response is still worth keeping alongside
+  // it, so an emitter added to the hub shows up here without a UI change.
   const types = [
     ...new Set(
-      [...events.map((e) => e.type), filters.type].filter((t) => t !== ""),
+      [...KNOWN_EVENT_TYPES, ...events.map((e) => e.type), filters.type].filter(
+        (t) => t !== "",
+      ),
     ),
   ].sort();
 
@@ -313,10 +343,11 @@ export function EventsPage({
                   <SeverityMark severity={severityOf(event)} />{" "}
                   <TypeChip type={event.type} />{" "}
                   <a href={`/hosts/${event.host_id}`}>{event.hostname}</a>{" "}
-                  {/* A subjectless event is one about the host as a whole
+                  {/* What happened, in words. A subjectless event with
+                      nothing in its detail is one about the host as a whole
                       (0001_init.sql), which is a fact worth marking rather
                       than an empty cell. */}
-                  <span>{event.subject ?? ABSENT}</span>
+                  <span>{messageOf(event) || ABSENT}</span>
                 </div>
               </div>
             ))}

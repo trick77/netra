@@ -2,6 +2,7 @@ package read_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -728,5 +729,270 @@ func TestIntegrationEventsLimitIsAppliedAndClamped(t *testing.T) {
 	}
 	if len(all) != 10 {
 		t.Errorf("got %d events, want all 10 -- an over-large limit is clamped, not rejected", len(all))
+	}
+}
+
+// The log is a union of three tables, and this is the test that says so. Before
+// it, /api/v1/events read `events` alone -- so it showed mdraid and nothing
+// else, while package_events was written on every apt-get and read by nothing.
+//
+// The unit branch is the one with a judgement in it. systemd_unit_events
+// records EVERY transition, including the inactive/activating/active cycle a
+// timer produces on schedule; piping those into the log would bury it. Only
+// entering `failed` and leaving it become events.
+func TestIntegrationEventsUnionsPackagesAndUnits(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	id := seedHost(t, pool, "union")
+
+	exec(t, pool, `
+		INSERT INTO events (host_id, ts, type, subject, detail)
+		VALUES ($1, now() - INTERVAL '10 hours', 'mdraid', 'md0', '{"state":"degraded"}')`, id)
+
+	exec(t, pool, `
+		INSERT INTO package_events (host_id, ts, name, action, from_version, to_version)
+		VALUES ($1, now() - INTERVAL '2 hours', 'curl',    'upgrade', '8.5.0', '8.5.0-2'),
+		       ($1, now() - INTERVAL '2 hours', 'libssl3', 'remove',  '3.0.13', NULL),
+		       ($1, now() - INTERVAL '2 hours', 'ripgrep', 'install', NULL,     '14.1.0')`, id)
+
+	var unitID int32
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
+		VALUES ($1, 'postgresql.service', 'active', 'running', now())
+		RETURNING id`, id).Scan(&unitID); err != nil {
+		t.Fatalf("seed unit: %v", err)
+	}
+	var timerID int32
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
+		VALUES ($1, 'logrotate.service', 'inactive', 'dead', now())
+		RETURNING id`, id).Scan(&timerID); err != nil {
+		t.Fatalf("seed timer unit: %v", err)
+	}
+
+	// postgresql goes active -> failed -> active. Both the failure and the
+	// recovery are events; the run-of-the-mill states around them are not.
+	exec(t, pool, `
+		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
+		VALUES ($1, $2, now() - INTERVAL '8 hours', 'active', 'running'),
+		       ($1, $2, now() - INTERVAL '5 hours', 'failed', 'failed'),
+		       ($1, $2, now() - INTERVAL '3 hours', 'active', 'running')`, id, unitID)
+
+	// A timer firing on schedule. Three transitions, no event: this is the
+	// noise the gate exists for.
+	exec(t, pool, `
+		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
+		VALUES ($1, $2, now() - INTERVAL '7 hours', 'activating', 'start'),
+		       ($1, $2, now() - INTERVAL '6 hours', 'active',     'running'),
+		       ($1, $2, now() - INTERVAL '4 hours', 'inactive',   'dead')`, id, timerID)
+
+	got, err := svc.Events(ctx, read.EventQuery{HostID: id}, now)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+
+	byType := map[string]int{}
+	for _, e := range got {
+		byType[e.Type]++
+	}
+	if byType["mdraid"] != 1 || byType["package"] != 3 || byType["unit"] != 2 {
+		t.Fatalf("types = %v, want 1 mdraid, 3 package, 2 unit (the failure and the recovery)", byType)
+	}
+	if len(got) != 6 {
+		t.Fatalf("got %d events, want 6 -- the timer's three transitions are not events", len(got))
+	}
+
+	t.Run("the union is ordered as one log, not three", func(t *testing.T) {
+		for i := 1; i < len(got); i++ {
+			if got[i].TS.After(got[i-1].TS) {
+				t.Fatalf("event %d (%s) is newer than the one before it (%s) -- "+
+					"the branches were concatenated rather than merged",
+					i, got[i].TS, got[i-1].TS)
+			}
+		}
+		if got[0].Type != "package" {
+			t.Errorf("newest event is %q, want the 2-hour-old package row", got[0].Type)
+		}
+		if got[len(got)-1].Type != "mdraid" {
+			t.Errorf("oldest event is %q, want the 10-hour-old mdraid row", got[len(got)-1].Type)
+		}
+	})
+
+	t.Run("every row carries a distinct id", func(t *testing.T) {
+		seen := map[string]bool{}
+		for _, e := range got {
+			if e.ID == "" {
+				t.Fatalf("event %+v has no id", e)
+			}
+			if seen[e.ID] {
+				t.Fatalf("id %q appears twice -- a duplicate key drops a row from the list", e.ID)
+			}
+			seen[e.ID] = true
+		}
+	})
+
+	t.Run("a package event carries its versions", func(t *testing.T) {
+		var upgrade, removal *read.Event
+		for i := range got {
+			if got[i].Subject == nil {
+				continue
+			}
+			switch *got[i].Subject {
+			case "curl":
+				upgrade = &got[i]
+			case "libssl3":
+				removal = &got[i]
+			}
+		}
+		if upgrade == nil || removal == nil {
+			t.Fatal("want an event for curl and one for libssl3")
+		}
+
+		var detail map[string]any
+		if err := json.Unmarshal(upgrade.Detail, &detail); err != nil {
+			t.Fatalf("unmarshal detail: %v", err)
+		}
+		if detail["action"] != "upgrade" ||
+			detail["from_version"] != "8.5.0" || detail["to_version"] != "8.5.0-2" {
+			t.Errorf("detail = %v, want the upgrade and both versions", detail)
+		}
+
+		// A removal has no to_version, and the key is dropped rather than sent
+		// as null -- the UI reads presence, not nullness. A fresh map, because
+		// json.Unmarshal merges into a non-empty one rather than replacing it.
+		var removed map[string]any
+		if err := json.Unmarshal(removal.Detail, &removed); err != nil {
+			t.Fatalf("unmarshal detail: %v", err)
+		}
+		if _, ok := removed["to_version"]; ok {
+			t.Errorf("detail = %v, want no to_version on a removal", removed)
+		}
+		if removed["action"] != "remove" || removed["from_version"] != "3.0.13" {
+			t.Errorf("detail = %v, want the removal and the version it had", removed)
+		}
+	})
+
+	t.Run("a unit failure states its severity and what it came from", func(t *testing.T) {
+		var failure, recovery map[string]any
+		for _, e := range got {
+			if e.Type != "unit" {
+				continue
+			}
+			if e.Subject == nil || *e.Subject != "postgresql.service" {
+				t.Fatalf("unit event subject = %v, want postgresql.service", e.Subject)
+			}
+			var detail map[string]any
+			if err := json.Unmarshal(e.Detail, &detail); err != nil {
+				t.Fatalf("unmarshal detail: %v", err)
+			}
+			if detail["state"] == "failed" {
+				failure = detail
+			} else {
+				recovery = detail
+			}
+		}
+		if failure == nil || recovery == nil {
+			t.Fatalf("want both a failure and a recovery, got %v and %v", failure, recovery)
+		}
+		// Stated outright, because the host tab's eventSeverity trusts only a
+		// stated severity and never infers one.
+		if failure["severity"] != "critical" {
+			t.Errorf("failure severity = %v, want critical", failure["severity"])
+		}
+		if failure["previous_state"] != "active" {
+			t.Errorf("failure previous_state = %v, want active", failure["previous_state"])
+		}
+		if _, ok := recovery["severity"]; ok {
+			t.Errorf("recovery detail = %v, want no severity -- recovering is not an emergency", recovery)
+		}
+		if recovery["previous_state"] != "failed" {
+			t.Errorf("recovery previous_state = %v, want failed", recovery["previous_state"])
+		}
+	})
+
+	t.Run("a type filter selects one branch", func(t *testing.T) {
+		for _, tc := range []struct {
+			typ  string
+			want int
+		}{
+			{"package", 3}, {"unit", 2}, {"mdraid", 1},
+		} {
+			got, err := svc.Events(ctx, read.EventQuery{HostID: id, Type: tc.typ}, now)
+			if err != nil {
+				t.Fatalf("Events(%s): %v", tc.typ, err)
+			}
+			if len(got) != tc.want {
+				t.Errorf("Events(%s) returned %d rows, want %d", tc.typ, len(got), tc.want)
+			}
+			for _, e := range got {
+				if e.Type != tc.typ {
+					t.Errorf("Events(%s) returned a %q row", tc.typ, e.Type)
+				}
+			}
+		}
+	})
+
+	t.Run("no host filter still reaches every branch", func(t *testing.T) {
+		got, err := svc.Events(ctx, read.EventQuery{}, now)
+		if err != nil {
+			t.Fatalf("Events: %v", err)
+		}
+		byType := map[string]int{}
+		for _, e := range got {
+			if e.HostID == id {
+				byType[e.Type]++
+			}
+		}
+		if byType["package"] != 3 || byType["unit"] != 2 || byType["mdraid"] != 1 {
+			t.Errorf("fleet-wide types for this host = %v, want the same 6 rows", byType)
+		}
+	})
+}
+
+// The recovery half of a unit event needs the transition BEFORE the window to
+// know it was a recovery. Without the lookback the row reads as a unit turning
+// active out of nowhere, which is not notable, and the recovery vanishes from
+// the log exactly when someone is looking for it.
+func TestIntegrationEventsUnitRecoveryFromOutsideTheWindow(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	id := seedHost(t, pool, "late-recovery")
+	var unitID int32
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
+		VALUES ($1, 'nginx.service', 'active', 'running', now())
+		RETURNING id`, id).Scan(&unitID); err != nil {
+		t.Fatalf("seed unit: %v", err)
+	}
+
+	// Failed three days ago -- well outside the default 24h window -- and
+	// recovered an hour ago, inside it.
+	exec(t, pool, `
+		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
+		VALUES ($1, $2, now() - INTERVAL '3 days', 'failed', 'failed'),
+		       ($1, $2, now() - INTERVAL '1 hour', 'active', 'running')`, id, unitID)
+
+	got, err := svc.Events(ctx, read.EventQuery{HostID: id}, now)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d events, want the one recovery", len(got))
+	}
+
+	var detail map[string]any
+	if err := json.Unmarshal(got[0].Detail, &detail); err != nil {
+		t.Fatalf("unmarshal detail: %v", err)
+	}
+	if detail["previous_state"] != "failed" {
+		t.Errorf("previous_state = %v, want failed -- the lookback did not reach the failure",
+			detail["previous_state"])
+	}
+	if got[0].TS.Before(now.Add(-2 * time.Hour)) {
+		t.Errorf("ts = %v, want the recovery inside the window, not the failure outside it", got[0].TS)
 	}
 }
