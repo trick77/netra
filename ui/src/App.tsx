@@ -30,6 +30,10 @@ import {
   type Entity,
 } from "./features/fleet/FleetPage";
 import {
+  isConditionKind,
+  type AttentionFilter,
+} from "./features/fleet/conditions";
+import {
   buildRows,
   fetchContainerTrends,
   fetchHostTrends,
@@ -352,6 +356,17 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   const viewParam = params.get("view");
   const density: Density =
     viewParam === "cards" || viewParam === "table" ? viewParam : loadView();
+  // What is wrong is a view of this page like any other, so it is a link:
+  // "the fleet, filtered to failed units" is a URL someone can paste into a
+  // chat. An unrecognised value is "all" rather than a filter that silently
+  // matches nothing -- see isConditionKind.
+  const attnParam = params.get("attn") ?? "";
+  const attention: AttentionFilter =
+    attnParam === "critical" || attnParam === "warning"
+      ? attnParam
+      : isConditionKind(attnParam)
+        ? attnParam
+        : "all";
   const setParam = paramSetter("/", search, go);
   const [range, chooseRange] = rangeParam(search, FLEET_RANGE_VALUES, setParam);
 
@@ -471,6 +486,10 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       }}
       range={range}
       onRangeChange={chooseRange}
+      attention={attention}
+      // "" clears the parameter -- withParam drops an empty value, so the
+      // unfiltered fleet is the bare URL rather than /?attn=all.
+      onAttentionChange={(next) => setParam("attn", next === "all" ? "" : next)}
       checkedAt={poll.data?.at ?? null}
       containers={poll.data?.containers}
       containerError={

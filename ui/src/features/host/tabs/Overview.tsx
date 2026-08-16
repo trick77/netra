@@ -389,17 +389,42 @@ const LIMITS: {
 // above a panel saying nothing needed attention. lib/host.ts anchors the
 // number to the product's alerting rule; there is one definition of down.
 
+// Worst first, and the only three needsAttention() emits: `ok` is not a
+// condition and `neutral` is not a severity anything here can be at. A
+// severity missing from this list would drop its rows silently, which is why
+// it is written out rather than derived from the data.
+const ATTENTION_SEVERITIES = ["critical", "serious", "warning"] as const;
+
+const SEVERITY_WORD: Record<Severity, string> = {
+  critical: "Critical",
+  serious: "Serious",
+  warning: "Warning",
+  ok: "OK",
+  neutral: "Unknown",
+};
+
+const SEVERITY_CLASS: Record<Severity, string> = {
+  critical: "st-crit",
+  serious: "st-serious",
+  warning: "st-warn",
+  ok: "st-ok",
+  neutral: "",
+};
+
 /**
  * What is wrong right now. Current state must not sit behind a tab, so this
  * is derived here from the same responses the cards above it render -- there
  * is no second source that could disagree with them.
  *
- * NOT sorted by severity, despite this list now leading the tab: the order is
- * the order it is written in, so a reader who looks twice finds the same rows
- * in the same places. That is the fleet's rule too -- see the note on
- * hostConditions() in fleet/conditions.ts, which spells out why ordering
- * within ONE host is left as written. The docstring used to claim "worst
- * first", which no line of this function has ever done.
+ * The order is the order it is written in, and this function sorts nothing:
+ * a reader who looks twice finds the same rows in the same places. That is
+ * the fleet's rule too -- see the note on hostConditions() in
+ * fleet/conditions.ts.
+ *
+ * What renders it DOES group by severity, with a stable partition, so the
+ * written order survives inside each group. Grouping is presentation; this
+ * list stays as written so the presentation can change without the data
+ * moving underneath it.
  */
 export function needsAttention(input: {
   host: HostDetail;
@@ -947,14 +972,42 @@ export function Overview({
               {attention.length === 1 ? "s" : ""} attention
             </h3>
           </header>
-          <ul className="attn-list">
-            {attention.map((a, index) => (
-              <li className="attn-row" key={index}>
-                <Badge severity={a.severity}>{a.severity}</Badge>
-                <span className="what">{a.what}</span>
-              </li>
-            ))}
-          </ul>
+          {/* The severity is a heading over the rows at that severity, said
+              once, rather than a chip repeated on every one of them. Three
+              critical rows do not need the word "critical" three times, and
+              the chip that used to carry it printed the raw severity literal
+              in lowercase. The dot on each row is the mark; the heading above
+              it is the word §3.3 requires, and it is a real heading so a
+              screen reader reaches the rows through it.
+
+              The fleet list groups the same way, and this page has to match
+              it -- see #92, where the two disagreed about one host. */}
+          {ATTENTION_SEVERITIES.map((severity) => {
+            // Stable partition, so the written order of needsAttention()
+            // survives inside each severity: reporting still leads, which is
+            // the whole reason it is written first.
+            const rows = attention.filter((a) => a.severity === severity);
+            if (rows.length === 0) return null;
+            return (
+              <div key={severity}>
+                <h4 className={`attn-sev ${SEVERITY_CLASS[severity]}`}>
+                  {SEVERITY_WORD[severity]}{" "}
+                  <span className="n">{rows.length}</span>
+                </h4>
+                <ul className="attn-list">
+                  {rows.map((a, index) => (
+                    <li className="attn-row" key={index}>
+                      <span
+                        className={`dot ${SEVERITY_CLASS[severity]}`}
+                        aria-hidden="true"
+                      />
+                      <span className="what">{a.what}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
         </section>
       )}
 

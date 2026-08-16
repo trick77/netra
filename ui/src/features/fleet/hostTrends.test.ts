@@ -357,7 +357,14 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest).toEqual({ mount: "data", pct: 88, others: 2 });
+    expect(trends.fullest).toEqual({
+      mount: "data",
+      pct: 88,
+      others: 2,
+      // Under DISK_WARN_PCT, so there is no crossing to date.
+      since: null,
+      sinceAtLeast: false,
+    });
   });
 
   // A filesystem is named to an operator by its mount point -- the thing they
@@ -417,7 +424,13 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest).toEqual({ mount: "/mnt/ark", pct: 20, others: 0 });
+    expect(trends.fullest).toEqual({
+      mount: "/mnt/ark",
+      pct: 20,
+      others: 0,
+      since: null,
+      sinceAtLeast: false,
+    });
   });
 
   // Never a zero-percent meter: an empty green bar says the disks were

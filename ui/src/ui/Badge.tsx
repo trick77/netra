@@ -1,14 +1,17 @@
 // Severity never rides on colour alone (spec §3.3): netra's accent and its
 // critical red measure ΔE 7.2 at normal vision and 2.2 under deuteranopia --
 // not reliably distinguishable, and no re-stepping fixes it. What preserves
-// meaning is that every status carries a WORD, so `children` is required by
-// the type -- a caller cannot construct a bare coloured chip that means
-// "critical" without a label inside it.
+// meaning is that every status carries a dot AND a word, so `children` is
+// required by the type -- a caller cannot construct a bare coloured dot that
+// means "critical" without a label attached to it.
 //
-// The word used to be paired with a dot as well, and the dot is gone: the
-// chip's tinted ground and edge now carry the hue (see .badge in index.css),
-// so the dot was a second copy of the same fact costing 12px on every badge
-// in the app. The label is what the mitigation was ever resting on.
+// The hue lived in a tinted chip ground for three commits and is back in the
+// dot. A tint is a filled object, and a page listing fifty warned hosts drew
+// fifty of them: the ground did the shouting the word is supposed to do, and
+// it could not be put in a table cell or mid-sentence without repainting the
+// row it sat in. A dot costs 12px and changes no ground it lands on. Only
+// the STATUS badge sheds the chip -- see .badge in index.css for the neutral
+// one, which is a label rather than a severity and keeps its own.
 import type { ReactNode } from "react";
 
 export type Severity = "ok" | "warning" | "serious" | "critical" | "neutral";
@@ -30,5 +33,10 @@ export interface BadgeProps {
 export function Badge({ severity = "neutral", children }: BadgeProps) {
   const severityClass = SEVERITY_CLASS[severity];
   const className = severityClass ? `badge ${severityClass}` : "badge";
-  return <span className={className}>{children}</span>;
+  return (
+    <span className={className}>
+      <span className="dot" aria-hidden="true" />
+      {children}
+    </span>
+  );
 }

@@ -1,4 +1,9 @@
-import { hostColumns, type HostRow, type Range } from "./hostColumns";
+import {
+  hostColumns,
+  type AttentionView,
+  type HostRow,
+  type Range,
+} from "./hostColumns";
 import { FleetEmptyState } from "./fleetEmptyState";
 
 // The one column a card renders as its header rather than as a tile -- a
@@ -8,6 +13,9 @@ const HEADER_COLUMN_KEY = "host";
 export interface HostCardsProps {
   rows: readonly HostRow[];
   range: Range;
+  /** See HostTable: the same pass-through, so a filtered fleet reads the
+   * same whichever density the reader is on. */
+  attention?: AttentionView;
 }
 
 /**
@@ -25,7 +33,7 @@ export interface HostCardsProps {
  * onto a third row rather than being dropped -- dropping it is the failure
  * mode this contract exists to prevent.
  */
-export function HostCards({ rows, range }: HostCardsProps) {
+export function HostCards({ rows, range, attention }: HostCardsProps) {
   if (rows.length === 0) {
     // The table's empty state, not a copy of it.
     return <FleetEmptyState />;
@@ -34,7 +42,7 @@ export function HostCards({ rows, range }: HostCardsProps) {
   // The header column is found by key, never by position: a column added at
   // the front of hostColumns would otherwise silently become the card title
   // instead of a tile.
-  const columns = hostColumns(range);
+  const columns = hostColumns(range, attention);
   const host = columns.find((col) => col.key === HEADER_COLUMN_KEY);
   const metrics = columns.filter((col) => col.key !== HEADER_COLUMN_KEY);
 

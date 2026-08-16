@@ -175,21 +175,29 @@ describe("FleetPage header", () => {
     expect(screen.getByText(/nothing needs attention/i)).toBeInTheDocument();
   });
 
-  it("shows the band, and no all-clear line, when something is wrong", () => {
+  it("counts what is wrong by kind, and drops the all-clear line", () => {
     renderPage({
       conditions: [
         {
           hostId: "1",
           hostname: "web-01",
+          kind: "disk",
           severity: "critical",
+          label: "Filesystem over 90%",
           what: "disk 99% full",
           since: "2026-08-10T13:00:00Z",
+          evidence: { type: "meter", pct: 99 },
           tab: "filesystems",
         },
       ],
     });
 
-    expect(screen.getByText(/disk 99% full/)).toBeInTheDocument();
+    // The kind and its host count, not the host's own sentence: unfiltered,
+    // this page is still the monitoring list and the sentence is one click
+    // away. That IS the change -- fifty warned hosts cannot each get a line.
+    const counts = screen.getByRole("list", { name: /by kind/i });
+    expect(within(counts).getByText(/Filesystem over 90%/)).toBeInTheDocument();
+    expect(within(counts).getByText("1")).toBeInTheDocument();
     expect(screen.queryByText(/nothing needs attention/i)).toBeNull();
   });
 
@@ -487,7 +495,7 @@ describe("FleetPage data fetching", () => {
   // The band existed from the start and had nothing to render: `conditions`
   // defaulted to [], so this page said "nothing needs attention" beside a
   // host whose own page was showing three OOM kills in red.
-  it("derives the attention band from the rows instead of rendering an empty one", () => {
+  it("derives what is wrong from the rows instead of claiming nothing is", () => {
     render(
       <FleetPage
         rows={[
@@ -499,8 +507,93 @@ describe("FleetPage data fetching", () => {
       />,
     );
 
-    expect(screen.getByText(/3 OOM kills/)).toBeInTheDocument();
+    const counts = screen.getByRole("list", { name: /by kind/i });
+    expect(within(counts).getByText(/OOM kills/)).toBeInTheDocument();
     expect(screen.queryByText(/nothing needs attention/)).toBeNull();
+  });
+
+  // The point of the counts line, in one assertion: the number of entries is
+  // bounded by how many KINDS of thing can be wrong, never by how many hosts
+  // are wrong. Twelve hosts with the same problem is one line -- which is
+  // what the band could not do, and why fifty warnings buried it.
+  it("stays one line per kind however many hosts carry it", () => {
+    render(
+      <FleetPage
+        rows={Array.from({ length: 12 }, (_, i) =>
+          makeRow({ id: i + 1, hostname: `web-${i + 1}`, oomKills: 1 }),
+        )}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    const counts = screen.getByRole("list", { name: /by kind/i });
+    expect(within(counts).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(counts).getByText("12")).toBeInTheDocument();
+  });
+
+  // Clicking a kind is the whole navigation model: the hosts carrying it, and
+  // nothing else, with the sentence that was too long to print twelve times.
+  it("filters the list to the hosts carrying the kind that was clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+        ]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    const counts = screen.getByRole("list", { name: /by kind/i });
+    await user.click(within(counts).getByRole("link", { name: /OOM kills/ }));
+
+    expect(screen.getByText(/3 OOM kills/)).toBeInTheDocument();
+    // The healthy host is gone, and the page says so rather than leaving the
+    // reader to notice -- the band's own overflow line ("+30 more hosts") was
+    // the counter-example, with nothing to click.
+    expect(screen.queryByText("web-01")).toBeNull();
+    expect(screen.getByRole("link", { name: /show all/i })).toBeInTheDocument();
+  });
+
+  // Severity is the coarse cut, and the two buckets have to add up to the
+  // count stated above them or the control contradicts the line.
+  it("splits the troubled hosts into critical and warning, and filters by either", async () => {
+    const user = userEvent.setup();
+    render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+          makeRow({
+            id: 3,
+            hostname: "build-01",
+            services_failed: 2,
+          }),
+        ]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /critical 1/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /warning 1/i }));
+
+    expect(screen.getByText("build-01")).toBeInTheDocument();
+    expect(screen.queryByText("db-01")).toBeNull();
+  });
+
+  // A host with nothing wrong is never in an attention view, whichever way
+  // the reader got there.
+  it("offers no severity control when the whole fleet is healthy", () => {
+    render(
+      <FleetPage rows={[makeRow({ id: 1 })]} checkedAt={null} now={NOW} />,
+    );
+    expect(screen.queryByRole("button", { name: /critical/i })).toBeNull();
   });
 
   it("counts the troubled hosts, not the conditions, above the band", () => {
@@ -527,7 +620,11 @@ describe("FleetPage data fetching", () => {
   // A filter is someone looking for one machine. Recomputing the band from
   // the filtered rows would hide a critical host because its name does not
   // match what was typed, which is exactly how an overview lies.
-  it("keeps the band whole while the list is filtered", async () => {
+  // The counts are computed over every row, never over the visible ones: a
+  // filter is someone looking for one machine, and hiding a critical host
+  // because its name does not match what was typed is exactly how an overview
+  // lies.
+  it("keeps the counts whole while the list is filtered", async () => {
     const user = userEvent.setup();
     render(
       <FleetPage
@@ -541,7 +638,9 @@ describe("FleetPage data fetching", () => {
     );
 
     await user.type(screen.getByPlaceholderText(/filter hosts/i), "web");
-    expect(screen.getByText(/3 OOM kills/)).toBeInTheDocument();
+    const counts = screen.getByRole("list", { name: /by kind/i });
+    expect(within(counts).getByText(/OOM kills/)).toBeInTheDocument();
+    expect(screen.getByText(/1 of 2 hosts/)).toBeInTheDocument();
   });
 
   it("still shows the quiet all-clear line for a healthy fleet", () => {

@@ -12,14 +12,20 @@ describe("Badge", () => {
     expect(screen.getByText("silent")).toBeInTheDocument();
   });
 
-  // The chip's tinted ground carries the hue, so the label is the only child
-  // there is. The dot it used to render in front of the label said the same
-  // thing twice and cost 12px on every badge in the app.
-  it("renders the label as the chip's only content", () => {
+  // A status badge is a dot and a word. The tinted chip that replaced the dot
+  // for three commits made a page of fifty warned hosts fifty filled objects,
+  // and the ground did the ranking the word is supposed to do.
+  it("renders a dot and the label, and hides the dot from the reading", () => {
     const { container } = render(<Badge severity="ok">healthy</Badge>);
     const badge = container.querySelector(".badge")!;
     expect(badge).toHaveTextContent("healthy");
-    expect(badge.children).toHaveLength(0);
+    // The dot carries the hue, the label carries the meaning (spec §3.3), so
+    // the dot is decoration to a screen reader and the word is not.
+    const dot = badge.querySelector(".dot")!;
+    expect(dot).toBeInTheDocument();
+    expect(dot).toHaveAttribute("aria-hidden", "true");
+    // Nothing else: a status badge is exactly a dot and its word.
+    expect(badge.children).toHaveLength(1);
   });
 
   it("applies the status class matching the severity", () => {

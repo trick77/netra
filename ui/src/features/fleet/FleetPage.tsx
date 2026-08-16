@@ -13,8 +13,18 @@ import { Input } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import { StatTile } from "../../ui/StatTile";
 import { Tabs } from "../../ui/Tabs";
-import { AttentionBand, type Condition } from "./AttentionBand";
-import { fleetConditions, hostsNeedingAttention } from "./conditions";
+import { AttentionCounts } from "./AttentionCounts";
+import {
+  fleetConditions,
+  groupByHost,
+  groupByKind,
+  hostsNeedingAttention,
+  isConditionKind,
+  severityRank,
+  type AttentionFilter,
+  type Condition,
+  type HostGroup,
+} from "./conditions";
 import { FleetContainers, type ContainerRow } from "./FleetContainers";
 import { HostCards } from "./HostCards";
 import { HostTable } from "./HostTable";
@@ -157,6 +167,17 @@ export interface FleetPageProps {
   entity?: Entity;
   density?: Density;
   /**
+   * Which part of what is wrong the reader asked for: everything, one
+   * severity, or one condition kind.
+   *
+   * One value rather than a severity and a kind side by side, because they
+   * are one question with one answer -- and because the Segmented that shows
+   * it must always have exactly one option pressed. Picking a kind presses
+   * the severity that kind is at; picking a severity clears the kind.
+   */
+  attention?: AttentionFilter;
+  onAttentionChange?: (next: AttentionFilter) => void;
+  /**
    * When the fleet was last read, for the all-clear line. Spec 4.3: the
    * quiet line exists to confirm the check RAN, so a page handed its data
    * from outside (Wave 5's poller, or a test) must be able to say when.
@@ -187,6 +208,8 @@ export function FleetPage({
   conditions: injectedConditions,
   entity: controlledEntity = "hosts",
   density: controlledDensity,
+  attention: controlledAttention,
+  onAttentionChange,
   checkedAt: injectedCheckedAt,
   containerError: injectedContainerError,
   now = new Date(),
@@ -200,6 +223,9 @@ export function FleetPage({
     () => controlledDensity ?? readStoredDensity() ?? "table",
   );
   const [localRange, setLocalRange] = useState<Range>(controlledRange ?? "24h");
+  const [localAttention, setLocalAttention] = useState<AttentionFilter>(
+    controlledAttention ?? "all",
+  );
 
   // Controlled when the caller supplies both the value and the setter,
   // uncontrolled otherwise. Half a pair is a value that cannot change, so
@@ -212,6 +238,10 @@ export function FleetPage({
   const setDensity = onDensityChange ?? setLocalDensity;
   const range = onRangeChange ? (controlledRange ?? localRange) : localRange;
   const setRange = onRangeChange ?? setLocalRange;
+  const attention = onAttentionChange
+    ? (controlledAttention ?? "all")
+    : localAttention;
+  const setAttention = onAttentionChange ?? setLocalAttention;
   const [filter, setFilter] = useState("");
   // Below the mobile breakpoint cards are automatic, not a preference (spec
   // 4.5): a six-column host table does not survive 390px, and a stored
@@ -326,6 +356,66 @@ export function FleetPage({
   // does not match what was typed is exactly how an overview lies.
   const shown = injectedConditions ?? fleetConditions(hostRows, now);
   const troubled = hostsNeedingAttention(shown);
+  const groups = groupByHost(shown);
+  const byHost = new Map<string, HostGroup>(groups.map((g) => [g.hostId, g]));
+  const kinds = groupByKind(shown);
+  // "Has something critical", not "is worst-critical", and the two buckets
+  // therefore OVERLAP -- a host that is both silent and short of disk is in
+  // both. They stop adding up to `troubled` and that is the trade, taken on
+  // purpose: a kind is always a subset of the severity it is at, so picking
+  // "failed units" from the counts line can press the Warning segment without
+  // the two contradicting each other. Partitioned by worst, they could not --
+  // thirty-one warned hosts that are also silent showed "Warning 0" pressed
+  // above thirty-one rows.
+  //
+  // Each count still answers a question a reader actually asks: how many
+  // machines have something critical on them.
+  const hasSeverity = (group: HostGroup, critical: boolean): boolean =>
+    group.conditions.some((c) => (c.severity === "critical") === critical);
+  const criticalHosts = groups.filter((g) => hasSeverity(g, true)).length;
+  // Everything that is not critical rather than severity === "warning"
+  // exactly: `serious` is a severity the type allows and nothing currently
+  // emits, and a host that started emitting it would otherwise be counted in
+  // `troubled` and be unreachable by either segment.
+  const warningHosts = groups.filter((g) => hasSeverity(g, false)).length;
+
+  const matchesAttention = (row: HostRow): boolean => {
+    const group = byHost.get(String(row.id));
+    if (group === undefined) return false;
+    if (isConditionKind(attention)) {
+      return group.conditions.some((c) => c.kind === attention);
+    }
+    return hasSeverity(group, attention === "critical");
+  };
+
+  const filtered = attention === "all";
+  const attentionHosts = filtered
+    ? visibleHosts
+    : visibleHosts.filter(matchesAttention);
+
+  // Worst first, always -- filtered or not. Array.prototype.sort is stable,
+  // so hosts at the same rank keep the hostname order the API returned them
+  // in, and a healthy fleet is untouched by this because every row ranks 0.
+  // The Table's own column sort still overrides it the moment a reader
+  // clicks a header; this is only what they see before they do.
+  const rankOf = (row: HostRow): number => {
+    const group = byHost.get(String(row.id));
+    return group === undefined ? 0 : severityRank(group.worst.severity);
+  };
+  const orderedHosts = [...attentionHosts].sort(
+    (a, b) => rankOf(b) - rankOf(a),
+  );
+
+  // The columns follow the question. Only when a filter is on: unfiltered,
+  // this list is still the monitoring table it has always been, and swapping
+  // its charts for sentences would answer a question nobody asked.
+  const attentionView = filtered
+    ? undefined
+    : {
+        groups: byHost,
+        kind: isConditionKind(attention) ? attention : null,
+        range,
+      };
 
   return (
     <>
@@ -361,7 +451,17 @@ export function FleetPage({
             {shown.length === 1 ? "" : "s"}
             {checkedAt === null ? "" : ` · checked ${relative(checkedAt, now)}`}
           </p>
-          <AttentionBand conditions={shown} />
+          {/* What used to be a band of one block per host. Fifty warned
+              hosts made fifty blocks, capped at twenty, with an overflow
+              line that was not even a link -- so the conditions moved into
+              the list below and this is what is left above it: one line per
+              KIND, which is one line per problem however many machines have
+              it. */}
+          <AttentionCounts
+            kinds={kinds}
+            active={isConditionKind(attention) ? attention : null}
+            onSelect={setAttention}
+          />
         </>
       ) : (
         // Not a green "all clear" card: a permanently present banner is one
@@ -440,6 +540,33 @@ export function FleetPage({
           aria-label={entity === "hosts" ? "Filter hosts" : "Filter containers"}
           onChange={(e) => setFilter(e.target.value)}
         />
+        {/* Left of the spacer, beside the filter it composes with: the two
+            on the right (range, density) change how the same list is drawn,
+            these two change WHICH hosts are in it. Hosts only -- every
+            condition netra has is host-level, so on the Containers tab this
+            control would offer three segments that all show the same list. */}
+        {entity === "hosts" && troubled > 0 ? (
+          <Segmented
+            options={[
+              { value: "all", label: `All ${hostRows.length}` },
+              { value: "critical", label: `Critical ${criticalHosts}` },
+              { value: "warning", label: `Warning ${warningHosts}` },
+            ]}
+            // A kind is a severity's subset, so the segment that contains it
+            // stays pressed while it is chosen -- Segmented's contract is
+            // exactly one pressed option, and a kind chosen from the counts
+            // line above must not leave all three looking unselected.
+            value={
+              isConditionKind(attention)
+                ? kinds.find((k) => k.kind === attention)?.severity ===
+                  "critical"
+                  ? "critical"
+                  : "warning"
+                : attention
+            }
+            onChange={(next) => setAttention(next as AttentionFilter)}
+          />
+        ) : null}
         <div className="spacer" />
         <Segmented options={FLEET_RANGES} value={range} onChange={setRange} />
         {/* Density is a hosts-only axis: a card grid of 247 containers is
@@ -460,11 +587,52 @@ export function FleetPage({
         ) : null}
       </div>
 
+      {entity === "hosts" && !filtered ? (
+        // Says what was left out, and how to stop leaving it out. The band's
+        // own overflow line was the counter-example: "+30 more hosts" with
+        // nothing to click.
+        <p className="countline">
+          Showing <strong>{orderedHosts.length}</strong> of {hostRows.length}{" "}
+          host{hostRows.length === 1 ? "" : "s"}
+          {isConditionKind(attention)
+            ? ` with ${(kinds.find((k) => k.kind === attention)?.label ?? "").toLowerCase()}`
+            : ` with something ${attention}`}{" "}
+          ·{" "}
+          <a
+            href="/"
+            onClick={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                return;
+              }
+              event.preventDefault();
+              setAttention("all");
+            }}
+          >
+            show all
+          </a>
+        </p>
+      ) : null}
+
       {entity === "hosts" ? (
         effectiveDensity === "table" ? (
-          <HostTable rows={visibleHosts} range={range} />
+          <HostTable
+            rows={orderedHosts}
+            range={range}
+            attention={attentionView}
+          />
         ) : (
-          <HostCards rows={visibleHosts} range={range} />
+          <HostCards
+            rows={orderedHosts}
+            range={range}
+            attention={attentionView}
+          />
         )
       ) : (
         <FleetContainers

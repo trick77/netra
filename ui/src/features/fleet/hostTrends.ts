@@ -17,6 +17,7 @@ import { memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import type { HostRow } from "./hostColumns";
+import { DISK_WARN_PCT } from "./conditions";
 
 /**
  * The fleet list's trends: four families per host, turned into the series
@@ -204,11 +205,60 @@ function sumSeries(
  * already seen over SSH. The API deliberately computes no percentage, so
  * this definition lives here.
  */
+/**
+ * When this filesystem last crossed the threshold and stayed over it.
+ *
+ * Walked backwards from the newest reading through THIS series and no other:
+ * the row names one mount, and dating it from whichever series crossed first
+ * would put a timestamp from /var beside a sentence about /srv. The caller
+ * has the series index for exactly that reason.
+ *
+ * A gap does not end the run. A host that was down for an hour did not empty
+ * its disk while it was away, and treating the hole as a return under the
+ * threshold would restart the clock every time the agent restarted.
+ *
+ * `atLeast` is the honest answer to a disk that was already full when the
+ * window opened: netra cannot see past the range the reader picked, so the
+ * row says "over 24 h" rather than naming the first bucket as if something
+ * happened there.
+ */
+function crossedAt(
+  res: MetricsResponse,
+  index: number,
+  threshold: number,
+): { since: string | null; atLeast: boolean } {
+  const used = griddedValues(res, index, "used");
+  const free = griddedValues(res, index, "free");
+  const count = Math.min(used.length, free.length);
+  const from = Date.parse(res.window.from);
+  const stepMs = res.step_s * 1000;
+  if (count === 0 || !Number.isFinite(from) || !(stepMs > 0)) {
+    return { since: null, atLeast: false };
+  }
+
+  let start = -1;
+  for (let i = count - 1; i >= 0; i--) {
+    const u = used[i];
+    const f = free[i];
+    // A bucket with no reading, or one whose two halves add to nothing, says
+    // nothing either way -- keep walking.
+    if (u === null || f === null || u + f === 0) continue;
+    if ((u / (u + f)) * 100 < threshold) break;
+    start = i;
+  }
+  if (start < 0) return { since: null, atLeast: false };
+  if (start === 0) return { since: res.window.from, atLeast: true };
+  return {
+    since: new Date(from + start * stepMs).toISOString(),
+    atLeast: false,
+  };
+}
+
 function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
   if (res === null || res.series.length === 0) return null;
   if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return null;
 
-  let best: { mount: string; pct: number } | null = null;
+  let best: { mount: string; pct: number; index: number } | null = null;
   let measured = 0;
   for (let i = 0; i < res.series.length; i++) {
     // latestValue, not lastNumber: this picks the MAXIMUM across a host's
@@ -226,13 +276,21 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
     measured++;
     const pct = (used / (used + free)) * 100;
     const mount = fsName(res.series[i]!.key, "?");
-    if (best === null || pct > best.pct) best = { mount, pct };
+    if (best === null || pct > best.pct) best = { mount, pct, index: i };
   }
   if (best === null) return null;
+  // The onset is computed for the winner only, and only when it is over the
+  // threshold at all: every other mount on the host is a walk nobody reads.
+  const crossed =
+    best.pct >= DISK_WARN_PCT
+      ? crossedAt(res, best.index, DISK_WARN_PCT)
+      : { since: null, atLeast: false };
   return {
     mount: best.mount,
     pct: best.pct,
     others: Math.max(0, measured - 1),
+    since: crossed.since,
+    sinceAtLeast: crossed.atLeast,
   };
 }
 
