@@ -27,9 +27,13 @@ import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { ABSENT, duration, relative } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
-import { clampRange, rangeWindow, type Range } from "../../lib/range";
+import {
+  clampRange,
+  rangeWindow,
+  EVENT_LIMITS,
+  type Range,
+} from "../../lib/range";
 import { loadRange } from "../settings/SettingsPage";
-import { EVENT_LIMITS } from "../events/EventsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
 import { Events } from "./tabs/Events";
 import { Graphs } from "./tabs/Graphs";

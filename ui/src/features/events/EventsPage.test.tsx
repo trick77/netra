@@ -7,11 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Event } from "../../lib/api";
-import { RANGES } from "../../lib/range";
+import { EVENT_LIMITS, RANGES } from "../../lib/range";
 import {
   DEFAULT_FILTERS,
   EventsPage,
-  EVENT_LIMITS,
   EVENT_RANGES,
   applyFilters,
   filtersFromQuery,

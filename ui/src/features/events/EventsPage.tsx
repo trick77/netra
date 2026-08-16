@@ -35,27 +35,6 @@ export const EVENT_RANGE_VALUES: readonly Range[] = EVENT_RANGES.map(
   (o) => o.value,
 );
 
-/**
- * How many rows to ask for, per window.
- *
- * A flat limit makes the wide buttons a lie: events accumulate with the
- * window, so 500 rows over 30 days is the newest few days and a silent cut
- * everywhere else -- the reader widens the range and sees the same page.
- * These scale with the span so a wide window returns a wide answer.
- *
- * 5000 is maxEventLimit in internal/hub/read/events.go; the hub clamps rather
- * than rejects, but asking for more than it will give is a lie in the other
- * direction. Covers every Range, not just the four this page offers, so the
- * record stays total if the offered set changes.
- */
-export const EVENT_LIMITS: Record<Range, number> = {
-  "1h": 500,
-  "6h": 500,
-  "24h": 500,
-  "7d": 2000,
-  "30d": 5000,
-};
-
 /** Derived, never received: the events table carries type, subject and
  * detail, and no severity column at all. */
 export type EventSeverity = "critical" | "warning" | "info";

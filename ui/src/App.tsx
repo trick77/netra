@@ -20,7 +20,7 @@ import {
   withParam,
   type Route,
 } from "./lib/router";
-import { clampRange, rangeWindow, type Range } from "./lib/range";
+import { clampRange, rangeWindow, EVENT_LIMITS, type Range } from "./lib/range";
 import { DENSITY_KEY, RANGE_KEY, writePref } from "./lib/prefs";
 import { EmptyState } from "./ui/EmptyState";
 import {
@@ -52,7 +52,6 @@ import {
 } from "./features/container/ContainerPage";
 import {
   EventsPage,
-  EVENT_LIMITS,
   EVENT_RANGE_VALUES,
   filtersFromQuery,
   filtersToQuery,
