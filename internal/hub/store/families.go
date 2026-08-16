@@ -880,9 +880,33 @@ func (s *Store) InsertSystemdUnitEvents(ctx context.Context, hostID int32, rows 
 		ids[name] = id
 	}
 
+	// A repeat of the state already recorded is NOT a transition, and must not
+	// be stored as one.
+	//
+	// The agent emits on change, but two paths legitimately re-send a state
+	// the hub already has: the failed-only baseline goes out on every agent
+	// start, and a ring replay resends whatever it was holding. Stored
+	// verbatim, a crash-looping agent restarting every minute would write sixty
+	// "exim4 went failed" rows an hour for a unit that has simply been failed
+	// the whole time -- and read.Units counts rows in this table to decide
+	// whether a unit is restarting repeatedly, so it would report a permanent
+	// failure as a flap.
+	//
+	// Guarded per row rather than in one statement so the batch keeps its
+	// per-row poison quarantine: one unstorable event must not cost the rest
+	// their insert. The comparison is against the state as it stood BEFORE
+	// this batch, since the columns are advanced below -- so a unit that
+	// flapped A->B->A inside a single replayed batch records the B and skips
+	// the trailing A. Undercounting is the safe direction for something that
+	// raises a warning.
 	const stmt = `
 		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
-		VALUES ($1, $2, $3, $4, $5)
+		SELECT $1, $2, $3, $4, $5
+		 WHERE NOT EXISTS (
+		       SELECT 1 FROM systemd_units u
+		        WHERE u.id = $2 AND u.host_id = $1
+		          AND u.state IS NOT DISTINCT FROM $4
+		          AND u.substate IS NOT DISTINCT FROM $5)
 		ON CONFLICT (host_id, unit_id, ts) DO NOTHING`
 
 	batch := &pgx.Batch{}

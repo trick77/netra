@@ -157,9 +157,15 @@ export type Unit = {
   substate: string | null;
   // When the unit ENTERED this state, not when the hub last heard about it:
   // both write paths advance it only on an actual change. That is what makes
-  // it usable to tell a unit stuck in a restart loop from one merely caught
-  // mid-restart -- see notableUnit in Overview.tsx.
+  // mid-restart.
   since: string | null;
+  // State changes recorded for this unit in the last hour.
+  //
+  // The only thing that reveals a unit which is broken without ever LOOKING
+  // broken: a service that runs a few minutes, dies and comes back is healthy
+  // at nearly every scrape, and systemd never escalates it to `failed` because
+  // it does not trip the start limit. See flapping() in Overview.tsx.
+  restarts_1h: number;
 };
 
 // internal/hub/read/events.go: Event

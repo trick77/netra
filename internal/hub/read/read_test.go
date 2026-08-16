@@ -357,6 +357,66 @@ func TestIntegrationUnitsListOnlyWhatNeedsAttention(t *testing.T) {
 	}
 }
 
+// A unit that is broken without ever LOOKING broken.
+//
+// A service that runs for a few minutes, dies and comes back is `active` at
+// nearly every scrape, and systemd never escalates it to `failed` because it
+// never trips the start limit. No snapshot of its current state can reveal it,
+// which is why the units query counts transitions as well as reading columns.
+func TestIntegrationUnitsListAUnitThatKeepsRestarting(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "flapping")
+
+	var flappy, steady int32
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
+		 VALUES ($1, 'backup.service', 'active', 'running', now()) RETURNING id`,
+		id).Scan(&flappy); err != nil {
+		t.Fatalf("insert flappy: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
+		 VALUES ($1, 'ssh.service', 'active', 'running', now()) RETURNING id`,
+		id).Scan(&steady); err != nil {
+		t.Fatalf("insert steady: %v", err)
+	}
+
+	// Six transitions in the last hour: up, down, up, down, up, down.
+	exec(t, pool, `
+		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
+		SELECT $1, $2, now() - (g || ' minutes')::interval,
+		       CASE WHEN g % 2 = 0 THEN 'active' ELSE 'failed' END, 'x'
+		  FROM generate_series(1, 6) AS g`, id, flappy)
+
+	// The steady unit restarted once, hours ago -- outside the window, and
+	// nowhere near the threshold either.
+	exec(t, pool, `
+		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
+		VALUES ($1, $2, now() - INTERVAL '5 hours', 'active', 'running')`, id, steady)
+
+	got, err := svc.Units(ctx, id)
+	if err != nil {
+		t.Fatalf("Units: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d units, want backup.service alone -- ssh.service is quiet and "+
+			"backup.service is only visible through its history", len(got))
+	}
+	if got[0].Name != "backup.service" {
+		t.Fatalf("listed %s, want backup.service", got[0].Name)
+	}
+	if got[0].Restarts1h < 6 {
+		t.Errorf("restarts_1h = %d, want at least 6 -- the count is what the page "+
+			"puts in the warning", got[0].Restarts1h)
+	}
+	// Its CURRENT state is perfectly healthy, which is the whole point.
+	if got[0].State == nil || *got[0].State != "active" {
+		t.Errorf("state = %v, want active; a unit that looks fine right now is exactly "+
+			"the one this rule exists to catch", got[0].State)
+	}
+}
+
 func TestIntegrationEventsFilterByHostTypeAndWindow(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)

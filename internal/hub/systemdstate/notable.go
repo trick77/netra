@@ -13,6 +13,8 @@
 // here is only half a change. The comment on the other side says the same.
 package systemdstate
 
+import "time"
+
 // Notable reports whether a unit's state deserves an operator's attention.
 //
 // The rule is deliberately narrow. A host runs 300-400 loaded services and a
@@ -48,3 +50,34 @@ func NotableSQL(alias string) string {
 	}
 	return "(" + alias + "state = 'failed' OR " + alias + "substate = 'auto-restart')"
 }
+
+// FlapWindow and FlapThreshold define "restarting repeatedly": at least this
+// many recorded state changes inside this window.
+//
+// Counting transitions is the only honest way to measure repetition, and the
+// obvious alternatives do not work:
+//
+//   - `substate = 'auto-restart'` alone is a single sighting, not a rate. It
+//     is also the gap BETWEEN restart attempts, which at the default
+//     RestartSec=100ms a 60-second scrape will essentially never land in.
+//   - "how long has it been in auto-restart" is worse than useless: state_ts
+//     advances on every state CHANGE, and a flapping unit is changing state
+//     constantly, so its age in the current state is near zero exactly when it
+//     is flapping hardest. A debounce built on it can never fire.
+//
+// A healthy unit transitions zero times in an hour; even a oneshot on a timer
+// manages two or three. Four is comfortably clear of both, and well under what
+// a service dying and restarting every few minutes produces.
+//
+// This does NOT cover a unit crash-looping in milliseconds -- systemd's
+// StartLimitBurst escalates that to `failed` within seconds, and Notable
+// already catches it. What it covers is the slow loop that never trips the
+// start limit: a service that runs for a few minutes, dies, and comes back,
+// which today shows up as a healthy unit at every single scrape.
+//
+// The UI has its own copy of the threshold, in needsAttention in
+// ui/src/features/host/tabs/Overview.tsx. Change both.
+const (
+	FlapWindow    = time.Hour
+	FlapThreshold = 4
+)

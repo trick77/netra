@@ -90,6 +90,12 @@ type Unit struct {
 	State    *string    `json:"state"`
 	Substate *string    `json:"substate"`
 	Since    *time.Time `json:"since"`
+	// Restarts1h is how many state changes this unit has recorded in the last
+	// hour, and it is the ONLY thing that reveals a unit which is broken
+	// without ever looking broken -- a service that runs for a few minutes,
+	// dies, and comes back is healthy at nearly every scrape. See
+	// systemdstate.FlapThreshold.
+	Restarts1h int32 `json:"restarts_1h"`
 }
 
 // Containers lists the containers seen on a host.
@@ -231,11 +237,27 @@ func (s *Service) Units(ctx context.Context, hostID int32) ([]Unit, error) {
 		return nil, err
 	}
 
+	// The transition count is what catches a unit that is BROKEN WITHOUT EVER
+	// LOOKING BROKEN: a service that runs a few minutes, dies, and comes back
+	// is healthy at nearly every scrape, so no snapshot of its current state
+	// can reveal it. Only the history can, which is why the event log is
+	// joined here rather than the columns being read alone.
+	//
+	// The count rides the same query as the filter because it is part of the
+	// filter -- such a unit is listed BECAUSE of its count, not despite it.
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.id, u.unit_name, u.state, u.substate, u.state_ts
+		SELECT u.id, u.unit_name, u.state, u.substate, u.state_ts, coalesce(f.n, 0)
 		  FROM systemd_units u
-		 WHERE u.host_id = $1 AND `+systemdstate.NotableSQL("u")+`
-		 ORDER BY u.unit_name`, hostID)
+		  LEFT JOIN LATERAL (
+		       SELECT count(*) AS n
+		         FROM systemd_unit_events e
+		        WHERE e.unit_id = u.id AND e.host_id = u.host_id
+		          AND e.ts > now() - $2::interval
+		  ) f ON TRUE
+		 WHERE u.host_id = $1
+		   AND (`+systemdstate.NotableSQL("u")+` OR coalesce(f.n, 0) >= $3)
+		 ORDER BY u.unit_name`,
+		hostID, systemdstate.FlapWindow, systemdstate.FlapThreshold)
 	if err != nil {
 		return nil, fmt.Errorf("query units: %w", err)
 	}
@@ -244,7 +266,7 @@ func (s *Service) Units(ctx context.Context, hostID int32) ([]Unit, error) {
 	out := []Unit{}
 	for rows.Next() {
 		var u Unit
-		if err := rows.Scan(&u.ID, &u.Name, &u.State, &u.Substate, &u.Since); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.State, &u.Substate, &u.Since, &u.Restarts1h); err != nil {
 			return nil, fmt.Errorf("scan unit: %w", err)
 		}
 		out = append(out, u)

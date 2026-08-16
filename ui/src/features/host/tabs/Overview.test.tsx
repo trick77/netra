@@ -330,6 +330,7 @@ describe("Overview", () => {
           state: "active",
           substate: "running",
           since: null,
+          restarts_1h: 0,
         },
         {
           id: 2,
@@ -337,6 +338,7 @@ describe("Overview", () => {
           state: "failed",
           substate: "dead",
           since: null,
+          restarts_1h: 0,
         },
       ],
     });
@@ -518,6 +520,7 @@ describe("Overview systemd units", () => {
       state: "failed",
       substate: "failed",
       since: "2026-08-10T00:00:00Z",
+      restarts_1h: 0,
       ...over,
     };
   }
@@ -546,35 +549,41 @@ describe("Overview systemd units", () => {
     expect(attention([])).not.toMatch(/exim4\.service/);
   });
 
-  it("warns about a unit stuck in a restart loop", () => {
+  // The unit nothing else can catch: a service that runs a few minutes, dies
+  // and comes back is HEALTHY at almost every scrape, and systemd never
+  // escalates it to `failed` because it does not trip the start limit. Only
+  // the transition count gives it away, which is why the warning is keyed on a
+  // rate rather than on the state in front of it.
+  it("warns about a unit that keeps restarting, even while it looks healthy", () => {
     const text = attention([
-      unit({ state: "activating", substate: "auto-restart" }),
+      unit({ state: "active", substate: "running", restarts_1h: 9 }),
     ]);
-    expect(text).toMatch(/exim4\.service is restarting repeatedly/);
+    expect(text).toMatch(/exim4\.service restarted 9 times in the last hour/);
   });
 
-  // auto-restart is the gap BETWEEN restart attempts, so every service that
-  // restarts for any reason passes through it. Warning on a single sighting
-  // would report a one-off blip as a loop -- a new false positive introduced
-  // inside the fix for a false positive.
-  it("does not call a unit a restart loop the moment it restarts once", () => {
+  it("does not call an ordinary restart a loop", () => {
     const text = attention([
-      unit({
-        state: "activating",
-        substate: "auto-restart",
-        since: "2026-08-10T01:00:00Z", // 30 seconds ago
-      }),
+      unit({ state: "active", substate: "running", restarts_1h: 2 }),
     ]);
     expect(text).not.toMatch(/exim4\.service/);
   });
 
-  // "State recorded, onset unknown" is not evidence of a loop, and guessing it
-  // is old enough would defeat the debounce entirely.
-  it("does not warn about auto-restart with no onset recorded", () => {
+  // A single sighting of auto-restart is not a rate. It is the gap BETWEEN
+  // attempts -- at the default RestartSec=100ms a 60s scrape essentially never
+  // lands in it, so treating one as proof of a loop would be a coin toss
+  // dressed up as a warning.
+  it("does not treat one sighting of auto-restart as a loop", () => {
     const text = attention([
-      unit({ state: "activating", substate: "auto-restart", since: null }),
+      unit({ state: "activating", substate: "auto-restart", restarts_1h: 1 }),
     ]);
-    expect(text).not.toMatch(/exim4\.service/);
+    expect(text).not.toMatch(/restarting|restarted/);
+  });
+
+  // A failed unit is reported as failed, not doubly as a loop.
+  it("reports a failed unit once", () => {
+    const text = attention([unit({ restarts_1h: 9 })]);
+    expect(text).toMatch(/exim4\.service failed/);
+    expect(text).not.toMatch(/restarted/);
   });
 });
 

@@ -435,10 +435,10 @@ export function needsAttention(input: {
   for (const unit of input.units ?? []) {
     if (unit.state === "failed") {
       out.push({ severity: "warning", what: `${unit.unit_name} failed` });
-    } else if (flapping(unit, now)) {
+    } else if (flapping(unit)) {
       out.push({
         severity: "warning",
-        what: `${unit.unit_name} is restarting repeatedly`,
+        what: `${unit.unit_name} restarted ${unit.restarts_1h} times in the last hour`,
       });
     }
   }
@@ -447,36 +447,31 @@ export function needsAttention(input: {
 }
 
 /**
- * How long a unit must have been in auto-restart before it counts as looping.
- *
- * Equal to the agent's snapshotFloor (internal/agent/collector/systemd.go), and
- * that equality is the whole mechanism -- see flapping().
+ * How many recorded state changes in the last hour make a unit "restarting
+ * repeatedly". Mirrors systemdstate.FlapThreshold in the hub -- change both.
  */
-const AUTO_RESTART_MIN_MS = 5 * 60 * 1000;
+const FLAP_THRESHOLD = 4;
 
 /**
- * Whether a unit is stuck in a restart loop, as opposed to merely having been
- * observed between two restart attempts.
+ * Whether a unit is stuck in a restart loop.
  *
- * `auto-restart` is the gap BETWEEN attempts: systemd has given up on the
- * current one and is waiting to try again. Every service that restarts for any
- * reason passes through it, so warning on a single observation would report a
- * one-off blip as a loop -- a new false-positive warning added inside the fix
- * for a false-positive warning.
+ * Repetition is a RATE, so it is measured by counting transitions rather than
+ * by inspecting the current state. Two tempting shortcuts are both wrong:
  *
- * The debounce is the unit's age in the state, which works because `since`
- * advances only on an actual CHANGE. A unit that merely passed through
- * auto-restart is reported as something else by the next snapshot, so its age
- * never reaches the floor; a unit genuinely looping keeps reporting
- * auto-restart, `since` stays put, and the age climbs past it. No client-side
- * history needed, which matters because this function sees one instant.
+ * - `substate === "auto-restart"` is one sighting, not a rate. It is also the
+ *   gap BETWEEN attempts, which at the default RestartSec=100ms a 60-second
+ *   scrape will essentially never land in.
+ * - "how long has it been in auto-restart" is worse: `since` advances on every
+ *   state CHANGE, and a flapping unit changes state constantly, so its age in
+ *   the current state is near zero exactly when it is flapping hardest.
  *
- * A unit with no `since` is not warned about: that is "state recorded, onset
- * unknown", and guessing it is old enough would defeat the debounce.
+ * The unit this catches is the one nothing else can: a service that runs for a
+ * few minutes, dies, and comes back looks perfectly healthy at almost every
+ * scrape, and systemd never escalates it to `failed` because it does not trip
+ * the start limit. Only its history gives it away.
  */
-function flapping(unit: Unit, now: Date): boolean {
-  if (unit.substate !== "auto-restart" || unit.since === null) return false;
-  return now.getTime() - new Date(unit.since).getTime() >= AUTO_RESTART_MIN_MS;
+function flapping(unit: Unit): boolean {
+  return unit.restarts_1h >= FLAP_THRESHOLD;
 }
 
 /**
