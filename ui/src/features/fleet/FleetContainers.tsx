@@ -12,6 +12,7 @@ import {
   type CapableHost,
 } from "../../lib/containers";
 import { type Range } from "../../lib/range";
+import { FLEET_RANGE_VALUES } from "./ranges";
 
 // The row shape and the column set live in features/container/columns, with
 // the page they link to. This file is the fleet's framing around them: the
@@ -163,7 +164,14 @@ export function FleetContainers({
         </p>
       ))}
       <Table
-        columns={containerColumns({ showHost, range, ...scales })}
+        columns={containerColumns({
+          showHost,
+          range,
+          // The fleet's own windows: it stops at 24h, where a host page
+          // goes to 7d.
+          ranges: FLEET_RANGE_VALUES,
+          ...scales,
+        })}
         rows={rows}
         // Two hosts can run the same container_key, so identity is the pair.
         rowKey={(row) => `${row.host_id}:${row.container_key}`}

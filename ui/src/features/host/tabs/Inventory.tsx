@@ -20,6 +20,7 @@ import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column, type TableProps } from "../../../ui/Table";
 import { Meter } from "../../../ui/Meter";
 import { type Range } from "../../../lib/range";
+import { RANGE_VALUES } from "../ranges";
 import { griddedValues } from "../../../lib/metrics";
 import {
   composeIdentity,
@@ -208,6 +209,9 @@ export function Containers({
   // definition of them.
   const columns = containerColumns({
     range,
+    // This page's own windows, so a chart enlarged out of a row cannot ask
+    // for one the toolbar above it could not express.
+    ranges: RANGE_VALUES,
     ...(metrics === null ? {} : trendScales(charted)),
   });
 

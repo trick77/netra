@@ -472,6 +472,8 @@ export function HostPage({
           netMetrics={data.netMetrics}
           containers={data.containers}
           units={data.units}
+          range={range}
+          fetchFamily={fetchFamily}
         />
       )}
       {tab === "graphs" && (

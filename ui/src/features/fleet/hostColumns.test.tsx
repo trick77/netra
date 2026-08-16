@@ -53,13 +53,16 @@ describe("hostColumns", () => {
   // changed. It still leads the host page's System card. Filesystem takes
   // its place beside Disk, because how full a disk is now and how fast it
   // got there are different questions and the meter only answers one.
-  it("yields Host, CPU, Memory, Traffic, Filesystem, Disk in that exact order", () => {
+  // Traffic sits second, right of the host it belongs to, rather than fourth
+  // behind two other charts: it is the reading this list is most often
+  // scanned for.
+  it("yields Host, Traffic, CPU, Memory, Filesystem, Disk in that exact order", () => {
     const cols = hostColumns("1h");
     expect(cols.map((c) => c.header)).toEqual([
       "Host",
+      "Traffic",
       "CPU",
       "Memory",
-      "Traffic",
       "Filesystem",
       "Disk",
     ]);
