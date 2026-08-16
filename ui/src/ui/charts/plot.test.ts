@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AXIS_FONT_PX,
   contains,
   labelWidth,
   layout,
@@ -13,19 +14,18 @@ import {
 describe("plot", () => {
   describe("labelWidth", () => {
     // The advance table is only worth anything if it agrees with what a
-    // browser actually renders. These four are getBBox() measurements taken
-    // in Chrome against .axislab at 11px with the app's own font stack. If a
-    // future edit to the table drifts, this is where it is caught -- there
-    // is no way to measure text in the test environment, so this pinned
-    // comparison IS the check.
+    // browser actually renders. These are getBBox() measurements taken in
+    // Chrome against the app's font stack at AXIS_FONT_PX with tabular-nums
+    // on. There is no way to measure text in the test environment, so this
+    // pinned comparison IS the check that the table has not drifted.
     const MEASURED_IN_CHROME: Array<[string, number]> = [
-      ["500 MB/s", 50.36],
-      ["1.0 GB/s", 45.3],
-      ["16 GiB", 35.5],
-      ["100%", 31.23],
-      ["0%", 17.25],
-      ["4 GiB", 28.52],
-      ["0", 7.0],
+      ["500 MB/s", 54.38],
+      ["1.0 GB/s", 48.84],
+      ["16 GiB", 38.31],
+      ["100%", 33.78],
+      ["0%", 18.67],
+      ["4 GiB", 30.75],
+      ["0", 7.56],
     ];
 
     // A fifth of a pixel. The advances are themselves rounded measurements,
@@ -42,8 +42,13 @@ describe("plot", () => {
       });
     }
 
-    it("scales linearly with font size", () => {
-      expect(labelWidth("100%", 22)).toBeCloseTo(labelWidth("100%", 11) * 2, 6);
+    // Measured at AXIS_FONT_PX, and that is the size the app draws an axis
+    // at. Scaling to another size is deliberately only an approximation:
+    // advances are hinted per size and do not scale linearly -- deriving
+    // 12px from an 11px measurement put "500 MB/s" 0.56 units out, enough to
+    // clip. A different axis size needs its own measured table.
+    it("computes at the calibrated size by default", () => {
+      expect(labelWidth("100%")).toBe(labelWidth("100%", AXIS_FONT_PX));
     });
 
     // An over-wide margin costs a few pixels of plot; an under-wide one

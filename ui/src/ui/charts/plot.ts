@@ -25,7 +25,7 @@ export interface LayoutOptions {
   yLabel?: string;
   /** The widest label the time axis will draw, already formatted. */
   xLabel?: string;
-  /** Axis label size in px, matching .axislab. */
+  /** Axis label size in viewBox units. Defaults to AXIS_FONT_PX. */
   fontPx?: number;
 }
 
@@ -64,7 +64,7 @@ export function layout(
   height: number,
   opts: LayoutOptions = {},
 ): PlotRect {
-  const { yLabel, xLabel, fontPx = 11 } = opts;
+  const { yLabel, xLabel, fontPx = AXIS_FONT_PX } = opts;
 
   const left = yLabel
     ? Math.ceil(labelWidth(yLabel, fontPx)) + LABEL_GAP + TICK_MAJOR
@@ -109,7 +109,20 @@ export function contains(rect: PlotRect, x: number, y: number): boolean {
 }
 
 /**
- * The width of a rendered axis label, in px, computed arithmetically.
+ * The size an axis label is drawn at, in viewBox units.
+ *
+ * The advance table below is measured AT this size, and the component sets
+ * font-size from this constant rather than leaving it to CSS. That coupling
+ * is deliberate: the left margin is computed from these numbers, so if the
+ * rendered size and the measured size could drift apart the margin would be
+ * silently wrong. Matches --text-micro, which is what the rest of the app
+ * uses for a label this small.
+ */
+export const AXIS_FONT_PX = 12;
+
+/**
+ * The width of a rendered axis label, in viewBox units, computed
+ * arithmetically.
  *
  * It does NOT measure. Measuring is the obvious approach and it cannot be
  * used here: in this project's jsdom test environment
@@ -120,71 +133,82 @@ export function contains(rect: PlotRect, x: number, y: number): boolean {
  *
  * Summing per-character advances is exact rather than approximate here for
  * one reason: .axislab sets font-variant-numeric: tabular-nums, so every
- * digit occupies the same width. The advances below were measured with
- * getBBox in Chrome against the app's own font stack at 11px. Checked
- * against real renderings, the sum is within 0.03px:
+ * digit occupies the same width. Without that the table would be a guess --
+ * proportional digits differ by glyph, and the same label would measure
+ * differently depending on which numbers were in it.
  *
- *     "500 MB/s"   50.38 computed   50.36 measured
- *     "1.0 GB/s"   45.31 computed   45.30 measured
- *     "16 GiB"     35.52 computed   35.50 measured
- *     "100%"       31.25 computed   31.23 measured
+ * The advances were measured with getBBox in Chrome against the app's own
+ * font stack at AXIS_FONT_PX. Checked against real renderings the sum lands
+ * within 0.03 units:
  *
- * Advances scale linearly with font size, which holds for every size this
- * app draws an axis at.
+ *     "500 MB/s"   54.35 computed   54.38 measured
+ *     "1.0 GB/s"   48.82 computed   48.84 measured
+ *     "16 GiB"     38.29 computed   38.31 measured
+ *     "100%"       33.78 computed   33.78 measured
+ *
+ * They are NOT scaled from another size. Advances do not scale linearly --
+ * hinting rounds them per size, and deriving 12px from an 11px measurement
+ * put "500 MB/s" 0.56 units out, an error large enough to clip. A different
+ * axis size would need its own measured table.
  */
-const ADVANCE_AT_11PX: Record<string, number> = {
+const ADVANCE: Record<string, number> = {
   // Digits are uniform under tabular-nums -- that is what makes this exact.
-  "0": 7.0,
-  "1": 7.0,
-  "2": 7.0,
-  "3": 7.0,
-  "4": 7.0,
-  "5": 7.0,
-  "6": 7.0,
-  "7": 7.0,
-  "8": 7.0,
-  "9": 7.0,
-  " ": 3.14,
-  ".": 3.33,
-  "%": 10.23,
-  "/": 3.41,
-  "-": 5.25,
-  "–": 6.48,
-  "—": 9.67,
-  k: 6.03,
-  K: 7.3,
-  M: 9.67,
-  G: 8.27,
-  T: 7.03,
-  P: 7.05,
-  B: 7.28,
-  i: 2.78,
-  I: 3.0,
-  s: 5.81,
-  b: 6.81,
-  m: 9.63,
-  h: 6.53,
-  d: 6.81,
-  "µ": 6.81,
-  "°": 5.25,
-  C: 7.94,
+  "0": 7.56,
+  "1": 7.56,
+  "2": 7.56,
+  "3": 7.56,
+  "4": 7.56,
+  "5": 7.56,
+  "6": 7.56,
+  "7": 7.56,
+  "8": 7.56,
+  "9": 7.56,
+  " ": 3.37,
+  ".": 3.56,
+  "%": 11.1,
+  "/": 3.65,
+  "-": 5.65,
+  "\u2013": 7.0,
+  "\u2014": 10.48,
+  k: 6.51,
+  K: 7.9,
+  M: 10.48,
+  G: 8.95,
+  T: 7.6,
+  P: 7.62,
+  B: 7.89,
+  i: 2.96,
+  I: 3.2,
+  s: 6.28,
+  b: 7.37,
+  m: 10.43,
+  h: 7.06,
+  d: 7.37,
+  "\u00b5": 7.37,
+  "\u00b0": 5.65,
+  C: 8.59,
 };
 
 /**
  * The advance used for a character not in the table.
  *
- * The digit width, which is wider than most glyphs a formatter emits. That
- * is the safe direction to be wrong in: an over-wide margin costs a few
- * pixels of plot, an under-wide one clips the label.
+ * The digit width, which is wider than most glyphs a value formatter emits.
+ * That is the safe direction to be wrong in: an over-wide margin costs a few
+ * units of plot, an under-wide one clips the label.
+ *
+ * Time labels ("Sat 18:00") contain letters that are deliberately absent
+ * here. They never need measuring: the bottom margin is a line height rather
+ * than a text width, and the labels at the two ends are anchored to their
+ * near edge instead of centred, so none of them can overflow the image.
  */
-const FALLBACK_ADVANCE = 7.0;
+const FALLBACK_ADVANCE = 7.56;
 
-export function labelWidth(text: string, fontPx = 11): number {
+export function labelWidth(text: string, fontPx = AXIS_FONT_PX): number {
   let total = 0;
   for (const ch of text) {
-    total += ADVANCE_AT_11PX[ch] ?? FALLBACK_ADVANCE;
+    total += ADVANCE[ch] ?? FALLBACK_ADVANCE;
   }
-  return (total * fontPx) / 11;
+  return (total * fontPx) / AXIS_FONT_PX;
 }
 
 /**
@@ -195,7 +219,10 @@ export function labelWidth(text: string, fontPx = 11): number {
  * and "16 GiB" is 6, but the digits and the wide M/G glyphs mean length is
  * not the ordering. Comparing lengths put the wrong label in the margin.
  */
-export function widestLabel(labels: readonly string[], fontPx = 11): string {
+export function widestLabel(
+  labels: readonly string[],
+  fontPx = AXIS_FONT_PX,
+): string {
   let widest = "";
   let width = -1;
   for (const label of labels) {

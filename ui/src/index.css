@@ -101,8 +101,18 @@
      per theme to sit at the same low prominence in both: it annotates the
      chart, it is not a series in it. */
   --reference: #8c8880;
-  --grid: #eeeae1;
-  --axis: #cfc9bb;
+  /* Chart furniture, at three levels of prominence. The values are derived
+     from a measured target rather than picked by eye, because picking by eye
+     failed twice: --grid was #eeeae1 on a #fffdf9 surface, a contrast ratio
+     of 1.18:1, which is drawn correctly and invisible on screen. RRDtool --
+     whose graphs are the readability benchmark here -- uses #d0d0d0 for its
+     helper grid and #a0a0a0 for its major one, measuring 1.54:1 and 2.61:1
+     on white. These sit either side of that in Clay's warm hue:
+     --grid-minor 1.40:1, --grid 1.86:1, --axis 3.47:1.
+     Do not retune these by eye; re-derive them from the ratios. */
+  --grid-minor: #ded8ca;
+  --grid: #c3bcaa;
+  --axis: #8f8878;
 
   /* Text painted on --accent-fill (spec has no token for this; .btn.primary
      hardcoded #fff with no light/dark peer and no contrast margin). White
@@ -173,8 +183,9 @@
     --accent-soft: #2e211a;
     --track: #3a3a37;
     --reference: #6e6c66;
-    --grid: #2a2a28;
-    --axis: #454540;
+    --grid-minor: #33332f;
+    --grid: #45443e;
+    --axis: #6a685f;
 
     --on-accent: #fff;
     /* status TEXT colours — dark. Measured on the page --bg (#1f1f1e): ok
@@ -217,8 +228,9 @@
   --accent-soft: #2e211a;
   --track: #3a3a37;
   --reference: #6e6c66;
-  --grid: #2a2a28;
-  --axis: #454540;
+  --grid-minor: #33332f;
+  --grid: #45443e;
+  --axis: #6a685f;
 
   --on-accent: #fff;
   --st-ok-text: #0ca30c;
@@ -2093,10 +2105,23 @@ svg.spark {
   max-width: 100%;
   height: auto;
 }
+/* Axis labels, drawn INSIDE the chart image as SVG text rather than beside
+   it as HTML. That is what keeps a label glued to the gridline it names at
+   any rendered size: both scale with the viewBox. The HTML gutter this
+   replaces was a fixed 320px beside an SVG that responsively rendered at
+   216px, so every label sat up to 104px from its own line.
+
+   font-size is NOT set here. plot.ts computes the axis margin from a table
+   of per-character widths measured at AXIS_FONT_PX, and the component sets
+   the size from that same constant -- if CSS could move the rendered size
+   independently, the margin would be silently wrong and labels would clip.
+
+   tabular-nums is load-bearing for the same reason: it makes every digit the
+   same width, which is what lets that table be exact instead of a guess. */
 .axislab {
-  font-size: var(--text-micro);
   fill: var(--muted);
   font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 .note {
   font-size: var(--text-label);

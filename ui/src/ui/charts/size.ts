@@ -77,5 +77,44 @@ export const MIRROR_STROKE_WIDTH = 1.25;
  * and it is the same structural hairline as a card edge or a table rule.
  * Solid, not dashed, for that reason too.
  */
+/* Stays --border, NOT the retuned --axis. This constant is the midline of a
+   SPARKLINE -- the fleet row's traffic cell draws it -- and a sparkline
+   carries no axis furniture at all, so its midline is a structural hairline
+   like a table rule rather than an axis. Pointing it at --axis darkened
+   every traffic cell in the fleet table, which UpDownSparkline's own test
+   caught. A chart WITH furniture uses ZERO_STROKE below, which is a
+   different mark answering a different question. */
 export const AXIS_STROKE = "var(--border)";
 export const AXIS_WIDTH = 1;
+
+/**
+ * The gridlines behind a chart, at two densities.
+ *
+ * MAJOR lines sit under the labelled ticks and carry the reading. MINOR
+ * lines are the unlabelled helpers between them, and they are most of why an
+ * RRDtool graph reads: they let the eye judge "a bit over 400M" without a
+ * label at 450M.
+ *
+ * The inks live in index.css (--grid, --grid-minor) and are derived from a
+ * measured contrast target rather than picked -- see the comment there
+ * before changing either. The DASH is as load-bearing as the ink: the first
+ * attempt used "1 4", a 20% duty cycle, which reads as nothing however dark
+ * the line. Both levels are drawn with the same pattern so the lattice reads
+ * as one grid at two weights, not as two different kinds of mark.
+ */
+export const GRID_MAJOR_STROKE = "var(--grid)";
+export const GRID_MINOR_STROKE = "var(--grid-minor)";
+export const GRID_DASH = "1 2";
+export const GRID_WIDTH = 1;
+
+/**
+ * The midline of a mirrored chart -- where zero is.
+ *
+ * Stronger than a gridline and stronger than the spine, because on a
+ * mirrored chart it is the line every reading is measured FROM. --border was
+ * too quiet for that once a real grid sat behind it: zero looked like one
+ * more helper line. Only for charts that draw furniture -- a sparkline's
+ * midline is AXIS_STROKE above and does not change.
+ */
+export const ZERO_STROKE = "var(--border-strong)";
+export const ZERO_WIDTH = 1;
