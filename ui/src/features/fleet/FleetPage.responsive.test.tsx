@@ -26,6 +26,8 @@ function row(overrides: Partial<HostRow> = {}): HostRow {
     fullest: null,
     disk: [],
     oomKills: null,
+    dropped: null,
+    postFailures: null,
     ...overrides,
   };
 }

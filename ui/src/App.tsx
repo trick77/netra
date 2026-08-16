@@ -317,9 +317,11 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   const poll = usePoll(
     async () => {
       const [hosts, sites] = await Promise.all([getHosts(), getSites()]);
-      // The trends are a fan-out -- three families per host -- because the
+      // The trends are a fan-out -- four families per host, five where the
+      // host is small enough to be worth a per-core stack -- because the
       // read API is per-host by construction and this page's whole premise
-      // is the last 24 hours rather than one instant. Settled
+      // is the last 24 hours rather than one instant. fetchHostTrends owns
+      // the list and the reason each family is on it. Settled
       // independently: one host answering 500 costs that host's sparklines,
       // not the fleet's.
       const settled = await Promise.allSettled(

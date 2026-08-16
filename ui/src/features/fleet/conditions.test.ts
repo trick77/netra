@@ -28,6 +28,8 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     fullest: { mount: "/", pct: 41, others: 1 },
     disk: [],
     oomKills: 0,
+    dropped: null,
+    postFailures: null,
     ...overrides,
   };
 }
@@ -89,6 +91,46 @@ describe("hostConditions", () => {
     expect(hostConditions(makeRow({ services_failed: null }), NOW)).toEqual([]);
     expect(
       hostConditions(makeRow({ services_failed: undefined }), NOW),
+    ).toEqual([]);
+  });
+
+  // The agent's own health. Both counters are the increase across the window,
+  // and both are worth a request the sparklines did not already need -- see
+  // the module header for why they cannot ride the hosts list.
+  it("leads with dropped samples, because the missing data is the evidence", () => {
+    const rows = hostConditions(
+      makeRow({ dropped: 12, fullest: { mount: "/", pct: 97, others: 0 } }),
+      NOW,
+    );
+    expect(rows[0]?.severity).toBe("critical");
+    expect(String(rows[0]?.what)).toMatch(/12 samples dropped before delivery/);
+  });
+
+  it("says sample, singular, for a single dropped sample", () => {
+    const [c] = hostConditions(makeRow({ dropped: 1 }), NOW);
+    expect(String(c?.what)).toMatch(/1 sample dropped\b/);
+  });
+
+  it("reports failed deliveries to the hub", () => {
+    const [c] = hostConditions(makeRow({ postFailures: 4 }), NOW);
+    expect(c?.severity).toBe("warning");
+    expect(String(c?.what)).toMatch(/4 failed deliveries/);
+  });
+
+  it("counts one failed delivery in the singular", () => {
+    const [c] = hostConditions(makeRow({ postFailures: 1 }), NOW);
+    expect(String(c?.what)).toMatch(/1 failed delivery\b/);
+  });
+
+  // post_failures_total is cumulative for the life of the agent process and
+  // is never reset by a success, so read as a latest value one hub restart
+  // would pin a failure here forever. 0 and null are both silence.
+  it("stays silent for a clean window and an unanswerable one alike", () => {
+    expect(
+      hostConditions(makeRow({ dropped: 0, postFailures: 0 }), NOW),
+    ).toEqual([]);
+    expect(
+      hostConditions(makeRow({ dropped: null, postFailures: null }), NOW),
     ).toEqual([]);
   });
 
