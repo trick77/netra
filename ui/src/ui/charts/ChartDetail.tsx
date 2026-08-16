@@ -9,6 +9,14 @@ export interface ChartDetailProps {
   unit?: string;
   series: OverlaySeries[];
   max?: number;
+  /** The floor the plot scales from. Zero by default, which is right for
+   * every quantity measured from nothing and wrong for a series drawn
+   * against its own extent: the sensor list free-scales deliberately, and a
+   * package sitting between 44 and 47 degrees pinned to a 0-47 box is a flat
+   * line at the bottom -- the enlarged view would say LESS than the 110px
+   * sparkline it was opened from. Callers whose small chart free-scales pass
+   * that chart's floor. */
+  min?: number;
   fmt?: (v: number | null) => string;
   /** The answered window, for the time axis. Absent, the axis is omitted
    * rather than guessed -- a chart with invented times is worse than one
@@ -68,6 +76,7 @@ export function ChartDetail({
   unit,
   series,
   max,
+  min = 0,
   fmt,
   window: answered = null,
   range,
@@ -91,8 +100,18 @@ export function ChartDetail({
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
+    // ...and goes back to whatever opened this when it closes. Without that,
+    // focus lands on document.body and the next Tab starts from the top of
+    // the page: a reader who opened the chart on row 14 of a twenty-host
+    // table is returned to the masthead. It matters more now than it did --
+    // every chart is one of these buttons, so a fleet page carries sixty of
+    // them rather than a page's worth of panels.
+    const opener = document.activeElement;
     ref.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
   }, [onClose]);
 
   const ceiling = max ?? peak(series, stacked);
@@ -150,7 +169,7 @@ export function ChartDetail({
               positioned where they actually fall. */}
           {!hideAxis && (
             <div className="cd-y">
-              {axisLabels(ceiling, reference, mirrored).map((label, i) => (
+              {axisLabels(ceiling, reference, mirrored, min).map((label, i) => (
                 <span key={i} style={{ top: `${(1 - label.fraction) * 100}%` }}>
                   {format(label.value)}
                 </span>
@@ -159,7 +178,7 @@ export function ChartDetail({
           )}
           <Overlay
             series={series}
-            min={0}
+            min={min}
             max={ceiling}
             width={900}
             height={320}
@@ -235,10 +254,17 @@ export function ChartDetail({
  * ceiling padded for a reference rule means something different on each of
  * the two half-axes. The mirrored case is taken first rather than guessed at.
  */
+// `floor` is the plot's own minimum, not an assumed zero. A free-scaled
+// chart (the sensor list) is drawn between its extent's floor and ceiling,
+// and labelling that plot 0 / half / ceiling would put three numbers on the
+// axis at heights the shape was never scaled to -- the labels would disagree
+// with the line beside them. Defaults to 0, so every panel that measures
+// from nothing is labelled exactly as before.
 function axisLabels(
   ceiling: number,
   reference: number | undefined,
   mirrored: boolean | undefined,
+  floor = 0,
 ): { fraction: number; value: number }[] {
   if (mirrored) {
     // Top and bottom are both +ceiling -- a magnitude away from the midline
@@ -249,13 +275,20 @@ function axisLabels(
       { fraction: 0, value: ceiling },
     ];
   }
+  // A series that never moved is drawn as one line down the middle of the box
+  // -- scaleY() centres a min === max series rather than dividing by zero --
+  // so the axis says that one value at that one height. Stepping it as though
+  // the box had a range would print three numbers the shape does not have:
+  // a fan pinned at 1200 RPM labelled 1201 / 1201 / 1200.
+  if (ceiling === floor) return [{ fraction: 0.5, value: floor }];
+  const span = ceiling - floor;
   const fractions =
     reference === undefined
       ? [1, 0.5, 0]
-      : [reference / ceiling, reference / ceiling / 2, 0];
+      : [(reference - floor) / span, (reference - floor) / span / 2, 0];
   return fractions.map((fraction) => ({
     fraction,
-    value: fraction * ceiling,
+    value: floor + fraction * span,
   }));
 }
 
@@ -269,7 +302,10 @@ function formatNumber(v: number | null): string {
 // and the top of the stack would be drawn outside the box. Callers here all
 // pass an explicit max today, but a derived ceiling that answers the wrong
 // question is a trap rather than a fallback.
-function peak(series: readonly OverlaySeries[], stacked = false): number {
+export function peak(
+  series: readonly OverlaySeries[],
+  stacked = false,
+): number {
   let max = 0;
   if (stacked) {
     const n = series.reduce(

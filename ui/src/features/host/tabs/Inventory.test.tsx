@@ -144,18 +144,71 @@ describe("Inventory", () => {
 });
 
 describe("Containers", () => {
+  const host = { id: 7, hostname: "web-01" };
+
   it("identifies a container by compose project and service, never by its id", () => {
-    render(<Containers rows={containers} />);
-    const row = screen.getByRole("row", { name: /shop/ });
-    expect(within(row).getByText("shop")).toBeInTheDocument();
-    expect(within(row).getByText("web")).toBeInTheDocument();
+    render(<Containers rows={containers} host={host} />);
+    const row = screen.getByRole("row", { name: /shop-web-1/ });
+    expect(within(row).getByText("shop / web")).toBeInTheDocument();
     // The Docker id changes on every `compose up -d`; showing it invites
     // people to key on it, which orphans all history.
     expect(row.textContent).not.toContain("42");
   });
 
+  // The regression this whole alignment exists for: the fleet's container
+  // list has always linked into container detail and this one never did, so
+  // from a host's own Containers tab the page was simply unreachable.
+  it("links every container to its detail page", () => {
+    render(<Containers rows={containers} host={host} />);
+    expect(
+      screen.getByRole("link", { name: "shop-web-1" }).getAttribute("href"),
+      // The key is "project/service" and router.ts splits the path before it
+      // decodes it, so the slash must survive as %2F or the link 404s.
+    ).toBe("/containers/7/shop%2Fweb");
+  });
+
+  // One list of containers, not two: the fleet tab and this tab render the
+  // same Column[] now, so a column that sorts there sorts here.
+  it("sorts, the way the fleet's container list always did", () => {
+    render(<Containers rows={containers} host={host} />);
+    expect(screen.getByRole("button", { name: "Image" })).toBeInTheDocument();
+  });
+
+  // On one host, what belongs together is a compose stack.
+  it("groups the list by compose project", () => {
+    render(<Containers rows={containers} host={host} />);
+    expect(
+      screen.getByRole("rowheader", { name: /netra/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("rowheader", { name: /shop/ })).toBeInTheDocument();
+  });
+
+  // A key with no slash is a container the agent could not read compose
+  // labels for. It has no project, and "no project" is not a project.
+  it("keeps a container with no compose project out of the named groups", () => {
+    render(
+      <Containers
+        rows={[
+          containers[0]!,
+          {
+            id: 43,
+            container_key: "a1b2c3d4e5f6",
+            name: null,
+            image: null,
+            is_agent: false,
+          },
+        ]}
+        host={host}
+      />,
+    );
+    const heads = screen
+      .getAllByRole("rowheader")
+      .map((el) => el.textContent ?? "");
+    expect(heads.at(-1)).toContain("No compose project");
+  });
+
   it("carries no first_seen/last_seen columns, because the schema has none", () => {
-    render(<Containers rows={containers} />);
+    render(<Containers rows={containers} host={host} />);
     expect(
       screen.queryByRole("columnheader", { name: /first seen/i }),
     ).toBeNull();
@@ -171,6 +224,7 @@ describe("Containers", () => {
     render(
       <Containers
         rows={[]}
+        host={host}
         capabilities={{ containers: "no-cgroup-scopes" }}
       />,
     );
@@ -188,16 +242,23 @@ describe("Containers", () => {
     render(
       <Containers
         rows={containers}
+        host={host}
         capabilities={{ containers: "no-docker-socket" }}
       />,
     );
 
     expect(screen.getByText(/Docker socket/)).toBeInTheDocument();
-    expect(screen.getByRole("row", { name: /shop/ })).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /shop-web-1/ })).toBeInTheDocument();
   });
 
   it("stays silent when the agent reported no trouble", () => {
-    render(<Containers rows={containers} capabilities={{ smart: "absent" }} />);
+    render(
+      <Containers
+        rows={containers}
+        host={host}
+        capabilities={{ smart: "absent" }}
+      />,
+    );
 
     expect(screen.queryByText(/Docker socket/)).toBeNull();
     expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();

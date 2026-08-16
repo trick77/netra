@@ -164,8 +164,9 @@ message HostSample {
   // MIB, which Linux keeps as one family-agnostic counter set: these values
   // already include IPv6 connections. /proc/net/snmp6 has no Tcp6 block at
   // all -- it carries Ip6*, Icmp6* and Udp6* only -- so a tcp6_* field could
-  // only duplicate the field above it or be permanently NULL. The IPv6 mirror
-  // further down covers exactly what the kernel does account separately.
+  // only duplicate the field above it or be permanently NULL. The IPv6
+  // mirrors further down cover exactly what the kernel does account
+  // separately, and all three of those blocks are now read.
   optional double tcp_retrans_segs_per_s = 29;
   optional double tcp_out_rsts_per_s = 30;
   optional double tcp_in_errs_per_s = 31;
@@ -283,6 +284,129 @@ message HostSample {
   // by the kernel, so a stack that omits it under-reports the cache rather
   // than over-reporting memory pressure.
   optional uint64 mem_sreclaimable = 59;
+
+  // --- /proc/net/snmp and /proc/net/snmp6: the IP and ICMP MIBs ---
+  //
+  // These seventy land in host_snmp_samples, NOT host_samples, and that is
+  // load-bearing rather than tidiness. A TimescaleDB continuous aggregate
+  // cannot gain a column: adding one to host_samples means dropping and
+  // recreating host_samples_5m and host_samples_1h, which re-materialises
+  // only from the seven days of raw still on disk and destroys every
+  // rolled-up host metric older than that -- CPU and memory included. A
+  // separate table with its own aggregates costs one read family and loses
+  // nothing. Do not "tidy" them into InsertHostSamples.
+  //
+  // The set is deliberately wider than what the UI charts today, for the same
+  // reason: a counter added later costs a drop-and-recreate, while a counter
+  // stored and never drawn costs a column.
+  //
+  // IcmpMsg: is NOT parsed. Its column names are per-ICMP-type and depend on
+  // which types the host has actually seen (InType3 InType8 OutType0 ...), so
+  // no fixed field set can be derived from it, and readPaired's zip-by-
+  // position would attribute one host's InType3 to another's InType8. The
+  // named Icmp: counters below cover the types worth charting: DestUnreachs
+  // is type 3 and Echos is type 8.
+
+  // --- Ip: volume ---
+  optional double ip_in_receives_per_s = 74;
+  optional double ip_in_delivers_per_s = 75;
+  optional double ip_out_requests_per_s = 76;
+  optional double ip_forw_datagrams_per_s = 77;
+  optional double ip_reasm_oks_per_s = 78;
+  optional double ip_frag_oks_per_s = 79;
+
+  // --- Ip: loss and error ---
+  optional double ip_in_hdr_errors_per_s = 80;
+  optional double ip_in_addr_errors_per_s = 81;
+  optional double ip_in_unknown_protos_per_s = 82;
+  optional double ip_in_discards_per_s = 83;
+  optional double ip_out_discards_per_s = 84;
+  optional double ip_out_no_routes_per_s = 85;
+  optional double ip_reasm_timeout_per_s = 86;
+
+  // --- Ip6*, from /proc/net/snmp6 ---
+  //
+  // Three have no IPv4 peer, and their absence above is the kernel's, not an
+  // omission here: the Ip: block has no InNoRoutes at all, and "packet too
+  // big" is an ICMPv6 fact that IPv4 records as fragmentation instead.
+  optional double ip6_in_receives_per_s = 87;
+  optional double ip6_in_delivers_per_s = 88;
+  optional double ip6_out_requests_per_s = 89;
+  optional double ip6_out_forw_datagrams_per_s = 90;
+  optional double ip6_reasm_oks_per_s = 91;
+  optional double ip6_frag_oks_per_s = 92;
+  optional double ip6_in_hdr_errors_per_s = 93;
+  optional double ip6_in_addr_errors_per_s = 94;
+  optional double ip6_in_unknown_protos_per_s = 95;
+  optional double ip6_in_discards_per_s = 96;
+  optional double ip6_out_discards_per_s = 97;
+  optional double ip6_out_no_routes_per_s = 98;
+  optional double ip6_in_no_routes_per_s = 99;
+  optional double ip6_in_too_big_errors_per_s = 100;
+  optional double ip6_reasm_timeout_per_s = 101;
+
+  // --- Icmp: error and control ---
+  optional double icmp_in_msgs_per_s = 102;
+  optional double icmp_out_msgs_per_s = 103;
+  optional double icmp_in_errors_per_s = 104;
+  optional double icmp_out_errors_per_s = 105;
+  optional double icmp_in_dest_unreachs_per_s = 106;
+  optional double icmp_out_dest_unreachs_per_s = 107;
+  optional double icmp_in_time_excds_per_s = 108;
+  optional double icmp_out_time_excds_per_s = 109;
+  optional double icmp_in_parm_probs_per_s = 110;
+  optional double icmp_out_parm_probs_per_s = 111;
+  optional double icmp_in_redirects_per_s = 112;
+  optional double icmp_out_redirects_per_s = 113;
+
+  // --- Icmp: informational ---
+  //
+  // Echo is reachability rather than failure, which is why it is charted on
+  // its own panel: a host answering pings is not a host in trouble, and
+  // mixing the two axes hides the counters that do mean something.
+  optional double icmp_in_echos_per_s = 114;
+  optional double icmp_out_echos_per_s = 115;
+  optional double icmp_in_echo_reps_per_s = 116;
+  optional double icmp_out_echo_reps_per_s = 117;
+
+  // --- Icmp6*, from /proc/net/snmp6 ---
+  //
+  // Unlike Tcp:, the ICMP MIB is genuinely per-family: Icmp: counts ICMPv4
+  // only and snmp6 carries a full Icmp6* block, so both are read. The
+  // spellings follow the kernel's icmp6type2name[] table, which is why two
+  // differ from their v4 peers -- ParmProblems, not ParmProbs, and
+  // EchoReplies, not EchoReps.
+  optional double icmp6_in_msgs_per_s = 118;
+  optional double icmp6_out_msgs_per_s = 119;
+  optional double icmp6_in_errors_per_s = 120;
+  optional double icmp6_out_errors_per_s = 121;
+  optional double icmp6_in_dest_unreachs_per_s = 122;
+  optional double icmp6_out_dest_unreachs_per_s = 123;
+  optional double icmp6_in_time_excds_per_s = 124;
+  optional double icmp6_out_time_excds_per_s = 125;
+  optional double icmp6_in_parm_problems_per_s = 126;
+  optional double icmp6_out_parm_problems_per_s = 127;
+  optional double icmp6_in_pkt_too_bigs_per_s = 128;
+  optional double icmp6_out_pkt_too_bigs_per_s = 129;
+  optional double icmp6_in_redirects_per_s = 130;
+  optional double icmp6_out_redirects_per_s = 131;
+  optional double icmp6_in_echos_per_s = 132;
+  optional double icmp6_out_echos_per_s = 133;
+  optional double icmp6_in_echo_replies_per_s = 134;
+  optional double icmp6_out_echo_replies_per_s = 135;
+
+  // Neighbour discovery. On IPv6 this IS the informational traffic -- there
+  // is no ARP, so solicits and advertisements carry what an operator would
+  // look for in an ARP table, and a host that stops answering neighbour
+  // solicits disappears from its segment.
+  optional double icmp6_in_neighbor_solicits_per_s = 136;
+  optional double icmp6_out_neighbor_solicits_per_s = 137;
+  optional double icmp6_in_neighbor_advertisements_per_s = 138;
+  optional double icmp6_out_neighbor_advertisements_per_s = 139;
+  optional double icmp6_in_router_solicits_per_s = 140;
+  optional double icmp6_out_router_solicits_per_s = 141;
+  optional double icmp6_in_router_advertisements_per_s = 142;
+  optional double icmp6_out_router_advertisements_per_s = 143;
 }
 
 // AgentSample is the agent's telemetry about itself for one scrape.

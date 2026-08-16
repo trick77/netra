@@ -263,6 +263,128 @@ func (s *Store) InsertAgentSamples(ctx context.Context, hostID int32, samples []
 	return execBatch(ctx, s.pool, batch, "agent sample")
 }
 
+// InsertHostSnmpSamples writes the IP and ICMP MIB counters carried by a
+// batch and returns the number of rows stored.
+//
+// A separate table and therefore a separate statement, not seventy more
+// placeholders on InsertHostSamples. Three reasons, in order of weight: a
+// continuous aggregate cannot gain a column, so these columns had to live
+// somewhere host_samples' rollups would not have to be recreated for (see
+// 0003_host_snmp_samples.sql); InsertAgentSamples is the existing precedent
+// for a second table fed from the same []*netrav1.HostSample on the same
+// natural key; and a 143-placeholder statement is past the point where a
+// transposed argument can be caught by reading it.
+//
+// The two batches are not atomic with each other, which is already true of
+// host_samples and agent_samples and safe for the same reason: both key on
+// (host_id, ts) with ON CONFLICT DO NOTHING, so a replay after a failure
+// between them makes the half that landed a no-op.
+//
+// A sample with none of the seventy set is skipped rather than written as an
+// all-NULL row -- the first scrape after an agent restart has no baseline and
+// so produces no rates at all, and a row of NULLs there would claim a
+// measurement was taken.
+func (s *Store) InsertHostSnmpSamples(ctx context.Context, hostID int32, samples []*netrav1.HostSample) (int64, error) {
+	const stmt = `
+		INSERT INTO host_snmp_samples (
+			host_id, ts,
+			ip_in_receives_per_s, ip_in_delivers_per_s, ip_out_requests_per_s,
+			ip_forw_datagrams_per_s, ip_reasm_oks_per_s, ip_frag_oks_per_s,
+			ip_in_hdr_errors_per_s, ip_in_addr_errors_per_s, ip_in_unknown_protos_per_s,
+			ip_in_discards_per_s, ip_out_discards_per_s, ip_out_no_routes_per_s,
+			ip_reasm_timeout_per_s, ip6_in_receives_per_s, ip6_in_delivers_per_s,
+			ip6_out_requests_per_s, ip6_out_forw_datagrams_per_s, ip6_reasm_oks_per_s,
+			ip6_frag_oks_per_s, ip6_in_hdr_errors_per_s, ip6_in_addr_errors_per_s,
+			ip6_in_unknown_protos_per_s, ip6_in_discards_per_s, ip6_out_discards_per_s,
+			ip6_out_no_routes_per_s, ip6_in_no_routes_per_s, ip6_in_too_big_errors_per_s,
+			ip6_reasm_timeout_per_s, icmp_in_msgs_per_s, icmp_out_msgs_per_s,
+			icmp_in_errors_per_s, icmp_out_errors_per_s, icmp_in_dest_unreachs_per_s,
+			icmp_out_dest_unreachs_per_s, icmp_in_time_excds_per_s, icmp_out_time_excds_per_s,
+			icmp_in_parm_probs_per_s, icmp_out_parm_probs_per_s, icmp_in_redirects_per_s,
+			icmp_out_redirects_per_s, icmp_in_echos_per_s, icmp_out_echos_per_s,
+			icmp_in_echo_reps_per_s, icmp_out_echo_reps_per_s, icmp6_in_msgs_per_s,
+			icmp6_out_msgs_per_s, icmp6_in_errors_per_s, icmp6_out_errors_per_s,
+			icmp6_in_dest_unreachs_per_s, icmp6_out_dest_unreachs_per_s, icmp6_in_time_excds_per_s,
+			icmp6_out_time_excds_per_s, icmp6_in_parm_problems_per_s, icmp6_out_parm_problems_per_s,
+			icmp6_in_pkt_too_bigs_per_s, icmp6_out_pkt_too_bigs_per_s, icmp6_in_redirects_per_s,
+			icmp6_out_redirects_per_s, icmp6_in_echos_per_s, icmp6_out_echos_per_s,
+			icmp6_in_echo_replies_per_s, icmp6_out_echo_replies_per_s, icmp6_in_neighbor_solicits_per_s,
+			icmp6_out_neighbor_solicits_per_s, icmp6_in_neighbor_advertisements_per_s, icmp6_out_neighbor_advertisements_per_s,
+			icmp6_in_router_solicits_per_s, icmp6_out_router_solicits_per_s, icmp6_in_router_advertisements_per_s,
+			icmp6_out_router_advertisements_per_s
+		) VALUES (
+			$1, $2,
+			$3, $4, $5, $6, $7, $8,
+			$9, $10, $11, $12, $13, $14,
+			$15, $16, $17, $18, $19, $20,
+			$21, $22, $23, $24, $25, $26,
+			$27, $28, $29, $30, $31, $32,
+			$33, $34, $35, $36, $37, $38,
+			$39, $40, $41, $42, $43, $44,
+			$45, $46, $47, $48, $49, $50,
+			$51, $52, $53, $54, $55, $56,
+			$57, $58, $59, $60, $61, $62,
+			$63, $64, $65, $66, $67, $68,
+			$69, $70, $71, $72
+		)
+		ON CONFLICT (host_id, ts) DO NOTHING`
+
+	batch := &pgx.Batch{}
+	for _, m := range samples {
+		args := []any{
+			hostID, time.UnixMilli(m.GetTsMs()).UTC(),
+			f64(m.IpInReceivesPerS), f64(m.IpInDeliversPerS), f64(m.IpOutRequestsPerS),
+			f64(m.IpForwDatagramsPerS), f64(m.IpReasmOksPerS), f64(m.IpFragOksPerS),
+			f64(m.IpInHdrErrorsPerS), f64(m.IpInAddrErrorsPerS), f64(m.IpInUnknownProtosPerS),
+			f64(m.IpInDiscardsPerS), f64(m.IpOutDiscardsPerS), f64(m.IpOutNoRoutesPerS),
+			f64(m.IpReasmTimeoutPerS), f64(m.Ip6InReceivesPerS), f64(m.Ip6InDeliversPerS),
+			f64(m.Ip6OutRequestsPerS), f64(m.Ip6OutForwDatagramsPerS), f64(m.Ip6ReasmOksPerS),
+			f64(m.Ip6FragOksPerS), f64(m.Ip6InHdrErrorsPerS), f64(m.Ip6InAddrErrorsPerS),
+			f64(m.Ip6InUnknownProtosPerS), f64(m.Ip6InDiscardsPerS), f64(m.Ip6OutDiscardsPerS),
+			f64(m.Ip6OutNoRoutesPerS), f64(m.Ip6InNoRoutesPerS), f64(m.Ip6InTooBigErrorsPerS),
+			f64(m.Ip6ReasmTimeoutPerS), f64(m.IcmpInMsgsPerS), f64(m.IcmpOutMsgsPerS),
+			f64(m.IcmpInErrorsPerS), f64(m.IcmpOutErrorsPerS), f64(m.IcmpInDestUnreachsPerS),
+			f64(m.IcmpOutDestUnreachsPerS), f64(m.IcmpInTimeExcdsPerS), f64(m.IcmpOutTimeExcdsPerS),
+			f64(m.IcmpInParmProbsPerS), f64(m.IcmpOutParmProbsPerS), f64(m.IcmpInRedirectsPerS),
+			f64(m.IcmpOutRedirectsPerS), f64(m.IcmpInEchosPerS), f64(m.IcmpOutEchosPerS),
+			f64(m.IcmpInEchoRepsPerS), f64(m.IcmpOutEchoRepsPerS), f64(m.Icmp6InMsgsPerS),
+			f64(m.Icmp6OutMsgsPerS), f64(m.Icmp6InErrorsPerS), f64(m.Icmp6OutErrorsPerS),
+			f64(m.Icmp6InDestUnreachsPerS), f64(m.Icmp6OutDestUnreachsPerS), f64(m.Icmp6InTimeExcdsPerS),
+			f64(m.Icmp6OutTimeExcdsPerS), f64(m.Icmp6InParmProblemsPerS), f64(m.Icmp6OutParmProblemsPerS),
+			f64(m.Icmp6InPktTooBigsPerS), f64(m.Icmp6OutPktTooBigsPerS), f64(m.Icmp6InRedirectsPerS),
+			f64(m.Icmp6OutRedirectsPerS), f64(m.Icmp6InEchosPerS), f64(m.Icmp6OutEchosPerS),
+			f64(m.Icmp6InEchoRepliesPerS), f64(m.Icmp6OutEchoRepliesPerS), f64(m.Icmp6InNeighborSolicitsPerS),
+			f64(m.Icmp6OutNeighborSolicitsPerS), f64(m.Icmp6InNeighborAdvertisementsPerS), f64(m.Icmp6OutNeighborAdvertisementsPerS),
+			f64(m.Icmp6InRouterSolicitsPerS), f64(m.Icmp6OutRouterSolicitsPerS), f64(m.Icmp6InRouterAdvertisementsPerS),
+			f64(m.Icmp6OutRouterAdvertisementsPerS),
+		}
+		// args[2:] is the seventy values; scanning them beats seventy
+		// explicit nil checks, which would repeat the field list a second
+		// time and give it a second chance to fall out of order.
+		if !anyNonNil(args[2:]) {
+			continue
+		}
+		batch.Queue(stmt, args...)
+	}
+	if batch.Len() == 0 {
+		return 0, nil
+	}
+
+	return execBatch(ctx, s.pool, batch, "host snmp sample")
+}
+
+// anyNonNil reports whether any of the values is a stored measurement rather
+// than a SQL NULL. f64 returns an untyped nil for an unset optional, so a
+// plain interface comparison is enough.
+func anyNonNil(vals []any) bool {
+	for _, v := range vals {
+		if v != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // f64 and u64 map an unset protobuf optional to a SQL NULL. Returning the
 // pointer directly would work for float64 but not for the uint64 -> int64
 // column mapping, so both are explicit.

@@ -46,11 +46,44 @@ export interface TableProps<T> {
    * misbehave once rows are sorted or filtered — callers with either
    * should always pass this. */
   rowKey?: (row: T, index: number) => string | number;
+  /**
+   * Splits the rows into labelled groups, each its own `<tbody>` under a
+   * header row.
+   *
+   * A long flat list answers "what is here" and nothing about what belongs
+   * with what: 200 containers under one header rail is a wall. Grouping is
+   * the answer, and it belongs here rather than in each caller because a
+   * group has to interact with sorting -- see below -- and only this
+   * component knows the sort state.
+   *
+   * `key` returning "" puts a row in the trailing unnamed group: a container
+   * with no compose project is not a member of a project called "", and it
+   * must not sort in among the named ones.
+   */
+  groupBy?: {
+    key: (row: T) => string;
+    label: (key: string, rows: readonly T[]) => ReactNode;
+    /**
+     * What to ORDER the groups by, when that is not the key itself.
+     *
+     * Identity and order are usually the same string and this can be left
+     * out. They come apart whenever the key is an id: the fleet groups
+     * containers by `host_id`, because two hosts in different sites may share
+     * a hostname and grouping on the name would merge them -- but ordering by
+     * that id lists the hosts in registration order under headings that read
+     * as names, beside a Hosts tab the API returns alphabetically. The group
+     * a row belongs to and the place that group sits are two questions.
+     *
+     * The empty key still sorts last regardless: "no group" is not a value to
+     * be ordered among the real ones.
+     */
+    order?: (key: string, rows: readonly T[]) => string | number;
+  };
 }
 
 type SortState = { key: string; dir: "asc" | "desc" };
 
-export function Table<T>({ columns, rows, rowKey }: TableProps<T>) {
+export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
   // Uncontrolled: every caller wants the same click-to-sort behaviour, and
   // threading identical state through each of them buys nothing.
   const [sort, setSort] = useState<SortState | null>(null);
@@ -81,6 +114,38 @@ export function Table<T>({ columns, rows, rowKey }: TableProps<T>) {
       return sign * (x - y);
     });
   }, [rows, columns, sort]);
+
+  // Partitioning the ALREADY sorted list is what makes "sort within a group"
+  // fall out for free: a stable partition of a sorted list leaves every
+  // bucket in that same order. Sorting each group separately afterwards would
+  // be the same answer computed twice.
+  //
+  // The groups themselves are ordered by `order` -- the key when the caller
+  // gave none -- rather than by first appearance, so two renders of the same
+  // data read the same way. The unnamed group ("") sorts last whatever its
+  // order value, the way an unknown sortValue does.
+  const groups = useMemo(() => {
+    if (groupBy === undefined) return null;
+    const byKey = new Map<string, T[]>();
+    for (const row of sorted) {
+      const key = groupBy.key(row);
+      const existing = byKey.get(key);
+      if (existing) existing.push(row);
+      else byKey.set(key, [row]);
+    }
+    const order = groupBy.order ?? ((key: string) => key);
+    return [...byKey.entries()].sort(([a, ra], [b, rb]) => {
+      if (a === b) return 0;
+      if (a === "") return 1;
+      if (b === "") return -1;
+      const x = order(a, ra);
+      const y = order(b, rb);
+      if (typeof x === "number" && typeof y === "number") return x - y;
+      // numeric, so "web-2" comes before "web-10" -- the same collation the
+      // column sort uses, because a reader scanning names expects one rule.
+      return String(x).localeCompare(String(y), undefined, { numeric: true });
+    });
+  }, [sorted, groupBy]);
 
   const toggle = (key: string) =>
     setSort((prev) =>
@@ -147,18 +212,35 @@ export function Table<T>({ columns, rows, rowKey }: TableProps<T>) {
             ))}
           </tr>
         </thead>
-        <tbody>
-          {sorted.map((row, index) => (
-            <tr key={rowKey ? rowKey(row, index) : index}>
-              {columns.map((col) => (
-                <td key={col.key} style={cellStyle(col)}>
-                  {col.cell(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
+        {groups === null ? (
+          <tbody>{sorted.map(bodyRow)}</tbody>
+        ) : (
+          groups.map(([key, rowsInGroup]) => (
+            <tbody key={key}>
+              <tr className="grouprow">
+                {/* A header for the rows below it, so scope is rowgroup
+                    rather than col -- it names the group, not a column. */}
+                <th scope="rowgroup" colSpan={columns.length}>
+                  {groupBy?.label(key, rowsInGroup)}
+                </th>
+              </tr>
+              {rowsInGroup.map(bodyRow)}
+            </tbody>
+          ))
+        )}
       </table>
     </div>
   );
+
+  function bodyRow(row: T, index: number) {
+    return (
+      <tr key={rowKey ? rowKey(row, index) : index}>
+        {columns.map((col) => (
+          <td key={col.key} style={cellStyle(col)}>
+            {col.cell(row)}
+          </td>
+        ))}
+      </tr>
+    );
+  }
 }

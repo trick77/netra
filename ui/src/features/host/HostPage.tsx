@@ -26,7 +26,7 @@ import { Button } from "../../ui/Button";
 import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { ABSENT, duration, relative } from "../../lib/format";
-import { hostStatus, osLabel } from "../../lib/host";
+import { hostStatus } from "../../lib/host";
 import { clampRange, rangeWindow, type Range } from "../../lib/range";
 import { loadRange } from "../settings/SettingsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
@@ -81,6 +81,7 @@ export { RANGE_OPTIONS, RANGE_VALUES };
 
 interface TabData {
   hostMetrics: MetricsResponse | null;
+  hostSnmpMetrics: MetricsResponse | null;
   filesystemMetrics: MetricsResponse | null;
   agentMetrics: MetricsResponse | null;
   sensorMetrics: MetricsResponse | null;
@@ -99,6 +100,7 @@ interface TabData {
 
 const NO_DATA: TabData = {
   hostMetrics: null,
+  hostSnmpMetrics: null,
   filesystemMetrics: null,
   agentMetrics: null,
   sensorMetrics: null,
@@ -272,6 +274,7 @@ export function HostPage({
         case "graphs": {
           const [
             hostMetrics,
+            hostSnmpMetrics,
             netMetrics,
             diskIoMetrics,
             filesystemMetrics,
@@ -280,6 +283,11 @@ export function HostPage({
             agentMetrics,
           ] = await Promise.all([
             metrics("host"),
+            // The IP and ICMP MIBs live in their own family because they live
+            // in their own table -- see 0003_host_snmp_samples.sql. orNull
+            // means a hub too old to answer it blanks those three panels and
+            // nothing else.
+            metrics("host_snmp"),
             metrics("net"),
             metrics("disk_io"),
             metrics("filesystem"),
@@ -289,6 +297,7 @@ export function HostPage({
           ]);
           return {
             hostMetrics,
+            hostSnmpMetrics,
             netMetrics,
             diskIoMetrics,
             filesystemMetrics,
@@ -391,15 +400,20 @@ export function HostPage({
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">
         <h1 className="serif">{host.hostname}</h1>
-        <span className="meta">
-          {/* osLabel, not host.os_name: this header sits two inches above the
-              Overview tab's System card, which names the OS through the same
-              helper. Printing the raw field here read "linux" under a card
-              reading "Linux" -- the same fact spelled two ways on one screen. */}
-          {[host.site_name, osLabel(host.os_name), host.kernel, host.arch]
-            .map((part) => part ?? ABSENT)
-            .join(" · ")}
-        </span>
+        {/* The site alone. OS, kernel and arch used to sit here too, and all
+            three are printed a few centimetres below in the Overview tab's
+            System card, which owns them -- the header was spending its most
+            prominent line restating the card.  The site is the one of the four
+            that appears nowhere else on host detail, so it stays.
+
+            Rendered conditionally rather than as `?? ABSENT`: on an unsited
+            host that put a lone em dash under the hostname with nothing beside
+            it to say what was missing, which reads as a rendering fault rather
+            than as "no site". .hosthead is a wrapping flex row, so the badge
+            simply takes the space back. */}
+        {host.site_name !== null && (
+          <span className="meta">{host.site_name}</span>
+        )}
         <Badge severity={status.severity}>{status.label}</Badge>
         {/* Beside the reporting status, not instead of it: the two answer
             different questions, and a host can be online AND four minutes
@@ -458,11 +472,14 @@ export function HostPage({
           netMetrics={data.netMetrics}
           containers={data.containers}
           units={data.units}
+          range={range}
+          fetchFamily={fetchFamily}
         />
       )}
       {tab === "graphs" && (
         <Graphs
           host={data.hostMetrics}
+          hostSnmp={data.hostSnmpMetrics}
           net={data.netMetrics}
           diskIo={data.diskIoMetrics}
           filesystem={data.filesystemMetrics}
@@ -476,6 +493,11 @@ export function HostPage({
       {tab === "containers" && (
         <Containers
           rows={data.containers ?? []}
+          // The id AND the name: the rows link to
+          // /containers/{host_id}/{key}, and this component is the only
+          // party that has both. Without them the tab could not offer a
+          // link at all, which is exactly what it did for a long time.
+          host={{ id: host.id, hostname: host.hostname }}
           metrics={data.containerMetrics ?? null}
           range={range}
           // Why the list is empty, or why its rows are named after 64 hex

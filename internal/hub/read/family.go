@@ -23,8 +23,9 @@ type family struct {
 	// table is the RAW relation. A tier's relation is table + tierSpec.suffix,
 	// which is the naming convention 0001_init.sql follows without exception.
 	table string
-	// keys is what splits the family into series. Empty for the two
-	// host-level families, which have exactly one series each.
+	// keys is what splits the family into series. Empty for the three
+	// host-level families (host, host_snmp, agent), which have exactly one
+	// series each.
 	keys []keySpec
 	// join is the dimension join, or empty when the key columns live on the
 	// sample relation itself.
@@ -57,6 +58,16 @@ var families = map[string]*family{
 	"agent": {
 		name:  "agent",
 		table: "agent_samples",
+		tiers: rolledUpTiers,
+	},
+	// The IP and ICMP MIBs. A second host-level family rather than more
+	// columns on "host", because a TimescaleDB continuous aggregate cannot
+	// gain a column -- adding one to host_samples means recreating its
+	// rollups and losing every host metric's rolled-up history past raw
+	// retention. See 0003_host_snmp_samples.sql.
+	"host_snmp": {
+		name:  "host_snmp",
+		table: "host_snmp_samples",
 		tiers: rolledUpTiers,
 	},
 	"cpu_core": {

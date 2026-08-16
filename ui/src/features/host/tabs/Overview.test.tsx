@@ -297,6 +297,41 @@ describe("Overview", () => {
     ).toBeTruthy();
   });
 
+  // The System card is lifted out for a different reason: a multi-column flow
+  // has no top-right slot to reorder a card into, so full width above the flow
+  // is the only position that holds. Inside .grid2 it drifts with the break
+  // point the browser picks from content height.
+  it("puts the System card above the card grid, not inside it", () => {
+    const { container } = renderOverview();
+    const system = screen.getByRole("region", { name: "System" });
+    const grid = container.querySelector(".grid2");
+    expect(grid).not.toBeNull();
+    expect(grid?.contains(system)).toBe(false);
+    expect(
+      system.compareDocumentPosition(grid!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  // The only link between the hoisted card and the CSS that lays it out two
+  // pairs across. Without it the card is a thin column of eight one-line rows
+  // down the left of a full-width card -- which renders perfectly, passes
+  // every other test here, and is exactly what the hoist was meant to fix.
+  it("lays the System card's facts out two pairs across", () => {
+    renderOverview();
+    const system = screen.getByRole("region", { name: "System" });
+    expect(system.querySelector("dl")?.className).toContain("wide");
+  });
+
+  // Traffic took the slot System left: first in the flow is the top of the
+  // LEFT column, and the network is the subsystem most likely to explain a
+  // problem.
+  it("leads the card grid with Traffic", () => {
+    const { container } = renderOverview();
+    const grid = container.querySelector(".grid2");
+    const first = grid?.firstElementChild;
+    expect(first?.getAttribute("aria-label")).toBe("Traffic");
+  });
+
   it("says so in one line when nothing is wrong, without the band", () => {
     renderOverview();
     expect(

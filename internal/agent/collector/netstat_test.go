@@ -56,6 +56,9 @@ func TestNetstatFirstCollectEmitsOnlyCurrEstab(t *testing.T) {
 		"TcpRetransSegsPerS": sample.TcpRetransSegsPerS,
 		"UdpInErrorsPerS":    sample.UdpInErrorsPerS,
 		"IpFragFailsPerS":    sample.IpFragFailsPerS,
+		"IpInReceivesPerS":   sample.IpInReceivesPerS,
+		"IcmpInMsgsPerS":     sample.IcmpInMsgsPerS,
+		"Icmp6InMsgsPerS":    sample.Icmp6InMsgsPerS,
 		"Udp6InErrorsPerS":   sample.Udp6InErrorsPerS,
 		"TcpListenDropsPerS": sample.TcpListenDropsPerS,
 	} {
@@ -95,8 +98,8 @@ func TestNetstatSecondCollectComputesRatesForAllFamilies(t *testing.T) {
 		{"UdpNoPortsPerS", sample.UdpNoPortsPerS, (120 - 60) / 60.0},
 		{"IpReasmReqdsPerS", sample.IpReasmReqdsPerS, (460 - 400) / 60.0},
 		{"IpReasmFailsPerS", sample.IpReasmFailsPerS, (26 - 20) / 60.0},
-		{"IpFragFailsPerS", sample.IpFragFailsPerS, (11 - 5) / 60.0},
-		{"IpFragCreatesPerS", sample.IpFragCreatesPerS, (310 - 250) / 60.0},
+		{"IpFragFailsPerS", sample.IpFragFailsPerS, (14 - 5) / 60.0},
+		{"IpFragCreatesPerS", sample.IpFragCreatesPerS, (316 - 250) / 60.0},
 
 		// Udp6/Ip6 from /proc/net/snmp6, the flat key/value format.
 		{"Udp6InErrorsPerS", sample.Udp6InErrorsPerS, (11 - 5) / 60.0},
@@ -107,6 +110,77 @@ func TestNetstatSecondCollectComputesRatesForAllFamilies(t *testing.T) {
 		{"Ip6ReasmFailsPerS", sample.Ip6ReasmFailsPerS, (16 - 10) / 60.0},
 		{"Ip6FragFailsPerS", sample.Ip6FragFailsPerS, (9 - 3) / 60.0},
 		{"Ip6FragCreatesPerS", sample.Ip6FragCreatesPerS, (120 - 90) / 60.0},
+
+		// The rest of Ip:, which the IP statistics panel draws.
+		{"IpInReceivesPerS", sample.IpInReceivesPerS, (1090000 - 1000000) / 60.0},
+		{"IpInDeliversPerS", sample.IpInDeliversPerS, (1071000 - 999000) / 60.0},
+		{"IpOutRequestsPerS", sample.IpOutRequestsPerS, (936000 - 888000) / 60.0},
+		{"IpForwDatagramsPerS", sample.IpForwDatagramsPerS, (2120 - 2000) / 60.0},
+		{"IpReasmOksPerS", sample.IpReasmOksPerS, (434 - 380) / 60.0},
+		{"IpFragOksPerS", sample.IpFragOksPerS, (130 - 100) / 60.0},
+		{"IpInHdrErrorsPerS", sample.IpInHdrErrorsPerS, (28 - 10) / 60.0},
+		{"IpInAddrErrorsPerS", sample.IpInAddrErrorsPerS, (29 - 5) / 60.0},
+		{"IpInUnknownProtosPerS", sample.IpInUnknownProtosPerS, (6 - 3) / 60.0},
+		{"IpInDiscardsPerS", sample.IpInDiscardsPerS, (19 - 7) / 60.0},
+		{"IpOutDiscardsPerS", sample.IpOutDiscardsPerS, (53 - 11) / 60.0},
+		{"IpOutNoRoutesPerS", sample.IpOutNoRoutesPerS, (38 - 2) / 60.0},
+		{"IpReasmTimeoutPerS", sample.IpReasmTimeoutPerS, (52 - 4) / 60.0},
+
+		// The Ip6* half of the same. Every delta is distinct so a
+		// transposed pair cannot pass.
+		{"Ip6InReceivesPerS", sample.Ip6InReceivesPerS, (212000 - 200000) / 60.0},
+		{"Ip6InDeliversPerS", sample.Ip6InDeliversPerS, (211000 - 199000) / 60.0},
+		{"Ip6OutRequestsPerS", sample.Ip6OutRequestsPerS, (192000 - 180000) / 60.0},
+		{"Ip6ReasmOksPerS", sample.Ip6ReasmOksPerS, (134 - 110) / 60.0},
+		{"Ip6FragOksPerS", sample.Ip6FragOksPerS, (52 - 40) / 60.0},
+
+		// Icmp:, error and informational alike. IPv4 only -- the kernel
+		// keeps a separate Icmp6 block rather than folding v6 in here.
+		{"IcmpInMsgsPerS", sample.IcmpInMsgsPerS, (280 - 100) / 60.0},
+		{"IcmpOutMsgsPerS", sample.IcmpOutMsgsPerS, (268 - 100) / 60.0},
+		{"IcmpInErrorsPerS", sample.IcmpInErrorsPerS, (25 - 4) / 60.0},
+		{"IcmpOutErrorsPerS", sample.IcmpOutErrorsPerS, (60 - 3) / 60.0},
+		{"IcmpInDestUnreachsPerS", sample.IcmpInDestUnreachsPerS, (83 - 50) / 60.0},
+		{"IcmpOutDestUnreachsPerS", sample.IcmpOutDestUnreachsPerS, (95 - 50) / 60.0},
+		{"IcmpInTimeExcdsPerS", sample.IcmpInTimeExcdsPerS, (45 - 6) / 60.0},
+		{"IcmpOutTimeExcdsPerS", sample.IcmpOutTimeExcdsPerS, (68 - 5) / 60.0},
+		{"IcmpInParmProbsPerS", sample.IcmpInParmProbsPerS, (17 - 2) / 60.0},
+		{"IcmpOutParmProbsPerS", sample.IcmpOutParmProbsPerS, (52 - 1) / 60.0},
+		{"IcmpInRedirectsPerS", sample.IcmpInRedirectsPerS, (35 - 8) / 60.0},
+		{"IcmpOutRedirectsPerS", sample.IcmpOutRedirectsPerS, (76 - 7) / 60.0},
+		{"IcmpInEchosPerS", sample.IcmpInEchosPerS, (200 - 50) / 60.0},
+		{"IcmpOutEchosPerS", sample.IcmpOutEchosPerS, (123 - 9) / 60.0},
+		{"IcmpInEchoRepsPerS", sample.IcmpInEchoRepsPerS, (114 - 12) / 60.0},
+		{"IcmpOutEchoRepsPerS", sample.IcmpOutEchoRepsPerS, (188 - 50) / 60.0},
+
+		// Icmp6*, including the neighbour-discovery counters that are
+		// IPv6's answer to ARP.
+		{"Icmp6InMsgsPerS", sample.Icmp6InMsgsPerS, (4300 - 4000) / 60.0},
+		{"Icmp6InErrorsPerS", sample.Icmp6InErrorsPerS, (346 - 40) / 60.0},
+		{"Icmp6OutMsgsPerS", sample.Icmp6OutMsgsPerS, (4112 - 3800) / 60.0},
+		{"Icmp6OutErrorsPerS", sample.Icmp6OutErrorsPerS, (348 - 30) / 60.0},
+		{"Icmp6InDestUnreachsPerS", sample.Icmp6InDestUnreachsPerS, (384 - 60) / 60.0},
+		{"Icmp6InPktTooBigsPerS", sample.Icmp6InPktTooBigsPerS, (342 - 12) / 60.0},
+		{"Icmp6InTimeExcdsPerS", sample.Icmp6InTimeExcdsPerS, (345 - 9) / 60.0},
+		{"Icmp6InParmProblemsPerS", sample.Icmp6InParmProblemsPerS, (347 - 5) / 60.0},
+		{"Icmp6InEchosPerS", sample.Icmp6InEchosPerS, (1048 - 700) / 60.0},
+		{"Icmp6InEchoRepliesPerS", sample.Icmp6InEchoRepliesPerS, (1004 - 650) / 60.0},
+		{"Icmp6InRouterSolicitsPerS", sample.Icmp6InRouterSolicitsPerS, (378 - 18) / 60.0},
+		{"Icmp6InRouterAdvertisementsPerS", sample.Icmp6InRouterAdvertisementsPerS, (456 - 90) / 60.0},
+		{"Icmp6InNeighborSolicitsPerS", sample.Icmp6InNeighborSolicitsPerS, (792 - 420) / 60.0},
+		{"Icmp6InNeighborAdvertisementsPerS", sample.Icmp6InNeighborAdvertisementsPerS, (758 - 380) / 60.0},
+		{"Icmp6InRedirectsPerS", sample.Icmp6InRedirectsPerS, (391 - 7) / 60.0},
+		{"Icmp6OutDestUnreachsPerS", sample.Icmp6OutDestUnreachsPerS, (445 - 55) / 60.0},
+		{"Icmp6OutPktTooBigsPerS", sample.Icmp6OutPktTooBigsPerS, (406 - 10) / 60.0},
+		{"Icmp6OutTimeExcdsPerS", sample.Icmp6OutTimeExcdsPerS, (410 - 8) / 60.0},
+		{"Icmp6OutParmProblemsPerS", sample.Icmp6OutParmProblemsPerS, (412 - 4) / 60.0},
+		{"Icmp6OutEchosPerS", sample.Icmp6OutEchosPerS, (1054 - 640) / 60.0},
+		{"Icmp6OutEchoRepliesPerS", sample.Icmp6OutEchoRepliesPerS, (1120 - 700) / 60.0},
+		{"Icmp6OutRouterSolicitsPerS", sample.Icmp6OutRouterSolicitsPerS, (442 - 16) / 60.0},
+		{"Icmp6OutRouterAdvertisementsPerS", sample.Icmp6OutRouterAdvertisementsPerS, (517 - 85) / 60.0},
+		{"Icmp6OutNeighborSolicitsPerS", sample.Icmp6OutNeighborSolicitsPerS, (838 - 400) / 60.0},
+		{"Icmp6OutNeighborAdvertisementsPerS", sample.Icmp6OutNeighborAdvertisementsPerS, (804 - 360) / 60.0},
+		{"Icmp6OutRedirectsPerS", sample.Icmp6OutRedirectsPerS, (456 - 6) / 60.0},
 	} {
 		if tc.got == nil {
 			t.Errorf("%s = nil, want %v", tc.name, tc.want)
@@ -150,14 +224,19 @@ func TestNetstatSnmp6AbsentLeavesAllIPv6FieldsUnset(t *testing.T) {
 	sample := collectTwice(t, "testdata/proc-noipv6", "testdata/proc-noipv6")
 
 	for name, got := range map[string]*float64{
-		"Udp6InErrorsPerS":     sample.Udp6InErrorsPerS,
-		"Udp6RcvbufErrorsPerS": sample.Udp6RcvbufErrorsPerS,
-		"Udp6SndbufErrorsPerS": sample.Udp6SndbufErrorsPerS,
-		"Udp6NoPortsPerS":      sample.Udp6NoPortsPerS,
-		"Ip6ReasmReqdsPerS":    sample.Ip6ReasmReqdsPerS,
-		"Ip6ReasmFailsPerS":    sample.Ip6ReasmFailsPerS,
-		"Ip6FragFailsPerS":     sample.Ip6FragFailsPerS,
-		"Ip6FragCreatesPerS":   sample.Ip6FragCreatesPerS,
+		"Udp6InErrorsPerS":            sample.Udp6InErrorsPerS,
+		"Udp6RcvbufErrorsPerS":        sample.Udp6RcvbufErrorsPerS,
+		"Udp6SndbufErrorsPerS":        sample.Udp6SndbufErrorsPerS,
+		"Udp6NoPortsPerS":             sample.Udp6NoPortsPerS,
+		"Ip6ReasmReqdsPerS":           sample.Ip6ReasmReqdsPerS,
+		"Ip6ReasmFailsPerS":           sample.Ip6ReasmFailsPerS,
+		"Ip6FragFailsPerS":            sample.Ip6FragFailsPerS,
+		"Ip6FragCreatesPerS":          sample.Ip6FragCreatesPerS,
+		"Ip6InReceivesPerS":           sample.Ip6InReceivesPerS,
+		"Ip6InTooBigErrorsPerS":       sample.Ip6InTooBigErrorsPerS,
+		"Icmp6InMsgsPerS":             sample.Icmp6InMsgsPerS,
+		"Icmp6InEchosPerS":            sample.Icmp6InEchosPerS,
+		"Icmp6InNeighborSolicitsPerS": sample.Icmp6InNeighborSolicitsPerS,
 	} {
 		if got != nil {
 			t.Errorf("%s = %v, want nil when /proc/net/snmp6 is absent", name, *got)
