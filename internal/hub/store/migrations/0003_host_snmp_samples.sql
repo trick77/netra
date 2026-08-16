@@ -16,6 +16,11 @@
 -- the same reason: a counter added later costs that same drop-and-recreate,
 -- while a counter stored and never drawn costs a column.
 --
+-- Read alongside host_samples in 0001, whose /proc/net/snmp section stops at
+-- Udp: and IP fragmentation. It is not edited to point here: the migration
+-- runner matches by filename with no checksum, so an edited 0001 is silently
+-- skipped on an existing database, and migrations are forward-only.
+--
 -- IcmpMsg: is not here. Its column names are per-ICMP-type and depend on
 -- which types the host has actually seen, so no fixed column set can be
 -- derived from it. The named Icmp: counters below cover the types worth
