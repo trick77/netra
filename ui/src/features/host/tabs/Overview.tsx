@@ -552,9 +552,17 @@ function SensorList({
   );
 }
 
-function Facts({ rows }: { rows: [string, ReactNode][] }) {
+/** `wide` lays the pairs out two across instead of one, for a card that spans
+ * the page rather than half of it. See .kv.wide. */
+function Facts({
+  rows,
+  wide = false,
+}: {
+  rows: [string, ReactNode][];
+  wide?: boolean;
+}) {
   return (
-    <dl className="kv">
+    <dl className={wide ? "kv wide" : "kv"}>
       {rows.map(([key, value]) => (
         <div key={key} style={{ display: "contents" }}>
           <dt>{key}</dt>
@@ -736,8 +744,9 @@ export function Overview({
           .grid2 is a CSS multi-column flow, so a card placed first in it only
           reaches the top of the LEFT column -- what is wrong with the host sat
           eighth, below the disk meters, at the width of half the page. It is
-          the one thing on this tab that must be read before anything else, so
-          it is lifted out of the flow entirely and spans the page.
+          the first thing on this tab that must be read, so it is lifted out of
+          the flow entirely and spans the page. The System card below it is
+          hoisted the same way for a different reason -- see there.
 
           Present only when something is wrong, the same rule the fleet band
           follows: a permanently visible "All clear" box in the best position
@@ -765,7 +774,103 @@ export function Overview({
         </section>
       )}
 
+      {/* Out of the flow, like the attention band -- but not because it has to
+          be read first. It is the machine's identity card, and it was asked
+          for at the top right of the page. .grid2 is a CSS multi-column flow,
+          not a grid: cards run down the left column and then down the right,
+          and the browser picks the break point from content height, so there
+          is no top-right slot to reorder a card into. Full width above the
+          flow is the position the mechanism can actually hold.
+
+          Sitting here it is also no longer a half-page column of eight
+          one-line rows, which is why Facts gets `wide` -- two key/value pairs
+          across, four even rows. See .kv.wide. */}
+      <Panel label="System" title="System">
+        <Facts
+          wide
+          rows={[
+            ["OS", osLabel(host.os_name)],
+            ["Kernel", host.kernel ?? ABSENT],
+            ["Architecture", host.arch ?? ABSENT],
+            ["Processor", host.cpu_model ?? ABSENT],
+            [
+              "Cores",
+              host.cores === null
+                ? ABSENT
+                : `${host.cores} cores · ${host.threads ?? ABSENT} threads`,
+            ],
+            // The machine's installed RAM, which this page never stated.
+            // memory_total was blank on every host until the agent started
+            // sending it, and its only reader since has been the memory
+            // chart's fallback denominator -- so the fact itself, the one
+            // an operator asks for first when sizing anything, was
+            // collected and never shown.
+            ["Memory", binaryBytes(host.memory_total)],
+            [
+              "Uptime",
+              duration(latest(hostMetrics, "uptime_s") ?? host.uptime_s),
+            ],
+            // The exact binary that is reporting, not just its release.
+            //
+            // "0.4.1" does not identify a build: it is whatever was last
+            // tagged, and the agent in front of you may be a rebuild, a
+            // patched branch, or the same tag from before a fix landed. The
+            // commit is what makes the answer exact, and it is the first
+            // thing anyone asks when a host reports something the code is
+            // not supposed to be able to report. Both were already collected
+            // (buildinfo.Version and buildinfo.Commit) and served on
+            // HostDetail; only the version was ever shown.
+            ["Agent", agentBuild(host)],
+          ]}
+        />
+      </Panel>
+
       <div className="grid2">
+        {/* First card in the flow, so it takes the top of the LEFT column.
+          Ingress above the line, egress below -- the same mark the fleet row
+          draws, because a reader moving between them should not have to
+          re-learn the chart. There was no traffic card on this page at all:
+          the only network chart lived in the Graphs tab, so the overview
+          summarised every subsystem except the one most likely to explain a
+          problem. */}
+        <Panel label="Traffic" title="Traffic">
+          {ingress.length === 0 && egress.length === 0 ? (
+            <p className="note">No interface samples in this window.</p>
+          ) : (
+            <div className="traffic-cell">
+              <UpDownSparkline
+                up={ingress}
+                down={egress}
+                width={260}
+                height={64}
+                label="Ingress and egress over time"
+              />
+              <div className="traffic-rates">
+                {/* byterate, never bitrate: net_rx/net_tx are BYTES per
+                  second, so bitrate() rendered every host's traffic 8x low
+                  and plausibly. The fleet's traffic cell carried the same
+                  bug, so the two pages agreed with each other and with
+                  nothing else.
+
+                  The numbers are host_current's gauges, not the end of the
+                  series drawn beside them. Off the series they moved with
+                  the RANGE -- the raw instantaneous rate at 1h, a
+                  five-minute average from a quarter of an hour ago at 6h and
+                  wider -- so widening the window changed what "now" meant.
+                  The sparkline still follows the range; the rates do not.
+
+                  Gated on the host still reporting: the gauge is the one
+                  number here that does not go absent by itself when the
+                  agent dies -- host_current keeps the last pair it was
+                  written -- and "the agent is down" must not render as
+                  "traffic is steady". */}
+                <span className="rate">↑ {byterate(currentRx)} in</span>
+                <span className="rate">↓ {byterate(currentTx)} out</span>
+              </div>
+            </div>
+          )}
+        </Panel>
+
         {/* Overlay (inside ChartPanel) renders the full legend itself once a
           panel carries two or more bands, so none is built here. */}
         <section aria-label="Processor">
@@ -915,50 +1020,6 @@ export function Overview({
           )}
         </Panel>
 
-        {/* Ingress above the line, egress below -- the same mark the fleet row
-          draws, because a reader moving between them should not have to
-          re-learn the chart. There was no traffic card on this page at all:
-          the only network chart lived in the Graphs tab, so the overview
-          summarised every subsystem except the one most likely to explain a
-          problem. */}
-        <Panel label="Traffic" title="Traffic">
-          {ingress.length === 0 && egress.length === 0 ? (
-            <p className="note">No interface samples in this window.</p>
-          ) : (
-            <div className="traffic-cell">
-              <UpDownSparkline
-                up={ingress}
-                down={egress}
-                width={260}
-                height={64}
-                label="Ingress and egress over time"
-              />
-              <div className="traffic-rates">
-                {/* byterate, never bitrate: net_rx/net_tx are BYTES per
-                  second, so bitrate() rendered every host's traffic 8x low
-                  and plausibly. The fleet's traffic cell carried the same
-                  bug, so the two pages agreed with each other and with
-                  nothing else.
-
-                  The numbers are host_current's gauges, not the end of the
-                  series drawn beside them. Off the series they moved with
-                  the RANGE -- the raw instantaneous rate at 1h, a
-                  five-minute average from a quarter of an hour ago at 6h and
-                  wider -- so widening the window changed what "now" meant.
-                  The sparkline still follows the range; the rates do not.
-
-                  Gated on the host still reporting: the gauge is the one
-                  number here that does not go absent by itself when the
-                  agent dies -- host_current keeps the last pair it was
-                  written -- and "the agent is down" must not render as
-                  "traffic is steady". */}
-                <span className="rate">↑ {byterate(currentRx)} in</span>
-                <span className="rate">↓ {byterate(currentTx)} out</span>
-              </div>
-            </div>
-          )}
-        </Panel>
-
         <Panel label="Disk" title="Disk">
           {filesystems.length === 0 ? (
             <p className="note">No filesystem samples in this window.</p>
@@ -992,45 +1053,6 @@ export function Overview({
               </p>
             </div>
           )}
-        </Panel>
-
-        <Panel label="System" title="System">
-          <Facts
-            rows={[
-              ["OS", osLabel(host.os_name)],
-              ["Kernel", host.kernel ?? ABSENT],
-              ["Architecture", host.arch ?? ABSENT],
-              ["Processor", host.cpu_model ?? ABSENT],
-              [
-                "Cores",
-                host.cores === null
-                  ? ABSENT
-                  : `${host.cores} cores · ${host.threads ?? ABSENT} threads`,
-              ],
-              // The machine's installed RAM, which this page never stated.
-              // memory_total was blank on every host until the agent started
-              // sending it, and its only reader since has been the memory
-              // chart's fallback denominator -- so the fact itself, the one
-              // an operator asks for first when sizing anything, was
-              // collected and never shown.
-              ["Memory", binaryBytes(host.memory_total)],
-              [
-                "Uptime",
-                duration(latest(hostMetrics, "uptime_s") ?? host.uptime_s),
-              ],
-              // The exact binary that is reporting, not just its release.
-              //
-              // "0.4.1" does not identify a build: it is whatever was last
-              // tagged, and the agent in front of you may be a rebuild, a
-              // patched branch, or the same tag from before a fix landed. The
-              // commit is what makes the answer exact, and it is the first
-              // thing anyone asks when a host reports something the code is
-              // not supposed to be able to report. Both were already collected
-              // (buildinfo.Version and buildinfo.Commit) and served on
-              // HostDetail; only the version was ever shown.
-              ["Agent", agentBuild(host)],
-            ]}
-          />
         </Panel>
 
         <Panel label="Inventory" title="Inventory">

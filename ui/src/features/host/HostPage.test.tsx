@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { HostDetail, MetricsResponse } from "../../lib/api";
+import { ABSENT } from "../../lib/format";
 
 // The only file in this feature that talks to the network, so the only one
 // that mocks it: the four tab components take plain props and are tested
@@ -117,13 +118,15 @@ describe("HostPage", () => {
       <HostPage hostId={7} tab="overview" onTabChange={() => {}} />,
     );
     await screen.findByRole("heading", { name: "kessel" });
-    // Scoped to the header: the same facts also appear in Overview's
-    // System card, and it is the header's copy that must never change.
+    // The site is all the header states about the machine. OS, kernel and
+    // arch were here too until the System card was found to be printing the
+    // same three a few centimetres below; the site is the one of the four
+    // that card does not carry.
     const header = within(screen.getByRole("banner", { name: "Host summary" }));
     expect(header.getByText(/Zurich/)).toBeInTheDocument();
-    expect(header.getByText(/Ubuntu 24\.04/)).toBeInTheDocument();
-    expect(header.getByText(/6\.8\.0-31-generic/)).toBeInTheDocument();
-    expect(header.getByText(/amd64/)).toBeInTheDocument();
+    expect(header.queryByText(/Ubuntu 24\.04/)).toBeNull();
+    expect(header.queryByText(/6\.8\.0-31-generic/)).toBeNull();
+    expect(header.queryByText(/amd64/)).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "24h" }));
 
@@ -185,18 +188,24 @@ describe("HostPage", () => {
     expect(badge.className).toContain("badge");
   });
 
-  // The System card on the Overview tab names the OS through osLabel, and the
-  // header prints the same field a few centimetres above it. A private copy of
-  // the mapping in one of them is how "linux" came to sit under a card reading
-  // "Linux" -- the same fact spelled two ways on one screen.
-  it("names the operating system in the header the way the System card does", async () => {
-    vi.mocked(api.getHost).mockResolvedValue({ ...host, os_name: "linux" });
+  // A host with no site is the common case on a fresh install, and the header
+  // used to answer it with a bare em dash: a placeholder with no label beside
+  // it to say which fact was missing, which reads as a rendering fault. The
+  // line is simply not there instead.
+  it("says nothing at all about the site of a host that has none", async () => {
+    vi.mocked(api.getHost).mockResolvedValue({ ...host, site_name: null });
 
     render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
 
     const header = await screen.findByRole("banner", { name: "Host summary" });
-    expect(within(header).getByText(/Linux/)).toBeInTheDocument();
-    expect(within(header).queryByText(/·\s*linux\s*·/)).toBeNull();
+    // The one .meta left is "last seen", which carries its own label -- an
+    // em dash under a word that says what is missing is not the same thing.
+    const meta = [...header.querySelectorAll(".meta")];
+    expect(meta).toHaveLength(1);
+    expect(meta[0].textContent).toMatch(/^last seen/);
+    expect(meta[0].textContent).not.toContain(ABSENT);
+    // The rest of the header is untouched by the site being absent.
+    expect(within(header).getByText("online")).toBeInTheDocument();
   });
 
   // A host up for a day is the overwhelmingly common case, and a badge on
