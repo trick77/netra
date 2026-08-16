@@ -38,6 +38,9 @@ import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
+import { Enlargeable } from "../../../ui/charts/Enlargeable";
+import { RANGE_VALUES } from "../ranges";
+import type { Range } from "../../../lib/range";
 import { Sparkline } from "../../../ui/charts/Sparkline";
 import { UpDownSparkline } from "../../../ui/charts/UpDownSparkline";
 
@@ -190,6 +193,37 @@ const CPU_BANDS: { base: string; name: string; color: string }[] = [
 ];
 
 /**
+ * user/system/iowait/steal as bands, on the window grid.
+ *
+ * An all-null band is not a band, and in a STACK it is actively destructive:
+ * stackBands() breaks every band at any index where any series is null,
+ * because a running total is undefined there. A bare metal host reports
+ * cpu_steal as NULL in every bucket -- correctly, it has no hypervisor to
+ * steal from -- and that one empty series erased the whole chart, legend
+ * still listing four states above a blank box.
+ *
+ * Shared with the enlarged view's own fetch, so widening the panel cannot
+ * draw a different set of bands from the one that was clicked.
+ */
+function cpuStateBands(res: MetricsResponse | null): Band[] {
+  return CPU_BANDS.map((band) => ({
+    name: band.name,
+    color: band.color,
+    // On the window grid, so an outage is a hole in the silhouette rather
+    // than a line drawn straight across it.
+    values: griddedValues(res, 0, band.base),
+  })).filter((band) => band.values.some((v) => v !== null));
+}
+
+/** The one-band silhouette: cpu_total, for a host with no per-core series.
+ * One true band beats a not-collected panel where a silhouette is available. */
+function totalCpuBand(values: (number | null)[]): Band[] {
+  return values.length > 0
+    ? [{ name: "busy", color: "var(--s1)", values }]
+    : [];
+}
+
+/**
  * The sensor family's series, narrowed to the kinds one card is about.
  *
  * The original index is carried through because latest(), griddedValues()
@@ -230,6 +264,18 @@ function sensorsOfKind(
  * rolled tiers), which is right for them: a rail sags and recovers, and the
  * bucket's mean is the honest summary of where it sat.
  */
+/** What a reader calls this sensor: chip and label, in that order.
+ *
+ * Also its identity across two responses -- the enlarged view re-finds its
+ * own series by this name after a range change rather than by the index it
+ * had, because a sensor that stopped reporting shifts every series after it
+ * and the chart would silently become another sensor's. */
+function sensorName(series: MetricsSeries): string {
+  return (
+    [series.key.chip, series.key.label].filter(Boolean).join(" ") || ABSENT
+  );
+}
+
 function sensorHistory(
   res: MetricsResponse | null,
   index: number,
@@ -503,6 +549,8 @@ function SensorList({
   color,
   trend,
   empty,
+  range,
+  fetchFamily,
 }: {
   res: MetricsResponse | null;
   rows: { series: MetricsSeries; index: number }[];
@@ -510,15 +558,15 @@ function SensorList({
   /** The word used in each sparkline's accessible label. */
   trend: string;
   empty: string;
+  range?: Range;
+  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
 }) {
   if (rows.length === 0) return <p className="note">{empty}</p>;
   return (
     <div className="sensor-list">
       {rows.map(({ series, index }) => {
         const kind = series.key.kind ?? "temperature";
-        const name =
-          [series.key.chip, series.key.label].filter(Boolean).join(" ") ||
-          ABSENT;
+        const name = sensorName(series);
         // Temperatures keep reading `temp`: it is the column they have
         // always been drawn from, it is the one every historical row was
         // written into, and an agent predating `value` filled only that.
@@ -537,13 +585,52 @@ function SensorList({
                 moving", not "which is biggest" -- and across kinds it is
                 not even arithmetic: 1200 RPM and 12 V on one scale is a
                 flat line at the bottom of the card. */}
-            <Sparkline
-              values={history}
-              width={110}
-              height={24}
-              color={color}
-              label={`${name} ${trend} trend`}
-            />
+            <Enlargeable
+              title={`${name} · ${trend}`}
+              label={`Enlarge ${trend} for ${name}`}
+              className="inline"
+              series={[{ name, color, values: history }]}
+              // Free-scaled in the dialog too, and re-scaled after a range
+              // change: the small chart above scales to its own extent, and a
+              // chart that snapped to a zero floor on being enlarged would
+              // draw a 44-47 degree package as a flat line.
+              autoScale
+              fmt={(n) => formatSensor(kind, n)}
+              range={range}
+              ranges={RANGE_VALUES}
+              fetchSeries={
+                fetchFamily === undefined
+                  ? undefined
+                  : async (next) => {
+                      const answered = await fetchFamily("sensor", next);
+                      // Re-found by its own key, never by the index it had
+                      // in the previous response: a sensor that stopped
+                      // reporting shifts every series after it, and the
+                      // chart would silently become another sensor's.
+                      const at = answered.series.findIndex(
+                        (s) => sensorName(s) === name,
+                      );
+                      const values =
+                        at === -1
+                          ? []
+                          : kind === "temperature"
+                            ? griddedValues(answered, at, "temp")
+                            : sensorHistory(answered, at, kind);
+                      return {
+                        series: [{ name, color, values }],
+                        window: answered.window,
+                      };
+                    }
+              }
+            >
+              <Sparkline
+                values={history}
+                width={110}
+                height={24}
+                color={color}
+                label={`${name} ${trend} trend`}
+              />
+            </Enlargeable>
             <span className="val">{formatSensor(kind, value)}</span>
           </div>
         );
@@ -578,6 +665,13 @@ export interface OverviewProps {
   netMetrics?: MetricsResponse | null;
   containers: Container[] | null;
   units: Unit[] | null;
+  /** The range this page is showing. Seeds the picker in every chart
+   * enlarged out of this tab. */
+  range?: Range;
+  /** One family at one range, for an enlarged chart alone -- HostPage's
+   * fetchFamily. Without it the enlarged charts carry no picker, which is
+   * what a caller that cannot refetch one family should get. */
+  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
   /** Injected by tests so "last reported" is deterministic. */
   now?: Date;
 }
@@ -592,21 +686,11 @@ export function Overview({
   sensorMetrics,
   containers,
   units,
+  range,
+  fetchFamily,
   now,
 }: OverviewProps) {
-  const perState: Band[] = CPU_BANDS.map((band) => ({
-    name: band.name,
-    color: band.color,
-    // On the window grid, so an outage is a hole in the silhouette rather
-    // than a line drawn straight across it.
-    values: griddedValues(hostMetrics, 0, band.base),
-    // An all-null band is not a band, and in a STACK it is actively
-    // destructive: stackBands() breaks every band at any index where any
-    // series is null, because a running total is undefined there. A bare
-    // metal host reports cpu_steal as NULL in every bucket -- correctly, it
-    // has no hypervisor to steal from -- and that one empty series erased
-    // the whole chart, legend still listing four states above a blank box.
-  })).filter((band) => band.values.some((v) => v !== null));
+  const perState = cpuStateBands(hostMetrics);
 
   // The headline chart is the per-core stack, the same one the fleet row for
   // this host draws -- the two must not disagree about the same machine.
@@ -619,12 +703,7 @@ export function Overview({
   // for this one.
   const total = griddedValues(hostMetrics, 0, "cpu_total");
   const perCore = perCoreBands(coreMetrics ?? null);
-  const cpuBands: Band[] =
-    perCore.length > 0
-      ? perCore
-      : total.length > 0
-        ? [{ name: "busy", color: "var(--s1)", values: total }]
-        : [];
+  const cpuBands: Band[] = perCore.length > 0 ? perCore : totalCpuBand(total);
 
   const memBands = memoryBands(hostMetrics);
 
@@ -818,6 +897,32 @@ export function Overview({
                 ? "The host reported no processor samples in this window."
                 : undefined
             }
+            range={range}
+            ranges={RANGE_VALUES}
+            // Whichever family this panel is actually drawing: the per-core
+            // stack widens as cpu_core, the cpu_total fallback as host. Asking
+            // for cpu_core on a host too large to have been given it would
+            // answer with a chart the small panel never showed.
+            fetchSeries={
+              fetchFamily === undefined
+                ? undefined
+                : async (next) => {
+                    const answered = await fetchFamily(
+                      perCore.length > 0 ? "cpu_core" : "host",
+                      next,
+                    );
+                    const cores = perCoreBands(answered);
+                    return {
+                      series:
+                        cores.length > 0
+                          ? cores
+                          : totalCpuBand(
+                              griddedValues(answered, 0, "cpu_total"),
+                            ),
+                      window: answered.window,
+                    };
+                  }
+            }
           />
         </section>
 
@@ -838,6 +943,19 @@ export function Overview({
             perState.length === 0
               ? "cpu_user, cpu_system, cpu_iowait and cpu_steal are not stored at this resolution."
               : undefined
+          }
+          range={range}
+          ranges={RANGE_VALUES}
+          fetchSeries={
+            fetchFamily === undefined
+              ? undefined
+              : async (next) => {
+                  const answered = await fetchFamily("host", next);
+                  return {
+                    series: cpuStateBands(answered),
+                    window: answered.window,
+                  };
+                }
           }
         />
 
@@ -870,6 +988,19 @@ export function Overview({
               : memTotal === null
                 ? "The host's total memory is unknown, so there is no ceiling to draw the bands against."
                 : undefined
+          }
+          range={range}
+          ranges={RANGE_VALUES}
+          fetchSeries={
+            fetchFamily === undefined
+              ? undefined
+              : async (next) => {
+                  const answered = await fetchFamily("host", next);
+                  return {
+                    series: memoryBands(answered),
+                    window: answered.window,
+                  };
+                }
           }
         />
 
@@ -926,13 +1057,59 @@ export function Overview({
             <p className="note">No interface samples in this window.</p>
           ) : (
             <div className="traffic-cell">
-              <UpDownSparkline
-                up={ingress}
-                down={egress}
-                width={260}
-                height={64}
-                label="Ingress and egress over time"
-              />
+              <Enlargeable
+                // Ingress and egress, not rx and tx: the direction is the
+                // point of this chart, and "rx" is the kernel's word for it
+                // rather than the reader's. The wire and the schema keep
+                // rx/tx.
+                title="Traffic"
+                unit="B/s"
+                series={[
+                  { name: "ingress", color: "var(--s1)", values: ingress },
+                  { name: "egress", color: "var(--s2)", values: egress },
+                ]}
+                mirrored
+                fmt={bytes}
+                window={netMetrics?.window ?? null}
+                range={range}
+                ranges={RANGE_VALUES}
+                fetchSeries={
+                  fetchFamily === undefined
+                    ? undefined
+                    : async (next) => {
+                        const answered = await fetchFamily("net", next);
+                        return {
+                          series: [
+                            {
+                              name: "ingress",
+                              color: "var(--s1)",
+                              values: sumInterfaces(
+                                answered,
+                                peakBase(answered, "rx_bytes"),
+                              ),
+                            },
+                            {
+                              name: "egress",
+                              color: "var(--s2)",
+                              values: sumInterfaces(
+                                answered,
+                                peakBase(answered, "tx_bytes"),
+                              ),
+                            },
+                          ],
+                          window: answered.window,
+                        };
+                      }
+                }
+              >
+                <UpDownSparkline
+                  up={ingress}
+                  down={egress}
+                  width={260}
+                  height={64}
+                  label="Ingress and egress over time"
+                />
+              </Enlargeable>
               <div className="traffic-rates">
                 {/* byterate, never bitrate: net_rx/net_tx are BYTES per
                   second, so bitrate() rendered every host's traffic 8x low
@@ -1062,6 +1239,8 @@ export function Overview({
           <SensorList
             res={sensorMetrics}
             rows={temperatureSeries}
+            range={range}
+            fetchFamily={fetchFamily}
             color="var(--s7)"
             trend="temperature"
             empty="No temperature readings in this window."
@@ -1077,6 +1256,8 @@ export function Overview({
             <SensorList
               res={sensorMetrics}
               rows={fanSeries}
+              range={range}
+              fetchFamily={fetchFamily}
               color="var(--s3)"
               trend="speed"
               empty="No fan readings in this window."
@@ -1089,6 +1270,8 @@ export function Overview({
             <SensorList
               res={sensorMetrics}
               rows={powerSeries}
+              range={range}
+              fetchFamily={fetchFamily}
               color="var(--s5)"
               trend="reading"
               empty="No power readings in this window."

@@ -143,7 +143,7 @@ describe("Inventory", () => {
 
 describe("Containers", () => {
   it("identifies a container by compose project and service, never by its id", () => {
-    render(<Containers rows={containers} />);
+    render(<Containers hostId={7} rows={containers} />);
     const row = screen.getByRole("row", { name: /shop/ });
     expect(within(row).getByText("shop")).toBeInTheDocument();
     expect(within(row).getByText("web")).toBeInTheDocument();
@@ -153,7 +153,7 @@ describe("Containers", () => {
   });
 
   it("carries no first_seen/last_seen columns, because the schema has none", () => {
-    render(<Containers rows={containers} />);
+    render(<Containers hostId={7} rows={containers} />);
     expect(
       screen.queryByRole("columnheader", { name: /first seen/i }),
     ).toBeNull();
@@ -168,6 +168,7 @@ describe("Containers", () => {
   it("says why the list is empty when the agent explained it", () => {
     render(
       <Containers
+        hostId={7}
         rows={[]}
         capabilities={{ containers: "no-cgroup-scopes" }}
       />,
@@ -185,6 +186,7 @@ describe("Containers", () => {
   it("explains raw ids on a list it has not emptied", () => {
     render(
       <Containers
+        hostId={7}
         rows={containers}
         capabilities={{ containers: "no-docker-socket" }}
       />,
@@ -195,7 +197,13 @@ describe("Containers", () => {
   });
 
   it("stays silent when the agent reported no trouble", () => {
-    render(<Containers rows={containers} capabilities={{ smart: "absent" }} />);
+    render(
+      <Containers
+        hostId={7}
+        rows={containers}
+        capabilities={{ smart: "absent" }}
+      />,
+    );
 
     expect(screen.queryByText(/Docker socket/)).toBeNull();
     expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();

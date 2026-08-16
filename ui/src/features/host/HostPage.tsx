@@ -458,6 +458,8 @@ export function HostPage({
           netMetrics={data.netMetrics}
           containers={data.containers}
           units={data.units}
+          range={range}
+          fetchFamily={fetchFamily}
         />
       )}
       {tab === "graphs" && (
@@ -475,6 +477,7 @@ export function HostPage({
       )}
       {tab === "containers" && (
         <Containers
+          hostId={hostId}
           rows={data.containers ?? []}
           metrics={data.containerMetrics ?? null}
           range={range}

@@ -22,6 +22,9 @@ import { Meter } from "../../../ui/Meter";
 import { Sparkline } from "../../../ui/charts/Sparkline";
 import { rangeLabel, type Range } from "../../../lib/range";
 import { griddedValues } from "../../../lib/metrics";
+import { ContainerChart } from "../../container/ContainerChart";
+import { containerTrends } from "../../fleet/hostTrends";
+import { RANGE_VALUES } from "../ranges";
 
 export interface InventoryProps<T> {
   /** Names the list for assistive tech and for the empty state. */
@@ -142,11 +145,15 @@ type ContainerWithTrend = Container & {
 };
 
 export function Containers({
+  hostId,
   rows,
   metrics = null,
   range = "24h",
   capabilities,
 }: {
+  /** Whose containers these are. The trend cells enlarge into a chart that
+   * refetches at another range, and family=container is per-host. */
+  hostId: number | string;
   rows: readonly Container[];
   /** A family=container response for this host. */
   metrics?: MetricsResponse | null;
@@ -159,17 +166,10 @@ export function Containers({
 }) {
   // The same trends the fleet's container list shows, for the same reason: a
   // list of containers with no time in it says what is there and nothing
-  // about what any of it is doing.
-  const byKey = new Map(
-    (metrics?.series ?? []).map((series, index) => [
-      series.key.container,
-      {
-        cpu: griddedValues(metrics, index, "cpu_pct"),
-        mem: griddedValues(metrics, index, "mem_used"),
-        memLimit: lastReported(griddedValues(metrics, index, "mem_limit")),
-      },
-    ]),
-  );
+  // about what any of it is doing. Read through the fleet's own function
+  // rather than reimplemented beside it, so the two lists and the enlarged
+  // view opened from either cannot disagree about which columns these are.
+  const byKey = containerTrends(metrics);
 
   const charted: ContainerWithTrend[] = rows.map((row) => ({
     ...row,
@@ -194,12 +194,15 @@ export function Containers({
         !row.cpu?.length ? (
           ABSENT
         ) : (
-          <Sparkline
+          <ContainerChart
+            hostId={hostId}
+            containerKey={row.container_key}
+            containerName={row.name ?? row.container_key}
+            metric="cpu"
             values={row.cpu}
-            min={0}
             max={cpuMax || 1}
-            color="var(--s1)"
-            label={`CPU trend, ${rangeLabel(range)}`}
+            range={range}
+            ranges={RANGE_VALUES}
           />
         ),
     });
@@ -210,13 +213,16 @@ export function Containers({
         !row.mem?.length ? (
           ABSENT
         ) : (
-          <Sparkline
+          <ContainerChart
+            hostId={hostId}
+            containerKey={row.container_key}
+            containerName={row.name ?? row.container_key}
+            metric="mem"
             values={row.mem}
-            min={0}
             // Its own limit when it has one; the list's largest otherwise.
             max={row.memLimit ?? memMax ?? 1}
-            color="var(--s2)"
-            label={`Memory trend, ${rangeLabel(range)}`}
+            range={range}
+            ranges={RANGE_VALUES}
           />
         ),
     });
@@ -236,20 +242,6 @@ export function Containers({
       notice={note === null ? undefined : <p className="note">{note}</p>}
     />
   );
-}
-
-/** The latest non-null value, or null when the series never reported.
- *
- * NOT lib/metrics.ts's latestValue(), which is the LATEST BUCKET including a
- * trailing null. The two answer different questions and only this one is
- * right for mem_limit: a configured ceiling does not stop being the ceiling
- * because the newest bucket has not materialised yet. */
-function lastReported(values: readonly (number | null)[]): number | null {
-  for (let i = values.length - 1; i >= 0; i--) {
-    const v = values[i];
-    if (v !== null && v !== undefined) return v;
-  }
-  return null;
 }
 
 // --- Filesystems ----------------------------------------------------------

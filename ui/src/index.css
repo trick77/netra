@@ -1475,6 +1475,13 @@ svg.spark {
   font: inherit;
   text-align: left;
 }
+/* The same button around a sparkline rather than a panel: in a table cell or
+   a flex row, the full-width rule above would stretch a 110px chart across
+   the whole column and push the reading beside it out of line. */
+.chartwrap.as-button.inline {
+  display: inline-flex;
+  width: auto;
+}
 
 /* ── Enlarged chart ───────────────────────────────────────────────── */
 .cd-back {

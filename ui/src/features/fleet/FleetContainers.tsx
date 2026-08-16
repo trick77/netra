@@ -9,8 +9,9 @@ import {
   fleetContainersBlocked,
   type CapableHost,
 } from "../../lib/containers";
-import { Sparkline } from "../../ui/charts/Sparkline";
-import { rangeLabel, type Range } from "../../lib/range";
+import { type Range } from "../../lib/range";
+import { ContainerChart } from "../container/ContainerChart";
+import { FLEET_RANGE_VALUES } from "./ranges";
 
 /**
  * A container as the fleet sees it: what `GET /api/v1/hosts/{id}/containers`
@@ -134,12 +135,15 @@ export function containerColumns({
         row.cpu === undefined || row.cpu.length === 0 ? (
           ABSENT
         ) : (
-          <Sparkline
+          <ContainerChart
+            hostId={row.host_id}
+            containerKey={row.container_key}
+            containerName={row.name ?? row.container_key}
+            metric="cpu"
             values={row.cpu}
-            max={cpuMax}
-            min={0}
-            color="var(--s1)"
-            label={`CPU trend, ${rangeLabel(range)}`}
+            max={cpuMax ?? 1}
+            range={range}
+            ranges={FLEET_RANGE_VALUES}
           />
         ),
     });
@@ -150,16 +154,19 @@ export function containerColumns({
         row.mem === undefined || row.mem.length === 0 ? (
           ABSENT
         ) : (
-          <Sparkline
+          <ContainerChart
+            hostId={row.host_id}
+            containerKey={row.container_key}
+            containerName={row.name ?? row.container_key}
+            metric="mem"
             values={row.mem}
             // Against its OWN limit when it has one -- that is what "how
             // close to being killed" means -- and against the list's
             // largest container when it does not, so the unlimited ones
             // stay comparable with each other.
-            max={row.mem_limit_bytes ?? memMax}
-            min={0}
-            color="var(--s2)"
-            label={`Memory trend, ${rangeLabel(range)}`}
+            max={row.mem_limit_bytes ?? memMax ?? 1}
+            range={range}
+            ranges={FLEET_RANGE_VALUES}
           />
         ),
     });

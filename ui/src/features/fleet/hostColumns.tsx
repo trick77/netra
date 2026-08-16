@@ -13,10 +13,19 @@ import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
 import { Overlay } from "../../ui/charts/Overlay";
 import { SPARK_WIDTH } from "../../ui/charts/size";
 import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
-import { ABSENT, byterate } from "../../lib/format";
+import { ABSENT, byterate, bytes, percent } from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
+import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
+import { memoryBands } from "../../lib/bands";
+import {
+  MAX_PER_CORE,
+  cpuBands,
+  fetchHostFamily,
+  trafficSeries,
+} from "./hostTrends";
+import { FLEET_RANGE_VALUES } from "./ranges";
 
 // The range is only ever a label here: this file never resolves one into a
 // getMetrics() call, it labels a chart that has already been handed
@@ -132,12 +141,50 @@ function HostCell({ row }: { row: HostRow }) {
 const CPU_PERCENT_MAX = 100;
 
 function CpuCell({ row, range }: { row: HostRow; range: Range }) {
+  // The dialog keeps the cell's normalisation and its 0-100 ceiling. That is
+  // not laziness about reusing the fetch: normalised, the per-core stack tops
+  // out at cpu_total, so 100 is a real ceiling and the axis reads as percent
+  // of this host. Refetching unnormalised would put a 0-3200 axis on a
+  // 32-core host and redraw the shape the reader just clicked. The host
+  // page's Graphs tab draws the same cores unnormalised, where the numbers
+  // matter more than cross-host comparability -- a different question, with
+  // its own chart.
+  const fetchSeries = async (next: Range): Promise<DetailData> => {
+    const [host, cores] = await Promise.all([
+      fetchHostFamily(row.id, "host", next),
+      // The same guard the fan-out uses: a 128-core host would ship 128
+      // series, and cpu_total is the silhouette it falls back to.
+      row.threads !== null && row.threads <= MAX_PER_CORE
+        ? fetchHostFamily(row.id, "cpu_core", next)
+        : Promise.resolve(null),
+    ]);
+    return { series: cpuBands(host, cores), window: host.window };
+  };
+
   return (
-    <StackedSparkline
-      bands={row.cpu}
+    <Enlargeable
+      title={`CPU · ${row.hostname}`}
+      label={`Enlarge CPU for ${row.hostname}`}
+      className="inline"
+      unit="%"
+      series={row.cpu}
       max={CPU_PERCENT_MAX}
-      label={`CPU trend, ${rangeLabel(range)}`}
-    />
+      stacked
+      // No legend in the dialog either when the stack is per-core: the stats
+      // table underneath already names every core beside its colour, and 32
+      // entries above the plot squeeze it into a corner.
+      legend={row.cpu.length <= 1}
+      fmt={(n) => percent(n)}
+      range={range}
+      ranges={FLEET_RANGE_VALUES}
+      fetchSeries={fetchSeries}
+    >
+      <StackedSparkline
+        bands={row.cpu}
+        max={CPU_PERCENT_MAX}
+        label={`CPU trend, ${rangeLabel(range)}`}
+      />
+    </Enlargeable>
   );
 }
 
@@ -166,22 +213,45 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
     // invented ceiling -- the same rule Meter itself follows.
     return <>{ABSENT}</>;
   }
+  const total = row.mem_total;
+  const fetchSeries = async (next: Range): Promise<DetailData> => {
+    const host = await fetchHostFamily(row.id, "host", next);
+    return { series: memoryBands(host), window: host.window };
+  };
+
   return (
-    <StackedSparkline
-      bands={row.mem}
-      // A little headroom above total, so the dashed rule marking it lands
-      // inside the plot instead of on the border, where it would read as the
-      // edge of the box rather than as the host's ceiling.
-      max={row.mem_total * MEM_HEADROOM}
-      reference={row.mem_total}
-      // No legend, like every other cell in this row. A previous review
-      // argued the five memory bands carry identity a legend should name and
-      // turned it back on here; that is not the call. These are sparklines
-      // in a dense list -- the shape is the message, and naming five bands
-      // under a 32px chart costs more row height than the names are worth.
-      // The host page's Memory panel is where the breakdown gets named.
-      label={`Memory trend, ${rangeLabel(range)}`}
-    />
+    <Enlargeable
+      title={`Memory · ${row.hostname}`}
+      label={`Enlarge memory for ${row.hostname}`}
+      className="inline"
+      series={row.mem}
+      max={total * MEM_HEADROOM}
+      reference={total}
+      stacked
+      fmt={bytes}
+      range={range}
+      ranges={FLEET_RANGE_VALUES}
+      fetchSeries={fetchSeries}
+    >
+      <StackedSparkline
+        bands={row.mem}
+        // A little headroom above total, so the dashed rule marking it lands
+        // inside the plot instead of on the border, where it would read as the
+        // edge of the box rather than as the host's ceiling.
+        max={total * MEM_HEADROOM}
+        reference={total}
+        // No legend, like every other cell in this row. A previous review
+        // argued the five memory bands carry identity a legend should name and
+        // turned it back on here; that is not the call. These are sparklines
+        // in a dense list -- the shape is the message, and naming five bands
+        // under a 32px chart costs more row height than the names are worth.
+        // The host page's Memory panel is where the breakdown gets named.
+        //
+        // The ENLARGED view does name them: it has the room, and "which part
+        // of memory is growing" is the question someone opens it to ask.
+        label={`Memory trend, ${rangeLabel(range)}`}
+      />
+    </Enlargeable>
   );
 }
 
@@ -214,13 +284,48 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
   const live = isReporting(row);
   const rx = live ? row.net_rx_bytes : null;
   const tx = live ? row.net_tx_bytes : null;
+  // Ingress and egress, in that order: Overlay's mirrored mode reads its
+  // series in pairs, (0,1) being one interface's in and out. The cell sums
+  // every interface into one pair, so the dialog does too -- the enlarged
+  // view of a cell must be the same chart, larger, not a different one.
+  const fetchSeries = async (next: Range): Promise<DetailData> => {
+    const net = await fetchHostFamily(row.id, "net", next);
+    const traffic = trafficSeries(net);
+    return {
+      series: [
+        { name: "ingress", color: "var(--s1)", values: traffic.rx },
+        { name: "egress", color: "var(--s2)", values: traffic.tx },
+      ],
+      window: net.window,
+    };
+  };
+
   return (
     <div className="traffic-cell">
-      <UpDownSparkline
-        up={row.rx}
-        down={row.tx}
-        label={`Traffic trend, ${rangeLabel(range)}`}
-      />
+      <Enlargeable
+        // Ingress and egress, not rx and tx: the direction is the point of
+        // this chart, and "rx" is the kernel's word for it rather than the
+        // reader's. The wire and the schema keep rx/tx.
+        title={`Traffic · ${row.hostname}`}
+        label={`Enlarge traffic for ${row.hostname}`}
+        className="inline"
+        unit="B/s"
+        series={[
+          { name: "ingress", color: "var(--s1)", values: row.rx },
+          { name: "egress", color: "var(--s2)", values: row.tx },
+        ]}
+        mirrored
+        fmt={bytes}
+        range={range}
+        ranges={FLEET_RANGE_VALUES}
+        fetchSeries={fetchSeries}
+      >
+        <UpDownSparkline
+          up={row.rx}
+          down={row.tx}
+          label={`Traffic trend, ${rangeLabel(range)}`}
+        />
+      </Enlargeable>
       {/* byterate, never bitrate: rx_bytes/tx_bytes are BYTES per second
           (internal/agent/collector/network.go divides a byte delta by the
           elapsed seconds), and bitrate() drew every rate on this page 8x

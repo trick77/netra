@@ -238,6 +238,12 @@ function filesystemBands(res: MetricsResponse | null): Band[] {
   return bands;
 }
 
+/** The latest non-null value, or null when the series never reported.
+ *
+ * NOT lib/metrics.ts's latestValue(), which is the LATEST BUCKET including a
+ * trailing null. The two answer different questions and only this one is
+ * right for mem_limit: a configured ceiling does not stop being the ceiling
+ * because the newest bucket has not materialised yet. */
 function lastNumber(values: readonly (number | null)[]): number | null {
   for (let i = values.length - 1; i >= 0; i--) {
     const v = values[i];
@@ -267,7 +273,67 @@ async function orNull(
  * Those hosts fall back to cpu_total, which the host family carries anyway,
  * so the row costs nothing extra and still shows a true silhouette.
  */
-const MAX_PER_CORE = 32;
+export const MAX_PER_CORE = 32;
+
+/**
+ * One family at one range, for a chart enlarged out of a fleet row.
+ *
+ * The same rangeWindow-then-getMetrics shape the fan-out below uses, so a
+ * widened dialog and a widened page ask the hub the same question -- and
+ * deliberately NOT wrapped in orNull(): the fan-out swallows a failure into
+ * a missing column because a fleet row has nineteen others to draw, while a
+ * dialog has one chart on screen and can say the range it just asked for
+ * failed. Same split as HostPage's fetchFamily.
+ */
+export function fetchHostFamily(
+  hostId: number | string,
+  family: string,
+  range: Range,
+  now?: Date,
+): Promise<MetricsResponse> {
+  const window = rangeWindow(range, now);
+  return getMetrics(hostId, {
+    family,
+    from: window.from,
+    to: window.to,
+    step: window.step,
+  });
+}
+
+/**
+ * The CPU silhouette: per-core when the host was small enough to ask for it,
+ * cpu_total otherwise.
+ *
+ * Shared with the enlarged view rather than inlined in the fan-out, so the
+ * dialog a reader opens off a CPU cell draws the same bands the cell does.
+ * Normalised, like the cell: see the comment at the call site below.
+ */
+export function cpuBands(
+  host: MetricsResponse | null,
+  cores: MetricsResponse | null,
+): Band[] {
+  const perCore = perCoreBands(cores, { normalise: true });
+  return perCore.length > 0
+    ? perCore
+    : totalBand(griddedValues(host, 0, "cpu_total"));
+}
+
+/**
+ * A host's traffic pair, summed over its interfaces at each bucket's PEAK.
+ *
+ * See the call site for why the peak and not the mean, and why the sum of
+ * peaks rather than the peak of the sum. Shared so the enlarged view cannot
+ * disagree with the cell it was opened from.
+ */
+export function trafficSeries(net: MetricsResponse | null): {
+  rx: (number | null)[];
+  tx: (number | null)[];
+} {
+  return {
+    rx: sumSeries(net, peakBase(net, "rx_bytes")),
+    tx: sumSeries(net, peakBase(net, "tx_bytes")),
+  };
+}
 
 export async function fetchHostTrends(
   hostId: number,
@@ -306,15 +372,14 @@ export async function fetchHostTrends(
   // 0-100 cell in this list, so the stack has to top out at cpu_total. The
   // host page draws the same cores unnormalised, where the numbers matter
   // more than cross-host comparability.
-  const perCore = perCoreBands(cores, { normalise: true });
-  // One series, one relation, every host -- see HostTrends.reporting. Gridded
-  // once and used twice: as the fallback silhouette for a host too large to
-  // fetch per-core, and as the series the status badge is judged from.
+  // One series, one relation, every host -- see HostTrends.reporting. The
+  // status badge is judged from it; cpuBands() grids it again for the
+  // silhouette when the host was too large to fetch per-core.
   const total = griddedValues(host, 0, "cpu_total");
-  const cpu = perCore.length > 0 ? perCore : totalBand(total);
+  const traffic = trafficSeries(net);
 
   return {
-    cpu,
+    cpu: cpuBands(host, cores),
     mem: memoryBands(host),
     reporting: total,
     // The PEAK of each bucket, not its mean -- see peakBase(). A fleet row
@@ -327,8 +392,8 @@ export async function fetchHostTrends(
     // for a cell answering "is there anything here to look at" -- it never
     // hides a burst, and the interface that actually burst is one click away
     // on the host page, where the pairs are drawn per interface.
-    rx: sumSeries(net, peakBase(net, "rx_bytes")),
-    tx: sumSeries(net, peakBase(net, "tx_bytes")),
+    rx: traffic.rx,
+    tx: traffic.tx,
     fullest: fullestFilesystem(filesystem),
     disk: filesystemBands(filesystem),
     oomKills: counterIncrease(griddedValues(host, 0, "oom_kill_total")),
@@ -396,6 +461,20 @@ export async function fetchContainerTrends(
     }),
   );
 
+  return containerTrends(res);
+}
+
+/**
+ * Every container's series in a family=container response, keyed by
+ * container_key.
+ *
+ * Shared with the host page's inventory list and with the enlarged view a
+ * reader opens off either list's CPU or Memory cell, so all three read the
+ * same columns out of the same response shape.
+ */
+export function containerTrends(
+  res: MetricsResponse | null,
+): Map<string, ContainerTrend> {
   const trends = new Map<string, ContainerTrend>();
   if (res === null) return trends;
 
