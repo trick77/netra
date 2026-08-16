@@ -26,7 +26,7 @@ import { Button } from "../../ui/Button";
 import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { ABSENT, duration, relative } from "../../lib/format";
-import { hostStatus, osLabel } from "../../lib/host";
+import { hostStatus } from "../../lib/host";
 import { clampRange, rangeWindow, type Range } from "../../lib/range";
 import { loadRange } from "../settings/SettingsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
@@ -391,15 +391,20 @@ export function HostPage({
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">
         <h1 className="serif">{host.hostname}</h1>
-        <span className="meta">
-          {/* osLabel, not host.os_name: this header sits two inches above the
-              Overview tab's System card, which names the OS through the same
-              helper. Printing the raw field here read "linux" under a card
-              reading "Linux" -- the same fact spelled two ways on one screen. */}
-          {[host.site_name, osLabel(host.os_name), host.kernel, host.arch]
-            .map((part) => part ?? ABSENT)
-            .join(" · ")}
-        </span>
+        {/* The site alone. OS, kernel and arch used to sit here too, and all
+            three are printed a few centimetres below in the Overview tab's
+            System card, which owns them -- the header was spending its most
+            prominent line restating the card.  The site is the one of the four
+            that appears nowhere else on host detail, so it stays.
+
+            Rendered conditionally rather than as `?? ABSENT`: on an unsited
+            host that put a lone em dash under the hostname with nothing beside
+            it to say what was missing, which reads as a rendering fault rather
+            than as "no site". .hosthead is a wrapping flex row, so the badge
+            simply takes the space back. */}
+        {host.site_name !== null && (
+          <span className="meta">{host.site_name}</span>
+        )}
         <Badge severity={status.severity}>{status.label}</Badge>
         {/* Beside the reporting status, not instead of it: the two answer
             different questions, and a host can be online AND four minutes

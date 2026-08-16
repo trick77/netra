@@ -1284,6 +1284,38 @@ svg.spark {
 .kv dd:last-of-type {
   border-bottom: 0;
 }
+/* Two pairs across, for a card that spans the page instead of half of it --
+   the host Overview's System card, whose eight rows are otherwise a long thin
+   column down the left of a full-width card. Two, not three: eight divides by
+   two into four full rows, where three leaves a ragged last row with an empty
+   cell, and it keeps enough width for the two longest values on that card (the
+   kernel string and the CPU model). */
+.kv.wide {
+  grid-template-columns: auto 1fr auto 1fr;
+}
+/* gap stays 0 -- dt's own padding-right is the space inside a pair. What the
+   second pair needs is space to the LEFT of its key, or its dt butts against
+   the first pair's value. dt order alternates columns, so every even dt is the
+   right-hand pair's key.
+
+   This counts on dt being a DIRECT child of the dl. Facts used to wrap each
+   pair in a `display: contents` div, which made every dt the first dt under
+   its own wrapper -- an `even` selector matched nothing, and the gutter
+   silently did not exist. Nothing in the suite can catch that: jsdom applies
+   no stylesheet, so the card renders and every assertion passes. */
+.kv.wide dt:nth-of-type(even) {
+  padding-left: var(--space-5);
+}
+/* The single-column rule above zeroes exactly one dt and one dd, which is the
+   whole last row only while there is one pair per row. Two across, the last
+   row holds two of each, and half of it keeps a rule that hangs under the
+   card. -n+2 is correct for an EVEN number of rows; the only .kv.wide on the
+   page has eight. An odd count would take the border off the pair above the
+   last one as well. */
+.kv.wide dt:nth-last-of-type(-n + 2),
+.kv.wide dd:nth-last-of-type(-n + 2) {
+  border-bottom: 0;
+}
 
 /* meter — fill carries severity/series colour (passed by the caller from
    --st-* or --s1..--s4, never the accent), track is a lighter step. */
@@ -1642,6 +1674,25 @@ svg.spark {
   }
   .grid2 {
     grid-template-columns: 1fr;
+  }
+  /* Back to one pair per row: two pairs of key AND value across 900px leaves
+     the kernel string and the CPU model nowhere to go. The gutter goes with
+     the second column -- left over, it indents every other key of a
+     single-column list -- and the last row is a single pair again, which is
+     what the plain .kv border rule already handles. */
+  .kv.wide {
+    grid-template-columns: auto 1fr;
+  }
+  .kv.wide dt:nth-of-type(even) {
+    padding-left: 0;
+  }
+  .kv.wide dt:nth-last-of-type(-n + 2),
+  .kv.wide dd:nth-last-of-type(-n + 2) {
+    border-bottom: 1px solid var(--border);
+  }
+  .kv.wide dt:last-of-type,
+  .kv.wide dd:last-of-type {
+    border-bottom: 0;
   }
 }
 
