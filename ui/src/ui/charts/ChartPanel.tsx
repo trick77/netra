@@ -267,7 +267,9 @@ export function ChartPanel({
   const widest =
     yTicks === undefined
       ? undefined
-      : widestLabel(yTicks.filter((t) => t.major).map((t) => tickText(t.value)));
+      : widestLabel(
+          yTicks.filter((t) => t.major).map((t) => tickText(t.value)),
+        );
 
   return (
     <section className="smp" aria-label={`${title} chart`}>

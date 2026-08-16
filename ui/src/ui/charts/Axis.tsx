@@ -78,24 +78,22 @@ export function Grid({
     y
       .filter((t) => t.major === major)
       .map((t, i) =>
-        line(`y${major}${i}`, [
-          rect.left,
-          yAt(rect, t.fraction),
-          rect.right,
-          yAt(rect, t.fraction),
-        ], major),
+        line(
+          `y${major}${i}`,
+          [rect.left, yAt(rect, t.fraction), rect.right, yAt(rect, t.fraction)],
+          major,
+        ),
       );
 
   const cols = (major: boolean) =>
     x
       .filter((t) => t.major === major)
       .map((t, i) =>
-        line(`x${major}${i}`, [
-          xAt(rect, t.fraction),
-          rect.top,
-          xAt(rect, t.fraction),
-          rect.bottom,
-        ], major),
+        line(
+          `x${major}${i}`,
+          [xAt(rect, t.fraction), rect.top, xAt(rect, t.fraction), rect.bottom],
+          major,
+        ),
       );
 
   return (
@@ -255,13 +253,7 @@ function anchorFor(
  * Zero on a mirrored chart: the line every reading is measured from, so it
  * outranks both the grid and the spine.
  */
-export function ZeroRule({
-  rect,
-  at,
-}: {
-  rect: PlotRect;
-  at: number;
-}) {
+export function ZeroRule({ rect, at }: { rect: PlotRect; at: number }) {
   return (
     <line
       data-zero

@@ -221,7 +221,9 @@ export function Chart({
       aria-label={label}
       onPointerMove={onCursorChange ? report : undefined}
       onPointerLeave={
-        onCursorChange ? () => cursor !== null && onCursorChange(null) : undefined
+        onCursorChange
+          ? () => cursor !== null && onCursorChange(null)
+          : undefined
       }
     >
       {grid && <Grid rect={axisRect} y={y} x={x} />}
@@ -273,9 +275,7 @@ export function Chart({
       {mirrored && (spine || grid || labels) && (
         <ZeroRule rect={axisRect} at={0.5} />
       )}
-      {labels && (
-        <AxisLabels rect={axisRect} y={y} x={x} format={format} />
-      )}
+      {labels && <AxisLabels rect={axisRect} y={y} x={x} format={format} />}
 
       {cursor !== null && (
         <Crosshair
@@ -363,20 +363,20 @@ function MirrorMarks({
         const up = series[p * 2];
         const down = series[p * 2 + 1];
         if (up === undefined) return null;
-        const paths = mirrorPaths(up.values, down?.values ?? [], w, h, max, pad);
+        const paths = mirrorPaths(
+          up.values,
+          down?.values ?? [],
+          w,
+          h,
+          max,
+          pad,
+        );
         // The envelope, when the tier carries a peak column. Drawn first so
         // the mean sits over it, and with no stroke -- it is a region, not a
         // reading, and an edge on it would compete with the line that is.
         const bands =
           up.band || down?.band
-            ? mirrorPaths(
-                up.band ?? [],
-                down?.band ?? [],
-                w,
-                h,
-                max,
-                pad,
-              )
+            ? mirrorPaths(up.band ?? [], down?.band ?? [], w, h, max, pad)
             : null;
         return (
           <g key={up.name} data-series={up.name} data-mirror>
@@ -465,20 +465,22 @@ function StackMarks({
   );
   return (
     <>
-      {series.map((s, i) => (bands[i] ?? "") === "" ? null : (
-        <path
-          key={s.name}
-          data-series={s.name}
-          data-band
-          d={bands[i]!}
-          fill={s.color}
-          fillOpacity={0.55}
-          stroke={s.color}
-          strokeWidth={bandStroke}
-          strokeLinejoin="round"
-          opacity={highlight !== undefined && highlight !== s.name ? 0.35 : 1}
-        />
-      ))}
+      {series.map((s, i) =>
+        (bands[i] ?? "") === "" ? null : (
+          <path
+            key={s.name}
+            data-series={s.name}
+            data-band
+            d={bands[i]!}
+            fill={s.color}
+            fillOpacity={0.55}
+            stroke={s.color}
+            strokeWidth={bandStroke}
+            strokeLinejoin="round"
+            opacity={highlight !== undefined && highlight !== s.name ? 0.35 : 1}
+          />
+        ),
+      )}
     </>
   );
 }
@@ -601,9 +603,7 @@ function Crosshair({
         // the raw value points at whatever band happens to sit at that
         // height -- on a per-core stack every dot bunched near the baseline
         // while its own band was somewhere above.
-        const stackedTo = stacked
-          ? runningTotal(series, index, i)
-          : null;
+        const stackedTo = stacked ? runningTotal(series, index, i) : null;
         const shown = stackedTo ?? v;
         const t = max === min ? 0.5 : (shown - min) / (max - min);
         const cy = mirrored

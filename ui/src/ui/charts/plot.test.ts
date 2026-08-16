@@ -108,7 +108,10 @@ describe("plot", () => {
     });
 
     it("keeps the plot rect inside the image", () => {
-      const rect = layout(260, 112, { yLabel: "500 MB/s", xLabel: "Sat 18:00" });
+      const rect = layout(260, 112, {
+        yLabel: "500 MB/s",
+        xLabel: "Sat 18:00",
+      });
       expect(rect.left).toBeGreaterThanOrEqual(0);
       expect(rect.right).toBeLessThanOrEqual(260);
       expect(rect.top).toBeGreaterThanOrEqual(0);

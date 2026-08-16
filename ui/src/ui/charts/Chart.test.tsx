@@ -21,7 +21,9 @@ describe("Chart", () => {
   // sparkline in the app move onto this renderer without changing.
   describe("furniture is opt-in", () => {
     it("draws no grid, spine, labels or crosshair by default", () => {
-      const c = draw(<Chart series={series} width={170} height={32} max={100} />);
+      const c = draw(
+        <Chart series={series} width={170} height={32} max={100} />,
+      );
       expect(c.querySelector("[data-grid]")).toBeNull();
       expect(c.querySelector("[data-spine]")).toBeNull();
       expect(c.querySelector("[data-axis-labels] text")).toBeNull();
@@ -33,7 +35,9 @@ describe("Chart", () => {
     // what it emitted before it moved onto this renderer -- which is what
     // lets every fleet cell migrate without being re-checked by eye.
     it("emits no wrapper group or clip path when there is no furniture", () => {
-      const c = draw(<Chart series={series} width={170} height={32} max={100} />);
+      const c = draw(
+        <Chart series={series} width={170} height={32} max={100} />,
+      );
       expect(c.querySelector("g[transform]")).toBeNull();
       expect(c.querySelector("clipPath")).toBeNull();
     });
@@ -59,7 +63,9 @@ describe("Chart", () => {
 
   describe("marks", () => {
     it("draws a line by default", () => {
-      const c = draw(<Chart series={series} width={170} height={32} max={100} />);
+      const c = draw(
+        <Chart series={series} width={170} height={32} max={100} />,
+      );
       expect(c.querySelectorAll("[data-line]").length).toBeGreaterThan(0);
       expect(c.querySelector("[data-area]")).toBeNull();
     });
@@ -95,7 +101,9 @@ describe("Chart", () => {
       const gapped: ChartSeries[] = [
         { name: "busy", color: "var(--s1)", values: [10, 20, null, 40, 50] },
       ];
-      const c = draw(<Chart series={gapped} width={170} height={32} max={100} />);
+      const c = draw(
+        <Chart series={gapped} width={170} height={32} max={100} />,
+      );
       expect(c.querySelectorAll("path[data-line]").length).toBe(2);
     });
   });
@@ -109,7 +117,13 @@ describe("Chart", () => {
         { ...pair[1]!, band: [10, 40, 20, 50] },
       ];
       const c = draw(
-        <Chart series={withBand} width={170} height={32} max={100} mark="mirror" />,
+        <Chart
+          series={withBand}
+          width={170}
+          height={32}
+          max={100}
+          mark="mirror"
+        />,
       );
       expect(c.querySelector("[data-band-up]")).not.toBeNull();
       expect(c.querySelector("[data-band-down]")).not.toBeNull();

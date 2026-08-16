@@ -156,9 +156,7 @@ function ChartView({
   // series had never been drawn against. Uptime showed it worst -- a window
   // from 2.6M to 3.2M seconds filled the box top to bottom under an axis
   // reading 0 / 1M / 2M / 3M.
-  const floor = spec.stacked
-    ? 0
-    : extent(series.flatMap((s) => s.values)).min;
+  const floor = spec.stacked ? 0 : extent(series.flatMap((s) => s.values)).min;
 
   const yTicks = !valueAxis
     ? undefined
@@ -249,7 +247,9 @@ function ChartView({
             {/* The column exists only while the pointer is over the plot. A
                 permanently empty one is furniture for a measurement nobody
                 is taking, and it pushes every real statistic sideways. */}
-            {at !== null && <th scope="col" className="cursor">{`At ${at}`}</th>}
+            {at !== null && (
+              <th scope="col" className="cursor">{`At ${at}`}</th>
+            )}
             <th scope="col">Latest</th>
             <th scope="col">Min</th>
             <th scope="col">Max</th>
@@ -312,7 +312,10 @@ function peakOf(series: readonly ChartSeries[]): number {
 }
 
 function runningTotalMax(series: readonly ChartSeries[]): number {
-  const n = series.reduce((longest, s) => Math.max(longest, s.values.length), 0);
+  const n = series.reduce(
+    (longest, s) => Math.max(longest, s.values.length),
+    0,
+  );
   let best = 0;
   for (let i = 0; i < n; i++) {
     if (series.some((s) => s.values[i] == null)) continue;

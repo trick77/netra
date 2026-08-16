@@ -67,10 +67,34 @@ const cores = response({
   key_columns: ["core"],
   columns: ["busy"],
   series: [
-    { key: { core: "0" }, points: [[t0, 80], [t0 + 60_000, 70]] },
-    { key: { core: "1" }, points: [[t0, 40], [t0 + 60_000, 45]] },
-    { key: { core: "2" }, points: [[t0, 0], [t0 + 60_000, 5]] },
-    { key: { core: "3" }, points: [[t0, 0], [t0 + 60_000, 0]] },
+    {
+      key: { core: "0" },
+      points: [
+        [t0, 80],
+        [t0 + 60_000, 70],
+      ],
+    },
+    {
+      key: { core: "1" },
+      points: [
+        [t0, 40],
+        [t0 + 60_000, 45],
+      ],
+    },
+    {
+      key: { core: "2" },
+      points: [
+        [t0, 0],
+        [t0 + 60_000, 5],
+      ],
+    },
+    {
+      key: { core: "3" },
+      points: [
+        [t0, 0],
+        [t0 + 60_000, 0],
+      ],
+    },
   ],
 });
 

@@ -19,7 +19,9 @@ describe("Axis", () => {
   describe("Grid", () => {
     it("draws a line for every tick, on both axes", () => {
       const c = draw(<Grid rect={RECT} y={Y} x={X} />);
-      expect(c.querySelectorAll("[data-grid]").length).toBe(Y.length + X.length);
+      expect(c.querySelectorAll("[data-grid]").length).toBe(
+        Y.length + X.length,
+      );
     });
 
     // Where a minor and a major line coincide the heavier one has to win, so
@@ -70,7 +72,9 @@ describe("Axis", () => {
     // series has painted over the grid.
     it("marks every tick, not only the labelled ones", () => {
       const c = draw(<Spine rect={RECT} y={Y} x={X} />);
-      expect(c.querySelectorAll("[data-tick]").length).toBe(Y.length + X.length);
+      expect(c.querySelectorAll("[data-tick]").length).toBe(
+        Y.length + X.length,
+      );
     });
 
     it("draws a longer mark at a labelled tick than at a helper", () => {
@@ -120,8 +124,8 @@ describe("Axis", () => {
         { fraction: 1, major: true, label: "end" },
       ];
       const c = draw(<AxisLabels rect={RECT} x={ends} />);
-      const anchors = [...c.querySelectorAll('[data-axis-label="x"]')].map((l) =>
-        l.getAttribute("text-anchor"),
+      const anchors = [...c.querySelectorAll('[data-axis-label="x"]')].map(
+        (l) => l.getAttribute("text-anchor"),
       );
       expect(anchors).toEqual(["start", "middle", "end"]);
     });

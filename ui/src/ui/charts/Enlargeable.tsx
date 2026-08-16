@@ -270,7 +270,11 @@ export function Enlargeable({
 }: EnlargeableProps) {
   const [enlarged, setEnlarged] = useState(false);
   // The dialog does no work at all when this chart opens a page instead.
-  const detail = useDetailRange(range, fetchSeries, enlarged && href === undefined);
+  const detail = useDetailRange(
+    range,
+    fetchSeries,
+    enlarged && href === undefined,
+  );
 
   // What the dialog is actually showing: its own data once the range has been
   // changed, the caller's otherwise. Keeping the previous series while a
