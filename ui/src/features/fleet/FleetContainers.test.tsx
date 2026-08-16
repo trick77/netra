@@ -42,15 +42,60 @@ describe("FleetContainers", () => {
       containerColumns({ showHost: true }).map((c) => c.header),
     );
 
-    const row = screen.getAllByRole("row")[1]!;
+    // [0] is the header rail and [1] the host's group header; the data
+    // rows follow it.
+    const row = screen.getAllByRole("row")[2]!;
     expect(within(row).getByText("postgres")).toBeInTheDocument();
     expect(within(row).getByText("db-01")).toBeInTheDocument();
+  });
+
+  // A fleet-wide list is a list of several hosts' containers, and which host
+  // a container runs on is the first thing that groups them.
+  it("groups the rows by host, naming and linking each one", () => {
+    render(
+      <FleetContainers
+        rows={[
+          makeRow(),
+          makeRow({
+            id: 2,
+            container_key: "web",
+            host_id: 8,
+            hostname: "web-01",
+          }),
+        ]}
+      />,
+    );
+
+    const heads = screen.getAllByRole("rowheader");
+    expect(heads.map((h) => h.textContent)).toEqual([
+      "db-01 · 1 container",
+      "web-01 · 1 container",
+    ]);
+    expect(
+      within(heads[0]!).getByRole("link", { name: "db-01" }),
+    ).toHaveAttribute("href", "/hosts/7/overview");
+  });
+
+  // Two hosts in different sites may share a hostname (see HostTable), so
+  // grouping on the NAME would merge two machines into one group and file
+  // one host's containers under the other host's link.
+  it("groups on the host id, not on the hostname", () => {
+    render(
+      <FleetContainers
+        rows={[
+          makeRow({ host_id: 7, hostname: "db-01" }),
+          makeRow({ id: 2, host_id: 9, hostname: "db-01" }),
+        ]}
+      />,
+    );
+
+    expect(screen.getAllByRole("rowheader")).toHaveLength(2);
   });
 
   it("renders an unnamed container as absent, never as a blank or a zero", () => {
     render(<FleetContainers rows={[makeRow({ name: null, image: null })]} />);
 
-    const row = screen.getAllByRole("row")[1]!;
+    const row = screen.getAllByRole("row")[2]!;
     expect(within(row).getAllByText(ABSENT).length).toBe(2);
     // The key still identifies it -- absence of a name is not absence of a
     // container.
