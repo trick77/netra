@@ -35,6 +35,21 @@ export interface UpDownSparklineProps {
   label?: string;
 }
 
+/**
+ * Green above the axis, purple below. Inbound is the green half in every
+ * traffic graph an operator has already read, and these started out the
+ * other way round. Purple rather than blue for the lower half: against the
+ * green above it, blue-vs-green separates by CVD dE 9 and reads as one mass
+ * at a glance, where purple is 20 -- and the two halves of this chart are the
+ * one comparison it exists to make.
+ *
+ * Exported because the enlarged view of a traffic sparkline is drawn by
+ * Overlay rather than by this component, and a chart that changed colour on
+ * being clicked open would be a different chart.
+ */
+export const UP_COLOR = "var(--s2)";
+export const DOWN_COLOR = "var(--s5)";
+
 export function UpDownSparkline({
   up,
   down,
@@ -42,14 +57,8 @@ export function UpDownSparkline({
   width = SPARK_WIDTH,
   height = 32,
   pad = 2,
-  // Green above the axis, purple below. Inbound is the green half in every
-  // traffic graph an operator has already read, and these started out the
-  // other way round. Purple rather than blue for the lower half: against the
-  // green above it, blue-vs-green separates by CVD dE 9 and reads as one
-  // mass at a glance, where purple is 20 -- and the two halves of this chart
-  // are the one comparison it exists to make.
-  upColor = "var(--s2)",
-  downColor = "var(--s5)",
+  upColor = UP_COLOR,
+  downColor = DOWN_COLOR,
   label = "up/down traffic chart",
 }: UpDownSparklineProps) {
   const effectiveMax = max ?? Math.max(extent(up).max, extent(down).max);

@@ -22,11 +22,11 @@
 // other -- the exact asymmetry this module exists to remove.
 import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
-import { Sparkline } from "../../ui/charts/Sparkline";
 import type { Column } from "../../ui/Table";
 import { ABSENT } from "../../lib/format";
 import type { Container } from "../../lib/api";
-import { rangeLabel, type Range } from "../../lib/range";
+import { type Range } from "../../lib/range";
+import { ContainerChart } from "./ContainerChart";
 
 /**
  * A container as a list sees it: what `GET /api/v1/hosts/{id}/containers`
@@ -166,24 +166,30 @@ function MemoryCell({
   row,
   memMax,
   range,
+  ranges,
 }: {
   row: ContainerRow;
   memMax: number;
   range: Range;
+  ranges?: readonly Range[];
 }) {
   if (row.mem === undefined || row.mem.length === 0) return <>{ABSENT}</>;
   const limit = row.mem_limit_bytes ?? null;
   return (
     <div className="mem-cell">
-      <Sparkline
+      {/* The chart is the button that enlarges it -- only the chart, not the
+          meter beside it: the meter answers "how close to being killed" at a
+          glance and has nothing bigger to show. */}
+      <ContainerChart
+        row={row}
+        metric="mem"
         values={row.mem}
         // Against its OWN limit when it has one -- that is what "how close to
         // being killed" means -- and against the list's largest container when
         // it does not, so the unlimited ones stay comparable with each other.
         max={limit ?? memMax}
-        min={0}
-        color="var(--s2)"
-        label={`Memory trend, ${rangeLabel(range)}`}
+        range={range}
+        ranges={ranges}
       />
       {/* The percentage alone, with no label: the bytes are already the
           sparkline's subject, and a table cell has no room for
@@ -221,6 +227,13 @@ export interface ContainerColumnsOptions {
    */
   cpuMax?: number;
   memMax?: number;
+  /**
+   * The ranges the PAGE behind this list offers, for the chart a reader
+   * enlarges out of a trend cell. The two lists sit on pages with different
+   * sets -- the fleet stops at 24h, a host page goes to 7d -- so the dialog
+   * must not be able to ask for a window its own page could not express.
+   */
+  ranges?: readonly Range[];
 }
 
 export function containerColumns({
@@ -228,6 +241,7 @@ export function containerColumns({
   cpuMax,
   memMax,
   range = "24h",
+  ranges,
 }: ContainerColumnsOptions = {}): Column<ContainerRow>[] {
   const columns: Column<ContainerRow>[] = [
     {
@@ -271,12 +285,13 @@ export function containerColumns({
         row.cpu === undefined || row.cpu.length === 0 ? (
           ABSENT
         ) : (
-          <Sparkline
+          <ContainerChart
+            row={row}
+            metric="cpu"
             values={row.cpu}
-            max={cpuMax}
-            min={0}
-            color="var(--s1)"
-            label={`CPU trend, ${rangeLabel(range)}`}
+            max={cpuMax ?? 1}
+            range={range}
+            ranges={ranges}
           />
         ),
       // The latest reported percentage, same rule as Memory below. Without
@@ -290,7 +305,12 @@ export function containerColumns({
       key: "memory",
       header: "Memory",
       cell: (row) => (
-        <MemoryCell row={row} memMax={memMax ?? 1} range={range} />
+        <MemoryCell
+          row={row}
+          memMax={memMax ?? 1}
+          range={range}
+          ranges={ranges}
+        />
       ),
       // Bytes, not percent of limit: sorting on the percentage would drop
       // every unlimited container into the unknown group, which on most
