@@ -419,25 +419,25 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 // no netra anywhere on the box was shown "/netra/fs/ark is 94 % full".
 //
 // The same string is markerPrefix in internal/agent/collector/filesystems.go,
-// where the agent stopped sending it, and the prefix that migration
-// 0002_strip_marker_prefix.sql strips from the rows that already carry it.
-// Restated rather than shared: the hub cannot import agent internals, and a
-// package for one constant would couple two binaries that otherwise only meet
-// over the wire.
+// where the agent stopped sending it. Restated rather than shared: the hub
+// cannot import agent internals, and a package for one constant would couple
+// two binaries that otherwise only meet over the wire.
 //
-// It is restated rather than left to the agent because the agent is the half
-// an operator upgrades LAST. 0002 runs once, at hub startup; ingest runs every
-// 60s. Without this, an agent still on the older image re-inserts the prefixed
-// row on its next scrape -- beside the one 0002 just renamed, measuring the
-// same disk, warning under the name that was supposed to be gone -- and the
-// migration gets no second chance to clean up after it.
+// This is the LAST defence rather than a redundant one. A one-time repair
+// migration used to strip the prefix from rows already carrying it; that is
+// gone, because the schema was squashed and the database recreated, so no such
+// row survives. What does survive is the agent that has not been upgraded yet
+// -- the half an operator upgrades LAST -- and it re-sends the prefixed label
+// on every scrape. Ingest is the only thing standing between that and a fleet
+// page warning about "/netra/fs/ark is 94 % full" on a host with no netra
+// anywhere on it.
 const markerPrefix = "/netra/fs/"
 
 // hostSideLabel is the label a host answers to, given what the agent sent.
 //
-// Anchored, like 0002's regexp_replace: /netra/fs/ is ten characters, and an
-// off-by-one turns `ark` into `rk`, which is wrong in a way that still looks
-// like a plausible filesystem name on the page.
+// Anchored with TrimPrefix rather than sliced by length: /netra/fs/ is ten
+// characters, and an off-by-one turns `ark` into `rk`, which is wrong in a way
+// that still looks like a plausible filesystem name on the page.
 func hostSideLabel(label string) string {
 	return strings.TrimPrefix(label, markerPrefix)
 }
@@ -445,13 +445,13 @@ func hostSideLabel(label string) string {
 // hostSideMountpoint is the mount point, or nothing if the agent only knew its
 // own bind target.
 //
-// Dropped rather than stripped, which is where this differs from 0002. The
-// migration turns /netra/fs/ark into `ark` because it is repairing a column in
-// place and a bare label beats a container path; but `ark` is a LABEL, and a
-// mount point is the path an operator would type into df. An agent that sends
-// only the bind target does not know that path, and saying so lets the
-// COALESCE below keep whichever real one the hub already has -- from an
-// earlier agent, or from the .env of the one that follows.
+// Dropped rather than stripped, which is where this differs from the label
+// above. Stripping would turn /netra/fs/ark into `ark`, and a bare label does
+// beat a container path -- but `ark` is a LABEL, and a mount point is the path
+// an operator would type into df. An agent that sends only the bind target does
+// not know that path, and saying so lets the COALESCE below keep whichever real
+// one the hub already has -- from an earlier agent, or from the .env of the one
+// that follows.
 func hostSideMountpoint(mountpoint string) string {
 	if strings.HasPrefix(mountpoint, markerPrefix) {
 		return ""

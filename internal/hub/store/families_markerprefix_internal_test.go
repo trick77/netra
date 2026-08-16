@@ -9,23 +9,25 @@ import (
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
-// Migration 0002 is a one-time repair; ingest is what has to hold.
+// Ingest is the only thing that holds here, now that the one-time repair
+// migration is gone with the squashed schema.
 //
-// 0002 runs once, at hub startup. An agent still on the older image scrapes
-// every 60s, and until this normalisation existed its next scrape re-inserted
-// the row the migration had just renamed -- so the operator saw one disk twice,
-// "/netra/fs/ark is 94 % full" beside "/mnt/ark is 94 % full", with the
-// migration already spent and no second chance to clean up.
-func TestIntegrationPrefixedLabelLandsOnTheMigratedRow(t *testing.T) {
+// An agent still on the older image scrapes every 60s and keeps sending the
+// bind target it measures through. Without this normalisation each scrape
+// inserts a second row for a disk that already has one, so the operator sees
+// one disk twice -- "/netra/fs/ark is 94 % full" beside "/mnt/ark is 94 %
+// full" -- and nothing ever cleans it up, because the agent is the half
+// upgraded last.
+func TestIntegrationPrefixedLabelLandsOnTheExistingRow(t *testing.T) {
 	ctx := context.Background()
 	s := OpenTest(t)
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	// Given: a host whose filesystem 0002 has already renamed, carrying the
-	// host mount point a current agent taught it and the history that is the
-	// whole reason the rename happened in place.
+	// Given: a host whose filesystem already carries the host-side label, with
+	// the mount point a current agent taught it and the history that is the
+	// whole reason its identity has to be preserved.
 	var hostID int32
 	if err := s.Pool().QueryRow(ctx,
 		`INSERT INTO hosts (hostname) VALUES ('ingest-prefix') RETURNING id`).Scan(&hostID); err != nil {
@@ -84,7 +86,7 @@ func TestIntegrationPrefixedLabelLandsOnTheMigratedRow(t *testing.T) {
 		t.Fatalf("count samples: %v", err)
 	}
 	if samples != 1 {
-		t.Errorf("samples on the migrated row = %d, want 1", samples)
+		t.Errorf("samples on the existing row = %d, want 1", samples)
 	}
 }
 

@@ -139,8 +139,9 @@ func (s *Store) InsertHostSamples(ctx context.Context, hostID int32, samples []*
 // most recent scrape, or nil when this post carried no net samples. They live
 // here rather than being read back off net_samples because the fleet's
 // traffic figure is a CURRENT RATE, and reading a rate out of a time series
-// makes it depend on the window the series was fetched over -- which is the
-// bug 0002_host_current_net.sql exists to end. A nil stores NULL, which the
+// makes it depend on the window the series was fetched over -- the bug the
+// net_rx_bytes/net_tx_bytes columns exist to end; see their comment in
+// 0001_init.sql for how the tier decided the meaning. A nil stores NULL, which the
 // UI renders as absent; it must never become a zero, since "no samples" and
 // "no traffic" are different facts.
 func (s *Store) UpsertHostCurrent(
