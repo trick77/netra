@@ -19,15 +19,17 @@ import { percent } from "../../lib/format";
 /**
  * How full a filesystem has to be before it is worth someone's attention.
  *
- * The same two thresholds the host page's needsAttention() uses. They are
- * duplicated rather than shared because the two functions read different
- * shapes -- the host page has every filesystem's bytes, this has one
- * pre-picked summary -- but the NUMBERS must not drift: a host that warns on
- * its own page and reads clean on the fleet page is the disagreement this
- * whole module exists to end.
+ * The same two thresholds the host page's needsAttention() uses, and now
+ * literally the same two constants: the host page imports these rather than
+ * writing 90 and 95 out again. The two functions still read different shapes
+ * -- the host page has every filesystem's bytes, this has one pre-picked
+ * summary -- so only the numbers are shared, not the logic around them. That
+ * is the part that had to stop drifting: a host that warns on its own page
+ * and reads clean on the fleet page is the disagreement this whole module
+ * exists to end.
  */
-const DISK_WARN_PCT = 90;
-const DISK_CRIT_PCT = 95;
+export const DISK_WARN_PCT = 90;
+export const DISK_CRIT_PCT = 95;
 
 /**
  * Everything wrong with one host, worst first.

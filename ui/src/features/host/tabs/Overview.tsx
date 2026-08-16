@@ -31,9 +31,8 @@ import {
   percent,
   relative,
 } from "../../../lib/format";
-import { osLabel } from "../../../lib/host";
+import { FLAP_THRESHOLD, isReporting, osLabel } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
-import { FLAP_THRESHOLD, isReporting } from "../../../lib/host";
 import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
@@ -47,6 +46,11 @@ import {
   UP_COLOR,
   UpDownSparkline,
 } from "../../../ui/charts/UpDownSparkline";
+// The fleet band's thresholds, imported rather than written out again. The
+// comment on them in fleet/conditions.ts spells out why: this page and that
+// one must agree on when a filesystem is worth mentioning, or a host warns
+// in one place and reads clean in the other.
+import { DISK_WARN_PCT, DISK_CRIT_PCT } from "../../fleet/conditions";
 
 /**
  * column() in lib/metrics.ts THROWS for a column the answering tier does
@@ -454,13 +458,21 @@ export function needsAttention(input: {
     });
   }
 
+  // `critical`, not `serious`, and that is the fleet page's word for this
+  // exact fact: hostConditions() in fleet/conditions.ts has always rated a
+  // host that stopped reporting `critical`. The two pages used to print
+  // different severities for one condition, so the same host read "serious"
+  // here and "critical" one click up -- the kind of disagreement the shared
+  // disk thresholds below exist to prevent, in the one place a constant
+  // could not fix it. `serious` remains a Badge severity; nothing else that
+  // uses it changed.
   if (input.host.last_seen === null) {
-    out.push({ severity: "serious", what: "never reported" });
+    out.push({ severity: "critical", what: "never reported" });
   } else {
     const age = now.getTime() - new Date(input.host.last_seen).getTime();
     if (age > STALE_AFTER_MS) {
       out.push({
-        severity: "serious",
+        severity: "critical",
         what: `last reported ${relative(input.host.last_seen, now)}`,
       });
     }
@@ -474,9 +486,9 @@ export function needsAttention(input: {
     const capacity = fs.used + fs.free;
     if (capacity === 0) continue;
     const full = (fs.used / capacity) * 100;
-    if (full >= 90) {
+    if (full >= DISK_WARN_PCT) {
       out.push({
-        severity: full >= 95 ? "critical" : "warning",
+        severity: full >= DISK_CRIT_PCT ? "critical" : "warning",
         what: `${fs.label} is ${percent(full)} full — ${bytes(fs.free)} free`,
       });
     }
