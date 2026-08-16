@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import * as api from "./lib/api";
@@ -19,6 +19,8 @@ vi.mock("./lib/api", async () => {
     getAddresses: vi.fn(),
     getPackages: vi.fn(),
     getUnits: vi.fn(),
+    getProviders: vi.fn(),
+    getConfig: vi.fn(),
   };
 });
 
@@ -53,6 +55,11 @@ beforeEach(() => {
   vi.mocked(api.getAddresses).mockResolvedValue([]);
   vi.mocked(api.getPackages).mockResolvedValue([]);
   vi.mocked(api.getUnits).mockResolvedValue([]);
+  // The host admin page's own two calls. Unmocked they fall through to the
+  // real fetch, so a test that only asks which nav link is current would make
+  // a network request in jsdom and settle after the test had finished.
+  vi.mocked(api.getProviders).mockResolvedValue([]);
+  vi.mocked(api.getConfig).mockResolvedValue({ hub_url: "http://hub.test" });
   goTo("/");
 });
 
@@ -327,5 +334,63 @@ describe("the range sticks", () => {
 
     expect(await screen.findByText("web-01")).toBeInTheDocument();
     expect(pressed("24h")).toBe("true");
+  });
+});
+
+// The rail is the one piece of chrome on every page, so it is also the one
+// place a broken href strands a keyboard user with no way out.
+describe("the nav rail", () => {
+  const DESTINATIONS = [
+    ["Overview", "/"],
+    ["Events", "/events"],
+    ["Hosts", "/admin/hosts"],
+    ["Settings", "/settings"],
+  ] as const;
+
+  it("offers every destination, each pointing at its own route", async () => {
+    render(<App />);
+    await screen.findByText("web-01");
+
+    const rail = within(screen.getByRole("navigation", { name: "Primary" }));
+    for (const [label, href] of DESTINATIONS) {
+      expect(rail.getByRole("link", { name: label })).toHaveAttribute(
+        "href",
+        href,
+      );
+    }
+  });
+
+  // aria-current is what tells a screen reader which of four identical-looking
+  // links is the page it is already on; the highlight alone says it to nobody.
+  it.each(DESTINATIONS)("marks %s as the current page", async (label, path) => {
+    goTo(path);
+
+    render(<App />);
+    const rail = within(
+      await screen.findByRole("navigation", { name: "Primary" }),
+    );
+
+    expect(rail.getByRole("link", { name: label })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    // Exactly one, or "you are here" means nothing.
+    expect(
+      rail
+        .getAllByRole("link")
+        .filter((a) => a.getAttribute("aria-current") === "page"),
+    ).toHaveLength(1);
+  });
+
+  // The rail now precedes the content in DOM order on every page, so the skip
+  // link is the only thing between a keyboard user and walking the whole nav.
+  it("keeps a skip link that resolves to the main region", async () => {
+    render(<App />);
+    await screen.findByText("web-01");
+
+    expect(
+      screen.getByRole("link", { name: "Skip to content" }),
+    ).toHaveAttribute("href", "#main");
+    expect(screen.getByRole("main")).toHaveAttribute("id", "main");
   });
 });
