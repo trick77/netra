@@ -376,3 +376,43 @@ func TestIntegrationSystemdSnapshotRecordsTheMissedTransition(t *testing.T) {
 		t.Errorf("events = %v, want one 'active' -- the recovery the agent never sent", states)
 	}
 }
+
+// A stale snapshot must not prune a unit the hub learned about after it was
+// taken.
+//
+// The agent holds ONE pending snapshot and only replaces it a snapshotFloor
+// later, so every POST made while flushes are failing carries a snapshot from
+// T0 beside events from T0..T5. A unit installed and started at T3 is
+// legitimately absent from the T0 name list, and pruning on absence alone
+// deleted it -- taking the transitions the event path had just recorded for it
+// with it through ON DELETE CASCADE, which is the very evidence read.Units
+// counts to decide a unit is restarting repeatedly.
+func TestIntegrationSystemdSnapshotStaleDoesNotPruneANewerUnit(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Millisecond)
+	s, id := openSystemd(t)
+
+	// T0: the host has exim4 only, and the agent's snapshot says so.
+	if _, err := s.ApplySystemdSnapshot(ctx, id,
+		snapshot(now.Add(-time.Hour), true, unitState("exim4.service", "failed", "failed"))); err != nil {
+		t.Fatalf("first snapshot: %v", err)
+	}
+
+	// T3: nginx is installed and falls over, and the event path records it.
+	if _, err := s.InsertSystemdUnitEvents(ctx, id, []*netrav1.SystemdUnitEvent{{
+		TsMs: now.UnixMilli(), UnitName: "nginx.service", State: "failed", Substate: "failed",
+	}}); err != nil {
+		t.Fatalf("insert event: %v", err)
+	}
+
+	// The T0 snapshot rides one more POST, because the first one was never
+	// acked. It knows nothing about nginx.
+	if _, err := s.ApplySystemdSnapshot(ctx, id,
+		snapshot(now.Add(-time.Hour), true, unitState("exim4.service", "failed", "failed"))); err != nil {
+		t.Fatalf("resent snapshot: %v", err)
+	}
+
+	if _, ok := unitRows(t, s, id)["nginx.service"]; !ok {
+		t.Error("nginx.service was pruned by a snapshot taken before it existed")
+	}
+}

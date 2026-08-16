@@ -197,7 +197,12 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 	}
 	slices.Sort(names)
 
-	ts := time.Now().UnixMilli()
+	// Through the same clock the snapshot floor is paced by, so a test that
+	// moves the clock moves the timestamps with it. Reading time.Now here
+	// while the floor read s.now made SetClockForTest half a clock: the
+	// snapshot's ts_ms -- the value every monotonic guard in the hub compares
+	// against -- came from wall time no matter what the test set.
+	ts := s.now().UnixMilli()
 	var events []*netrav1.SystemdUnitEvent
 
 	// The first scrape emits a BASELINE, but only of the units that are

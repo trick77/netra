@@ -33,7 +33,7 @@ import {
 } from "../../../lib/format";
 import { osLabel } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
-import { isReporting } from "../../../lib/host";
+import { FLAP_THRESHOLD, isReporting } from "../../../lib/host";
 import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
@@ -445,12 +445,6 @@ export function needsAttention(input: {
 
   return out;
 }
-
-/**
- * How many recorded state changes in the last hour make a unit "restarting
- * repeatedly". Mirrors systemdstate.FlapThreshold in the hub -- change both.
- */
-const FLAP_THRESHOLD = 4;
 
 /**
  * Whether a unit is stuck in a restart loop.

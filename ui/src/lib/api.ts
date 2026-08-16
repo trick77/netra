@@ -157,7 +157,8 @@ export type Unit = {
   substate: string | null;
   // When the unit ENTERED this state, not when the hub last heard about it:
   // both write paths advance it only on an actual change. That is what makes
-  // mid-restart.
+  // "failed since 03:12" mean the failure started then, rather than meaning
+  // the last snapshot happened to land then.
   since: string | null;
   // State changes recorded for this unit in the last hour.
   //

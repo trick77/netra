@@ -21,6 +21,21 @@ import { ABSENT } from "./format";
 const SCRAPE_INTERVAL_S = 60;
 const STALE_THRESHOLD_MS = 3 * SCRAPE_INTERVAL_S * 1000;
 
+/**
+ * How many recorded state changes in the last hour make a systemd unit
+ * "restarting repeatedly".
+ *
+ * One definition for the whole UI: the host page's warning band decides
+ * whether to warn about a unit, and the Units table decides whether to badge
+ * its restart count, and a table that badges a unit the band calls fine is
+ * worse than either answer on its own.
+ *
+ * Mirrors systemdstate.FlapThreshold in the hub, which is the copy that
+ * decides whether the unit is returned by /units at all. No compiler can see
+ * across that boundary -- change both.
+ */
+export const FLAP_THRESHOLD = 4;
+
 export type HostStatus = {
   severity: "ok" | "warning" | "critical";
   /** The WORD beside the dot. Severity never rides on colour alone. */

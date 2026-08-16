@@ -14,6 +14,7 @@ import type {
 } from "../../../lib/api";
 import { ABSENT, absolute, bytes, relative } from "../../../lib/format";
 import { hostContainerNote } from "../../../lib/containers";
+import { FLAP_THRESHOLD } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
@@ -523,12 +524,6 @@ const UNIT_SEVERITY: Record<string, Severity> = {
   failed: "critical",
   inactive: "neutral",
 };
-
-/**
- * How many restarts in the last hour this table calls out. Mirrors
- * systemdstate.FlapThreshold in the hub -- change both.
- */
-const FLAP_THRESHOLD = 4;
 
 const UNIT_COLUMNS: Column<Unit>[] = [
   { key: "unit", header: "Unit", cell: (row) => row.unit_name },

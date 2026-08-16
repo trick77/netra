@@ -1121,15 +1121,40 @@ func (s *Store) ApplySystemdSnapshot(ctx context.Context, hostID int32, snap *ne
 	// delete every tracked unit on the host on one bad scrape.
 	//
 	// Deleting takes the unit's events with it through the composite foreign
-	// key's ON DELETE CASCADE. That is acceptable only because nothing reads
-	// systemd_unit_events except read.Units, which reads the columns above --
-	// the log is currently write-only. IF A SYSTEMD HISTORY VIEW IS EVER
-	// ADDED, change this to keep the row with a NULL state and add a reaper to
-	// the existing netra_prune_discrete_events job rather than a second job.
+	// key's ON DELETE CASCADE, and read.Units COUNTS those events to decide
+	// whether a unit is restarting repeatedly -- so a delete does not merely
+	// drop history, it destroys the only evidence that would list the unit at
+	// all. IF A SYSTEMD HISTORY VIEW IS EVER ADDED, change this to keep the
+	// row with a NULL state and add a reaper to the existing
+	// netra_prune_discrete_events job rather than a second job.
+	//
+	// Carries the same monotonic guard as steps 1 and 2, and for a reason that
+	// is routine rather than theoretical. The agent holds one pending snapshot
+	// and only replaces it a snapshotFloor later, so any POST made while
+	// flushes are failing carries a snapshot taken at T0 alongside events from
+	// T0..T5. The event path above has just created a row for a unit installed
+	// and started at T3 -- a unit that did not exist when the snapshot was
+	// taken and is legitimately absent from its name list. Without the guard
+	// this deletes it, along with the transitions that had just been recorded
+	// for it.
 	if snap.GetComplete() {
-		if _, err := tx.Exec(ctx, `
-			DELETE FROM systemd_units WHERE host_id = $1 AND unit_name <> ALL($2)`,
-			hostID, names); err != nil {
+		// Nested, so the poison recovery below can actually recover. A failed
+		// statement leaves the WHOLE transaction aborted, and the Commit that
+		// follows would come back as ErrTxCommitRollback -- discarding steps
+		// 1-3 and 503ing the host into re-sending the identical batch, which
+		// is precisely the wedge this branch exists to avoid. pgx turns a
+		// nested Begin into a SAVEPOINT, so rolling this one back leaves the
+		// work above committable.
+		prune, err := tx.Begin(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("begin systemd unit prune: %w", err)
+		}
+		if _, err := prune.Exec(ctx, `
+			DELETE FROM systemd_units
+			 WHERE host_id = $1 AND unit_name <> ALL($2)
+			   AND (state_ts IS NULL OR state_ts <= $3)`,
+			hostID, names, ts); err != nil {
+			_ = prune.Rollback(ctx)
 			if !poisonRow(err) {
 				return 0, fmt.Errorf("prune systemd units: %w", err)
 			}
@@ -1140,6 +1165,8 @@ func (s *Store) ApplySystemdSnapshot(ctx context.Context, hostID int32, snap *ne
 			// -- do it.
 			slog.Warn("skipped the systemd unit prune: the keep set carries a value Postgres refuses",
 				"host_id", hostID, "err", err)
+		} else if err := prune.Commit(ctx); err != nil {
+			return 0, fmt.Errorf("commit systemd unit prune: %w", err)
 		}
 	}
 
