@@ -180,8 +180,17 @@ function ConditionRow({ c }: { c: Condition }) {
       {c.since === null ? null : (
         <span className="since">{relative(c.since)}</span>
       )}
+      {/* The visible text is the tab's name, which is all the eye needs
+          beside the hostname it sits under. A screen reader's link list has
+          no such context: a band with four hosts on it offers four links
+          reading "units →" and nothing to tell them apart, so the host is
+          named in the accessible name instead. */}
       {c.tab === null ? null : (
-        <a className="drill" href={`/hosts/${c.hostId}/${c.tab}`}>
+        <a
+          className="drill"
+          href={`/hosts/${c.hostId}/${c.tab}`}
+          aria-label={`${c.tab} on ${c.hostname}`}
+        >
           {c.tab} →
         </a>
       )}
