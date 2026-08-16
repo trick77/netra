@@ -1,5 +1,4 @@
 import type { MetricsResponse } from "../../lib/api";
-import type { Range } from "../../lib/range";
 import {
   carriesColumn,
   counterDeltas,
@@ -86,17 +85,30 @@ type Source =
  * Source reach the wire unmapped: both fetchers took `(family: string, ...)`,
  * a Source is assignable to string, and `family=cpuCore` type-checked all the
  * way to a rejected request. Now it does not compile.
+ *
+ * The whole registry, not only the names a panel spec uses: this list is the
+ * one statement of what the hub serves, so a caller outside the Graphs specs
+ * (Overview's sensor chart, a future smart or process page) has a name to
+ * pass rather than a reason to fall back to `string`. The type is derived
+ * from the array so the two cannot drift, and the tests sweep against the
+ * same export instead of a hand-copied twin.
  */
-export type Family =
-  | "host"
-  | "host_snmp"
-  | "net"
-  | "disk_io"
-  | "filesystem"
-  | "collector"
-  | "cpu_core"
-  | "agent"
-  | "container";
+export const FAMILIES = [
+  "host",
+  "host_snmp",
+  "net",
+  "disk_io",
+  "filesystem",
+  "collector",
+  "cpu_core",
+  "agent",
+  "container",
+  "sensor",
+  "smart",
+  "process",
+] as const;
+
+export type Family = (typeof FAMILIES)[number];
 
 /**
  * A panel's source to the family name the read API takes.
