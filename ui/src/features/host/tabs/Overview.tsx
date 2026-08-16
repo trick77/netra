@@ -1008,10 +1008,19 @@ export function Overview({
                 a wrap, and it is aria-hidden: the name is written next to
                 it. A host whose os_name the table does not recognise gets no
                 icon and no gap. */}
-            <span className="strong">
-              <OsIcon name={host.os_name} />
-              {osLabel(host.os_name)}
-            </span>
+            {/* Guarded like the other four. os_name is nullable in the store
+                -- ingest.go NULLIFs it, for an agent in a container that
+                cannot read the host's /etc/os-release -- and osLabel(null) is
+                ABSENT, so an unguarded span left a host with nothing else to
+                say showing a summary line of one em dash. The separators are
+                drawn from the SECOND span onward, so whichever fact ends up
+                first simply takes no leading dot. */}
+            {host.os_name !== null && (
+              <span className="strong">
+                <OsIcon name={host.os_name} />
+                {osLabel(host.os_name)}
+              </span>
+            )}
             {host.kernel !== null && <span>{host.kernel}</span>}
             {/* The one value long enough to push this line onto a second row
                 by itself: cpu_model is the raw string -- "AMD EPYC 7402P

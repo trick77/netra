@@ -4,8 +4,8 @@
  * Paths are the official marks, copied verbatim from simple-icons 16.28.0
  * (CC0-1.0), which is where they are maintained; they are not redrawn here
  * and must not be hand-edited. Vendored rather than depended on: the package
- * carries 3453 icons and this page wants twelve, and a runtime dependency for
- * twelve `d` attributes that change roughly never is a worse trade than the
+ * carries 3453 icons and this page wants thirteen, and a runtime dependency for
+ * thirteen `d` attributes that change roughly never is a worse trade than the
  * ~20 kB of string below. Every one is a single path on a 24x24 viewBox,
  * which is the only shape <OsIcon> knows how to draw.
  *
@@ -14,7 +14,7 @@
  * line would read as the page's accent -- the one colour the palette reserves
  * for "this is interactive" and for status. index.css §3.5 is explicit that
  * the status hues are never reused; the same reasoning applies to a logo
- * sitting one line under a status badge. A row of twelve different brand
+ * sitting one line under a status badge. A row of thirteen different brand
  * colours would also make the quietest fact on the page the loudest mark on
  * it.
  *

@@ -320,6 +320,34 @@ describe("Overview System summary", () => {
     expect(model.className).toContain("cpu");
   });
 
+  // The worst case the store can actually produce: ingest.go NULLIFs every
+  // one of these columns, and an agent in a container that cannot read the
+  // host's /etc/os-release reports no os_name at all. Unguarded, the OS span
+  // rendered osLabel(null) and the whole summary read "—Details" -- a line
+  // whose only content is an em dash, which is the failure the omission rule
+  // exists to prevent rather than a milder version of it.
+  it("writes no facts at all rather than a line of dashes", () => {
+    renderOverview({
+      host: {
+        ...host,
+        os_name: null,
+        kernel: null,
+        cpu_model: null,
+        memory_total: null,
+        uptime_s: null,
+      },
+    });
+    const summary = systemSummary();
+
+    expect(summary.textContent).not.toContain(ABSENT);
+    expect(summary.textContent).toBe("Details");
+    expect(summary.querySelector("svg.osicon")).toBeNull();
+    // The labelled strip still answers for all eight, dashes included.
+    expect(within(systemStrip()).getAllByText(ABSENT).length).toBeGreaterThan(
+      3,
+    );
+  });
+
   // The mark labels the OS name and travels with it, so it lives INSIDE the
   // OS span -- outside, a wrap could put the Ubuntu logo at the end of one
   // line and "Ubuntu 24.04" at the start of the next. aria-hidden because the
