@@ -202,61 +202,49 @@ describe("the list sparklines enlarge", () => {
       );
     }
 
-    it("widens CPU as the family it is actually drawing", async () => {
-      getMetrics.mockResolvedValue(response({ family: "cpu_core" }));
+    // Every sparkline in a fleet row is now a LINK, and each points at the
+    // page drawing the CELL's chart rather than the nearest thing on the
+    // Graphs tab. That distinction is the whole design: the cell normalises
+    // CPU per core, scales memory to mem_total and sums traffic across
+    // interfaces, and a link to a page that redrew any of those against a
+    // different scale would change the shape the reader just pointed at.
+    //
+    // These used to be dialog tests -- "widens CPU as the family it is
+    // actually drawing", and two more -- asserting which family the enlarged
+    // view refetched. There is no refetch to assert now; what has to hold is
+    // where each chart goes.
+    it.each([
+      ["CPU", "host-cpu"],
+      ["Memory", "host-memory"],
+      ["Traffic", "host-traffic"],
+      ["Filesystem usage", "host-filesystem"],
+    ])("opens %s as its own page", (name, slug) => {
+      // Given a fleet row at the 1h range
+      renderRow({
+        disk: [{ name: "/", color: "var(--s7)", values: [1, 2, 3] }],
+      });
 
-      renderRow();
-      await open("Enlarge CPU for ark");
-      await pick("6h");
+      // When the sparkline is read as a control
+      const link = screen.getByRole("link", { name: `Open ${name} for ark` });
 
-      // Both: the per-core stack, and the cpu_total it falls back to.
-      await waitFor(() => expect(getMetrics).toHaveBeenCalledTimes(2));
-      const families = getMetrics.mock.calls.map(([, p]) => p.family);
-      expect(families).toContain("cpu_core");
-      expect(families).toContain("host");
+      // Then it is an anchor to that chart's page, carrying the range and
+      // saying where Back goes
+      expect(link).toHaveAttribute(
+        "href",
+        `/hosts/7/chart/${slug}?range=1h&from=fleet`,
+      );
+      expect(
+        screen.queryByRole("button", { name: `Enlarge ${name}` }),
+      ).toBeNull();
     });
 
-    // The guard that stops a 128-core host shipping 128 series from a dialog:
-    // above MAX_PER_CORE the cell draws cpu_total, and the enlarged view has
-    // to ask for the family it is actually drawing rather than the one the
-    // small host beside it draws.
-    it("does not ask a large host for its cores", async () => {
-      getMetrics.mockResolvedValue(response({}));
-
-      renderRow({ threads: 128 });
-      await open("Enlarge CPU for ark");
-      await pick("6h");
-
-      await waitFor(() => expect(getMetrics).toHaveBeenCalledTimes(1));
-      expect(getMetrics.mock.calls.map(([, p]) => p.family)).toEqual(["host"]);
-    });
-
-    it("widens memory and traffic from their own families", async () => {
-      getMetrics.mockResolvedValue(response({}));
-
+    // An anchor, not a button with a handler: middle-click, copy-link and
+    // bookmark are most of the point of these charts having URLs, and none
+    // of them survive a click handler.
+    it("asks the API for nothing at all until one is opened", () => {
       renderRow();
-      await open("Enlarge Memory for ark");
-      await pick("6h");
-      await waitFor(() =>
-        expect(getMetrics).toHaveBeenCalledWith(
-          7,
-          expect.objectContaining({ family: "host" }),
-        ),
-      );
-      await userEvent.click(
-        within(screen.getByRole("dialog")).getByRole("button", {
-          name: "Close",
-        }),
-      );
 
-      await open("Enlarge Traffic for ark");
-      await pick("6h");
-      await waitFor(() =>
-        expect(getMetrics).toHaveBeenCalledWith(
-          7,
-          expect.objectContaining({ family: "net" }),
-        ),
-      );
+      expect(getMetrics).not.toHaveBeenCalled();
     });
   });
 

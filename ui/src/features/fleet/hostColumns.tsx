@@ -30,14 +30,8 @@ import { hostStatus, isReporting } from "../../lib/host";
 import type { Severity } from "../../ui/Badge";
 import type { Condition, ConditionKind, HostGroup } from "./conditions";
 import { rangeLabel, type Range } from "../../lib/range";
-import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
-import { memoryBands } from "../../lib/bands";
-import {
-  MAX_PER_CORE,
-  cpuBands,
-  fetchHostFamily,
-  trafficSeries,
-} from "./hostTrends";
+import { Enlargeable } from "../../ui/charts/Enlargeable";
+import { MAX_PER_CORE, cpuBands, fetchHostFamily } from "./hostTrends";
 import { FLEET_RANGE_VALUES } from "./ranges";
 
 // The range is only ever a label here: this file never resolves one into a
@@ -183,40 +177,19 @@ function HostCell({ row }: { row: HostRow }) {
 const CPU_PERCENT_MAX = 100;
 
 function CpuCell({ row, range }: { row: HostRow; range: Range }) {
-  // The dialog keeps the cell's normalisation and its 0-100 ceiling. That is
-  // not laziness about reusing the fetch: normalised, the per-core stack tops
-  // out at cpu_total, so 100 is a real ceiling and the axis reads as percent
-  // of this host. Refetching unnormalised would put a 0-3200 axis on a
-  // 32-core host and redraw the shape the reader just clicked. The host
-  // page's Graphs tab draws the same cores unnormalised, where the numbers
-  // matter more than cross-host comparability -- a different question, with
-  // its own chart.
-  const fetchSeries = async (next: Range): Promise<DetailData> => {
-    const [host, cores] = await Promise.all([
-      fetchHostFamily(row.id, "host", next),
-      // The same guard the fan-out uses: a 128-core host would ship 128
-      // series, and cpu_total is the silhouette it falls back to.
-      //
-      // Swallowed to null on failure, unlike the host family beside it: the
-      // per-core read is an enrichment with a documented fallback (cpuBands
-      // draws cpu_total when it gets none), so failing the whole dialog on
-      // it would report "could not load that range" for a range the chart
-      // can in fact draw. The host family is the primary read and still
-      // fails loudly.
-      row.threads !== null && row.threads <= MAX_PER_CORE
-        ? fetchHostFamily(row.id, "cpu_core", next).catch(() => null)
-        : Promise.resolve(null),
-    ]);
-    // The window of the response the BANDS were gridded against -- cpuBands
-    // says which one that was, because only it knows which branch it took.
-    const cpu = cpuBands(host, cores);
-    return { series: cpu.bands, window: (cpu.from ?? host).window };
-  };
-
+  // The page keeps the cell's normalisation and its 0-100 ceiling, which is
+  // why the link goes to host-cpu and not to the Graphs tab's "CPU cores":
+  // normalised, the per-core stack tops out at cpu_total, so 100 is a real
+  // ceiling and the axis reads as percent of this host. Unnormalised would
+  // put a 0-3200 axis on a 32-core host and redraw the shape the reader just
+  // clicked. The Graphs tab draws the same cores unnormalised, where the
+  // numbers matter more than cross-host comparability -- a different
+  // question, with its own chart.
   return (
     <Enlargeable
       title={`CPU · ${row.hostname}`}
-      label={`Enlarge CPU for ${row.hostname}`}
+      label={`Open CPU for ${row.hostname}`}
+      href={chartHref(row.id, "host-cpu", range)}
       className="inline"
       unit="%"
       series={row.cpu}
@@ -228,8 +201,6 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
       legend={row.cpu.length <= 1}
       fmt={(n) => percent(n)}
       range={range}
-      ranges={FLEET_RANGE_VALUES}
-      fetchSeries={fetchSeries}
     >
       <StackedSparkline
         bands={row.cpu}
@@ -266,15 +237,12 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
     return <>{ABSENT}</>;
   }
   const total = row.mem_total;
-  const fetchSeries = async (next: Range): Promise<DetailData> => {
-    const host = await fetchHostFamily(row.id, "host", next);
-    return { series: memoryBands(host), window: host.window };
-  };
 
   return (
     <Enlargeable
       title={`Memory · ${row.hostname}`}
-      label={`Enlarge Memory for ${row.hostname}`}
+      label={`Open Memory for ${row.hostname}`}
+      href={chartHref(row.id, "host-memory", range)}
       className="inline"
       series={row.mem}
       max={total * MEM_HEADROOM}
@@ -285,8 +253,6 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
       // labelled binarily makes one quantity look like two.
       fmt={(n) => binaryBytes(n)}
       range={range}
-      ranges={FLEET_RANGE_VALUES}
-      fetchSeries={fetchSeries}
     >
       <StackedSparkline
         bands={row.mem}
@@ -307,6 +273,27 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
         label={`Memory trend, ${rangeLabel(range)}`}
       />
     </Enlargeable>
+  );
+}
+
+/**
+ * The page a fleet sparkline opens.
+ *
+ * Every chart in this row has one, and each is the CELL's chart rather than
+ * the nearest thing on the Graphs tab: the cell normalises CPU per core,
+ * scales memory to mem_total and sums traffic across interfaces, and a link
+ * that quietly redrew any of those against a different scale would change
+ * the shape the reader just pointed at. The specs are host-cpu, host-memory,
+ * host-filesystem and host-traffic in chartSpecs.ts.
+ *
+ * The range rides along, like every other chart link (Graphs.tsx), and
+ * `from` so Back returns to the fleet rather than dropping the reader on a
+ * host's Graphs tab they were never on -- see backTarget in App.tsx.
+ */
+function chartHref(hostId: number, slug: string, range: Range): string {
+  return (
+    `/hosts/${encodeURIComponent(String(hostId))}/chart/${slug}` +
+    `?range=${encodeURIComponent(range)}&from=fleet`
   );
 }
 
@@ -339,21 +326,21 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
   const live = isReporting(row);
   const rx = live ? row.net_rx_bytes : null;
   const tx = live ? row.net_tx_bytes : null;
-  // Ingress and egress, in that order: Overlay's mirrored mode reads its
-  // series in pairs, (0,1) being one interface's in and out. The cell sums
-  // every interface into one pair, so the dialog does too -- the enlarged
-  // view of a cell must be the same chart, larger, not a different one.
-  const fetchSeries = async (next: Range): Promise<DetailData> => {
-    const net = await fetchHostFamily(row.id, "net", next);
-    const traffic = trafficSeries(net);
-    return {
-      series: [
-        { name: "in", color: UP_COLOR, values: traffic.rx },
-        { name: "out", color: DOWN_COLOR, values: traffic.tx },
-      ],
-      window: net.window,
-    };
-  };
+  // A page, not a dialog. This cell's chart -- every interface summed into
+  // one in/out pair -- now has a spec and a slug of its own
+  // (host-traffic, chartSpecs.ts), drawn from the same sumSeries the cell
+  // is drawn from, so the page IS this chart enlarged rather than a
+  // different one. interface-throughput would have been the different one:
+  // it draws a pair per interface and sums nothing.
+  //
+  // Carrying the range, like every other chart link (Graphs.tsx), and
+  // `from` so Back returns to the fleet instead of dropping the reader on
+  // a host's Graphs tab they were never on -- see backTarget in App.tsx.
+  //
+  // An href turns Enlargeable into an anchor and its dialog off
+  // (Enlargeable.tsx). That is the trade: the dialog is what a chart with
+  // no page gets, and this one has a page.
+  const href = chartHref(row.id, "host-traffic", range);
 
   return (
     <div className="traffic-cell">
@@ -362,7 +349,8 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         // this chart, and "rx" is the kernel's word for it rather than the
         // reader's. The wire and the schema keep rx/tx.
         title={`Traffic · ${row.hostname}`}
-        label={`Enlarge Traffic for ${row.hostname}`}
+        label={`Open Traffic for ${row.hostname}`}
+        href={href}
         className="inline"
         unit="B/s"
         series={[
@@ -372,8 +360,6 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         mirrored
         fmt={bytes}
         range={range}
-        ranges={FLEET_RANGE_VALUES}
-        fetchSeries={fetchSeries}
       >
         <UpDownSparkline
           up={row.rx}
@@ -409,20 +395,35 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
   if (row.disk.length === 0) return <>{ABSENT}</>;
   return (
-    <Overlay
+    // The one sparkline in this row that was not even clickable: it was a
+    // bare Overlay, so the chart most likely to be the reason a host is on
+    // this list at all had no way in. It has a page now, like the rest.
+    <Enlargeable
+      title={`Filesystem usage · ${row.hostname}`}
+      label={`Open Filesystem usage for ${row.hostname}`}
+      href={chartHref(row.id, "host-filesystem", range)}
+      className="inline"
       series={row.disk}
       min={0}
       max={100}
-      width={SPARK_WIDTH}
-      height={32}
-      // Lines rather than filled areas, and no legend: usage sits between
-      // 40% and 95%, so masses anchored at zero would pile into one solid
-      // block, and naming six mounts under a 32px chart is the same
-      // row-height problem the CPU column already solved by not naming
-      // thirty-two cores.
-      legend={false}
-      label={`Filesystem usage trend, ${rangeLabel(range)}`}
-    />
+      fmt={(n) => percent(n)}
+      range={range}
+    >
+      <Overlay
+        series={row.disk}
+        min={0}
+        max={100}
+        width={SPARK_WIDTH}
+        height={32}
+        // Lines rather than filled areas, and no legend: usage sits between
+        // 40% and 95%, so masses anchored at zero would pile into one solid
+        // block, and naming six mounts under a 32px chart is the same
+        // row-height problem the CPU column already solved by not naming
+        // thirty-two cores.
+        legend={false}
+        label={`Filesystem usage trend, ${rangeLabel(range)}`}
+      />
+    </Enlargeable>
   );
 }
 

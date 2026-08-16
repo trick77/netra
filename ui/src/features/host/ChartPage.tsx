@@ -28,6 +28,9 @@ import { windowNotice } from "../../lib/metrics";
 import { EmptyState } from "../../ui/EmptyState";
 import { CircleSlash } from "lucide-react";
 
+/** Room above a reference rule so it reads as a limit, not as the plot's
+ * edge. Matches MEM_HEADROOM in the fleet's memory cell. */
+const REFERENCE_HEADROOM = 1.08;
 const CHART_WIDTH = 1000;
 const CHART_HEIGHT = 380;
 /** The thumbnails are read as shapes, not values, so they carry no axis. */
@@ -40,6 +43,13 @@ export interface ChartPageProps {
   range: Range;
   onRangeChange: (range: Range) => void;
   onBack: () => void;
+  /**
+   * What Back says it goes back to. The chart page has more than one way in
+   * -- the Graphs tab and, since traffic got its own page, the fleet row --
+   * and a button reading "Back to graphs" on a page reached from the fleet
+   * names somewhere the reader has never been.
+   */
+  backLabel: string;
   /** Injectable for tests and for the harness; defaults to the real API. */
   fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
 }
@@ -50,6 +60,7 @@ export function ChartPage({
   range,
   onRangeChange,
   onBack,
+  backLabel,
   fetchFamily,
 }: ChartPageProps) {
   const spec = specForSlug(slug);
@@ -85,6 +96,7 @@ export function ChartPage({
       range={range}
       onRangeChange={onRangeChange}
       onBack={onBack}
+      backLabel={backLabel}
       load={load}
     />
   );
@@ -97,12 +109,14 @@ function ChartView({
   range,
   onRangeChange,
   onBack,
+  backLabel,
   load,
 }: {
   spec: Spec;
   range: Range;
   onRangeChange: (range: Range) => void;
   onBack: () => void;
+  backLabel: string;
   load: (family: Family, range: Range) => Promise<MetricsResponse>;
 }) {
   const [res, setRes] = useState<MetricsResponse | null>(null);
@@ -138,14 +152,34 @@ function ChartView({
     [spec, res],
   );
 
+  // A ceiling the DATA carries -- memory's mem_total -- and the dashed rule
+  // marking it. Headroom above so the rule lands inside the plot instead of
+  // on its border, where it reads as the edge of the box rather than as the
+  // host's limit; the same 1.08 the fleet cell uses.
+  const reference = useMemo(
+    () => (res && spec.ceiling ? (spec.ceiling(res) ?? undefined) : undefined),
+    [spec, res],
+  );
+
+  // A spec that declares a ceiling and cannot find one MUST NOT fall through
+  // to the auto-scale below. That fallback is the always-full bug: a memory
+  // stack scaled to its own running total draws every host as nearly out,
+  // whatever its headroom. The fleet cell refuses to draw a memory chart with
+  // no mem_total (hostColumns.tsx) and says the reading is absent; this is
+  // that same rule on the page, rather than the page drawing the lie the cell
+  // declines to.
+  const noCeiling =
+    res !== null && spec.ceiling !== undefined && reference === undefined;
+
   const ceiling = useMemo(() => {
+    if (reference !== undefined) return reference * REFERENCE_HEADROOM;
     if (spec.max !== undefined) return spec.max;
     if (spec.stacked) return runningTotalMax(series);
     // peakOf scans the BAND too, not just the line. The envelope is the
     // bucket's peak and therefore always the taller of the two; scaling to
     // the mean alone would draw it straight out of the plot box.
     return peakOf(series);
-  }, [spec, series]);
+  }, [spec, series, reference]);
 
   const format = (v: number) => (spec.fmt ? spec.fmt(v) : String(v));
   const valueAxis = !spec.hideAxis && !spec.boolean;
@@ -185,7 +219,7 @@ function ChartView({
       <div className="crumb">
         <button type="button" className="btn ghost" onClick={onBack}>
           <ChevronLeft size={15} aria-hidden="true" />
-          Back to graphs
+          {backLabel}
         </button>
       </div>
 
@@ -214,26 +248,34 @@ function ChartView({
 
       {notice && <p className="note">{notice}</p>}
 
-      <Chart
-        series={series}
-        width={CHART_WIDTH}
-        height={CHART_HEIGHT}
-        max={ceiling}
-        min={floor}
-        mark={spec.mirrored ? "mirror" : spec.stacked ? "stack" : "line"}
-        label={`${spec.title} over time`}
-        y={yTicks}
-        x={xTicks}
-        format={format}
-        grid
-        spine
-        labels
-        widestYLabel={widest}
-        cursor={cursor}
-        onCursorChange={setCursor}
-      />
+      {noCeiling ? (
+        <p className="note">
+          This host reported no {spec.title.toLowerCase()} ceiling in this
+          window, so there is no scale to draw the bands against.
+        </p>
+      ) : (
+        <Chart
+          series={series}
+          width={CHART_WIDTH}
+          height={CHART_HEIGHT}
+          max={ceiling}
+          min={floor}
+          reference={reference}
+          mark={spec.mirrored ? "mirror" : spec.stacked ? "stack" : "line"}
+          label={`${spec.title} over time`}
+          y={yTicks}
+          x={xTicks}
+          format={format}
+          grid
+          spine
+          labels
+          widestYLabel={widest}
+          cursor={cursor}
+          onCursorChange={setCursor}
+        />
+      )}
 
-      {res && (
+      {res && !noCeiling && (
         <div className="cd-x">
           <span>{absolute(res.window.from)}</span>
           <span>{absolute(res.window.to)}</span>

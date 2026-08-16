@@ -565,6 +565,7 @@ function ChartScreen({
 }) {
   const setParam = paramSetter(`/hosts/${hostId}/chart/${slug}`, search, go);
   const [range, chooseRange] = rangeParam(search, HOST_RANGE_VALUES, setParam);
+  const back = backTarget(hostId, search);
 
   return (
     <ChartPage
@@ -572,12 +573,54 @@ function ChartScreen({
       slug={slug}
       range={range}
       onRangeChange={chooseRange}
-      // Back to the tab this chart was opened from, carrying the range with
+      // Back to the page this chart was opened from, carrying the range with
       // it. history.back() would be wrong for someone who arrived by link:
       // there is nothing behind them.
-      onBack={() => go(`/hosts/${hostId}/graphs${search}`)}
+      onBack={() => go(back.path)}
+      backLabel={back.label}
     />
   );
+}
+
+/**
+ * Where Back goes, and what it says.
+ *
+ * `?from=` because this page has more than one way in. It was the Graphs
+ * tab alone, and Back was hardcoded to it; the fleet row's traffic cell now
+ * links here too, and sending that reader to a host's Graphs tab drops them
+ * on a page they were never on, one level deeper than where they started.
+ *
+ * A whitelist, never the raw value as a path: `from` arrives from the URL,
+ * and go() would happily route to whatever is in it.
+ *
+ * No `from` at all keeps the old behaviour exactly -- every existing link,
+ * and every one a reader has already sent, still goes back to the tab.
+ */
+const BACK_TARGETS: Record<
+  string,
+  (hostId: string) => { path: string; label: string }
+> = {
+  fleet: () => ({ path: "/", label: "Back to fleet" }),
+  overview: (hostId) => ({
+    path: `/hosts/${hostId}/overview`,
+    label: "Back to overview",
+  }),
+};
+
+function backTarget(hostId: string, search: string) {
+  // Stripped, not forwarded: `from` says how the reader got HERE, and
+  // carrying it onto the fleet URL would leave a parameter that page has no
+  // use for sitting in the address bar of a link they might then send.
+  const params = new URLSearchParams(search);
+  const from = params.get("from") ?? "";
+  params.delete("from");
+  const rest = params.toString();
+  const query = rest ? `?${rest}` : "";
+  const target = BACK_TARGETS[from]?.(hostId) ?? {
+    path: `/hosts/${hostId}/graphs`,
+    label: "Back to graphs",
+  };
+  return { path: target.path + query, label: target.label };
 }
 
 function ContainerScreen({

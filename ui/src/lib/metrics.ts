@@ -361,6 +361,47 @@ export function griddedValues(
   return seriesOnGrid(res, values, seriesTimestamps(res, seriesIndex));
 }
 
+/**
+ * Sums a keyed family across its series, index by index.
+ *
+ * A host's traffic is the sum over its interfaces, and a null anywhere in a
+ * bucket makes the total for that bucket unknowable rather than smaller --
+ * so the sum is null there too. Treating it as zero would draw a dip that
+ * never happened.
+ *
+ * One implementation, here, deliberately. It existed three times -- as
+ * sumSeries in hostTrends.ts, as sumInterfaces in the host overview, and it
+ * was about to be written a third time inside bandsFor -- and the whole
+ * point of the fleet cell, the overview card and the Traffic chart page
+ * being ONE chart is that they cannot be made to disagree about what the
+ * sum is.
+ */
+export function sumSeries(
+  res: MetricsResponse | null | undefined,
+  base: string,
+): (number | null)[] {
+  if (res == null || res.series.length === 0) return [];
+  const columns = res.series.map((_, i) => griddedValues(res, i, base));
+  const width = columns.reduce((w, c) => Math.max(w, c.length), 0);
+  const out: (number | null)[] = [];
+  for (let i = 0; i < width; i++) {
+    let total = 0;
+    let known = false;
+    let unknown = false;
+    for (const column of columns) {
+      const v = column[i];
+      if (v === undefined) continue;
+      if (v === null) unknown = true;
+      else {
+        total += v;
+        known = true;
+      }
+    }
+    out.push(unknown || !known ? null : total);
+  }
+  return out;
+}
+
 /** True when any value in the series is null -- the host reported nothing. */
 export function hasGaps(vals: readonly (number | null)[]): boolean {
   return vals.some((v) => v === null);

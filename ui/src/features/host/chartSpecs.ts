@@ -7,9 +7,18 @@ import {
   seriesCells,
   seriesOnGrid,
   seriesTimestamps,
+  sumSeries,
 } from "../../lib/metrics";
-import { ABSENT, bytes, duration, percent } from "../../lib/format";
+import {
+  ABSENT,
+  binaryBytes,
+  bytes,
+  duration,
+  percent,
+} from "../../lib/format";
 import { type Band } from "../../ui/charts/ChartPanel";
+import { DOWN_COLOR, UP_COLOR } from "../../ui/charts/UpDownSparkline";
+import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
 
 /** See Overview.tsx for why every column lookup on these pages is
  * optional: column() throws during render for a column the answering tier
@@ -179,6 +188,68 @@ interface PanelSpec {
   /** Draw the bases as mirrored pairs about a midline -- in above, out
    * below. Only meaningful when the bases come in twos, in that order. */
   mirrored?: boolean;
+  /**
+   * Fold a keyed family across its series: ONE band per base, summed, rather
+   * than one band per base per series.
+   *
+   * Only honest where the sum is itself the reading. A host's traffic is --
+   * "how much is this box moving" is not a question about eth0 -- while the
+   * sum of two filesystems' used bytes is a number nobody asked for. It is
+   * also a different QUESTION from the per-series panel rather than a
+   * tidier version of it, which is why host-traffic and
+   * interface-throughput are two specs and not one with a flag.
+   */
+  summed?: boolean;
+  /**
+   * Colours for the bases, positional against `bases`, overriding the
+   * per-index walk through SERIES_VARS.
+   *
+   * For a summed spec the index walk is actively wrong: a chart drawn in
+   * whatever two hues happened to land at positions 0 and 1 is a third
+   * colour scheme for a fact the fleet row and the host overview already
+   * draw in a fixed pair. Direction is the reading here, so the colour has
+   * to carry direction. A per-series spec must NOT use this -- see
+   * SERIES_VARS on why interface-throughput needs eight of them.
+   */
+  colors?: string[];
+  /**
+   * Build this panel's bands with a shared helper instead of the base loop.
+   *
+   * For the charts a fleet row draws, the bands are not "one column per
+   * series": they are a normalised per-core stack, a five-band memory
+   * partition, a per-filesystem Use% derived from used/(used + free). Those
+   * derivations already exist in lib/bands.ts, and every view that draws
+   * them calls in there precisely so the fleet cell and the page cannot
+   * disagree about the same host. A spec with `bands` says "the chart is
+   * whatever that function returns"; `bases` is then what the family lookup
+   * and the missing-column message read, and nothing else.
+   */
+  bands?: (res: MetricsResponse) => Band[];
+  /**
+   * A ceiling read from the data rather than fixed, drawn as BOTH the scale
+   * and a dashed reference rule.
+   *
+   * Memory is the case it exists for. The stack has to be scaled against
+   * mem_total, never against its own running total: auto-scaled, every host
+   * draws as nearly full, which is the one reading these charts exist to
+   * avoid. And a stack scaled to a ceiling nothing on screen names says how
+   * the parts move without saying whether the host is nearly out of memory,
+   * so the same number is also the rule.
+   */
+  ceiling?: (res: MetricsResponse) => number | null;
+}
+
+// The window's last non-null reading. mem_total is a constant for the life of
+// a boot, so any bucket carrying it answers "how much memory does this host
+// have" -- but the LAST bucket is routinely null (the tier materialises
+// behind now), and a null ceiling would drop the memory chart back to the
+// always-full auto-scale.
+function lastKnown(values: (number | null)[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && v !== undefined) return v;
+  }
+  return null;
 }
 
 // A count or a rate has no unit prefix worth inventing, so it is printed
@@ -188,6 +259,54 @@ function count(n: number | null): string {
 }
 
 export const SYSTEM: PanelSpec[] = [
+  // The fleet row's CPU cell, on a page.
+  //
+  // Normalised, like the cell and unlike "CPU cores" below: each core is
+  // divided by the core count, so the top of the stack is cpu_total and 100
+  // is a real ceiling. That is what makes a 4-core and a 32-core host
+  // comparable in one column, and redrawing the click unnormalised against a
+  // 0-3200 axis would change the very shape the reader pointed at. The
+  // unnormalised view answers a different question and keeps its own panel.
+  //
+  // On a host with more than MAX_PER_CORE threads the cell and the page do
+  // differ, deliberately: the fleet row will not fetch 128 series to draw a
+  // 170px chart, so it falls back to a single cpu_total band, while this page
+  // has the room and draws all 128. The SILHOUETTE is identical either way --
+  // a normalised per-core stack sums to cpu_total, which is exactly what that
+  // fallback band is -- so the shape the reader clicked is the shape they
+  // land on, with the cores it was made of underneath it. That is the page
+  // showing more, not the page showing something else.
+  {
+    title: "CPU",
+    slug: "host-cpu",
+    unit: "%",
+    source: "cpuCore",
+    bases: [{ base: "busy", label: "busy" }],
+    bands: (res) => perCoreBands(res, { normalise: true }),
+    max: 100,
+    stacked: true,
+    fmt: (n) => (n === null ? ABSENT : `${count(n)}%`),
+  },
+  // The fleet row's Memory cell, on a page. Five bands against mem_total,
+  // with the total as a dashed rule -- see PanelSpec.ceiling for why that
+  // rule is not decoration.
+  //
+  // Binary bytes, like the cell: the bands are read against a rule labelled
+  // in GiB, and a stack labelled decimally under it makes one quantity look
+  // like two.
+  {
+    title: "Memory",
+    slug: "host-memory",
+    source: "host",
+    bases: [
+      { base: "mem_used", label: "used" },
+      { base: "mem_free", label: "free" },
+    ],
+    bands: memoryBands,
+    ceiling: (res) => lastKnown(griddedValues(res, 0, "mem_total")),
+    stacked: true,
+    fmt: (n) => binaryBytes(n),
+  },
   // One band per logical CPU, each divided by the core count so the top of
   // the stack is the mean -- cpu_total. Unnormalised, 32 cores at 50% would
   // stack to 1600 against a ceiling of 100.
@@ -352,6 +471,29 @@ export const NETWORK: PanelSpec[] = [
     counter: true,
     fmt: count,
   },
+  // The fleet row's traffic cell and the host overview's Traffic card, on a
+  // page. Both draw every interface summed into one in/out pair, which is a
+  // different chart from the per-interface panel below -- so this is a
+  // different spec, and the cell links HERE. Pointing it at
+  // interface-throughput would have swapped one chart for another on click,
+  // which is the one thing an enlarged view must not do.
+  {
+    title: "Traffic",
+    slug: "host-traffic",
+    unit: "B/s",
+    source: "net",
+    bases: [
+      { base: "rx_bytes", label: "in" },
+      { base: "tx_bytes", label: "out" },
+    ],
+    // The same green-above / purple-below the sparkline draws, pinned rather
+    // than taken from the index walk. See PanelSpec.colors.
+    colors: [UP_COLOR, DOWN_COLOR],
+    mirrored: true,
+    peak: true,
+    summed: true,
+    fmt: bytes,
+  },
   {
     // "in" and "out", not rx and tx: the direction is the point of this
     // chart, and "rx" is the kernel's word for it rather than the reader's.
@@ -478,6 +620,25 @@ export const NETWORK: PanelSpec[] = [
 ];
 
 export const STORAGE: PanelSpec[] = [
+  // The fleet row's Filesystem cell, on a page: every mount's Use% over the
+  // window, one line each.
+  //
+  // Lines, not a stack: the mounts partition nothing, and stacking six of
+  // them would draw a host at 400% full. Fixed 0-100 for the same reason the
+  // cell has one -- self-scaled, a disk at 40% and one at 95% draw the same
+  // silhouette.
+  {
+    title: "Filesystem usage",
+    slug: "host-filesystem",
+    source: "filesystem",
+    bases: [
+      { base: "used", label: "used" },
+      { base: "free", label: "free" },
+    ],
+    bands: filesystemBands,
+    max: 100,
+    fmt: (n) => percent(n),
+  },
   {
     title: "Disk throughput",
     slug: "disk-throughput",
@@ -562,20 +723,54 @@ function bandsFor(
   opts: BandOptions = {},
 ): Band[] {
   if (res === null) return [];
+  // A spec that names its own builder IS that builder's output -- no base
+  // loop, no peak envelope, no colour walk. The point of these specs is that
+  // the page draws exactly what the fleet cell draws, and the way to
+  // guarantee that is to call the same function rather than to reproduce it
+  // here and keep the two in step by hand.
+  if (spec.bands) return spec.bands(res);
   const keyed = res.key_columns.length > 0;
   const bands: Band[] = [];
 
-  res.series.forEach((series, index) => {
-    // A keyed family names its bands by the key it is keyed on, so two
-    // devices in one panel stay tellable apart by their label, not by
-    // colour alone.
-    const prefix = keyed
-      ? res.key_columns
-          .map((k) => series.key[k])
-          .filter(Boolean)
-          .join(" ")
-      : "";
-    for (const { base, label } of spec.bases) {
+  /**
+   * The passes this spec draws: one per series normally, exactly ONE for a
+   * summed spec.
+   *
+   * A summed spec folds the family before anything is drawn, so it has no
+   * key to prefix a band with -- "in" here is the host's in, not eth0's,
+   * and labelling it with an interface would be a lie about what was
+   * summed. sumSeries grids every series the same way griddedValues does
+   * for one, so both passes hand the loop below the same shape.
+   *
+   * No boolean branch on the summed side: adding 1s and 0s across series
+   * produces a count, not a state, and no summed spec is boolean. The
+   * `boolean` flag and `summed` are mutually exclusive by that argument
+   * rather than by a type -- if a third flag ever needs the same guard,
+   * that is the moment to make it one.
+   */
+  const passes: {
+    prefix: string;
+    read: (column: string) => (number | null)[];
+  }[] = spec.summed
+    ? [{ prefix: "", read: (column) => sumSeries(res, column) }]
+    : res.series.map((series, index) => ({
+        // A keyed family names its bands by the key it is keyed on, so two
+        // devices in one panel stay tellable apart by their label, not by
+        // colour alone.
+        prefix: keyed
+          ? res.key_columns
+              .map((k) => series.key[k])
+              .filter(Boolean)
+              .join(" ")
+          : "",
+        read: (column) =>
+          spec.boolean
+            ? booleanValues(res, index, column)
+            : griddedValues(res, index, column),
+      }));
+
+  passes.forEach(({ prefix, read }) => {
+    for (const [baseIndex, { base, label }] of spec.bases.entries()) {
       // griddedValues, not optionalValues: the response carries only the
       // buckets that exist, so an outage arrives as a SHORTER series rather
       // than as nulls, and the geometry breaks a line only on a null. Drawn
@@ -599,12 +794,8 @@ function bandsFor(
         spec.mirrored === true &&
         peakColumn !== base;
       const column = wantsBand ? base : peakColumn;
-      const gridded = spec.boolean
-        ? booleanValues(res, index, column)
-        : griddedValues(res, index, column);
-      const band = wantsBand
-        ? griddedValues(res, index, peakColumn)
-        : undefined;
+      const gridded = read(column);
+      const band = wantsBand ? read(peakColumn) : undefined;
       // After the grid, never before: counterDeltas subtracts NEIGHBOURING
       // buckets, so it has to run on the window's own even spacing. Applied
       // to the raw response -- which omits the buckets a host did not
@@ -621,7 +812,14 @@ function bandsFor(
       if (spec.stacked && values.every((v) => v === null)) continue;
       bands.push({
         name: prefix ? `${prefix} ${label}` : label,
-        color: SERIES_VARS[bands.length % SERIES_VARS.length],
+        // Indexed by BASE when the spec pins its colours, not by how many
+        // bands happen to have been pushed: a spec that names its hues is
+        // saying "in is green", and reading the running count instead would
+        // hand the second interface of a keyed spec the wrong end of the
+        // pair.
+        color:
+          spec.colors?.[baseIndex] ??
+          SERIES_VARS[bands.length % SERIES_VARS.length],
         values,
         ...(band && band.length > 0 ? { band } : {}),
       });

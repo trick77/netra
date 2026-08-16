@@ -128,6 +128,7 @@ describe("opening a graph from the tab", () => {
         range="1h"
         onRangeChange={() => {}}
         onBack={() => {}}
+        backLabel="Back to graphs"
       />,
     );
 
@@ -148,6 +149,7 @@ describe("opening a graph from the tab", () => {
         range="1h"
         onRangeChange={() => {}}
         onBack={() => {}}
+        backLabel="Back to graphs"
       />,
     );
     expect(screen.getByText(/No such chart/i)).toBeInTheDocument();
