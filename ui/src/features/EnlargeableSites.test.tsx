@@ -131,7 +131,7 @@ describe("the list sparklines enlarge", () => {
 
       render(
         <Containers
-          hostId={7}
+          host={{ id: 7, hostname: "ark" }}
           rows={[
             {
               container_key: "shop/api",

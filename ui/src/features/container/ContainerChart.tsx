@@ -10,6 +10,7 @@ import { Sparkline } from "../../ui/charts/Sparkline";
 import { bytes, percent } from "../../lib/format";
 import { rangeLabel, type Range } from "../../lib/range";
 import { containerTrends, fetchHostFamily } from "../fleet/hostTrends";
+import type { ContainerRow } from "./columns";
 
 export type ContainerMetric = "cpu" | "mem";
 
@@ -22,16 +23,14 @@ const SPEC: Record<
 };
 
 export interface ContainerChartProps {
-  /** number | string because a route param arrives as a string and the read
-   * API takes either -- see getMetrics. */
-  hostId: number | string;
-  /** The stable identity -- the key, never the display name. Two containers
-   * can share a name across hosts; only the key selects the right series out
-   * of the family=container response. */
-  containerKey: string;
-  /** What a reader calls it, for the accessible name alone. Twenty rows of
-   * "Enlarge CPU" name twenty different charts identically. */
-  containerName: string;
+  /**
+   * The row this cell is in. It carries everything the enlarged view needs to
+   * ask for its own data again: `host_id` because family=container is
+   * per-host, and `container_key` because that is the stable identity -- two
+   * containers can share a name across hosts, and only the key selects the
+   * right series out of the response.
+   */
+  row: ContainerRow;
   metric: ContainerMetric;
   values: (number | null)[];
   /** The list's shared ceiling, so the column can be read down. Passed on to
@@ -41,13 +40,11 @@ export interface ContainerChartProps {
   range: Range;
   /** The ranges the PAGE offers. The dialog must not ask for a window its
    * own page could not express. */
-  ranges: readonly Range[];
+  ranges?: readonly Range[];
 }
 
 export function ContainerChart({
-  hostId,
-  containerKey,
-  containerName,
+  row,
   metric,
   values,
   max,
@@ -55,14 +52,18 @@ export function ContainerChart({
   ranges,
 }: ContainerChartProps) {
   const spec = SPEC[metric];
+  // What a reader calls it, for the accessible name: twenty rows of
+  // "Enlarge CPU" name twenty different charts identically. The key is the
+  // fallback for the same reason the name cell falls back to it.
+  const name = row.name ?? row.container_key;
 
   // family=container carries every container on the host, so widening one
   // row's chart costs the host's containers once -- there is no per-container
   // read route to ask more narrowly. The series for THIS row is then picked
   // by key, the same way the list itself picks it.
   const fetchSeries = async (next: Range): Promise<DetailData> => {
-    const res = await fetchHostFamily(hostId, "container", next);
-    const trend = containerTrends(res).get(containerKey);
+    const res = await fetchHostFamily(row.host_id, "container", next);
+    const trend = containerTrends(res).get(row.container_key);
     return {
       // An empty band rather than none: the container existing in the list
       // and not in the widened window is a real answer ("it was not running
@@ -80,11 +81,11 @@ export function ContainerChart({
 
   return (
     <Enlargeable
-      title={`${spec.title} · ${containerName}`}
+      title={`${spec.title} · ${name}`}
       // The metric's own title, verbatim: lowercasing it turned CPU into
       // "cpu", which a screen reader may attempt as a word rather than
       // spelling out. Every metric-named chart in the app reads the same way.
-      label={`Enlarge ${spec.title} for ${containerName}`}
+      label={`Enlarge ${spec.title} for ${name}`}
       className="inline"
       series={[{ name: spec.title, color: spec.color, values }]}
       max={max}

@@ -477,8 +477,12 @@ export function HostPage({
       )}
       {tab === "containers" && (
         <Containers
-          hostId={hostId}
           rows={data.containers ?? []}
+          // The id AND the name: the rows link to
+          // /containers/{host_id}/{key}, and this component is the only
+          // party that has both. Without them the tab could not offer a
+          // link at all, which is exactly what it did for a long time.
+          host={{ id: host.id, hostname: host.hostname }}
           metrics={data.containerMetrics ?? null}
           range={range}
           // Why the list is empty, or why its rows are named after 64 hex

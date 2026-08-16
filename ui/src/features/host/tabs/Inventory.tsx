@@ -17,14 +17,18 @@ import { hostContainerNote } from "../../../lib/containers";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
-import { Table, type Column } from "../../../ui/Table";
+import { Table, type Column, type TableProps } from "../../../ui/Table";
 import { Meter } from "../../../ui/Meter";
-import { Sparkline } from "../../../ui/charts/Sparkline";
-import { rangeLabel, type Range } from "../../../lib/range";
-import { griddedValues } from "../../../lib/metrics";
-import { ContainerChart } from "../../container/ContainerChart";
-import { containerTrends } from "../../fleet/hostTrends";
+import { type Range } from "../../../lib/range";
 import { RANGE_VALUES } from "../ranges";
+import { griddedValues } from "../../../lib/metrics";
+import {
+  composeIdentity,
+  containerColumns,
+  lastReported,
+  trendScales,
+  type ContainerRow,
+} from "../../container/columns";
 
 export interface InventoryProps<T> {
   /** Names the list for assistive tech and for the empty state. */
@@ -44,6 +48,9 @@ export interface InventoryProps<T> {
    * "what stopped the rest being collected", and a list that is partly there
    * needs both. */
   notice?: ReactNode;
+  /** Splits the list into labelled groups. Handed straight to Table -- see
+   * its own note for why grouping has to live there rather than here. */
+  groupBy?: TableProps<T>["groupBy"];
 }
 
 export function Inventory<T>({
@@ -54,6 +61,7 @@ export function Inventory<T>({
   searchText,
   controls,
   notice,
+  groupBy,
 }: InventoryProps<T>) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -87,7 +95,15 @@ export function Inventory<T>({
           }
         />
       ) : (
-        <Table columns={columns} rows={visible} rowKey={rowKey} />
+        // Grouped over what SURVIVED the filter: the search narrows the list
+        // and the groups describe what is left, so a filter that empties a
+        // group removes the group rather than leaving an empty heading.
+        <Table
+          columns={columns}
+          rows={visible}
+          rowKey={rowKey}
+          groupBy={groupBy}
+        />
       )}
     </section>
   );
@@ -101,60 +117,59 @@ function When({ iso }: { iso: string | null }) {
 
 // --- Containers -----------------------------------------------------------
 
-/**
- * container_key is the compose identity, "project/service" -- the agent
- * refuses to send the Docker id for it (see
- * internal/agent/collector/containers_test.go), because that id changes on
- * every `compose up -d` and keying history on it would orphan every series
- * the container has. The list therefore shows project and service, and the
- * hub's surrogate row id appears nowhere.
- */
-export function composeIdentity(key: string): {
-  project: string;
-  service: string;
-} {
-  const slash = key.indexOf("/");
-  if (slash === -1) return { project: ABSENT, service: key };
-  return { project: key.slice(0, slash), service: key.slice(slash + 1) };
-}
+// The row shape, the column set and composeIdentity all live in
+// features/container/columns now, beside the detail page the rows link to.
+// This tab used to carry a second, independent CONTAINER_COLUMNS -- Project,
+// Service, Name, Image, Agent -- which had drifted away from the fleet's list
+// on every axis that matters and, worst, had no anchor in it: from a host's
+// own Containers tab the container detail page was unreachable.
+//
+// composeIdentity is re-exported because it is this module's published name
+// for the project/service split and is imported and tested as such.
+export { composeIdentity };
 
-const CONTAINER_COLUMNS: Column<Container>[] = [
-  {
-    key: "project",
-    header: "Project",
-    cell: (row) => composeIdentity(row.container_key).project,
+// Hoisted for the same reason FleetContainers hoists its own: Table
+// memoises the partition on the groupBy identity, so a stable object is what
+// lets that memo ever hold.
+//
+// By compose project: on one host, what belongs together is a stack. A
+// container whose key has no slash has no project -- the agent could not read
+// the Docker socket -- and "" puts it in Table's trailing unnamed group
+// rather than in among the named stacks.
+const BY_PROJECT = {
+  key: (row: ContainerRow) => {
+    const { project } = composeIdentity(row.container_key);
+    return project === ABSENT ? "" : project;
   },
-  {
-    key: "service",
-    header: "Service",
-    cell: (row) => composeIdentity(row.container_key).service,
-  },
-  { key: "name", header: "Name", cell: (row) => row.name ?? ABSENT },
-  { key: "image", header: "Image", cell: (row) => row.image ?? ABSENT },
-  {
-    key: "agent",
-    header: "Agent",
-    cell: (row) => (row.is_agent ? <Badge severity="ok">agent</Badge> : ""),
-  },
-];
-
-type ContainerWithTrend = Container & {
-  cpu?: (number | null)[];
-  mem?: (number | null)[];
-  memLimit?: number | null;
+  label: (key: string, group: readonly ContainerRow[]) => (
+    <>
+      <span>{key === "" ? "No compose project" : key}</span>
+      <span className="groupcount">
+        {" · "}
+        {group.length} container{group.length === 1 ? "" : "s"}
+      </span>
+    </>
+  ),
 };
 
 export function Containers({
-  hostId,
   rows,
+  host,
   metrics = null,
   range = "24h",
   capabilities,
 }: {
-  /** Whose containers these are. The trend cells enlarge into a chart that
-   * refetches at another range, and family=container is per-host. */
-  hostId: number | string;
   rows: readonly Container[];
+  /**
+   * The host these containers belong to.
+   *
+   * Not decoration: the link to `/containers/{host_id}/{key}` is built from
+   * the id, so a tab handed only `Container[]` -- which is what this was --
+   * structurally could not offer one. The route knows the id and HostPage
+   * knows the name, so both come down from there rather than being
+   * re-derived here.
+   */
+  host: { id: number; hostname: string };
   /** A family=container response for this host. */
   metrics?: MetricsResponse | null;
   range?: Range;
@@ -166,67 +181,39 @@ export function Containers({
 }) {
   // The same trends the fleet's container list shows, for the same reason: a
   // list of containers with no time in it says what is there and nothing
-  // about what any of it is doing. Read through the fleet's own function
-  // rather than reimplemented beside it, so the two lists and the enlarged
-  // view opened from either cannot disagree about which columns these are.
-  const byKey = containerTrends(metrics);
+  // about what any of it is doing.
+  const byKey = new Map(
+    (metrics?.series ?? []).map((series, index) => [
+      series.key.container,
+      {
+        cpu: griddedValues(metrics, index, "cpu_pct"),
+        mem: griddedValues(metrics, index, "mem_used"),
+        // mem_limit_bytes, matching ContainerRow. The two lists used to call
+        // one quantity by two names, which is how they drifted.
+        mem_limit_bytes: lastReported(
+          griddedValues(metrics, index, "mem_limit"),
+        ),
+      },
+    ]),
+  );
 
-  const charted: ContainerWithTrend[] = rows.map((row) => ({
+  const charted: ContainerRow[] = rows.map((row) => ({
     ...row,
+    host_id: host.id,
+    hostname: host.hostname,
     ...byKey.get(row.container_key),
   }));
 
-  // Shared ceilings across the list, so the column can be read down rather
-  // than each row filling its own box regardless of magnitude.
-  let cpuMax = 0;
-  let memMax = 0;
-  for (const row of charted) {
-    for (const v of row.cpu ?? []) if (v !== null && v > cpuMax) cpuMax = v;
-    for (const v of row.mem ?? []) if (v !== null && v > memMax) memMax = v;
-  }
-
-  const columns: Column<ContainerWithTrend>[] = [...CONTAINER_COLUMNS];
-  if (metrics !== null) {
-    columns.push({
-      key: "cpu",
-      header: "CPU",
-      cell: (row) =>
-        !row.cpu?.length ? (
-          ABSENT
-        ) : (
-          <ContainerChart
-            hostId={hostId}
-            containerKey={row.container_key}
-            containerName={row.name ?? row.container_key}
-            metric="cpu"
-            values={row.cpu}
-            max={cpuMax || 1}
-            range={range}
-            ranges={RANGE_VALUES}
-          />
-        ),
-    });
-    columns.push({
-      key: "memory",
-      header: "Memory",
-      cell: (row) =>
-        !row.mem?.length ? (
-          ABSENT
-        ) : (
-          <ContainerChart
-            hostId={hostId}
-            containerKey={row.container_key}
-            containerName={row.name ?? row.container_key}
-            metric="mem"
-            values={row.mem}
-            // Its own limit when it has one; the list's largest otherwise.
-            max={row.memLimit ?? memMax ?? 1}
-            range={range}
-            ranges={RANGE_VALUES}
-          />
-        ),
-    });
-  }
+  // trendScales, not a second copy of the same loop: shared ceilings across
+  // the list are what make a column readable downwards, and there is one
+  // definition of them.
+  const columns = containerColumns({
+    range,
+    // This page's own windows, so a chart enlarged out of a row cannot ask
+    // for one the toolbar above it could not express.
+    ranges: RANGE_VALUES,
+    ...(metrics === null ? {} : trendScales(charted)),
+  });
 
   const note = hostContainerNote(capabilities);
 
@@ -235,11 +222,14 @@ export function Containers({
       label="Containers"
       columns={columns}
       rows={charted}
-      rowKey={(row) => row.container_key}
+      // The same pair the fleet list keys on, so "what a container row is"
+      // has one answer.
+      rowKey={(row) => `${row.host_id}:${row.container_key}`}
       searchText={(row) =>
         [row.container_key, row.name, row.image].filter(Boolean).join(" ")
       }
       notice={note === null ? undefined : <p className="note">{note}</p>}
+      groupBy={BY_PROJECT}
     />
   );
 }
