@@ -513,18 +513,17 @@ deploy/agent/compose.yaml.example and .env.example from your provisioning system
 
 Everything read-only is enabled automatically - the Docker socket, the mount
 table, the package database, the D-Bus socket and SYS_RAWIO for SATA SMART.
-SYS_ADMIN is the only privilege this asks about. `pid: host` is never prompted
-for - pass --pid-host if you want per-process metrics. Host CPU, memory and load
-are always collected and are not optional.
+SYS_ADMIN is the only privilege this asks about. `pid: host` is always granted:
+without it the agent reports no per-container network and no process count, and
+a monitoring agent that cannot see the host's process namespace has a hole in
+it. Host CPU, memory and load are always collected and are not optional.
 
 Options:
       --sys-admin          Grant SYS_ADMIN without prompting (NVMe SMART health
                            and wear). A no-op with a note if there is no NVMe.
-      --pid-host           Enable `pid: host`, for per-process CPU and memory
-                           metrics. This lets the agent read every process's
-                           cmdline and environ, so it is off unless asked for.
-                           Host CPU, memory and load need nothing: they are
-                           always collected.
+      --pid-host           Accepted and ignored. `pid: host` is now always
+                           rendered; the flag stays parsed so existing
+                           provisioning does not fail on an unknown option.
       --unsupported-os     Continue on a distro netra does not recognise,
                            without prompting. The version floors are only where
                            cgroup v2 became the default and the real checks are
@@ -576,7 +575,6 @@ parse_args() {
     # Privilege is granted by name. Each of these removes a prompt from the
     # sequence in the header; see the note there about answers files.
     GRANT_SYS_ADMIN=0
-    GRANT_PID_HOST=0
     # Not privilege, but the same shape: a prompt that defaults n, which an
     # operator who means it takes by name.
     GRANT_UNSUPPORTED_OS=0
@@ -611,7 +609,9 @@ parse_args() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
         --sys-admin) GRANT_SYS_ADMIN=1 ;;
-        --pid-host) GRANT_PID_HOST=1 ;;
+        # Accepted and ignored: `pid: host` is unconditional now. Kept so
+        # existing provisioning does not fail on an unknown option.
+        --pid-host) ;;
         --unsupported-os) GRANT_UNSUPPORTED_OS=1 ;;
         --assume-physical) ASSUME_PHYSICAL=1 ;;
         --force) FORCE=1 ;;
@@ -2256,14 +2256,8 @@ $_bc_body"
     export NETRA_BLK_CAP_ADD
 }
 
-build_pid_block() {
-    NETRA_BLK_PID=""
-    if [ "${PID_HOST:-0}" = 1 ]; then
-        NETRA_BLK_PID="    pid: host
-"
-    fi
-    export NETRA_BLK_PID
-}
+# No build_pid_block: `pid: host` is a literal line in compose.yaml.tmpl rather
+# than a rendered block, because it is unconditional.
 
 build_blocks() {
     build_volume_block
@@ -2272,7 +2266,6 @@ build_blocks() {
     build_fs_mounts_value
     build_device_block
     build_cap_block
-    build_pid_block
 }
 
 # netra_write_compose / netra_write_env — the redirection lives in a function so
@@ -2507,29 +2500,24 @@ plan_extras() {
         info "  logged-in users: $P_UTMP not present (no session count)"
     fi
 
-    # NOT PROMPTED, and this is the last prompt to go. Two reasons, either of
-    # which would be enough.
+    # NOT PROMPTED, AND NOT OPTIONAL. It used to be opt-in behind --pid-host, on
+    # the reasoning that the only thing it bought was a per-process breakdown no
+    # collector had written yet. That premise expired: the namespace is also what
+    # resolves each container's interfaces, so declining it silently zeroed
+    # net_rx and net_tx for EVERY container on the box -- and nothing in the
+    # script or the docs said so. An operator declining it for the stated privacy
+    # reason had no way to learn what else they had just switched off.
     #
-    # The question read as "Enable per-process CPU and memory metrics?", which
-    # invites the operator to think CPU and memory monitoring is optional. It is
-    # not: host CPU, memory and load come from /proc/stat, /proc/meminfo and
-    # /proc/loadavg, they are the core of what netra is for, and they are never
-    # asked about because a run that declined them would not be netra. Only the
-    # per-PROCESS breakdown needs this namespace.
-    #
-    # And that breakdown is a collector that does not exist yet. Asking an
-    # operator to weigh a real privacy cost against a metric nothing collects is
-    # asking them to guess. --pid-host turns it on for those who know they want
-    # it; everyone else gets an agent that is complete for what it can measure.
-    PID_HOST=0
-    if [ "${GRANT_PID_HOST:-0}" = 1 ]; then
-        PID_HOST=1
-        info "  processes:       pid: host enabled by --pid-host"
-        info "                   the agent can read every process's cmdline and environ"
-    else
-        info "  processes:       host CPU, memory and load are always collected;"
-        info "                   per-process breakdown needs --pid-host"
-    fi
+    # Stated rather than asked, because the exposure is real and the operator
+    # should read it even though there is no question attached: sharing the host
+    # PID namespace makes every process's /proc entry readable to this container,
+    # cmdline and environ included. netra reads NEITHER -- process names come
+    # from /proc/PID/comm, and internal/agent/collector/argv_guard_test.go fails
+    # the build if either name appears in a Go string literal.
+    info "  processes:       pid: host (always) -- per-container network and"
+    info "                   the process table both need the host PID namespace"
+    info "                   the namespace exposes every process's cmdline and"
+    info "                   environ to the container; netra reads neither"
 }
 
 # resolve_token — the prompt, with echo off. --token and --token-file are
@@ -2889,7 +2877,6 @@ EOF
         info "  smart devices:   none"
     fi
     info "  capabilities:    $(_plan_caps)"
-    info "  pid namespace:   $(if [ "$PID_HOST" = 1 ]; then printf 'host (per-process metrics)'; else printf 'container (default)'; fi)"
     info "  package mount:   ${PKG_MOUNT:-none}"
     info "  d-bus socket:    $(if [ "$DBUS_ENABLED" = 1 ]; then printf 'yes'; else printf 'no'; fi)"
     info "  hub url:         ${HUB_URL:-(not set)}"
@@ -2953,7 +2940,6 @@ write_outputs() {
     _env_value LOCATION "$LOCATION"
     _env_value PROVIDER "$PROVIDER"
     _env_value HOST_TYPE "$HOST_TYPE"
-    _env_value PID_HOST "${PID_HOST:-0}"
     _env_value FS_MOUNTS "${NETRA_BLK_FS_MOUNTS:-}"
 
     # The gate. One question covering everything below it, so "no" means the
@@ -3059,6 +3045,13 @@ EOF
         # make the operator re-supply a token to correct a label.
         sync_fs_mounts "$OUTPUT_DIR/.env"
 
+        # The second exception, on the same argument and a sharper edge: the
+        # compose this run just wrote always carries `pid: host`, so an .env
+        # still saying NETRA_PID_HOST=0 describes a container that no longer
+        # exists -- and the agent believes it, refusing to read counters it
+        # could read perfectly well.
+        sync_pid_host "$OUTPUT_DIR/.env"
+
         # The ONE case where leaving .env alone leaves the agent broken, and
         # broken silently. NETRA_CGROUP_ROOT used to be documented as
         # /sys/fs/cgroup, so an operator who uncommented it then pins the agent
@@ -3141,6 +3134,65 @@ netra_rewrite_fs_mounts() {
     [ -s "$_rf_tmp" ] || return 1
     cat "$_rf_tmp" >"$1" || return 1
     rm -f "$_rf_tmp"
+}
+
+# netra_rewrite_pid_host FILE — replace (or append) the NETRA_PID_HOST line.
+netra_rewrite_pid_host() {
+    _rp_tmp="$SCRATCH_DIR/env.pid_host"
+    awk '
+        /^NETRA_PID_HOST=/ {
+            print "NETRA_PID_HOST=1"
+            seen = 1
+            next
+        }
+        { print }
+        END {
+            if (!seen) {
+                print ""
+                print "# This container runs with `pid: host`, stated by setup-agent.sh so the"
+                print "# collectors need not guess. Required for the process table and for"
+                print "# per-container network traffic."
+                print "NETRA_PID_HOST=1"
+            }
+        }
+    ' "$1" >"$_rp_tmp" || return 1
+    # Same order as netra_rewrite_fs_mounts, and for the same reason: `cat >`
+    # truncates first, so an awk that produced nothing would take the token with
+    # it.
+    [ -s "$_rp_tmp" ] || return 1
+    cat "$_rp_tmp" >"$1" || return 1
+    rm -f "$_rp_tmp"
+}
+
+# sync_pid_host FILE — bring NETRA_PID_HOST in an existing .env up to date.
+#
+# The second derived line that must not be left behind, and the one an upgrade
+# gets wrong most damagingly. compose.yaml is rewritten on every run and now
+# always carries `pid: host`; .env is not rewritten without --force. So a host
+# set up before this became unconditional keeps NETRA_PID_HOST=0 while actually
+# HAVING the namespace -- and the agent believes the .env over the kernel.
+#
+# That combination is worse than the bug it replaced: containers.go refuses to
+# read anything when it is told there is no host PID namespace, so those hosts
+# would report zero per-container traffic FOREVER, and the message they get
+# ("re-run setup-agent.sh") would be the very thing that just failed to fix it.
+#
+# Corrected without --force, like NETRA_FS_MOUNTS: the value is derived from
+# what this run rendered, not supplied by the operator, and demanding a token
+# be re-supplied to correct a line the script itself wrote would be absurd.
+sync_pid_host() {
+    [ -f "$1" ] || return 0
+    if [ -n "$(sed -n '/^NETRA_PID_HOST=1$/p' "$1")" ]; then
+        return 0
+    fi
+    if ! netra_exec netra_rewrite_pid_host "$1"; then
+        warn "could not update NETRA_PID_HOST in $1. Until it says 1, the agent reports no" \
+            "process table and no per-container network traffic, even though this run" \
+            "granted the namespace. Set NETRA_PID_HOST=1 by hand."
+        return 0
+    fi
+    record_change "updated NETRA_PID_HOST in $1"
+    info "  processes:       NETRA_PID_HOST corrected to 1 in the existing .env"
 }
 
 # sync_fs_mounts FILE — bring one derived line of an existing .env up to date.

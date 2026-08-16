@@ -127,7 +127,7 @@ func containerRow(t *testing.T, rows []*netrav1.ContainerSample, key string) *ne
 func TestContainersSubtractsPageCacheFromMemory(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", Project: "proj", Service: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", Project: "proj", Service: "web"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -149,7 +149,7 @@ func TestContainersSubtractsPageCacheFromMemory(t *testing.T) {
 func TestContainersComputesCPUFromUsageMicroseconds(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}), true)
 
 	res := containersAt(t, testee, base)
 	if len(res.Containers) != 0 {
@@ -185,7 +185,7 @@ func TestContainersIdentityIsComposeProjectAndService(t *testing.T) {
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{
 			ID: "abc123", Name: "proj-web-1", Image: "nginx:1", Project: "proj", Service: "web",
-		}))
+		}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -208,7 +208,7 @@ func TestContainersIdentityIsComposeProjectAndService(t *testing.T) {
 func TestContainersFallsBackToTheContainerName(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "standalone"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "standalone"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -223,7 +223,7 @@ func TestContainersFallsBackToTheContainerName(t *testing.T) {
 func TestContainersLeavesMemLimitUnsetWhenUnlimited(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "def456", Name: "unlimited"}))
+		fakeLister(collector.ContainerMeta{ID: "def456", Name: "unlimited"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -248,7 +248,7 @@ func TestContainersReportsMetricsWithoutTheDockerSocket(t *testing.T) {
 	failing := func(context.Context) ([]collector.ContainerMeta, error) {
 		return nil, errors.New("dial /var/run/docker.sock: no such file")
 	}
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing, true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -277,7 +277,7 @@ func TestContainersReportsNetworkFromTheContainerNamespace(t *testing.T) {
 	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	advanceNet(t, procRoot, "42", 3000, 1500)
@@ -303,7 +303,7 @@ func TestContainersSkipsNetworkForHostNetworkedContainers(t *testing.T) {
 	cgroupRoot, procRoot := netFixture(t, "42", hostNS, hostNS, 1000, 500)
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	advanceNet(t, procRoot, "42", 3000, 1500)
@@ -341,7 +341,7 @@ func TestContainersFailsClosedWhenTheHostNamespaceIsUnreadable(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	advanceNet(t, procRoot, "42", 3000, 1500)
@@ -359,6 +359,12 @@ func TestContainersFailsClosedWhenTheHostNamespaceIsUnreadable(t *testing.T) {
 // cgroup.procs names HOST pids. Without pid: host the agent resolves them in
 // its own namespace and finds nothing, which is a deployment fact rather than
 // an absence of traffic -- so it is reported as a capability.
+//
+// The collector is told so (pidHost=false) rather than deducing it: the errno
+// cannot separate "this PID is not in my namespace" from "this process exited
+// mid-scrape", and the two need different words. See TestContainers...
+// ReportsNoHostNSWhenThePidNamespaceIsPresent for the other half of the pair --
+// same fixture, same syscall failure, different answer.
 func TestContainersReportsNamespacedWhenPidsDoNotResolve(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
@@ -370,7 +376,7 @@ func TestContainersReportsNamespacedWhenPidsDoNotResolve(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), false)
 
 	containersAt(t, testee, base)
 	res := containersAt(t, testee, base.Add(10*time.Second))
@@ -381,6 +387,233 @@ func TestContainersReportsNamespacedWhenPidsDoNotResolve(t *testing.T) {
 	}
 	if got := testee.Capabilities()["container_network"]; got != "namespaced" {
 		t.Errorf("capability = %q, want namespaced", got)
+	}
+	// Only networking is missing; the rest of the row is fine.
+	if row.MemUsed == nil {
+		t.Error("mem_used unset; only the network read failed")
+	}
+}
+
+// The socket's own answer, and the whole reason it is preferred: this fixture
+// has NO namespace links at all, which is what a real host looks like to an
+// agent without CAP_SYS_PTRACE -- readlink on /proc/<pid>/ns/net is denied for
+// a non-dumpable target even when the uids match, and no-new-privileges makes
+// every target non-dumpable. The counters are still read, because
+// /proc/<pid>/net/dev never needed the capability.
+func TestContainersMeasuresABridgedContainerWithoutReadingNamespaces(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	// Both links gone: the guard this replaces cannot run at all now.
+	if err := os.Remove(filepath.Join(procRoot, "1", "ns", "net")); err != nil {
+		t.Fatalf("remove host ns link: %v", err)
+	}
+	if err := os.Remove(filepath.Join(procRoot, "42", "ns", "net")); err != nil {
+		t.Fatalf("remove container ns link: %v", err)
+	}
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", NetworkMode: "bridge"}), true)
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx == nil || row.NetTx == nil {
+		t.Fatal("net_rx/net_tx unset; the socket said bridge, so no namespace read was needed")
+	}
+	// (3000-1000)/10 and (1500-500)/10.
+	if got := row.GetNetRx(); got != 200 {
+		t.Errorf("net_rx = %v, want 200", got)
+	}
+	if got := row.GetNetTx(); got != 100 {
+		t.Errorf("net_tx = %v, want 100", got)
+	}
+	if got := testee.Capabilities()["container_network"]; got != "" {
+		t.Errorf("capability = %q, want none -- nothing failed", got)
+	}
+}
+
+// A cgroup scope the socket never listed must not speak for the whole host.
+//
+// It happens routinely: a container that stops between the list and the walk,
+// or a scope Docker does not own at all -- podman, a bare systemd scope. If
+// such a scope fell through to the namespace comparison it would fail on a
+// stock install (no CAP_SYS_PTRACE), and because container_network is
+// host-wide that one scope would blank the Network panel for every container
+// that measured perfectly well.
+func TestContainersIgnoresAScopeTheSocketDidNotList(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	// The namespace links are gone, as they effectively are without ptrace
+	// access -- so the fallback path CANNOT quietly succeed and mask this.
+	if err := os.Remove(filepath.Join(procRoot, "1", "ns", "net")); err != nil {
+		t.Fatalf("remove host ns link: %v", err)
+	}
+	if err := os.Remove(filepath.Join(procRoot, "42", "ns", "net")); err != nil {
+		t.Fatalf("remove container ns link: %v", err)
+	}
+
+	// The socket answers, and names a DIFFERENT container than the one the
+	// walk finds.
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{
+			ID: "0000ffff", Name: "somebody-else", NetworkMode: "bridge",
+		}), true)
+
+	containersAt(t, testee, base)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	if got := testee.Capabilities()["container_network"]; got != "" {
+		t.Errorf("capability = %q, want none -- an unlisted scope is not a fact about the host", got)
+	}
+	_ = res
+}
+
+// Without the host PID namespace the socket path must refuse to read at all.
+//
+// The danger is not that the read fails -- it is that it SUCCEEDS. cgroup.procs
+// names host PIDs, and host pid 42 may well exist in the agent's own namespace
+// as an unrelated process whose net/dev is the agent's own interface. That
+// would be a plausible number attributed to the wrong container, which is worse
+// than reporting none.
+func TestContainersRefusesToReadHostPidsWithoutThePidNamespace(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	// The fixture HAS a readable /proc/42/net/dev, standing in for the
+	// coincidental collision. A correct agent still must not report it.
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{
+			ID: "abc123", Name: "web", NetworkMode: "bridge",
+		}), false) // NETRA_PID_HOST=0
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil || row.NetTx != nil {
+		t.Error("counters reported for a host PID resolved in the agent's own namespace")
+	}
+	if got := testee.Capabilities()["container_network"]; got != "namespaced" {
+		t.Errorf("capability = %q, want namespaced -- and it names a remedy", got)
+	}
+}
+
+// network_mode: host, on the socket's word. Its net/dev IS the host's file, and
+// the Network collector already reports those bytes once.
+func TestContainersSkipsAHostNetworkedContainerOnTheSocketsWord(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	// The namespaces DIFFER here, so a fixture-driven comparison would have
+	// called this bridged. The socket's answer overrides it.
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", NetworkMode: "host"}), true)
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil || row.NetTx != nil {
+		t.Error("a host-networked container reported traffic; those bytes are the machine's")
+	}
+	if got := testee.Capabilities()["container_network"]; got != "" {
+		t.Errorf("capability = %q, want none -- this is a deliberate skip, not a failure", got)
+	}
+}
+
+// A sidecar joining a peer's namespace. The peer reports the same counters
+// under its own key, so measuring both would double every byte.
+func TestContainersSkipsAContainerSharingAPeersNamespace(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{
+			ID: "abc123", Name: "web", NetworkMode: "container:deadbeef",
+		}), true)
+
+	containersAt(t, testee, base)
+	advanceNet(t, procRoot, "42", 3000, 1500)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil || row.NetTx != nil {
+		t.Error("a sidecar reported its peer's traffic; the peer already reports it")
+	}
+}
+
+// The other half of the pair above: the container's OWN namespace link is
+// unreadable on a host that does have the PID namespace. That is the ptrace
+// access check -- readlink on /proc/<pid>/ns/net needs PTRACE_MODE_READ_FSCRED,
+// which a root agent passes only for a dumpable, root-owned process -- and it
+// earns different words, because "re-run setup-agent.sh" would not fix it.
+//
+// This is the test that pins the whole reason NETRA_PID_HOST is passed in:
+// nothing in the fixture distinguishes the two runs, only what the operator
+// said about the container they deployed.
+func TestContainersReportsNoHostNSWhenThePidNamespaceIsPresent(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	// Denied rather than absent: /proc/42 is still there, only the namespace
+	// link cannot be resolved. Removing it is how a fixture spells EACCES.
+	if err := os.Remove(filepath.Join(procRoot, "42", "ns", "net")); err != nil {
+		t.Fatalf("remove container ns link: %v", err)
+	}
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
+
+	containersAt(t, testee, base)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil {
+		t.Error("net_rx set with no readable namespace to classify it by")
+	}
+	if got := testee.Capabilities()["container_network"]; got != "no-host-netns" {
+		t.Errorf("capability = %q, want no-host-netns -- with pid: host granted, the remaining cause is ptrace access", got)
+	}
+}
+
+// A process that exits between the read of cgroup.procs and the read of its
+// net/dev is ROUTINE, not a misconfiguration -- and it gets commoner the
+// shorter-lived the container.
+//
+// It must not set a capability. container_network is host-wide and
+// ContainerPage swaps the entire Network panel for its message, so one
+// container exiting mid-scrape would hide correctly measured traffic for every
+// other container on the box until the next post. Reaching net/dev at all
+// means the namespace link resolved a moment earlier, so /proc DID have this
+// PID: nothing here is denied, the process is simply gone.
+func TestContainersReportsNoCapabilityForAProcessThatExitedMidScrape(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	// The namespace link stays: the PID was there to classify, and only its
+	// counters have gone.
+	if err := os.Remove(filepath.Join(procRoot, "42", "net", "dev")); err != nil {
+		t.Fatalf("remove net/dev: %v", err)
+	}
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
+
+	containersAt(t, testee, base)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil {
+		t.Error("net_rx set with no readable net/dev")
+	}
+	if got := testee.Capabilities()["container_network"]; got != "" {
+		t.Errorf("capability = %q, want none -- a vanished process is not a misconfiguration", got)
 	}
 	// Only networking is missing; the rest of the row is fine.
 	if row.MemUsed == nil {
@@ -404,7 +637,7 @@ func TestContainersReportsZeroForAContainerWithNoInterfaces(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	res := containersAt(t, testee, base.Add(10*time.Second))
@@ -426,7 +659,7 @@ func TestContainersLeavesNetworkUnsetWithoutARunningProcess(t *testing.T) {
 	cgroupRoot, procRoot := netFixture(t, "", "net:[4026531992]", "", 0, 0)
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	res := containersAt(t, testee, base.Add(10*time.Second))
@@ -440,7 +673,7 @@ func TestContainersLeavesNetworkUnsetWithoutARunningProcess(t *testing.T) {
 // A host with no containers is the common case for a plain VPS. Absent, not
 // broken.
 func TestContainersReportsNothingWithNoContainers(t *testing.T) {
-	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister())
+	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister(), true)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -465,7 +698,7 @@ func TestContainersReportsNoCgroupScopesWhenTheSocketDisagrees(t *testing.T) {
 		fakeLister(
 			collector.ContainerMeta{ID: "abc123", Name: "web"},
 			collector.ContainerMeta{ID: "def456", Name: "db"},
-		))
+		), true)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -487,7 +720,7 @@ func TestContainersReportsNoCgroupScopesWhenTheSocketDisagrees(t *testing.T) {
 // rather than on an empty walk: a host genuinely running no containers is not
 // misconfigured and must not be flagged as such.
 func TestContainersRaisesNoCapabilityWhenThereIsGenuinelyNothingToSee(t *testing.T) {
-	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister())
+	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister(), true)
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -506,7 +739,7 @@ func TestContainersRaisesNoCapabilityWhenThereIsGenuinelyNothingToSee(t *testing
 // logged collector failure.
 func TestContainersFailsLoudlyWhenTheCgroupRootIsAbsent(t *testing.T) {
 	testee := collector.NewContainers(filepath.Join(t.TempDir(), "never-mounted"),
-		noProcRoot, fakeLister())
+		noProcRoot, fakeLister(), true)
 
 	res, err := testee.Collect(context.Background())
 	if err == nil {
@@ -543,7 +776,7 @@ func TestContainersReadsTheCgroupfsDriverBareHexDirectory(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(build(1000000), noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: id, Name: "cgroupfs-driver"}))
+		fakeLister(collector.ContainerMeta{ID: id, Name: "cgroupfs-driver"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest(build(6000000))
@@ -577,7 +810,7 @@ func TestContainersIgnoresDirectoriesThatAreNotContainerScopes(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(root, noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -594,7 +827,7 @@ func TestContainersStartupSummaryNamesWhatItSaw(t *testing.T) {
 	failing := func(context.Context) ([]collector.ContainerMeta, error) {
 		return nil, errors.New("dial /var/run/docker.sock: no such file")
 	}
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing, true)
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)

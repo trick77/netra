@@ -164,6 +164,47 @@ assert_eq 0 "$RUN_RC" "a re-run against a stale NETRA_FS_MOUNTS succeeds"
 assert_not_contains "$(cat "$OUT/.env")" "root=/wrong" "the stale mapping is replaced"
 assert_eq 1 "$(grep -c '^NETRA_FS_MOUNTS=' "$OUT/.env")" \
     "there is exactly one NETRA_FS_MOUNTS line, not one per run"
+
+# --- 3c. a re-run repairs NETRA_PID_HOST without --force ----------------------
+#
+# THE upgrade path, and the one that fails worst if left alone. A host set up
+# before `pid: host` became unconditional has NETRA_PID_HOST=0 in .env. This run
+# rewrites compose.yaml -- which now always grants the namespace -- but would
+# leave .env saying it does not have it.
+#
+# The agent believes .env over the kernel: told there is no host PID namespace,
+# containers.go refuses to resolve the host pids in cgroup.procs at all, because
+# any that DO resolve resolve to the wrong process. So the host would report zero
+# per-container traffic forever, and the message it shows says to re-run this
+# script -- the thing that just failed to fix it.
+sed 's|^NETRA_PID_HOST=.*|NETRA_PID_HOST=0|' "$OUT/.env" >"$TMP/env.oldpid"
+cp "$TMP/env.oldpid" "$OUT/.env"
+assert_contains "$(cat "$OUT/.env")" "NETRA_PID_HOST=0" "the fixture is an .env from before the change"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
+    --template-dir "$TEMPLATES" --output-dir "$OUT"
+assert_eq 0 "$RUN_RC" "a re-run against an .env from before pid: host succeeds"
+PIDREPAIRED=$(cat "$OUT/.env")
+assert_contains "$PIDREPAIRED" "NETRA_PID_HOST=1" \
+    "the re-run corrects NETRA_PID_HOST to match the compose it just wrote"
+assert_not_contains "$PIDREPAIRED" "NETRA_PID_HOST=0" "the stale value is replaced, not appended to"
+assert_eq 1 "$(grep -c '^NETRA_PID_HOST=' "$OUT/.env")" \
+    "there is exactly one NETRA_PID_HOST line, not one per run"
+assert_contains "$PIDREPAIRED" "nta_first" "and the existing token survives this repair too"
+assert_contains "$RUN_OUT" "NETRA_PID_HOST corrected" \
+    "the change is stated rather than made silently"
+
+# An .env that has no NETRA_PID_HOST line at all -- older still -- gains one.
+grep -v '^NETRA_PID_HOST=' "$OUT/.env" >"$TMP/env.nopid"
+cp "$TMP/env.nopid" "$OUT/.env"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
+    --template-dir "$TEMPLATES" --output-dir "$OUT"
+assert_eq 0 "$RUN_RC" "a re-run against an .env with no NETRA_PID_HOST succeeds"
+assert_contains "$(cat "$OUT/.env")" "NETRA_PID_HOST=1" "the missing line is added"
+
 cp "$OUT/.env" "$TMP/env.first"
 
 # --- 4. --force overwrites .env ------------------------------------------------
@@ -742,7 +783,7 @@ assert_contains "$COMPOSE_BODY" "docker.sock" "the Docker socket is still mounte
 # --- 12. the defaults produce a complete agent, and grant no privilege --------
 #
 # Taking every prompt's default must never expand privilege — SYS_ADMIN defaults
-# n and stays off, and pid: host is not a prompt at all — while still producing an agent that
+# n and stays off — while still producing an agent that
 # collects everything it can without them. That second half is now carried by
 # the read-only mounts, which are NOT prompts at all: the package database, the
 # D-Bus socket and SYS_RAWIO are enabled automatically, on the same argument
@@ -758,19 +799,21 @@ assert_file_present "$TMP/out-yesdef/compose.yaml" "compose.yaml is written"
 assert_file_present "$TMP/out-yesdef/.env" ".env is written"
 YESBODY=$(grep -v '^[[:space:]]*#' "$TMP/out-yesdef/compose.yaml")
 assert_not_contains "$YESBODY" "SYS_ADMIN" "the default never grants SYS_ADMIN"
-assert_not_contains "$YESBODY" "pid: host" "the default never enables pid: host"
 assert_not_contains "$YESBODY" "/dev/nvme0" \
     "a declined SYS_ADMIN also drops the NVMe controller from devices:"
 assert_contains "$RUN_OUT" "--sys-admin" "the run says which flag would grant SYS_ADMIN"
-assert_contains "$RUN_OUT" "--pid-host" "the run says which flag would enable pid: host"
-# The core of the product is never a question. A prompt that reads "Enable
-# per-process CPU and memory metrics?" invites the operator to think host CPU
-# and memory are optional; they are collected always, and the only thing that
-# needs the namespace is the per-process breakdown.
+# pid: host is the counter-example: not a prompt, not a flag, and not withheld
+# by taking the defaults. A run that granted no privilege at all still gets the
+# namespace, because without it the agent reports no per-container network and
+# no process count.
+assert_contains "$YESBODY" "pid: host" \
+    "the defaults still render pid: host -- it is unconditional"
 assert_not_contains "$RUN_OUT" "Enable per-process" \
     "pid: host is not prompted for at all"
-assert_contains "$RUN_OUT" "always collected" \
-    "and the run says host CPU, memory and load are not optional"
+assert_contains "$RUN_OUT" "pid: host (always)" \
+    "and the run states it rather than offering it"
+assert_contains "$RUN_OUT" "cmdline" \
+    "the run states the exposure even though there is no question attached"
 assert_contains "$RUN_OUT" "Skipped or degraded" "the declines reach the finish report"
 # The benign half, and the proof that it is no longer asked about: ANS_DEFAULT
 # has exactly three lines (SYS_ADMIN, drivetemp, write gate), so a resurrected
@@ -784,7 +827,7 @@ assert_contains "$YESBODY" "docker.sock" "the Docker socket is mounted"
 assert_contains "$YESBODY" "/netra/fs/root" "the marker mount is rendered"
 assert_is_file "$ROOT/.netra" "the marker files are created"
 
-# --- 13. --sys-admin and --pid-host grant explicitly, without prompting --------
+# --- 13. --sys-admin grants explicitly, without prompting ---------------------
 #
 # The answers files hold exactly the prompts the flag does NOT remove, so a
 # --sys-admin that still asked would run one line short and die with "answers
@@ -799,17 +842,22 @@ assert_eq 0 "$RUN_RC" "--sys-admin succeeds while consuming no answer of its own
 SABODY=$(grep -v '^[[:space:]]*#' "$TMP/out-sysadmin/compose.yaml")
 assert_contains "$SABODY" "SYS_ADMIN" "--sys-admin grants SYS_ADMIN"
 assert_contains "$SABODY" "/dev/nvme0" "--sys-admin also brings the NVMe controller back"
-assert_not_contains "$SABODY" "pid: host" "--sys-admin does not also enable pid: host"
 
+# --- 14. --pid-host is accepted and changes nothing ---------------------------
+#
+# The flag is retained purely so provisioning that already passes it does not
+# start dying on an unknown option. It must parse, consume no answer, and
+# produce a render identical to the one without it -- in particular it must not
+# drag SYS_ADMIN along, which is the failure this pairing has always guarded.
 ROOT=$(mkroot grantpidhost)
 ANS=$(answers pidhost n y y)
 run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
     NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --pid-host \
     --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-pidhost"
-assert_eq 0 "$RUN_RC" "--pid-host succeeds while consuming no answer of its own"
+assert_eq 0 "$RUN_RC" "--pid-host is still accepted, and consumes no answer of its own"
 PHBODY=$(grep -v '^[[:space:]]*#' "$TMP/out-pidhost/compose.yaml")
-assert_contains "$PHBODY" "pid: host" "--pid-host enables the host PID namespace"
+assert_contains "$PHBODY" "pid: host" "the namespace is rendered, as it would be without the flag"
 assert_not_contains "$PHBODY" "SYS_ADMIN" "--pid-host does not also grant SYS_ADMIN"
 
 # --- 15. --unsupported-os suppresses the prompt without silencing the warning --

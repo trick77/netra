@@ -186,8 +186,10 @@ into `./netra-agent`. It installs no software; Docker pulls the agent image when
 the stack starts.
 
 Everything read-only is enabled automatically. `SYS_ADMIN` (NVMe SMART health
-and wear) is the only privilege it prompts for, and `pid: host` is never
-prompted for at all — pass `--pid-host` if you want per-process metrics.
+and wear) is the only privilege it prompts for. `pid: host` is always granted:
+without it the agent reports no process table and no per-container network, and
+the run states the exposure rather than offering it — see *What each collector
+needs* below.
 
 The script is **interactive by design**: it reads `/dev/tty` and fails
 immediately without one. There is no unattended mode; see *Fleets* below.
@@ -202,13 +204,14 @@ curl -fsSL https://raw.githubusercontent.com/trick77/netra/master/setup-agent.sh
   --start
 ```
 
-Other flags worth knowing: `--sys-admin`, `--pid-host`, `--output-dir`,
-`--force` (required to overwrite an existing `.env`), `--template-dir` (no
-network at all), `--ref`. `sh setup-agent.sh --help` lists them all.
+Other flags worth knowing: `--sys-admin`, `--output-dir`, `--force` (required to
+overwrite an existing `.env`), `--template-dir` (no network at all), `--ref`.
+`sh setup-agent.sh --help` lists them all. `--pid-host` is still accepted and
+does nothing, so existing provisioning does not fail on an unknown option.
 
 Even with every value passed as a flag the run still needs a terminal: the
-grants are confirmed interactively unless `--sys-admin` / `--pid-host` /
-`--unsupported-os` take them by name.
+grants are confirmed interactively unless `--sys-admin` / `--unsupported-os`
+take them by name.
 
 ### By hand
 
@@ -256,8 +259,9 @@ answers, no compatibility promise — and is not a provisioning interface.)
 | --- | --- |
 | Nothing but `/proc` and `/sys` | CPU, per-core CPU, memory, load, kernelstat, vmstat, limits, netstat, procs, users, disk I/O, sensors, mdraid |
 | `network_mode: host` | network, addresses |
-| A mount | containers (the host's cgroup v2 hierarchy, plus the Docker socket for names), filesystems (marker dirs), systemd (D-Bus socket), packages (dpkg or apk db) |
-| An explicit privilege | SMART (`SYS_RAWIO`, plus `SYS_ADMIN` for NVMe, plus `devices:`), processes (`pid: host`) |
+| A mount | containers (the host's cgroup v2 hierarchy, plus the Docker socket for names **and** for per-container `net_rx`/`net_tx`), filesystems (marker dirs), systemd (D-Bus socket), packages (dpkg or apk db) |
+| `pid: host` | processes, procs, and per-container `net_rx`/`net_tx` |
+| An explicit privilege | SMART (`SYS_RAWIO`, plus `SYS_ADMIN` for NVMe, plus `devices:`) |
 
 A collector that cannot run reports **why** as a capability and is skipped. It
 never prevents the agent from starting, and an unavailable metric is left NULL
@@ -272,10 +276,38 @@ socket only names them: without it containers still report in full, keyed by raw
 `NETRA_CGROUP_ROOT` at the agent's own `/sys/fs/cgroup`; Docker's default cgroup
 namespace is private, so that tree holds no other container's scope.
 
-Two long-standing exceptions worth stating up front: the process count needs
-`pid: host` (and `NETRA_PID_HOST=1` to match), and the logged-in session count
-needs the `/var/run/utmp` bind — which yields nothing on Alpine and other
-busybox systems that ship no utmp writer.
+`pid: host` is rendered unconditionally by both deploy paths, because three
+things need it and only one of them is obvious. The process count and the
+per-process breakdown are the obvious two. The third is per-container
+networking: rx/tx counters live in each container's own network namespace,
+reached through the host PID its `cgroup.procs` names, and an agent confined to
+its own PID namespace cannot resolve that PID — so every container on the host
+reports no traffic. It was opt-in until it became clear that declining it
+silently switched off a metric nothing mentioned.
+
+The namespace alone is not enough to tell a `network_mode: host` container from
+a bridged one, and that distinction matters because a host-networked container's
+`/proc/<pid>/net/dev` *is* the host's file — counting it would attribute the
+whole machine's traffic to one container. netra reads
+`HostConfig.NetworkMode` from the Docker socket to answer it, which is why the
+socket now earns per-container networking as well as names. The alternative,
+comparing `/proc/<pid>/ns/net` against PID 1's, needs `CAP_SYS_PTRACE`: that
+readlink goes through `ptrace_may_access`, which requires the capability for a
+non-dumpable target *even when the uids match*, and `no-new-privileges` makes
+every target non-dumpable. The counters themselves never needed it —
+`/proc/<pid>/net/dev` is world-readable — so netra does not ask for a capability
+to answer a question the socket already answers. A host that declines the socket
+falls back to the namespace comparison and reports a capability if it is denied,
+rather than silently reporting nothing.
+
+The namespace makes every process's `/proc` entry readable to the container,
+`cmdline` and `environ` included. netra reads neither — process names come from
+`/proc/PID/comm`, and `internal/agent/collector/argv_guard_test.go` fails the
+build if either name appears in a Go string literal.
+
+One long-standing exception remains: the logged-in session count needs the
+`/var/run/utmp` bind — which yields nothing on Alpine and other busybox systems
+that ship no utmp writer.
 
 ---
 

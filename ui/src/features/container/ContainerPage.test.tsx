@@ -271,13 +271,34 @@ describe("ContainerPage", () => {
     renderPage();
 
     expect(screen.queryByText("no limit")).toBeNull();
-    expect(document.querySelector(".meter")).not.toBeNull();
-    // Scoped to the meter's own row: the Memory panel's header names the same
-    // limit now, so an unscoped query matches both.
-    const row = screen
-      .getByText("Memory against mem_limit")
-      .closest(".mrow") as HTMLElement;
-    expect(within(row).getByText(/· 1 GB/)).toBeInTheDocument();
+    // Inside the Memory panel, not merely somewhere on the page. The bar used
+    // to be rendered after the small-multiples grid, which put it under Disk
+    // I/O -- `.sm` is auto-fill, so the row after it follows the LAST panel at
+    // every width, never the chart the bar is the ceiling for.
+    const memory = screen.getByLabelText("Memory chart", {
+      selector: "section",
+    });
+    expect(memory.querySelector(".meter")).not.toBeNull();
+
+    // The bar carries the percentage and nothing else: the panel header above
+    // it already prints "used · limit", so repeating the pair inside the same
+    // card would say it twice.
+    const row = memory.querySelector(".mrow") as HTMLElement;
+    expect(within(row).getByText("50%")).toBeInTheDocument();
+    expect(row).not.toHaveTextContent("· 1 GB");
+  });
+
+  // The panel that collected nothing has no reading to qualify, so the footer
+  // must not survive into the not-collected branch -- a bar under the words
+  // "Not collected" states a measurement the panel just said it does not have.
+  it("draws no memory meter when the panel is not collected", () => {
+    renderPage({ containerNetwork: "namespaced" });
+
+    const network = screen.getByLabelText("Network, not collected", {
+      selector: "section",
+    });
+    expect(network.querySelector(".meter")).toBeNull();
+    expect(network.querySelector(".foot")).toBeNull();
   });
 
   // The header pairs a value against the limit, so the value has to be the
