@@ -477,20 +477,39 @@ a {
    rather than the tiles' 210px so seven kinds, the worst case there is, fit
    two rows at any width the app supports rather than three.
 
-   auto-FILL, unlike the stat tiles' auto-fit: auto-fit collapses the empty
-   tracks and stretches what is left, so a fleet with one kind of problem drew
-   a single 1180px-wide box across the whole page. The count of things wrong
-   must not change the size of the thing it is written in. */
+   auto-FILL, the same choice .tiles makes and for the same reason: auto-fit
+   collapses the empty tracks and stretches what is left, so a fleet with one
+   kind of problem drew a single 1180px-wide box across the whole page. The
+   count of things wrong must not change the size of the thing it is written
+   in. */
 .atiles {
   list-style: none;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  /* The same cap .tiles carries, for the alignment this whole change is
+     about: uncapped, five kinds ran the full 1180px while the stat tiles
+     below stopped at 960 and the two rows this is meant to read as one
+     system visibly disagreed. */
+  max-width: 960px;
   gap: var(--space-3);
   margin: 0 0 var(--space-4);
   padding: 0;
 }
+/* .tiles drops to two columns at 1120px and one at 640px, and these
+   deliberately do not follow it there. A stat tile carries a sentence
+   underneath its number ("ingress + egress, right now"); this carries one
+   word, so it stays legible at the 200px auto-fill keeps -- and seven kinds
+   two-up is four rows of summary above the list it is summarising. Below
+   640px the content is narrow enough that auto-fill lands on one column on
+   its own. */
 .atile {
   display: block;
+  /* The <li> is the grid item and stretches to the row's height; the tile is
+     the anchor INSIDE it, so without this a tile beside a taller neighbour --
+     a label that wraps to two lines at large text sizes -- stops short of the
+     row and takes its status edge and its selected ground with it. StatTile
+     needs no such rule: .tile is the grid item itself. */
+  height: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
   /* The severity's own edge. 3px on the left rather than a tinted ground:
