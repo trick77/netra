@@ -2,7 +2,7 @@
 // Units are ONE searchable-list component differing only in columns. Each
 // list shows first_seen/last_seen only where the schema actually has them
 // -- an empty "last seen" column would be a claim netra cannot back.
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Inbox } from "lucide-react";
 import type {
   Address,
@@ -26,6 +26,7 @@ import { griddedValues } from "../../../lib/metrics";
 import {
   composeIdentity,
   containerColumns,
+  ContainerGroupTotals,
   lastReported,
   trendScales,
   type ContainerRow,
@@ -80,6 +81,25 @@ export function Inventory<T>({
     ? rows.filter((row) => searchText(row).toLowerCase().includes(needle))
     : rows;
 
+  // A collapsible group must be forced open while a filter is on: `visible`
+  // is already narrowed, so a group still standing is a group with a hit in
+  // it, and a hit inside a closed group is a hit the reader cannot see. Only
+  // this component knows whether the search box holds anything, so only it
+  // can say so.
+  //
+  // Memoised, and on the flag rather than the string: callers hoist their
+  // groupBy to module scope precisely because Table memoises its partition on
+  // that object's identity, and spreading a fresh one every keystroke would
+  // throw that away -- on the list that is being re-filtered per keystroke.
+  const filtering = needle !== "";
+  const grouping = useMemo(
+    () =>
+      groupBy === undefined
+        ? undefined
+        : { ...groupBy, forceExpanded: filtering },
+    [groupBy, filtering],
+  );
+
   return (
     <section aria-label={label}>
       <div className="toolbar">
@@ -116,7 +136,7 @@ export function Inventory<T>({
           columns={columns}
           rows={visible}
           rowKey={rowKey}
-          groupBy={groupBy}
+          groupBy={grouping}
         />
       )}
     </section>
@@ -157,14 +177,26 @@ const BY_PROJECT = {
   },
   label: (key: string, group: readonly ContainerRow[]) => (
     <>
-      <span>{key === "" ? "No compose project" : key}</span>
+      <span>{projectName(key)}</span>
       <span className="groupcount">
         {" · "}
         {group.length} container{group.length === 1 ? "" : "s"}
       </span>
     </>
   ),
+  labelText: (key: string) => projectName(key),
+  // Shut by default: a host running fourteen containers in four stacks opens
+  // onto four lines instead of eighteen. That is only honest because the
+  // header keeps answering what the rows would have -- see the summary below.
+  collapsible: true,
+  // The one definition of what a group of containers is using, shared with
+  // the fleet's list so the two cannot come to disagree.
+  summary: (_key: string, group: readonly ContainerRow[]) => (
+    <ContainerGroupTotals rows={group} />
+  ),
 };
+
+const projectName = (key: string) => (key === "" ? "No compose project" : key);
 
 export function Containers({
   rows,
@@ -222,6 +254,8 @@ export function Containers({
   // the list are what make a column readable downwards, and there is one
   // definition of them.
   const columns = containerColumns({
+    // Grouped by project below, so the name cell stops repeating it.
+    groupedByProject: true,
     range,
     // This page's own windows, so a chart enlarged out of a row cannot ask
     // for one the toolbar above it could not express.

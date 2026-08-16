@@ -285,6 +285,22 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+/* Text for assistive tech only. Not `display: none` and not `visibility:
+   hidden` -- both remove it from the accessibility tree, which is the one
+   place it is meant to exist. Used where a control's visible content is an
+   icon and the heading beside it is a heading, not that control's label. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ── Assistant: ONE component, one visual language, never inline ──── */
 .ai-btn {
   font: inherit;
@@ -2115,6 +2131,176 @@ tbody:first-of-type .grouprow th {
 .grouprow .groupcount {
   color: var(--muted);
   font-weight: 400;
+}
+
+/* A COLLAPSIBLE group header. The cell keeps everything above; this is the
+   layout inside it: chevron, name, and the group's own reading pushed to the
+   far end where the columns it summarises are. */
+.grouprow th:has(.gtoggle) {
+  /* The button's stretched hit area (below) is positioned against this. */
+  position: relative;
+  /* The padding moves onto .ghead so the click target fills the cell rather
+     than stopping short of its edges. */
+  padding: 0;
+}
+.ghead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 9px var(--space-4);
+}
+.glabel {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* The name itself takes the ink; the count beside it stays quiet (above). */
+.glabel > :first-child {
+  color: var(--ink);
+}
+/* A group label may BE a link -- the fleet's hostname is one -- so it has to
+   sit above the stretched hit area rather than under it, or the only way into
+   a host becomes a way to fold its containers away. */
+.glabel a {
+  position: relative;
+  z-index: 1;
+}
+/* Only the chevron is inside the button; ::before is what makes the whole
+   header row the click target without wrapping a link in a <button>. */
+.gtoggle {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+.gtoggle::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.gtoggle .chev {
+  width: 16px;
+  height: 16px;
+  /* One icon in two states, not two icons: the rotation is what reads as
+     "this opens". */
+  transition: transform 120ms ease;
+}
+.gtoggle[aria-expanded="true"] .chev {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .gtoggle .chev {
+    transition: none;
+  }
+}
+/* The hover and the focus ring belong to the whole header, because the whole
+   header is the target -- a 16px chevron lighting up under a cursor that is
+   200px away from it says the wrong thing about what will happen. */
+.grouprow th:has(.gtoggle:hover) {
+  background: var(--surface-2);
+}
+.grouprow th:has(.gtoggle:hover) .gtoggle {
+  color: var(--ink-2);
+}
+.grouprow th:has(.gtoggle:focus-visible) {
+  outline: 2px solid var(--accent-fill);
+  outline-offset: -2px;
+}
+
+/* The group's own reading, at the end of the header.
+   A GRID rather than a flex row: every number sits in a fixed track, so the
+   headers line their readings up with each other down the page instead of
+   each one packing to its own width. Tracks are sized to the widest value
+   they will hold and no wider -- a right-aligned number in a roomy track
+   pushes itself away from the label naming it. 4px from label to value, the
+   full --space-5 between the two pairs: two pairs, not four loose items. */
+.gsummary {
+  margin-left: auto;
+  display: grid;
+  align-items: center;
+  /* minmax, not a fixed width. The minimum is what aligns the groups with
+     each other -- every header is its own grid, so only a shared floor makes
+     the totals read as a column. max-content is what stops a reading longer
+     than that floor ("232.2 MB" beside a 6-character sibling) from sliding
+     left over the label naming it: a right-aligned cell that outgrows its
+     track does not widen the track, it overflows it. A group with an unusual
+     reading steps out of the column rather than becoming unreadable inside
+     it. */
+  grid-template-columns:
+    auto minmax(52px, max-content)
+    auto minmax(78px, max-content) minmax(86px, max-content) 64px;
+  gap: 0 var(--space-2);
+  font-weight: 400;
+}
+/* Each stat's parts are tracks of .gsummary's grid, not a box of their own --
+   which is what lets one grid align parts belonging to two stats. */
+.gstat {
+  display: contents;
+}
+/* The gap BETWEEN the two stats, as a margin rather than a spacer track: with
+   `display: contents` there is no element to put in a gutter column, and a
+   grid track with nothing in it shifts every item after it one column left --
+   which is what once squeezed "Mem" into a 24px gutter and slid its reading
+   over the top of it. Two pairs, not four loose items. */
+.gsummary .gstat + .gstat .lbl {
+  margin-left: var(--space-4);
+}
+.gstat .lbl {
+  font-size: var(--text-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.gstat .val {
+  font-size: var(--text-label);
+  color: var(--ink);
+  font-weight: 600;
+  /* Tabular, so "8%" over "142%" still lines up on the last digit. */
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+/* "/ 10.5 GB" continues the value before it rather than being a third item.
+   Its track is fixed rather than sized to content so a group whose containers
+   have no limits -- nothing to print here -- still lines its meter up with
+   the groups that do. */
+.gstat .of {
+  font-size: var(--text-label);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-left: 3px;
+}
+/* Meter brings its own .mrow -- a 1fr/92px row with padding and a rule, all
+   three wrong inside a header cell that has its own. The same override
+   .mem-cell and .disk-cell make, for the same reason; here the value column
+   goes too, because Meter's reading is blanked (see ContainerGroupTotals). */
+.gstat .gmeter .mrow {
+  grid-template-columns: 1fr;
+  gap: 0;
+  padding: 0;
+  border-bottom: 0;
+}
+.gstat .gmeter .meter {
+  width: 64px;
+}
+
+/* Below the fleet breakpoint the reading drops under the name: the header is
+   the one row on the page that carries two columns' worth of numbers, and at
+   360px they would push the table sideways. */
+@media (max-width: 720px) {
+  .ghead {
+    flex-wrap: wrap;
+  }
+  .gsummary {
+    margin-left: calc(16px + var(--space-3));
+  }
 }
 
 /* The container list's memory cell: the trend, and under it the reading
