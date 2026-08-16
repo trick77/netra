@@ -1286,21 +1286,25 @@ svg.spark {
 }
 /* gap stays 0 -- dt's own padding-right is the space inside a pair. What the
    second pair needs is space to the LEFT of its key, or its dt butts against
-   the first pair's value. dt order alternates columns, so every even dt is the
-   right-hand pair's key. */
-.kv.wide dt:nth-of-type(even) {
+   the first pair's value.
+
+   Matched through the WRAPPER, not `dt:nth-of-type(even)`: Facts wraps each
+   pair in a `display: contents` div, and display affects boxes, not selector
+   matching -- every dt is the only dt under its own div, so `nth-of-type`
+   counts it as the first and an `even` selector matches nothing at all. The
+   wrappers are the dl's own children, so wrapper 2, 4, 6, 8 are the
+   right-hand pairs. Nothing in the test suite can catch this: jsdom applies
+   no stylesheet, so the card renders and every assertion passes with the
+   gutter missing. */
+.kv.wide > *:nth-of-type(even) > dt {
   padding-left: var(--space-5);
 }
-/* The single-column rule above zeroes exactly one dt and one dd, which is the
-   whole last row only while there is one pair per row. Two across, the last
-   row holds two of each, and half of it kept a rule that hung under the card.
-   -n+2 is correct for an EVEN number of rows; the only .kv.wide on the page
-   has eight. An odd count would take the border off the pair above the last
-   one as well. */
-.kv.wide dt:nth-last-of-type(-n + 2),
-.kv.wide dd:nth-last-of-type(-n + 2) {
-  border-bottom: 0;
-}
+/* No last-row border rule here on purpose. `.kv dt:last-of-type` above is
+   likewise counted per wrapper, so it already matches EVERY dt and dd of a
+   Facts list: no card built by Facts draws row rules at all, and there is no
+   rule left hanging under half the bottom row for a `-n + 2` selector to take
+   off. Restoring the separators means giving Facts direct dt/dd children,
+   which changes every card it builds -- not this card's layout problem. */
 
 /* meter — fill carries severity/series colour (passed by the caller from
    --st-* or --s1..--s4, never the accent), track is a lighter step. */
@@ -1654,22 +1658,14 @@ svg.spark {
     grid-template-columns: 1fr;
   }
   /* Back to one pair per row: two pairs of key AND value across 900px leaves
-     the kernel string and the CPU model nowhere to go. Reverting the template
-     also puts the last row back where the single-column border rule expects
-     it, so both overrides below go with it. */
+     the kernel string and the CPU model nowhere to go. The gutter goes with
+     the second column -- left over, it indents every other key of a
+     single-column list. */
   .kv.wide {
     grid-template-columns: auto 1fr;
   }
-  .kv.wide dt:nth-of-type(even) {
+  .kv.wide > *:nth-of-type(even) > dt {
     padding-left: 0;
-  }
-  .kv.wide dt:nth-last-of-type(-n + 2),
-  .kv.wide dd:nth-last-of-type(-n + 2) {
-    border-bottom: 1px solid var(--border);
-  }
-  .kv.wide dt:last-of-type,
-  .kv.wide dd:last-of-type {
-    border-bottom: 0;
   }
 }
 
