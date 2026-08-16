@@ -9,8 +9,17 @@
 //
 // This is not that alerting engine. It has no rules, no thresholds a user can
 // set, no history and no notion of acknowledgement. It states what is already
-// true in the row: every fact below is read from data the page fetched for
-// its sparklines, so this costs no request that was not already made.
+// true in the row.
+//
+// Most of what it states is free. Reporting, OOM kills and the fullest
+// filesystem are read from data the page fetched for its sparklines, and the
+// failed-unit count rides the hosts list the page already asks for. Two facts
+// are not: buffer_dropped_total and post_failures_total only mean anything
+// against the series around them, so a gauge on the list cannot carry either.
+// They cost this page one more family per host -- see the note on
+// fetchHostTrends in hostTrends.ts, which owns that fan-out. This module used
+// to promise it cost no request that was not already made; that stopped being
+// true when a host silently dropping samples was judged worth the request.
 import type { Condition } from "./AttentionBand";
 import type { HostRow } from "./hostColumns";
 import { hostStatus } from "../../lib/host";
@@ -67,6 +76,25 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
     });
   }
 
+  // The agent's ring buffer overflowed: samples it collected were never
+  // delivered. Nothing else netra reports about a host is more important,
+  // because it is the one condition that says the rest of the row may be
+  // incomplete -- and no sparkline can show it, since the missing data is
+  // the evidence.
+  //
+  // The agent's running total, not this window's increase, and the same
+  // number the host page prints -- see HostTrends.dropped in hostTrends.ts
+  // for why an increase reads as 0 for exactly the host that dropped
+  // something.
+  if (row.dropped !== null && row.dropped > 0) {
+    out.push({
+      ...base,
+      severity: "critical",
+      what: `${row.dropped} ${row.dropped === 1 ? "sample" : "samples"} dropped before delivery — this host's history has holes`,
+      since: null,
+    });
+  }
+
   // Cumulative since boot, so this is the INCREASE across the window --
   // otherwise a host that killed something a year ago carries a permanent
   // condition. null means the window had no usable pair to difference, which
@@ -77,6 +105,20 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       ...base,
       severity: "critical",
       what: `${row.oomKills} OOM ${row.oomKills === 1 ? "kill" : "kills"} — the kernel killed processes to reclaim memory`,
+      since: null,
+    });
+  }
+
+  // The increase, for a sharper reason than the OOM counter above: this one
+  // is cumulative for the life of the agent PROCESS and is never reset by a
+  // success, so read as a latest value one hub restart pins "1 failed
+  // delivery" here forever -- even though the ring buffer replayed those
+  // samples the moment the hub came back and nothing was actually lost.
+  if (row.postFailures !== null && row.postFailures > 0) {
+    out.push({
+      ...base,
+      severity: "warning",
+      what: `${row.postFailures} failed ${row.postFailures === 1 ? "delivery" : "deliveries"} to the hub in this window`,
       since: null,
     });
   }

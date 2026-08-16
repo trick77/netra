@@ -419,7 +419,7 @@ export function needsAttention(input: {
     // no chart can show it, because the missing data is the evidence.
     out.push({
       severity: "critical",
-      what: `${dropped} samples dropped before delivery — this host's history has holes`,
+      what: `${dropped} ${dropped === 1 ? "sample" : "samples"} dropped before delivery — this host's history has holes`,
     });
   }
 

@@ -100,6 +100,13 @@ export type HostRow = Host & {
    * counter. null is "cannot say", which the attention band stays silent
    * about; 0 is the host confirming nothing happened. */
   oomKills: number | null;
+  /** Samples the agent dropped before delivery, and failed deliveries to the
+   * hub, both inside the window and both the increase rather than the
+   * cumulative counter -- same null/0 rule as oomKills above. Neither is
+   * plotted by any column here: they are read only by the attention band,
+   * which is also the only reason the `agent` family is fetched at all. */
+  dropped: number | null;
+  postFailures: number | null;
 };
 
 function HostCell({ row }: { row: HostRow }) {

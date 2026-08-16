@@ -75,6 +75,91 @@ describe("fetchHostTrends", () => {
     expect(trends.cpu[0]!.values[0]).toBe(40);
   });
 
+  // The `agent` family is the one fetch here that draws nothing: it exists
+  // for the two delivery counters the attention band reports. They are read
+  // DIFFERENTLY, and the difference is the whole point -- post_failures_total
+  // as the window's increase, buffer_dropped_total as the agent's running
+  // total.
+  it("reads failed deliveries as the window's increase", async () => {
+    serve({
+      agent: response({
+        family: "agent",
+        columns: ["buffer_dropped_total", "post_failures_total"],
+        series: [
+          {
+            key: {},
+            points: [
+              [t0, 0, 7],
+              [t0 + hour, 0, 9],
+              [tNow, 0, 9],
+            ],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(getMetrics.mock.calls.map((c) => c[1].family)).toContain("agent");
+    expect(trends.postFailures).toBe(2);
+  });
+
+  // The case the first version of this got wrong, and could not have caught
+  // with a contiguous fixture. The ring only evicts once full, so the counter
+  // cannot move until the hub has been unreachable for a whole BufferWindow
+  // -- which puts a hole of exactly that length in this series, immediately
+  // before the samples that report the drop. Read as an increase, the jump
+  // across the hole is discarded and the flat runs sum to 0: silent for the
+  // one host it exists to catch.
+  it("still sees dropped samples across the outage that caused them", async () => {
+    serve({
+      agent: response({
+        family: "agent",
+        // Six hourly buckets, so the series has a run either side of the
+        // hole rather than only its two ends. That is what makes this the
+        // real failure: counterDeltas scores the flat runs 0 and refuses the
+        // pair spanning the gap, so the increase is 0 -- a confident "nothing
+        // happened" -- rather than the null it would return with no usable
+        // pair anywhere.
+        window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T06:00:00Z" },
+        requested_window: {
+          from: "2026-08-10T00:00:00Z",
+          to: "2026-08-10T06:00:00Z",
+        },
+        columns: ["buffer_dropped_total", "post_failures_total"],
+        series: [
+          // Two hours of quiet at 100, two hours of nothing at all while the
+          // hub is away, then the agent returns carrying 112 losses.
+          {
+            key: {},
+            points: [
+              [t0, 100, 0],
+              [t0 + hour, 100, 0],
+              [t0 + 4 * hour, 112, 0],
+              [t0 + 5 * hour, 112, 0],
+            ],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.dropped).toBe(112);
+  });
+
+  // One family the hub cannot answer costs that family, not the row -- and
+  // "cannot say" is null rather than 0, so a fleet page never reports an
+  // all-clear it did not hear.
+  it("says nothing about delivery when the agent family fails", async () => {
+    serve({ agent: new Error("500") });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.dropped).toBeNull();
+    expect(trends.postFailures).toBeNull();
+  });
+
   // The read API has no aggregate-across-keys mode, so asking a 128-thread
   // host for its cores would ship 128 series per host per fleet render. Those
   // hosts get cpu_total, which the host family carries anyway.
@@ -414,6 +499,8 @@ describe("buildRows", () => {
       fullest: { mount: "/", pct: 50, others: 0 },
       disk: [],
       oomKills: 0,
+      dropped: 0,
+      postFailures: 0,
     };
 
     const rows = buildRows([host], [site], new Map([[1, trends]]));
