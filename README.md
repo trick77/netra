@@ -186,8 +186,10 @@ into `./netra-agent`. It installs no software; Docker pulls the agent image when
 the stack starts.
 
 Everything read-only is enabled automatically. `SYS_ADMIN` (NVMe SMART health
-and wear) is the only privilege it prompts for, and `pid: host` is never
-prompted for at all — pass `--pid-host` if you want per-process metrics.
+and wear) is the only privilege it prompts for. `pid: host` is always granted:
+without it the agent reports no process table and no per-container network, and
+the run states the exposure rather than offering it — see *What each collector
+needs* below.
 
 The script is **interactive by design**: it reads `/dev/tty` and fails
 immediately without one. There is no unattended mode; see *Fleets* below.
@@ -202,13 +204,14 @@ curl -fsSL https://raw.githubusercontent.com/trick77/netra/master/setup-agent.sh
   --start
 ```
 
-Other flags worth knowing: `--sys-admin`, `--pid-host`, `--output-dir`,
-`--force` (required to overwrite an existing `.env`), `--template-dir` (no
-network at all), `--ref`. `sh setup-agent.sh --help` lists them all.
+Other flags worth knowing: `--sys-admin`, `--output-dir`, `--force` (required to
+overwrite an existing `.env`), `--template-dir` (no network at all), `--ref`.
+`sh setup-agent.sh --help` lists them all. `--pid-host` is still accepted and
+does nothing, so existing provisioning does not fail on an unknown option.
 
 Even with every value passed as a flag the run still needs a terminal: the
-grants are confirmed interactively unless `--sys-admin` / `--pid-host` /
-`--unsupported-os` take them by name.
+grants are confirmed interactively unless `--sys-admin` / `--unsupported-os`
+take them by name.
 
 ### By hand
 
