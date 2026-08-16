@@ -15,26 +15,41 @@ package systemdstate
 
 import "time"
 
-// Notable reports whether a unit's state deserves an operator's attention.
+// A unit needs an operator's attention when it is FAILED, or when it is
+// RESTARTING REPEATEDLY. Those are the two halves of one rule, and they are
+// answered differently:
 //
-// The rule is deliberately narrow. A host runs 300-400 loaded services and a
-// healthy one is overwhelmingly `active/running` (a daemon) or `inactive/dead`
-// (a oneshot that finished, or a service that is simply not enabled). Listing
-// those buries the one row that matters, so they are not notable.
+//   - failed is a property of the unit's current state, which is what Notable
+//     below tests.
+//   - restarting repeatedly is a RATE, so no amount of looking at the current
+//     state can answer it. It is counted from the event log, against
+//     FlapThreshold, in read.Units.
 //
-// The transient states -- `activating`, `deactivating`, and `reloading` -- are
-// NOT notable either, and that exclusion is load-bearing rather than an
-// oversight. A unit passes through them on every normal start; a snapshot that
-// happened to land mid-boot would mint a permanent row for a unit that was
-// never unhealthy. The rule has to describe units that are PERSISTENTLY out of
-// the ordinary, not units caught mid-transition.
+// Both halves must be applied together everywhere, or the host page's warning
+// band and its Units tab disagree about whether anything is wrong -- and a
+// panel that lists a unit the band calls fine is worse than either answer on
+// its own.
+
+// Notable reports whether a unit's state, on its own, deserves attention.
 //
-// `auto-restart` is a substate rather than a state, and a unit sitting in it
-// is looping: systemd has given up on the current attempt and is waiting to
-// try again. ActiveState alone reports that as `activating`, so matching on
-// state would miss a restart loop entirely -- which is why this takes both.
-func Notable(state, substate string) bool {
-	return state == "failed" || substate == "auto-restart"
+// Deliberately narrow: a host runs 300-400 loaded services, and a healthy one
+// is overwhelmingly `active/running` (a daemon) or `inactive/dead` (a oneshot
+// that finished, or a service simply not enabled). Listing those buries the
+// one row that matters.
+//
+// The transient states -- `activating`, `deactivating`, `reloading` -- are
+// excluded, and so is the `auto-restart` substate, which is less obvious. A
+// unit in auto-restart is inside systemd's backoff between two start attempts,
+// which sounds like exactly what we want, but it is a single sighting rather
+// than a rate: at the default RestartSec=100ms a 60-second scrape essentially
+// never lands in that window, so catching one is closer to a coin toss than to
+// evidence. A unit looping fast enough to be caught reliably trips
+// StartLimitBurst and becomes `failed`, which this already matches; a unit
+// looping slowly enough to miss the start limit is caught by the transition
+// count. Listing on the sighting would put a red badge on a service that is
+// most likely fine, on the one panel that exists to show only what is not.
+func Notable(state, _ string) bool {
+	return state == "failed"
 }
 
 // NotableSQL is Notable as a SQL predicate, for the callers that must apply it
@@ -42,13 +57,13 @@ func Notable(state, substate string) bool {
 // hang off ("u" or the bare table name); pass "" when the columns are
 // unqualified.
 //
-// Kept beside Notable rather than inlined at its two call sites so that the
-// Go and SQL forms are read together and cannot quietly diverge.
+// Kept beside Notable rather than inlined at its call sites so the Go and SQL
+// forms are read together and cannot quietly diverge.
 func NotableSQL(alias string) string {
 	if alias != "" {
 		alias += "."
 	}
-	return "(" + alias + "state = 'failed' OR " + alias + "substate = 'auto-restart')"
+	return "(" + alias + "state = 'failed')"
 }
 
 // FlapWindow and FlapThreshold define "restarting repeatedly": at least this

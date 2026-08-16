@@ -326,11 +326,13 @@ func TestIntegrationUnitsListOnlyWhatNeedsAttention(t *testing.T) {
 		byName[u.Name] = u
 	}
 
-	// A failed unit, and a unit looping in restart backoff. auto-restart is
-	// matched on SUBSTATE: systemd reports a service inside its backoff window
-	// as `activating`, so a state-only rule would miss a restart loop entirely.
-	if len(got) != 2 {
-		t.Fatalf("got %d units, want exim4.service and backup.service", len(got))
+	// Only the failed unit. backup.service is sitting in systemd's restart
+	// backoff, which sounds like it belongs here but is a single sighting
+	// rather than a rate -- see systemdstate.Notable. A unit that really is
+	// looping is caught by its transition count instead, which
+	// TestIntegrationUnitsListAUnitThatKeepsRestarting covers.
+	if len(got) != 1 {
+		t.Fatalf("got %d units, want exim4.service alone", len(got))
 	}
 
 	exim := byName["exim4.service"]
@@ -342,15 +344,12 @@ func TestIntegrationUnitsListOnlyWhatNeedsAttention(t *testing.T) {
 	if exim.Since == nil {
 		t.Error("exim4.service since = nil, want the state's onset")
 	}
-	if _, ok := byName["backup.service"]; !ok {
-		t.Error("backup.service is missing: a unit in auto-restart is looping, and " +
-			"its ActiveState alone never says so")
-	}
-
-	// The ordinary states, and the unknown one. A unit with no state recorded
-	// is not evidence of a problem, so it is not shown -- and it is not
-	// claimed to be healthy either.
-	for _, name := range []string{"ssh.service", "oneshot.service", "quiet.service"} {
+	// The ordinary states, the transient one, and the unknown one. A unit with
+	// no state recorded is not evidence of a problem, so it is not shown --
+	// and it is not claimed to be healthy either.
+	for _, name := range []string{
+		"ssh.service", "oneshot.service", "quiet.service", "backup.service",
+	} {
 		if _, ok := byName[name]; ok {
 			t.Errorf("%s is listed; a unit nobody needs to act on must not be", name)
 		}

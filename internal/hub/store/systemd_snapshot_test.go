@@ -179,21 +179,74 @@ func TestIntegrationSystemdSnapshotTracksOnlyNotableUnits(t *testing.T) {
 		// is what the notable rule exists to avoid.
 		unitState("starting.service", "activating", "start-pre"),
 		unitState("exim4.service", "failed", "failed"),
-		// systemd reports a unit in its restart backoff as activating, so this
-		// is only visible in the substate.
+		// Sitting in systemd's restart backoff. NOT tracked on that basis: it
+		// is one sighting rather than a rate, and at the default
+		// RestartSec=100ms a 60s scrape essentially never lands in that
+		// window, so acting on it is closer to a coin toss than to evidence.
+		// A unit that really is looping earns its row from the transitions the
+		// event path records.
 		unitState("backup.service", "activating", "auto-restart"),
 	)); err != nil {
 		t.Fatalf("ApplySystemdSnapshot: %v", err)
 	}
 
 	got := unitRows(t, s, id)
-	if len(got) != 2 {
-		t.Fatalf("tracked %d units (%v), want only exim4.service and backup.service", len(got), got)
+	if len(got) != 1 {
+		t.Fatalf("tracked %d units (%v), want only exim4.service", len(got), got)
 	}
-	for _, name := range []string{"exim4.service", "backup.service"} {
-		if _, ok := got[name]; !ok {
-			t.Errorf("%s is not tracked, and it is exactly what an operator needs to see", name)
+	if _, ok := got["exim4.service"]; !ok {
+		t.Error("exim4.service is not tracked, and it is exactly what an operator needs to see")
+	}
+}
+
+// A unit that keeps restarting keeps its row through the snapshot.
+//
+// Its row comes from the event path, not from step 3 -- by the time it has
+// enough transitions to be worth showing it is usually sitting at
+// active/running, which no current-state rule would track. So the thing to
+// prove is that the snapshot leaves it alone: step 2 corrects it, step 3
+// ignores it, and step 4 must not prune it, because it IS in the snapshot.
+// Pruning it would cascade away the events that are the only evidence of the
+// loop, and the unit would go back to looking perfectly healthy.
+func TestIntegrationSystemdSnapshotKeepsAFlappingUnit(t *testing.T) {
+	ctx := context.Background()
+	start := time.Now().Add(-time.Hour).Truncate(time.Millisecond)
+	s, id := openSystemd(t)
+
+	// The event path gives it a row and its history: down, up, down, up.
+	for i, st := range []struct{ state, sub string }{
+		{"failed", "failed"}, {"active", "running"},
+		{"failed", "failed"}, {"active", "running"},
+	} {
+		at := start.Add(time.Duration(i) * time.Minute)
+		if _, err := s.InsertSystemdUnitEvents(ctx, id, []*netrav1.SystemdUnitEvent{
+			{TsMs: at.UnixMilli(), UnitName: "backup.service", State: st.state, Substate: st.sub},
+		}); err != nil {
+			t.Fatalf("event %d: %v", i, err)
 		}
+	}
+
+	// A complete snapshot in which it looks perfectly healthy -- which is how
+	// it looks at nearly every scrape.
+	if _, err := s.ApplySystemdSnapshot(ctx, id, snapshot(start.Add(10*time.Minute), true,
+		unitState("backup.service", "active", "running"),
+		unitState("ssh.service", "active", "running"),
+	)); err != nil {
+		t.Fatalf("ApplySystemdSnapshot: %v", err)
+	}
+
+	if _, ok := unitRows(t, s, id)["backup.service"]; !ok {
+		t.Fatal("backup.service was pruned; it is present in the snapshot, and deleting " +
+			"it would cascade away the only evidence that it keeps restarting")
+	}
+
+	var n int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM systemd_unit_events WHERE host_id = $1`, id).Scan(&n); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if n != 4 {
+		t.Errorf("events = %d, want the 4 transitions -- the count is the whole signal", n)
 	}
 }
 

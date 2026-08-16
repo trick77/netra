@@ -1089,6 +1089,12 @@ func (s *Store) ApplySystemdSnapshot(ctx context.Context, hostID int32, snap *ne
 	// got its row from the event path. This covers the one that started
 	// failing while the agent was down or while its scrapes were being
 	// dropped -- the same gap the whole snapshot exists for.
+	//
+	// Only the state half of the rule applies here. A unit is also worth
+	// showing when it is restarting repeatedly, but that is a rate measured
+	// from the event log, and a unit with enough transitions to qualify has by
+	// definition already been given a row by the event path that recorded
+	// them.
 	tag, err = tx.Exec(ctx, `
 		INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
 		SELECT $1, i.name, i.state, NULLIF(i.substate, ''), $5

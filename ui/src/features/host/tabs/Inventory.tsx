@@ -525,19 +525,10 @@ const UNIT_SEVERITY: Record<string, Severity> = {
 };
 
 /**
- * The badge a unit's state earns.
- *
- * Substate is consulted first because a looping unit is the one case where
- * ActiveState alone is misleading: systemd reports a service in its
- * restart backoff as `activating`, or briefly `active`, so keying purely on
- * state painted a unit that has been crashing for an hour with the same green
- * badge as one that is fine -- while this very table listed it precisely
- * because it is not.
+ * How many restarts in the last hour this table calls out. Mirrors
+ * systemdstate.FlapThreshold in the hub -- change both.
  */
-function unitSeverity(row: Unit): Severity {
-  if (row.substate === "auto-restart") return "critical";
-  return (row.state === null ? undefined : UNIT_SEVERITY[row.state]) ?? "neutral";
-}
+const FLAP_THRESHOLD = 4;
 
 const UNIT_COLUMNS: Column<Unit>[] = [
   { key: "unit", header: "Unit", cell: (row) => row.unit_name },
@@ -548,13 +539,29 @@ const UNIT_COLUMNS: Column<Unit>[] = [
       row.state === null ? (
         ABSENT
       ) : (
-        <Badge severity={unitSeverity(row)}>{row.state}</Badge>
+        <Badge severity={UNIT_SEVERITY[row.state] ?? "neutral"}>
+          {row.state}
+        </Badge>
       ),
   },
   {
     key: "substate",
     header: "Substate",
     cell: (row) => row.substate ?? ABSENT,
+  },
+  {
+    // The reason a unit that reads active/running is in this table at all. A
+    // service that runs a few minutes, dies and comes back is healthy at
+    // nearly every scrape, so without this column its row looks like a
+    // mistake -- a green badge in a list of things that need attention.
+    key: "restarts",
+    header: "Restarts (1h)",
+    cell: (row) =>
+      row.restarts_1h >= FLAP_THRESHOLD ? (
+        <Badge severity="warning">{row.restarts_1h}</Badge>
+      ) : (
+        row.restarts_1h
+      ),
   },
   { key: "since", header: "Since", cell: (row) => <When iso={row.since} /> },
 ];

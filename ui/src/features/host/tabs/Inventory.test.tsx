@@ -317,19 +317,19 @@ describe("Units", () => {
     expect(screen.queryByText(/reported no units/i)).toBeNull();
   });
 
-  // systemd puts a unit in its restart backoff at activating/auto-restart, so
-  // keying the badge on state alone painted a unit that has been crashing for
-  // an hour the same green as one that is fine -- in a table that is listing
-  // it precisely because it is not.
-  it("does not paint a unit in restart backoff as healthy", () => {
+  // A unit that keeps dying and coming back reads active/running at nearly
+  // every scrape, so its row would otherwise look like a mistake: a green
+  // badge in a list of things that need attention. The restart count is the
+  // reason it is there, so the table has to show it.
+  it("shows why a unit that looks healthy is in the list at all", () => {
     render(
       <Units
         rows={[
           {
             id: 3,
             unit_name: "backup.service",
-            state: "activating",
-            substate: "auto-restart",
+            state: "active",
+            substate: "running",
             since: "2026-08-09T00:00:00Z",
             restarts_1h: 9,
           },
@@ -337,8 +337,7 @@ describe("Units", () => {
       />,
     );
     const row = screen.getByRole("row", { name: /backup/ });
-    expect(within(row).getByText("activating")).toBeInTheDocument();
-    expect(within(row).getByText("auto-restart")).toBeInTheDocument();
+    expect(within(row).getByText("9")).toBeInTheDocument();
   });
 });
 
