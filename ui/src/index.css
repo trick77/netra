@@ -552,25 +552,91 @@ a {
   color: var(--muted);
 }
 
-/* Traffic cell — the up/down sparkline with both rates beneath it. Both
+/* Traffic cell — the up/down sparkline with both rates BESIDE it, not under
+   it. Stacked, the two lines of type made this the tallest cell in the fleet
+   row and so set the height of every row on the page; beside the chart they
+   cost width, which the row has, instead of height, which it does not. Both
    rates render in identical type on purpose: netra cannot know whether a
    host is meant to push or pull more, so weighting one would assert a
    direction that is not true. */
 .traffic-cell {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
 }
+/* No min-width:0 on the chart, deliberately. svg.spark carries
+   `max-width:100%; height:auto`, so a horizontal squeeze costs HEIGHT as well
+   as width -- and height is the one thing moving the rates out of the way was
+   meant to buy. Every sparkline in a fleet row gives way together under that
+   rule, and the table's own column sizing already spreads them: measured at
+   1440px, traffic renders 29.6 tall beside CPU at 29.9, memory at 30.5 and
+   filesystem at 30.8, all from the same 170x32 intrinsic size.
+
+   Traffic does end up the smallest of the four, and this is the honest cost of
+   the layout above: .traffic-rates never shrinks, so ~110px of the cell is
+   spoken for before the chart gets any. With long FQDN hostnames, which widen
+   the Host column and squeeze every chart, the same row measures traffic 23.8
+   against CPU 25.9, memory 27.6 and filesystem 28.6 -- a couple of pixels
+   under its neighbours, inside the spread they already have between
+   themselves. min-width:0 here would drop it much further, and letting this
+   cell WRAP (what .card does below, where the chart is the only item that can
+   give) would make traffic the largest chart in the row and put the row height
+   straight back. A viewport too narrow for the wider cell is already handled:
+   .tablewrap scrolls, and below the mobile breakpoint the list is cards, which
+   restore the stack below. */
 .traffic-rates {
   display: flex;
-  gap: var(--space-3);
+  /* Stacked, so the pair is two short lines against the chart rather than one
+     long line that would double the cell's width. */
+  flex-direction: column;
+  gap: 0;
+  /* Never shrink: the chart is the fixed-width item here, and a rates column
+     that gave way would wrap a byterate mid-number. */
+  flex: none;
   font-size: var(--text-label);
+  /* Two lines at exactly the chart's 32px, so the rates align with the mark
+     they annotate and the cell is no taller than the sparkline. The body's
+     1.55 would draw them 43px tall -- taller than the chart, which is the
+     row height this change exists to remove. */
+  line-height: 1.15;
   /* --muted, matching the disk percentage in the same row (.mrow .val).
      These are both the number BESIDE a chart -- a reading the sparkline or
      the meter has already drawn -- and at --ink-2 the traffic rates read a
      step louder than the disk figure they sit next to, which made two
      equally important columns look ranked. */
   color: var(--muted);
+}
+/* Cards put the same cell in a 2-up tile roughly 165px wide, where a 170px
+   chart with a rates column beside it does not fit -- the sparkline would
+   scale down to a few pixels tall. Inside a card the axes go back to what they
+   were: chart above, rates in a row beneath. Scoped to .hcard rather than to
+   the mobile breakpoint because "Cards" is also a density a reader can pick by
+   hand at full width. */
+.hcard .traffic-cell {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.hcard .traffic-rates {
+  flex-direction: row;
+  gap: var(--space-3);
+  line-height: 1.55;
+}
+/* The host page's Overview Traffic card is the one place this cell is neither
+   a tile nor inside a scrolling table: it is a column of .grid2, so it simply
+   gets narrower with the window and the chart is the only item that can give.
+   Measured with the real tokens: at a 350px card the 260x64 sparkline draws
+   192x47, and at 390px viewport 15x4 -- a hairline, because .traffic-rates
+   never shrinks. Wrapping is the fix that keeps the intent: while the rates
+   fit beside the chart nothing changes, and when they no longer do they drop
+   underneath a FULL-SIZE chart instead of squeezing it. Scoped to .card so the
+   fleet table keeps the shared shrink-together behaviour argued for above. */
+.card .traffic-cell {
+  flex-wrap: wrap;
+  /* Beside the chart the gap is horizontal (--space-3); once wrapped it is the
+     stacked cell's 2px, not 12px of dead space under the mark. */
+  row-gap: 2px;
 }
 .rate {
   font-variant-numeric: tabular-nums;
