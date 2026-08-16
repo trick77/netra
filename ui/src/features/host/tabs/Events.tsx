@@ -6,6 +6,7 @@ import { ABSENT, absolute, relative } from "../../../lib/format";
 import { Badge, type Severity } from "../../../ui/Badge";
 import type { Column } from "../../../ui/Table";
 import { Inventory } from "./Inventory";
+import { messageOf } from "../../events/message";
 
 // Only these two carry a status tint. A package upgrade is not a
 // colour-coded emergency, so every other event is a neutral chip.
@@ -27,17 +28,6 @@ export function eventSeverity(event: Event): Severity | null {
   if (typeof stated !== "string") return null;
   const match = STATED_SEVERITIES.find((s) => s === stated);
   return match ?? null;
-}
-
-/** A one-line rendering of the collector's detail JSON. Passed through as
- * stored -- its shape is the emitting collector's, not this UI's -- so
- * anything but a flat object is simply not summarised. */
-function detailSummary(detail: unknown): string {
-  if (detail === null || typeof detail !== "object") return "";
-  return Object.entries(detail as Record<string, unknown>)
-    .filter(([key]) => key !== "severity")
-    .map(([key, value]) => `${key} ${String(value)}`)
-    .join(" · ");
 }
 
 const COLUMNS: Column<Event>[] = [
@@ -66,7 +56,10 @@ const COLUMNS: Column<Event>[] = [
     },
   },
   { key: "subject", header: "Subject", cell: (row) => row.subject ?? ABSENT },
-  { key: "detail", header: "Detail", cell: (row) => detailSummary(row.detail) },
+  // What happened, rather than the detail JSON's keys and values spelled out.
+  // Subject stays its own column: it is what the table is scanned and sorted
+  // by, and the message repeats it inside a sentence rather than replacing it.
+  { key: "message", header: "Event", cell: (row) => messageOf(row) || ABSENT },
 ];
 
 export interface EventsProps {
@@ -85,11 +78,9 @@ export function Events({ events }: EventsProps) {
       label="Events"
       columns={COLUMNS}
       rows={rows}
-      rowKey={(row) => String(row.id)}
+      rowKey={(row) => row.id}
       searchText={(row) =>
-        [row.type, row.subject, detailSummary(row.detail)]
-          .filter(Boolean)
-          .join(" ")
+        [row.type, row.subject, messageOf(row)].filter(Boolean).join(" ")
       }
     />
   );

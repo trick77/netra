@@ -52,7 +52,7 @@ func newSchedule(p *Profile, s signal, from, to time.Time) *schedule {
 		evs = append(evs, timedEvent{ts: from, event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    p.Mdraid,
-			DetailJson: `{"level":"raid10","state":"clean","degraded":0,"disks":4}`,
+			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"idle"}`,
 		}})
 	}
 
@@ -246,12 +246,21 @@ func mdraidTrouble(p *Profile, s signal, from, to time.Time) []timedEvent {
 }
 
 // mdraidIncident is one degrade, resync and recovery.
+//
+// The detail JSON below, and the clean state in newSchedule, are arrayState
+// from agent/collector/mdraid.go marshalled by hand: state, level, raid_disks,
+// degraded, sync_action, and nothing else. They had drifted -- `disks` instead
+// of `raid_disks`, plus `failed` and `resync_pct` keys the collector has never
+// sent -- which no test caught, because nothing asserts on this string. What
+// it cost was the events page rendering a simulated array differently from a
+// real one, so a dev environment could not be used to check the rendering at
+// all. Keep it identical to the struct.
 func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 	return []timedEvent{
 		{ts: at, event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    array,
-			DetailJson: `{"level":"raid10","state":"degraded","degraded":1,"disks":4,"failed":"sdc"}`,
+			DetailJson: `{"state":"degraded","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"idle"}`,
 		}},
 		// Well clear of the degrade rather than 90 seconds after it: on the
 		// coarse grid both would come due in the same slot, get the same
@@ -260,12 +269,12 @@ func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 		{ts: at.Add(25 * time.Minute), event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    array,
-			DetailJson: `{"level":"raid10","state":"recovering","degraded":1,"disks":4,"resync_pct":0.4}`,
+			DetailJson: `{"state":"recovering","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"recover"}`,
 		}},
 		{ts: rebuilt, event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    array,
-			DetailJson: `{"level":"raid10","state":"clean","degraded":0,"disks":4}`,
+			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"idle"}`,
 		}},
 	}
 }

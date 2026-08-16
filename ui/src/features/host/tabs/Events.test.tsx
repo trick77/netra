@@ -5,7 +5,7 @@ import { Events, eventSeverity } from "./Events";
 
 function event(over: Partial<Event> = {}): Event {
   return {
-    id: 1,
+    id: "e:1",
     host_id: 7,
     hostname: "kessel",
     ts: "2026-08-10T00:00:00Z",
@@ -46,7 +46,7 @@ describe("Events", () => {
       <Events
         events={[
           event({
-            id: 2,
+            id: "e:2",
             type: "mdraid",
             subject: "md0",
             detail: { severity: "critical", state: "degraded" },
@@ -63,8 +63,8 @@ describe("Events", () => {
     render(
       <Events
         events={[
-          event({ id: 1, subject: "older", ts: "2026-08-01T00:00:00Z" }),
-          event({ id: 2, subject: "newer", ts: "2026-08-09T00:00:00Z" }),
+          event({ id: "e:1", subject: "older", ts: "2026-08-01T00:00:00Z" }),
+          event({ id: "e:2", subject: "newer", ts: "2026-08-09T00:00:00Z" }),
         ]}
       />,
     );
