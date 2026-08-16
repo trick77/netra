@@ -41,6 +41,14 @@ export interface InventoryProps<T> {
    * "what stopped the rest being collected", and a list that is partly there
    * needs both. */
   notice?: ReactNode;
+  /** What an empty list means, for a list where "empty" is not "nothing was
+   * collected". Units is the case: it shows only what needs attention, so an
+   * empty one is a healthy host, and the default copy ("This host has reported
+   * no units") would be a plain falsehood about a host running 400 of them.
+   * Only the no-rows state is overridden -- "nothing matches your filter" says
+   * the same thing for every list. */
+  emptyTitle?: string;
+  emptyBody?: string;
 }
 
 export function Inventory<T>({
@@ -51,6 +59,8 @@ export function Inventory<T>({
   searchText,
   controls,
   notice,
+  emptyTitle,
+  emptyBody,
 }: InventoryProps<T>) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -75,11 +85,14 @@ export function Inventory<T>({
         <EmptyState
           icon={Inbox}
           title={
-            rows.length === 0 ? "Nothing collected yet" : "Nothing matches"
+            rows.length === 0
+              ? (emptyTitle ?? "Nothing collected yet")
+              : "Nothing matches"
           }
           body={
             rows.length === 0
-              ? `This host has reported no ${label.toLowerCase()}.`
+              ? (emptyBody ??
+                `This host has reported no ${label.toLowerCase()}.`)
               : `No ${label.toLowerCase()} match “${query}”.`
           }
         />
@@ -511,6 +524,21 @@ const UNIT_SEVERITY: Record<string, Severity> = {
   inactive: "neutral",
 };
 
+/**
+ * The badge a unit's state earns.
+ *
+ * Substate is consulted first because a looping unit is the one case where
+ * ActiveState alone is misleading: systemd reports a service in its
+ * restart backoff as `activating`, or briefly `active`, so keying purely on
+ * state painted a unit that has been crashing for an hour with the same green
+ * badge as one that is fine -- while this very table listed it precisely
+ * because it is not.
+ */
+function unitSeverity(row: Unit): Severity {
+  if (row.substate === "auto-restart") return "critical";
+  return (row.state === null ? undefined : UNIT_SEVERITY[row.state]) ?? "neutral";
+}
+
 const UNIT_COLUMNS: Column<Unit>[] = [
   { key: "unit", header: "Unit", cell: (row) => row.unit_name },
   {
@@ -520,9 +548,7 @@ const UNIT_COLUMNS: Column<Unit>[] = [
       row.state === null ? (
         ABSENT
       ) : (
-        <Badge severity={UNIT_SEVERITY[row.state] ?? "neutral"}>
-          {row.state}
-        </Badge>
+        <Badge severity={unitSeverity(row)}>{row.state}</Badge>
       ),
   },
   {
@@ -543,6 +569,8 @@ export function Units({ rows }: { rows: readonly Unit[] }) {
       searchText={(row) =>
         [row.unit_name, row.state, row.substate].filter(Boolean).join(" ")
       }
+      emptyTitle="Nothing needs attention"
+      emptyBody="Every systemd service on this host is running normally. Units appear here when one fails or falls into a restart loop."
     />
   );
 }

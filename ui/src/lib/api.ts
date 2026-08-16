@@ -45,6 +45,19 @@ export type Host = {
   // Ingress and egress are what the labels say.
   net_rx_bytes: number | null;
   net_tx_bytes: number | null;
+  // The host's systemd service counts as of its last scrape.
+  //
+  // Gauges rather than a count of the /units response, which is what the host
+  // page used to do. That endpoint returns only the units that NEED ATTENTION
+  // now, so counting it reports "0 units" for a healthy host running several
+  // hundred of them. Null on a host with no systemd -- a different fact from
+  // zero, which capabilities explains.
+  //
+  // Optional here, unlike the Go fields, for the reason `capabilities` below
+  // is: every reader already handles the absent case, and the hand-built host
+  // literals across the tests predate these fields.
+  services_total?: number | null;
+  services_failed?: number | null;
   // Inventory rather than a gauge, and on the list because the CPU sparkline
   // is a per-core stack: the page has to know how many logical CPUs a host
   // has before deciding to ask for one series per core.
@@ -132,11 +145,20 @@ export type Pkg = {
 };
 
 // internal/hub/read/inventory.go: Unit
+//
+// NOT an inventory: /units returns only the units that NEED ATTENTION, so a
+// unit missing from the list is a unit that is fine, never a unit the host
+// does not have. For "how many services does this host run", read
+// Host.services_total. See internal/hub/systemdstate for the rule.
 export type Unit = {
   id: number;
   unit_name: string;
   state: string | null;
   substate: string | null;
+  // When the unit ENTERED this state, not when the hub last heard about it:
+  // both write paths advance it only on an actual change. That is what makes
+  // it usable to tell a unit stuck in a restart loop from one merely caught
+  // mid-restart -- see notableUnit in Overview.tsx.
   since: string | null;
 };
 

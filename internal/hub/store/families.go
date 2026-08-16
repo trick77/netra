@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/trick77/netra/internal/hub/systemdstate"
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
 )
 
@@ -892,7 +893,55 @@ func (s *Store) InsertSystemdUnitEvents(ctx context.Context, hostID int32, rows 
 		}
 		batch.Queue(stmt, hostID, id, tsOf(r.GetTsMs()), r.GetState(), emptyToNil(r.GetSubstate()))
 	}
-	return execBatch(ctx, s.pool, batch, "systemd unit event")
+	n, err := execBatch(ctx, s.pool, batch, "systemd unit event")
+	if err != nil {
+		return n, err
+	}
+
+	// Advance the current-state columns from the same events.
+	//
+	// Without this the delta path writes only history, and a unit's state on
+	// the host page would move only when the five-minute snapshot caught up --
+	// turning a 60s time-to-alert into a 5-minute one, which is a regression
+	// against the behaviour this whole change is meant to preserve. The
+	// snapshot repairs divergence; the events are what make it fast.
+	//
+	// DISTINCT ON picks the newest event per unit in the batch, so a unit that
+	// flapped twice inside one replay lands on where it ended up rather than
+	// on whichever row the batch happened to queue last. The state_ts guard is
+	// the same one ApplySystemdSnapshot uses, so a replayed batch cannot drag
+	// a unit backwards past a state a later snapshot already confirmed.
+	names := make([]string, 0, len(rows))
+	sts := make([]string, 0, len(rows))
+	subs := make([]string, 0, len(rows))
+	when := make([]time.Time, 0, len(rows))
+	for _, r := range rows {
+		if _, ok := ids[r.GetUnitName()]; !ok {
+			continue
+		}
+		names = append(names, r.GetUnitName())
+		sts = append(sts, r.GetState())
+		subs = append(subs, r.GetSubstate())
+		when = append(when, tsOf(r.GetTsMs()))
+	}
+	if len(names) == 0 {
+		return n, nil
+	}
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE systemd_units u
+		   SET state = i.state, substate = NULLIF(i.substate, ''), state_ts = i.ts
+		  FROM (SELECT DISTINCT ON (name) name, state, substate, ts
+		          FROM unnest($2::text[], $3::text[], $4::text[], $5::timestamptz[])
+		               AS t(name, state, substate, ts)
+		         ORDER BY name, ts DESC) i
+		 WHERE u.host_id = $1 AND u.unit_name = i.name
+		   AND (u.state IS DISTINCT FROM i.state
+		     OR u.substate IS DISTINCT FROM NULLIF(i.substate, ''))
+		   AND (u.state_ts IS NULL OR i.ts > u.state_ts)`,
+		hostID, names, sts, subs, when); err != nil {
+		return n, fmt.Errorf("advance systemd unit state: %w", err)
+	}
+	return n, nil
 }
 
 // int64OrNil converts an optional unsigned protobuf field to the signed type
@@ -915,4 +964,157 @@ func emptyToNil(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// ApplySystemdSnapshot reconciles a host's systemd units against the complete
+// set the agent just observed.
+//
+// This is the level-triggered half of the systemd path, and it exists because
+// the event-triggered half cannot converge on its own. Events say what
+// CHANGED; if the change that would correct the hub is never sent, the last
+// event stands forever. Three routine things suppress it -- a unit recovering
+// while the agent is down, a unit vanishing from the bus (`apt purge`), and a
+// scrape lost to the ring buffer -- and each one pinned a unit at "failed"
+// with no way back. A snapshot says what IS, so a divergence cannot outlive
+// one.
+//
+// Only units that NEED ATTENTION get a row. A host runs 300-400 loaded
+// services and a healthy one is almost entirely active/running daemons and
+// inactive/dead oneshots; storing those would bury the row an operator is
+// looking for under several hundred that say nothing. See package systemdstate
+// for the rule and why the transient states are excluded from it.
+//
+// The whole thing is written so that an UNCHANGED snapshot performs zero
+// writes -- not merely inserts no event rows, but updates no tuples, so there
+// is no WAL and no dead tuple to vacuum. That is what makes sending one every
+// five minutes per host affordable, and it is the property to protect if this
+// function is ever edited.
+func (s *Store) ApplySystemdSnapshot(ctx context.Context, hostID int32, snap *netrav1.SystemdSnapshot) (int64, error) {
+	units := snap.GetUnits()
+	if len(units) == 0 {
+		return 0, nil
+	}
+
+	names := make([]string, 0, len(units))
+	states := make([]string, 0, len(units))
+	substates := make([]string, 0, len(units))
+	for _, u := range units {
+		if u.GetUnitName() == "" {
+			continue
+		}
+		names = append(names, u.GetUnitName())
+		states = append(states, u.GetState())
+		substates = append(substates, u.GetSubstate())
+	}
+	if len(names) == 0 {
+		return 0, nil
+	}
+	ts := tsOf(snap.GetTsMs())
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin systemd snapshot: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// 1. The log, FIRST, while the old state is still readable.
+	//
+	// A snapshot that disagrees with the stored state means a transition
+	// happened that the hub never heard about, so this writes the event that
+	// went missing. Doing it after step 2 would compare the new state against
+	// itself and record nothing, leaving the log claiming a unit never moved.
+	//
+	// Joined to systemd_units, so a unit with no row yet contributes nothing:
+	// its history starts when it first becomes worth tracking.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
+		SELECT $1, u.id, $5, i.state, NULLIF(i.substate, '')
+		  FROM unnest($2::text[], $3::text[], $4::text[]) AS i(name, state, substate)
+		  JOIN systemd_units u ON u.host_id = $1 AND u.unit_name = i.name
+		 WHERE (u.state IS DISTINCT FROM i.state
+		     OR u.substate IS DISTINCT FROM NULLIF(i.substate, ''))
+		   AND (u.state_ts IS NULL OR $5 > u.state_ts)
+		ON CONFLICT (host_id, unit_id, ts) DO NOTHING`,
+		hostID, names, states, substates, ts); err != nil {
+		return 0, fmt.Errorf("insert systemd snapshot events: %w", err)
+	}
+
+	// 2. Correct the units already tracked.
+	//
+	// The IS DISTINCT FROM guard is what makes an unchanged snapshot free:
+	// Postgres skips the row entirely rather than rewriting an identical
+	// tuple. The state_ts guard makes the statement order-independent, so a
+	// replayed or out-of-order batch cannot drag a unit backwards in time.
+	tag, err := tx.Exec(ctx, `
+		UPDATE systemd_units u
+		   SET state = i.state, substate = NULLIF(i.substate, ''), state_ts = $5
+		  FROM unnest($2::text[], $3::text[], $4::text[]) AS i(name, state, substate)
+		 WHERE u.host_id = $1 AND u.unit_name = i.name
+		   AND (u.state IS DISTINCT FROM i.state
+		     OR u.substate IS DISTINCT FROM NULLIF(i.substate, ''))
+		   AND (u.state_ts IS NULL OR $5 > u.state_ts)`,
+		hostID, names, states, substates, ts)
+	if err != nil {
+		return 0, fmt.Errorf("update systemd unit state: %w", err)
+	}
+	n := tag.RowsAffected()
+
+	// 3. Start tracking units that have become worth showing.
+	//
+	// Belt and braces: a unit that fails while the agent is running already
+	// got its row from the event path. This covers the one that started
+	// failing while the agent was down or while its scrapes were being
+	// dropped -- the same gap the whole snapshot exists for.
+	tag, err = tx.Exec(ctx, `
+		INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
+		SELECT $1, i.name, i.state, NULLIF(i.substate, ''), $5
+		  FROM unnest($2::text[], $3::text[], $4::text[]) AS i(name, state, substate)
+		 WHERE `+systemdstate.NotableSQL("i")+`
+		ON CONFLICT (host_id, unit_name) DO NOTHING`,
+		hostID, names, states, substates, ts)
+	if err != nil {
+		return 0, fmt.Errorf("insert notable systemd units: %w", err)
+	}
+	n += tag.RowsAffected()
+
+	// 4. Drop what the host no longer has.
+	//
+	// This is the only thing that clears a unit which was PURGED rather than
+	// repaired: `apt purge exim4` removes the unit file, systemd stops listing
+	// it, and the collector -- which can only iterate units that still exist
+	// -- never emits another event about it. Without this the row sits at
+	// "failed" forever with nothing on the host it refers to.
+	//
+	// Gated on `complete`, and never on the list merely being non-empty. A
+	// wedged D-Bus call sends NO snapshot at all rather than an empty one
+	// (collector/systemd.go), and treating absence as emptiness here would
+	// delete every tracked unit on the host on one bad scrape.
+	//
+	// Deleting takes the unit's events with it through the composite foreign
+	// key's ON DELETE CASCADE. That is acceptable only because nothing reads
+	// systemd_unit_events except read.Units, which reads the columns above --
+	// the log is currently write-only. IF A SYSTEMD HISTORY VIEW IS EVER
+	// ADDED, change this to keep the row with a NULL state and add a reaper to
+	// the existing netra_prune_discrete_events job rather than a second job.
+	if snap.GetComplete() {
+		if _, err := tx.Exec(ctx, `
+			DELETE FROM systemd_units WHERE host_id = $1 AND unit_name <> ALL($2)`,
+			hostID, names); err != nil {
+			if !poisonRow(err) {
+				return 0, fmt.Errorf("prune systemd units: %w", err)
+			}
+			// One unstorable unit name poisons the comparison, exactly as it
+			// does for addresses. A unit outliving its unit file is a wrong
+			// answer on a page; a 503 here is a permanent wedge for this host.
+			// Skip this round and let the next snapshot -- five minutes away
+			// -- do it.
+			slog.Warn("skipped the systemd unit prune: the keep set carries a value Postgres refuses",
+				"host_id", hostID, "err", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit systemd snapshot: %w", err)
+	}
+	return n, nil
 }

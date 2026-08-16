@@ -49,6 +49,10 @@ message IngestRequest {
   // They ride the metadata hash the same way capabilities do.
   repeated HostAddress addresses = 18;
   repeated HostPackage packages = 19;
+
+  // Level-triggered systemd state, sent periodically alongside the deltas in
+  // systemd_events. See SystemdSnapshot for why both exist.
+  SystemdSnapshot systemd_snapshot = 20;
 }
 
 // CpuCoreSample is one core's utilisation over one scrape interval. Rows land
@@ -620,6 +624,44 @@ message SystemdUnitEvent {
   string unit_name = 2;
   string state = 3;
   string substate = 4;
+}
+
+// SystemdSnapshot is every loaded .service the agent can see, with its state.
+//
+// systemd_events alone cannot keep the hub correct. Events are edge-triggered,
+// so the hub's view is only ever "what the last transition said" -- and there
+// are three ways to never send the transition that would fix it: the unit
+// recovered while the agent was down (the restart baseline reports only FAILED
+// units, so a recovery is silently skipped), the unit vanished from the bus
+// entirely (`apt purge`, or reset-failed followed by systemd unloading it, and
+// the collector only iterates units that still exist), or the scrape carrying
+// the recovery was dropped by the ring. Each one pins a unit at "failed"
+// forever. The snapshot is the level-triggered repair for all three: it says
+// what IS, not what changed, so a divergence cannot outlive one snapshot.
+//
+// Deltas stay because they are fast -- a failure reaches the hub in one scrape
+// (60s) rather than waiting out the snapshot floor.
+message SystemdSnapshot {
+  int64 ts_ms = 1;
+
+  // True when this is EVERY loaded .service the agent could see.
+  //
+  // The hub prunes units missing from a complete snapshot, so this must never
+  // be inferred from a non-empty list. A wedged collector sends NO snapshot at
+  // all (see collector/systemd.go); "no data" read as "no failed units" would
+  // clear every real warning in the fleet on one bad scrape.
+  bool complete = 2;
+
+  repeated SystemdUnitState units = 3;
+}
+
+// SystemdUnitState is one unit's state inside a SystemdSnapshot. Deliberately
+// not SystemdUnitEvent: there is no per-unit timestamp because every entry was
+// observed at the snapshot's ts_ms, and repeating it 400 times is waste.
+message SystemdUnitState {
+  string unit_name = 1;
+  string state = 2;
+  string substate = 3;
 }
 
 // PackageEvent is a package being installed, upgraded or removed.

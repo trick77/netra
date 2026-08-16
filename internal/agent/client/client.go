@@ -117,6 +117,23 @@ type Client struct {
 	metadata     *netrav1.Metadata
 	metadataHash []byte
 	sendMetadata bool
+
+	// pendingSnapshot is the newest systemd unit snapshot the collector has
+	// produced but the hub has not acked.
+	//
+	// It lives HERE and not on buffer.Scrape, which is where every other
+	// family rides, and the difference is worth stating because the ring is
+	// the obvious place to look for it. Addresses and Packages are
+	// change-triggered: they are emitted only when the host's inventory
+	// actually changed, so the ring holds roughly one copy of each. A snapshot
+	// is PERIODIC -- one every snapshotFloor, forever. Buffering it per scrape
+	// would mean a 12h outage holds ~144 copies of a 400-unit set in memory,
+	// in an agent whose whole design premise is to be light, in order to send
+	// exactly one: Flush already supersedes all but the newest, because a
+	// snapshot describes the present and a stale one has nothing to say.
+	//
+	// Cleared only once the hub acks, so a failed POST re-sends it.
+	pendingSnapshot *netrav1.SystemdSnapshot
 	// replaying stays true for the WHOLE of a replay, not just its first
 	// batch. It was cleared on the first successful partial drain, so
 	// recovering 7200 buffered samples flagged batch 1 as backfill and the
@@ -547,6 +564,13 @@ func (c *Client) collect(ctx context.Context) *buffer.Scrape {
 			// which is what keeps unset meaning "absent".
 			proto.Merge(sample, res.Host)
 		}
+		if res.SystemdSnapshot != nil {
+			// Supersede rather than append: a snapshot states the present, so
+			// an older one held behind it is not history worth keeping -- it
+			// is a wrong answer waiting to be sent. See pendingSnapshot on why
+			// this bypasses the ring entirely.
+			c.pendingSnapshot = res.SystemdSnapshot
+		}
 		appendFamilies(scrape, res)
 	}
 	elapsed := time.Since(start)
@@ -718,7 +742,12 @@ func (c *Client) Flush(ctx context.Context) error {
 	// Counted in rows rather than scrapes: a scrape now carries its host row
 	// plus every per-entity row measured with it, so the scrape count says
 	// nothing about the encoded body size.
-	rows := 0
+	// Seeded with the snapshot, which rides this POST without being drawn from
+	// pending and so would otherwise be invisible to the bound. 400 units is a
+	// meaningful share of maxBatchRows, and a bound that does not know about
+	// them is a bound that stops holding on exactly the large hosts it exists
+	// for.
+	rows := len(c.pendingSnapshot.GetUnits())
 	for i, e := range pending {
 		next := countRows(e.Scrape)
 		// The i > 0 guard lets a single oversized scrape through on its own.
@@ -781,6 +810,11 @@ func (c *Client) Flush(ctx context.Context) error {
 	req.Seq = highest
 	req.MetadataHash = c.metadataHash
 	req.HostSamples = samples
+	// Rides every POST until acked. Unlike the inventory families above it is
+	// not drawn from `pending`, so it goes out even on a batch that carried no
+	// scrape of its own -- which is the point: the repair must not be gated on
+	// the same delivery path whose failure created the divergence.
+	req.SystemdSnapshot = c.pendingSnapshot
 	// Anything sent after a failed flush is replayed history, and the hub
 	// needs to know so it can invalidate the affected aggregate ranges.
 	req.Backfill = c.replaying
@@ -907,6 +941,10 @@ func (c *Client) Flush(ctx context.Context) error {
 	}
 
 	c.ring.AckThrough(resp.GetAckSeq())
+	// Cleared only now, beside the ring's own ack, so a POST that failed or
+	// was refused re-sends it. collect and Flush run on the same goroutine, so
+	// nothing can have replaced it since it went out.
+	c.pendingSnapshot = nil
 	c.sendMetadata = resp.GetRequestMetadata()
 	// Cleared only once the ring is actually EMPTY. A partial drain means
 	// there is still buffered history behind this batch, and every batch of it

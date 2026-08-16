@@ -90,12 +90,32 @@ type Systemd struct {
 
 	prev        map[string]Unit
 	unavailable bool
+
+	// now and lastSnapshot pace the level-triggered snapshot. See
+	// snapshotFloor.
+	now          func() time.Time
+	lastSnapshot time.Time
 }
+
+// snapshotFloor is how often the full unit set is resent.
+//
+// The snapshot exists to repair divergence, not to report it: a failure still
+// reaches the hub in one scrape through the event path, so this only bounds
+// how long a unit can stay WRONG after the one transition that would have
+// fixed it was never sent. Five minutes is short enough that an operator who
+// ran `systemctl reset-failed` sees the warning go away while still looking at
+// the page, and long enough that the cost is nothing -- the hub's upsert is
+// written so that an unchanged snapshot performs zero writes, so the only
+// recurring cost is ~24KB on the wire.
+const snapshotFloor = 5 * time.Minute
 
 // NewSystemd builds a Systemd collector.
 func NewSystemd(lister UnitLister) *Systemd {
-	return &Systemd{lister: lister}
+	return &Systemd{lister: lister, now: time.Now}
 }
+
+// SetClockForTest replaces the clock used for the snapshot floor.
+func (s *Systemd) SetClockForTest(fn func() time.Time) { s.now = fn }
 
 // SetListerForTest swaps the unit source, so a test can change what systemd
 // reports between two scrapes without rebuilding the collector and losing the
@@ -118,7 +138,18 @@ func (s *Systemd) Name() string { return "systemd" }
 // "nginx.service went failed" that the ring dropped left the hub serving
 // "active" permanently: this collector is event-based precisely so the last
 // event is the state, and from its point of view nothing changed afterwards.
-func (s *Systemd) ResendInventory() { s.prev = nil }
+//
+// Clearing lastSnapshot as well is what repairs the MIRROR case, which the
+// baseline alone cannot: a dropped scrape carrying "nginx.service recovered"
+// left the hub serving "failed" just as permanently, and a failed-only
+// baseline says nothing about a unit that is now healthy. Without this line
+// the next snapshot -- the only message that can state a recovery the hub
+// missed -- waits out snapshotFloor while the page shows a warning that is no
+// longer true.
+func (s *Systemd) ResendInventory() {
+	s.prev = nil
+	s.lastSnapshot = time.Time{}
+}
 
 // Capabilities implements CapabilityReporter.
 func (s *Systemd) Capabilities() map[string]string {
@@ -136,6 +167,13 @@ func (s *Systemd) Capabilities() map[string]string {
 func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 	units, err := s.lister(ctx)
 	if err != nil {
+		// No units, and therefore NO SNAPSHOT -- which is the point, not an
+		// omission. The hub prunes units missing from a complete snapshot, so
+		// an empty-but-complete one sent from here would tell it this host has
+		// no services at all and clear every warning on it. A scrape the bus
+		// refused is a scrape with no information, and the hub must keep
+		// serving what it already knows (see 26a42a5: a wedged collector costs
+		// one scrape, not the agent).
 		s.unavailable = true
 		return &Result{}, nil
 	}
@@ -175,15 +213,25 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 	// Restricted to failed units because the volume is nothing like mdraid's.
 	// mdraid baselines a handful of arrays; every loaded .service on a normal
 	// host is 200-400, most of them inactive/dead oneshots that say nothing.
-	// systemd_unit_events is deliberately a plain table with no retention
-	// policy, sized on the premise that "a unit changes state a handful of
-	// times a month" -- so an unrestricted baseline would write a few hundred
-	// unprunable rows per host on EVERY agent restart, and a crash-looping
-	// agent or a fleet redeploy would multiply that. A failed unit is the rare
-	// case by construction, so this is normally zero rows and never more than
-	// a handful.
+	// systemd_unit_events is a plain table pruned only at 90 days
+	// (netra_prune_discrete_events), sized on the premise that "a unit changes
+	// state a handful of times a month" -- so an unrestricted baseline would
+	// write a few hundred rows per host on EVERY agent restart, and a
+	// crash-looping agent or a fleet redeploy would multiply that. A failed
+	// unit is the rare case by construction, so this is normally zero rows and
+	// never more than a handful.
 	//
 	// This is the one place this collector deliberately differs from mdraid.
+	//
+	// The asymmetry -- it can announce a failure it found on arrival, but
+	// never a RECOVERY that happened while the agent was down -- is what the
+	// snapshot below now covers, so this branch is strictly redundant against
+	// a current hub. It stays for one release because agents roll forward
+	// ahead of hubs: deploy/agent/compose.yaml.tmpl pins netra-agent:latest,
+	// so a host can be running an agent that speaks SystemdSnapshot to a hub
+	// that ignores it, and dropping this would leave that pair reporting no
+	// failures at all. DELETE THIS BRANCH once no supported hub predates the
+	// snapshot.
 	for _, name := range names {
 		u := cur[name]
 		p, seen := prev[name]
@@ -210,6 +258,37 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 		events = append(events, unitEvent(ts, name, u))
 	}
 
+	// The snapshot: what IS, rather than what changed.
+	//
+	// Sent on the first scrape (when prev is nil, so nothing above could have
+	// produced a transition) and every snapshotFloor after. Reusing the events'
+	// ts rather than reading the clock again keeps one scrape speaking with one
+	// voice -- the hub's monotonic guard compares the two against the same
+	// stored state_ts, and two timestamps a microsecond apart would make which
+	// one wins depend on statement order.
+	var snapshot *netrav1.SystemdSnapshot
+	if now := s.now(); prev == nil || now.Sub(s.lastSnapshot) >= snapshotFloor {
+		s.lastSnapshot = now
+		states := make([]*netrav1.SystemdUnitState, 0, len(names))
+		for _, name := range names {
+			u := cur[name]
+			states = append(states, &netrav1.SystemdUnitState{
+				UnitName: name,
+				State:    u.Active,
+				Substate: u.SubState,
+			})
+		}
+		snapshot = &netrav1.SystemdSnapshot{
+			TsMs: ts,
+			// Every loaded .service the bus returned. The lister error above
+			// returns before this point, so a snapshot is only ever built from
+			// a successful ListUnits -- there is no path that sets this on a
+			// partial set.
+			Complete: true,
+			Units:    states,
+		}
+	}
+
 	// The summary rides the host row, where two integers cost nothing, rather
 	// than forcing a dashboard to count rows in an event table.
 	return &Result{
@@ -217,7 +296,8 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 			ServicesTotal:  ptrTo(uint32(len(units))),
 			ServicesFailed: ptrTo(failed),
 		},
-		SystemdEvents: events,
+		SystemdEvents:   events,
+		SystemdSnapshot: snapshot,
 	}, nil
 }
 

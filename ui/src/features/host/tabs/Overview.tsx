@@ -432,12 +432,51 @@ export function needsAttention(input: {
     }
   }
 
-  const failed = (input.units ?? []).filter((u) => u.state === "failed");
-  for (const unit of failed) {
-    out.push({ severity: "warning", what: `${unit.unit_name} failed` });
+  for (const unit of input.units ?? []) {
+    if (unit.state === "failed") {
+      out.push({ severity: "warning", what: `${unit.unit_name} failed` });
+    } else if (flapping(unit, now)) {
+      out.push({
+        severity: "warning",
+        what: `${unit.unit_name} is restarting repeatedly`,
+      });
+    }
   }
 
   return out;
+}
+
+/**
+ * How long a unit must have been in auto-restart before it counts as looping.
+ *
+ * Equal to the agent's snapshotFloor (internal/agent/collector/systemd.go), and
+ * that equality is the whole mechanism -- see flapping().
+ */
+const AUTO_RESTART_MIN_MS = 5 * 60 * 1000;
+
+/**
+ * Whether a unit is stuck in a restart loop, as opposed to merely having been
+ * observed between two restart attempts.
+ *
+ * `auto-restart` is the gap BETWEEN attempts: systemd has given up on the
+ * current one and is waiting to try again. Every service that restarts for any
+ * reason passes through it, so warning on a single observation would report a
+ * one-off blip as a loop -- a new false-positive warning added inside the fix
+ * for a false-positive warning.
+ *
+ * The debounce is the unit's age in the state, which works because `since`
+ * advances only on an actual CHANGE. A unit that merely passed through
+ * auto-restart is reported as something else by the next snapshot, so its age
+ * never reaches the floor; a unit genuinely looping keeps reporting
+ * auto-restart, `since` stays put, and the age climbs past it. No client-side
+ * history needed, which matters because this function sees one instant.
+ *
+ * A unit with no `since` is not warned about: that is "state recorded, onset
+ * unknown", and guessing it is old enough would defeat the debounce.
+ */
+function flapping(unit: Unit, now: Date): boolean {
+  if (unit.substate !== "auto-restart" || unit.since === null) return false;
+  return now.getTime() - new Date(unit.since).getTime() >= AUTO_RESTART_MIN_MS;
 }
 
 /**
@@ -660,7 +699,12 @@ export function Overview({
     now,
   });
 
-  const failedUnits = (units ?? []).filter((u) => u.state === "failed").length;
+  // Off the host row, not off `units`. The units endpoint returns only what
+  // needs attention, so counting it would report "0 units" for a healthy host
+  // running several hundred services -- and "1 units · 1 failed" for one with
+  // a single broken service. These are the counts the agent reported.
+  const servicesTotal = host.services_total ?? null;
+  const failedUnits = host.services_failed ?? null;
   const capabilities = Object.entries(host.capabilities);
 
   // The sensor family carries fans, voltages, currents and power alongside
@@ -1044,9 +1088,9 @@ export function Overview({
               ],
               [
                 "Units",
-                units === null
+                servicesTotal === null
                   ? ABSENT
-                  : `${units.length} units · ${failedUnits} failed`,
+                  : `${servicesTotal} units · ${failedUnits ?? 0} failed`,
               ],
               [
                 "Filesystems",

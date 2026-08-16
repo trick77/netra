@@ -646,3 +646,62 @@ func TestIntegrationAPoisonNaturalKeyIsResolvedOncePerBatch(t *testing.T) {
 		t.Errorf("replay status = %d, want 200", resp.StatusCode)
 	}
 }
+
+// A snapshot stamped in the future is dropped WHOLE, and the units it would
+// have touched are left exactly as they were.
+//
+// Unlike a poison sample row, which costs one row, a poison snapshot timestamp
+// is a permanent wedge: state_ts is stored and every later write is guarded by
+// `ts > state_ts`, so a year-2100 snapshot would make this host's unit states
+// unwritable until real time caught up. That is precisely the failure the
+// timestamp filter exists to prevent, so the snapshot goes through the same
+// gate as the sample families -- but all-or-nothing, because a snapshot is one
+// statement about a whole host rather than a bag of independent rows.
+func TestIntegrationImplausibleSystemdSnapshotIsDroppedWhole(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+	ts := time.Now().Add(-time.Minute).UnixMilli()
+
+	// A host already tracking a failed unit.
+	req := fullRequest(1, ts)
+	req.SystemdSnapshot = &netrav1.SystemdSnapshot{
+		TsMs:     ts,
+		Complete: true,
+		Units: []*netrav1.SystemdUnitState{
+			{UnitName: "exim4.service", State: "failed", Substate: "failed"},
+		},
+	}
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	// The same host, a snapshot from the year 2100 claiming all is well.
+	poison := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
+	req = fullRequest(2, time.Now().UnixMilli())
+	req.SystemdSnapshot = &netrav1.SystemdSnapshot{
+		TsMs:     poison,
+		Complete: true,
+		Units: []*netrav1.SystemdUnitState{
+			{UnitName: "ssh.service", State: "active", Substate: "running"},
+		},
+	}
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 -- a poison snapshot must not 503 the batch", resp.StatusCode)
+	}
+
+	var state string
+	var stateTs time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT state, state_ts FROM systemd_units WHERE unit_name = 'exim4.service'`).
+		Scan(&state, &stateTs); err != nil {
+		t.Fatalf("read unit: %v", err)
+	}
+	if state != "failed" {
+		t.Errorf("exim4.service state = %q, want failed -- the future snapshot must not "+
+			"clear a warning, and it must not delete the unit either", state)
+	}
+	if stateTs.After(time.Now().Add(time.Hour)) {
+		t.Errorf("state_ts = %v is in the future; every later update would be skipped "+
+			"until real time caught up, freezing this host's units", stateTs)
+	}
+}
