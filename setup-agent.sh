@@ -2208,6 +2208,9 @@ EOF
     if [ "${MACHINEID_ENABLED:-0}" = 1 ] && [ -n "${MACHINEID_SOURCE:-}" ]; then
         _bv_add "$MACHINEID_SOURCE" "/etc/machine-id"
     fi
+    if [ "${OSRELEASE_ENABLED:-0}" = 1 ]; then
+        _bv_add "/etc/os-release" "/host/etc/os-release"
+    fi
     if [ "${DBUS_ENABLED:-0}" = 1 ]; then
         _bv_add "/run/dbus/system_bus_socket" "/run/dbus/system_bus_socket"
     fi
@@ -2469,6 +2472,23 @@ plan_extras() {
         warn "no /etc/machine-id or /var/lib/dbus/machine-id on this host, so the agent" \
             "cannot fingerprint it. The hub will not be able to tell if this agent's token" \
             "is later copied to a second machine."
+    fi
+
+    # The agent reads PRETTY_NAME from /etc/os-release for the OS the host page
+    # shows, and the distro mark drawn beside it. Without the mount it falls
+    # back to the Go runtime's "linux" and the page draws a generic penguin.
+    #
+    # EMIT path, so the host path is used verbatim. The TARGET is under /host:
+    # the agent image is Alpine and has an /etc/os-release of its OWN, so
+    # mounting over that would make a missing mount report "Alpine Linux" for
+    # every host rather than fall back visibly.
+    OSRELEASE_ENABLED=0
+    if [ -f "$P_OSRELEASE" ]; then
+        OSRELEASE_ENABLED=1
+        info "  os release:      /etc/os-release (read-only, distro name)"
+    else
+        warn "no /etc/os-release on this host, so the agent cannot report which distro" \
+            "it runs. The host page will show a generic Linux instead of this one."
     fi
 
     MOUNTINFO_ENABLED=0

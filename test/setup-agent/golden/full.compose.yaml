@@ -65,6 +65,10 @@ services:
         target: /etc/machine-id
         read_only: true
       - type: bind
+        source: "/etc/os-release"
+        target: /host/etc/os-release
+        read_only: true
+      - type: bind
         source: "/run/dbus/system_bus_socket"
         target: /run/dbus/system_bus_socket
         read_only: true

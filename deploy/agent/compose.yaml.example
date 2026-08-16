@@ -255,6 +255,24 @@ services:
       #   target: /etc/machine-id
       #   read_only: true
 
+      # --- Distro name ------------------------------------------------------
+      #
+      # The agent reads PRETTY_NAME from here for the OS shown on the host
+      # page, which is also what picks the distro mark drawn beside it. With
+      # no mount it falls back to the Go runtime's "linux" and the page shows
+      # a generic penguin instead of this host's own logo.
+      #
+      # The TARGET is not /etc/os-release, and that matters more here than for
+      # any other mount in this file: the image is Alpine and HAS its own
+      # /etc/os-release. Mounting over it would mean a forgotten mount reports
+      # "Alpine Linux" for every host in the fleet — a wrong answer that looks
+      # exactly like a right one. Its own path under /host means a missing
+      # mount reads nothing and falls back visibly.
+      - type: bind
+        source: /etc/os-release
+        target: /host/etc/os-release
+        read_only: true
+
       # --- OPTIONAL: systemd units ------------------------------------------
       #
       # Enables the systemd collector, which calls
