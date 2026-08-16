@@ -619,7 +619,10 @@ function Panel({
       // with legend, not highlight: the latter also dims every other series
       // to 35% and washed the whole stack out.
       legend={series.length <= 6}
-      hideAxis={spec.hideAxis}
+      // Boolean panels join the per-core stack in having no VALUE axis:
+      // their 0 and 1 are states, and ticking them would label a chart
+      // "up" / 0.5 / "down". Both keep their time axis.
+      hideAxis={spec.hideAxis ?? spec.boolean}
       // No per-panel notice: the window statement is about the RANGE, not
       // about any one chart, and repeating it under twenty panels made it
       // twenty pieces of noise nobody reads. It is rendered once, above the

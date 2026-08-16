@@ -22,6 +22,7 @@ import {
   AXIS_FONT_PX,
   TICK_MAJOR,
   TICK_MINOR,
+  labelWidth,
   xAt,
   yAt,
   type PlotRect,
@@ -204,7 +205,12 @@ export function AxisLabels({
             </text>
           ))}
       {x
-        .filter((t) => t.major && t.label !== null)
+        // A type predicate rather than a plain filter: the labels below are
+        // measured to place them, and measuring needs the narrowing this
+        // filter already performs at runtime.
+        .filter((t): t is TimeTick & { label: string } =>
+          Boolean(t.major && t.label !== null),
+        )
         .map((t, i) => (
           <text
             key={`xl${i}`}
@@ -213,7 +219,7 @@ export function AxisLabels({
             x={xAt(rect, t.fraction)}
             y={rect.bottom + TICK_MINOR + AXIS_FONT_PX}
             fontSize={AXIS_FONT_PX}
-            textAnchor={edgeAnchor(t.fraction)}
+            textAnchor={anchorFor(xAt(rect, t.fraction), t.label, rect)}
           >
             {t.label}
           </text>
@@ -223,16 +229,25 @@ export function AxisLabels({
 }
 
 /**
- * Centred, except within a couple of percent of either end.
+ * Centred, unless centring would push the label outside the image.
  *
- * A label centred on fraction 0 hangs half its width into the value-axis
- * gutter beside it; one centred on fraction 1 hangs off the right of the
- * image. Anchoring the near edge keeps the whole label inside without
- * detaching it from the tick it names.
+ * Measured rather than guessed at from the fraction. A fraction threshold
+ * cannot know how wide the text is, and the last tick of a 24h axis sits at
+ * about 0.95 -- inside any sane threshold, and still wide enough to run off
+ * the edge. "12:00" rendered as "12:0" with the rest clipped.
+ *
+ * The left bound is the plot's own left edge rather than zero: the value
+ * labels live in that margin, and a time label reaching into it collides
+ * with them rather than with the image boundary.
  */
-function edgeAnchor(fraction: number): "start" | "middle" | "end" {
-  if (fraction < 0.02) return "start";
-  if (fraction > 0.98) return "end";
+function anchorFor(
+  x: number,
+  label: string,
+  rect: PlotRect,
+): "start" | "middle" | "end" {
+  const half = labelWidth(label, AXIS_FONT_PX) / 2;
+  if (x - half < rect.left) return "start";
+  if (x + half > rect.right) return "end";
   return "middle";
 }
 

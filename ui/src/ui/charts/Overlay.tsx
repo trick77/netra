@@ -12,6 +12,7 @@
 // to look identical, which is exactly the comparison this component exists
 // to make possible.
 import { Chart } from "./Chart";
+import type { Tick, TimeTick } from "./ticks";
 
 export interface OverlaySeries {
   name: string;
@@ -85,6 +86,23 @@ export interface OverlayProps {
    * catches up.
    */
   mirrored?: boolean;
+
+  /**
+   * Axis furniture, forwarded verbatim to Chart.
+   *
+   * Overlay does not compute any of it. Ticks depend on the formatter and
+   * the answered window, which are the PANEL's knowledge -- Overlay is handed
+   * series and a ceiling and knows nothing about time or units. Forwarding
+   * rather than deriving is what keeps a fleet-row overlay, which passes
+   * none of these, drawing exactly what it drew before.
+   */
+  y?: readonly Tick[];
+  x?: readonly TimeTick[];
+  format?: (value: number) => string;
+  grid?: boolean;
+  spine?: boolean;
+  labels?: boolean;
+  widestYLabel?: string;
 }
 
 export function Overlay({
@@ -100,6 +118,13 @@ export function Overlay({
   legend = true,
   reference,
   mirrored = false,
+  y,
+  x,
+  format,
+  grid,
+  spine,
+  labels,
+  widestYLabel,
 }: OverlayProps) {
   return (
     <>
@@ -114,6 +139,13 @@ export function Overlay({
         highlight={highlight}
         reference={reference}
         label={label}
+        y={y}
+        x={x}
+        format={format}
+        grid={grid}
+        spine={spine}
+        labels={labels}
+        widestYLabel={widestYLabel}
       />
       {/* A legend names series; on a fleet overlay it would name all
           nineteen of them, which is the opposite of "every host

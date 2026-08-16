@@ -8,6 +8,8 @@
 import type { ReactNode } from "react";
 import { ABSENT } from "../../lib/format";
 import { extent } from "./geometry";
+import { mirroredTicks, niceTicks, timeTicks } from "./ticks";
+import { widestLabel } from "./plot";
 import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
 import { Enlargeable, type DetailData } from "./Enlargeable";
@@ -57,6 +59,17 @@ export interface ChartPanelProps {
   reference?: number;
   /** Draw the series as mirrored in/out pairs about a midline. */
   mirrored?: boolean;
+  /**
+   * The ladder the value ticks step on: 1000 for a decimal quantity, 1024
+   * for one formatted with binaryBytes.
+   *
+   * It has to be told rather than inferred, because a formatter is an opaque
+   * function -- and getting it wrong is not subtle. A 16 GiB host ticked
+   * decimally labels 1.9 / 3.7 / 5.6 / 7.5 GiB, every number ragged; in base
+   * 1024 the same axis reads 2 / 4 / 6 / 8 / 12 / 16 GiB. Memory is the only
+   * family that needs it.
+   */
+  tickBase?: 1000 | 1024;
   /** Formats the HEADLINE only, defaulting to `fmt`. The two are separate
    * because they answer to different neighbours: `fmt` also renders the
    * enlarged view's axis, its tooltips and its stats table, where every
@@ -117,6 +130,16 @@ export interface ChartPanelProps {
   footer?: ReactNode;
 }
 
+/**
+ * The shortest panel that still reads as a chart with an axis.
+ *
+ * Below this the two value labels and the row of time labels crowd the plot
+ * they describe. The panels this component actually draws are 112 tall; the
+ * threshold exists so a caller passing an explicit small height gets the
+ * bare shape it asked for rather than a collapsed plot.
+ */
+const AXIS_MIN_HEIGHT = 80;
+
 export function ChartPanel({
   title,
   unit,
@@ -126,7 +149,11 @@ export function ChartPanel({
   notice,
   unavailable,
   width = 260,
-  height = 64,
+  // Tall enough to carry an axis. A panel used to be a 64px shape whose only
+  // number was the headline, so reading a magnitude off it meant enlarging
+  // it; the extra 48px buy two value labels and three time labels, and the
+  // panel answers "how much, and when" on its own.
+  height = 112,
   highlight,
   stacked,
   legend,
@@ -135,6 +162,7 @@ export function ChartPanel({
   nowValue,
   mirrored,
   hideAxis,
+  tickBase = 1000,
   window: answered = null,
   range,
   ranges,
@@ -191,6 +219,52 @@ export function ChartPanel({
   const nowLabel =
     nowValue === undefined && series.length > 1 ? series[0]?.name : undefined;
 
+  // The axis, in two independent halves.
+  //
+  // A box shorter than AXIS_MIN_HEIGHT declines both. The axis costs a line
+  // of text below the plot and half a line above it, so below that height
+  // the furniture takes more of the box than the data does -- and a caller
+  // drawing this card at sparkline height wants a sparkline.
+  const axis = series.length > 0 && height >= AXIS_MIN_HEIGHT;
+
+  // hideAxis suppresses the VALUE half only, which is what it has always
+  // meant: "an axis would put a number on something that does not mean one".
+  // Two panels need it and neither is measuring a quantity -- the per-core
+  // stack, whose height is cores x 100, and a boolean series, whose 0 and 1
+  // are states rather than magnitudes. Both still happened in TIME, so the
+  // time axis stays: when a core spiked is a real question about a chart
+  // that cannot answer how much.
+  const valueAxis = axis && !hideAxis;
+
+  const floor = stacked ? 0 : extent(series.flatMap((s) => s.values)).min;
+  // ONE interval, not two or three. niceTicks rounds its step DOWN, so the
+  // count it is given is a floor on how many labels come back, not a target:
+  // asking for two over a 0-100 axis returns five (20/40/60/80/100), and
+  // five labels at 12px do not fit a 58px plot -- they collided in the panel
+  // before this was tuned. One interval yields the two or three that do.
+  // The chart page, with room for eight, asks for more.
+  const yTicks = !valueAxis
+    ? undefined
+    : mirrored
+      ? mirroredTicks(effectiveMax, 1, tickBase)
+      : niceTicks(floor, effectiveMax, 1, tickBase);
+  const xTicks =
+    !axis || answered === null
+      ? undefined
+      : timeTicks(
+          Date.parse(answered.from),
+          Date.parse(answered.to),
+          // Three labels is what 260px holds once the value gutter is taken
+          // out of it. timeTicks picks the coarsest step that yields at
+          // least this many, so they cannot collide.
+          3,
+        );
+  const tickText = (v: number) => (fmt ? fmt(v) : String(v));
+  const widest =
+    yTicks === undefined
+      ? undefined
+      : widestLabel(yTicks.filter((t) => t.major).map((t) => tickText(t.value)));
+
   return (
     <section className="smp" aria-label={`${title} chart`}>
       <div className="t">
@@ -229,6 +303,13 @@ export function ChartPanel({
         <Overlay
           series={series}
           max={effectiveMax}
+          y={yTicks}
+          x={xTicks}
+          format={tickText}
+          grid={axis}
+          spine={axis}
+          labels={axis}
+          widestYLabel={widest}
           // A stack is scaled from ZERO -- stackBands() has no min at all,
           // it divides a running total by `max` -- so the reference rule has
           // to be placed against the same floor. Without this, Overlay fell
