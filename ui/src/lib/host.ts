@@ -19,7 +19,13 @@ import { ABSENT } from "./format";
  * engine must not disagree about which hosts are down.
  */
 const SCRAPE_INTERVAL_S = 60;
-const STALE_THRESHOLD_MS = 3 * SCRAPE_INTERVAL_S * 1000;
+// Exported because the host page's needsAttention() judges the same fact and
+// used to carry its own five-minute constant. A host last seen four minutes
+// ago then had its header say "offline", its traffic gauges blanked, its
+// fleet row marked critical -- and the "Needs attention" panel directly below
+// all of that say nothing needed attention. One definition of down, in the
+// one place that states why it is three scrapes.
+export const STALE_THRESHOLD_MS = 3 * SCRAPE_INTERVAL_S * 1000;
 
 /**
  * How many recorded state changes in the last hour make a systemd unit
