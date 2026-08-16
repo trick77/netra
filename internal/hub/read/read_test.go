@@ -297,33 +297,28 @@ func TestIntegrationDimensionListingsProjectTheirTables(t *testing.T) {
 	})
 }
 
-// A unit's state is a last-value lookup into systemd_unit_events, because that
-// is where the collector puts it: systemd emits events, not samples. A unit
-// with no events yet must report null rather than "active", which would be a
-// guess.
-func TestIntegrationUnitsReportTheNewestStateAndNullWhenThereIsNone(t *testing.T) {
+// Units answers what NEEDS ATTENTION, not what the host runs.
+//
+// The state comes off the systemd_units row rather than the newest event, and
+// a unit whose state is ordinary is left out entirely -- a healthy host runs
+// 300-400 services and listing them buries the row an operator opened the page
+// for. See internal/hub/systemdstate.
+func TestIntegrationUnitsListOnlyWhatNeedsAttention(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
 	id := seedHost(t, pool, "systemd")
 
-	var noisy int32
-	if err := pool.QueryRow(ctx,
-		`INSERT INTO systemd_units (host_id, unit_name) VALUES ($1, 'ssh.service') RETURNING id`,
-		id).Scan(&noisy); err != nil {
-		t.Fatalf("insert unit: %v", err)
-	}
-	exec(t, pool, `INSERT INTO systemd_units (host_id, unit_name) VALUES ($1, 'quiet.service')`, id)
 	exec(t, pool, `
-		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
-		VALUES ($1, $2, now() - INTERVAL '2 hours', 'failed', 'failed'),
-		       ($1, $2, now() - INTERVAL '1 hour', 'active', 'running')`, id, noisy)
+		INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
+		VALUES ($1, 'ssh.service',     'active',     'running',      now() - INTERVAL '1 hour'),
+		       ($1, 'exim4.service',   'failed',     'failed',       now() - INTERVAL '2 hours'),
+		       ($1, 'backup.service',  'activating', 'auto-restart', now() - INTERVAL '3 hours'),
+		       ($1, 'oneshot.service', 'inactive',   'dead',         now() - INTERVAL '4 hours'),
+		       ($1, 'quiet.service',   NULL,         NULL,           NULL)`, id)
 
 	got, err := svc.Units(ctx, id)
 	if err != nil {
 		t.Fatalf("Units: %v", err)
-	}
-	if len(got) != 2 {
-		t.Fatalf("got %d units, want 2", len(got))
 	}
 
 	byName := map[string]read.Unit{}
@@ -331,18 +326,93 @@ func TestIntegrationUnitsReportTheNewestStateAndNullWhenThereIsNone(t *testing.T
 		byName[u.Name] = u
 	}
 
-	ssh := byName["ssh.service"]
-	if ssh.State == nil || *ssh.State != "active" {
-		t.Errorf("ssh.service state = %v, want the NEWEST event's active", ssh.State)
-	}
-	if ssh.Since == nil {
-		t.Error("ssh.service since = nil, want the newest event's timestamp")
+	// Only the failed unit. backup.service is sitting in systemd's restart
+	// backoff, which sounds like it belongs here but is a single sighting
+	// rather than a rate -- see systemdstate.Notable. A unit that really is
+	// looping is caught by its transition count instead, which
+	// TestIntegrationUnitsListAUnitThatKeepsRestarting covers.
+	if len(got) != 1 {
+		t.Fatalf("got %d units, want exim4.service alone", len(got))
 	}
 
-	quiet := byName["quiet.service"]
-	if quiet.State != nil {
-		t.Errorf("quiet.service state = %v, want null -- it has no events, and any "+
-			"state here would be a guess", quiet.State)
+	exim := byName["exim4.service"]
+	if exim.State == nil || *exim.State != "failed" {
+		t.Errorf("exim4.service state = %v, want failed", exim.State)
+	}
+	// Since is the ONSET of the state, which is what makes it usable to tell a
+	// unit stuck in a loop from one caught mid-restart.
+	if exim.Since == nil {
+		t.Error("exim4.service since = nil, want the state's onset")
+	}
+	// The ordinary states, the transient one, and the unknown one. A unit with
+	// no state recorded is not evidence of a problem, so it is not shown --
+	// and it is not claimed to be healthy either.
+	for _, name := range []string{
+		"ssh.service", "oneshot.service", "quiet.service", "backup.service",
+	} {
+		if _, ok := byName[name]; ok {
+			t.Errorf("%s is listed; a unit nobody needs to act on must not be", name)
+		}
+	}
+}
+
+// A unit that is broken without ever LOOKING broken.
+//
+// A service that runs for a few minutes, dies and comes back is `active` at
+// nearly every scrape, and systemd never escalates it to `failed` because it
+// never trips the start limit. No snapshot of its current state can reveal it,
+// which is why the units query counts transitions as well as reading columns.
+func TestIntegrationUnitsListAUnitThatKeepsRestarting(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "flapping")
+
+	var flappy, steady int32
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
+		 VALUES ($1, 'backup.service', 'active', 'running', now()) RETURNING id`,
+		id).Scan(&flappy); err != nil {
+		t.Fatalf("insert flappy: %v", err)
+	}
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO systemd_units (host_id, unit_name, state, substate, state_ts)
+		 VALUES ($1, 'ssh.service', 'active', 'running', now()) RETURNING id`,
+		id).Scan(&steady); err != nil {
+		t.Fatalf("insert steady: %v", err)
+	}
+
+	// Six transitions in the last hour: up, down, up, down, up, down.
+	exec(t, pool, `
+		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
+		SELECT $1, $2, now() - (g || ' minutes')::interval,
+		       CASE WHEN g % 2 = 0 THEN 'active' ELSE 'failed' END, 'x'
+		  FROM generate_series(1, 6) AS g`, id, flappy)
+
+	// The steady unit restarted once, hours ago -- outside the window, and
+	// nowhere near the threshold either.
+	exec(t, pool, `
+		INSERT INTO systemd_unit_events (host_id, unit_id, ts, state, substate)
+		VALUES ($1, $2, now() - INTERVAL '5 hours', 'active', 'running')`, id, steady)
+
+	got, err := svc.Units(ctx, id)
+	if err != nil {
+		t.Fatalf("Units: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d units, want backup.service alone -- ssh.service is quiet and "+
+			"backup.service is only visible through its history", len(got))
+	}
+	if got[0].Name != "backup.service" {
+		t.Fatalf("listed %s, want backup.service", got[0].Name)
+	}
+	if got[0].Restarts1h < 6 {
+		t.Errorf("restarts_1h = %d, want at least 6 -- the count is what the page "+
+			"puts in the warning", got[0].Restarts1h)
+	}
+	// Its CURRENT state is perfectly healthy, which is the whole point.
+	if got[0].State == nil || *got[0].State != "active" {
+		t.Errorf("state = %v, want active; a unit that looks fine right now is exactly "+
+			"the one this rule exists to catch", got[0].State)
 	}
 }
 

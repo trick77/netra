@@ -33,6 +33,12 @@ type Scrape struct {
 	PackageEvents []*netrav1.PackageEvent
 	Addresses     []*netrav1.HostAddress
 	Packages      []*netrav1.HostPackage
+
+	// SystemdSnapshot mirrors what a real agent sends every snapshotFloor.
+	// Without it a simulated fleet reproduces the bug the snapshot exists to
+	// fix -- units pinned at "failed" with nothing able to clear them -- and
+	// the local hub could not be used to check that it is gone.
+	SystemdSnapshot *netrav1.SystemdSnapshot
 }
 
 // Rows counts what this scrape will insert. The batcher bounds a POST by rows
@@ -44,7 +50,8 @@ func (s *Scrape) Rows() int {
 		len(s.Collectors) + len(s.Events) + len(s.Containers) +
 		len(s.Filesystems) + len(s.Smart) + len(s.Processes) +
 		len(s.SystemdEvents) + len(s.PackageEvents) +
-		len(s.Addresses) + len(s.Packages)
+		len(s.Addresses) + len(s.Packages) +
+		len(s.SystemdSnapshot.GetUnits())
 	if s.Host != nil {
 		n++
 	}
@@ -172,6 +179,8 @@ func (g *Generator) Scrape(ts time.Time, opt Options) *Scrape {
 			s.Events = append(s.Events, ev)
 		}
 	}
+
+	s.SystemdSnapshot = g.systemdSnapshot(ts)
 	return s
 }
 
@@ -1052,4 +1061,53 @@ func hashString(s string) uint64 {
 		h *= 1099511628211
 	}
 	return h
+}
+
+// simSnapshotFloor mirrors snapshotFloor in the systemd collector: how often a
+// real agent resends the full unit set. Kept equal so a simulated fleet
+// exercises the same write pattern the hub sees in production -- in
+// particular, that all but the first snapshot after a change are no-ops.
+const simSnapshotFloor = 5 * time.Minute
+
+// systemdSnapshot builds the level-triggered unit set a real agent sends every
+// simSnapshotFloor.
+//
+// Returns nil on a host with no systemd, which is what the collector does when
+// the bus is unreachable -- and the distinction matters here as much as it
+// does there: the hub prunes units missing from a COMPLETE snapshot, so a
+// simulated host that sent an empty one would have its units deleted rather
+// than left alone.
+//
+// Aligned to the wall clock rather than counted from the run's start so that a
+// backfill and a live run put snapshots at the same instants, and replaying a
+// window twice writes the same rows.
+func (g *Generator) systemdSnapshot(ts time.Time) *netrav1.SystemdSnapshot {
+	p := g.p
+	if p.Capabilities["systemd"] == "unavailable" || len(p.Units) == 0 {
+		return nil
+	}
+	if !ts.Truncate(simSnapshotFloor).Equal(ts) {
+		return nil
+	}
+
+	moved := g.sched.unitStates(ts)
+	units := make([]*netrav1.SystemdUnitState, 0, len(p.Units))
+	for _, name := range p.Units {
+		// A unit the schedule never touched has never failed, so it is a
+		// healthy daemon. Only units with events have any other state.
+		st := unitState{state: "active", substate: "running"}
+		if u, ok := moved[name]; ok {
+			st = u
+		}
+		units = append(units, &netrav1.SystemdUnitState{
+			UnitName: name,
+			State:    st.state,
+			Substate: st.substate,
+		})
+	}
+	return &netrav1.SystemdSnapshot{
+		TsMs:     ts.UnixMilli(),
+		Complete: true,
+		Units:    units,
+	}
 }

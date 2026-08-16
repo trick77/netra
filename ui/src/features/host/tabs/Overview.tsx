@@ -33,7 +33,7 @@ import {
 } from "../../../lib/format";
 import { osLabel } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
-import { isReporting } from "../../../lib/host";
+import { FLAP_THRESHOLD, isReporting } from "../../../lib/host";
 import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
@@ -482,12 +482,40 @@ export function needsAttention(input: {
     }
   }
 
-  const failed = (input.units ?? []).filter((u) => u.state === "failed");
-  for (const unit of failed) {
-    out.push({ severity: "warning", what: `${unit.unit_name} failed` });
+  for (const unit of input.units ?? []) {
+    if (unit.state === "failed") {
+      out.push({ severity: "warning", what: `${unit.unit_name} failed` });
+    } else if (flapping(unit)) {
+      out.push({
+        severity: "warning",
+        what: `${unit.unit_name} restarted ${unit.restarts_1h} times in the last hour`,
+      });
+    }
   }
 
   return out;
+}
+
+/**
+ * Whether a unit is stuck in a restart loop.
+ *
+ * Repetition is a RATE, so it is measured by counting transitions rather than
+ * by inspecting the current state. Two tempting shortcuts are both wrong:
+ *
+ * - `substate === "auto-restart"` is one sighting, not a rate. It is also the
+ *   gap BETWEEN attempts, which at the default RestartSec=100ms a 60-second
+ *   scrape will essentially never land in.
+ * - "how long has it been in auto-restart" is worse: `since` advances on every
+ *   state CHANGE, and a flapping unit changes state constantly, so its age in
+ *   the current state is near zero exactly when it is flapping hardest.
+ *
+ * The unit this catches is the one nothing else can: a service that runs for a
+ * few minutes, dies, and comes back looks perfectly healthy at almost every
+ * scrape, and systemd never escalates it to `failed` because it does not trip
+ * the start limit. Only its history gives it away.
+ */
+function flapping(unit: Unit): boolean {
+  return unit.restarts_1h >= FLAP_THRESHOLD;
 }
 
 /**
@@ -773,7 +801,12 @@ export function Overview({
     now,
   });
 
-  const failedUnits = (units ?? []).filter((u) => u.state === "failed").length;
+  // Off the host row, not off `units`. The units endpoint returns only what
+  // needs attention, so counting it would report "0 units" for a healthy host
+  // running several hundred services -- and "1 units · 1 failed" for one with
+  // a single broken service. These are the counts the agent reported.
+  const servicesTotal = host.services_total ?? null;
+  const failedUnits = host.services_failed ?? null;
   const capabilities = Object.entries(host.capabilities);
 
   // The sensor family carries fans, voltages, currents and power alongside
@@ -1281,9 +1314,9 @@ export function Overview({
               ],
               [
                 "Units",
-                units === null
+                servicesTotal === null
                   ? ABSENT
-                  : `${units.length} units · ${failedUnits} failed`,
+                  : `${servicesTotal} units · ${failedUnits ?? 0} failed`,
               ],
               [
                 "Filesystems",

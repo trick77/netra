@@ -14,6 +14,7 @@ import type {
 } from "../../../lib/api";
 import { ABSENT, absolute, bytes, relative } from "../../../lib/format";
 import { hostContainerNote } from "../../../lib/containers";
+import { FLAP_THRESHOLD } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
@@ -48,6 +49,14 @@ export interface InventoryProps<T> {
    * "what stopped the rest being collected", and a list that is partly there
    * needs both. */
   notice?: ReactNode;
+  /** What an empty list means, for a list where "empty" is not "nothing was
+   * collected". Units is the case: it shows only what needs attention, so an
+   * empty one is a healthy host, and the default copy ("This host has reported
+   * no units") would be a plain falsehood about a host running 400 of them.
+   * Only the no-rows state is overridden -- "nothing matches your filter" says
+   * the same thing for every list. */
+  emptyTitle?: string;
+  emptyBody?: string;
   /** Splits the list into labelled groups. Handed straight to Table -- see
    * its own note for why grouping has to live there rather than here. */
   groupBy?: TableProps<T>["groupBy"];
@@ -61,6 +70,8 @@ export function Inventory<T>({
   searchText,
   controls,
   notice,
+  emptyTitle,
+  emptyBody,
   groupBy,
 }: InventoryProps<T>) {
   const [query, setQuery] = useState("");
@@ -86,11 +97,14 @@ export function Inventory<T>({
         <EmptyState
           icon={Inbox}
           title={
-            rows.length === 0 ? "Nothing collected yet" : "Nothing matches"
+            rows.length === 0
+              ? (emptyTitle ?? "Nothing collected yet")
+              : "Nothing matches"
           }
           body={
             rows.length === 0
-              ? `This host has reported no ${label.toLowerCase()}.`
+              ? (emptyBody ??
+                `This host has reported no ${label.toLowerCase()}.`)
               : `No ${label.toLowerCase()} match “${query}”.`
           }
         />
@@ -512,6 +526,20 @@ const UNIT_COLUMNS: Column<Unit>[] = [
     header: "Substate",
     cell: (row) => row.substate ?? ABSENT,
   },
+  {
+    // The reason a unit that reads active/running is in this table at all. A
+    // service that runs a few minutes, dies and comes back is healthy at
+    // nearly every scrape, so without this column its row looks like a
+    // mistake -- a green badge in a list of things that need attention.
+    key: "restarts",
+    header: "Restarts (1h)",
+    cell: (row) =>
+      row.restarts_1h >= FLAP_THRESHOLD ? (
+        <Badge severity="warning">{row.restarts_1h}</Badge>
+      ) : (
+        row.restarts_1h
+      ),
+  },
   { key: "since", header: "Since", cell: (row) => <When iso={row.since} /> },
 ];
 
@@ -525,6 +553,8 @@ export function Units({ rows }: { rows: readonly Unit[] }) {
       searchText={(row) =>
         [row.unit_name, row.state, row.substate].filter(Boolean).join(" ")
       }
+      emptyTitle="Nothing needs attention"
+      emptyBody="Every systemd service on this host is running normally. Units appear here when one fails or falls into a restart loop."
     />
   );
 }

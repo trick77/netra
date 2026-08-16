@@ -123,6 +123,29 @@ func (h *IngestHandler) storeFamilies(ctx context.Context, hostID int32, req *ne
 		return fmt.Errorf("packages: %w", err)
 	}
 
+	// The systemd snapshot, unlike the inventory above it, DOES carry a
+	// timestamp -- it is stored as state_ts and compared against on every
+	// later write. So it goes through the same plausibility gate as the
+	// sample families, and a snapshot that fails it is dropped WHOLE rather
+	// than row by row.
+	//
+	// Dropping the whole thing is the point. A future state_ts is not one bad
+	// row, it is a poison pill: every subsequent update is guarded by
+	// `$ts > state_ts` and would be silently skipped until real time caught
+	// up, freezing the host's unit states for as long as the clock skew
+	// lasted. That is exactly the wedge filterByTs exists to prevent.
+	//
+	// Its position after the event inserts is immaterial rather than lucky:
+	// both write paths carry the same monotonic guard, so whichever runs
+	// second cannot undo the fresher of the two.
+	if snap := req.GetSystemdSnapshot(); snap != nil {
+		if !plausibleTs(snap.GetTsMs(), future) {
+			logDropped(hostID, "systemd snapshot", 1)
+		} else if _, err := h.store.ApplySystemdSnapshot(ctx, hostID, snap); err != nil {
+			return fmt.Errorf("systemd snapshot: %w", err)
+		}
+	}
+
 	return nil
 }
 

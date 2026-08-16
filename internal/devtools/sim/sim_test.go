@@ -212,7 +212,8 @@ func TestRowsMatchesWhatTheRequestCarries(t *testing.T) {
 		len(req.GetSensors()) + len(req.GetNet()) + len(req.GetCollectors()) +
 		len(req.GetEvents()) + len(req.GetContainers()) + len(req.GetFilesystems()) +
 		len(req.GetSmart()) + len(req.GetProcesses()) + len(req.GetSystemdEvents()) +
-		len(req.GetPackageEvents()) + len(req.GetAddresses()) + len(req.GetPackages())
+		len(req.GetPackageEvents()) + len(req.GetAddresses()) + len(req.GetPackages()) +
+		len(req.GetSystemdSnapshot().GetUnits())
 
 	if got != s.Rows() {
 		t.Errorf("Rows() reports %d but the request carries %d", s.Rows(), got)

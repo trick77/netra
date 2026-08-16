@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import type { HostDetail, MetricsResponse } from "../../../lib/api";
+import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { Overview, filesystemRows } from "./Overview";
 
@@ -15,6 +15,8 @@ const host: HostDetail = {
   uptime_s: 86_400,
   net_rx_bytes: 1.5e6,
   net_tx_bytes: 4e5,
+  services_total: 397,
+  services_failed: 1,
   site_name: "Zurich",
   provider_name: "Hetzner",
   fingerprint: "fp",
@@ -363,6 +365,7 @@ describe("Overview", () => {
           state: "active",
           substate: "running",
           since: null,
+          restarts_1h: 0,
         },
         {
           id: 2,
@@ -370,13 +373,17 @@ describe("Overview", () => {
           state: "failed",
           substate: "dead",
           since: null,
+          restarts_1h: 0,
         },
       ],
     });
     // A count and a link, not the inventory itself.
     expect(screen.getByText("2 containers")).toBeInTheDocument();
     expect(screen.queryByText("nginx")).toBeNull();
-    expect(screen.getByText(/1 failed/)).toBeInTheDocument();
+    // The host's OWN service counts, not the length of `units`. The units
+    // endpoint returns only what needs attention -- two rows here -- so
+    // counting it would report "2 units" for a host running 397.
+    expect(screen.getByText("397 units \u00b7 1 failed")).toBeInTheDocument();
   });
 
   it("reads the sensor family's temp column", () => {
@@ -535,6 +542,83 @@ describe("Overview", () => {
   it("reports a collector that is not running, with its reason", () => {
     renderOverview();
     expect(screen.getByText("not permitted")).toBeInTheDocument();
+  });
+});
+
+describe("Overview systemd units", () => {
+  const NOW = new Date("2026-08-10T01:00:30Z");
+
+  function unit(over: Partial<Unit> = {}): Unit {
+    return {
+      id: 1,
+      unit_name: "exim4.service",
+      state: "failed",
+      substate: "failed",
+      since: "2026-08-10T00:00:00Z",
+      restarts_1h: 0,
+      ...over,
+    };
+  }
+
+  function attention(units: Unit[]): string {
+    renderOverview({ units, now: NOW });
+    const band = screen.queryByRole("region", { name: /needs attention/i });
+    return band?.textContent ?? "";
+  }
+
+  it("warns about a failed unit", () => {
+    expect(attention([unit()])).toMatch(/exim4\.service failed/);
+  });
+
+  // The bug this whole change exists for. The warning used to be pinned by
+  // whatever the last event said, so a unit that recovered while the agent was
+  // down stayed "failed" on this page forever.
+  it("stops warning once the unit is reported healthy again", () => {
+    const text = attention([unit({ state: "active", substate: "running" })]);
+    expect(text).not.toMatch(/exim4\.service/);
+  });
+
+  // A purged unit is deleted hub-side rather than corrected, so it reaches the
+  // page by being absent rather than by changing state.
+  it("stops warning about a unit that is no longer on the host", () => {
+    expect(attention([])).not.toMatch(/exim4\.service/);
+  });
+
+  // The unit nothing else can catch: a service that runs a few minutes, dies
+  // and comes back is HEALTHY at almost every scrape, and systemd never
+  // escalates it to `failed` because it does not trip the start limit. Only
+  // the transition count gives it away, which is why the warning is keyed on a
+  // rate rather than on the state in front of it.
+  it("warns about a unit that keeps restarting, even while it looks healthy", () => {
+    const text = attention([
+      unit({ state: "active", substate: "running", restarts_1h: 9 }),
+    ]);
+    expect(text).toMatch(/exim4\.service restarted 9 times in the last hour/);
+  });
+
+  it("does not call an ordinary restart a loop", () => {
+    const text = attention([
+      unit({ state: "active", substate: "running", restarts_1h: 2 }),
+    ]);
+    expect(text).not.toMatch(/exim4\.service/);
+  });
+
+  // A single sighting of auto-restart is not a rate. It is the gap BETWEEN
+  // attempts -- at the default RestartSec=100ms a 60s scrape essentially never
+  // lands in it, so treating one as proof of a loop would be a coin toss
+  // dressed up as a warning.
+  it("does not treat one sighting of auto-restart as a loop", () => {
+    const text = attention([
+      unit({ state: "activating", substate: "auto-restart", restarts_1h: 1 }),
+    ]);
+    expect(text).not.toMatch(/restarting|restarted/);
+  });
+
+  // A failed unit is reported as failed, not doubly as a loop.
+  it("reports a failed unit once", () => {
+    const text = attention([unit({ restarts_1h: 9 })]);
+    expect(text).toMatch(/exim4\.service failed/);
+    expect(text).not.toMatch(/restarted/);
   });
 });
 
