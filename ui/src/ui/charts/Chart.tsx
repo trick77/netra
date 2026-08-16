@@ -30,6 +30,7 @@ import {
   REFERENCE_WIDTH,
 } from "./size";
 import {
+  contains,
   layout,
   plotHeight,
   plotWidth,
@@ -88,6 +89,16 @@ export interface ChartProps {
   /** The index the crosshair sits at, or null when nothing is hovered. */
   cursor?: number | null;
   /**
+   * Reports the bucket under the pointer, and null when it leaves.
+   *
+   * Given this, the chart listens for pointer movement itself. It has to:
+   * the mapping from a screen position to a bucket runs through the PLOT
+   * rect, and the rect is computed in here from margins the caller does not
+   * know. A caller doing its own arithmetic would be reading the axis
+   * margins as data -- brushing a value label would move the crosshair.
+   */
+  onCursorChange?: (index: number | null) => void;
+  /**
    * Stroke width for a stacked band's edge.
    *
    * A prop rather than a constant because the two existing stacks disagree
@@ -126,6 +137,7 @@ export function Chart({
   labels = false,
   widestYLabel,
   cursor = null,
+  onCursorChange,
   bandStroke = 1.25,
 }: ChartProps) {
   // React's useId, not a counter: two charts on one page must not mint the
@@ -165,6 +177,27 @@ export function Chart({
     rect.right !== width ||
     rect.bottom !== height;
 
+  const count = longest(series);
+
+  // Screen position -> bucket, through the plot rect. Outside it -- over the
+  // axis margins -- counts as not hovering, so brushing a label does not
+  // leave a rule behind.
+  const report = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (onCursorChange === undefined) return;
+    const box = e.currentTarget.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0 || count <= 0) return;
+    const vx = ((e.clientX - box.left) / box.width) * width;
+    const vy = ((e.clientY - box.top) / box.height) * height;
+    if (!contains(rect, vx, vy)) {
+      if (cursor !== null) onCursorChange(null);
+      return;
+    }
+    const span = plotWidth(rect);
+    const fraction = span === 0 ? 0 : (vx - rect.left) / span;
+    const next = Math.round(fraction * (count - 1));
+    if (next !== cursor) onCursorChange(next);
+  };
+
   return (
     <svg
       className="spark"
@@ -173,6 +206,10 @@ export function Chart({
       height={height}
       role="img"
       aria-label={label}
+      onPointerMove={onCursorChange ? report : undefined}
+      onPointerLeave={
+        onCursorChange ? () => cursor !== null && onCursorChange(null) : undefined
+      }
     >
       {grid && <Grid rect={rect} y={y} x={x} />}
 
@@ -220,7 +257,7 @@ export function Chart({
         <Crosshair
           rect={rect}
           index={cursor}
-          count={longest(series)}
+          count={count}
           series={series}
           max={max}
           min={floor}

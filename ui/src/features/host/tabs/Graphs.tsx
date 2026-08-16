@@ -104,6 +104,16 @@ const FAMILY: Record<Source, string> = {
 };
 
 interface PanelSpec {
+  /**
+   * This panel's identity in a URL: /hosts/3/chart/<slug>.
+   *
+   * Written out rather than derived from `title`. A title is UI copy and
+   * changes -- "ingress"/"egress" became "in"/"out" in this very file -- and
+   * a link that breaks when a label is reworded is not a link anyone can
+   * send. Once a slug has been published it is an API: rename the title
+   * freely, never the slug.
+   */
+  slug: string;
   title: string;
   unit?: string;
   source: Source;
@@ -157,6 +167,7 @@ const SYSTEM: PanelSpec[] = [
   // stack to 1600 against a ceiling of 100.
   {
     title: "CPU cores",
+    slug: "cpu-cores",
     source: "cpuCore",
     bases: [{ base: "busy", label: "busy" }],
     stacked: true,
@@ -171,6 +182,7 @@ const SYSTEM: PanelSpec[] = [
   // and 1h rollups now.
   {
     title: "CPU time breakdown",
+    slug: "cpu-time-breakdown",
     source: "host",
     bases: [
       { base: "cpu_user", label: "user" },
@@ -196,6 +208,7 @@ const SYSTEM: PanelSpec[] = [
   // so a stack would assert a partition that does not exist.
   {
     title: "Memory pressure",
+    slug: "memory-pressure",
     unit: "/s",
     source: "host",
     bases: [
@@ -210,6 +223,7 @@ const SYSTEM: PanelSpec[] = [
   // this draws -- one band per collector, 1 when it ran, 0 when it did not.
   {
     title: "Device availability",
+    slug: "device-availability",
     source: "collector",
     bases: [{ base: "ok", label: "ok" }],
     boolean: true,
@@ -218,12 +232,14 @@ const SYSTEM: PanelSpec[] = [
   },
   {
     title: "Uptime",
+    slug: "uptime",
     source: "host",
     bases: [{ base: "uptime_s", label: "uptime" }],
     fmt: duration,
   },
   {
     title: "Load averages",
+    slug: "load-averages",
     source: "host",
     bases: [
       { base: "load1", label: "1m" },
@@ -234,6 +250,7 @@ const SYSTEM: PanelSpec[] = [
   },
   {
     title: "Context switches",
+    slug: "context-switches",
     unit: "/s",
     source: "host",
     bases: [{ base: "ctxt_per_s", label: "ctxt" }],
@@ -241,6 +258,7 @@ const SYSTEM: PanelSpec[] = [
   },
   {
     title: "Interrupts",
+    slug: "interrupts",
     unit: "/s",
     source: "host",
     bases: [{ base: "intr_per_s", label: "intr" }],
@@ -248,6 +266,7 @@ const SYSTEM: PanelSpec[] = [
   },
   {
     title: "Running processes",
+    slug: "running-processes",
     source: "host",
     bases: [
       { base: "procs_running", label: "running" },
@@ -257,12 +276,14 @@ const SYSTEM: PanelSpec[] = [
   },
   {
     title: "Users logged in",
+    slug: "users-logged-in",
     source: "host",
     bases: [{ base: "users_logged_in", label: "users" }],
     fmt: count,
   },
   {
     title: "Total processes",
+    slug: "total-processes",
     source: "host",
     bases: [{ base: "processes_total", label: "processes" }],
     fmt: count,
@@ -278,6 +299,7 @@ const NETWORK: PanelSpec[] = [
   // together because neither answers "where is the time going" alone.
   {
     title: "Hub latency",
+    slug: "hub-latency",
     unit: "ms",
     source: "agent",
     bases: [
@@ -298,6 +320,7 @@ const NETWORK: PanelSpec[] = [
   // would put "3" and "42 ms" on one scale.
   {
     title: "Hub connect failures",
+    slug: "hub-connect-failures",
     source: "agent",
     bases: [{ base: "hub_connect_failures_total", label: "failures" }],
     counter: true,
@@ -309,6 +332,7 @@ const NETWORK: PanelSpec[] = [
     // (It read "ingress"/"egress" until an operator pointed out that an
     // interface has an in and an out; the schema and the wire are unchanged.)
     title: "Interface throughput",
+    slug: "interface-throughput",
     unit: "B/s",
     source: "net",
     bases: [
@@ -327,6 +351,7 @@ const NETWORK: PanelSpec[] = [
   },
   {
     title: "TCP statistics",
+    slug: "tcp-statistics",
     unit: "/s",
     source: "host",
     bases: [
@@ -338,6 +363,7 @@ const NETWORK: PanelSpec[] = [
   },
   {
     title: "TCP connections",
+    slug: "tcp-connections",
     source: "host",
     bases: [
       { base: "tcp_curr_estab", label: "established" },
@@ -349,6 +375,7 @@ const NETWORK: PanelSpec[] = [
   },
   {
     title: "IP fragmentation",
+    slug: "ip-fragmentation",
     unit: "/s",
     source: "host",
     bases: [
@@ -369,6 +396,7 @@ const NETWORK: PanelSpec[] = [
   // twenty-band panel is simply unreadable. Resist "completing" these.
   {
     title: "IP statistics",
+    slug: "ip-statistics",
     unit: "/s",
     source: "hostSnmp",
     bases: [
@@ -381,6 +409,7 @@ const NETWORK: PanelSpec[] = [
   },
   {
     title: "ICMP statistics",
+    slug: "icmp-statistics",
     unit: "/s",
     source: "hostSnmp",
     bases: [
@@ -396,6 +425,7 @@ const NETWORK: PanelSpec[] = [
     // and charting it beside dest-unreachable would put a good signal on a
     // failure axis.
     title: "ICMP informational",
+    slug: "icmp-informational",
     unit: "/s",
     source: "hostSnmp",
     bases: [
@@ -408,6 +438,7 @@ const NETWORK: PanelSpec[] = [
   },
   {
     title: "UDP statistics",
+    slug: "udp-statistics",
     unit: "/s",
     source: "host",
     bases: [
@@ -423,6 +454,7 @@ const NETWORK: PanelSpec[] = [
 const STORAGE: PanelSpec[] = [
   {
     title: "Disk throughput",
+    slug: "disk-throughput",
     unit: "B/s",
     source: "diskIo",
     bases: [
@@ -436,6 +468,7 @@ const STORAGE: PanelSpec[] = [
     // which is why it gets a panel of its own rather than a legend entry
     // on utilisation.
     title: "Disk latency",
+    slug: "disk-latency",
     unit: "ms",
     source: "diskIo",
     bases: [
@@ -448,6 +481,7 @@ const STORAGE: PanelSpec[] = [
     // No unit: percent() prints one already, and passing both rendered
     // "12 % %". See ChartPanel's unit prop.
     title: "Disk utilisation",
+    slug: "disk-utilisation",
     source: "diskIo",
     bases: [{ base: "io_util_pct", label: "utilisation" }],
     max: 100,
@@ -455,6 +489,7 @@ const STORAGE: PanelSpec[] = [
   },
   {
     title: "Filesystem space",
+    slug: "filesystem-space",
     unit: "B",
     source: "filesystem",
     bases: [
@@ -467,6 +502,7 @@ const STORAGE: PanelSpec[] = [
     // Inode exhaustion presents as "disk full" with free space showing,
     // and nothing else in this UI would explain it (spec §10).
     title: "Filesystem inodes",
+    slug: "filesystem-inodes",
     source: "filesystem",
     bases: [
       { base: "inodes_used", label: "used" },
@@ -497,9 +533,36 @@ export interface GraphsProps {
    * dialog's picker did when it was wired to the page's setter.
    */
   fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
+  /** The host these panels belong to, for the per-chart page links. Widened
+   * to match HostPage, which takes an id from the URL as a string and from a
+   * fetched host as a number. */
+  hostId?: number | string;
 }
 
-function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
+export interface BandOptions {
+  /**
+   * Draw the bucket's MEAN as the line and its PEAK as a pale envelope under
+   * it, instead of drawing the peak alone.
+   *
+   * The rollups materialise both (0001_init.sql) and a chart has only ever
+   * shown one. A peak-only line answers "did it burst" and hides where the
+   * link actually sits; a mean-only line loses the burst entirely, which is
+   * the failure peakBase() exists to prevent. Together they answer both, and
+   * there is room for the pair on a page where there is not on a 260px
+   * panel.
+   *
+   * Ignored at the raw tier, where the sample IS its own peak and there is
+   * no _max column to ask for -- there the envelope is correctly absent
+   * rather than a duplicate of the line.
+   */
+  withPeakBand?: boolean;
+}
+
+function bandsFor(
+  spec: PanelSpec,
+  res: MetricsResponse | null,
+  opts: BandOptions = {},
+): Band[] {
   if (res === null) return [];
   const keyed = res.key_columns.length > 0;
   const bands: Band[] = [];
@@ -522,10 +585,20 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
       // one unbroken line across the hole.
       // Resolved per response, not per tier constant: the raw table has no
       // _max peer, and there peakBase() falls back to the base name.
-      const column = spec.peak ? peakBase(res, base) : base;
+      const peakColumn = spec.peak ? peakBase(res, base) : base;
+      // With the envelope, the LINE is the mean and the band is the peak.
+      // peakBase falls back to the bare name at the raw tier, and there the
+      // two resolve to the same column -- which is the signal that this tier
+      // has no envelope to draw.
+      const wantsBand =
+        opts.withPeakBand === true && spec.peak === true && peakColumn !== base;
+      const column = wantsBand ? base : peakColumn;
       const gridded = spec.boolean
         ? booleanValues(res, index, column)
         : griddedValues(res, index, column);
+      const band = wantsBand
+        ? griddedValues(res, index, peakColumn)
+        : undefined;
       // After the grid, never before: counterDeltas subtracts NEIGHBOURING
       // buckets, so it has to run on the window's own even spacing. Applied
       // to the raw response -- which omits the buckets a host did not
@@ -544,6 +617,7 @@ function bandsFor(spec: PanelSpec, res: MetricsResponse | null): Band[] {
         name: prefix ? `${prefix} ${label}` : label,
         color: SERIES_VARS[bands.length % SERIES_VARS.length],
         values,
+        ...(band && band.length > 0 ? { band } : {}),
       });
     }
   });
@@ -570,11 +644,13 @@ function Panel({
   res,
   range,
   fetchFamily,
+  hostId,
 }: {
   spec: PanelSpec;
   res: MetricsResponse | null;
   range?: Range;
   fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
+  hostId?: number | string;
 }) {
   const series = bandsFor(spec, res);
 
@@ -610,6 +686,14 @@ function Panel({
   // point at which colour alone stops carrying identity.
   return (
     <ChartPanel
+      // The chart's own page. Every panel here has a slug, so every panel
+      // here is a link; the dialog is what a chart without a page still
+      // gets.
+      href={
+        hostId === undefined
+          ? undefined
+          : `/hosts/${encodeURIComponent(String(hostId))}/chart/${spec.slug}`
+      }
       title={spec.title}
       unit={spec.unit}
       series={series}
@@ -653,24 +737,47 @@ function Group({
   specs: PanelSpec[];
   sources: GraphsProps;
 }) {
-  const { range, fetchFamily } = sources;
+  const { range, fetchFamily, hostId } = sources;
   return (
     <>
       <h3 className="grouphead">{title}</h3>
       <div className="sm">
         {specs.map((spec) => (
           <Panel
-            key={spec.title}
+            // Keyed by slug, not title: the slug is the stable identity, and
+            // two panels could in principle share a title.
+            key={spec.slug}
             spec={spec}
             res={sources[spec.source] ?? null}
             range={range}
             fetchFamily={fetchFamily}
+            hostId={hostId}
           />
         ))}
       </div>
     </>
   );
 }
+
+/**
+ * Every panel the Graphs tab draws, in one list.
+ *
+ * The chart page resolves a URL slug against this, so the page and the tab
+ * cannot disagree about what a chart IS -- same spec, same bases, same
+ * formatter, same mark.
+ */
+export const ALL_SPECS: readonly PanelSpec[] = [
+  ...SYSTEM,
+  ...NETWORK,
+  ...STORAGE,
+];
+
+export function specForSlug(slug: string): PanelSpec | undefined {
+  return ALL_SPECS.find((spec) => spec.slug === slug);
+}
+
+export { bandsFor };
+export type { PanelSpec };
 
 export function Graphs(props: GraphsProps) {
   // One line for the whole tab, deduplicated: every family answering the

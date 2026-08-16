@@ -2097,6 +2097,104 @@ details.sysfold > .body {
   border-radius: 2px;
   flex: none;
 }
+/* ---- one chart, on its own page ---------------------------------------
+
+   Not a dialog: no scrim, no shadow, no Close. It has a URL, so Back leaves
+   it and a reload brings it straight back. Everything below is laid out with
+   flex and gap rather than per-element margins, so the rows cannot collapse
+   into each other as the chart's own height changes. */
+.chartpage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 1100px;
+}
+.chartpage > .crumb {
+  display: flex;
+  align-items: center;
+}
+.chartpage > header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.chartpage > header h2 {
+  font-family: var(--font-serif);
+  font-size: var(--text-display);
+  margin: 0;
+}
+.chartpage > header .u {
+  color: var(--muted);
+  font-size: var(--text-label);
+}
+.chartpage > header .spacer {
+  margin-left: auto;
+}
+
+/* The range strip: five views of this one chart, one per window.
+
+   Indented to the plot's left edge so it starts where the chart does. A
+   strip flush with the card edge reads as a toolbar that happens to sit
+   above a chart, rather than as this chart's own ranges. */
+.strip {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+/* No border, no fill, no shadow -- the active range is marked by dimming the
+   others and by nothing else. A thumbnail CONTAINS a chart, so any fill
+   tints the ground its series colour sits on and the thumbnail stops
+   matching the chart it opens. Dimming is already how this app says "not
+   this one": Overlay's highlight dims other series rather than hiding them. */
+.thumb {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border: 0;
+  background: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+}
+.thumb svg {
+  opacity: 0.4;
+  transition: opacity 120ms ease;
+}
+.thumb .lab {
+  font-size: var(--text-micro);
+  color: var(--muted);
+  opacity: 0.6;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.thumb:hover svg {
+  opacity: 0.7;
+}
+.thumb[aria-pressed="true"] svg {
+  opacity: 1;
+}
+.thumb[aria-pressed="true"] .lab {
+  opacity: 1;
+  color: var(--ink);
+  font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thumb svg {
+    transition: none;
+  }
+}
+
+/* The cursor column appears only while the pointer is over the plot, so it
+   is marked as the live reading rather than another statistic. */
+.cd-stats td.cursor,
+.cd-stats th.cursor {
+  color: var(--accent);
+}
+.cd-stats td.cursor {
+  font-weight: 600;
+}
+
 /* Charts carry explicit width/height attributes so they have an intrinsic
    size in a table cell, and a viewBox so they can be scaled. This is what
    lets them scale: below the width they were drawn at they shrink to fit

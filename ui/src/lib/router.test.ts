@@ -72,3 +72,47 @@ describe("query state", () => {
     expect(withParam("?host=3", "host", "")).toBe("");
   });
 });
+
+describe("the chart route", () => {
+  it("parses a chart page and round-trips it", () => {
+    const route = parseRoute("/hosts/3/chart/interface-throughput");
+    expect(route).toEqual({
+      name: "chart",
+      hostId: "3",
+      slug: "interface-throughput",
+    });
+    expect(routePath(route)).toBe("/hosts/3/chart/interface-throughput");
+  });
+
+  // The trap this route was moved off /graphs/ to avoid, pinned here because
+  // the old parser accepted a fourth segment under a known tab and silently
+  // rendered the tab -- so a link to a chart that no longer exists would
+  // have looked like it worked.
+  it("does not swallow a trailing segment under a tab", () => {
+    expect(parseRoute("/hosts/3/graphs/interface-throughput")).toEqual({
+      name: "notFound",
+      path: "/hosts/3/graphs/interface-throughput",
+    });
+  });
+
+  it("still parses a bare tab", () => {
+    expect(parseRoute("/hosts/3/graphs")).toEqual({
+      name: "host",
+      hostId: "3",
+      tab: "graphs",
+    });
+  });
+
+  it("has no chart without a slug", () => {
+    expect(parseRoute("/hosts/3/chart")).toEqual({
+      name: "notFound",
+      path: "/hosts/3/chart",
+    });
+  });
+
+  it("encodes a slug that needs it", () => {
+    expect(routePath({ name: "chart", hostId: "3", slug: "a/b" })).toBe(
+      "/hosts/3/chart/a%2Fb",
+    );
+  });
+});

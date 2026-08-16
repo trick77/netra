@@ -1,0 +1,412 @@
+// One chart, on its own page.
+//
+// The enlarged view used to be a modal, and the comment defending that
+// choice argued modal-versus-expanding-panel: "the surrounding grid of
+// twenty panels is exactly the noise being escaped". A page escapes it more
+// completely than a scrim does, and it answers something a dialog never
+// could -- spec 9's rule that a view someone is looking at should be a link
+// they can send. The chart an operator is staring at was the deepest, most
+// specific view in the app and the only one with no URL.
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronLeft } from "lucide-react";
+import { getMetrics, type MetricsResponse } from "../../lib/api";
+import { rangeWindow, type Range } from "../../lib/range";
+import { RANGE_VALUES } from "./ranges";
+import { bandsFor, specForSlug } from "./tabs/Graphs";
+import { Chart, type ChartSeries } from "../../ui/charts/Chart";
+import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
+import { Sparkline } from "../../ui/charts/Sparkline";
+import { StackedSparkline } from "../../ui/charts/StackedSparkline";
+import { mirroredTicks, niceTicks, timeTicks } from "../../ui/charts/ticks";
+import { widestLabel } from "../../ui/charts/plot";
+import { summarise } from "../../ui/charts/ChartDetail";
+import { ABSENT, absolute } from "../../lib/format";
+import { windowNotice } from "../../lib/metrics";
+import { EmptyState } from "../../ui/EmptyState";
+import { CircleSlash } from "lucide-react";
+
+const CHART_WIDTH = 1000;
+const CHART_HEIGHT = 380;
+/** The thumbnails are read as shapes, not values, so they carry no axis. */
+const THUMB_WIDTH = 150;
+const THUMB_HEIGHT = 34;
+
+export interface ChartPageProps {
+  hostId: string;
+  slug: string;
+  range: Range;
+  onRangeChange: (range: Range) => void;
+  onBack: () => void;
+  /** Injectable for tests and for the harness; defaults to the real API. */
+  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
+}
+
+export function ChartPage({
+  hostId,
+  slug,
+  range,
+  onRangeChange,
+  onBack,
+  fetchFamily,
+}: ChartPageProps) {
+  const spec = specForSlug(slug);
+
+  const load = useCallback(
+    (family: string, next: Range) => {
+      if (fetchFamily) return fetchFamily(family, next);
+      const window = rangeWindow(next);
+      return getMetrics(hostId, {
+        family,
+        from: window.from,
+        to: window.to,
+        step: window.step,
+      });
+    },
+    [fetchFamily, hostId],
+  );
+
+  if (spec === undefined) {
+    return (
+      <EmptyState
+        icon={CircleSlash}
+        title="No such chart"
+        body={`This host has no chart called "${slug}".`}
+      />
+    );
+  }
+
+  return (
+    <ChartView
+      key={slug}
+      spec={spec}
+      range={range}
+      onRangeChange={onRangeChange}
+      onBack={onBack}
+      load={load}
+    />
+  );
+}
+
+type Spec = NonNullable<ReturnType<typeof specForSlug>>;
+
+function ChartView({
+  spec,
+  range,
+  onRangeChange,
+  onBack,
+  load,
+}: {
+  spec: Spec;
+  range: Range;
+  onRangeChange: (range: Range) => void;
+  onBack: () => void;
+  load: (family: string, range: Range) => Promise<MetricsResponse>;
+}) {
+  const [res, setRes] = useState<MetricsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  // null until the pointer is over the plot. The crosshair and the "at
+  // cursor" column are a reading of where the pointer IS; with no pointer
+  // there is no such reading, and a rule frozen at some arbitrary bucket
+  // states one nobody asked for.
+  const [cursor, setCursor] = useState<number | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    load(spec.source, range)
+      .then((next) => {
+        if (!live) return;
+        setRes(next);
+        setError(null);
+      })
+      .catch(() => live && setError("Could not load this chart."))
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+  }, [load, spec.source, range]);
+
+  // The page has room for the pair: mean as the line, peak as the envelope.
+  // The panel this was opened from draws the peak alone, which is right at
+  // 260px -- two marks in that space is a smear.
+  const series: ChartSeries[] = useMemo(
+    () => (res ? bandsFor(spec, res, { withPeakBand: true }) : []),
+    [spec, res],
+  );
+
+  const ceiling = useMemo(() => {
+    if (spec.max !== undefined) return spec.max;
+    if (spec.stacked) return runningTotalMax(series);
+    // The BAND too, not just the line. The envelope is the bucket's peak and
+    // therefore always the taller of the two; scaling to the mean alone
+    // would draw it straight out of the plot box.
+    let peak = 0;
+    for (const s of series) {
+      for (const v of s.values) if (v !== null && v > peak) peak = v;
+      for (const v of s.band ?? []) if (v !== null && v > peak) peak = v;
+    }
+    return peak || 1;
+  }, [spec, series]);
+
+  const format = (v: number) => (spec.fmt ? spec.fmt(v) : String(v));
+  const valueAxis = !spec.hideAxis && !spec.boolean;
+
+  const yTicks = !valueAxis
+    ? undefined
+    : spec.mirrored
+      ? mirroredTicks(ceiling, 3)
+      : niceTicks(0, ceiling, 3);
+  const xTicks = res
+    ? timeTicks(
+        Date.parse(res.window.from),
+        Date.parse(res.window.to),
+        // A 1000-unit plot fits eight labels comfortably; the panel it was
+        // opened from fits three.
+        8,
+      )
+    : undefined;
+  const widest = yTicks
+    ? widestLabel(yTicks.filter((t) => t.major).map((t) => format(t.value)))
+    : undefined;
+
+  const buckets = series.reduce((n, s) => Math.max(n, s.values.length), 0);
+  const notice = res ? windowNotice(res) : null;
+  const at = cursorTime(res, cursor, buckets);
+
+  return (
+    <section className="chartpage">
+      <div className="crumb">
+        <button type="button" className="btn ghost" onClick={onBack}>
+          <ChevronLeft size={15} aria-hidden="true" />
+          Back to graphs
+        </button>
+      </div>
+
+      <header>
+        <h2>{spec.title}</h2>
+        {spec.unit !== undefined && <span className="u">{spec.unit}</span>}
+        <div className="spacer" />
+        {loading && (
+          <span className="note" role="status">
+            Loading…
+          </span>
+        )}
+        {error !== null && !loading && (
+          <span className="note" role="status">
+            {error}
+          </span>
+        )}
+      </header>
+
+      <RangeStrip
+        spec={spec}
+        active={range}
+        onPick={onRangeChange}
+        load={load}
+      />
+
+      {notice && <p className="note">{notice}</p>}
+
+      <Chart
+        series={series}
+        width={CHART_WIDTH}
+        height={CHART_HEIGHT}
+        max={ceiling}
+        min={spec.stacked ? 0 : undefined}
+        mark={spec.mirrored ? "mirror" : spec.stacked ? "stack" : "line"}
+        label={`${spec.title} over time`}
+        y={yTicks}
+        x={xTicks}
+        format={format}
+        grid
+        spine
+        labels
+        widestYLabel={widest}
+        cursor={cursor}
+        onCursorChange={setCursor}
+      />
+
+      {res && (
+        <div className="cd-x">
+          <span>{absolute(res.window.from)}</span>
+          <span>{absolute(res.window.to)}</span>
+        </div>
+      )}
+
+      <table className="cd-stats">
+        <thead>
+          <tr>
+            <th scope="col">Series</th>
+            {/* The column exists only while the pointer is over the plot. A
+                permanently empty one is furniture for a measurement nobody
+                is taking, and it pushes every real statistic sideways. */}
+            {at !== null && <th scope="col" className="cursor">{`At ${at}`}</th>}
+            <th scope="col">Latest</th>
+            <th scope="col">Min</th>
+            <th scope="col">Max</th>
+            <th scope="col">Mean</th>
+          </tr>
+        </thead>
+        <tbody>
+          {series.map((s) => {
+            const stats = summarise(s.values);
+            const here = cursor === null ? null : (s.values[cursor] ?? null);
+            return (
+              <tr key={s.name}>
+                <th scope="row">
+                  <i style={{ background: s.color }} />
+                  {s.name}
+                </th>
+                {at !== null && (
+                  <td className="cursor">
+                    {here === null ? ABSENT : format(here)}
+                  </td>
+                )}
+                <td>{stats.latest === null ? ABSENT : format(stats.latest)}</td>
+                <td>{stats.min === null ? ABSENT : format(stats.min)}</td>
+                <td>{stats.max === null ? ABSENT : format(stats.max)}</td>
+                <td>{stats.mean === null ? ABSENT : format(stats.mean)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+/** The moment the cursor is over, formatted for the stats column header. */
+function cursorTime(
+  res: MetricsResponse | null,
+  cursor: number | null,
+  buckets: number,
+): string | null {
+  if (res === null || cursor === null || buckets <= 1) return null;
+  const from = Date.parse(res.window.from);
+  const to = Date.parse(res.window.to);
+  const at = new Date(from + (cursor / (buckets - 1)) * (to - from));
+  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+}
+
+function runningTotalMax(series: readonly ChartSeries[]): number {
+  const n = series.reduce((longest, s) => Math.max(longest, s.values.length), 0);
+  let best = 0;
+  for (let i = 0; i < n; i++) {
+    if (series.some((s) => s.values[i] == null)) continue;
+    let sum = 0;
+    for (const s of series) sum += s.values[i] as number;
+    if (sum > best) best = sum;
+  }
+  return best || 1;
+}
+
+/**
+ * The ranges, drawn as the chart itself rather than listed as buttons.
+ *
+ * Observium's strongest navigation idea: you see WHERE an anomaly lives
+ * before you zoom to it. The active one is marked by dimming the others and
+ * by nothing else -- no border, no fill. A thumbnail contains a chart, so
+ * any fill tints the ground its series colour sits on and the thumbnail
+ * stops matching the chart it opens.
+ */
+function RangeStrip({
+  spec,
+  active,
+  onPick,
+  load,
+}: {
+  spec: Spec;
+  active: Range;
+  onPick: (range: Range) => void;
+  load: (family: string, range: Range) => Promise<MetricsResponse>;
+}) {
+  const [byRange, setByRange] = useState<Record<string, MetricsResponse>>({});
+
+  useEffect(() => {
+    let live = true;
+    // One request per range, all at once. Affordable only because this page
+    // draws ONE chart: the tab it was opened from mounts twenty-odd panels,
+    // and five requests each would be a hundred.
+    RANGE_VALUES.forEach((r) => {
+      load(spec.source, r)
+        .then((res) => {
+          if (live) setByRange((prev) => ({ ...prev, [r]: res }));
+        })
+        .catch(() => {
+          /* a thumbnail that will not load simply stays empty */
+        });
+    });
+    return () => {
+      live = false;
+    };
+  }, [load, spec.source]);
+
+  return (
+    <div className="strip" role="group" aria-label="Range">
+      {RANGE_VALUES.map((r) => {
+        const res = byRange[r] ?? null;
+        const bands = res ? bandsFor(spec, res) : [];
+        return (
+          <button
+            key={r}
+            type="button"
+            className="thumb"
+            aria-pressed={r === active}
+            aria-label={`last ${r}`}
+            onClick={() => onPick(r)}
+          >
+            <Thumb spec={spec} bands={bands} />
+            <span className="lab">{r}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * A thumbnail draws the SAME mark as the chart it opens -- mirrored stays
+ * mirrored, a stack stays a stack -- so the strip reads as five views of one
+ * chart rather than five unrelated pictures.
+ */
+function Thumb({ spec, bands }: { spec: Spec; bands: ChartSeries[] }) {
+  if (bands.length === 0) {
+    return <svg className="spark" width={THUMB_WIDTH} height={THUMB_HEIGHT} />;
+  }
+  if (spec.mirrored) {
+    return (
+      <UpDownSparkline
+        up={bands[0]?.values ?? []}
+        down={bands[1]?.values ?? []}
+        // The chart's OWN colours, not UpDownSparkline's defaults. A
+        // thumbnail that recolours the series stops being a small view of
+        // the chart it opens and becomes a different picture of it.
+        upColor={bands[0]?.color}
+        downColor={bands[1]?.color}
+        width={THUMB_WIDTH}
+        height={THUMB_HEIGHT}
+        label=""
+      />
+    );
+  }
+  if (spec.stacked) {
+    return (
+      <StackedSparkline
+        bands={bands}
+        width={THUMB_WIDTH}
+        height={THUMB_HEIGHT}
+        label=""
+      />
+    );
+  }
+  return (
+    <Sparkline
+      values={bands[0]?.values ?? []}
+      color={bands[0]?.color}
+      width={THUMB_WIDTH}
+      height={THUMB_HEIGHT}
+      label=""
+    />
+  );
+}

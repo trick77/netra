@@ -223,6 +223,16 @@ export interface EnlargeableProps {
    * the dialog carries no picker. */
   fetchSeries?: (range: Range) => Promise<DetailData>;
   /**
+   * Where this chart lives as a page.
+   *
+   * Given it, the chart is a LINK and there is no dialog: the enlarged view
+   * has a URL, so it can be sent to someone, reopened after a reload and
+   * left with Back. Without it the dialog stays -- a sparkline in a table
+   * cell has no page of its own to point at, and until it does it keeps the
+   * modal it always had.
+   */
+  href?: string;
+  /**
    * The button's accessible name. Defaults to `Enlarge {title}`, which is
    * enough for a titled card and not enough in a list: twenty rows of
    * "Enlarge CPU" name twenty different charts identically. List sites pass
@@ -253,12 +263,14 @@ export function Enlargeable({
   range,
   ranges,
   fetchSeries,
+  href,
   label,
   className,
   children,
 }: EnlargeableProps) {
   const [enlarged, setEnlarged] = useState(false);
-  const detail = useDetailRange(range, fetchSeries, enlarged);
+  // The dialog does no work at all when this chart opens a page instead.
+  const detail = useDetailRange(range, fetchSeries, enlarged && href === undefined);
 
   // What the dialog is actually showing: its own data once the range has been
   // changed, the caller's otherwise. Keeping the previous series while a
@@ -275,15 +287,31 @@ export function Enlargeable({
       {/* A button, not a div with a click handler: opening the enlarged view
           has to work from the keyboard, and the chart is the affordance --
           a separate "expand" icon would be a second thing to find. */}
-      <button
-        type="button"
-        className={`chartwrap as-button${className ? ` ${className}` : ""}`}
-        onClick={() => setEnlarged(true)}
-        aria-label={label ?? `Enlarge ${title}`}
-      >
-        {children}
-      </button>
-      {enlarged && (
+      {href !== undefined ? (
+        // A plain anchor, with no click handler of its own. App delegates
+        // navigation for every internal link at the root -- including the
+        // modifier-key and off-origin cases -- precisely so a component like
+        // this does not need a navigate callback threaded down to it. Being
+        // a real anchor is what makes middle-click, copy-link and bookmark
+        // work, which is most of the point of the chart having a URL.
+        <a
+          className={`chartwrap as-button${className ? ` ${className}` : ""}`}
+          href={href}
+          aria-label={label ?? `Open ${title}`}
+        >
+          {children}
+        </a>
+      ) : (
+        <button
+          type="button"
+          className={`chartwrap as-button${className ? ` ${className}` : ""}`}
+          onClick={() => setEnlarged(true)}
+          aria-label={label ?? `Enlarge ${title}`}
+        >
+          {children}
+        </button>
+      )}
+      {enlarged && href === undefined && (
         <ChartDetail
           title={title}
           unit={unit}

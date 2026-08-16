@@ -485,6 +485,7 @@ export function HostPage({
           filesystem={data.filesystemMetrics}
           collector={data.collectorMetrics}
           cpuCore={data.coreMetrics}
+          hostId={hostId}
           agent={data.agentMetrics}
           range={range}
           fetchFamily={fetchFamily}

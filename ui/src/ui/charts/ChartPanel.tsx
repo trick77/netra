@@ -70,6 +70,9 @@ export interface ChartPanelProps {
    * family that needs it.
    */
   tickBase?: 1000 | 1024;
+  /** Where this chart lives as a page. Given it, the panel is a link and the
+   * enlarge dialog is not built. See Enlargeable. */
+  href?: string;
   /** Formats the HEADLINE only, defaulting to `fmt`. The two are separate
    * because they answer to different neighbours: `fmt` also renders the
    * enlarged view's axis, its tooltips and its stats table, where every
@@ -167,6 +170,7 @@ export function ChartPanel({
   range,
   ranges,
   fetchSeries,
+  href,
   footer,
 }: ChartPanelProps) {
   if (unavailable !== undefined) {
@@ -279,6 +283,7 @@ export function ChartPanel({
           button and the dialog so that a sparkline drawn without this card
           around it can carry the same one. */}
       <Enlargeable
+        href={href}
         title={title}
         unit={unit}
         // The panel's own series, and its own `max` rather than
