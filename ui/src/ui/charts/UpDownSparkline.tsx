@@ -9,14 +9,11 @@
 // throughput panel must be the same mark at two sizes, or the operator has
 // to learn the chart twice. Sharing the constants is what makes that true by
 // construction rather than by everyone remembering to edit both files.
-import { extent, mirrorPaths } from "./geometry";
-import {
-  AXIS_STROKE,
-  AXIS_WIDTH,
-  MIRROR_FILL_OPACITY,
-  MIRROR_STROKE_WIDTH,
-  SPARK_WIDTH,
-} from "./size";
+import { extent } from "./geometry";
+import { Chart } from "./Chart";
+// The mirror weights and the midline stroke are Chart's now; only the shared
+// sparkline width is still read here.
+import { SPARK_WIDTH } from "./size";
 
 export interface UpDownSparklineProps {
   up: (number | null)[];
@@ -61,62 +58,23 @@ export function UpDownSparkline({
   downColor = DOWN_COLOR,
   label = "up/down traffic chart",
 }: UpDownSparklineProps) {
+  // Both directions share one ceiling, which is what makes the two halves
+  // comparable -- scaling each to its own extent would draw a trickle of
+  // egress the same size as a saturated ingress.
   const effectiveMax = max ?? Math.max(extent(up).max, extent(down).max);
-  const {
-    up: upPath,
-    down: downPath,
-    mid,
-  } = mirrorPaths(up, down, width, height, effectiveMax, pad);
 
   return (
-    <svg
-      className="spark"
-      viewBox={`0 0 ${width} ${height}`}
+    <Chart
+      series={[
+        { name: "up", color: upColor, values: up },
+        { name: "down", color: downColor, values: down },
+      ]}
       width={width}
       height={height}
-      role="img"
-      aria-label={label}
-    >
-      {/* One closed polygon carrying both a dimmed fill and an opaque stroke
-          of the same token -- the house pattern for every other chart here,
-          and the reason a fully opaque fill read as two blocks of colour
-          rather than a silhouette. Because mirrorPaths() closes each run to
-          the midline, the stroke also traces the drop at each run's ends;
-          that is true of the throughput panel too, and the axis rule below
-          covers it. */}
-      {upPath !== "" && (
-        <path
-          data-up
-          d={upPath}
-          fill={upColor}
-          fillOpacity={MIRROR_FILL_OPACITY}
-          stroke={upColor}
-          strokeWidth={MIRROR_STROKE_WIDTH}
-        />
-      )}
-      {downPath !== "" && (
-        <path
-          data-down
-          d={downPath}
-          fill={downColor}
-          fillOpacity={MIRROR_FILL_OPACITY}
-          stroke={downColor}
-          strokeWidth={MIRROR_STROKE_WIDTH}
-        />
-      )}
-      {/* Drawn last, on top, and unconditionally. Once the fills are dimmed
-          the mirror axis is what says where zero is, and a host reporting
-          nothing shows a bare rule rather than an empty box -- "axis, no
-          data" instead of "the chart failed to render". */}
-      <line
-        data-mid
-        x1={0}
-        x2={width}
-        y1={mid}
-        y2={mid}
-        stroke={AXIS_STROKE}
-        strokeWidth={AXIS_WIDTH}
-      />
-    </svg>
+      max={effectiveMax}
+      pad={pad}
+      mark="mirror"
+      label={label}
+    />
   );
 }

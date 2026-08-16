@@ -524,14 +524,14 @@ export function FleetPage({
           // ingress + egress, the words this app already uses for the two
           // directions: Graphs.tsx names its bands that ("not rx and tx --
           // the direction is the point of this chart"), and both traffic
-          // sparklines announce themselves as "Ingress and egress over time".
+          // sparklines announce themselves as "Traffic in and out over time".
           // "inbound + outbound" was a third spelling of the same pair, on
           // the one tile summarising all of them.
           // "latest sample" was only true at 1h; at the wider ranges the
           // number was a five-minute average from a quarter of an hour ago.
           // It is a gauge off host_current now, so "right now" is accurate
           // at every range -- which is the point of the change.
-          detail="ingress + egress, right now"
+          detail="in + out, right now"
         />
       </div>
 

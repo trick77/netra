@@ -45,6 +45,7 @@ import {
   RANGE_VALUES as HOST_RANGE_VALUES,
   type HostTab,
 } from "./features/host/HostPage";
+import { ChartPage } from "./features/host/ChartPage";
 import {
   ContainerPage,
   CONTAINER_RANGE_VALUES,
@@ -250,6 +251,15 @@ function Screen({
         <HostScreen
           hostId={route.hostId}
           tab={route.tab}
+          search={search}
+          go={go}
+        />
+      );
+    case "chart":
+      return (
+        <ChartScreen
+          hostId={route.hostId}
+          slug={route.slug}
           search={search}
           go={go}
         />
@@ -531,6 +541,41 @@ function HostScreen({
       onTabChange={(next: HostTab) => go(`/hosts/${hostId}/${next}${search}`)}
       range={range}
       onRangeChange={chooseRange}
+    />
+  );
+}
+
+/**
+ * One chart, with its own URL.
+ *
+ * The range is a query parameter for the same reason every other page's
+ * filters are (spec 9): the view someone is looking at should be a link they
+ * can send, and "this chart over the last 7 days" is the whole message.
+ */
+function ChartScreen({
+  hostId,
+  slug,
+  search,
+  go,
+}: {
+  hostId: string;
+  slug: string;
+  search: string;
+  go: Go;
+}) {
+  const setParam = paramSetter(`/hosts/${hostId}/chart/${slug}`, search, go);
+  const [range, chooseRange] = rangeParam(search, HOST_RANGE_VALUES, setParam);
+
+  return (
+    <ChartPage
+      hostId={hostId}
+      slug={slug}
+      range={range}
+      onRangeChange={chooseRange}
+      // Back to the tab this chart was opened from, carrying the range with
+      // it. history.back() would be wrong for someone who arrived by link:
+      // there is nothing behind them.
+      onBack={() => go(`/hosts/${hostId}/graphs${search}`)}
     />
   );
 }

@@ -3,13 +3,9 @@
 // is undefined for every band there, not just the null one) -- this
 // component's only job is to hand it the right `max` and turn its output
 // into SVG paths.
-import { stackBands } from "./geometry";
-import {
-  REFERENCE_DASH,
-  REFERENCE_STROKE,
-  REFERENCE_WIDTH,
-  SPARK_WIDTH,
-} from "./size";
+import { Chart } from "./Chart";
+// The reference rule's own constants live with the mark now: Chart draws it.
+import { SPARK_WIDTH } from "./size";
 
 export interface Band {
   name: string;
@@ -98,67 +94,33 @@ export function StackedSparkline({
   legend = false,
 }: StackedSparklineProps) {
   const effectiveMax = max ?? maxRunningTotal(bands);
-  // Where the reference sits in the plot box. Null when there is nothing to
-  // mark, or when it would land outside -- a rule drawn off the edge is a
-  // rule nobody can read.
-  const referenceY =
-    reference === undefined || effectiveMax <= 0
-      ? null
-      : height - pad - (reference / effectiveMax) * (height - 2 * pad);
-
-  const paths = stackBands(
-    bands.map((b) => b.values),
-    width,
-    height,
-    effectiveMax,
-    pad,
-  );
 
   return (
     <>
-      <svg
-        className="spark"
-        viewBox={`0 0 ${width} ${height}`}
+      {/* min={0}, always: a stack is scaled FROM zero -- stackBands divides a
+          running total by the ceiling and has no floor at all -- so the
+          reference rule has to be placed against the same zero, or the
+          dashed mem_total line lands at the wrong height and the gap above
+          the stack, which is the whole reading, misstates it.
+
+          bandStroke={1} keeps this exactly as it was. Overlay's stack draws
+          1.25; the two have always disagreed. See Chart's bandStroke. */}
+      <Chart
+        series={bands.map((b) => ({
+          name: b.name,
+          color: b.color,
+          values: b.values,
+        }))}
         width={width}
         height={height}
-        role="img"
-        aria-label={label}
-      >
-        {referenceY !== null && (
-          <line
-            data-reference
-            x1={0}
-            x2={width}
-            y1={referenceY}
-            y2={referenceY}
-            stroke={REFERENCE_STROKE}
-            strokeWidth={REFERENCE_WIDTH}
-            strokeDasharray={REFERENCE_DASH}
-          />
-        )}
-        {paths.map(
-          (d, i) =>
-            d !== "" && (
-              <path
-                key={bands[i]!.name}
-                data-band
-                d={d}
-                fill={bands[i]!.color}
-                // Dimmed fill, solid edge -- the pattern every tool that draws
-                // a many-band stack well uses. Without it thirty-two bands are
-                // one mass of colour: the fill says how much, and the crisp
-                // edge is what separates each band from its neighbour. The
-                // stroke outlines the whole polygon, and since a band's floor
-                // IS the band below it, that single attribute draws every
-                // separator in the stack.
-                fillOpacity={0.55}
-                stroke={bands[i]!.color}
-                strokeWidth={1}
-                strokeLinejoin="round"
-              />
-            ),
-        )}
-      </svg>
+        min={0}
+        max={effectiveMax}
+        pad={pad}
+        mark="stack"
+        reference={reference}
+        bandStroke={1}
+        label={label}
+      />
       {/* Off unless the caller asks. A sparkline is a shape in a table cell,
           read at a glance alongside four other columns, and at 32 cores a
           list of band names under it was taller than the row itself. Where

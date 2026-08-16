@@ -348,8 +348,8 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
     const traffic = trafficSeries(net);
     return {
       series: [
-        { name: "ingress", color: UP_COLOR, values: traffic.rx },
-        { name: "egress", color: DOWN_COLOR, values: traffic.tx },
+        { name: "in", color: UP_COLOR, values: traffic.rx },
+        { name: "out", color: DOWN_COLOR, values: traffic.tx },
       ],
       window: net.window,
     };
@@ -366,8 +366,8 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         className="inline"
         unit="B/s"
         series={[
-          { name: "ingress", color: UP_COLOR, values: row.rx },
-          { name: "egress", color: DOWN_COLOR, values: row.tx },
+          { name: "in", color: UP_COLOR, values: row.rx },
+          { name: "out", color: DOWN_COLOR, values: row.tx },
         ]}
         mirrored
         fmt={bytes}

@@ -101,8 +101,18 @@
      per theme to sit at the same low prominence in both: it annotates the
      chart, it is not a series in it. */
   --reference: #8c8880;
-  --grid: #eeeae1;
-  --axis: #cfc9bb;
+  /* Chart furniture, at three levels of prominence. The values are derived
+     from a measured target rather than picked by eye, because picking by eye
+     failed twice: --grid was #eeeae1 on a #fffdf9 surface, a contrast ratio
+     of 1.18:1, which is drawn correctly and invisible on screen. RRDtool --
+     whose graphs are the readability benchmark here -- uses #d0d0d0 for its
+     helper grid and #a0a0a0 for its major one, measuring 1.54:1 and 2.61:1
+     on white. These sit either side of that in Clay's warm hue:
+     --grid-minor 1.40:1, --grid 1.86:1, --axis 3.47:1.
+     Do not retune these by eye; re-derive them from the ratios. */
+  --grid-minor: #ded8ca;
+  --grid: #c3bcaa;
+  --axis: #8f8878;
 
   /* Text painted on --accent-fill (spec has no token for this; .btn.primary
      hardcoded #fff with no light/dark peer and no contrast margin). White
@@ -173,8 +183,9 @@
     --accent-soft: #2e211a;
     --track: #3a3a37;
     --reference: #6e6c66;
-    --grid: #2a2a28;
-    --axis: #454540;
+    --grid-minor: #33332f;
+    --grid: #45443e;
+    --axis: #6a685f;
 
     --on-accent: #fff;
     /* status TEXT colours — dark. Measured on the page --bg (#1f1f1e): ok
@@ -217,8 +228,9 @@
   --accent-soft: #2e211a;
   --track: #3a3a37;
   --reference: #6e6c66;
-  --grid: #2a2a28;
-  --axis: #454540;
+  --grid-minor: #33332f;
+  --grid: #45443e;
+  --axis: #6a685f;
 
   --on-accent: #fff;
   --st-ok-text: #0ca30c;
@@ -2198,6 +2210,104 @@ details.sysfold > .body {
   border-radius: 2px;
   flex: none;
 }
+/* ---- one chart, on its own page ---------------------------------------
+
+   Not a dialog: no scrim, no shadow, no Close. It has a URL, so Back leaves
+   it and a reload brings it straight back. Everything below is laid out with
+   flex and gap rather than per-element margins, so the rows cannot collapse
+   into each other as the chart's own height changes. */
+.chartpage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 1100px;
+}
+.chartpage > .crumb {
+  display: flex;
+  align-items: center;
+}
+.chartpage > header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.chartpage > header h2 {
+  font-family: var(--font-serif);
+  font-size: var(--text-display);
+  margin: 0;
+}
+.chartpage > header .u {
+  color: var(--muted);
+  font-size: var(--text-label);
+}
+.chartpage > header .spacer {
+  margin-left: auto;
+}
+
+/* The range strip: five views of this one chart, one per window.
+
+   Indented to the plot's left edge so it starts where the chart does. A
+   strip flush with the card edge reads as a toolbar that happens to sit
+   above a chart, rather than as this chart's own ranges. */
+.strip {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+/* No border, no fill, no shadow -- the active range is marked by dimming the
+   others and by nothing else. A thumbnail CONTAINS a chart, so any fill
+   tints the ground its series colour sits on and the thumbnail stops
+   matching the chart it opens. Dimming is already how this app says "not
+   this one": Overlay's highlight dims other series rather than hiding them. */
+.thumb {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border: 0;
+  background: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font: inherit;
+}
+.thumb svg {
+  opacity: 0.4;
+  transition: opacity 120ms ease;
+}
+.thumb .lab {
+  font-size: var(--text-micro);
+  color: var(--muted);
+  opacity: 0.6;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.thumb:hover svg {
+  opacity: 0.7;
+}
+.thumb[aria-pressed="true"] svg {
+  opacity: 1;
+}
+.thumb[aria-pressed="true"] .lab {
+  opacity: 1;
+  color: var(--ink);
+  font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thumb svg {
+    transition: none;
+  }
+}
+
+/* The cursor column appears only while the pointer is over the plot, so it
+   is marked as the live reading rather than another statistic. */
+.cd-stats td.cursor,
+.cd-stats th.cursor {
+  color: var(--accent);
+}
+.cd-stats td.cursor {
+  font-weight: 600;
+}
+
 /* Charts carry explicit width/height attributes so they have an intrinsic
    size in a table cell, and a viewBox so they can be scaled. This is what
    lets them scale: below the width they were drawn at they shrink to fit
@@ -2206,10 +2316,23 @@ svg.spark {
   max-width: 100%;
   height: auto;
 }
+/* Axis labels, drawn INSIDE the chart image as SVG text rather than beside
+   it as HTML. That is what keeps a label glued to the gridline it names at
+   any rendered size: both scale with the viewBox. The HTML gutter this
+   replaces was a fixed 320px beside an SVG that responsively rendered at
+   216px, so every label sat up to 104px from its own line.
+
+   font-size is NOT set here. plot.ts computes the axis margin from a table
+   of per-character widths measured at AXIS_FONT_PX, and the component sets
+   the size from that same constant -- if CSS could move the rendered size
+   independently, the margin would be silently wrong and labels would clip.
+
+   tabular-nums is load-bearing for the same reason: it makes every digit the
+   same width, which is what lets that table be exact instead of a guess. */
 .axislab {
-  font-size: var(--text-micro);
   fill: var(--muted);
   font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 .note {
   font-size: var(--text-label);
