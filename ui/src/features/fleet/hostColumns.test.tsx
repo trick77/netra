@@ -418,13 +418,13 @@ describe("hostColumns", () => {
   });
 
   describe("host cell", () => {
-    it("carries a status dot and a word, never colour alone", () => {
+    it("carries a status word inside the chip, never colour alone", () => {
       const cols = hostColumns("1h");
       const hostCol = cols.find((c) => c.header === "Host")!;
       const row = makeRow({ last_seen: "2026-08-10T13:59:30Z" });
       const { container } = render(<>{hostCol.cell(row)}</>);
       const badge = container.querySelector(".badge")!;
-      expect(badge.querySelector(".dot")).toBeInTheDocument();
+      expect(badge.className).toMatch(/st-/);
       expect(badge).toHaveTextContent(/./);
       expect(screen.getByText("web-01")).toBeInTheDocument();
     });

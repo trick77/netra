@@ -168,7 +168,7 @@ export function applyFilters(
   });
 }
 
-/** Only critical and warning carry a status dot (spec 6). Info is the word
+/** Only critical and warning carry a status tint (spec 6). Info is the word
  * on its own -- a log where every row is decorated has no emphasis left for
  * the row that needs it. */
 function SeverityMark({ severity }: { severity: EventSeverity }) {
@@ -182,8 +182,8 @@ function SeverityMark({ severity }: { severity: EventSeverity }) {
   );
 }
 
-/** The type is a chip: `.badge` without the `.dot` child, which is the
- * neutral pill this needs and costs no new class. */
+/** The type is a bare `.badge`: with no `st-*` class it takes the neutral
+ * chip ground, which is what a category needs and costs no new class. */
 function TypeChip({ type }: { type: string }) {
   return <span className="badge">{type}</span>;
 }

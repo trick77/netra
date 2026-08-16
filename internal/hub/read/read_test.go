@@ -44,9 +44,12 @@ func exec(t *testing.T, pool *pgxpool.Pool, sql string, args ...any) {
 	}
 }
 
-// The host list reads host_current and nothing else -- the whole point of that
-// table (spec 8) is that the list stays cheap however much history sits behind
-// it. A host that has never posted must come back with null gauges rather than
+// Every GAUGE on the host list comes from host_current -- the whole point of
+// that table (spec 8) is that the list stays cheap however much history sits
+// behind it. (The one other table it touches is systemd_units, for the failed
+// unit NAMES, which is a plain table read through a unique index and is
+// covered below.) A host that has never posted must come back with null
+// gauges rather than
 // zeros: 0% CPU on a machine never heard from is a much more misleading claim
 // than "nothing yet".
 func TestIntegrationListHostsReportsCurrentGaugesAndNullsForSilentHosts(t *testing.T) {
@@ -161,6 +164,92 @@ func TestIntegrationListHostsReportsFailedServicesAndKnowsWhenItHasNotLooked(t *
 	}
 }
 
+// The names behind the count, and the ways the two are allowed to disagree.
+//
+// FailedUnits is read from systemd_units while the count beside it comes from
+// the agent's summary on host_current, so this test seeds them independently
+// -- including the case where a host has a count and no unit rows at all,
+// which is what a host heard from once looks like and what the fleet band has
+// to keep rendering as a bare count.
+func TestIntegrationListHostsNamesTheFailedUnitsBehindTheCount(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+
+	seedUnits := func(hostname string, servicesFailed int, units map[string]string) int32 {
+		id := seedHost(t, pool, hostname)
+		exec(t, pool, `
+			INSERT INTO host_current (host_id, last_seen, services_failed)
+			VALUES ($1, now(), $2)`, id, servicesFailed)
+		for name, state := range units {
+			exec(t, pool, `
+				INSERT INTO systemd_units (host_id, unit_name, state)
+				VALUES ($1, $2, $3)`, id, name, state)
+		}
+		return id
+	}
+
+	seedUnits("one", 1, map[string]string{
+		"docker.service": "failed",
+		// Not failed, so not named: these are the 300-odd healthy units every
+		// host runs, and naming one here would be the band reporting a unit
+		// that is fine.
+		"sshd.service": "active",
+	})
+	// More failures than the list names. The cap is what keeps a host
+	// mid-cascade from taking forty lines of a band that shows one line per
+	// condition.
+	seedUnits("many", 5, map[string]string{
+		"a.service": "failed", "b.service": "failed", "c.service": "failed",
+		"d.service": "failed", "e.service": "failed",
+	})
+	// A summary and no unit rows: the hub knows the count and cannot name a
+	// single one of them.
+	seedUnits("unnamed", 2, nil)
+	seedUnits("healthy", 0, map[string]string{"sshd.service": "active"})
+
+	hosts, err := svc.ListHosts(ctx)
+	if err != nil {
+		t.Fatalf("ListHosts: %v", err)
+	}
+	byName := map[string]read.HostSummary{}
+	for _, h := range hosts {
+		byName[h.Hostname] = h
+	}
+
+	for _, tc := range []struct {
+		host string
+		want []string
+	}{
+		{"one", []string{"docker.service"}},
+		// Alphabetical and capped at three -- a stable answer, not whichever
+		// three rows the planner happened to reach first.
+		{"many", []string{"a.service", "b.service", "c.service"}},
+		{"unnamed", []string{}},
+		{"healthy", []string{}},
+	} {
+		got, ok := byName[tc.host]
+		if !ok {
+			t.Errorf("%s missing from ListHosts", tc.host)
+			continue
+		}
+		if len(got.FailedUnits) != len(tc.want) {
+			t.Errorf("%s failed_units = %v, want %v", tc.host, got.FailedUnits, tc.want)
+			continue
+		}
+		for i, name := range tc.want {
+			if got.FailedUnits[i] != name {
+				t.Errorf("%s failed_units[%d] = %q, want %q",
+					tc.host, i, got.FailedUnits[i], name)
+			}
+		}
+		// Never null: a JSON null here would read as a third state next to
+		// "named" and "cannot name", and there is no third state.
+		if got.FailedUnits == nil {
+			t.Errorf("%s failed_units is null, want an empty list", tc.host)
+		}
+	}
+}
+
 // The detail endpoint embeds HostSummary, so a column the list selects and
 // the detail does not comes back as a confident null for every host -- the
 // trap the Threads and Capabilities comments both warn about.
@@ -172,6 +261,9 @@ func TestIntegrationHostDetailCarriesFailedServicesToo(t *testing.T) {
 	exec(t, pool, `
 		INSERT INTO host_current (host_id, last_seen, services_failed)
 		VALUES ($1, now(), 3)`, id)
+	exec(t, pool, `
+		INSERT INTO systemd_units (host_id, unit_name, state)
+		VALUES ($1, 'docker.service', 'failed')`, id)
 
 	host, err := svc.Host(ctx, id)
 	if err != nil {
@@ -179,6 +271,12 @@ func TestIntegrationHostDetailCarriesFailedServicesToo(t *testing.T) {
 	}
 	if host.ServicesFailed == nil || *host.ServicesFailed != 3 {
 		t.Errorf("detail services_failed = %v, want 3", host.ServicesFailed)
+	}
+	// The names travel with the count for the same reason: this endpoint
+	// embeds the summary, so selecting one and not the other publishes a null
+	// that reads as "no failed unit is named" on every host detail there is.
+	if len(host.FailedUnits) != 1 || host.FailedUnits[0] != "docker.service" {
+		t.Errorf("detail failed_units = %v, want [docker.service]", host.FailedUnits)
 	}
 }
 

@@ -44,7 +44,7 @@ export const FLAP_THRESHOLD = 4;
 
 export type HostStatus = {
   severity: "ok" | "warning" | "critical";
-  /** The WORD beside the dot. Severity never rides on colour alone. */
+  /** The WORD inside the chip. Severity never rides on colour alone. */
   label: string;
 };
 

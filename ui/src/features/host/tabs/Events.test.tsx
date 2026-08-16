@@ -34,14 +34,14 @@ describe("eventSeverity", () => {
 });
 
 describe("Events", () => {
-  it("renders a package event as a neutral chip with no status dot", () => {
+  it("renders a package event as a neutral chip with no status tint", () => {
     render(<Events events={[event()]} />);
     const row = screen.getByRole("row", { name: /openssl/ });
     expect(within(row).getByText("package")).toBeInTheDocument();
-    expect(row.querySelector(".dot")).toBeNull();
+    expect(row.querySelector(".badge.st-crit, .badge.st-warn")).toBeNull();
   });
 
-  it("gives a stated severity both a dot and the word", () => {
+  it("gives a stated severity both a tint and the word", () => {
     render(
       <Events
         events={[
@@ -56,7 +56,7 @@ describe("Events", () => {
     );
     const row = screen.getByRole("row", { name: /md0/ });
     expect(within(row).getByText("critical")).toBeInTheDocument();
-    expect(row.querySelector(".dot")).not.toBeNull();
+    expect(row.querySelector(".badge.st-crit")).not.toBeNull();
   });
 
   it("shows the newest first", () => {

@@ -41,6 +41,37 @@ export const DISK_WARN_PCT = 90;
 export const DISK_CRIT_PCT = 95;
 
 /**
+ * "3 failed units — borgbackup.service, docker.service +1".
+ *
+ * The count leads and comes from services_failed, which is the agent's own
+ * summary; the names annotate it and come from the hub's unit rows. The two
+ * are allowed to disagree -- a host heard from once has a summary and no unit
+ * rows yet -- and every branch here resolves that disagreement in favour of
+ * the count:
+ *
+ *   - no names at all: the count alone, exactly what this said before the
+ *     hosts list carried names. "The hub cannot name them" is not "none".
+ *   - fewer names than the count (the list caps at three, or the snapshot is
+ *     behind): the names it has, then "+N" for the rest, so the sentence adds
+ *     up to the count it opened with.
+ *   - MORE names than the count: only as many as the count claims. A row
+ *     reading "1 failed unit — a.service, b.service" contradicts itself in
+ *     the same breath, and the count is the number every other part of netra
+ *     is counting.
+ */
+export function failedUnitsText(
+  count: number,
+  names: readonly string[],
+): string {
+  const noun = count === 1 ? "unit" : "units";
+  const head = `${count} failed ${noun}`;
+  const shown = names.slice(0, Math.max(count, 0));
+  if (shown.length === 0) return head;
+  const rest = count - shown.length;
+  return `${head} — ${shown.join(", ")}${rest > 0 ? ` +${rest}` : ""}`;
+}
+
+/**
  * Everything wrong with one host, worst first.
  *
  * Every condition names a MEASUREMENT and what it means, never a diagnosis:
@@ -66,6 +97,8 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
           : "stopped reporting — every figure below is its last known one",
       // The one condition with an honest onset: this IS the timestamp.
       since: row.last_seen,
+      // No tab explains a silent host better than the host page itself does.
+      tab: null,
     });
   } else if (status.severity === "warning") {
     out.push({
@@ -73,6 +106,7 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       severity: "warning",
       what: "reporting sporadically — gaps in the last few hours",
       since: null,
+      tab: null,
     });
   }
 
@@ -92,6 +126,7 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       severity: "critical",
       what: `${row.dropped} ${row.dropped === 1 ? "sample" : "samples"} dropped before delivery — this host's history has holes`,
       since: null,
+      tab: null,
     });
   }
 
@@ -106,6 +141,9 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       severity: "critical",
       what: `${row.oomKills} OOM ${row.oomKills === 1 ? "kill" : "kills"} — the kernel killed processes to reclaim memory`,
       since: null,
+      // Counted from a metric, not listed anywhere: no tab holds the list
+      // this row would be summarising.
+      tab: null,
     });
   }
 
@@ -120,14 +158,20 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       severity: "warning",
       what: `${row.postFailures} failed ${row.postFailures === 1 ? "delivery" : "deliveries"} to the hub in this window`,
       since: null,
+      tab: null,
     });
   }
 
-  // One condition for the whole set, never one per unit. The host's own page
-  // names each failed unit, because that is the page you open to find out
-  // WHICH one; a fleet row answers whether this host is worth opening, and
-  // eight unit names would bury the next host in the band. Same reasoning as
-  // the fullest-filesystem rule below.
+  // One condition for the whole set, never one per unit -- but it NAMES the
+  // units, up to the three the hosts list carries. It used to state the count
+  // alone, on the reasoning that a fleet row answers whether a host is worth
+  // opening and the host's own page answers which unit. That was the wrong
+  // half of the trade: "1 failed unit" is the count already answering the
+  // worth-opening question, and withholding the one word that says whether it
+  // is a backup job or the container runtime made the reader open the host to
+  // find out. Eight unit names would still bury the next host in the band,
+  // which is why the list is capped there and the count stays authoritative
+  // here -- see read.HostSummary.FailedUnits.
   //
   // null is a host with no systemd at all, or one not yet heard from, and
   // stays silent -- netra has not looked, which is not the same as nothing
@@ -141,8 +185,11 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
     out.push({
       ...base,
       severity: "warning",
-      what: `${row.services_failed} failed ${row.services_failed === 1 ? "unit" : "units"}`,
+      what: failedUnitsText(row.services_failed, row.failed_units ?? []),
       since: null,
+      // The units tab lists every failed unit with its state and its restart
+      // count -- the names above are a summary of exactly that page.
+      tab: "units",
     });
   }
 
@@ -157,6 +204,9 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       severity: fullest.pct >= DISK_CRIT_PCT ? "critical" : "warning",
       what: `${fullest.mount} is ${percent(fullest.pct)} full`,
       since: null,
+      // Only the fullest mount is named here; the filesystems tab is where
+      // this host's other mounts are.
+      tab: "filesystems",
     });
   }
 

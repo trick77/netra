@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fleetConditions, hostConditions } from "./conditions";
+import { failedUnitsText, fleetConditions, hostConditions } from "./conditions";
 import type { HostRow } from "./hostColumns";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
@@ -74,12 +74,32 @@ describe("hostConditions", () => {
     expect(String(c?.what)).toMatch(/1 failed unit\b/);
   });
 
-  // One row however many are broken -- the host's own page names them, this
-  // one answers whether the host is worth opening.
+  // One row however many are broken: the row names up to three of them and
+  // stays one row, rather than becoming one row per unit.
   it("says it once, not once per unit", () => {
     expect(hostConditions(makeRow({ services_failed: 8 }), NOW)).toHaveLength(
       1,
     );
+  });
+
+  // The dead end this fixes: the band said "1 failed unit" and the only way
+  // to learn whether that was a backup job or the container runtime was to
+  // open the host.
+  it("names the failed unit and points at the tab that lists it", () => {
+    const [c] = hostConditions(
+      makeRow({ services_failed: 1, failed_units: ["docker.service"] }),
+      NOW,
+    );
+    expect(String(c?.what)).toBe("1 failed unit — docker.service");
+    expect(c?.tab).toBe("units");
+  });
+
+  it("falls back to the bare count when the hub cannot name them", () => {
+    const [c] = hostConditions(
+      makeRow({ services_failed: 2, failed_units: [] }),
+      NOW,
+    );
+    expect(String(c?.what)).toBe("2 failed units");
   });
 
   // 0 is the host confirming its units are fine. null is a host that has
@@ -228,5 +248,36 @@ describe("fleetConditions", () => {
 
   it("is empty for a wholly healthy fleet, so the all-clear line shows", () => {
     expect(fleetConditions([makeRow(), makeRow({ id: 2 })], NOW)).toEqual([]);
+  });
+});
+
+// The count leads and the names annotate it. The two come from different
+// tables and are allowed to disagree; every branch resolves that in favour of
+// the count.
+describe("failedUnitsText", () => {
+  it("names what it can and counts the rest", () => {
+    expect(failedUnitsText(5, ["a.service", "b.service", "c.service"])).toBe(
+      "5 failed units — a.service, b.service, c.service +2",
+    );
+  });
+
+  it("adds no remainder when the names are complete", () => {
+    expect(failedUnitsText(2, ["a.service", "b.service"])).toBe(
+      "2 failed units — a.service, b.service",
+    );
+  });
+
+  // "1 failed unit — a.service, b.service" contradicts itself in one breath.
+  // The count is the number the rest of netra is counting, so the names give
+  // way to it.
+  it("never names more units than the count claims", () => {
+    expect(failedUnitsText(1, ["a.service", "b.service"])).toBe(
+      "1 failed unit — a.service",
+    );
+  });
+
+  it("keeps the count alone when there are no names", () => {
+    expect(failedUnitsText(1, [])).toBe("1 failed unit");
+    expect(failedUnitsText(4, [])).toBe("4 failed units");
   });
 });

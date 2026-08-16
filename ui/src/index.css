@@ -109,8 +109,8 @@
      on the darkened --accent-fill above measures 4.62:1. */
   --on-accent: #fff;
 
-  /* status TEXT colours — light. The dot keeps the fixed hue (--st-* above);
-     the word next to it is the actual colour-blindness mitigation (spec
+  /* status TEXT colours — light. The chip ground keeps the fixed hue (--st-*
+     above); the word on it is the actual colour-blindness mitigation (spec
      §3.3/3.5), so it must clear 4.5:1 on its own. The mark colours as text
      do not: on the page --bg they measure warn 1.68:1, serious 2.42:1, ok
      3.08:1, crit 4.41:1 — all four short. Each is darkened along its own
@@ -120,6 +120,36 @@
   --st-warn-text: #956703;
   --st-serious-text: #c24716;
   --st-crit-text: #cf3535;
+
+  /* status CHIP grounds — light. A chip is the status hue washed over
+     whatever surface it lands on, so these are alpha rather than solid: the
+     same chip sits on --surface (a card), --surface-2 (a table header) and
+     --bg (a bare page), and a solid tint mixed for one of them reads as a
+     patch on the other two.
+     13% is where the wash is visible on --surface without the chip becoming
+     a filled button; the edge at 42% is what keeps a warn chip from
+     dissolving into a cream page, since warn's own tint is the palest of
+     the four. */
+  --st-ok-tint: color-mix(in srgb, var(--st-ok) 13%, transparent);
+  --st-warn-tint: color-mix(in srgb, var(--st-warn) 13%, transparent);
+  --st-serious-tint: color-mix(in srgb, var(--st-serious) 13%, transparent);
+  --st-crit-tint: color-mix(in srgb, var(--st-crit) 13%, transparent);
+  --st-ok-edge: color-mix(in srgb, var(--st-ok) 42%, transparent);
+  --st-warn-edge: color-mix(in srgb, var(--st-warn) 42%, transparent);
+  --st-serious-edge: color-mix(in srgb, var(--st-serious) 42%, transparent);
+  --st-crit-edge: color-mix(in srgb, var(--st-crit) 42%, transparent);
+
+  /* status chip TEXT — light. Not --st-*-text: those clear 4.5:1 against a
+     plain surface, and the tint under a chip is a THIRD ground that eats the
+     margin they had. Measured on the worst case, the tint over --bg
+     (crit #f2ddd8, serious #f6e6dc, warn #f7ecd4, ok #d8ead2), where
+     --st-*-text falls to crit 3.82:1, ok 3.96:1, serious 4.11:1, warn
+     4.25:1 — all four short. Each is darkened along its own hue until it
+     clears: crit 4.53, ok 4.53, warn 4.54, serious 4.54. */
+  --st-ok-chip: #097809;
+  --st-warn-chip: #8f6303;
+  --st-serious-chip: #b64315;
+  --st-crit-chip: #ba3030;
 
   /* series palette — light (default). Orange never appears (spec §3.4).
      s5/s6 sit in the gaps between the existing four hues (~213°, 159°,
@@ -186,6 +216,29 @@
     --st-serious-text: #ec835a;
     --st-crit-text: #d96060;
 
+    /* status CHIP grounds — dark. 13% of a status hue over #1b1b1a is very
+       nearly #1b1b1a: on a dark ground the same wash carries far less of the
+       hue, so the tint is raised to 20% and the edge to 55% to land at the
+       same read as the light chip. */
+    --st-ok-tint: color-mix(in srgb, var(--st-ok) 20%, transparent);
+    --st-warn-tint: color-mix(in srgb, var(--st-warn) 20%, transparent);
+    --st-serious-tint: color-mix(in srgb, var(--st-serious) 20%, transparent);
+    --st-crit-tint: color-mix(in srgb, var(--st-crit) 20%, transparent);
+    --st-ok-edge: color-mix(in srgb, var(--st-ok) 55%, transparent);
+    --st-warn-edge: color-mix(in srgb, var(--st-warn) 55%, transparent);
+    --st-serious-edge: color-mix(in srgb, var(--st-serious) 55%, transparent);
+    --st-crit-edge: color-mix(in srgb, var(--st-crit) 55%, transparent);
+
+    /* status chip TEXT — dark. Measured on the worst case, the tint over
+       --surface-2 (crit #4d2f2d, serious #523d34, warn #554727, ok #264424).
+       --st-*-text falls to ok 3.25:1, crit 3.29:1, serious 3.81:1 there and
+       each is lightened along its own hue until it clears (4.52, 4.55,
+       4.57). Warn already measures 4.95:1 and is the token unchanged. */
+    --st-ok-chip: #50bd50;
+    --st-warn-chip: #fab219;
+    --st-serious-chip: #ef9978;
+    --st-crit-chip: #e28686;
+
     --s1: #3987e5;
     --s2: #199e70;
     --s3: #9085e9;
@@ -225,6 +278,20 @@
   --st-warn-text: #fab219;
   --st-serious-text: #ec835a;
   --st-crit-text: #d96060;
+
+  --st-ok-tint: color-mix(in srgb, var(--st-ok) 20%, transparent);
+  --st-warn-tint: color-mix(in srgb, var(--st-warn) 20%, transparent);
+  --st-serious-tint: color-mix(in srgb, var(--st-serious) 20%, transparent);
+  --st-crit-tint: color-mix(in srgb, var(--st-crit) 20%, transparent);
+  --st-ok-edge: color-mix(in srgb, var(--st-ok) 55%, transparent);
+  --st-warn-edge: color-mix(in srgb, var(--st-warn) 55%, transparent);
+  --st-serious-edge: color-mix(in srgb, var(--st-serious) 55%, transparent);
+  --st-crit-edge: color-mix(in srgb, var(--st-crit) 55%, transparent);
+
+  --st-ok-chip: #50bd50;
+  --st-warn-chip: #fab219;
+  --st-serious-chip: #ef9978;
+  --st-crit-chip: #e28686;
 
   --s1: #3987e5;
   --s2: #199e70;
@@ -448,13 +515,76 @@ a {
 }
 
 /* ── Attention band: present only when something is wrong ─────────── */
+/* No status stripe on the card. It used to carry a 3px --st-crit left edge
+   whatever was actually wrong, so a band of nothing but warnings announced
+   itself in critical red — and now that every row inside states its own
+   severity as a tinted chip, the edge was both wrong and redundant. The card
+   says "here is the list"; the chips say how bad it is. */
 .attn {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-left: 3px solid var(--st-crit);
   border-radius: var(--radius-ui);
   margin-bottom: var(--space-3);
   overflow: hidden;
+}
+/* One host and everything wrong with it. The hostname is a heading over its
+   conditions, not a row that carries one of them -- see HostBlock in
+   AttentionBand.tsx for why the promotion had to go. */
+.attn-host {
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0 var(--space-3);
+}
+.attn-host:last-child {
+  border-bottom: 0;
+}
+.attn-host > header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) 5px;
+}
+.attn-host > header .who {
+  font-weight: 600;
+  color: var(--ink);
+}
+.attn-host > header .count {
+  color: var(--muted);
+  font-size: var(--text-micro);
+}
+.attn-host ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* A fixed first column, so every sentence starts on one edge however wide
+   the chip in front of it is -- "critical", "warning" and "serious" are
+   three different widths, and left to themselves they put the text at three
+   different places and the rows stop reading as a column. */
+.attn-cond {
+  display: grid;
+  grid-template-columns: 72px 1fr auto auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 3px var(--space-4);
+  font-size: var(--text-label);
+}
+.attn-cond .what {
+  color: var(--ink-2);
+}
+.attn-cond .since {
+  color: var(--muted);
+  font-size: var(--text-micro);
+  font-variant-numeric: tabular-nums;
+}
+.attn-cond .drill {
+  color: var(--accent);
+  font-size: var(--text-micro);
+  white-space: nowrap;
+}
+.attn-overflow {
+  padding: 9px var(--space-4);
+  font-size: var(--text-label);
+  color: var(--muted);
 }
 .attn > header {
   display: flex;
@@ -468,6 +598,9 @@ a {
   font-weight: 600;
   color: var(--ink);
 }
+/* The host page's rows. The fleet band no longer uses .attn-row -- it groups
+   by host and draws .attn-cond -- so this is now the host band's own row and
+   has no who-column at all. */
 .attn-row {
   display: flex;
   align-items: center;
@@ -478,11 +611,6 @@ a {
 }
 .attn-row:last-child {
   border-bottom: 0;
-}
-.attn-row .who {
-  font-weight: 500;
-  color: var(--ink);
-  min-width: 140px;
 }
 .attn-row .what {
   color: var(--ink-2);
@@ -502,12 +630,14 @@ a {
   margin: 0;
   padding: 0;
 }
-/* The badge is this list's first column, and its three words are three
+/* The chip is this list's first column, and its three words are three
    different widths -- left to itself the sentence beside it starts at three
-   different places and the rows stop reading as a column. Same job the
-   fleet band's min-width on .who does. */
+   different places and the rows stop reading as a column. Same job the fleet
+   band's first grid column does. 68px, not the 82px this held while every
+   badge also carried a 7px dot and its 5px gap. */
 .attn-list .attn-row .badge {
-  min-width: 82px;
+  min-width: 68px;
+  justify-content: center;
 }
 .allclear {
   font-size: var(--text-label);
@@ -517,20 +647,12 @@ a {
   gap: 7px;
   padding: 2px 0 var(--space-3);
 }
-.attn-sub {
-  padding: 7px var(--space-4) 7px 52px;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--text-label);
-  color: var(--ink-2);
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-}
-.attn-sub .since {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: var(--text-label);
-  font-variant-numeric: tabular-nums;
+/* .attn-sub is gone with the shape it belonged to: it was the indented row a
+   host's second and later conditions were drawn as, at a 52px inset that
+   lined up with no column above it. Every condition is now an .attn-cond in
+   its host's own block. */
+.attn details {
+  padding: 2px 0 0;
 }
 .attn details > summary {
   list-style: none;
@@ -539,7 +661,12 @@ a {
 .attn details > summary::-webkit-details-marker {
   display: none;
 }
+/* Inline-block with the band's own gutter for a margin: the summary sits
+   inside a host's block now, so it lines up with that host's conditions
+   rather than with the edge of the card. */
 .attn .more {
+  display: inline-block;
+  margin: 3px var(--space-4) 2px;
   font-size: var(--text-micro);
   color: var(--accent);
   border: 1px dashed var(--border-strong);
@@ -1311,44 +1438,61 @@ a {
 }
 
 /* badges + status — colour never carries severity alone; callers pair
-   these with a word (spec §3.3). */
+   these with a word (spec §3.3).
+   A badge is a CHIP: the status hue as a tinted ground and a matching edge,
+   with the word inside it. It used to be a neutral outline with a coloured
+   dot in front, which put the hue in a 7px circle and left the pill itself
+   grey — at a glance a critical and an ok badge were the same object. The
+   tint makes the whole chip the status, so a page of chips sorts by severity
+   before a single word is read. The dot is gone with it: it was a second
+   copy of what the ground now says, and its 12px of width was paid on every
+   badge in the app.
+   Squarer than the old pill (--radius-sm, not --radius-pill): a filled pill
+   at this size reads as a button, and several of these sit in table cells
+   next to real controls. */
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-size: var(--text-micro);
-  font-weight: 500;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   color: var(--ink-2);
+  /* A neutral chip has no status to tint with (Badge.tsx renders no st-*
+     class for severity "neutral", and the events page's type chip is a bare
+     .badge): --surface-2 keeps it an object rather than loose text, without
+     borrowing a status hue it does not mean. */
+  background: var(--surface-2);
+  white-space: nowrap;
 }
-.dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-  /* visible default for a neutral/unclassified badge (Badge.tsx renders
-     no st-* class for severity "neutral") — without this the dot is
-     transparent and invisible on both surfaces. */
-  background: var(--muted);
+.badge.st-ok {
+  background: var(--st-ok-tint);
+  border-color: var(--st-ok-edge);
+  color: var(--st-ok-chip);
 }
-.st-ok .dot {
-  background: var(--st-ok);
+.badge.st-warn {
+  background: var(--st-warn-tint);
+  border-color: var(--st-warn-edge);
+  color: var(--st-warn-chip);
 }
-.st-warn .dot {
-  background: var(--st-warn);
+.badge.st-serious {
+  background: var(--st-serious-tint);
+  border-color: var(--st-serious-edge);
+  color: var(--st-serious-chip);
 }
-.st-serious .dot {
-  background: var(--st-serious);
+.badge.st-crit {
+  background: var(--st-crit-tint);
+  border-color: var(--st-crit-edge);
+  color: var(--st-crit-chip);
 }
-.st-crit .dot {
-  background: var(--st-crit);
-}
-/* Text colour: NOT the raw --st-* hue. The word beside the dot is the
-   actual colour-blindness mitigation (accent and crit measure ΔE 2.2
-   under deuteranopia) and several raw hues fail 4.5:1 as body text — see
-   the --st-*-text tokens above. The dot itself keeps the true status hue. */
+/* Text colour on a PLAIN ground, for the status words that are not chips.
+   NOT the raw --st-* hue: the word is the actual colour-blindness mitigation
+   (accent and crit measure ΔE 2.2 under deuteranopia) and several raw hues
+   fail 4.5:1 as body text — see the --st-*-text tokens above. Inside a chip
+   these are overridden by --st-*-chip, which is the same idea measured
+   against the tint rather than against the surface. */
 .st-ok {
   color: var(--st-ok-text);
 }

@@ -424,11 +424,11 @@ export function HostPage({
             branch. This is that warning, restored where the comment said it
             was.
 
-            "rebooted", not the duration alone. Badge's dot is aria-hidden, so
-            a screen reader hearing "1 m 40 s" cannot tell this host from one
-            up for "266 d 6 h", and a deuteranope sees only a hue change --
-            the state would ride on colour alone, which is precisely what
-            pairing a dot with a WORD prevents. A duration is not a
+            "rebooted", not the duration alone. A chip's tint says nothing to
+            a screen reader, so one hearing "1 m 40 s" cannot tell this host
+            from one up for "266 d 6 h", and a deuteranope sees only a hue
+            change -- the state would ride on colour alone, which is precisely
+            what putting a WORD in the chip prevents. A duration is not a
             severity. */}
         {recentlyBooted && (
           <Badge severity="warning">
