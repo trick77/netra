@@ -247,20 +247,33 @@ func mdraidTrouble(p *Profile, s signal, from, to time.Time) []timedEvent {
 
 // mdraidIncident is one degrade, resync and recovery.
 //
-// The detail JSON below, and the clean state in newSchedule, are arrayState
-// from agent/collector/mdraid.go marshalled by hand: state, level, raid_disks,
-// degraded, sync_action, and nothing else. They had drifted -- `disks` instead
-// of `raid_disks`, plus `failed` and `resync_pct` keys the collector has never
-// sent -- which no test caught, because nothing asserts on this string. What
-// it cost was the events page rendering a simulated array differently from a
-// real one, so a dev environment could not be used to check the rendering at
-// all. Keep it identical to the struct.
+// The detail JSON below, and the baseline in newSchedule, are arrayState from
+// agent/collector/mdraid.go marshalled by hand: state, level, raid_disks,
+// degraded, sync_action, and nothing else. Keep it identical to the struct --
+// both the KEYS and the VALUES, which is the part that is easy to get wrong.
+//
+// `state` is sysfs array_state, and its vocabulary is about CONSISTENCY, not
+// about how many disks are left: clear, inactive, suspended, readonly,
+// read-auto, clean, active, write-pending, active-idle. There is no
+// "degraded" and no "recovering" in it. The kernel reports a raid10 that has
+// lost a member as `clean`, and says so in this repo's own fixture --
+// collector/testdata/mdraid/degraded holds array_state=clean, degraded=1,
+// sync_action=recover. So the incident below is spelled the way a real array
+// spells it: state stays clean throughout, and `degraded` and `sync_action`
+// carry the whole story.
+//
+// Two rounds of drift have been fixed here, neither caught by a test because
+// nothing asserts on these strings: first `disks` for `raid_disks` plus
+// `failed` and `resync_pct` keys that do not exist, then state values no
+// agent could ever send. Both had the same cost -- a simulated array rendered
+// differently from a real one, so the dev environment could not be used to
+// check the events log at all, which is exactly what it is for.
 func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 	return []timedEvent{
 		{ts: at, event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    array,
-			DetailJson: `{"state":"degraded","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"idle"}`,
+			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"idle"}`,
 		}},
 		// Well clear of the degrade rather than 90 seconds after it: on the
 		// coarse grid both would come due in the same slot, get the same
@@ -269,7 +282,7 @@ func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 		{ts: at.Add(25 * time.Minute), event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    array,
-			DetailJson: `{"state":"recovering","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"recover"}`,
+			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"recover"}`,
 		}},
 		{ts: rebuilt, event: &netrav1.Event{
 			Type:       "mdraid",

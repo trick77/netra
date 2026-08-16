@@ -4,7 +4,7 @@
 // invented its own keys would pass while the page rendered blanks.
 import { describe, expect, it } from "vitest";
 import type { Event } from "../../lib/api";
-import { KNOWN_EVENT_TYPES, messageOf } from "./message";
+import { KNOWN_EVENT_TYPES, mdraidSeverity, messageOf } from "./message";
 
 function event(over: Partial<Event> = {}): Event {
   return {
@@ -105,20 +105,32 @@ describe("messageOf, unit events", () => {
 });
 
 describe("messageOf, mdraid events", () => {
-  it("counts the devices still present, which is what gets acted on", () => {
+  // THE fixture to get right. These are the exact values in
+  // internal/agent/collector/testdata/mdraid/degraded: the kernel reports a
+  // half-dead array as array_state=clean, because clean is about consistency
+  // rather than about how many disks are left. Reading `state` for the
+  // condition is therefore always wrong, and a fixture that says
+  // state:"degraded" is testing a shape no agent can send.
+  const REAL_DEGRADED = {
+    state: "clean",
+    level: "raid1",
+    raid_disks: 2,
+    degraded: 1,
+    sync_action: "idle",
+  };
+
+  it("calls a degraded array degraded, though sysfs called it clean", () => {
+    expect(messageOf(event({ detail: REAL_DEGRADED }))).toBe(
+      "md0 degraded — raid1, 1 of 2 devices",
+    );
+  });
+
+  it("calls it rebuilding once a repair is under way", () => {
     expect(
       messageOf(
-        event({
-          detail: {
-            state: "degraded",
-            level: "raid1",
-            raid_disks: 2,
-            degraded: 1,
-            sync_action: "idle",
-          },
-        }),
+        event({ detail: { ...REAL_DEGRADED, sync_action: "recover" } }),
       ),
-    ).toBe("md0 degraded — raid1, 1 of 2 devices");
+    ).toBe("md0 rebuilding — raid1, 1 of 2 devices");
   });
 
   it("names a sync in progress but stays quiet when idle", () => {
@@ -187,5 +199,53 @@ describe("KNOWN_EVENT_TYPES", () => {
   // added there, this list is the other half of the change.
   it("is the set the hub's union can emit", () => {
     expect([...KNOWN_EVENT_TYPES]).toEqual(["mdraid", "package", "unit"]);
+  });
+});
+
+describe("mdraidSeverity", () => {
+  // The bug this exists for: EventsPage's severity table matches the words
+  // "degraded", "faulty", "recovering", "rebuilding" against detail.state --
+  // and none of them is a value sysfs array_state can take. So for mdraid the
+  // table never fired once, and a raid1 down to its last disk was rendered
+  // "info", in the log whose whole job is to surface that.
+  const REAL_DEGRADED = {
+    state: "clean",
+    level: "raid1",
+    raid_disks: 2,
+    degraded: 1,
+    sync_action: "idle",
+  };
+
+  it("calls a degraded array with nothing being done about it critical", () => {
+    expect(mdraidSeverity(event({ detail: REAL_DEGRADED }))).toBe("critical");
+  });
+
+  it("softens to a warning while it rebuilds onto a spare", () => {
+    for (const sync of ["recover", "resync", "repair"]) {
+      expect(
+        mdraidSeverity(
+          event({ detail: { ...REAL_DEGRADED, sync_action: sync } }),
+        ),
+      ).toBe("warning");
+    }
+  });
+
+  it("has no opinion about a whole array, whatever it is doing", () => {
+    expect(
+      mdraidSeverity(event({ detail: { ...REAL_DEGRADED, degraded: 0 } })),
+    ).toBeNull();
+    expect(
+      mdraidSeverity(
+        event({
+          detail: { state: "clean", degraded: 0, sync_action: "check" },
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("judges only mdraid, leaving other types to their own emitter", () => {
+    expect(
+      mdraidSeverity(event({ type: "package", detail: REAL_DEGRADED })),
+    ).toBeNull();
   });
 });

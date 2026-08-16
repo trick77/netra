@@ -141,11 +141,17 @@ const unitLookback = "7 days"
 // eventsSQL is the log: three tables, one ordering, one limit.
 //
 // Each branch is parenthesised with its OWN ORDER BY and LIMIT. Both halves
-// matter. The limit stops one family from crowding out the others -- an
-// apt-get upgrade emits fifty package rows in a single timestamp, which
-// unbounded would be the entire first page and would hide the array that went
-// degraded underneath it. The ORDER BY is what makes the limit mean "the
-// newest fifty" rather than "whichever fifty the planner reached first".
+// matter, but only for WORK, not for fairness: a branch limit equal to the
+// outer limit means no branch can contribute more rows than the whole page
+// holds, so the union never materialises more than three pages before the
+// final sort. The ORDER BY is what makes that bound mean "the newest N of
+// this family" rather than "whichever N the planner reached first".
+//
+// What it does NOT do is stop one family crowding out the others. The result
+// is exactly what a single ORDER BY ts DESC LIMIT N over all three tables
+// would return, so a fleet-wide apt-get emitting more package rows than the
+// limit really does fill the page and push an older mdraid degradation off
+// it. That is what a limit means; the caller narrows by type or window.
 //
 // The unit branch is the one with a shape to get wrong. Its lag() must run
 // over the WHOLE partition, so the CTE takes no limit and is bounded only by

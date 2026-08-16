@@ -82,17 +82,71 @@ function unitMessage(name: string, f: Record<string, unknown>): string {
     return `${name} recovered to ${state || "an ordinary state"}`;
   }
   if (state === "failed") {
-    // The substate is systemd's reason word -- exit-code, timeout, signal --
-    // and is the first thing anyone wants after "it failed".
+    // The substate is appended when it says something the state does not.
+    // It usually does not: a failed unit's SubState is itself `failed`
+    // (internal/agent/collector/systemd_test.go), and the reason word --
+    // exit-code, timeout, signal -- is systemd's Result property, which the
+    // agent does not collect. So this reads as a bare "entered failed" today
+    // and only gains a parenthesis if a unit type ever reports otherwise.
     const why = substate && substate !== "failed" ? ` (${substate})` : "";
     return `${name} entered failed${why}`;
   }
   return previous ? `${name} ${previous} → ${state}` : `${name} ${state}`;
 }
 
+/** Whether an md array is missing members, and whether it is rebuilding them.
+ *
+ * `state` is deliberately NOT consulted. It is sysfs `array_state`
+ * (agent/collector/mdraid.go), whose vocabulary is clear / inactive /
+ * suspended / readonly / read-auto / clean / active / write-pending /
+ * active-idle -- and "degraded" is not among them. The kernel reports a
+ * half-dead raid1 as `clean`, because clean is about consistency, not about
+ * how many disks are left. The repo's own fixture says so:
+ * collector/testdata/mdraid/degraded reads array_state=clean, degraded=1,
+ * sync_action=recover.
+ *
+ * So the only honest source for "is this array in trouble" is the device
+ * count, and the only source for "is it fixing itself" is sync_action. Both
+ * the sentence and the severity are derived here, once, so they cannot
+ * disagree about the same array. */
+function mdraidCondition(f: Record<string, unknown>): {
+  word: string;
+  severity: "critical" | "warning" | null;
+} {
+  const degraded = Number(f["degraded"]);
+  const missing = Number.isFinite(degraded) && degraded > 0;
+  // A whole array is described by whatever array_state said, with no
+  // substitute invented for it: an event carrying no state at all has nothing
+  // to report, and the caller falls back to spelling the detail out.
+  if (!missing) return { word: text(f, "state"), severity: null };
+
+  // sync_action is idle / resync / recover / check / repair. The first two of
+  // the repair verbs mean the array is actively rebuilding onto a spare, which
+  // is bad but self-healing; idle with members missing means nothing is being
+  // done about it, and that is the one to wake someone for.
+  const sync = text(f, "sync_action");
+  const rebuilding =
+    sync === "recover" || sync === "resync" || sync === "repair";
+  return {
+    word: rebuilding ? "rebuilding" : "degraded",
+    severity: rebuilding ? "warning" : "critical",
+  };
+}
+
+/** The severity of an mdraid event, or null when the array is whole.
+ *
+ * Exported for EventsPage's severityOf, which otherwise judges an event by
+ * matching words in its detail against a table -- a table that, for mdraid,
+ * lists states the kernel has never emitted and so never fired. A degraded
+ * array rendered as "info". */
+export function mdraidSeverity(event: Event): "critical" | "warning" | null {
+  if (event.type !== "mdraid") return null;
+  return mdraidCondition(fields(event)).severity;
+}
+
 function mdraidMessage(name: string, f: Record<string, unknown>): string {
-  const state = text(f, "state");
-  if (!state) return everyField(f) || name;
+  const { word } = mdraidCondition(f);
+  if (!word) return everyField(f) || name;
 
   // level and raid_disks describe the array; degraded counts the missing
   // members. "1 of 2 devices" is the number an operator acts on.
@@ -109,12 +163,17 @@ function mdraidMessage(name: string, f: Record<string, unknown>): string {
         : `${disks} devices`,
     );
   }
+
+  // A repair verb still earns a word when the array is WHOLE -- a scheduled
+  // check or scrub on a healthy array is worth seeing. When members are
+  // missing the word is already "rebuilding", and repeating sync_action after
+  // it says the same thing twice.
   const sync = text(f, "sync_action");
-  if (sync && sync !== "idle") parts.push(sync);
+  if (sync && sync !== "idle" && word !== "rebuilding") parts.push(sync);
 
   return parts.length === 0
-    ? `${name} ${state}`
-    : `${name} ${state} — ${parts.join(", ")}`;
+    ? `${name} ${word}`
+    : `${name} ${word} — ${parts.join(", ")}`;
 }
 
 /**

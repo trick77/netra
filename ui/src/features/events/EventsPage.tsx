@@ -16,7 +16,7 @@ import { Segmented } from "../../ui/Segmented";
 import type { Event } from "../../lib/api";
 import type { Range } from "../../lib/range";
 import { ABSENT, absolute, relative } from "../../lib/format";
-import { KNOWN_EVENT_TYPES, messageOf } from "./message";
+import { KNOWN_EVENT_TYPES, mdraidSeverity, messageOf } from "./message";
 
 // The windows this page OFFERS: the log reaches back further than a metrics
 // chart does, because events are sparse and "what happened this week" is the
@@ -66,6 +66,13 @@ function detailOf(event: Event): Record<string, unknown> | null {
  * state word it reported decides. Everything else is info -- a package
  * upgrade is a fact, not an emergency, and colouring it as one is how a log
  * stops being read.
+ *
+ * mdraid is asked separately, and BEFORE the table above, because for mdraid
+ * the table has never once fired. The words in it -- degraded, faulty,
+ * recovering, rebuilding -- are not values sysfs `array_state` can take, and
+ * that is the field the collector puts in `state`. The kernel calls a raid1
+ * with one disk left `clean`, so every real degraded array this log has ever
+ * shown was rendered as "info". See mdraidSeverity.
  */
 export function severityOf(event: Event): EventSeverity {
   const detail = detailOf(event);
@@ -73,6 +80,9 @@ export function severityOf(event: Event): EventSeverity {
 
   const declared = detail["severity"];
   if (declared === "critical" || declared === "warning") return declared;
+
+  const array = mdraidSeverity(event);
+  if (array !== null) return array;
 
   const state = detail["state"];
   if (typeof state === "string") {

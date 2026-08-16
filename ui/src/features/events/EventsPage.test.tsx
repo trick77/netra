@@ -1,8 +1,8 @@
 // Events carry no severity on the wire -- the events table is (host_id, ts,
 // type, subject, detail) and nothing more -- so the fixtures below are real
 // emitter shapes (mdraid's detail JSON comes from
-// agent/collector/mdraid.go) and severity is asserted as something this page
-// derives from them.
+// agent/collector/mdraid.go, matching collector/testdata/mdraid/degraded) and
+// severity is asserted as something this page derives from them.
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -37,11 +37,14 @@ const DEGRADED = event({
   ts: "2026-08-10T13:50:00Z",
   type: "mdraid",
   subject: "md0",
+  // array_state is "clean" even here: the kernel reports consistency, not
+  // how many disks are left. See mdraidSeverity in ./message.
   detail: {
-    state: "degraded",
+    state: "clean",
     level: "raid10",
     raid_disks: 4,
     degraded: 1,
+    sync_action: "idle",
   },
 });
 
@@ -53,7 +56,7 @@ const RECOVERING = event({
   type: "mdraid",
   subject: "md0",
   detail: {
-    state: "recovering",
+    state: "clean",
     level: "raid10",
     raid_disks: 4,
     degraded: 1,
