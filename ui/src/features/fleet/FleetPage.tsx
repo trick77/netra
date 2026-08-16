@@ -345,13 +345,20 @@ export function FleetPage({
           {/* The count above the band, in the same place the all-clear line
               sits when there is nothing wrong -- so the page answers "how
               much of my fleet is in trouble" in one line whichever state it
-              is in, rather than only when the answer is none. */}
+              is in, rather than only when the answer is none.
+
+              It carries the problem count too, which the band used to state
+              in a header of its own reading "{n} on {m} hosts" -- the same
+              two numbers this line already had, in a form that has to be
+              decoded. One line, both counts, and the band starts at its
+              first host. */}
           <p className="allclear">
             <strong>
               {troubled} of {hostRows.length} host
               {hostRows.length === 1 ? "" : "s"}
             </strong>{" "}
-            need{troubled === 1 ? "s" : ""} attention
+            need{troubled === 1 ? "s" : ""} attention · {shown.length} problem
+            {shown.length === 1 ? "" : "s"}
             {checkedAt === null ? "" : ` · checked ${relative(checkedAt, now)}`}
           </p>
           <AttentionBand conditions={shown} />

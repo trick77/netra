@@ -7,7 +7,7 @@ import { Badge, type Severity } from "../../../ui/Badge";
 import type { Column } from "../../../ui/Table";
 import { Inventory } from "./Inventory";
 
-// Only these two carry a status dot. A package upgrade is not a
+// Only these two carry a status tint. A package upgrade is not a
 // colour-coded emergency, so every other event is a neutral chip.
 const STATED_SEVERITIES: Severity[] = ["warning", "critical"];
 
@@ -49,8 +49,8 @@ const COLUMNS: Column<Event>[] = [
   {
     key: "type",
     header: "Type",
-    // A chip, not a Badge: Badge always carries a status dot, and a type
-    // is a category rather than a judgement.
+    // A bare .badge, not a Badge: a neutral chip takes no status tint, and
+    // a type is a category rather than a judgement.
     cell: (row) => <span className="badge">{row.type}</span>,
   },
   {

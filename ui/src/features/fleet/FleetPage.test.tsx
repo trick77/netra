@@ -184,6 +184,7 @@ describe("FleetPage header", () => {
           severity: "critical",
           what: "disk 99% full",
           since: "2026-08-10T13:00:00Z",
+          tab: "filesystems",
         },
       ],
     });

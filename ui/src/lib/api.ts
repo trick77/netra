@@ -58,6 +58,14 @@ export type Host = {
   // literals across the tests predate these fields.
   services_total?: number | null;
   services_failed?: number | null;
+  // Names for up to three of the units behind services_failed, alphabetically
+  // -- an annotation on that count, never a substitute for it. They come from
+  // a different table than the count does (see read.HostSummary.FailedUnits),
+  // so an empty list means the hub cannot name them, not that none failed.
+  //
+  // Optional for the same reason capabilities below is: the hand-built host
+  // literals across the tests predate the field.
+  failed_units?: string[];
   // Inventory rather than a gauge, and on the list because the CPU sparkline
   // is a per-core stack: the page has to know how many logical CPUs a host
   // has before deciding to ask for one series per core.

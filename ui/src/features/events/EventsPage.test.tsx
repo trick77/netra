@@ -164,23 +164,25 @@ describe("applyFilters", () => {
 });
 
 describe("EventsPage", () => {
-  it("renders the type as a chip that carries no status dot", () => {
+  it("renders the type as a chip that takes no status tint", () => {
     renderPage({ events: [event()] });
 
     // Scoped to the row: "package" is also a filter option.
     const chip = within(screen.getByRole("listitem")).getByText("package");
     expect(chip).toHaveClass("badge");
-    expect(chip.querySelector(".dot")).toBeNull();
+    expect(chip.className).not.toMatch(/st-/);
   });
 
-  it("gives critical and warning a dot and a word, and info the word alone", () => {
+  it("gives critical and warning a tinted chip, and info the word alone", () => {
     renderPage();
 
     const rows = screen.getAllByRole("listitem").map((row) => within(row));
 
     const critical = rows[1]!.getByText("critical");
-    expect(critical.closest(".badge")?.querySelector(".dot")).not.toBeNull();
-    expect(rows[2]!.getByText("warning").closest(".badge")).not.toBeNull();
+    expect(critical.closest(".badge")).toHaveClass("st-crit");
+    expect(rows[2]!.getByText("warning").closest(".badge")).toHaveClass(
+      "st-warn",
+    );
 
     const info = rows[0]!.getByText("info");
     expect(info.closest(".badge")).toBeNull();

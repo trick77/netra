@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/trick77/netra/internal/hub/systemdstate"
 )
 
 // HostSummary is one row of the host list. Every metric on it comes from
@@ -53,6 +54,25 @@ type HostSummary struct {
 	// zero -- see Capabilities.
 	ServicesTotal  *int32 `json:"services_total"`
 	ServicesFailed *int32 `json:"services_failed"`
+	// FailedUnits names up to failedUnitNames of the failed units behind
+	// ServicesFailed, alphabetically.
+	//
+	// A NAME, never a count. ServicesFailed is what the agent summarised and
+	// stays the number anything counts; these are read from systemd_units,
+	// which the hub fills from the unit snapshot, and the two can legitimately
+	// disagree -- a host heard from once has a summary and no unit rows yet.
+	// So this annotates the count and never replaces it: an empty list is "the
+	// hub cannot name them", which is not "none failed".
+	//
+	// It exists because the fleet band's row was a dead end. "1 failed unit"
+	// is the fleet answering whether a host is worth opening, and it made the
+	// reader open the host to learn the one word that would have told them
+	// whether it mattered.
+	//
+	// Capped rather than complete: a host mid-cascade fails forty units, and
+	// the band is one line per condition. The names are the first three by
+	// name and the count says how many there are in total.
+	FailedUnits []string `json:"failed_units"`
 	// Threads is inventory rather than a gauge, and it is here because the
 	// fleet list's CPU sparkline is a per-core stack: the page has to know
 	// how many logical CPUs a host has BEFORE deciding to ask for one series
@@ -127,16 +147,39 @@ type HostDetail struct {
 	// through the embed.
 }
 
+// failedUnitNames is how many failed units the list names per host. See
+// HostSummary.FailedUnits for why it is capped at all.
+const failedUnitNames = 3
+
 // ListHosts returns every host with its current gauges, ordered by hostname.
 func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
+	// The LATERAL reads systemd_units, which is a plain table with a unique
+	// index on (host_id, unit_name) -- so the promise on HostSummary that this
+	// list touches no hypertable still holds. The index leads on host_id, so
+	// this is one host's own unit range per row (a few hundred at most, and
+	// the state filter is applied within it) rather than anything that grows
+	// with the history behind the list.
+	//
+	// systemdstate.NotableSQL rather than a literal state = 'failed': the
+	// names here have to be the same units the /units endpoint lists, and that
+	// endpoint applies the same predicate from the same place.
 	rows, err := s.pool.Query(ctx, `
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
-		       h.threads, coalesce(h.capabilities, '{}'::jsonb)
+		       h.threads, coalesce(h.capabilities, '{}'::jsonb),
+		       coalesce(fu.names, '{}'::text[])
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
-		 ORDER BY h.hostname, h.id`)
+		  LEFT JOIN LATERAL (
+		       SELECT array_agg(f.unit_name ORDER BY f.unit_name) AS names
+		         FROM (SELECT unit_name
+		                 FROM systemd_units
+		                WHERE host_id = h.id AND `+systemdstate.NotableSQL("")+`
+		                ORDER BY unit_name
+		                LIMIT $1) f
+		  ) fu ON TRUE
+		 ORDER BY h.hostname, h.id`, failedUnitNames)
 	if err != nil {
 		return nil, fmt.Errorf("query hosts: %w", err)
 	}
@@ -148,7 +191,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		if err := rows.Scan(&h.ID, &h.Hostname, &h.SiteID,
 			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 			&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
-			&h.Threads, &h.Capabilities); err != nil {
+			&h.Threads, &h.Capabilities, &h.FailedUnits); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}
 		hosts = append(hosts, h)
@@ -164,6 +207,12 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 	var h HostDetail
 
+	// The failed-unit LATERAL is repeated here rather than shared with
+	// ListHosts, and it has to be: HostDetail EMBEDS HostSummary, so a column
+	// the list selects and this does not comes back as a confident null for
+	// every host that asks for its own page -- the trap the Threads and
+	// Capabilities comments both warn about, and the one the detail test for
+	// services_failed exists to catch.
 	err := s.pool.QueryRow(ctx, `
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
@@ -171,19 +220,28 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		       si.name, p.name,
 		       h.fingerprint, h.host_type, h.agent_version, h.go_version, h.build_commit,
 		       h.kernel, h.os_name, h.arch, h.cpu_model, h.cores, h.threads, h.memory_total,
-		       h.latitude, h.longitude, h.created_at, h.capabilities
+		       h.latitude, h.longitude, h.created_at, h.capabilities,
+		       coalesce(fu.names, '{}'::text[])
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
 		  LEFT JOIN sites si ON si.id = h.site_id
 		  LEFT JOIN providers p ON p.id = si.provider_id
-		 WHERE h.id = $1`, hostID).Scan(
+		  LEFT JOIN LATERAL (
+		       SELECT array_agg(f.unit_name ORDER BY f.unit_name) AS names
+		         FROM (SELECT unit_name
+		                 FROM systemd_units
+		                WHERE host_id = h.id AND `+systemdstate.NotableSQL("")+`
+		                ORDER BY unit_name
+		                LIMIT $2) f
+		  ) fu ON TRUE
+		 WHERE h.id = $1`, hostID, failedUnitNames).Scan(
 		&h.ID, &h.Hostname, &h.SiteID,
 		&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 		&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 		&h.SiteName, &h.ProviderName,
 		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion, &h.BuildCommit,
 		&h.Kernel, &h.OSName, &h.Arch, &h.CPUModel, &h.Cores, &h.Threads, &h.MemoryTotal,
-		&h.Latitude, &h.Longitude, &h.CreatedAt, &h.Capabilities)
+		&h.Latitude, &h.Longitude, &h.CreatedAt, &h.Capabilities, &h.FailedUnits)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return HostDetail{}, ErrNotFound
 	}

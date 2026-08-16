@@ -4,7 +4,7 @@ import { Badge } from "./Badge";
 
 describe("Badge", () => {
   // The rule this component exists to enforce: severity never rides on
-  // colour alone. A dot with no word is indistinguishable from another
+  // colour alone. A tint with no word is indistinguishable from another
   // severity under deuteranopia (netra's accent vs. its critical red
   // measure ΔE 2.2 there) -- the label is what actually carries meaning.
   it("never renders severity without a text label", () => {
@@ -12,10 +12,14 @@ describe("Badge", () => {
     expect(screen.getByText("silent")).toBeInTheDocument();
   });
 
-  it("renders a dot alongside the label for each severity", () => {
+  // The chip's tinted ground carries the hue, so the label is the only child
+  // there is. The dot it used to render in front of the label said the same
+  // thing twice and cost 12px on every badge in the app.
+  it("renders the label as the chip's only content", () => {
     const { container } = render(<Badge severity="ok">healthy</Badge>);
-    expect(container.querySelector(".dot")).toBeInTheDocument();
-    expect(screen.getByText("healthy")).toBeInTheDocument();
+    const badge = container.querySelector(".badge")!;
+    expect(badge).toHaveTextContent("healthy");
+    expect(badge.children).toHaveLength(0);
   });
 
   it("applies the status class matching the severity", () => {
