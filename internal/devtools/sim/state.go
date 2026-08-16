@@ -80,22 +80,39 @@ func (sc *schedule) due(ts time.Time) []timedEvent {
 // the answer from the schedule rather than tracking it as mutable state, so
 // it stays correct whatever order the grid is walked in.
 func (sc *schedule) failedUnits(ts time.Time) uint32 {
-	state := map[string]string{}
+	var n uint32
+	for _, st := range sc.unitStates(ts) {
+		if st.state == "failed" {
+			n++
+		}
+	}
+	return n
+}
+
+// unitState is one unit's systemd state, as the snapshot carries it.
+type unitState struct{ state, substate string }
+
+// unitStates replays the schedule up to ts and reports where each unit that
+// has ever moved ended up.
+//
+// Only units with events appear: a unit that never failed has no event, and
+// the caller fills it in as healthy from the profile's unit list. Derived from
+// the schedule on every call rather than tracked as mutable state, for the
+// reason failedUnits was: the grid is not guaranteed to be walked forwards.
+func (sc *schedule) unitStates(ts time.Time) map[string]unitState {
+	state := map[string]unitState{}
 	for _, e := range sc.events {
 		if e.ts.After(ts) {
 			break
 		}
 		if e.unit != nil {
-			state[e.unit.GetUnitName()] = e.unit.GetState()
+			state[e.unit.GetUnitName()] = unitState{
+				state:    e.unit.GetState(),
+				substate: e.unit.GetSubstate(),
+			}
 		}
 	}
-	var n uint32
-	for _, st := range state {
-		if st == "failed" {
-			n++
-		}
-	}
-	return n
+	return state
 }
 
 // unitFailureInterval is roughly how often one of a host's units falls over.

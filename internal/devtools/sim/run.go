@@ -359,6 +359,14 @@ func (h *host) request(scrapes []*Scrape, isBackfill bool) *netrav1.IngestReques
 		if len(s.Packages) > 0 {
 			req.Packages = s.Packages
 		}
+
+		// Newest snapshot wins, for the reason the agent supersedes rather
+		// than buffers them: a snapshot states the present, so an older one
+		// carried alongside it is not history, it is a stale answer that would
+		// be applied second and undo the fresher one.
+		if s.SystemdSnapshot != nil {
+			req.SystemdSnapshot = s.SystemdSnapshot
+		}
 	}
 	return req
 }

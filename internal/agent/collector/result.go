@@ -37,6 +37,16 @@ type Result struct {
 	SystemdEvents []*netrav1.SystemdUnitEvent
 	PackageEvents []*netrav1.PackageEvent
 
+	// SystemdSnapshot is the level-triggered counterpart to SystemdEvents: the
+	// full unit set, sent periodically so a divergence between the agent's
+	// in-memory prev map and the hub's stored state cannot become permanent.
+	//
+	// A pointer rather than a slice, unlike every family above, because it is
+	// one document describing a whole scrape rather than a set of independent
+	// rows -- the `complete` flag it carries is meaningless split apart, and
+	// nil must stay distinguishable from empty (see SystemdSnapshot.complete).
+	SystemdSnapshot *netrav1.SystemdSnapshot
+
 	// Inventory: what the host HAS, rather than what it measured. Reported on
 	// change rather than every scrape.
 	Addresses []*netrav1.HostAddress

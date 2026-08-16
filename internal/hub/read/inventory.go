@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/trick77/netra/internal/hub/systemdstate"
 )
 
 // The five dimension listings behind a host. Each is a projection of one
@@ -67,21 +69,33 @@ type Package struct {
 	LastSeen  time.Time `json:"last_seen"`
 }
 
-// Unit is one row of /hosts/{id}/units: the unit, and the most recent state
-// transition recorded for it.
+// Unit is one row of /hosts/{id}/units: a unit that needs attention, and the
+// state it is in.
 //
-// The state is a LAST-VALUE lookup into systemd_unit_events rather than a
-// column on systemd_units, because that is where the collector puts it: the
-// systemd collector emits events, not samples (spec 5.3), so "what state is
-// this unit in" is by construction "what did the newest event say". A unit
-// with no events yet reports null rather than "active", which would be a
-// guess.
+// The state is read straight off systemd_units. It used to be a LAST-VALUE
+// lookup into systemd_unit_events, on the reasoning that the collector emits
+// events rather than samples (spec 5.3) so "what state is this unit in" is by
+// construction "what did the newest event say". That reasoning held only while
+// every transition arrived; the agent now also sends a periodic snapshot so
+// the hub can be told what IS, and the answer lives on the row. See Units
+// below and 0003_systemd_unit_state.sql.
+//
+// Since is when the unit ENTERED this state, not when the hub last heard about
+// it -- the write paths advance it only when the state actually changes. A
+// unit with no state recorded yet reports null rather than "active", which
+// would be a guess.
 type Unit struct {
 	ID       int32      `json:"id"`
 	Name     string     `json:"unit_name"`
 	State    *string    `json:"state"`
 	Substate *string    `json:"substate"`
 	Since    *time.Time `json:"since"`
+	// Restarts1h is how many state changes this unit has recorded in the last
+	// hour, and it is the ONLY thing that reveals a unit which is broken
+	// without ever looking broken -- a service that runs for a few minutes,
+	// dies, and comes back is healthy at nearly every scrape. See
+	// systemdstate.FlapThreshold.
+	Restarts1h int32 `json:"restarts_1h"`
 }
 
 // Containers lists the containers seen on a host.
@@ -200,29 +214,50 @@ func (s *Service) Packages(ctx context.Context, hostID int32) ([]Package, error)
 	return out, rowsErr(rows.Err(), "packages")
 }
 
-// Units lists the host's systemd units with their newest recorded state.
+// Units lists the host's systemd units that NEED ATTENTION.
 //
-// The newest event per unit comes from a LATERAL ... LIMIT 1, which uses
-// systemd_unit_events_unit_id_host_id_idx and stops at the first row per unit.
-// A plain join to a grouped max(ts) would read every event the unit ever had
-// -- the exact table the retention job below exists because it grows.
+// This is not an inventory, and the distinction matters to anyone reading the
+// result: a unit missing from this list is a unit that is fine, not a unit the
+// host does not have. A normal host runs 300-400 loaded services, nearly all
+// of them active/running daemons or inactive/dead oneshots, and returning them
+// buries the one row an operator opened the page for. package systemdstate
+// holds the rule and the reasoning behind which states qualify. For "how many
+// services does this host run", read host_current.services_total, which is the
+// count the agent actually reported.
+//
+// The state comes off the row rather than from the newest event, which is what
+// this used to do through a LATERAL over systemd_unit_events. That made the
+// event log double as the state store, and a log cannot say "nothing changed,
+// and here is the truth anyway" -- so a transition the hub never received left
+// a unit pinned at its last known state forever, and the 90-day event prune
+// could silently blank the state of a unit that was still failed. See
+// 0003_systemd_unit_state.sql.
 func (s *Service) Units(ctx context.Context, hostID int32) ([]Unit, error) {
 	if err := s.hostExists(ctx, hostID); err != nil {
 		return nil, err
 	}
 
+	// The transition count is what catches a unit that is BROKEN WITHOUT EVER
+	// LOOKING BROKEN: a service that runs a few minutes, dies, and comes back
+	// is healthy at nearly every scrape, so no snapshot of its current state
+	// can reveal it. Only the history can, which is why the event log is
+	// joined here rather than the columns being read alone.
+	//
+	// The count rides the same query as the filter because it is part of the
+	// filter -- such a unit is listed BECAUSE of its count, not despite it.
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.id, u.unit_name, e.state, e.substate, e.ts
+		SELECT u.id, u.unit_name, u.state, u.substate, u.state_ts, coalesce(f.n, 0)
 		  FROM systemd_units u
 		  LEFT JOIN LATERAL (
-		       SELECT state, substate, ts
-		         FROM systemd_unit_events
-		        WHERE unit_id = u.id AND host_id = u.host_id
-		        ORDER BY ts DESC
-		        LIMIT 1
-		  ) e ON TRUE
+		       SELECT count(*) AS n
+		         FROM systemd_unit_events e
+		        WHERE e.unit_id = u.id AND e.host_id = u.host_id
+		          AND e.ts > now() - $2::interval
+		  ) f ON TRUE
 		 WHERE u.host_id = $1
-		 ORDER BY u.unit_name`, hostID)
+		   AND (`+systemdstate.NotableSQL("u")+` OR coalesce(f.n, 0) >= $3)
+		 ORDER BY u.unit_name`,
+		hostID, systemdstate.FlapWindow, systemdstate.FlapThreshold)
 	if err != nil {
 		return nil, fmt.Errorf("query units: %w", err)
 	}
@@ -231,7 +266,7 @@ func (s *Service) Units(ctx context.Context, hostID int32) ([]Unit, error) {
 	out := []Unit{}
 	for rows.Next() {
 		var u Unit
-		if err := rows.Scan(&u.ID, &u.Name, &u.State, &u.Substate, &u.Since); err != nil {
+		if err := rows.Scan(&u.ID, &u.Name, &u.State, &u.Substate, &u.Since, &u.Restarts1h); err != nil {
 			return nil, fmt.Errorf("scan unit: %w", err)
 		}
 		out = append(out, u)

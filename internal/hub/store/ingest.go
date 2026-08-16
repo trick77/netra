@@ -149,8 +149,8 @@ func (s *Store) UpsertHostCurrent(
 ) error {
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO host_current (host_id, last_seen, cpu_total, mem_used, mem_total, uptime_s,
-		                          net_rx_bytes, net_tx_bytes)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		                          net_rx_bytes, net_tx_bytes, services_total, services_failed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (host_id) DO UPDATE SET
 			last_seen = EXCLUDED.last_seen,
 			cpu_total = EXCLUDED.cpu_total,
@@ -164,12 +164,19 @@ func (s *Store) UpsertHostCurrent(
 			-- absent and back. The other columns come from the host sample
 			-- that is always present when this runs at all.
 			net_rx_bytes = coalesce(EXCLUDED.net_rx_bytes, host_current.net_rx_bytes),
-			net_tx_bytes = coalesce(EXCLUDED.net_tx_bytes, host_current.net_tx_bytes)
+			net_tx_bytes = coalesce(EXCLUDED.net_tx_bytes, host_current.net_tx_bytes),
+			-- coalesced for the same reason as the net columns, and a
+			-- sharper one: the systemd collector goes quiet on a host with
+			-- no systemd, and on any scrape where the D-Bus call failed.
+			-- Overwriting the counts with NULL there would make the Units
+			-- summary blink to absent every time the bus hiccuped.
+			services_total  = coalesce(EXCLUDED.services_total, host_current.services_total),
+			services_failed = coalesce(EXCLUDED.services_failed, host_current.services_failed)
 		WHERE host_current.last_seen IS NULL
 		   OR host_current.last_seen <= EXCLUDED.last_seen`,
 		hostID, time.UnixMilli(m.GetTsMs()).UTC(),
 		f64(m.CpuTotal), u64(m.MemUsed), u64(m.MemTotal), u64(m.UptimeS),
-		f64(netRx), f64(netTx))
+		f64(netRx), f64(netTx), u32(m.ServicesTotal), u32(m.ServicesFailed))
 	if err != nil {
 		return fmt.Errorf("upsert host_current: %w", err)
 	}

@@ -76,6 +76,7 @@ const units: Unit[] = [
     state: "active",
     substate: "running",
     since: "2026-08-01T00:00:00Z",
+    restarts_1h: 0,
   },
   {
     id: 2,
@@ -83,6 +84,7 @@ const units: Unit[] = [
     state: "failed",
     substate: "dead",
     since: "2026-08-09T00:00:00Z",
+    restarts_1h: 0,
   },
 ];
 
@@ -364,6 +366,39 @@ describe("Units", () => {
     render(<Units rows={units} />);
     const row = screen.getByRole("row", { name: /cron/ });
     expect(within(row).getByText("failed")).toBeInTheDocument();
+  });
+
+  // The list shows only units that need attention, so empty is the COMMON case
+  // -- a healthy host. The generic copy ("This host has reported no units")
+  // would be a flat falsehood about a host running several hundred of them,
+  // and an empty table with no copy at all reads as a loading bug.
+  it("says a healthy host is healthy, not that it reported no units", () => {
+    render(<Units rows={[]} />);
+    expect(screen.getByText(/nothing needs attention/i)).toBeInTheDocument();
+    expect(screen.queryByText(/reported no units/i)).toBeNull();
+  });
+
+  // A unit that keeps dying and coming back reads active/running at nearly
+  // every scrape, so its row would otherwise look like a mistake: a green
+  // badge in a list of things that need attention. The restart count is the
+  // reason it is there, so the table has to show it.
+  it("shows why a unit that looks healthy is in the list at all", () => {
+    render(
+      <Units
+        rows={[
+          {
+            id: 3,
+            unit_name: "backup.service",
+            state: "active",
+            substate: "running",
+            since: "2026-08-09T00:00:00Z",
+            restarts_1h: 9,
+          },
+        ]}
+      />,
+    );
+    const row = screen.getByRole("row", { name: /backup/ });
+    expect(within(row).getByText("9")).toBeInTheDocument();
   });
 });
 

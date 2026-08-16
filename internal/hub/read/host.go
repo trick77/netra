@@ -42,6 +42,17 @@ type HostSummary struct {
 	// egress.
 	NetRxBytes *float64 `json:"net_rx_bytes"`
 	NetTxBytes *float64 `json:"net_tx_bytes"`
+	// ServicesTotal and ServicesFailed are the host's systemd service counts
+	// as of its last scrape.
+	//
+	// Gauges here rather than a count of the /units response, which is what
+	// the host page used to do. That endpoint now returns only the units that
+	// need attention, so counting it would report "0 units" for a healthy host
+	// running several hundred. These are the numbers the agent actually
+	// reported. Null on a host with no systemd, which is a different fact from
+	// zero -- see Capabilities.
+	ServicesTotal  *int32 `json:"services_total"`
+	ServicesFailed *int32 `json:"services_failed"`
 	// Threads is inventory rather than a gauge, and it is here because the
 	// fleet list's CPU sparkline is a per-core stack: the page has to know
 	// how many logical CPUs a host has BEFORE deciding to ask for one series
@@ -121,7 +132,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
-		       c.net_rx_bytes, c.net_tx_bytes,
+		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.threads, coalesce(h.capabilities, '{}'::jsonb)
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
@@ -136,7 +147,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		var h HostSummary
 		if err := rows.Scan(&h.ID, &h.Hostname, &h.SiteID,
 			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
-			&h.NetRxBytes, &h.NetTxBytes,
+			&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 			&h.Threads, &h.Capabilities); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}
@@ -156,7 +167,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 	err := s.pool.QueryRow(ctx, `
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
-		       c.net_rx_bytes, c.net_tx_bytes,
+		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       si.name, p.name,
 		       h.fingerprint, h.host_type, h.agent_version, h.go_version, h.build_commit,
 		       h.kernel, h.os_name, h.arch, h.cpu_model, h.cores, h.threads, h.memory_total,
@@ -168,7 +179,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		 WHERE h.id = $1`, hostID).Scan(
 		&h.ID, &h.Hostname, &h.SiteID,
 		&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
-		&h.NetRxBytes, &h.NetTxBytes,
+		&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 		&h.SiteName, &h.ProviderName,
 		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion, &h.BuildCommit,
 		&h.Kernel, &h.OSName, &h.Arch, &h.CPUModel, &h.Cores, &h.Threads, &h.MemoryTotal,
