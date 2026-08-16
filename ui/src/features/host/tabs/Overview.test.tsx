@@ -314,14 +314,43 @@ describe("Overview", () => {
     ).toBeTruthy();
   });
 
-  // The only link between the hoisted card and the CSS that lays it out two
-  // pairs across. Without it the card is a thin column of eight one-line rows
-  // down the left of a full-width card -- which renders perfectly, passes
-  // every other test here, and is exactly what the hoist was meant to fix.
-  it("lays the System card's facts out two pairs across", () => {
+  // The only link between the hoisted card and the CSS that lays it out four
+  // across, label above value. Without it the card is a thin column of eight
+  // one-line rows down the left of a full-width card -- which renders
+  // perfectly, passes every other test here, and is exactly what the hoist
+  // and then the strip were meant to fix. jsdom applies no stylesheet, so the
+  // class name is the whole assertion available.
+  it("lays the System card's facts out four across, label above value", () => {
     renderOverview();
     const system = screen.getByRole("region", { name: "System" });
-    expect(system.querySelector("dl")?.className).toContain("wide");
+    const dl = system.querySelector("dl")!;
+
+    expect(dl.className).toContain("sysstrip");
+    // Every pair is its own grid item -- a name-value group -- and all eight
+    // facts survive the shape change.
+    expect(dl.querySelectorAll(":scope > .f").length).toBe(8);
+    expect([...dl.querySelectorAll("dt")].map((dt) => dt.textContent)).toEqual([
+      "OS",
+      "Kernel",
+      "Architecture",
+      "Processor",
+      "Cores",
+      "Memory",
+      "Uptime",
+      "Agent",
+    ]);
+  });
+
+  // The processor model is the one value long enough to be cut off by the
+  // strip's ellipsis, so the full string has to stay reachable.
+  it("carries the full text of a fact as the value's title", () => {
+    renderOverview();
+    const system = screen.getByRole("region", { name: "System" });
+    const processor = [...system.querySelectorAll("dt")].find(
+      (dt) => dt.textContent === "Processor",
+    )!.nextElementSibling!;
+
+    expect(processor.getAttribute("title")).toBe(processor.textContent);
   });
 
   // Traffic took the slot System left: first in the flow is the top of the
@@ -503,6 +532,30 @@ describe("Overview", () => {
     expect(
       screen.getByRole("region", { name: /temperature/i }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Fans" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Power" })).toBeNull();
+  });
+
+  // The same rule for the third sensor card. A VPS has no hwmon at all, and
+  // the Temperature card was the one that stayed -- a heading over the words
+  // "No temperature readings in this window" on every cloud instance in the
+  // fleet.
+  it("omits the temperature card on a host that reports no temperatures", () => {
+    renderOverview({
+      sensorMetrics: response({
+        family: "sensor",
+        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:05:00Z" },
+        requested_window: {
+          from: "2025-08-10T00:00:00Z",
+          to: "2025-08-10T00:05:00Z",
+        },
+        key_columns: ["chip", "label", "kind"],
+        columns: ["temp", "value"],
+        series: [],
+      }),
+    });
+
+    expect(screen.queryByRole("region", { name: /temperature/i })).toBeNull();
     expect(screen.queryByRole("region", { name: "Fans" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Power" })).toBeNull();
   });

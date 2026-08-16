@@ -116,6 +116,30 @@ describe("hostColumns", () => {
     });
   });
 
+  describe("host cell", () => {
+    it("writes the site under the hostname", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const { container } = render(<>{col.cell(makeRow())}</>);
+
+      expect(container.querySelector(".host-cell-site")!.textContent).toBe(
+        "zurich-dc1",
+      );
+    });
+
+    // An unassigned host is not a host with a missing site: it is one that
+    // has not been put in a site yet, and an em dash under every such
+    // hostname reads as a fleet full of holes.
+    it("writes no site line at all when the host has no site", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const { container } = render(
+        <>{col.cell(makeRow({ site_id: null, site_name: null }))}</>,
+      );
+
+      expect(container.querySelector(".host-cell-site")).toBeNull();
+      expect(container.textContent).not.toContain(ABSENT);
+    });
+  });
+
   describe("filesystem cell", () => {
     // A host that reported no filesystems has no usage to draw. An empty
     // chart would claim it reported flat zero.

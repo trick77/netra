@@ -1484,6 +1484,43 @@ svg.spark {
   border-bottom: 0;
 }
 
+/* The host System card's eight facts, label ABOVE value and four across —
+   two rows where .kv.wide took four, and no key/value column rules at all.
+   The card sits full width above the page's card flow, in the position the
+   attention band would otherwise have, and the facts on it are identity: read
+   once when the page opens and then scrolled past. Four rows of type plus the
+   separators cost ~170px of that position; this costs ~115px with the card
+   header and drops nothing.
+
+   minmax(0, 1fr), not 1fr: a grid track's default min is auto, so the CPU
+   model's nowrap dd would push its column wider than a quarter and the other
+   three would collapse around it. */
+.sysstrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+}
+.sysstrip dt {
+  font-size: var(--text-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+/* One line, always. A processor model is the only value here long enough to
+   wrap, and letting it wrap makes the block a different height on every host
+   in the fleet — a Pi and a 48-thread server should draw the same box. The
+   full string is on the dd's title. */
+.sysstrip dd {
+  margin: 0;
+  font-size: var(--text-label);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* meter — fill carries severity/series colour (passed by the caller from
    --st-* or --s1..--s4, never the accent), track is a lighter step. */
 .meter {
@@ -1957,6 +1994,12 @@ svg.spark {
   .kv.wide dt:last-of-type,
   .kv.wide dd:last-of-type {
     border-bottom: 0;
+  }
+  /* Two facts across rather than four: at this width a quarter of the card is
+     narrower than "AMD EPYC 7402P" and every value on the row would ellipsize
+     at once. Eight facts still divide evenly, into four rows. */
+  .sysstrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
