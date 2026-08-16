@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { failedUnitsText, fleetConditions, hostConditions } from "./conditions";
+import {
+  failedUnitsShown,
+  fleetConditions,
+  groupByHost,
+  groupByKind,
+  hostConditions,
+  isConditionKind,
+} from "./conditions";
 import type { HostRow } from "./hostColumns";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
@@ -82,16 +89,45 @@ describe("hostConditions", () => {
     );
   });
 
-  // The dead end this fixes: the band said "1 failed unit" and the only way
-  // to learn whether that was a backup job or the container runtime was to
-  // open the host.
-  it("names the failed unit and points at the tab that lists it", () => {
+  // The dead end this fixes: the row said "1 failed unit" and the only way to
+  // learn whether that was a backup job or the container runtime was to open
+  // the host. The names are the row's EVIDENCE now rather than part of its
+  // sentence -- the sentence is the count, and the count is what the list
+  // groups thirty-one hosts by.
+  it("names the failed unit as evidence and points at the tab that lists it", () => {
     const [c] = hostConditions(
       makeRow({ services_failed: 1, failed_units: ["docker.service"] }),
       NOW,
     );
-    expect(String(c?.what)).toBe("1 failed unit — docker.service");
+    expect(String(c?.what)).toBe("1 failed unit");
+    expect(c?.evidence).toEqual({
+      type: "units",
+      names: ["docker.service"],
+      extra: 0,
+    });
+    expect(c?.kind).toBe("failed-units");
     expect(c?.tab).toBe("units");
+  });
+
+  // systemd's own timestamp, and the OLDEST of them: five units failing at
+  // five times is one condition that began with the first.
+  it("dates the failed units from the hub's oldest state change", () => {
+    const [c] = hostConditions(
+      makeRow({
+        services_failed: 2,
+        failed_units: ["a.service", "b.service"],
+        failed_since: "2026-08-13T09:00:00Z",
+      }),
+      NOW,
+    );
+    expect(c?.since).toBe("2026-08-13T09:00:00Z");
+  });
+
+  // Null is the honest answer, not now(): state_ts is nullable and a host
+  // with a count but no unit rows has nothing to date.
+  it("leaves the onset empty when the hub cannot date the units", () => {
+    const [c] = hostConditions(makeRow({ services_failed: 2 }), NOW);
+    expect(c?.since).toBeNull();
   });
 
   it("falls back to the bare count when the hub cannot name them", () => {
@@ -188,7 +224,7 @@ describe("hostConditions", () => {
       NOW,
     );
     expect(rows[0]?.severity).toBe("critical");
-    expect(String(rows[0]?.what)).toMatch(/stopped reporting/);
+    expect(String(rows[0]?.what)).toMatch(/Stopped reporting/);
     // last_seen IS the onset here -- the one condition with a real one.
     expect(rows[0]?.since).toBe("2026-08-12T11:00:00Z");
     expect(rows).toHaveLength(2);
@@ -254,30 +290,146 @@ describe("fleetConditions", () => {
 // The count leads and the names annotate it. The two come from different
 // tables and are allowed to disagree; every branch resolves that in favour of
 // the count.
-describe("failedUnitsText", () => {
+describe("failedUnitsShown", () => {
   it("names what it can and counts the rest", () => {
-    expect(failedUnitsText(5, ["a.service", "b.service", "c.service"])).toBe(
-      "5 failed units — a.service, b.service, c.service +2",
-    );
+    expect(
+      failedUnitsShown(5, ["a.service", "b.service", "c.service"]),
+    ).toEqual({ names: ["a.service", "b.service", "c.service"], extra: 2 });
   });
 
   it("adds no remainder when the names are complete", () => {
-    expect(failedUnitsText(2, ["a.service", "b.service"])).toBe(
-      "2 failed units — a.service, b.service",
-    );
+    expect(failedUnitsShown(2, ["a.service", "b.service"])).toEqual({
+      names: ["a.service", "b.service"],
+      extra: 0,
+    });
   });
 
-  // "1 failed unit — a.service, b.service" contradicts itself in one breath.
-  // The count is the number the rest of netra is counting, so the names give
-  // way to it.
+  // "1 failed unit" beside two names contradicts itself in one breath. The
+  // count is the number the rest of netra is counting, so the names give way
+  // to it.
   it("never names more units than the count claims", () => {
-    expect(failedUnitsText(1, ["a.service", "b.service"])).toBe(
-      "1 failed unit — a.service",
-    );
+    expect(failedUnitsShown(1, ["a.service", "b.service"])).toEqual({
+      names: ["a.service"],
+      extra: 0,
+    });
   });
 
-  it("keeps the count alone when there are no names", () => {
-    expect(failedUnitsText(1, [])).toBe("1 failed unit");
-    expect(failedUnitsText(4, [])).toBe("4 failed units");
+  it("counts them all as unnamed when there are no names", () => {
+    expect(failedUnitsShown(1, [])).toEqual({ names: [], extra: 1 });
+    expect(failedUnitsShown(4, [])).toEqual({ names: [], extra: 4 });
+  });
+});
+
+// Grouping is what makes fifty warnings readable, so both rules are pinned
+// here rather than left to a component that renders them.
+describe("groupByHost", () => {
+  const cond = (
+    hostId: string,
+    severity: "critical" | "warning",
+    kind: "disk" | "oom" | "failed-units",
+  ) => ({
+    hostId,
+    hostname: `host-${hostId}`,
+    kind,
+    severity,
+    label: kind,
+    what: kind,
+    since: null,
+    evidence: null,
+    tab: null,
+  });
+
+  // One critical outranks four warnings: a noisy-but-healthy host must never
+  // displace a genuinely broken one.
+  it("orders hosts by their worst condition, not by how many they have", () => {
+    const groups = groupByHost([
+      cond("noisy", "warning", "disk"),
+      cond("noisy", "warning", "failed-units"),
+      cond("broken", "critical", "oom"),
+    ]);
+    expect(groups.map((g) => g.hostId)).toEqual(["broken", "noisy"]);
+    expect(groups[0]!.worst.severity).toBe("critical");
+  });
+
+  it("orders a host's own conditions worst first, stably", () => {
+    const [group] = groupByHost([
+      cond("h", "warning", "disk"),
+      cond("h", "critical", "oom"),
+      cond("h", "warning", "failed-units"),
+    ]);
+    expect(group!.conditions.map((c) => c.kind)).toEqual([
+      "oom",
+      "disk",
+      "failed-units",
+    ]);
+  });
+
+  it("drops nothing: grouping is presentation, never suppression", () => {
+    const [group] = groupByHost([
+      cond("h", "warning", "disk"),
+      cond("h", "warning", "failed-units"),
+    ]);
+    expect(group!.conditions).toHaveLength(2);
+  });
+});
+
+describe("groupByKind", () => {
+  const cond = (
+    hostId: string,
+    kind: "disk" | "failed-units",
+    severity: "critical" | "warning" = "warning",
+  ) => ({
+    hostId,
+    hostname: `host-${hostId}`,
+    kind,
+    severity,
+    label: kind === "disk" ? "Filesystem over 90%" : "Failed units",
+    what: kind,
+    since: null,
+    evidence: null,
+    tab: null,
+  });
+
+  // The whole answer to fifty warnings: thirty-one hosts with the same
+  // condition are one line, not thirty-one rows.
+  it("counts hosts per kind", () => {
+    const kinds = groupByKind([
+      cond("a", "failed-units"),
+      cond("b", "failed-units"),
+      cond("c", "disk"),
+    ]);
+    const units = kinds.find((k) => k.kind === "failed-units")!;
+    expect(units.hostIds).toEqual(["a", "b"]);
+    expect(units.label).toBe("Failed units");
+  });
+
+  // The disk rule is 90% warning and 95% critical, so one kind can be both.
+  // A counts line that dotted it warning while a host sits at 97% would
+  // understate the fleet.
+  it("takes a kind's worst severity, and leads with the worst kind", () => {
+    const kinds = groupByKind([
+      cond("a", "failed-units"),
+      cond("b", "disk"),
+      cond("c", "disk", "critical"),
+    ]);
+    expect(kinds[0]!.kind).toBe("disk");
+    expect(kinds[0]!.severity).toBe("critical");
+  });
+
+  it("counts a host once per kind, however many conditions it has", () => {
+    const kinds = groupByKind([cond("a", "disk"), cond("a", "disk")]);
+    expect(kinds[0]!.hostIds).toEqual(["a"]);
+  });
+});
+
+// A ?attn= nobody recognises is "all", never a filter that silently matches
+// nothing.
+describe("isConditionKind", () => {
+  it("accepts the kinds and rejects everything else", () => {
+    expect(isConditionKind("disk")).toBe(true);
+    expect(isConditionKind("failed-units")).toBe(true);
+    expect(isConditionKind("critical")).toBe(false);
+    expect(isConditionKind("")).toBe(false);
+    expect(isConditionKind("toString")).toBe(false);
   });
 });

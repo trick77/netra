@@ -66,6 +66,15 @@ export type Host = {
   // Optional for the same reason capabilities below is: the hand-built host
   // literals across the tests predate the field.
   failed_units?: string[];
+  // When the OLDEST of those units entered its failed state -- systemd's own
+  // timestamp, not when the hub heard about it. One timestamp for the whole
+  // set: the fleet list states this as one condition per host, and a reader
+  // asking how long it has been broken means the first of them.
+  //
+  // Null is real and common: state_ts is nullable, and a host with a count
+  // and no unit rows yet has nothing to date. The list leaves its Since
+  // column empty rather than substituting a plausible instant.
+  failed_since?: string | null;
   // Inventory rather than a gauge, and on the list because the CPU sparkline
   // is a per-core stack: the page has to know how many logical CPUs a host
   // has before deciding to ask for one series per core.

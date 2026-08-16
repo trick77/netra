@@ -357,7 +357,14 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest).toEqual({ mount: "data", pct: 88, others: 2 });
+    expect(trends.fullest).toEqual({
+      mount: "data",
+      pct: 88,
+      others: 2,
+      // Under DISK_WARN_PCT, so there is no crossing to date.
+      since: null,
+      sinceAtLeast: false,
+    });
   });
 
   // A filesystem is named to an operator by its mount point -- the thing they
@@ -417,7 +424,73 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest).toEqual({ mount: "/mnt/ark", pct: 20, others: 0 });
+    expect(trends.fullest).toEqual({
+      mount: "/mnt/ark",
+      pct: 20,
+      others: 0,
+      since: null,
+      sinceAtLeast: false,
+    });
+  });
+
+  // The onset walk, and the case that made it lie. A gap at the start of the
+  // window is not the moment a disk filled up: the walk steps over empty
+  // buckets, so an agent that restarted at the window edge left it stopping
+  // at bucket 1 with nothing under the threshold behind it, and the row
+  // printed a precise timestamp for a disk that was full the whole time netra
+  // can see.
+  it("states a floor when the disk was over the line for the whole window", async () => {
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem"],
+        columns: ["used", "free", "total"],
+        series: [
+          {
+            key: { filesystem: "root" },
+            // Nothing in the first bucket -- the agent was restarting -- and
+            // over 90% in both buckets after it.
+            points: [
+              [t0 + hour, 95, 5, 110],
+              [tNow, 96, 4, 110],
+            ],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.fullest?.sinceAtLeast).toBe(true);
+    expect(trends.fullest?.since).toBe("2026-08-10T00:00:00Z");
+  });
+
+  // The other half of the same rule: a reading BELOW the threshold inside the
+  // window is a real crossing and gets a real timestamp.
+  it("dates the crossing when the disk was under the line earlier in the window", async () => {
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem"],
+        columns: ["used", "free", "total"],
+        series: [
+          {
+            key: { filesystem: "root" },
+            points: [
+              [t0, 40, 60, 110],
+              [t0 + hour, 95, 5, 110],
+              [tNow, 96, 4, 110],
+            ],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.fullest?.sinceAtLeast).toBe(false);
+    // Milliseconds because this one is computed from the grid rather than
+    // echoed from the window string -- both parse to the same instant, which
+    // is all `relative()` reads.
+    expect(trends.fullest?.since).toBe("2026-08-10T01:00:00.000Z");
   });
 
   // Never a zero-percent meter: an empty green bar says the disks were

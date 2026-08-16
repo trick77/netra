@@ -251,6 +251,117 @@ func TestIntegrationListHostsNamesTheFailedUnitsBehindTheCount(t *testing.T) {
 	}
 }
 
+// The onset behind the count: one timestamp per host, the OLDEST of its
+// failed units.
+//
+// Five units failing at five different times is one condition that started
+// when the first of them went, and that is the number the fleet list prints
+// in its Since column. The cases that matter are the ones where a plausible
+// wrong answer exists: a host whose newest failure is recent (the minimum has
+// to win), a host whose units carry no state_ts at all (null, not now()), and
+// a host with a count and no unit rows (also null).
+func TestIntegrationListHostsDatesTheOldestFailedUnit(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+
+	old := time.Date(2026, 8, 10, 6, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 8, 16, 9, 30, 0, 0, time.UTC)
+
+	spread := seedHost(t, pool, "spread")
+	exec(t, pool, `
+		INSERT INTO host_current (host_id, last_seen, services_failed)
+		VALUES ($1, now(), 3)`, spread)
+	exec(t, pool, `
+		INSERT INTO systemd_units (host_id, unit_name, state, state_ts)
+		VALUES ($1, 'a.service', 'failed', $2),
+		       ($1, 'b.service', 'failed', $3),
+		       ($1, 'c.service', 'failed', $3)`, spread, old, recent)
+	// A healthy unit that entered its state before any of the failures. It
+	// must not date the condition: NotableSQL is inside the aggregate, so
+	// this row is never seen by the min at all.
+	exec(t, pool, `
+		INSERT INTO systemd_units (host_id, unit_name, state, state_ts)
+		VALUES ($1, 'sshd.service', 'active', $2)`,
+		spread, old.Add(-72*time.Hour))
+
+	// Four failures, and the list only NAMES three. The onset is taken over
+	// every notable unit, so the one that started first still dates the
+	// condition even though its name never appears.
+	beyond := seedHost(t, pool, "beyond-the-cap")
+	exec(t, pool, `
+		INSERT INTO host_current (host_id, last_seen, services_failed)
+		VALUES ($1, now(), 4)`, beyond)
+	exec(t, pool, `
+		INSERT INTO systemd_units (host_id, unit_name, state, state_ts)
+		VALUES ($1, 'a.service', 'failed', $3),
+		       ($1, 'b.service', 'failed', $3),
+		       ($1, 'c.service', 'failed', $3),
+		       ($1, 'z.service', 'failed', $2)`, beyond, old, recent)
+
+	// state_ts is nullable: a unit the agent reported without one.
+	undated := seedHost(t, pool, "undated")
+	exec(t, pool, `
+		INSERT INTO host_current (host_id, last_seen, services_failed)
+		VALUES ($1, now(), 1)`, undated)
+	exec(t, pool, `
+		INSERT INTO systemd_units (host_id, unit_name, state)
+		VALUES ($1, 'docker.service', 'failed')`, undated)
+
+	// A summary and no unit rows -- nothing to take a minimum over.
+	unnamed := seedHost(t, pool, "unnamed")
+	exec(t, pool, `
+		INSERT INTO host_current (host_id, last_seen, services_failed)
+		VALUES ($1, now(), 2)`, unnamed)
+
+	hosts, err := svc.ListHosts(ctx)
+	if err != nil {
+		t.Fatalf("ListHosts: %v", err)
+	}
+	byName := map[string]read.HostSummary{}
+	for _, h := range hosts {
+		byName[h.Hostname] = h
+	}
+
+	for _, tc := range []struct {
+		host string
+		want *time.Time
+	}{
+		{"spread", &old},
+		{"beyond-the-cap", &old},
+		{"undated", nil},
+		{"unnamed", nil},
+	} {
+		got, ok := byName[tc.host]
+		if !ok {
+			t.Errorf("%s missing from ListHosts", tc.host)
+			continue
+		}
+		if tc.want == nil {
+			if got.FailedSince != nil {
+				t.Errorf("%s failed_since = %v, want null", tc.host, *got.FailedSince)
+			}
+			continue
+		}
+		if got.FailedSince == nil {
+			t.Errorf("%s failed_since is null, want %v", tc.host, *tc.want)
+			continue
+		}
+		if !got.FailedSince.Equal(*tc.want) {
+			t.Errorf("%s failed_since = %v, want %v",
+				tc.host, *got.FailedSince, *tc.want)
+		}
+	}
+
+	// The detail embeds the summary, so it has to select the column too.
+	detail, err := svc.Host(ctx, spread)
+	if err != nil {
+		t.Fatalf("Host: %v", err)
+	}
+	if detail.FailedSince == nil || !detail.FailedSince.Equal(old) {
+		t.Errorf("detail failed_since = %v, want %v", detail.FailedSince, old)
+	}
+}
+
 // The detail endpoint embeds HostSummary, so a column the list selects and
 // the detail does not comes back as a confident null for every host -- the
 // trap the Threads and Capabilities comments both warn about.

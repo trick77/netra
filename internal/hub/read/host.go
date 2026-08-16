@@ -73,6 +73,24 @@ type HostSummary struct {
 	// the band is one line per condition. The names are the first three by
 	// name and the count says how many there are in total.
 	FailedUnits []string `json:"failed_units"`
+	// FailedSince is when the OLDEST of those units entered its current state:
+	// systemd's own timestamp, not when the hub heard about it.
+	//
+	// One timestamp for the whole set, and the oldest rather than the newest,
+	// because the fleet list states this as one condition per host. Five units
+	// failing at five different times is one thing that has been wrong since
+	// the first of them went, and a reader scanning the column for "how long
+	// has this been broken" is asking about that first one.
+	//
+	// Null is real and common: state_ts is nullable (a unit whose state the
+	// agent reported without a timestamp), and a host with a failed-unit count
+	// but no unit rows yet has nothing to take a minimum over. The list simply
+	// leaves the column empty rather than substituting now().
+	//
+	// Taken over EVERY notable unit, not just the three FailedUnits names: the
+	// cap is about how much fits on a line, and the onset is about when the
+	// condition started.
+	FailedSince *time.Time `json:"failed_since"`
 	// Threads is inventory rather than a gauge, and it is here because the
 	// fleet list's CPU sparkline is a per-core stack: the page has to know
 	// how many logical CPUs a host has BEFORE deciding to ask for one series
@@ -168,16 +186,19 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.threads, coalesce(h.capabilities, '{}'::jsonb),
-		       coalesce(fu.names, '{}'::text[])
+		       coalesce(fu.names, '{}'::text[]), fu.since
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
 		  LEFT JOIN LATERAL (
-		       SELECT array_agg(f.unit_name ORDER BY f.unit_name) AS names
-		         FROM (SELECT unit_name
-		                 FROM systemd_units
-		                WHERE host_id = h.id AND `+systemdstate.NotableSQL("")+`
-		                ORDER BY unit_name
-		                LIMIT $1) f
+		       -- One pass over the host's notable units, sliced two ways: the
+		       -- first $1 names for the sentence, and the earliest state_ts
+		       -- across ALL of them for the onset. A second subquery would
+		       -- walk the same index range again to answer half of one
+		       -- question.
+		       SELECT (array_agg(unit_name ORDER BY unit_name))[1:$1] AS names,
+		              min(state_ts) AS since
+		         FROM systemd_units
+		        WHERE host_id = h.id AND `+systemdstate.NotableSQL("")+`
 		  ) fu ON TRUE
 		 ORDER BY h.hostname, h.id`, failedUnitNames)
 	if err != nil {
@@ -191,7 +212,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		if err := rows.Scan(&h.ID, &h.Hostname, &h.SiteID,
 			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 			&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
-			&h.Threads, &h.Capabilities, &h.FailedUnits); err != nil {
+			&h.Threads, &h.Capabilities, &h.FailedUnits, &h.FailedSince); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}
 		hosts = append(hosts, h)
@@ -221,18 +242,19 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		       h.fingerprint, h.host_type, h.agent_version, h.go_version, h.build_commit,
 		       h.kernel, h.os_name, h.arch, h.cpu_model, h.cores, h.threads, h.memory_total,
 		       h.latitude, h.longitude, h.created_at, h.capabilities,
-		       coalesce(fu.names, '{}'::text[])
+		       coalesce(fu.names, '{}'::text[]), fu.since
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
 		  LEFT JOIN sites si ON si.id = h.site_id
 		  LEFT JOIN providers p ON p.id = si.provider_id
 		  LEFT JOIN LATERAL (
-		       SELECT array_agg(f.unit_name ORDER BY f.unit_name) AS names
-		         FROM (SELECT unit_name
-		                 FROM systemd_units
-		                WHERE host_id = h.id AND `+systemdstate.NotableSQL("")+`
-		                ORDER BY unit_name
-		                LIMIT $2) f
+		       -- The same one-pass shape as ListHosts above; the detail
+		       -- embeds the summary, so selecting on one side only would
+		       -- publish a confident null on the other.
+		       SELECT (array_agg(unit_name ORDER BY unit_name))[1:$2] AS names,
+		              min(state_ts) AS since
+		         FROM systemd_units
+		        WHERE host_id = h.id AND `+systemdstate.NotableSQL("")+`
 		  ) fu ON TRUE
 		 WHERE h.id = $1`, hostID, failedUnitNames).Scan(
 		&h.ID, &h.Hostname, &h.SiteID,
@@ -241,7 +263,8 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		&h.SiteName, &h.ProviderName,
 		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion, &h.BuildCommit,
 		&h.Kernel, &h.OSName, &h.Arch, &h.CPUModel, &h.Cores, &h.Threads, &h.MemoryTotal,
-		&h.Latitude, &h.Longitude, &h.CreatedAt, &h.Capabilities, &h.FailedUnits)
+		&h.Latitude, &h.Longitude, &h.CreatedAt, &h.Capabilities, &h.FailedUnits,
+		&h.FailedSince)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return HostDetail{}, ErrNotFound
 	}
