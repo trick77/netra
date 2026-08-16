@@ -310,6 +310,16 @@ describe("Overview", () => {
     ).toBeTruthy();
   });
 
+  // The only link between the hoisted card and the CSS that lays it out two
+  // pairs across. Without it the card is a thin column of eight one-line rows
+  // down the left of a full-width card -- which renders perfectly, passes
+  // every other test here, and is exactly what the hoist was meant to fix.
+  it("lays the System card's facts out two pairs across", () => {
+    renderOverview();
+    const system = screen.getByRole("region", { name: "System" });
+    expect(system.querySelector("dl")?.className).toContain("wide");
+  });
+
   // Traffic took the slot System left: first in the flow is the top of the
   // LEFT column, and the network is the subsystem most likely to explain a
   // problem.
