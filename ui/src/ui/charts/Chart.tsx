@@ -87,6 +87,17 @@ export interface ChartProps {
   widestYLabel?: string;
   /** The index the crosshair sits at, or null when nothing is hovered. */
   cursor?: number | null;
+  /**
+   * Stroke width for a stacked band's edge.
+   *
+   * A prop rather than a constant because the two existing stacks disagree
+   * and always have: Overlay draws 1.25, StackedSparkline draws 1. That is
+   * pre-existing drift, not a decision -- but unifying it here would change
+   * every fleet row's CPU and memory cell, and sparklines are not changing
+   * in this work. Surfaced as a prop so the disagreement is visible in the
+   * callers instead of hidden in two copies of the same component.
+   */
+  bandStroke?: number;
 }
 
 /**
@@ -115,6 +126,7 @@ export function Chart({
   labels = false,
   widestYLabel,
   cursor = null,
+  bandStroke = 1.25,
 }: ChartProps) {
   // React's useId, not a counter: two charts on one page must not mint the
   // same clip-path id, and a module-level counter is not stable across a
@@ -142,6 +154,17 @@ export function Chart({
   const mirrored = mark === "mirror";
   const stacked = mark === "stack";
 
+  // With no furniture the plot IS the image, and then the wrapper group and
+  // the clip path are pure noise: nothing can overflow into margins that do
+  // not exist. Omitting them keeps a sparkline's markup exactly what it was
+  // before it moved onto this renderer, which is the guarantee that lets
+  // every fleet cell migrate without being re-reviewed by eye.
+  const inset =
+    rect.left !== 0 ||
+    rect.top !== 0 ||
+    rect.right !== width ||
+    rect.bottom !== height;
+
   return (
     <svg
       className="spark"
@@ -157,14 +180,13 @@ export function Chart({
           cannot paint over the axis labels. This is NOT clamping, which
           mirrorPaths deliberately refuses to do: the value still visibly
           escapes the box, it just cannot reach the margins. */}
-      <clipPath id={clipId}>
-        <rect x={rect.left} y={rect.top} width={w} height={h} />
-      </clipPath>
+      {inset && (
+        <clipPath id={clipId}>
+          <rect x={rect.left} y={rect.top} width={w} height={h} />
+        </clipPath>
+      )}
 
-      <g
-        clipPath={`url(#${clipId})`}
-        transform={`translate(${rect.left},${rect.top})`}
-      >
+      <MarkGroup inset={inset} clipId={clipId} rect={rect}>
         {referenceY !== null && (
           <line
             data-reference
@@ -180,7 +202,7 @@ export function Chart({
 
         {mirrored && <MirrorMarks {...{ series, w, h, max, pad }} />}
         {!mirrored && stacked && (
-          <StackMarks {...{ series, w, h, max, pad, highlight }} />
+          <StackMarks {...{ series, w, h, max, pad, highlight, bandStroke }} />
         )}
         {!mirrored && !stacked && (
           <LineMarks
@@ -188,7 +210,7 @@ export function Chart({
             filled={mark === "area"}
           />
         )}
-      </g>
+      </MarkGroup>
 
       {spine && <Spine rect={rect} y={y} x={x} />}
       {mirrored && <ZeroRule rect={rect} at={0.5} />}
@@ -207,6 +229,33 @@ export function Chart({
         />
       )}
     </svg>
+  );
+}
+
+/**
+ * Wraps the marks only when there is something to wrap them for. An identity
+ * translate is not free: it is one more node, and it reads in a diff as
+ * though the mark had moved.
+ */
+function MarkGroup({
+  inset,
+  clipId,
+  rect,
+  children,
+}: {
+  inset: boolean;
+  clipId: string;
+  rect: PlotRect;
+  children: React.ReactNode;
+}) {
+  if (!inset) return <>{children}</>;
+  return (
+    <g
+      clipPath={`url(#${clipId})`}
+      transform={`translate(${rect.left},${rect.top})`}
+    >
+      {children}
+    </g>
   );
 }
 
@@ -257,14 +306,16 @@ function MirrorMarks({
           <g key={up.name} data-series={up.name} data-mirror>
             {bands && (
               <>
-                <path
-                  data-band-up
-                  d={bands.up}
-                  fill={up.color}
-                  fillOpacity={0.18}
-                  stroke="none"
-                />
-                {down !== undefined && (
+                {bands.up !== "" && (
+                  <path
+                    data-band-up
+                    d={bands.up}
+                    fill={up.color}
+                    fillOpacity={0.18}
+                    stroke="none"
+                  />
+                )}
+                {down !== undefined && bands.down !== "" && (
                   <path
                     data-band-down
                     d={bands.down}
@@ -275,15 +326,17 @@ function MirrorMarks({
                 )}
               </>
             )}
-            <path
-              data-up
-              d={paths.up}
-              fill={up.color}
-              fillOpacity={MIRROR_FILL_OPACITY}
-              stroke={up.color}
-              strokeWidth={MIRROR_STROKE_WIDTH}
-            />
-            {down !== undefined && (
+            {paths.up !== "" && (
+              <path
+                data-up
+                d={paths.up}
+                fill={up.color}
+                fillOpacity={MIRROR_FILL_OPACITY}
+                stroke={up.color}
+                strokeWidth={MIRROR_STROKE_WIDTH}
+              />
+            )}
+            {down !== undefined && paths.down !== "" && (
               <path
                 data-down
                 d={paths.down}
@@ -317,6 +370,7 @@ function StackMarks({
   max,
   pad,
   highlight,
+  bandStroke,
 }: {
   series: ChartSeries[];
   w: number;
@@ -324,6 +378,7 @@ function StackMarks({
   max: number;
   pad: number;
   highlight?: string;
+  bandStroke: number;
 }) {
   const bands = stackBands(
     series.map((s) => s.values),
@@ -334,16 +389,16 @@ function StackMarks({
   );
   return (
     <>
-      {series.map((s, i) => (
+      {series.map((s, i) => (bands[i] ?? "") === "" ? null : (
         <path
           key={s.name}
           data-series={s.name}
           data-band
-          d={bands[i] ?? ""}
+          d={bands[i]!}
           fill={s.color}
           fillOpacity={0.55}
           stroke={s.color}
-          strokeWidth={1.25}
+          strokeWidth={bandStroke}
           strokeLinejoin="round"
           opacity={highlight !== undefined && highlight !== s.name ? 0.35 : 1}
         />

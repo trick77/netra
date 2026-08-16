@@ -28,10 +28,14 @@ describe("Chart", () => {
       expect(c.querySelector("[data-crosshair]")).toBeNull();
     });
 
-    it("gives the whole image to the mark when there are no labels", () => {
+    // No furniture means no margins, so there is nothing to clip against and
+    // nothing to translate by. The markup a sparkline emits is then exactly
+    // what it emitted before it moved onto this renderer -- which is what
+    // lets every fleet cell migrate without being re-checked by eye.
+    it("emits no wrapper group or clip path when there is no furniture", () => {
       const c = draw(<Chart series={series} width={170} height={32} max={100} />);
-      const g = c.querySelector("g[transform]");
-      expect(g?.getAttribute("transform")).toBe("translate(0,0)");
+      expect(c.querySelector("g[transform]")).toBeNull();
+      expect(c.querySelector("clipPath")).toBeNull();
     });
 
     // With labels the plot has to shrink to make room for them, and the mark
@@ -144,13 +148,25 @@ describe("Chart", () => {
     });
 
     it("gives two charts on one page different clip ids", () => {
+      const withAxis = (
+        <Chart
+          series={series}
+          width={260}
+          height={112}
+          max={100}
+          labels
+          widestYLabel="100%"
+          y={niceTicks(0, 100)}
+        />
+      );
       const c = draw(
         <>
-          <Chart series={series} width={170} height={32} max={100} />
-          <Chart series={series} width={170} height={32} max={100} />
+          {withAxis}
+          {withAxis}
         </>,
       );
       const ids = [...c.querySelectorAll("clipPath")].map((n) => n.id);
+      expect(ids).toHaveLength(2);
       expect(ids[0]).not.toBe(ids[1]);
     });
   });

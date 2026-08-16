@@ -58,15 +58,19 @@ function response(
   } as MetricsResponse;
 }
 
+// TWO points per core, not one. A single point cannot bound a filled
+// polygon, so stackBands drops it and the bands come back empty -- these
+// assertions used to count `<path d="">` elements and would have passed
+// against a chart that drew nothing at all.
 const cores = response({
   family: "cpu_core",
   key_columns: ["core"],
   columns: ["busy"],
   series: [
-    { key: { core: "0" }, points: [[t0, 80]] },
-    { key: { core: "1" }, points: [[t0, 40]] },
-    { key: { core: "2" }, points: [[t0, 0]] },
-    { key: { core: "3" }, points: [[t0, 0]] },
+    { key: { core: "0" }, points: [[t0, 80], [t0 + 60_000, 70]] },
+    { key: { core: "1" }, points: [[t0, 40], [t0 + 60_000, 45]] },
+    { key: { core: "2" }, points: [[t0, 0], [t0 + 60_000, 5]] },
+    { key: { core: "3" }, points: [[t0, 0], [t0 + 60_000, 0]] },
   ],
 });
 
@@ -87,7 +91,10 @@ const hostMetrics = response({
   series: [
     {
       key: {},
-      points: [[t0, 30, 20, 8, 1, 1, 1000, 200, 30, 100, 50]],
+      points: [
+        [t0, 30, 20, 8, 1, 1, 1000, 200, 30, 100, 50],
+        [t0 + 60_000, 32, 21, 9, 1, 1, 1000, 190, 30, 105, 50],
+      ],
     },
   ],
 });
