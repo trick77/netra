@@ -4,12 +4,8 @@
 // component's only job is to hand it the right `max` and turn its output
 // into SVG paths.
 import { Chart } from "./Chart";
-import {
-  REFERENCE_DASH,
-  REFERENCE_STROKE,
-  REFERENCE_WIDTH,
-  SPARK_WIDTH,
-} from "./size";
+// The reference rule's own constants live with the mark now: Chart draws it.
+import { SPARK_WIDTH } from "./size";
 
 export interface Band {
   name: string;

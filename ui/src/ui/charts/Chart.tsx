@@ -232,9 +232,17 @@ export function Chart({
           cannot paint over the axis labels. This is NOT clamping, which
           mirrorPaths deliberately refuses to do: the value still visibly
           escapes the box, it just cannot reach the margins. */}
+      {/* In the MARK GROUP's coordinates, not the image's. A userSpaceOnUse
+          clip path is resolved in the user space established by the element
+          that references it -- which includes that element's own transform --
+          and MarkGroup translates by (rect.left, rect.top). Giving the rect
+          image coordinates offset the clip window by the margins a second
+          time: on a 260x112 panel the clip landed at x >= 92 while the plot
+          starts at 48, so the oldest fifth of every axis-bearing chart was
+          drawn and then hidden. */}
       {inset && (
         <clipPath id={clipId}>
-          <rect x={rect.left} y={rect.top} width={w} height={h} />
+          <rect x={0} y={0} width={w} height={h} />
         </clipPath>
       )}
 

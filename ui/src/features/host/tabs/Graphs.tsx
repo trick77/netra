@@ -697,10 +697,17 @@ function Panel({
       // The chart's own page. Every panel here has a slug, so every panel
       // here is a link; the dialog is what a chart without a page still
       // gets.
+      // Carrying the range, because the link is meant to be the view someone
+      // is actually looking at: without it a panel opened at 30d rendered its
+      // page at the default range, and ChartScreen's Back -- which forwards
+      // the page's own query string -- then dropped the tab back to the
+      // default too, the opposite of the "carrying the range with it" its
+      // comment claims.
       href={
         hostId === undefined
           ? undefined
-          : `/hosts/${encodeURIComponent(String(hostId))}/chart/${spec.slug}`
+          : `/hosts/${encodeURIComponent(String(hostId))}/chart/${spec.slug}` +
+            (range === undefined ? "" : `?range=${encodeURIComponent(range)}`)
       }
       title={spec.title}
       unit={spec.unit}

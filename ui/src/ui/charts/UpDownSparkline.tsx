@@ -11,13 +11,9 @@
 // construction rather than by everyone remembering to edit both files.
 import { extent } from "./geometry";
 import { Chart } from "./Chart";
-import {
-  AXIS_STROKE,
-  AXIS_WIDTH,
-  MIRROR_FILL_OPACITY,
-  MIRROR_STROKE_WIDTH,
-  SPARK_WIDTH,
-} from "./size";
+// The mirror weights and the midline stroke are Chart's now; only the shared
+// sparkline width is still read here.
+import { SPARK_WIDTH } from "./size";
 
 export interface UpDownSparklineProps {
   up: (number | null)[];

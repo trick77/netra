@@ -161,6 +161,34 @@ describe("Chart", () => {
       expect(marks?.getAttribute("clip-path")).toBe(`url(#${clip?.id})`);
     });
 
+    // jsdom does not clip, so this asserts the COORDINATE SPACE instead --
+    // which is where the bug was. The clip rect is resolved in the user
+    // space of the element referencing it, and MarkGroup already carries a
+    // translate, so image-space coordinates on the rect are applied twice:
+    // on a 260x112 panel the window landed at x >= 92 while the plot starts
+    // at 48, and the oldest fifth of every axis-bearing chart plus the band
+    // nearest the ceiling was drawn and then hidden.
+    it("declares the clip rect in the group's space, not the image's", () => {
+      const c = draw(
+        <Chart
+          series={series}
+          width={260}
+          height={112}
+          max={100}
+          labels
+          widestYLabel="100%"
+          y={niceTicks(0, 100)}
+        />,
+      );
+      const rect = c.querySelector("clipPath rect")!;
+      const group = c.querySelector("g[clip-path]")!;
+      // The group is offset...
+      expect(group.getAttribute("transform")).not.toBe("translate(0,0)");
+      // ...so the rect must not be offset again.
+      expect(rect.getAttribute("x")).toBe("0");
+      expect(rect.getAttribute("y")).toBe("0");
+    });
+
     it("gives two charts on one page different clip ids", () => {
       const withAxis = (
         <Chart

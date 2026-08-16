@@ -1371,6 +1371,11 @@ export function Overview({
           // stack labelled decimally under a rule labelled binarily makes one
           // quantity look like two.
           fmt={(n) => binaryBytes(n)}
+          // ...and the axis ticks on the same ladder the formatter prints on.
+          // Ticked decimally, a 16 GiB host reads 1.9 / 3.7 / 5.6 GiB and
+          // every label on the axis is a ragged number. This is the family
+          // tickBase exists for.
+          tickBase={1024}
           // The ceiling used to be drawn as text inside the plot, over the
           // rule. It belongs beside the reading it is a ceiling for: the
           // header already says how much is used, and the pair says of what.

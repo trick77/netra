@@ -97,7 +97,12 @@ describe("opening a graph from the tab", () => {
 
     // The slug, not the title: a title is UI copy and moves.
     const link = screen.getByRole("link", { name: /CPU time breakdown/i });
-    expect(link).toHaveAttribute("href", "/hosts/7/chart/cpu-time-breakdown");
+    // With the range the tab is showing: the link is the view someone is
+    // looking at, and Back carries the page's query string home again.
+    expect(link).toHaveAttribute(
+      "href",
+      "/hosts/7/chart/cpu-time-breakdown?range=1h",
+    );
   });
 
   // A real anchor, so middle-click, copy-link and bookmark all work. App
