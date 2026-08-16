@@ -1,8 +1,10 @@
+import { useMemo } from "react";
 import { Boxes } from "lucide-react";
 import { EmptyState } from "../../ui/EmptyState";
 import { Table } from "../../ui/Table";
 import {
   containerColumns,
+  ContainerGroupTotals,
   trendScales,
   type ContainerRow,
 } from "../container/columns";
@@ -31,10 +33,15 @@ export interface FleetContainersProps {
   /**
    * Adds the Host column.
    *
-   * Off by default and unset by the fleet page, because this list groups by
-   * host: the hostname is already the group header, and already a link to
-   * that host, so a Host column repeats it on every row. The prop stays for
-   * a caller that wants the flat reading.
+   * The fleet page sets it, and the repetition is deliberate: this list does
+   * group by host, so the hostname IS the group header -- but a group that
+   * can be collapsed is a group whose header scrolls away once it is open,
+   * and thirteen rows deep into a host there was then nothing on the row
+   * saying which machine it runs on. A duplicated hostname is cheaper than an
+   * unidentifiable container.
+   *
+   * Still off by default: a caller that never collapses its groups keeps the
+   * heading in view and does not need the column.
    */
   showHost?: boolean;
   /** False while the container fan-out has not answered yet. */
@@ -70,6 +77,14 @@ export function FleetContainers({
   hosts,
   filtered = false,
 }: FleetContainersProps) {
+  // Before the empty-state returns below, because it is a hook. Memoised, and
+  // on the flag alone: BY_HOST is hoisted precisely so Table's partition memo
+  // can hold on its identity, and a fresh object every render would undo
+  // that.
+  const grouping = useMemo(
+    () => ({ ...BY_HOST, forceExpanded: filtered }),
+    [filtered],
+  );
   // A search that matched nothing says nothing about the fleet, so it gets no
   // explanation of the fleet: with rows filtered away, a note would be read as
   // the answer to "where are my containers" when the answer is "you typed a
@@ -175,7 +190,11 @@ export function FleetContainers({
         rows={rows}
         // Two hosts can run the same container_key, so identity is the pair.
         rowKey={(row) => `${row.host_id}:${row.container_key}`}
-        groupBy={BY_HOST}
+        // `rows` arrives already filtered, so a host still standing is a host
+        // with a hit on it -- and a hit inside a closed group is a hit the
+        // reader cannot see. This is the only signal here that a filter is on;
+        // it is why `filtered` was already a prop.
+        groupBy={grouping}
       />
     </>
   );
@@ -203,6 +222,15 @@ const BY_HOST = {
   order: (_key: string, group: readonly ContainerRow[]) => group[0].hostname,
   label: (_key: string, group: readonly ContainerRow[]) => (
     <HostGroup rows={group} />
+  ),
+  // The key here is a host_id ("7"), which names nothing -- hence labelText.
+  labelText: (_key: string, group: readonly ContainerRow[]) =>
+    group[0].hostname,
+  // Same disclosure the host page's Containers tab uses, for the same reason:
+  // a fleet list is the longer of the two, not the shorter.
+  collapsible: true,
+  summary: (_key: string, group: readonly ContainerRow[]) => (
+    <ContainerGroupTotals rows={group} />
   ),
 };
 

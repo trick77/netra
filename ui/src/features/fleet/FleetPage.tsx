@@ -462,9 +462,14 @@ export function FleetPage({
       ) : (
         <FleetContainers
           rows={visibleContainers}
-          // No showHost: the list groups by host, so every row already sits
-          // under its hostname -- and under a link to it. A Host column
-          // beside that repeats the group header on every single row.
+          // showHost, even though the list groups by host and every row sits
+          // under its hostname. The group header used to be enough because it
+          // was always in view; now that a group can be shut and opened, a
+          // reader who unfolds a host running thirteen containers scrolls its
+          // heading off the top and is left with a page of rows that do not
+          // say where they run. The column costs width and repeats the
+          // heading; a container whose host cannot be identified costs more.
+          showHost
           loaded={containersKnown}
           range={range}
           // hostRows, not visibleHosts: the point of the note is a host that

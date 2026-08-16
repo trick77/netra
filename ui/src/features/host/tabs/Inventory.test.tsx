@@ -10,6 +10,7 @@ import type {
   Unit,
 } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
+import { expandAllGroups } from "../../../testing/groups";
 import {
   Containers,
   Filesystems,
@@ -146,13 +147,61 @@ describe("Inventory", () => {
 describe("Containers", () => {
   const host = { id: 7, hostname: "web-01" };
 
-  it("identifies a container by compose project and service, never by its id", () => {
+  // The service, never the project beside it: this list GROUPS by project, so
+  // the project is already the heading these rows sit under, and printing it
+  // again on every one of them spends the widest column in the table saying
+  // what the reader was just told. (The fleet's list, which groups by host,
+  // still carries both -- there the project is in no heading at all.)
+  it("identifies a container by its compose service, the project being the group", () => {
     render(<Containers rows={containers} host={host} />);
+    expandAllGroups();
     const row = screen.getByRole("row", { name: /shop-web-1/ });
-    expect(within(row).getByText("shop / web")).toBeInTheDocument();
+    expect(within(row).getByText("web")).toBeInTheDocument();
+    expect(within(row).queryByText("shop / web")).toBeNull();
     // The Docker id changes on every `compose up -d`; showing it invites
     // people to key on it, which orphans all history.
     expect(row.textContent).not.toContain("42");
+  });
+
+  // ... and not even the service, when the name already carries it: "grafana"
+  // under a name of "grafana" is one fact printed twice. The line exists for
+  // the names that do NOT say it -- a compose-generated "monitoring_loki_1",
+  // or a container renamed away from its service.
+  it("drops the identity line when the name already says the same thing", () => {
+    render(
+      <Containers
+        rows={[
+          {
+            id: 51,
+            container_key: "monitoring/grafana",
+            name: "grafana",
+            image: "grafana/grafana:11.2.0",
+            is_agent: false,
+          },
+          {
+            id: 52,
+            container_key: "monitoring/loki",
+            name: "monitoring_loki_1",
+            image: "grafana/loki:3.1.1",
+            is_agent: false,
+          },
+        ]}
+        host={host}
+      />,
+    );
+    expandAllGroups();
+
+    // "grafana" appears once in its row -- as the link. No second line under
+    // it repeating the service. Located via the link rather than by row name:
+    // the sibling's image is "grafana/loki", so /grafana/ matches both rows.
+    const said = screen
+      .getByRole("link", { name: "grafana" })
+      .closest("tr") as HTMLElement;
+    expect(within(said).getAllByText("grafana")).toHaveLength(1);
+
+    // The compose-numbered name does not say "loki", so the line stays.
+    const unsaid = screen.getByRole("row", { name: /monitoring_loki_1/ });
+    expect(within(unsaid).getByText("loki")).toBeInTheDocument();
   });
 
   // The regression this whole alignment exists for: the fleet's container
@@ -160,6 +209,7 @@ describe("Containers", () => {
   // from a host's own Containers tab the page was simply unreachable.
   it("links every container to its detail page", () => {
     render(<Containers rows={containers} host={host} />);
+    expandAllGroups();
     expect(
       screen.getByRole("link", { name: "shop-web-1" }).getAttribute("href"),
       // The key is "project/service" and router.ts splits the path before it
@@ -248,6 +298,7 @@ describe("Containers", () => {
     );
 
     expect(screen.getByText(/Docker socket/)).toBeInTheDocument();
+    expandAllGroups();
     expect(screen.getByRole("row", { name: /shop-web-1/ })).toBeInTheDocument();
   });
 

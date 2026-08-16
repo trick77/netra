@@ -23,7 +23,7 @@
 import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
 import type { Column } from "../../ui/Table";
-import { ABSENT } from "../../lib/format";
+import { ABSENT, bytes, percent } from "../../lib/format";
 import type { Container } from "../../lib/api";
 import { type Range } from "../../lib/range";
 import { ContainerChart } from "./ContainerChart";
@@ -116,6 +116,96 @@ export function trendScales(rows: readonly ContainerRow[]): {
   return { cpuMax: cpuMax || 1, memMax: memMax || 1 };
 }
 
+/**
+ * What a GROUP of containers is using, right now.
+ *
+ * Both lists group -- a host page by compose project, the fleet by host --
+ * and both collapse those groups by default, so a group header has to answer
+ * what its rows would have answered. One definition for both, for the same
+ * reason the column set is one definition: two lists summing the same
+ * quantity two ways is the drift this module exists to prevent.
+ *
+ * The latest REPORTED reading per container (lastReported, not the last
+ * bucket), summed. A container whose newest bucket has not materialised has
+ * not stopped using memory, and dropping it from the total would make the
+ * group's figure dip every time the grid ticks over.
+ *
+ * `limit` is null unless EVERY container in the group has one. A group of
+ * four where three are capped has no ceiling to be a percentage of, and
+ * summing only the three that do would draw a meter against a denominator
+ * smaller than the numerator can reach. That is Meter's own rule -- no bar
+ * against an invented total -- applied to a group.
+ */
+export function containerGroupTotals(rows: readonly ContainerRow[]): {
+  cpu: number | null;
+  mem: number | null;
+  limit: number | null;
+} {
+  let cpu: number | null = null;
+  let mem: number | null = null;
+  let limit: number | null = 0;
+  for (const row of rows) {
+    const c = lastReported(row.cpu);
+    if (c !== null) cpu = (cpu ?? 0) + c;
+    const m = lastReported(row.mem);
+    if (m !== null) mem = (mem ?? 0) + m;
+    const l = row.mem_limit_bytes ?? null;
+    if (l === null) limit = null;
+    else if (limit !== null) limit += l;
+  }
+  return { cpu, mem, limit };
+}
+
+/**
+ * The group total as a group header draws it: CPU, then memory.
+ *
+ * CPU is a percentage of ONE core, which is what the per-container column
+ * already shows, so a stack on two busy cores reads 200% here. Not divided by
+ * the host's core count: this component is rendered by the fleet list too,
+ * where the rows in one group come from one host and the rows in the next
+ * come from another, and a number that means "of this host's cores" would
+ * mean something different in every group of the same column.
+ *
+ * A group that has reported nothing renders the absent marker rather than a
+ * zero -- the same distinction every cell in this module keeps.
+ */
+export function ContainerGroupTotals({
+  rows,
+}: {
+  rows: readonly ContainerRow[];
+}) {
+  const { cpu, mem, limit } = containerGroupTotals(rows);
+  return (
+    <>
+      <span className="gstat">
+        <span className="lbl">CPU</span>
+        <span className="val">{percent(cpu)}</span>
+      </span>
+      <span className="gstat">
+        <span className="lbl">Mem</span>
+        <span className="val">{bytes(mem)}</span>
+        {/* Always emitted, even empty: they are tracks of the header's grid,
+            and a group with no ceiling still has to line its meter up with
+            the groups that have one. */}
+        <span className="of">{limit === null ? "" : `/ ${bytes(limit)}`}</span>
+        <span className="gmeter">
+          {limit === null || mem === null ? null : (
+            // Meter, not a bar of this file's own: the severity thresholds and
+            // the >100% clamp are decisions that must not exist twice. Its
+            // reading is blanked because the bytes and the ceiling are already
+            // printed to its left -- a third number saying the same ratio is
+            // the clutter, not the information. Which is also why a group that
+            // has reported no memory draws nothing here rather than a Meter:
+            // with no value Meter falls back to printing the absent marker,
+            // and the header already carries one where the bytes would be.
+            <Meter value={mem} max={limit} formatValue={() => ""} />
+          )}
+        </span>
+      </span>
+    </>
+  );
+}
+
 // The container_key is the stable identity (it survives a rename); the name
 // is what an operator reads. A container with no name still has a key, so
 // the compose identity behind that key is always shown rather than being a
@@ -124,8 +214,54 @@ export function trendScales(rows: readonly ContainerRow[]): {
 // "project / service" rather than the raw "project/service": those two halves
 // are what the host tab used to spend two whole columns on, and spacing them
 // is what lets a reader separate them at a glance without those columns.
-function NameCell({ row }: { row: ContainerRow }) {
+/**
+ * Is the compose identity already legible from the container's own name?
+ *
+ * Compared on letters and digits only, so the separator compose happened to
+ * use ("immich-server", "immich_server", "immichserver") does not decide
+ * whether a line of type appears. Equality, never a substring test: "redis"
+ * inside "redis-sentinel" is a different service, and treating one as the
+ * other would hide the fact that they differ.
+ */
+function nameSaysIt(
+  name: string | null,
+  project: string,
+  service: string,
+): boolean {
+  if (name === null) return false;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const n = norm(name);
+  return n === norm(service) || n === norm(project + service);
+}
+
+function NameCell({
+  row,
+  groupedByProject,
+}: {
+  row: ContainerRow;
+  groupedByProject: boolean;
+}) {
   const { project, service } = composeIdentity(row.container_key);
+
+  // In a list already grouped BY project, the identity line drops the project:
+  // it is the heading these rows sit under, and repeating it on every one of
+  // them spends the widest column in the table saying what the reader was just
+  // told. And it drops the line entirely when the name already carries the
+  // service -- "immich-server" over "server" is one fact printed twice. What
+  // survives is the case the line exists for: a compose-generated name
+  // ("monitoring_grafana_1"), or a container renamed away from its service.
+  //
+  // Only when the list groups by project. The fleet groups by HOST, where the
+  // project is not in any heading and this line is the only place it appears
+  // at all.
+  const identity = groupedByProject
+    ? nameSaysIt(row.name ?? null, project === ABSENT ? "" : project, service)
+      ? null
+      : service
+    : project === ABSENT
+      ? service
+      : `${project} / ${service}`;
+
   return (
     <div className="host-cell">
       <div className="host-cell-top">
@@ -145,9 +281,9 @@ function NameCell({ row }: { row: ContainerRow }) {
             a state netra does not collect. */}
         {row.is_agent ? <Badge>agent</Badge> : null}
       </div>
-      <div className="host-cell-site mono">
-        {project === ABSENT ? service : `${project} / ${service}`}
-      </div>
+      {identity === null ? null : (
+        <div className="host-cell-site mono">{identity}</div>
+      )}
     </div>
   );
 }
@@ -205,12 +341,22 @@ export interface ContainerColumnsOptions {
   /**
    * Adds the Host column.
    *
-   * Both current lists group -- the fleet by host, a host page by compose
-   * project -- and a list grouped by host carries the hostname in its group
-   * header, so nothing reaches this today. It stays because a flat fleet list
-   * is the obvious next variant and this column is the only thing it needs.
+   * Set by the fleet list, which does group by host and so does carry the
+   * hostname in its group header -- but that header scrolls away once a
+   * collapsible group is opened, and a row thirteen deep then says nothing
+   * about the machine it runs on. See FleetContainers' own note.
+   *
+   * The host page's tab leaves it off: every row there is on the one host the
+   * page is about.
    */
   showHost?: boolean;
+  /**
+   * The list groups by compose project, so the name cell stops repeating it.
+   *
+   * The host page's tab sets this; the fleet's does not, because it groups by
+   * host and the project appears nowhere else on its rows. See NameCell.
+   */
+  groupedByProject?: boolean;
   /** Only for the charts' accessible names -- this file never resolves a
    * range into a query. */
   range?: Range;
@@ -238,6 +384,7 @@ export interface ContainerColumnsOptions {
 
 export function containerColumns({
   showHost = false,
+  groupedByProject = false,
   cpuMax,
   memMax,
   range = "24h",
@@ -247,7 +394,7 @@ export function containerColumns({
     {
       key: "container",
       header: "Container",
-      cell: (row) => <NameCell row={row} />,
+      cell: (row) => <NameCell row={row} groupedByProject={groupedByProject} />,
       // The displayed name, falling back to the key the cell falls back to,
       // so the order matches what a reader sees rather than an id behind it.
       sortValue: (row) => row.name ?? row.container_key,

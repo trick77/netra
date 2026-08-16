@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { Table, type Column } from "./Table";
 
 interface Row {
@@ -184,5 +184,168 @@ describe("Table grouping", () => {
     render(<Table columns={columns} rows={rows} rowKey={(r) => r.id} />);
     expect(screen.getByRole("table").querySelectorAll("tbody")).toHaveLength(1);
     expect(screen.queryAllByRole("rowheader")).toHaveLength(0);
+  });
+});
+
+// A group that can be shut is only honest if its heading keeps answering what
+// its rows would have -- which is why `summary` and `collapsible` arrive
+// together, and why every test below checks both halves.
+describe("Table collapsible groups", () => {
+  interface Grouped {
+    id: string;
+    site: string;
+    name: string;
+  }
+
+  const groupedColumns: Column<Grouped>[] = [
+    { key: "name", header: "Host", cell: (r) => r.name },
+  ];
+
+  const groupedRows: Grouped[] = [
+    { id: "1", site: "zrh", name: "host-a" },
+    { id: "2", site: "ams", name: "host-b" },
+  ];
+
+  const collapsible = {
+    key: (r: Grouped) => r.site,
+    label: (key: string) => key,
+    labelText: (key: string) => key,
+    collapsible: true,
+    summary: (_key: string, rs: readonly Grouped[]) => `${rs.length} up`,
+  };
+
+  function renderTable(over: Record<string, unknown> = {}) {
+    return render(
+      <Table
+        columns={groupedColumns}
+        rows={groupedRows}
+        rowKey={(r) => r.id}
+        groupBy={{ ...collapsible, ...over }}
+      />,
+    );
+  }
+
+  // Closed rather than open, because the lists that group are the long ones:
+  // four headings instead of eighteen rows, and the reader chooses.
+  it("starts closed, with no row of any group in the document", () => {
+    renderTable();
+
+    expect(screen.queryByText("host-a")).toBeNull();
+    expect(screen.queryByText("host-b")).toBeNull();
+    expect(screen.getAllByRole("rowheader")).toHaveLength(2);
+  });
+
+  // The whole point of a shut group: a heading that says only "zrh" answers
+  // what is in there and nothing about what any of it is doing.
+  it("keeps the summary readable while the group is shut", () => {
+    renderTable();
+
+    expect(screen.getAllByText("1 up")).toHaveLength(2);
+  });
+
+  it("opens one group without opening the others", () => {
+    renderTable();
+
+    // Ordered by key: ams first, zrh second.
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]!);
+
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+    expect(screen.queryByText("host-a")).toBeNull();
+  });
+
+  // The disclosure's accessible name cannot come from the heading beside it:
+  // that is a heading, not a label for this control, and the key is not always
+  // readable either (the fleet groups on a host id).
+  it("names the disclosure after the group, not after the key", () => {
+    renderTable({ labelText: () => "Zurich" });
+
+    expect(
+      screen.getAllByRole("button", { name: "Zurich" }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  // What a search box sets. Rows arrive already filtered, so a group still
+  // standing has a hit in it, and a hit inside a shut group is a hit the
+  // reader cannot see.
+  it("forceExpanded opens every group at once", () => {
+    renderTable({ forceExpanded: true });
+
+    expect(screen.getByText("host-a")).toBeInTheDocument();
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+  });
+
+  // The filter overrides the reader's choice WITHOUT overwriting it, so
+  // clearing the box puts the list back exactly where they left it.
+  it("restores what the reader had opened when forceExpanded goes away", () => {
+    const { rerender } = renderTable();
+
+    // Open ams by hand, leave zrh shut.
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]!);
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+
+    const table = (over: Record<string, unknown>) => (
+      <Table
+        columns={groupedColumns}
+        rows={groupedRows}
+        rowKey={(r: Grouped) => r.id}
+        groupBy={{ ...collapsible, ...over }}
+      />
+    );
+    rerender(table({ forceExpanded: true }));
+    expect(screen.getByText("host-a")).toBeInTheDocument();
+
+    rerender(table({ forceExpanded: false }));
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+    expect(screen.queryByText("host-a")).toBeNull();
+  });
+
+  // The same promise, against the click that used to break it: while the
+  // filter holds every group open the disclosure cannot move anything, so a
+  // reader who clicks one -- meaning to shut the noise -- must not have that
+  // click applied behind the filter and handed back to them when it clears.
+  it("ignores a click while forceExpanded, rather than remembering it", () => {
+    const table = (over: Record<string, unknown>) => (
+      <Table
+        columns={groupedColumns}
+        rows={groupedRows}
+        rowKey={(r: Grouped) => r.id}
+        groupBy={{ ...collapsible, ...over }}
+      />
+    );
+    const { rerender } = render(table({}));
+
+    // Open ams by hand, then filter: both groups are open now.
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]!);
+    rerender(table({ forceExpanded: true }));
+
+    // Click both headers while the filter holds them open: nothing moves.
+    for (const button of screen.getAllByRole("button", { expanded: true })) {
+      fireEvent.click(button);
+    }
+    expect(screen.getByText("host-a")).toBeInTheDocument();
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+
+    // ... and clearing it leaves exactly what the reader had: ams open, zrh
+    // shut. Without the guard, both clicks would have landed -- ams shut,
+    // zrh open.
+    rerender(table({ forceExpanded: false }));
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+    expect(screen.queryByText("host-a")).toBeNull();
+  });
+
+  // A group that is not collapsible has no disclosure at all -- the lists
+  // that group without summarising are unchanged.
+  it("draws no disclosure when the caller did not ask for one", () => {
+    render(
+      <Table
+        columns={groupedColumns}
+        rows={groupedRows}
+        rowKey={(r) => r.id}
+        groupBy={{ key: (r: Grouped) => r.site, label: (key: string) => key }}
+      />,
+    );
+
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByText("host-a")).toBeInTheDocument();
   });
 });

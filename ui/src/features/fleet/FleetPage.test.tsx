@@ -6,6 +6,7 @@ import { ABSENT } from "../../lib/format";
 import type { HostRow } from "./hostColumns";
 import type { ContainerRow } from "./FleetContainers";
 import { FleetPage, buildHostRows, DENSITY_KEY } from "./FleetPage";
+import { expandAllGroups } from "../../testing/groups";
 
 const NOW = new Date("2026-08-10T14:00:00Z");
 
@@ -101,8 +102,28 @@ describe("FleetPage entity tabs", () => {
     expect(
       screen.getByPlaceholderText(/filter containers/i),
     ).toBeInTheDocument();
+    // The container list groups by host and those groups start collapsed.
+    expandAllGroups();
     expect(screen.getByRole("link", { name: "postgres" })).toBeInTheDocument();
     expect(screen.queryByRole("columnheader", { name: "Uptime" })).toBeNull();
+  });
+
+  // The container list groups BY host, so this column repeats its own group
+  // header -- deliberately. A collapsible group's header scrolls away once it
+  // is open, and a row thirteen containers deep into a host would otherwise
+  // say nothing about the machine it runs on.
+  it("names the host on every container row, not only in the group header", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(containersTab());
+    expect(
+      screen.getByRole("columnheader", { name: "Host" }),
+    ).toBeInTheDocument();
+
+    expandAllGroups();
+    // Twice for the one container: the group heading, and the row own cell.
+    expect(screen.getAllByRole("link", { name: "web-01" })).toHaveLength(2);
   });
 
   // A card grid of 247 containers is not useful, so density is a hosts-only

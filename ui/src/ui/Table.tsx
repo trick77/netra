@@ -1,4 +1,11 @@
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useId,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { ChevronRight } from "lucide-react";
 
 /**
  * A single column definition shared by Table (this file) and, in later
@@ -78,6 +85,49 @@ export interface TableProps<T> {
      * be ordered among the real ones.
      */
     order?: (key: string, rows: readonly T[]) => string | number;
+    /**
+     * A reading for the WHOLE group, drawn at the right end of its header.
+     *
+     * The point of a collapsed group: shut, a heading that says only
+     * "immich · 4 containers" answers what is in there and nothing about what
+     * any of it is doing, so closing one costs the reader the very thing the
+     * list existed to show. A summary is what makes collapsed the honest
+     * default rather than a way of hiding data.
+     *
+     * Handed the group's rows, not a precomputed value, because only the
+     * caller knows what summing its own rows means -- and it is given the
+     * rows that are actually IN the group, which under a filter is the rows
+     * that survived it.
+     */
+    summary?: (key: string, rows: readonly T[]) => ReactNode;
+    /**
+     * The group's name as plain text, for the disclosure button's accessible
+     * name.
+     *
+     * `label` returns a node -- a link, a count, sometimes a badge -- and the
+     * key is not always readable either: the fleet groups on `host_id`, so its
+     * key is "7". Neither can name a control. Falls back to the key, which is
+     * right for the lists whose key IS the name.
+     */
+    labelText?: (key: string, rows: readonly T[]) => string;
+    /**
+     * Makes every group a disclosure, closed to begin with.
+     *
+     * Closed rather than open because the lists that group are the long ones:
+     * a host running fourteen containers in four stacks opens onto four lines
+     * instead of eighteen, and the reader chooses what to unfold. Only lists
+     * that carry a `summary` should ask for this -- see above.
+     */
+    collapsible?: boolean;
+    /**
+     * Forces every group open, without discarding what the reader had opened.
+     *
+     * This is what a search box sets. Rows arrive already filtered, so a group
+     * still standing is a group with a hit in it, and a hit inside a closed
+     * group is a hit the reader cannot see. Clearing the filter drops back to
+     * the state they left, because that state was never overwritten.
+     */
+    forceExpanded?: boolean;
   };
 }
 
@@ -87,6 +137,17 @@ export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
   // Uncontrolled: every caller wants the same click-to-sort behaviour, and
   // threading identical state through each of them buys nothing.
   const [sort, setSort] = useState<SortState | null>(null);
+
+  // The groups the reader has OPENED, not the ones they closed: collapsible
+  // groups start closed, so the empty set is the initial state and no group
+  // key has to exist before it can be tracked. A group that disappears (a
+  // project whose last container went away) leaves a stale key behind, which
+  // costs a string and means the group opens where it was left if it comes
+  // back.
+  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  // One id per table instance; each group header's aria-controls points at
+  // its own tbody, built from it.
+  const tableId = useId();
 
   const sorted = useMemo(() => {
     if (sort === null) return rows;
@@ -215,18 +276,79 @@ export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
         {groups === null ? (
           <tbody>{sorted.map(bodyRow)}</tbody>
         ) : (
-          groups.map(([key, rowsInGroup]) => (
-            <tbody key={key}>
-              <tr className="grouprow">
-                {/* A header for the rows below it, so scope is rowgroup
-                    rather than col -- it names the group, not a column. */}
-                <th scope="rowgroup" colSpan={columns.length}>
-                  {groupBy?.label(key, rowsInGroup)}
-                </th>
-              </tr>
-              {rowsInGroup.map(bodyRow)}
-            </tbody>
-          ))
+          groups.map(([key, rowsInGroup]) => {
+            const collapsible = groupBy?.collapsible === true;
+            // The filter WINS over the reader's choice while it is on, and
+            // `opened` is never written while it is on (the toggle below
+            // refuses), so clearing the box restores exactly what they had.
+            const forced = groupBy?.forceExpanded === true;
+            const open = !collapsible || forced || opened.has(key);
+            const bodyId = `${tableId}-${key}`;
+            return (
+              <tbody key={key} id={bodyId}>
+                <tr className="grouprow">
+                  {/* A header for the rows below it, so scope is rowgroup
+                      rather than col -- it names the group, not a column. */}
+                  <th scope="rowgroup" colSpan={columns.length}>
+                    <div className="ghead">
+                      {/* The button holds ONLY the chevron; the label sits
+                          beside it in normal flow. It has to, because a group
+                          label is allowed to contain a link -- the fleet's
+                          hostname is one -- and an anchor inside a button is
+                          neither valid nor operable. The whole header is still
+                          the click target: .gtoggle::before stretches over the
+                          cell, and the label's own link is raised above it.
+                          See index.css. */}
+                      {collapsible ? (
+                        <button
+                          type="button"
+                          className="gtoggle"
+                          aria-expanded={open}
+                          aria-controls={bodyId}
+                          onClick={() => {
+                            // Nothing while the filter forces every group
+                            // open: the group cannot move, and recording a
+                            // click that changed nothing would hand the
+                            // reader a different list when they clear the
+                            // box -- the one thing forceExpanded promises
+                            // not to do.
+                            if (forced) return;
+                            setOpened((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(key)) next.delete(key);
+                              else next.add(key);
+                              return next;
+                            });
+                          }}
+                        >
+                          <ChevronRight className="chev" aria-hidden="true" />
+                          {/* The button's accessible name. The heading beside
+                              it is a heading, not a label for this control,
+                              and "immich" alone would not say what the button
+                              does. */}
+                          <span className="sr-only">
+                            {groupBy?.labelText?.(key, rowsInGroup) ?? key}
+                          </span>
+                        </button>
+                      ) : null}
+                      <span className="glabel">
+                        {groupBy?.label(key, rowsInGroup)}
+                      </span>
+                      {groupBy?.summary ? (
+                        <span className="gsummary">
+                          {groupBy.summary(key, rowsInGroup)}
+                        </span>
+                      ) : null}
+                    </div>
+                  </th>
+                </tr>
+                {/* Not rendered at all rather than hidden with CSS: a closed
+                    group's rows are off the page for a screen reader and for
+                    ctrl-F alike, which is what "collapsed" means. */}
+                {open ? rowsInGroup.map(bodyRow) : null}
+              </tbody>
+            );
+          })
         )}
       </table>
     </div>
