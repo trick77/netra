@@ -432,6 +432,12 @@ func containerKey(m ContainerMeta, id string) string {
 func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (map[string]containerCounters, error) {
 	out := make(map[string]containerCounters)
 
+	// Containers whose counters SHOULD have been readable, and those that were.
+	// Only ever compared against each other, at the end of the walk -- see the
+	// warning there for why a total failure earns a word and a partial one does
+	// not. The walk callback is synchronous, so no lock is needed.
+	netEligible, netMeasured := 0, 0
+
 	err := filepath.WalkDir(c.cgroupRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			// The ROOT is different from anything below it. An unreadable
@@ -503,13 +509,40 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 		}
 		cc.rbytes, cc.wbytes = readIOStat(filepath.Join(path, "io.stat"))
 		m, listed := meta[id]
+		if socketAnswered && listed && m.NetworkMode != "" &&
+			!sharesForeignNetNS(m.NetworkMode) {
+			netEligible++
+		}
 		cc.rxBytes, cc.txBytes, cc.hasNet = c.containerNet(path, m.NetworkMode, listed, socketAnswered)
+		if cc.hasNet {
+			netMeasured++
+		}
 
 		out[id] = cc
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("walk %s: %w", c.cgroupRoot, err)
+	}
+
+	// EVERY eligible container failing is a different fact from a few failing,
+	// and only the first is worth a word.
+	//
+	// A single failed net/dev read is a process that exited mid-scrape --
+	// routine, and deliberately silent, because container_network is host-wide
+	// and one short-lived container must not blank the panel for the rest. But
+	// if not one eligible container yielded counters, the cause is systemic:
+	// procRoot points somewhere that is not this container's /proc, which is
+	// reachable by setting NETRA_PROC_ROOT by hand and looks exactly like a
+	// fleet of quiet containers.
+	//
+	// Logged rather than raised as a capability. The capability values name
+	// what the operator should DO, and both existing ones would be lies here:
+	// the namespace is granted and the socket answered. A warning names the
+	// variable, which is the actionable part.
+	if netEligible > 0 && netMeasured == 0 {
+		slog.Warn("no container reported network counters; is NETRA_PROC_ROOT this container's own /proc?",
+			"proc_root", c.procRoot, "containers", netEligible)
 	}
 
 	return out, nil

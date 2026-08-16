@@ -282,20 +282,22 @@ function last(values: readonly (number | null)[]): number | null {
 
 /**
  * What each `container_network` capability value means, in the reader's
- * terms rather than the kernel's. Both are failures; the wording differs
- * because the remedies do, and only one of them HAS a remedy the operator
- * can act on:
+ * terms rather than the kernel's. Both are failures, and both name a remedy,
+ * because a sentence an operator cannot act on is the bug these replaced:
  *
  *   namespaced      the container was started without `pid: host`. The setup
  *                   script now renders it unconditionally, so re-running it
  *                   is the fix -- named here for the same reason
- *                   CGROUP_REMEDY names it in lib/containers.ts, and because
- *                   every other capability tells the reader what to do while
- *                   this one used to leave them stranded.
- *   no-host-netns   the namespace is present and the link still would not
+ *                   CGROUP_REMEDY names it in lib/containers.ts.
+ *   no-host-netns   the namespace IS present and the link still would not
  *                   read, which in practice is the kernel's ptrace access
- *                   check. Re-running the script would change nothing, so
- *                   nothing is promised.
+ *                   check: it needs CAP_SYS_PTRACE for a non-dumpable target
+ *                   even when the uids match, and `no-new-privileges` makes
+ *                   every target non-dumpable. Re-running the script changes
+ *                   nothing, so it points at the Docker socket instead --
+ *                   which answers host-vs-bridged outright and is the only
+ *                   path to this state, since a host WITH the socket never
+ *                   reaches the namespace comparison at all.
  *
  * Values mirror capNetNamespaced and capNetNoHostNS in
  * internal/agent/collector/containers.go, which picks between them from
@@ -304,7 +306,7 @@ function last(values: readonly (number | null)[]): number | null {
  */
 const NETWORK_UNAVAILABLE: Record<string, string> = {
   "no-host-netns":
-    "The agent could not read this host's network namespaces, so it cannot tell a host-networked container from a bridged one and measured no container traffic.",
+    "The agent could not read this host's network namespaces, so it cannot tell a host-networked container from a bridged one and measured no container traffic. Mounting the Docker socket answers that question without the kernel access this needs.",
   namespaced:
     "The agent is running without the host's PID namespace, so it cannot resolve the processes that own each container's interfaces and measured no container traffic. Re-run setup-agent.sh on this host.",
 };

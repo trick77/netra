@@ -164,6 +164,47 @@ assert_eq 0 "$RUN_RC" "a re-run against a stale NETRA_FS_MOUNTS succeeds"
 assert_not_contains "$(cat "$OUT/.env")" "root=/wrong" "the stale mapping is replaced"
 assert_eq 1 "$(grep -c '^NETRA_FS_MOUNTS=' "$OUT/.env")" \
     "there is exactly one NETRA_FS_MOUNTS line, not one per run"
+
+# --- 3c. a re-run repairs NETRA_PID_HOST without --force ----------------------
+#
+# THE upgrade path, and the one that fails worst if left alone. A host set up
+# before `pid: host` became unconditional has NETRA_PID_HOST=0 in .env. This run
+# rewrites compose.yaml -- which now always grants the namespace -- but would
+# leave .env saying it does not have it.
+#
+# The agent believes .env over the kernel: told there is no host PID namespace,
+# containers.go refuses to resolve the host pids in cgroup.procs at all, because
+# any that DO resolve resolve to the wrong process. So the host would report zero
+# per-container traffic forever, and the message it shows says to re-run this
+# script -- the thing that just failed to fix it.
+sed 's|^NETRA_PID_HOST=.*|NETRA_PID_HOST=0|' "$OUT/.env" >"$TMP/env.oldpid"
+cp "$TMP/env.oldpid" "$OUT/.env"
+assert_contains "$(cat "$OUT/.env")" "NETRA_PID_HOST=0" "the fixture is an .env from before the change"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
+    --template-dir "$TEMPLATES" --output-dir "$OUT"
+assert_eq 0 "$RUN_RC" "a re-run against an .env from before pid: host succeeds"
+PIDREPAIRED=$(cat "$OUT/.env")
+assert_contains "$PIDREPAIRED" "NETRA_PID_HOST=1" \
+    "the re-run corrects NETRA_PID_HOST to match the compose it just wrote"
+assert_not_contains "$PIDREPAIRED" "NETRA_PID_HOST=0" "the stale value is replaced, not appended to"
+assert_eq 1 "$(grep -c '^NETRA_PID_HOST=' "$OUT/.env")" \
+    "there is exactly one NETRA_PID_HOST line, not one per run"
+assert_contains "$PIDREPAIRED" "nta_first" "and the existing token survives this repair too"
+assert_contains "$RUN_OUT" "NETRA_PID_HOST corrected" \
+    "the change is stated rather than made silently"
+
+# An .env that has no NETRA_PID_HOST line at all -- older still -- gains one.
+grep -v '^NETRA_PID_HOST=' "$OUT/.env" >"$TMP/env.nopid"
+cp "$TMP/env.nopid" "$OUT/.env"
+run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+    "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
+    --template-dir "$TEMPLATES" --output-dir "$OUT"
+assert_eq 0 "$RUN_RC" "a re-run against an .env with no NETRA_PID_HOST succeeds"
+assert_contains "$(cat "$OUT/.env")" "NETRA_PID_HOST=1" "the missing line is added"
+
 cp "$OUT/.env" "$TMP/env.first"
 
 # --- 4. --force overwrites .env ------------------------------------------------

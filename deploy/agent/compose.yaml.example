@@ -438,7 +438,14 @@ services:
     # aggregates CPU and memory by process name and nothing else.
     #
     # So the exposure is the namespace, not the agent: it grants far more than
-    # netra uses, and you are trusting the image not to use it. If that trade is
-    # unacceptable on a given host, comment this out and accept that container
-    # networking and the process table go with it.
+    # netra uses, and you are trusting the image not to use it.
+    #
+    # If that trade is unacceptable on a given host, comment this out AND set
+    # NETRA_PID_HOST=0 in .env. Both, never one: the collectors read that
+    # variable rather than probing, and an agent told it has a namespace it does
+    # not have will resolve the host pids from cgroup.procs inside its OWN
+    # namespace. Most find nothing, but one that collides with an unrelated
+    # local process reports that process's interface counters against a
+    # container -- a plausible number for the wrong thing, which is worse than
+    # the missing series declining the namespace costs you.
     pid: host

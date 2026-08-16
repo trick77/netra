@@ -3045,6 +3045,13 @@ EOF
         # make the operator re-supply a token to correct a label.
         sync_fs_mounts "$OUTPUT_DIR/.env"
 
+        # The second exception, on the same argument and a sharper edge: the
+        # compose this run just wrote always carries `pid: host`, so an .env
+        # still saying NETRA_PID_HOST=0 describes a container that no longer
+        # exists -- and the agent believes it, refusing to read counters it
+        # could read perfectly well.
+        sync_pid_host "$OUTPUT_DIR/.env"
+
         # The ONE case where leaving .env alone leaves the agent broken, and
         # broken silently. NETRA_CGROUP_ROOT used to be documented as
         # /sys/fs/cgroup, so an operator who uncommented it then pins the agent
@@ -3127,6 +3134,65 @@ netra_rewrite_fs_mounts() {
     [ -s "$_rf_tmp" ] || return 1
     cat "$_rf_tmp" >"$1" || return 1
     rm -f "$_rf_tmp"
+}
+
+# netra_rewrite_pid_host FILE — replace (or append) the NETRA_PID_HOST line.
+netra_rewrite_pid_host() {
+    _rp_tmp="$SCRATCH_DIR/env.pid_host"
+    awk '
+        /^NETRA_PID_HOST=/ {
+            print "NETRA_PID_HOST=1"
+            seen = 1
+            next
+        }
+        { print }
+        END {
+            if (!seen) {
+                print ""
+                print "# This container runs with `pid: host`, stated by setup-agent.sh so the"
+                print "# collectors need not guess. Required for the process table and for"
+                print "# per-container network traffic."
+                print "NETRA_PID_HOST=1"
+            }
+        }
+    ' "$1" >"$_rp_tmp" || return 1
+    # Same order as netra_rewrite_fs_mounts, and for the same reason: `cat >`
+    # truncates first, so an awk that produced nothing would take the token with
+    # it.
+    [ -s "$_rp_tmp" ] || return 1
+    cat "$_rp_tmp" >"$1" || return 1
+    rm -f "$_rp_tmp"
+}
+
+# sync_pid_host FILE — bring NETRA_PID_HOST in an existing .env up to date.
+#
+# The second derived line that must not be left behind, and the one an upgrade
+# gets wrong most damagingly. compose.yaml is rewritten on every run and now
+# always carries `pid: host`; .env is not rewritten without --force. So a host
+# set up before this became unconditional keeps NETRA_PID_HOST=0 while actually
+# HAVING the namespace -- and the agent believes the .env over the kernel.
+#
+# That combination is worse than the bug it replaced: containers.go refuses to
+# read anything when it is told there is no host PID namespace, so those hosts
+# would report zero per-container traffic FOREVER, and the message they get
+# ("re-run setup-agent.sh") would be the very thing that just failed to fix it.
+#
+# Corrected without --force, like NETRA_FS_MOUNTS: the value is derived from
+# what this run rendered, not supplied by the operator, and demanding a token
+# be re-supplied to correct a line the script itself wrote would be absurd.
+sync_pid_host() {
+    [ -f "$1" ] || return 0
+    if [ -n "$(sed -n '/^NETRA_PID_HOST=1$/p' "$1")" ]; then
+        return 0
+    fi
+    if ! netra_exec netra_rewrite_pid_host "$1"; then
+        warn "could not update NETRA_PID_HOST in $1. Until it says 1, the agent reports no" \
+            "process table and no per-container network traffic, even though this run" \
+            "granted the namespace. Set NETRA_PID_HOST=1 by hand."
+        return 0
+    fi
+    record_change "updated NETRA_PID_HOST in $1"
+    info "  processes:       NETRA_PID_HOST corrected to 1 in the existing .env"
 }
 
 # sync_fs_mounts FILE — bring one derived line of an existing .env up to date.
