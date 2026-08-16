@@ -520,10 +520,15 @@ a {
   padding: 1px 8px;
 }
 
-/* Host cell — the Host column's content, rendered by hostColumns and shown
-   both as a table cell and as a card header. The card-header hooks .hcard
-   .hn/.hs are scoped to the card, so a cell rendered in the table would go
-   unstyled; these classes carry the same look in both places. */
+/* Entity cell — a linked name, an optional badge beside it, and a quieter
+   second line underneath. Named for the Host column it was written for
+   (hostColumns, shown both as a table cell and as a card header: the
+   card-header hooks .hcard .hn/.hs are scoped to the card, so a cell
+   rendered in the table would go unstyled; these classes carry the same look
+   in both places). The container list's name cell is the same shape and now
+   uses the same classes — it had been left behind on the older .host/.name/
+   .site set below, which is how two lists of the same kind of thing ended up
+   looking like two different designs. */
 .host-cell {
   display: flex;
   flex-direction: column;
@@ -1207,6 +1212,10 @@ tbody tr:hover {
   display: block;
 }
 
+/* The original two-line entity cell, superseded by .host-cell above. Nothing
+   emits these classes any more -- the container list was the last caller and
+   moved off them -- so they are kept only because removing markup hooks is
+   not this change's job. Reach for .host-cell in new work. */
 .host {
   display: flex;
   align-items: center;
@@ -1273,6 +1282,38 @@ svg.spark {
 }
 .kv dt:last-of-type,
 .kv dd:last-of-type {
+  border-bottom: 0;
+}
+/* Two pairs across, for a card that spans the page instead of half of it --
+   the host Overview's System card, whose eight rows are otherwise a long thin
+   column down the left of a full-width card. Two, not three: eight divides by
+   two into four full rows, where three leaves a ragged last row with an empty
+   cell, and it keeps enough width for the two longest values on that card (the
+   kernel string and the CPU model). */
+.kv.wide {
+  grid-template-columns: auto 1fr auto 1fr;
+}
+/* gap stays 0 -- dt's own padding-right is the space inside a pair. What the
+   second pair needs is space to the LEFT of its key, or its dt butts against
+   the first pair's value. dt order alternates columns, so every even dt is the
+   right-hand pair's key.
+
+   This counts on dt being a DIRECT child of the dl. Facts used to wrap each
+   pair in a `display: contents` div, which made every dt the first dt under
+   its own wrapper -- an `even` selector matched nothing, and the gutter
+   silently did not exist. Nothing in the suite can catch that: jsdom applies
+   no stylesheet, so the card renders and every assertion passes. */
+.kv.wide dt:nth-of-type(even) {
+  padding-left: var(--space-5);
+}
+/* The single-column rule above zeroes exactly one dt and one dd, which is the
+   whole last row only while there is one pair per row. Two across, the last
+   row holds two of each, and half of it keeps a rule that hangs under the
+   card. -n+2 is correct for an EVEN number of rows; the only .kv.wide on the
+   page has eight. An odd count would take the border off the pair above the
+   last one as well. */
+.kv.wide dt:nth-last-of-type(-n + 2),
+.kv.wide dd:nth-last-of-type(-n + 2) {
   border-bottom: 0;
 }
 
@@ -1627,6 +1668,25 @@ svg.spark {
   .grid2 {
     grid-template-columns: 1fr;
   }
+  /* Back to one pair per row: two pairs of key AND value across 900px leaves
+     the kernel string and the CPU model nowhere to go. The gutter goes with
+     the second column -- left over, it indents every other key of a
+     single-column list -- and the last row is a single pair again, which is
+     what the plain .kv border rule already handles. */
+  .kv.wide {
+    grid-template-columns: auto 1fr;
+  }
+  .kv.wide dt:nth-of-type(even) {
+    padding-left: 0;
+  }
+  .kv.wide dt:nth-last-of-type(-n + 2),
+  .kv.wide dd:nth-last-of-type(-n + 2) {
+    border-bottom: 1px solid var(--border);
+  }
+  .kv.wide dt:last-of-type,
+  .kv.wide dd:last-of-type {
+    border-bottom: 0;
+  }
 }
 
 /* ── Below the mobile breakpoint ───────────────────────────────────────
@@ -1671,9 +1731,91 @@ svg.spark {
 
 /* Wide content scrolls inside its own box; the PAGE never scrolls
    sideways. A table that widens the document moves every other element on
-   it, including the nav. */
+   it, including the nav.
+
+   It is also the table's SURFACE. Every other block on every page is a
+   filled, bordered panel -- .card, .tile, .smp, .hcard -- and a table alone
+   sat unpainted on --bg between them, which is what "it's all white" was.
+   Here rather than on `table` itself so a table always gets its chrome and
+   its scroll box as one thing; here rather than in one feature's stylesheet
+   so the fleet's Hosts tab and its Containers tab cannot look different from
+   each other. */
 .tablewrap {
   overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ui);
+  /* Every stacked block on a page owns its own bottom gap -- .card, .tiles,
+     .cards and .toolbar all do, for the reason spelled out above .card. */
+  margin-bottom: var(--space-4);
+}
+/* The header rail, filled so it separates from the rows without another
+   border. Deliberately NOT sticky: `overflow-x: auto` makes .tablewrap a
+   scroll container on both axes, so `position: sticky; top: 0` would anchor
+   to this box rather than to the viewport and do nothing without a
+   max-height on it. Scoped to .tablewrap so ChartDetail's own .cd-stats
+   table, which is not wrapped, keeps its own header rules. */
+.tablewrap thead th {
+  background: var(--surface-2);
+}
+/* A table inside a card is already on a surface. Nothing does this today;
+   the reset is here so the next one does not nest two borders. */
+.card .tablewrap {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  margin-bottom: 0;
+}
+
+/* A group header inside a table body: one <tbody> per group, each led by
+   this row. Same type as .grouphead -- it does the same job in a different
+   container -- and it carries a top border because
+   `tbody tr:last-child td { border-bottom: 0 }` now fires once per GROUP, so
+   without it the last row of one group runs into the head of the next. The
+   first group's own top border is suppressed: it would double the header
+   rail's own line. */
+.grouprow th {
+  /* NOT uppercased, unlike .grouphead and the column headers -- and both the
+     transform and the tracking have to be undone explicitly, because the bare
+     `th` rule above applies to this cell too. What a group is named after
+     here is an identifier -- a hostname, a compose project -- and "WEB-01" is
+     not what that host is called. Weight and the filled ground do the
+     separating instead. */
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--text-label);
+  color: var(--ink-2);
+  font-weight: 600;
+  padding: 10px var(--space-4) 6px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+tbody:first-of-type .grouprow th {
+  border-top: 0;
+}
+/* Not the group's subject -- the count is how big it is, which is context. */
+.grouprow .groupcount {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* The container list's memory cell: the trend, and under it the reading
+   against the container's own mem_limit. Meter brings its own .mrow, which
+   is a 1fr/92px row with padding and a rule of its own -- all three wrong
+   inside a <td> that already has them. Same override .disk-cell makes, for
+   the same reason. */
+.mem-cell .mrow {
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2);
+  padding: 2px 0 0;
+  border-bottom: 0;
+}
+.mem-cell .val {
+  /* --text-label, like .uptime-cell and .traffic-cell .rate: the same job
+     -- a quiet secondary reading inside a table cell -- and --text-micro
+     has only its three sanctioned uses (spec 3.6). */
+  font-size: var(--text-label);
 }
 
 /* Every interactive control shows where the keyboard is. :focus-visible
