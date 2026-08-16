@@ -7,7 +7,7 @@
  * than each deriving bands from the raw columns, because "used" in
  * particular is a subtraction with several ways to get it subtly wrong.
  */
-import { griddedValues, carriesColumn, hasReading } from "./metrics";
+import { fsName, griddedValues, carriesColumn, hasReading } from "./metrics";
 import type { MetricsResponse } from "./api";
 import type { Band } from "../ui/charts/StackedSparkline";
 
@@ -271,4 +271,59 @@ function sumOptional(i: number, series: (number | null)[][]): number {
     total += s[i] ?? 0;
   }
   return total;
+}
+
+// One hue per filesystem, cycling. A host with more mounts than this has
+// more than a fleet row could name anyway -- the column's question is "is
+// any of them climbing", and the meter beside it names the one that matters.
+const FS_COLORS = [
+  "var(--s7)",
+  "var(--s1)",
+  "var(--s2)",
+  "var(--s5)",
+  "var(--s3)",
+  "var(--s8)",
+];
+
+/**
+ * Every filesystem's Use% over the window, one band each.
+ *
+ * All of them, not just the fullest: a host's root can sit flat at 40% while
+ * a log volume climbs into trouble, and one line for the worst mount hides
+ * which of them is moving. It also jumps between filesystems whenever
+ * another overtakes, drawing a line no single disk ever followed.
+ *
+ * df's Use% throughout -- used / (used + free), never used / total, since
+ * total includes the root reserve. The same definition the meter beside it
+ * and fullestFilesystem() use, so nothing on the row can disagree.
+ */
+export function filesystemBands(res: MetricsResponse | null): Band[] {
+  if (res === null || res.series.length === 0) return [];
+  if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return [];
+
+  const bands: Band[] = [];
+  for (let i = 0; i < res.series.length; i++) {
+    const used = griddedValues(res, i, "used");
+    const free = griddedValues(res, i, "free");
+    const width = Math.max(used.length, free.length);
+    const values: (number | null)[] = [];
+    for (let j = 0; j < width; j++) {
+      const u = used[j] ?? null;
+      const f = free[j] ?? null;
+      // A gap is a gap: the host reported nothing for that bucket, which is
+      // not the same as the disk being empty.
+      values.push(
+        u === null || f === null || u + f === 0 ? null : (u / (u + f)) * 100,
+      );
+    }
+    // A filesystem that reported nothing all window is not a flat line at
+    // zero; it is a mount with no readings, and drawing it would claim one.
+    if (!hasReading(values)) continue;
+    bands.push({
+      name: fsName(res.series[i]!.key, `fs ${i}`),
+      color: FS_COLORS[bands.length % FS_COLORS.length]!,
+      values,
+    });
+  }
+  return bands;
 }

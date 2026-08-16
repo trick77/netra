@@ -12,7 +12,15 @@ import { ChevronLeft } from "lucide-react";
 import { getMetrics, type MetricsResponse } from "../../lib/api";
 import { rangeWindow, type Range } from "../../lib/range";
 import { RANGE_VALUES } from "./ranges";
-import { bandsFor, familyFor, specForSlug, type Family } from "./chartSpecs";
+import {
+  REFERENCE_HEADROOM,
+  bandsFor,
+  ceilingOf,
+  familyFor,
+  noCeilingReason,
+  specForSlug,
+  type Family,
+} from "./chartSpecs";
 import { Chart, type ChartSeries } from "../../ui/charts/Chart";
 import {
   mirroredTicks,
@@ -40,6 +48,13 @@ export interface ChartPageProps {
   range: Range;
   onRangeChange: (range: Range) => void;
   onBack: () => void;
+  /**
+   * What Back says it goes back to. The chart page has more than one way in
+   * -- the Graphs tab and, since traffic got its own page, the fleet row --
+   * and a button reading "Back to graphs" on a page reached from the fleet
+   * names somewhere the reader has never been.
+   */
+  backLabel: string;
   /** Injectable for tests and for the harness; defaults to the real API. */
   fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
 }
@@ -50,6 +65,7 @@ export function ChartPage({
   range,
   onRangeChange,
   onBack,
+  backLabel,
   fetchFamily,
 }: ChartPageProps) {
   const spec = specForSlug(slug);
@@ -85,6 +101,7 @@ export function ChartPage({
       range={range}
       onRangeChange={onRangeChange}
       onBack={onBack}
+      backLabel={backLabel}
       load={load}
     />
   );
@@ -97,12 +114,14 @@ function ChartView({
   range,
   onRangeChange,
   onBack,
+  backLabel,
   load,
 }: {
   spec: Spec;
   range: Range;
   onRangeChange: (range: Range) => void;
   onBack: () => void;
+  backLabel: string;
   load: (family: Family, range: Range) => Promise<MetricsResponse>;
 }) {
   const [res, setRes] = useState<MetricsResponse | null>(null);
@@ -138,14 +157,34 @@ function ChartView({
     [spec, res],
   );
 
+  // A ceiling the DATA carries -- memory's mem_total -- and the dashed rule
+  // marking it. Headroom above so the rule lands inside the plot instead of
+  // on its border, where it reads as the edge of the box rather than as the
+  // host's limit; the same 1.08 the fleet cell uses.
+  const reference = useMemo(
+    () => (res && spec.ceiling ? ceilingOf(spec.ceiling(res)) : undefined),
+    [spec, res],
+  );
+
+  // A spec that declares a ceiling and cannot find one MUST NOT fall through
+  // to the auto-scale below. That fallback is the always-full bug: a memory
+  // stack scaled to its own running total draws every host as nearly out,
+  // whatever its headroom. The fleet cell refuses to draw a memory chart with
+  // no mem_total (hostColumns.tsx) and says the reading is absent; this is
+  // that same rule on the page, rather than the page drawing the lie the cell
+  // declines to.
+  const noCeiling =
+    res !== null && spec.ceiling !== undefined && reference === undefined;
+
   const ceiling = useMemo(() => {
+    if (reference !== undefined) return reference * REFERENCE_HEADROOM;
     if (spec.max !== undefined) return spec.max;
     if (spec.stacked) return runningTotalMax(series);
     // peakOf scans the BAND too, not just the line. The envelope is the
     // bucket's peak and therefore always the taller of the two; scaling to
     // the mean alone would draw it straight out of the plot box.
     return peakOf(series);
-  }, [spec, series]);
+  }, [spec, series, reference]);
 
   const format = (v: number) => (spec.fmt ? spec.fmt(v) : String(v));
   const valueAxis = !spec.hideAxis && !spec.boolean;
@@ -156,13 +195,19 @@ function ChartView({
   // series had never been drawn against. Uptime showed it worst -- a window
   // from 2.6M to 3.2M seconds filled the box top to bottom under an axis
   // reading 0 / 1M / 2M / 3M.
-  const floor = spec.stacked ? 0 : extent(series.flatMap((s) => s.values)).min;
+  // spec.min before the data's own minimum: a panel that names its floor is
+  // naming its SCALE -- filesystem usage is read against 0-100 or it is not
+  // read at all -- and deriving one from the window would draw a different
+  // picture from the cell this page was opened from.
+  const floor = spec.stacked
+    ? 0
+    : (spec.min ?? extent(series.flatMap((s) => s.values)).min);
 
   const yTicks = !valueAxis
     ? undefined
     : spec.mirrored
-      ? mirroredTicks(ceiling, 3)
-      : niceTicks(floor, ceiling, 3);
+      ? mirroredTicks(ceiling, 3, spec.tickBase)
+      : niceTicks(floor, ceiling, 3, spec.tickBase);
   const xTicks = res
     ? timeTicks(
         Date.parse(res.window.from),
@@ -185,7 +230,7 @@ function ChartView({
       <div className="crumb">
         <button type="button" className="btn ghost" onClick={onBack}>
           <ChevronLeft size={15} aria-hidden="true" />
-          Back to graphs
+          {backLabel}
         </button>
       </div>
 
@@ -214,26 +259,31 @@ function ChartView({
 
       {notice && <p className="note">{notice}</p>}
 
-      <Chart
-        series={series}
-        width={CHART_WIDTH}
-        height={CHART_HEIGHT}
-        max={ceiling}
-        min={floor}
-        mark={spec.mirrored ? "mirror" : spec.stacked ? "stack" : "line"}
-        label={`${spec.title} over time`}
-        y={yTicks}
-        x={xTicks}
-        format={format}
-        grid
-        spine
-        labels
-        widestYLabel={widest}
-        cursor={cursor}
-        onCursorChange={setCursor}
-      />
+      {noCeiling ? (
+        <p className="note">{noCeilingReason(spec)}</p>
+      ) : (
+        <Chart
+          series={series}
+          width={CHART_WIDTH}
+          height={CHART_HEIGHT}
+          max={ceiling}
+          min={floor}
+          reference={reference}
+          mark={spec.mirrored ? "mirror" : spec.stacked ? "stack" : "line"}
+          label={`${spec.title} over time`}
+          y={yTicks}
+          x={xTicks}
+          format={format}
+          grid
+          spine
+          labels
+          widestYLabel={widest}
+          cursor={cursor}
+          onCursorChange={setCursor}
+        />
+      )}
 
-      {res && (
+      {res && !noCeiling && (
         <div className="cd-x">
           <span>{absolute(res.window.from)}</span>
           <span>{absolute(res.window.to)}</span>
@@ -375,6 +425,11 @@ function RangeStrip({
         // is the bucket PEAK while the chart's is the mean, so the strip
         // would show a different reading of the same window.
         const bands = res ? bandsFor(spec, res, { withPeakBand: true }) : [];
+        // Read from THIS range's own response: mem_total is a constant per
+        // boot, but the range whose window the host was rebooted in is the
+        // one that has to answer for itself.
+        const reference =
+          res && spec.ceiling ? ceilingOf(spec.ceiling(res)) : undefined;
         return (
           <button
             key={r}
@@ -384,7 +439,7 @@ function RangeStrip({
             aria-label={`last ${r}`}
             onClick={() => onPick(r)}
           >
-            <Thumb spec={spec} bands={bands} />
+            <Thumb spec={spec} bands={bands} reference={reference} />
             <span className="lab">{r}</span>
           </button>
         );
@@ -403,8 +458,23 @@ function RangeStrip({
  * strip was not five views of one chart for exactly the specs where seeing
  * the shape matters most.
  */
-function Thumb({ spec, bands }: { spec: Spec; bands: ChartSeries[] }) {
-  if (bands.length === 0) {
+function Thumb({
+  spec,
+  bands,
+  reference,
+}: {
+  spec: Spec;
+  bands: ChartSeries[];
+  reference: number | undefined;
+}) {
+  // A thumbnail for a spec that declares a ceiling and has none is EMPTY,
+  // not auto-scaled -- the same refusal the chart above it makes, and for
+  // the same reason: a memory stack scaled to its own running total draws
+  // every host as nearly full.
+  if (
+    bands.length === 0 ||
+    (spec.ceiling !== undefined && reference === undefined)
+  ) {
     return <svg className="spark" width={THUMB_WIDTH} height={THUMB_HEIGHT} />;
   }
   const ceiling = spec.stacked ? runningTotalMax(bands) : peakOf(bands);
@@ -414,8 +484,17 @@ function Thumb({ spec, bands }: { spec: Spec; bands: ChartSeries[] }) {
       series={bands}
       width={THUMB_WIDTH}
       height={THUMB_HEIGHT}
-      max={spec.max ?? ceiling}
-      min={spec.stacked ? 0 : undefined}
+      // The data's ceiling first, then the fixed one, then the auto-scale.
+      // Without it the five memory thumbnails were each scaled to their own
+      // running total and drew a full box, while the chart they open sits
+      // under the mem_total rule -- so the strip stopped being five views of
+      // one chart for exactly the panel that needs a real scale most.
+      max={
+        reference !== undefined
+          ? reference * REFERENCE_HEADROOM
+          : (spec.max ?? ceiling)
+      }
+      min={spec.stacked ? 0 : spec.min}
       mark={spec.mirrored ? "mirror" : spec.stacked ? "stack" : "line"}
       label=""
     />

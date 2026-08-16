@@ -2226,6 +2226,17 @@ details.sysfold > .body {
   display: flex;
   align-items: center;
 }
+/* The Back button carries a chevron BESIDE its label, not above it. .btn is
+   a plain block with a fixed 34px height, so the icon and the text laid out
+   as two lines inside a box only tall enough for one -- the chevron sat on
+   the label. Flex here rather than on .btn: every other button in the app is
+   text alone and does not need it. */
+.chartpage > .crumb .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-left: 8px;
+}
 .chartpage > header {
   display: flex;
   align-items: baseline;

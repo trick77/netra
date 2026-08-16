@@ -19,6 +19,7 @@ import {
   latestValue,
   optionalValues,
   peakBase,
+  sumSeries,
 } from "../../../lib/metrics";
 import {
   ABSENT,
@@ -158,39 +159,6 @@ export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
 // fleet's traffic cell has always read the latest bucket, so the same dead
 // host read as absent there and as busy here -- which is why the rule now has
 // exactly one spelling instead of a copy per page.
-
-/**
- * A keyed family summed across its series, index by index.
- *
- * A null anywhere in a bucket makes that bucket's total unknowable rather
- * than smaller, so the sum is null there too: counting it as zero draws a
- * dip that never happened.
- */
-function sumInterfaces(
-  res: MetricsResponse | null | undefined,
-  base: string,
-): (number | null)[] {
-  if (res == null || res.series.length === 0) return [];
-  const columns = res.series.map((_, i) => griddedValues(res, i, base));
-  const width = columns.reduce((w, c) => Math.max(w, c.length), 0);
-  const out: (number | null)[] = [];
-  for (let i = 0; i < width; i++) {
-    let total = 0;
-    let known = false;
-    let unknown = false;
-    for (const column of columns) {
-      const v = column[i];
-      if (v === undefined) continue;
-      if (v === null) unknown = true;
-      else {
-        total += v;
-        known = true;
-      }
-    }
-    out.push(unknown || !known ? null : total);
-  }
-  return out;
-}
 
 export interface Attention {
   severity: Severity;
@@ -848,8 +816,8 @@ export function Overview({
   // Bucket PEAK rather than bucket mean -- see peakBase(). Same choice the
   // fleet row makes, including the per-interface summing caveat noted there,
   // so the two still agree about one host.
-  const ingress = sumInterfaces(netMetrics, peakBase(netMetrics, "rx_bytes"));
-  const egress = sumInterfaces(netMetrics, peakBase(netMetrics, "tx_bytes"));
+  const ingress = sumSeries(netMetrics, peakBase(netMetrics, "rx_bytes"));
+  const egress = sumSeries(netMetrics, peakBase(netMetrics, "tx_bytes"));
   // The Traffic card's NUMBERS, as opposed to the series beside them: gauges
   // off host_current, blanked when the host is not reporting. isReporting is
   // the fleet list's predicate too, so a host cannot read offline there and
@@ -1155,6 +1123,21 @@ export function Overview({
                 // rather than the reader's. The wire and the schema keep
                 // rx/tx.
                 title="Traffic"
+                // The same page the fleet row's traffic cell links to, for
+                // the same reason: this is the summed chart, host-traffic
+                // is the summed chart's spec, and the two pages must not
+                // disagree about what clicking traffic does. `from` sends
+                // Back here rather than to the Graphs tab.
+                //
+                // The dialog goes with the href (Enlargeable.tsx) -- it is
+                // what a chart with no page gets, and this one has a page.
+                href={
+                  `/hosts/${encodeURIComponent(String(host.id))}/chart/host-traffic` +
+                  `?from=overview` +
+                  (range === undefined
+                    ? ""
+                    : `&range=${encodeURIComponent(range)}`)
+                }
                 // Inline, like every other sparkline this wraps: the chart
                 // is a fixed 260px inside a flex column, and the full-width
                 // default would spread the pressable area (and its zoom-in
@@ -1169,35 +1152,6 @@ export function Overview({
                 fmt={bytes}
                 window={netMetrics?.window ?? null}
                 range={range}
-                ranges={RANGE_VALUES}
-                fetchSeries={
-                  fetchFamily === undefined
-                    ? undefined
-                    : async (next) => {
-                        const answered = await fetchFamily("net", next);
-                        return {
-                          series: [
-                            {
-                              name: "ingress",
-                              color: UP_COLOR,
-                              values: sumInterfaces(
-                                answered,
-                                peakBase(answered, "rx_bytes"),
-                              ),
-                            },
-                            {
-                              name: "egress",
-                              color: DOWN_COLOR,
-                              values: sumInterfaces(
-                                answered,
-                                peakBase(answered, "tx_bytes"),
-                              ),
-                            },
-                          ],
-                          window: answered.window,
-                        };
-                      }
-                }
               >
                 <UpDownSparkline
                   up={ingress}

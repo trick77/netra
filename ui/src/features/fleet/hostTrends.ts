@@ -9,11 +9,11 @@ import {
   counterIncrease,
   fsName,
   griddedValues,
-  hasReading,
   latestValue,
   peakBase,
+  sumSeries,
 } from "../../lib/metrics";
-import { memoryBands, perCoreBands } from "../../lib/bands";
+import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import type { HostRow } from "./hostColumns";
@@ -163,40 +163,6 @@ function totalBand(values: (number | null)[]): Band[] {
 }
 
 /**
- * Sums a keyed family across its series, index by index.
- *
- * A host's traffic is the sum over its interfaces, and a null anywhere in a
- * bucket makes the total for that bucket unknowable rather than smaller --
- * so the sum is null there too. Treating it as zero would draw a dip that
- * never happened.
- */
-function sumSeries(
-  res: MetricsResponse | null,
-  base: string,
-): (number | null)[] {
-  if (res === null || res.series.length === 0) return [];
-  const columns = res.series.map((_, i) => griddedValues(res, i, base));
-  const width = columns.reduce((w, c) => Math.max(w, c.length), 0);
-  const out: (number | null)[] = [];
-  for (let i = 0; i < width; i++) {
-    let total = 0;
-    let known = false;
-    let unknown = false;
-    for (const column of columns) {
-      const v = column[i];
-      if (v === undefined) continue;
-      if (v === null) unknown = true;
-      else {
-        total += v;
-        known = true;
-      }
-    }
-    out.push(unknown || !known ? null : total);
-  }
-  return out;
-}
-
-/**
  * The fullest filesystem, named, plus how many others there are.
  *
  * The percentage is used / (used + free) -- df's Use% -- and NOT
@@ -303,61 +269,6 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
     since: crossed.since,
     sinceAtLeast: crossed.atLeast,
   };
-}
-
-// One hue per filesystem, cycling. A host with more mounts than this has
-// more than a fleet row could name anyway -- the column's question is "is
-// any of them climbing", and the meter beside it names the one that matters.
-const FS_COLORS = [
-  "var(--s7)",
-  "var(--s1)",
-  "var(--s2)",
-  "var(--s5)",
-  "var(--s3)",
-  "var(--s8)",
-];
-
-/**
- * Every filesystem's Use% over the window, one band each.
- *
- * All of them, not just the fullest: a host's root can sit flat at 40% while
- * a log volume climbs into trouble, and one line for the worst mount hides
- * which of them is moving. It also jumps between filesystems whenever
- * another overtakes, drawing a line no single disk ever followed.
- *
- * df's Use% throughout -- used / (used + free), never used / total, since
- * total includes the root reserve. The same definition the meter beside it
- * and fullestFilesystem() use, so nothing on the row can disagree.
- */
-function filesystemBands(res: MetricsResponse | null): Band[] {
-  if (res === null || res.series.length === 0) return [];
-  if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return [];
-
-  const bands: Band[] = [];
-  for (let i = 0; i < res.series.length; i++) {
-    const used = griddedValues(res, i, "used");
-    const free = griddedValues(res, i, "free");
-    const width = Math.max(used.length, free.length);
-    const values: (number | null)[] = [];
-    for (let j = 0; j < width; j++) {
-      const u = used[j] ?? null;
-      const f = free[j] ?? null;
-      // A gap is a gap: the host reported nothing for that bucket, which is
-      // not the same as the disk being empty.
-      values.push(
-        u === null || f === null || u + f === 0 ? null : (u / (u + f)) * 100,
-      );
-    }
-    // A filesystem that reported nothing all window is not a flat line at
-    // zero; it is a mount with no readings, and drawing it would claim one.
-    if (!hasReading(values)) continue;
-    bands.push({
-      name: fsName(res.series[i]!.key, `fs ${i}`),
-      color: FS_COLORS[bands.length % FS_COLORS.length]!,
-      values,
-    });
-  }
-  return bands;
 }
 
 /** The latest non-null value, or null when the series never reported.

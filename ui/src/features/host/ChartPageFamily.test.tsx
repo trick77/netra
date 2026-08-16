@@ -53,6 +53,7 @@ function renderChart(slug: string) {
       range="1h"
       onRangeChange={() => {}}
       onBack={() => {}}
+      backLabel="Back to graphs"
     />,
   );
 }
