@@ -122,6 +122,25 @@ export function useDetailRange(
   };
 }
 
+/**
+ * The extent to draw a free-scaled chart against, or nothing when the series
+ * has no shape to scale.
+ *
+ * extent() answers {min: 0, max: 0} for a series with no readings at all --
+ * which is reachable, not theoretical: widen a sensor chart to 7d and the 1h
+ * tier materialises about ninety minutes behind now, so a window with no rows
+ * in it comes back empty. Passing that 0 through would ALSO defeat
+ * ChartDetail's own `max || 1` guard, because `0 ?? x` is 0 and the guard is
+ * only reached for an absent max. Undefined lets that guard do its job.
+ */
+function derived(series: readonly OverlaySeries[]): {
+  min?: number;
+  max?: number;
+} {
+  const span = extent(series.flatMap((s) => s.values));
+  return span.max > span.min ? span : {};
+}
+
 export interface EnlargeableProps {
   /** Names the dialog, and the button unless `label` overrides it. */
   title: string;
@@ -210,9 +229,7 @@ export function Enlargeable({
   // moment later is a flicker, and an empty chart in netra asserts "the host
   // reported nothing".
   const shown = detail.series ?? series;
-  const span = autoScale
-    ? extent(shown.flatMap((s) => s.values))
-    : { min, max };
+  const span = autoScale ? derived(shown) : { min, max };
 
   return (
     <>

@@ -42,7 +42,11 @@ import { Enlargeable } from "../../../ui/charts/Enlargeable";
 import { RANGE_VALUES } from "../ranges";
 import type { Range } from "../../../lib/range";
 import { Sparkline } from "../../../ui/charts/Sparkline";
-import { UpDownSparkline } from "../../../ui/charts/UpDownSparkline";
+import {
+  DOWN_COLOR,
+  UP_COLOR,
+  UpDownSparkline,
+} from "../../../ui/charts/UpDownSparkline";
 
 /**
  * column() in lib/metrics.ts THROWS for a column the answering tier does
@@ -1065,8 +1069,8 @@ export function Overview({
                 title="Traffic"
                 unit="B/s"
                 series={[
-                  { name: "ingress", color: "var(--s1)", values: ingress },
-                  { name: "egress", color: "var(--s2)", values: egress },
+                  { name: "ingress", color: UP_COLOR, values: ingress },
+                  { name: "egress", color: DOWN_COLOR, values: egress },
                 ]}
                 mirrored
                 fmt={bytes}
@@ -1082,7 +1086,7 @@ export function Overview({
                           series: [
                             {
                               name: "ingress",
-                              color: "var(--s1)",
+                              color: UP_COLOR,
                               values: sumInterfaces(
                                 answered,
                                 peakBase(answered, "rx_bytes"),
@@ -1090,7 +1094,7 @@ export function Overview({
                             },
                             {
                               name: "egress",
-                              color: "var(--s2)",
+                              color: DOWN_COLOR,
                               values: sumInterfaces(
                                 answered,
                                 peakBase(answered, "tx_bytes"),

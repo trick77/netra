@@ -12,7 +12,11 @@ import { Meter } from "../../ui/Meter";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
 import { Overlay } from "../../ui/charts/Overlay";
 import { SPARK_WIDTH } from "../../ui/charts/size";
-import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
+import {
+  DOWN_COLOR,
+  UP_COLOR,
+  UpDownSparkline,
+} from "../../ui/charts/UpDownSparkline";
 import { ABSENT, byterate, bytes, percent } from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
@@ -293,8 +297,8 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
     const traffic = trafficSeries(net);
     return {
       series: [
-        { name: "ingress", color: "var(--s1)", values: traffic.rx },
-        { name: "egress", color: "var(--s2)", values: traffic.tx },
+        { name: "ingress", color: UP_COLOR, values: traffic.rx },
+        { name: "egress", color: DOWN_COLOR, values: traffic.tx },
       ],
       window: net.window,
     };
@@ -311,8 +315,8 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         className="inline"
         unit="B/s"
         series={[
-          { name: "ingress", color: "var(--s1)", values: row.rx },
-          { name: "egress", color: "var(--s2)", values: row.tx },
+          { name: "ingress", color: UP_COLOR, values: row.rx },
+          { name: "egress", color: DOWN_COLOR, values: row.tx },
         ]}
         mirrored
         fmt={bytes}

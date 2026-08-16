@@ -146,6 +146,27 @@ describe("Enlargeable", () => {
       expect(axis()).toContain("0");
     });
 
+    // extent() answers {min: 0, max: 0} for a series with nothing in it,
+    // which is reachable rather than theoretical: the 1h tier materialises
+    // about ninety minutes behind now, so a widened window can come back with
+    // no rows at all. Passed through, that 0 would ALSO defeat ChartDetail's
+    // own `max || 1` guard, because `0 ?? x` is 0.
+    it("does not hand the plot a zero-height box for an empty window", async () => {
+      render(
+        <Enlargeable
+          title="Package"
+          series={[{ name: "temp", color: "var(--s7)", values: [] }]}
+          autoScale
+        >
+          <svg />
+        </Enlargeable>,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
+
+      expect(axis().join(" ")).not.toMatch(/NaN/);
+      expect(axis()).toContain("1");
+    });
+
     // A fixed floor would be the extent frozen when the dialog opened, so a
     // widened window would draw its new data against the old window's floor.
     it("rescales to the window it was just given", async () => {
