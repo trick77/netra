@@ -31,7 +31,12 @@ import {
   percent,
   relative,
 } from "../../../lib/format";
-import { FLAP_THRESHOLD, isReporting, osLabel } from "../../../lib/host";
+import {
+  FLAP_THRESHOLD,
+  isReporting,
+  osLabel,
+  STALE_THRESHOLD_MS,
+} from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
@@ -377,10 +382,12 @@ const LIMITS: {
   },
 ];
 
-// A host that has not reported for longer than this is stale rather than
-// merely late: the agent scrapes every 60s, so five missed scrapes is no
-// longer explainable by jitter.
-const STALE_AFTER_MS = 5 * 60 * 1000;
+// When a host counts as stale rather than merely late. Imported, never
+// restated: this used to be its own five-minute constant while hostStatus()
+// used three, so a host last seen four minutes ago had its own header call it
+// offline, its traffic gauges blanked, and its fleet row marked critical --
+// above a panel saying nothing needed attention. lib/host.ts anchors the
+// number to the product's alerting rule; there is one definition of down.
 
 /**
  * What is wrong right now. Current state must not sit behind a tab, so this
@@ -470,7 +477,7 @@ export function needsAttention(input: {
     out.push({ severity: "critical", what: "never reported" });
   } else {
     const age = now.getTime() - new Date(input.host.last_seen).getTime();
-    if (age > STALE_AFTER_MS) {
+    if (age > STALE_THRESHOLD_MS) {
       out.push({
         severity: "critical",
         what: `last reported ${relative(input.host.last_seen, now)}`,

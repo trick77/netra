@@ -4,6 +4,7 @@ import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { Overview, filesystemRows, needsAttention } from "./Overview";
 import { DISK_WARN_PCT, DISK_CRIT_PCT } from "../../fleet/conditions";
+import { STALE_THRESHOLD_MS } from "../../../lib/host";
 
 const host: HostDetail = {
   id: 7,
@@ -1066,6 +1067,29 @@ describe("needsAttention agrees with the fleet band", () => {
     expect(testee).toHaveLength(1);
     expect(testee[0].severity).toBe("critical");
     expect(testee[0].what).toMatch(/last reported/);
+  });
+
+  // The gap that survived the first pass at this: both pages said "critical"
+  // but disagreed about WHEN, this one at five minutes and hostStatus() at
+  // three. A host four minutes silent had its own header call it offline and
+  // this panel call it fine. Judged against the shared constant, so a change
+  // to the alerting rule cannot move one page without the other.
+  it("goes stale on the same threshold the header and the fleet use", () => {
+    const lastSeen = new Date("2026-08-10T01:00:00Z");
+    const justBefore = new Date(lastSeen.getTime() + STALE_THRESHOLD_MS);
+    const justAfter = new Date(lastSeen.getTime() + STALE_THRESHOLD_MS + 1000);
+    const at = (now: Date) =>
+      needsAttention({
+        ...quiet,
+        host: { ...host, last_seen: lastSeen.toISOString() },
+        now,
+      });
+
+    // Given a host exactly at the threshold, nothing is wrong yet
+    expect(at(justBefore)).toEqual([]);
+    // and one second past it, the panel agrees with the header
+    expect(at(justAfter)).toHaveLength(1);
+    expect(at(justAfter)[0].severity).toBe("critical");
   });
 
   it("warns and criticals on the same disk thresholds the fleet uses", () => {
