@@ -1,0 +1,206 @@
+import { describe, expect, it } from "vitest";
+import { render } from "@testing-library/react";
+import { Chart, type ChartSeries } from "./Chart";
+import { niceTicks, timeTicks } from "./ticks";
+
+const series: ChartSeries[] = [
+  { name: "busy", color: "var(--s1)", values: [10, 40, 20, 60] },
+];
+const pair: ChartSeries[] = [
+  { name: "in", color: "var(--s2)", values: [10, 40, 20, 60] },
+  { name: "out", color: "var(--s5)", values: [5, 20, 10, 30] },
+];
+
+function draw(ui: React.ReactElement) {
+  return render(ui).container;
+}
+
+describe("Chart", () => {
+  // The property the whole library rests on: a caller that asks for no
+  // furniture gets exactly the mark it drew before. That is what lets every
+  // sparkline in the app move onto this renderer without changing.
+  describe("furniture is opt-in", () => {
+    it("draws no grid, spine, labels or crosshair by default", () => {
+      const c = draw(<Chart series={series} width={170} height={32} max={100} />);
+      expect(c.querySelector("[data-grid]")).toBeNull();
+      expect(c.querySelector("[data-spine]")).toBeNull();
+      expect(c.querySelector("[data-axis-labels] text")).toBeNull();
+      expect(c.querySelector("[data-crosshair]")).toBeNull();
+    });
+
+    it("gives the whole image to the mark when there are no labels", () => {
+      const c = draw(<Chart series={series} width={170} height={32} max={100} />);
+      const g = c.querySelector("g[transform]");
+      expect(g?.getAttribute("transform")).toBe("translate(0,0)");
+    });
+
+    // With labels the plot has to shrink to make room for them, and the mark
+    // moves with it -- otherwise the series would be drawn over the axis.
+    it("insets the mark once labels are asked for", () => {
+      const c = draw(
+        <Chart
+          series={series}
+          width={260}
+          height={112}
+          max={100}
+          labels
+          widestYLabel="500 MB/s"
+          y={niceTicks(0, 100)}
+        />,
+      );
+      const g = c.querySelector("g[clip-path]");
+      expect(g?.getAttribute("transform")).not.toBe("translate(0,0)");
+    });
+  });
+
+  describe("marks", () => {
+    it("draws a line by default", () => {
+      const c = draw(<Chart series={series} width={170} height={32} max={100} />);
+      expect(c.querySelectorAll("[data-line]").length).toBeGreaterThan(0);
+      expect(c.querySelector("[data-area]")).toBeNull();
+    });
+
+    it("fills under the line when asked for an area", () => {
+      const c = draw(
+        <Chart series={series} width={170} height={32} max={100} mark="area" />,
+      );
+      expect(c.querySelector("[data-area]")).not.toBeNull();
+      // The stroke stays: the fill reads as volume, the edge is the value.
+      expect(c.querySelector("[data-line]")).not.toBeNull();
+    });
+
+    it("stacks bands cumulatively", () => {
+      const c = draw(
+        <Chart series={pair} width={170} height={32} max={100} mark="stack" />,
+      );
+      expect(c.querySelectorAll("[data-band]").length).toBe(2);
+    });
+
+    it("mirrors a pair about a midline", () => {
+      const c = draw(
+        <Chart series={pair} width={170} height={32} max={100} mark="mirror" />,
+      );
+      expect(c.querySelector("[data-up]")).not.toBeNull();
+      expect(c.querySelector("[data-down]")).not.toBeNull();
+      expect(c.querySelector("[data-mid]")).not.toBeNull();
+    });
+
+    // A null is a host that reported nothing. It must leave a hole, not a
+    // line drawn across it -- geometry.ts's rule, inherited here.
+    it("breaks the mark at a null rather than bridging it", () => {
+      const gapped: ChartSeries[] = [
+        { name: "busy", color: "var(--s1)", values: [10, 20, null, 40, 50] },
+      ];
+      const c = draw(<Chart series={gapped} width={170} height={32} max={100} />);
+      expect(c.querySelectorAll("path[data-line]").length).toBe(2);
+    });
+  });
+
+  describe("the peak envelope", () => {
+    // The rollups carry avg AND max per bucket. Drawing both is what lets a
+    // reader see the burst and the typical level at once.
+    it("draws a band beneath the mean when the tier carries a peak", () => {
+      const withBand: ChartSeries[] = [
+        { ...pair[0]!, band: [20, 80, 40, 90] },
+        { ...pair[1]!, band: [10, 40, 20, 50] },
+      ];
+      const c = draw(
+        <Chart series={withBand} width={170} height={32} max={100} mark="mirror" />,
+      );
+      expect(c.querySelector("[data-band-up]")).not.toBeNull();
+      expect(c.querySelector("[data-band-down]")).not.toBeNull();
+    });
+
+    // At the raw tier the sample IS its own peak and there is no _max column
+    // to ask for, so the envelope must simply be absent rather than assumed.
+    it("omits the band when the tier has no peak column", () => {
+      const c = draw(
+        <Chart series={pair} width={170} height={32} max={100} mark="mirror" />,
+      );
+      expect(c.querySelector("[data-band-up]")).toBeNull();
+    });
+  });
+
+  describe("clipping", () => {
+    // Clipping is not clamping. mirrorPaths deliberately lets a value escape
+    // its box so an overflow stays visible; the clip only stops it reaching
+    // the axis margins and painting over the labels.
+    it("clips the mark to the plot rect", () => {
+      const c = draw(
+        <Chart
+          series={series}
+          width={260}
+          height={112}
+          max={100}
+          labels
+          widestYLabel="100%"
+          y={niceTicks(0, 100)}
+        />,
+      );
+      const clip = c.querySelector("clipPath");
+      const marks = c.querySelector("g[clip-path]");
+      expect(clip).not.toBeNull();
+      expect(marks?.getAttribute("clip-path")).toBe(`url(#${clip?.id})`);
+    });
+
+    it("gives two charts on one page different clip ids", () => {
+      const c = draw(
+        <>
+          <Chart series={series} width={170} height={32} max={100} />
+          <Chart series={series} width={170} height={32} max={100} />
+        </>,
+      );
+      const ids = [...c.querySelectorAll("clipPath")].map((n) => n.id);
+      expect(ids[0]).not.toBe(ids[1]);
+    });
+  });
+
+  describe("crosshair", () => {
+    const FROM = new Date(2026, 7, 15, 13, 18).getTime();
+    const x = timeTicks(FROM, FROM + 3600_000, 4);
+
+    it("is absent when nothing is hovered", () => {
+      const c = draw(
+        <Chart series={series} width={260} height={112} max={100} x={x} />,
+      );
+      expect(c.querySelector("[data-cursor]")).toBeNull();
+    });
+
+    it("marks the hovered bucket with a rule and a dot per series", () => {
+      const c = draw(
+        <Chart series={pair} width={260} height={112} max={100} cursor={1} />,
+      );
+      expect(c.querySelector("[data-cursor]")).not.toBeNull();
+      expect(c.querySelectorAll("[data-cursor-dot]").length).toBe(2);
+    });
+
+    // The rule says WHERE, the dot says HOW MUCH. At a hole there is no value
+    // to mark, and a dot at zero would state a reading nobody reported.
+    it("rules a null bucket but puts no dot on it", () => {
+      const gapped: ChartSeries[] = [
+        { name: "busy", color: "var(--s1)", values: [10, null, 30] },
+      ];
+      const c = draw(
+        <Chart series={gapped} width={260} height={112} max={100} cursor={1} />,
+      );
+      expect(c.querySelector("[data-cursor]")).not.toBeNull();
+      expect(c.querySelector("[data-cursor-dot]")).toBeNull();
+    });
+  });
+
+  describe("reference rule", () => {
+    it("marks a ceiling with a dashed rule", () => {
+      const c = draw(
+        <Chart
+          series={series}
+          width={170}
+          height={32}
+          max={100}
+          min={0}
+          reference={80}
+        />,
+      );
+      expect(c.querySelector("[data-reference]")).not.toBeNull();
+    });
+  });
+});
