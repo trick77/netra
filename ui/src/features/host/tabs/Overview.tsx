@@ -919,6 +919,11 @@ export function Overview({
     unbounded: row.ceiling !== null && row.ceiling > Number.MAX_SAFE_INTEGER,
   }));
 
+  // Read once and used twice -- the summary line and the strip's Uptime row.
+  // Two copies of this expression is how the two come to disagree on a host
+  // whose metric and whose host row say different things.
+  const uptime = latest(hostMetrics, "uptime_s") ?? host.uptime_s;
+
   const limitsWorthShowing = limitRows.some(
     (row) => row.carried || row.reason !== null,
   );
@@ -1021,9 +1026,14 @@ export function Overview({
             {host.memory_total !== null && (
               <span>{binaryBytes(host.memory_total)}</span>
             )}
-            <span className="dim">
-              up {duration(latest(hostMetrics, "uptime_s") ?? host.uptime_s)}
-            </span>
+            {/* Guarded like the three above it, and for the same reason:
+                uptime_s is nullable on both the metric and the host row, and
+                duration(null) is ABSENT -- so an unguarded span writes
+                "up —" on a host that never reported one, which is the exact
+                placeholder this line does not write. */}
+            {uptime !== null && (
+              <span className="dim">up {duration(uptime)}</span>
+            )}
             <span className="more">Details</span>
           </summary>
           <div className="body">
@@ -1046,10 +1056,7 @@ export function Overview({
                 // an operator asks for first when sizing anything, was
                 // collected and never shown.
                 ["Memory", binaryBytes(host.memory_total)],
-                [
-                  "Uptime",
-                  duration(latest(hostMetrics, "uptime_s") ?? host.uptime_s),
-                ],
+                ["Uptime", duration(uptime)],
                 // The exact binary that is reporting, not just its release.
                 //
                 // "0.4.1" does not identify a build: it is whatever was last

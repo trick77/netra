@@ -350,11 +350,22 @@ describe("Overview System summary", () => {
   // because a labelled row is where a gap does need a mark.
   it("omits a fact the host never reported rather than writing a dash", () => {
     renderOverview({
-      host: { ...host, kernel: null, cpu_model: null, memory_total: null },
+      // uptime_s included deliberately. It is the one summary fact whose
+      // formatter absorbs null itself -- duration(null) is ABSENT -- so an
+      // unguarded span writes "up —" rather than nothing, and a fixture that
+      // keeps an uptime passes this test while the page prints the dash.
+      host: {
+        ...host,
+        kernel: null,
+        cpu_model: null,
+        memory_total: null,
+        uptime_s: null,
+      },
     });
     const summary = systemSummary();
 
     expect(summary.textContent).not.toContain(ABSENT);
+    expect(summary.textContent).not.toContain("up ");
     expect(summary.querySelector(".cpu")).toBeNull();
     // Still eight labelled rows underneath, three of them absent.
     expect(
