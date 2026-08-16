@@ -31,12 +31,29 @@ describe("AttentionCounts", () => {
     expect(within(list).getAllByRole("listitem")).toHaveLength(1);
     expect(within(list).getByText("Failed units")).toBeInTheDocument();
     expect(within(list).getByText("31")).toBeInTheDocument();
+    // The noun rides the number: "31" beside "Failed units" would read as
+    // thirty-one failed units, and it is thirty-one HOSTS.
+    expect(within(list).getByText(/hosts/)).toBeInTheDocument();
   });
 
-  // The dot is the severity and the label is the word beside it (spec §3.3).
-  // The word is the KIND's name rather than "warning": "Failed units" says
-  // what and how bad at once, and says it once.
-  it("marks the severity with a dot and never with colour alone", () => {
+  it("counts one host without pluralising it", () => {
+    render(
+      <AttentionCounts
+        kinds={[{ ...UNITS, hostIds: ["1"] }]}
+        active={null}
+        onSelect={() => {}}
+      />,
+    );
+    // getByText normalises the leading space away; the space is real in the
+    // DOM and is what separates the number from its noun.
+    expect(screen.getByText("host")).toBeInTheDocument();
+  });
+
+  // A tile has no dot -- its status ink is spread across the count and the
+  // edge -- so the severity WORD is what keeps meaning off colour alone
+  // (spec §3.3). The kind's own name cannot stand in for it: "Failed units"
+  // says what is wrong and not how bad it is.
+  it("names the severity rather than leaving it to the colour", () => {
     const { container } = render(
       <AttentionCounts
         kinds={[DISK, UNITS]}
@@ -45,8 +62,10 @@ describe("AttentionCounts", () => {
       />,
     );
 
-    expect(container.querySelector(".dot.st-crit")).toBeInTheDocument();
-    expect(container.querySelector(".dot.st-warn")).toBeInTheDocument();
+    expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(screen.getByText("Warning")).toBeInTheDocument();
+    expect(container.querySelector(".atile.st-crit")).toBeInTheDocument();
+    expect(container.querySelector(".atile.st-warn")).toBeInTheDocument();
     expect(screen.getByText("Filesystem over 90%")).toBeInTheDocument();
   });
 
