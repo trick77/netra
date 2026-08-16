@@ -306,6 +306,15 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       cell: (row) => <HostCell row={row} />,
       sortValue: (row) => row.hostname,
     },
+    // Second, immediately right of the host it belongs to. Traffic is the
+    // reading a fleet list is most often scanned for -- "is anything moving
+    // that should not be" -- and it sat fourth, past two charts, where the eye
+    // reached it last.
+    {
+      key: "traffic",
+      header: "Traffic",
+      cell: (row) => <TrafficCell row={row} range={range} />,
+    },
     {
       key: "cpu",
       header: "CPU",
@@ -315,11 +324,6 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       key: "memory",
       header: "Memory",
       cell: (row) => <MemoryCell row={row} range={range} />,
-    },
-    {
-      key: "traffic",
-      header: "Traffic",
-      cell: (row) => <TrafficCell row={row} range={range} />,
     },
     {
       key: "diskTrend",
