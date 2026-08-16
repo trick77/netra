@@ -128,8 +128,8 @@ function When({ iso }: { iso: string | null }) {
 export { composeIdentity };
 
 // Hoisted for the same reason FleetContainers hoists its own: Table
-// memoises the partition on the groupBy identity, and a fresh object every
-// render recomputes it every render.
+// memoises the partition on the groupBy identity, so a stable object is what
+// lets that memo ever hold.
 //
 // By compose project: on one host, what belongs together is a stack. A
 // container whose key has no slash has no project -- the agent could not read

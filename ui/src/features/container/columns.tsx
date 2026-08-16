@@ -279,6 +279,12 @@ export function containerColumns({
             label={`CPU trend, ${rangeLabel(range)}`}
           />
         ),
+      // The latest reported percentage, same rule as Memory below. Without
+      // it CPU was the one column in this set that could not answer its own
+      // question -- "which container is busiest" -- while Container, Image
+      // and Memory all sorted, which is the kind of gap this whole module
+      // exists to close.
+      sortValue: (row) => lastReported(row.cpu),
     });
     columns.push({
       key: "memory",

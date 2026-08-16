@@ -174,15 +174,25 @@ export function FleetContainers({
 }
 
 // Hoisted, not an inline literal: Table memoises the partition on the
-// groupBy identity, and a fresh object every render recomputes it every
-// render. Neither half closes over anything, so there is nothing to capture.
+// groupBy identity, so a stable object is what lets that memo hold. (It
+// still misses once a sort is active: Table's sort memo also depends on
+// `columns`, and the call below builds a fresh array every render.) Neither
+// half closes over anything, so there is nothing to capture.
 //
-// By host_id, never by hostname: two hosts in different sites may share a
-// hostname (see HostTable), and grouping on the name would merge two
+// Grouped by host_id, never by hostname: two hosts in different sites may
+// share a hostname (see HostTable), and grouping on the name would merge two
 // machines into one group and file one host's containers under the other
 // host's link. It is the same reason rowKey is a pair.
+//
+// ORDERED by hostname, though, which is a different question from identity.
+// On the id, the groups came out in registration order under headings that
+// read as names -- and the Hosts tab of the same page is alphabetical, because
+// the read API sorts it that way (internal/hub/read/host.go: ORDER BY
+// h.hostname, h.id). Two tabs of one page ordering the same hosts differently
+// makes the second one look arbitrary, and more so with every host added.
 const BY_HOST = {
   key: (row: ContainerRow) => String(row.host_id),
+  order: (_key: string, group: readonly ContainerRow[]) => group[0].hostname,
   label: (_key: string, group: readonly ContainerRow[]) => (
     <HostGroup rows={group} />
   ),

@@ -63,6 +63,21 @@ export interface TableProps<T> {
   groupBy?: {
     key: (row: T) => string;
     label: (key: string, rows: readonly T[]) => ReactNode;
+    /**
+     * What to ORDER the groups by, when that is not the key itself.
+     *
+     * Identity and order are usually the same string and this can be left
+     * out. They come apart whenever the key is an id: the fleet groups
+     * containers by `host_id`, because two hosts in different sites may share
+     * a hostname and grouping on the name would merge them -- but ordering by
+     * that id lists the hosts in registration order under headings that read
+     * as names, beside a Hosts tab the API returns alphabetically. The group
+     * a row belongs to and the place that group sits are two questions.
+     *
+     * The empty key still sorts last regardless: "no group" is not a value to
+     * be ordered among the real ones.
+     */
+    order?: (key: string, rows: readonly T[]) => string | number;
   };
 }
 
@@ -105,9 +120,10 @@ export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
   // bucket in that same order. Sorting each group separately afterwards would
   // be the same answer computed twice.
   //
-  // The groups themselves are ordered by key rather than by first appearance,
-  // so two renders of the same data read the same way -- and the unnamed
-  // group ("") sorts last in either case, the way an unknown sortValue does.
+  // The groups themselves are ordered by `order` -- the key when the caller
+  // gave none -- rather than by first appearance, so two renders of the same
+  // data read the same way. The unnamed group ("") sorts last whatever its
+  // order value, the way an unknown sortValue does.
   const groups = useMemo(() => {
     if (groupBy === undefined) return null;
     const byKey = new Map<string, T[]>();
@@ -117,11 +133,17 @@ export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
       if (existing) existing.push(row);
       else byKey.set(key, [row]);
     }
-    return [...byKey.entries()].sort(([a], [b]) => {
+    const order = groupBy.order ?? ((key: string) => key);
+    return [...byKey.entries()].sort(([a, ra], [b, rb]) => {
       if (a === b) return 0;
       if (a === "") return 1;
       if (b === "") return -1;
-      return a.localeCompare(b, undefined, { numeric: true });
+      const x = order(a, ra);
+      const y = order(b, rb);
+      if (typeof x === "number" && typeof y === "number") return x - y;
+      // numeric, so "web-2" comes before "web-10" -- the same collation the
+      // column sort uses, because a reader scanning names expects one rule.
+      return String(x).localeCompare(String(y), undefined, { numeric: true });
     });
   }, [sorted, groupBy]);
 

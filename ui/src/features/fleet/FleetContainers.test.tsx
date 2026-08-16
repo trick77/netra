@@ -76,6 +76,25 @@ describe("FleetContainers", () => {
     ).toHaveAttribute("href", "/hosts/7/overview");
   });
 
+  // Identity is the id; ORDER is the name. On the id the groups came out in
+  // registration order under headings that read as names, beside a Hosts tab
+  // the read API returns alphabetically.
+  it("orders the host groups by hostname, not by host id", () => {
+    render(
+      <FleetContainers
+        rows={[
+          makeRow({ host_id: 9, hostname: "app-01" }),
+          makeRow({ id: 2, host_id: 3, hostname: "web-01" }),
+        ]}
+      />,
+    );
+
+    expect(screen.getAllByRole("rowheader").map((h) => h.textContent)).toEqual([
+      "app-01 \u00b7 1 container",
+      "web-01 \u00b7 1 container",
+    ]);
+  });
+
   // Two hosts in different sites may share a hostname (see HostTable), so
   // grouping on the NAME would merge two machines into one group and file
   // one host's containers under the other host's link.

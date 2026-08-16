@@ -151,6 +151,35 @@ describe("Table grouping", () => {
     ]);
   });
 
+  // Identity and order are two questions, and they come apart whenever the
+  // key is an id: the fleet groups containers by host_id (two hosts may share
+  // a hostname) but must list those groups the way the Hosts tab lists hosts.
+  it("orders the groups by `order` when the key is not what to sort on", () => {
+    render(
+      <Table
+        columns={groupedColumns}
+        rows={[
+          { id: "1", site: "9", name: "web-01" },
+          { id: "2", site: "10", name: "app-01" },
+          { id: "3", site: "", name: "loose" },
+        ]}
+        rowKey={(r) => r.id}
+        groupBy={{
+          key: (r: Grouped) => r.site,
+          order: (_k: string, rs: readonly Grouped[]) => rs[0]!.name,
+          label: (key: string) => key || "unplaced",
+        }}
+      />,
+    );
+    // By name: app-01 (site 10) before web-01 (site 9). By key it would be
+    // the other way round, numerically.
+    expect(screen.getAllByRole("rowheader").map((h) => h.textContent)).toEqual([
+      "10",
+      "9",
+      "unplaced",
+    ]);
+  });
+
   it("is unchanged without groupBy: one tbody, no rowheader", () => {
     render(<Table columns={columns} rows={rows} rowKey={(r) => r.id} />);
     expect(screen.getByRole("table").querySelectorAll("tbody")).toHaveLength(1);

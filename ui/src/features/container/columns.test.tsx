@@ -138,6 +138,15 @@ describe("containerColumns", () => {
     expect(container.querySelector(".meter")).toBeNull();
   });
 
+  // Without it CPU was the one column in the set that could not answer its
+  // own question, while Container, Image and Memory all sorted.
+  it("sorts CPU on the latest reported percentage", () => {
+    const cpu = containerColumns({ cpuMax: 1, memMax: 1000 }).find(
+      (c) => c.key === "cpu",
+    )!;
+    expect(cpu.sortValue!(makeRow({ cpu: [4, 61, null] }))).toBe(61);
+  });
+
   // Sorting on percent-of-limit would drop every unlimited container into
   // the unknown group, which on most fleets is nearly all of them.
   it("sorts memory on bytes, so an unlimited container still has a place", () => {
