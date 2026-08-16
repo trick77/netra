@@ -177,6 +177,16 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Same treatment, same reasoning: primary rows on the host samples' own
+	// natural key, deduped on replay, so a retry costs one repeated POST.
+	if _, err := h.store.InsertHostSnmpSamples(ctx, hostID, samples); err != nil {
+		slog.Error("insert host snmp samples", "host_id", hostID, "err", err)
+		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
+		})
+		return
+	}
+
 	requestMetadata, err := h.reconcileMetadata(ctx, hostID, &req)
 	if err != nil {
 		slog.Error("reconcile metadata", "host_id", hostID, "err", err)

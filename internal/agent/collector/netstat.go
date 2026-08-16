@@ -26,8 +26,17 @@ import (
 // treatment rather than an omission: /proc/net/snmp's Tcp: block is the RFC
 // 1213 TCP MIB, which Linux maintains as a single family-agnostic counter set
 // already covering IPv6 connections, and /proc/net/snmp6 has no Tcp6 block at
-// all. Only UDP and IP fragmentation are accounted per family by the kernel,
-// and only those are mirrored here.
+// all. UDP, IP and ICMP are accounted per family by the kernel, and all three
+// are mirrored here -- ICMP genuinely so: Icmp: counts ICMPv4 alone and snmp6
+// carries a full Icmp6* block beside it.
+//
+// IcmpMsg: is deliberately NOT parsed. Its column names are per-ICMP-type and
+// depend on which types the host has actually seen -- one machine publishes
+// "InType3 InType8 OutType0", another a different set -- so no fixed field
+// list can be derived from it, and readPaired's zip-by-position would
+// attribute one host's InType3 to another's InType8. The named Icmp: counters
+// cover the types worth charting anyway: DestUnreachs is type 3, Echos is
+// type 8.
 type Netstat struct {
 	procRoot string
 
@@ -132,6 +141,94 @@ func (n *Netstat) Collect(_ context.Context) (*Result, error) {
 	sample.Ip6ReasmFailsPerS = r("Snmp6.Ip6ReasmFails")
 	sample.Ip6FragFailsPerS = r("Snmp6.Ip6FragFails")
 	sample.Ip6FragCreatesPerS = r("Snmp6.Ip6FragCreates")
+
+	// Ip:, beyond the fragmentation counters above. Everything from here
+	// down lands in host_snmp_samples rather than host_samples -- see the
+	// comment on the proto fields for why that split is load-bearing.
+	sample.IpInReceivesPerS = r("Ip.InReceives")
+	sample.IpInDeliversPerS = r("Ip.InDelivers")
+	sample.IpOutRequestsPerS = r("Ip.OutRequests")
+	sample.IpForwDatagramsPerS = r("Ip.ForwDatagrams")
+	sample.IpReasmOksPerS = r("Ip.ReasmOKs")
+	sample.IpFragOksPerS = r("Ip.FragOKs")
+	sample.IpInHdrErrorsPerS = r("Ip.InHdrErrors")
+	sample.IpInAddrErrorsPerS = r("Ip.InAddrErrors")
+	sample.IpInUnknownProtosPerS = r("Ip.InUnknownProtos")
+	sample.IpInDiscardsPerS = r("Ip.InDiscards")
+	sample.IpOutDiscardsPerS = r("Ip.OutDiscards")
+	sample.IpOutNoRoutesPerS = r("Ip.OutNoRoutes")
+	sample.IpReasmTimeoutPerS = r("Ip.ReasmTimeout")
+
+	// Ip6*. Three have no IPv4 peer, and that is the kernel's asymmetry
+	// rather than a gap here: the Ip: block has no InNoRoutes at all, and
+	// "packet too big" is an ICMPv6 fact IPv4 records as fragmentation.
+	sample.Ip6InReceivesPerS = r("Snmp6.Ip6InReceives")
+	sample.Ip6InDeliversPerS = r("Snmp6.Ip6InDelivers")
+	sample.Ip6OutRequestsPerS = r("Snmp6.Ip6OutRequests")
+	sample.Ip6OutForwDatagramsPerS = r("Snmp6.Ip6OutForwDatagrams")
+	sample.Ip6ReasmOksPerS = r("Snmp6.Ip6ReasmOKs")
+	sample.Ip6FragOksPerS = r("Snmp6.Ip6FragOKs")
+	sample.Ip6InHdrErrorsPerS = r("Snmp6.Ip6InHdrErrors")
+	sample.Ip6InAddrErrorsPerS = r("Snmp6.Ip6InAddrErrors")
+	sample.Ip6InUnknownProtosPerS = r("Snmp6.Ip6InUnknownProtos")
+	sample.Ip6InDiscardsPerS = r("Snmp6.Ip6InDiscards")
+	sample.Ip6OutDiscardsPerS = r("Snmp6.Ip6OutDiscards")
+	sample.Ip6OutNoRoutesPerS = r("Snmp6.Ip6OutNoRoutes")
+	sample.Ip6InNoRoutesPerS = r("Snmp6.Ip6InNoRoutes")
+	sample.Ip6InTooBigErrorsPerS = r("Snmp6.Ip6InTooBigErrors")
+	sample.Ip6ReasmTimeoutPerS = r("Snmp6.Ip6ReasmTimeout")
+
+	// Icmp:, which counts ICMPv4 alone -- unlike Tcp:, the kernel does not
+	// fold v6 into it. The last four are the informational half: echo is
+	// reachability, not failure, and shares no axis with the errors above.
+	sample.IcmpInMsgsPerS = r("Icmp.InMsgs")
+	sample.IcmpOutMsgsPerS = r("Icmp.OutMsgs")
+	sample.IcmpInErrorsPerS = r("Icmp.InErrors")
+	sample.IcmpOutErrorsPerS = r("Icmp.OutErrors")
+	sample.IcmpInDestUnreachsPerS = r("Icmp.InDestUnreachs")
+	sample.IcmpOutDestUnreachsPerS = r("Icmp.OutDestUnreachs")
+	sample.IcmpInTimeExcdsPerS = r("Icmp.InTimeExcds")
+	sample.IcmpOutTimeExcdsPerS = r("Icmp.OutTimeExcds")
+	sample.IcmpInParmProbsPerS = r("Icmp.InParmProbs")
+	sample.IcmpOutParmProbsPerS = r("Icmp.OutParmProbs")
+	sample.IcmpInRedirectsPerS = r("Icmp.InRedirects")
+	sample.IcmpOutRedirectsPerS = r("Icmp.OutRedirects")
+	sample.IcmpInEchosPerS = r("Icmp.InEchos")
+	sample.IcmpOutEchosPerS = r("Icmp.OutEchos")
+	sample.IcmpInEchoRepsPerS = r("Icmp.InEchoReps")
+	sample.IcmpOutEchoRepsPerS = r("Icmp.OutEchoReps")
+
+	// Icmp6*. The spellings follow the kernel's icmp6type2name[] table, so
+	// two differ from their v4 peers: ParmProblems, not ParmProbs, and
+	// EchoReplies, not EchoReps. The neighbour-discovery counters at the end
+	// are IPv6's informational traffic -- there is no ARP, so a host that
+	// stops answering neighbour solicits disappears from its segment.
+	sample.Icmp6InMsgsPerS = r("Snmp6.Icmp6InMsgs")
+	sample.Icmp6OutMsgsPerS = r("Snmp6.Icmp6OutMsgs")
+	sample.Icmp6InErrorsPerS = r("Snmp6.Icmp6InErrors")
+	sample.Icmp6OutErrorsPerS = r("Snmp6.Icmp6OutErrors")
+	sample.Icmp6InDestUnreachsPerS = r("Snmp6.Icmp6InDestUnreachs")
+	sample.Icmp6OutDestUnreachsPerS = r("Snmp6.Icmp6OutDestUnreachs")
+	sample.Icmp6InTimeExcdsPerS = r("Snmp6.Icmp6InTimeExcds")
+	sample.Icmp6OutTimeExcdsPerS = r("Snmp6.Icmp6OutTimeExcds")
+	sample.Icmp6InParmProblemsPerS = r("Snmp6.Icmp6InParmProblems")
+	sample.Icmp6OutParmProblemsPerS = r("Snmp6.Icmp6OutParmProblems")
+	sample.Icmp6InPktTooBigsPerS = r("Snmp6.Icmp6InPktTooBigs")
+	sample.Icmp6OutPktTooBigsPerS = r("Snmp6.Icmp6OutPktTooBigs")
+	sample.Icmp6InRedirectsPerS = r("Snmp6.Icmp6InRedirects")
+	sample.Icmp6OutRedirectsPerS = r("Snmp6.Icmp6OutRedirects")
+	sample.Icmp6InEchosPerS = r("Snmp6.Icmp6InEchos")
+	sample.Icmp6OutEchosPerS = r("Snmp6.Icmp6OutEchos")
+	sample.Icmp6InEchoRepliesPerS = r("Snmp6.Icmp6InEchoReplies")
+	sample.Icmp6OutEchoRepliesPerS = r("Snmp6.Icmp6OutEchoReplies")
+	sample.Icmp6InNeighborSolicitsPerS = r("Snmp6.Icmp6InNeighborSolicits")
+	sample.Icmp6OutNeighborSolicitsPerS = r("Snmp6.Icmp6OutNeighborSolicits")
+	sample.Icmp6InNeighborAdvertisementsPerS = r("Snmp6.Icmp6InNeighborAdvertisements")
+	sample.Icmp6OutNeighborAdvertisementsPerS = r("Snmp6.Icmp6OutNeighborAdvertisements")
+	sample.Icmp6InRouterSolicitsPerS = r("Snmp6.Icmp6InRouterSolicits")
+	sample.Icmp6OutRouterSolicitsPerS = r("Snmp6.Icmp6OutRouterSolicits")
+	sample.Icmp6InRouterAdvertisementsPerS = r("Snmp6.Icmp6InRouterAdvertisements")
+	sample.Icmp6OutRouterAdvertisementsPerS = r("Snmp6.Icmp6OutRouterAdvertisements")
 
 	return &Result{Host: sample}, nil
 }

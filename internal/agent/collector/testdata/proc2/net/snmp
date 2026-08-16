@@ -1,7 +1,7 @@
 Ip: Forwarding DefaultTTL InReceives InHdrErrors InAddrErrors ForwDatagrams InUnknownProtos InDiscards InDelivers OutRequests OutDiscards OutNoRoutes ReasmTimeout ReasmReqds ReasmOKs ReasmFails FragOKs FragFails FragCreates
-Ip: 1 64 1060000 0 0 0 0 0 1059000 948000 0 0 0 460 434 26 130 11 310
+Ip: 1 64 1090000 28 29 2120 6 19 1071000 936000 53 38 52 460 434 26 130 14 316
 Icmp: InMsgs InErrors InCsumErrors InDestUnreachs InTimeExcds InParmProbs InSrcQuenchs InRedirects InEchos InEchoReps InTimestamps InTimestampReps InAddrMasks InAddrMaskReps OutMsgs OutErrors OutDestUnreachs OutTimeExcds OutParmProbs OutSrcQuenchs OutRedirects OutEchos OutEchoReps OutTimestamps OutTimestampReps OutAddrMasks OutAddrMaskReps
-Icmp: 160 0 0 80 0 0 0 0 80 0 0 0 0 0 160 0 80 0 0 0 0 0 80 0 0 0 0
+Icmp: 280 25 0 83 45 17 0 35 200 114 0 0 0 0 268 60 95 68 52 0 76 123 188 0 0 0 0
 IcmpMsg: InType3 InType8 OutType0 OutType3
 IcmpMsg: 80 80 80 80
 Tcp: RtoAlgorithm RtoMin RtoMax MaxConn ActiveOpens PassiveOpens AttemptFails EstabResets CurrEstab InSegs OutSegs RetransSegs InErrs OutRsts InCsumErrors

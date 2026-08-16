@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { MetricsResponse } from "../../../lib/api";
-import { Graphs, UNAVAILABLE } from "./Graphs";
+import { Graphs } from "./Graphs";
 import { ABSENT } from "../../../lib/format";
 
 function response(
@@ -23,6 +23,43 @@ function response(
     ...over,
   };
 }
+
+// The host_snmp family, carrying exactly the columns the three IP/ICMP panels
+// draw. It is a SECOND host-level family, not more columns on "host": the
+// counters live in their own table so host_samples' continuous aggregates
+// never had to be dropped and recreated.
+const fullHostSnmp = response({
+  family: "host_snmp",
+  columns: [
+    "ip_in_receives_per_s",
+    "ip_out_requests_per_s",
+    "ip6_in_receives_per_s",
+    "ip6_out_requests_per_s",
+    "icmp_in_errors_per_s",
+    "icmp_out_errors_per_s",
+    "icmp_in_dest_unreachs_per_s",
+    "icmp6_in_errors_per_s",
+    "icmp_in_echos_per_s",
+    "icmp_out_echo_reps_per_s",
+    "icmp6_in_echos_per_s",
+    "icmp6_out_echo_replies_per_s",
+  ],
+  series: [
+    {
+      key: {},
+      points: [
+        [
+          1_754_784_000_000, 800, 700, 220, 190, 0.2, 0.1, 0.3, 0.1, 1.2, 1.1,
+          0.5, 0.4,
+        ],
+        [
+          1_754_784_060_000, 820, 710, 225, 195, 0.3, 0.2, 0.4, 0.2, 1.3, 1.2,
+          0.6, 0.5,
+        ],
+      ],
+    },
+  ],
+});
 
 // A tier that carries uptime but none of the load columns -- the case that
 // makes lib/metrics.ts's column() throw mid-render if it is called blind.
@@ -78,23 +115,50 @@ describe("Graphs", () => {
     }
   });
 
-  it("renders the three families with no data behind them as explicitly not collected, with the reason", () => {
+  // These three used to be hardcoded "not collected" panels: spec §11 listed
+  // IP statistics, ICMP statistics and ICMP informational as families with no
+  // data behind them anywhere in the schema. They are collected now, so the
+  // assertion is inverted -- they must draw, and nothing in the Network group
+  // may still claim a permanent schema gap.
+  it("draws the IP and ICMP panels from the host_snmp family", () => {
+    render(<Graphs host={fullHost} hostSnmp={fullHostSnmp} />);
+
+    for (const title of [
+      "IP statistics",
+      "ICMP statistics",
+      "ICMP informational",
+    ]) {
+      expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
+      expect(
+        screen.queryByRole("region", { name: `${title}, not collected` }),
+      ).not.toBeInTheDocument();
+    }
+  });
+
+  // Without the family the three panels have nothing to draw, and that must
+  // read as "this window has no samples" rather than as a chart of zeroes --
+  // absent is not zero (spec §7.5). It must also not take the Network group's
+  // other panels down with it.
+  it("leaves the IP and ICMP panels empty when the host_snmp family is absent", () => {
     render(<Graphs host={fullHost} />);
-    for (const [title, reason] of Object.entries(UNAVAILABLE)) {
-      const panel = screen.getByRole("region", {
-        name: `${title}, not collected`,
-      });
-      expect(panel).toHaveTextContent("Not collected");
-      expect(panel).toHaveTextContent(reason);
+
+    // Not merely present: each of the three says it has nothing to draw,
+    // which is the whole point -- a blank chart would assert the host
+    // reported zeroes.
+    for (const title of [
+      "IP statistics",
+      "ICMP statistics",
+      "ICMP informational",
+    ]) {
+      expect(
+        screen.getByRole("region", { name: `${title}, not collected` }),
+      ).toHaveTextContent("No data has been read for this family yet.");
     }
-    // The three §11 panels are the ones whose reason is a SCHEMA statement:
-    // the columns do not exist anywhere, at any tier, so no range brings
-    // them back. Other panels may also be unavailable in a given window --
-    // an empty chart would assert the host reported nothing (spec §7.6) --
-    // but they say something different and recoverable.
-    for (const reason of Object.values(UNAVAILABLE)) {
-      expect(screen.getByText(reason)).toBeInTheDocument();
-    }
+    // And the family it does have still draws, so one absent fetch does not
+    // take the rest of the Network group with it.
+    expect(
+      screen.getByRole("heading", { name: "IP fragmentation" }),
+    ).toBeInTheDocument();
   });
 
   // The failure this replaces: a panel whose columns this tier does not
@@ -103,10 +167,10 @@ describe("Graphs", () => {
   it("names the columns a tier is missing instead of drawing a blank panel", () => {
     render(<Graphs host={sparseHost} />);
 
-    // More than the three schema gaps: this tier is missing columns of its
-    // own, and each of those panels says which ones and that a shorter
-    // range brings them back.
-    expect(screen.getAllByText("Not collected").length).toBeGreaterThan(3);
+    // This tier is missing columns of its own, and each of those panels says
+    // which ones and that a shorter range brings them back. (It used to also
+    // count the three permanent schema gaps; those are collected now.)
+    expect(screen.getAllByText("Not collected").length).toBeGreaterThan(0);
     expect(
       screen.getAllByText(/not stored at the .* resolution/).length,
     ).toBeGreaterThan(0);
