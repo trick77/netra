@@ -36,6 +36,17 @@ export interface ChartPanelProps {
   unit?: string;
   series?: Band[];
   max?: number;
+  /**
+   * A fixed floor for a non-stacked panel, overriding the data's own
+   * minimum.
+   *
+   * Auto-scaling from the data is right for a series with no natural zero --
+   * a sensor between 44 and 47 degrees must not be drawn flat against a 0-47
+   * box -- and wrong for one whose scale IS the reading: filesystem usage
+   * read against its own 88-95 extent looks like a crisis on every host.
+   * A stacked panel is drawn from zero regardless.
+   */
+  min?: number;
   fmt?: (n: number | null) => string;
   /** The sentence from windowNotice() (lib/metrics.ts) explaining a served
    * window clamped by retention or materialisation lag. Rendered verbatim
@@ -45,6 +56,17 @@ export interface ChartPanelProps {
    * columns in the schema". Presence of this prop switches the whole panel
    * to the dashed not-collected state instead of drawing an empty chart. */
   unavailable?: string;
+  /**
+   * What the unavailable state calls itself. Defaults to "Not collected",
+   * which is the usual cause and the wrong words for all of them.
+   *
+   * A memory panel on a host that reported mem_used and mem_free but never
+   * mem_total is not a panel with no data -- the bands are right there, and
+   * only the scale to read them against is missing. Saying "not collected"
+   * about it is the same conflation this file refuses everywhere else, and
+   * it would send a reader looking for a broken collector.
+   */
+  unavailableHeadline?: string;
   width?: number;
   height?: number;
   highlight?: string;
@@ -148,9 +170,11 @@ export function ChartPanel({
   unit,
   series = [],
   max,
+  min,
   fmt,
   notice,
   unavailable,
+  unavailableHeadline = "Not collected",
   width = 260,
   // Tall enough to carry an axis. A panel used to be a 64px shape whose only
   // number was the headline, so reading a magnitude off it meant enlarging
@@ -175,12 +199,15 @@ export function ChartPanel({
 }: ChartPanelProps) {
   if (unavailable !== undefined) {
     return (
-      <section className="smp na" aria-label={`${title}, not collected`}>
+      <section
+        className="smp na"
+        aria-label={`${title}, ${unavailableHeadline.toLowerCase()}`}
+      >
         <div className="t">
           <h4>{title}</h4>
         </div>
         <div className="box">
-          <span>Not collected</span>
+          <span>{unavailableHeadline}</span>
           <span>{unavailable}</span>
         </div>
       </section>
@@ -240,7 +267,11 @@ export function ChartPanel({
   // that cannot answer how much.
   const valueAxis = axis && !hideAxis;
 
-  const floor = stacked ? 0 : extent(series.flatMap((s) => s.values)).min;
+  // A named floor before the derived one -- see the `min` prop for which
+  // panels have one and why the rest must keep auto-scaling.
+  const floor = stacked
+    ? 0
+    : (min ?? extent(series.flatMap((s) => s.values)).min);
   // ONE interval, not two or three. niceTicks rounds its step DOWN, so the
   // count it is given is a floor on how many labels come back, not a target:
   // asking for two over a 0-100 axis returns five (20/40/60/80/100), and
@@ -293,6 +324,10 @@ export function ChartPanel({
         // no explicit one is given, which is what it has always done.
         series={series}
         max={max}
+        // The panel's floor too, when it has a named one: a dialog opened
+        // from a 0-100 filesystem panel that rescaled itself to the data's
+        // own extent would redraw the shape the reader just clicked.
+        min={min}
         fmt={fmt}
         stacked={stacked}
         legend={legend}
@@ -331,7 +366,7 @@ export function ChartPanel({
           // where auto-scaling off the data's floor is deliberate -- a
           // temperature series between 44 and 47 degrees must not be drawn
           // as a flat line pinned to the bottom of a 0-47 box.
-          min={stacked ? 0 : undefined}
+          min={stacked ? 0 : min}
           width={width}
           height={height}
           highlight={highlight}

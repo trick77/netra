@@ -616,7 +616,14 @@ function backTarget(hostId: string, search: string) {
   params.delete("from");
   const rest = params.toString();
   const query = rest ? `?${rest}` : "";
-  const target = BACK_TARGETS[from]?.(hostId) ?? {
+  // hasOwn, not a bare lookup: BACK_TARGETS is an object literal, so
+  // `?from=toString` and `?from=constructor` find something on
+  // Object.prototype, call it, and hand back a value with no `path` on it --
+  // Back then navigates to the string "undefined" and renders a nameless
+  // button. A whitelist has to actually be one.
+  const target = (Object.hasOwn(BACK_TARGETS, from)
+    ? BACK_TARGETS[from]?.(hostId)
+    : undefined) ?? {
     path: `/hosts/${hostId}/graphs`,
     label: "Back to graphs",
   };

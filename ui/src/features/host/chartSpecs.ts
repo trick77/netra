@@ -157,6 +157,24 @@ interface PanelSpec {
    * "sda read" and "sdb read" stay distinguishable inside one panel. */
   bases: { base: string; label: string }[];
   max?: number;
+  /**
+   * A fixed floor, for a non-stacked panel whose scale is the reading.
+   *
+   * Without it a line chart is scaled from the data's own minimum, which is
+   * right for a sensor sitting between 44 and 47 degrees and wrong for
+   * filesystem usage: six mounts between 88% and 95% would fill the box top
+   * to bottom, drawing "nearly full" and "nearly full" as a dramatic spread
+   * -- and disagreeing with the fleet cell, which pins 0-100. A stacked
+   * panel is always drawn from zero and ignores this.
+   */
+  min?: number;
+  /**
+   * The ladder the y-axis ticks step on. 1024 for a panel formatted in
+   * binary bytes: ticked decimally, a 16 GiB host reads 1.9 / 3.7 / 5.6 GiB
+   * and every label on the axis is a ragged number. The same choice the
+   * host overview's memory card makes.
+   */
+  tickBase?: 1000 | 1024;
   fmt?: (n: number | null) => string;
   /** Read this family's columns as booleans (1 = true), not as numbers. */
   boolean?: boolean;
@@ -239,6 +257,47 @@ interface PanelSpec {
   ceiling?: (res: MetricsResponse) => number | null;
 }
 
+/**
+ * Room above a reference rule so it reads as a limit rather than as the top
+ * border of the plot.
+ *
+ * The same 1.08 as MEM_HEADROOM in the fleet's memory cell and the literal
+ * in the host overview's memory card, which each still own theirs. This one
+ * is what every SPEC-driven view uses -- the Graphs tab's panel, the chart
+ * page and its range thumbnails -- so that a panel and the page it links to
+ * cannot scale the same host differently, which is the class of bug these
+ * specs exist to close.
+ */
+export const REFERENCE_HEADROOM = 1.08;
+
+/**
+ * A ceiling read from the data, or nothing.
+ *
+ * Zero and negative are absent, not a scale: `?? undefined` alone would let
+ * a mem_total of 0 through as a real ceiling, and everything downstream then
+ * divides by it -- stackBands scales a running total by `max` -- while the
+ * "no ceiling" refusal, which tests only for undefined, would say the view
+ * has a scale to draw against.
+ */
+export function ceilingOf(
+  value: number | null | undefined,
+): number | undefined {
+  return value != null && value > 0 ? value : undefined;
+}
+
+/**
+ * What a view says instead of drawing a spec whose ceiling is missing.
+ *
+ * ONE spelling, called by both the Graphs tab's panel and the chart page --
+ * the same rule missingReason() follows and for the same reason. The panel
+ * and the page it links to are two views of one host, and the moment the
+ * sentence exists twice they are free to drift about which hosts they
+ * decline to draw and why.
+ */
+export function noCeilingReason(spec: PanelSpec): string {
+  return `This host reported no ${spec.title.toLowerCase()} ceiling in this window, so there is no scale to draw the bands against.`;
+}
+
 // The window's last non-null reading. mem_total is a constant for the life of
 // a boot, so any bucket carrying it answers "how much memory does this host
 // have" -- but the LAST bucket is routinely null (the tier materialises
@@ -306,6 +365,7 @@ export const SYSTEM: PanelSpec[] = [
     ceiling: (res) => lastKnown(griddedValues(res, 0, "mem_total")),
     stacked: true,
     fmt: (n) => binaryBytes(n),
+    tickBase: 1024,
   },
   // One band per logical CPU, each divided by the core count so the top of
   // the stack is the mean -- cpu_total. Unnormalised, 32 cores at 50% would
@@ -636,6 +696,13 @@ export const STORAGE: PanelSpec[] = [
       { base: "free", label: "free" },
     ],
     bands: filesystemBands,
+    // Both ends fixed, like the cell (DiskTrendCell passes min={0} max={100}).
+    // The ceiling alone is not enough: a non-stacked panel is otherwise
+    // scaled from the data's own floor, so six mounts between 88% and 95%
+    // would be spread across the whole plot -- the exact self-scaling this
+    // chart exists to avoid, and a different picture from the sparkline the
+    // reader clicked.
+    min: 0,
     max: 100,
     fmt: (n) => percent(n),
   },

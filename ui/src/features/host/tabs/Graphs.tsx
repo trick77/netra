@@ -14,9 +14,12 @@ import {
   SYSTEM,
   NETWORK,
   STORAGE,
+  REFERENCE_HEADROOM,
   bandsFor,
+  ceilingOf,
   familyFor,
   missingReason,
+  noCeilingReason,
   type Family,
   type PanelSpec,
 } from "../chartSpecs";
@@ -78,14 +81,36 @@ function Panel({
         };
       }
     : undefined;
+  // A ceiling the DATA carries -- memory's mem_total -- and the dashed rule
+  // marking it, exactly as the chart page reads them. The panel used to pass
+  // spec.max alone, which is undefined for host-memory: ChartPanel then fell
+  // back to the stack's own running total, so every host's Memory panel drew
+  // a full box with no rule on it. That is the always-full reading this spec
+  // carries a ceiling to prevent.
+  const reference =
+    res && spec.ceiling ? ceilingOf(spec.ceiling(res)) : undefined;
   // An empty band list has two causes and they are not the same fact: this
   // tier does not carry the columns (the rollups drop most per-state
   // columns), or nothing has been fetched yet. Either way an empty chart
   // asserts "the host reported nothing", which spec 7.6 forbids -- so the
   // panel says which one it is instead of drawing a blank box.
+  //
+  // A spec that declares a ceiling and cannot find one is the third cause,
+  // and it is not "no data": the bands are there, the scale to read them
+  // against is not. The chart page refuses this case outright rather than
+  // auto-scaling it, and the tab has to refuse it too -- drawing it here
+  // while declining it there would leave the panel and the page it links to
+  // disagreeing about the same host.
+  const noCeiling =
+    series.length > 0 &&
+    res !== null &&
+    spec.ceiling !== undefined &&
+    reference === undefined
+      ? noCeilingReason(spec)
+      : undefined;
   const unavailable =
     series.length > 0
-      ? undefined
+      ? noCeiling
       : res === null
         ? "No data has been read for this family yet."
         : missingReason(spec, res);
@@ -111,9 +136,25 @@ function Panel({
             (range === undefined ? "" : `?range=${encodeURIComponent(range)}`)
       }
       title={spec.title}
+      // "Not collected" would be a lie here: the bands exist, the scale to
+      // read them against does not, and a reader sent looking for a broken
+      // collector would find a perfectly healthy one.
+      unavailableHeadline={
+        noCeiling === undefined ? undefined : "No scale to draw against"
+      }
       unit={spec.unit}
       series={series}
-      max={spec.max}
+      // Headroom above the rule so it reads as a limit rather than as the
+      // top border of the plot -- the same 1.08 the fleet cell, the host
+      // overview's memory card and the chart page all use.
+      max={
+        reference !== undefined
+          ? reference * REFERENCE_HEADROOM
+          : (spec.max ?? undefined)
+      }
+      reference={reference}
+      min={spec.min}
+      tickBase={spec.tickBase}
       fmt={spec.fmt}
       stacked={spec.stacked}
       mirrored={spec.mirrored}

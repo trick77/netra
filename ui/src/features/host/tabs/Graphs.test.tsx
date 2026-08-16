@@ -374,3 +374,72 @@ describe("Graphs", () => {
     expect(screen.getAllByText(/was clamped to/)).toHaveLength(1);
   });
 });
+
+// The Memory panel is scaled against mem_total, on the tab as on the page.
+//
+// It is the one panel here whose ceiling comes from the DATA rather than
+// from a literal in its spec, and the panel used to pass `spec.max` alone --
+// undefined for host-memory -- so ChartPanel fell back to the stack's own
+// running total. A stack scaled to itself always touches the top, which
+// draws every host as nearly out of memory whatever its headroom: the single
+// reading this chart exists to avoid, and the reason the fleet cell and the
+// chart page both refuse to draw it without a total.
+describe("the Memory panel's ceiling", () => {
+  // Inside the response's own window, unlike the fixtures above: these two
+  // assertions are about VALUES, and a point outside the window is gridded
+  // to a null that would drop every band before the scale is ever chosen.
+  const at = Date.parse("2026-08-10T00:00:00Z");
+
+  function memory(columns: string[], point: number[]): MetricsResponse {
+    return response({
+      family: "host",
+      columns,
+      series: [
+        {
+          key: {},
+          points: [
+            [at, ...point],
+            [at + 60_000, ...point],
+          ],
+        },
+      ],
+    });
+  }
+
+  it("draws the mem_total rule the page draws", () => {
+    render(
+      <Graphs
+        host={memory(
+          ["mem_used", "mem_free", "mem_total"],
+          [1_073_741_824, 3_221_225_472, 4_294_967_296],
+        )}
+      />,
+    );
+
+    const panel = screen.getByRole("region", { name: "Memory chart" });
+    // The dashed rule IS the ceiling made visible: with no reference the
+    // panel is auto-scaled, and nothing in the plot says what the top of the
+    // stack is a fraction of.
+    expect(panel.querySelector("[data-reference]")).not.toBeNull();
+  });
+
+  it("refuses to draw at all when the host reported no total", () => {
+    render(<Graphs host={memory(["mem_used"], [1_073_741_824])} />);
+
+    // Named, not drawn -- the same refusal ChartPage makes, so the panel and
+    // the page it links to cannot disagree about this host.
+    //
+    // "No scale", never "Not collected": mem_used and mem_free are right
+    // there, and only the total to read them against is missing. Calling
+    // that "not collected" would send a reader hunting a broken collector.
+    const panel = screen.getByRole("region", {
+      name: "Memory, no scale to draw against",
+    });
+    // Scoped to this panel: the fixture carries mem_used alone, so most of
+    // the tab genuinely IS not collected and says so.
+    expect(panel.textContent).not.toMatch(/Not collected/);
+    expect(
+      screen.getByText(/no memory ceiling in this window/i),
+    ).toBeInTheDocument();
+  });
+});

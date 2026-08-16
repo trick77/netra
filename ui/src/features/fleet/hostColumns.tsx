@@ -31,8 +31,6 @@ import type { Severity } from "../../ui/Badge";
 import type { Condition, ConditionKind, HostGroup } from "./conditions";
 import { rangeLabel, type Range } from "../../lib/range";
 import { Enlargeable } from "../../ui/charts/Enlargeable";
-import { MAX_PER_CORE, cpuBands, fetchHostFamily } from "./hostTrends";
-import { FLEET_RANGE_VALUES } from "./ranges";
 
 // The range is only ever a label here: this file never resolves one into a
 // getMetrics() call, it labels a chart that has already been handed

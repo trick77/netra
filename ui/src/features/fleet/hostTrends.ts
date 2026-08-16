@@ -9,7 +9,6 @@ import {
   counterIncrease,
   fsName,
   griddedValues,
-  hasReading,
   latestValue,
   peakBase,
   sumSeries,
