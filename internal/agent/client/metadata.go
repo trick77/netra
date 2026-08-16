@@ -39,7 +39,7 @@ func BuildMetadata(cfg config.Config) *netrav1.Metadata {
 		BuildCommit:  buildinfo.Commit(),
 		Hostname:     hostname,
 		Arch:         runtime.GOARCH,
-		OsName:       runtime.GOOS,
+		OsName:       osName(cfg.OsRelease),
 		Threads:      uint32(runtime.NumCPU()),
 		Location:     cfg.Location,
 		Provider:     cfg.Provider,
@@ -63,6 +63,67 @@ func readKernelRelease(procRoot string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(raw))
+}
+
+// osName returns the host's distro name -- "Debian GNU/Linux 12 (bookworm)"
+// -- falling back to runtime.GOOS when os-release cannot be read. That
+// fallback is the bare "linux" the UI draws a generic penguin for, and it is
+// the honest answer: an agent whose os-release was never mounted knows the
+// kernel it runs on and nothing more about the distro.
+func osName(osReleasePath string) string {
+	if name := readOSRelease(osReleasePath); name != "" {
+		return name
+	}
+	return runtime.GOOS
+}
+
+// readOSRelease returns PRETTY_NAME from an os-release file, falling back to
+// NAME, and "" when the file cannot be read or holds neither.
+//
+// The file is PARSED, never sourced. Its format is shell-compatible by
+// design, which invites a host to hand the agent something like
+// NAME="$(rm -rf /)" -- so every value here is data and stays data, exactly
+// as setup-agent.sh treats the same file. Only one layer of surrounding
+// quotes comes off; anything inside them is passed through verbatim.
+func readOSRelease(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+
+	name := ""
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), "=")
+		if !ok {
+			continue
+		}
+		value = unquote(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+
+		switch strings.TrimSpace(key) {
+		case "PRETTY_NAME":
+			// The preferred field, and the only one worth an early return:
+			// nothing later in the file outranks it.
+			return value
+		case "NAME":
+			// Held, not returned: a PRETTY_NAME below it still wins.
+			name = value
+		}
+	}
+	return name
+}
+
+// unquote strips one matching pair of surrounding quotes. os-release values
+// are conventionally double-quoted; single quotes and bare words both occur.
+func unquote(s string) string {
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		return s[1 : len(s)-1]
+	}
+	return s
 }
 
 // readCPUInfo returns the CPU model string and the number of PHYSICAL cores.

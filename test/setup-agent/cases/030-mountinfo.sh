@@ -197,6 +197,26 @@ assert_contains "$NETRA_BLK_VOLUMES" 'source: "/sys/fs/cgroup"' \
 assert_contains "$NETRA_BLK_VOLUMES" "target: /host/sys/fs/cgroup" \
     "the cgroup hierarchy lands on /host/sys/fs/cgroup, not /sys/fs/cgroup"
 
+# The os-release bind: the agent reads PRETTY_NAME from it for the distro name
+# and the mark drawn beside it. The TARGET is under /host and not over the
+# container's own /etc/os-release, which the Alpine image really has -- mounting
+# over it would make a forgotten mount report "Alpine Linux" for every host
+# instead of falling back to the visible generic "linux".
+OSRELEASE_ENABLED=1
+build_volume_block
+assert_contains "$NETRA_BLK_VOLUMES" 'source: "/etc/os-release"' \
+    "the host os-release is mounted when it exists"
+assert_contains "$NETRA_BLK_VOLUMES" "target: /host/etc/os-release" \
+    "os-release lands on /host/etc/os-release, never over the image's own"
+
+# A host without /etc/os-release emits no bind at all: a long-form bind does not
+# create a missing source, so the container would refuse to start.
+OSRELEASE_ENABLED=0
+build_volume_block
+assert_not_contains "$NETRA_BLK_VOLUMES" "os-release" \
+    "no os-release bind is emitted when the host has no /etc/os-release"
+OSRELEASE_ENABLED=1
+
 # A space in the mount point survives into a quoted source rather than breaking
 # the YAML.
 mkdir -p "$ROOT/mnt/my data"

@@ -74,6 +74,19 @@ type Config struct {
 	// silence into a logged collector error instead.
 	CgroupRoot string
 
+	// OsRelease is the host's os-release file, read once at startup for the
+	// distro name the UI puts a mark beside.
+	//
+	// The default is the HOST's file bind-mounted to /host/etc/os-release,
+	// and it is NOT /etc/os-release for the same reason CgroupRoot is not
+	// /sys/fs/cgroup, only worse: this image is Alpine and HAS an
+	// /etc/os-release of its own. A missing mount would not read nothing, it
+	// would read "Alpine Linux" and report it for every host in the fleet --
+	// a wrong answer with nothing to distinguish it from a right one. A path
+	// that exists only when the mount was granted degrades to the GOOS
+	// fallback instead, which is what the UI's generic Tux already means.
+	OsRelease string
+
 	// DpkgStatus and ApkInstalled are the package databases. Whichever exists
 	// decides the format; a host with neither reports an unsupported-format
 	// capability rather than failing.
@@ -107,6 +120,7 @@ func Load() (Config, error) {
 		FsMounts: fsMounts(os.Getenv("NETRA_FS_MOUNTS")),
 
 		CgroupRoot:   envOr("NETRA_CGROUP_ROOT", "/host/sys/fs/cgroup"),
+		OsRelease:    envOr("NETRA_OS_RELEASE", "/host/etc/os-release"),
 		DpkgStatus:   envOr("NETRA_DPKG_STATUS", "/var/lib/dpkg/status"),
 		ApkInstalled: envOr("NETRA_APK_INSTALLED", "/lib/apk/db/installed"),
 	}

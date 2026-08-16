@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
 
@@ -103,6 +104,111 @@ func TestBuildMetadataLeavesHardwareFactsEmptyWhenProcIsUnreadable(t *testing.T)
 	// The facts that do not come from /proc still report.
 	if md.GetThreads() == 0 {
 		t.Error("threads = 0; it comes from the runtime, not /proc")
+	}
+}
+
+// osReleaseFixture writes an os-release file and returns its path.
+func osReleaseFixture(t *testing.T, body string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "os-release")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write os-release: %v", err)
+	}
+	return path
+}
+
+// os_name was runtime.GOOS, a build constant, so every host in the fleet
+// reported the literal string "linux" and the host page drew the generic
+// penguin beside it. The distro mark the UI already ships needs the real
+// name.
+func TestBuildMetadataReportsTheDistroName(t *testing.T) {
+	osRelease := osReleaseFixture(t, "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\n"+
+		"NAME=\"Debian GNU/Linux\"\nID=debian\nVERSION_ID=\"12\"\n")
+
+	md := client.BuildMetadata(config.Config{
+		ProcRoot:  procFixture(t, "", "", "6.1.0-13-amd64\n"),
+		OsRelease: osRelease,
+	})
+
+	if got := md.GetOsName(); got != "Debian GNU/Linux 12 (bookworm)" {
+		t.Errorf("os_name = %q, want the PRETTY_NAME", got)
+	}
+}
+
+// PRETTY_NAME wins wherever it sits in the file, and an unquoted value is as
+// valid as a quoted one -- the format allows both.
+func TestBuildMetadataPrefersPrettyNameOverName(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "pretty name below name",
+			body: "NAME=\"Ubuntu\"\nPRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\n",
+			want: "Ubuntu 24.04.1 LTS",
+		},
+		{
+			name: "pretty name above name",
+			body: "PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nNAME=\"Ubuntu\"\n",
+			want: "Ubuntu 24.04.1 LTS",
+		},
+		{
+			name: "unquoted",
+			body: "PRETTY_NAME=Alpine Linux v3.20\n",
+			want: "Alpine Linux v3.20",
+		},
+		{
+			name: "single quoted",
+			body: "PRETTY_NAME='Arch Linux'\n",
+			want: "Arch Linux",
+		},
+		{
+			name: "name only",
+			body: "NAME=\"Fedora Linux\"\nID=fedora\n",
+			want: "Fedora Linux",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			md := client.BuildMetadata(config.Config{
+				ProcRoot:  procFixture(t, "", "", "\n"),
+				OsRelease: osReleaseFixture(t, tc.body),
+			})
+
+			if got := md.GetOsName(); got != tc.want {
+				t.Errorf("os_name = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// No mount, no file: the agent knows the kernel it runs on and nothing more
+// about the distro, and GOOS says exactly that. It is also what the UI's
+// generic Tux fallback is written for.
+func TestBuildMetadataFallsBackToGOOSWithoutOsRelease(t *testing.T) {
+	md := client.BuildMetadata(config.Config{
+		ProcRoot:  procFixture(t, "", "", "\n"),
+		OsRelease: filepath.Join(t.TempDir(), "absent"),
+	})
+
+	if got := md.GetOsName(); got != runtime.GOOS {
+		t.Errorf("os_name = %q, want the GOOS fallback %q", got, runtime.GOOS)
+	}
+}
+
+// os-release is shell-COMPATIBLE, not shell to run. A value that looks like a
+// command substitution is a string like any other, and it reaches the hub
+// unevaluated and unmangled -- setup-agent.sh parses the same file under the
+// same rule.
+func TestBuildMetadataTreatsOsReleaseAsDataNotShell(t *testing.T) {
+	md := client.BuildMetadata(config.Config{
+		ProcRoot:  procFixture(t, "", "", "\n"),
+		OsRelease: osReleaseFixture(t, "PRETTY_NAME=\"$(id) `whoami` ${HOME}\"\n"),
+	})
+
+	if got := md.GetOsName(); got != "$(id) `whoami` ${HOME}" {
+		t.Errorf("os_name = %q, want the value verbatim", got)
 	}
 }
 
