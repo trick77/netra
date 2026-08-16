@@ -1527,19 +1527,19 @@ a {
   background: var(--surface-2);
   white-space: nowrap;
 }
-/* The chrome comes off, the box does not: border-color rather than border,
-   so a status badge and a neutral one beside it still sit on the same
-   baseline and the same 1px of edge is still in the box model. Weight drops
-   to 500 -- 600 was carrying a filled chip, and the dot now does that work.
-   Colour is --st-*-text below, measured against the plain surface, because
-   there is no longer a tint under the word to eat its contrast. */
+/* The tint comes off, the frame does not: a status badge keeps the base
+   border, ground and padding, so it sits in the same box as the neutral
+   badge beside it -- what changes with severity is the dot and the word,
+   never the area. That is what fifty warned hosts need: fifty identical
+   boxes rank themselves by their dots, fifty tinted ones rank themselves by
+   colour area. Weight drops to 500 -- 600 was carrying a filled chip, and
+   the dot now does that work. Colour is --st-*-text below, measured against
+   the plain surface, because there is no tint under the word to eat its
+   contrast. */
 .badge.st-ok,
 .badge.st-warn,
 .badge.st-serious,
 .badge.st-crit {
-  background: none;
-  border-color: transparent;
-  padding: 1px 0;
   font-weight: 500;
 }
 .dot {
