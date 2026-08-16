@@ -86,6 +86,104 @@ func TestIntegrationListHostsReportsCurrentGaugesAndNullsForSilentHosts(t *testi
 	}
 }
 
+// The fleet overview's failed-unit count, and specifically the difference
+// between "nothing is wrong" and "nobody has looked".
+//
+// The count is the agent's own services_failed summary carried forward on
+// host_current, NOT a derivation from systemd_unit_events -- see migration
+// 0003. The two facts that rules the event log out are worth restating,
+// because both look fine in a hand-seeded test and fail in production: the
+// collector emits a unit event only for a unit already failed at its first
+// scrape or on a transition, so a healthy host has NO unit rows at all; and
+// the event log is pruned at 90 days, so a long-failed unit loses the event
+// that proves it.
+//
+// This test therefore seeds host_current the way ingest writes it, and never
+// touches systemd_units.
+func TestIntegrationListHostsReportsFailedServicesAndKnowsWhenItHasNotLooked(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+
+	seedCurrent := func(hostname string, servicesFailed any) {
+		id := seedHost(t, pool, hostname)
+		exec(t, pool, `
+			INSERT INTO host_current (host_id, last_seen, services_failed)
+			VALUES ($1, now(), $2)`, id, servicesFailed)
+	}
+
+	seedCurrent("broken", 2)
+	// A host running systemd with nothing wrong. This is the case a
+	// systemd_unit_events derivation got wrong: it emits no events, so the
+	// event log cannot tell it apart from "unwatched" below.
+	seedCurrent("healthy", 0)
+	// A host with no systemd at all -- the agent sends no summary and the
+	// column stays NULL.
+	seedCurrent("nosystemd", nil)
+	// Registered, never posted: no host_current row whatsoever.
+	seedHost(t, pool, "unwatched")
+
+	hosts, err := svc.ListHosts(ctx)
+	if err != nil {
+		t.Fatalf("ListHosts: %v", err)
+	}
+	byName := map[string]read.HostSummary{}
+	for _, h := range hosts {
+		byName[h.Hostname] = h
+	}
+
+	for _, tc := range []struct {
+		host string
+		want *int32
+	}{
+		{"broken", ptr(int32(2))},
+		{"healthy", ptr(int32(0))},
+		{"nosystemd", nil},
+		{"unwatched", nil},
+	} {
+		// Presence first: byName returns a zero HostSummary for a missing key,
+		// whose ServicesFailed is nil, so a nil expectation would otherwise
+		// pass even if the join had dropped the row entirely.
+		got, ok := byName[tc.host]
+		if !ok {
+			t.Errorf("%s missing from ListHosts", tc.host)
+			continue
+		}
+		switch {
+		case tc.want == nil && got.ServicesFailed != nil:
+			t.Errorf("%s services_failed = %d, want null -- netra has not looked",
+				tc.host, *got.ServicesFailed)
+		case tc.want != nil && got.ServicesFailed == nil:
+			t.Errorf("%s services_failed = null, want %d", tc.host, *tc.want)
+		case tc.want != nil && got.ServicesFailed != nil && *got.ServicesFailed != *tc.want:
+			t.Errorf("%s services_failed = %d, want %d",
+				tc.host, *got.ServicesFailed, *tc.want)
+		}
+	}
+}
+
+// The detail endpoint embeds HostSummary, so a column the list selects and
+// the detail does not comes back as a confident null for every host -- the
+// trap the Threads and Capabilities comments both warn about.
+func TestIntegrationHostDetailCarriesFailedServicesToo(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+
+	id := seedHost(t, pool, "broken")
+	exec(t, pool, `
+		INSERT INTO host_current (host_id, last_seen, services_failed)
+		VALUES ($1, now(), 3)`, id)
+
+	host, err := svc.Host(ctx, id)
+	if err != nil {
+		t.Fatalf("Host: %v", err)
+	}
+	if host.ServicesFailed == nil || *host.ServicesFailed != 3 {
+		t.Errorf("detail services_failed = %v, want 3", host.ServicesFailed)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
 // Capabilities are the reason this endpoint exists apart from the list: they
 // are the only way to tell "this host has no hwmon" from "the sensors
 // collector never ran". Without them every NULL elsewhere in the API is
