@@ -299,6 +299,40 @@ describe("Table collapsible groups", () => {
     expect(screen.queryByText("host-a")).toBeNull();
   });
 
+  // The same promise, against the click that used to break it: while the
+  // filter holds every group open the disclosure cannot move anything, so a
+  // reader who clicks one -- meaning to shut the noise -- must not have that
+  // click applied behind the filter and handed back to them when it clears.
+  it("ignores a click while forceExpanded, rather than remembering it", () => {
+    const table = (over: Record<string, unknown>) => (
+      <Table
+        columns={groupedColumns}
+        rows={groupedRows}
+        rowKey={(r: Grouped) => r.id}
+        groupBy={{ ...collapsible, ...over }}
+      />
+    );
+    const { rerender } = render(table({}));
+
+    // Open ams by hand, then filter: both groups are open now.
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]!);
+    rerender(table({ forceExpanded: true }));
+
+    // Click both headers while the filter holds them open: nothing moves.
+    for (const button of screen.getAllByRole("button", { expanded: true })) {
+      fireEvent.click(button);
+    }
+    expect(screen.getByText("host-a")).toBeInTheDocument();
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+
+    // ... and clearing it leaves exactly what the reader had: ams open, zrh
+    // shut. Without the guard, both clicks would have landed -- ams shut,
+    // zrh open.
+    rerender(table({ forceExpanded: false }));
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+    expect(screen.queryByText("host-a")).toBeNull();
+  });
+
   // A group that is not collapsible has no disclosure at all -- the lists
   // that group without summarising are unchanged.
   it("draws no disclosure when the caller did not ask for one", () => {

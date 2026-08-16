@@ -279,12 +279,10 @@ export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
           groups.map(([key, rowsInGroup]) => {
             const collapsible = groupBy?.collapsible === true;
             // The filter WINS over the reader's choice while it is on, and
-            // `opened` is never written while it is on, so clearing the box
-            // restores exactly what they had.
-            const open =
-              !collapsible ||
-              groupBy?.forceExpanded === true ||
-              opened.has(key);
+            // `opened` is never written while it is on (the toggle below
+            // refuses), so clearing the box restores exactly what they had.
+            const forced = groupBy?.forceExpanded === true;
+            const open = !collapsible || forced || opened.has(key);
             const bodyId = `${tableId}-${key}`;
             return (
               <tbody key={key} id={bodyId}>
@@ -307,14 +305,21 @@ export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
                           className="gtoggle"
                           aria-expanded={open}
                           aria-controls={bodyId}
-                          onClick={() =>
+                          onClick={() => {
+                            // Nothing while the filter forces every group
+                            // open: the group cannot move, and recording a
+                            // click that changed nothing would hand the
+                            // reader a different list when they clear the
+                            // box -- the one thing forceExpanded promises
+                            // not to do.
+                            if (forced) return;
                             setOpened((prev) => {
                               const next = new Set(prev);
                               if (next.has(key)) next.delete(key);
                               else next.add(key);
                               return next;
-                            })
-                          }
+                            });
+                          }}
                         >
                           <ChevronRight className="chev" aria-hidden="true" />
                           {/* The button's accessible name. The heading beside

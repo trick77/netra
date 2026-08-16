@@ -2147,6 +2147,11 @@ tbody:first-of-type .grouprow th {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+}
+/* Only where the cell gave its padding up (above). A group header without a
+   disclosure keeps the padding on its th, and putting it here as well would
+   pad that header twice. */
+.grouprow th:has(.gtoggle) .ghead {
   padding: 9px var(--space-4);
 }
 .glabel {

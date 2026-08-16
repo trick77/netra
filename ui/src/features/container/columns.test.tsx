@@ -240,4 +240,18 @@ describe("ContainerGroupTotals", () => {
 
     expect(screen.getAllByText(ABSENT)).toHaveLength(2);
   });
+
+  // A capped group that has not reported: the ceiling is known, the reading
+  // is not. One absent marker for the reading, and no Meter behind it -- with
+  // no value Meter prints an absent marker of its own, so the header would
+  // otherwise say "Mem — / 4.1 kB —".
+  it("draws no bar for a capped group that has reported no memory", () => {
+    const { container } = render(
+      <ContainerGroupTotals rows={[makeRow({ mem_limit_bytes: 4096 })]} />,
+    );
+
+    expect(container.querySelector(".meter")).toBeNull();
+    expect(screen.getByText("/ 4.1 kB")).toBeInTheDocument();
+    expect(screen.getAllByText(ABSENT)).toHaveLength(2);
+  });
 });

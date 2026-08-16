@@ -189,12 +189,15 @@ export function ContainerGroupTotals({
             the groups that have one. */}
         <span className="of">{limit === null ? "" : `/ ${bytes(limit)}`}</span>
         <span className="gmeter">
-          {limit === null ? null : (
+          {limit === null || mem === null ? null : (
             // Meter, not a bar of this file's own: the severity thresholds and
             // the >100% clamp are decisions that must not exist twice. Its
             // reading is blanked because the bytes and the ceiling are already
             // printed to its left -- a third number saying the same ratio is
-            // the clutter, not the information.
+            // the clutter, not the information. Which is also why a group that
+            // has reported no memory draws nothing here rather than a Meter:
+            // with no value Meter falls back to printing the absent marker,
+            // and the header already carries one where the bytes would be.
             <Meter value={mem} max={limit} formatValue={() => ""} />
           )}
         </span>
