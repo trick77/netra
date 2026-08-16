@@ -57,7 +57,9 @@ describe("ChartPanel", () => {
         series={[{ name: "used", color: "var(--s1)", values: [1, 2, 3] }]}
       />,
     );
-    expect(screen.getByText("3 GB")).toBeInTheDocument();
+    // Scoped to the headline: the axis reads `fmt` too, so a ceiling of 3
+    // labels a tick "3 GB" as well, and a bare getByText matches both.
+    expect(document.querySelector(".now")?.textContent).toContain("3 GB");
   });
 
   it("does not render the unavailable box when data is present", () => {
@@ -84,8 +86,12 @@ describe("ChartPanel", () => {
       />,
     );
 
-    expect(screen.queryByText("43")).toBeNull();
-    expect(screen.getByText(ABSENT)).toBeInTheDocument();
+    // The headline specifically. "43" is legitimately on the axis now -- it
+    // is the series' ceiling -- and what must never appear is 43 as the
+    // CURRENT reading beside a hole.
+    const headline = document.querySelector(".now")?.textContent;
+    expect(headline).not.toContain("43");
+    expect(headline).toBe(ABSENT);
   });
 
   // With one series the unit says everything; with several, series[0]'s
@@ -222,7 +228,9 @@ describe("ChartPanel", () => {
     );
 
     const rule = container.querySelector("svg [data-reference]")!;
-    // Scaled from zero: 64 - 2 - 0.5 * 60 = 32, the midline.
+    // Scaled from zero: 64 - 2 - 0.5 * 60 = 32, the midline. (A 64-tall box
+    // is below the panel's axis threshold, so the plot is the whole image
+    // and this is unaffected by the axis margins.)
     // Scaled from the data's floor of 800 the fraction would be negative and
     // the rule would fall off the bottom of the box entirely.
     expect(Number(rule.getAttribute("y1"))).toBeCloseTo(32, 5);

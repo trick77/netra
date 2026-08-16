@@ -246,7 +246,7 @@ describe("ContainerPage", () => {
     renderPage();
 
     const legends = [...document.querySelectorAll(".legend")];
-    expect(legends.map((l) => l.textContent)).toContain("ingressegress");
+    expect(legends.map((l) => l.textContent)).toContain("inout");
     expect(legends.map((l) => l.textContent)).toContain("readwrite");
   });
 

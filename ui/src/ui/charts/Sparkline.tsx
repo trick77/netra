@@ -2,7 +2,8 @@
 // where the fill closes, where the axis floor/ceiling sits) comes from
 // geometry.ts verbatim -- this component only turns that output into SVG
 // markup and never recomputes or "fixes up" a coordinate itself.
-import { areaPath, dotPath, extent, linePath } from "./geometry";
+import { extent } from "./geometry";
+import { Chart } from "./Chart";
 import { SPARK_WIDTH } from "./size";
 
 export interface SparklineProps {
@@ -48,61 +49,22 @@ export function Sparkline({
   max,
   fill = true,
 }: SparklineProps) {
+  // Free-scaled by default: a sparkline with no declared extent is drawn
+  // between its own, so a flat-but-not-zero series still has a shape. Chart
+  // derives the floor the same way, but it takes an explicit ceiling, so the
+  // data's own max is resolved here.
   const auto = extent(values);
-  const floor = min ?? auto.min;
-  const ceiling = max ?? auto.max;
-  const { paths, points } = linePath(
-    values,
-    width,
-    height,
-    floor,
-    ceiling,
-    pad,
-  );
-  const areas = areaPath(paths, width, height, pad).filter((d) => d !== "");
 
   return (
-    <svg
-      className="spark"
-      viewBox={`0 0 ${width} ${height}`}
+    <Chart
+      series={[{ name: label, color, values }]}
       width={width}
       height={height}
-      role="img"
-      aria-label={label}
-    >
-      {fill &&
-        areas.map((d, i) => (
-          <path
-            key={`area-${i}`}
-            data-area
-            d={d}
-            fill={color}
-            fillOpacity={0.15}
-            stroke="none"
-          />
-        ))}
-      {paths.map((d, i) => (
-        <path
-          key={`line-${i}`}
-          data-line
-          d={d}
-          fill="none"
-          stroke={color}
-          strokeWidth={1.5}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      ))}
-      {points.map((p, i) => (
-        <path
-          key={`point-${i}`}
-          data-line
-          data-point
-          d={dotPath(p.x, p.y)}
-          fill={color}
-          stroke="none"
-        />
-      ))}
-    </svg>
+      min={min ?? auto.min}
+      max={max ?? auto.max}
+      pad={pad}
+      mark={fill ? "area" : "line"}
+      label={label}
+    />
   );
 }

@@ -266,8 +266,8 @@ function bandsFor(sampled: Sampled | null): ContainerBands {
     // the fleet row uses them: against green, blue separates by CVD dE 9 and
     // the two halves read as one mass.
     netBands: [
-      band("ingress", "var(--s2)", sampled?.netRx ?? empty),
-      band("egress", "var(--s5)", sampled?.netTx ?? empty),
+      band("in", "var(--s2)", sampled?.netRx ?? empty),
+      band("out", "var(--s5)", sampled?.netTx ?? empty),
     ],
     ioBands: [
       band("read", "var(--s2)", sampled?.ioRead ?? empty),
