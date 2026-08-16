@@ -225,21 +225,62 @@ export function groupByHost(conditions: readonly Condition[]): HostGroup[] {
  */
 export type AttentionFilter = "all" | "critical" | "warning" | ConditionKind;
 
-const CONDITION_KINDS: readonly ConditionKind[] = [
-  "silent",
-  "sporadic",
-  "dropped",
-  "oom",
-  "post-failures",
-  "failed-units",
-  "disk",
-];
+/**
+ * Every kind's name and the severity it is normally at.
+ *
+ * Static, and that is the point: a label derived from the conditions actually
+ * present disappears the moment the last host carrying that kind recovers,
+ * and the page is then holding a filter it cannot name -- "Showing 0 of 100
+ * hosts with · show all", with a severity segment pressed for something that
+ * is no longer on screen. A reader who followed a link to a kind that has
+ * since cleared deserves to be told which kind cleared.
+ *
+ * The severity here is the kind's ENTRY severity, used only when nothing is
+ * carrying the kind any more; a kind that is present takes its severity from
+ * the conditions themselves (see groupByKind), because disk warns at 90% and
+ * turns critical at 95% and the counts line must not understate that.
+ */
+const CONDITION_KIND_INFO: Record<
+  ConditionKind,
+  { label: string; severity: Severity }
+> = {
+  silent: { label: "Stopped reporting", severity: "critical" },
+  sporadic: { label: "Reporting sporadically", severity: "warning" },
+  dropped: { label: "Samples dropped", severity: "critical" },
+  oom: { label: "OOM kills", severity: "critical" },
+  "post-failures": { label: "Failed deliveries", severity: "warning" },
+  "failed-units": { label: "Failed units", severity: "warning" },
+  disk: { label: `Filesystem over ${DISK_WARN_PCT}%`, severity: "warning" },
+};
+
+const CONDITION_KINDS = Object.keys(
+  CONDITION_KIND_INFO,
+) as readonly ConditionKind[];
+
+/** The kind's name, with no data needed to produce it. */
+export function kindLabel(kind: ConditionKind): string {
+  return CONDITION_KIND_INFO[kind].label;
+}
+
+/** The severity a kind enters at -- see CONDITION_KIND_INFO. */
+export function kindSeverity(kind: ConditionKind): Severity {
+  return CONDITION_KIND_INFO[kind].severity;
+}
 
 /** Narrows an AttentionFilter to a kind -- and validates an arbitrary string,
  * which is what a URL parameter is. A ?attn= nobody recognises is "all",
  * never a filter that silently matches nothing. */
 export function isConditionKind(value: string): value is ConditionKind {
   return (CONDITION_KINDS as readonly string[]).includes(value);
+}
+
+/**
+ * The kind a filter names, or null -- looked up in the static table rather
+ * than in the conditions on screen, so a filter whose last host recovered can
+ * still say what it is filtering to.
+ */
+export function filterKind(filter: AttentionFilter): ConditionKind | null {
+  return isConditionKind(filter) ? filter : null;
 }
 
 export interface KindGroup {
@@ -339,7 +380,7 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       ...base,
       kind: "silent",
       severity: "critical",
-      label: "Stopped reporting",
+      label: kindLabel("silent"),
       what:
         row.last_seen === null
           ? "Has never reported"
@@ -357,7 +398,7 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       ...base,
       kind: "sporadic",
       severity: "warning",
-      label: "Reporting sporadically",
+      label: kindLabel("sporadic"),
       what: "Reporting sporadically — gaps in the last few hours",
       since: null,
       evidence: { type: "reporting" },
@@ -380,7 +421,7 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       ...base,
       kind: "dropped",
       severity: "critical",
-      label: "Samples dropped",
+      label: kindLabel("dropped"),
       what: `${row.dropped} ${row.dropped === 1 ? "sample" : "samples"} dropped before delivery — this host's history has holes`,
       since: null,
       // Deliberately none. The evidence is data that is not there, and every
@@ -401,7 +442,7 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       ...base,
       kind: "oom",
       severity: "critical",
-      label: "OOM kills",
+      label: kindLabel("oom"),
       what: `${row.oomKills} OOM ${row.oomKills === 1 ? "kill" : "kills"} — the kernel killed processes to reclaim memory`,
       since: null,
       evidence: { type: "memory" },
@@ -421,7 +462,7 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       ...base,
       kind: "post-failures",
       severity: "warning",
-      label: "Failed deliveries",
+      label: kindLabel("post-failures"),
       what: `${row.postFailures} failed ${row.postFailures === 1 ? "delivery" : "deliveries"} to the hub in this window`,
       since: null,
       evidence: null,
@@ -448,7 +489,7 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       ...base,
       kind: "failed-units",
       severity: "warning",
-      label: "Failed units",
+      label: kindLabel("failed-units"),
       // The count alone: the names are the evidence beside it now, not part
       // of the sentence. Grouped by kind, thirty-one hosts print thirty-one
       // sentences, and repeating three unit names inside every one of them
@@ -475,7 +516,7 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       ...base,
       kind: "disk",
       severity: fullest.pct >= DISK_CRIT_PCT ? "critical" : "warning",
-      label: `Filesystem over ${DISK_WARN_PCT}%`,
+      label: kindLabel("disk"),
       what: `${fullest.mount} is ${percent(fullest.pct)} full`,
       // Walked back through THIS mount's own series -- see fullestFilesystem
       // in hostTrends.ts, which owns the walk because it is the only place

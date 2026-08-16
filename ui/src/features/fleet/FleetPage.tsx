@@ -15,11 +15,14 @@ import { StatTile } from "../../ui/StatTile";
 import { Tabs } from "../../ui/Tabs";
 import { AttentionCounts } from "./AttentionCounts";
 import {
+  filterKind,
   fleetConditions,
   groupByHost,
   groupByKind,
   hostsNeedingAttention,
   isConditionKind,
+  kindLabel,
+  kindSeverity,
   severityRank,
   type AttentionFilter,
   type Condition,
@@ -178,6 +181,17 @@ export interface FleetPageProps {
   attention?: AttentionFilter;
   onAttentionChange?: (next: AttentionFilter) => void;
   /**
+   * Where a filter link points.
+   *
+   * The default writes the filter and nothing else, which is right for a page
+   * rendered on its own. A page whose URL is in charge passes one built from
+   * the current query string instead: cmd-click and copy-link go to the href
+   * rather than through onAttentionChange, and "/?attn=disk" would land the
+   * recipient on a fleet with the density, entity and range reset -- exactly
+   * what App's own comment says a shared fleet view must not do.
+   */
+  attentionHref?: (next: AttentionFilter) => string;
+  /**
    * When the fleet was last read, for the all-clear line. Spec 4.3: the
    * quiet line exists to confirm the check RAN, so a page handed its data
    * from outside (Wave 5's poller, or a test) must be able to say when.
@@ -210,6 +224,7 @@ export function FleetPage({
   density: controlledDensity,
   attention: controlledAttention,
   onAttentionChange,
+  attentionHref = (next) => (next === "all" ? "/" : `/?attn=${next}`),
   checkedAt: injectedCheckedAt,
   containerError: injectedContainerError,
   now = new Date(),
@@ -382,12 +397,17 @@ export function FleetPage({
   const matchesAttention = (row: HostRow): boolean => {
     const group = byHost.get(String(row.id));
     if (group === undefined) return false;
-    if (isConditionKind(attention)) {
-      return group.conditions.some((c) => c.kind === attention);
+    if (activeKind !== null) {
+      return group.conditions.some((c) => c.kind === activeKind);
     }
     return hasSeverity(group, attention === "critical");
   };
 
+  // From the filter itself, never from the conditions on screen: the last
+  // host carrying a kind can recover between the link being sent and being
+  // opened, and a page that cannot name the filter it is applying reads as
+  // broken ("Showing 0 of 100 hosts with").
+  const activeKind = filterKind(attention);
   const filtered = attention === "all";
   const attentionHosts = filtered
     ? visibleHosts
@@ -413,7 +433,7 @@ export function FleetPage({
     ? undefined
     : {
         groups: byHost,
-        kind: isConditionKind(attention) ? attention : null,
+        kind: activeKind,
         range,
       };
 
@@ -459,7 +479,8 @@ export function FleetPage({
               it. */}
           <AttentionCounts
             kinds={kinds}
-            active={isConditionKind(attention) ? attention : null}
+            active={activeKind}
+            href={attentionHref}
             onSelect={setAttention}
           />
         </>
@@ -556,13 +577,20 @@ export function FleetPage({
             // stays pressed while it is chosen -- Segmented's contract is
             // exactly one pressed option, and a kind chosen from the counts
             // line above must not leave all three looking unselected.
+            // A kind is a severity's subset, so the segment that contains it
+            // stays pressed while it is chosen -- Segmented's contract is
+            // exactly one pressed option, and a kind chosen from the counts
+            // line above must not leave all three looking unselected. The
+            // observed severity when the kind is present (disk warns at 90%
+            // and turns critical at 95%), its entry severity when every host
+            // carrying it has recovered.
             value={
-              isConditionKind(attention)
-                ? kinds.find((k) => k.kind === attention)?.severity ===
-                  "critical"
+              activeKind === null
+                ? attention
+                : (kinds.find((k) => k.kind === activeKind)?.severity ??
+                      kindSeverity(activeKind)) === "critical"
                   ? "critical"
                   : "warning"
-                : attention
             }
             onChange={(next) => setAttention(next as AttentionFilter)}
           />
@@ -594,12 +622,12 @@ export function FleetPage({
         <p className="countline">
           Showing <strong>{orderedHosts.length}</strong> of {hostRows.length}{" "}
           host{hostRows.length === 1 ? "" : "s"}
-          {isConditionKind(attention)
-            ? ` with ${(kinds.find((k) => k.kind === attention)?.label ?? "").toLowerCase()}`
-            : ` with something ${attention}`}{" "}
+          {activeKind === null
+            ? ` with something ${attention}`
+            : ` with ${kindLabel(activeKind).toLowerCase()}`}{" "}
           ·{" "}
           <a
-            href="/"
+            href={attentionHref("all")}
             onClick={(event) => {
               if (
                 event.defaultPrevented ||
@@ -626,12 +654,14 @@ export function FleetPage({
             rows={orderedHosts}
             range={range}
             attention={attentionView}
+            filtered={hostRows.length > 0}
           />
         ) : (
           <HostCards
             rows={orderedHosts}
             range={range}
             attention={attentionView}
+            filtered={hostRows.length > 0}
           />
         )
       ) : (

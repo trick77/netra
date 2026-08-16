@@ -14,6 +14,9 @@ export interface HostTableProps {
    * the fleet" -- see AttentionView. Passed straight through: which columns
    * a question needs is hostColumns' decision, not this file's. */
   attention?: AttentionView;
+  /** True when this list is empty because something is filtering it rather
+   * than because the hub has no hosts -- see FleetEmptyState. */
+  filtered?: boolean;
 }
 
 /**
@@ -27,11 +30,16 @@ export interface HostTableProps {
  * hostname; with index keys React would reuse a row's DOM for a different
  * host, carrying one host's chart state onto another's data.
  */
-export function HostTable({ rows, range, attention }: HostTableProps) {
+export function HostTable({
+  rows,
+  range,
+  attention,
+  filtered = false,
+}: HostTableProps) {
   if (rows.length === 0) {
     // An empty <table> renders as a bare header rail, which reads as a
     // loading glitch rather than as "this hub has no hosts yet".
-    return <FleetEmptyState />;
+    return <FleetEmptyState filtered={filtered} />;
   }
 
   return (

@@ -587,6 +587,71 @@ describe("FleetPage data fetching", () => {
     expect(screen.queryByText("db-01")).toBeNull();
   });
 
+  // Onboarding copy in front of a hundred hosts is the page contradicting
+  // itself. Reachable by opening a shared "/?attn=oom" link after that kind
+  // cleared -- and by the text filter, which could always do it.
+  it("says the filter is hiding the fleet, not that the fleet is empty", () => {
+    render(
+      <FleetPage
+        rows={[makeRow({ id: 1, hostname: "web-01", oomKills: 3 })]}
+        attention="oom"
+        onAttentionChange={() => {}}
+        conditions={[]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    expect(screen.getByText(/no hosts match/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no hosts yet/i)).toBeNull();
+  });
+
+  it("keeps the onboarding state for a hub with no hosts at all", () => {
+    render(<FleetPage rows={[]} checkedAt={null} now={NOW} />);
+
+    expect(screen.getByText(/no hosts yet/i)).toBeInTheDocument();
+  });
+
+  // The label comes from the static kind table, not from the conditions on
+  // screen: the last host carrying a kind can recover between a link being
+  // sent and being opened, and "Showing 0 of 1 hosts with · show all" is a
+  // sentence with its noun missing.
+  it("still names the kind it is filtering to after that kind clears", () => {
+    render(
+      <FleetPage
+        rows={[makeRow({ id: 1, hostname: "web-01" })]}
+        attention="oom"
+        onAttentionChange={() => {}}
+        conditions={[]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    expect(screen.getByText(/with oom kills/i)).toBeInTheDocument();
+  });
+
+  // A cmd-click never reaches onAttentionChange -- it follows the href -- so
+  // an href naming only the filter would drop the density, entity and range
+  // the reader is on.
+  it("lets the page decide where a filter link points", () => {
+    render(
+      <FleetPage
+        rows={[makeRow({ id: 1, hostname: "web-01", oomKills: 3 })]}
+        attentionHref={(next) =>
+          next === "all" ? "/?view=cards" : `/?view=cards&attn=${next}`
+        }
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: /OOM kills/ })).toHaveAttribute(
+      "href",
+      "/?view=cards&attn=oom",
+    );
+  });
+
   // A host with nothing wrong is never in an attention view, whichever way
   // the reader got there.
   it("offers no severity control when the whole fleet is healthy", () => {

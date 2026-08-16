@@ -237,17 +237,28 @@ function crossedAt(
   }
 
   let start = -1;
+  // Whether the walk ever SAW this filesystem under the threshold. That, not
+  // reaching index 0, is what separates a crossing from a floor: the loop
+  // steps over gap buckets, so an agent that restarted at the window edge
+  // leaves bucket 0 empty and the walk stops at bucket 1 having never seen a
+  // reading below the line. Dated from `start` that printed a precise
+  // "23 h ago" for a disk that was over threshold for the whole observable
+  // window -- the fabricated onset this function exists to avoid.
+  let dropped = false;
   for (let i = count - 1; i >= 0; i--) {
     const u = used[i];
     const f = free[i];
     // A bucket with no reading, or one whose two halves add to nothing, says
     // nothing either way -- keep walking.
     if (u === null || f === null || u + f === 0) continue;
-    if ((u / (u + f)) * 100 < threshold) break;
+    if ((u / (u + f)) * 100 < threshold) {
+      dropped = true;
+      break;
+    }
     start = i;
   }
   if (start < 0) return { since: null, atLeast: false };
-  if (start === 0) return { since: res.window.from, atLeast: true };
+  if (!dropped) return { since: res.window.from, atLeast: true };
   return {
     since: new Date(from + start * stepMs).toISOString(),
     atLeast: false,

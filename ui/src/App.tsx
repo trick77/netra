@@ -490,6 +490,13 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       // "" clears the parameter -- withParam drops an empty value, so the
       // unfiltered fleet is the bare URL rather than /?attn=all.
       onAttentionChange={(next) => setParam("attn", next === "all" ? "" : next)}
+      // Built from the CURRENT query string, so the density, entity and range
+      // the reader is on survive a cmd-click or a copied link -- withParam
+      // drops the value when it is empty, which is how "all" becomes the bare
+      // fleet URL rather than ?attn=all.
+      attentionHref={(next) =>
+        "/" + withParam(search, "attn", next === "all" ? "" : next)
+      }
       checkedAt={poll.data?.at ?? null}
       containers={poll.data?.containers}
       containerError={

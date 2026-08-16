@@ -16,6 +16,9 @@ export interface HostCardsProps {
   /** See HostTable: the same pass-through, so a filtered fleet reads the
    * same whichever density the reader is on. */
   attention?: AttentionView;
+  /** True when this list is empty because something is filtering it rather
+   * than because the hub has no hosts -- see FleetEmptyState. */
+  filtered?: boolean;
 }
 
 /**
@@ -33,10 +36,15 @@ export interface HostCardsProps {
  * onto a third row rather than being dropped -- dropping it is the failure
  * mode this contract exists to prevent.
  */
-export function HostCards({ rows, range, attention }: HostCardsProps) {
+export function HostCards({
+  rows,
+  range,
+  attention,
+  filtered = false,
+}: HostCardsProps) {
   if (rows.length === 0) {
     // The table's empty state, not a copy of it.
-    return <FleetEmptyState />;
+    return <FleetEmptyState filtered={filtered} />;
   }
 
   // The header column is found by key, never by position: a column added at

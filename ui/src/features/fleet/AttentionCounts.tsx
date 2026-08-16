@@ -30,6 +30,13 @@ export interface AttentionCountsProps {
    * and FleetPage rendered on its own). The href is what does the work when
    * the URL is in charge. */
   onSelect: (next: AttentionFilter) => void;
+  /**
+   * Where each entry points. Supplied by the page, because the URL this link
+   * belongs in carries the reader's density, entity and range as well -- and
+   * a cmd-click goes to the href without ever reaching onSelect, so an href
+   * that names only the filter silently resets the other three.
+   */
+  href?: (next: AttentionFilter) => string;
 }
 
 const SEVERITY_CLASS: Record<string, string> = {
@@ -44,6 +51,7 @@ export function AttentionCounts({
   kinds,
   active,
   onSelect,
+  href = (next) => (next === "all" ? "/" : `/?attn=${next}`),
 }: AttentionCountsProps) {
   if (kinds.length === 0) return null;
 
@@ -65,7 +73,7 @@ export function AttentionCounts({
         return (
           <li key={kind.kind}>
             <a
-              href={next === "all" ? "/" : `/?attn=${next}`}
+              href={href(next)}
               // Not aria-pressed: this is a link, not a toggle button, and a
               // pressed link is a control a screen reader announces twice.
               // aria-current says "this is the one you are looking at", which
