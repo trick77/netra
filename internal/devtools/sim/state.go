@@ -158,12 +158,23 @@ func packageChanges(p *Profile, s signal, from, to time.Time) []timedEvent {
 		return nil
 	}
 
-	// The running version of anything already upgraded. Without it a package
-	// upgraded twice reports the same from_version both times, and the second
-	// event claims to start from a version the first one already replaced.
-	current := map[string]string{}
+	// Which package is upgraded when, for BOTH schedules, before any version
+	// is assigned to any of them.
+	//
+	// The two passes matter. Versions are a chain -- each upgrade starts from
+	// whatever the last one left behind -- so they can only be assigned
+	// walking forwards in time. Laying out the weekly runs across the whole
+	// window and only then starting the dist-upgrades at `from` again would
+	// read end-of-window versions for events dated near the beginning, and the
+	// log would show curl going 1.0.9 -> 1.0.10 on day 19 and 1.0.3 -> 1.0.4
+	// on day 21. Backwards, and worse, replayed by packageStateAt into an
+	// inventory that disagrees with its own history.
+	type upgrade struct {
+		at  time.Time
+		pkg PackageSpec
+	}
+	var ups []upgrade
 
-	var evs []timedEvent
 	for i, at := 0, from.Add(packageUpgradeInterval); at.Before(to); i, at = i+1, at.Add(packageUpgradeInterval) {
 		// Upgrade runs land in the small hours, like the timer that drives
 		// them.
@@ -171,41 +182,88 @@ func packageChanges(p *Profile, s signal, from, to time.Time) []timedEvent {
 		for j := range 3 {
 			key := fmt.Sprintf("%s/pkg/%d/%d", p.Hostname, i, j)
 			pkg := p.Packages[int(s.unit(key, at)*float64(len(p.Packages)))%len(p.Packages)]
-
-			from := pkg.Version
-			if v, ok := current[pkg.Name]; ok {
-				from = v
-			}
-			to := bumpVersion(from)
-			current[pkg.Name] = to
-
 			// Spaced by more than the coarse grid step: three upgrades 40
 			// seconds apart all land in one slot, share a timestamp, and any
 			// two that picked the same package collapse into one row.
-			evs = append(evs, timedEvent{ts: at.Add(time.Duration(j) * 7 * time.Minute), pkg: &netrav1.PackageEvent{
-				Name:        pkg.Name,
-				Action:      "upgrade",
-				FromVersion: from,
-				ToVersion:   to,
-			}})
+			ups = append(ups, upgrade{at: at.Add(time.Duration(j) * 7 * time.Minute), pkg: pkg})
 		}
+	}
+
+	// The occasional dist-upgrade, so a run big enough to be FOLDED exists.
+	//
+	// The weekly loop touches three packages and the events log caps a run at
+	// three (packageRunRows in hub/read/events.go), so without this no
+	// simulated run ever exceeds the cap and the "+N more" affordance is
+	// unreachable in a dev environment. That is the same shape of blind spot
+	// as the mdraid detail JSON drifting from the collector: the simulator
+	// quietly could not produce the state the UI was built for, so nobody
+	// could see it was wrong.
+	//
+	// One timestamp for the whole run, exactly as the agent stamps it
+	// (collector/packages.go takes a single clock read per scrape). That is
+	// what makes it one run rather than N runs of one.
+	for at := from.Add(distUpgradeInterval); at.Before(to); at = at.Add(distUpgradeInterval) {
+		at = at.Truncate(24 * time.Hour).Add(3*time.Hour + 41*time.Minute)
+		for j, pkg := range p.Packages {
+			if j >= distUpgradePackages {
+				break
+			}
+			ups = append(ups, upgrade{at: at, pkg: pkg})
+		}
+	}
+
+	sort.SliceStable(ups, func(i, j int) bool { return ups[i].at.Before(ups[j].at) })
+
+	// The running version of anything already upgraded. Without it a package
+	// upgraded twice reports the same from_version both times, and the second
+	// event claims to start from a version the first one already replaced.
+	current := map[string]string{}
+
+	var evs []timedEvent
+	for _, u := range ups {
+		was := u.pkg.Version
+		if v, ok := current[u.pkg.Name]; ok {
+			was = v
+		}
+		now := bumpVersion(was)
+		current[u.pkg.Name] = now
+
+		evs = append(evs, timedEvent{ts: u.at, pkg: &netrav1.PackageEvent{
+			Name:        u.pkg.Name,
+			Action:      "upgrade",
+			FromVersion: was,
+			ToVersion:   now,
+		}})
 	}
 
 	// Installs too, so package_events is not all upgrades. Periodic rather
 	// than one at the window's midpoint: the schedule now runs past the
 	// backfill into the live horizon, and a midpoint of that span would put
 	// the only install somewhere nobody ever sees.
+	//
+	// Outside the chain above because an install has no from_version to
+	// inherit: installablePackages are deliberately absent from p.Packages.
 	for i, at := 0, from.Add(packageInstallInterval); at.Before(to); i, at = i+1, at.Add(packageInstallInterval) {
 		pkg := installablePackages[i%len(installablePackages)]
 		evs = append(evs, timedEvent{ts: at.Truncate(24 * time.Hour).Add(21*time.Hour + 3*time.Minute), pkg: &netrav1.PackageEvent{
 			Name: pkg.Name, Action: "install", ToVersion: pkg.Version,
 		}})
 	}
+
 	return evs
 }
 
 // packageInstallInterval is how often somebody installs something new.
 const packageInstallInterval = 26 * 24 * time.Hour
+
+// distUpgradeInterval and distUpgradePackages describe the occasional big one:
+// a release upgrade that rewrites most of the system in a single apt
+// transaction. Rarer than the weekly timer and far larger, which is the
+// combination the events log's per-run cap exists for.
+const (
+	distUpgradeInterval = 19 * 24 * time.Hour
+	distUpgradePackages = 40
+)
 
 // installablePackages are the packages that get installed during a run. They
 // are deliberately NOT in packageNames: the point is that they appear in the

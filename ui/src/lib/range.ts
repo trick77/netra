@@ -109,3 +109,30 @@ export function rangeWindow(
 export function rangeMs(range: Range): number {
   return SPEC[range].seconds * 1000;
 }
+
+/**
+ * How many rows an events request should ask for, per window.
+ *
+ * A flat limit makes the wide buttons a lie: events accumulate with the
+ * window, so 500 rows over 30 days is the newest few days and a silent cut
+ * everywhere else -- the reader widens the range and sees the same page.
+ * These scale with the span so a wide window returns a wide answer.
+ *
+ * 5000 is maxEventLimit in internal/hub/read/events.go; the hub clamps rather
+ * than rejects, but asking for more than it will give is a lie in the other
+ * direction. Covers every Range, not just the four the events page offers, so
+ * the record stays total if the offered set changes.
+ *
+ * Here rather than in EventsPage because both the fleet log and the host
+ * page's Events tab read it and neither owns it -- the same reason messageOf
+ * and PackageRunFold are their own modules. A host page reaching into a page
+ * component for a constant is the import that gets awkward later, and a table
+ * keyed by Range belongs beside Range.
+ */
+export const EVENT_LIMITS: Record<Range, number> = {
+  "1h": 500,
+  "6h": 500,
+  "24h": 500,
+  "7d": 2000,
+  "30d": 5000,
+};

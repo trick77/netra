@@ -17,6 +17,7 @@ import type { Event } from "../../lib/api";
 import type { Range } from "../../lib/range";
 import { ABSENT, absolute, relative } from "../../lib/format";
 import { KNOWN_EVENT_TYPES, mdraidSeverity, messageOf } from "./message";
+import { PackageRunFold } from "./PackageRunFold";
 
 // The windows this page OFFERS: the log reaches back further than a metrics
 // chart does, because events are sparse and "what happened this week" is the
@@ -348,6 +349,7 @@ export function EventsPage({
                       (0001_init.sql), which is a fact worth marking rather
                       than an empty cell. */}
                   <span>{messageOf(event) || ABSENT}</span>
+                  <PackageRunFold event={event} />
                 </div>
               </div>
             ))}

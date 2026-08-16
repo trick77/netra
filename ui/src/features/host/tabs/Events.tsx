@@ -7,6 +7,7 @@ import { Badge, type Severity } from "../../../ui/Badge";
 import type { Column } from "../../../ui/Table";
 import { Inventory } from "./Inventory";
 import { messageOf } from "../../events/message";
+import { PackageRunFold } from "../../events/PackageRunFold";
 
 // Only these two carry a status tint. A package upgrade is not a
 // colour-coded emergency, so every other event is a neutral chip.
@@ -59,7 +60,16 @@ const COLUMNS: Column<Event>[] = [
   // What happened, rather than the detail JSON's keys and values spelled out.
   // Subject stays its own column: it is what the table is scanned and sorted
   // by, and the message repeats it inside a sentence rather than replacing it.
-  { key: "message", header: "Event", cell: (row) => messageOf(row) || ABSENT },
+  {
+    key: "message",
+    header: "Event",
+    cell: (row) => (
+      <>
+        {messageOf(row) || ABSENT}
+        <PackageRunFold event={row} />
+      </>
+    ),
+  },
 ];
 
 export interface EventsProps {

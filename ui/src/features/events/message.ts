@@ -47,10 +47,15 @@ function text(fields: Record<string, unknown>, key: string): string {
  * never a blank cell -- worse than terse is empty. */
 function everyField(fields: Record<string, unknown>): string {
   return Object.entries(fields)
-    .filter(([key]) => key !== "severity")
+    .filter(([key]) => !NOT_FACTS.has(key))
     .map(([key, value]) => `${key} ${String(value)}`)
     .join(" · ");
 }
+
+/** Detail keys that are instructions to this UI rather than facts about the
+ * event, and so have no place in a sentence describing it: the severity an
+ * emitter stated, and the two counts describing an apt run's truncation. */
+const NOT_FACTS = new Set(["severity", "run_size", "more"]);
 
 function packageMessage(name: string, f: Record<string, unknown>): string {
   const from = text(f, "from_version");
@@ -68,6 +73,47 @@ function packageMessage(name: string, f: Record<string, unknown>): string {
     default:
       return everyField(f) || name;
   }
+}
+
+/** A positive count, or 0. Used for the two run keys, which the hub omits
+ * entirely on an ordinary run rather than sending a zero. */
+function count(fields: Record<string, unknown>, key: string): number {
+  const value = fields[key];
+  return typeof value === "number" && value > 0 ? value : 0;
+}
+
+/**
+ * How many packages of this event's apt run were left out of the run's own
+ * rows, or 0.
+ *
+ * One `apt upgrade` writes one event per package, all sharing a timestamp, so
+ * a dist-upgrade would otherwise fill the whole page and push out the array
+ * that went degraded underneath it. The hub keeps the first few of each run
+ * and puts the remainder here (packageRunRows in hub/read/events.go).
+ *
+ * Deliberately NOT "how many the hub did not send", which is the same number
+ * only most of the time. Every row of a run shares one timestamp, so the outer
+ * LIMIT can cut through a run: when it does, fewer rows arrive than the run
+ * kept and the true count of absent packages is higher than this. The marker
+ * rides the run's first row precisely so it survives that cut -- an
+ * understated count on the oldest row of a page beats no count at all.
+ *
+ * Deliberately not folded into messageOf: the row still says what ITS package
+ * did, and the count is a separate affordance beside that sentence -- a link
+ * to where the rest actually live, not a clause in the middle of a sentence
+ * about curl.
+ */
+export function packagesOmitted(event: Event): number {
+  if (event.type !== "package") return 0;
+  return count(fields(event), "more");
+}
+
+/** How many packages the whole run touched, or 0 when the run was small
+ * enough to be shown in full. The fold's tooltip: the row says how many are
+ * hidden, this says how many there were. */
+export function packageRunSize(event: Event): number {
+  if (event.type !== "package") return 0;
+  return count(fields(event), "run_size");
 }
 
 function unitMessage(name: string, f: Record<string, unknown>): string {

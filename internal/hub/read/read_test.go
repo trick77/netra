@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -1105,5 +1106,170 @@ func TestIntegrationEventsUnitRecoveryFromOutsideTheWindow(t *testing.T) {
 	}
 	if got[0].TS.Before(now.Add(-2 * time.Hour)) {
 		t.Errorf("ts = %v, want the recovery inside the window, not the failure outside it", got[0].TS)
+	}
+}
+
+// One apt run is one timestamp: the agent takes a single clock read per scrape
+// and stamps the whole package diff with it. Unbounded, a dist-upgrade writing
+// 400 rows takes 400 of the 500 slots on the page and pushes the array that
+// went degraded off it -- so the branch keeps a few and counts the rest.
+func TestIntegrationEventsCapsOnePackageRun(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	id := seedHost(t, pool, "dist-upgrade")
+
+	// Ten packages, one timestamp: one `apt upgrade`.
+	exec(t, pool, `
+		INSERT INTO package_events (host_id, ts, name, action, from_version, to_version)
+		SELECT $1, now() - INTERVAL '2 hours', 'pkg-' || lpad(n::text, 3, '0'),
+		       'upgrade', '1.0', '1.1'
+		  FROM generate_series(1, 10) AS n`, id)
+
+	// A separate, ordinary run of two, an hour later.
+	exec(t, pool, `
+		INSERT INTO package_events (host_id, ts, name, action, from_version, to_version)
+		VALUES ($1, now() - INTERVAL '1 hour', 'curl',    'upgrade', '8.5.0', '8.5.0-2'),
+		       ($1, now() - INTERVAL '1 hour', 'libssl3', 'upgrade', '3.0.13', '3.0.14')`, id)
+
+	got, err := svc.Events(ctx, read.EventQuery{HostID: id}, now)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+
+	if len(got) != 5 {
+		t.Fatalf("got %d events, want 5 -- three of the ten-package run, plus both of the two", len(got))
+	}
+
+	t.Run("the big run is capped and says how many it hid", func(t *testing.T) {
+		var marked int
+		big := 0
+		for _, e := range got {
+			if e.Subject == nil || !strings.HasPrefix(*e.Subject, "pkg-") {
+				continue
+			}
+			big++
+			var detail map[string]any
+			if err := json.Unmarshal(e.Detail, &detail); err != nil {
+				t.Fatalf("unmarshal detail: %v", err)
+			}
+			if detail["run_size"] != float64(10) {
+				t.Errorf("run_size = %v, want 10 -- the run is counted before it is cut",
+					detail["run_size"])
+			}
+			if more, ok := detail["more"]; ok {
+				marked++
+				if more != float64(7) {
+					t.Errorf("more = %v, want 7", more)
+				}
+			}
+		}
+		if big != 3 {
+			t.Errorf("got %d rows of the ten-package run, want 3", big)
+		}
+		if marked != 1 {
+			t.Errorf("%d rows carry `more`, want exactly 1", marked)
+		}
+	})
+
+	t.Run("an ordinary run is untouched and carries neither key", func(t *testing.T) {
+		small := 0
+		for _, e := range got {
+			if e.Subject == nil || strings.HasPrefix(*e.Subject, "pkg-") {
+				continue
+			}
+			small++
+			var detail map[string]any
+			if err := json.Unmarshal(e.Detail, &detail); err != nil {
+				t.Fatalf("unmarshal detail: %v", err)
+			}
+			if _, ok := detail["run_size"]; ok {
+				t.Errorf("detail = %v, want no run_size on a run under the cap", detail)
+			}
+			if _, ok := detail["more"]; ok {
+				t.Errorf("detail = %v, want no `more` on a run under the cap", detail)
+			}
+		}
+		if small != 2 {
+			t.Errorf("got %d rows of the two-package run, want both", small)
+		}
+	})
+}
+
+// The reason the cap exists, stated as a test: an array that went degraded
+// before a dist-upgrade must still be on the page after it.
+func TestIntegrationEventsPackageBurstDoesNotEvictAnArray(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	id := seedHost(t, pool, "crowded")
+
+	exec(t, pool, `
+		INSERT INTO events (host_id, ts, type, subject, detail)
+		VALUES ($1, now() - INTERVAL '5 hours', 'mdraid', 'md0',
+		        '{"state":"clean","level":"raid1","raid_disks":2,"degraded":1,"sync_action":"idle"}')`, id)
+
+	exec(t, pool, `
+		INSERT INTO package_events (host_id, ts, name, action, from_version, to_version)
+		SELECT $1, now() - INTERVAL '1 hour', 'pkg-' || lpad(n::text, 4, '0'),
+		       'upgrade', '1.0', '1.1'
+		  FROM generate_series(1, 400) AS n`, id)
+
+	got, err := svc.Events(ctx, read.EventQuery{HostID: id}, now)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+
+	var array bool
+	for _, e := range got {
+		if e.Type == "mdraid" {
+			array = true
+		}
+	}
+	if !array {
+		t.Fatalf("the degraded array is not on the page: %d rows, all packages -- "+
+			"one apt run evicted the event the log exists for", len(got))
+	}
+	if len(got) != 4 {
+		t.Errorf("got %d rows, want 4 -- three packages and the array", len(got))
+	}
+}
+
+// The marker must survive the page boundary cutting through a run. Every kept
+// row of a run shares one ts, so a limit can land mid-run; putting `more` on
+// the LAST row loses it exactly then, and the reader sees a truncated run with
+// nothing saying so.
+func TestIntegrationEventsRunStraddlingTheLimitKeepsItsMarker(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	id := seedHost(t, pool, "straddle")
+
+	exec(t, pool, `
+		INSERT INTO package_events (host_id, ts, name, action, to_version)
+		SELECT $1, now() - INTERVAL '1 hour', 'pkg-' || lpad(n::text, 3, '0'),
+		       'upgrade', '1.1'
+		  FROM generate_series(1, 20) AS n`, id)
+
+	// A limit of 1 cuts after the first row of the run -- the harshest
+	// straddle there is.
+	got, err := svc.Events(ctx, read.EventQuery{HostID: id, Limit: 1}, now)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, want 1", len(got))
+	}
+
+	var detail map[string]any
+	if err := json.Unmarshal(got[0].Detail, &detail); err != nil {
+		t.Fatalf("unmarshal detail: %v", err)
+	}
+	if detail["more"] != float64(17) {
+		t.Errorf("more = %v, want 17 -- the one row that survived the cut must "+
+			"still say the run was bigger", detail["more"])
 	}
 }

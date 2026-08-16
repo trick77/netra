@@ -2360,6 +2360,24 @@ svg.spark {
   font-variant-numeric: tabular-nums;
 }
 
+/* The rest of an apt run, folded. Modelled on `.attn .more` -- the same
+   dashed accent pill the fleet band uses to say "there is more behind this"
+   -- but its own class rather than that one: `.attn .more` and
+   `details.sysfold > summary .more` are both scoped to an ancestor this fold
+   has neither of, so reusing the bare class name would have styled nothing
+   at all and rendered a plain blue link. Kept unscoped because both the
+   events log and the host Events tab's table cell draw it. */
+.runfold {
+  display: inline-block;
+  margin-left: var(--space-2);
+  font-size: var(--text-micro);
+  color: var(--accent);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   /* The rail goes off-canvas -- back across the top -- rather than eating a
      fifth of a small window. It is also what makes the viewport an honest

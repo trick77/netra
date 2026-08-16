@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -878,3 +879,63 @@ func TestEveryContainerKeyIsComposeProjectAndService(t *testing.T) {
 		}
 	}
 }
+
+// A package's versions form a chain: each upgrade starts from whatever the
+// previous one left behind. Nothing enforced it across the two upgrade
+// schedules, and the dist-upgrade run broke it -- the weekly runs were laid
+// out over the whole window first, so the dist-upgrade events, dated near the
+// beginning, read end-of-window versions and the log showed a package moving
+// backwards. packageStateAt replays by ts, so the rendered inventory could
+// settle below a version an earlier event had already reported.
+func TestPackageUpgradesFormOneChainPerPackage(t *testing.T) {
+	// Given: a profile with packages, over a window long enough to contain
+	// several weekly runs AND at least one dist-upgrade.
+	from := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(60 * 24 * time.Hour)
+
+	for _, p := range Fleet() {
+		if len(p.Packages) == 0 {
+			continue
+		}
+
+		// When: the schedule is laid out.
+		evs := packageChanges(p, newSignal(1), from, to)
+		sort.SliceStable(evs, func(i, j int) bool { return evs[i].ts.Before(evs[j].ts) })
+
+		// Then: read in time order, every upgrade starts where the previous
+		// one for that package ended.
+		last := map[string]string{}
+		var sawDistUpgrade bool
+		byTs := map[time.Time]int{}
+
+		for _, e := range evs {
+			if e.pkg == nil || e.pkg.GetAction() != "upgrade" {
+				continue
+			}
+			byTs[e.ts]++
+			name := e.pkg.GetName()
+			if prev, seen := last[name]; seen && e.pkg.GetFromVersion() != prev {
+				t.Fatalf("%s: %s upgrade at %s starts from %q, but the previous "+
+					"upgrade left it at %q -- the version chain is broken",
+					p.Hostname, name, e.ts, e.pkg.GetFromVersion(), prev)
+			}
+			last[name] = e.pkg.GetToVersion()
+		}
+
+		for _, n := range byTs {
+			if n > packageRunRowsForTest {
+				sawDistUpgrade = true
+			}
+		}
+		if !sawDistUpgrade {
+			t.Errorf("%s: no run larger than %d packages in 60 days -- the events "+
+				"log's fold is unreachable in the simulator", p.Hostname, packageRunRowsForTest)
+		}
+	}
+}
+
+// The events log caps one apt run at this many rows (packageRunRows in
+// internal/hub/read/events.go). Duplicated rather than imported because the
+// hub is not a dependency of the simulator; the test above exists to catch the
+// simulator drifting under it.
+const packageRunRowsForTest = 3

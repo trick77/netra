@@ -138,6 +138,24 @@ func (s *Service) Events(ctx context.Context, q EventQuery, now time.Time) ([]Ev
 // in an unremarkable state, and gets filtered out entirely.
 const unitLookback = "7 days"
 
+// packageRunRows is how many packages of ONE apt run reach the log.
+//
+// The agent takes a single clock read per scrape and stamps the whole package
+// diff with it (collector/packages.go), so every package touched by one
+// `apt upgrade` lands with a byte-identical timestamp. (host_id, ts) is
+// therefore not an approximation of "one run" -- it is exactly one run.
+//
+// Without a cap those rows are eligible for the whole page. A dist-upgrade
+// writing 400 of them takes 400 of the 500 slots and pushes a degraded array
+// off the log, which is the one thing the log exists to show. Nothing about
+// the limit is unfair -- the page really does hold the newest N events -- but
+// "the newest N" is the wrong question when one transaction supplies them all.
+//
+// Three, matching MAX_CONDITION_ROWS in ui/src/features/fleet/AttentionBand.tsx,
+// which folds a host's conditions the same way and for the same reason. The
+// rest are counted, not dropped: see `more` below.
+const packageRunRows = 3
+
 // eventsSQL is the log: three tables, one ordering, one limit.
 //
 // Each branch is parenthesised with its OWN ORDER BY and LIMIT. Both halves
@@ -149,9 +167,23 @@ const unitLookback = "7 days"
 //
 // What it does NOT do is stop one family crowding out the others. The result
 // is exactly what a single ORDER BY ts DESC LIMIT N over all three tables
-// would return, so a fleet-wide apt-get emitting more package rows than the
-// limit really does fill the page and push an older mdraid degradation off
-// it. That is what a limit means; the caller narrows by type or window.
+// would return. For events and units that is fine -- neither can produce a
+// burst. Packages can, so that branch caps its own runs; see packageRunRows.
+//
+// The package branch counts a run before it truncates it, which is the whole
+// point and dictates the shape: the window functions run in a subquery with no
+// limit of its own, and rn/run_size are filtered in the query that reads it.
+// A `rn <= N` predicate pushed up beside the window would be applied before
+// count(*) finished and run_size would report the truncated run -- the same
+// trap the unit branch's CTE has, in a different disguise.
+//
+// `more` sits on rn = 1, the row of the run that renders FIRST, and the
+// obvious alternative is wrong. Every kept row of a run shares one ts, so the
+// outer LIMIT can cut through the middle of a run: put the marker on the last
+// row and a run straddling the page boundary loses it, leaving two rows of a
+// 400-package upgrade with nothing saying the other 398 happened. rn = 1
+// survives whenever any row of the run does. It also means nothing here
+// depends on the outer ORDER BY's direction.
 //
 // The unit branch is the one with a shape to get wrong. Its lag() must run
 // over the WHOLE partition, so the CTE takes no limit and is bounded only by
@@ -201,20 +233,40 @@ var eventsSQL = fmt.Sprintf(`
 	)
 	UNION ALL
 	(
-		SELECT 'p:' || p.host_id || ':' || p.ts || ':' || p.name AS id,
-		       p.host_id, coalesce(h.hostname, '') AS hostname,
-		       p.ts, 'package' AS type, p.name AS subject,
+		SELECT 'p:' || r.host_id || ':' || r.ts || ':' || r.name AS id,
+		       r.host_id, coalesce(h.hostname, '') AS hostname,
+		       r.ts, 'package' AS type, r.name AS subject,
 		       jsonb_strip_nulls(jsonb_build_object(
-		           'action',       p.action,
-		           'from_version', p.from_version,
-		           'to_version',   p.to_version
+		           'action',       r.action,
+		           'from_version', r.from_version,
+		           'to_version',   r.to_version,
+		           'run_size',     CASE WHEN r.run_size > %[3]d THEN r.run_size END,
+		           'more',         CASE WHEN r.rn = 1 AND r.run_size > %[3]d
+		                                THEN r.run_size - %[3]d END
 		       )) AS detail
-		  FROM package_events p
-		  JOIN hosts h ON h.id = p.host_id
-		 WHERE ($1::integer IS NULL OR p.host_id = $1)
-		   AND ($2::text IS NULL OR $2 = 'package')
-		   AND p.ts >= $3 AND p.ts <= $4
-		 ORDER BY p.ts DESC, p.name
+		  FROM (
+		      SELECT p.host_id, p.ts, p.name, p.action,
+		             p.from_version, p.to_version,
+		             row_number() OVER ordered AS rn,
+		             count(*)     OVER whole   AS run_size
+		        FROM package_events p
+		       WHERE ($1::integer IS NULL OR p.host_id = $1)
+		         AND ($2::text IS NULL OR $2 = 'package')
+		         AND p.ts >= $3 AND p.ts <= $4
+		      -- Two windows over the same partition, and they cannot be one.
+		      -- A window carrying ORDER BY gets the default frame, RANGE
+		      -- BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, so count(*) over
+		      -- it is a RUNNING count -- 1, 2, 3 -- rather than the size of
+		      -- the run. Every row of a 400-package upgrade would then report
+		      -- run_size <= its own position, no row would exceed the cap,
+		      -- and the fold would silently never appear. row_number needs
+		      -- the ordering; count must not have it.
+		      WINDOW ordered AS (PARTITION BY p.host_id, p.ts ORDER BY p.name DESC),
+		             whole   AS (PARTITION BY p.host_id, p.ts)
+		  ) r
+		  JOIN hosts h ON h.id = r.host_id
+		 WHERE r.rn <= %[3]d
+		 ORDER BY r.ts DESC, r.name DESC
 		 LIMIT $5
 	)
 	UNION ALL
@@ -237,4 +289,4 @@ var eventsSQL = fmt.Sprintf(`
 		 LIMIT $5
 	)
 	ORDER BY ts DESC, id DESC
-	LIMIT $5`, systemdstate.NotableSQL("ev"), unitLookback)
+	LIMIT $5`, systemdstate.NotableSQL("ev"), unitLookback, packageRunRows)
