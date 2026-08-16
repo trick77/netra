@@ -29,6 +29,7 @@ import { ABSENT, duration, relative } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
 import { clampRange, rangeWindow, type Range } from "../../lib/range";
 import { loadRange } from "../settings/SettingsPage";
+import { EVENT_LIMITS } from "../events/EventsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
 import { Events } from "./tabs/Events";
 import { Graphs } from "./tabs/Graphs";
@@ -339,7 +340,12 @@ export function HostPage({
                 host: hostId,
                 since: window.from,
                 until: window.to,
-                limit: 500,
+                // The same table the fleet log uses. A flat 500 is fine at
+                // 1h and a silent truncation at 7d, which this page offers:
+                // one host's dist-upgrade plus a week of ordinary churn
+                // reaches it, and the rows lost are the oldest -- exactly the
+                // ones someone widening the window is looking for.
+                limit: EVENT_LIMITS[range],
               }),
             ),
           };

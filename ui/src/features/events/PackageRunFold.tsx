@@ -12,8 +12,10 @@ import { packageRunSize, packagesOmitted } from "./message";
  * hub omits the counts entirely rather than sending zeroes, so a weekly
  * three-package upgrade is untouched.
  *
- * `.more` is the class AttentionBand already uses for its "+N more" fold, so
- * this costs no new styling and reads the same way in both places.
+ * `.runfold` is modelled on the fleet band's `+N more` pill and deliberately
+ * NOT the bare `.more` class it uses: that rule is scoped to `.attn`, and the
+ * other one to `details.sysfold > summary`, so borrowing the name here would
+ * have matched neither and rendered a plain link.
  *
  * The link goes to the host's package inventory rather than expanding in
  * place. A log row is a moment; "which 397?" is answered by a list of
@@ -29,7 +31,7 @@ export function PackageRunFold({ event }: { event: Event }) {
     <>
       {" "}
       <a
-        className="more"
+        className="runfold"
         href={`/hosts/${event.host_id}/packages`}
         title={
           total > 0
