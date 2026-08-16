@@ -100,8 +100,18 @@ export function ChartDetail({
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
+    // ...and goes back to whatever opened this when it closes. Without that,
+    // focus lands on document.body and the next Tab starts from the top of
+    // the page: a reader who opened the chart on row 14 of a twenty-host
+    // table is returned to the masthead. It matters more now than it did --
+    // every chart is one of these buttons, so a fleet page carries sixty of
+    // them rather than a page's worth of panels.
+    const opener = document.activeElement;
     ref.current?.focus();
-    return () => document.removeEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
   }, [onClose]);
 
   const ceiling = max ?? peak(series, stacked);
@@ -292,7 +302,10 @@ function formatNumber(v: number | null): string {
 // and the top of the stack would be drawn outside the box. Callers here all
 // pass an explicit max today, but a derived ceiling that answers the wrong
 // question is a trap rather than a fallback.
-function peak(series: readonly OverlaySeries[], stacked = false): number {
+export function peak(
+  series: readonly OverlaySeries[],
+  stacked = false,
+): number {
   let max = 0;
   if (stacked) {
     const n = series.reduce(

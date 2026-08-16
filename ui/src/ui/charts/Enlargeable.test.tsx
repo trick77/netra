@@ -105,6 +105,96 @@ describe("Enlargeable", () => {
   });
 
   /**
+   * A fixed ceiling is a decision about the SMALL chart -- one shared scale
+   * down a list's column, or a pinned 100 -- and opening the dialog keeps it.
+   * Widening is the other case: that window is asked for precisely to find
+   * what the page's window did not show.
+   */
+  describe("a fixed ceiling", () => {
+    function axisTop() {
+      const y = screen.getByRole("dialog").querySelector(".cd-y");
+      return (y?.firstElementChild?.textContent ?? "").trim();
+    }
+
+    it("is raised to fit a widened window rather than clipping it", async () => {
+      const fetchSeries = vi.fn().mockResolvedValue({
+        // A spike four times the ceiling the list shared. linePath does not
+        // clamp, so held to `max` this is drawn outside the box -- the one
+        // thing the reader widened the window to see goes off the top.
+        series: [{ name: "cpu", color: "var(--s1)", values: [10, 400] }],
+        window: { from: "a", to: "b" },
+      });
+
+      render(
+        <Enlargeable
+          title="CPU"
+          series={[{ name: "cpu", color: "var(--s1)", values: [10, 20] }]}
+          max={100}
+          range="1h"
+          ranges={["1h", "6h"]}
+          fetchSeries={fetchSeries}
+        >
+          <svg />
+        </Enlargeable>,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
+      expect(axisTop()).toBe("100");
+
+      await userEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", { name: "6h" }),
+      );
+      await waitFor(() => expect(axisTop()).toBe("400"));
+    });
+
+    // Raised only. A quieter wide window keeps the ceiling it was opened
+    // with, so the shape stays comparable with the cell behind it.
+    it("is not lowered for a quieter window", async () => {
+      const fetchSeries = vi.fn().mockResolvedValue({
+        series: [{ name: "cpu", color: "var(--s1)", values: [1, 2] }],
+        window: { from: "a", to: "b" },
+      });
+
+      render(
+        <Enlargeable
+          title="CPU"
+          series={[{ name: "cpu", color: "var(--s1)", values: [10, 20] }]}
+          max={100}
+          range="1h"
+          ranges={["1h", "6h"]}
+          fetchSeries={fetchSeries}
+        >
+          <svg />
+        </Enlargeable>,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
+      await userEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", { name: "6h" }),
+      );
+
+      await waitFor(() => expect(fetchSeries).toHaveBeenCalled());
+      expect(axisTop()).toBe("100");
+    });
+  });
+
+  // A reader who opened the chart on row 14 of a twenty-host table must not
+  // be returned to the masthead. The fleet page carries sixty of these.
+  it("returns focus to the button that opened it", async () => {
+    render(
+      <Enlargeable title="Package" series={series}>
+        <svg />
+      </Enlargeable>,
+    );
+    const button = screen.getByRole("button", { name: /Enlarge/ });
+
+    await userEvent.click(button);
+    await userEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }),
+    );
+
+    expect(button).toHaveFocus();
+  });
+
+  /**
    * The sensor list free-scales every row to its own extent on purpose: a
    * package between 44 and 47 degrees drawn against a 0-47 box is a flat line
    * at the bottom, so the enlarged view would say LESS than the 110px chart

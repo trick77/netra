@@ -164,8 +164,15 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
       fetchHostFamily(row.id, "host", next),
       // The same guard the fan-out uses: a 128-core host would ship 128
       // series, and cpu_total is the silhouette it falls back to.
+      //
+      // Swallowed to null on failure, unlike the host family beside it: the
+      // per-core read is an enrichment with a documented fallback (cpuBands
+      // draws cpu_total when it gets none), so failing the whole dialog on
+      // it would report "could not load that range" for a range the chart
+      // can in fact draw. The host family is the primary read and still
+      // fails loudly.
       row.threads !== null && row.threads <= MAX_PER_CORE
-        ? fetchHostFamily(row.id, "cpu_core", next)
+        ? fetchHostFamily(row.id, "cpu_core", next).catch(() => null)
         : Promise.resolve(null),
     ]);
     // The window of the response the BANDS were gridded against -- cpuBands

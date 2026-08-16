@@ -615,8 +615,19 @@ function SensorList({
                       // in the previous response: a sensor that stopped
                       // reporting shifts every series after it, and the
                       // chart would silently become another sensor's.
+                      //
+                      // Kind included in the match, because the name is only
+                      // chip+label: sensorsOfKind() picked these rows by kind
+                      // and this search does not, so a fan and a temperature
+                      // sharing a chip and a label would match each other --
+                      // and a temperature chart reading `temp` off a fan
+                      // series draws nothing at all. Two keyless series are
+                      // both named ABSENT, which makes the kind the only
+                      // thing separating them.
                       const at = answered.series.findIndex(
-                        (s) => sensorName(s) === name,
+                        (s) =>
+                          sensorName(s) === name &&
+                          (s.key.kind ?? "temperature") === kind,
                       );
                       const values =
                         at === -1
@@ -915,18 +926,25 @@ export function Overview({
               fetchFamily === undefined
                 ? undefined
                 : async (next) => {
-                    const answered = await fetchFamily(
-                      perCore.length > 0 ? "cpu_core" : "host",
-                      next,
-                    );
-                    const cores = perCoreBands(answered);
+                    if (perCore.length > 0) {
+                      const answered = await fetchFamily("cpu_core", next);
+                      const cores = perCoreBands(answered);
+                      if (cores.length > 0) {
+                        return { series: cores, window: answered.window };
+                      }
+                      // Falling back needs a SECOND request, not cpu_total
+                      // out of this one: family=cpu_core reads
+                      // cpu_core_samples, which has no cpu_total column, so
+                      // asking this response for it can only ever answer
+                      // with an empty array -- a blank dialog with nothing
+                      // saying why. The window a host with no cores at this
+                      // range still has a silhouette in is the host family's.
+                    }
+                    const answered = await fetchFamily("host", next);
                     return {
-                      series:
-                        cores.length > 0
-                          ? cores
-                          : totalCpuBand(
-                              griddedValues(answered, 0, "cpu_total"),
-                            ),
+                      series: totalCpuBand(
+                        griddedValues(answered, 0, "cpu_total"),
+                      ),
                       window: answered.window,
                     };
                   }
@@ -1071,6 +1089,11 @@ export function Overview({
                 // rather than the reader's. The wire and the schema keep
                 // rx/tx.
                 title="Traffic"
+                // Inline, like every other sparkline this wraps: the chart
+                // is a fixed 260px inside a flex column, and the full-width
+                // default would spread the pressable area (and its zoom-in
+                // cursor) across the empty half of the card.
+                className="inline"
                 unit="B/s"
                 series={[
                   { name: "ingress", color: UP_COLOR, values: ingress },

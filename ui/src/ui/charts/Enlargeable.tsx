@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { OverlaySeries } from "./Overlay";
 import { extent } from "./geometry";
-import { ChartDetail } from "./ChartDetail";
+import { ChartDetail, peak } from "./ChartDetail";
 import type { Range } from "../../lib/range";
 
 /** What fetchSeries answers: the bands to draw and the window they cover,
@@ -149,6 +149,35 @@ function derived(series: readonly OverlaySeries[]): {
   return values.some((v) => v !== null) ? extent(values) : {};
 }
 
+/**
+ * The given ceiling, raised if the data now on screen would not fit under it.
+ *
+ * A fixed `max` is a deliberate choice about the SMALL chart: the container
+ * lists share one ceiling down the column so the rows can be compared, and
+ * the fleet's CPU cell pins 100 so an idle host and a saturated one do not
+ * draw the same silhouette. Opening the dialog keeps it, which is the point
+ * -- a chart that rescaled itself on opening would redraw the shape the
+ * reader just clicked.
+ *
+ * Widening the range is the other case. The refetched window is this one
+ * chart's alone, and it is asked for precisely to find something the page's
+ * window did not show. Held to the old ceiling, any bucket above it is drawn
+ * OUTSIDE the plot -- linePath() deliberately never clamps (geometry.ts) --
+ * so the spike someone widened the window to see is the one thing that
+ * disappears off the top.
+ *
+ * Raised only, never lowered: a quieter wide window keeps the ceiling it was
+ * opened with, so the shape stays comparable with the cell behind it.
+ */
+function fitted(
+  max: number | undefined,
+  refetched: OverlaySeries[] | null,
+  stacked: boolean | undefined,
+): number | undefined {
+  if (max === undefined || refetched === null) return max;
+  return Math.max(max, peak(refetched, stacked));
+}
+
 export interface EnlargeableProps {
   /** Names the dialog, and the button unless `label` overrides it. */
   title: string;
@@ -237,7 +266,9 @@ export function Enlargeable({
   // moment later is a flicker, and an empty chart in netra asserts "the host
   // reported nothing".
   const shown = detail.series ?? series;
-  const span = autoScale ? derived(shown) : { min, max };
+  const span = autoScale
+    ? derived(shown)
+    : { min, max: fitted(max, detail.series, stacked) };
 
   return (
     <>
