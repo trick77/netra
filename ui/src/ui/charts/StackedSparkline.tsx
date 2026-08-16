@@ -50,7 +50,7 @@ export interface StackedSparklineProps {
    *
    * But it is a per-CALLER decision, not a property of sparklines. Removing
    * the legend outright to fix the CPU cell also stripped the five-band
-   * memory cell in the same row, where used/ARC/buffers/cached/shared are
+   * memory cell in the same row, where used/shared/ARC/buffers/cached are
    * five distinct hues that DO carry identity -- and identity on colour alone
    * is exactly what a legend exists to prevent. Five nameable bands opt in;
    * thirty-two unnameable ones do not.

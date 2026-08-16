@@ -68,6 +68,46 @@ describe("memoryBands", () => {
     }
   });
 
+  // The stacking order is the whole claim this function makes about memory,
+  // and it lives here rather than only in the fleet-trends test two layers
+  // away. Bottom to top, in increasing order of how readily the kernel can
+  // take the bytes back: shared is Shmem, unreclaimable under pressure, so it
+  // stacks with used rather than above the caches. Drawing it topmost, against
+  // the free gap, told the reader it was the first thing the host would hand
+  // back.
+  it("stacks the unreclaimable pages below the caches", () => {
+    expect(memoryBands(full).map((b) => b.name)).toEqual([
+      "used",
+      "shared",
+      "ARC",
+      "buffers",
+      "cached",
+    ]);
+  });
+
+  // Dropping a band a host does not have must not shuffle the ones it does:
+  // a reader moving between a ZFS host and a non-ZFS one reads the same
+  // gradient, minus one layer.
+  it("keeps the order when a host has no ARC to draw", () => {
+    const noZfs = response({
+      columns: [
+        "mem_total",
+        "mem_free",
+        "mem_buffers",
+        "mem_cached",
+        "mem_shared",
+      ],
+      series: [{ key: {}, points: [[t0, 1000, 200, 30, 100, 50]] }],
+    });
+
+    expect(memoryBands(noZfs).map((b) => b.name)).toEqual([
+      "used",
+      "shared",
+      "buffers",
+      "cached",
+    ]);
+  });
+
   // Free is the gap to the top, never a band: stacking it makes every host
   // look full, which is the one reading these charts exist to avoid.
   it("never draws free as a band", () => {

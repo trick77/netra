@@ -220,7 +220,7 @@ describe("Overview memory stack", () => {
   it("draws the memory partition against mem_total", () => {
     const { container } = renderOverview();
 
-    // used, buffers, cached, shared -- no ARC on a host without ZFS, and
+    // used, shared, buffers, cached -- no ARC on a host without ZFS, and
     // free is the gap to the top rather than a band.
     expect(
       container.querySelectorAll('[aria-label="Memory chart"] path[data-band]'),
