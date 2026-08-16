@@ -54,14 +54,15 @@
   --radius-sm: 5px;
   --radius-pill: 999px;
 
-  /* The nav rail. A token rather than a literal because two rules need to
-     agree on it -- the grid track on .app and the off-canvas override -- and
-     because it is the one width the content is measured AGAINST now that the
-     page itself has none. */
+  /* The nav rail. A token rather than a literal because it is the one width
+     the content is measured AGAINST now that the page itself has none: the
+     grid track on .app is what every breakpoint below is really about. The
+     off-canvas override drops the track entirely rather than restating it. */
   --rail-w: 212px;
   /* The measure for running text. The page is full-bleed, so prose that used
-     to be bounded by the old 1180px page width is now bounded by nothing;
-     every block of sentences caps itself here instead. */
+     to be bounded by the old 1180px page width is now bounded by nothing.
+     .note is the one prose class the app has and caps itself here; a block of
+     sentences added later should reach for this rather than a literal. */
   --measure: 68ch;
 
   /* status palette — FIXED, never themed, never reused as a series colour
@@ -1871,9 +1872,11 @@ svg.spark {
 
 @media (max-width: 900px) {
   /* The rail goes off-canvas -- back across the top -- rather than eating a
-     fifth of a small window. It is also what keeps every rule below this one
-     honest: they all measure the VIEWPORT, and with no rail the content is
-     the viewport again. FleetPage's own 640px matchMedia depends on that. */
+     fifth of a small window. It is also what makes the viewport an honest
+     stand-in for the content width again, which FleetPage's own 640px
+     matchMedia depends on: below here there is no rail to subtract. The rules
+     that care about content width rather than window width live in their own
+     block above, and start earlier than this one for that reason. */
   .app {
     display: block;
   }
@@ -1915,6 +1918,17 @@ svg.spark {
   .app > main {
     padding: var(--space-4) var(--space-5) 64px;
   }
+}
+
+/* ── Content-width overrides ───────────────────────────────────────────
+   These fire on the VIEWPORT, but every one of them is really about the width
+   the CONTENT gets -- and those stopped being the same number when the rail
+   arrived. While the rail is up, content is viewport - 212px of rail - 48px of
+   main's padding, so a 901px window leaves a 641px flow: narrower than the
+   852px these rules were written to rescue, with none of them in force.
+   They fire at 1120px instead, where content crosses ~860px. Below 900 the
+   rail is a top bar and content is viewport - 48, comfortably inside this. */
+@media (max-width: 1120px) {
   .tiles {
     grid-template-columns: 1fr 1fr;
   }
@@ -1925,9 +1939,9 @@ svg.spark {
   .grid2 {
     columns: 1;
   }
-  /* Back to one pair per row: two pairs of key AND value across 900px leaves
-     the kernel string and the CPU model nowhere to go. The gutter goes with
-     the second column -- left over, it indents every other key of a
+  /* Back to one pair per row: two pairs of key AND value across this width
+     leaves the kernel string and the CPU model nowhere to go. The gutter goes
+     with the second column -- left over, it indents every other key of a
      single-column list -- and the last row is a single pair again, which is
      what the plain .kv border rule already handles. */
   .kv.wide {

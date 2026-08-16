@@ -19,6 +19,8 @@ vi.mock("./lib/api", async () => {
     getAddresses: vi.fn(),
     getPackages: vi.fn(),
     getUnits: vi.fn(),
+    getProviders: vi.fn(),
+    getConfig: vi.fn(),
   };
 });
 
@@ -53,6 +55,11 @@ beforeEach(() => {
   vi.mocked(api.getAddresses).mockResolvedValue([]);
   vi.mocked(api.getPackages).mockResolvedValue([]);
   vi.mocked(api.getUnits).mockResolvedValue([]);
+  // The host admin page's own two calls. Unmocked they fall through to the
+  // real fetch, so a test that only asks which nav link is current would make
+  // a network request in jsdom and settle after the test had finished.
+  vi.mocked(api.getProviders).mockResolvedValue([]);
+  vi.mocked(api.getConfig).mockResolvedValue({ hub_url: "http://hub.test" });
   goTo("/");
 });
 
