@@ -24,8 +24,11 @@
 #   containers (the host's cgroup v2 hierarchy, plus the Docker socket for
 #   names only), filesystems, systemd, packages.
 #
+# Needing the host PID namespace (`pid: host`, rendered unconditionally):
+#   processes, procs, and per-container net_rx/net_tx.
+#
 # Needing a privilege the operator grants explicitly:
-#   SMART (device access), processes (pid: host).
+#   SMART (device access).
 #
 # A collector that cannot run reports WHY as a capability and is skipped; it
 # never prevents the agent from starting. So a host that grants none of the
@@ -34,9 +37,11 @@
 # The two long-standing exceptions are called out where they are configured
 # below —
 #
-#   * procs reports a total process count only with `pid: host`. Without it the
-#     agent sees its own PID namespace, and reports the metric as unavailable
-#     rather than reporting the two processes it can see.
+#   * procs, processes and per-container networking all need `pid: host`.
+#     Without it the agent sees only its own PID namespace: it reports the
+#     process count as unavailable rather than reporting the two processes it
+#     can see, and every container's net_rx/net_tx goes NULL because the PID
+#     that owns each container's interfaces cannot be resolved.
 #   * users needs the /var/run/utmp bind. Without it, or on a system with no
 #     utmp writer at all (Alpine and other busybox systems), the session count
 #     is reported as unavailable.
@@ -379,26 +384,33 @@ services:
     #   - /dev/sda
     #   - /dev/nvme0
 
-    # --- Processes (opt-in) --------------------------------------------------
+    # --- Host PID namespace (required) ---------------------------------------
     #
-    # pid: host is what makes the processes collector possible: without the
-    # host PID namespace the agent sees only itself in /proc.
+    # Not optional, and not only about processes. Two collectors need it:
     #
-    # Partly implemented today: with this enabled the agent reports a total
-    # process count. Without it that metric is NULL and the host's
-    # capabilities say "namespaced" — it is never guessed at. The per-process
-    # CPU and memory breakdown is still a later phase.
+    #   processes    without the host PID namespace the agent sees only itself
+    #                in /proc, so processes_total is NULL and the per-process
+    #                CPU and memory breakdown has nothing to walk.
     #
-    # If you uncomment this, also set NETRA_PID_HOST=1 in .env. The agent can
-    # only guess otherwise, and every guess has a case it gets wrong; the
-    # setup script writes this for you.
+    #   containers   per-container net_rx and net_tx. The counters live in each
+    #                container's own network namespace, reached through the host
+    #                PID named by its cgroup.procs — a PID the agent cannot
+    #                resolve in its own namespace. Without this, EVERY container
+    #                on the host reports no network traffic, and the host's
+    #                capabilities say container_network=namespaced.
     #
-    # It is commented out by default and should stay that way unless you want
-    # per-process metrics enough to accept the exposure. Sharing the host PID
-    # namespace makes EVERY process's /proc entry readable to this container,
-    # including cmdline and environ — that is command-line arguments and
-    # environment variables of every service on the box, which routinely carry
-    # passwords, API keys and DSNs.
+    # That second one is why this section no longer says "opt-in". Leaving the
+    # namespace out silently zeroed container networking for every container on
+    # the box, and nothing here said so.
+    #
+    # Also set NETRA_PID_HOST=1 in .env. The agent can only guess otherwise, and
+    # every guess has a case it gets wrong; the setup script writes this for you.
+    #
+    # READ THIS BEFORE ACCEPTING IT. Sharing the host PID namespace makes EVERY
+    # process's /proc entry readable to this container, including cmdline and
+    # environ — that is command-line arguments and environment variables of
+    # every service on the box, which routinely carry passwords, API keys and
+    # DSNs.
     #
     # netra reads NEITHER. Process names come from `comm` (/proc/PID/comm, 15
     # bytes, no arguments), and the agent never opens cmdline or environ at all
@@ -407,5 +419,7 @@ services:
     # aggregates CPU and memory by process name and nothing else.
     #
     # So the exposure is the namespace, not the agent: it grants far more than
-    # netra uses, and you are trusting the image not to use it.
-    # pid: host
+    # netra uses, and you are trusting the image not to use it. If that trade is
+    # unacceptable on a given host, comment this out and accept that container
+    # networking and the process table go with it.
+    pid: host

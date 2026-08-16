@@ -257,7 +257,8 @@ answers, no compatibility promise — and is not a provisioning interface.)
 | Nothing but `/proc` and `/sys` | CPU, per-core CPU, memory, load, kernelstat, vmstat, limits, netstat, procs, users, disk I/O, sensors, mdraid |
 | `network_mode: host` | network, addresses |
 | A mount | containers (the host's cgroup v2 hierarchy, plus the Docker socket for names), filesystems (marker dirs), systemd (D-Bus socket), packages (dpkg or apk db) |
-| An explicit privilege | SMART (`SYS_RAWIO`, plus `SYS_ADMIN` for NVMe, plus `devices:`), processes (`pid: host`) |
+| `pid: host` | processes, procs, and per-container `net_rx`/`net_tx` |
+| An explicit privilege | SMART (`SYS_RAWIO`, plus `SYS_ADMIN` for NVMe, plus `devices:`) |
 
 A collector that cannot run reports **why** as a capability and is skipped. It
 never prevents the agent from starting, and an unavailable metric is left NULL
@@ -272,10 +273,23 @@ socket only names them: without it containers still report in full, keyed by raw
 `NETRA_CGROUP_ROOT` at the agent's own `/sys/fs/cgroup`; Docker's default cgroup
 namespace is private, so that tree holds no other container's scope.
 
-Two long-standing exceptions worth stating up front: the process count needs
-`pid: host` (and `NETRA_PID_HOST=1` to match), and the logged-in session count
-needs the `/var/run/utmp` bind — which yields nothing on Alpine and other
-busybox systems that ship no utmp writer.
+`pid: host` is rendered unconditionally by both deploy paths, because three
+things need it and only one of them is obvious. The process count and the
+per-process breakdown are the obvious two. The third is per-container
+networking: rx/tx counters live in each container's own network namespace,
+reached through the host PID its `cgroup.procs` names, and an agent confined to
+its own PID namespace cannot resolve that PID — so every container on the host
+reports no traffic. It was opt-in until it became clear that declining it
+silently switched off a metric nothing mentioned.
+
+The namespace makes every process's `/proc` entry readable to the container,
+`cmdline` and `environ` included. netra reads neither — process names come from
+`/proc/PID/comm`, and `internal/agent/collector/argv_guard_test.go` fails the
+build if either name appears in a Go string literal.
+
+One long-standing exception remains: the logged-in session count needs the
+`/var/run/utmp` bind — which yields nothing on Alpine and other busybox systems
+that ship no utmp writer.
 
 ---
 

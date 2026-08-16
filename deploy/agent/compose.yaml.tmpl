@@ -11,8 +11,12 @@
 # Substitution happens by WHOLE MARKER LINES, never by inline tokens. Each
 # `#__NETRA_*__` line below is replaced in full by a rendered block, and a block
 # that is empty deletes its marker line entirely. That is how a conditional
-# `cap_add:` or `pid: host` vanishes without leaving a dangling key behind: the
+# `cap_add:` or `devices:` vanishes without leaving a dangling key behind: the
 # KEY ITSELF lives inside the block, not in this file.
+#
+# `pid: host` is NOT one of them. It is unconditional -- a monitoring agent that
+# cannot see the host's process namespace reports no per-container network and
+# no process count -- so it is a literal line here rather than a rendered block.
 #
 # The consequence, and the reason for the design: this file is valid YAML as it
 # stands (every marker is a comment), so it can be linted and reviewed on its
@@ -34,7 +38,7 @@ services:
     security_opt:
       - no-new-privileges:true
 
-    #__NETRA_PID__
+    pid: host
     #__NETRA_VOLUMES__
     #__NETRA_DEVICES__
     #__NETRA_CAP_ADD__

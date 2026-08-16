@@ -513,18 +513,17 @@ deploy/agent/compose.yaml.example and .env.example from your provisioning system
 
 Everything read-only is enabled automatically - the Docker socket, the mount
 table, the package database, the D-Bus socket and SYS_RAWIO for SATA SMART.
-SYS_ADMIN is the only privilege this asks about. `pid: host` is never prompted
-for - pass --pid-host if you want per-process metrics. Host CPU, memory and load
-are always collected and are not optional.
+SYS_ADMIN is the only privilege this asks about. `pid: host` is always granted:
+without it the agent reports no per-container network and no process count, and
+a monitoring agent that cannot see the host's process namespace has a hole in
+it. Host CPU, memory and load are always collected and are not optional.
 
 Options:
       --sys-admin          Grant SYS_ADMIN without prompting (NVMe SMART health
                            and wear). A no-op with a note if there is no NVMe.
-      --pid-host           Enable `pid: host`, for per-process CPU and memory
-                           metrics. This lets the agent read every process's
-                           cmdline and environ, so it is off unless asked for.
-                           Host CPU, memory and load need nothing: they are
-                           always collected.
+      --pid-host           Accepted and ignored. `pid: host` is now always
+                           rendered; the flag stays parsed so existing
+                           provisioning does not fail on an unknown option.
       --unsupported-os     Continue on a distro netra does not recognise,
                            without prompting. The version floors are only where
                            cgroup v2 became the default and the real checks are
@@ -576,7 +575,6 @@ parse_args() {
     # Privilege is granted by name. Each of these removes a prompt from the
     # sequence in the header; see the note there about answers files.
     GRANT_SYS_ADMIN=0
-    GRANT_PID_HOST=0
     # Not privilege, but the same shape: a prompt that defaults n, which an
     # operator who means it takes by name.
     GRANT_UNSUPPORTED_OS=0
@@ -611,7 +609,9 @@ parse_args() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
         --sys-admin) GRANT_SYS_ADMIN=1 ;;
-        --pid-host) GRANT_PID_HOST=1 ;;
+        # Accepted and ignored: `pid: host` is unconditional now. Kept so
+        # existing provisioning does not fail on an unknown option.
+        --pid-host) ;;
         --unsupported-os) GRANT_UNSUPPORTED_OS=1 ;;
         --assume-physical) ASSUME_PHYSICAL=1 ;;
         --force) FORCE=1 ;;
@@ -2256,14 +2256,8 @@ $_bc_body"
     export NETRA_BLK_CAP_ADD
 }
 
-build_pid_block() {
-    NETRA_BLK_PID=""
-    if [ "${PID_HOST:-0}" = 1 ]; then
-        NETRA_BLK_PID="    pid: host
-"
-    fi
-    export NETRA_BLK_PID
-}
+# No build_pid_block: `pid: host` is a literal line in compose.yaml.tmpl rather
+# than a rendered block, because it is unconditional.
 
 build_blocks() {
     build_volume_block
@@ -2272,7 +2266,6 @@ build_blocks() {
     build_fs_mounts_value
     build_device_block
     build_cap_block
-    build_pid_block
 }
 
 # netra_write_compose / netra_write_env — the redirection lives in a function so
@@ -2507,29 +2500,24 @@ plan_extras() {
         info "  logged-in users: $P_UTMP not present (no session count)"
     fi
 
-    # NOT PROMPTED, and this is the last prompt to go. Two reasons, either of
-    # which would be enough.
+    # NOT PROMPTED, AND NOT OPTIONAL. It used to be opt-in behind --pid-host, on
+    # the reasoning that the only thing it bought was a per-process breakdown no
+    # collector had written yet. That premise expired: the namespace is also what
+    # resolves each container's interfaces, so declining it silently zeroed
+    # net_rx and net_tx for EVERY container on the box -- and nothing in the
+    # script or the docs said so. An operator declining it for the stated privacy
+    # reason had no way to learn what else they had just switched off.
     #
-    # The question read as "Enable per-process CPU and memory metrics?", which
-    # invites the operator to think CPU and memory monitoring is optional. It is
-    # not: host CPU, memory and load come from /proc/stat, /proc/meminfo and
-    # /proc/loadavg, they are the core of what netra is for, and they are never
-    # asked about because a run that declined them would not be netra. Only the
-    # per-PROCESS breakdown needs this namespace.
-    #
-    # And that breakdown is a collector that does not exist yet. Asking an
-    # operator to weigh a real privacy cost against a metric nothing collects is
-    # asking them to guess. --pid-host turns it on for those who know they want
-    # it; everyone else gets an agent that is complete for what it can measure.
-    PID_HOST=0
-    if [ "${GRANT_PID_HOST:-0}" = 1 ]; then
-        PID_HOST=1
-        info "  processes:       pid: host enabled by --pid-host"
-        info "                   the agent can read every process's cmdline and environ"
-    else
-        info "  processes:       host CPU, memory and load are always collected;"
-        info "                   per-process breakdown needs --pid-host"
-    fi
+    # Stated rather than asked, because the exposure is real and the operator
+    # should read it even though there is no question attached: sharing the host
+    # PID namespace makes every process's /proc entry readable to this container,
+    # cmdline and environ included. netra reads NEITHER -- process names come
+    # from /proc/PID/comm, and internal/agent/collector/argv_guard_test.go fails
+    # the build if either name appears in a Go string literal.
+    info "  processes:       pid: host (always) -- per-container network and"
+    info "                   the process table both need the host PID namespace"
+    info "                   the namespace exposes every process's cmdline and"
+    info "                   environ to the container; netra reads neither"
 }
 
 # resolve_token — the prompt, with echo off. --token and --token-file are
@@ -2889,7 +2877,6 @@ EOF
         info "  smart devices:   none"
     fi
     info "  capabilities:    $(_plan_caps)"
-    info "  pid namespace:   $(if [ "$PID_HOST" = 1 ]; then printf 'host (per-process metrics)'; else printf 'container (default)'; fi)"
     info "  package mount:   ${PKG_MOUNT:-none}"
     info "  d-bus socket:    $(if [ "$DBUS_ENABLED" = 1 ]; then printf 'yes'; else printf 'no'; fi)"
     info "  hub url:         ${HUB_URL:-(not set)}"
@@ -2953,7 +2940,6 @@ write_outputs() {
     _env_value LOCATION "$LOCATION"
     _env_value PROVIDER "$PROVIDER"
     _env_value HOST_TYPE "$HOST_TYPE"
-    _env_value PID_HOST "${PID_HOST:-0}"
     _env_value FS_MOUNTS "${NETRA_BLK_FS_MOUNTS:-}"
 
     # The gate. One question covering everything below it, so "no" means the

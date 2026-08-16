@@ -95,12 +95,17 @@ ENVBODY=$(printf '%s\n' "$ENVOUT" | grep -v '^#' || true)
 assert_not_contains "$ENVBODY" "NETRA_INTERVAL" "there is no NETRA_INTERVAL assignment in .env"
 assert_not_contains "$ENVBODY" "__" "no substitution token is left unreplaced"
 
-# --- 2b. a host with no utmp, and no --pid-host -------------------------------
+# --- 2b. a host with no utmp --------------------------------------------------
 #
 # The negative of the golden render, and the common case rather than the exotic
-# one: Alpine and other busybox systems ship no utmp writer at all, and
-# --pid-host defaults off. Neither may be rendered speculatively -- binding a
-# file that does not exist makes the container fail to start.
+# one: Alpine and other busybox systems ship no utmp writer at all. A bind for a
+# file that does not exist may not be rendered speculatively -- it makes the
+# container fail to start.
+#
+# `pid: host` is the counter-example in the same render, and it is asserted here
+# on purpose: it is unconditional, so it appears even on a run that grants
+# nothing but --sys-admin. A conditional mount and an unconditional namespace
+# side by side is exactly what this case is for.
 #
 # This runs BEFORE the script is sourced below: sourcing exports NETRA_BLK_*
 # and the curl shim's return code, which a later subprocess run would inherit.
@@ -120,18 +125,18 @@ run_capture env NETRA_SETUP_ROOT="$ROOT2" NETRA_TTY="$NO_TTY" \
 assert_eq 0 "$RUN_RC" "a run against a host without utmp succeeds"
 assert_file_present "$OUT2/compose.yaml" "the no-utmp run still writes compose.yaml"
 
-# Comments are stripped first: the template's own header explains what a
-# `pid: host` block would look like, so matching the whole file would assert
-# against the documentation rather than the render.
+# Comments are stripped first: the template's own header discusses `pid: host`
+# and `cap_add:` in prose, so matching the whole file would assert against the
+# documentation rather than the render.
 COMPOSE2=$(grep -v '^[[:space:]]*#' "$OUT2/compose.yaml" 2>/dev/null || true)
 assert_not_contains "$COMPOSE2" "/var/run/utmp" \
     "no utmp bind is rendered when the host has no utmp"
-assert_not_contains "$COMPOSE2" "pid: host" \
-    "no pid: host is rendered without --pid-host"
+assert_contains "$COMPOSE2" "pid: host" \
+    "pid: host is rendered anyway -- it is unconditional, not a grant"
 
 ENVOUT2=$(cat "$OUT2/.env" 2>/dev/null || true)
-assert_contains "$ENVOUT2" "NETRA_PID_HOST=0" \
-    "the absence of --pid-host is stated, not left blank"
+assert_contains "$ENVOUT2" "NETRA_PID_HOST=1" \
+    "and .env states it, so the process collector need not guess"
 
 # The whole reason render_env is awk and not `sed s///`: a value containing `/`
 # or `&` turns a sed expression into something else entirely.
@@ -160,12 +165,14 @@ assert_contains "$ENVOUT" 'NETRA_TOKEN=nta_a&b/c\d' \
 # unconditionally, so it can no longer return an empty block on any host
 # check_cgroup_v2 lets through. The renderer's contract is tested here anyway --
 # it is the renderer's, not that function's, and the same marker-deleting rule
-# carries cap_add, devices and pid, each of which IS routinely empty.
+# carries cap_add and devices, both of which ARE routinely empty.
+#
+# `pid: host` is deliberately absent from this list: it is a literal line in the
+# template, not a marker, so no empty block can delete it.
 NETRA_BLK_VOLUMES=""
 NETRA_BLK_DEVICES=""
 NETRA_BLK_CAP_ADD=""
-NETRA_BLK_PID=""
-export NETRA_BLK_VOLUMES NETRA_BLK_DEVICES NETRA_BLK_CAP_ADD NETRA_BLK_PID
+export NETRA_BLK_VOLUMES NETRA_BLK_DEVICES NETRA_BLK_CAP_ADD
 render_template "$TEMPLATES/compose.yaml.tmpl" >"$TMP/empty.yaml"
 if diff -u "$GOLDEN/empty-volumes.compose.yaml" "$TMP/empty.yaml" >"$TMP/diff.empty" 2>&1; then
     ok "an empty block deletes its marker line entirely"
@@ -181,7 +188,8 @@ EMPTYBODY=$(grep -v '^[[:space:]]*#' "$TMP/empty.yaml" || true)
 assert_not_contains "$EMPTYBODY" "volumes:" "no dangling volumes: key remains"
 assert_not_contains "$EMPTYBODY" "cap_add:" "no dangling cap_add: key remains"
 assert_not_contains "$EMPTYBODY" "devices:" "no dangling devices: key remains"
-assert_not_contains "$EMPTYBODY" "pid:" "no dangling pid: key remains"
+assert_contains "$EMPTYBODY" "pid: host" \
+    "pid: host survives an all-empty render -- it is a literal, not a marker"
 assert_not_contains "$EMPTYBODY" "#__NETRA_" "no marker line survives"
 
 # --- 4. blocks travel through ENVIRON, never `awk -v` --------------------------
