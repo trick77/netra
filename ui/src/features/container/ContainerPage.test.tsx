@@ -166,7 +166,10 @@ describe("ContainerPage", () => {
     ).toBeInTheDocument();
     // Twice on purpose: once in the header, once in the Identity card.
     for (const link of screen.getAllByRole("link", { name: "web-01" })) {
-      expect(link).toHaveAttribute("href", "/hosts/3");
+      // The explicit tab, matching every other host link in the app --
+      // /hosts/3 resolves to the same page, but two spellings of one link is
+      // how the two container lists drifted in the first place.
+      expect(link).toHaveAttribute("href", "/hosts/3/overview");
     }
     expect(screen.getAllByText("nginx:1.27").length).toBeGreaterThan(0);
   });

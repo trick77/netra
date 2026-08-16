@@ -520,10 +520,15 @@ a {
   padding: 1px 8px;
 }
 
-/* Host cell — the Host column's content, rendered by hostColumns and shown
-   both as a table cell and as a card header. The card-header hooks .hcard
-   .hn/.hs are scoped to the card, so a cell rendered in the table would go
-   unstyled; these classes carry the same look in both places. */
+/* Entity cell — a linked name, an optional badge beside it, and a quieter
+   second line underneath. Named for the Host column it was written for
+   (hostColumns, shown both as a table cell and as a card header: the
+   card-header hooks .hcard .hn/.hs are scoped to the card, so a cell
+   rendered in the table would go unstyled; these classes carry the same look
+   in both places). The container list's name cell is the same shape and now
+   uses the same classes — it had been left behind on the older .host/.name/
+   .site set below, which is how two lists of the same kind of thing ended up
+   looking like two different designs. */
 .host-cell {
   display: flex;
   flex-direction: column;
@@ -547,25 +552,91 @@ a {
   color: var(--muted);
 }
 
-/* Traffic cell — the up/down sparkline with both rates beneath it. Both
+/* Traffic cell — the up/down sparkline with both rates BESIDE it, not under
+   it. Stacked, the two lines of type made this the tallest cell in the fleet
+   row and so set the height of every row on the page; beside the chart they
+   cost width, which the row has, instead of height, which it does not. Both
    rates render in identical type on purpose: netra cannot know whether a
    host is meant to push or pull more, so weighting one would assert a
    direction that is not true. */
 .traffic-cell {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
 }
+/* No min-width:0 on the chart, deliberately. svg.spark carries
+   `max-width:100%; height:auto`, so a horizontal squeeze costs HEIGHT as well
+   as width -- and height is the one thing moving the rates out of the way was
+   meant to buy. Every sparkline in a fleet row gives way together under that
+   rule, and the table's own column sizing already spreads them: measured at
+   1440px, traffic renders 29.6 tall beside CPU at 29.9, memory at 30.5 and
+   filesystem at 30.8, all from the same 170x32 intrinsic size.
+
+   Traffic does end up the smallest of the four, and this is the honest cost of
+   the layout above: .traffic-rates never shrinks, so ~110px of the cell is
+   spoken for before the chart gets any. With long FQDN hostnames, which widen
+   the Host column and squeeze every chart, the same row measures traffic 23.8
+   against CPU 25.9, memory 27.6 and filesystem 28.6 -- a couple of pixels
+   under its neighbours, inside the spread they already have between
+   themselves. min-width:0 here would drop it much further, and letting this
+   cell WRAP (what .card does below, where the chart is the only item that can
+   give) would make traffic the largest chart in the row and put the row height
+   straight back. A viewport too narrow for the wider cell is already handled:
+   .tablewrap scrolls, and below the mobile breakpoint the list is cards, which
+   restore the stack below. */
 .traffic-rates {
   display: flex;
-  gap: var(--space-3);
+  /* Stacked, so the pair is two short lines against the chart rather than one
+     long line that would double the cell's width. */
+  flex-direction: column;
+  gap: 0;
+  /* Never shrink: the chart is the fixed-width item here, and a rates column
+     that gave way would wrap a byterate mid-number. */
+  flex: none;
   font-size: var(--text-label);
+  /* Two lines at exactly the chart's 32px, so the rates align with the mark
+     they annotate and the cell is no taller than the sparkline. The body's
+     1.55 would draw them 43px tall -- taller than the chart, which is the
+     row height this change exists to remove. */
+  line-height: 1.15;
   /* --muted, matching the disk percentage in the same row (.mrow .val).
      These are both the number BESIDE a chart -- a reading the sparkline or
      the meter has already drawn -- and at --ink-2 the traffic rates read a
      step louder than the disk figure they sit next to, which made two
      equally important columns look ranked. */
   color: var(--muted);
+}
+/* Cards put the same cell in a 2-up tile roughly 165px wide, where a 170px
+   chart with a rates column beside it does not fit -- the sparkline would
+   scale down to a few pixels tall. Inside a card the axes go back to what they
+   were: chart above, rates in a row beneath. Scoped to .hcard rather than to
+   the mobile breakpoint because "Cards" is also a density a reader can pick by
+   hand at full width. */
+.hcard .traffic-cell {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.hcard .traffic-rates {
+  flex-direction: row;
+  gap: var(--space-3);
+  line-height: 1.55;
+}
+/* The host page's Overview Traffic card is the one place this cell is neither
+   a tile nor inside a scrolling table: it is a column of .grid2, so it simply
+   gets narrower with the window and the chart is the only item that can give.
+   Measured with the real tokens: at a 350px card the 260x64 sparkline draws
+   192x47, and at 390px viewport 15x4 -- a hairline, because .traffic-rates
+   never shrinks. Wrapping is the fix that keeps the intent: while the rates
+   fit beside the chart nothing changes, and when they no longer do they drop
+   underneath a FULL-SIZE chart instead of squeezing it. Scoped to .card so the
+   fleet table keeps the shared shrink-together behaviour argued for above. */
+.card .traffic-cell {
+  flex-wrap: wrap;
+  /* Beside the chart the gap is horizontal (--space-3); once wrapped it is the
+     stacked cell's 2px, not 12px of dead space under the mark. */
+  row-gap: 2px;
 }
 .rate {
   font-variant-numeric: tabular-nums;
@@ -1212,6 +1283,10 @@ tbody tr:hover {
   display: block;
 }
 
+/* The original two-line entity cell, superseded by .host-cell above. Nothing
+   emits these classes any more -- the container list was the last caller and
+   moved off them -- so they are kept only because removing markup hooks is
+   not this change's job. Reach for .host-cell in new work. */
 .host {
   display: flex;
   align-items: center;
@@ -1278,6 +1353,38 @@ svg.spark {
 }
 .kv dt:last-of-type,
 .kv dd:last-of-type {
+  border-bottom: 0;
+}
+/* Two pairs across, for a card that spans the page instead of half of it --
+   the host Overview's System card, whose eight rows are otherwise a long thin
+   column down the left of a full-width card. Two, not three: eight divides by
+   two into four full rows, where three leaves a ragged last row with an empty
+   cell, and it keeps enough width for the two longest values on that card (the
+   kernel string and the CPU model). */
+.kv.wide {
+  grid-template-columns: auto 1fr auto 1fr;
+}
+/* gap stays 0 -- dt's own padding-right is the space inside a pair. What the
+   second pair needs is space to the LEFT of its key, or its dt butts against
+   the first pair's value. dt order alternates columns, so every even dt is the
+   right-hand pair's key.
+
+   This counts on dt being a DIRECT child of the dl. Facts used to wrap each
+   pair in a `display: contents` div, which made every dt the first dt under
+   its own wrapper -- an `even` selector matched nothing, and the gutter
+   silently did not exist. Nothing in the suite can catch that: jsdom applies
+   no stylesheet, so the card renders and every assertion passes. */
+.kv.wide dt:nth-of-type(even) {
+  padding-left: var(--space-5);
+}
+/* The single-column rule above zeroes exactly one dt and one dd, which is the
+   whole last row only while there is one pair per row. Two across, the last
+   row holds two of each, and half of it keeps a rule that hangs under the
+   card. -n+2 is correct for an EVEN number of rows; the only .kv.wide on the
+   page has eight. An odd count would take the border off the pair above the
+   last one as well. */
+.kv.wide dt:nth-last-of-type(-n + 2),
+.kv.wide dd:nth-last-of-type(-n + 2) {
   border-bottom: 0;
 }
 
@@ -1503,6 +1610,13 @@ svg.spark {
   font: inherit;
   text-align: left;
 }
+/* The same button around a sparkline rather than a panel: in a table cell or
+   a flex row, the full-width rule above would stretch a 110px chart across
+   the whole column and push the reading beside it out of line. */
+.chartwrap.as-button.inline {
+  display: inline-flex;
+  width: auto;
+}
 
 /* ── Enlarged chart ───────────────────────────────────────────────── */
 .cd-back {
@@ -1655,6 +1769,25 @@ svg.spark {
   .grid2 {
     grid-template-columns: 1fr;
   }
+  /* Back to one pair per row: two pairs of key AND value across 900px leaves
+     the kernel string and the CPU model nowhere to go. The gutter goes with
+     the second column -- left over, it indents every other key of a
+     single-column list -- and the last row is a single pair again, which is
+     what the plain .kv border rule already handles. */
+  .kv.wide {
+    grid-template-columns: auto 1fr;
+  }
+  .kv.wide dt:nth-of-type(even) {
+    padding-left: 0;
+  }
+  .kv.wide dt:nth-last-of-type(-n + 2),
+  .kv.wide dd:nth-last-of-type(-n + 2) {
+    border-bottom: 1px solid var(--border);
+  }
+  .kv.wide dt:last-of-type,
+  .kv.wide dd:last-of-type {
+    border-bottom: 0;
+  }
 }
 
 /* ── Below the mobile breakpoint ───────────────────────────────────────
@@ -1699,9 +1832,91 @@ svg.spark {
 
 /* Wide content scrolls inside its own box; the PAGE never scrolls
    sideways. A table that widens the document moves every other element on
-   it, including the nav. */
+   it, including the nav.
+
+   It is also the table's SURFACE. Every other block on every page is a
+   filled, bordered panel -- .card, .tile, .smp, .hcard -- and a table alone
+   sat unpainted on --bg between them, which is what "it's all white" was.
+   Here rather than on `table` itself so a table always gets its chrome and
+   its scroll box as one thing; here rather than in one feature's stylesheet
+   so the fleet's Hosts tab and its Containers tab cannot look different from
+   each other. */
 .tablewrap {
   overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ui);
+  /* Every stacked block on a page owns its own bottom gap -- .card, .tiles,
+     .cards and .toolbar all do, for the reason spelled out above .card. */
+  margin-bottom: var(--space-4);
+}
+/* The header rail, filled so it separates from the rows without another
+   border. Deliberately NOT sticky: `overflow-x: auto` makes .tablewrap a
+   scroll container on both axes, so `position: sticky; top: 0` would anchor
+   to this box rather than to the viewport and do nothing without a
+   max-height on it. Scoped to .tablewrap so ChartDetail's own .cd-stats
+   table, which is not wrapped, keeps its own header rules. */
+.tablewrap thead th {
+  background: var(--surface-2);
+}
+/* A table inside a card is already on a surface. Nothing does this today;
+   the reset is here so the next one does not nest two borders. */
+.card .tablewrap {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  margin-bottom: 0;
+}
+
+/* A group header inside a table body: one <tbody> per group, each led by
+   this row. Same type as .grouphead -- it does the same job in a different
+   container -- and it carries a top border because
+   `tbody tr:last-child td { border-bottom: 0 }` now fires once per GROUP, so
+   without it the last row of one group runs into the head of the next. The
+   first group's own top border is suppressed: it would double the header
+   rail's own line. */
+.grouprow th {
+  /* NOT uppercased, unlike .grouphead and the column headers -- and both the
+     transform and the tracking have to be undone explicitly, because the bare
+     `th` rule above applies to this cell too. What a group is named after
+     here is an identifier -- a hostname, a compose project -- and "WEB-01" is
+     not what that host is called. Weight and the filled ground do the
+     separating instead. */
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: var(--text-label);
+  color: var(--ink-2);
+  font-weight: 600;
+  padding: 10px var(--space-4) 6px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+tbody:first-of-type .grouprow th {
+  border-top: 0;
+}
+/* Not the group's subject -- the count is how big it is, which is context. */
+.grouprow .groupcount {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* The container list's memory cell: the trend, and under it the reading
+   against the container's own mem_limit. Meter brings its own .mrow, which
+   is a 1fr/92px row with padding and a rule of its own -- all three wrong
+   inside a <td> that already has them. Same override .disk-cell makes, for
+   the same reason. */
+.mem-cell .mrow {
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2);
+  padding: 2px 0 0;
+  border-bottom: 0;
+}
+.mem-cell .val {
+  /* --text-label, like .uptime-cell and .traffic-cell .rate: the same job
+     -- a quiet secondary reading inside a table cell -- and --text-micro
+     has only its three sanctioned uses (spec 3.6). */
+  font-size: var(--text-label);
 }
 
 /* Every interactive control shows where the keyboard is. :focus-visible

@@ -6,113 +6,24 @@
 // something which cannot run says why -- this panel is where that
 // contract reaches the UI.
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
 import { ABSENT } from "../../lib/format";
 import { extent } from "./geometry";
 import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
-import { ChartDetail } from "./ChartDetail";
+import { Enlargeable, type DetailData } from "./Enlargeable";
 import type { Range } from "../../lib/range";
 
 /** A single plotted series. Re-exported as `Band` because that is the name
  * the task brief uses for ChartPanel's `series` prop. */
 export type Band = OverlaySeries;
 
-/**
- * The enlarged view's own range, and the data for it.
- *
- * The whole point of this hook is that nothing it returns reaches the page.
- * A reader who enlarges one chart and widens it is asking a question about
- * that chart; answering it by re-ranging the twenty panels behind the dialog
- * -- which is what wiring the dialog to the page's setter did -- refetches
- * the entire tab and moves the toolbar under the thing being read.
- *
- * `series` is null until the range is actually changed, so a dialog opened
- * and closed again costs no request at all: the panel's own data already
- * covers the page's range.
- */
-function useDetailRange(
-  pageRange: Range | undefined,
-  fetchSeries: ((range: Range) => Promise<DetailData>) | undefined,
-  open: boolean,
-) {
-  const [range, setRange] = useState<Range | undefined>(pageRange);
-  const [data, setData] = useState<DetailData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // The latest fetcher, without making it a dependency of the effect below.
-  // Both callers build it inline -- Graphs closes over `spec`, ContainerPage
-  // over which bands to pick -- so it is a new function on every render of
-  // the page, and depending on it would refire the dialog's fetch on every
-  // poll of the page behind it. Same reason and same shape as usePoll's
-  // fnRef in lib/poll.ts.
-  const fetchRef = useRef(fetchSeries);
-  fetchRef.current = fetchSeries;
-
-  // Closing resets, so reopening starts from the page again rather than from
-  // wherever the last look happened to end. The dialog is a question asked
-  // and answered, not a second piece of page state to keep track of.
-  useEffect(() => {
-    if (open) return;
-    setRange(pageRange);
-    setData(null);
-    setError(null);
-    // Closed while a fetch was in flight: its resolver bails on `cancelled`
-    // below, so without this the header would still say "Loading…" the next
-    // time the dialog is opened.
-    setLoading(false);
-  }, [open, pageRange]);
-
-  useEffect(() => {
-    // Nothing to do at the page's own range: the series already on screen
-    // are that range's, which is what makes opening the dialog free. Coming
-    // BACK to it also ends whatever the last range said: a fetch cancelled
-    // on the way here never settles, and "could not load that range" is
-    // about a range no longer being shown.
-    if (!open || range === undefined || range === pageRange) {
-      setLoading(false);
-      setError(null);
-      return;
-    }
-    const fetchSeries = fetchRef.current;
-    if (fetchSeries === undefined) return;
-
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchSeries(range).then(
-      (next) => {
-        if (cancelled) return;
-        setData(next);
-        setLoading(false);
-      },
-      (e: unknown) => {
-        if (cancelled) return;
-        // The previous series stay on screen (see the series prop below), so
-        // this reports the failure without also blanking the chart -- an
-        // empty chart would claim the host reported nothing over the window
-        // just asked for, which is a different and much worse statement.
-        setError(e instanceof Error ? e.message : String(e));
-        setLoading(false);
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [open, range, pageRange]);
-
-  return {
-    range,
-    // No picker without a fetcher: buttons that cannot change anything are
-    // worse than no buttons.
-    setRange: fetchSeries === undefined ? undefined : setRange,
-    series: range === pageRange ? null : (data?.series ?? null),
-    window: range === pageRange ? null : (data?.window ?? null),
-    loading,
-    error,
-  };
-}
+// The click-to-enlarge behaviour, the dialog and the dialog's own range now
+// live in Enlargeable, so that a sparkline drawn without this card around it
+// -- in a table cell, in the sensor list -- can carry the same affordance.
+// Re-exported from here because this is where they were, and every existing
+// import says so.
+export type { DetailData } from "./Enlargeable";
+export { useDetailRange } from "./Enlargeable";
 
 export interface ChartPanelProps {
   title: string;
@@ -206,14 +117,6 @@ export interface ChartPanelProps {
   footer?: ReactNode;
 }
 
-/** What fetchSeries answers: the bands to draw and the window they cover,
- * already shaped -- the caller owns the response-to-bands conversion because
- * only it knows which columns this panel plots. */
-export interface DetailData {
-  series: Band[];
-  window: { from: string; to: string } | null;
-}
-
 export function ChartPanel({
   title,
   unit,
@@ -238,8 +141,6 @@ export function ChartPanel({
   fetchSeries,
   footer,
 }: ChartPanelProps) {
-  const [enlarged, setEnlarged] = useState(false);
-  const detail = useDetailRange(range, fetchSeries, enlarged);
   if (unavailable !== undefined) {
     return (
       <section className="smp na" aria-label={`${title}, not collected`}>
@@ -300,14 +201,30 @@ export function ChartPanel({
         </span>
         {unit !== undefined && <span className="u">{unit}</span>}
       </div>
-      {/* A button, not a div with a click handler: opening the enlarged view
-          has to work from the keyboard, and the chart is the affordance --
-          a separate "expand" icon would be a second thing to find. */}
-      <button
-        type="button"
-        className="chartwrap as-button"
-        onClick={() => setEnlarged(true)}
-        aria-label={`Enlarge ${title}`}
+      {/* The chart is the affordance -- see Enlargeable, which owns the
+          button and the dialog so that a sparkline drawn without this card
+          around it can carry the same one. */}
+      <Enlargeable
+        title={title}
+        unit={unit}
+        // The panel's own series, and its own `max` rather than
+        // `effectiveMax`: the dialog derives its ceiling from the data when
+        // no explicit one is given, which is what it has always done.
+        series={series}
+        max={max}
+        fmt={fmt}
+        stacked={stacked}
+        legend={legend}
+        // The rule is unlabelled in both views: the enlarged view's y axis
+        // already names it at the height it sits, and the small panel names
+        // it in its header rather than inside the plot.
+        reference={reference}
+        mirrored={mirrored}
+        hideAxis={hideAxis}
+        window={answered}
+        range={range}
+        ranges={ranges}
+        fetchSeries={fetchSeries}
       >
         <Overlay
           series={series}
@@ -336,43 +253,12 @@ export function ChartPanel({
           mirrored={mirrored}
           label={`${title} over time`}
         />
-      </button>
+      </Enlargeable>
       {notice && <p className="note">{notice}</p>}
       {/* Under the chart, inside the panel. The `unavailable` branch above
           returns before reaching this, which is the point: a meter beneath
           "Not collected" would state a reading for a panel that has none. */}
       {footer !== undefined && <div className="foot">{footer}</div>}
-      {enlarged && (
-        <ChartDetail
-          title={title}
-          unit={unit}
-          // The dialog's own data once its range has been changed, and the
-          // panel's otherwise. Keeping the previous series while a fetch is
-          // in flight is deliberate: blanking the chart to redraw it a
-          // moment later is a flicker, and an empty chart in netra asserts
-          // "the host reported nothing".
-          series={detail.series ?? series}
-          max={max}
-          fmt={fmt}
-          stacked={stacked}
-          legend={legend}
-          reference={reference}
-          // The rule is unlabelled in both views: the enlarged view's y axis
-          // already names it at the height it sits, and the small panel names
-          // it in its header rather than inside the plot.
-          mirrored={mirrored}
-          hideAxis={hideAxis}
-          window={detail.window ?? answered}
-          // The dialog's range and the dialog's setter. The page's setter is
-          // deliberately not reachable from here.
-          range={detail.range}
-          onRangeChange={detail.setRange}
-          ranges={ranges}
-          loading={detail.loading}
-          error={detail.error}
-          onClose={() => setEnlarged(false)}
-        />
-      )}
     </section>
   );
 }

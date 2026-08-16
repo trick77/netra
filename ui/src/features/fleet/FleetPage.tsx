@@ -125,23 +125,11 @@ function readStoredDensity(): Density | null {
   return stored === "cards" || stored === "table" ? stored : null;
 }
 
-/**
- * The windows this page OFFERS. Exported so the screen that fetches for it
- * can clamp a remembered range to this set BEFORE asking the hub: clamping
- * inside the component would leave the fetch on 7d while the toolbar showed
- * 24h. A 30-day fan-out across every host is a rollup nobody asked for,
- * which is why this stops at 24h.
- */
-export const FLEET_RANGES: { value: Range; label: string }[] = [
-  { value: "1h", label: "1h" },
-  { value: "6h", label: "6h" },
-  { value: "24h", label: "24h" },
-];
-
-/** The same set as the bare values clampRange takes. */
-export const FLEET_RANGE_VALUES: readonly Range[] = FLEET_RANGES.map(
-  (o) => o.value,
-);
+// They live in ./ranges now, so the container list and the host columns can
+// read them without importing this page. Re-exported because App.tsx and
+// this page's own tests have always taken them from here.
+export { FLEET_RANGES, FLEET_RANGE_VALUES } from "./ranges";
+import { FLEET_RANGES } from "./ranges";
 
 const DENSITIES: { value: Density; label: string }[] = [
   { value: "table", label: "Table" },
@@ -474,7 +462,9 @@ export function FleetPage({
       ) : (
         <FleetContainers
           rows={visibleContainers}
-          showHost
+          // No showHost: the list groups by host, so every row already sits
+          // under its hostname -- and under a link to it. A Host column
+          // beside that repeats the group header on every single row.
           loaded={containersKnown}
           range={range}
           // hostRows, not visibleHosts: the point of the note is a host that
