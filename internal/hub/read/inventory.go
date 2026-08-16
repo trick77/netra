@@ -78,7 +78,7 @@ type Package struct {
 // construction "what did the newest event say". That reasoning held only while
 // every transition arrived; the agent now also sends a periodic snapshot so
 // the hub can be told what IS, and the answer lives on the row. See Units
-// below and 0003_systemd_unit_state.sql.
+// below and systemd_units in 0001_init.sql.
 //
 // Since is when the unit ENTERED this state, not when the hub last heard about
 // it -- the write paths advance it only when the state actually changes. A
@@ -231,7 +231,7 @@ func (s *Service) Packages(ctx context.Context, hostID int32) ([]Package, error)
 // and here is the truth anyway" -- so a transition the hub never received left
 // a unit pinned at its last known state forever, and the 90-day event prune
 // could silently blank the state of a unit that was still failed. See
-// 0003_systemd_unit_state.sql.
+// systemd_units in 0001_init.sql.
 func (s *Service) Units(ctx context.Context, hostID int32) ([]Unit, error) {
 	if err := s.hostExists(ctx, hostID); err != nil {
 		return nil, err
