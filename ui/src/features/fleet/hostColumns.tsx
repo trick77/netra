@@ -142,8 +142,16 @@ function HostCell({ row }: { row: HostRow }) {
       {/* The location goes under the name rather than beside it: the two are
           a heading and its subtitle, not two peers, and the row has the
           vertical space. Inline, a long site name pushed the hostname off
-          the eye's scan line down the column. */}
-      <div className="host-cell-site">{row.site_name ?? ABSENT}</div>
+          the eye's scan line down the column.
+
+          A host with no site gets no line at all rather than an em dash: the
+          dash is a placeholder for a value that should be there and is
+          missing, and an unassigned host is not missing anything -- it is
+          simply not in a site yet. A column of dashes under every hostname
+          reads as a fleet full of holes. */}
+      {row.site_name !== null && (
+        <div className="host-cell-site">{row.site_name}</div>
+      )}
     </div>
   );
 }

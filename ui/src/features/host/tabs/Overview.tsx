@@ -705,6 +705,33 @@ function SensorList({
   );
 }
 
+/** The same pairs as Facts, written label-above-value four across instead of
+ * label-beside-value down a column -- the host's System card, which spans the
+ * page and was spending 170px of the best position on it to say eight short
+ * things.
+ *
+ * A key/value pair is still a dl: the wrapper div around each dt/dd is what
+ * the HTML spec calls a name-value group, and it is a real grid item here
+ * rather than the `display: contents` box that broke Facts' separators. No
+ * nth-of-type selector depends on it.
+ *
+ * Values do not wrap. A processor model is the one string long enough to
+ * need two lines, and letting it take them makes the block a different
+ * height on every host in the fleet -- so it ellipsizes and carries the full
+ * text as a title. See .sysstrip. */
+function FactStrip({ rows }: { rows: [string, ReactNode][] }) {
+  return (
+    <dl className="sysstrip">
+      {rows.map(([key, value]) => (
+        <div className="f" key={key}>
+          <dt>{key}</dt>
+          <dd title={typeof value === "string" ? value : undefined}>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 /** `wide` lays the pairs out two across instead of one, for a card that spans
  * the page rather than half of it. See .kv.wide. */
 function Facts({
@@ -940,11 +967,13 @@ export function Overview({
           flow is the position the mechanism can actually hold.
 
           Sitting here it is also no longer a half-page column of eight
-          one-line rows, which is why Facts gets `wide` -- two key/value pairs
-          across, four even rows. See .kv.wide. */}
+          one-line rows. Two pairs across (Facts `wide`) still spent four
+          rows and ~170px of the page's best position on eight short facts
+          that are read once and then scrolled past, so the card writes them
+          label-above-value four across instead: two rows, the same eight
+          facts, no label dropped. See FactStrip and .sysstrip. */}
       <Panel label="System" title="System">
-        <Facts
-          wide
+        <FactStrip
           rows={[
             ["OS", osLabel(host.os_name)],
             ["Kernel", host.kernel ?? ABSENT],
@@ -1347,22 +1376,33 @@ export function Overview({
           />
         </Panel>
 
-        <Panel label="Temperature" title="Temperature">
-          <SensorList
-            res={sensorMetrics}
-            rows={temperatureSeries}
-            range={range}
-            fetchFamily={fetchFamily}
-            color="var(--s7)"
-            trend="temperature"
-            empty="No temperature readings in this window."
-          />
-        </Panel>
+        {/* All three sensor cards are rendered only when the host actually
+          reports that kind of reading: a VPS has no hwmon at all, and most
+          VMs and every container host report no fans, so an empty card on
+          every cloud instance in the fleet would teach people to skip the
+          column this page is made of. Why it is emptiness in the WINDOW
+          rather than the agent's `sensors: absent` capability: the three
+          cards then say the same thing the same way, and the capability is
+          still spelled out on the Collectors card below for anyone asking
+          why the readings are gone. The cost is that a host which does have
+          sensors but reported none in the selected range loses the card
+          instead of showing the sentence -- which is also why the `empty`
+          strings below can no longer render, and are kept only so a future
+          caller of SensorList inherits the wording. */}
+        {temperatureSeries.length > 0 && (
+          <Panel label="Temperature" title="Temperature">
+            <SensorList
+              res={sensorMetrics}
+              rows={temperatureSeries}
+              range={range}
+              fetchFamily={fetchFamily}
+              color="var(--s7)"
+              trend="temperature"
+              empty="No temperature readings in this window."
+            />
+          </Panel>
+        )}
 
-        {/* Only rendered when the host actually has fans: most VMs and every
-          container host report none, and an empty "Fans" card on every
-          cloud instance in the fleet would teach people to skip the column
-          this page is made of. Same for power below. */}
         {fanSeries.length > 0 && (
           <Panel label="Fans" title="Fans">
             <SensorList
