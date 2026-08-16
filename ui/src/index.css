@@ -804,7 +804,12 @@ a {
   border-style: dashed;
 }
 .smp.na .box {
-  height: 104px;
+  /* min-height, not height: 104px matches the chart this panel stands in for,
+     so a not-collected panel is the same size as a collected one -- but a
+     capability message that also names its remedy runs to a fourth line at a
+     narrow width, and a fixed height clipped it. The floor keeps the grid
+     even in the common case and the panel grows only when the words need it. */
+  min-height: 104px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -813,7 +818,7 @@ a {
   text-align: center;
   color: var(--muted);
   font-size: var(--text-label);
-  padding: 0 var(--space-3);
+  padding: var(--space-3);
 }
 .grouphead {
   font-size: var(--text-micro);
@@ -1299,6 +1304,29 @@ svg.spark {
 }
 .mrow:last-child {
   border-bottom: 0;
+}
+/* A reading drawn under the chart it qualifies, inside the panel: the
+   container memory meter under the memory chart. Scoped rather than given its
+   own Meter prop, for the same reason .disk-cell and .fs-list below are --
+   Meter is shared by the fleet's disk cell and the host's filesystem list, and
+   what changes here is placement, not the component.
+
+   The label is hidden because the panel title already carries it, and the
+   value column sizes to its text: the footer prints a bare percentage, not the
+   92px byte pair the host page needs. */
+.smp .foot {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+.smp .foot .mrow {
+  padding: 0;
+  border-bottom: 0;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2);
+}
+.smp .foot .lab {
+  display: none;
 }
 /* The fleet's disk cell: a percentage needs nowhere near the 92px the host
    page's byte counts do, and the fixed column left it stranded away from its

@@ -5,6 +5,7 @@
 // no columns in the schema at all, and netra's collector contract is that
 // something which cannot run says why -- this panel is where that
 // contract reaches the UI.
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { ABSENT } from "../../lib/format";
 import { extent } from "./geometry";
@@ -190,6 +191,19 @@ export interface ChartPanelProps {
    * panel whose page cannot refetch one family on its own.
    */
   fetchSeries?: (range: Range) => Promise<DetailData>;
+  /**
+   * A reading that QUALIFIES this chart, drawn under it inside the panel.
+   *
+   * For the container memory meter, which has to sit with the memory chart it
+   * is the ceiling for. Rendered outside the panel it landed after the whole
+   * small-multiples grid closed -- so it read as a footnote to the last panel
+   * in the grid (Disk I/O) rather than to Memory, at every viewport width.
+   *
+   * Deliberately NOT rendered by the `unavailable` branch: a panel that
+   * collected nothing has no reading to qualify, and a meter under "Not
+   * collected" would be the empty chart that branch exists to prevent.
+   */
+  footer?: ReactNode;
 }
 
 /** What fetchSeries answers: the bands to draw and the window they cover,
@@ -222,6 +236,7 @@ export function ChartPanel({
   range,
   ranges,
   fetchSeries,
+  footer,
 }: ChartPanelProps) {
   const [enlarged, setEnlarged] = useState(false);
   const detail = useDetailRange(range, fetchSeries, enlarged);
@@ -323,6 +338,10 @@ export function ChartPanel({
         />
       </button>
       {notice && <p className="note">{notice}</p>}
+      {/* Under the chart, inside the panel. The `unavailable` branch above
+          returns before reaching this, which is the point: a meter beneath
+          "Not collected" would state a reading for a panel that has none. */}
+      {footer !== undefined && <div className="foot">{footer}</div>}
       {enlarged && (
         <ChartDetail
           title={title}

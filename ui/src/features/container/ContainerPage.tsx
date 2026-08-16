@@ -283,17 +283,30 @@ function last(values: readonly (number | null)[]): number | null {
 /**
  * What each `container_network` capability value means, in the reader's
  * terms rather than the kernel's. Both are failures; the wording differs
- * because the remedies do -- one is a missing namespace mount, the other a
- * container started without the host PID namespace.
+ * because the remedies do, and only one of them HAS a remedy the operator
+ * can act on:
  *
- * Values mirror capNetNoHostNS and capNetNamespaced in
- * internal/agent/collector/containers.go.
+ *   namespaced      the container was started without `pid: host`. The setup
+ *                   script now renders it unconditionally, so re-running it
+ *                   is the fix -- named here for the same reason
+ *                   CGROUP_REMEDY names it in lib/containers.ts, and because
+ *                   every other capability tells the reader what to do while
+ *                   this one used to leave them stranded.
+ *   no-host-netns   the namespace is present and the link still would not
+ *                   read, which in practice is the kernel's ptrace access
+ *                   check. Re-running the script would change nothing, so
+ *                   nothing is promised.
+ *
+ * Values mirror capNetNamespaced and capNetNoHostNS in
+ * internal/agent/collector/containers.go, which picks between them from
+ * NETRA_PID_HOST rather than from an errno -- the two failures are
+ * indistinguishable at the syscall.
  */
 const NETWORK_UNAVAILABLE: Record<string, string> = {
   "no-host-netns":
     "The agent could not read this host's network namespaces, so it cannot tell a host-networked container from a bridged one and measured no container traffic.",
   namespaced:
-    "The agent is running without the host's PID namespace, so it cannot resolve the processes that own each container's interfaces and measured no container traffic.",
+    "The agent is running without the host's PID namespace, so it cannot resolve the processes that own each container's interfaces and measured no container traffic. Re-run setup-agent.sh on this host.",
 };
 
 export interface ContainerPageProps {
@@ -455,6 +468,28 @@ export function ContainerPage({
           }
           stacked={memBands.length > 1}
           series={memBands}
+          // The bar belongs to THIS chart, so it is drawn inside this panel.
+          // It used to sit in its own row after the small-multiples grid, and
+          // a grid is not a column: `.sm` is auto-fill, so the row after it
+          // follows the LAST panel, which is Disk I/O at every width the grid
+          // wraps at. The comment there claimed it was "directly under the
+          // memory chart it qualifies"; it never was.
+          footer={
+            <Meter
+              value={memUsed}
+              max={memLimit}
+              // "no limit" is a fact about a container that reported mem_limit
+              // as null; a container that reported nothing at all has not said
+              // it is unlimited, and gets the absent marker instead.
+              noLimit={sampled !== null && memLimit === null}
+              // No label: the panel title says Memory, and the header above
+              // already carries "used · limit" through nowFmt. Repeating
+              // either inside the same card is noise. The percentage is what
+              // the bar adds -- it is the one form of the reading neither the
+              // header nor the dashed ceiling rule states.
+              formatValue={(_value, _max, pct) => percent(pct)}
+            />
+          }
         />
         {/* Mirrored about a midline, ingress above and egress below, like
             every other traffic chart in the app -- two lines climbing one
@@ -498,23 +533,6 @@ export function ContainerPage({
           ranges={CONTAINER_RANGE_VALUES}
           fetchSeries={detail((b) => b.ioBands)}
           series={ioBands}
-        />
-      </div>
-
-      {/* Meter renders its own .mrow; the bar (or the words "no limit")
-          belongs directly under the memory chart it qualifies. */}
-      <div>
-        <Meter
-          value={memUsed}
-          max={memLimit}
-          // "no limit" is a fact about a container that reported mem_limit
-          // as null; a container that reported nothing at all has not said
-          // it is unlimited, and gets the absent marker instead.
-          noLimit={sampled !== null && memLimit === null}
-          label="Memory against mem_limit"
-          formatValue={(value, max, pct) =>
-            `${bytesPair(value, max)} (${percent(pct)})`
-          }
         />
       </div>
 

@@ -251,4 +251,41 @@ describe("ChartPanel", () => {
       .map((pair) => Number(pair.split(",")[1]));
     expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(50);
   });
+
+  // `footer` exists so a reading that qualifies a chart can be drawn with it
+  // rather than after the grid the chart sits in -- see the prop's own comment.
+  it("draws a footer under the chart", () => {
+    render(
+      <ChartPanel
+        title="Memory"
+        series={[{ name: "used", color: "var(--s1)", values: [1, 2] }]}
+        footer={<p>90%</p>}
+      />,
+    );
+
+    const panel = screen.getByLabelText("Memory chart", {
+      selector: "section",
+    });
+    expect(panel.querySelector(".foot")).toHaveTextContent("90%");
+  });
+
+  // The not-collected branch returns before the footer, and must: a panel that
+  // collected nothing has no reading to qualify, so a meter or a headline
+  // underneath it would state a measurement the panel just denied having.
+  it("suppresses the footer when the panel is not collected", () => {
+    render(
+      <ChartPanel
+        title="Memory"
+        series={[{ name: "used", color: "var(--s1)", values: [1, 2] }]}
+        unavailable="No cgroup memory controller on this host."
+        footer={<p>90%</p>}
+      />,
+    );
+
+    const panel = screen.getByLabelText("Memory, not collected", {
+      selector: "section",
+    });
+    expect(panel.querySelector(".foot")).toBeNull();
+    expect(panel).not.toHaveTextContent("90%");
+  });
 });
