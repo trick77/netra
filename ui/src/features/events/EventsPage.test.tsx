@@ -1,8 +1,8 @@
 // Events carry no severity on the wire -- the events table is (host_id, ts,
 // type, subject, detail) and nothing more -- so the fixtures below are real
 // emitter shapes (mdraid's detail JSON comes from
-// agent/collector/mdraid.go) and severity is asserted as something this page
-// derives from them.
+// agent/collector/mdraid.go, matching collector/testdata/mdraid/degraded) and
+// severity is asserted as something this page derives from them.
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -21,7 +21,7 @@ const NOW = new Date("2026-08-10T14:00:00Z");
 
 function event(overrides: Partial<Event> = {}): Event {
   return {
-    id: 1,
+    id: "e:1",
     host_id: 3,
     hostname: "web-01",
     ts: "2026-08-10T13:59:00Z",
@@ -33,21 +33,35 @@ function event(overrides: Partial<Event> = {}): Event {
 }
 
 const DEGRADED = event({
-  id: 2,
+  id: "e:2",
   ts: "2026-08-10T13:50:00Z",
   type: "mdraid",
   subject: "md0",
-  detail: { level: "raid10", state: "degraded", degraded: 1, disks: 4 },
+  // array_state is "clean" even here: the kernel reports consistency, not
+  // how many disks are left. See mdraidSeverity in ./message.
+  detail: {
+    state: "clean",
+    level: "raid10",
+    raid_disks: 4,
+    degraded: 1,
+    sync_action: "idle",
+  },
 });
 
 const RECOVERING = event({
-  id: 3,
+  id: "e:3",
   ts: "2026-08-10T13:20:00Z",
   host_id: 4,
   hostname: "db-01",
   type: "mdraid",
   subject: "md0",
-  detail: { level: "raid10", state: "recovering", resync_pct: 0.4 },
+  detail: {
+    state: "clean",
+    level: "raid10",
+    raid_disks: 4,
+    degraded: 1,
+    sync_action: "recover",
+  },
 });
 
 const HOSTS = [
@@ -188,10 +202,37 @@ describe("EventsPage", () => {
     expect(info.closest(".badge")).toBeNull();
   });
 
-  it("renders a subjectless event as the absent marker, not as a blank", () => {
-    renderPage({ events: [event({ subject: null })] });
+  it("renders an event with nothing to say as the absent marker, not a blank", () => {
+    // Subjectless AND detailless: an event about the host as a whole that
+    // carried no payload. A subjectless event that DOES have detail is not
+    // blank any more -- see the message tests -- so this is the only case
+    // left where the marker is the honest rendering.
+    renderPage({ events: [event({ subject: null, detail: {} })] });
 
     expect(screen.getByText("—")).toBeInTheDocument();
+  });
+
+  it("says what happened rather than naming the subject and stopping", () => {
+    // The whole point of the wider log: detail was always fetched and never
+    // shown, so a package row read "package · web-01 · nginx" and the
+    // version change it existed to report was invisible.
+    renderPage({
+      events: [
+        event({
+          type: "package",
+          subject: "curl",
+          detail: {
+            action: "upgrade",
+            from_version: "8.5.0",
+            to_version: "8.5.0-2",
+          },
+        }),
+      ],
+    });
+
+    expect(
+      screen.getByText("curl upgraded 8.5.0 → 8.5.0-2"),
+    ).toBeInTheDocument();
   });
 
   it("links each row to its host", () => {
@@ -231,15 +272,36 @@ describe("EventsPage", () => {
     ]);
   });
 
-  // Inventing a taxonomy the hub does not have would offer filters that
-  // match nothing; the types on offer are the types that arrived.
-  it("offers the types the events actually carry", () => {
+  // The known types are always on offer, because filtering by type narrows
+  // the response: a list built from the response alone would empty itself
+  // down to the one type already selected, with no way back.
+  it("offers every type the hub emits, not only the ones in this response", () => {
     renderPage();
 
     const options = [
       ...screen.getByLabelText("Type").querySelectorAll("option"),
     ];
-    expect(options.map((o) => o.value)).toEqual(["", "mdraid", "package"]);
+    expect(options.map((o) => o.value)).toEqual([
+      "",
+      "mdraid",
+      "package",
+      "unit",
+    ]);
+  });
+
+  it("keeps the other types on offer once one is selected", () => {
+    // The regression this guards: with the response filtered to packages,
+    // deriving the list from it alone leaves "package" as the only option.
+    renderPage({
+      events: [event({ type: "package" })],
+      filters: { type: "package" },
+    });
+
+    const options = [
+      ...screen.getByLabelText("Type").querySelectorAll("option"),
+    ];
+    expect(options.map((o) => o.value)).toContain("mdraid");
+    expect(options.map((o) => o.value)).toContain("unit");
   });
 
   // internal/hub/read/events.go orders by ts DESC, id DESC, so the newest

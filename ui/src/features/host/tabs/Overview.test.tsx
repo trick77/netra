@@ -221,26 +221,42 @@ describe("Overview delivery failures", () => {
   });
 });
 
+/** The System block's one-line summary, which is what the card looks like
+ * before anyone clicks it. Five of the eight facts are on it and the same
+ * five are also in the strip underneath, so a bare getByText inside the
+ * region now matches twice -- every assertion about the summary has to say
+ * which of the two it means. */
+function systemSummary() {
+  return screen
+    .getByRole("region", { name: "System" })
+    .querySelector("summary")!;
+}
+
+/** The disclosed strip: the eight labelled facts. */
+function systemStrip() {
+  return screen.getByRole("region", { name: "System" }).querySelector("dl")!;
+}
+
 describe("Overview system facts", () => {
   // GOOS is a build constant, so an agent that could not read /etc/os-release
   // falls back to it and the page used to print the compiler's token.
   it("names the operating system rather than printing GOOS", () => {
     renderOverview({ host: { ...host, os_name: "linux" } });
-    const system = screen.getByRole("region", { name: "System" });
-    expect(within(system).getByText("Linux")).toBeInTheDocument();
+    expect(within(systemSummary()).getByText("Linux")).toBeInTheDocument();
+    expect(within(systemStrip()).getByText("Linux")).toBeInTheDocument();
   });
 
   it("does not title-case its way to Darwin and Freebsd", () => {
     renderOverview({ host: { ...host, os_name: "darwin" } });
-    expect(
-      within(screen.getByRole("region", { name: "System" })).getByText("macOS"),
-    ).toBeInTheDocument();
+    expect(within(systemSummary()).getByText("macOS")).toBeInTheDocument();
   });
 
   // A distro string is already the right answer and must pass through.
   it("leaves a distribution name alone", () => {
     renderOverview({ host: { ...host, os_name: "Debian GNU/Linux 13" } });
-    expect(screen.getByText("Debian GNU/Linux 13")).toBeInTheDocument();
+    expect(
+      within(systemSummary()).getByText("Debian GNU/Linux 13"),
+    ).toBeInTheDocument();
   });
 
   // ~32 GiB of MemTotal. Decimally this reads "33.3 GB", which is above the
@@ -248,8 +264,141 @@ describe("Overview system facts", () => {
   it("states installed memory in the binary units it was sold in", () => {
     renderOverview({ host: { ...host, memory_total: 33_260_000_000 } });
     const system = screen.getByRole("region", { name: "System" });
-    expect(within(system).getByText("31 GiB")).toBeInTheDocument();
+    expect(within(systemSummary()).getByText("31 GiB")).toBeInTheDocument();
     expect(within(system).queryByText(/33.3 GB/)).toBeNull();
+  });
+});
+
+// The card is shut when the page opens: the five facts an operator reads in
+// passing are on one line, and the other three cost a click. That is the
+// whole point of the shape -- a permanently open eight-fact table spent more
+// of the page's best position on its own frame than on its facts.
+describe("Overview System summary", () => {
+  it("states OS, kernel, processor, memory and uptime without a click", () => {
+    renderOverview();
+    const summary = systemSummary();
+
+    expect(summary.closest("details")!.hasAttribute("open")).toBe(false);
+    for (const fact of [
+      "Ubuntu 24.04",
+      "6.8.0-31-generic",
+      "EPYC 7003",
+      "7.5 GiB",
+    ]) {
+      expect(within(summary).getByText(fact)).toBeInTheDocument();
+    }
+    expect(summary.textContent).toContain("up ");
+  });
+
+  // Architecture, cores and the agent build are the three facts behind the
+  // click. They are looked up deliberately rather than read in passing --
+  // amd64 is implied by the processor model, the core count is a number you
+  // go and get when sizing something, and the commit is what you read when a
+  // host reports something the code should not be able to report. If any of
+  // them creeps onto the summary the disclosure stops paying for its click.
+  it("keeps architecture, cores and the agent build behind the click", () => {
+    renderOverview();
+    const summary = systemSummary();
+    const strip = systemStrip();
+
+    for (const hidden of ["amd64", "4 cores · 8 threads", "0.4.1 · abc1234"]) {
+      expect(within(summary).queryByText(hidden)).toBeNull();
+      expect(within(strip).getByText(hidden)).toBeInTheDocument();
+    }
+  });
+
+  // The processor model is the raw string, long enough on a real host to push
+  // the line onto a second row on its own, so it is the one summary value
+  // allowed to ellipsize -- which makes its title the only place the full
+  // text survives.
+  it("carries the processor model's full text on the summary too", () => {
+    const cpu = "AMD EPYC 7402P 24-Core Processor";
+    renderOverview({ host: { ...host, cpu_model: cpu } });
+    const model = within(systemSummary()).getByText(cpu);
+
+    expect(model.getAttribute("title")).toBe(cpu);
+    expect(model.className).toContain("cpu");
+  });
+
+  // The worst case the store can actually produce: ingest.go NULLIFs every
+  // one of these columns, and an agent in a container that cannot read the
+  // host's /etc/os-release reports no os_name at all. Unguarded, the OS span
+  // rendered osLabel(null) and the whole summary read "—Details" -- a line
+  // whose only content is an em dash, which is the failure the omission rule
+  // exists to prevent rather than a milder version of it.
+  it("writes no facts at all rather than a line of dashes", () => {
+    renderOverview({
+      host: {
+        ...host,
+        os_name: null,
+        kernel: null,
+        cpu_model: null,
+        memory_total: null,
+        uptime_s: null,
+      },
+    });
+    const summary = systemSummary();
+
+    expect(summary.textContent).not.toContain(ABSENT);
+    expect(summary.textContent).toBe("Details");
+    expect(summary.querySelector("svg.osicon")).toBeNull();
+    // The labelled strip still answers for all eight, dashes included.
+    expect(within(systemStrip()).getAllByText(ABSENT).length).toBeGreaterThan(
+      3,
+    );
+  });
+
+  // The mark labels the OS name and travels with it, so it lives INSIDE the
+  // OS span -- outside, a wrap could put the Ubuntu logo at the end of one
+  // line and "Ubuntu 24.04" at the start of the next. aria-hidden because the
+  // name is written right beside it; announcing it would say "Ubuntu" twice.
+  it("puts the distribution mark in front of the OS name", () => {
+    renderOverview();
+    const os = systemSummary().querySelector(".strong")!;
+    const icon = os.querySelector("svg.osicon")!;
+
+    expect(icon).not.toBeNull();
+    expect(icon.getAttribute("aria-hidden")).toBe("true");
+    expect(icon.getAttribute("fill")).toBe("currentColor");
+    expect(os.textContent).toBe("Ubuntu 24.04");
+  });
+
+  // A name the table does not know renders no icon at all, and no gap where
+  // one would have been.
+  it("draws no mark for an OS it does not recognise", () => {
+    renderOverview({ host: { ...host, os_name: "Windows Server 2022" } });
+    expect(systemSummary().querySelector("svg.osicon")).toBeNull();
+  });
+
+  // An absent fact is not written at all, rather than written as an em dash.
+  // The separators are drawn by CSS on `span + span`, so a placeholder span
+  // would leave a dot with nothing on one side of it -- the same reason the
+  // fleet list dropped the site line's dash and the Temperature card stopped
+  // rendering itself empty. The labelled strip below still shows ABSENT,
+  // because a labelled row is where a gap does need a mark.
+  it("omits a fact the host never reported rather than writing a dash", () => {
+    renderOverview({
+      // uptime_s included deliberately. It is the one summary fact whose
+      // formatter absorbs null itself -- duration(null) is ABSENT -- so an
+      // unguarded span writes "up —" rather than nothing, and a fixture that
+      // keeps an uptime passes this test while the page prints the dash.
+      host: {
+        ...host,
+        kernel: null,
+        cpu_model: null,
+        memory_total: null,
+        uptime_s: null,
+      },
+    });
+    const summary = systemSummary();
+
+    expect(summary.textContent).not.toContain(ABSENT);
+    expect(summary.textContent).not.toContain("up ");
+    expect(summary.querySelector(".cpu")).toBeNull();
+    // Still eight labelled rows underneath, three of them absent.
+    expect(
+      within(systemStrip()).getAllByText(ABSENT).length,
+    ).toBeGreaterThanOrEqual(3);
   });
 });
 

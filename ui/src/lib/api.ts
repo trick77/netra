@@ -188,7 +188,10 @@ export type Unit = {
 
 // internal/hub/read/events.go: Event
 export type Event = {
-  id: number;
+  // A string, not a number: the log unions three tables with three different
+  // keys, and the hub prefixes each ("e:", "p:", "u:") rather than inventing
+  // integers that could collide across them.
+  id: string;
   host_id: number;
   hostname: string;
   ts: string;

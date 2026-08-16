@@ -40,6 +40,7 @@ import {
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Card } from "../../../ui/Card";
 import { Meter } from "../../../ui/Meter";
+import { OsIcon } from "../../../ui/OsIcon";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
 import { Enlargeable } from "../../../ui/charts/Enlargeable";
@@ -943,6 +944,11 @@ export function Overview({
     unbounded: row.ceiling !== null && row.ceiling > Number.MAX_SAFE_INTEGER,
   }));
 
+  // Read once and used twice -- the summary line and the strip's Uptime row.
+  // Two copies of this expression is how the two come to disagree on a host
+  // whose metric and whose host row say different things.
+  const uptime = latest(hostMetrics, "uptime_s") ?? host.uptime_s;
+
   const limitsWorthShowing = limitRows.some(
     (row) => row.carried || row.reason !== null,
   );
@@ -1019,50 +1025,116 @@ export function Overview({
           is no top-right slot to reorder a card into. Full width above the
           flow is the position the mechanism can actually hold.
 
-          Sitting here it is also no longer a half-page column of eight
-          one-line rows. Two pairs across (Facts `wide`) still spent four
-          rows and ~170px of the page's best position on eight short facts
-          that are read once and then scrolled past, so the card writes them
-          label-above-value four across instead: two rows, the same eight
-          facts, no label dropped. See FactStrip and .sysstrip. */}
-      <Panel label="System" title="System">
-        <FactStrip
-          rows={[
-            ["OS", osLabel(host.os_name)],
-            ["Kernel", host.kernel ?? ABSENT],
-            ["Architecture", host.arch ?? ABSENT],
-            ["Processor", host.cpu_model ?? ABSENT],
-            [
-              "Cores",
-              host.cores === null
-                ? ABSENT
-                : `${host.cores} cores · ${host.threads ?? ABSENT} threads`,
-            ],
-            // The machine's installed RAM, which this page never stated.
-            // memory_total was blank on every host until the agent started
-            // sending it, and its only reader since has been the memory
-            // chart's fallback denominator -- so the fact itself, the one
-            // an operator asks for first when sizing anything, was
-            // collected and never shown.
-            ["Memory", binaryBytes(host.memory_total)],
-            [
-              "Uptime",
-              duration(latest(hostMetrics, "uptime_s") ?? host.uptime_s),
-            ],
-            // The exact binary that is reporting, not just its release.
-            //
-            // "0.4.1" does not identify a build: it is whatever was last
-            // tagged, and the agent in front of you may be a rebuild, a
-            // patched branch, or the same tag from before a fix landed. The
-            // commit is what makes the answer exact, and it is the first
-            // thing anyone asks when a host reports something the code is
-            // not supposed to be able to report. Both were already collected
-            // (buildinfo.Version and buildinfo.Commit) and served on
-            // HostDetail; only the version was ever shown.
-            ["Agent", agentBuild(host)],
-          ]}
-        />
-      </Panel>
+          Shut by default, and that is the change here. Writing the eight
+          facts label-above-value four across took the block from ~170px to
+          ~115px, which fixed the content and left the frame: a card header, a
+          border, 16px of body padding top and bottom and a bottom margin --
+          more chrome than the facts it wrapped, in the best position on the
+          page, for identity that is read once when the page opens and then
+          scrolled past. So the summary IS the card now, one line carrying the
+          five facts read in passing, and the labelled eight-fact strip is
+          what opens underneath. Nothing is dropped; three facts stop being
+          permanently on screen.
+
+          A native <details>, no mirrored useState -- the same shape the fleet
+          attention band uses, and for the reason spelled out there: the
+          element owns the open state, and the disclosed content has to live
+          INSIDE it or a screen reader is told "expanded" and handed nothing.
+
+          <section aria-label="System"> stays. With the card header gone the
+          word "System" is painted nowhere, so the accessible name is the only
+          thing left carrying it -- and it is what every test on this card
+          finds the card through. See .sysfold. */}
+      <section aria-label="System">
+        <details className="sysfold">
+          {/* Five facts, and an absent one is simply not written rather than
+              given an em dash. That is the rule the Temperature card and the
+              fleet list's site line already follow: a dash is a placeholder
+              for a value that should be there and is missing, and a VPS that
+              never reported a cpu_model is not missing anything. The labelled
+              strip below keeps ABSENT, because a labelled table is where a
+              gap does need a mark. */}
+          <summary>
+            {/* The distribution mark, in currentColor rather than in Ubuntu
+                orange or Fedora blue -- see lib/osIcon.ts. It is inside the
+                OS span so it cannot be separated from the name it labels by
+                a wrap, and it is aria-hidden: the name is written next to
+                it. A host whose os_name the table does not recognise gets no
+                icon and no gap. */}
+            {/* Guarded like the other four. os_name is nullable in the store
+                -- ingest.go NULLIFs it, for an agent in a container that
+                cannot read the host's /etc/os-release -- and osLabel(null) is
+                ABSENT, so an unguarded span left a host with nothing else to
+                say showing a summary line of one em dash. The separators are
+                drawn from the SECOND span onward, so whichever fact ends up
+                first simply takes no leading dot. */}
+            {host.os_name !== null && (
+              <span className="strong">
+                <OsIcon name={host.os_name} />
+                {osLabel(host.os_name)}
+              </span>
+            )}
+            {host.kernel !== null && <span>{host.kernel}</span>}
+            {/* The one value long enough to push this line onto a second row
+                by itself: cpu_model is the raw string -- "AMD EPYC 7402P
+                24-Core Processor", not the short marketing name. It gives way
+                first and carries its full text as a title, the same treatment
+                .sysstrip dd gives it for the same reason. */}
+            {host.cpu_model !== null && (
+              <span className="cpu" title={host.cpu_model}>
+                {host.cpu_model}
+              </span>
+            )}
+            {host.memory_total !== null && (
+              <span>{binaryBytes(host.memory_total)}</span>
+            )}
+            {/* Guarded like the three above it, and for the same reason:
+                uptime_s is nullable on both the metric and the host row, and
+                duration(null) is ABSENT -- so an unguarded span writes
+                "up —" on a host that never reported one, which is the exact
+                placeholder this line does not write. */}
+            {uptime !== null && (
+              <span className="dim">up {duration(uptime)}</span>
+            )}
+            <span className="more">Details</span>
+          </summary>
+          <div className="body">
+            <FactStrip
+              rows={[
+                ["OS", osLabel(host.os_name)],
+                ["Kernel", host.kernel ?? ABSENT],
+                ["Architecture", host.arch ?? ABSENT],
+                ["Processor", host.cpu_model ?? ABSENT],
+                [
+                  "Cores",
+                  host.cores === null
+                    ? ABSENT
+                    : `${host.cores} cores · ${host.threads ?? ABSENT} threads`,
+                ],
+                // The machine's installed RAM, which this page never stated.
+                // memory_total was blank on every host until the agent started
+                // sending it, and its only reader since has been the memory
+                // chart's fallback denominator -- so the fact itself, the one
+                // an operator asks for first when sizing anything, was
+                // collected and never shown.
+                ["Memory", binaryBytes(host.memory_total)],
+                ["Uptime", duration(uptime)],
+                // The exact binary that is reporting, not just its release.
+                //
+                // "0.4.1" does not identify a build: it is whatever was last
+                // tagged, and the agent in front of you may be a rebuild, a
+                // patched branch, or the same tag from before a fix landed. The
+                // commit is what makes the answer exact, and it is the first
+                // thing anyone asks when a host reports something the code is
+                // not supposed to be able to report. Both were already collected
+                // (buildinfo.Version and buildinfo.Commit) and served on
+                // HostDetail; only the version was ever shown.
+                ["Agent", agentBuild(host)],
+              ]}
+            />
+          </div>
+        </details>
+      </section>
 
       <div className="grid2">
         {/* First card in the flow, so it takes the top of the LEFT column.

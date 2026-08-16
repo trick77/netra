@@ -1605,13 +1605,109 @@ svg.spark {
   border-bottom: 0;
 }
 
+/* The host System card, shut: one line of identity and a Details link, in the
+   position the attention band would otherwise have.
+
+   .sysstrip below already took the eight facts from ~170px to ~115px by
+   writing them label-above-value. What was left was the frame — a card
+   header, a border, 16px of body padding top and bottom, a bottom margin —
+   which came to more than the facts it wrapped, spent on identity that is
+   read once and scrolled past. So the summary replaces the card header
+   outright and .sysstrip becomes what OPENS.
+
+   A bordered surface, not loose text, and that is load-bearing: this block
+   sits directly under either the quiet one-line .allclear or the .attn band,
+   and without a ground of its own it merges into both. */
+details.sysfold {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ui);
+  margin-bottom: var(--space-4);
+}
+/* list-style AND the -webkit- marker: the two together are what removes the
+   disclosure triangle across engines, the same pair .attn details > summary
+   uses. */
+details.sysfold > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  padding: 10px var(--space-4);
+  font-size: var(--text-label);
+  color: var(--ink-2);
+}
+details.sysfold > summary::-webkit-details-marker {
+  display: none;
+}
+/* The separator belongs to the gap between two facts, so it is drawn by the
+   SECOND of the pair — a first span has nothing to its left, and an omitted
+   fact (a VPS with no kernel) takes its dot with it rather than leaving a
+   run of them. Same reason the facts are written conditionally in
+   Overview.tsx rather than as `?? ABSENT`. */
+details.sysfold > summary span {
+  white-space: nowrap;
+}
+details.sysfold > summary span + span::before {
+  content: "\00b7";
+  color: var(--border-strong);
+  margin: 0 var(--space-2);
+}
+details.sysfold > summary .strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+/* The distribution mark. --muted rather than the surrounding --ink, because
+   at 14px a solid glyph reads heavier than the word beside it and would make
+   the logo the loudest thing on a line whose job is to be quiet. Its own
+   colour is never used — see lib/osIcon.ts on why the brand palette stays
+   out of this. */
+/* display: inline-block is not cosmetic — Tailwind's preflight sets
+   `svg { display: block }`, which put the mark on its own line ABOVE the OS
+   name and made every row in the fleet two lines tall. */
+details.sysfold > summary .osicon {
+  display: inline-block;
+  color: var(--muted);
+  vertical-align: -2px;
+  margin-right: var(--space-2);
+}
+details.sysfold > summary .dim {
+  color: var(--muted);
+}
+/* min-width: 0 is the whole mechanism — a flex item's default min is its
+   content, so without it the processor model refuses to shrink and pushes
+   the line onto a second row instead of ellipsizing. It is the only value
+   here allowed to give way; the full string is on its title. */
+details.sysfold > summary .cpu {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Pushed to the right edge, and NOT given a separator dot: it is the control,
+   not another fact. */
+details.sysfold > summary .more {
+  margin-left: auto;
+  padding-left: var(--space-4);
+  color: var(--accent);
+  font-size: var(--text-micro);
+}
+details.sysfold > summary .more::before {
+  content: none;
+}
+details.sysfold[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+details.sysfold > .body {
+  padding: var(--space-4);
+}
+
 /* The host System card's eight facts, label ABOVE value and four across —
    two rows where .kv.wide took four, and no key/value column rules at all.
-   The card sits full width above the page's card flow, in the position the
-   attention band would otherwise have, and the facts on it are identity: read
-   once when the page opens and then scrolled past. Four rows of type plus the
-   separators cost ~170px of that position; this costs ~115px with the card
-   header and drops nothing.
+   Now the disclosed state of .sysfold above rather than the card's default
+   body; the facts on it are identity: read once when the page opens and then
+   scrolled past. Four rows of type plus the separators cost ~170px of the
+   page's best position; this costs ~115px and drops nothing.
 
    minmax(0, 1fr), not 1fr: a grid track's default min is auto, so the CPU
    model's nowrap dd would push its column wider than a quarter and the other
