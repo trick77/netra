@@ -568,14 +568,23 @@ a {
 /* No min-width:0 on the chart, deliberately. svg.spark carries
    `max-width:100%; height:auto`, so a horizontal squeeze costs HEIGHT as well
    as width -- and height is the one thing moving the rates out of the way was
-   meant to buy. Every sparkline in a fleet row already gives way together
-   under that rule, which is what keeps the row reading as one picture rather
-   than four charts: measured at 1440px, traffic renders 29.6 tall beside CPU
-   at 29.9, memory at 30.5 and filesystem at 30.8, all from the same 170x32
-   intrinsic size. min-width:0 would exempt this one chart from that shared
-   floor and let it shrink past its neighbours. A viewport too narrow for the
-   wider cell is already handled: .tablewrap scrolls, and below the mobile
-   breakpoint the list is cards, which restore the stack below. */
+   meant to buy. Every sparkline in a fleet row gives way together under that
+   rule, and the table's own column sizing already spreads them: measured at
+   1440px, traffic renders 29.6 tall beside CPU at 29.9, memory at 30.5 and
+   filesystem at 30.8, all from the same 170x32 intrinsic size.
+
+   Traffic does end up the smallest of the four, and this is the honest cost of
+   the layout above: .traffic-rates never shrinks, so ~110px of the cell is
+   spoken for before the chart gets any. With long FQDN hostnames, which widen
+   the Host column and squeeze every chart, the same row measures traffic 23.8
+   against CPU 25.9, memory 27.6 and filesystem 28.6 -- a couple of pixels
+   under its neighbours, inside the spread they already have between
+   themselves. min-width:0 here would drop it much further, and letting this
+   cell WRAP (what .card does below, where the chart is the only item that can
+   give) would make traffic the largest chart in the row and put the row height
+   straight back. A viewport too narrow for the wider cell is already handled:
+   .tablewrap scrolls, and below the mobile breakpoint the list is cards, which
+   restore the stack below. */
 .traffic-rates {
   display: flex;
   /* Stacked, so the pair is two short lines against the chart rather than one
@@ -613,6 +622,21 @@ a {
   flex-direction: row;
   gap: var(--space-3);
   line-height: 1.55;
+}
+/* The host page's Overview Traffic card is the one place this cell is neither
+   a tile nor inside a scrolling table: it is a column of .grid2, so it simply
+   gets narrower with the window and the chart is the only item that can give.
+   Measured with the real tokens: at a 350px card the 260x64 sparkline draws
+   192x47, and at 390px viewport 15x4 -- a hairline, because .traffic-rates
+   never shrinks. Wrapping is the fix that keeps the intent: while the rates
+   fit beside the chart nothing changes, and when they no longer do they drop
+   underneath a FULL-SIZE chart instead of squeezing it. Scoped to .card so the
+   fleet table keeps the shared shrink-together behaviour argued for above. */
+.card .traffic-cell {
+  flex-wrap: wrap;
+  /* Beside the chart the gap is horizontal (--space-3); once wrapped it is the
+     stacked cell's 2px, not 12px of dead space under the mark. */
+  row-gap: 2px;
 }
 .rate {
   font-variant-numeric: tabular-nums;
