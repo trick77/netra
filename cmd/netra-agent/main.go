@@ -76,7 +76,7 @@ func run() error {
 		collector.NewAddresses(collector.SystemIfaces),
 
 		// Group 3: needs a mount.
-		collector.NewContainers(cfg.CgroupRoot, cfg.ProcRoot, collector.SystemDockerContainers),
+		collector.NewContainers(cfg.CgroupRoot, cfg.ProcRoot, collector.SystemDockerContainers, cfg.PidHost),
 		collector.NewFilesystems(cfg.ProcRoot, cfg.FsMounts, collector.SystemStatfs),
 		collector.NewSystemd(collector.SystemUnits),
 		collector.NewPackages(cfg.DpkgStatus, cfg.ApkInstalled),

@@ -110,6 +110,15 @@ type Containers struct {
 	hostNetNS     string
 	hostNetNSOnce sync.Once
 
+	// pidHost is the operator's own statement, from NETRA_PID_HOST, mirroring
+	// what Procs and Processes are already given. It exists so containerNet can
+	// SAY why a namespace link was unreadable instead of inferring it from an
+	// errno: without the host PID namespace, cgroup.procs names host PIDs this
+	// agent's /proc does not have, and the readlink fails with ENOENT -- which
+	// is also what a process exiting mid-scrape looks like. The two need
+	// different words and errno cannot tell them apart.
+	pidHost bool
+
 	mu sync.Mutex
 	// netCapability explains why per-container networking is absent, or is
 	// empty when it is working.
@@ -119,9 +128,17 @@ type Containers struct {
 // NewContainers builds a Containers collector. cgroupRoot is the mounted
 // cgroup v2 hierarchy, procRoot the mounted /proc that per-container network
 // counters are read through; lister may be nil when the Docker socket is not
-// available.
-func NewContainers(cgroupRoot, procRoot string, lister ContainerLister) *Containers {
-	return &Containers{cgroupRoot: cgroupRoot, procRoot: procRoot, lister: lister, now: time.Now}
+// available. pidHost is NETRA_PID_HOST, and is what lets an unreadable
+// namespace link be reported as the configuration it is rather than guessed at
+// from an errno -- see the field comment.
+func NewContainers(cgroupRoot, procRoot string, lister ContainerLister, pidHost bool) *Containers {
+	return &Containers{
+		cgroupRoot: cgroupRoot,
+		procRoot:   procRoot,
+		lister:     lister,
+		pidHost:    pidHost,
+		now:        time.Now,
+	}
 }
 
 // Name implements Collector.
@@ -139,11 +156,16 @@ func (c *Containers) SetClockForTest(fn func() time.Time) { c.now = fn }
 // Capability values reported by Containers for per-container networking.
 const (
 	// capNetNamespaced: cgroup.procs names host PIDs, and without pid: host
-	// the agent resolves them in its own namespace and finds nothing.
+	// the agent resolves them in its own namespace and finds nothing. Reported
+	// on the operator's own statement (NETRA_PID_HOST), never inferred from an
+	// errno -- a process exiting mid-scrape produces the same ENOENT.
 	capNetNamespaced = "namespaced"
 
-	// capNetNoHostNS: /proc/1/ns/net or the container's own is unreadable, so
-	// a host-networked container cannot be told from a bridged one.
+	// capNetNoHostNS: /proc/1/ns/net or the container's own is unreadable on a
+	// host that DOES have the PID namespace, so a host-networked container
+	// cannot be told from a bridged one. In practice this is the ptrace access
+	// check: readlink on /proc/<pid>/ns/net needs PTRACE_MODE_READ_FSCRED,
+	// which a root agent passes only for a root-owned process.
 	capNetNoHostNS = "no-host-netns"
 
 	// capNoCgroupScopes: the Docker socket named containers that the cgroup
@@ -643,13 +665,13 @@ func (c *Containers) containerNet(cgroupDir string) (rx, tx uint64, ok bool) {
 	// succeeds the read.
 	host := c.hostNetNamespace()
 	if host == "" {
-		c.setCapability(capNetNoHostNS)
+		c.setCapability(c.netFailure())
 		return 0, 0, false
 	}
 
 	ns, nsOK := readNamespace(filepath.Join(c.procRoot, pid, "ns", "net"))
 	if !nsOK {
-		c.setCapability(capNetNoHostNS)
+		c.setCapability(c.netFailure())
 		return 0, 0, false
 	}
 	if ns == host {
@@ -659,13 +681,32 @@ func (c *Containers) containerNet(cgroupDir string) (rx, tx uint64, ok bool) {
 
 	rx, tx, ok = sumNetDev(filepath.Join(c.procRoot, pid, "net", "dev"))
 	if !ok {
-		// The cgroup named a PID that /proc does not have. That is the
-		// signature of a PID namespace: cgroup.procs reports host PIDs, so
-		// without pid: host the agent looks them up in its own namespace and
-		// finds nothing. Saying so distinguishes it from "no traffic".
-		c.setCapability(capNetNamespaced)
+		// The cgroup named a PID that /proc does not have. Same two candidates
+		// as above, and the same answer: say which one on the operator's own
+		// statement rather than guessing.
+		c.setCapability(c.netFailure())
 	}
 	return rx, tx, ok
+}
+
+// netFailure names the reason per-container networking produced nothing, for
+// the failures that are indistinguishable at the syscall.
+//
+// Every one of them is a PID that could not be resolved or a namespace link
+// that could not be read, and both have exactly two causes: no host PID
+// namespace, or no ptrace access to a process owned by another user. The errno
+// does not separate them -- a missing PID and a process that exited during the
+// scrape are both ENOENT -- so this reads NETRA_PID_HOST, which the operator
+// set to describe the container they actually deployed.
+//
+// Getting it wrong is not cosmetic. Each value has its own remedy in the UI,
+// and "could not read this host's network namespaces" sent to an operator whose
+// real problem is a missing `pid: host` is a sentence they cannot act on.
+func (c *Containers) netFailure() string {
+	if !c.pidHost {
+		return capNetNamespaced
+	}
+	return capNetNoHostNS
 }
 
 // hostNetNamespace resolves the host's network namespace once. PID 1 is the

@@ -127,7 +127,7 @@ func containerRow(t *testing.T, rows []*netrav1.ContainerSample, key string) *ne
 func TestContainersSubtractsPageCacheFromMemory(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", Project: "proj", Service: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web", Project: "proj", Service: "web"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -149,7 +149,7 @@ func TestContainersSubtractsPageCacheFromMemory(t *testing.T) {
 func TestContainersComputesCPUFromUsageMicroseconds(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}), true)
 
 	res := containersAt(t, testee, base)
 	if len(res.Containers) != 0 {
@@ -185,7 +185,7 @@ func TestContainersIdentityIsComposeProjectAndService(t *testing.T) {
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
 		fakeLister(collector.ContainerMeta{
 			ID: "abc123", Name: "proj-web-1", Image: "nginx:1", Project: "proj", Service: "web",
-		}))
+		}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -208,7 +208,7 @@ func TestContainersIdentityIsComposeProjectAndService(t *testing.T) {
 func TestContainersFallsBackToTheContainerName(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "standalone"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "standalone"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -223,7 +223,7 @@ func TestContainersFallsBackToTheContainerName(t *testing.T) {
 func TestContainersLeavesMemLimitUnsetWhenUnlimited(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "def456", Name: "unlimited"}))
+		fakeLister(collector.ContainerMeta{ID: "def456", Name: "unlimited"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -248,7 +248,7 @@ func TestContainersReportsMetricsWithoutTheDockerSocket(t *testing.T) {
 	failing := func(context.Context) ([]collector.ContainerMeta, error) {
 		return nil, errors.New("dial /var/run/docker.sock: no such file")
 	}
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing, true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -277,7 +277,7 @@ func TestContainersReportsNetworkFromTheContainerNamespace(t *testing.T) {
 	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	advanceNet(t, procRoot, "42", 3000, 1500)
@@ -303,7 +303,7 @@ func TestContainersSkipsNetworkForHostNetworkedContainers(t *testing.T) {
 	cgroupRoot, procRoot := netFixture(t, "42", hostNS, hostNS, 1000, 500)
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	advanceNet(t, procRoot, "42", 3000, 1500)
@@ -341,7 +341,7 @@ func TestContainersFailsClosedWhenTheHostNamespaceIsUnreadable(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	advanceNet(t, procRoot, "42", 3000, 1500)
@@ -359,6 +359,12 @@ func TestContainersFailsClosedWhenTheHostNamespaceIsUnreadable(t *testing.T) {
 // cgroup.procs names HOST pids. Without pid: host the agent resolves them in
 // its own namespace and finds nothing, which is a deployment fact rather than
 // an absence of traffic -- so it is reported as a capability.
+//
+// The collector is told so (pidHost=false) rather than deducing it: the errno
+// cannot separate "this PID is not in my namespace" from "this process exited
+// mid-scrape", and the two need different words. See TestContainers...
+// ReportsNoHostNSWhenThePidNamespaceIsPresent for the other half of the pair --
+// same fixture, same syscall failure, different answer.
 func TestContainersReportsNamespacedWhenPidsDoNotResolve(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
@@ -370,7 +376,7 @@ func TestContainersReportsNamespacedWhenPidsDoNotResolve(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), false)
 
 	containersAt(t, testee, base)
 	res := containersAt(t, testee, base.Add(10*time.Second))
@@ -385,6 +391,38 @@ func TestContainersReportsNamespacedWhenPidsDoNotResolve(t *testing.T) {
 	// Only networking is missing; the rest of the row is fine.
 	if row.MemUsed == nil {
 		t.Error("mem_used unset; only the network read failed")
+	}
+}
+
+// The other half of the pair above: the SAME unreadable PID, on a host that
+// does have the PID namespace. There the remaining cause is the ptrace access
+// check -- readlink on /proc/<pid>/ns/net needs PTRACE_MODE_READ_FSCRED, which
+// a root agent passes only for a root-owned process -- and it earns different
+// words, because "re-run setup-agent.sh" would not fix it.
+//
+// This is the test that pins the whole reason NETRA_PID_HOST is passed in:
+// nothing in the fixture distinguishes the two runs, only what the operator
+// said about the container they deployed.
+func TestContainersReportsNoHostNSWhenThePidNamespaceIsPresent(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	if err := os.Remove(filepath.Join(procRoot, "42", "net", "dev")); err != nil {
+		t.Fatalf("remove net/dev: %v", err)
+	}
+
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
+
+	containersAt(t, testee, base)
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "web")
+	if row.NetRx != nil {
+		t.Error("net_rx set with no readable net/dev")
+	}
+	if got := testee.Capabilities()["container_network"]; got != "no-host-netns" {
+		t.Errorf("capability = %q, want no-host-netns -- with pid: host granted, the remaining cause is ptrace access", got)
 	}
 }
 
@@ -404,7 +442,7 @@ func TestContainersReportsZeroForAContainerWithNoInterfaces(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	res := containersAt(t, testee, base.Add(10*time.Second))
@@ -426,7 +464,7 @@ func TestContainersLeavesNetworkUnsetWithoutARunningProcess(t *testing.T) {
 	cgroupRoot, procRoot := netFixture(t, "", "net:[4026531992]", "", 0, 0)
 
 	testee := collector.NewContainers(cgroupRoot, procRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	containersAt(t, testee, base)
 	res := containersAt(t, testee, base.Add(10*time.Second))
@@ -440,7 +478,7 @@ func TestContainersLeavesNetworkUnsetWithoutARunningProcess(t *testing.T) {
 // A host with no containers is the common case for a plain VPS. Absent, not
 // broken.
 func TestContainersReportsNothingWithNoContainers(t *testing.T) {
-	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister())
+	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister(), true)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -465,7 +503,7 @@ func TestContainersReportsNoCgroupScopesWhenTheSocketDisagrees(t *testing.T) {
 		fakeLister(
 			collector.ContainerMeta{ID: "abc123", Name: "web"},
 			collector.ContainerMeta{ID: "def456", Name: "db"},
-		))
+		), true)
 
 	res, err := testee.Collect(context.Background())
 	if err != nil {
@@ -487,7 +525,7 @@ func TestContainersReportsNoCgroupScopesWhenTheSocketDisagrees(t *testing.T) {
 // rather than on an empty walk: a host genuinely running no containers is not
 // misconfigured and must not be flagged as such.
 func TestContainersRaisesNoCapabilityWhenThereIsGenuinelyNothingToSee(t *testing.T) {
-	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister())
+	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister(), true)
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -506,7 +544,7 @@ func TestContainersRaisesNoCapabilityWhenThereIsGenuinelyNothingToSee(t *testing
 // logged collector failure.
 func TestContainersFailsLoudlyWhenTheCgroupRootIsAbsent(t *testing.T) {
 	testee := collector.NewContainers(filepath.Join(t.TempDir(), "never-mounted"),
-		noProcRoot, fakeLister())
+		noProcRoot, fakeLister(), true)
 
 	res, err := testee.Collect(context.Background())
 	if err == nil {
@@ -543,7 +581,7 @@ func TestContainersReadsTheCgroupfsDriverBareHexDirectory(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(build(1000000), noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: id, Name: "cgroupfs-driver"}))
+		fakeLister(collector.ContainerMeta{ID: id, Name: "cgroupfs-driver"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest(build(6000000))
@@ -577,7 +615,7 @@ func TestContainersIgnoresDirectoriesThatAreNotContainerScopes(t *testing.T) {
 	}
 
 	testee := collector.NewContainers(root, noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -594,7 +632,7 @@ func TestContainersStartupSummaryNamesWhatItSaw(t *testing.T) {
 	failing := func(context.Context) ([]collector.ContainerMeta, error) {
 		return nil, errors.New("dial /var/run/docker.sock: no such file")
 	}
-	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing, true)
 
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)

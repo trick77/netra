@@ -17,7 +17,7 @@ import (
 func TestContainersSplitsCPUIntoUserAndSystem(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -44,7 +44,7 @@ func TestContainersSplitsCPUIntoUserAndSystem(t *testing.T) {
 func TestContainersLeavesTheCPUSplitUnsetWhenTheKernelOmitsIt(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "def456", Project: "proj", Service: "db"}))
+		fakeLister(collector.ContainerMeta{ID: "def456", Project: "proj", Service: "db"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -69,7 +69,7 @@ func TestContainersLeavesTheCPUSplitUnsetWhenTheKernelOmitsIt(t *testing.T) {
 func TestContainersReportsTheMemoryBreakdown(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -101,7 +101,7 @@ func TestContainersReportsTheMemoryBreakdown(t *testing.T) {
 func TestContainersKeepsFileWholeWithoutAShmemLine(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "def456", Project: "proj", Service: "db"}))
+		fakeLister(collector.ContainerMeta{ID: "def456", Project: "proj", Service: "db"}), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -152,7 +152,7 @@ func breakdownOf(t *testing.T, memStat string) *netrav1.ContainerSample {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	root := memStatFixture(t, memStat)
 	testee := collector.NewContainers(root, noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}))
+		fakeLister(collector.ContainerMeta{ID: "abc123", Project: "proj", Service: "web"}), true)
 
 	containersAt(t, testee, base)
 	res := containersAt(t, testee, base.Add(10*time.Second))
