@@ -146,6 +146,27 @@ describe("Enlargeable", () => {
       expect(axis()).toContain("0");
     });
 
+    // A fan pinned at one speed is a real reading, not an absent one. The
+    // sparkline above draws it centred (scaleY centres a min === max series),
+    // and dropping back to a zero floor here would put the same fan at the
+    // top of a 0-1200 box -- the disagreement autoScale exists to prevent.
+    it("keeps a series that never moved at its own value", async () => {
+      render(
+        <Enlargeable
+          title="fan1"
+          series={[{ name: "fan1", color: "var(--s3)", values: [1200, 1200] }]}
+          autoScale
+        >
+          <svg />
+        </Enlargeable>,
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
+
+      // One label, at the one value the series has -- not three steps across
+      // a range it does not span.
+      expect(axis()).toEqual(["1200"]);
+    });
+
     // extent() answers {min: 0, max: 0} for a series with nothing in it,
     // which is reachable rather than theoretical: the 1h tier materialises
     // about ninety minutes behind now, so a widened window can come back with

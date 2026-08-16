@@ -311,11 +311,18 @@ export function fetchHostFamily(
 export function cpuBands(
   host: MetricsResponse | null,
   cores: MetricsResponse | null,
-): Band[] {
+): { bands: Band[]; from: MetricsResponse | null } {
   const perCore = perCoreBands(cores, { normalise: true });
+  // `from` is the response the bands were actually gridded against, and it is
+  // returned rather than inferred because only this function knows which
+  // branch it took: the two families can be answered from different tiers, so
+  // a caller labelling a per-core plot with the host response's endpoints
+  // would put times on it the shape was never gridded to. A caller that
+  // guessed `cores ?? host` would be wrong for a cpu_core response that came
+  // back carrying no series.
   return perCore.length > 0
-    ? perCore
-    : totalBand(griddedValues(host, 0, "cpu_total"));
+    ? { bands: perCore, from: cores }
+    : { bands: totalBand(griddedValues(host, 0, "cpu_total")), from: host };
 }
 
 /**
@@ -379,7 +386,7 @@ export async function fetchHostTrends(
   const traffic = trafficSeries(net);
 
   return {
-    cpu: cpuBands(host, cores),
+    cpu: cpuBands(host, cores).bands,
     mem: memoryBands(host),
     reporting: total,
     // The PEAK of each bucket, not its mean -- see peakBase(). A fleet row

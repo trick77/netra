@@ -17,7 +17,13 @@ import {
   UP_COLOR,
   UpDownSparkline,
 } from "../../ui/charts/UpDownSparkline";
-import { ABSENT, byterate, bytes, percent } from "../../lib/format";
+import {
+  ABSENT,
+  binaryBytes,
+  byterate,
+  bytes,
+  percent,
+} from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
@@ -162,7 +168,10 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
         ? fetchHostFamily(row.id, "cpu_core", next)
         : Promise.resolve(null),
     ]);
-    return { series: cpuBands(host, cores), window: host.window };
+    // The window of the response the BANDS were gridded against -- cpuBands
+    // says which one that was, because only it knows which branch it took.
+    const cpu = cpuBands(host, cores);
+    return { series: cpu.bands, window: (cpu.from ?? host).window };
   };
 
   return (
@@ -232,7 +241,10 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
       max={total * MEM_HEADROOM}
       reference={total}
       stacked
-      fmt={bytes}
+      // Binary, like the host page's Memory panel: the bands are read against
+      // the mem_total rule, and a stack labelled decimally under a rule
+      // labelled binarily makes one quantity look like two.
+      fmt={(n) => binaryBytes(n)}
       range={range}
       ranges={FLEET_RANGE_VALUES}
       fetchSeries={fetchSeries}

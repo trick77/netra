@@ -124,21 +124,29 @@ export function useDetailRange(
 
 /**
  * The extent to draw a free-scaled chart against, or nothing when the series
- * has no shape to scale.
+ * has no readings to scale to.
  *
- * extent() answers {min: 0, max: 0} for a series with no readings at all --
- * which is reachable, not theoretical: widen a sensor chart to 7d and the 1h
- * tier materialises about ninety minutes behind now, so a window with no rows
- * in it comes back empty. Passing that 0 through would ALSO defeat
- * ChartDetail's own `max || 1` guard, because `0 ?? x` is 0 and the guard is
- * only reached for an absent max. Undefined lets that guard do its job.
+ * The test is whether anything was REPORTED, not whether the extent has
+ * width. A flat series is a real reading -- a fan pinned at one speed, a rail
+ * that never moved -- and its degenerate span is what the sparkline above is
+ * already drawn from: scaleY() centres a min === max series in the box rather
+ * than dividing by zero. Rejecting it here would drop the dialog back to a
+ * zero floor and draw the same fan at the top of a 0-1200 box, which is the
+ * disagreement autoScale exists to prevent.
+ *
+ * An EMPTY series is the other case, and it is reachable rather than
+ * theoretical: widen a sensor chart to 7d and the 1h tier materialises about
+ * ninety minutes behind now, so a window with no rows comes back with
+ * nothing. extent() answers {min: 0, max: 0} for it, and passing that 0
+ * through would ALSO defeat ChartDetail's own `max || 1` guard, because
+ * `0 ?? x` is 0 and the guard is only reached for an absent max.
  */
 function derived(series: readonly OverlaySeries[]): {
   min?: number;
   max?: number;
 } {
-  const span = extent(series.flatMap((s) => s.values));
-  return span.max > span.min ? span : {};
+  const values = series.flatMap((s) => s.values);
+  return values.some((v) => v !== null) ? extent(values) : {};
 }
 
 export interface EnlargeableProps {

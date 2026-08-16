@@ -268,6 +268,17 @@ function sensorsOfKind(
  * rolled tiers), which is right for them: a rail sags and recovers, and the
  * bucket's mean is the honest summary of where it sat.
  */
+function sensorHistory(
+  res: MetricsResponse | null,
+  index: number,
+  kind: string,
+): (number | null)[] {
+  if (kind === "fan" && carriesColumn(res, "value_min")) {
+    return griddedValues(res, index, "value_min");
+  }
+  return griddedValues(res, index, "value");
+}
+
 /** What a reader calls this sensor: chip and label, in that order.
  *
  * Also its identity across two responses -- the enlarged view re-finds its
@@ -278,17 +289,6 @@ function sensorName(series: MetricsSeries): string {
   return (
     [series.key.chip, series.key.label].filter(Boolean).join(" ") || ABSENT
   );
-}
-
-function sensorHistory(
-  res: MetricsResponse | null,
-  index: number,
-  kind: string,
-): (number | null)[] {
-  if (kind === "fan" && carriesColumn(res, "value_min")) {
-    return griddedValues(res, index, "value_min");
-  }
-  return griddedValues(res, index, "value");
 }
 
 /** The most recent non-null entry of an already-built series. The sensor
@@ -594,6 +594,10 @@ function SensorList({
               label={`Enlarge ${trend} for ${name}`}
               className="inline"
               series={[{ name, color, values: history }]}
+              // The window these readings were gridded against, so the
+              // enlarged view carries a time axis from the moment it is
+              // opened rather than only once a range has been changed.
+              window={res?.window ?? null}
               // Free-scaled in the dialog too, and re-scaled after a range
               // change: the small chart above scales to its own extent, and a
               // chart that snapped to a zero floor on being enlarged would

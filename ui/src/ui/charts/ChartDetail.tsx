@@ -265,7 +265,13 @@ function axisLabels(
       { fraction: 0, value: ceiling },
     ];
   }
-  const span = ceiling - floor || 1;
+  // A series that never moved is drawn as one line down the middle of the box
+  // -- scaleY() centres a min === max series rather than dividing by zero --
+  // so the axis says that one value at that one height. Stepping it as though
+  // the box had a range would print three numbers the shape does not have:
+  // a fan pinned at 1200 RPM labelled 1201 / 1201 / 1200.
+  if (ceiling === floor) return [{ fraction: 0.5, value: floor }];
+  const span = ceiling - floor;
   const fractions =
     reference === undefined
       ? [1, 0.5, 0]
