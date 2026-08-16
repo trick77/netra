@@ -39,6 +39,25 @@ describe("ticks", () => {
       expect(niceStep(9 * GiB, 1024)).toBe(8 * GiB);
     });
 
+    // The mantissa runs to 512, because `norm` lives in [1, 1024) rather
+    // than [1, 10). Capping it at 8 made any step 16x or more above a power
+    // of 1024 up to 128 times too small -- a 100 GiB filesystem asking for
+    // ~33 GiB steps got 8 GiB, which is fifty ticks on a 260px panel.
+    it("keeps stepping past 8x a power of 1024", () => {
+      const GiB = 1024 ** 3;
+      expect(niceStep(33 * GiB, 1024)).toBe(32 * GiB);
+      expect(niceStep(100 * GiB, 1024)).toBe(64 * GiB);
+      expect(niceStep(700 * GiB, 1024)).toBe(512 * GiB);
+    });
+
+    it("keeps a binary step a whole number of binary units", () => {
+      const GiB = 1024 ** 3;
+      for (const rough of [3 * GiB, 33 * GiB, 300 * GiB]) {
+        const step = niceStep(rough, 1024);
+        expect(Number.isInteger(step / GiB)).toBe(true);
+      }
+    });
+
     // Not an axis this app draws, but the function is total and a caller
     // deriving a step from an empty series must not get NaN back.
     it("is total for degenerate input", () => {

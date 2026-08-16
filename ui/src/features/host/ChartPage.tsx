@@ -14,11 +14,14 @@ import { rangeWindow, type Range } from "../../lib/range";
 import { RANGE_VALUES } from "./ranges";
 import { bandsFor, specForSlug } from "./tabs/Graphs";
 import { Chart, type ChartSeries } from "../../ui/charts/Chart";
-import { UpDownSparkline } from "../../ui/charts/UpDownSparkline";
-import { Sparkline } from "../../ui/charts/Sparkline";
-import { StackedSparkline } from "../../ui/charts/StackedSparkline";
-import { mirroredTicks, niceTicks, timeTicks } from "../../ui/charts/ticks";
+import {
+  mirroredTicks,
+  niceTicks,
+  timeLabel,
+  timeTicks,
+} from "../../ui/charts/ticks";
 import { widestLabel } from "../../ui/charts/plot";
+import { extent } from "../../ui/charts/geometry";
 import { summarise } from "../../ui/charts/ChartDetail";
 import { ABSENT, absolute } from "../../lib/format";
 import { windowNotice } from "../../lib/metrics";
@@ -138,25 +141,30 @@ function ChartView({
   const ceiling = useMemo(() => {
     if (spec.max !== undefined) return spec.max;
     if (spec.stacked) return runningTotalMax(series);
-    // The BAND too, not just the line. The envelope is the bucket's peak and
-    // therefore always the taller of the two; scaling to the mean alone
-    // would draw it straight out of the plot box.
-    let peak = 0;
-    for (const s of series) {
-      for (const v of s.values) if (v !== null && v > peak) peak = v;
-      for (const v of s.band ?? []) if (v !== null && v > peak) peak = v;
-    }
-    return peak || 1;
+    // peakOf scans the BAND too, not just the line. The envelope is the
+    // bucket's peak and therefore always the taller of the two; scaling to
+    // the mean alone would draw it straight out of the plot box.
+    return peakOf(series);
   }, [spec, series]);
 
   const format = (v: number) => (spec.fmt ? spec.fmt(v) : String(v));
   const valueAxis = !spec.hideAxis && !spec.boolean;
 
+  // ONE floor, used both to scale the mark and to label the axis. They were
+  // computed separately and disagreed: the ticks stepped from 0 while Chart
+  // fell back to the data's own minimum, so the labels named heights the
+  // series had never been drawn against. Uptime showed it worst -- a window
+  // from 2.6M to 3.2M seconds filled the box top to bottom under an axis
+  // reading 0 / 1M / 2M / 3M.
+  const floor = spec.stacked
+    ? 0
+    : extent(series.flatMap((s) => s.values)).min;
+
   const yTicks = !valueAxis
     ? undefined
     : spec.mirrored
       ? mirroredTicks(ceiling, 3)
-      : niceTicks(0, ceiling, 3);
+      : niceTicks(floor, ceiling, 3);
   const xTicks = res
     ? timeTicks(
         Date.parse(res.window.from),
@@ -213,7 +221,7 @@ function ChartView({
         width={CHART_WIDTH}
         height={CHART_HEIGHT}
         max={ceiling}
-        min={spec.stacked ? 0 : undefined}
+        min={floor}
         mark={spec.mirrored ? "mirror" : spec.stacked ? "stack" : "line"}
         label={`${spec.title} over time`}
         y={yTicks}
@@ -286,7 +294,21 @@ function cursorTime(
   const from = Date.parse(res.window.from);
   const to = Date.parse(res.window.to);
   const at = new Date(from + (cursor / (buckets - 1)) * (to - from));
-  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  // timeLabel, not a bare clock: it widens to a weekday and then to a date
+  // as the window does. Formatting HH:MM regardless put "At 09:00" in the
+  // header for one of thirty days while the axis below it, correctly, said
+  // "16 Aug" -- two readings of the same instant disagreeing in one view.
+  return timeLabel(at, to - from);
+}
+
+/** The largest value across every series, bands included. */
+function peakOf(series: readonly ChartSeries[]): number {
+  let peak = 0;
+  for (const s of series) {
+    for (const v of s.values) if (v !== null && v > peak) peak = v;
+    for (const v of s.band ?? []) if (v !== null && v > peak) peak = v;
+  }
+  return peak || 1;
 }
 
 function runningTotalMax(series: readonly ChartSeries[]): number {
@@ -346,7 +368,10 @@ function RangeStrip({
     <div className="strip" role="group" aria-label="Range">
       {RANGE_VALUES.map((r) => {
         const res = byRange[r] ?? null;
-        const bands = res ? bandsFor(spec, res) : [];
+        // withPeakBand, same as the chart: without it the thumbnail's line
+        // is the bucket PEAK while the chart's is the mean, so the strip
+        // would show a different reading of the same window.
+        const bands = res ? bandsFor(spec, res, { withPeakBand: true }) : [];
         return (
           <button
             key={r}
@@ -366,46 +391,29 @@ function RangeStrip({
 }
 
 /**
- * A thumbnail draws the SAME mark as the chart it opens -- mirrored stays
- * mirrored, a stack stays a stack -- so the strip reads as five views of one
- * chart rather than five unrelated pictures.
+ * A thumbnail draws the SAME mark as the chart it opens, through the same
+ * renderer with all furniture off.
+ *
+ * It used to special-case each mark and hand a sparkline component one
+ * series, which meant Load averages, TCP statistics and Hub latency showed
+ * ONE of their lines in the strip and all of them in the chart -- so the
+ * strip was not five views of one chart for exactly the specs where seeing
+ * the shape matters most.
  */
 function Thumb({ spec, bands }: { spec: Spec; bands: ChartSeries[] }) {
   if (bands.length === 0) {
     return <svg className="spark" width={THUMB_WIDTH} height={THUMB_HEIGHT} />;
   }
-  if (spec.mirrored) {
-    return (
-      <UpDownSparkline
-        up={bands[0]?.values ?? []}
-        down={bands[1]?.values ?? []}
-        // The chart's OWN colours, not UpDownSparkline's defaults. A
-        // thumbnail that recolours the series stops being a small view of
-        // the chart it opens and becomes a different picture of it.
-        upColor={bands[0]?.color}
-        downColor={bands[1]?.color}
-        width={THUMB_WIDTH}
-        height={THUMB_HEIGHT}
-        label=""
-      />
-    );
-  }
-  if (spec.stacked) {
-    return (
-      <StackedSparkline
-        bands={bands}
-        width={THUMB_WIDTH}
-        height={THUMB_HEIGHT}
-        label=""
-      />
-    );
-  }
+  const ceiling = spec.stacked ? runningTotalMax(bands) : peakOf(bands);
+
   return (
-    <Sparkline
-      values={bands[0]?.values ?? []}
-      color={bands[0]?.color}
+    <Chart
+      series={bands}
       width={THUMB_WIDTH}
       height={THUMB_HEIGHT}
+      max={spec.max ?? ceiling}
+      min={spec.stacked ? 0 : undefined}
+      mark={spec.mirrored ? "mirror" : spec.stacked ? "stack" : "line"}
       label=""
     />
   );

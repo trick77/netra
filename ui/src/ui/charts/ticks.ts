@@ -47,21 +47,27 @@ const MINOR_PER_MAJOR = 4;
  * intervals fit.
  *
  * `base` selects the ladder. 1000 steps 1/2/5 x 10^n, which is right for
- * every decimal quantity. 1024 steps 1/2/4/8 x 2^10k, which is what a
- * binaryBytes panel needs: ticked decimally, a 16 GiB host reads
- * 1.9 / 3.7 / 5.6 / 7.5 GiB, and every label on the axis is a ragged number.
- * In base 1024 the same axis reads 2 / 4 / 6 / 8 / 12 / 16 GiB.
+ * every decimal quantity. 1024 steps a POWER OF TWO within a power of 1024,
+ * which is what a binaryBytes panel needs: ticked decimally, a 16 GiB host
+ * reads 1.9 / 3.7 / 5.6 / 7.5 GiB, and every label on the axis is a ragged
+ * number. In base 1024 the same axis reads 2 / 4 / 6 / 8 / 12 / 16 GiB.
  */
 export function niceStep(rough: number, base: 1000 | 1024 = 1000): number {
   if (!Number.isFinite(rough) || rough <= 0) return 1;
 
   if (base === 1024) {
-    // The largest power of 1024 at or below `rough`, then a 1/2/4/8 mantissa
-    // within it. Powers of two throughout, so a tick is always a whole
-    // number of KiB/MiB/GiB and the formatter prints it without a fraction.
+    // The largest power of 1024 at or below `rough`, then a power-of-two
+    // mantissa within it. Powers of two throughout, so a tick is always a
+    // whole number of KiB/MiB/GiB and the formatter prints it without a
+    // fraction.
     const mag = Math.pow(1024, Math.floor(Math.log(rough) / Math.log(1024)));
     const norm = rough / mag;
-    const mantissa = norm >= 8 ? 8 : norm >= 4 ? 4 : norm >= 2 ? 2 : 1;
+    // The largest power of two at or below `norm`, which runs the whole way
+    // to 512 -- `norm` lives in [1, 1024), not [1, 10). A ladder stopping at
+    // 8 collapsed any step 16x or more above a power of 1024 down to 8, up
+    // to 128 times too small: a 100 GiB filesystem asking for ~33 GiB steps
+    // got 8 GiB, which is twelve labels and fifty ticks on a 260px panel.
+    const mantissa = Math.pow(2, Math.floor(Math.log2(norm)));
     return mantissa * mag;
   }
 

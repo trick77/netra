@@ -590,8 +590,16 @@ function bandsFor(
       // peakBase falls back to the bare name at the raw tier, and there the
       // two resolve to the same column -- which is the signal that this tier
       // has no envelope to draw.
+      // Mirrored only, for now, and deliberately: Chart draws the envelope in
+      // its mirror branch alone. Without this guard the first non-mirrored
+      // `peak` spec added would silently switch its LINE to the mean and
+      // then draw no envelope at all -- strictly less than the 260px panel
+      // it was opened from. Widen this when LineMarks learns the band.
       const wantsBand =
-        opts.withPeakBand === true && spec.peak === true && peakColumn !== base;
+        opts.withPeakBand === true &&
+        spec.peak === true &&
+        spec.mirrored === true &&
+        peakColumn !== base;
       const column = wantsBand ? base : peakColumn;
       const gridded = spec.boolean
         ? booleanValues(res, index, column)

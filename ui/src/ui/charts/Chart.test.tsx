@@ -171,6 +171,34 @@ describe("Chart", () => {
     });
   });
 
+  // The guarantee the whole migration rests on, tested at the one place it
+  // was actually broken: ZeroRule was drawn for every mirrored chart, so a
+  // fleet traffic cell gained a second, heavier midline on top of its own.
+  describe("a mirrored sparkline is not given axis furniture", () => {
+    it("draws no zero rule without a spine, grid or labels", () => {
+      const c = draw(
+        <Chart series={pair} width={170} height={32} max={100} mark="mirror" />,
+      );
+      expect(c.querySelector("[data-zero]")).toBeNull();
+      // Its own midline, at the sparkline ink, is still there.
+      expect(c.querySelector("[data-mid]")).not.toBeNull();
+    });
+
+    it("draws the zero rule once there is furniture to outrank", () => {
+      const c = draw(
+        <Chart
+          series={pair}
+          width={900}
+          height={320}
+          max={100}
+          mark="mirror"
+          spine
+        />,
+      );
+      expect(c.querySelector("[data-zero]")).not.toBeNull();
+    });
+  });
+
   describe("crosshair", () => {
     const FROM = new Date(2026, 7, 15, 13, 18).getTime();
     const x = timeTicks(FROM, FROM + 3600_000, 4);
@@ -201,6 +229,58 @@ describe("Chart", () => {
       );
       expect(c.querySelector("[data-cursor]")).not.toBeNull();
       expect(c.querySelector("[data-cursor-dot]")).toBeNull();
+    });
+  });
+
+  // A stack draws band k at the RUNNING TOTAL through k. Dots placed at the
+  // raw value bunched near the baseline while their own bands sat above.
+  describe("crosshair on a stack", () => {
+    it("puts each dot on its own band, not on its raw value", () => {
+      const c = draw(
+        <Chart
+          series={pair}
+          width={200}
+          height={100}
+          max={100}
+          min={0}
+          mark="stack"
+          cursor={1}
+        />,
+      );
+      const ys = [...c.querySelectorAll("[data-cursor-dot]")].map((d) =>
+        Number(d.getAttribute("cy")),
+      );
+      // pair at index 1 is 40 and 20, so the bands top out at 40 and 60.
+      // SVG y grows downward, so the second dot sits ABOVE the first.
+      expect(ys).toHaveLength(2);
+      expect(ys[1]!).toBeLessThan(ys[0]!);
+    });
+  });
+
+  // geometry.ts insets every mark by `pad` inside the box it is given, so
+  // furniture mapped across the full rect named heights the series was never
+  // drawn at.
+  describe("furniture lines up with the marks", () => {
+    it("insets the grid by the same pad the marks use", () => {
+      const pad = 6;
+      const c = draw(
+        <Chart
+          series={series}
+          width={200}
+          height={100}
+          max={100}
+          min={0}
+          pad={pad}
+          grid
+          y={niceTicks(0, 100, 1)}
+        />,
+      );
+      const top = [...c.querySelectorAll("[data-grid][data-major]")]
+        .map((l) => Number(l.getAttribute("y1")))
+        .sort((a, b) => a - b)[0]!;
+      // The topmost gridline names the ceiling, and the ceiling is drawn at
+      // y = pad -- not at y = 0.
+      expect(top).toBeCloseTo(pad, 6);
     });
   });
 

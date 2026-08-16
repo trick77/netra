@@ -166,6 +166,19 @@ export function Chart({
   const mirrored = mark === "mirror";
   const stacked = mark === "stack";
 
+  // Where the DATA actually lives. geometry.ts insets every mark by `pad`
+  // inside the box it is given (scaleX/scaleY map into [pad, w-pad]), so
+  // furniture mapped across the full rect names heights the series was never
+  // drawn at -- on a 112px panel the top gridline sat about two units above
+  // its own value, and the crosshair rule never quite touched the point it
+  // marked. The marks keep their coordinates; the axis moves onto them.
+  const axisRect = {
+    left: rect.left + pad,
+    right: rect.right - pad,
+    top: rect.top + pad,
+    bottom: rect.bottom - pad,
+  };
+
   // With no furniture the plot IS the image, and then the wrapper group and
   // the clip path are pure noise: nothing can overflow into margins that do
   // not exist. Omitting them keeps a sparkline's markup exactly what it was
@@ -188,12 +201,12 @@ export function Chart({
     if (box.width === 0 || box.height === 0 || count <= 0) return;
     const vx = ((e.clientX - box.left) / box.width) * width;
     const vy = ((e.clientY - box.top) / box.height) * height;
-    if (!contains(rect, vx, vy)) {
+    if (!contains(axisRect, vx, vy)) {
       if (cursor !== null) onCursorChange(null);
       return;
     }
-    const span = plotWidth(rect);
-    const fraction = span === 0 ? 0 : (vx - rect.left) / span;
+    const span = plotWidth(axisRect);
+    const fraction = span === 0 ? 0 : (vx - axisRect.left) / span;
     const next = Math.round(fraction * (count - 1));
     if (next !== cursor) onCursorChange(next);
   };
@@ -211,7 +224,7 @@ export function Chart({
         onCursorChange ? () => cursor !== null && onCursorChange(null) : undefined
       }
     >
-      {grid && <Grid rect={rect} y={y} x={x} />}
+      {grid && <Grid rect={axisRect} y={y} x={x} />}
 
       {/* The series are clipped to the plot rect so an overflowing value
           cannot paint over the axis labels. This is NOT clamping, which
@@ -249,20 +262,31 @@ export function Chart({
         )}
       </MarkGroup>
 
-      {spine && <Spine rect={rect} y={y} x={x} />}
-      {mirrored && <ZeroRule rect={rect} at={0.5} />}
-      {labels && <AxisLabels rect={rect} y={y} x={x} format={format} />}
+      {spine && <Spine rect={axisRect} y={y} x={x} />}
+      {/* Only where there is furniture to outrank. A sparkline already draws
+          its midline inside MirrorMarks at AXIS_STROKE, and size.ts is
+          explicit that a sparkline's midline does not change; drawing this
+          over it in the heavier ZERO_STROKE darkened every fleet traffic
+          cell, the Overview traffic card and every range thumbnail. The
+          sparkline's own test did not catch it because it asserts on
+          [data-mid], which is the line underneath. */}
+      {mirrored && (spine || grid || labels) && (
+        <ZeroRule rect={axisRect} at={0.5} />
+      )}
+      {labels && (
+        <AxisLabels rect={axisRect} y={y} x={x} format={format} />
+      )}
 
       {cursor !== null && (
         <Crosshair
-          rect={rect}
+          rect={axisRect}
           index={cursor}
           count={count}
           series={series}
           max={max}
           min={floor}
-          pad={pad}
           mirrored={mirrored}
+          stacked={stacked}
         />
       )}
     </svg>
@@ -294,6 +318,21 @@ function MarkGroup({
       {children}
     </g>
   );
+}
+
+/** The stack's height through series `upto` at `index`, or null at a hole. */
+function runningTotal(
+  series: readonly ChartSeries[],
+  index: number,
+  upto: number,
+): number | null {
+  let sum = 0;
+  for (let k = 0; k <= upto; k++) {
+    const v = series[k]?.values[index];
+    if (v === null || v === undefined) return null;
+    sum += v;
+  }
+  return sum;
 }
 
 function longest(series: readonly ChartSeries[]): number {
@@ -525,8 +564,8 @@ function Crosshair({
   series,
   max,
   min,
-  pad,
   mirrored,
+  stacked,
 }: {
   rect: PlotRect;
   index: number;
@@ -534,8 +573,8 @@ function Crosshair({
   series: ChartSeries[];
   max: number;
   min: number;
-  pad: number;
   mirrored: boolean;
+  stacked: boolean;
 }) {
   if (count <= 0) return null;
   const fraction = count <= 1 ? 0 : index / (count - 1);
@@ -558,11 +597,19 @@ function Crosshair({
       {series.map((s, i) => {
         const v = s.values[index];
         if (v === null || v === undefined) return null;
-        const t = max === min ? 0.5 : (v - min) / (max - min);
+        // A stack draws band k at the RUNNING TOTAL through k, so a dot at
+        // the raw value points at whatever band happens to sit at that
+        // height -- on a per-core stack every dot bunched near the baseline
+        // while its own band was somewhere above.
+        const stackedTo = stacked
+          ? runningTotal(series, index, i)
+          : null;
+        const shown = stackedTo ?? v;
+        const t = max === min ? 0.5 : (shown - min) / (max - min);
         const cy = mirrored
           ? rect.top +
             h / 2 +
-            (i % 2 === 0 ? -1 : 1) * (max === 0 ? 0 : v / max) * (h / 2 - pad)
+            (i % 2 === 0 ? -1 : 1) * (max === 0 ? 0 : v / max) * (h / 2)
           : yAt(rect, t);
         return (
           <circle
