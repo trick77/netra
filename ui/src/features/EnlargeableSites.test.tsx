@@ -100,7 +100,7 @@ describe("the list sparklines enlarge", () => {
       render(<FleetContainers rows={rows} range="1h" />);
       // Named for the row: twenty "Enlarge CPU" buttons name twenty charts
       // identically.
-      await open("Enlarge cpu for api");
+      await open("Enlarge CPU for api");
       await pick("6h");
 
       await waitFor(() => expect(getMetrics).toHaveBeenCalledTimes(1));
@@ -112,7 +112,7 @@ describe("the list sparklines enlarge", () => {
 
     it("offers only the ranges the fleet page itself offers", async () => {
       render(<FleetContainers rows={rows} range="1h" />);
-      const dialog = await open("Enlarge memory for api");
+      const dialog = await open("Enlarge Memory for api");
 
       // 30d is a range lib/range knows and this page does not: a dialog that
       // offered it would hand the page a range its own picker cannot express.
@@ -146,7 +146,7 @@ describe("the list sparklines enlarge", () => {
           range="1h"
         />,
       );
-      await open("Enlarge cpu for api");
+      await open("Enlarge CPU for api");
       await pick("6h");
 
       await waitFor(() =>
@@ -186,9 +186,13 @@ describe("the list sparklines enlarge", () => {
       oomKills: null,
     } as never;
 
-    function renderRow() {
+    function renderRow(over: Record<string, unknown> = {}) {
       render(
-        <Table columns={hostColumns("1h")} rows={[row]} rowKey={() => "r"} />,
+        <Table
+          columns={hostColumns("1h")}
+          rows={[{ ...(row as object), ...over } as never]}
+          rowKey={() => "r"}
+        />,
       );
     }
 
@@ -206,11 +210,26 @@ describe("the list sparklines enlarge", () => {
       expect(families).toContain("host");
     });
 
+    // The guard that stops a 128-core host shipping 128 series from a dialog:
+    // above MAX_PER_CORE the cell draws cpu_total, and the enlarged view has
+    // to ask for the family it is actually drawing rather than the one the
+    // small host beside it draws.
+    it("does not ask a large host for its cores", async () => {
+      getMetrics.mockResolvedValue(response({}));
+
+      renderRow({ threads: 128 });
+      await open("Enlarge CPU for ark");
+      await pick("6h");
+
+      await waitFor(() => expect(getMetrics).toHaveBeenCalledTimes(1));
+      expect(getMetrics.mock.calls.map(([, p]) => p.family)).toEqual(["host"]);
+    });
+
     it("widens memory and traffic from their own families", async () => {
       getMetrics.mockResolvedValue(response({}));
 
       renderRow();
-      await open("Enlarge memory for ark");
+      await open("Enlarge Memory for ark");
       await pick("6h");
       await waitFor(() =>
         expect(getMetrics).toHaveBeenCalledWith(
@@ -224,7 +243,7 @@ describe("the list sparklines enlarge", () => {
         }),
       );
 
-      await open("Enlarge traffic for ark");
+      await open("Enlarge Traffic for ark");
       await pick("6h");
       await waitFor(() =>
         expect(getMetrics).toHaveBeenCalledWith(

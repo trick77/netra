@@ -81,7 +81,10 @@ export function ContainerChart({
   return (
     <Enlargeable
       title={`${spec.title} · ${containerName}`}
-      label={`Enlarge ${spec.title.toLowerCase()} for ${containerName}`}
+      // The metric's own title, verbatim: lowercasing it turned CPU into
+      // "cpu", which a screen reader may attempt as a word rather than
+      // spelling out. Every metric-named chart in the app reads the same way.
+      label={`Enlarge ${spec.title} for ${containerName}`}
       className="inline"
       series={[{ name: spec.title, color: spec.color, values }]}
       max={max}

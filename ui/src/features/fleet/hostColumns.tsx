@@ -226,7 +226,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   return (
     <Enlargeable
       title={`Memory · ${row.hostname}`}
-      label={`Enlarge memory for ${row.hostname}`}
+      label={`Enlarge Memory for ${row.hostname}`}
       className="inline"
       series={row.mem}
       max={total * MEM_HEADROOM}
@@ -311,7 +311,7 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         // this chart, and "rx" is the kernel's word for it rather than the
         // reader's. The wire and the schema keep rx/tx.
         title={`Traffic · ${row.hostname}`}
-        label={`Enlarge traffic for ${row.hostname}`}
+        label={`Enlarge Traffic for ${row.hostname}`}
         className="inline"
         unit="B/s"
         series={[
