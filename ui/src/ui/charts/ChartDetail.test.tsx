@@ -189,7 +189,7 @@ describe("ChartPanel enlargement", () => {
   });
 
   it("does not open one for a panel that has nothing to show", () => {
-    render(<ChartPanel title="ICMP statistics" unavailable="no columns" />);
+    render(<ChartPanel title="Container health" unavailable="no columns" />);
 
     expect(screen.queryByRole("button", { name: /enlarge/i })).toBeNull();
   });

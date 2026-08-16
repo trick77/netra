@@ -17,12 +17,14 @@ describe("ChartPanel", () => {
   it("renders the not-collected panel instead of an empty chart", () => {
     render(
       <ChartPanel
-        title="ICMP statistics"
-        unavailable="no ICMP columns in the schema"
+        title="Container health"
+        unavailable="the agent reads health from the Docker socket, but it reaches neither the wire nor the schema"
       />,
     );
     expect(screen.getByText(/not collected/i)).toBeInTheDocument();
-    expect(screen.getByText(/no ICMP columns/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/neither the wire nor the schema/i),
+    ).toBeInTheDocument();
   });
 
   it("surfaces a window notice when the served range was clamped", () => {

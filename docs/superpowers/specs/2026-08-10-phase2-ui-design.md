@@ -437,14 +437,27 @@ explicit "not collected" panels until they land:
 |---|---|
 | TCP statistics | ✅ present |
 | IP fragmentation | ✅ present (`ip_frag_*`, `ip_reasm_*`, + IPv6 mirror) |
-| **IP statistics** | ❌ only fragmentation/reassembly exist; `InReceives`/`InDelivers`/`OutRequests` are never parsed |
-| **ICMP statistics** | ❌ no ICMP columns anywhere in `0001_init.sql` |
-| **ICMP informational** | ❌ same gap |
+| **IP statistics** | ✅ closed — `host_snmp_samples`, family `host_snmp` |
+| **ICMP statistics** | ✅ closed — same table |
+| **ICMP informational** | ✅ closed — same table |
 
-Closing them is agent work (`/proc/net/snmp` already contains the `Icmp` and `Ip` rows —
-more parsing, no new privileges) plus schema columns plus the three tier views. Two
-cautions: schema edits go into `0001_init.sql`, and the migration runner matches by
-filename with **no checksum**, so an edited `0001` is silently skipped on an existing DB.
+Closed by `0003_host_snmp_samples.sql`: seventy IP and ICMP counters parsed out of
+`/proc/net/snmp` and `/proc/net/snmp6` (rows the collector already read and discarded — no
+new privileges), landing in a **separate table with its own continuous aggregates** and
+registered as a second host-level read family.
+
+The separate table is the load-bearing part, and it corrects the advice this section
+originally gave. TimescaleDB cannot `ALTER` a continuous aggregate to add a column, so
+putting these on `host_samples` would have meant dropping and recreating
+`host_samples_5m` and `host_samples_1h` — which re-materialise only from the 7 days of raw
+still on disk, destroying 23 days of 5m and 83 days of 1h history **for every host
+metric**. Schema edits therefore go into a *new numbered migration*, never back into
+`0001_init.sql`: the runner matches by filename with **no checksum**, so an edited `0001`
+is silently skipped on an existing database.
+
+Only twelve of the seventy columns are charted. The rest are stored and deliberately
+undrawn — a counter added later costs that same drop-and-recreate, while a stored counter
+nobody charts costs a column, and a twenty-band panel is unreadable.
 
 **Container health, restart count, state and labels are also absent.** Spec §6.2 says the
 agent reads health and labels from the Docker socket, but neither reaches the hub:

@@ -61,16 +61,17 @@ func TestIntegrationRefreshPolicyStartOffsetExceedsBufferWindow(t *testing.T) {
 			t.Fatalf("start_offset = %s, want greater than the 1h buffer window", startOffset)
 		}
 	}
-	// host_samples, agent_samples and the five Group 1 hypertables
-	// (cpu_core_samples, disk_io_samples, sensor_samples, net_samples,
-	// collector_samples), each with a 5m and a 1h aggregate.
+	// host_samples, host_snmp_samples, agent_samples and the five Group 1
+	// hypertables (cpu_core_samples, disk_io_samples, sensor_samples,
+	// net_samples, collector_samples), each with a 5m and a 1h aggregate.
 	// This literal is deliberately hard-coded rather than derived: a new
 	// hypertable whose refresh policy is forgotten is a permanently silent
 	// failure, so adding one must break this test until it is counted.
-	if seen != 18 {
-		t.Fatalf("refresh policies found = %d, want 18 "+
-			"(host_samples, agent_samples, the five Group 1 tables, plus "+
-			"container_samples and filesystem_samples, 5m and 1h each)", seen)
+	if seen != 20 {
+		t.Fatalf("refresh policies found = %d, want 20 "+
+			"(host_samples, host_snmp_samples, agent_samples, the five Group 1 "+
+			"tables, plus container_samples and filesystem_samples, 5m and 1h "+
+			"each)", seen)
 	}
 }
 
@@ -194,13 +195,15 @@ func TestIntegrationRawRetentionExceedsRefreshLag(t *testing.T) {
 		t.Fatalf("iterate: %v", err)
 	}
 
-	// Seven raw hypertables. Continuous aggregates carry their own retention
+	// Twelve raw hypertables. Continuous aggregates carry their own retention
 	// policies too, and Timescale reports those under the aggregate's own
 	// view name rather than the internal materialisation hypertable — hence
 	// the anti-join above rather than a name pattern.
-	if seen != 11 {
-		t.Fatalf("raw retention policies found = %d, want 7 "+
-			"(host_samples, agent_samples and the five Group 1 tables)", seen)
+	if seen != 12 {
+		t.Fatalf("raw retention policies found = %d, want 12 "+
+			"(host_samples, host_snmp_samples, agent_samples and the five "+
+			"Group 1 tables, plus container_samples, filesystem_samples, "+
+			"smart_attributes and process_samples)", seen)
 	}
 }
 
@@ -229,8 +232,8 @@ func TestIntegrationEveryContinuousAggregateHasRetention(t *testing.T) {
 		t.Fatalf("count aggregate retention policies: %v", err)
 	}
 
-	if aggregates != 18 {
-		t.Fatalf("continuous aggregates found = %d, want 14", aggregates)
+	if aggregates != 20 {
+		t.Fatalf("continuous aggregates found = %d, want 20", aggregates)
 	}
 	if policies != aggregates {
 		t.Fatalf("aggregate retention policies = %d, want %d (one per aggregate)", policies, aggregates)

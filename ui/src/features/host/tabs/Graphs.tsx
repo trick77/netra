@@ -58,21 +58,6 @@ function booleanValues(
   return seriesOnGrid(res, mapped, seriesTimestamps(res, seriesIndex));
 }
 
-/**
- * The three requested families with no data behind them (spec §11). They
- * render as explicit "not collected" panels carrying the reason, never as
- * an empty chart: an empty chart claims the host reported nothing, which
- * is a different and much more alarming fact than "netra never asked".
- */
-export const UNAVAILABLE: Record<string, string> = {
-  "IP statistics":
-    "only fragmentation and reassembly are parsed from /proc/net/snmp; InReceives, InDelivers and OutRequests reach neither the wire nor the schema",
-  "ICMP statistics":
-    "no ICMP columns exist in 0001_init.sql; the Icmp rows of /proc/net/snmp are never parsed",
-  "ICMP informational":
-    "the same gap as ICMP statistics — no ICMP columns exist in the schema",
-};
-
 // Colours are token references (index.css owns the palette); the series
 // index wraps so a family with many devices still never names a hue here.
 // Eight, not four. The throughput panel draws two series per interface, so
@@ -90,7 +75,14 @@ const SERIES_VARS = [
 ];
 
 type Source =
-  "host" | "net" | "diskIo" | "filesystem" | "collector" | "cpuCore" | "agent";
+  | "host"
+  | "hostSnmp"
+  | "net"
+  | "diskIo"
+  | "filesystem"
+  | "collector"
+  | "cpuCore"
+  | "agent";
 
 /**
  * A panel's source to the family name the read API takes.
@@ -102,6 +94,7 @@ type Source =
  */
 const FAMILY: Record<Source, string> = {
   host: "host",
+  hostSnmp: "host_snmp",
   net: "net",
   diskIo: "disk_io",
   filesystem: "filesystem",
@@ -364,6 +357,53 @@ const NETWORK: PanelSpec[] = [
     ],
     fmt: count,
   },
+  // The three panels that used to render as "not collected". host_snmp is a
+  // second host-level family rather than more columns on "host" -- see
+  // 0003_host_snmp_samples.sql for why that split had to happen.
+  //
+  // Four bands each, out of seventy stored columns. The rest are queryable
+  // and deliberately undrawn: a continuous aggregate cannot gain a column, so
+  // storing a counter now is cheap and adding one later is not, whereas a
+  // twenty-band panel is simply unreadable. Resist "completing" these.
+  {
+    title: "IP statistics",
+    unit: "/s",
+    source: "hostSnmp",
+    bases: [
+      { base: "ip_in_receives_per_s", label: "received" },
+      { base: "ip_out_requests_per_s", label: "sent" },
+      { base: "ip6_in_receives_per_s", label: "received (v6)" },
+      { base: "ip6_out_requests_per_s", label: "sent (v6)" },
+    ],
+    fmt: count,
+  },
+  {
+    title: "ICMP statistics",
+    unit: "/s",
+    source: "hostSnmp",
+    bases: [
+      { base: "icmp_in_errors_per_s", label: "in errors" },
+      { base: "icmp_out_errors_per_s", label: "out errors" },
+      { base: "icmp_in_dest_unreachs_per_s", label: "dest unreachable" },
+      { base: "icmp6_in_errors_per_s", label: "in errors (v6)" },
+    ],
+    fmt: count,
+  },
+  {
+    // Echo is reachability, not failure: a host answering pings is healthy,
+    // and charting it beside dest-unreachable would put a good signal on a
+    // failure axis.
+    title: "ICMP informational",
+    unit: "/s",
+    source: "hostSnmp",
+    bases: [
+      { base: "icmp_in_echos_per_s", label: "echos in" },
+      { base: "icmp_out_echo_reps_per_s", label: "echo replies out" },
+      { base: "icmp6_in_echos_per_s", label: "echos in (v6)" },
+      { base: "icmp6_out_echo_replies_per_s", label: "echo replies out (v6)" },
+    ],
+    fmt: count,
+  },
   {
     title: "UDP statistics",
     unit: "/s",
@@ -436,6 +476,7 @@ const STORAGE: PanelSpec[] = [
 
 export interface GraphsProps {
   host?: MetricsResponse | null;
+  hostSnmp?: MetricsResponse | null;
   net?: MetricsResponse | null;
   diskIo?: MetricsResponse | null;
   filesystem?: MetricsResponse | null;
@@ -602,12 +643,10 @@ function Group({
   title,
   specs,
   sources,
-  extra,
 }: {
   title: string;
   specs: PanelSpec[];
   sources: GraphsProps;
-  extra?: string[];
 }) {
   const { range, fetchFamily } = sources;
   return (
@@ -623,13 +662,6 @@ function Group({
             fetchFamily={fetchFamily}
           />
         ))}
-        {(extra ?? []).map((missing) => (
-          <ChartPanel
-            key={missing}
-            title={missing}
-            unavailable={UNAVAILABLE[missing]}
-          />
-        ))}
       </div>
     </>
   );
@@ -643,6 +675,7 @@ export function Graphs(props: GraphsProps) {
     ...new Set(
       [
         props.host,
+        props.hostSnmp,
         props.net,
         props.diskIo,
         props.filesystem,
@@ -662,12 +695,7 @@ export function Graphs(props: GraphsProps) {
         </p>
       ))}
       <Group title="System" specs={SYSTEM} sources={props} />
-      <Group
-        title="Network"
-        specs={NETWORK}
-        sources={props}
-        extra={Object.keys(UNAVAILABLE)}
-      />
+      <Group title="Network" specs={NETWORK} sources={props} />
       <Group title="Storage" specs={STORAGE} sources={props} />
     </div>
   );

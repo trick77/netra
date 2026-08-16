@@ -273,9 +273,9 @@ func TestIntegrationChunkIntervalIsSmallEnoughForItsRetention(t *testing.T) {
 		t.Fatalf("iterate: %v", err)
 	}
 
-	// Eleven raw hypertables and eighteen continuous aggregates.
-	if seen != 29 {
-		t.Fatalf("retention policies with a chunk interval = %d, want 29", seen)
+	// Twelve raw hypertables and twenty continuous aggregates.
+	if seen != 32 {
+		t.Fatalf("retention policies with a chunk interval = %d, want 32", seen)
 	}
 }
 
@@ -319,15 +319,15 @@ func TestIntegrationMigrationIsRerunnableAgainstItsOwnSchema(t *testing.T) {
 		t.Fatalf("count policies: %v", err)
 	}
 
-	// Seven. timescaledb_information.hypertables lists user hypertables only;
-	// the fourteen internal materialisation hypertables backing the
-	// continuous aggregates are not exposed there.
-	if hypertables != 11 {
-		t.Errorf("hypertables after re-run = %d, want 11", hypertables)
+	// timescaledb_information.hypertables lists user hypertables only; the
+	// internal materialisation hypertables backing the continuous aggregates
+	// are not exposed there.
+	if hypertables != 12 {
+		t.Errorf("hypertables after re-run = %d, want 12", hypertables)
 	}
-	// 29 retention policies (11 raw + 18 aggregate) and 18 refresh policies.
-	if policies != 47 {
-		t.Errorf("policies after re-run = %d, want 47", policies)
+	// 32 retention policies (12 raw + 20 aggregate) and 20 refresh policies.
+	if policies != 52 {
+		t.Errorf("policies after re-run = %d, want 52", policies)
 	}
 }
 

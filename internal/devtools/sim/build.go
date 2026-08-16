@@ -352,6 +352,45 @@ func (g *Generator) netstat(h *netrav1.HostSample, ts time.Time, cpu float64) {
 	h.IpFragFailsPerS = proto.Float64(round2(g.sig.daily("ip.fragfail", ts, 0.03, 1.4, 1.4)))
 	h.IpFragCreatesPerS = proto.Float64(round2(g.sig.daily("ip.fragcreate", ts, 1.1, 0.9, 0.7)))
 
+	// The rest of Ip:, and Icmp:. Volume scales with load; the error
+	// counters stay low and bursty, because a host discarding datagrams
+	// steadily is not the interesting default and a flat line reads as a
+	// broken panel rather than a quiet one.
+	h.IpInReceivesPerS = proto.Float64(round2(g.sig.daily("ip.rx", ts, 820, 0.7, 0.3) * busy))
+	h.IpInDeliversPerS = proto.Float64(round2(g.sig.daily("ip.deliver", ts, 780, 0.7, 0.3) * busy))
+	h.IpOutRequestsPerS = proto.Float64(round2(g.sig.daily("ip.tx", ts, 690, 0.7, 0.3) * busy))
+	h.IpForwDatagramsPerS = proto.Float64(round2(g.sig.daily("ip.forward", ts, 0.6, 1.1, 0.9)))
+	h.IpReasmOksPerS = proto.Float64(round2(g.sig.daily("ip.reasmok", ts, 0.8, 0.8, 0.6)))
+	h.IpFragOksPerS = proto.Float64(round2(g.sig.daily("ip.fragok", ts, 1.0, 0.9, 0.7)))
+	h.IpInHdrErrorsPerS = proto.Float64(round2(g.sig.daily("ip.hdrerr", ts, 0.02, 1.5, 1.5)))
+	h.IpInAddrErrorsPerS = proto.Float64(round2(g.sig.daily("ip.addrerr", ts, 0.04, 1.4, 1.4)))
+	h.IpInUnknownProtosPerS = proto.Float64(round2(g.sig.daily("ip.unkproto", ts, 0.01, 1.6, 1.6)))
+	h.IpInDiscardsPerS = proto.Float64(round2(g.sig.daily("ip.indisc", ts, 0.03, 1.4, 1.4)))
+	h.IpOutDiscardsPerS = proto.Float64(round2(g.sig.daily("ip.outdisc", ts, 0.05, 1.4, 1.4)))
+	h.IpOutNoRoutesPerS = proto.Float64(round2(g.sig.daily("ip.noroute", ts, 0.02, 1.5, 1.5)))
+	h.IpReasmTimeoutPerS = proto.Float64(round2(g.sig.daily("ip.reasmto", ts, 0.02, 1.5, 1.5)))
+
+	h.IcmpInMsgsPerS = proto.Float64(round2(g.sig.daily("icmp.in", ts, 2.4, 0.8, 0.5)))
+	h.IcmpOutMsgsPerS = proto.Float64(round2(g.sig.daily("icmp.out", ts, 2.1, 0.8, 0.5)))
+	h.IcmpInErrorsPerS = proto.Float64(round2(g.sig.daily("icmp.inerr", ts, 0.02, 1.5, 1.5)))
+	h.IcmpOutErrorsPerS = proto.Float64(round2(g.sig.daily("icmp.outerr", ts, 0.02, 1.5, 1.5)))
+	h.IcmpInDestUnreachsPerS = proto.Float64(round2(g.sig.daily("icmp.indu", ts, 0.3, 1.2, 1.1)))
+	h.IcmpOutDestUnreachsPerS = proto.Float64(round2(g.sig.daily("icmp.outdu", ts, 0.25, 1.2, 1.1)))
+	h.IcmpInTimeExcdsPerS = proto.Float64(round2(g.sig.daily("icmp.inte", ts, 0.08, 1.3, 1.2)))
+	h.IcmpOutTimeExcdsPerS = proto.Float64(round2(g.sig.daily("icmp.outte", ts, 0.06, 1.3, 1.2)))
+	h.IcmpInParmProbsPerS = proto.Float64(round2(g.sig.daily("icmp.inpp", ts, 0.01, 1.6, 1.6)))
+	h.IcmpOutParmProbsPerS = proto.Float64(round2(g.sig.daily("icmp.outpp", ts, 0.01, 1.6, 1.6)))
+	h.IcmpInRedirectsPerS = proto.Float64(round2(g.sig.daily("icmp.inrd", ts, 0.04, 1.4, 1.3)))
+	h.IcmpOutRedirectsPerS = proto.Float64(round2(g.sig.daily("icmp.outrd", ts, 0.03, 1.4, 1.3)))
+
+	// Echo. Steady and non-zero on every host worth monitoring -- something
+	// is always pinging it -- which is what makes the informational panel look
+	// alive rather than broken.
+	h.IcmpInEchosPerS = proto.Float64(round2(g.sig.daily("icmp.inecho", ts, 1.1, 0.6, 0.3)))
+	h.IcmpOutEchosPerS = proto.Float64(round2(g.sig.daily("icmp.outecho", ts, 0.4, 0.7, 0.4)))
+	h.IcmpInEchoRepsPerS = proto.Float64(round2(g.sig.daily("icmp.inechorep", ts, 0.4, 0.7, 0.4)))
+	h.IcmpOutEchoRepsPerS = proto.Float64(round2(g.sig.daily("icmp.outechorep", ts, 1.1, 0.6, 0.3)))
+
 	if !g.hasIPv6() {
 		return
 	}
@@ -363,6 +402,55 @@ func (g *Generator) netstat(h *netrav1.HostSample, ts time.Time, cpu float64) {
 	h.Ip6ReasmFailsPerS = proto.Float64(round2(g.sig.daily("ip6.reasmfail", ts, 0.02, 1.5, 1.5)))
 	h.Ip6FragFailsPerS = proto.Float64(round2(g.sig.daily("ip6.fragfail", ts, 0.01, 1.5, 1.5)))
 	h.Ip6FragCreatesPerS = proto.Float64(round2(g.sig.daily("ip6.fragcreate", ts, 0.5, 0.9, 0.7)))
+
+	// The Ip6* and Icmp6* mirrors of the block above.
+	h.Ip6InReceivesPerS = proto.Float64(round2(g.sig.daily("ip6.rx", ts, 260, 0.7, 0.3) * busy))
+	h.Ip6InDeliversPerS = proto.Float64(round2(g.sig.daily("ip6.deliver", ts, 245, 0.7, 0.3) * busy))
+	h.Ip6OutRequestsPerS = proto.Float64(round2(g.sig.daily("ip6.tx", ts, 210, 0.7, 0.3) * busy))
+	h.Ip6OutForwDatagramsPerS = proto.Float64(round2(g.sig.daily("ip6.forward", ts, 0.2, 1.1, 0.9)))
+	h.Ip6ReasmOksPerS = proto.Float64(round2(g.sig.daily("ip6.reasmok", ts, 0.35, 0.9, 0.7)))
+	h.Ip6FragOksPerS = proto.Float64(round2(g.sig.daily("ip6.fragok", ts, 0.45, 0.9, 0.7)))
+	h.Ip6InHdrErrorsPerS = proto.Float64(round2(g.sig.daily("ip6.hdrerr", ts, 0.01, 1.5, 1.5)))
+	h.Ip6InAddrErrorsPerS = proto.Float64(round2(g.sig.daily("ip6.addrerr", ts, 0.02, 1.4, 1.4)))
+	h.Ip6InUnknownProtosPerS = proto.Float64(round2(g.sig.daily("ip6.unkproto", ts, 0.005, 1.6, 1.6)))
+	h.Ip6InDiscardsPerS = proto.Float64(round2(g.sig.daily("ip6.indisc", ts, 0.015, 1.4, 1.4)))
+	h.Ip6OutDiscardsPerS = proto.Float64(round2(g.sig.daily("ip6.outdisc", ts, 0.02, 1.4, 1.4)))
+	h.Ip6OutNoRoutesPerS = proto.Float64(round2(g.sig.daily("ip6.outnoroute", ts, 0.01, 1.5, 1.5)))
+	h.Ip6InNoRoutesPerS = proto.Float64(round2(g.sig.daily("ip6.innoroute", ts, 0.01, 1.5, 1.5)))
+	h.Ip6InTooBigErrorsPerS = proto.Float64(round2(g.sig.daily("ip6.toobig", ts, 0.02, 1.5, 1.5)))
+	h.Ip6ReasmTimeoutPerS = proto.Float64(round2(g.sig.daily("ip6.reasmto", ts, 0.01, 1.5, 1.5)))
+
+	h.Icmp6InMsgsPerS = proto.Float64(round2(g.sig.daily("icmp6.in", ts, 1.6, 0.8, 0.5)))
+	h.Icmp6OutMsgsPerS = proto.Float64(round2(g.sig.daily("icmp6.out", ts, 1.5, 0.8, 0.5)))
+	h.Icmp6InErrorsPerS = proto.Float64(round2(g.sig.daily("icmp6.inerr", ts, 0.01, 1.5, 1.5)))
+	h.Icmp6OutErrorsPerS = proto.Float64(round2(g.sig.daily("icmp6.outerr", ts, 0.01, 1.5, 1.5)))
+	h.Icmp6InDestUnreachsPerS = proto.Float64(round2(g.sig.daily("icmp6.indu", ts, 0.15, 1.2, 1.1)))
+	h.Icmp6OutDestUnreachsPerS = proto.Float64(round2(g.sig.daily("icmp6.outdu", ts, 0.12, 1.2, 1.1)))
+	h.Icmp6InTimeExcdsPerS = proto.Float64(round2(g.sig.daily("icmp6.inte", ts, 0.04, 1.3, 1.2)))
+	h.Icmp6OutTimeExcdsPerS = proto.Float64(round2(g.sig.daily("icmp6.outte", ts, 0.03, 1.3, 1.2)))
+	h.Icmp6InParmProblemsPerS = proto.Float64(round2(g.sig.daily("icmp6.inpp", ts, 0.005, 1.6, 1.6)))
+	h.Icmp6OutParmProblemsPerS = proto.Float64(round2(g.sig.daily("icmp6.outpp", ts, 0.005, 1.6, 1.6)))
+	h.Icmp6InPktTooBigsPerS = proto.Float64(round2(g.sig.daily("icmp6.inptb", ts, 0.02, 1.4, 1.3)))
+	h.Icmp6OutPktTooBigsPerS = proto.Float64(round2(g.sig.daily("icmp6.outptb", ts, 0.02, 1.4, 1.3)))
+	h.Icmp6InRedirectsPerS = proto.Float64(round2(g.sig.daily("icmp6.inrd", ts, 0.01, 1.4, 1.3)))
+	h.Icmp6OutRedirectsPerS = proto.Float64(round2(g.sig.daily("icmp6.outrd", ts, 0.01, 1.4, 1.3)))
+	h.Icmp6InEchosPerS = proto.Float64(round2(g.sig.daily("icmp6.inecho", ts, 0.5, 0.6, 0.3)))
+	h.Icmp6OutEchosPerS = proto.Float64(round2(g.sig.daily("icmp6.outecho", ts, 0.2, 0.7, 0.4)))
+	h.Icmp6InEchoRepliesPerS = proto.Float64(round2(g.sig.daily("icmp6.inechorep", ts, 0.2, 0.7, 0.4)))
+	h.Icmp6OutEchoRepliesPerS = proto.Float64(round2(g.sig.daily("icmp6.outechorep", ts, 0.5, 0.6, 0.3)))
+
+	// Neighbour discovery: IPv6 has no ARP, so this is the background
+	// chatter that keeps a segment resolvable. Steady and low -- the
+	// "quiet but non-zero" case the informational panel needs in order
+	// to be distinguishable from a dead one.
+	h.Icmp6InNeighborSolicitsPerS = proto.Float64(round2(g.sig.daily("icmp6.inns", ts, 0.32, 0.5, 0.25)))
+	h.Icmp6OutNeighborSolicitsPerS = proto.Float64(round2(g.sig.daily("icmp6.outns", ts, 0.28, 0.5, 0.25)))
+	h.Icmp6InNeighborAdvertisementsPerS = proto.Float64(round2(g.sig.daily("icmp6.inna", ts, 0.26, 0.5, 0.25)))
+	h.Icmp6OutNeighborAdvertisementsPerS = proto.Float64(round2(g.sig.daily("icmp6.outna", ts, 0.3, 0.5, 0.25)))
+	h.Icmp6InRouterSolicitsPerS = proto.Float64(round2(g.sig.daily("icmp6.inrs", ts, 0.03, 0.6, 0.3)))
+	h.Icmp6OutRouterSolicitsPerS = proto.Float64(round2(g.sig.daily("icmp6.outrs", ts, 0.02, 0.6, 0.3)))
+	h.Icmp6InRouterAdvertisementsPerS = proto.Float64(round2(g.sig.daily("icmp6.inra", ts, 0.06, 0.5, 0.2)))
+	h.Icmp6OutRouterAdvertisementsPerS = proto.Float64(round2(g.sig.daily("icmp6.outra", ts, 0.01, 0.6, 0.3)))
 
 	// Memory pressure. Kept low and bursty: a host that majors-faults
 	// constantly is not the interesting default, and a flat line would make

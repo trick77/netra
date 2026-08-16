@@ -1,10 +1,10 @@
 // The card that wraps a chart with a title, unit, latest value, legend and
 // (when applicable) either a "not collected" state or a clamped-window
-// notice. `unavailable` is a product requirement, not a nicety: three
-// metric families (IP statistics, ICMP statistics, ICMP informational) have
-// no columns in the schema at all, and netra's collector contract is that
-// something which cannot run says why -- this panel is where that
-// contract reaches the UI.
+// notice. `unavailable` is a product requirement, not a nicety: netra's
+// collector contract is that something which cannot run says why, and this
+// panel is where that contract reaches the UI. It was built for the IP and
+// ICMP families, which had no columns in the schema at all; those are
+// collected now, and per-container networking is the remaining caller.
 import type { ReactNode } from "react";
 import { ABSENT } from "../../lib/format";
 import { extent } from "./geometry";
