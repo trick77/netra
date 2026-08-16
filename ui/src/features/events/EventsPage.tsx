@@ -17,6 +17,7 @@ import type { Event } from "../../lib/api";
 import type { Range } from "../../lib/range";
 import { ABSENT, absolute, relative } from "../../lib/format";
 import { KNOWN_EVENT_TYPES, mdraidSeverity, messageOf } from "./message";
+import { PackageRunFold } from "./PackageRunFold";
 
 // The windows this page OFFERS: the log reaches back further than a metrics
 // chart does, because events are sparse and "what happened this week" is the
@@ -33,6 +34,27 @@ export const EVENT_RANGES: { value: Range; label: string }[] = [
 export const EVENT_RANGE_VALUES: readonly Range[] = EVENT_RANGES.map(
   (o) => o.value,
 );
+
+/**
+ * How many rows to ask for, per window.
+ *
+ * A flat limit makes the wide buttons a lie: events accumulate with the
+ * window, so 500 rows over 30 days is the newest few days and a silent cut
+ * everywhere else -- the reader widens the range and sees the same page.
+ * These scale with the span so a wide window returns a wide answer.
+ *
+ * 5000 is maxEventLimit in internal/hub/read/events.go; the hub clamps rather
+ * than rejects, but asking for more than it will give is a lie in the other
+ * direction. Covers every Range, not just the four this page offers, so the
+ * record stays total if the offered set changes.
+ */
+export const EVENT_LIMITS: Record<Range, number> = {
+  "1h": 500,
+  "6h": 500,
+  "24h": 500,
+  "7d": 2000,
+  "30d": 5000,
+};
 
 /** Derived, never received: the events table carries type, subject and
  * detail, and no severity column at all. */
@@ -348,6 +370,7 @@ export function EventsPage({
                       (0001_init.sql), which is a fact worth marking rather
                       than an empty cell. */}
                   <span>{messageOf(event) || ABSENT}</span>
+                  <PackageRunFold event={event} />
                 </div>
               </div>
             ))}

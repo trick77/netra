@@ -7,9 +7,12 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Event } from "../../lib/api";
+import { RANGES } from "../../lib/range";
 import {
   DEFAULT_FILTERS,
   EventsPage,
+  EVENT_LIMITS,
+  EVENT_RANGES,
   applyFilters,
   filtersFromQuery,
   filtersToQuery,
@@ -235,6 +238,50 @@ describe("EventsPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("folds the rest of a big apt run into a link to the host's packages", () => {
+    // The hub keeps three rows of a run and counts the rest, so one
+    // dist-upgrade cannot fill the page. The row still says what ITS package
+    // did; the fold is beside it.
+    renderPage({
+      events: [
+        event({
+          type: "package",
+          subject: "curl",
+          detail: {
+            action: "upgrade",
+            from_version: "8.5.0",
+            to_version: "8.5.0-2",
+            more: 397,
+            run_size: 400,
+          },
+        }),
+      ],
+    });
+
+    expect(
+      screen.getByText("curl upgraded 8.5.0 → 8.5.0-2"),
+    ).toBeInTheDocument();
+    const fold = screen.getByRole("link", {
+      name: "+397 more packages changed",
+    });
+    expect(fold).toHaveAttribute("href", "/hosts/3/packages");
+    expect(fold).toHaveAttribute("title", "400 packages changed in this run");
+  });
+
+  it("shows no fold on a run the hub sent in full", () => {
+    renderPage({
+      events: [
+        event({
+          type: "package",
+          subject: "curl",
+          detail: { action: "upgrade", to_version: "8.5.0-2" },
+        }),
+      ],
+    });
+
+    expect(screen.queryByText(/more packages changed/)).toBeNull();
+  });
+
   it("links each row to its host", () => {
     renderPage({ events: [event()] });
 
@@ -328,5 +375,33 @@ describe("EventsPage", () => {
     expect(
       screen.getByRole("heading", { name: /no events/i }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("EVENT_LIMITS", () => {
+  // A flat limit makes the wide buttons a lie: events accumulate with the
+  // window, so the same 500 rows over 30 days is the newest few days and a
+  // silent cut everywhere else.
+  it("asks for more rows as the window widens", () => {
+    const offered = EVENT_RANGES.map((r) => EVENT_LIMITS[r.value]);
+    for (let i = 1; i < offered.length; i++) {
+      expect(offered[i]!).toBeGreaterThanOrEqual(offered[i - 1]!);
+    }
+    expect(EVENT_LIMITS["30d"]).toBeGreaterThan(EVENT_LIMITS["24h"]);
+  });
+
+  // maxEventLimit in internal/hub/read/events.go. The hub clamps rather than
+  // rejects, so asking for more is not an error -- it is a lie about what
+  // came back.
+  it("never asks for more than the hub will give", () => {
+    for (const limit of Object.values(EVENT_LIMITS)) {
+      expect(limit).toBeLessThanOrEqual(5000);
+    }
+  });
+
+  it("covers every range, not only the ones this page offers", () => {
+    for (const range of RANGES) {
+      expect(EVENT_LIMITS[range]).toBeGreaterThan(0);
+    }
   });
 });

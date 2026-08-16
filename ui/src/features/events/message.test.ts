@@ -4,7 +4,13 @@
 // invented its own keys would pass while the page rendered blanks.
 import { describe, expect, it } from "vitest";
 import type { Event } from "../../lib/api";
-import { KNOWN_EVENT_TYPES, mdraidSeverity, messageOf } from "./message";
+import {
+  KNOWN_EVENT_TYPES,
+  mdraidSeverity,
+  messageOf,
+  packageRunSize,
+  packagesOmitted,
+} from "./message";
 
 function event(over: Partial<Event> = {}): Event {
   return {
@@ -247,5 +253,57 @@ describe("mdraidSeverity", () => {
     expect(
       mdraidSeverity(event({ type: "package", detail: REAL_DEGRADED })),
     ).toBeNull();
+  });
+});
+
+describe("packagesOmitted / packageRunSize", () => {
+  // One apt run is one timestamp, so a dist-upgrade would otherwise fill the
+  // page. The hub keeps the first few and counts the rest; these read that
+  // count. Both keys are ABSENT on an ordinary run rather than sent as zero.
+  it("is zero for a run the hub sent in full", () => {
+    expect(packagesOmitted(pkg({ action: "upgrade" }))).toBe(0);
+    expect(packageRunSize(pkg({ action: "upgrade" }))).toBe(0);
+  });
+
+  it("reads the counts off the row the hub marked", () => {
+    const marked = pkg({ action: "upgrade", more: 397, run_size: 400 });
+    expect(packagesOmitted(marked)).toBe(397);
+    expect(packageRunSize(marked)).toBe(400);
+  });
+
+  it("ignores the keys on any other type", () => {
+    // Only the package branch truncates runs; a `more` key on an mdraid event
+    // would be a coincidence of shape, not a truncated apt run.
+    expect(packagesOmitted(event({ detail: { more: 9, run_size: 12 } }))).toBe(
+      0,
+    );
+    expect(packageRunSize(event({ detail: { more: 9, run_size: 12 } }))).toBe(
+      0,
+    );
+  });
+
+  it("treats a zero or a non-number as nothing omitted", () => {
+    expect(packagesOmitted(pkg({ action: "upgrade", more: 0 }))).toBe(0);
+    expect(packagesOmitted(pkg({ action: "upgrade", more: "397" }))).toBe(0);
+  });
+
+  it("keeps the counts out of the sentence", () => {
+    // They are instructions to the UI, not facts about what happened to curl.
+    expect(
+      messageOf(
+        pkg({
+          action: "upgrade",
+          from_version: "8.5.0",
+          to_version: "8.5.0-2",
+          more: 397,
+          run_size: 400,
+        }),
+      ),
+    ).toBe("curl upgraded 8.5.0 → 8.5.0-2");
+
+    // Including via the unknown-action fallback, which spells out every key.
+    expect(messageOf(pkg({ action: "held", more: 397, run_size: 400 }))).toBe(
+      "action held",
+    );
   });
 });

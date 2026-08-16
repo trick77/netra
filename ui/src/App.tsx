@@ -52,6 +52,7 @@ import {
 } from "./features/container/ContainerPage";
 import {
   EventsPage,
+  EVENT_LIMITS,
   EVENT_RANGE_VALUES,
   filtersFromQuery,
   filtersToQuery,
@@ -694,10 +695,32 @@ function EventsScreen({ search, go }: { search: string; go: Go }) {
     [search],
   );
 
-  const poll = usePoll(async () => {
-    const [events, hosts] = await Promise.all([getEvents(), getHosts()]);
-    return { events, hosts };
-  }, POLL_MS);
+  // The window is taken INSIDE the callback, not memoised on the range.
+  // rangeWindow reads the clock when it is called, so a value computed once
+  // per range change would pin `to` at that instant and the log would stop
+  // advancing -- a page that looks live and is frozen. HostPage and
+  // hostTrends take it inside their effect for the same reason.
+  //
+  // filters.range is the third argument for a different reason: usePoll keeps
+  // `fn` in a ref and deliberately leaves it out of the effect deps, so
+  // without naming the range here a click on 7d would move the picker and
+  // change nothing on screen until the next 60-second tick.
+  const poll = usePoll(
+    async () => {
+      const window = rangeWindow(filters.range);
+      const [events, hosts] = await Promise.all([
+        getEvents({
+          since: window.from,
+          until: window.to,
+          limit: EVENT_LIMITS[filters.range],
+        }),
+        getHosts(),
+      ]);
+      return { events, hosts };
+    },
+    POLL_MS,
+    [filters.range],
+  );
   useAuthRedirect(poll.error, go, { name: "events" });
 
   return (
