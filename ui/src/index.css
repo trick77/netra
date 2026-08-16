@@ -54,6 +54,16 @@
   --radius-sm: 5px;
   --radius-pill: 999px;
 
+  /* The nav rail. A token rather than a literal because two rules need to
+     agree on it -- the grid track on .app and the off-canvas override -- and
+     because it is the one width the content is measured AGAINST now that the
+     page itself has none. */
+  --rail-w: 212px;
+  /* The measure for running text. The page is full-bleed, so prose that used
+     to be bounded by the old 1180px page width is now bounded by nothing;
+     every block of sentences caps itself here instead. */
+  --measure: 68ch;
+
   /* status palette — FIXED, never themed, never reused as a series colour
      (spec §3.5). */
   --st-ok: #0ca30c;
@@ -693,7 +703,8 @@ a {
   gap: 6px;
   margin-bottom: var(--space-4);
   /* A card is as wide as the page; a hostname is not. Left uncapped, the
-     input ran the full 1180px and read as a text area rather than a name. */
+     input ran the whole page width and read as a text area rather than a
+     name -- which matters more now that the page has no width of its own. */
   max-width: 30rem;
 }
 .field > label {
@@ -938,42 +949,122 @@ a {
 }
 
 /* ── Primitives: buttons, controls, cards, badges, tables, charts ─── */
+/* Two tracks: a fixed rail and everything else. The page carries no width of
+   its own any more -- a fleet table is as wide as the fleet needs, and the
+   old 1180px cap was what forced six columns of chart-plus-figure to squeeze.
+   What the cap USED to do for prose is now done per block by --measure. */
 .app {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 0 var(--space-5) 80px;
+  display: grid;
+  grid-template-columns: var(--rail-w) 1fr;
+  min-height: 100vh;
 }
 
-.topnav {
+.siderail {
   display: flex;
-  align-items: center;
-  gap: var(--space-5);
-  padding: 14px 0;
-  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: 14px var(--space-3);
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  /* Sticky rather than fixed: fixed would take the rail out of the grid and
+     leave the content track sized against a column nothing occupies. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
 }
 .brand {
   font-family: var(--font-serif);
   font-size: var(--text-title);
   letter-spacing: -0.01em;
+  padding: 0 var(--space-2);
 }
 .brand span {
   color: var(--accent);
 }
+/* Fills the rail so .navgroup-end has something to push against. */
 .nav {
   display: flex;
-  gap: 2px;
-  margin-left: auto;
+  flex-direction: column;
+  flex: 1;
+  gap: 1px;
+}
+.navgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.navgroup-end {
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
 }
 .nav a {
-  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
   border-radius: var(--radius-sm);
   color: var(--ink-2);
   font-size: var(--text-label);
+  /* The transparent border reserves the space the current item's border
+     takes, so hovering does not shift the label by a pixel. */
+  border: 1px solid transparent;
+  position: relative;
+  /* Same 120ms ease .tile-link uses -- this app has one hover timing. */
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.nav a:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+/* Sized here rather than per icon: lucide renders at 24px by default, which
+   is half again the height of the label beside it. The stroke is here for the
+   same reason and matters more -- lucide draws at 2, which is drawn for 24px.
+   Scaled down to 16px next to a 14px label in a light text face it reads as
+   heavy and cluttered; 1.75 sits with the label instead of shouting over it.
+   A CSS property beats the presentation attribute lucide sets, so this wins
+   without threading a prop through every call site. */
+.nav a svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.75;
+  flex: none;
 }
 .nav a[aria-current] {
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 500;
+  border-color: var(--border);
+}
+/* A bar near the rail's own edge, so "you are here" is legible from the page
+   rather than only from inside the nav. The offset tracks the rail's 12px side
+   padding and the item's 1px border: -9px leaves the bar 4px clear of the
+   window edge. Flush at -13px it read as clipped rather than deliberate. */
+.nav a[aria-current]::before {
+  content: "";
+  position: absolute;
+  left: -9px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav a {
+    transition: none;
+  }
+}
+/* The content track. It carries the page padding the .app used to own.
+   min-width:0 is load-bearing, not tidiness: a grid item defaults to
+   min-width:auto, which lets a wide table push the TRACK wider instead of
+   scrolling inside its own .tablewrap -- the one thing the rule further down
+   this file exists to prevent. Without it the rail slides off-screen left. */
+.app > main {
+  min-width: 0;
+  padding: var(--space-5) var(--space-5) 80px;
 }
 
 .section {
@@ -1052,7 +1143,12 @@ a {
 /* stat tiles */
 .tiles {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  /* auto-FILL, not auto-fit: auto-fit collapses the empty tracks and hands
+     their width to the tiles that exist, so on a full-bleed page three stat
+     tiles became three ~530px slabs with one number each. auto-fill keeps the
+     empty tracks empty, and the cap stops the row itself running the window. */
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  max-width: 960px;
   gap: var(--space-3);
   /* The tiles are a section of their own, and they ended flush against the
      entity tabs directly below them -- 0px, so the fleet's summary and the
@@ -1556,6 +1652,14 @@ svg.spark {
   columns: 2;
   column-gap: var(--space-4);
 }
+/* A third column once two would each be wider than a card wants to be. Stated
+   as a column COUNT, not a track template: see the note on the 900px override
+   for why a grid property does nothing to this box. */
+@media (min-width: 1500px) {
+  .grid2 {
+    columns: 3;
+  }
+}
 .grid2 > * {
   /* A card must not be split across the column break. */
   break-inside: avoid;
@@ -1744,6 +1848,10 @@ svg.spark {
   font-size: var(--text-label);
   color: var(--muted);
   margin-top: var(--space-2);
+  /* The one prose class the app has, and the page no longer caps it. A
+     clamped-window notice set across a 2500px window is a sentence you have
+     to track with your head. Inline uses of .note ignore this, as they should. */
+  max-width: var(--measure);
 }
 .evrow {
   display: grid;
@@ -1763,11 +1871,60 @@ svg.spark {
 }
 
 @media (max-width: 900px) {
+  /* The rail goes off-canvas -- back across the top -- rather than eating a
+     fifth of a small window. It is also what keeps every rule below this one
+     honest: they all measure the VIEWPORT, and with no rail the content is
+     the viewport again. FleetPage's own 640px matchMedia depends on that. */
+  .app {
+    display: block;
+  }
+  .siderail {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-5);
+    padding: 14px var(--space-3);
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .nav {
+    flex-direction: row;
+    flex: 0 1 auto;
+    gap: 2px;
+    margin-left: auto;
+  }
+  .navgroup {
+    flex-direction: row;
+    gap: 2px;
+  }
+  /* The edge bar has no edge to sit against once the rail is a top bar, and
+     it would hang off the left of the first item. The fill carries it here. */
+  .nav a[aria-current]::before {
+    display: none;
+  }
+  /* The same separation turned on its side: a rule to the left of Settings
+     instead of above it, since "the foot of the rail" has no meaning in a row. */
+  .navgroup-end {
+    margin-top: 0;
+    margin-left: var(--space-3);
+    padding-top: 0;
+    padding-left: var(--space-3);
+    border-top: 0;
+    border-left: 1px solid var(--border);
+  }
+  .app > main {
+    padding: var(--space-4) var(--space-5) 64px;
+  }
   .tiles {
     grid-template-columns: 1fr 1fr;
   }
+  /* `columns`, not `grid-template-columns`. .grid2 is a multi-column box and
+     never became a grid, so the grid property this used to set matched
+     nothing and the host and container pages stayed two-up at every width
+     down to 390px. */
   .grid2 {
-    grid-template-columns: 1fr;
+    columns: 1;
   }
   /* Back to one pair per row: two pairs of key AND value across 900px leaves
      the kernel string and the CPU model nowhere to go. The gutter goes with
@@ -1798,8 +1955,8 @@ svg.spark {
    would put every host in the DOM twice, which a screen reader reads twice.
    What lives here is everything else that has to give at this width. */
 @media (max-width: 640px) {
-  .app {
-    padding: 0 var(--space-3) 64px;
+  .app > main {
+    padding: var(--space-3) var(--space-3) 64px;
   }
   .tiles {
     grid-template-columns: 1fr;
@@ -1818,7 +1975,7 @@ svg.spark {
   .hosthead h1 {
     flex: 1 1 100%;
   }
-  .topnav {
+  .siderail {
     flex-wrap: wrap;
     gap: var(--space-2);
   }
@@ -1826,6 +1983,9 @@ svg.spark {
     margin-left: 0;
     width: 100%;
     overflow-x: visible;
+    flex-wrap: wrap;
+  }
+  .navgroup {
     flex-wrap: wrap;
   }
 }

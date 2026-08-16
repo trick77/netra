@@ -58,7 +58,14 @@ import {
 } from "./features/settings/SettingsPage";
 import { LoginPage } from "./features/auth/LoginPage";
 import { HostAdminPage } from "./features/admin/HostAdminPage";
-import { CircleSlash } from "lucide-react";
+import {
+  Bell,
+  CircleSlash,
+  Gauge,
+  Server,
+  Settings2,
+  type LucideIcon,
+} from "lucide-react";
 
 /**
  * The composition root: it owns the URL, the polling, and the one decision
@@ -88,23 +95,52 @@ export default function App() {
       <a className="skip" href="#main">
         Skip to content
       </a>
-      <header className="topnav">
+      {/* Still a <header>, and still the banner landmark: only its position
+          moved. HostPage's own header is disambiguated from this one by
+          accessible name, not by there being exactly one. */}
+      <header className="siderail">
         <a className="brand" href="/">
           netra
         </a>
-        <nav className="nav">
-          <NavLink href="/" active={route.name === "fleet"}>
-            Overview
-          </NavLink>
-          <NavLink href="/events" active={route.name === "events"}>
-            Events
-          </NavLink>
-          <NavLink href="/admin/hosts" active={route.name === "admin"}>
-            Hosts
-          </NavLink>
-          <NavLink href="/settings" active={route.name === "settings"}>
-            Settings
-          </NavLink>
+        {/* Named because it is not the only nav landmark on a page -- Tabs
+            renders one too -- and "navigation" twice over tells a screen
+            reader user nothing about which is which. */}
+        <nav className="nav" aria-label="Primary">
+          <div className="navgroup">
+            {/* A dial for the fleet reading and a bell for things that
+                happened: the two marks that have to say "monitoring tool"
+                rather than "admin panel". The other two are a server and a
+                cog in every set worth considering. */}
+            <NavLink href="/" icon={Gauge} active={route.name === "fleet"}>
+              Overview
+            </NavLink>
+            <NavLink
+              href="/events"
+              icon={Bell}
+              active={route.name === "events"}
+            >
+              Events
+            </NavLink>
+            <NavLink
+              href="/admin/hosts"
+              icon={Server}
+              active={route.name === "admin"}
+            >
+              Hosts
+            </NavLink>
+          </div>
+          {/* Settings is the only destination here that is not about the
+              fleet, so it sits apart -- pushed to the foot of the rail with a
+              rule above it rather than filed as a fourth peer. */}
+          <div className="navgroup navgroup-end">
+            <NavLink
+              href="/settings"
+              icon={Settings2}
+              active={route.name === "settings"}
+            >
+              Settings
+            </NavLink>
+          </div>
         </nav>
       </header>
       <main id="main" tabIndex={-1}>
@@ -175,14 +211,19 @@ function useDelegatedNavigation(go: Go) {
 function NavLink({
   href,
   active,
+  icon: Icon,
   children,
 }: {
   href: string;
   active: boolean;
+  icon: LucideIcon;
   children: React.ReactNode;
 }) {
   return (
     <a href={href} aria-current={active ? "page" : undefined}>
+      {/* Decorative: the word beside it is the accessible name, and an icon
+          that repeats the label would read it twice. */}
+      <Icon aria-hidden="true" />
       {children}
     </a>
   );
