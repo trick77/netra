@@ -241,12 +241,15 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
+    // Bottom to top, least reclaimable first: shared is Shmem and cannot be
+    // dropped under pressure, so it stacks with used rather than above the
+    // caches.
     expect(trends.mem.map((b) => b.name)).toEqual([
       "used",
+      "shared",
       "ARC",
       "buffers",
       "cached",
-      "shared",
     ]);
     // The stack is mem_total minus free, never more: free is the gap to the
     // top rather than a band.

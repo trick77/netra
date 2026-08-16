@@ -14,14 +14,14 @@ import type { Band } from "../ui/charts/StackedSparkline";
 /**
  * The memory bands, in the order they stack.
  *
- * Colours are token references; index.css owns the palette. The order is the
- * validated categorical order -- blue, orange, aqua, yellow, magenta -- and
- * not the s1..s5 sequence, which put blue, aqua, violet and magenta next to
- * each other and read as one muddy mass in a 32px cell. Orange and yellow are
- * the two hues that ramp never had, and they are most of why this chart is
- * legible at fleet-row size. Yellow and orange are deliberately NOT adjacent
- * in the stack: that is the one pair in this set that fails the separation
- * floors.
+ * Colours are token references; index.css owns the palette. The hues are the
+ * validated categorical set -- blue, magenta, orange, aqua, yellow -- and not
+ * the s1..s5 sequence, which put blue, aqua, violet and magenta next to each
+ * other and read as one muddy mass in a 32px cell. Orange and yellow are the
+ * two hues that ramp never had, and they are most of why this chart is legible
+ * at fleet-row size. Yellow and orange are deliberately NOT adjacent in the
+ * stack: that is the one pair in this set that fails the separation floors,
+ * and the stacking order below keeps aqua between them.
  */
 const USED = "var(--s1)";
 const ARC = "var(--s7)";
@@ -111,14 +111,24 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
     used.push(Math.max(0, t - f - parts));
   }
 
-  // Bottom to top: the resident pages first, then the caches, so the
-  // volatile part of the chart is the part that moves.
+  // Bottom to top, in increasing order of how readily the kernel can take the
+  // bytes back: the pages it cannot reclaim first, then the caches it can, so
+  // the volatile part of the chart is the part nearest the free gap.
+  //
+  // shared sits with used rather than above the caches, which is where it used
+  // to be drawn. It is Shmem -- tmpfs and shm pages with no backing store --
+  // so under pressure it cannot be dropped at all, only swapped. Painting it
+  // topmost, against the free gap, told the reader it was the first thing the
+  // host would hand back, which is the exact opposite of the truth. htop puts
+  // shared below cache for the same reason. ARC stays under buffers and cached
+  // because it is reclaimable but stickier than page cache -- and because that
+  // keeps orange and yellow apart, see the palette note above.
   return [
     { name: "used", color: USED, values: used },
+    { name: "shared", color: SHARED, values: shared },
     { name: "ARC", color: ARC, values: arc },
     { name: "buffers", color: BUFFERS, values: buffers },
     { name: "cached", color: CACHED, values: cached },
-    { name: "shared", color: SHARED, values: shared },
   ].filter((b) => hasReading(b.values));
 }
 
