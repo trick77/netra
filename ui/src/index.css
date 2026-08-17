@@ -286,9 +286,20 @@ h3 {
   margin: 0;
   font-weight: 500;
 }
+/* Links rest in ink and reach for the accent only under the pointer. Colour
+   here is almost entirely the fleet's hostnames, and orange on identity text
+   competed with the status palette it sits beside: dark --accent (#d97757) and
+   --st-serious (#ec835a) are near neighbours, so a hostname next to a severity
+   dot read as a severity itself. Every deliberate accent use in this file sets
+   its own colour (brand, current tab, ghost button, segmented control), so
+   none of them ride on this rule. 120ms is the app's one hover timing. */
 a {
-  color: var(--accent);
+  color: var(--ink-2);
   text-decoration: none;
+  transition: color 120ms ease;
+}
+a:hover {
+  color: var(--accent);
 }
 .serif {
   font-family: var(--font-serif);
@@ -1176,13 +1187,19 @@ a {
   top: 0;
   height: 100vh;
 }
+/* The wordmark keeps the accent explicitly. It used to inherit it from the
+   global `a` rule, with a `.brand span` rule that matched nothing -- the mark
+   has been a bare <a> since, so the span selector was dead and the colour was
+   the link default. Now that links rest in ink, stating it here is what keeps
+   the mark orange. */
 .brand {
   font-family: var(--font-serif);
   font-size: var(--text-title);
   letter-spacing: -0.01em;
   padding: 0 var(--space-2);
+  color: var(--accent);
 }
-.brand span {
+.brand:hover {
   color: var(--accent);
 }
 /* Fills the rail so .navgroup-end has something to push against. */
@@ -1233,27 +1250,17 @@ a {
   stroke-width: 1.75;
   flex: none;
 }
-/* No outline on the current item: the fill, the accent text and the bar say it
-   three times already, and a frame around one of five rows read as a control
-   you could press rather than as where you are. */
+/* Where you are, said once: a neutral fill and a heavier label. The accent
+   fill, the accent text and the edge bar that used to say it three times were
+   the loudest thing in a rail that is chrome, not content. No outline either --
+   a frame around one of five rows read as a control you could press. The bar
+   is gone rather than neutralised: a grey 3px rule against the window edge
+   read as a rendering seam. Weight is what separates this from :hover above,
+   which shares the same ground. */
 .nav a[aria-current] {
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 500;
-}
-/* A bar near the rail's own edge, so "you are here" is legible from the page
-   rather than only from inside the nav. The offset tracks the rail's 12px side
-   padding: -8px leaves the bar 4px clear of the window edge. Flush at -12px it
-   read as clipped rather than deliberate. */
-.nav a[aria-current]::before {
-  content: "";
-  position: absolute;
-  left: -8px;
-  top: 6px;
-  bottom: 6px;
-  width: 3px;
-  border-radius: 3px;
-  background: var(--accent);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 600;
 }
 @media (prefers-reduced-motion: reduce) {
   .nav a {
@@ -2079,9 +2086,9 @@ details.sysfold > .body {
 .chartwrap {
   position: relative;
 }
-/* The chart itself is the button that enlarges it, so the button must add
-   nothing of its own: no chrome, no padding, no focus-time layout shift.
-   Only the pointer and the focus ring say it is pressable. */
+/* The chart itself is the control, so the control must add nothing of its
+   own: no chrome, no padding, no focus-time layout shift. Only the pointer
+   and the focus ring say it is pressable. */
 .chartwrap.as-button {
   display: block;
   width: 100%;
@@ -2092,6 +2099,14 @@ details.sysfold > .body {
   color: inherit;
   font: inherit;
   text-align: left;
+}
+/* zoom-in above is for the <button> branch, which enlarges the chart in
+   place. The <a> branch navigates to the chart's own page, and a magnifier
+   over something that leaves the page tells the wrong story -- an anchor
+   gets the ordinary link pointer. Both branches share the class because
+   everything else about them is identical; only the cursor may differ. */
+a.chartwrap.as-button {
+  cursor: pointer;
 }
 /* The same button around a sparkline rather than a panel: in a table cell or
    a flex row, the full-width rule above would stretch a 110px chart across
@@ -2418,11 +2433,6 @@ svg.spark {
   .navgroup {
     flex-direction: row;
     gap: 2px;
-  }
-  /* The edge bar has no edge to sit against once the rail is a top bar, and
-     it would hang off the left of the first item. The fill carries it here. */
-  .nav a[aria-current]::before {
-    display: none;
   }
   /* The same separation turned on its side: a rule to the left of Settings
      instead of above it, since "the foot of the rail" has no meaning in a row. */
