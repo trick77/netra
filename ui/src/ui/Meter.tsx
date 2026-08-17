@@ -1,7 +1,9 @@
 // Fill colour comes from the series palette (--s1..--s4) or the status
 // palette (--st-ok/--st-warn/--st-serious/--st-crit), NEVER --accent -- the
-// accent is chrome (brand, links, active nav, focus ring, primary button),
-// not a data or severity fill. See index.css's comment above `.meter`.
+// accent is chrome (brand, current tab, ghost button, focus ring, primary
+// button), not a data or severity fill. See index.css's comment above
+// `.meter`. Links and the active nav entry rest in ink and are no longer on
+// that list -- see the comment above `a` in index.css.
 import type { ReactNode } from "react";
 import { ABSENT, percent } from "../lib/format";
 import type { Severity } from "./Badge";
