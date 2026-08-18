@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Card } from "../../ui/Card";
 import { Segmented } from "../../ui/Segmented";
-import { applyTheme, loadTheme, type ThemePref } from "../../lib/theme";
 import { isRange, RANGES, type Range } from "../../lib/range";
 import { DENSITY_KEY, RANGE_KEY, readPref, writePref } from "../../lib/prefs";
 
@@ -55,12 +54,6 @@ export function loadRange(): RangeKey {
   return isRange(value) ? value : "24h";
 }
 
-const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" },
-];
-
 /** A labelled block. A real <fieldset>/<legend> rather than a div plus an
  * aria-label: it is the one grouping construct assistive technology already
  * announces, and it names the Segmented inside it for free. */
@@ -87,17 +80,8 @@ function Setting({
  * it reaches the hub, so nothing on this page needs saving or can fail.
  */
 export function SettingsPage() {
-  const [theme, setTheme] = useState<ThemePref>(loadTheme);
   const [view, setView] = useState<OverviewView>(loadView);
   const [range, setRange] = useState<RangeKey>(loadRange);
-
-  // applyTheme both stamps the root and stores the choice -- including the
-  // "system" case, where the stamp is REMOVED so prefers-color-scheme decides
-  // live. Never reimplement that here; see lib/theme.ts.
-  function chooseTheme(next: ThemePref) {
-    applyTheme(next);
-    setTheme(next);
-  }
 
   function chooseView(next: OverviewView) {
     // writePref is guarded for the same reason readPref is: a store that
@@ -120,19 +104,9 @@ export function SettingsPage() {
         <h2>Settings</h2>
       </div>
 
-      <Card title="Appearance">
-        <Setting
-          legend="Theme"
-          hint="System follows the operating system as it changes, without a reload."
-        >
-          <Segmented
-            options={THEME_OPTIONS}
-            value={theme}
-            onChange={chooseTheme}
-          />
-        </Setting>
-      </Card>
-
+      {/* Appearance held one control, Theme, and netra has one theme now --
+          so the card went with it rather than becoming an empty box titled
+          after a choice nobody has. */}
       <Card title="Defaults">
         <Setting
           legend="Default overview view"

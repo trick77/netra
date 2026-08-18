@@ -23,11 +23,14 @@
   font-display: swap;
 }
 
-/* ── Tailwind theme registry: invariant tokens + light (default) palette ──
-   Direction "Clay" (spec §3.2). Dark values are music's tokens verbatim;
-   the light peer is derived, since music has no light theme to copy.
-   Light lives here as the default; dark is layered on afterwards so the
-   Settings toggle (data-theme) and the OS preference both work. */
+/* ── Tailwind theme registry: invariant tokens + the palette ──────────
+   Direction "Clay" (spec §3.2), dark. There is ONE theme, and that is the
+   point: a light peer nobody chose was a second palette to keep honest --
+   every contrast figure below had to hold twice, and the light half was
+   derived rather than measured. The values are music's, verbatim.
+
+   Nothing here is scoped to a media query or a data-theme stamp, so a token
+   has exactly one value and grepping for it finds that value. */
 @theme static {
   --font-sans:
     "Anthropic Sans", system-ui, "Segoe UI", Roboto, Helvetica, Arial,
@@ -72,148 +75,7 @@
   --st-serious: #ec835a;
   --st-crit: #d03b3b;
 
-  /* palette "Clay" — light (default). */
-  --bg: #f7f5f0;
-  --surface: #fffdf9;
-  --surface-2: #faf8f3;
-  --raised: #fffdf9;
-  --border: #e7e2d8;
-  --border-strong: #cfc9bb;
-  --ink: #1f1e1a;
-  --ink-2: #4d4a42;
-  --muted: #807c72;
-  --accent: #b4531f;
-  /* Darkened one step from #c25f34: white-on-fill (.btn.primary) measured
-     4.22:1, under the 4.5:1 floor. #b85a30 keeps the same clay hue/chroma
-     direction and clears it at 4.62:1 — see --on-accent below. */
-  --accent-fill: #b85a30;
-  --accent-soft: #fbeee5;
-  /* The unfilled part of a meter. Neutral rather than a tint of --accent:
-     the fill beside it is the FIXED status palette (ok/warn/serious/crit),
-     and a warm track behind a green or amber bar muddied both. Lighter than
-     --accent-soft was, so the empty portion reads as empty and the fill
-     carries the contrast. Its own token because --accent-soft also backs
-     the tag, the badge and the selected row, which are not meters. */
-  --track: #f4f2ee;
-  /* The dashed ceiling rule on a chart (total RAM). Its own token because
-     --ink and --ink-2 invert with the theme, so using either made the rule
-     quiet in one theme and the loudest mark on the row in the other. Tuned
-     per theme to sit at the same low prominence in both: it annotates the
-     chart, it is not a series in it. */
-  --reference: #8c8880;
-  /* Chart furniture, at three levels of prominence. The values are derived
-     from a measured target rather than picked by eye, because picking by eye
-     failed twice: --grid was #eeeae1 on a #fffdf9 surface, a contrast ratio
-     of 1.18:1, which is drawn correctly and invisible on screen. RRDtool --
-     whose graphs are the readability benchmark here -- uses #d0d0d0 for its
-     helper grid and #a0a0a0 for its major one, measuring 1.54:1 and 2.61:1
-     on white. These sit either side of that in Clay's warm hue:
-     --grid-minor 1.40:1, --grid 1.86:1, --axis 3.47:1.
-     Do not retune these by eye; re-derive them from the ratios. */
-  --grid-minor: #ded8ca;
-  --grid: #c3bcaa;
-  --axis: #8f8878;
-
-  /* Text painted on --accent-fill (spec has no token for this; .btn.primary
-     hardcoded #fff with no light/dark peer and no contrast margin). White
-     on the darkened --accent-fill above measures 4.62:1. */
-  --on-accent: #fff;
-
-  /* status TEXT colours — light. The chip ground keeps the fixed hue (--st-*
-     above); the word on it is the actual colour-blindness mitigation (spec
-     §3.3/3.5), so it must clear 4.5:1 on its own. The mark colours as text
-     do not: on the page --bg they measure warn 1.68:1, serious 2.42:1, ok
-     3.08:1, crit 4.41:1 — all four short. Each is darkened along its own
-     hue until it clears on --bg (#f7f5f0), the harder of the two grounds
-     status text lands on; on --surface every one of them is ≥4.9:1. */
-  --st-ok-text: #0a820a;
-  --st-warn-text: #956703;
-  --st-serious-text: #c24716;
-  --st-crit-text: #cf3535;
-
-  /* series palette — light (default). Orange never appears (spec §3.4).
-     s5/s6 sit in the gaps between the existing four hues (~213°, 159°,
-     249°, 337°) rather than crowding any of them: s6 ≈180° (cyan) falls
-     between s2's green and s1's blue; s5 ≈277° (violet) falls between
-     s3's purple and s4's pink. Both stay well clear of the 0–41° band
-     reserved for accent/status (accent 18°, crit 0°, serious 17°,
-     warn 41°, ok 120° also avoided). */
-  --s1: #2a78d6;
-  --s2: #1baf7a;
-  --s3: #4a3aa7;
-  --s4: #e87ba4;
-  --s5: #9b4fc9;
-  --s6: #1a9e9e;
-  /* Orange and yellow, the two hues the series ramp never had. The memory
-     stack needs five bands that stay apart at 32px tall, and blue/aqua/
-     violet/magenta alone read as one muddy mass at that size. Validated as a
-     set with s1 and s2: worst adjacent CVD dE 9.1, worst adjacent
-     normal-vision dE 19.6. Three of them sit under 3:1 on the light surface,
-     which is why every chart using them carries a legend. */
-  --s7: #eb6834;
-  --s8: #eda100;
-  /* The per-core sweep computes its own hues -- there is no fixed set of
-     steps to name when the ramp has to subdivide to fit the host -- but
-     saturation and lightness stay here so the ramp still follows the theme
-     instead of being frozen in a .ts file. */
-  --chart-saturation: 65%;
-  --chart-lightness: 50%;
-
-  /* drawer shadow — per-theme; the dark value read as a grey smear on the
-     light surface. */
-  --shadow-drawer: 0 18px 48px rgba(31, 30, 26, 0.16);
-}
-
-/* Dark is BOTH the media query and the explicit stamp, so the Settings
-   toggle wins in both directions: an unstamped root follows the OS live,
-   and an explicit "dark" choice wins even against a light OS. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #1f1f1e;
-    --surface: #1b1b1a;
-    --surface-2: #2c2c2a;
-    --raised: #363632;
-    --border: #323230;
-    --border-strong: #454540;
-    --ink: #faf9f5;
-    --ink-2: #c9c6bd;
-    --muted: #9c9a92;
-    --accent: #d97757;
-    --accent-fill: #b85a30;
-    --accent-soft: #2e211a;
-    --track: #3a3a37;
-    --reference: #6e6c66;
-    --grid-minor: #33332f;
-    --grid: #45443e;
-    --axis: #6a685f;
-
-    --on-accent: #fff;
-    /* status TEXT colours — dark. Measured on the page --bg (#1f1f1e): ok
-       4.92:1, warn 8.99:1, serious 6.25:1 already clear and keep their mark
-       hue exactly; only crit fails at 3.43:1 and is lightened until it
-       clears (4.55:1). */
-    --st-ok-text: #0ca30c;
-    --st-warn-text: #fab219;
-    --st-serious-text: #ec835a;
-    --st-crit-text: #d96060;
-
-    --s1: #3987e5;
-    --s2: #199e70;
-    --s3: #9085e9;
-    --s4: #d55181;
-    --s5: #b06fe0;
-    --s6: #2bbcbc;
-    --s7: #d95926;
-    --s8: #c98500;
-    /* Lifted on the dark surface: the same hues at 50% L sit too close to
-       the background to read as distinct bands. */
-    --chart-saturation: 62%;
-    --chart-lightness: 58%;
-
-    --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
-  }
-}
-:root[data-theme="dark"] {
+  /* palette "Clay". */
   --bg: #1f1f1e;
   --surface: #1b1b1a;
   --surface-2: #2c2c2a;
@@ -224,33 +86,87 @@
   --ink-2: #c9c6bd;
   --muted: #9c9a92;
   --accent: #d97757;
+  /* Darkened one step from #c25f34: white-on-fill (.btn.primary) measured
+     4.22:1, under the 4.5:1 floor. #b85a30 keeps the same clay hue/chroma
+     direction and clears it at 4.62:1 — see --on-accent below. */
   --accent-fill: #b85a30;
   --accent-soft: #2e211a;
+  /* The unfilled part of a meter. Neutral rather than a tint of --accent:
+     the fill beside it is the FIXED status palette (ok/warn/serious/crit),
+     and a warm track behind a green or amber bar muddied both. Lighter than
+     --accent-soft was, so the empty portion reads as empty and the fill
+     carries the contrast. Its own token because --accent-soft also backs
+     the tag, the badge and the selected row, which are not meters. */
   --track: #3a3a37;
+  /* The dashed ceiling rule on a chart (total RAM). Its own token because
+     --ink and --ink-2 invert with the theme, so using either made the rule
+     quiet in one theme and the loudest mark on the row in the other. Tuned
+     per theme to sit at the same low prominence in both: it annotates the
+     chart, it is not a series in it. */
   --reference: #6e6c66;
+  /* Chart furniture, at three levels of prominence. The values are derived
+     from a measured target rather than picked by eye, because picking by eye
+     failed twice: --grid was #eeeae1 on a #fffdf9 surface, a contrast ratio
+     of 1.18:1, which is drawn correctly and invisible on screen. RRDtool --
+     whose graphs are the readability benchmark here -- uses #d0d0d0 for its
+     helper grid and #a0a0a0 for its major one, measuring 1.54:1 and 2.61:1
+     on white. These sit either side of that in Clay's warm hue:
+     --grid-minor 1.40:1, --grid 1.86:1, --axis 3.47:1.
+     Do not retune these by eye; re-derive them from the ratios. */
   --grid-minor: #33332f;
   --grid: #45443e;
   --axis: #6a685f;
 
+  /* Text painted on --accent-fill (spec has no token for this; .btn.primary
+     hardcoded #fff with no contrast margin). White on --accent-fill
+     measures 4.62:1. */
   --on-accent: #fff;
+
+  /* status TEXT colours. The chip ground keeps the fixed hue (--st-* above);
+     the word on it is the actual colour-blindness mitigation (spec §3.3/3.5),
+     so it must clear 4.5:1 on its own. Measured on the page --bg (#1f1f1e):
+     ok 4.92:1, warn 8.99:1 and serious 6.25:1 clear as they are and keep
+     their mark hue exactly; only crit fell short at 3.43:1 and is lightened
+     until it clears (4.55:1). */
   --st-ok-text: #0ca30c;
   --st-warn-text: #fab219;
   --st-serious-text: #ec835a;
   --st-crit-text: #d96060;
 
+  /* series palette. Orange never appears (spec §3.4).
+     s5/s6 sit in the gaps between the existing four hues (~213°, 159°,
+     249°, 337°) rather than crowding any of them: s6 ≈180° (cyan) falls
+     between s2's green and s1's blue; s5 ≈277° (violet) falls between
+     s3's purple and s4's pink. Both stay well clear of the 0–41° band
+     reserved for accent/status (accent 18°, crit 0°, serious 17°,
+     warn 41°, ok 120° also avoided). */
   --s1: #3987e5;
   --s2: #199e70;
   --s3: #9085e9;
   --s4: #d55181;
   --s5: #b06fe0;
   --s6: #2bbcbc;
+  /* Orange and yellow, the two hues the series ramp never had. The memory
+     stack needs five bands that stay apart at 32px tall, and blue/aqua/
+     violet/magenta alone read as one muddy mass at that size. Validated as a
+     set with s1 and s2: worst adjacent CVD dE 9.1, worst adjacent
+     normal-vision dE 19.6. Every chart drawing them carries a legend. */
   --s7: #d95926;
   --s8: #c98500;
+  /* The per-core sweep computes its own hues -- there is no fixed set of
+     steps to name when the ramp has to subdivide to fit the host -- but
+     saturation and lightness stay here so the ramp still follows the theme
+     instead of being frozen in a .ts file. */
   --chart-saturation: 62%;
   --chart-lightness: 58%;
 
+  /* drawer shadow. */
   --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
+
+/* Dark is BOTH the media query and the explicit stamp, so the Settings
+   toggle wins in both directions: an unstamped root follows the OS live,
+   and an explicit "dark" choice wins even against a light OS. */
 
 /* ── Reset + base ─────────────────────────────────────────────────── */
 * {
@@ -258,17 +174,8 @@
 }
 /* Without color-scheme the browser keeps painting its own widgets light on a
    dark page: scrollbars, select popups, date pickers, the default background
-   of form controls. The three scopes mirror the token blocks exactly, so an
-   explicit theme choice moves the native UI with it. */
+   of form controls. Unconditional, because so is the palette above. */
 :root {
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
   color-scheme: dark;
 }
 body {
