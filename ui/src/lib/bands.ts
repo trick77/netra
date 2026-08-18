@@ -20,8 +20,13 @@ import type { Band } from "../ui/charts/StackedSparkline";
  * --s7 (#d95926), which sits a few degrees from --accent (#d97757) and from
  * --st-serious (#ec835a) -- so a memory band, "something needs attention" and
  * a severity were all the same colour, two columns apart, on the same row.
- * Orange means attention now and nothing else. ARC takes --s3 (violet), the
- * hue the set had spare.
+ * ARC takes --s3 (violet), the hue the set had spare.
+ *
+ * The rule that buys is narrower than "orange is never a series": it is that
+ * no warm hue is drawn in a DENSE list, where hue is all a reader has and a
+ * severity mark sits two columns away. chartSpecs.ts still hands --s7 to the
+ * seventh slot of its ramp, and that is fine -- those are large charts with a
+ * legend under them.
  *
  * The remaining amber (--s8, cached) is the one warm hue this stack keeps,
  * and it is kept knowingly: five bands need five separable hues, and without

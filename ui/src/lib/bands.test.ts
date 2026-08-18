@@ -103,8 +103,9 @@ describe("memoryBands", () => {
   });
 
   // --s7 is --accent's hue and --st-serious's neighbour. It carried the ARC
-  // band until the palette reserved warm for attention; nothing in a memory
-  // chart may claim it back.
+  // band until the palette reserved warm for attention. These bands are drawn
+  // in a 32px fleet cell with a severity badge two columns away, which is the
+  // case the rule exists for -- a large legended chart may still use --s7.
   it("keeps attention's orange out of the memory stack", () => {
     expect(memoryBands(full).map((b) => b.color)).not.toContain("var(--s7)");
   });

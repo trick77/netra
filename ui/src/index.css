@@ -89,11 +89,17 @@
 
      INK IS THREE STEPS QUIETER. --ink was #faf9f5 at 17.6:1, which on a
      black-ish page reads as glare rather than as text, and the stat tiles
-     print it at 28px. The floor that matters is --surface, not --bg: surface
-     is the LIGHTER ground here, so it is the harder one for text. Measured
-     on it -- ink 9.9:1, ink-2 6.6:1, muted 4.5:1 -- all clear, with muted
-     sitting just over the 4.5 body-text floor rather than comfortably above
-     it, which is what keeps it reading as secondary. */
+     print it at 28px.
+
+     Text is measured against the LIGHTEST ground it can land on, and that is
+     not --surface. Ranked by luminance the grounds go --bg, --surface,
+     --surface-2, --accent-soft, --raised, so --accent-soft is the one that
+     decides: it is the ground under a SELECTED attention tile
+     (.atile[aria-current]), which is a resting state and not a hover, and
+     the label inside it is --muted. Measured there: ink 8.0:1, ink-2 5.3:1,
+     muted 4.95:1 -- all clear, with muted just over the 4.5 body-text floor
+     rather than comfortably above it, which is what keeps it secondary.
+     A value chosen against --surface alone lands at 4.10:1 there. */
   --bg: #131312;
   --surface: #1b1b1a;
   --surface-2: #222221;
@@ -102,7 +108,7 @@
   --border-strong: #3b3b38;
   --ink: #c7c4bb;
   --ink-2: #a3a099;
-  --muted: #85837b;
+  --muted: #94918a;
   --accent: #d97757;
   /* Darkened one step from #c25f34: white-on-fill (.btn.primary) measured
      4.22:1, under the 4.5:1 floor. #b85a30 keeps the same clay hue/chroma
@@ -128,8 +134,13 @@
      of 1.18:1, which is drawn correctly and invisible on screen. RRDtool --
      whose graphs are the readability benchmark here -- uses #d0d0d0 for its
      helper grid and #a0a0a0 for its major one, measuring 1.54:1 and 2.61:1
-     on white. These sit either side of that in Clay's warm hue:
-     --grid-minor 1.40:1, --grid 1.86:1, --axis 3.47:1.
+     on white. These sit either side of that in Clay's warm hue.
+
+     Measured on --surface (#1b1b1a), which is the surface a chart is drawn
+     on: --grid-minor 1.36:1, --grid 1.76:1, --axis 3.08:1. Those are the
+     values these hexes actually produce -- the figures quoted here used to
+     be the LIGHT theme's targets (1.40 / 1.86 / 3.47), which no maintainer
+     could reach from the dark tokens sitting under them.
      Do not retune these by eye; re-derive them from the ratios. */
   --grid-minor: #33332f;
   --grid: #45443e;
@@ -153,7 +164,19 @@
   --st-serious-text: #ec835a;
   --st-crit-text: #d96060;
 
-  /* series palette. Orange never appears (spec §3.4).
+  /* series palette.
+
+     s1-s6 hold the 0-41 degree band clear, which is the band --accent and
+     the status palette live in. s7 and s8 do NOT -- see their own note below
+     -- so the rule is about WHERE a warm series may be drawn, not that one
+     never exists: never in a dense list (a 32px fleet cell, a container row),
+     where a reader has only hue to go on and a severity mark sits two columns
+     away; allowed on a large chart that carries a legend and a stats table.
+     The one exception inside that rule is the memory stack, which needs a
+     warm hue to make five bands separable at all and is argued for in
+     lib/bands.ts. ("Orange never appears" is what this comment used to say,
+     directly above the line defining an orange.)
+
      s5/s6 sit in the gaps between the existing four hues (~213°, 159°,
      249°, 337°) rather than crowding any of them: s6 ≈180° (cyan) falls
      between s2's green and s1's blue; s5 ≈277° (violet) falls between
@@ -183,10 +206,6 @@
   /* drawer shadow. */
   --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
-
-/* Dark is BOTH the media query and the explicit stamp, so the Settings
-   toggle wins in both directions: an unstamped root follows the OS live,
-   and an explicit "dark" choice wins even against a light OS. */
 
 /* ── Reset + base ─────────────────────────────────────────────────── */
 * {
