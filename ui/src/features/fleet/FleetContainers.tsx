@@ -5,6 +5,7 @@ import { Table } from "../../ui/Table";
 import {
   containerColumns,
   ContainerGroupTotals,
+  containerSeverity,
   trendScales,
   type ContainerRow,
 } from "../container/columns";
@@ -33,15 +34,15 @@ export interface FleetContainersProps {
   /**
    * Adds the Host column.
    *
-   * The fleet page sets it, and the repetition is deliberate: this list does
-   * group by host, so the hostname IS the group header -- but a group that
-   * can be collapsed is a group whose header scrolls away once it is open,
-   * and thirteen rows deep into a host there was then nothing on the row
-   * saying which machine it runs on. A duplicated hostname is cheaper than an
-   * unidentifiable container.
+   * NOBODY SETS THIS ANY MORE, and the prop is kept only so a future list that
+   * shows containers from several hosts WITHOUT grouping by host has somewhere
+   * to ask. The fleet page set it, and the repetition was defended on the
+   * grounds that an opened group's heading scrolls off the top -- true, and
+   * not worth eighty-four rows restating what four headings say, in the widest
+   * table on the page. The heading is one scroll away.
    *
-   * Still off by default: a caller that never collapses its groups keeps the
-   * heading in view and does not need the column.
+   * A caller that groups by host should leave this off: the group header is
+   * the answer, and a column beside it is the same answer again.
    */
   showHost?: boolean;
   /** False while the container fan-out has not answered yet. */
@@ -190,6 +191,11 @@ export function FleetContainers({
         rows={rows}
         // Two hosts can run the same container_key, so identity is the pair.
         rowKey={(row) => `${row.host_id}:${row.container_key}`}
+        // Which of eighty-four rows to look at, readable from the edge of
+        // the table. Memory against the container's own limit, through the
+        // same function the meter in the row uses, so the two marks cannot
+        // disagree.
+        rowSeverity={containerSeverity}
         // `rows` arrives already filtered, so a host still standing is a host
         // with a hit on it -- and a hit inside a closed group is a hit the
         // reader cannot see. This is the only signal here that a filter is on;

@@ -41,9 +41,17 @@ const SERIES_VAR: Record<1 | 2 | 3 | 4, string> = {
   4: "var(--s4)",
 };
 
-function severityFromPercent(
+/**
+ * Where a percentage falls against the thresholds.
+ *
+ * Exported because the container list's row rail has to agree with the meter
+ * drawn inside that same row: two readings of one number that disagreed --
+ * an amber bar on a row with a red rail -- would be worse than either alone.
+ * One function, one answer.
+ */
+export function severityFromPercent(
   pct: number,
-  thresholds: MeterThresholds,
+  thresholds: MeterThresholds = DEFAULT_THRESHOLDS,
 ): FillSeverity {
   if (pct >= thresholds.critical) return "critical";
   if (pct >= thresholds.serious) return "serious";

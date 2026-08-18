@@ -27,6 +27,7 @@ import {
   composeIdentity,
   containerColumns,
   ContainerGroupTotals,
+  containerSeverity,
   lastReported,
   trendScales,
   type ContainerRow,
@@ -61,6 +62,9 @@ export interface InventoryProps<T> {
   /** Splits the list into labelled groups. Handed straight to Table -- see
    * its own note for why grouping has to live there rather than here. */
   groupBy?: TableProps<T>["groupBy"];
+  /** Marks a row that needs attention, drawn as a rail down its leading
+   * edge. Handed straight to Table; see its note. */
+  rowSeverity?: TableProps<T>["rowSeverity"];
 }
 
 export function Inventory<T>({
@@ -74,6 +78,7 @@ export function Inventory<T>({
   emptyTitle,
   emptyBody,
   groupBy,
+  rowSeverity,
 }: InventoryProps<T>) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -136,6 +141,7 @@ export function Inventory<T>({
           columns={columns}
           rows={visible}
           rowKey={rowKey}
+          rowSeverity={rowSeverity}
           groupBy={grouping}
         />
       )}
@@ -185,9 +191,10 @@ const BY_PROJECT = {
     </>
   ),
   labelText: (key: string) => projectName(key),
-  // Shut by default: a host running fourteen containers in four stacks opens
-  // onto four lines instead of eighteen. That is only honest because the
-  // header keeps answering what the rows would have -- see the summary below.
+  // Open by default now -- see Table's own note. A list that arrives showing
+  // nothing but headings has not summarised itself, it has hidden itself. The
+  // disclosure stays for the reader who wants to fold a noisy stack away, and
+  // the summary below is what a folded one keeps saying.
   collapsible: true,
   // The one definition of what a group of containers is using, shared with
   // the fleet's list so the two cannot come to disagree.
@@ -273,6 +280,9 @@ export function Containers({
       // The same pair the fleet list keys on, so "what a container row is"
       // has one answer.
       rowKey={(row) => `${row.host_id}:${row.container_key}`}
+      // The same rail the fleet's container list draws, from the same
+      // function: one container row, one definition of "needs attention".
+      rowSeverity={containerSeverity}
       searchText={(row) =>
         [row.container_key, row.name, row.image].filter(Boolean).join(" ")
       }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { ABSENT } from "../../lib/format";
-import { expandAllGroups, groupLabels } from "../../testing/groups";
+import { groupLabels } from "../../testing/groups";
 import {
   FleetContainers,
   containerColumns,
@@ -45,7 +45,6 @@ describe("FleetContainers", () => {
 
     // Groups start collapsed, so the rows are not in the DOM until the
     // disclosure is opened.
-    expandAllGroups();
     // [0] is the header rail and [1] the host's group header; the data
     // rows follow it.
     const row = screen.getAllByRole("row")[2]!;
@@ -118,7 +117,6 @@ describe("FleetContainers", () => {
   it("renders an unnamed container as absent, never as a blank or a zero", () => {
     render(<FleetContainers rows={[makeRow({ name: null, image: null })]} />);
 
-    expandAllGroups();
     const row = screen.getAllByRole("row")[2]!;
     expect(within(row).getAllByText(ABSENT).length).toBe(2);
     // The key still identifies it -- absence of a name is not absence of a
@@ -129,7 +127,6 @@ describe("FleetContainers", () => {
   it("links each container to its detail page", () => {
     render(<FleetContainers rows={[makeRow()]} />);
 
-    expandAllGroups();
     expect(screen.getByRole("link", { name: /postgres/ })).toHaveAttribute(
       "href",
       "/containers/7/9f2c1ab3",
@@ -146,7 +143,6 @@ describe("FleetContainers", () => {
   it("marks the agent's own container so it is not read as a workload", () => {
     render(<FleetContainers rows={[makeRow({ is_agent: true })]} />);
 
-    expandAllGroups();
     expect(screen.getByText("agent")).toBeInTheDocument();
   });
 
@@ -186,7 +182,6 @@ describe("FleetContainers", () => {
       <FleetContainers rows={[busy, idle]} showHost loaded />,
     );
 
-    expandAllGroups();
     const paths = [...container.querySelectorAll("path[data-line]")].map((p) =>
       p.getAttribute("d"),
     );

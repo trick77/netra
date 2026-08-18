@@ -1,12 +1,16 @@
-// Helpers for the two lists whose Table groups are collapsible: a group's
-// rows are not in the DOM until it is opened, so a test that asserts on rows
-// has to open them first. Shared rather than copied into each test file
-// because "how do you get at a grouped row" is one answer, and three copies
-// of it drift the moment the header's markup changes.
+// Helpers for the two lists whose Table groups are collapsible. Shared rather
+// than copied into each test file because "how do you get at a grouped row" is
+// one answer, and three copies of it drift the moment the header's markup
+// changes.
 import { fireEvent, screen, within } from "@testing-library/react";
 
 /**
  * Opens every collapsed group in the document.
+ *
+ * Groups now arrive OPEN, so this is a no-op on a freshly rendered list and
+ * the calls that used to precede every assertion are gone. It is kept for the
+ * test that SHUTS a group and then needs it back, and because "open the
+ * groups" should have one implementation the day the default moves again.
  *
  * Clicked rather than reached round the back: it is the same control a reader
  * uses, so a test that stops passing because the disclosure broke is a test

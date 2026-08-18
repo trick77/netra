@@ -820,6 +820,70 @@ a:hover {
   font-family: var(--font-mono);
 }
 
+/* The container list's Image cell. .mono sets a family and nothing else, so
+   this was the one cell in the row still at the body's --text-ui while the
+   identity line, the memory reading and the group totals are all --text-label
+   -- and a mono face at the same px reads larger than the sans beside it. The
+   result was the longest and least urgent string in the row drawn as the
+   loudest thing in it.
+
+   --text-micro is one of its three sanctioned uses (spec 3.6: badges, axis
+   ticks, eyebrows) stretched to a fourth, and deliberately: this is an
+   identifier a reader looks up when something is already wrong with a
+   version, not a thing they read down the column. --muted for the same
+   reason. break-all because an image ref has no spaces and would otherwise
+   set the column's minimum width. */
+.imgcell {
+  font-size: var(--text-micro);
+  color: var(--muted);
+  word-break: break-all;
+}
+
+/* The severity rail: which rows to look at, readable from the edge of the
+   table before any cell is read.
+
+   An inset box-shadow on the first cell rather than a border or a column of
+   its own -- a border would shift every unmarked row by 3px, and a column
+   would spend width on a mark that is empty in most rows. The padding of the
+   marked cell grows by the same 3px so its text does not slide.
+
+   The hue is the only thing that differs between the three, and it is never
+   the whole answer: every row this marks also carries a badge with a word in
+   it. Reserved for rows that are actually wrong -- a table where every row is
+   railed has said nothing. */
+.rail td:first-child {
+  padding-left: calc(var(--space-4) + 3px);
+}
+.rail-warning td:first-child {
+  box-shadow: inset 3px 0 0 var(--st-warn);
+}
+.rail-serious td:first-child {
+  box-shadow: inset 3px 0 0 var(--st-serious);
+}
+.rail-critical td:first-child {
+  box-shadow: inset 3px 0 0 var(--st-crit);
+}
+
+/* A container row's CPU cell: the chart, and the reading it ends on beside
+   it. Same shape and same reasoning as .traffic-cell on the fleet row -- the
+   number costs width, which the row has, rather than height, which it does
+   not, and it stays --muted because the sparkline is the subject and this
+   annotates it. */
+.ccell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.cval {
+  font-size: var(--text-label);
+  color: var(--muted);
+  /* Never shrink, and never wrap a percentage mid-number: the chart is the
+     item that gives way when the column is squeezed. */
+  flex: none;
+  min-width: 44px;
+  text-align: right;
+}
+
 /* A shell command the reader is meant to copy. .ai-cmd above is the inline
    peer of this, scoped to the drawer; both take their face and ground from
    the same tokens, and this one is the block form: a command that wraps is

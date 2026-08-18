@@ -21,7 +21,7 @@
 // the fleet fan-out does not, so it would appear on one list and not the
 // other -- the exact asymmetry this module exists to remove.
 import { Badge } from "../../ui/Badge";
-import { Meter } from "../../ui/Meter";
+import { Meter, severityFromPercent } from "../../ui/Meter";
 import type { Column } from "../../ui/Table";
 import { ABSENT, bytes, percent } from "../../lib/format";
 import type { Container } from "../../lib/api";
@@ -419,7 +419,16 @@ export function containerColumns({
     // `.mono` is an identifier face (spec 3.1: --font-mono for versions,
     // addresses, commands and identifiers). `.tnum` would be wrong here:
     // that is tabular figures, for columns of digits that must line up.
-    cell: (row) => <span className="mono">{row.image ?? ABSENT}</span>,
+    //
+    // `.imgcell` is what stops it shouting. `.mono` sets a FAMILY and nothing
+    // else, so this cell inherited the body's --text-ui (15px) while every
+    // other piece of text in the row -- the identity line, the memory
+    // reading, the group totals -- is stepped down to --text-label. A
+    // mono face at 15px also carries a wider advance and a taller x-height
+    // than the sans beside it, so the longest, least urgent string in the
+    // row ("ghcr.io/immich-app/immich-server:v1.119.1") was drawn as the
+    // loudest. It is a version, read when something is wrong with a version.
+    cell: (row) => <span className="imgcell mono">{row.image ?? ABSENT}</span>,
     sortValue: (row) => row.image ?? null,
   });
 
@@ -428,18 +437,27 @@ export function containerColumns({
     columns.push({
       key: "cpu",
       header: "CPU",
+      // The chart, and the reading it ends on beside it. Memory has carried
+      // its number since it got a meter; CPU was a shape with no value at
+      // all, so "which container is busiest" could be sorted but not read.
+      // The number is --muted (.cval): the sparkline is the subject and this
+      // annotates it, the same relationship .traffic-rates has on the fleet
+      // row.
       cell: (row) =>
         row.cpu === undefined || row.cpu.length === 0 ? (
           ABSENT
         ) : (
-          <ContainerChart
-            row={row}
-            metric="cpu"
-            values={row.cpu}
-            max={cpuMax ?? 1}
-            range={range}
-            ranges={ranges}
-          />
+          <div className="ccell">
+            <ContainerChart
+              row={row}
+              metric="cpu"
+              values={row.cpu}
+              max={cpuMax ?? 1}
+              range={range}
+              ranges={ranges}
+            />
+            <span className="cval tnum">{percent(lastReported(row.cpu))}</span>
+          </div>
         ),
       // The latest reported percentage, same rule as Memory below. Without
       // it CPU was the one column in this set that could not answer its own
@@ -468,4 +486,32 @@ export function containerColumns({
   }
 
   return columns;
+}
+
+/**
+ * How close a container is to being OOM-killed, as a row severity.
+ *
+ * The rail this feeds and the meter inside the row read the SAME number
+ * through the same function (Meter's severityFromPercent), so they cannot
+ * disagree -- an amber bar on a row with a red rail would be worse than
+ * either mark alone.
+ *
+ * Memory only, and against the container's OWN limit. CPU is deliberately not
+ * consulted: a container pinned at 100% of a core is doing its job, and
+ * netra has no idea what that container is for -- railing it would mark the
+ * busiest row on every honest fleet. Being near a limit that will kill you is
+ * the one thing this list knows is bad.
+ *
+ * An unlimited container has no denominator and so no severity, which is
+ * Meter's own rule: a bar against an invented ceiling is a lie.
+ */
+export function containerSeverity(
+  row: ContainerRow,
+): "warning" | "serious" | "critical" | null {
+  const limit = row.mem_limit_bytes ?? null;
+  if (limit === null || limit <= 0) return null;
+  const used = lastReported(row.mem);
+  if (used === null) return null;
+  const severity = severityFromPercent((used / limit) * 100);
+  return severity === "ok" ? null : severity;
 }
