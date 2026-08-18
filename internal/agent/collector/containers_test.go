@@ -97,6 +97,52 @@ func advanceNet(t *testing.T, procRoot, pid string, rx, tx uint64) {
 	}
 }
 
+// addNetScope adds a SECOND container to a tree netFixture already built: its
+// cgroup scope, its namespace link and its net/dev counters. It exists so a
+// test can put a container whose namespace link is refused next to one whose
+// link reads fine, which is the only way to tell a per-container latch from a
+// host-wide one.
+func addNetScope(t *testing.T, cgroupRoot, procRoot, id, pid, ns string, rx, tx uint64) {
+	t.Helper()
+
+	scope := filepath.Join(cgroupRoot, "system.slice", "docker-"+id+".scope")
+	if err := os.MkdirAll(scope, 0o755); err != nil {
+		t.Fatalf("mkdir scope: %v", err)
+	}
+	files := map[string]string{
+		"cpu.stat":       "usage_usec 2000000\n",
+		"memory.current": "2000\n",
+		"memory.stat":    "inactive_file 0\n",
+		"memory.max":     "max\n",
+		"io.stat":        "8:0 rbytes=0 wbytes=0\n",
+		"cgroup.procs":   pid + "\n",
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(scope, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	nsPath := filepath.Join(procRoot, pid, "ns", "net")
+	if err := os.MkdirAll(filepath.Dir(nsPath), 0o755); err != nil {
+		t.Fatalf("mkdir ns: %v", err)
+	}
+	if err := os.Symlink(ns, nsPath); err != nil {
+		t.Fatalf("symlink %s: %v", nsPath, err)
+	}
+
+	netDir := filepath.Join(procRoot, pid, "net")
+	if err := os.MkdirAll(netDir, 0o755); err != nil {
+		t.Fatalf("mkdir net: %v", err)
+	}
+	body := "Inter-|   Receive                        |  Transmit\n" +
+		" face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n" +
+		fmt.Sprintf("  eth0: %d 10 0 0 0 0 0 0 %d 10 0 0 0 0 0 0\n", rx, tx)
+	if err := os.WriteFile(filepath.Join(netDir, "dev"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write net/dev: %v", err)
+	}
+}
+
 func containersAt(t *testing.T, c *collector.Containers, at time.Time) *collector.Result {
 	t.Helper()
 	c.SetClockForTest(func() time.Time { return at })
@@ -912,5 +958,83 @@ func TestContainersKeepsAskingWhenTheProcessMerelyExited(t *testing.T) {
 
 	if missing != 3 {
 		t.Errorf("readlink attempts = %d, want 3 -- an exited process must not disable the next scrape's read", missing)
+	}
+}
+
+// A refusal is a fact about ONE process, so it must silence one container.
+//
+// ptrace_may_access refuses a particular target: a box can run a privileged
+// container, whose first PID is unconfined and therefore denied under
+// docker-default, alongside ordinary ones whose links read perfectly well. A
+// latch shared by the whole host would let the first stop the others from ever
+// being measured again -- worse than the log noise the latch exists to stop.
+func TestContainersLatchesOneContainerNotTheHost(t *testing.T) {
+	base := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+	addNetScope(t, cgroupRoot, procRoot, "def456", "43", "net:[4026532001]", 7000, 3000)
+
+	denied := 0
+	testee := collector.NewContainers(cgroupRoot, procRoot, fakeLister(
+		collector.ContainerMeta{ID: "abc123", Name: "web"},
+		collector.ContainerMeta{ID: "def456", Name: "db"},
+	), true)
+	testee.SetReadlinkForTest(func(path string) (string, error) {
+		if filepath.Base(filepath.Dir(filepath.Dir(path))) == "42" {
+			denied++
+			return "", fs.ErrPermission
+		}
+		return os.Readlink(path)
+	})
+
+	containersAt(t, testee, base)
+	res := containersAt(t, testee, base.Add(1*time.Minute))
+
+	if denied != 1 {
+		t.Errorf("readlink attempts for the denied container = %d, want 1", denied)
+	}
+	if row := containerRow(t, res.Containers, "web"); row.NetRx != nil {
+		t.Error("net_rx set for the container whose link was denied")
+	}
+	// Set, not non-zero: net_rx is a RATE, and a fixture whose counters do not
+	// move between the two scrapes correctly rates to 0. The fact under test
+	// is that the field was MEASURED at all while a sibling was denied.
+	if row := containerRow(t, res.Containers, "db"); row.NetRx == nil {
+		t.Fatal("net_rx unset for a container whose link reads fine; one denial must not latch the whole host")
+	}
+}
+
+// A latch must not outlive the container it was set for. An entry the walk no
+// longer sees is dead weight, and on a host churning through short-lived
+// containers it would grow without bound.
+func TestContainersForgetsTheLatchWhenTheContainerGoes(t *testing.T) {
+	base := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	denied := 0
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
+	testee.SetReadlinkForTest(func(path string) (string, error) {
+		if filepath.Base(filepath.Dir(filepath.Dir(path))) == "42" {
+			denied++
+			return "", fs.ErrPermission
+		}
+		return os.Readlink(path)
+	})
+
+	containersAt(t, testee, base)
+
+	scope := filepath.Join(cgroupRoot, "system.slice", "docker-abc123.scope")
+	moved := filepath.Join(cgroupRoot, "parked")
+	if err := os.Rename(scope, moved); err != nil {
+		t.Fatalf("park scope: %v", err)
+	}
+	containersAt(t, testee, base.Add(1*time.Minute))
+	if err := os.Rename(moved, scope); err != nil {
+		t.Fatalf("restore scope: %v", err)
+	}
+	containersAt(t, testee, base.Add(2*time.Minute))
+
+	if denied != 2 {
+		t.Errorf("readlink attempts = %d, want 2 -- the latch must not survive the container it was set for", denied)
 	}
 }

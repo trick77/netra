@@ -142,18 +142,26 @@ type Containers struct {
 	// empty when it is working.
 	netCapability string
 
-	// netNSDenied latches the namespace comparison OFF after its first
-	// failure. The comparison is a ptrace-gated readlink and a stock Docker
-	// host denies it for every target -- see containerNet -- so a retry cannot
-	// succeed: docker-default only permits ptrace against another
-	// docker-default peer, and changing that needs a container restart, which
-	// makes a new collector with this flag clear. The retry is not free
-	// either. Every denied attempt writes one apparmor="DENIED" line to the
-	// host's kernel audit log, and the scrape loop runs once a minute, so an
-	// agent left alone contributes 1440 lines a day to the log the operator
-	// installed it to help them read. One line per agent start is a diagnosis;
-	// one a minute is vandalism.
-	netNSDenied bool
+	// netNSDenied latches the namespace comparison OFF, PER CONTAINER, after
+	// that container's link is first refused. The comparison is a ptrace-gated
+	// readlink -- see containerNet -- and a refusal cannot turn into an answer
+	// while the target lives: docker-default permits ptrace only against
+	// another docker-default peer, so an unconfined or privileged target is
+	// denied every time. The retry is not free either. Each denied attempt
+	// writes one apparmor="DENIED" line to the HOST's kernel audit log, and
+	// the scrape loop runs once a minute, so one such container contributes
+	// 1440 lines a day to the log the operator installed netra to help them
+	// read. One line per container is a diagnosis; one a minute is vandalism.
+	//
+	// Keyed by container id rather than a single flag for the whole host,
+	// because ptrace_may_access refuses a PARTICULAR process: a box may run
+	// one privileged container whose link is denied alongside thirty ordinary
+	// ones whose links read perfectly well, and a host-wide latch would let
+	// the first stop the other thirty from ever being measured again.
+	//
+	// Pruned each scrape to the containers the walk actually saw, so a host
+	// churning through short-lived containers cannot grow this without bound.
+	netNSDenied map[string]struct{}
 }
 
 // NewContainers builds a Containers collector. cgroupRoot is the mounted
@@ -291,19 +299,36 @@ func (c *Containers) setCapability(value string) {
 	c.netCapability = value
 }
 
-// netNSIsDenied reports whether the namespace comparison has already been
-// refused once, and must not be attempted again.
-func (c *Containers) netNSIsDenied() bool {
+// netNSIsDenied reports whether this container's namespace link has already
+// been refused, and must not be asked for again.
+func (c *Containers) netNSIsDenied(id string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.netNSDenied
+	_, denied := c.netNSDenied[id]
+	return denied
 }
 
-// denyNetNS latches the comparison off. Never called while mu is held.
-func (c *Containers) denyNetNS() {
+// denyNetNS latches one container off. Never called while mu is held.
+func (c *Containers) denyNetNS(id string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.netNSDenied = true
+	if c.netNSDenied == nil {
+		c.netNSDenied = map[string]struct{}{}
+	}
+	c.netNSDenied[id] = struct{}{}
+}
+
+// pruneNetNSDenied drops latches for containers this scrape did not see. A
+// recreated container gets a new id and so a fresh attempt, which is right:
+// the refusal was a property of the process that is now gone.
+func (c *Containers) pruneNetNSDenied(seen map[string]containerCounters) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id := range c.netNSDenied {
+		if _, ok := seen[id]; !ok {
+			delete(c.netNSDenied, id)
+		}
+	}
 }
 
 // Collect implements Collector.
@@ -555,7 +580,7 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 			!sharesForeignNetNS(m.NetworkMode) {
 			netEligible++
 		}
-		cc.rxBytes, cc.txBytes, cc.hasNet = c.containerNet(path, m.NetworkMode, listed, socketAnswered)
+		cc.rxBytes, cc.txBytes, cc.hasNet = c.containerNet(id, path, m.NetworkMode, listed, socketAnswered)
 		if cc.hasNet {
 			netMeasured++
 		}
@@ -566,6 +591,8 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 	if err != nil {
 		return nil, fmt.Errorf("walk %s: %w", c.cgroupRoot, err)
 	}
+
+	c.pruneNetNSDenied(out)
 
 	// EVERY eligible container failing is a different fact from a few failing,
 	// and only the first is worth a word.
@@ -743,7 +770,7 @@ func readIOStat(path string) (rbytes, wbytes uint64) {
 // capability -- /proc/<pid>/net/dev is world-readable -- so asking for it to
 // answer a question the socket already answers would have been a large
 // privilege for nothing.
-func (c *Containers) containerNet(cgroupDir, networkMode string, listed, socketAnswered bool) (rx, tx uint64, ok bool) {
+func (c *Containers) containerNet(id, cgroupDir, networkMode string, listed, socketAnswered bool) (rx, tx uint64, ok bool) {
 	pid, ok := firstPID(filepath.Join(cgroupDir, "cgroup.procs"))
 	if !ok {
 		// No processes in the cgroup: the container is stopped or restarting.
@@ -797,37 +824,36 @@ func (c *Containers) containerNet(cgroupDir, networkMode string, listed, socketA
 	// guessing attributes the ENTIRE machine's traffic to one container on
 	// every scrape -- bytes the Network collector already reports once.
 	//
-	// Attempted at most ONCE per agent process. The readlinks below are
-	// ptrace-gated and a stock host refuses them, and a refusal that repeats
-	// every scrape is a line a minute in the host's kernel audit log for an
-	// answer that cannot change while the container lives -- see netNSDenied.
-	// The capability is still set on every scrape, so what the UI reports is
-	// exactly what it reported before the latch.
-	if c.netNSIsDenied() {
+	// Asked at most ONCE per container. The readlink below is ptrace-gated and
+	// a refusal cannot become an answer while the target lives, so repeating
+	// it every scrape buys nothing and costs a line a minute in the host's
+	// kernel audit log -- see netNSDenied. The capability is still set on
+	// every scrape, so what the UI reports is exactly what it reported before
+	// the latch.
+	if c.netNSIsDenied(id) {
 		c.setCapability(c.netFailure())
 		return 0, 0, false
 	}
 
+	// No latch here: hostNetNSOnce already resolves PID 1 exactly once, so
+	// this branch costs no syscall on any scrape after the first.
 	host := c.hostNetNamespace()
 	if host == "" {
-		c.denyNetNS()
 		c.setCapability(c.netFailure())
 		return 0, 0, false
 	}
 
 	// Latched on EACCES ONLY, never on ENOENT. The two reach this line for
-	// opposite reasons: EACCES is the ptrace refusal, a property of the
-	// profile that holds for every container until the agent restarts, while
-	// ENOENT is one container having exited between the read of cgroup.procs
-	// and this readlink -- routine on a busy host, and commoner the
-	// shorter-lived the container. Latching on ENOENT would let a single
-	// short-lived container switch per-container networking off for the whole
-	// host until the next restart, which is a far worse bug than the log noise
-	// this latch exists to stop.
+	// opposite reasons: EACCES is the ptrace refusal, which holds for as long
+	// as the target process lives, while ENOENT is the container having exited
+	// between the read of cgroup.procs and this readlink -- routine on a busy
+	// host, and commoner the shorter-lived the container. Latching on ENOENT
+	// would let one such exit silence a container that is about to be readable
+	// again on the very next scrape.
 	ns, err := c.readNamespace(filepath.Join(c.procRoot, pid, "ns", "net"))
 	if err != nil {
 		if errors.Is(err, fs.ErrPermission) {
-			c.denyNetNS()
+			c.denyNetNS(id)
 		}
 		c.setCapability(c.netFailure())
 		return 0, 0, false
