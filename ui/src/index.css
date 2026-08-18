@@ -75,16 +75,34 @@
   --st-serious: #ec835a;
   --st-crit: #d03b3b;
 
-  /* palette "Clay". */
-  --bg: #1f1f1e;
+  /* palette "Clay".
+
+     ELEVATION RUNS THE RIGHT WAY UP. --surface (#1b1b1a) used to be DARKER
+     than --bg (#1f1f1e), so every card, tile and table on the page sat in a
+     hole instead of on a shelf -- the one cue that says "this is a thing"
+     was pointing the wrong way. --bg drops below the surface rather than the
+     surface rising, because raising it would have pushed --raised and the
+     borders up with it and lifted the whole page toward grey.
+
+     Measured against --bg: surface 1.08:1, surface-2 1.17, raised 1.29,
+     border 1.31, border-strong 1.65 -- a ladder, each rung visible.
+
+     INK IS THREE STEPS QUIETER. --ink was #faf9f5 at 17.6:1, which on a
+     black-ish page reads as glare rather than as text, and the stat tiles
+     print it at 28px. The floor that matters is --surface, not --bg: surface
+     is the LIGHTER ground here, so it is the harder one for text. Measured
+     on it -- ink 9.9:1, ink-2 6.6:1, muted 4.5:1 -- all clear, with muted
+     sitting just over the 4.5 body-text floor rather than comfortably above
+     it, which is what keeps it reading as secondary. */
+  --bg: #131312;
   --surface: #1b1b1a;
-  --surface-2: #2c2c2a;
-  --raised: #363632;
-  --border: #323230;
-  --border-strong: #454540;
-  --ink: #faf9f5;
-  --ink-2: #c9c6bd;
-  --muted: #9c9a92;
+  --surface-2: #222221;
+  --raised: #2a2a28;
+  --border: #2b2b29;
+  --border-strong: #3b3b38;
+  --ink: #c7c4bb;
+  --ink-2: #a3a099;
+  --muted: #85837b;
   --accent: #d97757;
   /* Darkened one step from #c25f34: white-on-fill (.btn.primary) measured
      4.22:1, under the 4.5:1 floor. #b85a30 keeps the same clay hue/chroma
@@ -98,11 +116,11 @@
      carries the contrast. Its own token because --accent-soft also backs
      the tag, the badge and the selected row, which are not meters. */
   --track: #3a3a37;
-  /* The dashed ceiling rule on a chart (total RAM). Its own token because
-     --ink and --ink-2 invert with the theme, so using either made the rule
-     quiet in one theme and the loudest mark on the row in the other. Tuned
-     per theme to sit at the same low prominence in both: it annotates the
-     chart, it is not a series in it. */
+  /* The dashed ceiling rule on a chart (total RAM), and now every threshold
+     rule beside it. Its own token rather than --ink-2 because it must sit
+     BELOW the series it annotates: at 3.3:1 on --surface it is legible and
+     still the quietest mark in the frame. A rule is an annotation, never a
+     series -- which is also why a threshold does not wear a status hue. */
   --reference: #6e6c66;
   /* Chart furniture, at three levels of prominence. The values are derived
      from a measured target rather than picked by eye, because picking by eye
@@ -124,10 +142,12 @@
 
   /* status TEXT colours. The chip ground keeps the fixed hue (--st-* above);
      the word on it is the actual colour-blindness mitigation (spec §3.3/3.5),
-     so it must clear 4.5:1 on its own. Measured on the page --bg (#1f1f1e):
-     ok 4.92:1, warn 8.99:1 and serious 6.25:1 clear as they are and keep
-     their mark hue exactly; only crit fell short at 3.43:1 and is lightened
-     until it clears (4.55:1). */
+     so it must clear 4.5:1 on its own. Measured on the page --bg (#131312):
+     ok 5.54:1, warn 10.13:1 and serious 7.05:1 clear as they are and keep
+     their mark hue exactly. crit is the one that had to move: the true mark
+     #d03b3b measures 3.87:1 even on this darker ground, so the TEXT step
+     stays lightened to #d96060 (5.13:1) while the dot beside it keeps the
+     real hue. */
   --st-ok-text: #0ca30c;
   --st-warn-text: #fab219;
   --st-serious-text: #ec835a;

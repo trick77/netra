@@ -240,7 +240,11 @@ function bandsFor(sampled: Sampled | null): ContainerBands {
   // one drop a band on the same rule.
   const cpuSplit = [
     band("user", "var(--s1)", sampled?.cpuUser ?? empty),
-    band("system", "var(--s7)", sampled?.cpuSystem ?? empty),
+    // --s2, not --s7: orange is attention's hue, and a container burning CPU
+    // in system time is not a severity netra has decided. Blue over green is
+    // also the pair the host's own CPU stack opens with, so the two charts
+    // agree about what user and system look like.
+    band("system", "var(--s2)", sampled?.cpuSystem ?? empty),
   ].filter((b) => hasReading(b.values));
   const cpuBands =
     cpuSplit.length > 1

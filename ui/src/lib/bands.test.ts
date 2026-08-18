@@ -85,6 +85,30 @@ describe("memoryBands", () => {
     ]);
   });
 
+  // The colours are not decoration and neither is their ORDER: the set was
+  // validated on the pairs that end up ADJACENT in the stack above, so the
+  // assignment and the stacking order are one decision. This pins the
+  // sequence that was measured (s1 -> s2 -> s3 -> s4 -> s8, worst adjacent
+  // pair dE 13.2 deuteranopia on the #1b1b1a surface) so that reordering the
+  // stack, or reassigning a hue, fails here rather than silently shipping a
+  // pair nobody checked.
+  it("paints the stack in the validated hue sequence", () => {
+    expect(memoryBands(full).map((b) => b.color)).toEqual([
+      "var(--s1)",
+      "var(--s2)",
+      "var(--s3)",
+      "var(--s4)",
+      "var(--s8)",
+    ]);
+  });
+
+  // --s7 is --accent's hue and --st-serious's neighbour. It carried the ARC
+  // band until the palette reserved warm for attention; nothing in a memory
+  // chart may claim it back.
+  it("keeps attention's orange out of the memory stack", () => {
+    expect(memoryBands(full).map((b) => b.color)).not.toContain("var(--s7)");
+  });
+
   // Dropping a band a host does not have must not shuffle the ones it does:
   // a reader moving between a ZFS host and a non-ZFS one reads the same
   // gradient, minus one layer.

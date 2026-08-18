@@ -1473,6 +1473,13 @@ export function Overview({
           instead of showing the sentence -- which is also why the `empty`
           strings below can no longer render, and are kept only so a future
           caller of SensorList inherits the wording. */}
+        {/* Temperature is --s1, not the --s7 orange it used to be. Orange was
+            chosen because temperature reads as heat, and that is exactly the
+            problem: --s7 sits a few degrees from --accent and --st-serious, so
+            a CPU at a perfectly normal 46 degrees drew itself in the colour
+            this app uses for "look at this". A sensor list states a reading;
+            it does not rank it. --s1 is the single-series default (Sparkline),
+            which is what each row here is. */}
         {temperatureSeries.length > 0 && (
           <Panel label="Temperature" title="Temperature">
             <SensorList
@@ -1480,7 +1487,7 @@ export function Overview({
               rows={temperatureSeries}
               range={range}
               fetchFamily={fetchFamily}
-              color="var(--s7)"
+              color="var(--s1)"
               trend="temperature"
               empty="No temperature readings in this window."
             />
