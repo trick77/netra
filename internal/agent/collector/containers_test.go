@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -834,5 +835,82 @@ func TestContainersStartupSummaryNamesWhatItSaw(t *testing.T) {
 	}
 	if got := testee.StartupSummary(); got != "2 cgroup scopes, docker socket unavailable" {
 		t.Errorf("StartupSummary = %q, want the scope count and the socket's absence", got)
+	}
+}
+
+// A REFUSED namespace link is refused for the life of the container, and the
+// agent must ask exactly once.
+//
+// readlink on /proc/<pid>/ns/net is ptrace-gated, and Docker's default
+// AppArmor profile permits ptrace only against another docker-default peer --
+// so an unconfined target (a privileged container, or any host process) is
+// denied on every attempt, and nothing about that can change until the agent's
+// own container restarts. Asking again on the next scrape cannot succeed; it
+// only writes another apparmor="DENIED" line to the HOST's kernel audit log.
+// At one scrape a minute that is 1440 lines a day, per monitored host, in the
+// log netra exists to help the operator read.
+//
+// The capability must still be reported on every scrape: the latch is about
+// the syscall, not about what the UI is told.
+func TestContainersAsksOnceForADeniedNamespaceLink(t *testing.T) {
+	base := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	denied := 0
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
+	testee.SetReadlinkForTest(func(path string) (string, error) {
+		if filepath.Base(filepath.Dir(filepath.Dir(path))) == "42" {
+			denied++
+			return "", fs.ErrPermission
+		}
+		return os.Readlink(path)
+	})
+
+	containersAt(t, testee, base)
+	containersAt(t, testee, base.Add(1*time.Minute))
+	res := containersAt(t, testee, base.Add(2*time.Minute))
+
+	if denied != 1 {
+		t.Errorf("readlink attempts = %d, want 1 -- a denial that repeats every scrape fills the host's audit log", denied)
+	}
+	if got := testee.Capabilities()["container_network"]; got != "no-host-netns" {
+		t.Errorf("capability = %q, want no-host-netns -- the latch must silence the syscall, not the explanation", got)
+	}
+	if row := containerRow(t, res.Containers, "web"); row.NetRx != nil {
+		t.Error("net_rx set with no readable namespace to classify it by")
+	}
+}
+
+// The opposite case, and the reason the latch reads the errno instead of
+// latching on any failure at all.
+//
+// A container that exits between the read of cgroup.procs and this readlink
+// gives ENOENT, which is routine on a busy host and gets commoner the
+// shorter-lived the container. Latching on it would let ONE short-lived
+// container switch per-container networking off for every container on the
+// box until the agent restarts -- a far worse bug than the log noise the latch
+// exists to stop.
+func TestContainersKeepsAskingWhenTheProcessMerelyExited(t *testing.T) {
+	base := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	cgroupRoot, procRoot := netFixture(t, "42", "net:[4026531992]", "net:[4026532000]", 1000, 500)
+
+	missing := 0
+	testee := collector.NewContainers(cgroupRoot, procRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
+	testee.SetReadlinkForTest(func(path string) (string, error) {
+		if filepath.Base(filepath.Dir(filepath.Dir(path))) == "42" {
+			missing++
+			return "", fs.ErrNotExist
+		}
+		return os.Readlink(path)
+	})
+
+	containersAt(t, testee, base)
+	containersAt(t, testee, base.Add(1*time.Minute))
+	containersAt(t, testee, base.Add(2*time.Minute))
+
+	if missing != 3 {
+		t.Errorf("readlink attempts = %d, want 3 -- an exited process must not disable the next scrape's read", missing)
 	}
 }

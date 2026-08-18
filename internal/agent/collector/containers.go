@@ -3,7 +3,9 @@ package collector
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -127,10 +129,31 @@ type Containers struct {
 	// different words and errno cannot tell them apart.
 	pidHost bool
 
+	// readlink is os.Readlink, replaced only by tests. It is a seam because
+	// the latch below turns on the first EACCES and never off, and no fixture
+	// tree spells EACCES portably: a suite running as root reads a 0000
+	// directory perfectly well, and removing the link spells ENOENT, which is
+	// deliberately the case that must NOT latch. The syscall is the only place
+	// the two can be told apart on demand.
+	readlink func(string) (string, error)
+
 	mu sync.Mutex
 	// netCapability explains why per-container networking is absent, or is
 	// empty when it is working.
 	netCapability string
+
+	// netNSDenied latches the namespace comparison OFF after its first
+	// failure. The comparison is a ptrace-gated readlink and a stock Docker
+	// host denies it for every target -- see containerNet -- so a retry cannot
+	// succeed: docker-default only permits ptrace against another
+	// docker-default peer, and changing that needs a container restart, which
+	// makes a new collector with this flag clear. The retry is not free
+	// either. Every denied attempt writes one apparmor="DENIED" line to the
+	// host's kernel audit log, and the scrape loop runs once a minute, so an
+	// agent left alone contributes 1440 lines a day to the log the operator
+	// installed it to help them read. One line per agent start is a diagnosis;
+	// one a minute is vandalism.
+	netNSDenied bool
 }
 
 // NewContainers builds a Containers collector. cgroupRoot is the mounted
@@ -145,6 +168,7 @@ func NewContainers(cgroupRoot, procRoot string, lister ContainerLister, pidHost 
 		procRoot:   procRoot,
 		lister:     lister,
 		pidHost:    pidHost,
+		readlink:   os.Readlink,
 		now:        time.Now,
 	}
 }
@@ -160,6 +184,9 @@ func (c *Containers) SetProcRootForTest(root string) { c.procRoot = root }
 
 // SetClockForTest replaces the clock used to measure the scrape interval.
 func (c *Containers) SetClockForTest(fn func() time.Time) { c.now = fn }
+
+// SetReadlinkForTest replaces the readlink used to resolve namespace links.
+func (c *Containers) SetReadlinkForTest(fn func(string) (string, error)) { c.readlink = fn }
 
 // Capability values reported by Containers for per-container networking.
 const (
@@ -262,6 +289,21 @@ func (c *Containers) setCapability(value string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.netCapability = value
+}
+
+// netNSIsDenied reports whether the namespace comparison has already been
+// refused once, and must not be attempted again.
+func (c *Containers) netNSIsDenied() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.netNSDenied
+}
+
+// denyNetNS latches the comparison off. Never called while mu is held.
+func (c *Containers) denyNetNS() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.netNSDenied = true
 }
 
 // Collect implements Collector.
@@ -754,14 +796,39 @@ func (c *Containers) containerNet(cgroupDir, networkMode string, listed, socketA
 	// modes are not symmetric: reporting nothing loses a series, while
 	// guessing attributes the ENTIRE machine's traffic to one container on
 	// every scrape -- bytes the Network collector already reports once.
-	host := c.hostNetNamespace()
-	if host == "" {
+	//
+	// Attempted at most ONCE per agent process. The readlinks below are
+	// ptrace-gated and a stock host refuses them, and a refusal that repeats
+	// every scrape is a line a minute in the host's kernel audit log for an
+	// answer that cannot change while the container lives -- see netNSDenied.
+	// The capability is still set on every scrape, so what the UI reports is
+	// exactly what it reported before the latch.
+	if c.netNSIsDenied() {
 		c.setCapability(c.netFailure())
 		return 0, 0, false
 	}
 
-	ns, nsOK := readNamespace(filepath.Join(c.procRoot, pid, "ns", "net"))
-	if !nsOK {
+	host := c.hostNetNamespace()
+	if host == "" {
+		c.denyNetNS()
+		c.setCapability(c.netFailure())
+		return 0, 0, false
+	}
+
+	// Latched on EACCES ONLY, never on ENOENT. The two reach this line for
+	// opposite reasons: EACCES is the ptrace refusal, a property of the
+	// profile that holds for every container until the agent restarts, while
+	// ENOENT is one container having exited between the read of cgroup.procs
+	// and this readlink -- routine on a busy host, and commoner the
+	// shorter-lived the container. Latching on ENOENT would let a single
+	// short-lived container switch per-container networking off for the whole
+	// host until the next restart, which is a far worse bug than the log noise
+	// this latch exists to stop.
+	ns, err := c.readNamespace(filepath.Join(c.procRoot, pid, "ns", "net"))
+	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			c.denyNetNS()
+		}
 		c.setCapability(c.netFailure())
 		return 0, 0, false
 	}
@@ -837,7 +904,7 @@ func (c *Containers) netFailure() string {
 // rather than "no guard needed" -- see containerNet.
 func (c *Containers) hostNetNamespace() string {
 	c.hostNetNSOnce.Do(func() {
-		if ns, ok := readNamespace(filepath.Join(c.procRoot, "1", "ns", "net")); ok {
+		if ns, err := c.readNamespace(filepath.Join(c.procRoot, "1", "ns", "net")); err == nil {
 			c.hostNetNS = ns
 		}
 	})
@@ -847,12 +914,12 @@ func (c *Containers) hostNetNamespace() string {
 // readNamespace returns the "net:[4026531992]" identity behind a namespace
 // symlink. Comparing two of these is how processes are told to share a
 // namespace, and it needs no privilege beyond reading the link.
-func readNamespace(path string) (string, bool) {
-	target, err := os.Readlink(path)
-	if err != nil {
-		return "", false
-	}
-	return target, true
+//
+// The error is returned rather than a bare ok, because the CALLER has to tell
+// EACCES from ENOENT: only the first is a standing refusal worth latching on.
+// See containerNet.
+func (c *Containers) readNamespace(path string) (string, error) {
+	return c.readlink(path)
 }
 
 // firstPID returns the first entry of a cgroup.procs file. Any process in the
