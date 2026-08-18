@@ -29,17 +29,16 @@ export const SPARK_WIDTH = 170;
 /*
  * Its own token, and NOT --ink or --ink-2.
  *
- * Both of those inks inverture with the theme -- --ink is #1f1e1a in light and
- * #faf9f5 in dark -- so "make the rule less prominent" and "make it darker"
- * are the same request in light and opposite requests in dark. Reaching for
- * --ink put a near-white rule across every memory sparkline for anyone
- * reading in dark, which is the loudest mark on the row rather than the
- * quietest.
+ * Both of those inks are TEXT inks, tuned to clear a reading floor -- --ink
+ * measures 9.9:1 on the chart surface. Reaching for one put a bright rule
+ * across every memory sparkline, which made the annotation the loudest mark
+ * on the row rather than the quietest.
  *
- * --reference is defined per theme to sit at the SAME low prominence in
- * both: dim enough to read as a quiet annotation over the bands it crosses,
- * legible enough to find. A hairline with open dashes, for the same reason
- * -- it annotates the chart, it is not a series in it.
+ * --reference is tuned for the opposite job: dim enough to read as a quiet
+ * annotation over the bands it crosses, legible enough to find, at 3.3:1.
+ * A hairline with open dashes, for the same reason -- it annotates the
+ * chart, it is not a series in it, which is also why a threshold rule drawn
+ * with it never wears a status hue.
  */
 export const REFERENCE_STROKE = "var(--reference)";
 export const REFERENCE_DASH = "4 3";

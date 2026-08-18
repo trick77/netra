@@ -14,20 +14,39 @@ import type { Band } from "../ui/charts/StackedSparkline";
 /**
  * The memory bands, in the order they stack.
  *
- * Colours are token references; index.css owns the palette. The hues are the
- * validated categorical set -- blue, magenta, orange, aqua, yellow -- and not
- * the s1..s5 sequence, which put blue, aqua, violet and magenta next to each
- * other and read as one muddy mass in a 32px cell. Orange and yellow are the
- * two hues that ramp never had, and they are most of why this chart is legible
- * at fleet-row size. Yellow and orange are deliberately NOT adjacent in the
- * stack: that is the one pair in this set that fails the separation floors,
- * and the stacking order below keeps aqua between them.
+ * Colours are token references; index.css owns the palette.
+ *
+ * ORANGE IS GONE FROM HERE, and that is the point of this assignment. ARC was
+ * --s7 (#d95926), which sits a few degrees from --accent (#d97757) and from
+ * --st-serious (#ec835a) -- so a memory band, "something needs attention" and
+ * a severity were all the same colour, two columns apart, on the same row.
+ * ARC takes --s3 (violet), the hue the set had spare.
+ *
+ * The rule that buys is narrower than "orange is never a series": it is that
+ * no warm hue is drawn in a DENSE list, where hue is all a reader has and a
+ * severity mark sits two columns away. chartSpecs.ts still hands --s7 to the
+ * seventh slot of its ramp, and that is fine -- those are large charts with a
+ * legend under them.
+ *
+ * The remaining amber (--s8, cached) is the one warm hue this stack keeps,
+ * and it is kept knowingly: five bands need five separable hues, and without
+ * a warm one no ordering clears the floors -- blue/violet collapse under
+ * protanopia and green/magenta under deuteranopia. It is safe because
+ * severity never rides on colour alone here: a warned row also carries a
+ * rail, a dot and a word.
+ *
+ * ORDER IS THE SAFETY MECHANISM, not decoration. Assigned so that bands
+ * ADJACENT in the stack below follow s1 -> s2 -> s3 -> s4 -> s8, which is the
+ * sequence validated on the #1b1b1a surface: every adjacent pair passes, with
+ * the worst at dE 13.2 deuteranopia and 19.3 normal vision. Re-run the
+ * validator if the stacking order ever changes -- the pairs it checks are
+ * decided by that order, not by this list.
  */
 const USED = "var(--s1)";
-const ARC = "var(--s7)";
-const BUFFERS = "var(--s2)";
+const SHARED = "var(--s2)";
+const ARC = "var(--s3)";
+const BUFFERS = "var(--s4)";
 const CACHED = "var(--s8)";
-const SHARED = "var(--s4)";
 
 /**
  * The memory stack, bottom to top, as a partition of mem_total.
@@ -121,8 +140,12 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
   // topmost, against the free gap, told the reader it was the first thing the
   // host would hand back, which is the exact opposite of the truth. htop puts
   // shared below cache for the same reason. ARC stays under buffers and cached
-  // because it is reclaimable but stickier than page cache -- and because that
-  // keeps orange and yellow apart, see the palette note above.
+  // because it is reclaimable but stickier than page cache.
+  //
+  // This order is also what the palette above is validated against -- the
+  // colours were assigned to fit it, not the other way round. Reordering these
+  // five lines changes which pairs sit next to each other and therefore which
+  // pairs have to clear the separation floors; re-run the validator if you do.
   return [
     { name: "used", color: USED, values: used },
     { name: "shared", color: SHARED, values: shared },
@@ -273,17 +296,21 @@ function sumOptional(i: number, series: (number | null)[][]): number {
   return total;
 }
 
-// One hue per filesystem, cycling. A host with more mounts than this has
-// more than a fleet row could name anyway -- the column's question is "is
-// any of them climbing", and the meter beside it names the one that matters.
-const FS_COLORS = [
-  "var(--s7)",
-  "var(--s1)",
-  "var(--s2)",
-  "var(--s5)",
-  "var(--s3)",
-  "var(--s8)",
-];
+// One hue per filesystem, cycling. A host with more mounts than this has more
+// than a fleet row could name anyway -- the column's question is "is any of
+// them climbing", and the meter beside it names the one that matters.
+//
+// FOUR, not six, and validated on ALL PAIRS rather than adjacent ones: these
+// are separate lines in one frame, so a reader compares any two of them, not
+// just neighbours. Under that harder test six hues cannot be found at all --
+// the previous set opened with --s7 orange (attention's hue) and included both
+// --s3 and --s5, a violet pair that collapses under protanopia. Blue, amber,
+// magenta and cyan clear every pair on the #1b1b1a surface.
+//
+// The fifth mount reuses blue. That is honest for this column: past four
+// lines nobody is tracing identity by hue anyway, and the meter names the
+// mount that matters.
+const FS_COLORS = ["var(--s1)", "var(--s8)", "var(--s4)", "var(--s6)"];
 
 /**
  * Every filesystem's Use% over the window, one band each.

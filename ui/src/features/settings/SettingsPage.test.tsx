@@ -11,10 +11,9 @@ import {
 
 // test-setup.ts installs ONE MemoryStorage for the whole run and nothing
 // clears it between tests, so a stored preference would leak into the next
-// test's default. The root attribute is global for the same reason.
+// test's default.
 beforeEach(() => {
   localStorage.clear();
-  document.documentElement.removeAttribute("data-theme");
 });
 
 function pressed(group: HTMLElement): string[] {
@@ -25,14 +24,10 @@ function pressed(group: HTMLElement): string[] {
 
 describe("SettingsPage", () => {
   it("shows the stored preferences as the pressed options", () => {
-    localStorage.setItem("netra.theme", "dark");
     localStorage.setItem(VIEW_KEY, "cards");
     localStorage.setItem(RANGE_KEY, "7d");
     render(<SettingsPage />);
 
-    expect(pressed(screen.getByRole("group", { name: "Theme" }))).toEqual([
-      "Dark",
-    ]);
     expect(
       pressed(screen.getByRole("group", { name: "Default overview view" })),
     ).toEqual(["Cards"]);
@@ -41,24 +36,14 @@ describe("SettingsPage", () => {
     ).toEqual(["7 d"]);
   });
 
-  it("stamps an explicit theme on the root element", async () => {
-    const user = userEvent.setup();
+  // netra has one theme, so Settings offers no theme control and nothing
+  // stamps the root. This asserts the absence rather than leaving it
+  // untested: a Segmented reintroduced here would otherwise ship unnoticed.
+  it("offers no theme control", () => {
     render(<SettingsPage />);
 
-    await user.click(screen.getByRole("button", { name: "Dark" }));
-
-    expect(document.documentElement.dataset.theme).toBe("dark");
-  });
-
-  it("removes data-theme for System, so the page follows the OS live", async () => {
-    const user = userEvent.setup();
-    render(<SettingsPage />);
-
-    await user.click(screen.getByRole("button", { name: "Dark" }));
-    await user.click(screen.getByRole("button", { name: "System" }));
-
+    expect(screen.queryByRole("group", { name: "Theme" })).toBeNull();
     expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
-    expect(localStorage.getItem("netra.theme")).toBe("system");
   });
 
   it("persists the default view and range for the next visit", async () => {
