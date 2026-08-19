@@ -184,22 +184,6 @@ export function ChartDetail({
     return () => document.removeEventListener("mousedown", onDown);
   }, [drawer]);
 
-  // The content track gives way while the drawer is open. Without it the
-  // panel sits ON TOP of the right-hand half of a Graphs grid -- which is
-  // exactly the panels a reader would click next, so an overlay that keeps
-  // the surface "usable" would have covered the usable part of it.
-  //
-  // A root attribute rather than a class on some ancestor: this component
-  // does not know what it was rendered inside, and the layout that has to
-  // yield (.app > main) is three files away.
-  useEffect(() => {
-    if (!drawer) return;
-    document.documentElement.dataset.drawer = "on";
-    return () => {
-      delete document.documentElement.dataset.drawer;
-    };
-  }, [drawer]);
-
   const ceiling = max ?? peak(series, stacked);
   const format = (v: number | null) => (fmt ? fmt(v) : formatNumber(v));
 
