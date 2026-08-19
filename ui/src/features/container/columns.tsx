@@ -456,7 +456,16 @@ export function containerColumns({
               range={range}
               ranges={ranges}
             />
-            <span className="cval tnum">{percent(lastReported(row.cpu))}</span>
+            {/* Nothing, not a dash, when the series reported no value at
+                all: the same rule the fleet row's absent readings follow --
+                a mark asserts netra looked and found a number it could not
+                print, and the gap in the sparkline beside it already says
+                the container reported nothing. */}
+            {lastReported(row.cpu) === null ? null : (
+              <span className="cval tnum">
+                {percent(lastReported(row.cpu))}
+              </span>
+            )}
           </div>
         ),
       // The latest reported percentage, same rule as Memory below. Without

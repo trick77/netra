@@ -360,6 +360,9 @@ export function Enlargeable({
           // clicked in, so the reader can walk the list; one without a page
           // has nowhere else to be and takes the modal.
           variant={href === undefined ? "dialog" : "drawer"}
+          // The drawer's way onward to the full page -- which carries the
+          // range picker and the time axis this panel may not have.
+          href={href}
         />
       )}
     </>

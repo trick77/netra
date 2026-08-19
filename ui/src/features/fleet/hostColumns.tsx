@@ -186,7 +186,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
   return (
     <Enlargeable
       title={`CPU · ${row.hostname}`}
-      label={`Open CPU for ${row.hostname}`}
+      label={`Enlarge CPU for ${row.hostname}`}
       href={chartHref(row.id, "host-cpu", range)}
       className="inline"
       unit="%"
@@ -245,7 +245,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   return (
     <Enlargeable
       title={`Memory · ${row.hostname}`}
-      label={`Open Memory for ${row.hostname}`}
+      label={`Enlarge Memory for ${row.hostname}`}
       href={chartHref(row.id, "host-memory", range)}
       className="inline"
       series={row.mem}
@@ -341,9 +341,10 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
   // `from` so Back returns to the fleet instead of dropping the reader on
   // a host's Graphs tab they were never on -- see backTarget in App.tsx.
   //
-  // An href turns Enlargeable into an anchor and its dialog off
-  // (Enlargeable.tsx). That is the trade: the dialog is what a chart with
-  // no page gets, and this one has a page.
+  // An href turns Enlargeable into a real anchor (Enlargeable.tsx), so
+  // cmd-click and middle-click reach that page and copy-link yields its URL.
+  // The plain click opens the DRAWER beside this list instead: the modal
+  // dialog is what a chart with no page of its own gets.
   const href = chartHref(row.id, "host-traffic", range);
 
   return (
@@ -353,7 +354,7 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         // this chart, and "rx" is the kernel's word for it rather than the
         // reader's. The wire and the schema keep rx/tx.
         title={`Traffic · ${row.hostname}`}
-        label={`Open Traffic for ${row.hostname}`}
+        label={`Enlarge Traffic for ${row.hostname}`}
         href={href}
         className="inline"
         unit="B/s"
@@ -415,7 +416,7 @@ function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
     // this list at all had no way in. It has a page now, like the rest.
     <Enlargeable
       title={`Filesystem usage · ${row.hostname}`}
-      label={`Open Filesystem usage for ${row.hostname}`}
+      label={`Enlarge Filesystem usage for ${row.hostname}`}
       href={chartHref(row.id, "host-filesystem", range)}
       className="inline"
       series={row.disk}

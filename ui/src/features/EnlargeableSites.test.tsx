@@ -221,7 +221,9 @@ describe("the list sparklines enlarge", () => {
       });
 
       // When the sparkline is read as a control
-      const link = screen.getByRole("link", { name: `Open ${name} for ark` });
+      const link = screen.getByRole("link", {
+        name: `Enlarge ${name} for ark`,
+      });
 
       // Then it is an anchor to that chart's page, carrying the range and
       // saying where Back goes

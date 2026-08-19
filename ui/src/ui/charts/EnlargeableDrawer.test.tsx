@@ -108,6 +108,35 @@ describe("Enlargeable with a page of its own", () => {
     expect(document.documentElement.dataset.drawer).toBeUndefined();
   });
 
+  // The fleet's four host charts pass no fetchSeries and no window, so their
+  // drawer carries no range picker and no time axis -- the page does, and
+  // before this a plain click went there. A reader must not have to know that
+  // cmd-click exists to get back what the plain click used to give them.
+  it("offers a visible way onward to the full page", async () => {
+    renderLinked();
+
+    await userEvent.click(screen.getByRole("link"));
+
+    const onward = within(screen.getByRole("dialog")).getByRole("link", {
+      name: "Open as page",
+    });
+    expect(onward).toHaveAttribute("href", "/hosts/7/chart/host-cpu");
+  });
+
+  // Nothing to link to: a chart with no page of its own is exactly the case
+  // the modal still serves.
+  it("offers no such link when the chart has no page", async () => {
+    render(
+      <Enlargeable title="CPU" series={series}>
+        <svg />
+      </Enlargeable>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
+
+    expect(screen.queryByRole("link", { name: "Open as page" })).toBeNull();
+  });
+
   it("closes on a click outside it", async () => {
     renderLinked();
     await userEvent.click(screen.getByRole("link"));

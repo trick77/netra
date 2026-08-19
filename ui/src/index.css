@@ -2190,10 +2190,15 @@ a.chartwrap.as-button {
 :root[data-drawer="on"] .app > main {
   padding-right: calc(min(720px, 92vw) + var(--space-5));
 }
-/* Below the fleet breakpoint the drawer is most of the window, so yielding
-   would leave the content in a few dozen pixels. It covers instead, which is
-   what a sheet does on a small screen. */
-@media (max-width: 900px) {
+/* Yielding only pays when there is something left to yield INTO, and the
+   arithmetic says that starts far higher than the fleet's own 900px
+   breakpoint: the rail is 212px, the two --space-5 gutters are 48px and the
+   panel is 720px, so a 1024px window would have left 44px of content and a
+   901px window less than nothing -- the content track collapsing to zero,
+   which is a worse outcome than being covered and the exact opposite of what
+   the drawer was chosen for. Below ~1400px it covers instead, which is what a
+   sheet does when the window is not wide enough to hold both. */
+@media (max-width: 1399px) {
   :root[data-drawer="on"] .app > main {
     padding-right: var(--space-5);
   }

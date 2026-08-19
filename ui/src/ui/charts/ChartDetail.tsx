@@ -72,6 +72,20 @@ export interface ChartDetailProps {
    * over the dialog it replaces.
    */
   variant?: "dialog" | "drawer";
+  /**
+   * The chart's own page, when it has one.
+   *
+   * Rendered as a link in the drawer's header, and it closes a gap the drawer
+   * would otherwise open. The fleet's four host charts pass neither a
+   * `fetchSeries` nor a `window`, so their drawer carries no range picker and
+   * no time axis -- the page does, and before this a plain click went there.
+   * A reader must not have to know that cmd-click exists to get back what the
+   * plain click used to give them.
+   *
+   * Only in the drawer. The dialog is what a chart with no page gets, so
+   * there is nothing for it to link to.
+   */
+  href?: string;
 }
 
 /**
@@ -105,30 +119,50 @@ export function ChartDetail({
   mirrored,
   hideAxis,
   variant = "dialog",
+  href,
 }: ChartDetailProps) {
   const ref = useRef<HTMLDivElement>(null);
   const drawer = variant === "drawer";
+
+  // The latest onClose, without making it a dependency of the effects below.
+  // Callers build it inline (`onClose={() => setEnlarged(false)}`), so it is a
+  // new function on every render of the page behind this -- and the page
+  // behind this polls. Depending on it re-ran the focus effect on every tick:
+  // cleanup put focus back on the opener and setup pulled it into the panel
+  // again, so a reader who had just clicked "6h" in the picker, or who was
+  // typing in the filter box the drawer deliberately leaves reachable, lost
+  // the caret to the panel root. Same reason and same shape as useDetailRange's
+  // fetchRef and usePoll's fnRef.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     // Escape closes, and focus moves into the dialog so the next Tab lands
     // inside it rather than back in the page behind.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
-    // ...and goes back to whatever opened this when it closes. Without that,
-    // focus lands on document.body and the next Tab starts from the top of
-    // the page: a reader who opened the chart on row 14 of a twenty-host
-    // table is returned to the masthead. It matters more now than it did --
-    // every chart is one of these buttons, so a fleet page carries sixty of
-    // them rather than a page's worth of panels.
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    // Focus goes into the panel on open, and back to whatever opened this
+    // when it closes. Without the second half, focus lands on document.body
+    // and the next Tab starts from the top of the page: a reader who opened
+    // the chart on row 14 of a twenty-host table is returned to the masthead.
+    // It matters more now than it did -- every chart is one of these buttons,
+    // so a fleet page carries sixty of them rather than a page's worth of
+    // panels.
+    //
+    // Runs ONCE, on mount: this is what opening and closing does, not
+    // something a re-render of the page behind gets to redo.
     const opener = document.activeElement;
     ref.current?.focus();
     return () => {
-      document.removeEventListener("keydown", onKey);
       if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
     };
-  }, [onClose]);
+  }, []);
 
   // The drawer's dismiss, and the reason it cannot simply reuse the dialog's:
   // the dialog closes on its backdrop, and a drawer deliberately has none.
@@ -144,11 +178,11 @@ export function ChartDetail({
       const target = e.target;
       if (!(target instanceof Node)) return;
       if (ref.current?.contains(target)) return;
-      onClose();
+      onCloseRef.current();
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [drawer, onClose]);
+  }, [drawer]);
 
   // The content track gives way while the drawer is open. Without it the
   // panel sits ON TOP of the right-hand half of a Graphs grid -- which is
@@ -205,6 +239,14 @@ export function ChartDetail({
           <span className="note" role="status">
             Could not load that range.
           </span>
+        )}
+        {/* Before Close, because it is the way ONWARD rather than the way
+            out. A real anchor: App delegates in-origin clicks at the root, so
+            this needs no navigate callback threaded down to it. */}
+        {drawer && href !== undefined && (
+          <a className="btn" href={href}>
+            Open as page
+          </a>
         )}
         <button className="btn ghost" onClick={onClose} aria-label="Close">
           Close
