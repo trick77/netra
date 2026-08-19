@@ -225,11 +225,14 @@ export interface EnlargeableProps {
   /**
    * Where this chart lives as a page.
    *
-   * Given it, the chart is a LINK and there is no dialog: the enlarged view
-   * has a URL, so it can be sent to someone, reopened after a reload and
-   * left with Back. Without it the dialog stays -- a sparkline in a table
-   * cell has no page of its own to point at, and until it does it keeps the
-   * modal it always had.
+   * Given it, the chart is a real ANCHOR: cmd-click and middle-click open
+   * that page in a new tab, and copy-link yields a URL. A plain left click
+   * does not navigate -- it opens the DRAWER, beside the list the chart was
+   * clicked in, so the list survives being read.
+   *
+   * Without it the chart is a button and the enlarged view is the modal
+   * dialog: a sparkline with no page of its own has nowhere else to be, and
+   * nothing to keep on screen beside it.
    */
   href?: string;
   /**
@@ -269,12 +272,14 @@ export function Enlargeable({
   children,
 }: EnlargeableProps) {
   const [enlarged, setEnlarged] = useState(false);
-  // The dialog does no work at all when this chart opens a page instead.
-  const detail = useDetailRange(
-    range,
-    fetchSeries,
-    enlarged && href === undefined,
-  );
+  // Gated on `enlarged` alone. It used to be gated on href being absent too,
+  // because an href meant navigation and the enlarged view never opened; a
+  // plain click now opens the drawer whether or not there is a page behind
+  // it, so the range fetch belongs to "is it open", full stop. The gate still
+  // matters as much as it ever did: the fleet list mounts one of these per
+  // chart cell, so twenty hosts is sixty of them, and fetching for a view
+  // nobody opened would turn one page render into sixty requests.
+  const detail = useDetailRange(range, fetchSeries, enlarged);
 
   // What the dialog is actually showing: its own data once the range has been
   // changed, the caller's otherwise. Keeping the previous series while a
@@ -292,16 +297,30 @@ export function Enlargeable({
           has to work from the keyboard, and the chart is the affordance --
           a separate "expand" icon would be a second thing to find. */}
       {href !== undefined ? (
-        // A plain anchor, with no click handler of its own. App delegates
-        // navigation for every internal link at the root -- including the
-        // modifier-key and off-origin cases -- precisely so a component like
-        // this does not need a navigate callback threaded down to it. Being
-        // a real anchor is what makes middle-click, copy-link and bookmark
-        // work, which is most of the point of the chart having a URL.
+        // Still a real anchor, and that is deliberate: middle-click and
+        // cmd-click open the chart's own page in a new tab, and copy-link
+        // still yields a URL. What changed is the PLAIN left click, which is
+        // intercepted and opens the drawer instead of navigating.
+        //
+        // #108 made every one of these navigate, and it was right that the
+        // chart needed somewhere to be. It was wrong about the common case:
+        // on the Graphs tab a plain click threw away a grid of fifteen panels
+        // to look at one of them, and coming back re-rendered it from the top.
+        // The page is still there for the click that asks for it; the drawer
+        // is what the other click gets.
+        //
+        // Modified and non-primary clicks belong to the browser -- the same
+        // rule Tabs.tsx and StatTile.tsx follow, for the same reason.
         <a
           className={`chartwrap as-button${className ? ` ${className}` : ""}`}
           href={href}
-          aria-label={label ?? `Open ${title}`}
+          aria-label={label ?? `Enlarge ${title}`}
+          onClick={(e) => {
+            if (e.defaultPrevented || e.button !== 0) return;
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+            e.preventDefault();
+            setEnlarged(true);
+          }}
         >
           {children}
         </a>
@@ -315,7 +334,7 @@ export function Enlargeable({
           {children}
         </button>
       )}
-      {enlarged && href === undefined && (
+      {enlarged && (
         <ChartDetail
           title={title}
           unit={unit}
@@ -337,6 +356,10 @@ export function Enlargeable({
           loading={detail.loading}
           error={detail.error}
           onClose={() => setEnlarged(false)}
+          // A chart with a page of its own opens beside the list it was
+          // clicked in, so the reader can walk the list; one without a page
+          // has nowhere else to be and takes the modal.
+          variant={href === undefined ? "dialog" : "drawer"}
         />
       )}
     </>

@@ -2147,6 +2147,65 @@ a.chartwrap.as-button {
   max-height: 100%;
   overflow: auto;
 }
+
+/* ── The drawer: a chart that has a page, opened beside the list ──────
+   Same panel as the dialog above, pinned to the right edge instead of
+   centred, and with no backdrop at all. The backdrop is exactly what it must
+   not have: a scrim makes the surface behind it inert, and the surface
+   staying live -- so a reader can walk a Graphs grid panel by panel and watch
+   this change -- is the whole reason a drawer replaced the modal here.
+
+   Dismissal is therefore not the backdrop's job: Escape, the Close button, or
+   a click anywhere outside the panel, all handled in ChartDetail. */
+.cd-drawer {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(720px, 92vw);
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  border: 0;
+  border-left: 1px solid var(--border-strong);
+  overflow-y: auto;
+  animation: drawer-in 180ms ease;
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+/* The content track gives way while a drawer is open, rather than being
+   covered by it. Without this the panel sits on top of the right-hand half of
+   a Graphs grid -- which is exactly the panels a reader clicks next, so an
+   overlay chosen for keeping the surface usable would have covered the usable
+   part of it. The grid reflows to fewer columns and everything stays
+   reachable. ChartDetail sets the attribute; nothing else reads it. */
+.app > main {
+  transition: padding-right 180ms ease;
+}
+:root[data-drawer="on"] .app > main {
+  padding-right: calc(min(720px, 92vw) + var(--space-5));
+}
+/* Below the fleet breakpoint the drawer is most of the window, so yielding
+   would leave the content in a few dozen pixels. It covers instead, which is
+   what a sheet does on a small screen. */
+@media (max-width: 900px) {
+  :root[data-drawer="on"] .app > main {
+    padding-right: var(--space-5);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cd-drawer {
+    animation: none;
+  }
+  .app > main {
+    transition: none;
+  }
+}
 .cd > header {
   display: flex;
   align-items: center;
