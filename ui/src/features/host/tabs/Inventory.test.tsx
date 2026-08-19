@@ -10,7 +10,6 @@ import type {
   Unit,
 } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
-import { expandAllGroups } from "../../../testing/groups";
 import {
   Containers,
   Filesystems,
@@ -154,7 +153,6 @@ describe("Containers", () => {
   // still carries both -- there the project is in no heading at all.)
   it("identifies a container by its compose service, the project being the group", () => {
     render(<Containers rows={containers} host={host} />);
-    expandAllGroups();
     const row = screen.getByRole("row", { name: /shop-web-1/ });
     expect(within(row).getByText("web")).toBeInTheDocument();
     expect(within(row).queryByText("shop / web")).toBeNull();
@@ -189,7 +187,6 @@ describe("Containers", () => {
         host={host}
       />,
     );
-    expandAllGroups();
 
     // "grafana" appears once in its row -- as the link. No second line under
     // it repeating the service. Located via the link rather than by row name:
@@ -209,7 +206,6 @@ describe("Containers", () => {
   // from a host's own Containers tab the page was simply unreachable.
   it("links every container to its detail page", () => {
     render(<Containers rows={containers} host={host} />);
-    expandAllGroups();
     expect(
       screen.getByRole("link", { name: "shop-web-1" }).getAttribute("href"),
       // The key is "project/service" and router.ts splits the path before it
@@ -298,7 +294,6 @@ describe("Containers", () => {
     );
 
     expect(screen.getByText(/Docker socket/)).toBeInTheDocument();
-    expandAllGroups();
     expect(screen.getByRole("row", { name: /shop-web-1/ })).toBeInTheDocument();
   });
 

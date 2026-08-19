@@ -820,6 +820,70 @@ a:hover {
   font-family: var(--font-mono);
 }
 
+/* The container list's Image cell. .mono sets a family and nothing else, so
+   this was the one cell in the row still at the body's --text-ui while the
+   identity line, the memory reading and the group totals are all --text-label
+   -- and a mono face at the same px reads larger than the sans beside it. The
+   result was the longest and least urgent string in the row drawn as the
+   loudest thing in it.
+
+   --text-micro is one of its three sanctioned uses (spec 3.6: badges, axis
+   ticks, eyebrows) stretched to a fourth, and deliberately: this is an
+   identifier a reader looks up when something is already wrong with a
+   version, not a thing they read down the column. --muted for the same
+   reason. break-all because an image ref has no spaces and would otherwise
+   set the column's minimum width. */
+.imgcell {
+  font-size: var(--text-micro);
+  color: var(--muted);
+  word-break: break-all;
+}
+
+/* The severity rail: which rows to look at, readable from the edge of the
+   table before any cell is read.
+
+   An inset box-shadow on the first cell rather than a border or a column of
+   its own -- a border would shift every unmarked row by 3px, and a column
+   would spend width on a mark that is empty in most rows. The padding of the
+   marked cell grows by the same 3px so its text does not slide.
+
+   The hue is the only thing that differs between the three, and it is never
+   the whole answer: every row this marks also carries a badge with a word in
+   it. Reserved for rows that are actually wrong -- a table where every row is
+   railed has said nothing. */
+.rail td:first-child {
+  padding-left: calc(var(--space-4) + 3px);
+}
+.rail-warning td:first-child {
+  box-shadow: inset 3px 0 0 var(--st-warn);
+}
+.rail-serious td:first-child {
+  box-shadow: inset 3px 0 0 var(--st-serious);
+}
+.rail-critical td:first-child {
+  box-shadow: inset 3px 0 0 var(--st-crit);
+}
+
+/* A container row's CPU cell: the chart, and the reading it ends on beside
+   it. Same shape and same reasoning as .traffic-cell on the fleet row -- the
+   number costs width, which the row has, rather than height, which it does
+   not, and it stays --muted because the sparkline is the subject and this
+   annotates it. */
+.ccell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.cval {
+  font-size: var(--text-label);
+  color: var(--muted);
+  /* Never shrink, and never wrap a percentage mid-number: the chart is the
+     item that gives way when the column is squeezed. */
+  flex: none;
+  min-width: 44px;
+  text-align: right;
+}
+
 /* A shell command the reader is meant to copy. .ai-cmd above is the inline
    peer of this, scoped to the drawer; both take their face and ground from
    the same tokens, and this one is the block form: a command that wraps is
@@ -2082,6 +2146,70 @@ a.chartwrap.as-button {
   max-width: min(1000px, 100%);
   max-height: 100%;
   overflow: auto;
+}
+
+/* ── The drawer: a chart that has a page, opened beside the list ──────
+   Same panel as the dialog above, pinned to the right edge instead of
+   centred, and with no backdrop at all. The backdrop is exactly what it must
+   not have: a scrim makes the surface behind it inert, and the surface
+   staying live -- so a reader can walk a Graphs grid panel by panel and watch
+   this change -- is the whole reason a drawer replaced the modal here.
+
+   Dismissal is therefore not the backdrop's job: Escape, the Close button, or
+   a click anywhere outside the panel, all handled in ChartDetail. */
+.cd-drawer {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: min(720px, 92vw);
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  border: 0;
+  border-left: 1px solid var(--border-strong);
+  overflow-y: auto;
+  animation: drawer-in 180ms ease;
+}
+@keyframes drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+
+/* The content track gives way while a drawer is open, rather than being
+   covered by it. Without this the panel sits on top of the right-hand half of
+   a Graphs grid -- which is exactly the panels a reader clicks next, so an
+   overlay chosen for keeping the surface usable would have covered the usable
+   part of it. The grid reflows to fewer columns and everything stays
+   reachable. ChartDetail sets the attribute; nothing else reads it. */
+.app > main {
+  transition: padding-right 180ms ease;
+}
+:root[data-drawer="on"] .app > main {
+  padding-right: calc(min(720px, 92vw) + var(--space-5));
+}
+/* Yielding only pays when there is something left to yield INTO, and the
+   arithmetic says that starts far higher than the fleet's own 900px
+   breakpoint: the rail is 212px, the two --space-5 gutters are 48px and the
+   panel is 720px, so a 1024px window would have left 44px of content and a
+   901px window less than nothing -- the content track collapsing to zero,
+   which is a worse outcome than being covered and the exact opposite of what
+   the drawer was chosen for. Below ~1400px it covers instead, which is what a
+   sheet does when the window is not wide enough to hold both. */
+@media (max-width: 1399px) {
+  :root[data-drawer="on"] .app > main {
+    padding-right: var(--space-5);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cd-drawer {
+    animation: none;
+  }
+  .app > main {
+    transition: none;
+  }
 }
 .cd > header {
   display: flex;

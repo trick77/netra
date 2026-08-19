@@ -186,7 +186,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
   return (
     <Enlargeable
       title={`CPU · ${row.hostname}`}
-      label={`Open CPU for ${row.hostname}`}
+      label={`Enlarge CPU for ${row.hostname}`}
       href={chartHref(row.id, "host-cpu", range)}
       className="inline"
       unit="%"
@@ -227,19 +227,25 @@ const MEM_HEADROOM = 1.08;
 
 function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   if (row.mem_total === null) {
-    // No known ceiling means no scale to draw the stack against. Drawing
-    // one anyway (e.g. falling back to the bands' own auto-scale) would
-    // silently readmit the always-full bug this column is built to avoid,
-    // so this renders the absent marker instead of a chart with an
-    // invented ceiling -- the same rule Meter itself follows.
-    return <>{ABSENT}</>;
+    // No known ceiling means no scale to draw the stack against. Drawing one
+    // anyway (e.g. falling back to the bands' own auto-scale) would silently
+    // readmit the always-full bug this column is built to avoid -- the same
+    // rule Meter itself follows.
+    //
+    // NOTHING, rather than a dash. A dash is a mark, and a mark asserts that
+    // netra looked and found a value it could not print; the truth here is
+    // that there is nothing to say. It also read as data on a row whose other
+    // cells are charts: a column of em dashes down a silent host looked like
+    // a reading of zero. The host cell already carries the "stopped
+    // reporting" badge that explains the empty row.
+    return null;
   }
   const total = row.mem_total;
 
   return (
     <Enlargeable
       title={`Memory · ${row.hostname}`}
-      label={`Open Memory for ${row.hostname}`}
+      label={`Enlarge Memory for ${row.hostname}`}
       href={chartHref(row.id, "host-memory", range)}
       className="inline"
       series={row.mem}
@@ -335,9 +341,10 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
   // `from` so Back returns to the fleet instead of dropping the reader on
   // a host's Graphs tab they were never on -- see backTarget in App.tsx.
   //
-  // An href turns Enlargeable into an anchor and its dialog off
-  // (Enlargeable.tsx). That is the trade: the dialog is what a chart with
-  // no page gets, and this one has a page.
+  // An href turns Enlargeable into a real anchor (Enlargeable.tsx), so
+  // cmd-click and middle-click reach that page and copy-link yields its URL.
+  // The plain click opens the DRAWER beside this list instead: the modal
+  // dialog is what a chart with no page of its own gets.
   const href = chartHref(row.id, "host-traffic", range);
 
   return (
@@ -347,7 +354,7 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         // this chart, and "rx" is the kernel's word for it rather than the
         // reader's. The wire and the schema keep rx/tx.
         title={`Traffic · ${row.hostname}`}
-        label={`Open Traffic for ${row.hostname}`}
+        label={`Enlarge Traffic for ${row.hostname}`}
         href={href}
         className="inline"
         unit="B/s"
@@ -370,13 +377,23 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
           elapsed seconds), and bitrate() drew every rate on this page 8x
           low. The host overview's Traffic card had the identical bug, which
           is why nothing on screen contradicted it. */}
+      {/* A rate the host never reported prints NOTHING, not a dash. Stacked
+          two deep beside a chart, "↑ — ↓ —" read as a pair of readings rather
+          than as their absence -- and on a silent host the whole row became a
+          column of dashes that looked like data. The gap in the sparkline
+          beside it already says the host stopped talking, and the badge on the
+          host cell says why. */}
       <div className="traffic-rates">
-        <span className="rate" aria-label={`inbound ${byterate(rx)}`}>
-          <span aria-hidden="true">↑</span> {byterate(rx)}
-        </span>
-        <span className="rate" aria-label={`outbound ${byterate(tx)}`}>
-          <span aria-hidden="true">↓</span> {byterate(tx)}
-        </span>
+        {rx === null ? null : (
+          <span className="rate" aria-label={`inbound ${byterate(rx)}`}>
+            <span aria-hidden="true">↑</span> {byterate(rx)}
+          </span>
+        )}
+        {tx === null ? null : (
+          <span className="rate" aria-label={`outbound ${byterate(tx)}`}>
+            <span aria-hidden="true">↓</span> {byterate(tx)}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -391,14 +408,15 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 // at 95% must not draw the same silhouette, which is exactly what a
 // self-scaled sparkline would do.
 function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
-  if (row.disk.length === 0) return <>{ABSENT}</>;
+  // Empty, not a dash -- see MemoryCell.
+  if (row.disk.length === 0) return null;
   return (
     // The one sparkline in this row that was not even clickable: it was a
     // bare Overlay, so the chart most likely to be the reason a host is on
     // this list at all had no way in. It has a page now, like the rest.
     <Enlargeable
       title={`Filesystem usage · ${row.hostname}`}
-      label={`Open Filesystem usage for ${row.hostname}`}
+      label={`Enlarge Filesystem usage for ${row.hostname}`}
       href={chartHref(row.id, "host-filesystem", range)}
       className="inline"
       series={row.disk}
@@ -429,8 +447,9 @@ function DiskCell({ row }: { row: HostRow }) {
   if (row.fullest === null) {
     // A host that has reported no filesystems has no fullest one. Drawing a
     // meter anyway would put an empty green bar where "never collected"
-    // belongs, which reads as a fact rather than as an absence.
-    return <>{ABSENT}</>;
+    // belongs, which reads as a fact rather than as an absence -- and a dash
+    // is the same mistake one step quieter. See MemoryCell.
+    return null;
   }
   const { mount, pct, others } = row.fullest;
   const label = others > 0 ? `${mount} +${others}` : mount;

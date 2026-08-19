@@ -54,6 +54,24 @@ export interface TableProps<T> {
    * should always pass this. */
   rowKey?: (row: T, index: number) => string | number;
   /**
+   * The severity of a row, drawn as a rail down its leading edge.
+   *
+   * A list exists to be scanned, and a reader scanning one is asking "which
+   * of these should I look at" before they read any cell. The badge inside
+   * the Host cell answers that only once the eye has already stopped on the
+   * row; a rail answers it from the edge of the table, at a glance, down the
+   * whole column at once.
+   *
+   * Colour is never the whole answer -- every row this marks also carries a
+   * badge with a word in it, which is what a reader who cannot separate amber
+   * from red is reading. The rail is a second channel on a fact already
+   * stated, never the only one.
+   *
+   * Returning null (or omitting the prop) draws no rail, which is what an
+   * ordinary row gets: a table where every row is marked has marked nothing.
+   */
+  rowSeverity?: (row: T) => "warning" | "serious" | "critical" | null;
+  /**
    * Splits the rows into labelled groups, each its own `<tbody>` under a
    * header row.
    *
@@ -111,12 +129,19 @@ export interface TableProps<T> {
      */
     labelText?: (key: string, rows: readonly T[]) => string;
     /**
-     * Makes every group a disclosure, closed to begin with.
+     * Makes every group a disclosure, OPEN to begin with.
      *
-     * Closed rather than open because the lists that group are the long ones:
-     * a host running fourteen containers in four stacks opens onto four lines
-     * instead of eighteen, and the reader chooses what to unfold. Only lists
-     * that carry a `summary` should ask for this -- see above.
+     * It began closed, and the argument was that the lists which group are the
+     * long ones -- fourteen containers in four stacks opening onto four lines
+     * instead of eighteen. What that actually shipped was a Containers tab
+     * that arrives showing nothing at all: a column of hostnames, no
+     * containers, and no clue that the data is one click away per host. A list
+     * that hides its own contents on arrival has not summarised them, it has
+     * hidden them.
+     *
+     * Open by default, and the disclosure stays for the reader who wants to
+     * fold a noisy host away. Only lists that carry a `summary` should ask for
+     * this -- see above.
      */
     collapsible?: boolean;
     /**
@@ -133,18 +158,25 @@ export interface TableProps<T> {
 
 type SortState = { key: string; dir: "asc" | "desc" };
 
-export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
+export function Table<T>({
+  columns,
+  rows,
+  rowKey,
+  rowSeverity,
+  groupBy,
+}: TableProps<T>) {
   // Uncontrolled: every caller wants the same click-to-sort behaviour, and
   // threading identical state through each of them buys nothing.
   const [sort, setSort] = useState<SortState | null>(null);
 
-  // The groups the reader has OPENED, not the ones they closed: collapsible
-  // groups start closed, so the empty set is the initial state and no group
-  // key has to exist before it can be tracked. A group that disappears (a
-  // project whose last container went away) leaves a stale key behind, which
-  // costs a string and means the group opens where it was left if it comes
-  // back.
-  const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
+  // The groups the reader has CLOSED, not the ones they opened. Collapsible
+  // groups start open, so the empty set is the initial state and no group key
+  // has to exist before it can be tracked -- the same property the inverse set
+  // had when they started closed, which is why this is a rename of the state
+  // and not a new one. A group that disappears (a project whose last container
+  // went away) leaves a stale key behind, which costs a string and means the
+  // group comes back folded the way it was left.
+  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
   // One id per table instance; each group header's aria-controls points at
   // its own tbody, built from it.
   const tableId = useId();
@@ -279,10 +311,10 @@ export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
           groups.map(([key, rowsInGroup]) => {
             const collapsible = groupBy?.collapsible === true;
             // The filter WINS over the reader's choice while it is on, and
-            // `opened` is never written while it is on (the toggle below
+            // `closed` is never written while it is on (the toggle below
             // refuses), so clearing the box restores exactly what they had.
             const forced = groupBy?.forceExpanded === true;
-            const open = !collapsible || forced || opened.has(key);
+            const open = !collapsible || forced || !closed.has(key);
             const bodyId = `${tableId}-${key}`;
             return (
               <tbody key={key} id={bodyId}>
@@ -313,7 +345,7 @@ export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
                             // box -- the one thing forceExpanded promises
                             // not to do.
                             if (forced) return;
-                            setOpened((prev) => {
+                            setClosed((prev) => {
                               const next = new Set(prev);
                               if (next.has(key)) next.delete(key);
                               else next.add(key);
@@ -355,8 +387,15 @@ export function Table<T>({ columns, rows, rowKey, groupBy }: TableProps<T>) {
   );
 
   function bodyRow(row: T, index: number) {
+    // The rail rides the row's class, not a cell's: it is a statement about
+    // the row, and index.css paints it as an inset shadow on the first cell so
+    // it needs no column of its own and cannot shift the layout.
+    const severity = rowSeverity?.(row) ?? null;
     return (
-      <tr key={rowKey ? rowKey(row, index) : index}>
+      <tr
+        key={rowKey ? rowKey(row, index) : index}
+        className={severity === null ? undefined : `rail rail-${severity}`}
+      >
         {columns.map((col) => (
           <td key={col.key} style={cellStyle(col)}>
             {col.cell(row)}

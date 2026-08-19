@@ -1,30 +1,12 @@
-// Helpers for the two lists whose Table groups are collapsible: a group's
-// rows are not in the DOM until it is opened, so a test that asserts on rows
-// has to open them first. Shared rather than copied into each test file
-// because "how do you get at a grouped row" is one answer, and three copies
-// of it drift the moment the header's markup changes.
-import { fireEvent, screen, within } from "@testing-library/react";
-
-/**
- * Opens every collapsed group in the document.
- *
- * Clicked rather than reached round the back: it is the same control a reader
- * uses, so a test that stops passing because the disclosure broke is a test
- * doing its job.
- *
- * fireEvent, not element.click(): the latter dispatches outside React's act()
- * and the state update never flushes, so every assertion after it still sees
- * a closed group.
- */
-export function expandAllGroups(): void {
-  for (const head of screen.queryAllByRole("rowheader")) {
-    for (const button of within(head).queryAllByRole("button", {
-      expanded: false,
-    })) {
-      fireEvent.click(button);
-    }
-  }
-}
+// Reading a grouped list in a test. Shared rather than copied into each test
+// file because "how do you read a group heading" is one answer, and three
+// copies of it drift the moment the header's markup changes.
+//
+// expandAllGroups() used to live here, and every assertion on a grouped row
+// had to call it first: groups arrived shut. They arrive OPEN now, which made
+// it a no-op at all fourteen call sites, and a helper kept "in case" is a
+// helper whose comment starts lying about who calls it.
+import { screen } from "@testing-library/react";
 
 /**
  * The group headings, as a reader reads them -- the name and its count, with

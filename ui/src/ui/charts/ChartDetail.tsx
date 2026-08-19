@@ -58,6 +58,34 @@ export interface ChartDetailProps {
    * quantity -- unnormalised per-core CPU runs to N x 100 -- must not carry
    * an axis putting a number on it. */
   hideAxis?: boolean;
+  /**
+   * How the enlarged view arrives.
+   *
+   * "dialog" is a modal over a scrim: one thing, closely, with the page
+   * behind it inert. Right for a chart opened from somewhere that has no
+   * other charts worth comparing it against.
+   *
+   * "drawer" is a side panel with NO scrim, and the difference is the point:
+   * the surface behind it stays readable and clickable, so a reader can walk
+   * a Graphs grid panel by panel and watch the panel change. A scrim would
+   * make that surface inert, which is the entire reason a drawer was chosen
+   * over the dialog it replaces.
+   */
+  variant?: "dialog" | "drawer";
+  /**
+   * The chart's own page, when it has one.
+   *
+   * Rendered as a link in the drawer's header, and it closes a gap the drawer
+   * would otherwise open. The fleet's four host charts pass neither a
+   * `fetchSeries` nor a `window`, so their drawer carries no range picker and
+   * no time axis -- the page does, and before this a plain click went there.
+   * A reader must not have to know that cmd-click exists to get back what the
+   * plain click used to give them.
+   *
+   * Only in the drawer. The dialog is what a chart with no page gets, so
+   * there is nothing for it to link to.
+   */
+  href?: string;
 }
 
 /**
@@ -90,144 +118,220 @@ export function ChartDetail({
   reference,
   mirrored,
   hideAxis,
+  variant = "dialog",
+  href,
 }: ChartDetailProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const drawer = variant === "drawer";
+
+  // The latest onClose, without making it a dependency of the effects below.
+  // Callers build it inline (`onClose={() => setEnlarged(false)}`), so it is a
+  // new function on every render of the page behind this -- and the page
+  // behind this polls. Depending on it re-ran the focus effect on every tick:
+  // cleanup put focus back on the opener and setup pulled it into the panel
+  // again, so a reader who had just clicked "6h" in the picker, or who was
+  // typing in the filter box the drawer deliberately leaves reachable, lost
+  // the caret to the panel root. Same reason and same shape as useDetailRange's
+  // fetchRef and usePoll's fnRef.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     // Escape closes, and focus moves into the dialog so the next Tab lands
     // inside it rather than back in the page behind.
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
     };
     document.addEventListener("keydown", onKey);
-    // ...and goes back to whatever opened this when it closes. Without that,
-    // focus lands on document.body and the next Tab starts from the top of
-    // the page: a reader who opened the chart on row 14 of a twenty-host
-    // table is returned to the masthead. It matters more now than it did --
-    // every chart is one of these buttons, so a fleet page carries sixty of
-    // them rather than a page's worth of panels.
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    // Focus goes into the panel on open, and back to whatever opened this
+    // when it closes. Without the second half, focus lands on document.body
+    // and the next Tab starts from the top of the page: a reader who opened
+    // the chart on row 14 of a twenty-host table is returned to the masthead.
+    // It matters more now than it did -- every chart is one of these buttons,
+    // so a fleet page carries sixty of them rather than a page's worth of
+    // panels.
+    //
+    // Runs ONCE, on mount: this is what opening and closing does, not
+    // something a re-render of the page behind gets to redo.
     const opener = document.activeElement;
     ref.current?.focus();
     return () => {
-      document.removeEventListener("keydown", onKey);
       if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
     };
-  }, [onClose]);
+  }, []);
+
+  // The drawer's dismiss, and the reason it cannot simply reuse the dialog's:
+  // the dialog closes on its backdrop, and a drawer deliberately has none.
+  // So the outside click is caught on the document instead.
+  //
+  // mousedown rather than click, and a click that lands on ANOTHER chart is
+  // let through rather than swallowed: that chart's own trigger then opens
+  // its drawer, so walking a grid panel by panel swaps the panel instead of
+  // closing it and making the reader click twice.
+  useEffect(() => {
+    if (!drawer) return;
+    const onDown = (e: MouseEvent) => {
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      if (ref.current?.contains(target)) return;
+      onCloseRef.current();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [drawer]);
+
+  // The content track gives way while the drawer is open. Without it the
+  // panel sits ON TOP of the right-hand half of a Graphs grid -- which is
+  // exactly the panels a reader would click next, so an overlay that keeps
+  // the surface "usable" would have covered the usable part of it.
+  //
+  // A root attribute rather than a class on some ancestor: this component
+  // does not know what it was rendered inside, and the layout that has to
+  // yield (.app > main) is three files away.
+  useEffect(() => {
+    if (!drawer) return;
+    document.documentElement.dataset.drawer = "on";
+    return () => {
+      delete document.documentElement.dataset.drawer;
+    };
+  }, [drawer]);
 
   const ceiling = max ?? peak(series, stacked);
   const format = (v: number | null) => (fmt ? fmt(v) : formatNumber(v));
 
-  return (
-    // The backdrop closes on click; the dialog stops the click so a stray
-    // press inside it does not dismiss what you are reading.
-    <div className="cd-back" onClick={onClose}>
-      <div
-        ref={ref}
-        className="cd"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`${title}, enlarged`}
-        tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <header>
-          <h3>{title}</h3>
-          {unit && <span className="u">{unit}</span>}
-          <div className="spacer" />
-          {range !== undefined && onRangeChange !== undefined && (
-            <Segmented
-              options={ranges.map((r) => ({ value: r, label: r }))}
-              value={range}
-              onChange={onRangeChange}
-            />
-          )}
-          {/* Beside the picker rather than over the chart: the chart is
+  const panel = (
+    <div
+      ref={ref}
+      className={drawer ? "cd cd-drawer" : "cd"}
+      role="dialog"
+      // Only the dialog is modal. A drawer that claimed aria-modal would tell
+      // a screen reader the rest of the page had gone away, when staying is
+      // the whole point of it.
+      aria-modal={drawer ? undefined : "true"}
+      aria-label={`${title}, enlarged`}
+      tabIndex={-1}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <header>
+        <h3>{title}</h3>
+        {unit && <span className="u">{unit}</span>}
+        <div className="spacer" />
+        {range !== undefined && onRangeChange !== undefined && (
+          <Segmented
+            options={ranges.map((r) => ({ value: r, label: r }))}
+            value={range}
+            onChange={onRangeChange}
+          />
+        )}
+        {/* Beside the picker rather than over the chart: the chart is
               still showing real data for the range it had, and covering it
               would hide the thing the dialog was opened to read. */}
-          {loading && (
-            <span className="note" role="status">
-              Loading…
-            </span>
-          )}
-          {error !== null && !loading && (
-            <span className="note" role="status">
-              Could not load that range.
-            </span>
-          )}
-          <button className="btn ghost" onClick={onClose} aria-label="Close">
-            Close
-          </button>
-        </header>
+        {loading && (
+          <span className="note" role="status">
+            Loading…
+          </span>
+        )}
+        {error !== null && !loading && (
+          <span className="note" role="status">
+            Could not load that range.
+          </span>
+        )}
+        {/* Before Close, because it is the way ONWARD rather than the way
+            out. A real anchor: App delegates in-origin clicks at the root, so
+            this needs no navigate callback threaded down to it. */}
+        {drawer && href !== undefined && (
+          <a className="btn" href={href}>
+            Open as page
+          </a>
+        )}
+        <button className="btn ghost" onClick={onClose} aria-label="Close">
+          Close
+        </button>
+      </header>
 
-        <div className="cd-chart">
-          {/* The axis is drawn from the same ceiling the shape is scaled to,
+      <div className="cd-chart">
+        {/* The axis is drawn from the same ceiling the shape is scaled to,
               so the labels cannot disagree with it -- EXCEPT when a
               reference is given. Then the ceiling carries headroom above the
               reference so the rule is visible, and labelling that padded
               number puts a quantity on screen that does not exist: a 137.4 GB
               host read "148.4 GB". The labels then step from the reference,
               positioned where they actually fall. */}
-          {!hideAxis && (
-            <div className="cd-y">
-              {axisLabels(ceiling, reference, mirrored, min).map((label, i) => (
-                <span key={i} style={{ top: `${(1 - label.fraction) * 100}%` }}>
-                  {format(label.value)}
-                </span>
-              ))}
-            </div>
-          )}
-          <Overlay
-            series={series}
-            min={min}
-            max={ceiling}
-            width={900}
-            height={320}
-            stacked={stacked}
-            legend={legend}
-            reference={reference}
-            mirrored={mirrored}
-            label={`${title}, enlarged`}
-          />
-        </div>
-
-        {answered && (
-          <div className="cd-x">
-            <span>{absolute(answered.from)}</span>
-            <span>{absolute(answered.to)}</span>
+        {!hideAxis && (
+          <div className="cd-y">
+            {axisLabels(ceiling, reference, mirrored, min).map((label, i) => (
+              <span key={i} style={{ top: `${(1 - label.fraction) * 100}%` }}>
+                {format(label.value)}
+              </span>
+            ))}
           </div>
         )}
-
-        {/* What the small panel has no room for: every series named, with
-            the numbers a reader would otherwise have to eyeball. */}
-        <table className="cd-stats">
-          <thead>
-            <tr>
-              <th scope="col">Series</th>
-              <th scope="col">Latest</th>
-              <th scope="col">Min</th>
-              <th scope="col">Max</th>
-              <th scope="col">Mean</th>
-            </tr>
-          </thead>
-          <tbody>
-            {series.map((s) => {
-              const stats = summarise(s.values);
-              return (
-                <tr key={s.name}>
-                  <th scope="row">
-                    <i style={{ background: s.color }} />
-                    {s.name}
-                  </th>
-                  <td>{format(stats.latest)}</td>
-                  <td>{format(stats.min)}</td>
-                  <td>{format(stats.max)}</td>
-                  <td>{format(stats.mean)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <Overlay
+          series={series}
+          min={min}
+          max={ceiling}
+          width={900}
+          height={320}
+          stacked={stacked}
+          legend={legend}
+          reference={reference}
+          mirrored={mirrored}
+          label={`${title}, enlarged`}
+        />
       </div>
+
+      {answered && (
+        <div className="cd-x">
+          <span>{absolute(answered.from)}</span>
+          <span>{absolute(answered.to)}</span>
+        </div>
+      )}
+
+      {/* What the small panel has no room for: every series named, with
+            the numbers a reader would otherwise have to eyeball. */}
+      <table className="cd-stats">
+        <thead>
+          <tr>
+            <th scope="col">Series</th>
+            <th scope="col">Latest</th>
+            <th scope="col">Min</th>
+            <th scope="col">Max</th>
+            <th scope="col">Mean</th>
+          </tr>
+        </thead>
+        <tbody>
+          {series.map((s) => {
+            const stats = summarise(s.values);
+            return (
+              <tr key={s.name}>
+                <th scope="row">
+                  <i style={{ background: s.color }} />
+                  {s.name}
+                </th>
+                <td>{format(stats.latest)}</td>
+                <td>{format(stats.min)}</td>
+                <td>{format(stats.max)}</td>
+                <td>{format(stats.mean)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  // The dialog keeps its backdrop -- it closes on a click and stops the click
+  // inside itself, so a stray press on what you are reading does not dismiss
+  // it. The drawer has no backdrop at all, by design: see `variant`.
+  return drawer ? (
+    panel
+  ) : (
+    <div className="cd-back" onClick={onClose}>
+      {panel}
     </div>
   );
 }

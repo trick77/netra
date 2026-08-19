@@ -143,13 +143,15 @@ describe("hostColumns", () => {
 
   describe("filesystem cell", () => {
     // A host that reported no filesystems has no usage to draw. An empty
-    // chart would claim it reported flat zero.
-    it("renders the absent marker rather than an empty chart", () => {
+    // chart would claim it reported flat zero -- and a dash claims netra
+    // looked and found something it could not print. Nothing is the honest
+    // mark for nothing.
+    it("renders neither a chart nor a dash when nothing was collected", () => {
       const col = hostColumns("1h").find((c) => c.header === "Filesystem")!;
       const { container } = render(<>{col.cell(makeRow({ disk: [] }))}</>);
 
       expect(container.querySelector("svg")).toBeNull();
-      expect(container.textContent).toBe(ABSENT);
+      expect(container.textContent).toBe("");
     });
 
     it("draws one line per filesystem", () => {
@@ -224,14 +226,14 @@ describe("hostColumns", () => {
     // type used to forbid saying so, and the only expressible stand-in was
     // pct: 0 -- an empty, healthy, green bar where "never collected"
     // belongs, absent rendered as a fact.
-    it("renders the absent marker, not an empty meter, when nothing was collected", () => {
+    it("renders neither a meter nor a dash when nothing was collected", () => {
       const diskCol = hostColumns("1h").find((c) => c.header === "Disk")!;
       const { container } = render(
         <>{diskCol.cell(makeRow({ fullest: null }))}</>,
       );
 
       expect(container.querySelector(".meter")).not.toBeInTheDocument();
-      expect(container.textContent).toBe(ABSENT);
+      expect(container.textContent).toBe("");
     });
   });
 
@@ -239,7 +241,14 @@ describe("hostColumns", () => {
     it("renders rx and tx in identical typographic weight, distinguished only by direction", () => {
       const cols = hostColumns("1h");
       const trafficCol = cols.find((c) => c.header === "Traffic")!;
-      const row = makeRow({ rx: [1e6, 2e6], tx: [5e5, 6e5] });
+      // last_seen must be RECENT: a host that stopped reporting now prints no
+      // rates at all (see the blanking test below), so a stale fixture would
+      // pass this by rendering nothing rather than by rendering two equals.
+      const row = makeRow({
+        rx: [1e6, 2e6],
+        tx: [5e5, 6e5],
+        last_seen: new Date().toISOString(),
+      });
       const { container } = render(<>{trafficCol.cell(row)}</>);
       const rates = container.querySelectorAll(".rate");
       expect(rates).toHaveLength(2);
@@ -318,7 +327,11 @@ describe("hostColumns", () => {
       const { container } = render(<>{trafficCol.cell(row)}</>);
 
       expect(container.textContent).not.toContain("MB/s");
-      expect(container.textContent).toContain("—");
+      // Nothing at all, not a dash: stacked two deep beside a chart, "↑ — ↓ —"
+      // reads as a pair of readings rather than as their absence. The gap in
+      // the sparkline says the host stopped talking.
+      expect(container.textContent).not.toContain("—");
+      expect(container.querySelectorAll(".rate")).toHaveLength(0);
     });
   });
 
@@ -409,12 +422,16 @@ describe("hostColumns", () => {
       expect(paths).toEqual(expected);
     });
 
-    it("renders the absent marker instead of a chart with an invented ceiling when mem_total is unknown", () => {
+    it("renders nothing at all, not a chart with an invented ceiling, when mem_total is unknown", () => {
       const cols = hostColumns("1h");
       const memCol = cols.find((c) => c.header === "Memory")!;
       const row = makeRow({ mem_total: null });
-      render(<>{memCol.cell(row)}</>);
-      expect(screen.getByText("—")).toBeInTheDocument();
+      const { container } = render(<>{memCol.cell(row)}</>);
+
+      expect(container.querySelector("svg")).toBeNull();
+      // Not a dash either: a column of em dashes down a silent host reads as
+      // a reading, and the host cell's badge already explains the empty row.
+      expect(container.textContent).toBe("");
     });
   });
 

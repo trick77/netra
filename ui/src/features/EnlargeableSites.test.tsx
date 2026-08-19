@@ -8,7 +8,6 @@ import { hostColumns } from "./fleet/hostColumns";
 import { Containers } from "./host/tabs/Inventory";
 import { Overview } from "./host/tabs/Overview";
 import { Table } from "../ui/Table";
-import { expandAllGroups } from "../testing/groups";
 
 vi.mock("../lib/api", async () => {
   const actual = await vi.importActual<typeof api>("../lib/api");
@@ -101,7 +100,6 @@ describe("the list sparklines enlarge", () => {
       render(<FleetContainers rows={rows} range="1h" />);
       // The groups start collapsed, so the row carrying the chart is not in
       // the DOM until its host is opened.
-      expandAllGroups();
       // Named for the row: twenty "Enlarge CPU" buttons name twenty charts
       // identically.
       await open("Enlarge CPU for api");
@@ -116,7 +114,6 @@ describe("the list sparklines enlarge", () => {
 
     it("offers only the ranges the fleet page itself offers", async () => {
       render(<FleetContainers rows={rows} range="1h" />);
-      expandAllGroups();
       const dialog = await open("Enlarge Memory for api");
 
       // 30d is a range lib/range knows and this page does not: a dialog that
@@ -151,7 +148,6 @@ describe("the list sparklines enlarge", () => {
           range="1h"
         />,
       );
-      expandAllGroups();
       await open("Enlarge CPU for api");
       await pick("6h");
 
@@ -225,7 +221,9 @@ describe("the list sparklines enlarge", () => {
       });
 
       // When the sparkline is read as a control
-      const link = screen.getByRole("link", { name: `Open ${name} for ark` });
+      const link = screen.getByRole("link", {
+        name: `Enlarge ${name} for ark`,
+      });
 
       // Then it is an anchor to that chart's page, carrying the range and
       // saying where Back goes

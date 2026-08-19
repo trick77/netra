@@ -225,32 +225,36 @@ describe("Table collapsible groups", () => {
     );
   }
 
-  // Closed rather than open, because the lists that group are the long ones:
-  // four headings instead of eighteen rows, and the reader chooses.
-  it("starts closed, with no row of any group in the document", () => {
+  // OPEN rather than closed. Closed shipped a Containers tab that arrived
+  // showing a column of hostnames and not one container -- a list that hides
+  // its own contents has not summarised them.
+  it("starts open, with every group's rows in the document", () => {
     renderTable();
 
-    expect(screen.queryByText("host-a")).toBeNull();
-    expect(screen.queryByText("host-b")).toBeNull();
+    expect(screen.getByText("host-a")).toBeInTheDocument();
+    expect(screen.getByText("host-b")).toBeInTheDocument();
     expect(screen.getAllByRole("rowheader")).toHaveLength(2);
   });
 
-  // The whole point of a shut group: a heading that says only "zrh" answers
-  // what is in there and nothing about what any of it is doing.
-  it("keeps the summary readable while the group is shut", () => {
+  // The summary is readable in both states: it is what a shut group says about
+  // itself, and it must not appear or vanish as one is folded.
+  it("keeps the summary readable open or shut", () => {
     renderTable();
+    expect(screen.getAllByText("1 up")).toHaveLength(2);
+
+    fireEvent.click(screen.getAllByRole("button", { expanded: true })[0]!);
 
     expect(screen.getAllByText("1 up")).toHaveLength(2);
   });
 
-  it("opens one group without opening the others", () => {
+  it("shuts one group without shutting the others", () => {
     renderTable();
 
     // Ordered by key: ams first, zrh second.
-    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]!);
+    fireEvent.click(screen.getAllByRole("button", { expanded: true })[0]!);
 
-    expect(screen.getByText("host-b")).toBeInTheDocument();
-    expect(screen.queryByText("host-a")).toBeNull();
+    expect(screen.queryByText("host-b")).toBeNull();
+    expect(screen.getByText("host-a")).toBeInTheDocument();
   });
 
   // The disclosure's accessible name cannot come from the heading beside it:
@@ -276,12 +280,12 @@ describe("Table collapsible groups", () => {
 
   // The filter overrides the reader's choice WITHOUT overwriting it, so
   // clearing the box puts the list back exactly where they left it.
-  it("restores what the reader had opened when forceExpanded goes away", () => {
+  it("restores what the reader had shut when forceExpanded goes away", () => {
     const { rerender } = renderTable();
 
-    // Open ams by hand, leave zrh shut.
-    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]!);
-    expect(screen.getByText("host-b")).toBeInTheDocument();
+    // Shut ams by hand, leave zrh open.
+    fireEvent.click(screen.getAllByRole("button", { expanded: true })[0]!);
+    expect(screen.queryByText("host-b")).toBeNull();
 
     const table = (over: Record<string, unknown>) => (
       <Table
@@ -292,11 +296,11 @@ describe("Table collapsible groups", () => {
       />
     );
     rerender(table({ forceExpanded: true }));
-    expect(screen.getByText("host-a")).toBeInTheDocument();
+    expect(screen.getByText("host-b")).toBeInTheDocument();
 
     rerender(table({ forceExpanded: false }));
-    expect(screen.getByText("host-b")).toBeInTheDocument();
-    expect(screen.queryByText("host-a")).toBeNull();
+    expect(screen.getByText("host-a")).toBeInTheDocument();
+    expect(screen.queryByText("host-b")).toBeNull();
   });
 
   // The same promise, against the click that used to break it: while the
@@ -314,8 +318,8 @@ describe("Table collapsible groups", () => {
     );
     const { rerender } = render(table({}));
 
-    // Open ams by hand, then filter: both groups are open now.
-    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]!);
+    // Shut ams by hand, then filter: both groups are open now.
+    fireEvent.click(screen.getAllByRole("button", { expanded: true })[0]!);
     rerender(table({ forceExpanded: true }));
 
     // Click both headers while the filter holds them open: nothing moves.
@@ -325,12 +329,12 @@ describe("Table collapsible groups", () => {
     expect(screen.getByText("host-a")).toBeInTheDocument();
     expect(screen.getByText("host-b")).toBeInTheDocument();
 
-    // ... and clearing it leaves exactly what the reader had: ams open, zrh
-    // shut. Without the guard, both clicks would have landed -- ams shut,
-    // zrh open.
+    // ... and clearing it leaves exactly what the reader had: ams shut, zrh
+    // open. Without the guard, both clicks would have landed -- ams open,
+    // zrh shut.
     rerender(table({ forceExpanded: false }));
-    expect(screen.getByText("host-b")).toBeInTheDocument();
-    expect(screen.queryByText("host-a")).toBeNull();
+    expect(screen.getByText("host-a")).toBeInTheDocument();
+    expect(screen.queryByText("host-b")).toBeNull();
   });
 
   // A group that is not collapsible has no disclosure at all -- the lists
