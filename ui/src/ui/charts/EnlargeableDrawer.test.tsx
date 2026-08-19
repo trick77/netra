@@ -91,16 +91,18 @@ describe("Enlargeable with a page of its own", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  // Without this the panel sits ON TOP of the right-hand half of a Graphs
-  // grid -- which is exactly the panels a reader would click next, so an
-  // overlay sold as "keeps the surface usable" would have covered the usable
-  // part of it. index.css yields the content track while this is set.
-  it("marks the document while open, so the layout can give way", async () => {
+  // The drawer lies over the content; it does not push it aside. An earlier
+  // version marked the root with data-drawer="on" and index.css put a 720px
+  // padding-right on the content track, so opening one chart reflowed the
+  // grid and moved every panel a reader was looking at. This guards the
+  // absence of that: the document must be untouched while the drawer is open.
+  it("leaves the document unmarked, so nothing behind it reflows", async () => {
     renderLinked();
     expect(document.documentElement.dataset.drawer).toBeUndefined();
 
     await userEvent.click(screen.getByRole("link"));
-    expect(document.documentElement.dataset.drawer).toBe("on");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(document.documentElement.dataset.drawer).toBeUndefined();
 
     await userEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }),

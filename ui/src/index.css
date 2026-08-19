@@ -2178,37 +2178,17 @@ a.chartwrap.as-button {
   }
 }
 
-/* The content track gives way while a drawer is open, rather than being
-   covered by it. Without this the panel sits on top of the right-hand half of
-   a Graphs grid -- which is exactly the panels a reader clicks next, so an
-   overlay chosen for keeping the surface usable would have covered the usable
-   part of it. The grid reflows to fewer columns and everything stays
-   reachable. ChartDetail sets the attribute; nothing else reads it. */
-.app > main {
-  transition: padding-right 180ms ease;
-}
-:root[data-drawer="on"] .app > main {
-  padding-right: calc(min(720px, 92vw) + var(--space-5));
-}
-/* Yielding only pays when there is something left to yield INTO, and the
-   arithmetic says that starts far higher than the fleet's own 900px
-   breakpoint: the rail is 212px, the two --space-5 gutters are 48px and the
-   panel is 720px, so a 1024px window would have left 44px of content and a
-   901px window less than nothing -- the content track collapsing to zero,
-   which is a worse outcome than being covered and the exact opposite of what
-   the drawer was chosen for. Below ~1400px it covers instead, which is what a
-   sheet does when the window is not wide enough to hold both. */
-@media (max-width: 1399px) {
-  :root[data-drawer="on"] .app > main {
-    padding-right: var(--space-5);
-  }
-}
+/* The content track does NOT give way. The drawer lies OVER it at every
+   width: nothing behind reflows, nothing changes width, the panel arrives on
+   the right edge and leaves again. Yielding was tried and is not what this
+   is -- reflowing the grid underneath moves the very panels being read, so
+   opening one chart rearranged every other one, and that shift cost more than
+   being covered ever did. Covered is affordable here only because the surface
+   stays LIVE: no scrim, nothing inert, so a click on another chart still
+   lands and swaps this panel for that one. */
 @media (prefers-reduced-motion: reduce) {
   .cd-drawer {
     animation: none;
-  }
-  .app > main {
-    transition: none;
   }
 }
 .cd > header {
