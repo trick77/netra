@@ -19,16 +19,6 @@ import type { HostTab } from "../features/host/HostPage";
 export type Route =
   | { name: "fleet" }
   | { name: "host"; hostId: string; tab: HostTab }
-  /**
-   * One chart, on its own page.
-   *
-   * /hosts/3/chart/interface-throughput rather than .../graphs/... on
-   * purpose: `graphs` is a tab, and a fourth segment under it reads as a
-   * sub-tab. It is also the safer URL -- parseRoute already accepts
-   * /hosts/3/graphs and ignores anything after it, so a chart route hung
-   * there would be one missing check away from silently rendering the tab.
-   */
-  | { name: "chart"; hostId: string; slug: string }
   | { name: "container"; hostId: string; key: string }
   | { name: "events" }
   | { name: "settings" }
@@ -72,8 +62,12 @@ export function parseRoute(pathname: string): Route {
     // it is the URL a human types, and the one an external link is most
     // likely to carry.
     if (tab === undefined) return { name: "host", hostId, tab: "overview" };
+    // /hosts/3/chart/<slug> was a real page once. Every chart opens in a
+    // dialog now, so the URL has nowhere of its own to land -- but it is a
+    // link a reader may have sent, and 404 is the wrong answer to it. The
+    // Graphs tab is where that chart is, so that is where it goes.
     if (tab === "chart" && parts[3] !== undefined && parts.length === 4) {
-      return { name: "chart", hostId, slug: parts[3] };
+      return { name: "host", hostId, tab: "graphs" };
     }
     // A known tab and NOTHING after it. The length check is the point: this
     // used to accept /hosts/3/graphs/anything and render the graphs tab,
@@ -106,8 +100,6 @@ export function routePath(route: Route): string {
       return "/";
     case "host":
       return `/hosts/${encodeURIComponent(route.hostId)}/${route.tab}`;
-    case "chart":
-      return `/hosts/${encodeURIComponent(route.hostId)}/chart/${encodeURIComponent(route.slug)}`;
     case "container":
       return `/containers/${encodeURIComponent(route.hostId)}/${encodeURIComponent(route.key)}`;
     case "events":

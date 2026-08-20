@@ -38,6 +38,9 @@ export interface ContainerChartProps {
    * redraw the shape the reader clicked. */
   max: number;
   range: Range;
+  /** The window the list was answered for, for the enlarged view's time
+   * axis. Absent, no time axis is drawn rather than a guessed one. */
+  window?: { from: string; to: string } | null;
   /** The ranges the PAGE offers. The dialog must not ask for a window its
    * own page could not express. */
   ranges?: readonly Range[];
@@ -49,6 +52,7 @@ export function ContainerChart({
   values,
   max,
   range,
+  window: answered = null,
   ranges,
 }: ContainerChartProps) {
   const spec = SPEC[metric];
@@ -90,6 +94,7 @@ export function ContainerChart({
       series={[{ name: spec.title, color: spec.color, values }]}
       max={max}
       fmt={spec.fmt}
+      window={answered}
       range={range}
       ranges={ranges}
       fetchSeries={fetchSeries}

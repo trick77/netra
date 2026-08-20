@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { Overview, filesystemRows, needsAttention } from "./Overview";
@@ -948,21 +949,19 @@ describe("Overview processor panel", () => {
   // low and entirely plausible -- a 2 MB/s link showed as "2 Mb/s" -- and
   // the fleet's traffic cell carried the identical bug, so nothing on screen
   // contradicted it.
-  // The card's chart is the SUMMED in/out pair, which now has a page of its
-  // own (host-traffic). It used to enlarge into a dialog; it links instead,
-  // to the same page the fleet row's traffic cell links to, because the two
-  // draw the same chart and must not disagree about what clicking it does.
-  // `from=overview` so Back returns here rather than to the Graphs tab.
-  it("opens the traffic chart's own page rather than a dialog", () => {
+  // The card's chart is the SUMMED in/out pair, and it enlarges into the
+  // dialog like every other chart in the app. It briefly navigated to a page
+  // of its own instead; there are no chart pages any more.
+  it("enlarges the traffic chart into the dialog", async () => {
     renderOverview({ netMetrics });
     const traffic = screen.getByRole("region", { name: "Traffic" });
 
-    expect(
-      within(traffic).getByRole("link", { name: /Traffic/ }),
-    ).toHaveAttribute("href", "/hosts/7/chart/host-traffic?from=overview");
-    expect(
-      within(traffic).queryByRole("button", { name: /Enlarge/ }),
-    ).toBeNull();
+    await userEvent.click(
+      within(traffic).getByRole("button", { name: /Enlarge/ }),
+    );
+
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(traffic).queryByRole("link", { name: /Traffic/ })).toBeNull();
   });
 
   it("shows traffic in bytes per second, not bits", () => {

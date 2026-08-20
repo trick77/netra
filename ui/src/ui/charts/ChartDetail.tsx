@@ -1,8 +1,18 @@
 import { useEffect, useRef } from "react";
-import { Overlay, type OverlaySeries } from "./Overlay";
+import type { OverlaySeries } from "./Overlay";
+import { ChartFigure } from "./ChartFigure";
 import { Segmented } from "../Segmented";
-import { ABSENT, absolute } from "../../lib/format";
+import { ABSENT } from "../../lib/format";
 import { RANGES, type Range } from "../../lib/range";
+
+// Where it lives now. Re-exported because this is where it was.
+export { summarise } from "./ChartFigure";
+
+// The size the enlarged chart is DRAWN at. It scales down to whatever the
+// panel gives it -- svg.spark carries max-width:100% and a viewBox -- so
+// this is the shape of the image, not a minimum width the dialog demands.
+const CHART_WIDTH = 1000;
+const CHART_HEIGHT = 380;
 
 export interface ChartDetailProps {
   title: string;
@@ -46,46 +56,20 @@ export interface ChartDetailProps {
   /** Draw the series as a cumulative stack, matching the small panel that
    * opened this. The mark must not change when a chart is enlarged. */
   stacked?: boolean;
-  /** Whether the chart names its series above it. Off for the per-core
-   * stack: 32 entries squeezed the 900px plot into a corner, and the stats
-   * table below already names every series beside its colour. */
-  legend?: boolean;
   /** A value to mark with a dashed rule, e.g. a host's total memory. */
   reference?: number;
   /** Draw the series as mirrored in/out pairs about a midline. */
   mirrored?: boolean;
-  /** Hide the y axis. A stack whose height is a shape rather than a
-   * quantity -- unnormalised per-core CPU runs to N x 100 -- must not carry
-   * an axis putting a number on it. */
+  /** 1024 for byte quantities, so the axis steps 512 MB rather than 500 MB.
+   * The small panel has always passed this; the enlarged view ignored it,
+   * because its HTML gutter stepped the axis itself and knew nothing about
+   * a base. Same chart, two different sets of numbers. */
+  tickBase?: 1000 | 1024;
+  /** Hide the VALUE axis, and only that. A stack whose height is a shape
+   * rather than a quantity -- unnormalised per-core CPU runs to N x 100 --
+   * must not carry an axis putting a number on it. Gridlines, the spine and
+   * the time axis stay: "when" is a real question about every chart. */
   hideAxis?: boolean;
-  /**
-   * How the enlarged view arrives.
-   *
-   * "dialog" is a modal over a scrim: one thing, closely, with the page
-   * behind it inert. Right for a chart opened from somewhere that has no
-   * other charts worth comparing it against.
-   *
-   * "drawer" is a side panel with NO scrim, and the difference is the point:
-   * the surface behind it stays readable and clickable, so a reader can walk
-   * a Graphs grid panel by panel and watch the panel change. A scrim would
-   * make that surface inert, which is the entire reason a drawer was chosen
-   * over the dialog it replaces.
-   */
-  variant?: "dialog" | "drawer";
-  /**
-   * The chart's own page, when it has one.
-   *
-   * Rendered as a link in the drawer's header, and it closes a gap the drawer
-   * would otherwise open. The fleet's four host charts pass neither a
-   * `fetchSeries` nor a `window`, so their drawer carries no range picker and
-   * no time axis -- the page does, and before this a plain click went there.
-   * A reader must not have to know that cmd-click exists to get back what the
-   * plain click used to give them.
-   *
-   * Only in the drawer. The dialog is what a chart with no page gets, so
-   * there is nothing for it to link to.
-   */
-  href?: string;
 }
 
 /**
@@ -114,15 +98,12 @@ export function ChartDetail({
   error = null,
   onClose,
   stacked,
-  legend,
   reference,
   mirrored,
+  tickBase,
   hideAxis,
-  variant = "dialog",
-  href,
 }: ChartDetailProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const drawer = variant === "drawer";
 
   // The latest onClose, without making it a dependency of the effects below.
   // Callers build it inline (`onClose={() => setEnlarged(false)}`), so it is a
@@ -130,7 +111,7 @@ export function ChartDetail({
   // behind this polls. Depending on it re-ran the focus effect on every tick:
   // cleanup put focus back on the opener and setup pulled it into the panel
   // again, so a reader who had just clicked "6h" in the picker, or who was
-  // typing in the filter box the drawer deliberately leaves reachable, lost
+  // typing in the picker, lost
   // the caret to the panel root. Same reason and same shape as useDetailRange's
   // fetchRef and usePoll's fnRef.
   const onCloseRef = useRef(onClose);
@@ -164,38 +145,18 @@ export function ChartDetail({
     };
   }, []);
 
-  // The drawer's dismiss, and the reason it cannot simply reuse the dialog's:
-  // the dialog closes on its backdrop, and a drawer deliberately has none.
-  // So the outside click is caught on the document instead.
-  //
-  // mousedown rather than click, and a click that lands on ANOTHER chart is
-  // let through rather than swallowed: that chart's own trigger then opens
-  // its drawer, so walking a grid panel by panel swaps the panel instead of
-  // closing it and making the reader click twice.
-  useEffect(() => {
-    if (!drawer) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target;
-      if (!(target instanceof Node)) return;
-      if (ref.current?.contains(target)) return;
-      onCloseRef.current();
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [drawer]);
-
   const ceiling = max ?? peak(series, stacked);
-  const format = (v: number | null) => (fmt ? fmt(v) : formatNumber(v));
+  // The figure only ever formats a real number -- a tick, or a value under
+  // the cursor. The null case belongs to the caller's fmt, which the stats
+  // table used to reach through for its absent cells and no longer does.
+  const format = (v: number) => (fmt ? fmt(v) : formatNumber(v));
 
   const panel = (
     <div
       ref={ref}
-      className={drawer ? "cd cd-drawer" : "cd"}
+      className="cd"
       role="dialog"
-      // Only the dialog is modal. A drawer that claimed aria-modal would tell
-      // a screen reader the rest of the page had gone away, when staying is
-      // the whole point of it.
-      aria-modal={drawer ? undefined : "true"}
+      aria-modal="true"
       aria-label={`${title}, enlarged`}
       tabIndex={-1}
       onClick={(e) => e.stopPropagation()}
@@ -224,160 +185,36 @@ export function ChartDetail({
             Could not load that range.
           </span>
         )}
-        {/* Before Close, because it is the way ONWARD rather than the way
-            out. A real anchor: App delegates in-origin clicks at the root, so
-            this needs no navigate callback threaded down to it. */}
-        {drawer && href !== undefined && (
-          <a className="btn" href={href}>
-            Open as page
-          </a>
-        )}
         <button className="btn ghost" onClick={onClose} aria-label="Close">
           Close
         </button>
       </header>
 
-      <div className="cd-chart">
-        {/* The axis is drawn from the same ceiling the shape is scaled to,
-              so the labels cannot disagree with it -- EXCEPT when a
-              reference is given. Then the ceiling carries headroom above the
-              reference so the rule is visible, and labelling that padded
-              number puts a quantity on screen that does not exist: a 137.4 GB
-              host read "148.4 GB". The labels then step from the reference,
-              positioned where they actually fall. */}
-        {!hideAxis && (
-          <div className="cd-y">
-            {axisLabels(ceiling, reference, mirrored, min).map((label, i) => (
-              <span key={i} style={{ top: `${(1 - label.fraction) * 100}%` }}>
-                {format(label.value)}
-              </span>
-            ))}
-          </div>
-        )}
-        <Overlay
-          series={series}
-          min={min}
-          max={ceiling}
-          width={900}
-          height={320}
-          stacked={stacked}
-          legend={legend}
-          reference={reference}
-          mirrored={mirrored}
-          label={`${title}, enlarged`}
-        />
-      </div>
-
-      {answered && (
-        <div className="cd-x">
-          <span>{absolute(answered.from)}</span>
-          <span>{absolute(answered.to)}</span>
-        </div>
-      )}
-
-      {/* What the small panel has no room for: every series named, with
-            the numbers a reader would otherwise have to eyeball. */}
-      <table className="cd-stats">
-        <thead>
-          <tr>
-            <th scope="col">Series</th>
-            <th scope="col">Latest</th>
-            <th scope="col">Min</th>
-            <th scope="col">Max</th>
-            <th scope="col">Mean</th>
-          </tr>
-        </thead>
-        <tbody>
-          {series.map((s) => {
-            const stats = summarise(s.values);
-            return (
-              <tr key={s.name}>
-                <th scope="row">
-                  <i style={{ background: s.color }} />
-                  {s.name}
-                </th>
-                <td>{format(stats.latest)}</td>
-                <td>{format(stats.min)}</td>
-                <td>{format(stats.max)}</td>
-                <td>{format(stats.mean)}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <ChartFigure
+        series={series}
+        min={min}
+        max={ceiling}
+        width={CHART_WIDTH}
+        height={CHART_HEIGHT}
+        stacked={stacked}
+        reference={reference}
+        mirrored={mirrored}
+        hideAxis={hideAxis}
+        format={format}
+        tickBase={tickBase}
+        window={answered}
+        label={`${title}, enlarged`}
+      />
     </div>
   );
 
-  // The dialog keeps its backdrop -- it closes on a click and stops the click
-  // inside itself, so a stray press on what you are reading does not dismiss
-  // it. The drawer has no backdrop at all, by design: see `variant`.
-  return drawer ? (
-    panel
-  ) : (
+  // The backdrop closes on a click, and the panel stops the click inside
+  // itself, so a stray press on what you are reading does not dismiss it.
+  return (
     <div className="cd-back" onClick={onClose}>
       {panel}
     </div>
   );
-}
-
-/**
- * The three y-axis labels, as a position in the plot box and the value that
- * belongs at it.
- *
- * The mirrored case gets its own axis rather than `hideAxis`, and the reason
- * is what the chart is for: both mirrored callers -- the Graphs tab's
- * "Interface throughput" and the container page's "Network" -- are rate
- * charts carrying unit="B/s", so "how much" is exactly the question a reader
- * enlarged them to answer. Dropping the axis answers less than labelling it
- * correctly does.
- *
- * What it must say is set by mirrorPaths() (geometry.ts): the baseline is
- * h/2, ingress is drawn UPWARD from it and egress DOWNWARD, both scaled
- * against the same max. So the midline is zero and BOTH edges are a peak of
- * `ceiling`. The shared [ceiling, ceiling/2, 0] axis claimed the opposite --
- * zero at the bottom, where the largest egress actually sits -- which read a
- * saturated downlink as an idle one.
- *
- * `reference` is not combined with `mirrored`: no caller passes both, and a
- * ceiling padded for a reference rule means something different on each of
- * the two half-axes. The mirrored case is taken first rather than guessed at.
- */
-// `floor` is the plot's own minimum, not an assumed zero. A free-scaled
-// chart (the sensor list) is drawn between its extent's floor and ceiling,
-// and labelling that plot 0 / half / ceiling would put three numbers on the
-// axis at heights the shape was never scaled to -- the labels would disagree
-// with the line beside them. Defaults to 0, so every panel that measures
-// from nothing is labelled exactly as before.
-function axisLabels(
-  ceiling: number,
-  reference: number | undefined,
-  mirrored: boolean | undefined,
-  floor = 0,
-): { fraction: number; value: number }[] {
-  if (mirrored) {
-    // Top and bottom are both +ceiling -- a magnitude away from the midline
-    // in either direction -- and the midline is zero.
-    return [
-      { fraction: 1, value: ceiling },
-      { fraction: 0.5, value: 0 },
-      { fraction: 0, value: ceiling },
-    ];
-  }
-  // A series that never moved is drawn as one line down the middle of the box
-  // -- scaleY() centres a min === max series rather than dividing by zero --
-  // so the axis says that one value at that one height. Stepping it as though
-  // the box had a range would print three numbers the shape does not have:
-  // a fan pinned at 1200 RPM labelled 1201 / 1201 / 1200.
-  if (ceiling === floor) return [{ fraction: 0.5, value: floor }];
-  const span = ceiling - floor;
-  const fractions =
-    reference === undefined
-      ? [1, 0.5, 0]
-      : [(reference - floor) / span, (reference - floor) / span / 2, 0];
-  return fractions.map((fraction) => ({
-    fraction,
-    value: floor + fraction * span,
-  }));
 }
 
 function formatNumber(v: number | null): string {
@@ -411,39 +248,16 @@ export function peak(
   } else {
     for (const s of series) {
       for (const v of s.values) if (v !== null && v > max) max = v;
+      // The BAND too, not just the line. With the mean-plus-peak pair the
+      // line is the bucket's mean and the band is its peak, so the band is
+      // always the taller of the two: a ceiling taken from the line alone
+      // draws the envelope outside the plot -- linePath() never clamps --
+      // and the burst someone enlarged the chart to see is the one thing
+      // that disappears off the top. This is what the chart page's peakOf()
+      // did before this component absorbed it.
+      for (const v of s.band ?? []) if (v !== null && v > max) max = v;
     }
   }
   // A zero ceiling would divide by zero in the geometry.
   return max || 1;
-}
-
-/**
- * Latest, min, max and mean over the non-null values.
- *
- * Nulls are skipped rather than counted as zero: a host that reported
- * nothing for an hour did not report an hour of zeroes, and averaging them
- * in would drag every mean toward a number nobody measured. A series with no
- * values at all reports null for each, which renders as the absent marker.
- */
-export function summarise(values: readonly (number | null)[]): {
-  latest: number | null;
-  min: number | null;
-  max: number | null;
-  mean: number | null;
-} {
-  let min: number | null = null;
-  let max: number | null = null;
-  let sum = 0;
-  let count = 0;
-  for (const v of values) {
-    if (v === null) continue;
-    if (min === null || v < min) min = v;
-    if (max === null || v > max) max = v;
-    sum += v;
-    count++;
-  }
-  // The LATEST bucket, trailing nulls included: a series that has gone quiet
-  // reads as absent rather than as its last known value.
-  const latest = values.length > 0 ? (values[values.length - 1] ?? null) : null;
-  return { latest, min, max, mean: count === 0 ? null : sum / count };
 }

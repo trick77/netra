@@ -2110,20 +2110,51 @@ details.sysfold > .body {
   font: inherit;
   text-align: left;
 }
-/* zoom-in above is for the <button> branch, which enlarges the chart in
-   place. The <a> branch navigates to the chart's own page, and a magnifier
-   over something that leaves the page tells the wrong story -- an anchor
-   gets the ordinary link pointer. Both branches share the class because
-   everything else about them is identical; only the cursor may differ. */
-a.chartwrap.as-button {
-  cursor: pointer;
-}
 /* The same button around a sparkline rather than a panel: in a table cell or
    a flex row, the full-width rule above would stretch a 110px chart across
    the whole column and push the reading beside it out of line. */
 .chartwrap.as-button.inline {
   display: inline-flex;
   width: auto;
+}
+/* The mark that says a chart is pressable.
+   Absolutely positioned, and that is the requirement rather than a
+   preference: this badge sits on a 170x32 sparkline inside a table cell as
+   well as on a full panel, and anything taking layout space would push the
+   row's other columns out of line. It rides in the corner of whichever chart
+   it is over.
+
+   Quiet at rest -- a fleet page carries sixty of these, and sixty
+   full-contrast plus signs would read as data. It comes up on hover and on
+   keyboard focus, which is when a reader is actually asking "can I click
+   this". */
+.chartwrap-more {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: var(--radius-sm, 3px);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  opacity: 0.55;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease;
+  pointer-events: none;
+}
+.chartwrap.as-button:hover .chartwrap-more,
+.chartwrap.as-button:focus-visible .chartwrap-more {
+  opacity: 1;
+  color: var(--fg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chartwrap-more {
+    transition: none;
+  }
 }
 
 /* ── Enlarged chart ───────────────────────────────────────────────── */
@@ -2143,54 +2174,15 @@ a.chartwrap.as-button {
   border-radius: var(--radius-ui);
   box-shadow: var(--shadow-drawer);
   padding: var(--space-5);
-  max-width: min(1000px, 100%);
+  /* The width the page used to have. The chart inside is drawn at 1000 and
+     scales down with its container, so this is headroom rather than a floor:
+     a narrow window gets the same chart, smaller, with its axis labels still
+     on their gridlines. */
+  max-width: min(1100px, 100%);
   max-height: 100%;
   overflow: auto;
 }
 
-/* ── The drawer: a chart that has a page, opened beside the list ──────
-   Same panel as the dialog above, pinned to the right edge instead of
-   centred, and with no backdrop at all. The backdrop is exactly what it must
-   not have: a scrim makes the surface behind it inert, and the surface
-   staying live -- so a reader can walk a Graphs grid panel by panel and watch
-   this change -- is the whole reason a drawer replaced the modal here.
-
-   Dismissal is therefore not the backdrop's job: Escape, the Close button, or
-   a click anywhere outside the panel, all handled in ChartDetail. */
-.cd-drawer {
-  position: fixed;
-  z-index: 20;
-  top: 0;
-  right: 0;
-  height: 100vh;
-  width: min(720px, 92vw);
-  max-width: none;
-  max-height: none;
-  border-radius: 0;
-  border: 0;
-  border-left: 1px solid var(--border-strong);
-  overflow-y: auto;
-  animation: drawer-in 180ms ease;
-}
-@keyframes drawer-in {
-  from {
-    transform: translateX(100%);
-  }
-}
-
-/* The content track does NOT give way. The drawer lies OVER it at every
-   width: nothing behind reflows, nothing changes width, the panel arrives on
-   the right edge and leaves again. Yielding was tried and is not what this
-   is -- reflowing the grid underneath moves the very panels being read, so
-   opening one chart rearranged every other one, and that shift cost more than
-   being covered ever did. Covered is affordable here only because the surface
-   stays LIVE: no scrim, nothing inert, so a click on another chart still
-   lands and swaps this panel for that one. */
-@media (prefers-reduced-motion: reduce) {
-  .cd-drawer {
-    animation: none;
-  }
-}
 .cd > header {
   display: flex;
   align-items: center;
@@ -2204,35 +2196,6 @@ a.chartwrap.as-button {
 .cd > header .spacer {
   margin-left: auto;
 }
-.cd-chart {
-  display: flex;
-  gap: var(--space-2);
-}
-/* The axis labels sit beside the plot and share its height, so a label can
-   never drift from the gridline it names. */
-.cd-y {
-  /* Labels are placed at the value they name rather than spread evenly:
-     with a reference line the plot carries headroom above it, so an evenly
-     spread top label would sit above the number it claims to mark. */
-  position: relative;
-  font-size: var(--text-micro);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  height: 320px;
-  /* Wide enough for the longest label this axis draws, because the spans are
-     absolutely positioned and so contribute nothing to the container's own
-     width: at 5.5em "137.4 GB" wrapped onto two lines and read as a
-     truncated number. */
-  width: 7em;
-}
-.cd-y span {
-  position: absolute;
-  right: 0;
-  transform: translateY(-50%);
-  text-align: right;
-  white-space: nowrap;
-}
-
 .cd-x {
   display: flex;
   justify-content: space-between;
@@ -2279,105 +2242,6 @@ a.chartwrap.as-button {
   border-radius: 2px;
   flex: none;
 }
-/* ---- one chart, on its own page ---------------------------------------
-
-   Not a dialog: no scrim, no shadow, no Close. It has a URL, so Back leaves
-   it and a reload brings it straight back. Everything below is laid out with
-   flex and gap rather than per-element margins, so the rows cannot collapse
-   into each other as the chart's own height changes. */
-.chartpage {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  max-width: 1100px;
-}
-.chartpage > .crumb {
-  display: flex;
-  align-items: center;
-}
-/* The Back button carries a chevron BESIDE its label, not above it. .btn is
-   a plain block with a fixed 34px height, so the icon and the text laid out
-   as two lines inside a box only tall enough for one -- the chevron sat on
-   the label. Flex here rather than on .btn: every other button in the app is
-   text alone and does not need it. */
-.chartpage > .crumb .btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding-left: 8px;
-}
-.chartpage > header {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-}
-.chartpage > header h2 {
-  font-family: var(--font-serif);
-  font-size: var(--text-display);
-  margin: 0;
-}
-.chartpage > header .u {
-  color: var(--muted);
-  font-size: var(--text-label);
-}
-.chartpage > header .spacer {
-  margin-left: auto;
-}
-
-/* The range strip: five views of this one chart, one per window.
-
-   Indented to the plot's left edge so it starts where the chart does. A
-   strip flush with the card edge reads as a toolbar that happens to sit
-   above a chart, rather than as this chart's own ranges. */
-.strip {
-  display: flex;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-}
-/* No border, no fill, no shadow -- the active range is marked by dimming the
-   others and by nothing else. A thumbnail CONTAINS a chart, so any fill
-   tints the ground its series colour sits on and the thumbnail stops
-   matching the chart it opens. Dimming is already how this app says "not
-   this one": Overlay's highlight dims other series rather than hiding them. */
-.thumb {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-2);
-  border: 0;
-  background: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  font: inherit;
-}
-.thumb svg {
-  opacity: 0.4;
-  transition: opacity 120ms ease;
-}
-.thumb .lab {
-  font-size: var(--text-micro);
-  color: var(--muted);
-  opacity: 0.6;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
-.thumb:hover svg {
-  opacity: 0.7;
-}
-.thumb[aria-pressed="true"] svg {
-  opacity: 1;
-}
-.thumb[aria-pressed="true"] .lab {
-  opacity: 1;
-  color: var(--ink);
-  font-weight: 600;
-}
-@media (prefers-reduced-motion: reduce) {
-  .thumb svg {
-    transition: none;
-  }
-}
-
 /* The cursor column appears only while the pointer is over the plot, so it
    is marked as the live reading rather than another statistic. */
 .cd-stats td.cursor,

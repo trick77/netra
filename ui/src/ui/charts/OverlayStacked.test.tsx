@@ -115,9 +115,17 @@ describe("ChartDetail, stacked", () => {
       <ChartDetail title="Memory" series={series} stacked onClose={() => {}} />,
     );
 
-    // The y-axis labels name the ceiling the geometry used.
-    const top = container.querySelector(".cd-y span");
-    expect(top?.textContent).toBe("35");
+    // The y-axis labels name the ceiling the geometry used. They are SVG
+    // text inside the plot, so the topmost is the one with the smallest y.
+    const labels = Array.from(
+      container.querySelectorAll('[data-axis-label="y"]'),
+    ).sort((a, b) => Number(a.getAttribute("y")) - Number(b.getAttribute("y")));
+    // The tick chooser rounds to a readable step, so the top label is the
+    // highest nice value UNDER the ceiling rather than the ceiling itself.
+    // What matters is that it is above the largest single band: a ceiling
+    // taken from that instead of the running total would top the axis out at
+    // 20 and draw the stack straight out of the box.
+    expect(Number(labels[0]?.textContent)).toBeGreaterThan(20);
   });
 });
 

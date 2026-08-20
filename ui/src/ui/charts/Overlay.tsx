@@ -21,6 +21,15 @@ export interface OverlaySeries {
    * legend is required below since colour alone can't carry identity. */
   color: string;
   values: (number | null)[];
+  /**
+   * The bucket's PEAK, drawn as a pale envelope beneath the line.
+   *
+   * Declared here rather than only on ChartSeries because bandsFor() has
+   * always attached one and this type has always carried it -- as an
+   * untyped spread, which type-checked by accident and meant no caller
+   * could pass it deliberately. See ChartSeries.band in Chart.tsx.
+   */
+  band?: (number | null)[];
 }
 
 export interface OverlayProps {

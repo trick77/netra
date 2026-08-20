@@ -400,7 +400,7 @@ describe("the nav rail", () => {
 // tab was the only entrance, and wrong the moment the fleet row's traffic
 // cell started linking here: it dropped the reader a level DEEPER than
 // where they started, on a page they had never seen.
-describe("a chart page's Back", () => {
+describe("the old chart-page URL", () => {
   beforeEach(() => {
     vi.mocked(api.getHost).mockResolvedValue({
       ...host,
@@ -424,54 +424,17 @@ describe("a chart page's Back", () => {
     } as unknown as api.MetricsResponse);
   });
 
-  it("returns to the fleet when the fleet is where the reader came from", async () => {
-    // Given a chart opened from a fleet row's traffic cell
+  // Every chart opens in a dialog now, so a chart has no URL of its own to
+  // land on. The links readers have already sent must still arrive
+  // somewhere true rather than on "no such page": the Graphs tab is where
+  // that chart is drawn.
+  it("lands on the graphs tab rather than a not-found page", async () => {
     goTo("/hosts/3/chart/host-traffic?range=6h&from=fleet");
     render(<App />);
 
-    // When Back is pressed
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Back to fleet/ }),
-    );
-
-    // Then the fleet, carrying the range -- and WITHOUT `from`, which says
-    // how the reader got to the chart and means nothing on the page they
-    // came from.
-    await waitFor(() => expect(window.location.pathname).toBe("/"));
-    expect(window.location.search).toBe("?range=6h");
-  });
-
-  it("still returns to the graphs tab for a link that says nothing", async () => {
-    // Given a chart opened the way every existing link opens one
-    goTo("/hosts/3/chart/host-traffic?range=6h");
-    render(<App />);
-
-    // When Back is pressed
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Back to graphs/ }),
-    );
-
-    // Then the tab, exactly as before -- no link anyone has already sent
-    // changes behaviour.
-    await waitFor(() =>
-      expect(window.location.pathname).toBe("/hosts/3/graphs"),
-    );
-  });
-
-  it("falls back rather than routing to whatever the URL says", async () => {
-    // Given a `from` nobody put there on purpose. It arrives from the URL,
-    // so it is never used as a path.
-    goTo("/hosts/3/chart/host-traffic?from=%2F%2Fevil.example");
-    render(<App />);
-
-    // When Back is pressed
-    await userEvent.click(
-      await screen.findByRole("button", { name: /Back to graphs/ }),
-    );
-
-    // Then the default target
-    await waitFor(() =>
-      expect(window.location.pathname).toBe("/hosts/3/graphs"),
-    );
+    // The tabs are real links carrying aria-current, not ARIA tabs -- see
+    // Tabs.tsx.
+    const graphs = await screen.findByRole("link", { name: "Graphs" });
+    expect(graphs).toHaveAttribute("aria-current", "page");
   });
 });

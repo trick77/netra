@@ -45,10 +45,6 @@ export interface GraphsProps {
    * dialog's picker did when it was wired to the page's setter.
    */
   fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
-  /** The host these panels belong to, for the per-chart page links. Widened
-   * to match HostPage, which takes an id from the URL as a string and from a
-   * fetched host as a number. */
-  hostId?: number | string;
 }
 
 function Panel({
@@ -56,27 +52,34 @@ function Panel({
   res,
   range,
   fetchFamily,
-  hostId,
 }: {
   spec: PanelSpec;
   res: MetricsResponse | null;
   range?: Range;
   fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
-  hostId?: number | string;
 }) {
   const series = bandsFor(spec, res);
+  // The enlarged view has room for the pair -- mean as the line, the
+  // bucket's peak as a pale envelope under it -- and the 260px panel does
+  // not: two marks in that space are a smear, so it draws the peak alone.
+  // bandsFor only builds an envelope for the specs that can carry one (a
+  // mirrored rate chart at a rollup tier), so every other panel is handed
+  // exactly what it already had.
+  const detailSeries = bandsFor(spec, res, { withPeakBand: true });
 
-  // The same bandsFor the page uses, over a response for one family at one
+  // The same bandsFor the panel uses, over a response for one family at one
   // other range -- so an enlarged chart draws its wider window exactly as
-  // the small one drew its narrower one, counters, stacks and all. Rebuilt
-  // per render rather than memoised: useDetailRange only calls it when its
-  // own range actually differs from the page's, which is at most once per
-  // click on a picker nobody clicks in a loop.
+  // the small one drew its narrower one, counters, stacks and all. With the
+  // envelope, because this feeds the DIALOG: without it, widening the range
+  // would quietly drop the pair back to a single mark. Rebuilt per render
+  // rather than memoised: useDetailRange only calls it when its own range
+  // actually differs from the page's, which is at most once per click on a
+  // picker nobody clicks in a loop.
   const fetchSeries = fetchFamily
     ? async (next: Range) => {
         const answered = await fetchFamily(familyFor(spec), next);
         return {
-          series: bandsFor(spec, answered),
+          series: bandsFor(spec, answered, { withPeakBand: true }),
           window: answered.window ?? null,
         };
       }
@@ -120,22 +123,8 @@ function Panel({
   // point at which colour alone stops carrying identity.
   return (
     <ChartPanel
-      // The chart's own page. Every panel here has a slug, so every panel
-      // here is a link; the dialog is what a chart without a page still
-      // gets.
-      // Carrying the range, because the link is meant to be the view someone
-      // is actually looking at: without it a panel opened at 30d rendered its
-      // page at the default range, and ChartScreen's Back -- which forwards
-      // the page's own query string -- then dropped the tab back to the
-      // default too, the opposite of the "carrying the range with it" its
-      // comment claims.
-      href={
-        hostId === undefined
-          ? undefined
-          : `/hosts/${encodeURIComponent(String(hostId))}/chart/${spec.slug}` +
-            (range === undefined ? "" : `?range=${encodeURIComponent(range)}`)
-      }
       title={spec.title}
+      detailSeries={detailSeries}
       // "Not collected" would be a lie here: the bands exist, the scale to
       // read them against does not, and a reader sent looking for a broken
       // collector would find a perfectly healthy one.
@@ -194,7 +183,7 @@ function Group({
   specs: PanelSpec[];
   sources: GraphsProps;
 }) {
-  const { range, fetchFamily, hostId } = sources;
+  const { range, fetchFamily } = sources;
   return (
     <>
       <h3 className="grouphead">{title}</h3>
@@ -208,7 +197,6 @@ function Group({
             res={sources[spec.source] ?? null}
             range={range}
             fetchFamily={fetchFamily}
-            hostId={hostId}
           />
         ))}
       </div>

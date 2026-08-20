@@ -73,21 +73,23 @@ describe("query state", () => {
   });
 });
 
-describe("the chart route", () => {
-  it("parses a chart page and round-trips it", () => {
-    const route = parseRoute("/hosts/3/chart/interface-throughput");
-    expect(route).toEqual({
-      name: "chart",
+describe("the old chart-page route", () => {
+  // /hosts/3/chart/<slug> was a real page once. Charts open in a dialog now,
+  // so the URL has nowhere of its own to land -- and 404 is the wrong answer
+  // to a link a reader may already have sent. It lands on the tab holding
+  // that chart instead.
+  it("lands on the graphs tab rather than nowhere", () => {
+    expect(parseRoute("/hosts/3/chart/interface-throughput")).toEqual({
+      name: "host",
       hostId: "3",
-      slug: "interface-throughput",
+      tab: "graphs",
     });
-    expect(routePath(route)).toBe("/hosts/3/chart/interface-throughput");
   });
 
-  // The trap this route was moved off /graphs/ to avoid, pinned here because
-  // the old parser accepted a fourth segment under a known tab and silently
-  // rendered the tab -- so a link to a chart that no longer exists would
-  // have looked like it worked.
+  // The trap this route was moved off /graphs/ to avoid, still pinned: the
+  // old parser accepted a fourth segment under a known tab and silently
+  // rendered the tab, so a link to something that does not exist looked like
+  // it worked.
   it("does not swallow a trailing segment under a tab", () => {
     expect(parseRoute("/hosts/3/graphs/interface-throughput")).toEqual({
       name: "notFound",
@@ -103,16 +105,10 @@ describe("the chart route", () => {
     });
   });
 
-  it("has no chart without a slug", () => {
+  it("has nothing to redirect without a slug", () => {
     expect(parseRoute("/hosts/3/chart")).toEqual({
       name: "notFound",
       path: "/hosts/3/chart",
     });
-  });
-
-  it("encodes a slug that needs it", () => {
-    expect(routePath({ name: "chart", hostId: "3", slug: "a/b" })).toBe(
-      "/hosts/3/chart/a%2Fb",
-    );
   });
 });
