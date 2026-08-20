@@ -45,7 +45,6 @@ import {
   RANGE_VALUES as HOST_RANGE_VALUES,
   type HostTab,
 } from "./features/host/HostPage";
-import { ChartPage } from "./features/host/ChartPage";
 import {
   ContainerPage,
   CONTAINER_RANGE_VALUES,
@@ -255,15 +254,6 @@ function Screen({
           go={go}
         />
       );
-    case "chart":
-      return (
-        <ChartScreen
-          hostId={route.hostId}
-          slug={route.slug}
-          search={search}
-          go={go}
-        />
-      );
     case "container":
       return (
         <ContainerScreen
@@ -426,11 +416,15 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
             fetchContainerTrends(host.id, range),
           ]);
           return list.map((container) => {
-            const trend = trends.get(container.container_key);
+            const trend = trends.trends.get(container.container_key);
             return {
               ...container,
               host_id: host.id,
               hostname: host.hostname,
+              // Per ROW, not per list: this list spans hosts, and each host
+              // answered its own window. One window over all of them would
+              // label a row's chart with another host's times.
+              window: trends.window,
               cpu: trend?.cpu ?? [],
               mem: trend?.mem ?? [],
               mem_limit_bytes: trend?.memLimit ?? null,
@@ -543,91 +537,6 @@ function HostScreen({
       onRangeChange={chooseRange}
     />
   );
-}
-
-/**
- * One chart, with its own URL.
- *
- * The range is a query parameter for the same reason every other page's
- * filters are (spec 9): the view someone is looking at should be a link they
- * can send, and "this chart over the last 7 days" is the whole message.
- */
-function ChartScreen({
-  hostId,
-  slug,
-  search,
-  go,
-}: {
-  hostId: string;
-  slug: string;
-  search: string;
-  go: Go;
-}) {
-  const setParam = paramSetter(`/hosts/${hostId}/chart/${slug}`, search, go);
-  const [range, chooseRange] = rangeParam(search, HOST_RANGE_VALUES, setParam);
-  const back = backTarget(hostId, search);
-
-  return (
-    <ChartPage
-      hostId={hostId}
-      slug={slug}
-      range={range}
-      onRangeChange={chooseRange}
-      // Back to the page this chart was opened from, carrying the range with
-      // it. history.back() would be wrong for someone who arrived by link:
-      // there is nothing behind them.
-      onBack={() => go(back.path)}
-      backLabel={back.label}
-    />
-  );
-}
-
-/**
- * Where Back goes, and what it says.
- *
- * `?from=` because this page has more than one way in. It was the Graphs
- * tab alone, and Back was hardcoded to it; the fleet row's traffic cell now
- * links here too, and sending that reader to a host's Graphs tab drops them
- * on a page they were never on, one level deeper than where they started.
- *
- * A whitelist, never the raw value as a path: `from` arrives from the URL,
- * and go() would happily route to whatever is in it.
- *
- * No `from` at all keeps the old behaviour exactly -- every existing link,
- * and every one a reader has already sent, still goes back to the tab.
- */
-const BACK_TARGETS: Record<
-  string,
-  (hostId: string) => { path: string; label: string }
-> = {
-  fleet: () => ({ path: "/", label: "Back to fleet" }),
-  overview: (hostId) => ({
-    path: `/hosts/${hostId}/overview`,
-    label: "Back to overview",
-  }),
-};
-
-function backTarget(hostId: string, search: string) {
-  // Stripped, not forwarded: `from` says how the reader got HERE, and
-  // carrying it onto the fleet URL would leave a parameter that page has no
-  // use for sitting in the address bar of a link they might then send.
-  const params = new URLSearchParams(search);
-  const from = params.get("from") ?? "";
-  params.delete("from");
-  const rest = params.toString();
-  const query = rest ? `?${rest}` : "";
-  // hasOwn, not a bare lookup: BACK_TARGETS is an object literal, so
-  // `?from=toString` and `?from=constructor` find something on
-  // Object.prototype, call it, and hand back a value with no `path` on it --
-  // Back then navigates to the string "undefined" and renders a nameless
-  // button. A whitelist has to actually be one.
-  const target = (Object.hasOwn(BACK_TARGETS, from)
-    ? BACK_TARGETS[from]?.(hostId)
-    : undefined) ?? {
-    path: `/hosts/${hostId}/graphs`,
-    label: "Back to graphs",
-  };
-  return { path: target.path + query, label: target.label };
 }
 
 function ContainerScreen({

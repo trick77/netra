@@ -48,6 +48,19 @@ import { DISK_WARN_PCT } from "./conditions";
  * that host's sparklines, not the fleet's.
  */
 export interface HostTrends {
+  /**
+   * The window the hub actually answered, for the enlarged view's time axis.
+   *
+   * Not recomputed from the range at render time: the hub clamps a window it
+   * cannot serve in full (retention, materialisation lag), so the range the
+   * reader picked and the window the series were gridded against are not
+   * always the same span. Labelling the axis from the ask rather than the
+   * answer would put times on screen the data does not cover.
+   *
+   * null when every family failed, which is the same "cannot say" the
+   * counters below use: no axis at all beats an invented one.
+   */
+  window: { from: string; to: string } | null;
   cpu: Band[];
   mem: Band[];
   /**
@@ -423,6 +436,10 @@ export async function fetchHostTrends(
   const traffic = trafficSeries(net);
 
   return {
+    // Whichever family answered. They are all asked for the same window, so
+    // any of them names it; host is listed first because it is the one fetch
+    // this row cannot do without.
+    window: (host ?? net ?? filesystem ?? agent)?.window ?? null,
     cpu: cpuBands(host, cores).bands,
     mem: memoryBands(host),
     reporting: total,
@@ -466,6 +483,7 @@ export function buildRows(
       ...host,
       site_name:
         host.site_id === null ? null : (siteNames.get(host.site_id) ?? null),
+      window: trend?.window ?? null,
       cpu: trend?.cpu ?? [],
       mem: trend?.mem ?? [],
       reporting: trend?.reporting ?? [],
@@ -506,7 +524,12 @@ export async function fetchContainerTrends(
   hostId: number,
   range: Range,
   now?: Date,
-): Promise<Map<string, ContainerTrend>> {
+): Promise<{
+  trends: Map<string, ContainerTrend>;
+  /** The window the hub answered, for the enlarged view's time axis -- the
+   * answer rather than the ask, for the reason HostTrends.window gives. */
+  window: { from: string; to: string } | null;
+}> {
   const window = rangeWindow(range, now);
   const res = await orNull(
     getMetrics(hostId, {
@@ -517,7 +540,7 @@ export async function fetchContainerTrends(
     }),
   );
 
-  return containerTrends(res);
+  return { trends: containerTrends(res), window: res?.window ?? null };
 }
 
 /**

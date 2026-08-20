@@ -567,6 +567,7 @@ describe("buildRows", () => {
 
   it("carries a host's trends onto its row", () => {
     const trends: HostTrends = {
+      window: null,
       cpu: [{ name: "busy", color: "var(--s1)", values: [1, 2] }],
       mem: [],
       reporting: [1, 2],

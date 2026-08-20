@@ -198,47 +198,44 @@ describe("the list sparklines enlarge", () => {
       );
     }
 
-    // Every sparkline in a fleet row is now a LINK, and each points at the
-    // page drawing the CELL's chart rather than the nearest thing on the
-    // Graphs tab. That distinction is the whole design: the cell normalises
-    // CPU per core, scales memory to mem_total and sums traffic across
-    // interfaces, and a link to a page that redrew any of those against a
-    // different scale would change the shape the reader just pointed at.
+    // Every sparkline in a fleet row opens the DIALOG, and each refetches
+    // the CELL's chart rather than the nearest thing on the Graphs tab. That
+    // distinction is the whole design: the cell normalises CPU per core,
+    // scales memory to mem_total and sums traffic across interfaces, and a
+    // view that redrew any of those against a different scale would change
+    // the shape the reader just pointed at.
     //
-    // These used to be dialog tests -- "widens CPU as the family it is
-    // actually drawing", and two more -- asserting which family the enlarged
-    // view refetched. There is no refetch to assert now; what has to hold is
-    // where each chart goes.
+    // These were briefly page-link tests, asserting an href per cell. The
+    // pages are gone -- every chart in the app is one dialog now -- so what
+    // has to hold is again which family each cell asks for when widened.
     it.each([
-      ["CPU", "host-cpu"],
-      ["Memory", "host-memory"],
-      ["Traffic", "host-traffic"],
-      ["Filesystem usage", "host-filesystem"],
-    ])("opens %s as its own page", (name, slug) => {
-      // Given a fleet row at the 1h range
-      renderRow({
-        disk: [{ name: "/", color: "var(--s7)", values: [1, 2, 3] }],
-      });
+      ["CPU", "host"],
+      ["Memory", "host"],
+      ["Traffic", "net"],
+      ["Filesystem usage", "filesystem"],
+    ])(
+      "widens %s as the family it is actually drawing",
+      async (name, family) => {
+        // Given a fleet row at the 1h range
+        getMetrics.mockResolvedValue(response({}));
+        renderRow({
+          disk: [{ name: "/", color: "var(--s7)", values: [1, 2, 3] }],
+        });
 
-      // When the sparkline is read as a control
-      const link = screen.getByRole("link", {
-        name: `Enlarge ${name} for ark`,
-      });
+        // When the sparkline is opened and widened
+        await open(`Enlarge ${name} for ark`);
+        await pick("6h");
 
-      // Then it is an anchor to that chart's page, carrying the range and
-      // saying where Back goes
-      expect(link).toHaveAttribute(
-        "href",
-        `/hosts/7/chart/${slug}?range=1h&from=fleet`,
-      );
-      expect(
-        screen.queryByRole("button", { name: `Enlarge ${name}` }),
-      ).toBeNull();
-    });
+        // Then the dialog asked for that cell's own family
+        await waitFor(() =>
+          expect(getMetrics).toHaveBeenCalledWith(
+            7,
+            expect.objectContaining({ family }),
+          ),
+        );
+      },
+    );
 
-    // An anchor, not a button with a handler: middle-click, copy-link and
-    // bookmark are most of the point of these charts having URLs, and none
-    // of them survive a click handler.
     it("asks the API for nothing at all until one is opened", () => {
       renderRow();
 
@@ -301,7 +298,7 @@ describe("the list sparklines enlarge", () => {
       const dialog = await open("Enlarge temperature for k10temp Tctl");
 
       const axis = Array.from(
-        dialog.querySelector(".cd-y")?.children ?? [],
+        dialog.querySelectorAll('[data-axis-label="y"]'),
       ).map((el) => el.textContent);
       expect(axis).toContain("44 °C");
       expect(axis).not.toContain("0 °C");

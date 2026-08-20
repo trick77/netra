@@ -18,6 +18,7 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     hostname: "web-01",
     site_id: 3,
     site_name: "zurich-dc1",
+    window: null,
     last_seen: "2026-08-10T13:59:30Z",
     cpu_total: 42,
     mem_used: 4_000_000_000,

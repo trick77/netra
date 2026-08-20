@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChartDetail, summarise } from "./ChartDetail";
 import { ChartPanel } from "./ChartPanel";
@@ -86,11 +86,19 @@ describe("ChartDetail", () => {
 });
 
 describe("ChartDetail y axis", () => {
+  // The labels are SVG text inside the plot now, not an HTML gutter beside
+  // it, and that is the point rather than an implementation detail: both
+  // scale with the viewBox, so a label cannot drift from the gridline it
+  // names when the panel is narrower than the width the chart was drawn at.
+  // Read top-to-bottom, which for SVG means by ascending y.
   const axisLabels = () =>
-    Array.from(document.querySelectorAll(".cd-y span")).map((el) => ({
-      top: (el as HTMLElement).style.top,
-      text: el.textContent,
-    }));
+    Array.from(document.querySelectorAll('[data-axis-label="y"]'))
+      .map((el) => ({
+        y: Number(el.getAttribute("y")),
+        text: el.textContent,
+      }))
+      .sort((a, b) => a.y - b.y)
+      .map((t) => t.text);
 
   // mirrorPaths() puts the baseline at h/2 and draws egress DOWNWARD from
   // it, so the midline is ZERO and both edges are a peak. The shared
@@ -112,11 +120,12 @@ describe("ChartDetail y axis", () => {
       />,
     );
 
-    expect(axisLabels()).toEqual([
-      { top: "0%", text: "100" },
-      { top: "50%", text: "0" },
-      { top: "100%", text: "100" },
-    ]);
+    // Symmetric about a zero midline: whatever magnitudes the tick chooser
+    // lands on, the top half must mirror the bottom half and 0 must sit
+    // between them.
+    const labels = axisLabels();
+    expect(labels).toEqual([...labels].reverse());
+    expect(labels[Math.floor(labels.length / 2)]).toBe("0");
   });
 
   // The axis is kept rather than hidden because both mirrored callers are
@@ -134,7 +143,7 @@ describe("ChartDetail y axis", () => {
       />,
     );
 
-    expect(document.querySelector(".cd-y")).not.toBeNull();
+    expect(axisLabels().length).toBeGreaterThan(0);
   });
 
   // The unmirrored axis is unchanged: top is the ceiling, bottom is zero.
@@ -148,11 +157,9 @@ describe("ChartDetail y axis", () => {
       />,
     );
 
-    expect(axisLabels()).toEqual([
-      { top: "0%", text: "100" },
-      { top: "50%", text: "50" },
-      { top: "100%", text: "0" },
-    ]);
+    const labels = axisLabels();
+    expect(labels[0]).toBe("100");
+    expect(labels[labels.length - 1]).toBe("0");
   });
 
   // hideAxis still wins: an unnormalised per-core stack runs to N x 100 and
@@ -169,7 +176,7 @@ describe("ChartDetail y axis", () => {
       />,
     );
 
-    expect(document.querySelector(".cd-y")).toBeNull();
+    expect(axisLabels()).toEqual([]);
   });
 });
 
@@ -192,5 +199,72 @@ describe("ChartPanel enlargement", () => {
     render(<ChartPanel title="Container health" unavailable="no columns" />);
 
     expect(screen.queryByRole("button", { name: /enlarge/i })).toBeNull();
+  });
+
+  /**
+   * A panel given neither a floor nor a ceiling derives both from its data,
+   * and the dialog it opens has to derive them the same way.
+   *
+   * Uptime is the case that shows it. A day's window runs from 39d 4h to
+   * 40d 3h -- a rising diagonal across the panel. Drawn from an assumed zero
+   * floor instead, the same series is a flat line pinned to the top of the
+   * box under an axis reading 0 / 11d / 23d / 34d: the enlarged view saying
+   * strictly LESS than the 260px chart it was opened from. It went unnoticed
+   * because these panels used to open a page, which derived its own floor.
+   */
+  it("keeps a free-scaled panel's own floor when it is enlarged", async () => {
+    const uptime = [
+      { name: "uptime", color: "var(--s1)", values: [3_386_400, 3_466_800] },
+    ];
+    render(<ChartPanel title="Uptime" series={uptime} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /enlarge/i }));
+
+    // The axis starts at the data, not at zero.
+    const labels = Array.from(
+      screen.getByRole("dialog").querySelectorAll('[data-axis-label="y"]'),
+    ).map((el) => el.textContent);
+    expect(labels).not.toContain("0");
+    expect(labels.length).toBeGreaterThan(0);
+  });
+
+  // A pinned scale is a DECISION -- a named ceiling, a stack, a mirror, a
+  // reference rule -- and deriving one from the window would throw it away.
+  it("keeps a pinned ceiling when it is enlarged", async () => {
+    render(<ChartPanel title="Processor" series={series} max={100} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /enlarge/i }));
+
+    const labels = Array.from(
+      screen.getByRole("dialog").querySelectorAll('[data-axis-label="y"]'),
+    ).map((el) => el.textContent);
+    expect(labels).toContain("100");
+  });
+
+  /**
+   * The panel and the dialog are the same chart at two sizes, and for one
+   * caller that means two different SERIES: the Graphs tab draws the peak
+   * alone at 260px, where a mean line and a peak envelope together are a
+   * smear, and hands the pair to the dialog that has room for it.
+   */
+  it("draws the enlarged view's own series when it is given one", async () => {
+    render(
+      <ChartPanel
+        title="Traffic"
+        series={[{ name: "in", color: "var(--s1)", values: [10, 20] }]}
+        detailSeries={[
+          { name: "in", color: "var(--s1)", values: [8, 16], band: [10, 20] },
+        ]}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /enlarge/i }));
+
+    // The stats read detailSeries: latest 16, min 8. 20 is the panel's own
+    // last value and appears nowhere in the dialog -- which is the whole
+    // claim, since the two series are otherwise the same shape.
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getAllByText("16").length).toBeGreaterThan(0);
+    expect(within(dialog).queryByText("20")).toBeNull();
   });
 });

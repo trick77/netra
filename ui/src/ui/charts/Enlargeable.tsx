@@ -8,6 +8,7 @@
 // is handed as children becomes the button, and pressing it opens the same
 // ChartDetail the panels open.
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Plus } from "lucide-react";
 import type { OverlaySeries } from "./Overlay";
 import { extent } from "./geometry";
 import { ChartDetail, peak } from "./ChartDetail";
@@ -203,11 +204,26 @@ export interface EnlargeableProps {
    * small version free-scales; anything measured from zero must stay at zero.
    */
   autoScale?: boolean;
+  /**
+   * What the ENLARGED view draws, when that is not what the small one draws.
+   *
+   * The panel and the dialog are the same chart at two sizes, and for almost
+   * every caller that means the same series. The exception is the pair: a
+   * mean line with the bucket peak as a pale envelope under it. There is
+   * room for both at 1000px and not at 260, where two marks are a smear --
+   * so the panel keeps the single mark and the dialog gets the pair.
+   *
+   * Absent, the dialog draws `series`, which is what every other caller
+   * wants and what all of them did before this existed.
+   */
+  detailSeries?: OverlaySeries[];
   fmt?: (n: number | null) => string;
   stacked?: boolean;
-  legend?: boolean;
   reference?: number;
   mirrored?: boolean;
+  /** The ladder the enlarged view's value ticks step on: 1024 for a byte
+   * quantity, 1000 otherwise. See ChartPanel's prop of the same name. */
+  tickBase?: 1000 | 1024;
   hideAxis?: boolean;
   /** The answered window, for the dialog's time axis. */
   window?: { from: string; to: string } | null;
@@ -222,19 +238,6 @@ export interface EnlargeableProps {
   /** Loads these series at another range, for the dialog alone. Without it
    * the dialog carries no picker. */
   fetchSeries?: (range: Range) => Promise<DetailData>;
-  /**
-   * Where this chart lives as a page.
-   *
-   * Given it, the chart is a real ANCHOR: cmd-click and middle-click open
-   * that page in a new tab, and copy-link yields a URL. A plain left click
-   * does not navigate -- it opens the DRAWER, beside the list the chart was
-   * clicked in, so the list survives being read.
-   *
-   * Without it the chart is a button and the enlarged view is the modal
-   * dialog: a sparkline with no page of its own has nowhere else to be, and
-   * nothing to keep on screen beside it.
-   */
-  href?: string;
   /**
    * The button's accessible name. Defaults to `Enlarge {title}`, which is
    * enough for a titled card and not enough in a list: twenty rows of
@@ -253,29 +256,29 @@ export function Enlargeable({
   title,
   unit,
   series,
+  detailSeries,
   max,
   min,
   autoScale,
   fmt,
   stacked,
-  legend,
   reference,
   mirrored,
+  tickBase,
   hideAxis,
   window: answered = null,
   range,
   ranges,
   fetchSeries,
-  href,
   label,
   className,
   children,
 }: EnlargeableProps) {
   const [enlarged, setEnlarged] = useState(false);
   // Gated on `enlarged` alone. It used to be gated on href being absent too,
-  // because an href meant navigation and the enlarged view never opened; a
-  // plain click now opens the drawer whether or not there is a page behind
-  // it, so the range fetch belongs to "is it open", full stop. The gate still
+  // because an href meant navigation and the enlarged view never opened;
+  // there are no chart pages any more, so every chart opens the dialog and
+  // the range fetch belongs to "is it open", full stop. The gate still
   // matters as much as it ever did: the fleet list mounts one of these per
   // chart cell, so twenty hosts is sixty of them, and fetching for a view
   // nobody opened would turn one page render into sixty requests.
@@ -286,7 +289,7 @@ export function Enlargeable({
   // fetch is in flight is deliberate: blanking the chart to redraw it a
   // moment later is a flicker, and an empty chart in netra asserts "the host
   // reported nothing".
-  const shown = detail.series ?? series;
+  const shown = detail.series ?? detailSeries ?? series;
   const span = autoScale
     ? derived(shown)
     : { min, max: fitted(max, detail.series, stacked) };
@@ -294,46 +297,24 @@ export function Enlargeable({
   return (
     <>
       {/* A button, not a div with a click handler: opening the enlarged view
-          has to work from the keyboard, and the chart is the affordance --
-          a separate "expand" icon would be a second thing to find. */}
-      {href !== undefined ? (
-        // Still a real anchor, and that is deliberate: middle-click and
-        // cmd-click open the chart's own page in a new tab, and copy-link
-        // still yields a URL. What changed is the PLAIN left click, which is
-        // intercepted and opens the drawer instead of navigating.
-        //
-        // #108 made every one of these navigate, and it was right that the
-        // chart needed somewhere to be. It was wrong about the common case:
-        // on the Graphs tab a plain click threw away a grid of fifteen panels
-        // to look at one of them, and coming back re-rendered it from the top.
-        // The page is still there for the click that asks for it; the drawer
-        // is what the other click gets.
-        //
-        // Modified and non-primary clicks belong to the browser -- the same
-        // rule Tabs.tsx and StatTile.tsx follow, for the same reason.
-        <a
-          className={`chartwrap as-button${className ? ` ${className}` : ""}`}
-          href={href}
-          aria-label={label ?? `Enlarge ${title}`}
-          onClick={(e) => {
-            if (e.defaultPrevented || e.button !== 0) return;
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-            e.preventDefault();
-            setEnlarged(true);
-          }}
-        >
-          {children}
-        </a>
-      ) : (
-        <button
-          type="button"
-          className={`chartwrap as-button${className ? ` ${className}` : ""}`}
-          onClick={() => setEnlarged(true)}
-          aria-label={label ?? `Enlarge ${title}`}
-        >
-          {children}
-        </button>
-      )}
+          has to work from the keyboard, and the chart itself is the
+          affordance -- the badge below marks it rather than replacing it, so
+          there is still only one thing to hit. */}
+      <button
+        type="button"
+        className={`chartwrap as-button${className ? ` ${className}` : ""}`}
+        onClick={() => setEnlarged(true)}
+        aria-label={label ?? `Enlarge ${title}`}
+      >
+        {children}
+        {/* aria-hidden: the button already says "Enlarge <title>", and a
+            screen reader announcing a plus after it would name the same
+            affordance twice. This is for the eye that has to be told a
+            32px sparkline in a table cell is pressable at all. */}
+        <span className="chartwrap-more" aria-hidden="true">
+          <Plus size={11} strokeWidth={2.5} />
+        </span>
+      </button>
       {enlarged && (
         <ChartDetail
           title={title}
@@ -343,9 +324,9 @@ export function Enlargeable({
           min={span.min}
           fmt={fmt}
           stacked={stacked}
-          legend={legend}
           reference={reference}
           mirrored={mirrored}
+          tickBase={tickBase}
           hideAxis={hideAxis}
           window={detail.window ?? answered}
           // The dialog's range and the dialog's setter. The page's setter is
@@ -356,13 +337,6 @@ export function Enlargeable({
           loading={detail.loading}
           error={detail.error}
           onClose={() => setEnlarged(false)}
-          // A chart with a page of its own opens beside the list it was
-          // clicked in, so the reader can walk the list; one without a page
-          // has nowhere else to be and takes the modal.
-          variant={href === undefined ? "dialog" : "drawer"}
-          // The drawer's way onward to the full page -- which carries the
-          // range picker and the time axis this panel may not have.
-          href={href}
         />
       )}
     </>

@@ -1112,55 +1112,65 @@ export function Overview({
           the only network chart lived in the Graphs tab, so the overview
           summarised every subsystem except the one most likely to explain a
           problem. */}
-        <Panel label="Traffic" title="Traffic">
-          {ingress.length === 0 && egress.length === 0 ? (
-            <p className="note">No interface samples in this window.</p>
-          ) : (
-            <div className="traffic-cell">
-              <Enlargeable
-                // "in" and "out", not rx and tx: the direction is the
-                // point of this chart, and "rx" is the kernel's word for it
-                // rather than the reader's. The wire and the schema keep
-                // rx/tx.
-                title="Traffic"
-                // The same page the fleet row's traffic cell links to, for
-                // the same reason: this is the summed chart, host-traffic
-                // is the summed chart's spec, and the two pages must not
-                // disagree about what clicking traffic does. `from` sends
-                // Back here rather than to the Graphs tab.
-                //
-                // The dialog goes with the href (Enlargeable.tsx) -- it is
-                // what a chart with no page gets, and this one has a page.
-                href={
-                  `/hosts/${encodeURIComponent(String(host.id))}/chart/host-traffic` +
-                  `?from=overview` +
-                  (range === undefined
-                    ? ""
-                    : `&range=${encodeURIComponent(range)}`)
-                }
-                // Inline, like every other sparkline this wraps: the chart
-                // is a fixed 260px inside a flex column, and the full-width
-                // default would spread the pressable area (and its zoom-in
-                // cursor) across the empty half of the card.
-                className="inline"
-                unit="B/s"
-                series={[
-                  { name: "in", color: UP_COLOR, values: ingress },
-                  { name: "out", color: DOWN_COLOR, values: egress },
-                ]}
-                mirrored
-                fmt={bytes}
-                window={netMetrics?.window ?? null}
-                range={range}
-              >
-                <UpDownSparkline
-                  up={ingress}
-                  down={egress}
-                  width={260}
-                  height={64}
-                  label="Traffic in and out over time"
-                />
-              </Enlargeable>
+        <section aria-label="Traffic">
+          <ChartPanel
+            // A ChartPanel like every other chart on this page, rather than a
+            // bare sparkline in a hand-rolled card. It was the one chart here
+            // drawn without an axis, sitting in the same column as three that
+            // have one -- so the card most likely to explain a problem was
+            // also the only one a reader could not put a number to.
+            title="Traffic"
+            unit="B/s"
+            // "in" and "out", not rx and tx: the direction is the point of
+            // this chart, and "rx" is the kernel's word for it rather than
+            // the reader's. The wire and the schema keep rx/tx.
+            series={[
+              { name: "in", color: UP_COLOR, values: ingress },
+              { name: "out", color: DOWN_COLOR, values: egress },
+            ]}
+            mirrored
+            fmt={bytes}
+            unavailable={
+              ingress.length === 0 && egress.length === 0
+                ? "No interface samples in this window."
+                : undefined
+            }
+            unavailableHeadline="No samples"
+            window={netMetrics?.window ?? null}
+            range={range}
+            ranges={RANGE_VALUES}
+            fetchSeries={
+              fetchFamily === undefined
+                ? undefined
+                : async (next) => {
+                    const answered = await fetchFamily("net", next);
+                    return {
+                      series: [
+                        {
+                          name: "in",
+                          color: UP_COLOR,
+                          values: sumSeries(
+                            answered,
+                            peakBase(answered, "rx_bytes"),
+                          ),
+                        },
+                        {
+                          name: "out",
+                          color: DOWN_COLOR,
+                          values: sumSeries(
+                            answered,
+                            peakBase(answered, "tx_bytes"),
+                          ),
+                        },
+                      ],
+                      window: answered.window,
+                    };
+                  }
+            }
+            // The rates belong INSIDE the card, under the chart they qualify:
+            // rendered after it they read as a footnote to whatever panel came
+            // next in the grid.
+            footer={
               <div className="traffic-rates">
                 {/* byterate, never bitrate: net_rx/net_tx are BYTES per
                   second, so bitrate() rendered every host's traffic 8x low
@@ -1173,7 +1183,7 @@ export function Overview({
                   the RANGE -- the raw instantaneous rate at 1h, a
                   five-minute average from a quarter of an hour ago at 6h and
                   wider -- so widening the window changed what "now" meant.
-                  The sparkline still follows the range; the rates do not.
+                  The chart still follows the range; the rates do not.
 
                   Gated on the host still reporting: the gauge is the one
                   number here that does not go absent by itself when the
@@ -1183,9 +1193,9 @@ export function Overview({
                 <span className="rate">↑ {byterate(currentRx)} in</span>
                 <span className="rate">↓ {byterate(currentTx)} out</span>
               </div>
-            </div>
-          )}
-        </Panel>
+            }
+          />
+        </section>
 
         {/* Overlay (inside ChartPanel) renders the full legend itself once a
           panel carries two or more bands, so none is built here. */}

@@ -35,6 +35,9 @@ export interface ChartPanelProps {
    * formats the magnitude, and only "B/s" says it is per second. */
   unit?: string;
   series?: Band[];
+  /** What the ENLARGED view draws, when the panel is too small for it --
+   * the mean-plus-peak pair. See Enlargeable's prop of the same name. */
+  detailSeries?: Band[];
   max?: number;
   /**
    * A fixed floor for a non-stacked panel, overriding the data's own
@@ -92,9 +95,6 @@ export interface ChartPanelProps {
    * family that needs it.
    */
   tickBase?: 1000 | 1024;
-  /** Where this chart lives as a page. Given it, the panel is a link and the
-   * enlarge dialog is not built. See Enlargeable. */
-  href?: string;
   /** Formats the HEADLINE only, defaulting to `fmt`. The two are separate
    * because they answer to different neighbours: `fmt` also renders the
    * enlarged view's axis, its tooltips and its stats table, where every
@@ -169,6 +169,7 @@ export function ChartPanel({
   title,
   unit,
   series = [],
+  detailSeries,
   max,
   min,
   fmt,
@@ -194,7 +195,6 @@ export function ChartPanel({
   range,
   ranges,
   fetchSeries,
-  href,
   footer,
 }: ChartPanelProps) {
   if (unavailable !== undefined) {
@@ -316,26 +316,44 @@ export function ChartPanel({
           button and the dialog so that a sparkline drawn without this card
           around it can carry the same one. */}
       <Enlargeable
-        href={href}
         title={title}
         unit={unit}
         // The panel's own series, and its own `max` rather than
         // `effectiveMax`: the dialog derives its ceiling from the data when
         // no explicit one is given, which is what it has always done.
         series={series}
+        detailSeries={detailSeries}
         max={max}
         // The panel's floor too, when it has a named one: a dialog opened
         // from a 0-100 filesystem panel that rescaled itself to the data's
         // own extent would redraw the shape the reader just clicked.
         min={min}
         fmt={fmt}
+        // A panel given neither a floor nor a ceiling derives BOTH from its
+        // own data (see `floor` above), and the dialog has to do the same or
+        // it redraws the shape the reader just clicked. Uptime is the case
+        // that shows it: a window from 39d 4h to 40d 3h is a rising diagonal
+        // in the panel and, against an assumed zero floor, a flat line
+        // pinned to the top of the dialog -- the enlarged view saying LESS
+        // than the 260px chart it was opened from.
+        //
+        // Only when nothing at all was pinned: a named max, a stack, a
+        // mirror or a reference rule each make the scale a decision rather
+        // than a derivation, and autoScale would throw it away.
+        autoScale={
+          !stacked &&
+          !mirrored &&
+          min === undefined &&
+          max === undefined &&
+          reference === undefined
+        }
         stacked={stacked}
-        legend={legend}
         // The rule is unlabelled in both views: the enlarged view's y axis
         // already names it at the height it sits, and the small panel names
         // it in its header rather than inside the plot.
         reference={reference}
         mirrored={mirrored}
+        tickBase={tickBase}
         hideAxis={hideAxis}
         window={answered}
         range={range}

@@ -11,6 +11,22 @@ import { Enlargeable } from "./Enlargeable";
  * title, a unit and a headline value -- rather than of the chart. These tests
  * are about the affordance surviving on its own.
  */
+/**
+ * The dialog's y-axis labels, top to bottom.
+ *
+ * SVG text inside the plot rather than an HTML gutter beside it: both scale
+ * with the viewBox, so a label stays on the gridline it names at any rendered
+ * size. Sorted by y because document order follows the tick list, not the
+ * screen.
+ */
+function yLabels(): string[] {
+  return Array.from(
+    screen.getByRole("dialog").querySelectorAll('[data-axis-label="y"]'),
+  )
+    .sort((a, b) => Number(a.getAttribute("y")) - Number(b.getAttribute("y")))
+    .map((el) => el.textContent ?? "");
+}
+
 describe("Enlargeable", () => {
   const series = [{ name: "temp", color: "var(--s7)", values: [44, 46, 45] }];
 
@@ -112,8 +128,7 @@ describe("Enlargeable", () => {
    */
   describe("a fixed ceiling", () => {
     function axisTop() {
-      const y = screen.getByRole("dialog").querySelector(".cd-y");
-      return (y?.firstElementChild?.textContent ?? "").trim();
+      return (yLabels()[0] ?? "").trim();
     }
 
     it("is raised to fit a widened window rather than clipping it", async () => {
@@ -204,12 +219,7 @@ describe("Enlargeable", () => {
     /** The y axis' labels alone. The stats table underneath prints the same
      * numbers, so a bare getByText would match either. */
     function axis(): string[] {
-      const labels = screen
-        .getByRole("dialog")
-        .querySelector(".cd-y") as HTMLElement | null;
-      return Array.from(labels?.children ?? []).map(
-        (el) => el.textContent ?? "",
-      );
+      return yLabels();
     }
 
     it("labels the axis from the series' own floor, not zero", async () => {

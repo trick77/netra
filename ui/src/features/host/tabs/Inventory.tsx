@@ -254,6 +254,7 @@ export function Containers({
     ...row,
     host_id: host.id,
     hostname: host.hostname,
+    window: metrics?.window ?? null,
     ...byKey.get(row.container_key),
   }));
 

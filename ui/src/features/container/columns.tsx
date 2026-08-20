@@ -42,6 +42,10 @@ import { ContainerChart } from "./ContainerChart";
 export type ContainerRow = Container & {
   host_id: number;
   hostname: string;
+  /** The window the hub answered for this row's host, for the enlarged
+   * view's time axis. Absent, the dialog draws no time axis rather than
+   * inventing one. */
+  window?: { from: string; to: string } | null;
   /** CPU percent and memory bytes over the window, when they have been
    * fetched. Absent (not empty) when nobody asked for them: an empty series
    * draws a gap, which is the truth for a container that reported nothing,
@@ -320,6 +324,7 @@ function MemoryCell({
         row={row}
         metric="mem"
         values={row.mem}
+        window={row.window ?? null}
         // Against its OWN limit when it has one -- that is what "how close to
         // being killed" means -- and against the list's largest container when
         // it does not, so the unlimited ones stay comparable with each other.
@@ -452,6 +457,7 @@ export function containerColumns({
               row={row}
               metric="cpu"
               values={row.cpu}
+              window={row.window ?? null}
               max={cpuMax ?? 1}
               range={range}
               ranges={ranges}

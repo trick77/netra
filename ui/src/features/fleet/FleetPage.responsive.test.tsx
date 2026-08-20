@@ -10,6 +10,7 @@ function row(overrides: Partial<HostRow> = {}): HostRow {
     hostname: "web-01",
     site_id: null,
     site_name: null,
+    window: null,
     last_seen: new Date().toISOString(),
     cpu_total: null,
     mem_used: null,
