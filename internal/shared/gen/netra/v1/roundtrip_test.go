@@ -126,7 +126,6 @@ func TestEveryPerEntityFamilyCarriesItsOwnTimestamp(t *testing.T) {
 		Containers:    []*netrav1.ContainerSample{{TsMs: 70, ContainerKey: "proj/svc"}},
 		Filesystems:   []*netrav1.FilesystemSample{{TsMs: 80, Label: "root"}},
 		Smart:         []*netrav1.SmartAttribute{{TsMs: 90, Device: "sda", AttrId: 5}},
-		Processes:     []*netrav1.ProcessSample{{TsMs: 100, Name: "postgres"}},
 		SystemdEvents: []*netrav1.SystemdUnitEvent{{TsMs: 110, UnitName: "ssh.service", State: "failed"}},
 		PackageEvents: []*netrav1.PackageEvent{{TsMs: 120, Name: "bash", Action: "upgrade"}},
 	}
@@ -150,7 +149,6 @@ func TestEveryPerEntityFamilyCarriesItsOwnTimestamp(t *testing.T) {
 		"containers":     out.GetContainers()[0].GetTsMs(),
 		"filesystems":    out.GetFilesystems()[0].GetTsMs(),
 		"smart":          out.GetSmart()[0].GetTsMs(),
-		"processes":      out.GetProcesses()[0].GetTsMs(),
 		"systemd_events": out.GetSystemdEvents()[0].GetTsMs(),
 		"package_events": out.GetPackageEvents()[0].GetTsMs(),
 	} {

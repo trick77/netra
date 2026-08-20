@@ -77,7 +77,6 @@ type Profile struct {
 	Units       []string
 	Packages    []PackageSpec
 	Addresses   []AddressSpec
-	Processes   []ProcessSpec
 
 	// Collectors names the collectors whose health this host reports. See the
 	// note on collector_samples in build.go: filling this is a deliberate
@@ -213,17 +212,6 @@ type AddressSpec struct {
 	Address     string
 	Family      uint32
 	Description string
-}
-
-// ProcessSpec is one process name, aggregated across every process sharing
-// it. Names are comm-style and truncated to 15 bytes like the kernel's,
-// because that is what the real collector can see -- argv is never collected
-// anywhere in netra and must not appear here either.
-type ProcessSpec struct {
-	Name    string
-	CPUBase float64
-	MemBase uint64
-	Count   uint32
 }
 
 // runsCollector reports whether this host runs the named collector, which is

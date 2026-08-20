@@ -97,7 +97,7 @@ type Source =
  *
  * The whole registry, not only the names a panel spec uses: this list is the
  * one statement of what the hub serves, so a caller outside the Graphs specs
- * (Overview's sensor chart, a future smart or process page) has a name to
+ * (Overview's sensor chart, a future smart page) has a name to
  * pass rather than a reason to fall back to `string`. The type is derived
  * from the array so the two cannot drift, and the tests sweep against the
  * same export instead of a hand-copied twin.
@@ -114,7 +114,6 @@ export const FAMILIES = [
   "container",
   "sensor",
   "smart",
-  "process",
 ] as const;
 
 export type Family = (typeof FAMILIES)[number];

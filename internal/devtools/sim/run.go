@@ -30,11 +30,6 @@ const (
 // identical surviving history.
 const rawRetention = 7 * 24 * time.Hour
 
-// processRetention is how long process_samples are kept. Generating them for
-// the whole window would write months of rows straight into a policy that
-// deletes them.
-const processRetention = 48 * time.Hour
-
 // Config parameterises one simulator run.
 type Config struct {
 	Seed     uint64
@@ -244,7 +239,7 @@ func live(ctx context.Context, hub *Hub, hosts []*host, cfg Config, log *slog.Lo
 	for {
 		ts := cfg.now().Truncate(time.Minute)
 		for _, h := range hosts {
-			h.append(h.gen.Scrape(ts, Options{Smart: ts.Minute() == 0, Processes: true, Collectors: true, Inventory: ts.Minute()%30 == 0}))
+			h.append(h.gen.Scrape(ts, Options{Smart: ts.Minute() == 0, Collectors: true, Inventory: ts.Minute()%30 == 0}))
 			if err := h.flush(ctx, hub, false); err != nil {
 				// A live tick that fails is not fatal: the hub may be
 				// restarting, and the next tick carries the next sample. The
@@ -347,7 +342,6 @@ func (h *host) request(scrapes []*Scrape, isBackfill bool) *netrav1.IngestReques
 		req.Containers = append(req.Containers, s.Containers...)
 		req.Filesystems = append(req.Filesystems, s.Filesystems...)
 		req.Smart = append(req.Smart, s.Smart...)
-		req.Processes = append(req.Processes, s.Processes...)
 		req.SystemdEvents = append(req.SystemdEvents, s.SystemdEvents...)
 		req.PackageEvents = append(req.PackageEvents, s.PackageEvents...)
 
@@ -389,9 +383,6 @@ func optionsFor(ts, from, now time.Time) Options {
 		// Hourly, like the real agent's self-gated SMART collector: reading
 		// SMART spins up sleeping drives, and the values change over days.
 		Smart: ts.Truncate(time.Hour).Equal(ts),
-		// Only inside the retention window, so months of rows are not
-		// generated for a table that keeps two days of them.
-		Processes: !ts.Before(now.Add(-processRetention)),
 		// Every instant, which is the real agent's cadence: a collector
 		// reports its own health on each scrape.
 		//

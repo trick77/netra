@@ -28,7 +28,6 @@ type Result struct {
 	Containers  []*netrav1.ContainerSample
 	Filesystems []*netrav1.FilesystemSample
 	Smart       []*netrav1.SmartAttribute
-	Processes   []*netrav1.ProcessSample
 	Events      []*netrav1.Event
 
 	// SystemdEvents and PackageEvents are separate from Events because both

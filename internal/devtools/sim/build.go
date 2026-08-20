@@ -28,7 +28,6 @@ type Scrape struct {
 	Containers    []*netrav1.ContainerSample
 	Filesystems   []*netrav1.FilesystemSample
 	Smart         []*netrav1.SmartAttribute
-	Processes     []*netrav1.ProcessSample
 	SystemdEvents []*netrav1.SystemdUnitEvent
 	PackageEvents []*netrav1.PackageEvent
 	Addresses     []*netrav1.HostAddress
@@ -48,7 +47,7 @@ type Scrape struct {
 func (s *Scrape) Rows() int {
 	n := len(s.Cores) + len(s.Disks) + len(s.Sensors) + len(s.Nets) +
 		len(s.Collectors) + len(s.Events) + len(s.Containers) +
-		len(s.Filesystems) + len(s.Smart) + len(s.Processes) +
+		len(s.Filesystems) + len(s.Smart) +
 		len(s.SystemdEvents) + len(s.PackageEvents) +
 		len(s.Addresses) + len(s.Packages) +
 		len(s.SystemdSnapshot.GetUnits())
@@ -60,12 +59,10 @@ func (s *Scrape) Rows() int {
 
 // Options selects which families a scrape carries. They are not all emitted
 // at every instant: SMART changes over hours and reading it spins up sleeping
-// drives, process rows are retained for 48 hours so generating 90 days of
-// them writes 88 days into a retention policy, and inventory describes what
-// the host HAS rather than what it measured.
+// drives, and inventory describes what the host HAS rather than what it
+// measured.
 type Options struct {
 	Smart      bool
-	Processes  bool
 	Collectors bool
 	Inventory  bool
 }
@@ -149,14 +146,6 @@ func (g *Generator) Scrape(ts time.Time, opt Options) *Scrape {
 	}
 	if opt.Smart {
 		s.Smart = g.smart(ts)
-	}
-	// Gated on the profile as well as the instant. A host that emits process
-	// rows without listing the collector that produces them is a state no
-	// real fleet can reach, and a read-side query joining process data to
-	// collector health would report the collector as absent while the rows
-	// sit right there.
-	if opt.Processes && g.p.runsCollector("processes") {
-		s.Processes = g.processes(ts, cpu)
 	}
 	if opt.Inventory {
 		s.Addresses = g.addresses()
@@ -309,8 +298,12 @@ func (g *Generator) hostSample(ts time.Time, cpu float64) *netrav1.HostSample {
 
 	// processes_total is unset -- never 0 -- on a host whose agent is in a
 	// PID namespace and can see only itself.
+	//
+	// Sized from the thread count rather than from a per-process list, which
+	// no profile carries any more: a busier host runs more processes, and the
+	// count is the only process figure netra reports.
 	if p.Capabilities["processes"] != "namespaced" {
-		h.ProcessesTotal = proto.Uint32(uint32(g.sig.daily("procs", ts, 40*float64(len(p.Processes))+120, 0.15, 0.08)))
+		h.ProcessesTotal = proto.Uint32(uint32(g.sig.daily("procs", ts, 40*threads+120, 0.15, 0.08)))
 	}
 	if p.Capabilities["users"] != "absent" {
 		h.UsersLoggedIn = proto.Uint32(uint32(g.sig.unit("users", ts) * 3))
@@ -896,22 +889,6 @@ func (g *Generator) smart(ts time.Time) []*netrav1.SmartAttribute {
 	return out
 }
 
-func (g *Generator) processes(ts time.Time, cpu float64) []*netrav1.ProcessSample {
-	busy := 0.4 + cpu/70
-	out := make([]*netrav1.ProcessSample, 0, len(g.p.Processes))
-	for _, pr := range g.p.Processes {
-		key := "proc/" + pr.Name
-		out = append(out, &netrav1.ProcessSample{
-			TsMs:     ts.UnixMilli(),
-			Name:     comm(pr.Name),
-			CpuPct:   proto.Float64(round2(clamp(g.sig.daily(key+"/cpu", ts, pr.CPUBase, 0.7, 0.35)*busy, 0, 100*float64(g.p.Threads)))),
-			MemBytes: proto.Uint64(uint64(float64(pr.MemBase) * clamp(g.sig.daily(key+"/mem", ts, 1, 0.12, 0.05), 0.4, 1.8))),
-			Count:    proto.Uint32(pr.Count),
-		})
-	}
-	return out
-}
-
 // collectorHealth reports each collector's own duration and success.
 //
 // The real agent sends these too: its scrape loop times each collector from
@@ -930,8 +907,6 @@ func (g *Generator) collectorHealth(ts time.Time) []*netrav1.CollectorSample {
 			base = 140
 		case "containers", "systemd":
 			base = 45
-		case "processes":
-			base = 62
 		}
 		c := &netrav1.CollectorSample{
 			TsMs:       ts.UnixMilli(),
@@ -1034,16 +1009,6 @@ func (g *Generator) hasIPv6() bool {
 		}
 	}
 	return false
-}
-
-// comm truncates a name the way the kernel does. The real collector reads
-// /proc/PID/comm, which is capped at 15 bytes, and a simulator that emitted
-// longer names would make the UI look like it can show something it cannot.
-func comm(name string) string {
-	if len(name) <= 15 {
-		return name
-	}
-	return name[:15]
 }
 
 // round2 keeps the generated values readable in psql. The columns are double

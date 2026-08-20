@@ -187,7 +187,7 @@ the stack starts.
 
 Everything read-only is enabled automatically. `SYS_ADMIN` (NVMe SMART health
 and wear) is the only privilege it prompts for. `pid: host` is always granted:
-without it the agent reports no process table and no per-container network, and
+without it the agent reports no process count and no per-container network, and
 the run states the exposure rather than offering it — see *What each collector
 needs* below.
 
@@ -260,7 +260,7 @@ answers, no compatibility promise — and is not a provisioning interface.)
 | Nothing but `/proc` and `/sys` | CPU, per-core CPU, memory, load, kernelstat, vmstat, limits, netstat, procs, users, disk I/O, sensors, mdraid |
 | `network_mode: host` | network, addresses |
 | A mount | containers (the host's cgroup v2 hierarchy, plus the Docker socket for names **and** for per-container `net_rx`/`net_tx`), filesystems (marker dirs), systemd (D-Bus socket), packages (dpkg or apk db) |
-| `pid: host` | processes, procs, and per-container `net_rx`/`net_tx` |
+| `pid: host` | procs, and per-container `net_rx`/`net_tx` |
 | An explicit privilege | SMART (`SYS_RAWIO`, plus `SYS_ADMIN` for NVMe, plus `devices:`) |
 
 A collector that cannot run reports **why** as a capability and is skipped. It
@@ -276,9 +276,9 @@ socket only names them: without it containers still report in full, keyed by raw
 `NETRA_CGROUP_ROOT` at the agent's own `/sys/fs/cgroup`; Docker's default cgroup
 namespace is private, so that tree holds no other container's scope.
 
-`pid: host` is rendered unconditionally by both deploy paths, because three
-things need it and only one of them is obvious. The process count and the
-per-process breakdown are the obvious two. The third is per-container
+`pid: host` is rendered unconditionally by both deploy paths, because two
+things need it and only one of them is obvious. The process count is the
+obvious one. The other is per-container
 networking: rx/tx counters live in each container's own network namespace,
 reached through the host PID its `cgroup.procs` names, and an agent confined to
 its own PID namespace cannot resolve that PID — so every container on the host
@@ -301,9 +301,18 @@ falls back to the namespace comparison and reports a capability if it is denied,
 rather than silently reporting nothing.
 
 The namespace makes every process's `/proc` entry readable to the container,
-`cmdline` and `environ` included. netra reads neither — process names come from
-`/proc/PID/comm`, and `internal/agent/collector/argv_guard_test.go` fails the
-build if either name appears in a Go string literal.
+`cmdline` and `environ` included. netra reads neither, and
+`internal/agent/collector/argv_guard_test.go` fails the build if either name
+appears in a Go string literal.
+
+netra used to report a per-process-name table as well, and no longer does. The
+collector read `/proc/<pid>/stat` for every process on the host each scrape;
+the kernel ptrace-checks each of those reads inside `do_task_stat`, and a
+`docker-default` container fails that check against every unconfined host
+process — one `apparmor="DENIED" operation="ptrace"` line a minute in the
+host's kernel log, which is the log netra exists to help an operator read. The
+process **count** is unaffected: it comes from counting entries in `/proc`,
+which needs no such read.
 
 One long-standing exception remains: the logged-in session count needs the
 `/var/run/utmp` bind — which yields nothing on Alpine and other busybox systems

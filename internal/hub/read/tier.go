@@ -62,9 +62,9 @@ type tierSpec struct {
 
 // The three resolutions every rolled-up family carries, fine to coarse.
 //
-// A tier is not a fixed global: the two raw-only families below have their own
-// raw spec with a different retention, which is the whole reason tier
-// selection is per-family rather than a lookup on the range alone.
+// A tier is not a fixed global: the raw-only family below has its own raw spec
+// with a different retention, which is the whole reason tier selection is
+// per-family rather than a lookup on the range alone.
 var (
 	rawTier = tierSpec{
 		name: TierRaw, suffix: "", tsColumn: "ts",
@@ -86,23 +86,15 @@ var (
 // aggregates. Ordered fine to coarse; selection depends on that order.
 var rolledUpTiers = []tierSpec{rawTier, fiveMinuteTier, hourlyTier}
 
-// smartTiers and processTiers are the two raw-only families (spec 5.3, 5.4).
+// smartTiers is the one raw-only family (spec 5.3).
 //
-// Neither is an omission. SMART is read hourly, so a 5-minute bucket would
-// hold at most one reading and restate the raw table at triple the storage;
-// a 1-hour average of a top-N process list whose membership changes between
-// buckets is close to meaningless. Both are pinned by
+// Not an omission: SMART is read hourly, so a 5-minute bucket would hold at
+// most one reading and restate the raw table at triple the storage. Pinned by
 // TestIntegrationRawOnlyTablesHaveNoContinuousAggregates.
-var (
-	smartTiers = []tierSpec{{
-		name: TierRaw, suffix: "", tsColumn: "ts",
-		step: time.Hour, lag: 0, retention: 90 * 24 * time.Hour,
-	}}
-	processTiers = []tierSpec{{
-		name: TierRaw, suffix: "", tsColumn: "ts",
-		step: time.Minute, lag: 0, retention: 48 * time.Hour,
-	}}
-)
+var smartTiers = []tierSpec{{
+	name: TierRaw, suffix: "", tsColumn: "ts",
+	step: time.Hour, lag: 0, retention: 90 * 24 * time.Hour,
+}}
 
 // materialisedThrough is the newest bucket boundary this tier can be relied on
 // to have written, given the clock.
@@ -323,10 +315,9 @@ func selectTier(tiers []tierSpec, from time.Time, step time.Duration, stepSet bo
 // rather than the way Go does, which would put "168h0m0s" in a message meant
 // for a person.
 //
-// The one-week floor on the day unit is what keeps process_samples reading as
-// "48 hours" rather than "2 days": 0001_init.sql declares it in hours, and a
-// warning that renames the interval makes it harder to find the line that set
-// it.
+// The one-week floor on the day unit is what keeps a retention the migrations
+// declare in hours reading back as "48 hours" rather than "2 days": a warning
+// that renames the interval makes it harder to find the line that set it.
 func humanDuration(d time.Duration) string {
 	switch {
 	case d%(24*time.Hour) == 0 && d >= 7*24*time.Hour:

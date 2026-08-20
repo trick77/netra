@@ -2521,8 +2521,9 @@ plan_extras() {
     fi
 
     # NOT PROMPTED, AND NOT OPTIONAL. It used to be opt-in behind --pid-host, on
-    # the reasoning that the only thing it bought was a per-process breakdown no
-    # collector had written yet. That premise expired: the namespace is also what
+    # the reasoning that the only thing it bought was a per-process breakdown.
+    # That premise expired twice over: the breakdown has since been removed, and
+    # the namespace is also what
     # resolves each container's interfaces, so declining it silently zeroed
     # net_rx and net_tx for EVERY container on the box -- and nothing in the
     # script or the docs said so. An operator declining it for the stated privacy
@@ -2531,11 +2532,12 @@ plan_extras() {
     # Stated rather than asked, because the exposure is real and the operator
     # should read it even though there is no question attached: sharing the host
     # PID namespace makes every process's /proc entry readable to this container,
-    # cmdline and environ included. netra reads NEITHER -- process names come
-    # from /proc/PID/comm, and internal/agent/collector/argv_guard_test.go fails
-    # the build if either name appears in a Go string literal.
+    # cmdline and environ included. netra reads NEITHER, and no longer reads any
+    # individual process's /proc entry at all -- the count comes from counting
+    # numeric directories in /proc. internal/agent/collector/argv_guard_test.go
+    # fails the build if either name appears in a Go string literal.
     info "  processes:       pid: host (always) -- per-container network and"
-    info "                   the process table both need the host PID namespace"
+    info "                   the process count both need the host PID namespace"
     info "                   the namespace exposes every process's cmdline and"
     info "                   environ to the container; netra reads neither"
 }
@@ -3170,7 +3172,7 @@ netra_rewrite_pid_host() {
             if (!seen) {
                 print ""
                 print "# This container runs with `pid: host`, stated by setup-agent.sh so the"
-                print "# collectors need not guess. Required for the process table and for"
+                print "# collectors need not guess. Required for the process count and for"
                 print "# per-container network traffic."
                 print "NETRA_PID_HOST=1"
             }
@@ -3207,7 +3209,7 @@ sync_pid_host() {
     fi
     if ! netra_exec netra_rewrite_pid_host "$1"; then
         warn "could not update NETRA_PID_HOST in $1. Until it says 1, the agent reports no" \
-            "process table and no per-container network traffic, even though this run" \
+            "process count and no per-container network traffic, even though this run" \
             "granted the namespace. Set NETRA_PID_HOST=1 by hand."
         return 0
     fi

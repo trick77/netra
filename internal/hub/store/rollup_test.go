@@ -195,15 +195,15 @@ func TestIntegrationRawRetentionExceedsRefreshLag(t *testing.T) {
 		t.Fatalf("iterate: %v", err)
 	}
 
-	// Twelve raw hypertables. Continuous aggregates carry their own retention
+	// Eleven raw hypertables. Continuous aggregates carry their own retention
 	// policies too, and Timescale reports those under the aggregate's own
 	// view name rather than the internal materialisation hypertable — hence
 	// the anti-join above rather than a name pattern.
-	if seen != 12 {
-		t.Fatalf("raw retention policies found = %d, want 12 "+
+	if seen != 11 {
+		t.Fatalf("raw retention policies found = %d, want 11 "+
 			"(host_samples, host_snmp_samples, agent_samples and the five "+
-			"Group 1 tables, plus container_samples, filesystem_samples, "+
-			"smart_attributes and process_samples)", seen)
+			"Group 1 tables, plus container_samples, filesystem_samples and "+
+			"smart_attributes)", seen)
 	}
 }
 

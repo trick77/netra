@@ -660,7 +660,6 @@ func appendFamilies(s *buffer.Scrape, res *collector.Result) {
 	s.Containers = append(s.Containers, res.Containers...)
 	s.Filesystems = append(s.Filesystems, res.Filesystems...)
 	s.Smart = append(s.Smart, res.Smart...)
-	s.Processes = append(s.Processes, res.Processes...)
 	s.Events = append(s.Events, res.Events...)
 	s.SystemdEvents = append(s.SystemdEvents, res.SystemdEvents...)
 	s.PackageEvents = append(s.PackageEvents, res.PackageEvents...)
@@ -680,7 +679,7 @@ func countRows(s *buffer.Scrape) int {
 	return 1 +
 		len(s.Cores) + len(s.Disks) + len(s.Sensors) + len(s.Nets) +
 		len(s.Containers) + len(s.Filesystems) + len(s.Smart) +
-		len(s.Processes) + len(s.Events) + len(s.SystemdEvents) +
+		len(s.Events) + len(s.SystemdEvents) +
 		len(s.PackageEvents) + len(s.Addresses) + len(s.Packages) +
 		len(s.Collectors)
 }
@@ -772,7 +771,6 @@ func (c *Client) Flush(ctx context.Context) error {
 		req.Containers = append(req.Containers, s.Containers...)
 		req.Filesystems = append(req.Filesystems, s.Filesystems...)
 		req.Smart = append(req.Smart, s.Smart...)
-		req.Processes = append(req.Processes, s.Processes...)
 		req.Events = append(req.Events, s.Events...)
 		req.SystemdEvents = append(req.SystemdEvents, s.SystemdEvents...)
 		req.PackageEvents = append(req.PackageEvents, s.PackageEvents...)

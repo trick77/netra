@@ -25,7 +25,7 @@
 #   names only), filesystems, systemd, packages.
 #
 # Needing the host PID namespace (`pid: host`, rendered unconditionally):
-#   processes, procs, and per-container net_rx/net_tx.
+#   procs, and per-container net_rx/net_tx.
 #
 # Needing a privilege the operator grants explicitly:
 #   SMART (device access).
@@ -37,11 +37,11 @@
 # The two long-standing exceptions are called out where they are configured
 # below —
 #
-#   * procs, processes and per-container networking all need `pid: host`.
-#     Without it the agent sees only its own PID namespace: it reports the
-#     process count as unavailable rather than reporting the two processes it
-#     can see, and every container's net_rx/net_tx goes NULL because the PID
-#     that owns each container's interfaces cannot be resolved.
+#   * procs and per-container networking both need `pid: host`. Without it the
+#     agent sees only its own PID namespace: it reports the process count as
+#     unavailable rather than reporting the two processes it can see, and every
+#     container's net_rx/net_tx goes NULL because the PID that owns each
+#     container's interfaces cannot be resolved.
 #   * users needs the /var/run/utmp bind. Without it, or on a system with no
 #     utmp writer at all (Alpine and other busybox systems), the session count
 #     is reported as unavailable.
@@ -419,9 +419,9 @@ services:
     #
     # Not optional, and not only about processes. Two collectors need it:
     #
-    #   processes    without the host PID namespace the agent sees only itself
-    #                in /proc, so processes_total is NULL and the per-process
-    #                CPU and memory breakdown has nothing to walk.
+    #   procs        without the host PID namespace the agent sees only itself
+    #                in /proc, so processes_total is NULL rather than counting
+    #                the two entries the container's own namespace holds.
     #
     #   containers   per-container net_rx and net_tx. The counters live in each
     #                container's own network namespace, reached through the host
@@ -449,11 +449,12 @@ services:
     # every service on the box, which routinely carry passwords, API keys and
     # DSNs.
     #
-    # netra reads NEITHER. Process names come from `comm` (/proc/PID/comm, 15
-    # bytes, no arguments), and the agent never opens cmdline or environ at all
-    # — enforced by internal/agent/collector/argv_guard_test.go, which fails the
-    # build if either name appears in a Go string literal. The collector
-    # aggregates CPU and memory by process name and nothing else.
+    # netra reads NEITHER, and since the per-process collector was removed it
+    # does not read any individual process's /proc entry at all — the process
+    # count comes from counting the numeric directories in /proc. cmdline and
+    # environ are never opened, enforced by
+    # internal/agent/collector/argv_guard_test.go, which fails the build if
+    # either name appears in a Go string literal.
     #
     # So the exposure is the namespace, not the agent: it grants far more than
     # netra uses, and you are trusting the image not to use it.
