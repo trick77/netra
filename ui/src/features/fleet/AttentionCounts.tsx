@@ -88,7 +88,7 @@ export function AttentionCounts({
         const severityClass = SEVERITY_CLASS[kind.severity];
         const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
           // Modified and non-primary clicks belong to the browser -- the same
-          // rule Tabs and StatTile follow, for the same reason: an href is
+          // rule Tabs and StatFigure follow, for the same reason: an href is
           // used precisely so cmd-click still opens a tab.
           if (event.defaultPrevented || event.button !== 0) return;
           if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
@@ -109,9 +109,9 @@ export function AttentionCounts({
               onClick={handleClick}
             >
               <span className="k">{kind.label}</span>
-              {/* The noun rides the number, the way StatTile's `unit` does:
-                  "3" beside "Failed units" reads as three failed units, and
-                  it is three HOSTS -- one of which may have five. */}
+              {/* The noun rides the number: "3" beside "Failed units"
+                  reads as three failed units, and it is three HOSTS -- one
+                  of which may have five. */}
               <span className="v">
                 {hosts}
                 <span className="u"> host{hosts === 1 ? "" : "s"}</span>
