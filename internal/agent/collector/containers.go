@@ -121,7 +121,7 @@ type Containers struct {
 	hostNetNSOnce sync.Once
 
 	// pidHost is the operator's own statement, from NETRA_PID_HOST, mirroring
-	// what Procs and Processes are already given. It exists so containerNet can
+	// what Procs is already given. It exists so containerNet can
 	// SAY why a namespace link was unreadable instead of inferring it from an
 	// errno: without the host PID namespace, cgroup.procs names host PIDs this
 	// agent's /proc does not have, and the readlink fails with ENOENT -- which
@@ -1038,9 +1038,9 @@ func sumNetDev(path string) (rx, tx uint64, ok bool) {
 // 20000-row batch limit, so the cap is a backstop rather than a routine
 // truncation.
 //
-// Processes solves the same problem by ranking (topByCPUAndMemory); containers
-// are not ranked, because a container is an entity an operator names and looks
-// for rather than a population to sample. Truncating the tail of a stable sort
+// Containers are not ranked before truncating, because a container is an
+// entity an operator names and looks for rather than a population to sample.
+// Truncating the tail of a stable sort
 // keeps the same containers reported scrape after scrape, so a chart does not
 // flicker between them -- and the log line says what was left out, which
 // silently returning 500 rows would not.

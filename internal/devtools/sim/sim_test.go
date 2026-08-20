@@ -26,7 +26,7 @@ var (
 func TestTheSameSeedRegeneratesIdenticalHistory(t *testing.T) {
 	for _, p := range Fleet() {
 		ts := testTo.Add(-33 * time.Hour)
-		opt := Options{Smart: true, Processes: true, Collectors: true, Inventory: true}
+		opt := Options{Smart: true, Collectors: true, Inventory: true}
 
 		a := NewGenerator(p, 7, testFrom, testTo).Scrape(ts, opt)
 		b := NewGenerator(p, 7, testFrom, testTo).Scrape(ts, opt)
@@ -61,7 +61,7 @@ func TestADifferentSeedProducesDifferentHistory(t *testing.T) {
 // fabricated zero, which is the whole reason every metric field is optional.
 func TestAbsentSubsystemsAreUnsetRatherThanZero(t *testing.T) {
 	ts := testTo.Add(-2 * time.Hour)
-	opt := Options{Smart: true, Processes: true, Collectors: true, Inventory: true}
+	opt := Options{Smart: true, Collectors: true, Inventory: true}
 
 	byName := map[string]*Scrape{}
 	profiles := map[string]*Profile{}
@@ -105,7 +105,7 @@ func TestAbsentSubsystemsAreUnsetRatherThanZero(t *testing.T) {
 // The fleet must cover every table in the schema, or the simulator leaves
 // exactly the gap it was built to close.
 func TestTheFleetPopulatesEveryFamily(t *testing.T) {
-	opt := Options{Smart: true, Processes: true, Collectors: true, Inventory: true}
+	opt := Options{Smart: true, Collectors: true, Inventory: true}
 	seen := map[string]bool{}
 
 	for _, p := range Fleet() {
@@ -124,7 +124,6 @@ func TestTheFleetPopulatesEveryFamily(t *testing.T) {
 			mark(seen, "containers", len(s.Containers) > 0)
 			mark(seen, "filesystems", len(s.Filesystems) > 0)
 			mark(seen, "smart", len(s.Smart) > 0)
-			mark(seen, "processes", len(s.Processes) > 0)
 			mark(seen, "events", len(s.Events) > 0)
 			mark(seen, "systemd_events", len(s.SystemdEvents) > 0)
 			mark(seen, "package_events", len(s.PackageEvents) > 0)
@@ -135,7 +134,7 @@ func TestTheFleetPopulatesEveryFamily(t *testing.T) {
 
 	for _, family := range []string{
 		"host", "agent", "cores", "disks", "sensors", "nets", "collectors",
-		"containers", "filesystems", "smart", "processes", "events",
+		"containers", "filesystems", "smart", "events",
 		"systemd_events", "package_events", "addresses", "packages",
 	} {
 		if !seen[family] {
@@ -187,7 +186,7 @@ func TestABatchNeverExceedsTheHubsBodyCap(t *testing.T) {
 
 		ts := testTo.Add(-24 * time.Hour)
 		for h.pendingRows < maxBatchRows {
-			h.append(g.Scrape(ts, Options{Smart: true, Processes: true, Collectors: true, Inventory: true}))
+			h.append(g.Scrape(ts, Options{Smart: true, Collectors: true, Inventory: true}))
 			ts = ts.Add(time.Minute)
 		}
 
@@ -203,7 +202,7 @@ func TestABatchNeverExceedsTheHubsBodyCap(t *testing.T) {
 func TestRowsMatchesWhatTheRequestCarries(t *testing.T) {
 	p := Fleet()[2]
 	g := NewGenerator(p, 1, testFrom, testTo)
-	s := g.Scrape(testTo.Add(-time.Hour), Options{Smart: true, Processes: true, Collectors: true, Inventory: true})
+	s := g.Scrape(testTo.Add(-time.Hour), Options{Smart: true, Collectors: true, Inventory: true})
 
 	h := &host{profile: p, gen: g}
 	h.append(s)
@@ -212,7 +211,7 @@ func TestRowsMatchesWhatTheRequestCarries(t *testing.T) {
 	got := len(req.GetHostSamples()) + len(req.GetCpuCores()) + len(req.GetDiskIo()) +
 		len(req.GetSensors()) + len(req.GetNet()) + len(req.GetCollectors()) +
 		len(req.GetEvents()) + len(req.GetContainers()) + len(req.GetFilesystems()) +
-		len(req.GetSmart()) + len(req.GetProcesses()) + len(req.GetSystemdEvents()) +
+		len(req.GetSmart()) + len(req.GetSystemdEvents()) +
 		len(req.GetPackageEvents()) + len(req.GetAddresses()) + len(req.GetPackages()) +
 		len(req.GetSystemdSnapshot().GetUnits())
 
@@ -520,7 +519,7 @@ func TestSplittingAnOversizedBatchStillDeliversTheMetadata(t *testing.T) {
 	h := &host{profile: p, gen: g, meta: meta, metaHash: HashMetadata(meta), sendMeta: true}
 
 	// Enough scrapes to push the marshalled request past the split threshold.
-	opt := Options{Smart: true, Processes: true, Collectors: true, Inventory: true}
+	opt := Options{Smart: true, Collectors: true, Inventory: true}
 	for ts := testTo.Add(-2000 * time.Minute); ts.Before(testTo); ts = ts.Add(time.Minute) {
 		h.append(g.Scrape(ts, opt))
 	}
@@ -623,7 +622,7 @@ func TestRepeatedUpgradesChainTheirVersions(t *testing.T) {
 // collector_samples is built from, or the health table contradicts the data
 // table.
 func TestAProfileNeverEmitsAFamilyItsCollectorListDoesNotCover(t *testing.T) {
-	opt := Options{Smart: true, Processes: true, Collectors: true, Inventory: true}
+	opt := Options{Smart: true, Collectors: true, Inventory: true}
 
 	for _, p := range Fleet() {
 		s := NewGenerator(p, 1, testFrom, testTo).Scrape(testTo.Add(-time.Hour), opt)
@@ -632,7 +631,6 @@ func TestAProfileNeverEmitsAFamilyItsCollectorListDoesNotCover(t *testing.T) {
 			collector string
 			emitted   bool
 		}{
-			{"processes", len(s.Processes) > 0},
 			{"smart", len(s.Smart) > 0},
 			{"sensors", len(s.Sensors) > 0},
 			{"containers", len(s.Containers) > 0},
@@ -828,20 +826,6 @@ func TestEveryScheduledEventIsDeliveredExactlyOnce(t *testing.T) {
 
 	if delivered != total {
 		t.Errorf("delivered %d of %d scheduled events", delivered, total)
-	}
-}
-
-// A process name must never exceed what /proc/PID/comm can hold: a simulator
-// that emitted longer names would make the UI look like it can show something
-// it cannot, and argv is never collected anywhere in netra.
-func TestProcessNamesStayWithinCommsFifteenBytes(t *testing.T) {
-	for _, p := range Fleet() {
-		g := NewGenerator(p, 1, testFrom, testTo)
-		for _, pr := range g.Scrape(testTo.Add(-time.Hour), Options{Processes: true}).Processes {
-			if len(pr.GetName()) > 15 {
-				t.Errorf("%s: process name %q is %d bytes, comm holds 15", p.Name, pr.GetName(), len(pr.GetName()))
-			}
-		}
 	}
 }
 

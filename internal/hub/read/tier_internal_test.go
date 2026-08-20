@@ -174,10 +174,8 @@ func TestTierSelectionRawIsFreshToNow(t *testing.T) {
 	}
 }
 
-// The two raw-only families are why selection is per-family rather than a
-// lookup on the range: a sixty-day SMART range has no 5m tier to fall to, and
-// process can never cover more than its 48 hours however long a range is
-// asked for.
+// The raw-only family is why selection is per-family rather than a lookup on
+// the range: a sixty-day SMART range has no 5m tier to fall to.
 func TestTierSelectionForRawOnlyFamilies(t *testing.T) {
 	t.Run("smart over sixty days stays raw and is not clamped", func(t *testing.T) {
 		p := mustPlan(t, "smart", testNow.Add(-60*day), testNow, 0, false)
@@ -204,19 +202,6 @@ func TestTierSelectionForRawOnlyFamilies(t *testing.T) {
 		}
 	})
 
-	t.Run("process is bounded at forty-eight hours", func(t *testing.T) {
-		p := mustPlan(t, "process", testNow.Add(-7*day), testNow, 0, false)
-
-		if p.Tier != TierRaw {
-			t.Errorf("tier = %q, want %q", p.Tier, TierRaw)
-		}
-		if want := testNow.Add(-48 * time.Hour); !p.Window.From.Equal(want) {
-			t.Errorf("window.from = %v, want %v", p.Window.From, want)
-		}
-		if !hasWarning(p, "48 hours") {
-			t.Errorf("warnings = %q, want one naming the 48-hour retention", p.Warnings)
-		}
-	})
 }
 
 // An explicit step is total: every duration resolves to a tier rather than
@@ -236,7 +221,7 @@ func TestTierSelectionWithAnExplicitStep(t *testing.T) {
 		{"between 5m and 1h", "host", 10 * time.Minute, Tier5m, 300},
 		{"exactly 1h", "host", time.Hour, Tier1h, 3600},
 		{"coarser than 1h clamps to 1h", "host", 24 * time.Hour, Tier1h, 3600},
-		{"a raw-only family ignores the step", "process", time.Hour, TierRaw, 60},
+		{"a raw-only family ignores the step", "smart", 5 * time.Minute, TierRaw, 3600},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := mustPlan(t, tc.family, testNow.Add(-2*time.Hour), testNow, tc.step, true)

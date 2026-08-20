@@ -85,7 +85,6 @@ func run() error {
 		// internally -- the scrape loop runs every collector on every tick, and
 		// waking sleeping drives once a minute would shorten their life.
 		collector.NewSmart(cfg.SmartInterval, collector.SystemSmartctl),
-		collector.NewProcesses(cfg.ProcRoot, cfg.PidHost),
 	}
 
 	c := client.New(cfg, collectors)

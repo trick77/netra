@@ -26,10 +26,12 @@ const minPlausibleProcs = 5
 
 // Procs reports the total number of processes on the host.
 //
-// This is deliberately distinct from the per-name counts a future process
-// collector will report: those are a top-N list and cannot answer "how many
-// processes exist". It counts numeric entries in /proc and opens none of
-// them, except one comm file used to detect a PID namespace.
+// netra reported a per-name CPU and memory table once and no longer does: it
+// read /proc/<pid>/stat for every process each scrape, and the kernel
+// ptrace-checks those reads, which a docker-default container fails against
+// every unconfined host process. This collector survived that removal because
+// it never made such a read -- it counts the numeric entries in /proc and
+// opens none of them, except one comm file used to detect a PID namespace.
 //
 // Without pid: host the agent sees only its own namespace, where the count is
 // a meaningless 1 or 2. That case reports nothing at all rather than a

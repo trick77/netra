@@ -156,13 +156,6 @@ var families = map[string]*family{
 		dimensionColumns: []string{"device_id", "attr_id"},
 		tiers:            smartTiers,
 	},
-	"process": {
-		name:             "process",
-		table:            "process_samples",
-		keys:             []keySpec{{name: "name", expr: "s.name"}},
-		dimensionColumns: []string{"name"},
-		tiers:            processTiers,
-	},
 }
 
 // familyNames lists the registry in a stable order, for the error message an

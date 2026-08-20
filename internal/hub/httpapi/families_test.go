@@ -37,9 +37,6 @@ func fullRequest(seq uint64, ts int64) *netrav1.IngestRequest {
 		Smart: []*netrav1.SmartAttribute{
 			{TsMs: ts, Device: "sda", Model: "Samsung", AttrId: 5, Raw: proto.Int64(0)},
 		},
-		Processes: []*netrav1.ProcessSample{
-			{TsMs: ts, Name: "postgres", CpuPct: proto.Float64(12)},
-		},
 		Collectors: []*netrav1.CollectorSample{
 			{TsMs: ts, Collector: "sensors", Ok: true, DurationMs: proto.Uint32(3)},
 		},
@@ -66,7 +63,7 @@ func fullRequest(seq uint64, ts int64) *netrav1.IngestRequest {
 var familyTables = []string{
 	"cpu_core_samples", "disk_io_samples", "sensor_samples", "net_samples",
 	"container_samples", "filesystem_samples", "smart_attributes",
-	"process_samples", "collector_samples", "events",
+	"collector_samples", "events",
 	"systemd_unit_events", "package_events", "host_addresses", "host_packages",
 }
 
@@ -283,10 +280,10 @@ func TestIntegrationOneImplausibleRowDoesNotFailTheBatch(t *testing.T) {
 // prevent, arriving through a different door: a 503 makes the agent re-send
 // the identical batch forever, so a single unstorable row wedges the ring
 // buffer permanently. The timestamp filter only catches implausible ts_ms --
-// a NUL byte in a process comm or an address INET will not parse are equally
+// a NUL byte in an event subject or an address INET will not parse are equally
 // unstorable and equally permanent.
 //
-// Both quarantine paths are exercised on purpose. A NUL in a process name
+// Both quarantine paths are exercised on purpose. A NUL in an event subject
 // fails inside the family's own INSERT batch; a NUL in a container_key fails
 // EARLIER, in the dimension resolver that maps natural keys to ids, which the
 // batch quarantine never sees.
@@ -297,8 +294,8 @@ func TestIntegrationOneUnstorableRowDoesNotCostTheOtherFamiliesTheirData(t *test
 
 	req := fullRequest(1, ts)
 	// Batch path: SQLSTATE 22021, invalid byte sequence for encoding UTF8.
-	req.Processes = append(req.Processes, &netrav1.ProcessSample{
-		TsMs: ts, Name: "evil\x00comm", CpuPct: proto.Float64(1),
+	req.Events = append(req.Events, &netrav1.Event{
+		TsMs: ts, Type: "mdraid", Subject: "ev\x00il", DetailJson: `{"state":"clean"}`,
 	})
 	// Resolver path: the same NUL, but in a natural key the hub must resolve
 	// to a surrogate id before any sample can reference it. Every dimension is
@@ -344,7 +341,7 @@ func TestIntegrationOneUnstorableRowDoesNotCostTheOtherFamiliesTheirData(t *test
 	// The poisoned rows themselves are dropped, not stored mangled. Every
 	// dimension keeps exactly the one good row fullRequest carries.
 	for _, c := range []struct{ what, query string }{
-		{"process", `SELECT count(*) FROM process_samples WHERE name LIKE 'evil%'`},
+		{"event", `SELECT count(*) FROM events WHERE subject LIKE 'ev%il'`},
 		{"container", `SELECT count(*) FROM containers WHERE container_key LIKE 'proj/ev%'`},
 		{"address", `SELECT count(*) FROM host_addresses WHERE host(address) = 'not-an-address'`},
 		{"sensor", `SELECT count(*) FROM sensors WHERE label = 'evil'`},
@@ -363,7 +360,7 @@ func TestIntegrationOneUnstorableRowDoesNotCostTheOtherFamiliesTheirData(t *test
 
 	// And the good row of each poisoned family survived its quarantine.
 	for _, c := range []struct{ what, query string }{
-		{"process", `SELECT count(*) FROM process_samples WHERE name = 'postgres'`},
+		{"event", `SELECT count(*) FROM events WHERE subject = 'md0'`},
 		{"container", `SELECT count(*) FROM containers WHERE container_key = 'proj/web'`},
 		{"address", `SELECT count(*) FROM host_addresses WHERE host(address) = '10.0.0.5'`},
 	} {
@@ -386,20 +383,23 @@ func TestIntegrationOneUnstorableRowDoesNotCostTheOtherFamiliesTheirData(t *test
 // and answer 200, turning a schema mistake into silent, fleet-wide data loss.
 // It stays a 503 an operator can see.
 //
-// A renamed COLUMN rather than a dropped table, deliberately. process_samples
-// is a hypertable: dropping it disturbs TimescaleDB's own catalog and orphans
-// the retention and continuous-aggregate jobs the migration registers, which
-// then fire against a later test's freshly recreated schema and deadlock
-// against whatever it is doing. A rename produces the same SQLSTATE with no
-// catalog damage at all.
+// A renamed COLUMN rather than a dropped table, deliberately. The point is to
+// produce SQLSTATE 42703 from a statement the ingest path actually runs, with
+// the least disturbance to the schema the fixture built: a rename leaves the
+// table, its rows and every foreign key referencing it exactly where they are,
+// and the next test's OpenTest rebuilds the schema from scratch regardless.
+// Dropping a table to get the same class would work here -- events is a plain
+// table -- but the trick has to stay safe if it is ever pointed at one of the
+// hypertables, where a drop disturbs TimescaleDB's own catalog and orphans the
+// retention jobs the migration registers.
 func TestIntegrationANonPoisonFailureStill503s(t *testing.T) {
 	srv, token, s := newFixture(t)
 	ctx := context.Background()
 	ts := time.Now().Add(-time.Minute).UnixMilli()
 
 	if _, err := s.Pool().Exec(ctx,
-		`ALTER TABLE process_samples RENAME COLUMN cpu_pct TO cpu_pct_gone`); err != nil {
-		t.Fatalf("rename process_samples column: %v", err)
+		`ALTER TABLE events RENAME COLUMN detail TO detail_gone`); err != nil {
+		t.Fatalf("rename events column: %v", err)
 	}
 
 	resp := post(t, srv, token, fullRequest(1, ts))

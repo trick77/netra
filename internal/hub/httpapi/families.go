@@ -84,12 +84,6 @@ func (h *IngestHandler) storeFamilies(ctx context.Context, hostID int32, req *ne
 		return fmt.Errorf("smart: %w", err)
 	}
 
-	processes, dropped := filterByTs(req.GetProcesses(), future)
-	logDropped(hostID, "process", dropped)
-	if _, err := h.store.InsertProcessSamples(ctx, hostID, processes); err != nil {
-		return fmt.Errorf("processes: %w", err)
-	}
-
 	collectors, dropped := filterByTs(req.GetCollectors(), future)
 	logDropped(hostID, "collector", dropped)
 	if _, err := h.store.InsertCollectorSamples(ctx, hostID, collectors); err != nil {

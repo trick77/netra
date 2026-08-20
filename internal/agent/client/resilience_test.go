@@ -56,11 +56,11 @@ type fatCollector struct{ rows int }
 
 func (fatCollector) Name() string { return "fat" }
 func (f fatCollector) Collect(context.Context) (*collector.Result, error) {
-	procs := make([]*netrav1.ProcessSample, f.rows)
-	for i := range procs {
-		procs[i] = &netrav1.ProcessSample{TsMs: 1, Name: "x"}
+	rows := make([]*netrav1.CpuCoreSample, f.rows)
+	for i := range rows {
+		rows[i] = &netrav1.CpuCoreSample{TsMs: 1, Core: uint32(i)}
 	}
-	return &collector.Result{Processes: procs}, nil
+	return &collector.Result{Cores: rows}, nil
 }
 
 func testConfig(url string) config.Config {

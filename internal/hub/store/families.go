@@ -664,32 +664,6 @@ func (s *Store) InsertSmartAttributes(ctx context.Context, hostID int32, rows []
 	return execBatch(ctx, s.pool, batch, "smart attribute")
 }
 
-// ---------------------------------------------------------------- processes
-
-// InsertProcessSamples writes one row per process name.
-func (s *Store) InsertProcessSamples(ctx context.Context, hostID int32, rows []*netrav1.ProcessSample) (int64, error) {
-	if len(rows) == 0 {
-		return 0, nil
-	}
-
-	const stmt = `
-		INSERT INTO process_samples (host_id, ts, name, cpu_pct, mem_bytes, count)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (host_id, ts, name) DO NOTHING`
-
-	batch := &pgx.Batch{}
-	for _, r := range rows {
-		var count *int32
-		if r.Count != nil {
-			v := int32(r.GetCount())
-			count = &v
-		}
-		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), r.GetName(),
-			r.CpuPct, int64OrNil(r.MemBytes), count)
-	}
-	return execBatch(ctx, s.pool, batch, "process sample")
-}
-
 // --------------------------------------------------------------- inventory
 
 // UpsertHostAddresses replaces the host's address set.

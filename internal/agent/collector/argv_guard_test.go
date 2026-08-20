@@ -28,10 +28,11 @@ import (
 // The trap is that the DANGEROUS implementation is the NATURAL one.
 // /proc/PID/stat gives a 15-byte truncated `comm`, so the obvious way to get
 // readable process names — "nginx: worker process", "/usr/bin/python3
-// /opt/app/main.py" — is to read cmdline. Whoever writes the processes
-// collector will reach for it unless something stops them. This is that thing,
-// and it exists before the collector on purpose: a guard added afterwards only
-// documents a decision already made wrongly.
+// /opt/app/main.py" — is to read cmdline. Whoever writes the next collector
+// that names a process will reach for it unless something stops them. This is
+// that thing. netra shipped a per-process collector once and has since removed
+// it, so no such reader exists today — which is exactly when a guard is worth
+// keeping, not dropping.
 //
 // Process identity is `comm`, from /proc/PID/comm or field 2 of /proc/PID/stat.
 // The cost is real and accepted: names truncate ("postgres: chec") and
@@ -55,8 +56,8 @@ const (
 // Three properties, each load-bearing:
 //
 //   - STRING LITERALS ONLY. A comment saying "never read cmdline" is fine, and
-//     the processes collector will want to write exactly that. Only string
-//     literal nodes are examined — see literalsOf.
+//     a collector that names processes will want to write exactly that. Only
+//     string literal nodes are examined — see literalsOf.
 //   - WORD BOUNDARIES. `environ` is a substring of "environment", which appears
 //     in config.go's package comment. A naive substring match would be red the
 //     moment this file landed.
@@ -124,8 +125,8 @@ so the decision is visible rather than silent.`,
 //
 // A hand-written list was wrong the day it was written: it named internal/agent
 // and cmd/netra-agent, so internal/shared/gen/netra/v1 was never walked — and that is
-// the tree that matters most. Adding `string cmdline = 5;` to ProcessSample and
-// running `make proto` regenerates ingest.pb.go with a
+// the tree that matters most. Adding `string cmdline = 5;` to any sample
+// message and running `make proto` regenerates ingest.pb.go with a
 // `protobuf:"...name=cmdline..."` struct tag, which is a string literal this
 // guard would catch, in a file it never opened. The wire format is the whole
 // point: a field that reaches the hub is the violation, and the proto comment
@@ -154,9 +155,8 @@ func guardRoots(t *testing.T) []string {
 	// compiler reports. `go list -deps` covers only what main already imports,
 	// which narrows the guard in the other direction: a new collector written
 	// before it is wired into netra-agent would be unguarded until the import
-	// lands. That is precisely the processes collector, the package this whole
-	// guard exists to constrain, during precisely the window it is being
-	// written. Overlap with a computed root is harmless — WalkDir would visit
+	// lands — precisely the window in which a collector that names processes
+	// is being written, and precisely what this guard exists to constrain. Overlap with a computed root is harmless — WalkDir would visit
 	// a file twice and report it twice, and duplicate findings in a failure
 	// message cost nothing next to a missed one.
 	roots := []string{".."}
@@ -237,8 +237,8 @@ func scanFile(path string) ([]string, error) {
 // The AST is what makes "string literals only" true rather than aspirational.
 // The previous regexp had no idea what a comment was, so
 // `// names come from comm, never "cmdline"` failed the build — the exact
-// comment this file predicts the processes collector's author will write, in
-// the repo's own backtick-quoting house style. It also could not see inside a
+// comment this file predicts such a collector's author will write, in the
+// repo's own backtick-quoting house style. It also could not see inside a
 // multi-line raw string, so the same path hidden in one passed. Both directions
 // were wrong; the parser gets both right.
 //

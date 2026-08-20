@@ -40,7 +40,6 @@ message IngestRequest {
   repeated ContainerSample containers = 12;
   repeated FilesystemSample filesystems = 13;
   repeated SmartAttribute smart = 14;
-  repeated ProcessSample processes = 15;
   repeated SystemdUnitEvent systemd_events = 16;
   repeated PackageEvent package_events = 17;
 
@@ -53,6 +52,20 @@ message IngestRequest {
   // Level-triggered systemd state, sent periodically alongside the deltas in
   // systemd_events. See SystemdSnapshot for why both exist.
   SystemdSnapshot systemd_snapshot = 20;
+
+  // 15 was `repeated ProcessSample processes`, the per-process-name table. It
+  // read /proc/<pid>/stat for every process on the host each scrape, and the
+  // kernel ptrace-checks each of those reads (do_task_stat), which a
+  // docker-default container fails against every unconfined host process --
+  // one apparmor="DENIED" line a minute in the log netra exists to help the
+  // operator read. Nothing rendered the rows. Reserved so the tag is never
+  // reused: agents older than this still send it, and a hub that reassigned
+  // 15 would decode their process rows as whatever took the number. The NAME
+  // is reserved beside it: JSON encodings key on the name, so a later field
+  // called `processes` would collide with an old agent's payload even with a
+  // different tag.
+  reserved 15;
+  reserved "processes";
 }
 
 // CpuCoreSample is one core's utilisation over one scrape interval. Rows land
@@ -474,11 +487,13 @@ message AgentSample {
   optional uint64 hub_connect_failures_total = 11;
 }
 
-// ProcessSample carries exactly: name, cpu_pct, mem_bytes, count. The rule
-// below is why, and it holds for every future field.
+// NO FIELD ON THIS WIRE MAY EVER CARRY ARGV OR THE ENVIRONMENT.
 //
-// `name` is `comm` — /proc/PID/comm, or field 2 of /proc/PID/stat — which the
-// kernel caps at 15 bytes. No field may ever carry argv or the environment.
+// The per-process table that used to live here (field 15, now reserved) named
+// processes by `comm` -- /proc/PID/comm, or field 2 of /proc/PID/stat -- which
+// the kernel caps at 15 bytes. It is gone, but the rule it was written under
+// outlives it and holds for every future field.
+//
 // /proc/PID/cmdline is argv, and argv routinely carries credentials
 // (`mysql -p<pass>`, `-Dspring.datasource.password=...`, `--token=...`);
 // /proc/PID/environ is worse. Either on the wire turns netra into a credential
@@ -488,8 +503,7 @@ message AgentSample {
 // The trap is that the dangerous implementation is the natural one: 15 bytes is
 // an unsatisfying name and cmdline has the whole command in it. Enforced by
 // internal/agent/collector/argv_guard_test.go, which fails the build rather
-// than trusting review. See spec 6.2 for the accepted cost (truncated names,
-// "python3" instead of the script).
+// than trusting review.
 
 // IngestResponse carries everything the hub would push over a socket.
 message IngestResponse {
@@ -671,21 +685,6 @@ message SmartAttribute {
   uint32 attr_id = 5;
   optional int64 raw = 6;
   optional uint32 normalized = 7;
-}
-
-// ProcessSample is one process NAME, aggregated across every process sharing
-// it -- top-10-by-CPU union top-10-by-memory, not every process on the host.
-message ProcessSample {
-  int64 ts_ms = 1;
-  // comm from /proc/PID/stat. NEVER argv: cmdline and environ carry secrets
-  // passed on command lines, and argv_guard_test.go fails the build if either
-  // name appears in a Go string literal. The accepted cost is truncated names
-  // and "python3" rather than the script (spec 6.2).
-  string name = 2;
-  optional double cpu_pct = 3;
-  optional uint64 mem_bytes = 4;
-  // How many processes were aggregated under this name.
-  optional uint32 count = 5;
 }
 
 // CollectorSample is one collector's own health for one scrape: how long it

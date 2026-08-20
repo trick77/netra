@@ -23,7 +23,6 @@ type Scrape struct {
 	Containers    []*netrav1.ContainerSample
 	Filesystems   []*netrav1.FilesystemSample
 	Smart         []*netrav1.SmartAttribute
-	Processes     []*netrav1.ProcessSample
 	Events        []*netrav1.Event
 	SystemdEvents []*netrav1.SystemdUnitEvent
 	PackageEvents []*netrav1.PackageEvent

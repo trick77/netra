@@ -211,13 +211,11 @@ func TestIntegrationHostAddressesSupportsSubnetQueries(t *testing.T) {
 	}
 }
 
-// smart_attributes and process_samples are raw-only BY DESIGN.
+// smart_attributes is raw-only BY DESIGN.
 //
 // SMART is read hourly, so a 5-minute bucket holds at most one reading and a
 // 1-hour bucket exactly one -- the aggregates would restate the raw table at
-// triple the storage. process_samples is the spec's stated exception (5.4): a
-// 1-hour average of a top-N list whose membership changes between buckets is
-// close to meaningless.
+// triple the storage.
 //
 // Pinned so a later change adding an aggregate has to move this deliberately,
 // rather than shipping one without the retention policy nobody assigned it.
@@ -228,7 +226,7 @@ func TestIntegrationRawOnlyTablesHaveNoContinuousAggregates(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	for _, table := range []string{"smart_attributes", "process_samples"} {
+	for _, table := range []string{"smart_attributes"} {
 		var n int
 		if err := s.Pool().QueryRow(ctx, `
 			SELECT count(*) FROM timescaledb_information.continuous_aggregates

@@ -114,7 +114,6 @@ func TestFlushSendsEveryBufferedFamily(t *testing.T) {
 		"Containers":    "Containers",
 		"Filesystems":   "Filesystems",
 		"Smart":         "Smart",
-		"Processes":     "Processes",
 		"Events":        "Events",
 		"SystemdEvents": "SystemdEvents",
 		"PackageEvents": "PackageEvents",
