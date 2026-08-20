@@ -1,14 +1,20 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { buildRows, fetchHostTrends, type HostTrends } from "./hostTrends";
+import {
+  buildRows,
+  fetchFleetTrends,
+  fetchHostTrends,
+  type HostTrends,
+} from "./hostTrends";
 import * as api from "../../lib/api";
 import type { Host, MetricsResponse, Site } from "../../lib/api";
 
 vi.mock("../../lib/api", async () => {
   const actual = await vi.importActual<typeof api>("../../lib/api");
-  return { ...actual, getMetrics: vi.fn() };
+  return { ...actual, getMetrics: vi.fn(), getFleetMetrics: vi.fn() };
 });
 
 const getMetrics = vi.mocked(api.getMetrics);
+const getFleetMetrics = vi.mocked(api.getFleetMetrics);
 
 function response(over: Partial<MetricsResponse>): MetricsResponse {
   return {
@@ -530,6 +536,128 @@ describe("fetchHostTrends", () => {
       expect(call[1].to).toBe("2026-08-11T12:00:00.000Z");
       expect(call[1].step).toBe("5m");
     }
+  });
+});
+
+// The fleet form. This is what the page actually calls now: it used to spend
+// six requests per host per render -- four families, five on a host small
+// enough for a per-core stack, plus containers -- and re-send the lot on every
+// poll and every range toggle. One request per family answers all of them.
+describe("fetchFleetTrends", () => {
+  /** Answers each family with the same response for every host asked about. */
+  function serveFleet(byFamily: Record<string, MetricsResponse | Error>) {
+    getFleetMetrics.mockImplementation(async (ids, params) => {
+      const answer = byFamily[params.family];
+      if (answer instanceof Error) throw answer;
+      const res = answer ?? response({});
+      return new Map(ids.map((id) => [Number(id), res]));
+    });
+  }
+
+  it("asks each family once for the whole fleet", async () => {
+    serveFleet({});
+
+    await fetchFleetTrends(
+      [
+        { id: 1, threads: 4 },
+        { id: 2, threads: 8 },
+      ],
+      "24h",
+      new Date("2026-08-11T12:00:00Z"),
+    );
+
+    // Five families, five calls -- not five per host.
+    const families = getFleetMetrics.mock.calls.map((c) => c[1].family).sort();
+    expect(families).toEqual([
+      "agent",
+      "cpu_core",
+      "filesystem",
+      "host",
+      "net",
+    ]);
+    for (const call of getFleetMetrics.mock.calls) {
+      expect(call[0]).toEqual([1, 2]);
+      expect(call[1].from).toBe("2026-08-10T12:00:00.000Z");
+      expect(call[1].to).toBe("2026-08-11T12:00:00.000Z");
+      expect(call[1].step).toBe("5m");
+    }
+  });
+
+  // Narrowed, and this is the test that says so. family=host carries 71 value
+  // columns at raw and 101 at 5m; a fleet row reads ten of them. Unnarrowed,
+  // a 24h render moved an order of magnitude more numbers than it drew.
+  it("asks only for the columns it draws", async () => {
+    serveFleet({});
+
+    await fetchFleetTrends([{ id: 1, threads: 4 }], "24h");
+
+    const host = getFleetMetrics.mock.calls.find(
+      (c) => c[1].family === "host",
+    )?.[1];
+    expect(host?.columns).toContain("cpu_total");
+    expect(host?.columns).toContain("mem_free");
+    expect(host?.columns).toContain("oom_kill_total");
+    // BASE names, never a tier's suffixed ones: the hub expands each to the
+    // aggregates the answering tier carries, and naming a suffix here would
+    // pin the request to one tier and 400 at every other range.
+    expect(host?.columns?.some((c) => c.endsWith("_avg"))).toBe(false);
+  });
+
+  // MAX_PER_CORE is a transfer limit, and it still is one when the fan-out
+  // collapses: thirty-two series per host add up the same either way. A host
+  // too large for the per-core stack is left out of that ONE call rather than
+  // costing the whole fleet its silhouettes.
+  it("asks for per-core samples only for the hosts small enough to want them", async () => {
+    serveFleet({});
+
+    await fetchFleetTrends(
+      [
+        { id: 1, threads: 4 },
+        { id: 2, threads: 128 },
+      ],
+      "1h",
+    );
+
+    const cores = getFleetMetrics.mock.calls.find(
+      (c) => c[1].family === "cpu_core",
+    );
+    expect(cores?.[0]).toEqual([1]);
+  });
+
+  it("skips the per-core call entirely when no host is small enough", async () => {
+    serveFleet({});
+
+    await fetchFleetTrends([{ id: 1, threads: 128 }], "1h");
+
+    expect(
+      getFleetMetrics.mock.calls.some((c) => c[1].family === "cpu_core"),
+    ).toBe(false);
+  });
+
+  // Failure isolation moved with the fan-out: it used to be per host, and it
+  // is now per family. Either way the page draws what it has.
+  it("loses one column rather than the fleet when a family fails", async () => {
+    serveFleet({
+      net: new Error("boom"),
+      host: response({
+        columns: ["cpu_total"],
+        series: [{ key: {}, points: [[t0, 12]] }],
+      }),
+    });
+
+    const trends = await fetchFleetTrends([{ id: 1, threads: 4 }], "1h");
+
+    expect(trends.get(1)?.rx).toEqual([]);
+    expect(trends.get(1)?.reporting.length).toBeGreaterThan(0);
+  });
+
+  it("asks nothing at all for an empty fleet", async () => {
+    serveFleet({});
+
+    const trends = await fetchFleetTrends([], "24h");
+
+    expect(trends.size).toBe(0);
+    expect(getFleetMetrics).not.toHaveBeenCalled();
   });
 });
 

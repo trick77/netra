@@ -577,34 +577,54 @@ func TestIntegrationMetricsHourlyTierJoinsItsDimension(t *testing.T) {
 	}
 }
 
-// An explicit columns filter is TIER-SPECIFIC, and the combination of
-// ?columns= with automatic tier selection is the sharp edge of that: the same
-// column name does not exist at every tier, by the design that makes the
-// tiers unconfusable in the first place.
+// An explicit columns filter is resolved AGAINST the tier the request lands
+// on, and a BASE name is the way a caller asks without knowing which tier
+// that will be.
 //
-// The error names the columns the chosen tier does have, so it is
-// recoverable -- but it is behaviour a client has to know about, which is why
-// the plan document states it and why this test pins it rather than leaving
-// it to be discovered.
-func TestIntegrationMetricsColumnFilterIsTierSpecific(t *testing.T) {
+// This used to be an outright 400: ?columns=cpu_total against a range that
+// selects 5m named a column that tier does not have. The names still differ
+// per tier by construction -- that is what stops a client confusing an
+// average with a peak -- but requiring the caller to predict the tier made
+// ?columns= unusable for exactly the caller who needs it most, a page drawing
+// one chart at every range. So an unsuffixed name is now a base and expands
+// to whichever aggregates the answering tier carries, while a name that
+// already picks an aggregate is still matched exactly.
+func TestIntegrationMetricsColumnFilterResolvesBaseNamesPerTier(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
 	now := time.Now()
 	id := seedHost(t, pool, "filtered")
 
-	_, err := svc.Metrics(ctx, read.MetricsQuery{
+	// A base name at the 5m tier: both aggregates of it, and only of it.
+	res, err := svc.Metrics(ctx, read.MetricsQuery{
 		HostID: id, Family: "host", From: now.Add(-30 * 24 * time.Hour), To: now,
 		Columns: []string{"cpu_total"},
 	}, now)
-	if !errors.Is(err, read.ErrInvalid) {
-		t.Fatalf("err = %v, want ErrInvalid -- cpu_total is a raw column and this range selects 5m", err)
+	if err != nil {
+		t.Fatalf("Metrics with a base column name: %v", err)
 	}
-	if !strings.Contains(err.Error(), "cpu_total_avg") {
-		t.Errorf("err = %q, want it to name the columns the chosen tier does have", err)
+	if res.Tier != read.Tier5m {
+		t.Fatalf("tier = %q, want 5m -- the rest of this test is about that tier", res.Tier)
+	}
+	if !slices.Equal(res.Columns, []string{"cpu_total_avg", "cpu_total_max"}) {
+		t.Errorf("columns = %v, want [cpu_total_avg cpu_total_max]", res.Columns)
 	}
 
-	// The same request with the tier pinned is the documented way through.
-	res, err := svc.Metrics(ctx, read.MetricsQuery{
+	// The SAME base name at the raw tier is the raw column, unsuffixed. One
+	// request shape, every range -- which is the whole point.
+	res, err = svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "host", From: now.Add(-time.Hour), To: now,
+		Columns: []string{"cpu_total"},
+	}, now)
+	if err != nil {
+		t.Fatalf("Metrics with a base column name at raw: %v", err)
+	}
+	if !slices.Equal(res.Columns, []string{"cpu_total"}) {
+		t.Errorf("columns = %v, want [cpu_total]", res.Columns)
+	}
+
+	// Naming one aggregate still pins it, and still gets only that one.
+	res, err = svc.Metrics(ctx, read.MetricsQuery{
 		HostID: id, Family: "host", From: now.Add(-30 * 24 * time.Hour), To: now,
 		Columns: []string{"cpu_total_avg"},
 	}, now)
@@ -613,6 +633,65 @@ func TestIntegrationMetricsColumnFilterIsTierSpecific(t *testing.T) {
 	}
 	if !slices.Equal(res.Columns, []string{"cpu_total_avg"}) {
 		t.Errorf("columns = %v, want [cpu_total_avg]", res.Columns)
+	}
+
+	// And an aggregate the tier does NOT have is still a 400 naming what it
+	// does have. A suffixed name is a claim about the tier, so silently
+	// answering it with the base would hand back an average labelled a peak.
+	_, err = svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "host", From: now.Add(-time.Hour), To: now,
+		Columns: []string{"cpu_total_avg"},
+	}, now)
+	if !errors.Is(err, read.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid -- cpu_total_avg is a 5m column and this range selects raw", err)
+	}
+	if !strings.Contains(err.Error(), "cpu_total") {
+		t.Errorf("err = %q, want it to name the columns the chosen tier does have", err)
+	}
+}
+
+// A base the family measures SOMEWHERE but not at the answering tier is
+// dropped and WARNED about -- never a 400, and never in silence.
+//
+// mem_available is the case that forces it: host_samples carries it and
+// neither aggregate rolls it up, so a client naming the quantity once for
+// every range is right and the 5m tier simply has nothing to give it. A 400
+// there would make one unrollable column break a request for nine good ones;
+// dropping it quietly would draw an empty chart with no way to find out why.
+//
+// The other half -- a base NO tier of the family has ever carried -- is still
+// the 400 a typo deserves, and TestIntegrationMetricsRejectsBadRequests pins
+// it.
+func TestIntegrationMetricsDropsAndWarnsForAColumnTheTierLacks(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+	id := seedHost(t, pool, "partial")
+
+	res, err := svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "host", From: now.Add(-24 * time.Hour), To: now,
+		Step: 5 * time.Minute, StepSet: true,
+		Columns: []string{"cpu_total", "mem_available"},
+	}, now)
+	if err != nil {
+		t.Fatalf("Metrics: %v", err)
+	}
+	if res.Tier != read.Tier5m {
+		t.Fatalf("tier = %q, want 5m", res.Tier)
+	}
+	if !slices.Equal(res.Columns, []string{"cpu_total_avg", "cpu_total_max"}) {
+		t.Errorf("columns = %v, want the cpu_total pair and nothing for mem_available", res.Columns)
+	}
+
+	var warned bool
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "mem_available") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Errorf("warnings = %v, want one naming mem_available -- a dropped column "+
+			"the caller cannot see is a chart that is empty for no stated reason", res.Warnings)
 	}
 }
 
@@ -707,4 +786,277 @@ func TestIntegrationMetricsHourlyContainerTierCarriesTheBreakdown(t *testing.T) 
 	if got, ok := value.(float64); !ok || got != 15 {
 		t.Errorf("cpu_system_avg = %#v, want 15 (the mean of 10 and 20)", value)
 	}
+}
+
+// --- the fleet form ---
+//
+// FleetMetrics answers several hosts from one query. The fleet page used to
+// ask N hosts the identical question N times -- four families per host, five
+// where the host was small enough for a per-core stack, plus a container call
+// each, re-sent on every sixty-second poll and every range toggle -- through a
+// browser that opens six connections.
+//
+// The tests below pin the three things that make collapsing that safe: one
+// header describes every host, the grouping survives hosts that share a key
+// value, and a host that reported nothing is still in the answer.
+
+// seedNetSamples writes one net_samples row per offset, for one interface.
+func seedNetSamples(t *testing.T, pool *pgxpool.Pool, hostID int32, iface string, offsets ...time.Duration) {
+	t.Helper()
+
+	for i, off := range offsets {
+		exec(t, pool, `
+			INSERT INTO net_samples (host_id, ts, iface, rx_bytes, tx_bytes)
+			VALUES ($1, now() - $2::interval, $3, $4, $5)`,
+			hostID, off.String(), iface, float64(100+i), float64(200+i))
+	}
+}
+
+func TestIntegrationFleetMetricsAnswersEveryHostFromOneQuery(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	a := seedHost(t, pool, "fleet-a")
+	b := seedHost(t, pool, "fleet-b")
+	// Registered, and silent. It must appear in the answer with no series: a
+	// caller has to be able to tell a quiet host from one it never asked
+	// about, which is why Hosts is seeded from the request rather than from
+	// the rows that came back.
+	quiet := seedHost(t, pool, "fleet-quiet")
+
+	seedHostSamples(t, pool, a, 30*time.Minute, 20*time.Minute)
+	seedHostSamples(t, pool, b, 30*time.Minute, 20*time.Minute, 10*time.Minute)
+
+	res, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
+		HostIDs: []int32{a, b, quiet},
+		Family:  "host",
+		From:    now.Add(-2 * time.Hour),
+		To:      now,
+		Columns: []string{"cpu_total"},
+	}, now)
+	if err != nil {
+		t.Fatalf("FleetMetrics: %v", err)
+	}
+
+	if res.Tier != read.TierRaw {
+		t.Errorf("tier = %q, want raw", res.Tier)
+	}
+	if !slices.Equal(res.Columns, []string{"cpu_total"}) {
+		t.Errorf("columns = %v, want [cpu_total]", res.Columns)
+	}
+	if len(res.Hosts) != 3 {
+		t.Fatalf("hosts = %d, want 3 -- every requested host, answered or not", len(res.Hosts))
+	}
+
+	byID := map[int32][]read.Series{}
+	for _, h := range res.Hosts {
+		byID[h.HostID] = h.Series
+	}
+	if got := len(byID[a][0].Points); got != 2 {
+		t.Errorf("host a points = %d, want 2", got)
+	}
+	if got := len(byID[b][0].Points); got != 3 {
+		t.Errorf("host b points = %d, want 3", got)
+	}
+	if series, ok := byID[quiet]; !ok || len(series) != 0 {
+		t.Errorf("quiet host = %v (present %v), want an empty series list", series, ok)
+	}
+}
+
+// The grouping break is on host AND key, never on the key alone. Two hosts
+// with an interface of the same name are what catches a break that watched
+// only the key: eth0's rows would run together across the host boundary and
+// one host would be handed the other's traffic.
+func TestIntegrationFleetMetricsKeepsHostsApartWhenTheyShareAKey(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	a := seedHost(t, pool, "iface-a")
+	b := seedHost(t, pool, "iface-b")
+
+	seedNetSamples(t, pool, a, "eth0", 30*time.Minute, 20*time.Minute)
+	seedNetSamples(t, pool, b, "eth0", 30*time.Minute)
+
+	res, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
+		HostIDs: []int32{a, b},
+		Family:  "net",
+		From:    now.Add(-2 * time.Hour),
+		To:      now,
+		Columns: []string{"rx_bytes"},
+	}, now)
+	if err != nil {
+		t.Fatalf("FleetMetrics: %v", err)
+	}
+
+	points := map[int32]int{}
+	for _, h := range res.Hosts {
+		if len(h.Series) != 1 {
+			t.Fatalf("host %d series = %d, want 1", h.HostID, len(h.Series))
+		}
+		if h.Series[0].Key["iface"] != "eth0" {
+			t.Errorf("host %d key = %v, want eth0", h.HostID, h.Series[0].Key)
+		}
+		points[h.HostID] = len(h.Series[0].Points)
+	}
+	if points[a] != 2 || points[b] != 1 {
+		t.Errorf("points = %v, want host a with 2 and host b with 1 -- a break that "+
+			"watched only the key would run eth0 together across the host boundary", points)
+	}
+}
+
+// The point cap is applied PER HOST, and this is the test that says so.
+//
+// A single LIMIT over the whole result would look like a bound and behave
+// like a silent regression: the rows arrive in host_id order, so the first
+// hosts would spend the budget and every host after the cut would come back
+// empty -- deterministically the same hosts, on every poll, with nothing on
+// screen to say why. The per-host route this replaced gave each host its own
+// cap by construction, because each host was its own request.
+//
+// Both hosts below are seeded past the cap. Both must come back capped, and
+// neither may be starved by the other.
+func TestIntegrationFleetMetricsCapsEachHostSeparately(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	a := seedHost(t, pool, "cap-a")
+	b := seedHost(t, pool, "cap-b")
+	seedHostSamples(t, pool, a, 40*time.Minute, 30*time.Minute, 20*time.Minute)
+	seedHostSamples(t, pool, b, 40*time.Minute, 30*time.Minute, 20*time.Minute)
+
+	restore := read.SetMaxPointsForTest(2)
+	defer restore()
+
+	res, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
+		HostIDs: []int32{a, b},
+		Family:  "host",
+		From:    now.Add(-2 * time.Hour),
+		To:      now,
+		Columns: []string{"cpu_total"},
+	}, now)
+	if err != nil {
+		t.Fatalf("FleetMetrics: %v", err)
+	}
+	if !res.Truncated {
+		t.Fatal("truncated = false, want true -- three points per host against a cap of two")
+	}
+
+	perHost := map[int32]int{}
+	for _, h := range res.Hosts {
+		for _, s := range h.Series {
+			perHost[h.HostID] += len(s.Points)
+		}
+	}
+	if perHost[a] != 2 || perHost[b] != 2 {
+		t.Errorf("points = %v, want 2 for each host -- a shared budget would have "+
+			"given the first host 2 and the second none", perHost)
+	}
+}
+
+// A family whose key comes from a JOINED dimension table, with two key
+// columns rather than one.
+//
+// The fleet query wraps its select in a subquery so it can rank rows per host,
+// which means every key expression has to be carried out through an alias --
+// d.label and d.mountpoint are not columns of the sample relation, and the
+// window's ORDER BY cannot name the aliases either. filesystem exercises both
+// halves of that at once, and net (one key, no join) would not.
+func TestIntegrationFleetMetricsCarriesJoinedDimensionKeys(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	a := seedHost(t, pool, "disks-a")
+	b := seedHost(t, pool, "disks-b")
+
+	seedFS := func(hostID int32, label, mount string) {
+		t.Helper()
+		var fsID int32
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO filesystems (host_id, label, mountpoint) VALUES ($1, $2, $3)
+			RETURNING id`, hostID, label, mount).Scan(&fsID); err != nil {
+			t.Fatalf("insert filesystem: %v", err)
+		}
+		exec(t, pool, `
+			INSERT INTO filesystem_samples (host_id, ts, fs_id, total, used, free)
+			VALUES ($1, now() - INTERVAL '5 minutes', $2, 1000, 800, 150)`, hostID, fsID)
+	}
+	// The same mountpoint on both hosts, so a grouping break that forgot the
+	// host would run them together.
+	seedFS(a, "root", "/")
+	seedFS(a, "logs", "/var/log")
+	seedFS(b, "root", "/")
+
+	res, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
+		HostIDs: []int32{a, b},
+		Family:  "filesystem",
+		From:    now.Add(-time.Hour),
+		To:      now,
+		Columns: []string{"used", "free"},
+	}, now)
+	if err != nil {
+		t.Fatalf("FleetMetrics: %v", err)
+	}
+
+	mounts := map[int32][]string{}
+	for _, h := range res.Hosts {
+		for _, s := range h.Series {
+			if s.Key["mountpoint"] == "" {
+				t.Errorf("host %d series has no mountpoint: %v -- the joined key "+
+					"did not survive the subquery", h.HostID, s.Key)
+			}
+			mounts[h.HostID] = append(mounts[h.HostID], s.Key["mountpoint"])
+		}
+	}
+	slices.Sort(mounts[a])
+	if !slices.Equal(mounts[a], []string{"/", "/var/log"}) {
+		t.Errorf("host a mounts = %v, want [/ /var/log]", mounts[a])
+	}
+	if !slices.Equal(mounts[b], []string{"/"}) {
+		t.Errorf("host b mounts = %v, want [/]", mounts[b])
+	}
+}
+
+func TestIntegrationFleetMetricsRejectsBadRequests(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+	id := seedHost(t, pool, "fleet-picky")
+
+	t.Run("no hosts at all", func(t *testing.T) {
+		_, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
+			HostIDs: nil, Family: "host"}, now)
+		if !errors.Is(err, read.ErrInvalid) {
+			t.Errorf("err = %v, want ErrInvalid -- an empty list must not come to mean "+
+				"every host, which is the most expensive query the hub can run", err)
+		}
+	})
+
+	t.Run("an unknown family", func(t *testing.T) {
+		_, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
+			HostIDs: []int32{id}, Family: "cpu"}, now)
+		if !errors.Is(err, read.ErrInvalid) {
+			t.Errorf("err = %v, want ErrInvalid", err)
+		}
+	})
+
+	// An id nobody registered is NOT an error here, unlike the per-host route.
+	// It contributes no rows and comes back empty, which is exactly what a
+	// registered but silent host looks like -- and the fleet page only ever
+	// names hosts /api/v1/hosts just handed it.
+	t.Run("an unknown host", func(t *testing.T) {
+		res, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
+			HostIDs: []int32{4242}, Family: "host",
+			From: now.Add(-time.Hour), To: now,
+		}, now)
+		if err != nil {
+			t.Fatalf("FleetMetrics: %v", err)
+		}
+		if len(res.Hosts) != 1 || len(res.Hosts[0].Series) != 0 {
+			t.Errorf("hosts = %+v, want one entry with no series", res.Hosts)
+		}
+	})
 }

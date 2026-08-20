@@ -452,3 +452,38 @@ export function getMetrics(
     `/api/v1/hosts/${hostId}/metrics${toQueryString(params)}`,
   );
 }
+
+// internal/hub/read/metrics.go: FleetResult
+//
+// Everything above `hosts` is shared by every host in the answer, because the
+// tier is chosen from the family and the step and never from the data. That is
+// what makes the split below sound.
+type FleetMetricsResponse = Omit<MetricsResponse, "series"> & {
+  hosts: { host_id: number; series: MetricsSeries[] }[];
+};
+
+/**
+ * One family, one window, every host named -- the fleet form of getMetrics.
+ *
+ * Returns a Map of the SAME MetricsResponse shape the per-host call returns,
+ * one entry per host, by re-attaching the shared header to each host's series.
+ * That is the point of the split: every reader downstream -- griddedValues,
+ * seriesOnGrid, memoryBands, perCoreBands, containerTrends -- keeps taking a
+ * MetricsResponse and does not learn that the fleet page now asks once instead
+ * of N times.
+ *
+ * A host that reported nothing comes back with an empty `series`, never a
+ * missing entry, so a caller can tell silence from an unanswered request.
+ */
+export async function getFleetMetrics(
+  hostIds: readonly (number | string)[],
+  params: MetricsParams,
+): Promise<Map<number, MetricsResponse>> {
+  const res = await request<FleetMetricsResponse>(
+    `/api/v1/metrics${toQueryString({ ...params, hosts: hostIds.join(",") })}`,
+  );
+  const { hosts, ...header } = res;
+  return new Map(
+    hosts.map((host) => [host.host_id, { ...header, series: host.series }]),
+  );
+}
