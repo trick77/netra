@@ -441,36 +441,34 @@ a:hover {
    beside them is what actually carries it (spec §3.3), because a tile has no
    dot to pair with.
 
-   Present only when something is wrong -- a healthy fleet is the page as it
-   was, one quiet all-clear line and the three stat tiles. minmax is 200px
-   rather than the tiles' 210px so seven kinds, the worst case there is, fit
-   two rows at any width the app supports rather than three.
+   Present only when something is wrong -- a healthy fleet is one quiet
+   all-clear line and the figure rail (.srail), and nothing else above the
+   list. These are the page's loud row, and the only one: the three ambient
+   figures below them gave up their cards precisely so that these read first.
 
-   auto-FILL, the same choice .tiles makes and for the same reason: auto-fit
-   collapses the empty tracks and stretches what is left, so a fleet with one
-   kind of problem drew a single 1180px-wide box across the whole page. The
-   count of things wrong must not change the size of the thing it is written
-   in. */
+   auto-FILL, not auto-fit: auto-fit collapses the empty tracks and stretches
+   what is left, so a fleet with one kind of problem drew a single 1180px-wide
+   box across the whole page. The count of things wrong must not change the
+   size of the thing it is written in. */
 .atiles {
   list-style: none;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  /* The same cap .tiles carries, for the alignment this whole change is
-     about: uncapped, five kinds ran the full 1180px while the stat tiles
-     below stopped at 960 and the two rows this is meant to read as one
-     system visibly disagreed. */
+  /* Uncapped, five kinds ran the full 1180px above a summary that stopped
+     short of it, and the two rows meant to read as one system visibly
+     disagreed. The rail below is narrower still (640px) -- deliberately, it
+     is subordinate -- but both start at the same left edge and neither runs
+     the window. */
   max-width: 960px;
   gap: var(--space-3);
   margin: 0 0 var(--space-4);
   padding: 0;
 }
-/* .tiles drops to two columns at 1120px and one at 640px, and these
-   deliberately do not follow it there. A stat tile carries a sentence
-   underneath its number ("ingress + egress, right now"); this carries one
-   word, so it stays legible at the 200px auto-fill keeps -- and seven kinds
-   two-up is four rows of summary above the list it is summarising. Below
-   640px the content is narrow enough that auto-fill lands on one column on
-   its own. */
+/* No breakpoint of their own, deliberately. A tile here carries one word
+   under its number, so it stays legible at the 200px auto-fill keeps -- and
+   seven kinds two-up is four rows of summary above the list it is
+   summarising. Below 640px the content is narrow enough that auto-fill lands
+   on one column on its own. */
 .atile {
   display: block;
   /* The <li> is the grid item and stretches to the row's height; the tile is
@@ -497,7 +495,7 @@ a:hover {
   background: var(--surface-2);
 }
 /* Keyboard focus needs its own mark: the hover treatment is a background
-   change, which a keyboard user never triggers. Same rule .tile-link makes. */
+   change, which a keyboard user never triggers. Same rule .srail a makes. */
 .atile:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -1238,7 +1236,7 @@ a:hover {
   color: var(--ink-2);
   font-size: var(--text-label);
   position: relative;
-  /* Same 120ms ease .tile-link uses -- this app has one hover timing. */
+  /* Same 120ms ease .atile uses -- this app has one hover timing. */
   transition:
     background 120ms ease,
     color 120ms ease;
@@ -1307,7 +1305,7 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-ui);
   /* Every stacked block on a page owns its own bottom gap here (.toolbar,
-     .tiles, .cards, .setting all do). Cards used to get theirs from a
+     .srail, .cards, .setting all do). Cards used to get theirs from a
      gapped flex parent, so two of them as plain siblings -- Settings'
      Appearance and Defaults, or the token panel above the new-host form --
      met at a single shared border and read as one box. `.grid2 > *` sets
@@ -1360,68 +1358,78 @@ a:hover {
   margin-bottom: 0;
 }
 
-/* stat tiles */
-.tiles {
-  display: grid;
-  /* auto-FILL, not auto-fit: auto-fit collapses the empty tracks and hands
-     their width to the tiles that exist, so on a full-bleed page three stat
-     tiles became three ~530px slabs with one number each. auto-fill keeps the
-     empty tracks empty, and the cap stops the row itself running the window. */
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  max-width: 960px;
-  gap: var(--space-3);
-  /* The tiles are a section of their own, and they ended flush against the
-     entity tabs directly below them -- 0px, so the fleet's summary and the
-     control for what you are looking at read as one crowded block. */
-  margin-bottom: var(--space-5);
-}
-.tile {
-  background: var(--surface);
+/* ── The fleet's ambient figures, on one rail ──────────────────────────
+   These were three cards with 28px figures, directly under three ATTENTION
+   cards with 28px figures: six cards of equal weight, so the fleet's
+   problems and its inventory shouted the same. The attention row keeps the
+   cards; this is context and is set as context -- one box, one line high.
+
+   Still a box rather than a bare line of text: on an all-clear fleet the
+   .atiles row above is gone entirely and this is the only thing left, and a
+   page that collapses to a single sentence reads as broken rather than as
+   calm. */
+.srail {
+  display: flex;
+  align-items: center;
+  /* Wraps rather than scrolls or squeezes: three figures at a narrow width
+     go under each other, and each keeps its own border-left except the one
+     that starts a row -- see the :first-child rule and the wrap fix under
+     it. */
+  flex-wrap: wrap;
   border: 1px solid var(--border);
   border-radius: var(--radius-ui);
-  padding: var(--space-4);
+  background: var(--surface);
+  /* Narrower than the .atiles cap above it. The rail is subordinate, and a
+     box the full width of the row it sits under does not read that way. */
+  max-width: 640px;
+  /* The same gap the tiles left between themselves and the entity tabs
+     below: the fleet's summary and the control for what you are looking at
+     must not read as one crowded block. */
+  margin-bottom: var(--space-5);
 }
-.tile .k {
-  font-size: var(--text-label);
-  color: var(--muted);
+.srail .s {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-left: 1px solid var(--border);
 }
-.tile .v {
-  font-size: var(--text-display);
+.srail .s:first-child {
+  border-left: 0;
+}
+.srail b {
+  font-size: var(--text-ui);
   font-weight: 600;
-  letter-spacing: -0.02em;
-  margin-top: 2px;
+  color: var(--ink);
+  /* Tabular here, unlike the old .tile .v: these are three figures on one
+     line rather than one headline, and a rate that reflows its own width
+     every poll shifts the two labels beside it. */
+  font-variant-numeric: tabular-nums;
 }
-.tile .d {
+.srail .l {
   font-size: var(--text-label);
   color: var(--muted);
 }
-/* A tile that leads somewhere. It is an <a>, so it needs the anchor colour
-   and underline undone -- the tile's own type is already the design, and a
-   blue underlined heading inside a card is not it. What marks it as
-   interactive is the hover lift and the pointer, not a link colour. */
-.tile-link {
-  display: block;
+/* A figure that leads somewhere. It is an <a>, so the anchor colour and
+   underline are undone -- what marks it as interactive is the pointer and
+   the accent on hover, not a link colour. */
+.srail a {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   text-decoration: none;
   color: inherit;
   cursor: pointer;
-  transition:
-    border-color 120ms ease,
-    background 120ms ease;
 }
-.tile-link:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-2);
+.srail a:hover b {
+  color: var(--accent);
 }
 /* Keyboard focus has to be visible on its own terms: the hover treatment is
-   a background change, which a keyboard user never triggers. */
-.tile-link:focus-visible {
+   a colour change on the figure, which a keyboard user never triggers. */
+.srail a:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-@media (prefers-reduced-motion: reduce) {
-  .tile-link {
-    transition: none;
-  }
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
 }
 
 /* controls — ONE input style, ONE button style, four variants */
@@ -2117,45 +2125,6 @@ details.sysfold > .body {
   display: inline-flex;
   width: auto;
 }
-/* The mark that says a chart is pressable.
-   Absolutely positioned, and that is the requirement rather than a
-   preference: this badge sits on a 170x32 sparkline inside a table cell as
-   well as on a full panel, and anything taking layout space would push the
-   row's other columns out of line. It rides in the corner of whichever chart
-   it is over.
-
-   Quiet at rest -- a fleet page carries sixty of these, and sixty
-   full-contrast plus signs would read as data. It comes up on hover and on
-   keyboard focus, which is when a reader is actually asking "can I click
-   this". */
-.chartwrap-more {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  height: 15px;
-  border-radius: var(--radius-sm, 3px);
-  color: var(--muted);
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
-  opacity: 0.55;
-  transition:
-    opacity 120ms ease,
-    color 120ms ease;
-  pointer-events: none;
-}
-.chartwrap.as-button:hover .chartwrap-more,
-.chartwrap.as-button:focus-visible .chartwrap-more {
-  opacity: 1;
-  color: var(--fg);
-}
-@media (prefers-reduced-motion: reduce) {
-  .chartwrap-more {
-    transition: none;
-  }
-}
 
 /* ── Enlarged chart ───────────────────────────────────────────────── */
 .cd-back {
@@ -2376,8 +2345,13 @@ svg.spark {
    They fire at 1120px instead, where content crosses ~860px. Below 900 the
    rail is a top bar and content is viewport - 48, comfortably inside this. */
 @media (max-width: 1120px) {
-  .tiles {
-    grid-template-columns: 1fr 1fr;
+  /* The rail wraps on its own -- it is a flex row, not the grid the stat
+     tiles were, so there is no column count to reset here. What it does need
+     is the divider fix below: :first-child only clears the border on the
+     first figure overall, so a figure that starts a SECOND row still draws a
+     leading rule against the box edge. */
+  .srail {
+    max-width: 100%;
   }
   /* `columns`, not `grid-template-columns`. .grid2 is a multi-column box and
      never became a grid, so the grid property this used to set matched
@@ -2424,8 +2398,16 @@ svg.spark {
   .app > main {
     padding: var(--space-3) var(--space-3) 64px;
   }
-  .tiles {
-    grid-template-columns: 1fr;
+  /* One figure per row at this width. Each is then the first on its row, so
+     every divider would sit against the box edge; the border moves to the
+     TOP instead, which is what a stacked rail wants. */
+  .srail .s {
+    flex: 1 0 100%;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  .srail .s:first-child {
+    border-top: 0;
   }
   .toolbar {
     flex-wrap: wrap;
@@ -2472,7 +2454,7 @@ svg.spark {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-ui);
-  /* Every stacked block on a page owns its own bottom gap -- .card, .tiles,
+  /* Every stacked block on a page owns its own bottom gap -- .card, .srail,
      .cards and .toolbar all do, for the reason spelled out above .card. */
   margin-bottom: var(--space-4);
 }

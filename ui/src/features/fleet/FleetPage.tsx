@@ -11,7 +11,7 @@ import {
 import { ABSENT, byterate, relative } from "../../lib/format";
 import { Input } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
-import { StatTile } from "../../ui/StatTile";
+import { StatFigure, StatRail } from "../../ui/StatRail";
 import { Tabs } from "../../ui/Tabs";
 import { AttentionCounts } from "./AttentionCounts";
 import {
@@ -495,45 +495,54 @@ export function FleetPage({
         </p>
       )}
 
-      <div className="tiles">
-        {/* The first two tiles count a set the page can show, and sit
+      {/* The ambient figures, on a rail rather than in cards.
+          They were three cards with 28px numbers sitting directly under
+          three ATTENTION cards with 28px numbers -- six cards of equal
+          weight, so the fleet's problems and its inventory shouted the same
+          and nothing said which to read first. The attention row is what
+          this page is for; these are context for it, and are set as
+          context. See StatRail. */}
+      <StatRail>
+        {/* The first two figures count a set the page can show, and sit
             directly above the tabs that show it -- so they are the control
             they already looked like. Their hrefs match the tabs' own, which
             is what keeps them bookmarkable and what makes clicking one the
             same act as clicking the tab. */}
-        <StatTile
-          label="Hosts reporting"
+        <StatFigure
           value={reporting}
-          detail={`of ${hostRows.length} known`}
+          // Pluralised, like the all-clear sentence directly above it: a
+          // one-host fleet read "of 1 hosts reporting" against a line already
+          // saying "All 1 host reporting".
+          label={`of ${hostRows.length} host${
+            hostRows.length === 1 ? "" : "s"
+          } reporting`}
           href="/"
           onSelect={() => setEntity("hosts")}
         />
-        <StatTile
-          label="Containers"
+        <StatFigure
           value={containersKnown ? containerRows.length : ABSENT}
-          detail="across the fleet"
+          label="containers"
           href="/?entity=containers"
           onSelect={() => setEntity("containers")}
         />
         {/* No href: fleet traffic is a rate, not a set, so there is no list
-            of it to go to. A tile that looks clickable and does nothing is
+            of it to go to. A figure that looks clickable and does nothing is
             worse than one that plainly is not. */}
-        <StatTile
-          label="Fleet traffic"
+        <StatFigure
           value={fleetTraffic(hostRows, now)}
-          // ingress + egress, the words this app already uses for the two
+          // "in + out", the words this app already uses for the two
           // directions: Graphs.tsx names its bands that ("not rx and tx --
           // the direction is the point of this chart"), and both traffic
-          // sparklines announce themselves as "Traffic in and out over time".
-          // "inbound + outbound" was a third spelling of the same pair, on
-          // the one tile summarising all of them.
-          // "latest sample" was only true at 1h; at the wider ranges the
-          // number was a five-minute average from a quarter of an hour ago.
-          // It is a gauge off host_current now, so "right now" is accurate
-          // at every range -- which is the point of the change.
-          detail="in + out, right now"
+          // sparklines announce themselves as "Traffic in and out over
+          // time".
+          //
+          // The "right now" that used to qualify this is gone with the card
+          // that had room for it. It stays true -- the number is a gauge off
+          // host_current, not the latest bucket of a range -- and the rail
+          // has no line for a qualifier that repeats for all three figures.
+          label="in + out"
         />
-      </div>
+      </StatRail>
 
       <Tabs
         items={[

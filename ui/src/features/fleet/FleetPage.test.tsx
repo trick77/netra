@@ -54,17 +54,22 @@ function makeContainer(overrides: Partial<ContainerRow> = {}): ContainerRow {
   };
 }
 
-/** The Containers TAB. The Containers stat tile above it is now a link of
- * the same name, so every query for one has to exclude the other. */
+/** The Containers TAB. The Containers figure on the rail above it is a link
+ * of the same name, so every query for one has to exclude the other. */
 function containersTab(): HTMLElement {
   const nav = document.querySelector<HTMLElement>("nav.tabs")!;
   return within(nav).getByRole("link", { name: /containers/i });
 }
 
-/** A stat tile by the href it leads to -- its accessible name is the whole
- * tile ("Containers 22 across the fleet"), which is not worth matching on. */
+/** A rail figure by the href it leads to -- its accessible name is the whole
+ * figure ("22 containers"), which is not worth matching on. */
 function tile(href: string): HTMLElement {
-  return document.querySelector<HTMLElement>(`a.tile[href="${href}"]`)!;
+  return document.querySelector<HTMLElement>(`.srail a[href="${href}"]`)!;
+}
+
+/** One segment of the figure rail, found by the phrase that finishes it. */
+function figure(label: RegExp): HTMLElement {
+  return screen.getByText(label).closest<HTMLElement>(".s")!;
 }
 
 function renderPage(props: Parameters<typeof FleetPage>[0] = {}) {
@@ -209,15 +214,21 @@ describe("FleetPage header", () => {
       ],
     });
 
-    const tile = screen
-      .getByText("Hosts reporting")
-      .closest<HTMLElement>(".tile")!;
-    expect(within(tile).getByText("1")).toBeInTheDocument();
-    expect(within(tile).getByText(/of 3/)).toBeInTheDocument();
+    const reporting = figure(/hosts reporting/);
+    expect(within(reporting).getByText("1")).toBeInTheDocument();
+    expect(within(reporting).getByText(/of 3/)).toBeInTheDocument();
+  });
+
+  // The rail's phrase agrees with the all-clear sentence above it, which
+  // already says "All 1 host reporting".
+  it("says host, not hosts, for a fleet of one", () => {
+    renderPage({ rows: [makeRow()] });
+
+    expect(screen.getByText(/of 1 host reporting/)).toBeInTheDocument();
   });
 
   function trafficTile(): HTMLElement {
-    return screen.getByText("Fleet traffic").closest<HTMLElement>(".tile")!;
+    return figure(/in \+ out/);
   }
 
   // Absent is not zero: a host that has reported no rate has an unknown
@@ -230,10 +241,10 @@ describe("FleetPage header", () => {
     expect(within(trafficTile()).getByText(ABSENT)).toBeInTheDocument();
   });
 
-  // rx_bytes/tx_bytes are BYTES per second, so bitrate() labelled this tile
+  // rx_bytes/tx_bytes are BYTES per second, so bitrate() labelled this figure
   // "Mb/s" above rows reading "MB/s" -- off by eight and entirely plausible.
   // The third copy of that bug: #51 fixed the fleet row's traffic cell and the
-  // host overview's card, and missed the tile sitting above both.
+  // host overview's card, and missed the figure sitting above both.
   it("states fleet traffic in bytes per second, like every row under it", () => {
     renderPage({
       rows: [makeRow({ net_rx_bytes: 1_000_000, net_tx_bytes: 1_000_000 })],
@@ -711,8 +722,8 @@ describe("FleetPage data fetching", () => {
   });
 });
 
-describe("FleetPage stat tiles as controls", () => {
-  it("switches to the containers list when the Containers tile is clicked", async () => {
+describe("FleetPage stat figures as controls", () => {
+  it("switches to the containers list when the Containers figure is clicked", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -725,7 +736,7 @@ describe("FleetPage stat tiles as controls", () => {
     ).toBeInTheDocument();
   });
 
-  it("returns to the hosts list from the Hosts reporting tile", async () => {
+  it("returns to the hosts list from the hosts-reporting figure", async () => {
     const user = userEvent.setup();
     renderPage({ entity: "containers" });
 
@@ -736,7 +747,7 @@ describe("FleetPage stat tiles as controls", () => {
 
   // Real links, so middle-click, cmd-click and bookmarking work without this
   // component reimplementing any of them. The hrefs match the tabs' own.
-  it("gives the navigable tiles the same hrefs as the tabs", () => {
+  it("gives the navigable figures the same hrefs as the tabs", () => {
     renderPage();
 
     expect(tile("/")).not.toBeNull();
@@ -745,10 +756,10 @@ describe("FleetPage stat tiles as controls", () => {
 
   // Fleet traffic is a rate, not a set: there is no list of it to go to, and
   // a tile that looks clickable and does nothing is worse than an inert one.
-  it("leaves the fleet traffic tile inert", () => {
+  it("leaves the fleet traffic figure inert", () => {
     renderPage();
 
-    expect(screen.getByText("Fleet traffic").closest("a")).toBeNull();
+    expect(screen.getByText(/in \+ out/).closest("a")).toBeNull();
   });
 });
 

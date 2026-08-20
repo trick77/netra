@@ -8,7 +8,6 @@
 // is handed as children becomes the button, and pressing it opens the same
 // ChartDetail the panels open.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Plus } from "lucide-react";
 import type { OverlaySeries } from "./Overlay";
 import { extent } from "./geometry";
 import { ChartDetail, peak } from "./ChartDetail";
@@ -297,9 +296,11 @@ export function Enlargeable({
   return (
     <>
       {/* A button, not a div with a click handler: opening the enlarged view
-          has to work from the keyboard, and the chart itself is the
-          affordance -- the badge below marks it rather than replacing it, so
-          there is still only one thing to hit. */}
+          has to work from the keyboard, and the chart IS the affordance --
+          the zoom-in pointer and the focus ring say so, and nothing is drawn
+          on top of it. A (+) badge was tried here and taken off again: in
+          the corner of a 170x32 table cell it read as clutter in the row,
+          not as an invitation, and a fleet page carries sixty of them. */}
       <button
         type="button"
         className={`chartwrap as-button${className ? ` ${className}` : ""}`}
@@ -307,13 +308,6 @@ export function Enlargeable({
         aria-label={label ?? `Enlarge ${title}`}
       >
         {children}
-        {/* aria-hidden: the button already says "Enlarge <title>", and a
-            screen reader announcing a plus after it would name the same
-            affordance twice. This is for the eye that has to be told a
-            32px sparkline in a table cell is pressable at all. */}
-        <span className="chartwrap-more" aria-hidden="true">
-          <Plus size={11} strokeWidth={2.5} />
-        </span>
       </button>
       {enlarged && (
         <ChartDetail
