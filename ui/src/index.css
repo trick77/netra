@@ -474,8 +474,8 @@ a:hover {
   /* The <li> is the grid item and stretches to the row's height; the tile is
      the anchor INSIDE it, so without this a tile beside a taller neighbour --
      a label that wraps to two lines at large text sizes -- stops short of the
-     row and takes its status edge and its selected ground with it. StatTile
-     needs no such rule: .tile is the grid item itself. */
+     row and takes its status edge and its selected ground with it. The
+     figures on .srail need no such rule: a .s is a flex item on one line. */
   height: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -523,12 +523,13 @@ a:hover {
   font-weight: 600;
   letter-spacing: -0.02em;
   margin-top: 2px;
-  /* Proportional figures, like .tile .v: tabular-nums is for columns of
-     numbers that line up vertically, and these are single headline values. */
+  /* Proportional figures: tabular-nums is for columns of numbers that line
+     up vertically, and these are single headline values. (.srail b does take
+     tabular-nums -- three figures on one line, not a headline.) */
 }
 /* The noun rides the number rather than sitting on a line of its own -- "3"
    beside "Failed units" reads as three failed units, and it is three HOSTS,
-   one of which may have five. Same shape as StatTile's `unit`. */
+   one of which may have five. */
 .atile .v .u {
   font-size: var(--text-label);
   font-weight: 500;
@@ -1370,15 +1371,24 @@ a:hover {
    calm. */
 .srail {
   display: flex;
-  align-items: center;
-  /* Wraps rather than scrolls or squeezes: three figures at a narrow width
-     go under each other, and each keeps its own border-left except the one
-     that starts a row -- see the :first-child rule and the wrap fix under
-     it. */
+  /* Wraps rather than scrolls or squeezes. It has to: this box is capped at
+     640px at every width, and a 412-host fleet spends that on its figures
+     alone ("398 of 412 hosts reporting · 1042 containers · 1.2 GB/s"). */
   flex-wrap: wrap;
+  /* The dividers are 1px of the container's own ground showing between the
+     segments -- NOT a border-left on each one. A border-left has to be
+     cancelled on whichever segment starts a row, and which segment that is
+     depends on the width AND on how long the numbers happen to be, so
+     :first-child gets it right on one row and draws a rule against the box
+     edge on every row after it. A gap cannot be wrong: it appears between
+     segments and nowhere else, in both axes, however the row breaks. */
+  gap: 1px;
+  background: var(--border);
   border: 1px solid var(--border);
   border-radius: var(--radius-ui);
-  background: var(--surface);
+  /* The segments are square and the box is not, so without this their
+     corners sit outside the radius at all four corners of the rail. */
+  overflow: hidden;
   /* Narrower than the .atiles cap above it. The rail is subordinate, and a
      box the full width of the row it sits under does not read that way. */
   max-width: 640px;
@@ -1392,12 +1402,16 @@ a:hover {
   align-items: baseline;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-4);
-  border-left: 1px solid var(--border);
+  /* Its own ground, over the container's. The two differ by exactly the
+     divider, so a segment that failed to paint would read as a 1px rule
+     rather than as nothing. */
+  background: var(--surface);
+  /* Grow into the slack. Left at their natural widths the segments would
+     leave the rest of the row showing the container's ground -- which is
+     the divider colour, so the leftover would read as one wide border. */
+  flex: 1 1 auto;
 }
-.srail .s:first-child {
-  border-left: 0;
-}
-.srail b {
+srail b {
   font-size: var(--text-ui);
   font-weight: 600;
   color: var(--ink);
@@ -2346,10 +2360,14 @@ svg.spark {
    rail is a top bar and content is viewport - 48, comfortably inside this. */
 @media (max-width: 1120px) {
   /* The rail wraps on its own -- it is a flex row, not the grid the stat
-     tiles were, so there is no column count to reset here. What it does need
-     is the divider fix below: :first-child only clears the border on the
-     first figure overall, so a figure that starts a SECOND row still draws a
-     leading rule against the box edge. */
+     tiles were, so there is no column count to reset here. It gets the width
+     back instead, so the three figures stay on one line in the band where
+     the content column is narrowing.
+     Note :first-child only clears the border on the first figure OVERALL:
+     wherever the figures do wrap, the one starting the second row still
+     draws a leading rule against the box edge. Only the <=640px rule below
+     fixes that, by turning the dividers into top borders once every figure
+     is on a row of its own. */
   .srail {
     max-width: 100%;
   }
@@ -2398,16 +2416,11 @@ svg.spark {
   .app > main {
     padding: var(--space-3) var(--space-3) 64px;
   }
-  /* One figure per row at this width. Each is then the first on its row, so
-     every divider would sit against the box edge; the border moves to the
-     TOP instead, which is what a stacked rail wants. */
+  /* One figure per row at this width, rather than two-and-one. The gap
+     dividers need no help here -- they run horizontally between the rows on
+     their own -- so this is only about the break. */
   .srail .s {
     flex: 1 0 100%;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-  }
-  .srail .s:first-child {
-    border-top: 0;
   }
   .toolbar {
     flex-wrap: wrap;
