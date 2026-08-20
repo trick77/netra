@@ -35,9 +35,8 @@ import {
 } from "./features/fleet/conditions";
 import {
   buildRows,
-  fetchContainerTrends,
-  fetchHostTrends,
-  type HostTrends,
+  fetchFleetContainerTrends,
+  fetchFleetTrends,
 } from "./features/fleet/hostTrends";
 import type { ContainerRow } from "./features/fleet/FleetContainers";
 import {
@@ -373,71 +372,59 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   const poll = usePoll(
     async () => {
       const [hosts, sites] = await Promise.all([getHosts(), getSites()]);
-      // The trends are a fan-out -- four families per host, five where the
-      // host is small enough to be worth a per-core stack -- because the
-      // read API is per-host by construction and this page's whole premise
-      // is the last 24 hours rather than one instant. fetchHostTrends owns
-      // the list and the reason each family is on it. Settled
-      // independently: one host answering 500 costs that host's sparklines,
-      // not the fleet's.
-      const settled = await Promise.allSettled(
-        hosts.map(
-          async (host) =>
-            [
-              host.id,
-              // threads, not cores: the per-core samples are one per logical
-              // CPU (the N in /proc/stat's cpuN), and on an SMT host the two
-              // differ by a factor of two.
-              await fetchHostTrends(host.id, range, undefined, host.threads),
-            ] as const,
-        ),
-      );
-      const trends = new Map(
-        settled
-          .filter(
-            (r): r is PromiseFulfilledResult<readonly [number, HostTrends]> =>
-              r.status === "fulfilled",
-          )
-          .map((r) => r.value),
-      );
 
-      // The fleet-wide container list is the same shape of fan-out, and for
-      // the same reason: there is no /api/v1/containers, only the per-host
-      // route. It is fetched HERE rather than left to FleetPage, which only
-      // fetches when nothing was injected -- and this page always injects
-      // its rows, so the Containers tab sat empty claiming no host in the
-      // fleet had ever reported one.
-      const perHost = await Promise.allSettled(
-        hosts.map(async (host) => {
-          // The list and its metrics together: a container row with no
-          // trend renders as text, which is what the whole list was before.
-          const [list, trends] = await Promise.all([
-            getContainers(host.id),
-            fetchContainerTrends(host.id, range),
-          ]);
-          return list.map((container) => {
-            const trend = trends.trends.get(container.container_key);
-            return {
-              ...container,
-              host_id: host.id,
-              hostname: host.hostname,
-              // Per ROW, not per list: this list spans hosts, and each host
-              // answered its own window. One window over all of them would
-              // label a row's chart with another host's times.
-              window: trends.window,
-              cpu: trend?.cpu ?? [],
-              mem: trend?.mem ?? [],
-              mem_limit_bytes: trend?.memLimit ?? null,
-            };
+      // Three requests' worth of work in ONE wave, where this used to be two
+      // fan-outs of one request per host per family, the second waiting on
+      // the first. fetchFleetTrends owns the family list and the reason each
+      // family is on it; the container listing stays per-host because there
+      // is no /api/v1/containers, only the route under each host -- but it no
+      // longer waits for the trends to finish first.
+      //
+      // The listings are fetched HERE rather than left to FleetPage, which
+      // only fetches when nothing was injected -- and this page always
+      // injects its rows, so the Containers tab sat empty claiming no host in
+      // the fleet had ever reported one.
+      const [trends, containerTrends, listings] = await Promise.all([
+        // threads, not cores: the per-core samples are one per logical CPU
+        // (the N in /proc/stat's cpuN), and on an SMT host the two differ by
+        // a factor of two. fetchFleetTrends reads it off each host.
+        fetchFleetTrends(hosts, range),
+        fetchFleetContainerTrends(hosts, range),
+        // Settled independently: one host whose container listing answers 500
+        // costs that host's containers, not the fleet's.
+        Promise.allSettled(hosts.map((host) => getContainers(host.id))),
+      ]);
+
+      const containers: ContainerRow[] = [];
+      hosts.forEach((host, i) => {
+        const listing = listings[i];
+        if (listing.status !== "fulfilled") return;
+        // The list and its metrics together: a container row with no trend
+        // renders as text, which is what the whole list was before.
+        const byKey = containerTrends.trends.get(host.id);
+        for (const container of listing.value) {
+          const trend = byKey?.get(container.container_key);
+          containers.push({
+            ...container,
+            host_id: host.id,
+            hostname: host.hostname,
+            // Still per ROW, and now the same window on every one of them:
+            // this list spans hosts, and one request answered all of them
+            // from one plan. It was per row because it had to be -- N
+            // separate requests could each be clamped differently, and a row
+            // labelled with another host's times was a real risk.
+            window: containerTrends.window,
+            cpu: trend?.cpu ?? [],
+            mem: trend?.mem ?? [],
+            mem_limit_bytes: trend?.memLimit ?? null,
           });
-        }),
-      );
-      const containers = perHost
-        .filter((r) => r.status === "fulfilled")
-        .flatMap((r) => (r as PromiseFulfilledResult<ContainerRow[]>).value);
+        }
+      });
       // A host that could not be asked is not a host running nothing, so the
       // count says how many are missing rather than quietly under-reporting.
-      const unreachable = perHost.filter((r) => r.status === "rejected").length;
+      const unreachable = listings.filter(
+        (r) => r.status === "rejected",
+      ).length;
 
       return {
         hosts,

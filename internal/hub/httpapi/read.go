@@ -38,6 +38,12 @@ func (h *readHandler) register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/hosts/{id}/packages", listing(h.svc.Packages))
 	mux.Handle("GET /api/v1/hosts/{id}/units", listing(h.svc.Units))
 	mux.Handle("GET /api/v1/hosts/{id}/metrics", http.HandlerFunc(h.metrics))
+	// The fleet form of the line above, and NOT under /hosts/: it is one
+	// question about many hosts rather than a collection under one of them.
+	// It answers to the same admin credential as everything else on
+	// /api/v1/ -- see NewRouter, which mounts the whole prefix behind
+	// RequireAdmin.
+	mux.Handle("GET /api/v1/metrics", http.HandlerFunc(h.fleetMetrics))
 	mux.Handle("GET /api/v1/events", http.HandlerFunc(h.events))
 }
 
@@ -120,6 +126,71 @@ func (h *readHandler) metrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *readHandler) fleetMetrics(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	hostIDs, err := parseHostIDs(q["hosts"])
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+
+	from, err := parseTime(q.Get("from"), "from")
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+	to, err := parseTime(q.Get("to"), "to")
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+	step, stepSet, err := parseStep(q.Get("step"))
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+
+	res, err := h.svc.FleetMetrics(r.Context(), read.FleetMetricsQuery{
+		HostIDs: hostIDs,
+		Family:  q.Get("family"),
+		From:    from,
+		To:      to,
+		Step:    step,
+		StepSet: stepSet,
+		Columns: splitColumns(q["columns"]),
+	}, h.now())
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// parseHostIDs reads ?hosts=1,2,3 -- and ?hosts=1&hosts=2, on splitColumns'
+// reasoning that a caller building the query from a list will reach for one
+// form or the other and neither is wrong.
+//
+// An empty list is a 400 rather than an empty 200. "Every host" is a tempting
+// default and the wrong one here: it would turn a caller's own bug -- a page
+// rendering before its host list arrived -- into the most expensive query the
+// hub can run, silently.
+func parseHostIDs(values []string) ([]int32, error) {
+	raw := splitColumns(values)
+	if len(raw) == 0 {
+		return nil, invalidf("hosts must name at least one host id")
+	}
+	out := make([]int32, 0, len(raw))
+	for _, r := range raw {
+		id, ok := parseID(r)
+		if !ok {
+			return nil, invalidf("hosts must be a comma-separated list of integer host ids; %q is not one", r)
+		}
+		out = append(out, id)
+	}
+	return out, nil
 }
 
 func (h *readHandler) events(w http.ResponseWriter, r *http.Request) {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach, type Mock } from "vitest";
 import {
+  getFleetMetrics,
   getHosts,
   getMetrics,
   createHost,
@@ -57,6 +58,53 @@ describe("api", () => {
     expect(url).toContain("family=host");
     expect(url).toContain("from=2026-08-10T00%3A00%3A00Z");
     expect(url).toContain("step=5m");
+  });
+
+  // The fleet route asks about several hosts at once and answers with ONE
+  // header beside a per-host series list. Splitting it back into the per-host
+  // shape here, and only here, is what lets every reader downstream --
+  // griddedValues, memoryBands, containerTrends -- stay unchanged: they still
+  // take a MetricsResponse and never learn how it was fetched.
+  it("splits a fleet response back into one response per host", async () => {
+    mockFetch(200, {
+      family: "host",
+      tier: "5m",
+      step_s: 300,
+      window: { from: "a", to: "b" },
+      requested_window: { from: "a", to: "b" },
+      warnings: [],
+      key_columns: [],
+      columns: ["cpu_total_avg"],
+      truncated: false,
+      hosts: [
+        { host_id: 1, series: [{ key: {}, points: [[0, 5]] }] },
+        { host_id: 2, series: [] },
+      ],
+    });
+
+    const byHost = await getFleetMetrics([1, 2], {
+      family: "host",
+      from: "2026-08-10T00:00:00Z",
+      to: "2026-08-11T00:00:00Z",
+      step: "5m",
+      columns: ["cpu_total"],
+    });
+
+    const [url] = (fetch as unknown as Mock).mock.calls[0];
+    expect(url).toContain("/api/v1/metrics?");
+    expect(url).toContain("hosts=1%2C2");
+    expect(url).toContain("columns=cpu_total");
+
+    // Both hosts present, and each carrying the SHARED header -- a caller
+    // reading tier or columns off one host's response must get the answer for
+    // the whole request.
+    expect(byHost.get(1)?.columns).toEqual(["cpu_total_avg"]);
+    expect(byHost.get(1)?.tier).toBe("5m");
+    expect(byHost.get(1)?.series[0].points).toEqual([[0, 5]]);
+    // A host that reported nothing is present with no series, never absent:
+    // silence and "never asked" have to stay distinguishable.
+    expect(byHost.get(2)?.series).toEqual([]);
+    expect(byHost.get(2)?.tier).toBe("5m");
   });
 
   // DELETE /api/v1/hosts/{id} answers 204 with no body at all. Calling

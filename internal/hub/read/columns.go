@@ -126,31 +126,108 @@ func decodeCached(names []string) []column {
 	return out
 }
 
+// aggregateSuffixes are the suffixes a continuous aggregate adds to a base
+// column name. They are what makes a column name tier-dependent: the raw
+// relation carries cpu_total, the 5m and 1h ones carry cpu_total_avg and
+// cpu_total_max, and filesystem_samples_5m carries free_min with no _avg or
+// _max peer at all.
+//
+// The same list the UI resolves against (ui/src/lib/metrics.ts, candidates()),
+// and it has to stay the same list: a suffix known to one side and not the
+// other is a column one side can ask for and the other cannot answer.
+var aggregateSuffixes = []string{"_avg", "_max", "_min"}
+
+// isSuffixed reports whether a requested name already names one aggregate of a
+// base rather than the base itself.
+func isSuffixed(name string) bool {
+	for _, suf := range aggregateSuffixes {
+		if strings.HasSuffix(name, suf) {
+			return true
+		}
+	}
+	return false
+}
+
+// unsuffixed strips an aggregate suffix, so cpu_total_avg and cpu_total_max
+// both reduce to the quantity they aggregate.
+func unsuffixed(name string) string {
+	for _, suf := range aggregateSuffixes {
+		if base, found := strings.CutSuffix(name, suf); found {
+			return base
+		}
+	}
+	return name
+}
+
+// candidates is name plus every aggregate of it, in a fixed order.
+func candidates(base string) []string {
+	out := make([]string, 0, len(aggregateSuffixes)+1)
+	out = append(out, base)
+	for _, suf := range aggregateSuffixes {
+		out = append(out, base+suf)
+	}
+	return out
+}
+
 // narrow applies a ?columns= filter, preserving the SCHEMA's order rather than
 // the request's: two clients asking for the same columns in different orders
 // must not get points whose fields are transposed relative to each other.
 //
-// An unknown column is a 400 naming what the tier does have. Silently dropping
-// it would answer with a column the caller did not ask for and omit the one
-// they did, which a chart cannot notice.
-func narrow(cols []column, want []string, rel string) ([]column, error) {
+// A requested name is matched one of two ways, and its SUFFIX decides which:
+//
+//   - Already suffixed (cpu_total_max) -- EXACT. The caller named one tier's
+//     aggregate, so a tier that does not carry it is a 400 naming what the
+//     tier does carry. This is the honesty rule the column naming exists to
+//     enforce (see Result.Columns): answering a request for cpu_total_max with
+//     cpu_total would hand back a peak that is really an average.
+//   - Not suffixed (cpu_total) -- a BASE, expanded to itself plus every
+//     aggregate of it the relation carries. A caller drawing one chart at
+//     every range can then name the quantity once instead of tracking which
+//     tier is about to answer it, which is what lets the fleet page ask for
+//     the dozen columns it draws instead of taking all hundred.
+//
+// The second return names the bases that matched nothing HERE. A base can be
+// real and still be absent from one tier -- filesystem_samples has `free` and
+// filesystem_samples_5m has only free_min -- so that alone is not an error.
+// The caller decides: a base the family measures at SOME tier becomes a
+// warning (see missingColumns), and a base no tier has ever heard of is the
+// 400 it was before, because that is a typo and nothing else.
+func narrow(cols []column, want []string, rel string) ([]column, []string, error) {
 	if len(want) == 0 {
-		return cols, nil
+		return cols, nil, nil
 	}
 
 	available := columnNames(cols)
+	keep := make([]string, 0, len(want)*2)
+	var missing []string
+
 	for _, w := range want {
-		if !slices.Contains(available, w) {
-			return nil, fmt.Errorf("%w: %s has no column %q; it has %s",
-				ErrInvalid, rel, w, strings.Join(available, ", "))
+		if isSuffixed(w) {
+			if !slices.Contains(available, w) {
+				return nil, nil, fmt.Errorf("%w: %s has no column %q; it has %s",
+					ErrInvalid, rel, w, strings.Join(available, ", "))
+			}
+			keep = append(keep, w)
+			continue
+		}
+
+		found := false
+		for _, c := range candidates(w) {
+			if slices.Contains(available, c) {
+				keep = append(keep, c)
+				found = true
+			}
+		}
+		if !found {
+			missing = append(missing, w)
 		}
 	}
 
-	out := make([]column, 0, len(want))
+	out := make([]column, 0, len(keep))
 	for _, c := range cols {
-		if slices.Contains(want, c.name) {
+		if slices.Contains(keep, c.name) {
 			out = append(out, c)
 		}
 	}
-	return out, nil
+	return out, missing, nil
 }

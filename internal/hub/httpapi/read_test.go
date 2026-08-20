@@ -25,6 +25,10 @@ func TestIntegrationReadEndpointsRequireTheAdminToken(t *testing.T) {
 		"/api/v1/hosts/1",
 		"/api/v1/hosts/1/containers",
 		"/api/v1/hosts/1/metrics?family=host",
+		// Not under /hosts/, so it does not inherit the guard by sitting
+		// inside a path that already had one -- it is on /api/v1/ and this
+		// list is what says so.
+		"/api/v1/metrics?family=host&hosts=1",
 		"/api/v1/events",
 	} {
 		resp, err := noRedirectClient(srv).Get(srv.URL + path)
@@ -257,6 +261,105 @@ func TestIntegrationMetricsEnvelopeNamesItsTier(t *testing.T) {
 	}
 	if len(res.Series) != 1 || len(res.Series[0].Points) != 1 {
 		t.Fatalf("series = %+v, want one point", res.Series)
+	}
+}
+
+// GET /api/v1/metrics on the wire: one envelope, one column list, and one
+// entry per host asked about.
+//
+// The fleet page renders four hosts and used to spend six requests each doing
+// it. This route is what collapses that, so the shape it returns -- a shared
+// header beside a per-host series list -- is the part a client depends on.
+func TestIntegrationFleetMetricsEnvelopeCarriesEveryHost(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	a, _ := createHost(t, srv, "fleet-one")
+	b, _ := createHost(t, srv, "fleet-two")
+
+	if _, err := s.Pool().Exec(context.Background(), `
+		INSERT INTO host_samples (host_id, ts, cpu_total)
+		VALUES ($1, now() - INTERVAL '5 minutes', 21.0)`, a); err != nil {
+		t.Fatalf("seed host_samples: %v", err)
+	}
+
+	resp := doAdmin(t, srv, http.MethodGet,
+		"/api/v1/metrics?family=host&columns=cpu_total&hosts="+itoa(a)+","+itoa(b), "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.StatusCode, readBody(t, resp))
+	}
+
+	var res struct {
+		Family   string   `json:"family"`
+		Tier     string   `json:"tier"`
+		StepS    int      `json:"step_s"`
+		Columns  []string `json:"columns"`
+		Warnings []string `json:"warnings"`
+		Hosts    []struct {
+			HostID int32 `json:"host_id"`
+			Series []struct {
+				Points [][]json.RawMessage `json:"points"`
+			} `json:"series"`
+		} `json:"hosts"`
+	}
+	decodeJSON(t, resp, &res)
+
+	if res.Family != "host" || res.Tier != "raw" || res.StepS != 60 {
+		t.Errorf("envelope = %s/%s/%ds, want host/raw/60s", res.Family, res.Tier, res.StepS)
+	}
+	if !slices.Equal(res.Columns, []string{"cpu_total"}) {
+		t.Errorf("columns = %v, want [cpu_total]", res.Columns)
+	}
+	if res.Warnings == nil {
+		t.Error("warnings = null, want [] -- an absent list is a null check a client should not need")
+	}
+	if len(res.Hosts) != 2 {
+		t.Fatalf("hosts = %+v, want both", res.Hosts)
+	}
+	// In the order asked, so a client can pair the answer with its request
+	// without sorting or searching.
+	if res.Hosts[0].HostID != a || res.Hosts[1].HostID != b {
+		t.Errorf("host ids = %d,%d, want %d,%d in the order asked",
+			res.Hosts[0].HostID, res.Hosts[1].HostID, a, b)
+	}
+	if len(res.Hosts[0].Series) != 1 || len(res.Hosts[0].Series[0].Points) != 1 {
+		t.Errorf("host a series = %+v, want one point", res.Hosts[0].Series)
+	}
+	if len(res.Hosts[1].Series) != 0 {
+		t.Errorf("host b series = %+v, want none -- it reported nothing", res.Hosts[1].Series)
+	}
+}
+
+// ?hosts= parsing. An empty or unparseable list is a 400 rather than a
+// default: "every host" is a tempting default and the wrong one, because it
+// would turn a caller's own bug -- a page rendering before its host list
+// arrived -- into the most expensive query the hub can run, silently.
+func TestIntegrationFleetMetricsRejectsABadHostList(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	id, _ := createHost(t, srv, "fleet-strict")
+
+	for _, tc := range []struct{ name, query string }{
+		{"no hosts parameter", "family=host"},
+		{"an empty hosts parameter", "family=host&hosts="},
+		{"a hosts parameter that is not an integer", "family=host&hosts=" + itoa(id) + ",web-01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := doAdmin(t, srv, http.MethodGet, "/api/v1/metrics?"+tc.query, "")
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400: %s", resp.StatusCode, readBody(t, resp))
+			}
+		})
+	}
+
+	// Both spellings of the list are accepted, on splitColumns' reasoning:
+	// a caller building the query from an array will reach for one form or
+	// the other and neither is wrong.
+	for _, query := range []string{
+		"family=host&hosts=" + itoa(id),
+		"family=host&hosts=" + itoa(id) + "&hosts=" + itoa(id),
+	} {
+		resp := doAdmin(t, srv, http.MethodGet, "/api/v1/metrics?"+query, "")
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET ?%s: status = %d, want 200: %s", query, resp.StatusCode, readBody(t, resp))
+		}
 	}
 }
 

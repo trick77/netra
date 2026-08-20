@@ -1,4 +1,5 @@
 import {
+  getFleetMetrics,
   getMetrics,
   type Host,
   type MetricsResponse,
@@ -36,13 +37,14 @@ import { DISK_WARN_PCT } from "./conditions";
  * agent's running total, because the outage that makes the second one move
  * also punches the hole that makes an increase across it unreadable.
  *
- * This is a fan-out -- one request per family per host -- and it is the cost
- * of the overview's whole premise. The spec is explicit that sparklines are
- * non-negotiable here: a bar shows one instant, and recent history is half
- * of what an overview is for. The read API is per-host by construction
- * (GET /api/v1/hosts/{id}/metrics), so there is no single call that answers
- * this; a fleet-wide metrics endpoint would be the fix, and it does not
- * exist yet.
+ * This USED to be a fan-out -- one request per family per host -- and it was
+ * the cost of the overview's whole premise. The spec is explicit that
+ * sparklines are non-negotiable here: a bar shows one instant, and recent
+ * history is half of what an overview is for. The read API was per-host by
+ * construction (GET /api/v1/hosts/{id}/metrics), so there was no single call
+ * that answered this, and the fleet-wide endpoint named here as the fix now
+ * exists: GET /api/v1/metrics. fetchFleetTrends below asks it once per
+ * family, and fetchHostTrends is the single-host form of the same question.
  *
  * Every request is settled independently. One host answering 500 must cost
  * that host's sparklines, not the fleet's.
@@ -298,9 +300,9 @@ function lastNumber(values: readonly (number | null)[]): number | null {
   return null;
 }
 
-async function orNull(
-  p: Promise<MetricsResponse>,
-): Promise<MetricsResponse | null> {
+// Generic over what it swallows, so the per-host fetch (one MetricsResponse)
+// and the fleet fetch (a Map of them) share one failure rule.
+async function orNull<T>(p: Promise<T>): Promise<T | null> {
   try {
     return await p;
   } catch {
@@ -388,6 +390,51 @@ export function trafficSeries(net: MetricsResponse | null): {
   };
 }
 
+/**
+ * What this page actually draws, per family, as BASE column names.
+ *
+ * Sent as ?columns= so the hub ships these instead of everything: family=host
+ * alone carries 71 value columns at the raw tier and 101 at 5m, and a fleet
+ * row reads the dozen below. Left unnarrowed, a 24h fleet render moved an
+ * order of magnitude more numbers than it drew.
+ *
+ * BASE names, deliberately -- the hub expands each to itself plus whichever of
+ * _avg/_max/_min the answering tier carries (narrow(), internal/hub/read/
+ * columns.go), which is the same resolution candidates() does on this side.
+ * Naming a suffix here would pin the request to one tier and 400 at the
+ * others, and orNull() below would turn that into a blank cell rather than an
+ * error anyone could see.
+ *
+ * Every entry has a reader. Adding a griddedValues() call for a column that is
+ * not on its family's list gets nulls, not a warning, so the two move
+ * together.
+ */
+const FLEET_COLUMNS: Record<string, string[]> = {
+  // cpu_total for the silhouette and the reporting series; oom_kill_total for
+  // the attention band. The rest are memoryBands' five-band partition: it
+  // needs mem_free AND mem_total or it falls back to a lone mem_used band,
+  // and the others are the subsystems it subtracts.
+  host: [
+    "cpu_total",
+    "mem_total",
+    "mem_free",
+    "mem_used",
+    "mem_buffers",
+    "mem_cached",
+    "mem_shared",
+    "mem_sreclaimable",
+    "mem_zfs_arc",
+    "oom_kill_total",
+  ],
+  net: ["rx_bytes", "tx_bytes"],
+  // used and free, never a percentage: fullestFilesystem() and
+  // filesystemBands() both derive the ratio themselves.
+  filesystem: ["used", "free"],
+  agent: ["buffer_dropped_total", "post_failures_total"],
+  cpu_core: ["busy"],
+  container: ["cpu_pct", "mem_used", "mem_limit"],
+};
+
 export async function fetchHostTrends(
   hostId: number,
   range: Range,
@@ -405,11 +452,10 @@ export async function fetchHostTrends(
         from: window.from,
         to: window.to,
         step: window.step,
+        columns: FLEET_COLUMNS[family],
       }),
     );
 
-  const wantCores =
-    threads !== null && threads !== undefined && threads <= MAX_PER_CORE;
   const [host, net, filesystem, agent, cores] = await Promise.all([
     ask("host"),
     ask("net"),
@@ -418,9 +464,35 @@ export async function fetchHostTrends(
     // reports -- see HostTrends.dropped and .postFailures for why they cannot
     // ride the hosts list instead.
     ask("agent"),
-    wantCores ? ask("cpu_core") : Promise.resolve(null),
+    wantsCores(threads) ? ask("cpu_core") : Promise.resolve(null),
   ]);
 
+  return hostTrendsFrom(host, net, filesystem, agent, cores);
+}
+
+/**
+ * Whether a host is small enough for the per-core stack to be worth asking
+ * for. Unknown thread count means don't: an unbounded fetch on a host whose
+ * size nobody knows is exactly the case MAX_PER_CORE is for.
+ */
+function wantsCores(threads?: number | null): boolean {
+  return threads !== null && threads !== undefined && threads <= MAX_PER_CORE;
+}
+
+/**
+ * The five family responses turned into one row's trends.
+ *
+ * Split out of the fetch so the per-host and the fleet-wide paths cannot
+ * disagree about what a row means: they ask the hub differently -- N requests
+ * or one -- and then run the identical code over the identical response shape.
+ */
+export function hostTrendsFrom(
+  host: MetricsResponse | null,
+  net: MetricsResponse | null,
+  filesystem: MetricsResponse | null,
+  agent: MetricsResponse | null,
+  cores: MetricsResponse | null,
+): HostTrends {
   // Per-core when the host is small enough to ask for it, and cpu_total
   // otherwise. Never the user/system/iowait/steal breakdown here: that is a
   // different question -- where the time went, rather than which core spent
@@ -468,6 +540,124 @@ export async function fetchHostTrends(
       griddedValues(agent, 0, "post_failures_total"),
     ),
   };
+}
+
+/** The subset of Host fetchFleetTrends needs: an id, and how big the host is. */
+export interface TrendHost {
+  id: number;
+  threads?: number | null;
+}
+
+/**
+ * Every host's trends, in one request per family instead of one per host.
+ *
+ * This is what the doc comment at the top of this file said did not exist yet.
+ * The read API was per-host by construction, so the fleet page asked N hosts
+ * the same question N times -- 6N+2 requests per render at four hosts, re-sent
+ * on every poll and every range toggle, through a browser that will open six
+ * connections. GET /api/v1/metrics answers all of them at once, and the
+ * responses come back in the per-host shape so nothing downstream changes.
+ *
+ * Failure isolation moves with the fan-out: it used to be per host (one host
+ * answering 500 cost that host's row), and it is now per FAMILY (one family
+ * failing costs that column across the fleet). Both are the same bargain --
+ * a page that draws what it has -- and a family that fails now fails for a
+ * reason that was never host-specific anyway.
+ */
+export async function fetchFleetTrends(
+  hosts: readonly TrendHost[],
+  range: Range,
+  now?: Date,
+): Promise<Map<number, HostTrends>> {
+  const trends = new Map<number, HostTrends>();
+  if (hosts.length === 0) return trends;
+
+  const window = rangeWindow(range, now);
+  const ids = hosts.map((h) => h.id);
+  const ask = (family: string, forHosts: number[]) =>
+    orNull(
+      getFleetMetrics(forHosts, {
+        family,
+        from: window.from,
+        to: window.to,
+        step: window.step,
+        columns: FLEET_COLUMNS[family],
+      }),
+    );
+
+  // Only the hosts small enough for a per-core stack, and no request at all
+  // when none of them are: MAX_PER_CORE is a transfer limit, and it still is
+  // one when the fan-out collapses -- thirty-two series per host add up the
+  // same either way.
+  const coreIds = hosts.filter((h) => wantsCores(h.threads)).map((h) => h.id);
+
+  const [host, net, filesystem, agent, cores] = await Promise.all([
+    ask("host", ids),
+    ask("net", ids),
+    ask("filesystem", ids),
+    ask("agent", ids),
+    coreIds.length > 0 ? ask("cpu_core", coreIds) : Promise.resolve(null),
+  ]);
+
+  for (const id of ids) {
+    trends.set(
+      id,
+      hostTrendsFrom(
+        host?.get(id) ?? null,
+        net?.get(id) ?? null,
+        filesystem?.get(id) ?? null,
+        agent?.get(id) ?? null,
+        cores?.get(id) ?? null,
+      ),
+    );
+  }
+  return trends;
+}
+
+/**
+ * Every host's container trends, in one request rather than one per host.
+ *
+ * Keyed host id, then container_key. A host whose containers could not be
+ * asked about gets an empty inner map, never a missing entry.
+ */
+export async function fetchFleetContainerTrends(
+  hosts: readonly TrendHost[],
+  range: Range,
+  now?: Date,
+): Promise<{
+  trends: Map<number, Map<string, ContainerTrend>>;
+  /** The window the hub answered, for the enlarged view's time axis -- the
+   * answer rather than the ask, for the reason HostTrends.window gives.
+   *
+   * ONE window for the whole list, and that is now a fact rather than an
+   * approximation: this is a single request, so every host was answered from
+   * the same plan. It used to be per host because it had to be -- N separate
+   * requests could each be clamped differently, and labelling one host's
+   * chart with another's times was a real risk. */
+  window: { from: string; to: string } | null;
+}> {
+  const trends = new Map<number, Map<string, ContainerTrend>>();
+  if (hosts.length === 0) return { trends, window: null };
+
+  const window = rangeWindow(range, now);
+  const ids = hosts.map((h) => h.id);
+  const res = await orNull(
+    getFleetMetrics(ids, {
+      family: "container",
+      from: window.from,
+      to: window.to,
+      step: window.step,
+      columns: FLEET_COLUMNS.container,
+    }),
+  );
+
+  for (const id of ids) {
+    trends.set(id, containerTrends(res?.get(id) ?? null));
+  }
+  // Every host carries the same header, so the first is the answer for all
+  // of them -- see getFleetMetrics.
+  const answered = ids.map((id) => res?.get(id)).find(Boolean);
+  return { trends, window: answered?.window ?? null };
 }
 
 /** Joins hosts, their site names and their trends into the rows the columns read. */
@@ -518,29 +708,6 @@ export interface ContainerTrend {
   mem: (number | null)[];
   /** The container's own ceiling, or null when it runs unlimited. */
   memLimit: number | null;
-}
-
-export async function fetchContainerTrends(
-  hostId: number,
-  range: Range,
-  now?: Date,
-): Promise<{
-  trends: Map<string, ContainerTrend>;
-  /** The window the hub answered, for the enlarged view's time axis -- the
-   * answer rather than the ask, for the reason HostTrends.window gives. */
-  window: { from: string; to: string } | null;
-}> {
-  const window = rangeWindow(range, now);
-  const res = await orNull(
-    getMetrics(hostId, {
-      family: "container",
-      from: window.from,
-      to: window.to,
-      step: window.step,
-    }),
-  );
-
-  return { trends: containerTrends(res), window: res?.window ?? null };
 }
 
 /**

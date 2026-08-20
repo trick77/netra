@@ -100,6 +100,13 @@ services:
       # tls: "true" with no certresolver — the certificate is pre-loaded in
       # Traefik's static config, so there is no ACME challenge to run here.
       traefik.http.routers.netra.tls: "true"
+      # The hub emits plain JSON and nothing in the container compresses it.
+      # The read API is float-heavy — one fleet render moves tens of thousands
+      # of numbers — and that text compresses roughly tenfold, so this is the
+      # cheapest thing on the page's critical path. Traefik skips responses
+      # that already carry a Content-Encoding, so it does not double-handle.
+      traefik.http.middlewares.netra-compress.compress: "true"
+      traefik.http.routers.netra.middlewares: netra-compress
       traefik.http.services.netra.loadbalancer.server.port: "8080"
 
   timescaledb:
