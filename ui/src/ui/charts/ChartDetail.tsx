@@ -248,6 +248,14 @@ export function peak(
   } else {
     for (const s of series) {
       for (const v of s.values) if (v !== null && v > max) max = v;
+      // The BAND too, not just the line. With the mean-plus-peak pair the
+      // line is the bucket's mean and the band is its peak, so the band is
+      // always the taller of the two: a ceiling taken from the line alone
+      // draws the envelope outside the plot -- linePath() never clamps --
+      // and the burst someone enlarged the chart to see is the one thing
+      // that disappears off the top. This is what the chart page's peakOf()
+      // did before this component absorbed it.
+      for (const v of s.band ?? []) if (v !== null && v > max) max = v;
     }
   }
   // A zero ceiling would divide by zero in the geometry.

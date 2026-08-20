@@ -128,6 +128,35 @@ describe("ChartDetail y axis", () => {
     expect(labels[Math.floor(labels.length / 2)]).toBe("0");
   });
 
+  // The mean-plus-peak pair: the line is the bucket's mean and the band is
+  // its peak, so the band is always the taller of the two. A ceiling derived
+  // from the line alone drew the envelope outside the plot -- linePath()
+  // never clamps -- so the burst the pair exists to show was the one thing
+  // clipped off the top. Neither traffic spec declares a max, so this
+  // derived ceiling is the only one those dialogs get.
+  it("derives its ceiling from the peak band, not from the mean line", () => {
+    render(
+      <ChartDetail
+        title="Interface throughput"
+        series={[
+          {
+            name: "in",
+            color: "var(--s2)",
+            values: [1, 2],
+            band: [10, 20],
+          },
+        ]}
+        mirrored
+        onClose={() => {}}
+      />,
+    );
+
+    // Mirrored, so the top label is the ceiling's magnitude: it has to clear
+    // the band's 20 rather than stopping at the line's 2.
+    const top = Number(axisLabels()[0]);
+    expect(top).toBeGreaterThan(2);
+  });
+
   // The axis is kept rather than hidden because both mirrored callers are
   // rate charts carrying unit="B/s": "how much" is the question a reader
   // enlarged them to answer, and dropping the axis answers less than

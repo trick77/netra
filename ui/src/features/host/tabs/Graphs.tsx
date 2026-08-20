@@ -45,10 +45,6 @@ export interface GraphsProps {
    * dialog's picker did when it was wired to the page's setter.
    */
   fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
-  /** The host these panels belong to, for the per-chart page links. Widened
-   * to match HostPage, which takes an id from the URL as a string and from a
-   * fetched host as a number. */
-  hostId?: number | string;
 }
 
 function Panel({
@@ -56,13 +52,11 @@ function Panel({
   res,
   range,
   fetchFamily,
-  hostId,
 }: {
   spec: PanelSpec;
   res: MetricsResponse | null;
   range?: Range;
   fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
-  hostId?: number | string;
 }) {
   const series = bandsFor(spec, res);
   // The enlarged view has room for the pair -- mean as the line, the
@@ -189,7 +183,7 @@ function Group({
   specs: PanelSpec[];
   sources: GraphsProps;
 }) {
-  const { range, fetchFamily, hostId } = sources;
+  const { range, fetchFamily } = sources;
   return (
     <>
       <h3 className="grouphead">{title}</h3>
@@ -203,7 +197,6 @@ function Group({
             res={sources[spec.source] ?? null}
             range={range}
             fetchFamily={fetchFamily}
-            hostId={hostId}
           />
         ))}
       </div>
