@@ -2532,10 +2532,12 @@ plan_extras() {
     # Stated rather than asked, because the exposure is real and the operator
     # should read it even though there is no question attached: sharing the host
     # PID namespace makes every process's /proc entry readable to this container,
-    # cmdline and environ included. netra reads NEITHER, and no longer reads any
-    # individual process's /proc entry at all -- the count comes from counting
-    # numeric directories in /proc. internal/agent/collector/argv_guard_test.go
-    # fails the build if either name appears in a Go string literal.
+    # cmdline and environ included. netra reads NEITHER. Since the per-process
+    # collector was removed the only per-process file it opens is comm, for
+    # /proc/1 and /proc/self, and only when NETRA_PID_HOST is unset; the count
+    # itself comes from counting numeric directories in /proc.
+    # internal/agent/collector/argv_guard_test.go fails the build if either name
+    # appears in a Go string literal.
     info "  processes:       pid: host (always) -- per-container network and"
     info "                   the process count both need the host PID namespace"
     info "                   the namespace exposes every process's cmdline and"

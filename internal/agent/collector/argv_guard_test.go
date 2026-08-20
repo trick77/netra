@@ -125,8 +125,8 @@ so the decision is visible rather than silent.`,
 //
 // A hand-written list was wrong the day it was written: it named internal/agent
 // and cmd/netra-agent, so internal/shared/gen/netra/v1 was never walked — and that is
-// the tree that matters most. Adding `string cmdline = 5;` to ProcessSample and
-// running `make proto` regenerates ingest.pb.go with a
+// the tree that matters most. Adding `string cmdline = 5;` to any sample
+// message and running `make proto` regenerates ingest.pb.go with a
 // `protobuf:"...name=cmdline..."` struct tag, which is a string literal this
 // guard would catch, in a file it never opened. The wire format is the whole
 // point: a field that reaches the hub is the violation, and the proto comment

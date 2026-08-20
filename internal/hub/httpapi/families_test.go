@@ -383,12 +383,15 @@ func TestIntegrationOneUnstorableRowDoesNotCostTheOtherFamiliesTheirData(t *test
 // and answer 200, turning a schema mistake into silent, fleet-wide data loss.
 // It stays a 503 an operator can see.
 //
-// A renamed COLUMN rather than a dropped table, deliberately. events is a
-// hypertable: dropping it disturbs TimescaleDB's own catalog and orphans the
-// retention and continuous-aggregate jobs the migration registers, which then
-// fire against a later test's freshly recreated schema and deadlock against
-// whatever it is doing. A rename produces the same SQLSTATE with no catalog
-// damage at all.
+// A renamed COLUMN rather than a dropped table, deliberately. The point is to
+// produce SQLSTATE 42703 from a statement the ingest path actually runs, with
+// the least disturbance to the schema the fixture built: a rename leaves the
+// table, its rows and every foreign key referencing it exactly where they are,
+// and the next test's OpenTest rebuilds the schema from scratch regardless.
+// Dropping a table to get the same class would work here -- events is a plain
+// table -- but the trick has to stay safe if it is ever pointed at one of the
+// hypertables, where a drop disturbs TimescaleDB's own catalog and orphans the
+// retention jobs the migration registers.
 func TestIntegrationANonPoisonFailureStill503s(t *testing.T) {
 	srv, token, s := newFixture(t)
 	ctx := context.Background()

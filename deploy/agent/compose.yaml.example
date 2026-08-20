@@ -449,10 +449,11 @@ services:
     # every service on the box, which routinely carry passwords, API keys and
     # DSNs.
     #
-    # netra reads NEITHER, and since the per-process collector was removed it
-    # does not read any individual process's /proc entry at all — the process
-    # count comes from counting the numeric directories in /proc. cmdline and
-    # environ are never opened, enforced by
+    # netra reads NEITHER. Since the per-process collector was removed, the only
+    # per-process file it opens at all is /proc/1/comm and /proc/self/comm, and
+    # only when NETRA_PID_HOST is unset — the namespace heuristic compares the
+    # two. The process count itself comes from counting the numeric directories
+    # in /proc. cmdline and environ are never opened, enforced by
     # internal/agent/collector/argv_guard_test.go, which fails the build if
     # either name appears in a Go string literal.
     #

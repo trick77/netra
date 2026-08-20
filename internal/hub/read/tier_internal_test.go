@@ -174,10 +174,8 @@ func TestTierSelectionRawIsFreshToNow(t *testing.T) {
 	}
 }
 
-// The two raw-only families are why selection is per-family rather than a
-// lookup on the range: a sixty-day SMART range has no 5m tier to fall to, and
-// process can never cover more than its 48 hours however long a range is
-// asked for.
+// The raw-only family is why selection is per-family rather than a lookup on
+// the range: a sixty-day SMART range has no 5m tier to fall to.
 func TestTierSelectionForRawOnlyFamilies(t *testing.T) {
 	t.Run("smart over sixty days stays raw and is not clamped", func(t *testing.T) {
 		p := mustPlan(t, "smart", testNow.Add(-60*day), testNow, 0, false)

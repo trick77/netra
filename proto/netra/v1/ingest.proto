@@ -60,8 +60,12 @@ message IngestRequest {
   // one apparmor="DENIED" line a minute in the log netra exists to help the
   // operator read. Nothing rendered the rows. Reserved so the tag is never
   // reused: agents older than this still send it, and a hub that reassigned
-  // 15 would decode their process rows as whatever took the number.
+  // 15 would decode their process rows as whatever took the number. The NAME
+  // is reserved beside it: JSON encodings key on the name, so a later field
+  // called `processes` would collide with an old agent's payload even with a
+  // different tag.
   reserved 15;
+  reserved "processes";
 }
 
 // CpuCoreSample is one core's utilisation over one scrape interval. Rows land

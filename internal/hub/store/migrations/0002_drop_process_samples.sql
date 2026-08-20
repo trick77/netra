@@ -12,6 +12,16 @@
 -- creates it and then drops it here. Editing 0001 in place would diverge from
 -- every database already running it.
 --
+-- One path brings the table back, and it is left as is deliberately. Migrate()
+-- replays 0001 from the top when its schema_migrations row is missing, and
+-- CREATE TABLE IF NOT EXISTS + create_hypertable + add_retention_policy
+-- recreate process_samples -- while 0002, already recorded, does not run again.
+-- That needs 0001's row to be lost AFTER 0002 was recorded, which no code path
+-- does; an interrupted first run self-heals, because 0002 runs straight after
+-- the replay. The alternative is editing 0001, which would diverge from every
+-- database already running it -- a worse trade for a resurrected empty table
+-- that nothing writes to.
+--
 -- Guarded on the table existing rather than on the policy: remove_retention_policy
 -- raises on a missing relation even with if_exists, and this migration must be
 -- re-runnable against a database that has already dropped the table by hand.

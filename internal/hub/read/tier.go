@@ -164,10 +164,9 @@ const defaultSpan = time.Hour
 // the table below is an ordinary unit test rather than something that needs
 // data at a particular age to exist.
 //
-// The rule is RETENTION ON from, not span. Span alone gets the raw-only
-// families wrong in both directions: family=smart over sixty days must answer
-// raw, because there is no 5m tier to fall back to, and family=process can
-// never cover more than forty-eight hours however long a range is asked for.
+// The rule is RETENTION ON from, not span. Span alone gets the raw-only family
+// wrong: family=smart over sixty days must answer raw, because there is no 5m
+// tier to fall back to.
 func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now time.Time) (Plan, error) {
 	to, from := req.To, req.From
 	if to.IsZero() {
