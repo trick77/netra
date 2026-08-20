@@ -248,10 +248,10 @@ type FleetResult struct {
 
 	Hosts []HostSeries `json:"hosts"`
 
-	// Truncated reports that maxPoints was reached. The cap is on the whole
-	// response rather than per host -- it bounds what the hub materialises,
-	// and that is one number however many hosts share it -- so this is
-	// top-level and the hosts after the cut simply carry fewer points.
+	// Truncated reports that AT LEAST ONE host reached maxPoints and its
+	// series are cut short. The cap is per host, not per response: see
+	// fleetSQL for why a shared budget would be a silent regression rather
+	// than a bound. Never true silently.
 	Truncated bool `json:"truncated"`
 }
 
@@ -330,7 +330,7 @@ func (s *Service) FleetMetrics(ctx context.Context, q FleetMetricsQuery, now tim
 	res.Truncated = truncated
 	if truncated {
 		res.Warnings = append(res.Warnings, fmt.Sprintf(
-			"the result reached the %d-point limit and is truncated; narrow the window, ask for fewer hosts or ask for fewer columns",
+			"at least one host reached the %d-point limit and its series are truncated; narrow the window or ask for fewer columns",
 			maxPoints))
 	}
 	return res, nil
@@ -365,11 +365,12 @@ func (s *Service) queryFleetSeries(ctx context.Context, hostIDs []int32, fam *fa
 
 	nKeys := len(fam.keys)
 	out := make(map[int32][]Series, len(hostIDs))
+	perHost := make(map[int32]int, len(hostIDs))
 	var currentHost int32
 	var currentKey []string
 	var current *Series
 	haveHost := false
-	total := 0
+	truncated := false
 
 	for rows.Next() {
 		values, err := rows.Values()
@@ -382,6 +383,16 @@ func (s *Service) queryFleetSeries(ctx context.Context, hostIDs []int32, fam *fa
 		// consider the host it is already inside.
 		hostID, _ := values[0].(int32)
 		rest := values[1:]
+
+		// The query fetches one row past the cap PER HOST, which is the only
+		// way to tell "exactly maxPoints of data" from "more than fits". Drop
+		// it, and say so -- but keep reading, because the hosts after this one
+		// have their own budget and their own rows still to come.
+		perHost[hostID]++
+		if perHost[hostID] > maxPoints {
+			truncated = true
+			continue
+		}
 
 		key := make([]string, nKeys)
 		for i := range nKeys {
@@ -403,22 +414,11 @@ func (s *Service) queryFleetSeries(ctx context.Context, hostIDs []int32, fam *fa
 		point = append(point, ts.UnixMilli())
 		point = append(point, rest[nKeys+1:]...)
 		current.Points = append(current.Points, point)
-
-		total++
-		if total > maxPoints {
-			// One row past the cap, dropped -- see querySeries for why it is
-			// fetched at all.
-			current.Points = current.Points[:len(current.Points)-1]
-			if len(current.Points) == 0 {
-				out[currentHost] = out[currentHost][:len(out[currentHost])-1]
-			}
-			return out, true, nil
-		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, fmt.Errorf("iterate %s: %w", fam.relation(plan.spec), err)
 	}
-	return out, false, nil
+	return out, truncated, nil
 }
 
 // querySeries runs the plan and groups the rows into series.
@@ -508,41 +508,105 @@ func buildFleetSQL(fam *family, spec tierSpec, cols []column) string {
 // relation being queried, and that argument is only worth making once. The
 // host id (or ids) and the window are parameters.
 func buildSeriesSQL(fam *family, spec tierSpec, cols []column, fleet bool) string {
-	rel := fam.relation(spec)
-
-	selects := make([]string, 0, len(fam.keys)+len(cols)+2)
-	orders := make([]string, 0, len(fam.keys)+2)
 	if fleet {
-		selects = append(selects, "s.host_id")
-		orders = append(orders, "1")
+		return fleetSQL(fam, spec, cols)
 	}
-	// The ordinal every key sits at, which the host_id column shifts by one.
-	offset := len(selects)
-	for i, k := range fam.keys {
-		selects = append(selects, k.expr)
-		// Ordinal ordering: the key expressions are already the first
-		// columns, and repeating a qualified expression in ORDER BY would
-		// have to stay character-identical to the SELECT to reuse it.
-		orders = append(orders, fmt.Sprintf("%d", offset+i+1))
+	return hostSQL(fam, spec, cols)
+}
+
+// seriesExprs is the select list every shape shares: the key expressions, then
+// the time column, then the values -- in the order querySeries reads them.
+func seriesExprs(fam *family, spec tierSpec, cols []column) []string {
+	out := make([]string, 0, len(fam.keys)+len(cols)+1)
+	for _, k := range fam.keys {
+		out = append(out, k.expr)
 	}
-	selects = append(selects, "s."+spec.tsColumn)
-	orders = append(orders, fmt.Sprintf("%d", offset+len(fam.keys)+1))
+	out = append(out, "s."+spec.tsColumn)
 	for _, c := range cols {
-		selects = append(selects, c.selectExpr())
+		out = append(out, c.selectExpr())
 	}
+	return out
+}
 
-	hostPredicate := "s.host_id = $1"
-	if fleet {
-		hostPredicate = "s.host_id = ANY($1)"
+// hostSQL is the single-host query: one flat select, ordered key then time,
+// bounded by one LIMIT.
+func hostSQL(fam *family, spec tierSpec, cols []column) string {
+	exprs := seriesExprs(fam, spec, cols)
+
+	// Ordinal ordering: the key expressions and the time column are already
+	// the leading select items, and repeating a qualified expression in ORDER
+	// BY would have to stay character-identical to the SELECT to reuse it.
+	orders := make([]string, 0, len(fam.keys)+1)
+	for i := range len(fam.keys) + 1 {
+		orders = append(orders, fmt.Sprintf("%d", i+1))
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "SELECT %s\n  FROM %s s\n", strings.Join(selects, ", "), rel)
+	fmt.Fprintf(&b, "SELECT %s\n  FROM %s s\n", strings.Join(exprs, ", "), fam.relation(spec))
 	if fam.join != "" {
 		fmt.Fprintf(&b, "  %s\n", fam.join)
 	}
-	fmt.Fprintf(&b, " WHERE %s AND s.%s >= $2 AND s.%s <= $3\n", hostPredicate, spec.tsColumn, spec.tsColumn)
+	fmt.Fprintf(&b, " WHERE s.host_id = $1 AND s.%s >= $2 AND s.%s <= $3\n", spec.tsColumn, spec.tsColumn)
 	fmt.Fprintf(&b, " ORDER BY %s\n LIMIT $4", strings.Join(orders, ", "))
+	return b.String()
+}
+
+// fleetSQL is the several-host query. host_id leads the select list and the
+// ordering, so one host's rows still arrive contiguously and every series
+// inside a host still arrives in one run.
+//
+// The cap is applied PER HOST, with row_number() rather than a LIMIT over the
+// whole result. A single LIMIT here would be a silent regression rather than a
+// bound: the rows arrive in host_id order, so the first hosts would spend the
+// budget and every host after the cut would come back empty -- deterministically
+// the same hosts, every poll, with nothing on screen to say so. The per-host
+// route this replaces gave each host its own cap by construction, because each
+// host was its own request; partitioning restores exactly that, and the total
+// work stays bounded by the same hosts x maxPoints it always was.
+//
+// The columns are aliased positionally because the outer query has to name
+// them and a key can be an arbitrary expression from a joined dimension table
+// (fam.keys[].expr). The window's ORDER BY repeats those expressions rather
+// than the aliases, which is where PostgreSQL requires them.
+func fleetSQL(fam *family, spec tierSpec, cols []column) string {
+	exprs := seriesExprs(fam, spec, cols)
+
+	inner := make([]string, 0, len(exprs)+2)
+	outer := make([]string, 0, len(exprs)+1)
+	inner = append(inner, "s.host_id AS c0")
+	outer = append(outer, "c0")
+	for i, e := range exprs {
+		inner = append(inner, fmt.Sprintf("%s AS c%d", e, i+1))
+		outer = append(outer, fmt.Sprintf("c%d", i+1))
+	}
+
+	// Within a host: key, then time -- the same run order querySeries and
+	// queryFleetSeries both group on.
+	within := make([]string, 0, len(fam.keys)+1)
+	for _, k := range fam.keys {
+		within = append(within, k.expr)
+	}
+	within = append(within, "s."+spec.tsColumn)
+
+	inner = append(inner, fmt.Sprintf(
+		"row_number() OVER (PARTITION BY s.host_id ORDER BY %s) AS rn",
+		strings.Join(within, ", ")))
+
+	// c0 is host_id; the key columns and the time column follow it.
+	orders := make([]string, 0, len(fam.keys)+2)
+	for i := range len(fam.keys) + 2 {
+		orders = append(orders, fmt.Sprintf("c%d", i))
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "SELECT %s\n  FROM (\n", strings.Join(outer, ", "))
+	fmt.Fprintf(&b, "    SELECT %s\n      FROM %s s\n", strings.Join(inner, ", "), fam.relation(spec))
+	if fam.join != "" {
+		fmt.Fprintf(&b, "      %s\n", fam.join)
+	}
+	fmt.Fprintf(&b, "     WHERE s.host_id = ANY($1) AND s.%s >= $2 AND s.%s <= $3\n",
+		spec.tsColumn, spec.tsColumn)
+	fmt.Fprintf(&b, "  ) t\n WHERE rn <= $4\n ORDER BY %s", strings.Join(orders, ", "))
 	return b.String()
 }
 

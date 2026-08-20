@@ -906,20 +906,28 @@ func TestIntegrationFleetMetricsKeepsHostsApartWhenTheyShareAKey(t *testing.T) {
 	}
 }
 
-// The point cap bounds the RESPONSE, not each host's share of it: it bounds
-// what the hub materialises, and that is one number however many hosts asked.
-// The hosts past the cut carry fewer points and truncated says so once.
-func TestIntegrationFleetMetricsTruncationSpansHosts(t *testing.T) {
+// The point cap is applied PER HOST, and this is the test that says so.
+//
+// A single LIMIT over the whole result would look like a bound and behave
+// like a silent regression: the rows arrive in host_id order, so the first
+// hosts would spend the budget and every host after the cut would come back
+// empty -- deterministically the same hosts, on every poll, with nothing on
+// screen to say why. The per-host route this replaced gave each host its own
+// cap by construction, because each host was its own request.
+//
+// Both hosts below are seeded past the cap. Both must come back capped, and
+// neither may be starved by the other.
+func TestIntegrationFleetMetricsCapsEachHostSeparately(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
 	now := time.Now()
 
 	a := seedHost(t, pool, "cap-a")
 	b := seedHost(t, pool, "cap-b")
-	seedHostSamples(t, pool, a, 30*time.Minute, 20*time.Minute)
-	seedHostSamples(t, pool, b, 30*time.Minute, 20*time.Minute)
+	seedHostSamples(t, pool, a, 40*time.Minute, 30*time.Minute, 20*time.Minute)
+	seedHostSamples(t, pool, b, 40*time.Minute, 30*time.Minute, 20*time.Minute)
 
-	restore := read.SetMaxPointsForTest(3)
+	restore := read.SetMaxPointsForTest(2)
 	defer restore()
 
 	res, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
@@ -933,17 +941,82 @@ func TestIntegrationFleetMetricsTruncationSpansHosts(t *testing.T) {
 		t.Fatalf("FleetMetrics: %v", err)
 	}
 	if !res.Truncated {
-		t.Fatal("truncated = false, want true -- four points were seeded against a cap of three")
+		t.Fatal("truncated = false, want true -- three points per host against a cap of two")
 	}
 
-	total := 0
+	perHost := map[int32]int{}
 	for _, h := range res.Hosts {
 		for _, s := range h.Series {
-			total += len(s.Points)
+			perHost[h.HostID] += len(s.Points)
 		}
 	}
-	if total != 3 {
-		t.Errorf("points = %d, want 3 -- the cap is on the whole response", total)
+	if perHost[a] != 2 || perHost[b] != 2 {
+		t.Errorf("points = %v, want 2 for each host -- a shared budget would have "+
+			"given the first host 2 and the second none", perHost)
+	}
+}
+
+// A family whose key comes from a JOINED dimension table, with two key
+// columns rather than one.
+//
+// The fleet query wraps its select in a subquery so it can rank rows per host,
+// which means every key expression has to be carried out through an alias --
+// d.label and d.mountpoint are not columns of the sample relation, and the
+// window's ORDER BY cannot name the aliases either. filesystem exercises both
+// halves of that at once, and net (one key, no join) would not.
+func TestIntegrationFleetMetricsCarriesJoinedDimensionKeys(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+
+	a := seedHost(t, pool, "disks-a")
+	b := seedHost(t, pool, "disks-b")
+
+	seedFS := func(hostID int32, label, mount string) {
+		t.Helper()
+		var fsID int32
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO filesystems (host_id, label, mountpoint) VALUES ($1, $2, $3)
+			RETURNING id`, hostID, label, mount).Scan(&fsID); err != nil {
+			t.Fatalf("insert filesystem: %v", err)
+		}
+		exec(t, pool, `
+			INSERT INTO filesystem_samples (host_id, ts, fs_id, total, used, free)
+			VALUES ($1, now() - INTERVAL '5 minutes', $2, 1000, 800, 150)`, hostID, fsID)
+	}
+	// The same mountpoint on both hosts, so a grouping break that forgot the
+	// host would run them together.
+	seedFS(a, "root", "/")
+	seedFS(a, "logs", "/var/log")
+	seedFS(b, "root", "/")
+
+	res, err := svc.FleetMetrics(ctx, read.FleetMetricsQuery{
+		HostIDs: []int32{a, b},
+		Family:  "filesystem",
+		From:    now.Add(-time.Hour),
+		To:      now,
+		Columns: []string{"used", "free"},
+	}, now)
+	if err != nil {
+		t.Fatalf("FleetMetrics: %v", err)
+	}
+
+	mounts := map[int32][]string{}
+	for _, h := range res.Hosts {
+		for _, s := range h.Series {
+			if s.Key["mountpoint"] == "" {
+				t.Errorf("host %d series has no mountpoint: %v -- the joined key "+
+					"did not survive the subquery", h.HostID, s.Key)
+			}
+			mounts[h.HostID] = append(mounts[h.HostID], s.Key["mountpoint"])
+		}
+	}
+	slices.Sort(mounts[a])
+	if !slices.Equal(mounts[a], []string{"/", "/var/log"}) {
+		t.Errorf("host a mounts = %v, want [/ /var/log]", mounts[a])
+	}
+	if !slices.Equal(mounts[b], []string{"/"}) {
+		t.Errorf("host b mounts = %v, want [/]", mounts[b])
 	}
 }
 
