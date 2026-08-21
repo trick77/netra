@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { mirrorPaths } from "./geometry";
+import { trafficScale } from "./scale";
 import { UpDownSparkline } from "./UpDownSparkline";
 
 describe("UpDownSparkline", () => {
@@ -44,6 +45,47 @@ describe("UpDownSparkline", () => {
     expect(container.querySelector("path[data-down]")?.getAttribute("d")).toBe(
       expected.down,
     );
+  });
+
+  // The reason this component exists in its current form. Its own test rather
+  // than a line in the geometry one above: that test draws values of 1 to 4,
+  // where asinh is indistinguishable from proportional, so it would pass just
+  // as happily against the linear scale this replaced.
+  it("compresses a heavy-tailed day instead of flattening it", () => {
+    // Given a day like ark's: a quiet baseline and one transfer three orders
+    // of magnitude above it
+    const up = [29_000, 31_000, 37_040_000, 30_000, 28_000];
+    const down = [39_000, 40_000, 24_790_000, 38_000, 41_000];
+    const height = 32;
+    const pad = 2;
+    const { container } = render(
+      <UpDownSparkline up={up} down={down} height={height} pad={pad} />,
+    );
+
+    // Then the mark is the one asinh draws, not the one proportion does
+    const max = 37_040_000;
+    const compressed = mirrorPaths(
+      up,
+      down,
+      170,
+      height,
+      max,
+      pad,
+      trafficScale(max),
+    );
+    const proportional = mirrorPaths(up, down, 170, height, max, pad);
+    const drawn = container.querySelector("path[data-up]")?.getAttribute("d");
+    expect(drawn).toBe(compressed.up);
+    expect(drawn).not.toBe(proportional.up);
+
+    // And concretely: the quiet buckets sit ~5px off the midline instead of
+    // the hundredth of a pixel that made this cell a flat line. y grows
+    // downward and `up` is drawn above the midline, so a taller reading is a
+    // SMALLER y.
+    const midline = height / 2;
+    const firstY = Number(drawn!.split(" ")[1]!.split(",")[1]);
+    expect(midline - firstY).toBeGreaterThan(4.5);
+    expect(midline - firstY).toBeLessThan(5.5);
   });
 
   it("takes colours from the caller, defaulting to series tokens not hex", () => {

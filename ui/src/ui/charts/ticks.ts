@@ -157,6 +157,52 @@ export function mirroredTicks(
   return ticks;
 }
 
+/**
+ * Mirrored ticks for an axis that is NOT proportional -- one decade per
+ * labelled tick, positioned by the same scale the mark was drawn with.
+ *
+ * mirroredTicks() above cannot serve a non-linear axis twice over. Its
+ * positions come from `value / ceiling`, which is the proportional
+ * assumption written down; and its VALUES come from niceStep, an even ladder
+ * that on a compressed axis crowds every label it produces into the top
+ * fifth of the box -- a 100 MB/s ceiling stepped evenly gives 25 / 50 / 75,
+ * and all three land above the line where the interesting readings are.
+ * Decades are what a compressed axis wants: 1 k, 10 k, 100 k, 1 M spread
+ * evenly up the box, because that is what asinh does to them.
+ *
+ * `scale` is the caller's own -- the same function passed to Chart, so a
+ * label cannot sit anywhere but on the height its value is drawn at. Minor
+ * ticks are the 2..9 multiples inside each decade, which is where a log
+ * axis's texture comes from: they crowd towards the top of each decade and
+ * that crowding is itself the reading.
+ */
+export function mirroredDecadeTicks(
+  ceiling: number,
+  scale: (value: number) => number,
+  floor = 1_000,
+): Tick[] {
+  const zero: Tick[] = [{ fraction: 0.5, value: 0, major: true }];
+  if (!(ceiling > 0) || !(floor > 0)) return zero;
+
+  const ticks = [...zero];
+  for (
+    let decade = floor;
+    decade <= ceiling * 10;
+    decade = Math.round(decade * 10)
+  ) {
+    for (let m = 1; m <= 9; m++) {
+      const value = decade * m;
+      if (value > ceiling) break;
+      const half = scale(value) * 0.5;
+      // A tick outside the box would be drawn on the frame, or past it.
+      if (half > 0.5) break;
+      ticks.push({ fraction: 0.5 + half, value, major: m === 1 });
+      ticks.push({ fraction: 0.5 - half, value, major: m === 1 });
+    }
+  }
+  return ticks;
+}
+
 /** Whether `value` sits on a multiple of `step`, tolerant of float drift. */
 function isMultiple(value: number, step: number): boolean {
   const ratio = value / step;

@@ -40,6 +40,7 @@ import {
 } from "./plot";
 import { AxisLabels, Grid, Spine, ZeroRule } from "./Axis";
 import type { Tick, TimeTick } from "./ticks";
+import { linearScale, type Scale } from "./scale";
 
 export interface ChartSeries {
   name: string;
@@ -66,6 +67,17 @@ export interface ChartProps {
   height: number;
   /** The ceiling the shape is scaled to. */
   max: number;
+  /**
+   * How a value becomes a height, when proportional is the wrong answer.
+   *
+   * Omitted everywhere but the traffic charts, and they need it: their range
+   * runs to thousands to one, where a proportional axis draws the typical
+   * reading at a fraction of a pixel. See scale.ts, which carries the
+   * measurement. Mirror marks only for now -- the stack and line branches
+   * still scale proportionally, and a caller that passes this with another
+   * mark would get the ceiling it asked for and the shape it did not.
+   */
+  scale?: Scale;
   /** The floor. Defaults to the data's own minimum, for a free-scaled chart. */
   min?: number;
   mark?: ChartMark;
@@ -124,6 +136,7 @@ export function Chart({
   height,
   max,
   min,
+  scale,
   mark = "line",
   pad = 2,
   label = "chart",
@@ -260,7 +273,7 @@ export function Chart({
           />
         )}
 
-        {mirrored && <MirrorMarks {...{ series, w, h, max, pad }} />}
+        {mirrored && <MirrorMarks {...{ series, w, h, max, pad, scale }} />}
         {!mirrored && stacked && (
           <StackMarks {...{ series, w, h, max, pad, highlight, bandStroke }} />
         )}
@@ -293,6 +306,7 @@ export function Chart({
           series={series}
           max={max}
           min={floor}
+          scale={scale}
           mirrored={mirrored}
           stacked={stacked}
         />
@@ -358,12 +372,14 @@ function MirrorMarks({
   h,
   max,
   pad,
+  scale,
 }: {
   series: ChartSeries[];
   w: number;
   h: number;
   max: number;
   pad: number;
+  scale?: Scale;
 }) {
   return (
     <>
@@ -378,13 +394,22 @@ function MirrorMarks({
           h,
           max,
           pad,
+          scale,
         );
         // The envelope, when the tier carries a peak column. Drawn first so
         // the mean sits over it, and with no stroke -- it is a region, not a
         // reading, and an edge on it would compete with the line that is.
         const bands =
           up.band || down?.band
-            ? mirrorPaths(up.band ?? [], down?.band ?? [], w, h, max, pad)
+            ? mirrorPaths(
+                up.band ?? [],
+                down?.band ?? [],
+                w,
+                h,
+                max,
+                pad,
+                scale,
+              )
             : null;
         return (
           <g key={up.name} data-series={up.name} data-mirror>
@@ -574,6 +599,7 @@ function Crosshair({
   series,
   max,
   min,
+  scale,
   mirrored,
   stacked,
 }: {
@@ -583,6 +609,7 @@ function Crosshair({
   series: ChartSeries[];
   max: number;
   min: number;
+  scale?: Scale;
   mirrored: boolean;
   stacked: boolean;
 }) {
@@ -614,10 +641,12 @@ function Crosshair({
         const stackedTo = stacked ? runningTotal(series, index, i) : null;
         const shown = stackedTo ?? v;
         const t = max === min ? 0.5 : (shown - min) / (max - min);
+        // Through the SAME scale the mark was drawn with, never `v / max`:
+        // on a non-linear axis the two disagree, and the dot would float
+        // above the line it is supposed to be reading.
+        const toFraction = scale ?? linearScale(max);
         const cy = mirrored
-          ? rect.top +
-            h / 2 +
-            (i % 2 === 0 ? -1 : 1) * (max === 0 ? 0 : v / max) * (h / 2)
+          ? rect.top + h / 2 + (i % 2 === 0 ? -1 : 1) * toFraction(v) * (h / 2)
           : yAt(rect, t);
         return (
           <circle

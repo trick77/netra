@@ -4,6 +4,7 @@ import { ChartFigure } from "./ChartFigure";
 import { Segmented } from "../Segmented";
 import { ABSENT } from "../../lib/format";
 import { RANGES, type Range } from "../../lib/range";
+import type { ScaleFactory } from "./scale";
 
 // Where it lives now. Re-exported because this is where it was.
 export { summarise } from "./ChartFigure";
@@ -60,6 +61,9 @@ export interface ChartDetailProps {
   reference?: number;
   /** Draw the series as mirrored in/out pairs about a midline. */
   mirrored?: boolean;
+  /** A non-proportional value axis, forwarded so the enlarged chart draws the
+   * same curve as the small one it was opened from. See scale.ts. */
+  scaleFor?: ScaleFactory;
   /** 1024 for byte quantities, so the axis steps 512 MB rather than 500 MB.
    * The small panel has always passed this; the enlarged view ignored it,
    * because its HTML gutter stepped the axis itself and knew nothing about
@@ -100,6 +104,7 @@ export function ChartDetail({
   stacked,
   reference,
   mirrored,
+  scaleFor,
   tickBase,
   hideAxis,
 }: ChartDetailProps) {
@@ -199,6 +204,7 @@ export function ChartDetail({
         stacked={stacked}
         reference={reference}
         mirrored={mirrored}
+        scaleFor={scaleFor}
         hideAxis={hideAxis}
         format={format}
         tickBase={tickBase}

@@ -8,7 +8,13 @@
 import type { ReactNode } from "react";
 import { ABSENT } from "../../lib/format";
 import { extent } from "./geometry";
-import { mirroredTicks, niceTicks, timeTicks } from "./ticks";
+import {
+  mirroredDecadeTicks,
+  mirroredTicks,
+  niceTicks,
+  timeTicks,
+} from "./ticks";
+import type { ScaleFactory } from "./scale";
 import { widestLabel } from "./plot";
 import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
@@ -84,6 +90,9 @@ export interface ChartPanelProps {
   reference?: number;
   /** Draw the series as mirrored in/out pairs about a midline. */
   mirrored?: boolean;
+  /** A non-proportional value axis, applied to this panel's own ceiling, with
+   * ticks to match. See scale.ts and ChartFigure's copy of this prop. */
+  scaleFor?: ScaleFactory;
   /**
    * The ladder the value ticks step on: 1000 for a decimal quantity, 1024
    * for one formatted with binaryBytes.
@@ -189,6 +198,7 @@ export function ChartPanel({
   nowFmt,
   nowValue,
   mirrored,
+  scaleFor,
   hideAxis,
   tickBase = 1000,
   window: answered = null,
@@ -278,10 +288,13 @@ export function ChartPanel({
   // five labels at 12px do not fit a 58px plot -- they collided in the panel
   // before this was tuned. One interval yields the two or three that do.
   // The chart page, with room for eight, asks for more.
+  const scale = scaleFor?.(effectiveMax);
   const yTicks = !valueAxis
     ? undefined
     : mirrored
-      ? mirroredTicks(effectiveMax, 1, tickBase)
+      ? scale
+        ? mirroredDecadeTicks(effectiveMax, scale)
+        : mirroredTicks(effectiveMax, 1, tickBase)
       : niceTicks(floor, effectiveMax, 1, tickBase);
   const xTicks =
     !axis || answered === null
@@ -353,6 +366,7 @@ export function ChartPanel({
         // it in its header rather than inside the plot.
         reference={reference}
         mirrored={mirrored}
+        scaleFor={scaleFor}
         tickBase={tickBase}
         hideAxis={hideAxis}
         window={answered}
@@ -392,6 +406,7 @@ export function ChartPanel({
           legend={legend}
           reference={reference}
           mirrored={mirrored}
+          scale={scale}
           label={`${title} over time`}
         />
       </Enlargeable>

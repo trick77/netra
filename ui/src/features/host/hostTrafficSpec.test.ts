@@ -176,12 +176,16 @@ function netRolledUp(): MetricsResponse {
 }
 
 describe("the Traffic page's envelope", () => {
-  // The design claim is "the sparkline, enlarged -- nothing moves". With the
-  // envelope on, the LINE becomes the mean, so the thing that must equal the
-  // cell's curve is the BAND, not the line. Asserted on the options the page
-  // actually passes (ChartPage: withPeakBand: true), because on the default
-  // options this is true for free and proves nothing.
-  it("draws the cell's own curve as the envelope, with the mean inside it", () => {
+  // The design claim is "the sparkline, enlarged -- nothing moves", and this
+  // pins it across the two places traffic is drawn. It used to hold the other
+  // way up: the cell read the bucket's PEAK, so what had to equal the cell was
+  // the page's BAND. The cell reads the mean now (trafficSeries), which makes
+  // the agreement a stronger one -- the cell and the page's LINE are the same
+  // series, and the envelope is the extra the larger chart has room for.
+  // Asserted on the options the page actually passes (ChartPage:
+  // withPeakBand: true), because on the default options the line is the peak
+  // and the claim is true for free.
+  it("draws the cell's own curve as the line, with the peak as an envelope over it", () => {
     // Given a rolled-up response, where peak and mean are separate columns
     const res = netRolledUp();
 
@@ -191,17 +195,19 @@ describe("the Traffic page's envelope", () => {
     });
     const cell = trafficSeries(res);
 
-    // Then the envelope IS the fleet cell's line. `band` lives on Band (the
-    // chart-panel type bandsFor returns) but not on the narrower
-    // OverlaySeries the array is typed as here, so it is read off explicitly.
+    // Then the page's line IS the fleet cell's curve, both being the mean
+    expect(page[0]?.values).toEqual(cell.rx);
+    expect(page[1]?.values).toEqual(cell.tx);
+    expect(page[0]?.values).toEqual([11, 22, 33]);
+
+    // And the envelope over it is the peak -- a different, higher series.
+    // `band` lives on Band (the chart-panel type bandsFor returns) but not on
+    // the narrower OverlaySeries the array is typed as here, so it is read
+    // off explicitly.
     const envelope = (b: (typeof page)[number]) =>
       (b as { band?: (number | null)[] }).band;
-    expect(envelope(page[0]!)).toEqual(cell.rx);
-    expect(envelope(page[1]!)).toEqual(cell.tx);
-
-    // And the line inside it is the mean -- a different, lower series
-    expect(page[0]?.values).toEqual([11, 22, 33]);
-    expect(page[0]?.values).not.toEqual(cell.rx);
+    expect(envelope(page[0]!)).toEqual([105, 206, 307]);
+    expect(envelope(page[0]!)).not.toEqual(cell.rx);
   });
 });
 

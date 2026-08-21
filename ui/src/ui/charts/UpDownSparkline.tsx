@@ -11,6 +11,7 @@
 // construction rather than by everyone remembering to edit both files.
 import { extent } from "./geometry";
 import { Chart } from "./Chart";
+import { trafficScale } from "./scale";
 // The mirror weights and the midline stroke are Chart's now; only the shared
 // sparkline width is still read here.
 import { SPARK_WIDTH } from "./size";
@@ -63,6 +64,17 @@ export function UpDownSparkline({
   // egress the same size as a saturated ingress.
   const effectiveMax = max ?? Math.max(extent(up).max, extent(down).max);
 
+  /* Non-linear, and this is the whole reason scale.ts exists. Traffic has no
+     ceiling and a very heavy tail: measured on ark.o11.net over 24 h, the
+     typical five-minute bucket is 29 kB/s and the day's peak is 101 MB/s,
+     ~3500:1. Against a proportional axis the typical bucket drew 0.004 px of
+     this chart's 14 px half-height, so the cell was a hairline on the midline
+     with three spikes -- the whole day unreadable, which is the bug this
+     replaced. Through asinh the same bucket draws 5.03 px and the spikes
+     still reach the top. See scale.ts for why asinh and not log, and why the
+     knee is a constant. */
+  const toFraction = trafficScale(effectiveMax);
+
   return (
     <Chart
       series={[
@@ -72,6 +84,7 @@ export function UpDownSparkline({
       width={width}
       height={height}
       max={effectiveMax}
+      scale={toFraction}
       pad={pad}
       mark="mirror"
       label={label}

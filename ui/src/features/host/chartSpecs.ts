@@ -206,6 +206,23 @@ interface PanelSpec {
    * below. Only meaningful when the bases come in twos, in that order. */
   mirrored?: boolean;
   /**
+   * Scale the value axis through asinh rather than proportionally.
+   *
+   * For a quantity with no ceiling and a heavy tail, where the typical
+   * reading and the peak are orders of magnitude apart and a proportional
+   * axis can only show one of them. Measured on ark.o11.net: 29 kB/s typical
+   * against a 101 MB/s peak, and the typical reading drew at four thousandths
+   * of a pixel.
+   *
+   * Declared per spec rather than inferred from `mirrored`. Every mirrored
+   * panel here happens to be throughput today, so the two look
+   * interchangeable -- but the scale is a statement about a quantity's
+   * DISTRIBUTION and the mirror is a statement about its having a direction,
+   * and the first mirrored panel of something evenly distributed would
+   * silently get an axis bent for traffic. See scale.ts.
+   */
+  compressed?: boolean;
+  /**
    * Fold a keyed family across its series: ONE band per base, summed, rather
    * than one band per base per series.
    *
@@ -549,6 +566,7 @@ export const NETWORK: PanelSpec[] = [
     // than taken from the index walk. See PanelSpec.colors.
     colors: [UP_COLOR, DOWN_COLOR],
     mirrored: true,
+    compressed: true,
     peak: true,
     summed: true,
     fmt: bytes,
@@ -570,6 +588,7 @@ export const NETWORK: PanelSpec[] = [
     // traffic: two lines climbing one axis make a reader compare shapes to
     // answer "which way is this going".
     mirrored: true,
+    compressed: true,
     // Read the bucket's peak, not its mean -- see peakBase(). Unlike the
     // fleet cell this panel draws one pair per interface and sums nothing,
     // so the mark here is a true per-interface maximum.
