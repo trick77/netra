@@ -1,19 +1,14 @@
-import { Table } from "../../ui/Table";
+import { Table, type TableProps } from "../../ui/Table";
 import { FleetEmptyState } from "./fleetEmptyState";
-import {
-  hostColumns,
-  type AttentionView,
-  type HostRow,
-  type Range,
-} from "./hostColumns";
+import { hostColumns, type HostRow, type Range } from "./hostColumns";
 
 export interface HostTableProps {
   rows: readonly HostRow[];
   range: Range;
-  /** Present when the list is answering "what is wrong" rather than "how is
-   * the fleet" -- see AttentionView. Passed straight through: which columns
-   * a question needs is hostColumns' decision, not this file's. */
-  attention?: AttentionView;
+  /** The severity rail down a row's leading edge -- which hosts to look at,
+   * read from the edge of the table before any cell is. Passed straight to
+   * Table, which owns how a rail is drawn. */
+  severity?: TableProps<HostRow>["rowSeverity"];
   /** True when this list is empty because something is filtering it rather
    * than because the hub has no hosts -- see FleetEmptyState. */
   filtered?: boolean;
@@ -33,7 +28,7 @@ export interface HostTableProps {
 export function HostTable({
   rows,
   range,
-  attention,
+  severity,
   filtered = false,
 }: HostTableProps) {
   if (rows.length === 0) {
@@ -44,9 +39,10 @@ export function HostTable({
 
   return (
     <Table
-      columns={hostColumns(range, attention)}
+      columns={hostColumns(range)}
       rows={rows}
       rowKey={(row) => row.id}
+      rowSeverity={severity}
     />
   );
 }

@@ -539,7 +539,7 @@ describe("FleetPage data fetching", () => {
   });
 
   // Clicking a kind is the whole navigation model: the hosts carrying it, and
-  // nothing else, with the sentence that was too long to print twelve times.
+  // nothing else -- in the same columns the unfiltered list uses.
   it("filters the list to the hosts carrying the kind that was clicked", async () => {
     const user = userEvent.setup();
     render(
@@ -556,7 +556,7 @@ describe("FleetPage data fetching", () => {
     const counts = screen.getByRole("list", { name: /by kind/i });
     await user.click(within(counts).getByRole("link", { name: /OOM kills/ }));
 
-    expect(screen.getByText(/3 OOM kills/)).toBeInTheDocument();
+    expect(screen.getByText("db-01")).toBeInTheDocument();
     // The healthy host is gone, and the page says so rather than leaving the
     // reader to notice -- the band's own overflow line ("+30 more hosts") was
     // the counter-example, with nothing to click.
@@ -712,6 +712,29 @@ describe("FleetPage data fetching", () => {
     const counts = screen.getByRole("list", { name: /by kind/i });
     expect(within(counts).getByText(/OOM kills/)).toBeInTheDocument();
     expect(screen.getByText(/1 of 2 hosts/)).toBeInTheDocument();
+  });
+
+  // The rail replaces the worst-first ordering: rows stay where the API put
+  // them, and the mark says which of them to look at.
+  it("rails a troubled row and leaves a healthy one unmarked", () => {
+    const { container } = render(
+      <FleetPage
+        rows={[
+          makeRow({ id: 1, hostname: "web-01" }),
+          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+        ]}
+        checkedAt={null}
+        now={NOW}
+      />,
+    );
+
+    const rows = container.querySelectorAll("tbody tr");
+    expect(rows[0].className).toBe("");
+    expect(rows[1].className).toContain("rail-critical");
+    // The colour is never the only channel: the word rides the row for a
+    // reader who gets no colour, and a healthy row says nothing.
+    expect(rows[1].querySelector(".sr-only")?.textContent).toBe("Critical");
+    expect(rows[0].querySelector(".sr-only")).toBeNull();
   });
 
   it("still shows the quiet all-clear line for a healthy fleet", () => {

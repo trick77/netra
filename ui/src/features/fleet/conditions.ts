@@ -154,12 +154,6 @@ const SEVERITY_RANK: Record<Severity, number> = {
   neutral: 0,
 };
 
-/** Worst first. Exported so a caller can rank hosts by the same rule the
- * conditions themselves are ranked by. */
-export function severityRank(severity: Severity): number {
-  return SEVERITY_RANK[severity];
-}
-
 export function worstOf(conditions: readonly Condition[]): Condition {
   return conditions.reduce((worst, c) =>
     SEVERITY_RANK[c.severity] > SEVERITY_RANK[worst.severity] ? c : worst,

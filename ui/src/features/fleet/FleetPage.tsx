@@ -23,7 +23,6 @@ import {
   isConditionKind,
   kindLabel,
   kindSeverity,
-  severityRank,
   type AttentionFilter,
   type Condition,
   type HostGroup,
@@ -413,29 +412,25 @@ export function FleetPage({
     ? visibleHosts
     : visibleHosts.filter(matchesAttention);
 
-  // Worst first, always -- filtered or not. Array.prototype.sort is stable,
-  // so hosts at the same rank keep the hostname order the API returned them
-  // in, and a healthy fleet is untouched by this because every row ranks 0.
-  // The Table's own column sort still overrides it the moment a reader
-  // clicks a header; this is only what they see before they do.
-  const rankOf = (row: HostRow): number => {
-    const group = byHost.get(String(row.id));
-    return group === undefined ? 0 : severityRank(group.worst.severity);
+  // The mark on the row itself, in place of the ordering that used to lift a
+  // troubled host to the top: a rail down the leading edge says which hosts
+  // to look at without moving any of them. Only the severities that mean
+  // something is wrong -- a rail on every row would say nothing.
+  const railSeverity = (
+    row: HostRow,
+  ): "warning" | "serious" | "critical" | null => {
+    const worst = byHost.get(String(row.id))?.worst.severity;
+    if (worst === "critical" || worst === "serious" || worst === "warning") {
+      return worst;
+    }
+    return null;
   };
-  const orderedHosts = [...attentionHosts].sort(
-    (a, b) => rankOf(b) - rankOf(a),
-  );
 
-  // The columns follow the question. Only when a filter is on: unfiltered,
-  // this list is still the monitoring table it has always been, and swapping
-  // its charts for sentences would answer a question nobody asked.
-  const attentionView = filtered
-    ? undefined
-    : {
-        groups: byHost,
-        kind: activeKind,
-        range,
-      };
+  // The rows keep the order the API returned them in -- hostname order -- and
+  // a troubled host is not lifted above a healthy one. Finding a machine you
+  // came looking for beats being shown the worst one first, and the severity
+  // is already legible in the row itself. The Table's own column sort still
+  // takes over the moment a reader clicks a header.
 
   return (
     <>
@@ -629,7 +624,7 @@ export function FleetPage({
         // own overflow line was the counter-example: "+30 more hosts" with
         // nothing to click.
         <p className="countline">
-          Showing <strong>{orderedHosts.length}</strong> of {hostRows.length}{" "}
+          Showing <strong>{attentionHosts.length}</strong> of {hostRows.length}{" "}
           host{hostRows.length === 1 ? "" : "s"}
           {activeKind === null
             ? ` with something ${attention}`
@@ -660,16 +655,16 @@ export function FleetPage({
       {entity === "hosts" ? (
         effectiveDensity === "table" ? (
           <HostTable
-            rows={orderedHosts}
+            rows={attentionHosts}
             range={range}
-            attention={attentionView}
+            severity={railSeverity}
             filtered={hostRows.length > 0}
           />
         ) : (
           <HostCards
-            rows={orderedHosts}
+            rows={attentionHosts}
             range={range}
-            attention={attentionView}
+            severity={railSeverity}
             filtered={hostRows.length > 0}
           />
         )

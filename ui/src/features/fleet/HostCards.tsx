@@ -1,9 +1,4 @@
-import {
-  hostColumns,
-  type AttentionView,
-  type HostRow,
-  type Range,
-} from "./hostColumns";
+import { hostColumns, type HostRow, type Range } from "./hostColumns";
 import { FleetEmptyState } from "./fleetEmptyState";
 
 // The one column a card renders as its header rather than as a tile -- a
@@ -13,9 +8,9 @@ const HEADER_COLUMN_KEY = "host";
 export interface HostCardsProps {
   rows: readonly HostRow[];
   range: Range;
-  /** See HostTable: the same pass-through, so a filtered fleet reads the
-   * same whichever density the reader is on. */
-  attention?: AttentionView;
+  /** See HostTable: the same mark, drawn down the card's leading edge so a
+   * grid of cards is scannable the way the table is. */
+  severity?: (row: HostRow) => "warning" | "serious" | "critical" | null;
   /** True when this list is empty because something is filtering it rather
    * than because the hub has no hosts -- see FleetEmptyState. */
   filtered?: boolean;
@@ -36,10 +31,20 @@ export interface HostCardsProps {
  * onto a third row rather than being dropped -- dropping it is the failure
  * mode this contract exists to prevent.
  */
+// The rail is a second channel on a fact the card already states in its own
+// badge, never the only one -- see Table's rowSeverity. An unmarked card is
+// what a healthy host gets: a grid where every card is railed has said
+// nothing.
+function cardClass(
+  severity: "warning" | "serious" | "critical" | null,
+): string {
+  return severity === null ? "hcard" : `hcard rail-card rail-${severity}`;
+}
+
 export function HostCards({
   rows,
   range,
-  attention,
+  severity,
   filtered = false,
 }: HostCardsProps) {
   if (rows.length === 0) {
@@ -50,7 +55,7 @@ export function HostCards({
   // The header column is found by key, never by position: a column added at
   // the front of hostColumns would otherwise silently become the card title
   // instead of a tile.
-  const columns = hostColumns(range, attention);
+  const columns = hostColumns(range);
   const host = columns.find((col) => col.key === HEADER_COLUMN_KEY);
   const metrics = columns.filter((col) => col.key !== HEADER_COLUMN_KEY);
 
@@ -62,7 +67,11 @@ export function HostCards({
         // article gives a screen-reader user a nameless region holding a
         // nameless div -- and cards are automatic below the mobile
         // breakpoint, so this is not an opt-in path anyone chose.
-        <article className="hcard" key={row.id} aria-label={row.hostname}>
+        <article
+          className={cardClass(severity?.(row) ?? null)}
+          key={row.id}
+          aria-label={row.hostname}
+        >
           <header>{host?.cell(row)}</header>
           <div className="grid">
             {metrics.map((col) => (
