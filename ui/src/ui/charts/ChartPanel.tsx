@@ -15,7 +15,7 @@ import {
   timeTicks,
 } from "./ticks";
 import type { ScaleFactory } from "./scale";
-import { widestLabel } from "./plot";
+import { minLabelGap, widestLabel } from "./plot";
 import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
 import { Enlargeable, type DetailData } from "./Enlargeable";
@@ -293,7 +293,13 @@ export function ChartPanel({
     ? undefined
     : mirrored
       ? scale
-        ? mirroredDecadeTicks(effectiveMax, scale)
+        ? // The panel's own room, and no minor rungs: five decades of 2..9
+          // multiples is 87 gridlines in a 260x112 box, which reads as a
+          // wash. The enlarged view has the height for them.
+          mirroredDecadeTicks(effectiveMax, scale, {
+            minGap: minLabelGap(height),
+            minors: false,
+          })
         : mirroredTicks(effectiveMax, 1, tickBase)
       : niceTicks(floor, effectiveMax, 1, tickBase);
   const xTicks =

@@ -397,7 +397,7 @@ export function cpuBands(
  * Shared with the enlarged view so it cannot disagree with the cell it was
  * opened from.
  */
-export function trafficSeries(net: MetricsResponse | null): {
+export function trafficSeries(net: MetricsResponse | null | undefined): {
   rx: (number | null)[];
   tx: (number | null)[];
 } {

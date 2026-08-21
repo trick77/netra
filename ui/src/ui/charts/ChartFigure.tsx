@@ -23,7 +23,7 @@ import {
   timeTicks,
 } from "./ticks";
 import type { ScaleFactory } from "./scale";
-import { widestLabel } from "./plot";
+import { minLabelGap, widestLabel } from "./plot";
 import { ABSENT, absolute } from "../../lib/format";
 
 export interface ChartFigureProps {
@@ -100,7 +100,7 @@ export function ChartFigure({
     ? undefined
     : mirrored
       ? scale
-        ? mirroredDecadeTicks(max, scale)
+        ? mirroredDecadeTicks(max, scale, { minGap: minLabelGap(height) })
         : mirroredTicks(max, 3, tickBase)
       : niceTicks(min, max, 3, tickBase);
 
