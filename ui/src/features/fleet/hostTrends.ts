@@ -11,7 +11,6 @@ import {
   fsName,
   griddedValues,
   latestValue,
-  peakBase,
   sumSeries,
 } from "../../lib/metrics";
 import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
@@ -374,19 +373,37 @@ export function cpuBands(
 }
 
 /**
- * A host's traffic pair, summed over its interfaces at each bucket's PEAK.
+ * A host's traffic pair, summed over its interfaces at each bucket's MEAN.
  *
- * See the call site for why the peak and not the mean, and why the sum of
- * peaks rather than the peak of the sum. Shared so the enlarged view cannot
- * disagree with the cell it was opened from.
+ * The mean, and not the peak this used to read through peakBase(). Two
+ * reasons, and both of them outlived the reason for the peak:
+ *
+ *  - Summing is only valid on means. The sum of each interface's mean IS the
+ *    mean of the summed traffic; the sum of each interface's peak is not the
+ *    peak of anything -- it adds bursts that happened in different minutes of
+ *    the same bucket as though they had happened at once. The old call site
+ *    knew this and accepted the bias deliberately.
+ *  - The peak existed so a fleet row could answer "did this host spike",
+ *    which the mean on a proportional axis genuinely hid. That is no longer
+ *    what makes a spike visible: UpDownSparkline scales through asinh now, so
+ *    a burst still reaches the top of the cell without flattening the other
+ *    23 hours to a hairline. Measured on ark.o11.net, the peak cost a factor
+ *    of 2.7 in ceiling and bought an answer the scale now gives for free.
+ *
+ * It also puts traffic on the same footing as the CPU and memory cells, which
+ * have always read _avg, and matches the host page's throughput panel, which
+ * draws the mean as its line and the peak as an envelope over it.
+ *
+ * Shared with the enlarged view so it cannot disagree with the cell it was
+ * opened from.
  */
-export function trafficSeries(net: MetricsResponse | null): {
+export function trafficSeries(net: MetricsResponse | null | undefined): {
   rx: (number | null)[];
   tx: (number | null)[];
 } {
   return {
-    rx: sumSeries(net, peakBase(net, "rx_bytes")),
-    tx: sumSeries(net, peakBase(net, "tx_bytes")),
+    rx: sumSeries(net, "rx_bytes"),
+    tx: sumSeries(net, "tx_bytes"),
   };
 }
 
@@ -515,16 +532,11 @@ export function hostTrendsFrom(
     cpu: cpuBands(host, cores).bands,
     mem: memoryBands(host),
     reporting: total,
-    // The PEAK of each bucket, not its mean -- see peakBase(). A fleet row
-    // is scanned for "did this host spike", and the average hid exactly that.
-    //
-    // Summed per interface, so this is the sum of each interface's own peak
-    // rather than the peak of the summed traffic, and is therefore >= it: two
-    // interfaces that burst in different minutes of the same bucket add
-    // together here as though they had burst at once. That is the right bias
-    // for a cell answering "is there anything here to look at" -- it never
-    // hides a burst, and the interface that actually burst is one click away
-    // on the host page, where the pairs are drawn per interface.
+    // The MEAN of each bucket, summed across interfaces -- trafficSeries()
+    // carries why that is the pair of choices, and why the peak this used to
+    // read is no longer what makes a spike visible. The interface that
+    // actually burst is still one click away on the host page, where the
+    // pairs are drawn per interface.
     rx: traffic.rx,
     tx: traffic.tx,
     fullest: fullestFilesystem(filesystem),

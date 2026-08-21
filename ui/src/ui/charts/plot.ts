@@ -121,6 +121,24 @@ export function contains(rect: PlotRect, x: number, y: number): boolean {
 export const AXIS_FONT_PX = 12;
 
 /**
+ * The closest two value labels may sit, as a fraction of the plot box.
+ *
+ * `height` is the whole image, plot plus axis margins, because that is what
+ * a caller has to hand before layout() has run. The fraction is therefore
+ * conservative -- the plot is shorter than the image, so the real gap in
+ * viewBox units comes out under this -- which is the safe direction: a
+ * little more air than asked for, never less. 1.6 line heights is what keeps
+ * "1 kB" clear of "0 B" on a 112-unit panel.
+ *
+ * Only a non-linear axis needs this. niceTicks and mirroredTicks are asked
+ * for a tick COUNT and space their output evenly, so their labels cannot
+ * bunch; a decade ladder over asinh puts its rungs where the curve does.
+ */
+export function minLabelGap(height: number): number {
+  return height > 0 ? (AXIS_FONT_PX * 1.6) / height : 0;
+}
+
+/**
  * The width of a rendered axis label, in viewBox units, computed
  * arithmetically.
  *

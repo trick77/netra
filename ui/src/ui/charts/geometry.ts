@@ -6,6 +6,8 @@
 // SVG's y-axis grows downward, so every value-to-y mapping below inverts
 // the value: a higher value must land at a smaller y.
 
+import { linearScale, type Scale } from "./scale";
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -303,10 +305,15 @@ export function mirrorPaths(
   h: number,
   max: number,
   pad = 0,
+  scale?: Scale,
 ): { up: string; down: string; mid: number } {
   const mid = h / 2;
   const n = Math.max(up.length, down.length);
   const baseline = round1(mid);
+  // Proportional unless the caller says otherwise, so every existing caller
+  // draws exactly what it drew before this parameter existed. See scale.ts
+  // for when a chart wants the other one.
+  const toFraction = scale ?? linearScale(max);
 
   const build = (vals: (number | null)[], direction: 1 | -1): string => {
     const usable = h / 2 - pad;
@@ -319,7 +326,7 @@ export function mirrorPaths(
         const pts = run.map((i) => {
           const x = scaleX(i, n, w, pad);
           const v = vals[i] as number;
-          const t = max === 0 ? 0 : v / max;
+          const t = toFraction(v);
           const y = mid + direction * t * usable;
           return point(x, y);
         });

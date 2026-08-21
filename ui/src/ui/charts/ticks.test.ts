@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  mirroredDecadeTicks,
   mirroredTicks,
   niceStep,
   niceTicks,
   timeLabel,
   timeTicks,
 } from "./ticks";
+import { trafficScale } from "./scale";
+import { minLabelGap } from "./plot";
 
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
@@ -130,6 +133,164 @@ describe("ticks", () => {
         12 * GiB,
         16 * GiB,
       ]);
+    });
+  });
+
+  describe("mirroredDecadeTicks", () => {
+    // ark's ceiling, and the scale the traffic charts draw it with.
+    const CEILING = 37_040_000;
+    const scale = trafficScale(CEILING);
+
+    it("labels one decade at a time, mirrored about zero", () => {
+      // Given a compressed axis four decades tall
+      const ticks = mirroredDecadeTicks(CEILING, scale);
+
+      // Then the labelled values are the decades, each appearing twice --
+      // once above the midline and once below, both a magnitude
+      const majors = [
+        ...new Set(
+          ticks.filter((t) => t.major && t.value > 0).map((t) => t.value),
+        ),
+      ];
+      expect(majors).toEqual([1e3, 1e4, 1e5, 1e6, 1e7]);
+      for (const value of majors) {
+        expect(ticks.filter((t) => t.value === value)).toHaveLength(2);
+      }
+    });
+
+    it("puts every tick where the scale draws that value, not where proportion would", () => {
+      // Given the same axis
+      const ticks = mirroredDecadeTicks(CEILING, scale);
+
+      // Then a tick's position comes from the curve the mark was drawn with.
+      // Proportionally 1 MB/s would sit at 0.514 -- a hair off the midline --
+      // and its label would name a height the line never reaches.
+      const at = (v: number) =>
+        ticks.find((t) => t.value === v && t.fraction > 0.5)!.fraction;
+      expect(at(1e6)).toBeCloseTo(0.5 + scale(1e6) * 0.5, 6);
+      expect(at(1e6)).toBeGreaterThan(0.8);
+    });
+
+    it("draws minor ticks inside each decade, crowding towards its top", () => {
+      // Given the axis
+      const ticks = mirroredDecadeTicks(CEILING, scale);
+      const above = ticks.filter((t) => t.fraction > 0.5);
+
+      // Then the 2..9 multiples are there, unlabelled
+      expect(above.filter((t) => t.value === 2e5)[0]?.major).toBe(false);
+
+      // And they bunch: 9x a decade is much nearer 10x than 2x is to 1x,
+      // which is the texture that makes a compressed axis readable
+      const gap = (a: number, b: number) => scale(b) - scale(a);
+      expect(gap(9e5, 1e6)).toBeLessThan(gap(1e5, 2e5));
+    });
+
+    it("stops at the ceiling rather than drawing on the frame", () => {
+      // Given a ceiling that is not itself a round decade
+      const ticks = mirroredDecadeTicks(CEILING, scale);
+
+      // Then nothing is placed above the top of the box
+      expect(Math.max(...ticks.map((t) => t.value))).toBeLessThanOrEqual(
+        CEILING,
+      );
+      expect(Math.max(...ticks.map((t) => t.fraction))).toBeLessThanOrEqual(1);
+    });
+
+    it("answers a lone zero for an axis with no ceiling to divide", () => {
+      // Given a host that reported nothing at all
+      // Then the midline is the only thing there is to label
+      expect(mirroredDecadeTicks(0, scale)).toEqual([
+        { fraction: 0.5, value: 0, major: true },
+      ]);
+    });
+
+    it("demotes a decade that cannot clear the label below it", () => {
+      // Given the room a 112px panel has -- 12px of text in a box whose plot
+      // is about 80 units tall
+      const minGap = (12 * 1.6) / 112;
+
+      // When the ladder is thinned to it
+      const ticks = mirroredDecadeTicks(CEILING, scale, { minGap });
+      const above = ticks
+        .filter((t) => t.major && t.fraction >= 0.5)
+        .sort((a, b) => a.fraction - b.fraction);
+
+      // Then no two labels sit closer than that, the midline included. Left
+      // unthinned this axis put "0 B", "1 kB" and "1 kB" within 0.04 of the
+      // box of each other -- eleven labels in eighty units, which renders as
+      // a smear rather than as three readings.
+      for (let i = 1; i < above.length; i++) {
+        expect(
+          above[i]!.fraction - above[i - 1]!.fraction,
+        ).toBeGreaterThanOrEqual(minGap);
+      }
+      expect(above.length).toBeLessThan(4);
+
+      // And the decades that lost their label keep their gridline
+      expect(ticks.some((t) => t.value === 1_000 && !t.major)).toBe(true);
+    });
+
+    it("labels something other than zero however little room there is", () => {
+      // Given a box too short for any decade to clear the midline
+      const ticks = mirroredDecadeTicks(CEILING, scale, { minGap: 1 });
+
+      // Then the topmost rung is labelled anyway: an axis reading only "0"
+      // names no magnitude at all, which is worse than a tight one
+      const majors = ticks.filter((t) => t.major && t.value > 0);
+      expect(majors.length).toBeGreaterThan(0);
+      expect(Math.max(...majors.map((t) => t.value))).toBe(1e7);
+    });
+
+    it("drops the 2..9 rungs when the caller has no room for them", () => {
+      // Given a small panel, where five decades of minors is 87 gridlines
+      const ticks = mirroredDecadeTicks(CEILING, scale, { minors: false });
+
+      // Then only the decades are there
+      expect(ticks.every((t) => t.value === 0 || t.major)).toBe(true);
+    });
+
+    it("drops below the knee for a host too quiet to reach it", () => {
+      // Given a host whose whole day peaks at 500 B/s -- under the 1 kB/s
+      // decade floor, so the ladder as written had nothing to put on the axis
+      const quiet = trafficScale(500);
+      const ticks = mirroredDecadeTicks(500, quiet);
+
+      // Then it labels the decade the data actually lives in, rather than
+      // leaving the reader an axis whose only label is zero
+      const majors = [
+        ...new Set(
+          ticks.filter((t) => t.major && t.value > 0).map((t) => t.value),
+        ),
+      ];
+      expect(majors).toEqual([100]);
+
+      // And still positioned by the scale, not proportionally
+      const at = ticks.find((t) => t.value === 100 && t.fraction > 0.5)!;
+      expect(at.fraction).toBeCloseTo(0.5 + quiet(100) * 0.5, 6);
+    });
+
+    it("terminates on a sub-decimal ceiling instead of hanging the render", () => {
+      // Given a ceiling under a tenth, where a decade walked by repeated
+      // `Math.round(decade * 10)` rounds to zero and the loop never advances
+      const ticks = mirroredDecadeTicks(0.05, trafficScale(0.05));
+
+      // Then it comes back, and it names the decade the data lives in
+      expect(ticks.filter((t) => t.major && t.value > 0)[0]?.value).toBe(0.01);
+    });
+
+    it("keeps the enlarged view's midline clear too", () => {
+      // Given the dialog's own room -- 380 units, not the panel's 112
+      const ticks = mirroredDecadeTicks(CEILING, scale, {
+        minGap: minLabelGap(380),
+      });
+      const labelled = new Set(
+        ticks.filter((t) => t.major && t.value > 0).map((t) => t.value),
+      );
+
+      // Then it has the height for four decades but still not for the one
+      // that sits 0.04 of the box off zero: "0 B" and two "1 kB" in thirteen
+      // units is a smear at any chart size.
+      expect([...labelled]).toEqual([1e4, 1e5, 1e6, 1e7]);
     });
   });
 

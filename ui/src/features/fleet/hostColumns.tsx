@@ -17,6 +17,7 @@ import {
   UP_COLOR,
   UpDownSparkline,
 } from "../../ui/charts/UpDownSparkline";
+import { trafficScale } from "../../ui/charts/scale";
 import {
   ABSENT,
   binaryBytes,
@@ -384,6 +385,11 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
           { name: "out", color: DOWN_COLOR, values: row.tx },
         ]}
         mirrored
+        // The enlarged view draws the cell's own curve at the cell's own
+        // ceiling -- a compressed sparkline that opened into a proportional
+        // dialog would be a different chart on click, which is the one thing
+        // an enlarged view must not be.
+        scaleFor={trafficScale}
         fmt={bytes}
         window={row.window}
         range={range}

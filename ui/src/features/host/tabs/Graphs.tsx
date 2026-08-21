@@ -10,6 +10,7 @@ import type { Range } from "../../../lib/range";
 import { windowNotice } from "../../../lib/metrics";
 import { ChartPanel } from "../../../ui/charts/ChartPanel";
 import { RANGE_VALUES } from "../ranges";
+import { trafficScale } from "../../../ui/charts/scale";
 import {
   SYSTEM,
   NETWORK,
@@ -147,6 +148,9 @@ function Panel({
       fmt={spec.fmt}
       stacked={spec.stacked}
       mirrored={spec.mirrored}
+      // Only where the spec asks for it -- see PanelSpec.compressed for why
+      // this is not read off `mirrored`.
+      scaleFor={spec.compressed === true ? trafficScale : undefined}
       // A 32-core legend is longer than the chart it explains. Suppressed
       // with legend, not highlight: the latter also dims every other series
       // to 35% and washed the whole stack out.

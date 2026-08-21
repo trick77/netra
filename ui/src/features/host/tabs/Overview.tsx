@@ -18,8 +18,6 @@ import {
   hasReading,
   latestValue,
   optionalValues,
-  peakBase,
-  sumSeries,
 } from "../../../lib/metrics";
 import {
   ABSENT,
@@ -58,6 +56,11 @@ import {
 // one must agree on when a filesystem is worth mentioning, or a host warns
 // in one place and reads clean in the other.
 import { DISK_WARN_PCT, DISK_CRIT_PCT } from "../../fleet/conditions";
+// The one derivation of a host's traffic pair, shared with the fleet row and
+// the Traffic chart spec -- its own comment carries why the three cannot be
+// allowed to disagree, and scale.ts why they share a bent axis.
+import { trafficSeries } from "../../fleet/hostTrends";
+import { trafficScale } from "../../../ui/charts/scale";
 
 /**
  * column() in lib/metrics.ts THROWS for a column the answering tier does
@@ -813,11 +816,12 @@ export function Overview({
   // a bucket makes that bucket's total unknowable rather than smaller --
   // counting it as zero would draw a dip that never happened. Same rule the
   // fleet row uses, so the two agree about one host.
-  // Bucket PEAK rather than bucket mean -- see peakBase(). Same choice the
-  // fleet row makes, including the per-interface summing caveat noted there,
-  // so the two still agree about one host.
-  const ingress = sumSeries(netMetrics, peakBase(netMetrics, "rx_bytes"));
-  const egress = sumSeries(netMetrics, peakBase(netMetrics, "tx_bytes"));
+  //
+  // Through trafficSeries(), which is where the bucket MEAN is argued for
+  // over its peak. Called rather than re-derived here: this card, the fleet
+  // row and the Traffic chart page are one chart, and a second copy of the
+  // sum is exactly how they came to disagree.
+  const { rx: ingress, tx: egress } = trafficSeries(netMetrics);
   // The Traffic card's NUMBERS, as opposed to the series beside them: gauges
   // off host_current, blanked when the host is not reporting. isReporting is
   // the fleet list's predicate too, so a host cannot read offline there and
@@ -1129,6 +1133,10 @@ export function Overview({
               { name: "out", color: DOWN_COLOR, values: egress },
             ]}
             mirrored
+            // The same bent axis the fleet row draws this pair on. Without
+            // it this card was the one place a host's traffic still scaled
+            // proportionally, so one day was two shapes.
+            scaleFor={trafficScale}
             fmt={bytes}
             unavailable={
               ingress.length === 0 && egress.length === 0
@@ -1144,24 +1152,11 @@ export function Overview({
                 ? undefined
                 : async (next) => {
                     const answered = await fetchFamily("net", next);
+                    const traffic = trafficSeries(answered);
                     return {
                       series: [
-                        {
-                          name: "in",
-                          color: UP_COLOR,
-                          values: sumSeries(
-                            answered,
-                            peakBase(answered, "rx_bytes"),
-                          ),
-                        },
-                        {
-                          name: "out",
-                          color: DOWN_COLOR,
-                          values: sumSeries(
-                            answered,
-                            peakBase(answered, "tx_bytes"),
-                          ),
-                        },
+                        { name: "in", color: UP_COLOR, values: traffic.rx },
+                        { name: "out", color: DOWN_COLOR, values: traffic.tx },
                       ],
                       window: answered.window,
                     };
