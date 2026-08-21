@@ -158,6 +158,14 @@ export interface TableProps<T> {
 
 type SortState = { key: string; dir: "asc" | "desc" };
 
+/** What each rail hue means, in a word. Only the three severities a rail is
+ * ever drawn for -- see rowSeverity. */
+const SEVERITY_WORD: Record<"warning" | "serious" | "critical", string> = {
+  warning: "Warning",
+  serious: "Serious",
+  critical: "Critical",
+};
+
 export function Table<T>({
   columns,
   rows,
@@ -396,8 +404,17 @@ export function Table<T>({
         key={rowKey ? rowKey(row, index) : index}
         className={severity === null ? undefined : `rail rail-${severity}`}
       >
-        {columns.map((col) => (
+        {columns.map((col, i) => (
           <td key={col.key} style={cellStyle(col)}>
+            {/* The word the colour stands for, for a reader who gets no
+                colour. The rail is a hue and nothing else, and the row's own
+                badge cannot be relied on to carry the severity: a fleet host
+                railed for OOM kills says "online" in its badge, or says
+                nothing at all. Said once, in the first cell, where a row is
+                read from. */}
+            {i === 0 && severity !== null ? (
+              <span className="sr-only">{SEVERITY_WORD[severity]}</span>
+            ) : null}
             {col.cell(row)}
           </td>
         ))}

@@ -731,6 +731,10 @@ describe("FleetPage data fetching", () => {
     const rows = container.querySelectorAll("tbody tr");
     expect(rows[0].className).toBe("");
     expect(rows[1].className).toContain("rail-critical");
+    // The colour is never the only channel: the word rides the row for a
+    // reader who gets no colour, and a healthy row says nothing.
+    expect(rows[1].querySelector(".sr-only")?.textContent).toBe("Critical");
+    expect(rows[0].querySelector(".sr-only")).toBeNull();
   });
 
   it("still shows the quiet all-clear line for a healthy fleet", () => {

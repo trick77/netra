@@ -18,18 +18,9 @@ import {
   UpDownSparkline,
 } from "../../ui/charts/UpDownSparkline";
 import { trafficScale } from "../../ui/charts/scale";
-import {
-  ABSENT,
-  binaryBytes,
-  byterate,
-  bytes,
-  percent,
-  relative,
-} from "../../lib/format";
+import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
-import type { Severity } from "../../ui/Badge";
-import type { Condition, ConditionKind, HostGroup } from "./conditions";
 import { rangeLabel, type Range } from "../../lib/range";
 import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
 import { filesystemBands, memoryBands } from "../../lib/bands";

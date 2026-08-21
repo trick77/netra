@@ -840,20 +840,19 @@ a:hover {
   box-shadow: inset 3px 0 0 var(--st-crit);
 }
 
-/* The same mark on a card. A card has one leading edge of its own, so this is
-   a border rather than an inset shadow on a first cell -- and the border it
-   replaces is already there on every card, so nothing shifts. */
-.rail-card {
-  border-left-width: 3px;
-}
+/* The same mark on a card, down its own leading edge. An inset shadow like
+   the table's rather than a thicker left border: the border would eat 2px of
+   the card's content box, so a marked card's charts -- fixed-width
+   sparklines under overflow: hidden -- would clip while its neighbours' did
+   not. */
 .rail-card.rail-warning {
-  border-left-color: var(--st-warn);
+  box-shadow: inset 3px 0 0 var(--st-warn);
 }
 .rail-card.rail-serious {
-  border-left-color: var(--st-serious);
+  box-shadow: inset 3px 0 0 var(--st-serious);
 }
 .rail-card.rail-critical {
-  border-left-color: var(--st-crit);
+  box-shadow: inset 3px 0 0 var(--st-crit);
 }
 
 /* A container row's CPU cell: the chart, and the reading it ends on beside
