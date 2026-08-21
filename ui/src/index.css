@@ -585,29 +585,6 @@ a:hover {
   color: var(--ink);
 }
 
-/* The severity dot in front of a filtered row's hostname. The word that has
-   to accompany it (spec §3.3) is the sentence in the next column; the dot
-   carries the severity itself in its aria-label, because a column of colour
-   with no text at all is exactly what that rule forbids. */
-.attn-host-cell {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-/* Said out loud rather than left blank: an empty cell reads as a rendering
-   fault, and "there is no mark" is the actual answer for a host whose
-   evidence is the samples that never arrived. */
-.ev-none,
-.ev-more,
-.what-more {
-  color: var(--muted);
-}
-.drill {
-  color: var(--accent);
-  font-size: var(--text-label);
-  white-space: nowrap;
-}
-
 /* ── The host page's band: one host, so it is bounded ───────────────── */
 .attn {
   background: var(--surface);
@@ -861,6 +838,22 @@ a:hover {
 }
 .rail-critical td:first-child {
   box-shadow: inset 3px 0 0 var(--st-crit);
+}
+
+/* The same mark on a card. A card has one leading edge of its own, so this is
+   a border rather than an inset shadow on a first cell -- and the border it
+   replaces is already there on every card, so nothing shifts. */
+.rail-card {
+  border-left-width: 3px;
+}
+.rail-card.rail-warning {
+  border-left-color: var(--st-warn);
+}
+.rail-card.rail-serious {
+  border-left-color: var(--st-serious);
+}
+.rail-card.rail-critical {
+  border-left-color: var(--st-crit);
 }
 
 /* A container row's CPU cell: the chart, and the reading it ends on beside
