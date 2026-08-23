@@ -58,6 +58,18 @@ services:
       # nobody can run.
       NETRA_HUB_URL: "https://${NETRA_HOSTNAME}"
 
+      # Browser sign-in. Optional: leave NETRA_OIDC_ISSUER unset and the admin
+      # token stays the only way in, exactly as before. Setting it without the
+      # client credentials is refused at startup rather than falling back
+      # silently -- a half-configured provider should not look like a decision.
+      #
+      # The redirect URI is derived from NETRA_HUB_URL, so it cannot drift from
+      # the name Traefik routes on. Register https://${NETRA_HOSTNAME}/auth/callback
+      # at the provider.
+      NETRA_OIDC_ISSUER: "${NETRA_OIDC_ISSUER:-}"
+      NETRA_OIDC_CLIENT_ID: "${NETRA_OIDC_CLIENT_ID:-}"
+      NETRA_OIDC_CLIENT_SECRET: "${NETRA_OIDC_CLIENT_SECRET:-}"
+
     # /api/health reports database reachability, not just process liveness, so
     # a hub that cannot reach Postgres correctly goes unhealthy instead of
     # accepting ingest it will only 503. wget is busybox's, shipped in the

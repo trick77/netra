@@ -105,7 +105,7 @@ func TestRequireAdminAcceptsAValidSessionCookie(t *testing.T) {
 	h := httpapi.RequireAdmin("s3cret", false, okHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
-	req.AddCookie(httpapi.NewSessionCookieForTest("s3cret", time.Now()))
+	req.AddCookie(httpapi.NewSessionCookieForTest("s3cret", "", time.Now()))
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -119,7 +119,7 @@ func TestRequireAdminRejectsASessionCookieFromAnotherToken(t *testing.T) {
 	h := httpapi.RequireAdmin("new-token", false, okHandler())
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/hosts", nil)
-	req.AddCookie(httpapi.NewSessionCookieForTest("old-token", time.Now()))
+	req.AddCookie(httpapi.NewSessionCookieForTest("old-token", "", time.Now()))
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

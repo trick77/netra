@@ -13,7 +13,7 @@ import (
 
 func TestSessionCookieRoundTrips(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	c := httpapi.NewSessionCookieForTest("s3cret", now)
+	c := httpapi.NewSessionCookieForTest("s3cret", "", now)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(c)
@@ -25,7 +25,7 @@ func TestSessionCookieRoundTrips(t *testing.T) {
 
 func TestSessionCookieExpires(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	c := httpapi.NewSessionCookieForTest("s3cret", now)
+	c := httpapi.NewSessionCookieForTest("s3cret", "", now)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(c)
@@ -40,7 +40,7 @@ func TestSessionCookieExpires(t *testing.T) {
 // permanent session by editing the plaintext half of the cookie.
 func TestSessionCookieRejectsATamperedExpiry(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	c := httpapi.NewSessionCookieForTest("s3cret", now)
+	c := httpapi.NewSessionCookieForTest("s3cret", "", now)
 
 	_, mac, ok := strings.Cut(c.Value, ".")
 	if !ok {
@@ -60,7 +60,7 @@ func TestSessionCookieRejectsATamperedExpiry(t *testing.T) {
 // also the way to log every browser out. There is no session store to clear.
 func TestSessionCookieFromAnotherAdminTokenIsRejected(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	c := httpapi.NewSessionCookieForTest("old-token", now)
+	c := httpapi.NewSessionCookieForTest("old-token", "", now)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(c)
@@ -71,7 +71,7 @@ func TestSessionCookieFromAnotherAdminTokenIsRejected(t *testing.T) {
 }
 
 func TestSessionCookieIsHttpOnlyAndSameSiteStrict(t *testing.T) {
-	c := httpapi.NewSessionCookieForTest("s3cret", time.Unix(1_700_000_000, 0))
+	c := httpapi.NewSessionCookieForTest("s3cret", "", time.Unix(1_700_000_000, 0))
 
 	if !c.HttpOnly {
 		t.Error("cookie is not HttpOnly — script-readable session")
