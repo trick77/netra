@@ -37,8 +37,11 @@ run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     --token nta_testtoken --hub-url https://netra.example.com \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
 assert_eq 1 "$RUN_RC" "a pre-rename .env is refused"
-assert_contains "$RUN_OUT" "old NETRA_ prefix" "the refusal names the old prefix"
-assert_contains "$RUN_OUT" "sed -i.bak" "and hands over the rename that fixes it"
+# Flattened: die wraps at 76 columns, and both needles span a fold.
+assert_contains "$(flatten "$RUN_OUT")" "still uses the old NETRA_ prefix" \
+    "the refusal names the old prefix"
+assert_contains "$(flatten "$RUN_OUT")" "sed -i.bak 's/^NETRA_/AGENT_/'" \
+    "and hands over the rename that fixes it"
 
 # The refusal is worth nothing if the file it refuses is already damaged: the
 # token in it is unrecoverable.
@@ -68,8 +71,9 @@ run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     --token nta_testtoken --hub-url https://netra.example.com \
     --template-dir "$OLD" --output-dir "$OUT2"
 assert_eq 1 "$RUN_RC" "a template with unrenamed markers is refused"
-assert_contains "$RUN_OUT" "unsubstituted template marker" \
+assert_contains "$(flatten "$RUN_OUT")" "unsubstituted template marker" \
     "the refusal names the marker rather than the symptom"
-assert_contains "$RUN_OUT" "--template-dir" "and names both escape hatches"
+assert_contains "$(flatten "$RUN_OUT")" "--template-dir" \
+    "and names both escape hatches"
 
 exit_case
