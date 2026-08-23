@@ -83,19 +83,22 @@ type Drive struct {
 	// resolveDeviceIDs upserts the drive before the attribute rows land.
 	Attributes []DriveAttribute `json:"attributes"`
 
-	FirstSeen time.Time `json:"first_seen"`
 	// When this drive's newest reading was TAKEN, from devices.last_seen.
 	//
 	// The same instant the newest attribute carries, but stored rather than
-	// derived, and that is the difference worth having: smart_attributes is
-	// dropped at 90 days by its own retention policy, so a drive whose
-	// readings have aged out has no attribute left to date. This column still
-	// dates it. It is also what netra_prune_stale_devices reads, so the table
-	// and the prune cannot disagree about how old a drive is.
+	// derived, so it survives the readings themselves: smart_attributes is
+	// dropped by its own retention policy, and this column still dates a drive
+	// whose attributes have aged out.
 	//
 	// Stamped from the reading's ts, never from the hub's clock: the agent
 	// replays buffered scrapes after an outage, and now() would report
 	// overnight readings as taken on arrival.
+	//
+	// devices.first_seen is deliberately NOT here. It is a HUB timestamp --
+	// the floor netra_prune_stale_devices needs so a host with a bad clock
+	// cannot have its drives deleted and re-created for ever -- and putting it
+	// on the wire beside a last_seen from the agent's clock would ship a pair
+	// that can read first_seen > last_seen after a replay.
 	LastSeen time.Time `json:"last_seen"`
 }
 
@@ -281,16 +284,22 @@ func (s *Service) Addresses(ctx context.Context, hostID int32) ([]Address, error
 // bucket would hold at most one reading.
 //
 // A LEFT JOIN, so a drive the hub has resolved an id for but has no attributes
-// from still appears. That is a real state -- resolveDeviceIDs upserts the
-// device before the batch of attributes lands, and a drive smartctl can name
-// but not read reports no attributes at all.
+// from still appears.
+//
+// That is a real state, and NOT the one it looks like. It is not "smartctl
+// could not read this drive": the collector `continue`s past a failed --all
+// before appending any row, so such a drive produces nothing and never
+// resolves an id at all. It is a drive whose readings have aged out under
+// smart_attributes' retention while its devices row is still inside the
+// prune's longer horizon -- the row outliving its own history, which is
+// exactly why last_seen is stored on it rather than derived.
 func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 	if err := s.hostExists(ctx, hostID); err != nil {
 		return nil, err
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT d.device, d.model, d.serial, d.first_seen, d.last_seen,
+		SELECT d.device, d.model, d.serial, d.last_seen,
 		       a.attr_id, a.raw, a.normalized
 		  FROM devices d
 		  LEFT JOIN LATERAL (
@@ -311,11 +320,11 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 	for rows.Next() {
 		var device string
 		var model, serial *string
-		var firstSeen, lastSeen time.Time
+		var lastSeen time.Time
 		var attrID *int16
 		var raw *int64
 		var normalized *int16
-		if err := rows.Scan(&device, &model, &serial, &firstSeen, &lastSeen,
+		if err := rows.Scan(&device, &model, &serial, &lastSeen,
 			&attrID, &raw, &normalized); err != nil {
 			return nil, fmt.Errorf("scan drive: %w", err)
 		}
@@ -325,7 +334,7 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 		if len(out) == 0 || out[len(out)-1].Device != device {
 			out = append(out, Drive{
 				Device: device, Model: model, Serial: serial,
-				FirstSeen: firstSeen, LastSeen: lastSeen,
+				LastSeen: lastSeen,
 				// An empty slice, not nil: nil marshals as `null`, and the UI
 				// reads .length on this to decide between "healthy" and
 				// "not read". The same reason every listing here starts at

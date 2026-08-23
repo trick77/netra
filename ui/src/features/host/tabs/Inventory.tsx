@@ -555,9 +555,10 @@ export function Network({ rows }: { rows: readonly Address[] }) {
 function DriveHealthPill({ drive }: { drive: Drive }) {
   const severity = driveSeverity(drive);
   if (drive.attributes.length === 0) {
-    // Not a verdict about the hardware. smartctl named the drive and could not
-    // read it, which the Device availability panel already reports as a
-    // collector fact.
+    // Not a verdict about the hardware: there is nothing to judge. The
+    // readings have aged out under retention while the drive's row is still
+    // inside the prune's longer horizon, so the Last read column is the only
+    // thing left that can speak for it.
     return <span className="badge drive-unread">not read</span>;
   }
   const label = severity === "ok" ? "healthy" : severity;

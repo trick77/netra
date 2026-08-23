@@ -535,7 +535,6 @@ describe("Drives", () => {
       { id: 194, raw: 49, normalized: 71 },
       { id: 197, raw: 15, normalized: 68 },
     ],
-    first_seen: "2026-06-01T11:00:00Z",
     last_seen: "2026-08-23T11:00:00Z",
   };
 
@@ -549,7 +548,6 @@ describe("Drives", () => {
       { id: 1006, raw: 9400, normalized: null },
       { id: 1008, raw: 49, normalized: null },
     ],
-    first_seen: "2026-06-01T11:00:00Z",
     last_seen: "2026-08-23T11:00:00Z",
   };
 
@@ -558,8 +556,7 @@ describe("Drives", () => {
     model: null,
     serial: null,
     attributes: [],
-    first_seen: "2026-06-01T11:00:00Z",
-    // Reported on the newest scrape; smartctl simply could not read it.
+    // Its readings aged out under retention; the devices row still dates it.
     last_seen: "2026-08-23T11:00:00Z",
   };
 
@@ -575,8 +572,8 @@ describe("Drives", () => {
   });
 
   // A healthy drive SAYS so. On a table whose whole point is advance warning,
-  // "we checked, it is fine" and "we have not looked" must not render the
-  // same.
+  // "we checked, it is fine" and "there is nothing left to check" must not
+  // render the same.
   it("distinguishes a healthy drive from one it could not read", () => {
     render(<Drives rows={[nvme, unread]} />);
 

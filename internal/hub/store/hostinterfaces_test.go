@@ -465,15 +465,22 @@ func TestIntegrationStaleDevicesArePrunedAndLiveOnesAreNot(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	// sdb was pulled out of the machine four months ago.
+	// sdb was pulled out of the machine most of a year ago.
+	//
+	// BOTH columns, because the prune requires both: last_seen is the agent's
+	// clock and first_seen is the hub's, and a row is only stale when it is
+	// stale by both. Ageing last_seen alone leaves sdb alive, which is the
+	// guard doing its job rather than the fixture being wrong.
 	if _, err := s.Pool().Exec(ctx,
-		`UPDATE devices SET last_seen = now() - INTERVAL '120 days'
+		`UPDATE devices
+		    SET last_seen = now() - INTERVAL '200 days',
+		        first_seen = now() - INTERVAL '400 days'
 		  WHERE host_id = $1 AND device = 'sdb'`, id); err != nil {
 		t.Fatalf("age sdb: %v", err)
 	}
 
 	if _, err := s.Pool().Exec(ctx,
-		`CALL netra_prune_stale_devices(0, '{"retention": "90 days"}'::jsonb)`); err != nil {
+		`CALL netra_prune_stale_devices(0, '{"retention": "120 days"}'::jsonb)`); err != nil {
 		t.Fatalf("prune: %v", err)
 	}
 
@@ -507,5 +514,67 @@ func TestIntegrationStaleDevicesArePrunedAndLiveOnesAreNot(t *testing.T) {
 	}
 	if attrs != 1 {
 		t.Errorf("smart_attributes = %d, want 1 (sda's); sdb's went with its device row", attrs)
+	}
+}
+
+// A host whose clock is months behind must not have its drives deleted and
+// re-created for ever.
+//
+// last_seen comes from the agent's ts, and the hub accepts anything inside
+// [2020-01-01, now+1h] -- so an RTC-less box before NTP settles, or a restored
+// snapshot, reports readings stamped long before any cutoff. Keyed on
+// last_seen alone the drive is inserted already stale, deleted that night with
+// its readings, re-created by the next scrape and deleted again. GREATEST does
+// not help: it protects a row that already holds a newer value, and a
+// first-seen row holds nothing.
+//
+// first_seen is a HUB timestamp and cannot be moved by a bad agent clock, so
+// the prune requires both.
+func TestIntegrationADriveFromAHostWithASkewedClockSurvives(t *testing.T) {
+	ctx := context.Background()
+	s := openMigrated(t)
+	id := seedInterfaceHost(t, s, "skewed")
+
+	// Two years behind, and still inside the hub's plausibility window.
+	stamped := time.Now().Add(-2 * 365 * 24 * time.Hour)
+	if _, err := s.InsertSmartAttributes(ctx, id, []*netrav1.SmartAttribute{{
+		TsMs: stamped.UnixMilli(), Device: "sda",
+		Model: "ST16000NM000J", Serial: "A", AttrId: 5, Raw: proto.Int64(0),
+	}}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// last_seen is honestly ancient -- that is what the agent reported.
+	var lastSeen time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT last_seen FROM devices WHERE host_id = $1`, id).Scan(&lastSeen); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if time.Since(lastSeen) < 300*24*time.Hour {
+		t.Fatalf("last_seen = %s; the fixture is meant to be years old", lastSeen)
+	}
+
+	if _, err := s.Pool().Exec(ctx,
+		`CALL netra_prune_stale_devices(0, '{"retention": "120 days"}'::jsonb)`); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	var devices, attrs int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM devices WHERE host_id = $1`, id).Scan(&devices); err != nil {
+		t.Fatalf("count devices: %v", err)
+	}
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM smart_attributes WHERE host_id = $1`, id).Scan(&attrs); err != nil {
+		t.Fatalf("count attributes: %v", err)
+	}
+
+	if devices != 1 {
+		t.Errorf("devices = %d, want 1; a drive the hub has only just learned about "+
+			"was deleted because the host's clock is wrong", devices)
+	}
+	if attrs != 1 {
+		t.Errorf("smart_attributes = %d, want 1; the cascade took a live drive's "+
+			"readings with it", attrs)
 	}
 }

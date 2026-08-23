@@ -193,11 +193,14 @@ export type Drive = {
   model: string | null;
   serial: string | null;
   attributes: DriveAttribute[];
-  first_seen: string;
   /** When this drive's newest reading was TAKEN -- devices.last_seen. The
    * same instant the newest attribute carries, but stored rather than
-   * derived, so a drive whose readings have aged out under the 90-day
-   * retention still has a date on it. */
+   * derived, so a drive whose readings have aged out under retention still
+   * has a date on it.
+   *
+   * devices.first_seen is not sent: it is a hub timestamp the prune uses as a
+   * floor, and the two clocks side by side could read first_seen > last_seen
+   * after a replayed batch. */
   last_seen: string;
 };
 
