@@ -187,7 +187,7 @@ describe("FleetPage header", () => {
           what: "disk 99% full",
           since: "2026-08-10T13:00:00Z",
           evidence: { type: "meter", pct: 99 },
-          tab: "filesystems",
+          tab: "storage",
         },
       ],
     });

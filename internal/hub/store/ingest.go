@@ -374,6 +374,54 @@ func (s *Store) InsertHostSnmpSamples(ctx context.Context, hostID int32, samples
 	return execBatch(ctx, s.pool, batch, "host snmp sample")
 }
 
+// InsertHostProtoSamples writes the TCP and UDP volume counters.
+//
+// A third table and a third statement, for the reason the second one exists:
+// a continuous aggregate cannot gain a column, so a counter added to
+// host_samples or host_snmp_samples costs that table's rolled-up history. See
+// host_proto_samples in 0003_host_proto_samples.sql.
+//
+// Same contract as InsertHostSnmpSamples in every other respect: keyed on
+// (host_id, ts) with ON CONFLICT DO NOTHING, so a replay after a partial
+// failure is a no-op, and a sample with none of the seven set is skipped
+// rather than written as a row of NULLs claiming a measurement was taken --
+// which is the first scrape after an agent restart, every time, since a rate
+// needs a baseline.
+func (s *Store) InsertHostProtoSamples(ctx context.Context, hostID int32, samples []*netrav1.HostSample) (int64, error) {
+	const stmt = `
+		INSERT INTO host_proto_samples (
+			host_id, ts,
+			tcp_in_segs_per_s, tcp_out_segs_per_s, tcp_estab_resets_per_s,
+			udp_in_datagrams_per_s, udp_out_datagrams_per_s,
+			udp6_in_datagrams_per_s, udp6_out_datagrams_per_s
+		) VALUES (
+			$1, $2,
+			$3, $4, $5,
+			$6, $7,
+			$8, $9
+		)
+		ON CONFLICT (host_id, ts) DO NOTHING`
+
+	batch := &pgx.Batch{}
+	for _, m := range samples {
+		args := []any{
+			hostID, time.UnixMilli(m.GetTsMs()).UTC(),
+			f64(m.TcpInSegsPerS), f64(m.TcpOutSegsPerS), f64(m.TcpEstabResetsPerS),
+			f64(m.UdpInDatagramsPerS), f64(m.UdpOutDatagramsPerS),
+			f64(m.Udp6InDatagramsPerS), f64(m.Udp6OutDatagramsPerS),
+		}
+		if !anyNonNil(args[2:]) {
+			continue
+		}
+		batch.Queue(stmt, args...)
+	}
+	if batch.Len() == 0 {
+		return 0, nil
+	}
+
+	return execBatch(ctx, s.pool, batch, "host proto sample")
+}
+
 // anyNonNil reports whether any of the values is a stored measurement rather
 // than a SQL NULL. f64 returns an untyped nil for an unset optional, so a
 // plain interface comparison is enough.

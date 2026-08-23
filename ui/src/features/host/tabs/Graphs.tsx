@@ -1,7 +1,12 @@
-// The Graphs tab: small multiples. ONE ChartPanel component, N instances,
-// uniform size (nothing here overrides its width/height), one range
-// control -- the header's -- driving all of them. Adding a family later is
-// a row in PANELS, not a new component.
+// Small multiples: ONE ChartPanel component, N instances, uniform size
+// (nothing here overrides its width/height), one range control -- the
+// header's -- driving all of them.
+//
+// This used to be THE Graphs tab, which is why the file is still called that.
+// There is no Graphs tab now: "Graphs" named a rendering format rather than a
+// subject and split every subject across two tabs -- addresses here, network
+// charts there. What is left is the machinery, rendered by whichever subject
+// tab owns the panels. See GROUP_SLUGS in ../chartSpecs for the grouping.
 //
 // The specs themselves live in ../chartSpecs, because the chart page resolves
 // a slug against the same list.
@@ -12,22 +17,25 @@ import { ChartPanel } from "../../../ui/charts/ChartPanel";
 import { RANGE_VALUES } from "../ranges";
 import { trafficScale } from "../../../ui/charts/scale";
 import {
-  SYSTEM,
-  NETWORK,
-  STORAGE,
+  NETWORK_GROUPS,
   REFERENCE_HEADROOM,
+  STORAGE_GROUPS,
+  SYSTEM_GROUPS,
   bandsFor,
   ceilingOf,
-  familyFor,
+  familiesFor,
   missingReason,
   noCeilingReason,
+  sourcesFor,
   type Family,
+  type PanelGroup,
   type PanelSpec,
 } from "../chartSpecs";
 
 export interface GraphsProps {
   host?: MetricsResponse | null;
   hostSnmp?: MetricsResponse | null;
+  hostProto?: MetricsResponse | null;
   net?: MetricsResponse | null;
   diskIo?: MetricsResponse | null;
   filesystem?: MetricsResponse | null;
@@ -50,23 +58,36 @@ export interface GraphsProps {
 
 function Panel({
   spec,
-  res,
+  sources,
   range,
   fetchFamily,
 }: {
   spec: PanelSpec;
-  res: MetricsResponse | null;
+  /** Every family the page has fetched. A single-source panel reads one of
+   * them; a cross-source panel (the fragmentation pair) reads two. */
+  sources: GraphsProps;
   range?: Range;
   fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
 }) {
-  const series = bandsFor(spec, res);
+  const res = sources[spec.source] ?? null;
+  // Only the families this spec's bases actually name. Handing bandsFor the
+  // whole props object would work and would also let a spec quietly read a
+  // family it never declared, which is the sort of thing that goes unnoticed
+  // until a panel draws on a page that does not fetch it.
+  const extra: Partial<Record<PanelSpec["source"], MetricsResponse | null>> =
+    {};
+  for (const source of sourcesFor(spec)) {
+    extra[source] = sources[source] ?? null;
+  }
+
+  const series = bandsFor(spec, res, { extra });
   // The enlarged view has room for the pair -- mean as the line, the
   // bucket's peak as a pale envelope under it -- and the 260px panel does
   // not: two marks in that space are a smear, so it draws the peak alone.
   // bandsFor only builds an envelope for the specs that can carry one (a
   // mirrored rate chart at a rollup tier), so every other panel is handed
   // exactly what it already had.
-  const detailSeries = bandsFor(spec, res, { withPeakBand: true });
+  const detailSeries = bandsFor(spec, res, { withPeakBand: true, extra });
 
   // The same bandsFor the panel uses, over a response for one family at one
   // other range -- so an enlarged chart draws its wider window exactly as
@@ -76,12 +97,30 @@ function Panel({
   // rather than memoised: useDetailRange only calls it when its own range
   // actually differs from the page's, which is at most once per click on a
   // picker nobody clicks in a loop.
+  //
+  // EVERY family the spec names, not only its own: a dialog that widened a
+  // cross-source panel by fetching one family would drop the other's bands,
+  // which is strictly less than the 260px panel it was opened from. The
+  // primary is sourcesFor()[0] by construction, and its window is the one
+  // the axis is drawn against.
   const fetchSeries = fetchFamily
     ? async (next: Range) => {
-        const answered = await fetchFamily(familyFor(spec), next);
+        const wanted = sourcesFor(spec);
+        const answers = await Promise.all(
+          familiesFor(spec).map((family) => fetchFamily(family, next)),
+        );
+        const widened: Partial<Record<PanelSpec["source"], MetricsResponse>> =
+          {};
+        wanted.forEach((source, i) => {
+          widened[source] = answers[i];
+        });
+        const primary = answers[0];
         return {
-          series: bandsFor(spec, answered, { withPeakBand: true }),
-          window: answered.window ?? null,
+          series: bandsFor(spec, primary, {
+            withPeakBand: true,
+            extra: widened,
+          }),
+          window: primary.window ?? null,
         };
       }
     : undefined;
@@ -112,12 +151,15 @@ function Panel({
     reference === undefined
       ? noCeilingReason(spec)
       : undefined;
+  // Keyed off the PRIMARY response alone: a cross-source panel whose foreign
+  // family has not arrived still has its own bands to draw, and calling that
+  // "no data" would blank a panel that has four of its six.
   const unavailable =
     series.length > 0
       ? noCeiling
       : res === null
         ? "No data has been read for this family yet."
-        : missingReason(spec, res);
+        : missingReason(spec, res, extra);
 
   // No legend is built here: Overlay (inside ChartPanel) already renders
   // one as soon as a panel carries two or more bands, which is exactly the
@@ -179,26 +221,24 @@ function Panel({
 }
 
 function Group({
-  title,
-  specs,
+  group,
   sources,
 }: {
-  title: string;
-  specs: PanelSpec[];
+  group: PanelGroup;
   sources: GraphsProps;
 }) {
   const { range, fetchFamily } = sources;
   return (
     <>
-      <h3 className="grouphead">{title}</h3>
+      <h3 className="grouphead">{group.title}</h3>
       <div className="sm">
-        {specs.map((spec) => (
+        {group.specs.map((spec) => (
           <Panel
             // Keyed by slug, not title: the slug is the stable identity, and
             // two panels could in principle share a title.
             key={spec.slug}
             spec={spec}
-            res={sources[spec.source] ?? null}
+            sources={sources}
             range={range}
             fetchFamily={fetchFamily}
           />
@@ -208,21 +248,29 @@ function Group({
   );
 }
 
-export function Graphs(props: GraphsProps) {
-  // One line for the whole tab, deduplicated: every family answering the
-  // same clamped window says the same sentence, and saying it once is the
-  // difference between a statement and wallpaper.
+/**
+ * The panels of one subject tab, with the window notice above them.
+ *
+ * The notice is deduplicated across families: every family answering the same
+ * clamped window says the same sentence, and saying it once is the difference
+ * between a statement and wallpaper. It is scoped to the families THIS tab
+ * draws -- a Storage tab announcing that the ICMP family was clamped is
+ * telling the reader about a page they are not on.
+ */
+export function PanelGroups({
+  groups,
+  sources,
+}: {
+  groups: PanelGroup[];
+  sources: GraphsProps;
+}) {
+  const shown = new Set(
+    groups.flatMap((g) => g.specs.flatMap((spec) => sourcesFor(spec))),
+  );
   const notices = [
     ...new Set(
-      [
-        props.host,
-        props.hostSnmp,
-        props.net,
-        props.diskIo,
-        props.filesystem,
-        props.collector,
-        props.agent,
-      ]
+      [...shown]
+        .map((source) => sources[source] ?? null)
         .map((res) => (res ? windowNotice(res) : null))
         .filter((n): n is string => n !== null),
     ),
@@ -235,9 +283,23 @@ export function Graphs(props: GraphsProps) {
           {notice}
         </p>
       ))}
-      <Group title="System" specs={SYSTEM} sources={props} />
-      <Group title="Network" specs={NETWORK} sources={props} />
-      <Group title="Storage" specs={STORAGE} sources={props} />
+      {groups.map((group) => (
+        <Group key={group.title} group={group} sources={sources} />
+      ))}
     </div>
   );
+}
+
+// The three subject tabs. Thin on purpose: what differs between them is which
+// groups they draw, and that lives in chartSpecs beside the panels.
+export function SystemGraphs(props: GraphsProps) {
+  return <PanelGroups groups={SYSTEM_GROUPS} sources={props} />;
+}
+
+export function NetworkGraphs(props: GraphsProps) {
+  return <PanelGroups groups={NETWORK_GROUPS} sources={props} />;
+}
+
+export function StorageGraphs(props: GraphsProps) {
+  return <PanelGroups groups={STORAGE_GROUPS} sources={props} />;
 }

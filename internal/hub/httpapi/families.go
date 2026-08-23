@@ -113,6 +113,9 @@ func (h *IngestHandler) storeFamilies(ctx context.Context, hostID int32, req *ne
 	if _, err := h.store.UpsertHostAddresses(ctx, hostID, req.GetAddresses()); err != nil {
 		return fmt.Errorf("addresses: %w", err)
 	}
+	if _, err := h.store.UpsertHostInterfaces(ctx, hostID, req.GetInterfaces()); err != nil {
+		return fmt.Errorf("interfaces: %w", err)
+	}
 	if _, err := h.store.UpsertHostPackages(ctx, hostID, req.GetPackages()); err != nil {
 		return fmt.Errorf("packages: %w", err)
 	}

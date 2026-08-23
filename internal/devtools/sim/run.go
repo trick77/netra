@@ -350,6 +350,9 @@ func (h *host) request(scrapes []*Scrape, isBackfill bool) *netrav1.IngestReques
 		if len(s.Addresses) > 0 {
 			req.Addresses = s.Addresses
 		}
+		if len(s.Interfaces) > 0 {
+			req.Interfaces = s.Interfaces
+		}
 		if len(s.Packages) > 0 {
 			req.Packages = s.Packages
 		}

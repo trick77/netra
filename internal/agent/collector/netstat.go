@@ -122,10 +122,26 @@ func (n *Netstat) Collect(_ context.Context) (*Result, error) {
 	sample.TcpListenOverflowsPerS = r("TcpExt.ListenOverflows")
 	sample.TcpListenDropsPerS = r("TcpExt.ListenDrops")
 
+	// Volume, not failure -- these land in host_proto_samples rather than
+	// host_samples. See the proto's comment on tcp_in_segs_per_s for why a
+	// third table and not four more columns here.
+	//
+	// The panel that reads them is the reason they exist: TCP statistics drew
+	// retransmits against nothing, so a host retransmitting 40 segments a
+	// second looked identical whether it was pushing 40 or 40,000.
+	sample.TcpInSegsPerS = r("Tcp.InSegs")
+	sample.TcpOutSegsPerS = r("Tcp.OutSegs")
+	sample.TcpEstabResetsPerS = r("Tcp.EstabResets")
+
 	sample.UdpInErrorsPerS = r("Udp.InErrors")
 	sample.UdpRcvbufErrorsPerS = r("Udp.RcvbufErrors")
 	sample.UdpSndbufErrorsPerS = r("Udp.SndbufErrors")
 	sample.UdpNoPortsPerS = r("Udp.NoPorts")
+
+	// The denominator the four errors above never had, and host_proto_samples
+	// for the same reason as the Tcp: volume counters.
+	sample.UdpInDatagramsPerS = r("Udp.InDatagrams")
+	sample.UdpOutDatagramsPerS = r("Udp.OutDatagrams")
 
 	sample.IpReasmReqdsPerS = r("Ip.ReasmReqds")
 	sample.IpReasmFailsPerS = r("Ip.ReasmFails")
@@ -136,6 +152,9 @@ func (n *Netstat) Collect(_ context.Context) (*Result, error) {
 	sample.Udp6RcvbufErrorsPerS = r("Snmp6.Udp6RcvbufErrors")
 	sample.Udp6SndbufErrorsPerS = r("Snmp6.Udp6SndbufErrors")
 	sample.Udp6NoPortsPerS = r("Snmp6.Udp6NoPorts")
+
+	sample.Udp6InDatagramsPerS = r("Snmp6.Udp6InDatagrams")
+	sample.Udp6OutDatagramsPerS = r("Snmp6.Udp6OutDatagrams")
 
 	sample.Ip6ReasmReqdsPerS = r("Snmp6.Ip6ReasmReqds")
 	sample.Ip6ReasmFailsPerS = r("Snmp6.Ip6ReasmFails")

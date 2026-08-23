@@ -1,8 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import type { MetricsResponse } from "../../../lib/api";
-import { Graphs } from "./Graphs";
+import {
+  NetworkGraphs,
+  StorageGraphs,
+  SystemGraphs,
+  type GraphsProps,
+} from "./Graphs";
 import { ABSENT } from "../../../lib/format";
+import { ALL_SPECS, groupedSlugs } from "../chartSpecs";
+
+/**
+ * All three subject tabs at once.
+ *
+ * The Graphs tab is gone -- see GROUP_SLUGS in ../chartSpecs -- but these
+ * tests are about how a PANEL behaves (gaps, ceilings, counters, absent
+ * columns), not about which tab it landed on, and asserting that against
+ * every panel in one render is what they have always done. The split itself
+ * is asserted separately, below.
+ */
+function Graphs(props: GraphsProps) {
+  return (
+    <>
+      <SystemGraphs {...props} />
+      <NetworkGraphs {...props} />
+      <StorageGraphs {...props} />
+    </>
+  );
+}
 
 function response(
   over: Partial<MetricsResponse> & { family: string },
@@ -108,11 +133,46 @@ const fullHost = response({
 });
 
 describe("Graphs", () => {
-  it("groups the small multiples System / Network / Storage", () => {
+  it("groups the small multiples under named headings", () => {
     render(<Graphs host={fullHost} />);
-    for (const group of ["System", "Network", "Storage"]) {
-      expect(screen.getByRole("heading", { name: group })).toBeInTheDocument();
+    for (const group of [
+      "Resources",
+      "Kernel",
+      "Agent",
+      "Traffic",
+      "IP",
+      "TCP",
+      "UDP",
+      "ICMP",
+      "Filesystems",
+      "Disks",
+    ]) {
+      // level 3, because a group heading and a panel title can be the same
+      // word: "Traffic" is both the group and the panel inside it. The
+      // groups are h3 (.grouphead) and the panels h4.
+      expect(
+        screen.getByRole("heading", { name: group, level: 3 }),
+      ).toBeInTheDocument();
     }
+  });
+
+  // The split itself, since the shim above deliberately renders all three at
+  // once. A panel drawn on two subject tabs, or on none, is the failure this
+  // catches -- and "on none" is invisible without it: a spec can be defined,
+  // exported and simply left out of every group.
+  it("draws each panel on exactly one subject tab", () => {
+    const slugs = groupedSlugs();
+    expect(new Set(slugs).size).toBe(slugs.length);
+    expect([...slugs].sort()).toEqual([...ALL_SPECS.map((s) => s.slug)].sort());
+  });
+
+  it("puts the network panels on Network and the disks on Storage", () => {
+    render(<NetworkGraphs host={fullHost} />);
+    expect(
+      screen.getByRole("heading", { name: "TCP statistics" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Kernel" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Disks" })).toBeNull();
   });
 
   // These three used to be hardcoded "not collected" panels: spec §11 listed
@@ -369,7 +429,9 @@ describe("Graphs", () => {
       series: [{ key: {}, points: [[1_754_784_000_000, 3600]] }],
     });
 
-    render(<Graphs host={clamped} />);
+    // ONE subject tab, not the all-tabs shim: the notice is per tab, and
+    // three tabs rendered together correctly say it three times.
+    render(<SystemGraphs host={clamped} />);
 
     expect(screen.getAllByText(/was clamped to/)).toHaveLength(1);
   });
@@ -441,5 +503,75 @@ describe("the Memory panel's ceiling", () => {
     expect(
       screen.getByText(/no memory ceiling in this window/i),
     ).toBeInTheDocument();
+  });
+});
+
+// A cross-source panel whose foreign family answered with NO SERIES must draw
+// the bands it does have, not throw.
+//
+// This is a real answer rather than an edge case: read/metrics.go initialises
+// `out := []Series{}`, and InsertHostSnmpSamples skips a sample with none of
+// its seventy columns set -- so a host reporting host_samples with no snmp
+// rows in the window gets a 200 carrying `series: []`. seriesTimestamps()
+// THROWS on that, and there is no error boundary above these panels, so the
+// throw took the whole tab white. griddedValues() has guarded exactly this
+// since it was written; the cross-source reader did not.
+describe("a cross-source panel with an empty foreign family", () => {
+  const fragHost = response({
+    family: "host",
+    columns: [
+      "ip_reasm_reqds_per_s",
+      "ip_reasm_fails_per_s",
+      "ip_frag_fails_per_s",
+      "ip_frag_creates_per_s",
+    ],
+    series: [
+      {
+        key: {},
+        points: [
+          [1_754_784_000_000, 1.4, 0.05, 0.03, 1.1],
+          [1_754_784_060_000, 1.5, 0.04, 0.02, 1.2],
+        ],
+      },
+    ],
+  });
+
+  // The columns exist on the tier; the host simply reported no rows.
+  const emptySnmp = response({
+    family: "host_snmp",
+    columns: ["ip_reasm_oks_per_s", "ip_frag_oks_per_s"],
+    series: [],
+  });
+
+  it("draws its own bands instead of throwing", () => {
+    render(<NetworkGraphs host={fragHost} hostSnmp={emptySnmp} />);
+
+    const panel = screen.getByRole("region", {
+      name: "IP fragmentation chart",
+    });
+    expect(panel).toBeInTheDocument();
+    // The four host_samples bands are there...
+    expect(within(panel).getByText("reasm reqd")).toBeInTheDocument();
+    expect(within(panel).getByText("frag create")).toBeInTheDocument();
+    // ...and the two that had no series to read are absent rather than drawn
+    // as a flat zero the host never reported.
+    expect(within(panel).queryByText("reasm ok")).not.toBeInTheDocument();
+  });
+
+  it("does not report the panel as uncollected when it has bands", () => {
+    render(<NetworkGraphs host={fragHost} hostSnmp={emptySnmp} />);
+    expect(
+      screen.queryByRole("region", { name: "IP fragmentation, not collected" }),
+    ).not.toBeInTheDocument();
+  });
+
+  // A foreign family the page has not fetched at all is the same fact as one
+  // that answered empty, and must not throw either.
+  it("tolerates the foreign family being absent entirely", () => {
+    render(<NetworkGraphs host={fragHost} />);
+    const panel = screen.getByRole("region", {
+      name: "IP fragmentation chart",
+    });
+    expect(within(panel).getByText("reasm reqd")).toBeInTheDocument();
   });
 });

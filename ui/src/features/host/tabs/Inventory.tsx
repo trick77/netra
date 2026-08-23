@@ -1,5 +1,5 @@
-// The inventory family: Containers, Filesystems, Network, Packages and
-// Units are ONE searchable-list component differing only in columns. Each
+// The inventory family: Containers, Mounts, Interfaces, Network, Packages
+// and Units are ONE searchable-list component differing only in columns. Each
 // list shows first_seen/last_seen only where the schema actually has them
 // -- an empty "last seen" column would be a claim netra cannot back.
 import { useMemo, useState, type ReactNode } from "react";
@@ -8,6 +8,7 @@ import type {
   Address,
   Container,
   Filesystem,
+  Iface,
   Pkg,
   Unit,
   MetricsResponse,
@@ -65,6 +66,14 @@ export interface InventoryProps<T> {
   /** Marks a row that needs attention, drawn as a rail down its leading
    * edge. Handed straight to Table; see its note. */
   rowSeverity?: TableProps<T>["rowSeverity"];
+  /** Print `label` as a visible heading above the toolbar, in the same
+   * .grouphead the chart groups below use.
+   *
+   * Off by default, because a tab holding ONE list needs no heading -- the
+   * tab is the heading. It is on where a tab stacks two, which the Network
+   * tab now does: Interfaces above Addresses, told apart otherwise only by
+   * the word inside a search box. */
+  heading?: boolean;
 }
 
 export function Inventory<T>({
@@ -79,6 +88,7 @@ export function Inventory<T>({
   emptyBody,
   groupBy,
   rowSeverity,
+  heading = false,
 }: InventoryProps<T>) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
@@ -107,6 +117,7 @@ export function Inventory<T>({
 
   return (
     <section aria-label={label}>
+      {heading && <h3 className="grouphead">{label}</h3>}
       <div className="toolbar">
         <Input
           type="search"
@@ -325,16 +336,32 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
       row.used === null || row.free === null || row.used + row.free === 0 ? (
         ABSENT
       ) : (
-        <Meter
-          value={(row.used / (row.used + row.free)) * 100}
-          max={100}
-          label={row.label}
-        />
+        // Wrapped, for the reason .disk-cell and .mem-cell are: Meter brings
+        // its own .mrow, a 1fr/92px row with padding and a rule of its own,
+        // and all three are wrong inside a <td> that already has them. This
+        // cell had no such scope, so every mount's bar sat under a second
+        // horizontal rule and its percentage was stranded 92px from the bar
+        // it belonged to.
+        <div className="usage-cell">
+          <Meter
+            value={(row.used / (row.used + row.free)) * 100}
+            max={100}
+            label={row.label}
+          />
+        </div>
       ),
   },
 ];
 
-export function Filesystems({
+/**
+ * The Storage tab's mount table.
+ *
+ * Called Mounts rather than Filesystems because it is no longer a tab of its
+ * own: the tab is Storage, and it carries this table and the disk charts.
+ * Splitting them was the same "the format is not the subject" mistake the
+ * Graphs tab made.
+ */
+export function Mounts({
   rows,
   metrics = null,
 }: {
@@ -389,28 +416,56 @@ function lastOf(
 // host_addresses.family holds the AF_* number the kernel uses, not a name.
 const FAMILY_NAME: Record<number, string> = { 4: "IPv4", 6: "IPv6" };
 
+/**
+ * The hub's scope classification, as a pill beside the address it describes.
+ *
+ * A column of its own put an address and its classification two columns
+ * apart, which is two saccades to answer "is this box reachable from the
+ * internet". Every scope wears one, not only `private`: with a pill on some
+ * rows and nothing on others, "no pill" would mean both "public" and "the hub
+ * could not classify this", and those are different facts.
+ *
+ * public carries the warn hue because a publicly routable address on a host
+ * is the notable one -- the others are the quiet default. It is a status
+ * TEXT colour, not a fill: the pill is an annotation, not a severity badge.
+ *
+ * The values come from AddressScope (internal/hub/store/scope.go), which
+ * covers RFC 1918, fc00::/7, link-local and 169.254/16. An unrecognised
+ * string still renders, in the neutral style -- the hub is free to add a
+ * class without this file being taught it first.
+ */
+function ScopePill({ scope }: { scope: string | null }) {
+  if (scope === null) return null;
+  return <span className={`badge scope scope-${scope}`}>{scope}</span>;
+}
+
 const ADDRESS_COLUMNS: Column<Address>[] = [
   { key: "iface", header: "Interface", cell: (row) => row.iface },
-  { key: "address", header: "Address", cell: (row) => row.address },
+  {
+    key: "address",
+    header: "Address",
+    cell: (row) => (
+      <span className="addr-cell">
+        <span className="ident">{row.address}</span>
+        <ScopePill scope={row.scope} />
+      </span>
+    ),
+  },
   {
     key: "family",
     header: "Family",
     cell: (row) => FAMILY_NAME[row.family] ?? String(row.family),
   },
-  { key: "scope", header: "Scope", cell: (row) => row.scope ?? ABSENT },
-  // The interface alias -- ip link set dev eth0 alias "uplink to core-sw1"
-  // -- which the agent now reports. It was already searchable here and
-  // shown nowhere, so a host whose operator had labelled every NIC still
-  // presented a table of bare kernel names.
+  // The Description column moved to the Interfaces table above, and only the
+  // column did: Address.description still arrives, and is still searched
+  // below, so typing an alias here still finds its addresses.
   //
-  // Empty is ABSENT rather than a blank cell: `ip` reports no alias as an
-  // absent attribute, and the store writes it as NULL (families.go), so
-  // the distinction survives the round trip.
-  {
-    key: "description",
-    header: "Description",
-    cell: (row) => row.description ?? ABSENT,
-  },
+  // The alias is `ip link set dev eth0 alias "uplink to core-sw1"` -- a fact
+  // about the INTERFACE. On an address-keyed table it was printed once per
+  // address, so a host with a v4, a v6 and a link-local on eth0 showed the
+  // same sentence three times and invited the reader to wonder which address
+  // it described. It describes none of them.
+  //
   // The VRF column is gone rather than blank. sysfs cannot identify a VRF
   // master -- drivers/net/vrf.c sets no DEVTYPE -- so the addresses
   // collector writes vrfUnknown ("") for every interface on every host, by
@@ -454,11 +509,135 @@ export function Network({ rows }: { rows: readonly Address[] }) {
   return (
     <Inventory
       label="Addresses"
+      heading
       columns={ADDRESS_COLUMNS}
       rows={rows}
       rowKey={(row) => `${row.iface}/${row.address}`}
       searchText={(row) =>
         [row.iface, row.address, row.scope, row.vrf, row.description]
+          .filter(Boolean)
+          .join(" ")
+      }
+    />
+  );
+}
+
+// --- Interfaces -----------------------------------------------------------
+
+/**
+ * The link state, as a pill on the interface name.
+ *
+ * The kernel's own word, uppercased by nothing: "lowerlayerdown" is rendered
+ * "lower down" because that is the same fact in the width a table column has,
+ * and every other value is short enough to print as-is.
+ *
+ * up is green and down/lowerlayerdown red, from the FIXED status palette --
+ * this is genuinely a health reading and not a category. "unknown" is muted
+ * and is neither: it is what a virtual device reports (wg0, lo, a bridge),
+ * every time, and colouring it as a problem would paint a healthy host's
+ * loopback red forever.
+ */
+const LINK_STATE_LABEL: Record<string, string> = {
+  lowerlayerdown: "lower down",
+};
+
+function LinkStatePill({ state }: { state: string | null }) {
+  if (state === null) return null;
+  const bad = state === "down" || state === "lowerlayerdown";
+  const cls = state === "up" ? "link-up" : bad ? "link-down" : "link-unknown";
+  return (
+    <span className={`badge link ${cls}`}>
+      {LINK_STATE_LABEL[state] ?? state}
+    </span>
+  );
+}
+
+const INTERFACE_COLUMNS: Column<Iface>[] = [
+  {
+    key: "iface",
+    // The state rides the name, the way the scope pill rides the address:
+    // one cell carrying a thing and its classification, rather than two
+    // columns the eye has to pair up. It also makes the down links findable
+    // by scanning a single column.
+    header: "Interface",
+    cell: (row) => (
+      <span className="addr-cell">
+        <span className="ident">{row.iface}</span>
+        <LinkStatePill state={row.oper_state} />
+      </span>
+    ),
+  },
+  {
+    key: "speed",
+    header: "Speed",
+    align: "right",
+    // Absent, not "0 Mb/s". A virtual device has no link speed and a down one
+    // refuses to report its, and both arrive as null by the collector's own
+    // decision (ifaceSpeed in addresses.go) -- printing a zero would put an
+    // unplugged NIC and a wg0 in the same bucket as a 10 Gb link that is
+    // somehow idle.
+    cell: (row) =>
+      row.speed_mbps === null ? ABSENT : linkSpeed(row.speed_mbps),
+  },
+  { key: "duplex", header: "Duplex", cell: (row) => row.duplex ?? ABSENT },
+  {
+    key: "mtu",
+    header: "MTU",
+    align: "right",
+    cell: (row) => (row.mtu === null ? ABSENT : String(row.mtu)),
+  },
+  {
+    key: "mac",
+    header: "MAC",
+    cell: (row) =>
+      row.mac === null ? ABSENT : <span className="ident">{row.mac}</span>,
+  },
+  {
+    key: "description",
+    header: "Description",
+    cell: (row) => row.description ?? ABSENT,
+  },
+  {
+    key: "last_seen",
+    // "Last changed", for the reason the addresses table's column says so:
+    // the collector reports on change only, so a healthy host that keeps its
+    // links stops touching these rows and the timestamp drifts into the past
+    // the longer it stays healthy.
+    header: "Last changed",
+    cell: (row) => <When iso={row.last_seen} />,
+  },
+];
+
+/**
+ * Mbit/s as the operator reads it: 1000 is a gigabit link, not "1000".
+ *
+ * Decimal, not binary, and that is not a slip -- link speeds are decimal by
+ * definition (a "1 Gb/s" NIC is 10^9 bits), unlike the byte counts elsewhere
+ * on this page.
+ */
+function linkSpeed(mbps: number): string {
+  if (mbps >= 1000 && mbps % 1000 === 0) return `${mbps / 1000} Gb/s`;
+  return `${mbps} Mb/s`;
+}
+
+/**
+ * The links, above the addresses on them.
+ *
+ * A separate table rather than more columns on Addresses, because an
+ * interface with NO address is exactly what an operator is looking for -- a
+ * failed bond, an unplugged spare NIC -- and an address-keyed table cannot
+ * hold one. Before this it appeared nowhere in netra at all.
+ */
+export function Interfaces({ rows }: { rows: readonly Iface[] }) {
+  return (
+    <Inventory
+      label="Interfaces"
+      heading
+      columns={INTERFACE_COLUMNS}
+      rows={rows}
+      rowKey={(row) => row.iface}
+      searchText={(row) =>
+        [row.iface, row.oper_state, row.duplex, row.mac, row.description]
           .filter(Boolean)
           .join(" ")
       }

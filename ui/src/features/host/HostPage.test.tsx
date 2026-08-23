@@ -85,7 +85,7 @@ beforeEach(() => {
 
 describe("hostTabHref", () => {
   it("is the URL contract Wave 5's router has to honour", () => {
-    expect(hostTabHref(7, "graphs")).toBe("/hosts/7/graphs");
+    expect(hostTabHref(7, "system")).toBe("/hosts/7/system");
     expect(hostTabHref("7", "overview")).toBe("/hosts/7/overview");
   });
 });
@@ -109,8 +109,8 @@ describe("HostPage", () => {
     render(<HostPage hostId={7} tab="overview" onTabChange={onTabChange} />);
     await screen.findByRole("heading", { name: "kessel" });
 
-    await userEvent.click(screen.getByRole("link", { name: "Graphs" }));
-    expect(onTabChange).toHaveBeenCalledWith("graphs");
+    await userEvent.click(screen.getByRole("link", { name: "System" }));
+    expect(onTabChange).toHaveBeenCalledWith("system");
   });
 
   it("keeps one header and one range control across tabs, and the range survives the swap", async () => {
@@ -130,20 +130,20 @@ describe("HostPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "24h" }));
 
-    rerender(<HostPage hostId={7} tab="graphs" onTabChange={() => {}} />);
-    await screen.findByText("System");
+    rerender(<HostPage hostId={7} tab="system" onTabChange={() => {}} />);
+    await screen.findByText("Resources");
     expect(screen.getByRole("heading", { name: "kessel" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "24h" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
-    // One control, not one per panel: the Graphs tab draws many charts and
+    // One control, not one per panel: a subject tab draws many charts and
     // every one of them is driven by the header's range.
     expect(screen.getAllByRole("group")).toHaveLength(1);
   });
 
   it("asks the hub for absolute times only", async () => {
-    render(<HostPage hostId={7} tab="graphs" onTabChange={() => {}} />);
+    render(<HostPage hostId={7} tab="system" onTabChange={() => {}} />);
     await waitFor(() => expect(api.getMetrics).toHaveBeenCalled());
     for (const call of vi.mocked(api.getMetrics).mock.calls) {
       expect(call[1].from).toMatch(/^\d{4}-\d{2}-\d{2}T/);

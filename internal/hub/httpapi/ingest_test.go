@@ -839,3 +839,100 @@ func TestIntegrationIngestUnstorableAgentSampleIsQuarantinedNotRetriedForever(t 
 		t.Errorf("host_samples rows = %d, want 1", count)
 	}
 }
+
+// One POST fans out to three host-level tables: host_samples, plus the two
+// families that exist only because a continuous aggregate cannot gain a
+// column. A counter routed to the wrong statement -- or to none -- is stored
+// nowhere and surfaces much later as a panel that will not draw.
+func TestIntegrationIngestFansOutToEveryHostLevelTable(t *testing.T) {
+	srv, token, s := newFixture(t)
+
+	req := &netrav1.IngestRequest{
+		Seq: 11,
+		HostSamples: []*netrav1.HostSample{{
+			TsMs: 1_700_000_000_000,
+			// host_samples
+			CpuTotal: proto.Float64(33),
+			// host_snmp_samples
+			IpInReceivesPerS: proto.Float64(1016),
+			// host_proto_samples
+			TcpInSegsPerS:      proto.Float64(4200),
+			UdpInDatagramsPerS: proto.Float64(640),
+		}},
+	}
+
+	resp := post(t, srv, token, req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	ctx := context.Background()
+	for table, column := range map[string]string{
+		"host_samples":       "cpu_total",
+		"host_snmp_samples":  "ip_in_receives_per_s",
+		"host_proto_samples": "tcp_in_segs_per_s",
+	} {
+		var n int
+		if err := s.Pool().QueryRow(ctx,
+			"SELECT count(*) FROM "+table+" WHERE "+column+" IS NOT NULL").Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if n != 1 {
+			t.Errorf("%s has %d rows with %s set, want 1", table, n, column)
+		}
+	}
+}
+
+// The interfaces inventory rides the same POST as the addresses, and the hub
+// stores both. An interface with no address is the row the separate table
+// exists for, so it is the one asserted here.
+func TestIntegrationIngestStoresInterfaceInventory(t *testing.T) {
+	srv, token, s := newFixture(t)
+
+	req := &netrav1.IngestRequest{
+		Seq: 12,
+		HostSamples: []*netrav1.HostSample{
+			{TsMs: 1_700_000_000_000, CpuTotal: proto.Float64(1)},
+		},
+		Addresses: []*netrav1.HostAddress{
+			{Iface: "eth0", Address: "10.0.0.5", Family: 4},
+		},
+		Interfaces: []*netrav1.HostInterface{
+			{
+				Iface:     "eth0",
+				OperState: "up",
+				SpeedMbps: proto.Uint64(1000),
+				Duplex:    "full",
+				Mtu:       proto.Uint32(1500),
+				Mac:       "52:54:00:3a:1c:07",
+			},
+			// No address anywhere in this request.
+			{Iface: "bond0", OperState: "lowerlayerdown", Mtu: proto.Uint32(9000)},
+		},
+	}
+
+	resp := post(t, srv, token, req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	ctx := context.Background()
+	var state string
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT oper_state FROM host_interfaces WHERE iface = 'bond0'`).Scan(&state); err != nil {
+		t.Fatalf("bond0 was not stored; an interface with no address is the case this "+
+			"table exists for: %v", err)
+	}
+	if state != "lowerlayerdown" {
+		t.Errorf("bond0 oper_state = %q, want lowerlayerdown", state)
+	}
+
+	var speed *int64
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT speed_mbps FROM host_interfaces WHERE iface = 'bond0'`).Scan(&speed); err != nil {
+		t.Fatalf("query bond0 speed: %v", err)
+	}
+	if speed != nil {
+		t.Errorf("bond0 speed_mbps = %d, want NULL", *speed)
+	}
+}

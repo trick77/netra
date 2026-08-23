@@ -425,16 +425,17 @@ describe("the old chart-page URL", () => {
   });
 
   // Every chart opens in a dialog now, so a chart has no URL of its own to
-  // land on. The links readers have already sent must still arrive
-  // somewhere true rather than on "no such page": the Graphs tab is where
-  // that chart is drawn.
-  it("lands on the graphs tab rather than a not-found page", async () => {
+  // land on. The links readers have already sent must still arrive somewhere
+  // true rather than on "no such page": the subject tab that draws that
+  // chart. host-traffic is a network panel, so Network is the answer -- it
+  // used to be Graphs for every slug alike, because Graphs held them all.
+  it("lands on the tab drawing that chart rather than a not-found page", async () => {
     goTo("/hosts/3/chart/host-traffic?range=6h&from=fleet");
     render(<App />);
 
     // The tabs are real links carrying aria-current, not ARIA tabs -- see
     // Tabs.tsx.
-    const graphs = await screen.findByRole("link", { name: "Graphs" });
-    expect(graphs).toHaveAttribute("aria-current", "page");
+    const network = await screen.findByRole("link", { name: "Network" });
+    expect(network).toHaveAttribute("aria-current", "page");
   });
 });

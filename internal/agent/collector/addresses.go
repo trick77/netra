@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
@@ -29,6 +30,31 @@ type Iface struct {
 	// Description is the interface alias -- what SNMP calls ifAlias and what
 	// `ip link set <if> alias <text>` writes. Empty unless an operator set one.
 	Description string
+
+	// The link itself, rather than what is addressed on it. Every one of
+	// these is a single file under /sys/class/net/<name>/, read the same way
+	// ifalias already was.
+	//
+	// OperState is /sys/class/net/<name>/operstate verbatim, and NOT
+	// net.Flags&net.FlagUp, which is sitting right there for free. FlagUp is
+	// IFF_UP -- administratively up -- and an unplugged cable leaves it set
+	// while the carrier drops. That gap is the entire reason an operator
+	// looks at a link-state column, so reading the flag would produce a
+	// column that says "up" for the one case it exists to catch.
+	OperState string
+
+	// SpeedMbps and Duplex are absent, not zero, on every interface with no
+	// link speed to report: the kernel writes -1 into speed for a virtual
+	// device, and the read fails with EINVAL on one that is down. Both are
+	// left unset there rather than reported as 0 Mbit/s half duplex.
+	SpeedMbps *uint64
+	Duplex    string
+
+	MTU *uint32
+
+	// The MAC. Empty for a device with no link layer of its own -- lo, wg0,
+	// a tunnel -- which sysfs reports as 00:00:00:00:00:00.
+	MAC string
 }
 
 // vrfUnknown records why HostAddress.vrf is left empty rather than filled.
@@ -95,9 +121,87 @@ func SystemIfaces() ([]Iface, error) {
 			Addrs:       raw,
 			VRF:         vrfUnknown,
 			Description: ifaceAlias(i.Name),
+			OperState:   ifaceAttr(i.Name, "operstate"),
+			SpeedMbps:   ifaceSpeed(i.Name),
+			Duplex:      ifaceDuplex(i.Name),
+			MTU:         ifaceMTU(i.Name, i.MTU),
+			MAC:         ifaceMAC(i.Name),
 		})
 	}
 	return out, nil
+}
+
+// ifaceAttr reads one /sys/class/net/<name>/<attr>, trimmed. Absent, or
+// unreadable, reads as empty -- the same treatment ifaceAlias gives a missing
+// alias, and for the same reason: a virtual device simply has fewer files.
+func ifaceAttr(name, attr string) string {
+	raw, err := os.ReadFile(filepath.Join(sysClassNet, name, attr))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+// ifaceSpeed reads the link speed in Mbit/s.
+//
+// Three ways to have no speed, all of them normal and none of them zero: the
+// file is missing (a virtual device), the read fails with EINVAL (the kernel
+// refuses while the link is down, which is the documented behaviour of
+// ethtool_get_link_ksettings), or it contains -1. All three return nil, which
+// the wire carries as absent -- reporting 0 would put a "0 Mbit/s" in a column
+// where it means "unplugged" everywhere else.
+func ifaceSpeed(name string) *uint64 {
+	text := ifaceAttr(name, "speed")
+	if text == "" {
+		return nil
+	}
+	v, err := strconv.ParseInt(text, 10, 64)
+	if err != nil || v <= 0 {
+		return nil
+	}
+	u := uint64(v)
+	return &u
+}
+
+// ifaceDuplex reads "full" or "half". The kernel writes the literal string
+// "unknown" for a device that has no answer, which is the same fact as an
+// absent file and is reported the same way.
+func ifaceDuplex(name string) string {
+	if d := ifaceAttr(name, "duplex"); d != "unknown" {
+		return d
+	}
+	return ""
+}
+
+// ifaceMTU prefers the value net.Interfaces already returned and falls back to
+// sysfs, so a lister that has one does not need the file to exist.
+//
+// Zero is not a valid MTU, so it reads as absent rather than as a measurement.
+func ifaceMTU(name string, fromNet int) *uint32 {
+	if fromNet > 0 {
+		v := uint32(fromNet)
+		return &v
+	}
+	text := ifaceAttr(name, "mtu")
+	if text == "" {
+		return nil
+	}
+	v, err := strconv.ParseUint(text, 10, 32)
+	if err != nil || v == 0 {
+		return nil
+	}
+	u := uint32(v)
+	return &u
+}
+
+// ifaceMAC reads the link-layer address, treating the all-zero one sysfs
+// reports for a device without one (lo, wg0, a tunnel) as the absence it is.
+func ifaceMAC(name string) string {
+	mac := ifaceAttr(name, "address")
+	if mac == "00:00:00:00:00:00" {
+		return ""
+	}
+	return mac
 }
 
 // ifaceAlias returns the interface alias, the Linux equivalent of SNMP's
@@ -169,6 +273,7 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 	}
 
 	var rows []*netrav1.HostAddress
+	var links []*netrav1.HostInterface
 	for _, i := range ifaces {
 		if !reportableIface(i.Name) {
 			// The same exclusions as the network collector, and for the same
@@ -176,6 +281,22 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 			// fact about this host.
 			continue
 		}
+
+		// Emitted whether or not the interface has an address, which is the
+		// point of reporting links separately: a failed bond and an unplugged
+		// spare NIC both have none, and both are exactly what an operator is
+		// looking for. In an address-keyed table they appear nowhere at all.
+		links = append(links, &netrav1.HostInterface{
+			Iface:       i.Name,
+			IfIndex:     ptrTo(uint32(i.Index)),
+			OperState:   i.OperState,
+			SpeedMbps:   i.SpeedMbps,
+			Duplex:      i.Duplex,
+			Mtu:         i.MTU,
+			Mac:         i.MAC,
+			Description: i.Description,
+		})
+
 		for _, raw := range i.Addrs {
 			ip, _, err := net.ParseCIDR(raw)
 			if err != nil {
@@ -215,10 +336,35 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 	// part of what counts as a change. Keying on iface and address alone
 	// would leave an operator's `ip link set ... alias` unreported until some
 	// unrelated address moved, and the hub serving the old text meanwhile.
-	fingerprint := make([]string, 0, len(rows))
+	slices.SortFunc(links, func(x, y *netrav1.HostInterface) int {
+		return strings.Compare(x.GetIface(), y.GetIface())
+	})
+
+	fingerprint := make([]string, 0, len(rows)+len(links))
 	for _, r := range rows {
 		fingerprint = append(fingerprint,
 			r.GetIface()+" "+r.GetAddress()+" "+r.GetVrf()+" "+r.GetDescription())
+	}
+	// The link attributes are part of what is being reported, so they are part
+	// of what counts as a change -- a cable pulled from an interface moves
+	// nothing but operstate and speed, and that is the change most worth
+	// noticing. Without this the whole set would go unreported until an
+	// address happened to move.
+	//
+	// Prefixed so a link line can never collide with an address line: an
+	// interface called "x" with alias "y" would otherwise be able to
+	// fingerprint identically to some address row.
+	//
+	// if_index is in here because it is REPORTED: an interface destroyed and
+	// recreated under the same name -- a module reload, a netplan apply --
+	// keeps its name, MAC and attributes and gets a new index. Left out, that
+	// scrape fingerprints identically, the collector reports nothing, and the
+	// hub serves the old index until some unrelated attribute happens to move.
+	for _, l := range links {
+		fingerprint = append(fingerprint, "link "+l.GetIface()+" "+
+			formatUint32Ptr(l.IfIndex)+" "+l.GetOperState()+" "+
+			formatUint64Ptr(l.SpeedMbps)+" "+l.GetDuplex()+" "+
+			formatUint32Ptr(l.Mtu)+" "+l.GetMac()+" "+l.GetDescription())
 	}
 
 	if slices.Equal(fingerprint, a.prev) {
@@ -229,5 +375,22 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 	}
 	a.prev = fingerprint
 
-	return &Result{Addresses: rows}, nil
+	return &Result{Addresses: rows, Interfaces: links}, nil
+}
+
+// formatUint64Ptr renders an optional for the change fingerprint, keeping
+// absent distinct from zero -- "" and "0" must not compare equal, or a link
+// dropping from 1000 Mbit/s to no reading at all would look unchanged.
+func formatUint64Ptr(v *uint64) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.FormatUint(*v, 10)
+}
+
+func formatUint32Ptr(v *uint32) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.FormatUint(uint64(*v), 10)
 }

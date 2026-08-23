@@ -70,6 +70,13 @@ var families = map[string]*family{
 		table: "host_snmp_samples",
 		tiers: rolledUpTiers,
 	},
+	// The TCP and UDP volume counters. A third host-level family for the
+	// reason host_snmp is the second one -- see 0003_host_proto_samples.sql.
+	"host_proto": {
+		name:  "host_proto",
+		table: "host_proto_samples",
+		tiers: rolledUpTiers,
+	},
 	"cpu_core": {
 		name:             "cpu_core",
 		table:            "cpu_core_samples",

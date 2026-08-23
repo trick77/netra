@@ -2707,6 +2707,88 @@ tbody:first-of-type .grouprow th {
   font-size: var(--text-label);
 }
 
+/* An identifier and its classification in one cell: an address with its
+   scope, an interface with its link state. Two columns apart, answering
+   "is this box reachable from the internet" took two saccades. */
+.addr-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* A monospaced identifier inside a table cell -- an IP, an interface name, a
+   MAC. --text-micro is sanctioned here for the same reason it is on the other
+   dense readings (spec 3.6): a v6 address at --text-label wraps the column.
+
+   Its OWN class rather than more properties on .mono above, which is the
+   identifier face shared by the container list. Declared later with equal
+   specificity, a second `.mono` block wins per-property everywhere: it was
+   overriding .host-cell-site's --text-label/--muted and .imgcell's --muted in
+   a table this change never touched. The font-family is repeated here rather
+   than paired as `class="mono ident"`, so one class carries one look. */
+.ident {
+  font-family: var(--font-mono);
+  font-size: var(--text-micro);
+  color: var(--ink);
+}
+/* The scope and link-state pills reuse .badge (defined above) for the neutral
+   case and override only the colour. Both are ANNOTATIONS on an identifier,
+   not severity badges, so neither takes a status FILL -- the word carries the
+   colour, which is also what keeps them readable without hue. */
+.badge.scope,
+.badge.link {
+  font-weight: 500;
+}
+/* A publicly routable address on a host is the notable one; private and
+   loopback are the quiet default and keep the neutral ink. */
+.badge.scope-public {
+  color: var(--st-warn-text);
+  border-color: #5a4a1e;
+}
+.badge.scope-loopback {
+  color: var(--muted);
+}
+.badge.link-up {
+  color: var(--st-ok-text);
+  border-color: #1e4a1e;
+}
+.badge.link-down {
+  color: var(--st-crit-text);
+  border-color: #5a2828;
+}
+/* Muted, not red. "unknown" is what every virtual device reports -- wg0, lo,
+   a bridge -- so colouring it as a problem would paint a healthy host's
+   loopback red in perpetuity. */
+.badge.link-unknown {
+  color: var(--muted);
+}
+
+/* The Storage tab's mount table, Usage column. The third table cell to draw
+   a Meter and the only one that had no override, so every mount's bar came
+   with a rule the row already had and a percentage pinned 92px away from it.
+   Same shape as .disk-cell and .mem-cell above. */
+.usage-cell .mrow {
+  grid-template-columns: 1fr auto;
+  gap: var(--space-2);
+  padding: 0;
+  border-bottom: 0;
+}
+.usage-cell .val {
+  font-size: var(--text-label);
+}
+/* Meter's own label, hidden here for the reason .smp .foot hides it: the row
+   this bar sits in already has a Label column saying "root", and printing it
+   again directly above the bar is the same word twice in one row. The prop is
+   still passed, because it is what the bar is announced as. */
+.usage-cell .lab {
+  display: none;
+}
+/* The bar needs a width to be readable as a proportion; in a table cell it
+   otherwise shrinks to whatever is left over after the percentage. */
+.usage-cell {
+  min-width: 140px;
+}
+
 /* Every interactive control shows where the keyboard is. :focus-visible
    rather than :focus so a mouse click does not leave a ring behind. */
 a:focus-visible,

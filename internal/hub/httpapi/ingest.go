@@ -187,6 +187,15 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// And the third host-level table, on the same terms.
+	if _, err := h.store.InsertHostProtoSamples(ctx, hostID, samples); err != nil {
+		slog.Error("insert host proto samples", "host_id", hostID, "err", err)
+		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
+		})
+		return
+	}
+
 	requestMetadata, err := h.reconcileMetadata(ctx, hostID, &req)
 	if err != nil {
 		slog.Error("reconcile metadata", "host_id", hostID, "err", err)
