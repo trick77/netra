@@ -17,8 +17,8 @@ export REPO FIXTURES LIB
 
 # Which shell to run the cases and setup-agent.sh under. `dash run.sh` must
 # actually exercise dash, so the runner asks the OS what interpreter it is
-# executing under rather than hardcoding `sh`. NETRA_TEST_SH overrides.
-SH="${NETRA_TEST_SH:-}"
+# executing under rather than hardcoding `sh`. AGENT_TEST_SH overrides.
+SH="${AGENT_TEST_SH:-}"
 if [ -z "$SH" ]; then
     SH=$(ps -o comm= -p $$ 2>/dev/null | sed 's|.*/||; s/^-//') || SH=""
 fi
@@ -78,7 +78,7 @@ for CASEFILE in "$HERE"/cases/*.sh; do
     # /var/folders/... where /var -> /private/var (and likewise /tmp ->
     # /private/tmp). Any code that later resolves a path with `pwd -P`,
     # `realpath` or a sysfs symlink read gets back the /private/... form, so a
-    # naive `${path#$NETRA_SETUP_ROOT}` strip against the un-canonicalised
+    # naive `${path#$AGENT_SETUP_ROOT}` strip against the un-canonicalised
     # /var/... root silently fails to strip and the prefix leaks into the
     # rendered compose. Canonicalising here means fixture roots are already
     # physical paths and the strip is a plain prefix match. This bites the SMART

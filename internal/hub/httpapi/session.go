@@ -23,7 +23,7 @@ const sessionTTL = 12 * time.Hour
 // sessionKey derives the cookie-signing key from the admin token.
 //
 // Deriving rather than configuring means there is no second secret to manage,
-// and it buys a property worth having: changing NETRA_ADMIN_TOKEN invalidates
+// and it buys a property worth having: changing BACKEND_ADMIN_TOKEN invalidates
 // every session issued under the old one, because the verification key moves
 // with it. There is no session table to clear and no server-side state.
 //
@@ -73,7 +73,7 @@ func newSessionCookie(adminToken, user string, now time.Time) *http.Cookie {
 			sign(sessionKey(adminToken), expiry, user)),
 		Path: "/",
 		// Secure, because the UI now moves behind TLS: Traefik fronts the
-		// whole hub on NETRA_HOSTNAME's websecure entrypoint and the
+		// whole hub on BACKEND_HOSTNAME's websecure entrypoint and the
 		// container publishes no host port, so there is no plain-HTTP
 		// deployment left for this cookie to be needed on. Without the flag
 		// a browser holding a session sends it in cleartext the moment

@@ -47,21 +47,21 @@ mkshims "$TMP/shims"
 # the root in place. run.sh canonicalises; this asserts it stayed that way.
 assert_eq "$TMP" "$(cd "$TMP" && pwd -P)" "\$TMP handed to a case is already a physical path"
 
-# NETRA_TTY is the probe seam for /dev/tty. There is no portable way to detach a
+# AGENT_TTY is the probe seam for /dev/tty. There is no portable way to detach a
 # controlling terminal in a test (no setsid on macOS, and redirecting stdin does
 # not touch /dev/tty), so the setup script resolves the terminal through this
 # variable and the tests point it at a path that cannot be opened.
 NO_TTY=/nonexistent/netra-tty
 
 # There is no --yes any more: the script is interactive, and require_tty fails a
-# run with no terminal before any phase. NETRA_ANSWERS_FILE is the seam that
+# run with no terminal before any phase. AGENT_ANSWERS_FILE is the seam that
 # lets the suite drive the prompts anyway, and it exempts require_tty.
 #
-# NETRA_UID=0 makes plan_drivetemp take its root branch. Without it the suite
+# AGENT_UID=0 makes plan_drivetemp take its root branch. Without it the suite
 # would exercise whichever branch the machine happened to be on — never root on
 # a laptop, never root on a CI runner.
-NETRA_UID=0
-export NETRA_UID
+AGENT_UID=0
+export AGENT_UID
 
 # An EMPTY answers file for the runs that die in preflight: it satisfies
 # require_tty and, because an exhausted file is a hard error, it also proves no
@@ -71,8 +71,8 @@ ANS_EMPTY=$(answers empty)
 # --- 1. cgroup v1 (no cgroup.controllers) => hard fail naming cgroup v2 -------
 ROOT=$(mkroot cgroupv1)
 rm -f "$ROOT/sys/fs/cgroup/cgroup.controllers"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_EMPTY" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_EMPTY" \
     "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "cgroup v1 host exits non-zero"
@@ -85,8 +85,8 @@ assert_contains "$RUN_OUT" "systemd.unified_cgroup_hierarchy=1" \
 # v1, so the container collector would read nothing. It must fail, not pass.
 ROOT=$(mkroot cgrouphybrid)
 mkdir -p "$ROOT/sys/fs/cgroup/unified"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_EMPTY" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_EMPTY" \
     "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "hybrid cgroup host exits non-zero"
@@ -96,8 +96,8 @@ assert_contains "$RUN_OUT" "hybrid" "hybrid failure says hybrid"
 # --- 3. /etc/machine-id present but zero length => fail -----------------------
 ROOT=$(mkroot emptymachineid)
 : >"$ROOT/etc/machine-id"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_EMPTY" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_EMPTY" \
     "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "empty machine-id exits non-zero"
@@ -112,8 +112,8 @@ assert_contains "$RUN_OUT" "empty" "empty machine-id failure says it is empty"
 # plus a y to the two prompts that remain (drivetemp, the write gate).
 ROOT=$(mkroot healthy)
 ANS=$(answers healthy y y)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" AGENT_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
     "$SH" "$SETUP" --sys-admin --pid-host \
     --token nta_test --hub-url https://hub.example \
     --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
@@ -132,17 +132,17 @@ assert_file_present "$ROOT/etc/modules-load.d/drivetemp.conf" \
 # rebuilding them.
 ROOT=$(mkroot composev1)
 ANS=$(answers composev1 n n n n)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" \
-    NETRA_SHIM_COMPOSE_V2_RC=1 "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" \
+    AGENT_SHIM_COMPOSE_V2_RC=1 "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "a host with only docker-compose v1 completes"
 assert_contains "$RUN_OUT" "compose_v1" "docker compose v1 is detected as the fallback"
 
 ROOT=$(mkroot nodaemon)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_EMPTY" \
-    NETRA_SHIM_INFO_RC=1 "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_EMPTY" \
+    AGENT_SHIM_INFO_RC=1 "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "an unreachable Docker daemon exits non-zero"
 assert_contains "$RUN_OUT" "Docker daemon" "the daemon failure says so"
@@ -150,10 +150,10 @@ assert_contains "$RUN_OUT" "Docker daemon" "the daemon failure says so"
 # --- 4b. no terminal is an explicit failure, before any phase runs ------------
 #
 # There is no unattended mode, and the refusal must not arrive three minutes
-# into detection it is about to throw away. NETRA_ANSWERS_FILE is not set here,
+# into detection it is about to throw away. AGENT_ANSWERS_FILE is not set here,
 # so require_tty is the first thing that speaks.
 ROOT=$(mkroot notty)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "no terminal exits non-zero"
@@ -167,11 +167,11 @@ assert_not_contains "$RUN_OUT" "Preflight" \
 assert_not_contains "$RUN_OUT" "Summary" \
     "no-terminal failure does not silently take defaults and finish"
 
-# NETRA_ANSWERS_FILE is the one exemption, and it is the test seam rather than a
+# AGENT_ANSWERS_FILE is the one exemption, and it is the test seam rather than a
 # supported provisioning interface: an env var, not a flag, with positional
 # answers that the PROMPT ORDER contract in the script header defines.
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers notty n n y)" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers notty n n y)" \
     "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "an answers file needs no terminal"
@@ -186,8 +186,8 @@ assert_contains "$RUN_OUT" "Summary" "the seeded run reaches the end"
 # exists. The answers file says `n`, which is also this prompt's default.
 ROOT=$(mkroot unsupporteddefault)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers unsupported n)" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers unsupported n)" \
     "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 1 "$RUN_RC" "answering no on an unsupported OS aborts"
@@ -204,8 +204,8 @@ assert_file_absent "$ROOT/out/compose.yaml" "nothing is written after the abort"
 ROOT=$(mkroot unsupportedy)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
 ANS=$(answers unsupported y y y y y)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" \
     --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "answering y to the unsupported-OS prompt continues"
@@ -224,8 +224,8 @@ assert_contains "$RUN_OUT" "continuing at operator request" "the run says it con
 # by the test rather than assumed.
 ROOT=$(mkroot answern)
 ANS=$(answers n4 n n n n)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "answering n mid-sequence does not abort the script"
 assert_contains "$RUN_OUT" "Summary" "the script continues past a declined prompt"
@@ -244,36 +244,36 @@ assert_contains "$RUN_OUT" "package mount:   /var/lib/dpkg" \
 # is about errexit and not about the prompts being unreachable.
 ROOT=$(mkroot answery)
 ANS=$(answers y4 y y y y)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "answering y completes"
 assert_contains "$RUN_OUT" "Summary" "answering y reaches the summary"
 
 # --- 6. argument parsing ------------------------------------------------------
-run_capture env NETRA_TTY="$NO_TTY" "$SH" "$SETUP" --frobnicate
+run_capture env AGENT_TTY="$NO_TTY" "$SH" "$SETUP" --frobnicate
 assert_eq 1 "$RUN_RC" "unknown flag exits non-zero"
 assert_contains "$RUN_OUT" "--frobnicate" "unknown flag error names the flag"
 
-run_capture env NETRA_TTY="$NO_TTY" "$SH" "$SETUP" --help
+run_capture env AGENT_TTY="$NO_TTY" "$SH" "$SETUP" --help
 assert_eq 0 "$RUN_RC" "--help exits 0"
 assert_contains "$RUN_OUT" "Usage" "--help prints usage"
 
-run_capture env NETRA_TTY="$NO_TTY" "$SH" "$SETUP" --token
+run_capture env AGENT_TTY="$NO_TTY" "$SH" "$SETUP" --token
 assert_eq 1 "$RUN_RC" "a value-taking flag with no value exits non-zero"
 assert_contains "$RUN_OUT" "--token" "missing-value error names the flag"
 
-run_capture env NETRA_TTY="$NO_TTY" "$SH" "$SETUP" --token t --token-file /f
+run_capture env AGENT_TTY="$NO_TTY" "$SH" "$SETUP" --token t --token-file /f
 assert_eq 1 "$RUN_RC" "--token and --token-file together exit non-zero"
 assert_contains "$RUN_OUT" "mutually exclusive" "the conflict is explained"
 
-run_capture env NETRA_TTY="$NO_TTY" "$SH" "$SETUP" -h
+run_capture env AGENT_TTY="$NO_TTY" "$SH" "$SETUP" -h
 assert_eq 0 "$RUN_RC" "-h exits 0"
 assert_contains "$RUN_OUT" "Usage" "-h prints usage"
 
 # --- netra_exec is the single mutation choke point ----------------------------
-NETRA_SOURCED=1
-export NETRA_SOURCED
+AGENT_SOURCED=1
+export AGENT_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
@@ -358,13 +358,13 @@ assert_eq 0 "$OD_RC" "an explicit --output-dir still means exactly what it says"
 assert_eq 0 "$OD_RC" "anywhere else the default is still ./netra-agent"
 
 # --- probe-path prefixing -----------------------------------------------------
-# Every probe path must pick up NETRA_SETUP_ROOT; explicit overrides must not.
-NETRA_SETUP_ROOT="$TMP/probe-root"
-NETRA_OSRELEASE_PATH="$TMP/explicit-os-release"
-export NETRA_SETUP_ROOT NETRA_OSRELEASE_PATH
+# Every probe path must pick up AGENT_SETUP_ROOT; explicit overrides must not.
+AGENT_SETUP_ROOT="$TMP/probe-root"
+AGENT_OSRELEASE_PATH="$TMP/explicit-os-release"
+export AGENT_SETUP_ROOT AGENT_OSRELEASE_PATH
 init_paths
 assert_eq "$TMP/probe-root/etc/machine-id" "$P_MACHINEID" \
-    "probe paths are prefixed with NETRA_SETUP_ROOT"
+    "probe paths are prefixed with AGENT_SETUP_ROOT"
 assert_eq "$TMP/probe-root/sys/fs/cgroup" "$P_CGROUP" \
     "cgroup probe root is prefixed"
 assert_eq "$TMP/explicit-os-release" "$P_OSRELEASE" \

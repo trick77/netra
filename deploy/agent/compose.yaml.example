@@ -135,7 +135,7 @@ services:
       # host has no /netra of any kind, so an agent that named a filesystem
       # after it would be showing operators its own insides. What the hub is
       # told is the label plus the host mount point, and the mount point comes
-      # from NETRA_FS_MOUNTS in .env — add a bind here, add its `label=/path`
+      # from AGENT_FS_MOUNTS in .env — add a bind here, add its `label=/path`
       # there, or re-run setup-agent.sh and let it write both.
       #
       # A marker mount also narrows what the agent measures: when any is
@@ -440,7 +440,7 @@ services:
     # namespace out silently zeroed container networking for every container on
     # the box, and nothing here said so.
     #
-    # Also set NETRA_PID_HOST=1 in .env. The agent can only guess otherwise, and
+    # Also set AGENT_PID_HOST=1 in .env. The agent can only guess otherwise, and
     # every guess has a case it gets wrong; the setup script writes this for you.
     #
     # READ THIS BEFORE ACCEPTING IT. Sharing the host PID namespace makes EVERY
@@ -451,7 +451,7 @@ services:
     #
     # netra reads NEITHER. Since the per-process collector was removed, the only
     # per-process file it opens at all is /proc/1/comm and /proc/self/comm, and
-    # only when NETRA_PID_HOST is unset — the namespace heuristic compares the
+    # only when AGENT_PID_HOST is unset — the namespace heuristic compares the
     # two. The process count itself comes from counting the numeric directories
     # in /proc. cmdline and environ are never opened, enforced by
     # internal/agent/collector/argv_guard_test.go, which fails the build if
@@ -461,7 +461,7 @@ services:
     # netra uses, and you are trusting the image not to use it.
     #
     # If that trade is unacceptable on a given host, comment this out AND set
-    # NETRA_PID_HOST=0 in .env. Both, never one: the collectors read that
+    # AGENT_PID_HOST=0 in .env. Both, never one: the collectors read that
     # variable rather than probing, and an agent told it has a namespace it does
     # not have will resolve the host pids from cgroup.procs inside its OWN
     # namespace. Most find nothing, but one that collides with an unrelated

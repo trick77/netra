@@ -27,7 +27,7 @@ mkshims "$TMP/shims"
 SH_ABS=$(command -v "$SH")
 
 # There is no unattended mode, so every run below that is expected to reach the
-# end drives its prompts through NETRA_ANSWERS_FILE. NETRA_UID is pinned on each
+# end drives its prompts through AGENT_ANSWERS_FILE. AGENT_UID is pinned on each
 # of those runs too: plan_drivetemp asks nothing when the run is not root, so an
 # unpinned uid would make the prompt COUNT depend on who runs the suite.
 #
@@ -36,8 +36,8 @@ SH_ABS=$(command -v "$SH")
 ANS_ROOT=$(answers plat-root n y y)
 ANS_USER=$(answers plat-user n y)
 
-# NETRA_SOURCED=0 on every subprocess run below. This case SOURCES the script to
-# unit-test _wrap, detect_virt and friends, and NETRA_SOURCED has to be exported
+# AGENT_SOURCED=0 on every subprocess run below. This case SOURCES the script to
+# unit-test _wrap, detect_virt and friends, and AGENT_SOURCED has to be exported
 # for that — but a child process inheriting it reads "you are being sourced",
 # defines its functions, and exits 0 having done nothing at all. Which is
 # indistinguishable from a clean run if you only assert on the exit code.
@@ -59,8 +59,8 @@ linkbin() {
     printf '%s\n' "$_lb_dir"
 }
 
-NETRA_SOURCED=1
-export NETRA_SOURCED
+AGENT_SOURCED=1
+export AGENT_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
@@ -123,8 +123,8 @@ mkplatform() {
 R=$(mkplatform virt-flag)
 printf 'flags\t\t: fpu vme de pse tsc msr hypervisor lahf_lm\n' >"$R/proc/cpuinfo"
 printf 'QEMU\n' >"$R/sys/class/dmi/id/sys_vendor"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 assert_eq "QEMU" "$(detect_virt)" "the hypervisor CPU flag is detected, and DMI names it"
 
@@ -132,8 +132,8 @@ assert_eq "QEMU" "$(detect_virt)" "the hypervisor CPU flag is detected, and DMI 
 R=$(mkplatform phys)
 printf 'flags\t\t: fpu vme de pse tsc msr lahf_lm\n' >"$R/proc/cpuinfo"
 printf 'Supermicro\n' >"$R/sys/class/dmi/id/sys_vendor"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 assert_eq "" "$(detect_virt)" "a physical host is not reported as virtual"
 
@@ -141,8 +141,8 @@ assert_eq "" "$(detect_virt)" "a physical host is not reported as virtual"
 R=$(mkplatform virt-dmi)
 printf 'processor\t: 0\n' >"$R/proc/cpuinfo"
 printf 'QEMU\n' >"$R/sys/class/dmi/id/sys_vendor"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 assert_eq "QEMU" "$(detect_virt)" "a hypervisor product in DMI is detected without the CPU flag"
 
@@ -157,8 +157,8 @@ for v in Google "Microsoft Corporation" "Amazon EC2" Hetzner Scaleway DigitalOce
     R=$(mkplatform "virt-brand")
     printf 'processor\t: 0\n' >"$R/proc/cpuinfo"
     printf '%s\n' "$v" >"$R/sys/class/dmi/id/sys_vendor"
-    NETRA_SETUP_ROOT="$R"
-    export NETRA_SETUP_ROOT
+    AGENT_SETUP_ROOT="$R"
+    export AGENT_SETUP_ROOT
     init_paths
     assert_eq "" "$(detect_virt)" "'$v' alone is a brand name, not a hypervisor"
 done
@@ -169,8 +169,8 @@ printf 'processor\t: 0\n' >"$R/proc/cpuinfo"
 printf 'Bare Metal Inc\n' >"$R/sys/class/dmi/id/sys_vendor"
 mkdir -p "$R/sys/hypervisor"
 printf 'xen\n' >"$R/sys/hypervisor/type"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 assert_eq "xen" "$(detect_virt)" "Xen PV is detected through /sys/hypervisor/type"
 
@@ -187,8 +187,8 @@ mkdir -p "$R/sys/hypervisor/properties"
 printf 'xen\n' >"$R/sys/hypervisor/type"
 printf 'xen-3.0-x86_64 xen-3.0-x86_32p hvm-3.0-x86_32 control_d\n' \
     >"$R/sys/hypervisor/properties/capabilities"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 assert_eq "" "$(detect_virt)" "a Xen dom0 is physical, not a guest"
 
@@ -211,8 +211,8 @@ mkdir -p "$R/sys/devices/pci0000:00/ata1/host0/block/sda/device" "$R/sys/block" 
 printf '1000\n' >"$R/sys/devices/pci0000:00/ata1/host0/block/sda/size"
 ln -sf "../devices/pci0000:00/ata1/host0/block/sda" "$R/sys/block/sda"
 : >"$R/dev/sda"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 VIRT="QEMU"
 SKIPPED_NOTES=""
@@ -305,7 +305,7 @@ cp -R "$(fixture root-full)/." "$ROOT/"
 
 # Everything the check requires EXCEPT tr, so the failure has exactly one cause.
 ONEBIN=$(linkbin onebin awk sed grep head cat sort wc mktemp mkdir rm cp id)
-run_capture env PATH="$ONEBIN" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+run_capture env PATH="$ONEBIN" AGENT_SOURCED=0 AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-tools"
 assert_eq 1 "$RUN_RC" "a host missing a required command exits non-zero"
@@ -317,7 +317,7 @@ assert_contains "$(flatten "$RUN_OUT")" "missing commands the setup script needs
 # with "line 745: id: command not found" and never reached the check whose
 # whole job is to name it.
 NOID=$(linkbin noid awk sed grep tr head cat sort wc mktemp mkdir rm cp)
-run_capture env PATH="$NOID" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+run_capture env PATH="$NOID" AGENT_SOURCED=0 AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-noid"
 assert_eq 1 "$RUN_RC" "a host without id exits non-zero"
@@ -333,7 +333,7 @@ assert_not_contains "$RUN_OUT" "id: command not found" \
 # Every other command in the list is reported BY die, so die has to survive the
 # absence of each of them.
 NOSED=$(linkbin nosed awk grep tr head cat sort wc mktemp mkdir rm cp id)
-run_capture env PATH="$NOSED" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+run_capture env PATH="$NOSED" AGENT_SOURCED=0 AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-nosed"
 assert_eq 1 "$RUN_RC" "a host without sed exits 1, not 127 from a broken die"
@@ -345,8 +345,8 @@ assert_not_contains "$RUN_OUT" "sed: command not found" \
 # ...and with tr restored the same run gets past the check, so the assertion
 # above is about tr and not about the restricted PATH in general.
 FULLBIN=$(linkbin fullbin awk sed grep tr head cat sort wc mktemp mkdir rm cp id)
-run_capture env PATH="$FULLBIN" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_UID=1000 NETRA_ANSWERS_FILE="$ANS_USER" \
+run_capture env PATH="$FULLBIN" AGENT_SOURCED=0 AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_UID=1000 AGENT_ANSWERS_FILE="$ANS_USER" \
     "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-tools2"
 assert_eq 0 "$RUN_RC" "the same run succeeds once the missing command is there"
@@ -363,32 +363,32 @@ cp -R "$(fixture root-full)/." "$ROOT2/"
 NOCURL=$(linkbin nocurlbin awk sed grep tr head cat sort wc mktemp mkdir rm cp id)
 cat >"$NOCURL/wget" <<'SHIM'
 #!/bin/sh
-printf 'wget %s\n' "$*" >>"$NETRA_SHIM_LOG"
-printf '%s' "${NETRA_SHIM_CURL_BODY:-}"
-exit "${NETRA_SHIM_CURL_RC:-0}"
+printf 'wget %s\n' "$*" >>"$AGENT_SHIM_LOG"
+printf '%s' "${AGENT_SHIM_CURL_BODY:-}"
+exit "${AGENT_SHIM_CURL_RC:-0}"
 SHIM
 chmod +x "$NOCURL/wget"
 
-: >"$NETRA_SHIM_LOG"
-run_capture env PATH="$NOCURL" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT2" NETRA_TTY="$NO_TTY" \
-    NETRA_SHIM_CURL_BODY='{"tag_name":"v9.9.9"}' \
-    NETRA_UID=1000 NETRA_ANSWERS_FILE="$ANS_USER" \
+: >"$AGENT_SHIM_LOG"
+run_capture env PATH="$NOCURL" AGENT_SOURCED=0 AGENT_SETUP_ROOT="$ROOT2" AGENT_TTY="$NO_TTY" \
+    AGENT_SHIM_CURL_BODY='{"tag_name":"v9.9.9"}' \
+    AGENT_UID=1000 AGENT_ANSWERS_FILE="$ANS_USER" \
     "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --output-dir "$TMP/out-wget"
-assert_contains "$(cat "$NETRA_SHIM_LOG")" "wget " "wget is used when curl is absent"
-assert_not_contains "$(cat "$NETRA_SHIM_LOG")" "curl " "and curl is not reached for at all"
+assert_contains "$(cat "$AGENT_SHIM_LOG")" "wget " "wget is used when curl is absent"
+assert_not_contains "$(cat "$AGENT_SHIM_LOG")" "curl " "and curl is not reached for at all"
 
 # Neither one, and no --template-dir, is a hard error naming both.
 NONET=$(linkbin nonetbin awk sed grep tr head cat sort wc mktemp mkdir rm cp id)
-run_capture env PATH="$NONET" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT2" NETRA_TTY="$NO_TTY" \
+run_capture env PATH="$NONET" AGENT_SOURCED=0 AGENT_SETUP_ROOT="$ROOT2" AGENT_TTY="$NO_TTY" \
     "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --output-dir "$TMP/out-nonet"
 assert_eq 1 "$RUN_RC" "no HTTP client and no --template-dir is a hard error"
 assert_contains "$(flatten "$RUN_OUT")" "neither curl nor wget" "the failure names both"
 
 # ...but --template-dir needs no HTTP client at all.
-run_capture env PATH="$NONET" NETRA_SOURCED=0 NETRA_SETUP_ROOT="$ROOT2" NETRA_TTY="$NO_TTY" \
-    NETRA_UID=1000 NETRA_ANSWERS_FILE="$ANS_USER" \
+run_capture env PATH="$NONET" AGENT_SOURCED=0 AGENT_SETUP_ROOT="$ROOT2" AGENT_TTY="$NO_TTY" \
+    AGENT_UID=1000 AGENT_ANSWERS_FILE="$ANS_USER" \
     "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-nonet2"
 assert_eq 0 "$RUN_RC" "--template-dir works with no HTTP client on the host"
@@ -405,17 +405,17 @@ ROOT3="$TMP/rootcheck"
 mkdir -p "$ROOT3"
 cp -R "$(fixture root-full)/." "$ROOT3/"
 
-run_capture env NETRA_SETUP_ROOT="$ROOT3" NETRA_UID=0 NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_ROOT" \
-    NETRA_SOURCED=0 "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
+run_capture env AGENT_SETUP_ROOT="$ROOT3" AGENT_UID=0 AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_ROOT" \
+    AGENT_SOURCED=0 "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-root"
 assert_eq 0 "$RUN_RC" "a root run succeeds"
 assert_contains "$RUN_OUT" "user:            root" "a root run says so"
 assert_not_contains "$RUN_OUT" "not running as root" "and warns about nothing"
 
-run_capture env NETRA_SETUP_ROOT="$ROOT3" NETRA_UID=1000 NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_USER" \
-    NETRA_SOURCED=0 "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
+run_capture env AGENT_SETUP_ROOT="$ROOT3" AGENT_UID=1000 AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_USER" \
+    AGENT_SOURCED=0 "$SH_ABS" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-root2"
 assert_eq 0 "$RUN_RC" "a non-root run is not refused"
 assert_contains "$RUN_OUT" "uid 1000 (not root)" "the run says which uid it is"

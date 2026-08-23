@@ -106,7 +106,7 @@ export function LoginPage({ onSuccess }: LoginPageProps) {
       </form>
 
       <p className="note">
-        This is <code>NETRA_ADMIN_TOKEN</code> from the hub's environment, not
+        This is <code>BACKEND_ADMIN_TOKEN</code> from the hub's environment, not
         an agent token. Rotating it ends every session immediately.
       </p>
     </div>

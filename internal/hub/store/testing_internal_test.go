@@ -106,7 +106,7 @@ func TestTemplateDBNameIsStableAndDerivedFromTheMigrations(t *testing.T) {
 // them has to fail by returning rather than by connecting somewhere else.
 // That distinction is the whole point: a DSN this code cannot use has to stop
 // the run, because the alternative -- quietly falling back to the database
-// named in NETRA_TEST_DSN -- is the shared-database behaviour the per-test
+// named in BACKEND_TEST_DSN -- is the shared-database behaviour the per-test
 // clone exists to end, and it would look like a pass.
 func TestAdminHelpersFailRatherThanGuess(t *testing.T) {
 	ctx := context.Background()

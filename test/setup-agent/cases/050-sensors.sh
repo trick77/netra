@@ -11,8 +11,8 @@ set -eu
 
 SETUP="$REPO/setup-agent.sh"
 
-NETRA_SOURCED=1
-export NETRA_SOURCED
+AGENT_SOURCED=1
+export AGENT_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
@@ -51,8 +51,8 @@ mkchip "$R" 2 coretemp
 mktemp_sensor "$R" 2 1 41000 "Package id 0"
 mktemp_sensor "$R" 2 2 39000 "Core 0"
 
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 
 ROWS=$(hwmon_chips)
@@ -85,8 +85,8 @@ R="$TMP/r2"
 mkdir -p "$R/sys/class/hwmon/hwmon0/device"
 printf 'nvme\n' >"$R/sys/class/hwmon/hwmon0/device/name"
 printf '38000\n' >"$R/sys/class/hwmon/hwmon0/temp1_input"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 assert_contains "$(hwmon_chips)" "hwmon0|nvme|temp1_input" \
     "a chip with no name file falls back to device/name"
@@ -95,10 +95,10 @@ assert_contains "$(hwmon_chips)" "hwmon0|nvme|temp1_input" \
 #
 # The agent auto-selects at runtime with this same preference order. Freezing a
 # setup-time guess into .env would outlive the CPU swap or kernel upgrade that
-# invalidated it, so NETRA_PRIMARY_SENSOR stays unset unless the operator asked
+# invalidated it, so AGENT_PRIMARY_SENSOR stays unset unless the operator asked
 # for it explicitly.
-NETRA_SETUP_ROOT="$TMP/r1"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$TMP/r1"
+export AGENT_SETUP_ROOT
 init_paths
 PRIMARY_SENSOR=""
 SKIPPED_NOTES=""
@@ -117,31 +117,31 @@ mkchip "$R" 0 coretemp
 mktemp_sensor "$R" 0 1 41000 "Package id 0"
 mkchip "$R" 1 coretemp
 mktemp_sensor "$R" 1 1 43000 "Package id 1"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 PRIMARY_SENSOR=""
 SKIPPED_NOTES=""
-NETRA_ANSWER_INDEX=0
+AGENT_ANSWER_INDEX=0
 : >"$TMP/ans-sensors"
-NETRA_ANSWERS_FILE="$TMP/ans-sensors"
-export NETRA_ANSWERS_FILE
+AGENT_ANSWERS_FILE="$TMP/ans-sensors"
+export AGENT_ANSWERS_FILE
 detect_sensors >/dev/null 2>&1
 # A tie is REPORTED, never prompted. Asking about it made the prompt sequence
 # variable-length - a dual-socket box has two, a four-socket box four - and the
 # answer was a guess frozen into .env that outlives the hardware justifying it.
 # The empty answers file is the proof: a surviving prompt would die exhausted.
 assert_eq "" "$PRIMARY_SENSOR" "a tie is left unpinned rather than guessed at"
-assert_eq 0 "$NETRA_ANSWER_INDEX" "a tie consumes no answer, because it asks nothing"
+assert_eq 0 "$AGENT_ANSWER_INDEX" "a tie consumes no answer, because it asks nothing"
 assert_contains "$SKIPPED_NOTES" "equally-ranked" "the tie is reported as a note"
 assert_contains "$SKIPPED_NOTES" "--primary-sensor" "the note names the flag that pins one"
-unset NETRA_ANSWERS_FILE
+unset AGENT_ANSWERS_FILE
 
 # --- 4. a missing hwmon directory is a note, not an error ---------------------
 R="$TMP/r4"
 mkdir -p "$R/sys/class"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 SKIPPED_NOTES=""
 PRIMARY_SENSOR=""
@@ -161,8 +161,8 @@ assert_eq "" "$(hwmon_chips)" "hwmon_chips prints nothing when the directory is 
 # drives do not report SCT temperature, so persisting on the strength of that
 # exit status would enshrine a module that does nothing, forever.
 mkshims "$TMP/shims"
-NETRA_UID=0
-export NETRA_UID
+AGENT_UID=0
+export AGENT_UID
 
 dt_root() {
     _dt_r="$TMP/$1"
@@ -172,17 +172,17 @@ dt_root() {
 
 # 6a. loads and produces a chip -> persisted, and the sensor list sees it.
 R=$(dt_root dt_ok)
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 SMART_ATA_DEVICES="sda"
 SKIPPED_NOTES=""
-NETRA_ANSWER_INDEX=0
-NETRA_ANSWERS_FILE=$(answers dt-ok y)
-export NETRA_ANSWERS_FILE
-NETRA_SHIM_MODPROBE_HWMON="$R/sys/class/hwmon"
-export NETRA_SHIM_MODPROBE_HWMON
-: >"$NETRA_SHIM_LOG"
+AGENT_ANSWER_INDEX=0
+AGENT_ANSWERS_FILE=$(answers dt-ok y)
+export AGENT_ANSWERS_FILE
+AGENT_SHIM_MODPROBE_HWMON="$R/sys/class/hwmon"
+export AGENT_SHIM_MODPROBE_HWMON
+: >"$AGENT_SHIM_LOG"
 run_capture plan_drivetemp
 assert_eq 0 "$RUN_RC" "a working drivetemp load succeeds"
 plan_drivetemp >/dev/null 2>&1
@@ -195,93 +195,93 @@ assert_eq "" "$SKIPPED_NOTES" "a drivetemp that works is not a degradation"
 
 # 6b. loads but produces nothing -> unloaded again, nothing persisted.
 R=$(dt_root dt_nochip)
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 SMART_ATA_DEVICES="sda"
 SKIPPED_NOTES=""
-NETRA_ANSWER_INDEX=0
-NETRA_ANSWERS_FILE=$(answers dt-nochip y)
-export NETRA_ANSWERS_FILE
-unset NETRA_SHIM_MODPROBE_HWMON
-: >"$NETRA_SHIM_LOG"
+AGENT_ANSWER_INDEX=0
+AGENT_ANSWERS_FILE=$(answers dt-nochip y)
+export AGENT_ANSWERS_FILE
+unset AGENT_SHIM_MODPROBE_HWMON
+: >"$AGENT_SHIM_LOG"
 plan_drivetemp >/dev/null 2>&1
 assert_file_absent "$R/etc/modules-load.d/drivetemp.conf" \
     "a load that produced no chip persists nothing"
-assert_contains "$(cat "$NETRA_SHIM_LOG")" "modprobe -r drivetemp" \
+assert_contains "$(cat "$AGENT_SHIM_LOG")" "modprobe -r drivetemp" \
     "a useless module is unloaded again, leaving the host as it was found"
 assert_contains "$SKIPPED_NOTES" "no hwmon chip" "the operator is told it did not work"
 
 # 6c. modprobe fails outright -> warned, nothing persisted, no unload attempted.
 R=$(dt_root dt_fail)
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 SMART_ATA_DEVICES="sda"
 SKIPPED_NOTES=""
-NETRA_ANSWER_INDEX=0
-NETRA_ANSWERS_FILE=$(answers dt-fail y)
-export NETRA_ANSWERS_FILE
-NETRA_SHIM_MODPROBE_RC=1
-export NETRA_SHIM_MODPROBE_RC
-: >"$NETRA_SHIM_LOG"
+AGENT_ANSWER_INDEX=0
+AGENT_ANSWERS_FILE=$(answers dt-fail y)
+export AGENT_ANSWERS_FILE
+AGENT_SHIM_MODPROBE_RC=1
+export AGENT_SHIM_MODPROBE_RC
+: >"$AGENT_SHIM_LOG"
 plan_drivetemp >/dev/null 2>&1
 assert_file_absent "$R/etc/modules-load.d/drivetemp.conf" \
     "a failed modprobe persists nothing"
 assert_contains "$SKIPPED_NOTES" "no drivetemp module" "the failure names the cause"
-assert_not_contains "$(cat "$NETRA_SHIM_LOG")" "modprobe -r" \
+assert_not_contains "$(cat "$AGENT_SHIM_LOG")" "modprobe -r" \
     "nothing is unloaded when nothing loaded"
-unset NETRA_SHIM_MODPROBE_RC
+unset AGENT_SHIM_MODPROBE_RC
 
 # 6d. declining is not an error, and says how to do it later.
 R=$(dt_root dt_no)
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 SMART_ATA_DEVICES="sda"
 SKIPPED_NOTES=""
-NETRA_ANSWER_INDEX=0
-NETRA_ANSWERS_FILE=$(answers dt-no n)
-export NETRA_ANSWERS_FILE
-: >"$NETRA_SHIM_LOG"
+AGENT_ANSWER_INDEX=0
+AGENT_ANSWERS_FILE=$(answers dt-no n)
+export AGENT_ANSWERS_FILE
+: >"$AGENT_SHIM_LOG"
 plan_drivetemp >/dev/null 2>&1
-assert_eq "" "$(cat "$NETRA_SHIM_LOG")" "declining calls modprobe not at all"
+assert_eq "" "$(cat "$AGENT_SHIM_LOG")" "declining calls modprobe not at all"
 assert_contains "$SKIPPED_NOTES" "modules-load.d" "the note gives the command to do it later"
 
 # 6e. not root -> the command is printed and modprobe is never called. The note
 # covers only drivetemp: check_root says once, up front, what a non-root run
 # costs generally, so repeating it here would be noise at the point of use.
 R=$(dt_root dt_nonroot)
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 # Before init_paths, which is where P_UID is resolved.
-NETRA_UID=1000
-export NETRA_UID
+AGENT_UID=1000
+export AGENT_UID
 init_paths
 SMART_ATA_DEVICES="sda"
 SKIPPED_NOTES=""
-NETRA_ANSWER_INDEX=0
-NETRA_ANSWERS_FILE=$(answers dt-nonroot)
-export NETRA_ANSWERS_FILE
-: >"$NETRA_SHIM_LOG"
+AGENT_ANSWER_INDEX=0
+AGENT_ANSWERS_FILE=$(answers dt-nonroot)
+export AGENT_ANSWERS_FILE
+: >"$AGENT_SHIM_LOG"
 plan_drivetemp >/dev/null 2>&1
-assert_eq "" "$(cat "$NETRA_SHIM_LOG")" "a non-root run never calls modprobe"
-assert_eq 0 "$NETRA_ANSWER_INDEX" "a non-root run does not ask a question it cannot act on"
+assert_eq "" "$(cat "$AGENT_SHIM_LOG")" "a non-root run never calls modprobe"
+assert_eq 0 "$AGENT_ANSWER_INDEX" "a non-root run does not ask a question it cannot act on"
 assert_contains "$SKIPPED_NOTES" "modprobe drivetemp" "the note gives the command to run as root"
 assert_contains "$(flatten "$SKIPPED_NOTES")" "needs root to load" \
     "and says why it could not"
-NETRA_UID=0
-export NETRA_UID
+AGENT_UID=0
+export AGENT_UID
 
 # 6f. no SATA devices at all -> nothing is offered, because nothing would use it.
 R=$(dt_root dt_nosata)
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 SMART_ATA_DEVICES=""
 SKIPPED_NOTES=""
-NETRA_ANSWER_INDEX=0
-: >"$NETRA_SHIM_LOG"
+AGENT_ANSWER_INDEX=0
+: >"$AGENT_SHIM_LOG"
 run_capture plan_drivetemp
 assert_eq "" "$RUN_OUT" "an NVMe-only host is not offered drivetemp at all"
 assert_eq "" "$SKIPPED_NOTES" "and it is not reported as a degradation either"
@@ -290,16 +290,16 @@ assert_eq "" "$SKIPPED_NOTES" "and it is not reported as a degradation either"
 R=$(dt_root dt_already)
 mkdir -p "$R/sys/class/hwmon/hwmon0"
 printf 'drivetemp\n' >"$R/sys/class/hwmon/hwmon0/name"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 SMART_ATA_DEVICES="sda"
 SKIPPED_NOTES=""
-NETRA_ANSWER_INDEX=0
-: >"$NETRA_SHIM_LOG"
+AGENT_ANSWER_INDEX=0
+: >"$AGENT_SHIM_LOG"
 run_capture plan_drivetemp
 assert_contains "$RUN_OUT" "already loaded" "an already-loaded module says so"
-assert_eq "" "$(cat "$NETRA_SHIM_LOG")" "and calls modprobe not at all"
-unset NETRA_ANSWERS_FILE
+assert_eq "" "$(cat "$AGENT_SHIM_LOG")" "and calls modprobe not at all"
+unset AGENT_ANSWERS_FILE
 
 exit_case

@@ -305,7 +305,7 @@ function last(values: readonly (number | null)[]): number | null {
  *
  * Values mirror capNetNamespaced and capNetNoHostNS in
  * internal/agent/collector/containers.go, which picks between them from
- * NETRA_PID_HOST rather than from an errno -- the two failures are
+ * AGENT_PID_HOST rather than from an errno -- the two failures are
  * indistinguishable at the syscall.
  */
 const NETWORK_UNAVAILABLE: Record<string, string> = {

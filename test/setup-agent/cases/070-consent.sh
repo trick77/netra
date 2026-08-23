@@ -5,7 +5,7 @@
 # repeated run is byte-identical.
 #
 # There is no unattended mode. Every run here drives its prompts through
-# NETRA_ANSWERS_FILE, whose contents are the PROMPT ORDER contract from the
+# AGENT_ANSWERS_FILE, whose contents are the PROMPT ORDER contract from the
 # setup script header written down:
 #
 #   unsupported OS (unknown distro only) -> SYS_ADMIN (NVMe only)
@@ -26,8 +26,8 @@ mkshims "$TMP/shims"
 
 # plan_drivetemp's root branch, deterministically, on a laptop and a CI runner
 # alike. Without it the prompt count would depend on who is running the suite.
-NETRA_UID=0
-export NETRA_UID
+AGENT_UID=0
+export AGENT_UID
 
 # The three defaults on this fixture: SYS_ADMIN no, drivetemp yes, write gate
 # yes. Named rather than repeated so a change to the prompt sequence is one
@@ -50,13 +50,13 @@ mkroot() {
 ROOT=$(mkroot declined)
 CWD="$TMP/emptycwd"
 mkdir -p "$CWD"
-: >"$NETRA_SHIM_LOG"
+: >"$AGENT_SHIM_LOG"
 ANS_DECLINE=$(answers decline n n n)
 
 # A subshell so the case's own working directory is not disturbed. OUTPUT_DIR
 # defaults to ./netra-agent, so a declined run that leaked would leave it here.
-if RUN_OUT=$(cd "$CWD" && env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DECLINE" \
+if RUN_OUT=$(cd "$CWD" && env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DECLINE" \
     "$SH" "$SETUP" --start --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" 2>&1); then
     RUN_RC=0
@@ -79,7 +79,7 @@ assert_contains "$RUN_OUT" "compose.yaml   generated" \
 # would be wrong: preflight legitimately runs `docker info` and
 # `docker compose version` before any consent is needed, since a host with no
 # reachable daemon has nothing to consent to.
-SHIMLOG=$(cat "$NETRA_SHIM_LOG")
+SHIMLOG=$(cat "$AGENT_SHIM_LOG")
 assert_not_contains "$SHIMLOG" "up -d" \
     "--start never reaches the stack when the gate was declined"
 assert_not_contains "$SHIMLOG" "modprobe" "a declined run loads no kernel module either"
@@ -90,8 +90,8 @@ assert_eq "" "$(printf '%s\n' "$SHIMLOG" | grep -v '^docker info$' |
 # --- 2. a real run writes both files ------------------------------------------
 ROOT=$(mkroot real)
 OUT="$TMP/out"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --token nta_first --hub-url https://first.example \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
 assert_eq 0 "$RUN_RC" "the first real run succeeds"
@@ -109,8 +109,8 @@ cp "$OUT/compose.yaml" "$TMP/compose.first"
 # §12a: a re-run inside a provisioning script must not be able to silently
 # replace a working token. compose.yaml has no such protection because it is
 # derived — every byte of it comes from this run's detection.
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
 assert_eq 0 "$RUN_RC" "a re-run without --force still succeeds"
@@ -129,7 +129,7 @@ assert_contains "$(cat "$OUT/.env")" "nta_first" "the original token is still th
 assert_contains "$RUN_OUT" "overwritten" "the finish report states the compose/.env asymmetry"
 assert_contains "$RUN_OUT" "up -d" "the finish report gives the command that applies the change"
 
-# --- 3b. a re-run repairs NETRA_FS_MOUNTS without --force ----------------------
+# --- 3b. a re-run repairs AGENT_FS_MOUNTS without --force ----------------------
 #
 # The one derived line in .env. An agent installed before it existed measures
 # its filesystems through /netra/fs/<label> bind mounts and, with nothing to map
@@ -138,37 +138,37 @@ assert_contains "$RUN_OUT" "up -d" "the finish report gives the command that app
 #
 # Fixing that must not cost the operator their token. --force replaces the whole
 # file, so requiring it here would mean re-supplying a token to correct a label.
-grep -v '^NETRA_FS_MOUNTS=' "$OUT/.env" >"$TMP/env.nofs"
+grep -v '^AGENT_FS_MOUNTS=' "$OUT/.env" >"$TMP/env.nofs"
 cp "$TMP/env.nofs" "$OUT/.env"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
-assert_eq 0 "$RUN_RC" "a re-run against an .env with no NETRA_FS_MOUNTS succeeds"
+assert_eq 0 "$RUN_RC" "a re-run against an .env with no AGENT_FS_MOUNTS succeeds"
 REPAIRED=$(cat "$OUT/.env")
-assert_contains "$REPAIRED" "NETRA_FS_MOUNTS=root=/" \
+assert_contains "$REPAIRED" "AGENT_FS_MOUNTS=root=/" \
     "the re-run adds the label-to-mountpoint mapping without --force"
 assert_contains "$REPAIRED" "nta_first" "and the existing token survives the repair"
 assert_not_contains "$REPAIRED" "nta_second" "the re-run still cannot replace the token"
-assert_contains "$RUN_OUT" "NETRA_FS_MOUNTS updated" \
+assert_contains "$RUN_OUT" "AGENT_FS_MOUNTS updated" \
     "the change is stated rather than made silently"
 
 # A stale value is corrected, not appended to.
-sed 's|^NETRA_FS_MOUNTS=.*|NETRA_FS_MOUNTS=root=/wrong|' "$OUT/.env" >"$TMP/env.stale"
+sed 's|^AGENT_FS_MOUNTS=.*|AGENT_FS_MOUNTS=root=/wrong|' "$OUT/.env" >"$TMP/env.stale"
 cp "$TMP/env.stale" "$OUT/.env"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
-assert_eq 0 "$RUN_RC" "a re-run against a stale NETRA_FS_MOUNTS succeeds"
+assert_eq 0 "$RUN_RC" "a re-run against a stale AGENT_FS_MOUNTS succeeds"
 assert_not_contains "$(cat "$OUT/.env")" "root=/wrong" "the stale mapping is replaced"
-assert_eq 1 "$(grep -c '^NETRA_FS_MOUNTS=' "$OUT/.env")" \
-    "there is exactly one NETRA_FS_MOUNTS line, not one per run"
+assert_eq 1 "$(grep -c '^AGENT_FS_MOUNTS=' "$OUT/.env")" \
+    "there is exactly one AGENT_FS_MOUNTS line, not one per run"
 
-# --- 3c. a re-run repairs NETRA_PID_HOST without --force ----------------------
+# --- 3c. a re-run repairs AGENT_PID_HOST without --force ----------------------
 #
 # THE upgrade path, and the one that fails worst if left alone. A host set up
-# before `pid: host` became unconditional has NETRA_PID_HOST=0 in .env. This run
+# before `pid: host` became unconditional has AGENT_PID_HOST=0 in .env. This run
 # rewrites compose.yaml -- which now always grants the namespace -- but would
 # leave .env saying it does not have it.
 #
@@ -177,39 +177,39 @@ assert_eq 1 "$(grep -c '^NETRA_FS_MOUNTS=' "$OUT/.env")" \
 # any that DO resolve resolve to the wrong process. So the host would report zero
 # per-container traffic forever, and the message it shows says to re-run this
 # script -- the thing that just failed to fix it.
-sed 's|^NETRA_PID_HOST=.*|NETRA_PID_HOST=0|' "$OUT/.env" >"$TMP/env.oldpid"
+sed 's|^AGENT_PID_HOST=.*|AGENT_PID_HOST=0|' "$OUT/.env" >"$TMP/env.oldpid"
 cp "$TMP/env.oldpid" "$OUT/.env"
-assert_contains "$(cat "$OUT/.env")" "NETRA_PID_HOST=0" "the fixture is an .env from before the change"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+assert_contains "$(cat "$OUT/.env")" "AGENT_PID_HOST=0" "the fixture is an .env from before the change"
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
 assert_eq 0 "$RUN_RC" "a re-run against an .env from before pid: host succeeds"
 PIDREPAIRED=$(cat "$OUT/.env")
-assert_contains "$PIDREPAIRED" "NETRA_PID_HOST=1" \
-    "the re-run corrects NETRA_PID_HOST to match the compose it just wrote"
-assert_not_contains "$PIDREPAIRED" "NETRA_PID_HOST=0" "the stale value is replaced, not appended to"
-assert_eq 1 "$(grep -c '^NETRA_PID_HOST=' "$OUT/.env")" \
-    "there is exactly one NETRA_PID_HOST line, not one per run"
+assert_contains "$PIDREPAIRED" "AGENT_PID_HOST=1" \
+    "the re-run corrects AGENT_PID_HOST to match the compose it just wrote"
+assert_not_contains "$PIDREPAIRED" "AGENT_PID_HOST=0" "the stale value is replaced, not appended to"
+assert_eq 1 "$(grep -c '^AGENT_PID_HOST=' "$OUT/.env")" \
+    "there is exactly one AGENT_PID_HOST line, not one per run"
 assert_contains "$PIDREPAIRED" "nta_first" "and the existing token survives this repair too"
-assert_contains "$RUN_OUT" "NETRA_PID_HOST corrected" \
+assert_contains "$RUN_OUT" "AGENT_PID_HOST corrected" \
     "the change is stated rather than made silently"
 
-# An .env that has no NETRA_PID_HOST line at all -- older still -- gains one.
-grep -v '^NETRA_PID_HOST=' "$OUT/.env" >"$TMP/env.nopid"
+# An .env that has no AGENT_PID_HOST line at all -- older still -- gains one.
+grep -v '^AGENT_PID_HOST=' "$OUT/.env" >"$TMP/env.nopid"
 cp "$TMP/env.nopid" "$OUT/.env"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --token nta_second --hub-url https://second.example \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
-assert_eq 0 "$RUN_RC" "a re-run against an .env with no NETRA_PID_HOST succeeds"
-assert_contains "$(cat "$OUT/.env")" "NETRA_PID_HOST=1" "the missing line is added"
+assert_eq 0 "$RUN_RC" "a re-run against an .env with no AGENT_PID_HOST succeeds"
+assert_contains "$(cat "$OUT/.env")" "AGENT_PID_HOST=1" "the missing line is added"
 
 cp "$OUT/.env" "$TMP/env.first"
 
 # --- 4. --force overwrites .env ------------------------------------------------
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --force --token nta_second --hub-url https://second.example \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
 assert_eq 0 "$RUN_RC" "a --force run succeeds"
@@ -219,8 +219,8 @@ assert_contains "$(cat "$OUT/.env")" "https://second.example" "--force replaces 
 # --- 5. idempotency: a second identical --force run changes nothing ------------
 cp "$OUT/.env" "$TMP/env.force1"
 cp "$OUT/compose.yaml" "$TMP/compose.force1"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --force --token nta_second --hub-url https://second.example \
     --template-dir "$TEMPLATES" --output-dir "$OUT"
 assert_eq 0 "$RUN_RC" "the repeated --force run succeeds"
@@ -243,7 +243,7 @@ fi
 # agent collecting less than the operator believes. There is no unattended mode
 # to fall back to, so the refusal has to name what to use instead.
 ROOT=$(mkroot notty)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-notty"
 assert_eq 1 "$RUN_RC" "no terminal exits non-zero"
@@ -260,8 +260,8 @@ assert_file_absent "$TMP/out-notty/compose.yaml" "nothing is written when consen
 # finish report cheerfully printing `cd <dir> && docker compose up -d`.
 ROOT=$(mkroot decline)
 ANS=$(answers decline n n n n)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" \
     --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-decline"
 assert_eq 0 "$RUN_RC" "declining every prompt is not an error"
@@ -289,10 +289,10 @@ assert_contains "$RUN_OUT" "Skipped or degraded" "everything declined is reporte
 
 # (a) drivetemp accepted, works, persisted, THEN the gate is declined.
 ROOT=$(mkroot declinedt)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers declinedt n y n)" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
-    NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers declinedt n y n)" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    AGENT_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-declinedt"
 assert_eq 0 "$RUN_RC" "declining the gate after drivetemp was loaded is not an error"
@@ -306,10 +306,10 @@ assert_contains "$(flatten "$RUN_OUT")" "modprobe -r drivetemp && rm /etc/module
 # is still loaded and no file was ever written. The `|| true` on that unload
 # exists precisely because this can happen.
 ROOT=$(mkroot declinedtstuck)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers declinedtstuck n y n)" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
-    NETRA_SHIM_MODPROBE_R_RC=1 \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers declinedtstuck n y n)" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    AGENT_SHIM_MODPROBE_R_RC=1 \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-declinedtstuck"
 assert_eq 0 "$RUN_RC" "a drivetemp module that will not unload is not a fatal error"
@@ -325,9 +325,9 @@ assert_file_absent "$ROOT/etc/modules-load.d/drivetemp.conf" "and indeed none wa
 # (c) drivetemp declined outright: the host really is untouched, and the run is
 # allowed to say so. This is the control for both cases above.
 ROOT=$(mkroot declinedtno)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers declinedtno n n n)" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers declinedtno n n n)" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-declinedtno"
 assert_contains "$RUN_OUT" "Nothing was changed" \
@@ -342,13 +342,13 @@ ROOT=$(mkroot declinestart)
 mkdir -p "$TMP/out-stale"
 printf 'services: {}\n' >"$TMP/out-stale/compose.yaml"
 ANS=$(answers declinestart n n n n)
-: >"$NETRA_SHIM_LOG"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --start \
+: >"$AGENT_SHIM_LOG"
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --start \
     --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-stale"
 assert_eq 0 "$RUN_RC" "declining the gate with --start is not an error"
-assert_not_contains "$(cat "$NETRA_SHIM_LOG")" "up -d" \
+assert_not_contains "$(cat "$AGENT_SHIM_LOG")" "up -d" \
     "a declined write gate never starts a stale compose.yaml"
 assert_eq "services: {}" "$(cat "$TMP/out-stale/compose.yaml")" \
     "and the stale file is left exactly as it was"
@@ -356,60 +356,60 @@ assert_eq "services: {}" "$(cat "$TMP/out-stale/compose.yaml")" \
 # --- 8. a run with no token warns rather than dying ---------------------------
 #
 # The hub mints tokens; the setup script never invents one. Dying here would
-# waste every answer the operator already gave, so NETRA_TOKEN is written empty
+# waste every answer the operator already gave, so AGENT_TOKEN is written empty
 # and the report says the agent will refuse to start until it is filled in. The
 # same treatment applies to an empty hub URL, which is equally fatal.
 ROOT=$(mkroot notoken)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --hub-url https://h \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-notoken"
 assert_eq 0 "$RUN_RC" "a run with no token still completes"
 assert_contains "$RUN_OUT" "refuse to start" "the missing token is called out loudly"
-assert_contains "$(cat "$TMP/out-notoken/.env")" "NETRA_TOKEN=" "NETRA_TOKEN is written empty"
+assert_contains "$(cat "$TMP/out-notoken/.env")" "AGENT_TOKEN=" "AGENT_TOKEN is written empty"
 assert_not_contains "$RUN_OUT" "nta_" "no token value is ever printed"
 
 ROOT=$(mkroot nohuburl)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --token nta_x \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --token nta_x \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-nohub"
 assert_eq 0 "$RUN_RC" "a run with no hub URL still completes"
 assert_contains "$RUN_OUT" "no hub URL" "the missing hub URL is called out"
-assert_contains "$(cat "$TMP/out-nohub/.env")" "NETRA_HUB_URL=" "NETRA_HUB_URL is written empty"
+assert_contains "$(cat "$TMP/out-nohub/.env")" "AGENT_HUB_URL=" "AGENT_HUB_URL is written empty"
 
 # --- 8b. the free-text values are asked for, and each prompt advances ---------
 #
 # The bug this pins: netra_ask_value used to print its answer for the caller to
 # capture with `VAR=$(netra_ask_value ...)`, which runs it in a SUBSHELL - so
-# NETRA_VALUE_INDEX never advanced in the parent, every prompt read line 1
+# AGENT_VALUE_INDEX never advanced in the parent, every prompt read line 1
 # forever, and the host-type validation loop spun on it without end. A single
 # values file with four DIFFERENT lines is what catches that: with the bug, all
 # four values are the hub URL and the run never terminates.
 ROOT=$(mkroot values)
 VALS=$(values four https://vals.example "Gravelines, FR" OVH vps)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" NETRA_VALUES_FILE="$VALS" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" AGENT_VALUES_FILE="$VALS" \
     "$SH" "$SETUP" --token nta_x \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-values"
 assert_eq 0 "$RUN_RC" "a run driven by a values file completes"
 VALENV=$(cat "$TMP/out-values/.env")
-assert_contains "$VALENV" "NETRA_HUB_URL=https://vals.example" "the hub URL is the first value"
-assert_contains "$VALENV" "NETRA_LOCATION=Gravelines, FR" "the location is the second"
-assert_contains "$VALENV" "NETRA_PROVIDER=OVH" "the provider is the third"
-assert_contains "$VALENV" "NETRA_HOST_TYPE=vps" "the host type is the fourth"
+assert_contains "$VALENV" "AGENT_HUB_URL=https://vals.example" "the hub URL is the first value"
+assert_contains "$VALENV" "AGENT_LOCATION=Gravelines, FR" "the location is the second"
+assert_contains "$VALENV" "AGENT_PROVIDER=OVH" "the provider is the third"
+assert_contains "$VALENV" "AGENT_HOST_TYPE=vps" "the host type is the fourth"
 # Never asked for, so it stays blank however many values are supplied.
-assert_contains "$VALENV" "NETRA_FACILITY=" "the facility is not asked for"
+assert_contains "$VALENV" "AGENT_FACILITY=" "the facility is not asked for"
 
 # An invalid host type is re-asked rather than written to .env, and an empty
 # answer ends the loop rather than re-taking the rejected value as its default.
 ROOT=$(mkroot badhosttype)
 VALS=$(values bad https://vals.example "Gravelines, FR" OVH nas "")
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" NETRA_VALUES_FILE="$VALS" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" AGENT_VALUES_FILE="$VALS" \
     "$SH" "$SETUP" --token nta_x \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-badht"
 assert_eq 0 "$RUN_RC" "an invalid host type does not abort the run"
 assert_contains "$RUN_OUT" "is not one of bare_metal" "the invalid host type is rejected out loud"
-assert_eq "NETRA_HOST_TYPE=" "$(grep '^NETRA_HOST_TYPE=' "$TMP/out-badht/.env")" \
+assert_eq "AGENT_HOST_TYPE=" "$(grep '^AGENT_HOST_TYPE=' "$TMP/out-badht/.env")" \
     "a rejected host type is left blank rather than written to .env"
 
 # --- 8c. a value with no placeholder to land in is REPORTED, not swallowed ----
@@ -423,19 +423,19 @@ ROOT=$(mkroot oldtmpl)
 OLDTMPL="$TMP/oldtmpl"
 mkdir -p "$OLDTMPL"
 cp "$TEMPLATES/compose.yaml.tmpl" "$OLDTMPL/"
-grep -v '^NETRA_LOCATION=' "$TEMPLATES/env.tmpl" >"$OLDTMPL/env.tmpl"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --token nta_x \
+grep -v '^AGENT_LOCATION=' "$TEMPLATES/env.tmpl" >"$OLDTMPL/env.tmpl"
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --token nta_x \
     --hub-url https://h --location "Gravelines, FR" \
     --template-dir "$OLDTMPL" --output-dir "$TMP/out-oldtmpl"
 assert_eq 0 "$RUN_RC" "an out-of-date template is not a hard failure"
-assert_contains "$RUN_OUT" "NETRA_LOCATION is not in the rendered .env" \
+assert_contains "$RUN_OUT" "AGENT_LOCATION is not in the rendered .env" \
     "a value that found no placeholder is named"
 assert_contains "$RUN_OUT" "newer than the release" "the note explains why it happened"
 # ...and the values that DID land say nothing, or the note is noise.
-assert_not_contains "$RUN_OUT" "NETRA_PROVIDER is not in the rendered .env" \
+assert_not_contains "$RUN_OUT" "AGENT_PROVIDER is not in the rendered .env" \
     "a value that was never given is not reported as lost"
-assert_not_contains "$RUN_OUT" "NETRA_HUB_URL is not in the rendered .env" \
+assert_not_contains "$RUN_OUT" "AGENT_HUB_URL is not in the rendered .env" \
     "a value that landed correctly is not reported as lost"
 
 # --- 8d. a write that FAILS is a failure, not a summary claiming success ------
@@ -450,38 +450,38 @@ ROOT=$(mkroot writefail)
 BLOCKED="$TMP/blocked"
 mkdir -p "$BLOCKED"
 chmod 500 "$BLOCKED"
-: >"$NETRA_SHIM_LOG"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --start \
+: >"$AGENT_SHIM_LOG"
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --start \
     --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$BLOCKED/out"
 chmod 700 "$BLOCKED"
 assert_eq 1 "$RUN_RC" "a write that cannot be performed exits non-zero"
 assert_contains "$RUN_OUT" "could not create" "the failure names what it could not do"
 assert_not_contains "$RUN_OUT" "Summary" "a failed write does not reach the summary"
-assert_not_contains "$(cat "$NETRA_SHIM_LOG")" "up -d" \
+assert_not_contains "$(cat "$AGENT_SHIM_LOG")" "up -d" \
     "and --start never runs against files that were not written"
 
 # --- 8e. no token is not a hard error, and the run still finishes -------------
 #
 # The setup script never invents a token: the hub mints them and stores only a
 # SHA-256. An operator who has not minted one yet must still be able to finish
-# the run rather than have every answer already given thrown away — NETRA_TOKEN
+# the run rather than have every answer already given thrown away — AGENT_TOKEN
 # is written empty with a loud note instead. Every other test passes --token,
 # which is why this needs its own.
 #
-# NETRA_TTY points at /dev/null: READABLE (so the no-terminal branch is not the
+# AGENT_TTY points at /dev/null: READABLE (so the no-terminal branch is not the
 # one under test) but instantly EOF, so the hidden read returns an empty token
 # rather than hanging.
 ROOT=$(mkroot notoken)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY=/dev/null \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --hub-url https://h \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY=/dev/null \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-notoken"
 assert_eq 0 "$RUN_RC" "a run with no token completes rather than dying"
 assert_contains "$RUN_OUT" "Summary" "the run reaches the end"
 assert_file_present "$TMP/out-notoken/.env" ".env is still written"
-assert_contains "$(cat "$TMP/out-notoken/.env")" "NETRA_TOKEN=" \
-    "NETRA_TOKEN is present and empty, not invented"
+assert_contains "$(cat "$TMP/out-notoken/.env")" "AGENT_TOKEN=" \
+    "AGENT_TOKEN is present and empty, not invented"
 
 # --- 8f. an .env left alone is not diagnosed as a broken template -------------
 #
@@ -490,13 +490,13 @@ assert_contains "$(cat "$TMP/out-notoken/.env")" "NETRA_TOKEN=" \
 # the template for every value that differed from it.
 ROOT=$(mkroot recheck)
 OUT2="$TMP/out-recheck"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" \
     --token nta_first --hub-url https://first.example \
     --template-dir "$TEMPLATES" --output-dir "$OUT2"
 assert_eq 0 "$RUN_RC" "the first run succeeds"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" \
     --token nta_second --hub-url https://second.example --location "Zurich, CH" \
     --template-dir "$TEMPLATES" --output-dir "$OUT2"
 assert_eq 0 "$RUN_RC" "the re-run succeeds"
@@ -514,8 +514,8 @@ assert_not_contains "$RUN_OUT" "is not in the rendered .env" \
 # Driven with an EMPTY values file and no --token: with the bug, the run asks
 # and writes blanks; with the fix, nothing is asked because nothing is empty.
 ROOT=$(mkroot reuse)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --token nta_first --hub-url https://first.example \
     --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-reuse"
@@ -523,20 +523,20 @@ assert_eq 0 "$RUN_RC" "the first run completes"
 
 # The re-run: no flags carrying any value, and no tty to be asked at.
 ROOT=$(mkroot reuse2)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-reuse"
 assert_eq 0 "$RUN_RC" "the re-run completes with no values supplied"
 
 REUSEENV=$(cat "$TMP/out-reuse/.env")
-assert_contains "$REUSEENV" "NETRA_TOKEN=nta_first" "the existing token survives the re-run"
-assert_contains "$REUSEENV" "NETRA_HUB_URL=https://first.example" "the existing hub URL survives"
-assert_contains "$REUSEENV" "NETRA_LOCATION=Zurich, CH" "the existing location survives"
+assert_contains "$REUSEENV" "AGENT_TOKEN=nta_first" "the existing token survives the re-run"
+assert_contains "$REUSEENV" "AGENT_HUB_URL=https://first.example" "the existing hub URL survives"
+assert_contains "$REUSEENV" "AGENT_LOCATION=Zurich, CH" "the existing location survives"
 
 # What the operator sees: the keys reused, and never the token itself.
 assert_contains "$RUN_OUT" "reused from .env" "the re-run says what it reused"
-assert_contains "$RUN_OUT" "NETRA_TOKEN" "the reused token is named"
+assert_contains "$RUN_OUT" "AGENT_TOKEN" "the reused token is named"
 assert_not_contains "$RUN_OUT" "nta_first" "the token VALUE is never printed"
 
 # The point of the whole change: the re-run did not warn that it was about to
@@ -548,41 +548,41 @@ assert_not_contains "$RUN_OUT" "will NOT be written" \
 # pre-filling them would silently answer the question they asked to be asked.
 # A rotated token must land.
 ROOT=$(mkroot reuse3)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --force --token nta_rotated --hub-url https://second.example \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-reuse"
 assert_eq 0 "$RUN_RC" "a --force re-run completes"
 ROTENV=$(cat "$TMP/out-reuse/.env")
-assert_contains "$ROTENV" "NETRA_TOKEN=nta_rotated" "--force replaces the token"
+assert_contains "$ROTENV" "AGENT_TOKEN=nta_rotated" "--force replaces the token"
 assert_not_contains "$ROTENV" "nta_first" "the old token is gone"
 
 # --- 8h. a key the .env leaves EMPTY is not asked for either -------------------
 #
 # The worst shape of the original defect, and the one 8g does not reach because
 # every value there arrives by flag. A first run with NO token writes
-# NETRA_TOKEN= empty, which is an allowed path. The operator then mints a token
+# AGENT_TOKEN= empty, which is an allowed path. The operator then mints a token
 # and re-runs without --force: the value is empty, so seeding cannot fill it,
 # and the old prompt would take the secret at a hidden prompt and drop it in
 # write_outputs. It must be named, not asked for.
 ROOT=$(mkroot emptyseed)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --hub-url https://first.example \
     --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-emptyseed"
 assert_eq 0 "$RUN_RC" "a first run with no token completes"
-assert_eq "NETRA_TOKEN=" "$(grep '^NETRA_TOKEN=' "$TMP/out-emptyseed/.env")" \
+assert_eq "AGENT_TOKEN=" "$(grep '^AGENT_TOKEN=' "$TMP/out-emptyseed/.env")" \
     "the first run leaves the token empty"
 
 ROOT=$(mkroot emptyseed2)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-emptyseed"
 assert_eq 0 "$RUN_RC" "the re-run completes"
 assert_contains "$RUN_OUT" "are EMPTY in it" "the empty key is named rather than asked for"
-assert_contains "$RUN_OUT" "NETRA_TOKEN" "and the token is the key named"
+assert_contains "$RUN_OUT" "AGENT_TOKEN" "and the token is the key named"
 # resolve_token's own "no token was provided" complaint is the observable that
 # separates skipped from attempted: reached, it fires; skipped, it cannot. (The
 # hidden prompt itself is not observable here -- the harness has no tty, so
@@ -591,7 +591,7 @@ assert_contains "$RUN_OUT" "NETRA_TOKEN" "and the token is the key named"
 # the skip and watching this assertion, and only this one, go red.)
 assert_not_contains "$RUN_OUT" "no agent token was provided" \
     "the token is not collected on a run that cannot write it"
-assert_contains "$RUN_OUT" "NETRA_LOCATION" "the values it CAN reuse are still reused"
+assert_contains "$RUN_OUT" "AGENT_LOCATION" "the values it CAN reuse are still reused"
 
 # --- 8i. --force keeps the dimensions the .env already had --------------------
 #
@@ -601,19 +601,19 @@ assert_contains "$RUN_OUT" "NETRA_LOCATION" "the values it CAN reuse are still r
 #
 #   setup-agent.sh --force --token X --hub-url Y
 #
-# rewrote NETRA_LOCATION=, NETRA_PROVIDER= and NETRA_HOST_TYPE= empty. Two ways
+# rewrote AGENT_LOCATION=, AGENT_PROVIDER= and AGENT_HOST_TYPE= empty. Two ways
 # to reach it, and the ordinary one is interactive: netra_ask_value falls back
 # to the variable's current value, which was empty, so pressing Enter at "Where
 # is this host" ERASED it -- while every other prompt in this script treats
 # Enter as "leave it alone". The shape below is the other way: an unreadable
 # $P_TTY makes netra_ask_value return empty without printing anything at all.
 #
-# Asserted on the RESULTING .env, never on prompt strings. With NETRA_TTY
+# Asserted on the RESULTING .env, never on prompt strings. With AGENT_TTY
 # pointing at an unopenable path, netra_ask_value prints nothing whatever it
 # does, so a prompt-text assertion here would pass with the fix removed.
 ROOT=$(mkroot forceseed)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --token nta_first --hub-url https://first.example \
     --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-forceseed"
@@ -622,39 +622,39 @@ assert_eq 0 "$RUN_RC" "the first run completes"
 # The rotation: a new token and nothing else. Every dimension is left to the
 # prompts, which cannot be answered here.
 ROOT=$(mkroot forceseed2)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --force --token nta_second --hub-url https://second.example \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-forceseed"
 assert_eq 0 "$RUN_RC" "the --force rotation completes"
 
 FORCEENV=$(cat "$TMP/out-forceseed/.env")
-assert_contains "$FORCEENV" "NETRA_LOCATION=Zurich, CH" "--force keeps the location it was not given"
-assert_contains "$FORCEENV" "NETRA_PROVIDER=Hetzner" "--force keeps the provider"
-assert_contains "$FORCEENV" "NETRA_HOST_TYPE=bare_metal" "--force keeps the host type"
+assert_contains "$FORCEENV" "AGENT_LOCATION=Zurich, CH" "--force keeps the location it was not given"
+assert_contains "$FORCEENV" "AGENT_PROVIDER=Hetzner" "--force keeps the provider"
+assert_contains "$FORCEENV" "AGENT_HOST_TYPE=bare_metal" "--force keeps the host type"
 
 # What --force IS for still works: the flags win over the seeded values.
-assert_contains "$FORCEENV" "NETRA_TOKEN=nta_second" "--force still replaces the token"
-assert_contains "$FORCEENV" "NETRA_HUB_URL=https://second.example" "--force still replaces the hub URL"
+assert_contains "$FORCEENV" "AGENT_TOKEN=nta_second" "--force still replaces the token"
+assert_contains "$FORCEENV" "AGENT_HUB_URL=https://second.example" "--force still replaces the hub URL"
 assert_not_contains "$FORCEENV" "nta_first" "the old token is gone"
 
 # ...and the message about what was reused names only what was actually taken.
 # A key the file holds and a FLAG answered is not reused: on the reuse path
 # that distinction was invisible (the flag's value was dropped too), but here
 # the flag is what gets written, so naming it would be false.
-assert_not_contains "$RUN_OUT" "reused from .env: NETRA_HUB_URL" \
+assert_not_contains "$RUN_OUT" "reused from .env: AGENT_HUB_URL" \
     "a key the flag supplied is not reported as reused"
 
 # The hub URL survives a --force run that did not supply one. Every other case
 # here passes --hub-url, so without this the seeded-HUB_URL branch is never
 # exercised and the fix could be half-removed with the suite still green.
 ROOT=$(mkroot forceseed3)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --force --token nta_third \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-forceseed"
 assert_eq 0 "$RUN_RC" "a --force run with no hub URL completes"
-assert_contains "$(cat "$TMP/out-forceseed/.env")" "NETRA_HUB_URL=https://second.example" \
+assert_contains "$(cat "$TMP/out-forceseed/.env")" "AGENT_HUB_URL=https://second.example" \
     "--force keeps the hub URL it was not given"
 assert_not_contains "$RUN_OUT" "no hub URL was given" \
     "and does not warn about a hub URL it still has"
@@ -665,12 +665,12 @@ assert_not_contains "$RUN_OUT" "no hub URL was given" \
 # and an old token already overwritten on disk. Rotating stays explicit --
 # --token, or typing one at the prompt, both covered above.
 ROOT=$(mkroot forceseed4)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --force --hub-url https://fourth.example \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-forceseed"
 assert_eq 0 "$RUN_RC" "a --force run with no token completes"
-assert_contains "$(cat "$TMP/out-forceseed/.env")" "NETRA_TOKEN=nta_third" \
+assert_contains "$(cat "$TMP/out-forceseed/.env")" "AGENT_TOKEN=nta_third" \
     "--force keeps the existing token when it is not asked to replace one"
 assert_not_contains "$RUN_OUT" "written empty" \
     "and does not threaten to blank a token it is keeping"
@@ -681,20 +681,20 @@ assert_not_contains "$RUN_OUT" "nta_third" "the kept token's value is never prin
 # A flag still beats the file, and is not re-asked: --location here must land
 # even though the .env holds a different one.
 ROOT=$(mkroot forceseed5)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --force --token nta_fourth --hub-url https://fifth.example \
     --location "Bern, CH" \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-forceseed"
 assert_eq 0 "$RUN_RC" "a --force run with a location flag completes"
-assert_contains "$(cat "$TMP/out-forceseed/.env")" "NETRA_LOCATION=Bern, CH" \
+assert_contains "$(cat "$TMP/out-forceseed/.env")" "AGENT_LOCATION=Bern, CH" \
     "a flag beats the value seeded from the file"
 
 # The sensor is NOT kept, and that is deliberate: detect_sensors has already
 # run and reported by the time configure executes, so restoring the old value
 # here would re-pin a chip this run may have just described as auto-selected --
 # or one no longer on the host at all.
-assert_eq "NETRA_PRIMARY_SENSOR=" "$(grep '^NETRA_PRIMARY_SENSOR=' "$TMP/out-forceseed/.env")" \
+assert_eq "AGENT_PRIMARY_SENSOR=" "$(grep '^AGENT_PRIMARY_SENSOR=' "$TMP/out-forceseed/.env")" \
     "--force leaves the primary sensor to be re-detected rather than re-pinning it"
 
 # --- 9. --token-file ----------------------------------------------------------
@@ -705,16 +705,16 @@ assert_eq "NETRA_PRIMARY_SENSOR=" "$(grep '^NETRA_PRIMARY_SENSOR=' "$TMP/out-for
 # the logs to explain it.
 ROOT=$(mkroot tokenfile)
 printf 'nta_fromfile\r\n' >"$TMP/token.txt"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --token-file "$TMP/token.txt" --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-tokenfile"
 assert_eq 0 "$RUN_RC" "--token-file completes"
-assert_eq "NETRA_TOKEN=nta_fromfile" \
-    "$(grep '^NETRA_TOKEN=' "$TMP/out-tokenfile/.env")" \
+assert_eq "AGENT_TOKEN=nta_fromfile" \
+    "$(grep '^AGENT_TOKEN=' "$TMP/out-tokenfile/.env")" \
     "the CR and the trailing newline are stripped from a token file"
 
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     "$SH" "$SETUP" --token-file "$TMP/nosuch" --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-tf2"
 assert_eq 1 "$RUN_RC" "a missing --token-file is a hard error"
@@ -724,7 +724,7 @@ assert_contains "$RUN_OUT" "does not exist" "the missing token file failure says
 assert_not_contains "$RUN_OUT" "Preflight" "an unreadable token file fails before detection"
 
 : >"$TMP/token-empty.txt"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     "$SH" "$SETUP" --token-file "$TMP/token-empty.txt" --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-tf3"
 assert_eq 1 "$RUN_RC" "an empty --token-file is a hard error, not an empty token"
@@ -736,24 +736,24 @@ assert_eq 1 "$RUN_RC" "an empty --token-file is a hard error, not an empty token
 # netra_exec with a -f pointing at the file just rendered (the setup script cannot
 # cd, so an implicit ./compose.yaml would start the wrong thing or nothing).
 ROOT=$(mkroot started)
-: >"$NETRA_SHIM_LOG"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+: >"$AGENT_SHIM_LOG"
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --start --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-start"
 assert_eq 0 "$RUN_RC" "a --start run succeeds"
-assert_contains "$(cat "$NETRA_SHIM_LOG")" "compose -f $TMP/out-start/compose.yaml up -d" \
+assert_contains "$(cat "$AGENT_SHIM_LOG")" "compose -f $TMP/out-start/compose.yaml up -d" \
     "--start runs docker compose against the rendered file"
 
 # The v1 spelling is a different binary, not a different subcommand.
 ROOT=$(mkroot startedv1)
-: >"$NETRA_SHIM_LOG"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
-    NETRA_SHIM_COMPOSE_V2_RC=1 "$SH" "$SETUP" --start --token nta_x \
+: >"$AGENT_SHIM_LOG"
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
+    AGENT_SHIM_COMPOSE_V2_RC=1 "$SH" "$SETUP" --start --token nta_x \
     --hub-url https://h --template-dir "$TEMPLATES" --output-dir "$TMP/out-start1"
 assert_eq 0 "$RUN_RC" "a --start run on a compose v1 host succeeds"
-assert_contains "$(cat "$NETRA_SHIM_LOG")" \
+assert_contains "$(cat "$AGENT_SHIM_LOG")" \
     "docker-compose -f $TMP/out-start1/compose.yaml up -d" \
     "--start uses docker-compose where that is the only spelling available"
 assert_contains "$RUN_OUT" "docker-compose up -d" \
@@ -769,8 +769,8 @@ cat >"$ROOT/proc/1/mountinfo" <<'EOF'
 29 25 0:24 / /run rw,nosuid shared:5 - tmpfs tmpfs rw
 33 25 0:44 / /var/lib/docker/overlay2/8a1/merged rw - overlay overlay rw
 EOF
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --token nta_x --hub-url https://h \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-conly"
 assert_eq 0 "$RUN_RC" "a container-only host is not an error"
 assert_contains "$RUN_OUT" "none accepted" "the run says no filesystem was accepted"
@@ -789,9 +789,9 @@ assert_contains "$COMPOSE_BODY" "docker.sock" "the Docker socket is still mounte
 # D-Bus socket and SYS_RAWIO are enabled automatically, on the same argument
 # that was always made for the Docker socket.
 ROOT=$(mkroot yesdefaults)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
-    NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
+    AGENT_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-yesdef"
 assert_eq 0 "$RUN_RC" "a defaults run on an NVMe host succeeds"
@@ -834,8 +834,8 @@ assert_is_file "$ROOT/.netra" "the marker files are created"
 # file exhausted" rather than passing quietly.
 ROOT=$(mkroot grantsysadmin)
 ANS=$(answers sysadmin y y)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --sys-admin \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --sys-admin \
     --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-sysadmin"
 assert_eq 0 "$RUN_RC" "--sys-admin succeeds while consuming no answer of its own"
@@ -851,8 +851,8 @@ assert_contains "$SABODY" "/dev/nvme0" "--sys-admin also brings the NVMe control
 # drag SYS_ADMIN along, which is the failure this pairing has always guarded.
 ROOT=$(mkroot grantpidhost)
 ANS=$(answers pidhost n y y)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --pid-host \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --pid-host \
     --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-pidhost"
 assert_eq 0 "$RUN_RC" "--pid-host is still accepted, and consumes no answer of its own"
@@ -869,8 +869,8 @@ assert_not_contains "$PHBODY" "SYS_ADMIN" "--pid-host does not also grant SYS_AD
 # "no" quietly turns an advisory floor into a hard refusal.
 ROOT=$(mkroot unsupportedgrant)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --unsupported-os \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" "$SH" "$SETUP" --unsupported-os \
     --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-unsupported"
 assert_eq 0 "$RUN_RC" "--unsupported-os completes on a distro netra does not know"
@@ -900,8 +900,8 @@ assert_contains "$UONOTES" "not a distribution/version" \
 ROOT=$(mkroot unsupportedcount)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
 ANS=$(answers unsupported3 y y y)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --unsupported-os \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --unsupported-os \
     --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-unscount"
 assert_eq 0 "$RUN_RC" "--unsupported-os consumes no answer: prompt 1 is skipped entirely"
@@ -916,8 +916,8 @@ assert_not_contains "$RUN_OUT" "Continue on an unsupported OS?" \
 # warning here would make every provisioning script that passes the flag
 # defensively look degraded on a perfectly supported host.
 ROOT=$(mkroot unsupportednoop)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
     "$SH" "$SETUP" --unsupported-os --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-unsnoop"
 assert_eq 0 "$RUN_RC" "--unsupported-os on a supported distro succeeds"
@@ -950,10 +950,10 @@ assert_contains "$RUN_OUT" "--unsupported-os" "--help documents --unsupported-os
 # the first run below and lie on the second.
 ROOT=$(mkroot ledger)
 LOUT="$TMP/out-ledger"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
-    NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    AGENT_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$LOUT"
 assert_eq 0 "$RUN_RC" "the first run succeeds"
@@ -978,9 +978,9 @@ assert_not_contains "$RUN_OUT" "nta_x" "the ledger never prints the token"
 # The teeth. A ledger assembled in print_finish would repeat the first run's
 # list; this one has to report exactly what the second run did, which is
 # overwrite one derived file and nothing else.
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers ledger2 n y)" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers ledger2 n y)" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$LOUT"
 assert_eq 0 "$RUN_RC" "the re-run succeeds"
@@ -1006,9 +1006,9 @@ assert_not_contains "$LEDGER2" "loaded the drivetemp kernel module" \
 # point the operator declined, the first is about the ledger. Case 7b (c) above
 # pins the other one on the same path.
 ROOT=$(mkroot ledgernone)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers ledgernone n n n)" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers ledgernone n n n)" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-ledgernone"
 assert_eq 0 "$RUN_RC" "declining everything is not an error"
@@ -1020,10 +1020,10 @@ assert_not_contains "$RUN_OUT" "Changed on this host:" \
 # A declined gate AFTER drivetemp was loaded still owes the operator the two
 # entries: the ledger is printed before the early return for a declined write.
 ROOT=$(mkroot ledgerdt)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers ledgerdt n y n)" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
-    NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers ledgerdt n y n)" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    AGENT_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-ledgerdt"
 assert_eq 0 "$RUN_RC" "declining the gate after loading the module is not an error"
@@ -1048,9 +1048,9 @@ assert_not_contains "$LEDGER3" "wrote $TMP/out-ledgerdt/compose.yaml" \
 # claim it created anything.
 ROOT=$(mkroot ledgerolddir)
 mkdir -p "$ROOT/.netra"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers ledgerolddir n n y)" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers ledgerolddir n n y)" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-olddir"
 assert_eq 0 "$RUN_RC" "a host with the old marker directory still installs"
@@ -1081,9 +1081,9 @@ assert_contains "$(cat "$TMP/out-olddir/compose.yaml")" "/.netra" \
 # exhausted inode table, a quota or a relabelled parent.
 ROOT=$(mkroot ledgernomarker)
 ln -s /nonexistent-dir/marker "$ROOT/.netra"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers ledgernomarker n n y)" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers ledgernomarker n n y)" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-nomarker"
 assert_eq 0 "$RUN_RC" "a marker that cannot be created is not a failed run"
@@ -1102,11 +1102,11 @@ assert_not_contains "$(flatten "$RUN_OUT")" "created the marker file /.netra" \
 # only makes sense ahead of the compose output. So it prints its own entry
 # rather than being left out of the ledger entirely.
 ROOT=$(mkroot ledgerstart)
-: >"$NETRA_SHIM_LOG"
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS_DEFAULT" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
-    NETRA_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
+: >"$AGENT_SHIM_LOG"
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS_DEFAULT" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+    AGENT_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
     "$SH" "$SETUP" --start --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-ledgerstart"
 assert_eq 0 "$RUN_RC" "a --start run succeeds"
@@ -1115,9 +1115,9 @@ assert_contains "$(flatten "$RUN_OUT")" \
     "starting the stack is reported as a change"
 # And a declined gate never gets that line, because it never started anything.
 ROOT=$(mkroot ledgernostart)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$(answers ledgernostart n n n)" \
-    NETRA_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$(answers ledgernostart n n n)" \
+    AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
     "$SH" "$SETUP" --start --token nta_x --hub-url https://h \
     --template-dir "$TEMPLATES" --output-dir "$TMP/out-ledgernostart"
 assert_not_contains "$RUN_OUT" "started the agent from" \

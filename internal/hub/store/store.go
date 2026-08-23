@@ -15,7 +15,7 @@ type Store struct {
 	// dsn is what this store was opened with. Kept so a test can open a
 	// SECOND pool on the same database -- which since OpenTest began handing
 	// out a per-test clone is no longer the same thing as re-reading
-	// NETRA_TEST_DSN. See OpenTestSibling.
+	// BACKEND_TEST_DSN. See OpenTestSibling.
 	dsn string
 
 	// unscheduleJobs makes Migrate leave TimescaleDB's policy jobs registered

@@ -130,7 +130,7 @@ func TestCheckHubSurvivesEveryRejection(t *testing.T) {
 }
 
 // An unreachable hub is a transport error rather than a status, and it is the
-// one an operator hits most: a typo in NETRA_HUB_URL.
+// one an operator hits most: a typo in AGENT_HUB_URL.
 func TestCheckHubSurvivesAnUnreachableHub(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := srv.URL

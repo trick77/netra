@@ -64,7 +64,7 @@ func TestProcsUnsetWhenTooFewProcessesToBeAHost(t *testing.T) {
 	}
 }
 
-// NETRA_PID_HOST is the operator's own statement, and setup-agent.sh knows
+// AGENT_PID_HOST is the operator's own statement, and setup-agent.sh knows
 // what it rendered. It must beat every heuristic -- otherwise a host that
 // genuinely runs very few processes would be misread as a container forever.
 func TestProcsTrustsPidHostConfigOverHeuristics(t *testing.T) {
@@ -90,7 +90,7 @@ func TestProcsTrustsPidHostConfigOverHeuristics(t *testing.T) {
 // leaves its field unset and does not fail the scrape.
 //
 // It reports unavailable rather than namespaced: a missing bind mount, a
-// misconfigured NETRA_PROC_ROOT and a permission error all reach this branch,
+// misconfigured AGENT_PROC_ROOT and a permission error all reach this branch,
 // and "namespaced" would send the operator off to add pid: host, which fixes
 // none of them.
 func TestProcsUnreadableProcRootIsUnsetNotZero(t *testing.T) {

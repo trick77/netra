@@ -1,7 +1,7 @@
-// Package logging turns the NETRA_LOG_LEVEL config value into the default
-// slog handler.
+// Package logging turns the log-level config value into the default slog
+// handler.
 //
-// Both binaries parsed NETRA_LOG_LEVEL into their Config and then never used
+// Both binaries parsed their log level into their Config and then never used
 // it: neither main called slog.SetDefault, so the variable documented in the
 // spec and in .env.example did nothing at all. The visible cost was that every
 // slog.Debug in the tree was unreachable — including the hub's "ingesting
@@ -19,14 +19,17 @@ import (
 	"strings"
 )
 
-// Setup installs a default slog handler at the named level.
+// Setup installs a default slog handler at the named level. envVar is the
+// variable the level came from -- BACKEND_LOG_LEVEL for the hub,
+// AGENT_LOG_LEVEL for the agent -- so the error names the thing to go and fix.
+// The two binaries no longer share a variable name, only this parser.
 //
 // An unrecognised level is an ERROR, not a silent fallback to info. The whole
 // failure this replaces was a logging knob that quietly did nothing, and
-// "NETRA_LOG_LEVEL=DEBUG_" behaving exactly like a correct value would be the
+// "BACKEND_LOG_LEVEL=DEBUG_" behaving exactly like a correct value would be the
 // same bug wearing a different hat.
-func Setup(level string) error {
-	lvl, err := parseLevel(level)
+func Setup(envVar, level string) error {
+	lvl, err := parseLevel(envVar, level)
 	if err != nil {
 		return err
 	}
@@ -36,7 +39,7 @@ func Setup(level string) error {
 	return nil
 }
 
-func parseLevel(level string) (slog.Level, error) {
+func parseLevel(envVar, level string) (slog.Level, error) {
 	switch strings.ToLower(strings.TrimSpace(level)) {
 	case "debug":
 		return slog.LevelDebug, nil
@@ -47,6 +50,6 @@ func parseLevel(level string) (slog.Level, error) {
 	case "error":
 		return slog.LevelError, nil
 	default:
-		return 0, fmt.Errorf("NETRA_LOG_LEVEL %q is not one of debug, info, warn, error", level)
+		return 0, fmt.Errorf("%s %q is not one of debug, info, warn, error", envVar, level)
 	}
 }

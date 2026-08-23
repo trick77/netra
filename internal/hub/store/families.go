@@ -526,7 +526,7 @@ func (s *Store) resolveFilesystemIDs(ctx context.Context, hostID int32, rows []*
 		u := want[label]
 
 		// COALESCE(NULLIF(...)) rather than a bare EXCLUDED: an agent with no
-		// NETRA_FS_MOUNTS mapping yet sends no mount point, and letting that
+		// AGENT_FS_MOUNTS mapping yet sends no mount point, and letting that
 		// win would blank the /mnt/ark a better-informed agent established --
 		// once per scrape, for as long as the two overlap. A name the hub has
 		// is never replaced by no name, and device_id is guarded the same way

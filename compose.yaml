@@ -3,7 +3,7 @@
 # Host prep before the first run:
 #
 #   mkdir -p data/timescaledb
-#   cp .env.example .env && $EDITOR .env      # two secrets AND NETRA_HOSTNAME
+#   cp .env.example .env && $EDITOR .env      # two secrets AND BACKEND_HOSTNAME
 #   docker compose up -d
 #
 # Agents are configured separately, on each monitored host — see
@@ -37,38 +37,38 @@ services:
       # network; nothing on the host ever binds it, so it is fixed and has no
       # reason to be configurable. Same for the healthcheck below and the
       # loadbalancer label.
-      NETRA_LISTEN_ADDR: ":8080"
+      BACKEND_LISTEN_ADDR: ":8080"
       # sslmode=disable is correct here and only here: this connection never
       # leaves the internal Docker network, and TLS between two containers on
       # the same host buys nothing but a certificate to rotate.
-      NETRA_DB_DSN: "postgres://netra:${POSTGRES_PASSWORD}@timescaledb:5432/netra?sslmode=disable"
+      BACKEND_DB_DSN: "postgres://netra:${POSTGRES_PASSWORD}@timescaledb:5432/netra?sslmode=disable"
       # Required — the hub refuses to start without it rather than serving an
       # unauthenticated admin API.
-      NETRA_ADMIN_TOKEN: "${NETRA_ADMIN_TOKEN}"
-      NETRA_LOG_LEVEL: "${NETRA_LOG_LEVEL:-info}"
+      BACKEND_ADMIN_TOKEN: "${BACKEND_ADMIN_TOKEN}"
+      BACKEND_LOG_LEVEL: "${BACKEND_LOG_LEVEL:-info}"
       # The address agents post to. Used only to render a ready-to-paste
       # setup-agent.sh command in the UI: the hub sits behind Traefik and sees
       # a proxied request, so it cannot infer its own public name from one.
       #
       # Safe as a bare expansion ONLY because the router rule below marks
-      # NETRA_HOSTNAME required with `:?`, so compose refuses to start rather
+      # BACKEND_HOSTNAME required with `:?`, so compose refuses to start rather
       # than reaching this line unset. Drop that `:?` and this becomes the
       # literal "https://", which the hub trims to "https:/" — non-empty, so
       # the UI renders it as a configured value and hands out a setup command
       # nobody can run.
-      NETRA_HUB_URL: "https://${NETRA_HOSTNAME}"
+      BACKEND_HUB_URL: "https://${BACKEND_HOSTNAME}"
 
-      # Browser sign-in. Optional: leave NETRA_OIDC_ISSUER unset and the admin
+      # Browser sign-in. Optional: leave BACKEND_OIDC_ISSUER unset and the admin
       # token stays the only way in, exactly as before. Setting it without the
       # client credentials is refused at startup rather than falling back
       # silently -- a half-configured provider should not look like a decision.
       #
-      # The redirect URI is derived from NETRA_HUB_URL, so it cannot drift from
-      # the name Traefik routes on. Register https://${NETRA_HOSTNAME}/auth/callback
+      # The redirect URI is derived from BACKEND_HUB_URL, so it cannot drift from
+      # the name Traefik routes on. Register https://${BACKEND_HOSTNAME}/auth/callback
       # at the provider.
-      NETRA_OIDC_ISSUER: "${NETRA_OIDC_ISSUER:-}"
-      NETRA_OIDC_CLIENT_ID: "${NETRA_OIDC_CLIENT_ID:-}"
-      NETRA_OIDC_CLIENT_SECRET: "${NETRA_OIDC_CLIENT_SECRET:-}"
+      BACKEND_OIDC_ISSUER: "${BACKEND_OIDC_ISSUER:-}"
+      BACKEND_OIDC_CLIENT_ID: "${BACKEND_OIDC_CLIENT_ID:-}"
+      BACKEND_OIDC_CLIENT_SECRET: "${BACKEND_OIDC_CLIENT_SECRET:-}"
 
     # /api/health reports database reachability, not just process liveness, so
     # a hub that cannot reach Postgres correctly goes unhealthy instead of
@@ -97,17 +97,17 @@ services:
       # Host alone, so Traefik fronts the whole hub: agent ingest, the read
       # API, the admin API that mints agent tokens and deletes hosts, and the
       # management UI at /. Everything past ingest is gated on the single
-      # shared NETRA_ADMIN_TOKEN, and on this router that token is what stands
+      # shared BACKEND_ADMIN_TOKEN, and on this router that token is what stands
       # between the admin API and the internet — so it is a credential, not a
       # convenience. Generate it with `openssl rand -hex 32` and treat losing
       # it as losing the fleet.
       #
       # `:?` rather than a default. A default here is worse than no value at
-      # all: an operator who never set NETRA_HOSTNAME got a router matching a
+      # all: an operator who never set BACKEND_HOSTNAME got a router matching a
       # domain this project does not own, compose started clean, the hub went
       # healthy, and agent ingest was unreachable with nothing anywhere saying
       # why. Now the run stops with the message below.
-      traefik.http.routers.netra.rule: Host(`${NETRA_HOSTNAME:?set NETRA_HOSTNAME in .env — the name Traefik routes the hub on}`)
+      traefik.http.routers.netra.rule: Host(`${BACKEND_HOSTNAME:?set BACKEND_HOSTNAME in .env — the name Traefik routes the hub on}`)
       traefik.http.routers.netra.entrypoints: websecure
       # tls: "true" with no certresolver — the certificate is pre-loaded in
       # Traefik's static config, so there is no ACME challenge to run here.

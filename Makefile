@@ -15,11 +15,11 @@ LDFLAGS = -s -w -X github.com/trick77/netra/internal/shared/buildinfo.version=$(
 test:
 	$(GO) test ./...
 
-# Integration tests are skipped unless NETRA_TEST_DSN points at a TimescaleDB.
+# Integration tests are skipped unless BACKEND_TEST_DSN points at a TimescaleDB.
 # -p 1 is mandatory: store.OpenTest drops the shared public schema, so two
 # package binaries running in parallel race on the same database.
 test-integration:
-	NETRA_TEST_DSN=$${NETRA_TEST_DSN:-postgres://netra:netra@127.0.0.1:5432/netra_test} \
+	BACKEND_TEST_DSN=$${BACKEND_TEST_DSN:-postgres://netra:netra@127.0.0.1:5432/netra_test} \
 		$(GO) test -p 1 ./internal/hub/... -run Integration -v
 
 # setup-agent.sh is POSIX sh, not bash, and is curl'd onto hosts whose /bin/sh

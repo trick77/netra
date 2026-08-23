@@ -44,7 +44,7 @@ type loginHandler struct {
 	adminToken string
 	login      *template.Template
 
-	// oidc is nil when NETRA_OIDC_ISSUER is unset. Every OIDC route checks it
+	// oidc is nil when BACKEND_OIDC_ISSUER is unset. Every OIDC route checks it
 	// and 404s rather than 500s: a hub without sign-in configured should look
 	// like it has no such endpoint, not like it has a broken one.
 	oidc *oidc.Service

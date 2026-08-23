@@ -39,7 +39,7 @@ const minPlausibleProcs = 5
 type Procs struct {
 	procRoot string
 
-	// pidHost is the operator's own statement, from NETRA_PID_HOST. The setup
+	// pidHost is the operator's own statement, from AGENT_PID_HOST. The setup
 	// script knows whether it rendered pid: host, so on a script-installed
 	// host this replaces the heuristics below with a fact.
 	pidHost bool
@@ -93,7 +93,7 @@ func (p *Procs) Collect(_ context.Context) (*Result, error) {
 		// will report its own failure.
 		//
 		// Reported as unavailable, not namespaced: a missing bind mount, a
-		// misconfigured NETRA_PROC_ROOT and a permission error all land here,
+		// misconfigured AGENT_PROC_ROOT and a permission error all land here,
 		// and none of them is fixed by adding pid: host. The namespace verdict
 		// is only reached below, where the tree was actually readable.
 		p.setCapability(procsCapUnavailable)
@@ -128,9 +128,9 @@ func (p *Procs) Collect(_ context.Context) (*Result, error) {
 // The checks are ordered by decreasing confidence and short-circuit, so the
 // operator's own configuration wins over every guess. The residual failure
 // mode is accepted and documented: a container started with a shell as PID 1,
-// no NETRA_PID_HOST, and more than a handful of processes reports an
+// no AGENT_PID_HOST, and more than a handful of processes reports an
 // implausibly low count as though it were the host. It degrades to a wrong
-// number rather than a crash, and setting NETRA_PID_HOST removes the guess.
+// number rather than a crash, and setting AGENT_PID_HOST removes the guess.
 func (p *Procs) namespaced(count int) bool {
 	// 1. The operator said so.
 	if p.pidHost {

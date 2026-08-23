@@ -274,7 +274,7 @@ jobs:
             -coverprofile=coverage/${{ matrix.component }}.out ${{ matrix.packages }}
         env:
           CGO_ENABLED: "1"
-          NETRA_TEST_DSN: postgres://netra:netra@127.0.0.1:5432/netra_test
+          BACKEND_TEST_DSN: postgres://netra:netra@127.0.0.1:5432/netra_test
       # Go exposes no line metric — `go tool cover` reports statements only —
       # so the line percentage comes from a Cobertura conversion. That also
       # merges the duplicate blocks -coverpkg emits, one set per test binary,

@@ -42,7 +42,7 @@ export const SETUP_SCRIPT_URL =
  * the page rendered a complete, runnable, wrong command. As a `placeholder`
  * attribute it is greyed, never submitted, and gone the moment the operator
  * types -- an example the DOM itself refuses to treat as a value.
- * NETRA_HUB_URL lives server-side; getConfig() is the only source of a real one.
+ * BACKEND_HUB_URL lives server-side; getConfig() is the only source of a real one.
  */
 export const HUB_URL_EXAMPLE = "https://netra.example.com";
 
@@ -120,7 +120,7 @@ function TokenPanel({
           <strong>Set the hub URL to get the install command.</strong> It is the
           address agents reach this hub on, which is not the address your
           browser is using -- you are on loopback. Set{" "}
-          <code>NETRA_HOSTNAME</code> in the hub&apos;s <code>.env</code> to
+          <code>BACKEND_HOSTNAME</code> in the hub&apos;s <code>.env</code> to
           have it filled in here automatically.
         </p>
       ) : (
@@ -644,7 +644,7 @@ export function HostAdminPage() {
   const [rotating, setRotating] = useState<number | null>(null);
 
   const [minted, setMinted] = useState<Minted | null>(null);
-  // The hub's own NETRA_HUB_URL, read once at mount and then left alone. Held
+  // The hub's own BACKEND_HUB_URL, read once at mount and then left alone. Held
   // apart from the editable field below because dismissing a token panel has
   // to restore it: the effect that reads it runs once, so overwriting this
   // with a constant on dismiss threw the configured value away for the rest
@@ -698,7 +698,7 @@ export function HostAdminPage() {
     getProviders()
       .then(setProviders)
       .catch(() => setProviders([]));
-    // An unset NETRA_HUB_URL comes back as "" and the field stays empty --
+    // An unset BACKEND_HUB_URL comes back as "" and the field stays empty --
     // a guess would be worse than an obvious gap, because a wrong hostname
     // in that command sends an agent token to whoever owns the name.
     getConfig()

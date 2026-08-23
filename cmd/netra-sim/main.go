@@ -4,7 +4,7 @@
 // has no place on a production hub: it registers hosts, mints tokens for
 // them and writes three months of invented history.
 //
-//	netra-sim --admin-token "$NETRA_ADMIN_TOKEN" \
+//	netra-sim --admin-token "$BACKEND_ADMIN_TOKEN" \
 //	          --dsn "postgres://netra:...@127.0.0.1:5432/netra" \
 //	          --backfill 2160h --live
 package main
@@ -30,10 +30,29 @@ func main() {
 	}
 }
 
+// rejectOldPrefix refuses to run while a NETRA_-prefixed variable is still set,
+// the same sweep the two long-running binaries do at startup. It matters here
+// for BACKEND_SIM_DSN in particular: unlike the admin token, an unread DSN is
+// not an error, it just leaves the continuous aggregates unmaterialised, so a
+// stale shell would produce a fleet whose older graphs are silently empty.
+func rejectOldPrefix() error {
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if old, found := strings.CutPrefix(key, "NETRA_"); found {
+			return fmt.Errorf("%s is no longer read; rename it to BACKEND_%s", key, old)
+		}
+	}
+	return nil
+}
+
 func run() error {
-	hubURL := flag.String("hub", envOr("NETRA_HUB_URL", "http://127.0.0.1:8080"), "hub base URL")
-	adminToken := flag.String("admin-token", os.Getenv("NETRA_ADMIN_TOKEN"), "hub admin token")
-	dsn := flag.String("dsn", os.Getenv("NETRA_SIM_DSN"),
+	if err := rejectOldPrefix(); err != nil {
+		return err
+	}
+
+	hubURL := flag.String("hub", envOr("BACKEND_HUB_URL", "http://127.0.0.1:8080"), "hub base URL")
+	adminToken := flag.String("admin-token", os.Getenv("BACKEND_ADMIN_TOKEN"), "hub admin token")
+	dsn := flag.String("dsn", os.Getenv("BACKEND_SIM_DSN"),
 		"hub database DSN, used only to materialise continuous aggregates over the backfill; "+
 			"without it only the last few hours roll up")
 	hosts := flag.String("hosts", "", "comma-separated profiles to simulate (default: all)")
@@ -47,7 +66,7 @@ func run() error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(*logLevel)})))
 
 	if *adminToken == "" {
-		return fmt.Errorf("--admin-token is required (or set NETRA_ADMIN_TOKEN)")
+		return fmt.Errorf("--admin-token is required (or set BACKEND_ADMIN_TOKEN)")
 	}
 
 	profiles := sim.Fleet()

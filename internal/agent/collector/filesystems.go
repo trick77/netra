@@ -447,7 +447,7 @@ func (f *Filesystems) name(lines []mountLine) []mountEntry {
 		label := strings.TrimPrefix(t, markerPrefix)
 		mountpoint := f.fsMounts[label]
 		if mountpoint == "" {
-			// An agent upgraded ahead of its .env: NETRA_FS_MOUNTS is not
+			// An agent upgraded ahead of its .env: AGENT_FS_MOUNTS is not
 			// there yet. Reporting the bare label is imperfect but honest;
 			// it is a name the operator recognises, and the next setup run
 			// replaces it with the real mountpoint.
