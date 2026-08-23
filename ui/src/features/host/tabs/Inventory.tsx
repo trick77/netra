@@ -7,13 +7,27 @@ import { Inbox } from "lucide-react";
 import type {
   Address,
   Container,
+  Drive,
   Filesystem,
   Iface,
   Pkg,
   Unit,
   MetricsResponse,
 } from "../../../lib/api";
-import { ABSENT, absolute, bytes, relative } from "../../../lib/format";
+import {
+  ABSENT,
+  absolute,
+  bytes,
+  duration,
+  relative,
+} from "../../../lib/format";
+import {
+  driveFindings,
+  drivePowerOnHours,
+  driveSeverity,
+  driveTemperature,
+  driveWearPct,
+} from "../smart";
 import { hostContainerNote } from "../../../lib/containers";
 import { FLAP_THRESHOLD } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
@@ -388,7 +402,13 @@ export function Mounts({
 
   return (
     <Inventory
-      label="Filesystems"
+      // "Mounts", not "Filesystems". The Storage tab stacks two tables and
+      // then a chart group already called Filesystems, and two identical
+      // headings on one page is a page that cannot be scanned. This table is
+      // one row per MOUNT -- label, mountpoint, usage -- while the charts
+      // below plot the filesystems those mounts sit on.
+      label="Mounts"
+      heading
       columns={FILESYSTEM_COLUMNS}
       rows={joined}
       rowKey={(row) => String(row.id)}
@@ -518,6 +538,146 @@ export function Network({ rows }: { rows: readonly Address[] }) {
           .filter(Boolean)
           .join(" ")
       }
+    />
+  );
+}
+
+// --- Drives ---------------------------------------------------------------
+
+/**
+ * The drive's overall state, as a badge on its device name.
+ *
+ * Same shape as the link-state and scope pills: the thing and its
+ * classification in one cell. A healthy drive says so rather than showing
+ * nothing -- on a table whose whole point is advance warning, a blank cell and
+ * "we checked, it is fine" must not look the same.
+ */
+function DriveHealthPill({ drive }: { drive: Drive }) {
+  const severity = driveSeverity(drive);
+  if (drive.attributes.length === 0) {
+    // Not a verdict about the hardware. smartctl named the drive and could not
+    // read it, which the Device availability panel already reports as a
+    // collector fact.
+    return <span className="badge drive-unread">not read</span>;
+  }
+  const label = severity === "ok" ? "healthy" : severity;
+  return <span className={`badge drive drive-${severity}`}>{label}</span>;
+}
+
+const DRIVE_COLUMNS: Column<Drive>[] = [
+  {
+    key: "device",
+    header: "Drive",
+    cell: (row) => (
+      <span className="addr-cell">
+        <span className="ident">{row.device}</span>
+        <DriveHealthPill drive={row} />
+      </span>
+    ),
+  },
+  { key: "model", header: "Model", cell: (row) => row.model ?? ABSENT },
+  {
+    key: "serial",
+    header: "Serial",
+    cell: (row) =>
+      row.serial === null ? (
+        ABSENT
+      ) : (
+        <span className="ident">{row.serial}</span>
+      ),
+  },
+  {
+    key: "temperature",
+    header: "Temp",
+    align: "right",
+    cell: (row) => {
+      const c = driveTemperature(row);
+      return c === null ? ABSENT : `${c} °C`;
+    },
+  },
+  {
+    key: "power_on",
+    header: "Power on",
+    align: "right",
+    // Hours as the drive counts them, rendered as a duration: 43800 is a
+    // number nobody converts in their head, and "5 y" is the fact -- this
+    // disk has been spinning for five years.
+    cell: (row) => {
+      const hours = drivePowerOnHours(row);
+      return hours === null ? ABSENT : duration(hours * 3600);
+    },
+  },
+  {
+    key: "wear",
+    header: "Wear",
+    align: "right",
+    // NVMe only, and absent rather than guessed elsewhere -- see driveWearPct
+    // for why an ATA drive has no comparable figure.
+    cell: (row) => {
+      const pct = driveWearPct(row);
+      return pct === null ? ABSENT : `${pct}%`;
+    },
+  },
+  {
+    key: "findings",
+    header: "Findings",
+    // The reason the table exists. Every finding, worst first, in the words an
+    // operator would use -- "3 pending sectors", not "attribute 197 = 3".
+    cell: (row) => {
+      const findings = driveFindings(row);
+      if (findings.length === 0) return ABSENT;
+      return (
+        <span className="findings">
+          {findings.map((f) => (
+            <span key={f.text} className={`finding finding-${f.severity}`}>
+              {f.text}
+            </span>
+          ))}
+        </span>
+      );
+    },
+  },
+];
+
+/**
+ * The host's physical disks and what SMART says about them.
+ *
+ * netra has collected SMART since the agent was written -- the hub stores it
+ * on its own hypertable with 90-day retention and serves it as a metric family
+ * -- and until this table nothing rendered any of it. The only thing the UI
+ * said about disks was the Device availability panel, which reads
+ * collector_samples.ok: whether smartctl RAN, not what it found. A drive
+ * reporting reallocated sectors and a drive in perfect health looked
+ * identical.
+ *
+ * Rows carry a severity rail as well as a badge, because severity riding on
+ * colour alone fails the reader who cannot see it -- the same rule the fleet
+ * list follows.
+ */
+export function Drives({ rows }: { rows: readonly Drive[] }) {
+  return (
+    <Inventory
+      label="Drives"
+      heading
+      columns={DRIVE_COLUMNS}
+      rows={rows}
+      rowKey={(row) => row.device}
+      searchText={(row) =>
+        [
+          row.device,
+          row.model,
+          row.serial,
+          ...driveFindings(row).map((f) => f.text),
+        ]
+          .filter(Boolean)
+          .join(" ")
+      }
+      rowSeverity={(row) => {
+        const severity = driveSeverity(row);
+        return severity === "ok" ? null : severity;
+      }}
+      emptyTitle="No drives reported"
+      emptyBody="SMART needs smartctl on the host and a drive that answers it. A container agent also needs the device passed through."
     />
   );
 }

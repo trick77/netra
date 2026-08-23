@@ -172,6 +172,32 @@ export type Iface = {
   last_seen: string;
 };
 
+// internal/hub/read/inventory.go: Drive and DriveAttribute
+//
+// The attribute set is untyped on purpose, as the schema stores it: SMART
+// attributes vary per drive model, so a typed field per attribute would need a
+// schema change for every new drive. What an id MEANS is named in
+// features/host/smart.ts, on this side, for the same reason the fleet's
+// severity rules live here rather than in the hub.
+export type DriveAttribute = {
+  id: number;
+  raw: number | null;
+  /** ATA's vendor-scaled 1-253 health figure, where higher is better. Always
+   * null on an NVMe row: the health log has no such scale, and the collector
+   * declines to invent one. */
+  normalized: number | null;
+};
+
+export type Drive = {
+  device: string;
+  model: string | null;
+  serial: string | null;
+  attributes: DriveAttribute[];
+  /** When the newest of those readings was taken. null when the drive has no
+   * attributes at all -- which is not the same as "read a long time ago". */
+  last_seen: string | null;
+};
+
 // internal/hub/read/inventory.go: Package
 export type Pkg = {
   name: string;
@@ -328,6 +354,10 @@ export function getAddresses(id: number | string): Promise<Address[]> {
 
 export function getInterfaces(id: number | string): Promise<Iface[]> {
   return request<Iface[]>(`/api/v1/hosts/${id}/interfaces`);
+}
+
+export function getDrives(id: number | string): Promise<Drive[]> {
+  return request<Drive[]>(`/api/v1/hosts/${id}/drives`);
 }
 
 export function getPackages(id: number | string): Promise<Pkg[]> {

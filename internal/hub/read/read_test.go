@@ -1364,3 +1364,125 @@ func TestIntegrationInterfacesSeparateEmptyFromMissing(t *testing.T) {
 		t.Errorf("interfaces = %v, want empty", got)
 	}
 }
+
+// Drives folds one row per (device, attr_id) into one entry per drive, taking
+// the NEWEST reading of each attribute.
+//
+// A listing rather than the `smart` metric family, which is keyed on
+// (device, attr_id): "which drives are in trouble" through that API is a
+// hundred series to read six numbers off.
+func TestIntegrationDrivesFoldTheNewestReadingPerAttribute(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "spinning")
+
+	exec(t, pool, `
+		INSERT INTO devices (host_id, device, model, serial)
+		VALUES ($1, 'sda', 'ST16000NM000J', 'ZR5A1M0K'),
+		       ($1, 'nvme0n1', 'SAMSUNG MZQL2', 'S64FNE0R')`, id)
+
+	// Two readings of attribute 5 on sda, an hour apart. The later one is the
+	// answer; the earlier must not win on ordering.
+	exec(t, pool, `
+		INSERT INTO smart_attributes (host_id, ts, device_id, attr_id, raw, normalized)
+		SELECT $1, ts, d.id, attr_id, raw, normalized
+		  FROM devices d,
+		       (VALUES
+		          ('sda', TIMESTAMPTZ '2026-08-23T10:00:00Z', 5::smallint, 8::bigint, 96::smallint),
+		          ('sda', TIMESTAMPTZ '2026-08-23T11:00:00Z', 5::smallint, 12::bigint, 94::smallint),
+		          ('sda', TIMESTAMPTZ '2026-08-23T11:00:00Z', 194::smallint, 38::bigint, 82::smallint),
+		          ('nvme0n1', TIMESTAMPTZ '2026-08-23T11:00:00Z', 1001::smallint, 7::bigint, NULL)
+		       ) AS v(device, ts, attr_id, raw, normalized)
+		 WHERE d.host_id = $1 AND d.device = v.device`, id)
+
+	got, err := svc.Drives(ctx, id)
+	if err != nil {
+		t.Fatalf("Drives: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d drives, want 2", len(got))
+	}
+
+	// Ordered by device: nvme0n1 before sda.
+	nvme, sda := got[0], got[1]
+	if nvme.Device != "nvme0n1" || sda.Device != "sda" {
+		t.Fatalf("drives = %s, %s; want them ordered by device", nvme.Device, sda.Device)
+	}
+
+	if sda.Model == nil || *sda.Model != "ST16000NM000J" {
+		t.Errorf("sda model = %v", sda.Model)
+	}
+	if len(sda.Attributes) != 2 {
+		t.Fatalf("sda has %d attributes, want 2 (one per id, newest)", len(sda.Attributes))
+	}
+	// Ordered by attr_id, so 5 comes first.
+	if sda.Attributes[0].ID != 5 {
+		t.Fatalf("first attribute = %d, want 5", sda.Attributes[0].ID)
+	}
+	if sda.Attributes[0].Raw == nil || *sda.Attributes[0].Raw != 12 {
+		t.Errorf("attribute 5 raw = %v, want the 11:00 reading (12), not the 10:00 one (8)",
+			sda.Attributes[0].Raw)
+	}
+	if sda.LastSeen == nil || sda.LastSeen.UTC().Hour() != 11 {
+		t.Errorf("last_seen = %v, want the newest reading's timestamp", sda.LastSeen)
+	}
+
+	// NVMe rows carry no normalized value: the health log has no such scale,
+	// and the collector declines to invent one.
+	if len(nvme.Attributes) != 1 {
+		t.Fatalf("nvme0n1 has %d attributes, want 1", len(nvme.Attributes))
+	}
+	if nvme.Attributes[0].Normalized != nil {
+		t.Errorf("nvme normalized = %v, want absent", *nvme.Attributes[0].Normalized)
+	}
+}
+
+// A drive the hub has an id for but no attributes from is a real state:
+// resolveDeviceIDs upserts the device before the batch lands, and a drive
+// smartctl can name but not read reports nothing at all. It must still appear
+// -- the UI says "not read" about it, which is a different fact from a drive
+// that is failing.
+func TestIntegrationDrivesIncludeOnesWithNoAttributes(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "unread")
+
+	exec(t, pool, `
+		INSERT INTO devices (host_id, device, model, serial)
+		VALUES ($1, 'sdz', NULL, NULL)`, id)
+
+	got, err := svc.Drives(ctx, id)
+	if err != nil {
+		t.Fatalf("Drives: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d drives, want 1", len(got))
+	}
+	if got[0].Attributes == nil {
+		// nil marshals as null; the UI reads .length on it.
+		t.Error("attributes = nil, want an empty slice")
+	}
+	if len(got[0].Attributes) != 0 {
+		t.Errorf("attributes = %v, want empty", got[0].Attributes)
+	}
+	if got[0].LastSeen != nil {
+		t.Errorf("last_seen = %v, want absent when there are no readings", got[0].LastSeen)
+	}
+}
+
+func TestIntegrationDrivesSeparateEmptyFromMissing(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "diskless")
+
+	got, err := svc.Drives(ctx, id)
+	if err != nil {
+		t.Fatalf("Drives: %v", err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Errorf("drives = %v, want an empty slice", got)
+	}
+	if _, err := svc.Drives(ctx, 4242); !errors.Is(err, read.ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound for an unknown host", err)
+	}
+}
