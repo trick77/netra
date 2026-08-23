@@ -30,7 +30,26 @@ func main() {
 	}
 }
 
+// rejectOldPrefix refuses to run while a NETRA_-prefixed variable is still set,
+// the same sweep the two long-running binaries do at startup. It matters here
+// for BACKEND_SIM_DSN in particular: unlike the admin token, an unread DSN is
+// not an error, it just leaves the continuous aggregates unmaterialised, so a
+// stale shell would produce a fleet whose older graphs are silently empty.
+func rejectOldPrefix() error {
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if old, found := strings.CutPrefix(key, "NETRA_"); found {
+			return fmt.Errorf("%s is no longer read; rename it to BACKEND_%s", key, old)
+		}
+	}
+	return nil
+}
+
 func run() error {
+	if err := rejectOldPrefix(); err != nil {
+		return err
+	}
+
 	hubURL := flag.String("hub", envOr("BACKEND_HUB_URL", "http://127.0.0.1:8080"), "hub base URL")
 	adminToken := flag.String("admin-token", os.Getenv("BACKEND_ADMIN_TOKEN"), "hub admin token")
 	dsn := flag.String("dsn", os.Getenv("BACKEND_SIM_DSN"),

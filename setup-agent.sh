@@ -2723,6 +2723,28 @@ seed_from_env() {
 configure() {
     step "Configuration"
 
+    # BEFORE anything reads or writes that file, because every reader below
+    # looks for AGENT_ names and a pre-rename .env holds NETRA_ ones. Left to
+    # run, this script would report AGENT_HUB_URL and AGENT_TOKEN as EMPTY
+    # while both sit in the file under their old names, append AGENT_PID_HOST
+    # and AGENT_FS_MOUNTS to a file the agent now refuses to start with, and --
+    # with --force, where the prior token is read from AGENT_TOKEN -- destroy a
+    # token the hub only ever stored the SHA-256 of.
+    #
+    # Refuses rather than renaming the keys itself: the agent accepts exactly
+    # one spelling, on purpose, and a file this script silently rewrote is not
+    # the file the operator thinks is on the host.
+    #
+    # Anchored. The shipped .env.example carries the sed line below in a
+    # comment, and an unanchored match would refuse the file that documents the
+    # fix.
+    if [ -f "$OUTPUT_DIR/.env" ] && grep -q '^NETRA_' "$OUTPUT_DIR/.env" 2>/dev/null; then
+        die "$OUTPUT_DIR/.env still uses the old NETRA_ prefix. Every agent variable is" \
+            "AGENT_-prefixed now, and the agent refuses to start while an old name is set." \
+            "Rename them and re-run this script:" \
+            "  sed -i.bak 's/^NETRA_/AGENT_/' $OUTPUT_DIR/.env"
+    fi
+
     # BEFORE the questions, because the answer to most of them is already on
     # disk. write_outputs refuses to overwrite an existing .env without --force,
     # so a re-run used to ask for the hub URL, then the TOKEN at a hidden
@@ -3046,6 +3068,22 @@ EOF
 
     netra_exec netra_write_compose "$_wo_compose_tmpl" "$OUTPUT_DIR/compose.yaml" ||
         die "could not write $OUTPUT_DIR/compose.yaml"
+
+    # A marker this script does not know is a marker it did not substitute, and
+    # an unsubstituted marker is a COMMENT LINE: no volumes, no devices, no
+    # cap_add, and a compose that starts clean while the agent measures almost
+    # nothing. The one way to reach it is version skew -- this script comes from
+    # master, its templates from the latest release tag -- which is exactly what
+    # happened when the markers were renamed from #__NETRA_*__ to #__AGENT_*__.
+    # Silent is the whole problem, so it is fatal here.
+    if grep -qE '^[[:space:]]*#__[A-Z_]+__[[:space:]]*$' "$OUTPUT_DIR/compose.yaml"; then
+        die "$OUTPUT_DIR/compose.yaml still contains an unsubstituted template marker," \
+            "so the template fetched from $REF is older than this script and the bind" \
+            "mounts, devices and capabilities it describes were not rendered." \
+            "Pass --ref <tag> to pin a newer release tag, or --template-dir <path> to use" \
+            "local template files."
+    fi
+
     if [ "$_wo_compose_existed" = 1 ]; then
         record_change "overwrote $OUTPUT_DIR/compose.yaml"
     else
