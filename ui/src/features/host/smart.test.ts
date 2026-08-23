@@ -207,6 +207,32 @@ describe("the readings the table prints", () => {
     expect(drivePowerOnHours(nvme)).toBe(900);
   });
 
+  // The collector stores smartctl's raw field verbatim, and many vendors pack
+  // the lifetime min and max into its upper words. 0x1C0000001C is a drive at
+  // 28 degrees; printed unmasked it is a temperature column reading a hundred
+  // and twenty billion.
+  //
+  // The simulator writes clean single-byte values, so this never appears in a
+  // local fleet -- which is exactly why it needs a test rather than a look.
+  it("masks the packed min/max out of an ATA temperature", () => {
+    expect(driveTemperature(drive({ [ATA.temperature]: 0x1c0000001c }))).toBe(
+      28,
+    );
+    // A drive that reports the bare value is unaffected.
+    expect(driveTemperature(drive({ [ATA.temperature]: 34 }))).toBe(34);
+  });
+
+  // NVMe's is already degrees Celsius in smartctl's JSON, converted from the
+  // log's Kelvin, with nothing packed into it -- so masking it would corrupt
+  // a reading rather than repair one.
+  it("leaves an NVMe temperature alone", () => {
+    expect(
+      driveTemperature(
+        drive({ [NVME.temperature]: 52, [NVME.percentageUsed]: 3 }),
+      ),
+    ).toBe(52);
+  });
+
   // ATA has no universal wear attribute: the SSD life-left counters are
   // vendor-specific with opposite polarity between models, and a spinning
   // disk has no endurance figure at all. Absent beats a confident wrong

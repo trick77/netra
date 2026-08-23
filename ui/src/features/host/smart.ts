@@ -214,11 +214,38 @@ export function driveSeverity(drive: Drive): Finding["severity"] {
   return findings.length === 0 ? "ok" : findings[0]!.severity;
 }
 
-/** Temperature in degrees Celsius, from whichever id this drive uses. */
+/**
+ * Temperature in degrees Celsius, from whichever id this drive uses.
+ *
+ * ATA's attribute 194 needs masking and NVMe's 1008 does not, which is the
+ * whole reason this is a function rather than two `attr` calls.
+ *
+ * The collector stores smartctl's raw field verbatim -- a 48-bit value, by
+ * the schema's stated contract that the agent reports and does not interpret.
+ * Many vendors pack the lifetime minimum and maximum into its upper words, so
+ * a drive at 28 °C can arrive as 0x1C0000001C, which is 120259084316. Printed
+ * unmasked that is a temperature column reading a hundred and twenty billion
+ * degrees.
+ *
+ * The masking belongs here rather than in the collector for the reason
+ * everything else in this file does: it is interpretation, and a rule shipped
+ * inside an agent is frozen into every host in the fleet.
+ *
+ * The low byte, not the low word: a disk temperature in Celsius has never
+ * needed more than eight bits, and the packing puts the current reading
+ * there on every layout in the wild.
+ *
+ * The simulator writes clean single-byte values, so this case cannot appear
+ * in a local fleet -- which is why it survived a browser check.
+ */
 export function driveTemperature(drive: Drive): number | null {
-  return driveKind(drive) === "nvme"
-    ? attr(drive, NVME.temperature)
-    : attr(drive, ATA.temperature);
+  if (driveKind(drive) === "nvme") {
+    // smartctl reports the NVMe health log's temperature in degrees, already
+    // converted from the raw log's Kelvin. Nothing is packed into it.
+    return attr(drive, NVME.temperature);
+  }
+  const raw = attr(drive, ATA.temperature);
+  return raw === null ? null : raw & 0xff;
 }
 
 /** Power-on hours, from whichever id this drive uses. */

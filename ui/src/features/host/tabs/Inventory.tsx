@@ -619,6 +619,19 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
     },
   },
   {
+    key: "last_seen",
+    // The staleness cue the health pill cannot give.
+    //
+    // "not read" covers a drive with no attributes at all. A drive whose
+    // attributes stopped arriving -- a permission change, a device pulled out
+    // of a container passthrough, an agent that died -- keeps every one of
+    // them, so its temperature, wear and findings go on rendering as current
+    // facts about hardware nobody has looked at in a week. This column is what
+    // says when they were last true.
+    header: "Last read",
+    cell: (row) => <When iso={row.last_seen} />,
+  },
+  {
     key: "findings",
     header: "Findings",
     // The reason the table exists. Every finding, worst first, in the words an

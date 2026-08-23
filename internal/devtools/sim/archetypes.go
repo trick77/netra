@@ -225,19 +225,19 @@ func smartBaremetal() *Profile {
 			// The one that goes bad. Everything else on this host is healthy,
 			// so a "which drive is dying" query has exactly one answer.
 			{Device: "sdc", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1PQ2", PowerOnHours: 21402, Failing: true},
-			// The boot drive, and the fleet's only NVMe. It is here rather
-			// than on the VPS because that host declares
-			// smart: no-device-access and does not run the collector -- a
+			{Device: "sdd", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1RB8", PowerOnHours: 21391},
+			// NVMe, so the fleet exercises both attribute id spaces. ATA
+			// numbers 1-255 out of the drive's own table; NVMe has no ids at
+			// all, so the collector maps its health log onto synthetic ones
+			// from 1000 up, and the two are read by different code. This drive
+			// was already named nvme0n1 while reporting ATA attributes, which
+			// no real NVMe device does.
+			//
+			// On this host rather than the VPS because that profile declares
+			// smart: no-device-access and runs no smart collector -- a
 			// hypervisor does not pass SMART through, which is the realistic
 			// state and worth keeping.
-			//
-			// A mixed host is the point: ATA and NVMe use different attribute
-			// id spaces, read by different code, and a fleet with only one of
-			// them leaves half the drive table unexercised by anyone looking
-			// at it.
-			{Device: "nvme0n1", Model: "SAMSUNG MZQL21T9HCJR-00A07", Serial: "S64FNE0R512345", SSD: true, NVMe: true, PowerOnHours: 9400},
-			{Device: "sdd", Model: "ST16000NM000J-2TW103", Serial: "ZR5A1RB8", PowerOnHours: 21391},
-			{Device: "nvme0n1", Model: "SAMSUNG MZQL21T9HCJR-00A07", Serial: "S64HNE0T512345", SSD: true, PowerOnHours: 9120},
+			{Device: "nvme0n1", Model: "SAMSUNG MZQL21T9HCJR-00A07", Serial: "S64HNE0T512345", SSD: true, NVMe: true, PowerOnHours: 9120},
 		},
 		Disks: []DiskSpec{
 			{Device: "sda", ReadBase: 4.2 * 1024 * 1024, WriteBase: 6.8 * 1024 * 1024, AwaitBase: 9.4},
