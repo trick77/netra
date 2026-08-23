@@ -628,6 +628,10 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
     // them, so its temperature, wear and findings go on rendering as current
     // facts about hardware nobody has looked at in a week. This column is what
     // says when they were last true.
+    //
+    // devices.last_seen, so it is filled for the "not read" rows too: a drive
+    // smartctl can name and cannot read is still being reported, and "how long
+    // has this been unreadable" is the question that row raises.
     header: "Last read",
     cell: (row) => <When iso={row.last_seen} />,
   },

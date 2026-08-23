@@ -535,6 +535,7 @@ describe("Drives", () => {
       { id: 194, raw: 49, normalized: 71 },
       { id: 197, raw: 15, normalized: 68 },
     ],
+    first_seen: "2026-06-01T11:00:00Z",
     last_seen: "2026-08-23T11:00:00Z",
   };
 
@@ -548,6 +549,7 @@ describe("Drives", () => {
       { id: 1006, raw: 9400, normalized: null },
       { id: 1008, raw: 49, normalized: null },
     ],
+    first_seen: "2026-06-01T11:00:00Z",
     last_seen: "2026-08-23T11:00:00Z",
   };
 
@@ -556,7 +558,9 @@ describe("Drives", () => {
     model: null,
     serial: null,
     attributes: [],
-    last_seen: null,
+    first_seen: "2026-06-01T11:00:00Z",
+    // Reported on the newest scrape; smartctl simply could not read it.
+    last_seen: "2026-08-23T11:00:00Z",
   };
 
   it("names what is wrong with a failing drive, worst first", () => {

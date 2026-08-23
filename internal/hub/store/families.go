@@ -614,11 +614,17 @@ func (s *Store) resolveDeviceIDs(ctx context.Context, hostID int32, rows []*netr
 		}
 		tried[name] = true
 
+		// last_seen is what netra_prune_stale_devices reads, and this is the
+		// only place that can touch it: it means "the agent last mentioned
+		// this drive", which is a different fact from "a reading landed".
+		// A drive smartctl can name but not read still counts as present, and
+		// still keeps its history.
 		id, ok, err := s.resolveOne(ctx, "device", name, `
 			INSERT INTO devices (host_id, device, model, serial)
 			VALUES ($1, $2, $3, $4)
 			ON CONFLICT (host_id, device) DO UPDATE
-			   SET model = EXCLUDED.model, serial = EXCLUDED.serial
+			   SET model = EXCLUDED.model, serial = EXCLUDED.serial,
+			       last_seen = now()
 			RETURNING id`,
 			hostID, name, r.GetModel(), r.GetSerial())
 		if err != nil {

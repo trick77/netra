@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -325,5 +326,122 @@ func TestIntegrationInsertHostProtoSamplesAcceptsNothing(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("inserted %d, want 0", n)
+	}
+}
+
+// devices is the one inventory table that cannot prune by set difference, and
+// the reason is the cascade: smart_attributes references it ON DELETE CASCADE,
+// and the collector drops a single drive it cannot read while reporting the
+// others. Deleting whatever the newest report omits would therefore let one
+// unreadable drive on one scrape destroy ninety days of its own readings.
+//
+// So the prune is on a timestamp with a horizon far longer than any transient
+// failure, and these tests pin both halves of that: reporting a drive keeps it
+// alive, and only real silence removes it.
+func TestIntegrationReportingADriveKeepsItAlive(t *testing.T) {
+	ctx := context.Background()
+	s := openMigrated(t)
+	id := seedInterfaceHost(t, s, "drives")
+
+	smart := func(device string, raw int64) *netrav1.SmartAttribute {
+		return &netrav1.SmartAttribute{
+			TsMs: 1_754_784_000_000, Device: device,
+			Model: "ST16000NM000J", Serial: "ZR5A1M0K",
+			AttrId: 5, Raw: proto.Int64(raw),
+		}
+	}
+
+	if _, err := s.InsertSmartAttributes(ctx, id,
+		[]*netrav1.SmartAttribute{smart("sda", 0)}); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+
+	// Age the row past any horizon, then report the drive again.
+	if _, err := s.Pool().Exec(ctx,
+		`UPDATE devices SET last_seen = now() - INTERVAL '200 days' WHERE host_id = $1`,
+		id); err != nil {
+		t.Fatalf("age: %v", err)
+	}
+	if _, err := s.InsertSmartAttributes(ctx, id,
+		[]*netrav1.SmartAttribute{smart("sda", 1)}); err != nil {
+		t.Fatalf("second insert: %v", err)
+	}
+
+	var age time.Duration
+	var lastSeen time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT last_seen FROM devices WHERE host_id = $1`, id).Scan(&lastSeen); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	age = time.Since(lastSeen)
+	if age > time.Minute {
+		t.Errorf("last_seen is %s old after the drive was reported again; "+
+			"the prune would eventually delete a live drive's history", age)
+	}
+}
+
+// The prune itself, called directly rather than waited on: it is registered as
+// a daily job, and a test that slept for one would be a test nobody runs.
+func TestIntegrationStaleDevicesArePrunedAndLiveOnesAreNot(t *testing.T) {
+	ctx := context.Background()
+	s := openMigrated(t)
+	id := seedInterfaceHost(t, s, "mixed")
+
+	rows := []*netrav1.SmartAttribute{
+		{
+			TsMs: 1_754_784_000_000, Device: "sda", Model: "ST16000NM000J",
+			Serial: "A", AttrId: 5, Raw: proto.Int64(0),
+		},
+		{
+			TsMs: 1_754_784_000_000, Device: "sdb", Model: "ST16000NM000J",
+			Serial: "B", AttrId: 5, Raw: proto.Int64(0),
+		},
+	}
+	if _, err := s.InsertSmartAttributes(ctx, id, rows); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// sdb was pulled out of the machine four months ago.
+	if _, err := s.Pool().Exec(ctx,
+		`UPDATE devices SET last_seen = now() - INTERVAL '120 days'
+		  WHERE host_id = $1 AND device = 'sdb'`, id); err != nil {
+		t.Fatalf("age sdb: %v", err)
+	}
+
+	if _, err := s.Pool().Exec(ctx,
+		`CALL netra_prune_stale_devices(0, '{"retention": "90 days"}'::jsonb)`); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	var names []string
+	pgRows, err := s.Pool().Query(ctx,
+		`SELECT device FROM devices WHERE host_id = $1 ORDER BY device`, id)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer pgRows.Close()
+	for pgRows.Next() {
+		var n string
+		if err := pgRows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		names = append(names, n)
+	}
+
+	if len(names) != 1 || names[0] != "sda" {
+		t.Errorf("devices = %v, want [sda]; the drive still being reported must "+
+			"survive and the one silent for four months must not", names)
+	}
+
+	// The cascade took sdb's readings with it. At this horizon there were none
+	// left to take -- smart_attributes' own retention drops them at 90 days --
+	// but the row count is what proves the FK is doing what the migration says.
+	var attrs int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM smart_attributes WHERE host_id = $1`, id).Scan(&attrs); err != nil {
+		t.Fatalf("count attributes: %v", err)
+	}
+	if attrs != 1 {
+		t.Errorf("smart_attributes = %d, want 1 (sda's); sdb's went with its device row", attrs)
 	}
 }

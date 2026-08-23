@@ -1423,8 +1423,11 @@ func TestIntegrationDrivesFoldTheNewestReadingPerAttribute(t *testing.T) {
 		t.Errorf("attribute 5 raw = %v, want the 11:00 reading (12), not the 10:00 one (8)",
 			sda.Attributes[0].Raw)
 	}
-	if sda.LastSeen == nil || sda.LastSeen.UTC().Hour() != 11 {
-		t.Errorf("last_seen = %v, want the newest reading's timestamp", sda.LastSeen)
+	// devices.last_seen, not the newest attribute's ts: it means "the agent
+	// last reported this drive", which is the only timestamp a drive smartctl
+	// could name but not read has at all.
+	if sda.LastSeen.IsZero() {
+		t.Error("last_seen is zero; it comes from the devices row and is always set")
 	}
 
 	// NVMe rows carry no normalized value: the health log has no such scale,
@@ -1465,8 +1468,12 @@ func TestIntegrationDrivesIncludeOnesWithNoAttributes(t *testing.T) {
 	if len(got[0].Attributes) != 0 {
 		t.Errorf("attributes = %v, want empty", got[0].Attributes)
 	}
-	if got[0].LastSeen != nil {
-		t.Errorf("last_seen = %v, want absent when there are no readings", got[0].LastSeen)
+	// Set even with no readings, which is the point of taking it from the
+	// devices row: this drive is being reported and cannot be read, and "how
+	// long has that been true" is the question the row raises.
+	if got[0].LastSeen.IsZero() {
+		t.Error("last_seen is zero for a drive with no attributes; " +
+			"it comes from the devices row, which exists")
 	}
 }
 

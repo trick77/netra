@@ -82,9 +82,19 @@ type Drive struct {
 	// the hub knows about but has no attributes for -- which is possible:
 	// resolveDeviceIDs upserts the drive before the attribute rows land.
 	Attributes []DriveAttribute `json:"attributes"`
-	// When the newest of those readings was taken. Absent when there are no
-	// attributes at all, which is not the same as "read a long time ago".
-	LastSeen *time.Time `json:"last_seen"`
+
+	FirstSeen time.Time `json:"first_seen"`
+	// When the agent last REPORTED this drive, from devices.last_seen -- not
+	// when the newest attribute landed.
+	//
+	// The two differ exactly where it matters. A drive smartctl can name but
+	// not read is still present and still reported, and it is the one the UI
+	// marks "not read": deriving this from the attributes would leave that
+	// drive with no timestamp at all, so the table could say neither how long
+	// it has been unreadable nor whether anyone is still looking. It is also
+	// the column netra_prune_stale_devices reads, so the table and the prune
+	// agree about what "gone" means.
+	LastSeen time.Time `json:"last_seen"`
 }
 
 // DriveAttribute is one SMART attribute's latest value.
@@ -278,11 +288,12 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT d.device, d.model, d.serial, a.attr_id, a.raw, a.normalized, a.ts
+		SELECT d.device, d.model, d.serial, d.first_seen, d.last_seen,
+		       a.attr_id, a.raw, a.normalized
 		  FROM devices d
 		  LEFT JOIN LATERAL (
 		       SELECT DISTINCT ON (s.attr_id)
-		              s.attr_id, s.raw, s.normalized, s.ts
+		              s.attr_id, s.raw, s.normalized
 		         FROM smart_attributes s
 		        WHERE s.host_id = d.host_id AND s.device_id = d.id
 		        ORDER BY s.attr_id, s.ts DESC
@@ -298,12 +309,12 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 	for rows.Next() {
 		var device string
 		var model, serial *string
+		var firstSeen, lastSeen time.Time
 		var attrID *int16
 		var raw *int64
 		var normalized *int16
-		var ts *time.Time
-		if err := rows.Scan(&device, &model, &serial,
-			&attrID, &raw, &normalized, &ts); err != nil {
+		if err := rows.Scan(&device, &model, &serial, &firstSeen, &lastSeen,
+			&attrID, &raw, &normalized); err != nil {
 			return nil, fmt.Errorf("scan drive: %w", err)
 		}
 
@@ -312,6 +323,7 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 		if len(out) == 0 || out[len(out)-1].Device != device {
 			out = append(out, Drive{
 				Device: device, Model: model, Serial: serial,
+				FirstSeen: firstSeen, LastSeen: lastSeen,
 				// An empty slice, not nil: nil marshals as `null`, and the UI
 				// reads .length on this to decide between "healthy" and
 				// "not read". The same reason every listing here starts at
@@ -330,9 +342,6 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 		d.Attributes = append(d.Attributes, DriveAttribute{
 			ID: *attrID, Raw: raw, Normalized: normalized,
 		})
-		if ts != nil && (d.LastSeen == nil || ts.After(*d.LastSeen)) {
-			d.LastSeen = ts
-		}
 	}
 	return out, rowsErr(rows.Err(), "drives")
 }

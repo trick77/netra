@@ -24,6 +24,7 @@ function drive(
       raw,
       normalized: null,
     })),
+    first_seen: "2026-06-01T12:00:00Z",
     last_seen: "2026-08-23T12:00:00Z",
     ...over,
   };

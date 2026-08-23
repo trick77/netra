@@ -193,9 +193,12 @@ export type Drive = {
   model: string | null;
   serial: string | null;
   attributes: DriveAttribute[];
-  /** When the newest of those readings was taken. null when the drive has no
-   * attributes at all -- which is not the same as "read a long time ago". */
-  last_seen: string | null;
+  first_seen: string;
+  /** When the agent last REPORTED this drive -- devices.last_seen -- not when
+   * the newest attribute landed. A drive smartctl can name but not read is
+   * still reported, so this is the one timestamp that exists for the drives
+   * the table marks "not read". */
+  last_seen: string;
 };
 
 // internal/hub/read/inventory.go: Package
