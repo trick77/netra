@@ -612,6 +612,31 @@ export const NETWORK: PanelSpec[] = [
     peak: true,
     fmt: bytes,
   },
+  // Half of net_samples, stored since the collector was written and drawn
+  // nowhere. Traffic and Interface throughput read rx_bytes and tx_bytes and
+  // nothing else, so a NIC dropping frames looked exactly like a healthy one
+  // carrying the same load -- which is the failure somebody opens a network
+  // tab to find.
+  //
+  // Not mirrored, unlike the two throughput panels above: a mirror states that
+  // a quantity has a direction and invites the reader to compare the two
+  // halves, and "which direction are the errors on" is a real question here
+  // rather than a shape. Both climb together on a bad cable and separately on
+  // a bad peer.
+  //
+  // One band per interface per direction, keyed by iface -- so a single bad
+  // NIC on a host with six is named rather than averaged into them.
+  {
+    title: "Interface errors",
+    slug: "interface-errors",
+    unit: "/s",
+    source: "net",
+    bases: [
+      { base: "rx_errs", label: "in" },
+      { base: "tx_errs", label: "out" },
+    ],
+    fmt: count,
+  },
   {
     title: "TCP statistics",
     slug: "tcp-statistics",
@@ -735,16 +760,42 @@ export const NETWORK: PanelSpec[] = [
     ],
     fmt: count,
   },
+  // One panel per family, four bands each, where there was one panel drawing
+  // three of IPv4's four counters and one of IPv6's.
+  //
+  // All eight are stored and always were. The old panel charted
+  // udp_in_errors, udp_rcvbuf_errors and udp_no_ports for v4 and only
+  // udp6_in_errors for v6 -- so a v6-only receive-buffer overflow was
+  // invisible while its v4 twin was drawn, which is a rule applied to one
+  // address family and not the other rather than a judgement about what is
+  // worth drawing. Splitting per family is what the fragmentation panels did,
+  // and for the same reason: a host can be fine on one family and not the
+  // other, and one axis cannot say so.
+  //
+  // The v4 panel keeps the udp-statistics slug. A published slug is an API.
   {
-    title: "UDP statistics",
+    title: "UDP errors",
     slug: "udp-statistics",
     unit: "/s",
     source: "host",
     bases: [
       { base: "udp_in_errors_per_s", label: "in errors" },
       { base: "udp_rcvbuf_errors_per_s", label: "rcvbuf errors" },
+      { base: "udp_sndbuf_errors_per_s", label: "sndbuf errors" },
       { base: "udp_no_ports_per_s", label: "no ports" },
-      { base: "udp6_in_errors_per_s", label: "in errors (v6)" },
+    ],
+    fmt: count,
+  },
+  {
+    title: "UDPv6 errors",
+    slug: "udp6-statistics",
+    unit: "/s",
+    source: "host",
+    bases: [
+      { base: "udp6_in_errors_per_s", label: "in errors" },
+      { base: "udp6_rcvbuf_errors_per_s", label: "rcvbuf errors" },
+      { base: "udp6_sndbuf_errors_per_s", label: "sndbuf errors" },
+      { base: "udp6_no_ports_per_s", label: "no ports" },
     ],
     fmt: count,
   },
@@ -784,6 +835,28 @@ export const NETWORK: PanelSpec[] = [
       { base: "tcp_in_segs_per_s", label: "in" },
       { base: "tcp_out_segs_per_s", label: "out" },
       { base: "tcp_estab_resets_per_s", label: "estab resets" },
+    ],
+    fmt: count,
+  },
+  // A full accept queue is a listener refusing connections it was never told
+  // about: the kernel drops the handshake, the client sees a timeout, and the
+  // process's own logs show nothing at all. Both counters come from TcpExt:
+  // and have been stored on host_samples since the collector was written.
+  //
+  // The two are not the same fact and both are drawn. ListenOverflows counts
+  // connections dropped because the accept queue was full -- the application
+  // is not calling accept() fast enough. ListenDrops is the wider count, which
+  // includes overflows but also SYN-queue drops and memory pressure, so
+  // drops climbing while overflows stay flat says the problem is below the
+  // application rather than in it.
+  {
+    title: "TCP listen queue",
+    slug: "tcp-listen-queue",
+    unit: "/s",
+    source: "host",
+    bases: [
+      { base: "tcp_listen_overflows_per_s", label: "overflows" },
+      { base: "tcp_listen_drops_per_s", label: "drops" },
     ],
     fmt: count,
   },
@@ -864,6 +937,24 @@ export const STORAGE: PanelSpec[] = [
     bases: [{ base: "io_util_pct", label: "utilisation" }],
     max: 100,
     fmt: (n) => percent(n),
+  },
+  // Operations, not bytes. Storage drew throughput, await and utilisation and
+  // never the count -- and it is the count that separates a small-random
+  // workload from a large-sequential one at identical MB/s, and the count a
+  // cloud volume is actually rate-limited on. A device sitting at its IOPS
+  // ceiling shows as high await and high utilisation with unremarkable
+  // throughput, which is three panels agreeing that something is wrong and
+  // none of them saying what.
+  {
+    title: "Disk operations",
+    slug: "disk-operations",
+    unit: "/s",
+    source: "diskIo",
+    bases: [
+      { base: "read_ops", label: "read" },
+      { base: "write_ops", label: "write" },
+    ],
+    fmt: count,
   },
   {
     title: "Filesystem space",
@@ -1199,16 +1290,27 @@ const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
     },
   ],
   network: [
-    { title: "Traffic", slugs: ["host-traffic", "interface-throughput"] },
+    {
+      title: "Traffic",
+      slugs: ["host-traffic", "interface-throughput", "interface-errors"],
+    },
     {
       title: "IP",
       slugs: ["ip-statistics", "ip-fragmentation", "ip6-fragmentation"],
     },
     {
       title: "TCP",
-      slugs: ["tcp-statistics", "tcp-connections", "tcp-segments"],
+      slugs: [
+        "tcp-statistics",
+        "tcp-connections",
+        "tcp-segments",
+        "tcp-listen-queue",
+      ],
     },
-    { title: "UDP", slugs: ["udp-statistics", "udp-datagrams"] },
+    {
+      title: "UDP",
+      slugs: ["udp-statistics", "udp6-statistics", "udp-datagrams"],
+    },
     { title: "ICMP", slugs: ["icmp-statistics", "icmp-informational"] },
   ],
   storage: [
@@ -1218,7 +1320,12 @@ const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
     },
     {
       title: "Disks",
-      slugs: ["disk-throughput", "disk-latency", "disk-utilisation"],
+      slugs: [
+        "disk-throughput",
+        "disk-operations",
+        "disk-latency",
+        "disk-utilisation",
+      ],
     },
   ],
 };

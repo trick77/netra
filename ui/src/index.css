@@ -2771,6 +2771,59 @@ tbody:first-of-type .grouprow th {
   color: var(--muted);
 }
 
+/* The drive health pill. Same annotation-on-an-identifier shape as the two
+   above, on the fixed status palette because this one IS a severity: the
+   whole point of a SMART table is that a failing disk reads as failing. */
+.badge.drive-ok {
+  color: var(--st-ok-text);
+  border-color: #1e4a1e;
+}
+.badge.drive-warning {
+  color: var(--st-warn-text);
+  border-color: #5a4a1e;
+}
+.badge.drive-serious {
+  color: var(--st-serious-text);
+  border-color: #5a3a28;
+}
+.badge.drive-critical {
+  color: var(--st-crit-text);
+  border-color: #5a2828;
+}
+/* A drive smartctl named but could not read. Muted rather than a severity:
+   this is a fact about the COLLECTOR, and colouring it as a failing disk
+   would be a claim about hardware made from the absence of a reading. */
+.badge.drive-unread {
+  color: var(--muted);
+  border-style: dashed;
+}
+
+/* What is wrong with a drive, worst first. A column rather than a run of
+   text: two findings on one line read as one sentence, and they are separate
+   facts with separate severities. */
+.findings {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.finding {
+  font-size: var(--text-label);
+  line-height: 1.35;
+}
+/* Severity carries in the WORDS as well as the colour -- "3 pending sectors"
+   says what is wrong without any hue at all -- so these tint the text and
+   nothing else. No fill, no icon: a findings cell with four chips in it is a
+   traffic light, not a sentence. */
+.finding-warning {
+  color: var(--st-warn-text);
+}
+.finding-serious {
+  color: var(--st-serious-text);
+}
+.finding-critical {
+  color: var(--st-crit-text);
+}
+
 /* The Storage tab's mount table, Usage column. The third table cell to draw
    a Meter and the only one that had no override, so every mount's bar came
    with a rule the row already had and a percentage pinned 92px away from it.

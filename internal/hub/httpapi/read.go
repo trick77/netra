@@ -36,6 +36,7 @@ func (h *readHandler) register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/hosts/{id}/filesystems", listing(h.svc.Filesystems))
 	mux.Handle("GET /api/v1/hosts/{id}/addresses", listing(h.svc.Addresses))
 	mux.Handle("GET /api/v1/hosts/{id}/interfaces", listing(h.svc.Interfaces))
+	mux.Handle("GET /api/v1/hosts/{id}/drives", listing(h.svc.Drives))
 	mux.Handle("GET /api/v1/hosts/{id}/packages", listing(h.svc.Packages))
 	mux.Handle("GET /api/v1/hosts/{id}/units", listing(h.svc.Units))
 	mux.Handle("GET /api/v1/hosts/{id}/metrics", http.HandlerFunc(h.metrics))
@@ -48,9 +49,9 @@ func (h *readHandler) register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/events", http.HandlerFunc(h.events))
 }
 
-// listing adapts the six dimension listings, which differ only in their row
-// type. A generic wrapper rather than five near-identical handlers, so a fix
-// to the id parsing or the error mapping cannot land on four of them.
+// listing adapts the seven dimension listings, which differ only in their row
+// type. A generic wrapper rather than seven near-identical handlers, so a fix
+// to the id parsing or the error mapping cannot land on six of them.
 //
 // A free function rather than a method because Go has no generic methods.
 func listing[T any](q func(context.Context, int32) ([]T, error)) http.Handler {

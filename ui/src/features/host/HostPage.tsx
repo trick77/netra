@@ -8,6 +8,7 @@ import {
   getContainers,
   getEvents,
   getFilesystems,
+  getDrives,
   getHost,
   getInterfaces,
   getMetrics,
@@ -15,6 +16,7 @@ import {
   getUnits,
   type Address,
   type Container,
+  type Drive,
   type Event,
   type Filesystem,
   type HostDetail,
@@ -41,6 +43,7 @@ import { Events } from "./tabs/Events";
 import { NetworkGraphs, StorageGraphs, SystemGraphs } from "./tabs/Graphs";
 import {
   Containers,
+  Drives,
   Interfaces,
   Mounts,
   Network,
@@ -113,6 +116,7 @@ interface TabData {
   containerMetrics: MetricsResponse | null;
   containers: Container[] | null;
   filesystems: Filesystem[] | null;
+  drives: Drive[] | null;
   addresses: Address[] | null;
   interfaces: Iface[] | null;
   packages: Pkg[] | null;
@@ -134,6 +138,7 @@ const NO_DATA: TabData = {
   containerMetrics: null,
   containers: null,
   filesystems: null,
+  drives: null,
   addresses: null,
   interfaces: null,
   packages: null,
@@ -351,13 +356,17 @@ export function HostPage({
           // and nothing else -- size, used and free live in the metrics
           // family. Fetching both is what makes this tab answer the question
           // anyone opens it for: how full is that disk.
-          const [filesystems, filesystemMetrics, diskIoMetrics] =
+          const [filesystems, drives, filesystemMetrics, diskIoMetrics] =
             await Promise.all([
               orNull(getFilesystems(hostId)),
+              // The physical disks under those mounts. orNull, like every
+              // other family: a hub too old to serve the route leaves the
+              // table empty and the rest of the tab intact.
+              orNull(getDrives(hostId)),
               metrics("filesystem"),
               metrics("disk_io"),
             ]);
-          return { filesystems, filesystemMetrics, diskIoMetrics };
+          return { filesystems, drives, filesystemMetrics, diskIoMetrics };
         }
         case "containers": {
           // The list and its metrics, so the tab can show what each
@@ -567,10 +576,14 @@ export function HostPage({
       )}
       {tab === "storage" && (
         <>
+          {/* Mounts first: "how full is it" is what people open this tab
+              for. Drives is the hardware under those mounts, and reads as
+              the answer to a question the first table has just raised. */}
           <Mounts
             rows={data.filesystems ?? []}
             metrics={data.filesystemMetrics ?? null}
           />
+          <Drives rows={data.drives ?? []} />
           <StorageGraphs
             filesystem={data.filesystemMetrics}
             diskIo={data.diskIoMetrics}

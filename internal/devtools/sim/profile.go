@@ -153,6 +153,11 @@ type DriveSpec struct {
 	Model  string
 	Serial string
 	SSD    bool
+	// NVMe switches the drive to the synthetic 1000-range attribute ids the
+	// collector assigns to NVMe health-log fields. The two id spaces are read
+	// differently by the UI, so a fleet with only ATA drives leaves half the
+	// drive table untested by anyone looking at it.
+	NVMe bool
 	// Failing marks the drive whose reallocated-sector count steps up
 	// partway through the window, so "find me a drive that is dying" has
 	// something to find.

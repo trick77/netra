@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   Address,
   Container,
+  Drive,
   Filesystem,
   MetricsResponse,
   Pkg,
@@ -12,6 +13,7 @@ import type {
 import { ABSENT } from "../../../lib/format";
 import {
   Containers,
+  Drives,
   Mounts,
   Inventory,
   Network,
@@ -519,5 +521,104 @@ describe("Mounts", () => {
     const dataRow = screen.getByText("data").closest("tr")!;
     expect(dataRow.textContent).toContain(ABSENT);
     expect(dataRow.querySelector(".meter")).toBeNull();
+  });
+});
+
+describe("Drives", () => {
+  const ata: Drive = {
+    device: "sdc",
+    model: "ST16000NM000J-2TW103",
+    serial: "ZR5A1PQ2",
+    attributes: [
+      { id: 5, raw: 238, normalized: 68 },
+      { id: 9, raw: 21_402, normalized: 98 },
+      { id: 194, raw: 49, normalized: 71 },
+      { id: 197, raw: 15, normalized: 68 },
+    ],
+    last_seen: "2026-08-23T11:00:00Z",
+  };
+
+  const nvme: Drive = {
+    device: "nvme0n1",
+    model: "SAMSUNG MZQL21T9HCJR-00A07",
+    serial: "S64FNE0R512345",
+    attributes: [
+      { id: 1000, raw: 0, normalized: null },
+      { id: 1001, raw: 7, normalized: null },
+      { id: 1006, raw: 9400, normalized: null },
+      { id: 1008, raw: 49, normalized: null },
+    ],
+    last_seen: "2026-08-23T11:00:00Z",
+  };
+
+  const unread: Drive = {
+    device: "sdz",
+    model: null,
+    serial: null,
+    attributes: [],
+    last_seen: null,
+  };
+
+  it("names what is wrong with a failing drive, worst first", () => {
+    render(<Drives rows={[ata]} />);
+    const row = screen.getByRole("row", { name: /sdc/ });
+    expect(within(row).getByText("15 pending sectors")).toBeInTheDocument();
+    expect(
+      within(row).getByText("238 reallocated sectors"),
+    ).toBeInTheDocument();
+    // The pill carries the worst of them.
+    expect(within(row).getByText("critical")).toBeInTheDocument();
+  });
+
+  // A healthy drive SAYS so. On a table whose whole point is advance warning,
+  // "we checked, it is fine" and "we have not looked" must not render the
+  // same.
+  it("distinguishes a healthy drive from one it could not read", () => {
+    render(<Drives rows={[nvme, unread]} />);
+
+    const healthy = screen.getByRole("row", { name: /nvme0n1/ });
+    expect(within(healthy).getByText("healthy")).toBeInTheDocument();
+
+    const notRead = screen.getByRole("row", { name: /sdz/ });
+    expect(within(notRead).getByText("not read")).toBeInTheDocument();
+    expect(within(notRead).queryByText("healthy")).not.toBeInTheDocument();
+  });
+
+  it("reads temperature and power-on hours from whichever id space the drive uses", () => {
+    render(<Drives rows={[ata, nvme]} />);
+    // Both report 49 degrees, from attribute 194 and 1008 respectively.
+    expect(screen.getAllByText("49 °C")).toHaveLength(2);
+  });
+
+  // NVMe reports consumed endurance; ATA has no comparable figure, and a
+  // vendor-specific life-left counter read as though it were standard would
+  // print a confident number meaning something different per model.
+  it("shows wear for NVMe and the absent marker for ATA", () => {
+    render(<Drives rows={[ata, nvme]} />);
+    expect(
+      within(screen.getByRole("row", { name: /nvme0n1/ })).getByText("7%"),
+    ).toBeInTheDocument();
+    const ataRow = screen.getByRole("row", { name: /sdc/ });
+    expect(within(ataRow).queryByText(/%$/)).not.toBeInTheDocument();
+  });
+
+  it("finds a drive by its findings, not only by its name", () => {
+    render(<Drives rows={[ata, nvme]} />);
+    fireEvent.change(screen.getByRole("searchbox", { name: "Filter Drives" }), {
+      target: { value: "pending" },
+    });
+    expect(screen.getByRole("row", { name: /sdc/ })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("row", { name: /nvme0n1/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  // SMART needs smartctl on the host and a device that answers it, and a
+  // containerised agent needs the device passed through. An empty table that
+  // said "this host has reported no drives" would send somebody looking for a
+  // disk rather than for the three reasons the reading is missing.
+  it("explains an empty table rather than stating the host has no disks", () => {
+    render(<Drives rows={[]} />);
+    expect(screen.getByText(/smartctl/)).toBeInTheDocument();
   });
 });

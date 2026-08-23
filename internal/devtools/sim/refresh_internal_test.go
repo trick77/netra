@@ -111,3 +111,62 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// Two DriveSpecs with the same Device on one profile silently become ONE
+// drive, and the merge is invisible from a browser.
+//
+// devices is unique on (host_id, device) and resolveDeviceIDs skips a name it
+// has already resolved, so the second spec's attributes land under the first
+// spec's device_id. Both id spaces then sit on one row: driveKind sees an
+// NVMe id and calls the whole thing NVMe, the ATA drive disappears from the
+// table, and the result renders exactly like the drive that was intended.
+//
+// That is what happened when the NVMe drive was added to the bare-metal
+// profile, which already had an nvme0n1 -- five specs, four rows, and nothing
+// on screen to say so.
+func TestProfileDriveNamesAreUniquePerHost(t *testing.T) {
+	for _, p := range Fleet() {
+		seen := map[string]bool{}
+		for _, d := range p.Drives {
+			if seen[d.Device] {
+				t.Errorf("%s declares %s twice; the two specs merge into one "+
+					"devices row and one of the drives vanishes from the table",
+					p.Hostname, d.Device)
+			}
+			seen[d.Device] = true
+		}
+	}
+}
+
+// The same collision, one table over: two DiskSpecs with one name would make
+// disk_io_samples' (host_id, ts, device) key discard one of them on every
+// scrape.
+func TestProfileDiskNamesAreUniquePerHost(t *testing.T) {
+	for _, p := range Fleet() {
+		seen := map[string]bool{}
+		for _, d := range p.Disks {
+			if seen[d.Device] {
+				t.Errorf("%s declares disk %s twice; one of the two is dropped "+
+					"by the samples table's natural key", p.Hostname, d.Device)
+			}
+			seen[d.Device] = true
+		}
+	}
+}
+
+// A profile that declares drives but does not run the smart collector reports
+// SMART the fleet's own capability map says it cannot read. The VPS is the
+// case this protects: it declares smart: no-device-access because a hypervisor
+// does not pass SMART through.
+func TestProfilesWithDrivesRunTheSmartCollector(t *testing.T) {
+	for _, p := range Fleet() {
+		if len(p.Drives) == 0 {
+			continue
+		}
+		if !p.runsCollector("smart") {
+			t.Errorf("%s declares %d drives but does not run the smart collector; "+
+				"the data table and the health table would contradict each other",
+				p.Hostname, len(p.Drives))
+		}
+	}
+}

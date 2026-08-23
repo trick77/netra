@@ -1,0 +1,24 @@
+-- An index for "the newest reading of every attribute on this drive", which
+-- is what the Drives listing asks on every Storage-tab load.
+--
+-- read.Drives runs a DISTINCT ON (attr_id) ... ORDER BY attr_id, ts DESC per
+-- device. The only index on smart_attributes is (device_id, host_id), which
+-- gets the planner to the drive's rows and then leaves it to sort all of them:
+-- SMART is sampled hourly and retained 90 days, so a drive reporting fifteen
+-- attributes has on the order of 32,000 rows to sort, per drive, per page
+-- load.
+--
+-- Deliberately NOT solved with a `ts > now() - interval 'N days'` bound. That
+-- would make the scan cheap and would also silently drop a drive whose agent
+-- has been down longer than N from the table -- turning a staleness question
+-- into a missing row. The Drives table answers staleness with a Last read
+-- column instead, which needs the real newest timestamp however old it is.
+--
+-- Column order is the access pattern: device_id and host_id locate the drive,
+-- attr_id is what DISTINCT ON groups on, and ts DESC puts the newest reading
+-- of each attribute first so the planner can take the first row per attr_id
+-- rather than sorting the group.
+--
+-- Forward-only; 0001 and 0003 are not touched.
+CREATE INDEX IF NOT EXISTS smart_attributes_latest_idx
+    ON smart_attributes (device_id, host_id, attr_id, ts DESC);

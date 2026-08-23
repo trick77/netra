@@ -871,6 +871,38 @@ func (g *Generator) smart(ts time.Time) []*netrav1.SmartAttribute {
 			})
 		}
 
+		if d.NVMe {
+			// The synthetic ids from nvmeAttrs (collector/smart.go). No
+			// normalized value on any of them: the health log has no such
+			// scale, so the real collector leaves it unset and so does this.
+			nvme := func(id uint32, raw int64) {
+				out = append(out, &netrav1.SmartAttribute{
+					TsMs:   ts.UnixMilli(),
+					Device: d.Device,
+					Model:  d.Model,
+					Serial: d.Serial,
+					AttrId: id,
+					Raw:    proto.Int64(raw),
+				})
+			}
+
+			nvmeTemp := 44 + 9*g.sig.unit(key+"/temp", ts.Truncate(time.Hour))
+			nvme(1000, 0) // critical_warning: clear
+			// Wear climbing slowly across the window. Below the 80% warning
+			// line, because the fleet already has one drive going bad and a
+			// second alarm would make "which drive needs attention" ambiguous.
+			nvme(1001, int64(6+progress*2))
+			nvme(1002, 100) // available_spare
+			nvme(1003, 10)  // available_spare_threshold
+			nvme(1004, 0)   // media_errors
+			nvme(1005, int64(3+progress*1))
+			nvme(1006, d.PowerOnHours+hoursIn)
+			nvme(1007, 41)
+			nvme(1008, int64(nvmeTemp))
+			nvme(1009, 0)
+			continue
+		}
+
 		temp := 34 + 8*g.sig.unit(key+"/temp", ts.Truncate(time.Hour))
 		if d.Failing {
 			// A drive that is reallocating sectors runs warm, so the

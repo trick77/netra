@@ -58,6 +58,51 @@ type Address struct {
 	LastSeen    time.Time `json:"last_seen"`
 }
 
+// Drive is one row of /hosts/{id}/drives: a physical disk and its latest SMART
+// reading per attribute.
+//
+// A LISTING rather than the `smart` metric family, which is keyed on
+// (device, attr_id) and answers "how has attribute 197 moved over the window".
+// That is the wrong question to open with: an operator wants to know which
+// drives are in trouble right now, and getting there through the metrics API
+// means one series per attribute per drive -- a hundred series to read six
+// numbers off. The family stays for anyone charting a specific attribute's
+// trend.
+//
+// The attribute set is deliberately untyped, exactly as the schema stores it:
+// SMART attributes vary per drive model, and a typed field per attribute would
+// need a schema change for every new drive (spec §5.3). Naming what an id
+// MEANS is the reader's job, in the UI, for the same reason the fleet's
+// severity rules live there.
+type Drive struct {
+	Device string  `json:"device"`
+	Model  *string `json:"model"`
+	Serial *string `json:"serial"`
+	// Latest reading per attribute, ordered by attr_id. Empty for a device
+	// the hub knows about but has no attributes for -- which is possible:
+	// resolveDeviceIDs upserts the drive before the attribute rows land.
+	Attributes []DriveAttribute `json:"attributes"`
+	// When the newest of those readings was taken. Absent when there are no
+	// attributes at all, which is not the same as "read a long time ago".
+	LastSeen *time.Time `json:"last_seen"`
+}
+
+// DriveAttribute is one SMART attribute's latest value.
+//
+// Raw and Normalized are both carried and are not interchangeable. Raw is the
+// count an operator reasons about -- five reallocated sectors is five sectors.
+// Normalized is ATA's vendor-scaled 1-253 "health" figure for the same
+// attribute, where higher is better and the drive decides what the scale
+// means; it is the one SMART's own pass/fail threshold is compared against.
+// NVMe rows carry no normalized value at all, by the collector's decision:
+// there is no such scale in the health log, and inventing one would be the
+// agent classifying.
+type DriveAttribute struct {
+	ID         int16  `json:"id"`
+	Raw        *int64 `json:"raw"`
+	Normalized *int16 `json:"normalized"`
+}
+
 // Interface is one row of /hosts/{id}/interfaces: one link, with no addresses
 // on it.
 //
@@ -209,6 +254,87 @@ func (s *Service) Addresses(ctx context.Context, hostID int32) ([]Address, error
 		out = append(out, a)
 	}
 	return out, rowsErr(rows.Err(), "addresses")
+}
+
+// Drives lists the host's physical disks with their latest SMART reading.
+//
+// One row per (device, attr_id), folded into one Drive per device here rather
+// than in SQL: the grouping is a shape the JSON wants and Postgres would need
+// a json_agg to express, which trades a readable query for a scan nobody can
+// debug.
+//
+// DISTINCT ON is the newest-per-attribute pick, and it is why this reads the
+// raw table directly rather than a rollup: SMART has no continuous aggregates
+// (smartTiers, read/tier.go) because it is sampled hourly and a 5-minute
+// bucket would hold at most one reading.
+//
+// A LEFT JOIN, so a drive the hub has resolved an id for but has no attributes
+// from still appears. That is a real state -- resolveDeviceIDs upserts the
+// device before the batch of attributes lands, and a drive smartctl can name
+// but not read reports no attributes at all.
+func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
+	if err := s.hostExists(ctx, hostID); err != nil {
+		return nil, err
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.device, d.model, d.serial, a.attr_id, a.raw, a.normalized, a.ts
+		  FROM devices d
+		  LEFT JOIN LATERAL (
+		       SELECT DISTINCT ON (s.attr_id)
+		              s.attr_id, s.raw, s.normalized, s.ts
+		         FROM smart_attributes s
+		        WHERE s.host_id = d.host_id AND s.device_id = d.id
+		        ORDER BY s.attr_id, s.ts DESC
+		  ) a ON TRUE
+		 WHERE d.host_id = $1
+		 ORDER BY d.device, a.attr_id`, hostID)
+	if err != nil {
+		return nil, fmt.Errorf("query drives: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Drive{}
+	for rows.Next() {
+		var device string
+		var model, serial *string
+		var attrID *int16
+		var raw *int64
+		var normalized *int16
+		var ts *time.Time
+		if err := rows.Scan(&device, &model, &serial,
+			&attrID, &raw, &normalized, &ts); err != nil {
+			return nil, fmt.Errorf("scan drive: %w", err)
+		}
+
+		// Ordered by device, so a new name is always a new drive and the fold
+		// needs no map.
+		if len(out) == 0 || out[len(out)-1].Device != device {
+			out = append(out, Drive{
+				Device: device, Model: model, Serial: serial,
+				// An empty slice, not nil: nil marshals as `null`, and the UI
+				// reads .length on this to decide between "healthy" and
+				// "not read". The same reason every listing here starts at
+				// []T{} rather than a nil slice.
+				Attributes: []DriveAttribute{},
+			})
+		}
+		d := &out[len(out)-1]
+
+		// The LEFT JOIN's miss: a drive with no attributes yields one row with
+		// every attribute column NULL. It is the drive that matters there, not
+		// a nil attribute.
+		if attrID == nil {
+			continue
+		}
+		d.Attributes = append(d.Attributes, DriveAttribute{
+			ID: *attrID, Raw: raw, Normalized: normalized,
+		})
+		if ts != nil && (d.LastSeen == nil || ts.After(*d.LastSeen)) {
+			d.LastSeen = ts
+		}
+	}
+	return out, rowsErr(rows.Err(), "drives")
 }
 
 // Interfaces lists the host's network interfaces.
