@@ -82,9 +82,24 @@ type Drive struct {
 	// the hub knows about but has no attributes for -- which is possible:
 	// resolveDeviceIDs upserts the drive before the attribute rows land.
 	Attributes []DriveAttribute `json:"attributes"`
-	// When the newest of those readings was taken. Absent when there are no
-	// attributes at all, which is not the same as "read a long time ago".
-	LastSeen *time.Time `json:"last_seen"`
+
+	// When this drive's newest reading was TAKEN, from devices.last_seen.
+	//
+	// The same instant the newest attribute carries, but stored rather than
+	// derived, so it survives the readings themselves: smart_attributes is
+	// dropped by its own retention policy, and this column still dates a drive
+	// whose attributes have aged out.
+	//
+	// Stamped from the reading's ts, never from the hub's clock: the agent
+	// replays buffered scrapes after an outage, and now() would report
+	// overnight readings as taken on arrival.
+	//
+	// devices.first_seen is deliberately NOT here. It is a HUB timestamp --
+	// the floor netra_prune_stale_devices needs so a host with a bad clock
+	// cannot have its drives deleted and re-created for ever -- and putting it
+	// on the wire beside a last_seen from the agent's clock would ship a pair
+	// that can read first_seen > last_seen after a replay.
+	LastSeen time.Time `json:"last_seen"`
 }
 
 // DriveAttribute is one SMART attribute's latest value.
@@ -269,20 +284,27 @@ func (s *Service) Addresses(ctx context.Context, hostID int32) ([]Address, error
 // bucket would hold at most one reading.
 //
 // A LEFT JOIN, so a drive the hub has resolved an id for but has no attributes
-// from still appears. That is a real state -- resolveDeviceIDs upserts the
-// device before the batch of attributes lands, and a drive smartctl can name
-// but not read reports no attributes at all.
+// from still appears.
+//
+// That is a real state, and NOT the one it looks like. It is not "smartctl
+// could not read this drive": the collector `continue`s past a failed --all
+// before appending any row, so such a drive produces nothing and never
+// resolves an id at all. It is a drive whose readings have aged out under
+// smart_attributes' retention while its devices row is still inside the
+// prune's longer horizon -- the row outliving its own history, which is
+// exactly why last_seen is stored on it rather than derived.
 func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 	if err := s.hostExists(ctx, hostID); err != nil {
 		return nil, err
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT d.device, d.model, d.serial, a.attr_id, a.raw, a.normalized, a.ts
+		SELECT d.device, d.model, d.serial, d.last_seen,
+		       a.attr_id, a.raw, a.normalized
 		  FROM devices d
 		  LEFT JOIN LATERAL (
 		       SELECT DISTINCT ON (s.attr_id)
-		              s.attr_id, s.raw, s.normalized, s.ts
+		              s.attr_id, s.raw, s.normalized
 		         FROM smart_attributes s
 		        WHERE s.host_id = d.host_id AND s.device_id = d.id
 		        ORDER BY s.attr_id, s.ts DESC
@@ -298,12 +320,12 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 	for rows.Next() {
 		var device string
 		var model, serial *string
+		var lastSeen time.Time
 		var attrID *int16
 		var raw *int64
 		var normalized *int16
-		var ts *time.Time
-		if err := rows.Scan(&device, &model, &serial,
-			&attrID, &raw, &normalized, &ts); err != nil {
+		if err := rows.Scan(&device, &model, &serial, &lastSeen,
+			&attrID, &raw, &normalized); err != nil {
 			return nil, fmt.Errorf("scan drive: %w", err)
 		}
 
@@ -312,6 +334,7 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 		if len(out) == 0 || out[len(out)-1].Device != device {
 			out = append(out, Drive{
 				Device: device, Model: model, Serial: serial,
+				LastSeen: lastSeen,
 				// An empty slice, not nil: nil marshals as `null`, and the UI
 				// reads .length on this to decide between "healthy" and
 				// "not read". The same reason every listing here starts at
@@ -330,9 +353,6 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 		d.Attributes = append(d.Attributes, DriveAttribute{
 			ID: *attrID, Raw: raw, Normalized: normalized,
 		})
-		if ts != nil && (d.LastSeen == nil || ts.After(*d.LastSeen)) {
-			d.LastSeen = ts
-		}
 	}
 	return out, rowsErr(rows.Err(), "drives")
 }

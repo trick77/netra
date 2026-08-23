@@ -433,6 +433,16 @@ func quoteIdentifier(name string) string {
 // deletes a host is simultaneously cascading through. It is netra's own job
 // rather than one of Timescale's, but the scheduler treats it identically.
 //
+// netra_prune_stale_devices joins it, and is the worse of the two: it DELETEs
+// from devices, which cascades into smart_attributes -- a hypertable, so the
+// delete reaches its chunks -- while a host-delete test is cascading through
+// the same pair from the other end. The loser of that deadlock fails with
+// SQLSTATE 40P01 and nothing in the test to explain it.
+//
+// A job left off this list does not fail anything: no assertion covers it, the
+// suite stays green, and the deadlock surfaces later as a flake. Any job a
+// migration adds belongs here the same day.
+//
 // UNSCHEDULED, not deleted. Several tests count the policies to prove the
 // migration registered them (rollup_test.go, group1rollup_test.go), and
 // deleting the jobs would make those tests pass for the wrong reason -- or
@@ -504,7 +514,8 @@ func (s *Store) unschedulePolicyJobs(ctx context.Context) error {
 			SELECT alter_job(job_id, scheduled => false)
 			  FROM timescaledb_information.jobs
 			 WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate',
-			                     'netra_prune_discrete_events')`)
+			                     'netra_prune_discrete_events',
+			                     'netra_prune_stale_devices')`)
 		if err == nil {
 			return nil
 		}

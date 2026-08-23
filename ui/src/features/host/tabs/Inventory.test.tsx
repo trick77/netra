@@ -556,7 +556,8 @@ describe("Drives", () => {
     model: null,
     serial: null,
     attributes: [],
-    last_seen: null,
+    // Its readings aged out under retention; the devices row still dates it.
+    last_seen: "2026-08-23T11:00:00Z",
   };
 
   it("names what is wrong with a failing drive, worst first", () => {
@@ -571,8 +572,8 @@ describe("Drives", () => {
   });
 
   // A healthy drive SAYS so. On a table whose whole point is advance warning,
-  // "we checked, it is fine" and "we have not looked" must not render the
-  // same.
+  // "we checked, it is fine" and "there is nothing left to check" must not
+  // render the same.
   it("distinguishes a healthy drive from one it could not read", () => {
     render(<Drives rows={[nvme, unread]} />);
 

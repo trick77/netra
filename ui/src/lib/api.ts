@@ -193,9 +193,15 @@ export type Drive = {
   model: string | null;
   serial: string | null;
   attributes: DriveAttribute[];
-  /** When the newest of those readings was taken. null when the drive has no
-   * attributes at all -- which is not the same as "read a long time ago". */
-  last_seen: string | null;
+  /** When this drive's newest reading was TAKEN -- devices.last_seen. The
+   * same instant the newest attribute carries, but stored rather than
+   * derived, so a drive whose readings have aged out under retention still
+   * has a date on it.
+   *
+   * devices.first_seen is not sent: it is a hub timestamp the prune uses as a
+   * floor, and the two clocks side by side could read first_seen > last_seen
+   * after a replayed batch. */
+  last_seen: string;
 };
 
 // internal/hub/read/inventory.go: Package

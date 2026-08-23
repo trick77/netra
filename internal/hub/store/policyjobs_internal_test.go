@@ -60,7 +60,8 @@ func TestIntegrationUnschedulePolicyJobsIsRepeatable(t *testing.T) {
 	if err := s.pool.QueryRow(ctx, `
 		SELECT count(*) FROM timescaledb_information.jobs
 		 WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate',
-		                     'netra_prune_discrete_events')
+		                     'netra_prune_discrete_events',
+		                     'netra_prune_stale_devices')
 		   AND scheduled`).Scan(&stillScheduled); err != nil {
 		t.Fatalf("count scheduled jobs: %v", err)
 	}

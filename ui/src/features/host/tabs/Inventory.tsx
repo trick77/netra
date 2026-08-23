@@ -555,9 +555,10 @@ export function Network({ rows }: { rows: readonly Address[] }) {
 function DriveHealthPill({ drive }: { drive: Drive }) {
   const severity = driveSeverity(drive);
   if (drive.attributes.length === 0) {
-    // Not a verdict about the hardware. smartctl named the drive and could not
-    // read it, which the Device availability panel already reports as a
-    // collector fact.
+    // Not a verdict about the hardware: there is nothing to judge. The
+    // readings have aged out under retention while the drive's row is still
+    // inside the prune's longer horizon, so the Last read column is the only
+    // thing left that can speak for it.
     return <span className="badge drive-unread">not read</span>;
   }
   const label = severity === "ok" ? "healthy" : severity;
@@ -622,12 +623,17 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
     key: "last_seen",
     // The staleness cue the health pill cannot give.
     //
-    // "not read" covers a drive with no attributes at all. A drive whose
-    // attributes stopped arriving -- a permission change, a device pulled out
-    // of a container passthrough, an agent that died -- keeps every one of
-    // them, so its temperature, wear and findings go on rendering as current
-    // facts about hardware nobody has looked at in a week. This column is what
-    // says when they were last true.
+    // When this drive's newest reading was taken.
+    //
+    // Every other cell in the row -- temperature, wear, findings -- is the
+    // newest reading rendered as a current fact. Nothing else on the row says
+    // how old that is, and a host whose agent stopped an hour ago looks
+    // exactly like one reporting now.
+    //
+    // devices.last_seen rather than the newest attribute's own ts: the two are
+    // the same instant, but smart_attributes is dropped at 90 days by its
+    // retention policy and the devices row outlives it, so a drive whose
+    // readings have aged out still has a date rather than a dash.
     header: "Last read",
     cell: (row) => <When iso={row.last_seen} />,
   },

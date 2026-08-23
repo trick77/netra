@@ -1371,15 +1371,22 @@ func TestIntegrationInterfacesSeparateEmptyFromMissing(t *testing.T) {
 // A listing rather than the `smart` metric family, which is keyed on
 // (device, attr_id): "which drives are in trouble" through that API is a
 // hundred series to read six numbers off.
+var seededLastSeen = time.Date(2026, 8, 23, 11, 0, 0, 0, time.UTC)
+
 func TestIntegrationDrivesFoldTheNewestReadingPerAttribute(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
 	id := seedHost(t, pool, "spinning")
 
+	// first_seen and last_seen get DIFFERENT values on purpose: they are
+	// adjacent columns of the same type, and identical fixtures would let a
+	// swapped SELECT pass.
 	exec(t, pool, `
-		INSERT INTO devices (host_id, device, model, serial)
-		VALUES ($1, 'sda', 'ST16000NM000J', 'ZR5A1M0K'),
-		       ($1, 'nvme0n1', 'SAMSUNG MZQL2', 'S64FNE0R')`, id)
+		INSERT INTO devices (host_id, device, model, serial, first_seen, last_seen)
+		VALUES ($1, 'sda', 'ST16000NM000J', 'ZR5A1M0K',
+		        TIMESTAMPTZ '2026-01-05T09:00:00Z', TIMESTAMPTZ '2026-08-23T11:00:00Z'),
+		       ($1, 'nvme0n1', 'SAMSUNG MZQL2', 'S64FNE0R',
+		        TIMESTAMPTZ '2026-01-05T09:00:00Z', TIMESTAMPTZ '2026-08-23T11:00:00Z')`, id)
 
 	// Two readings of attribute 5 on sda, an hour apart. The later one is the
 	// answer; the earlier must not win on ordering.
@@ -1423,8 +1430,12 @@ func TestIntegrationDrivesFoldTheNewestReadingPerAttribute(t *testing.T) {
 		t.Errorf("attribute 5 raw = %v, want the 11:00 reading (12), not the 10:00 one (8)",
 			sda.Attributes[0].Raw)
 	}
-	if sda.LastSeen == nil || sda.LastSeen.UTC().Hour() != 11 {
-		t.Errorf("last_seen = %v, want the newest reading's timestamp", sda.LastSeen)
+	// The exact value the fixture seeded, not merely non-zero: last_seen and
+	// first_seen are adjacent TIMESTAMPTZ columns, and an IsZero() check
+	// passes just as happily if the SELECT reads them in the wrong order.
+	if !sda.LastSeen.Equal(seededLastSeen) {
+		t.Errorf("last_seen = %s, want %s -- the devices row's own column",
+			sda.LastSeen.UTC(), seededLastSeen.UTC())
 	}
 
 	// NVMe rows carry no normalized value: the health log has no such scale,
@@ -1437,11 +1448,11 @@ func TestIntegrationDrivesFoldTheNewestReadingPerAttribute(t *testing.T) {
 	}
 }
 
-// A drive the hub has an id for but no attributes from is a real state:
-// resolveDeviceIDs upserts the device before the batch lands, and a drive
-// smartctl can name but not read reports nothing at all. It must still appear
-// -- the UI says "not read" about it, which is a different fact from a drive
-// that is failing.
+// A drive the hub has an id for but no attributes from is a real state: its
+// readings aged out under smart_attributes' retention while the devices row
+// is still inside the prune's longer horizon. It must still appear -- the UI
+// says "not read" about it, which is a different fact from a drive that is
+// failing -- and the row still carries the last_seen its readings had.
 func TestIntegrationDrivesIncludeOnesWithNoAttributes(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
@@ -1465,8 +1476,12 @@ func TestIntegrationDrivesIncludeOnesWithNoAttributes(t *testing.T) {
 	if len(got[0].Attributes) != 0 {
 		t.Errorf("attributes = %v, want empty", got[0].Attributes)
 	}
-	if got[0].LastSeen != nil {
-		t.Errorf("last_seen = %v, want absent when there are no readings", got[0].LastSeen)
+	// Set even with no readings, which is the point of storing it on the
+	// devices row rather than deriving it: this drive's attributes are gone
+	// and the row still says when they were last taken.
+	if got[0].LastSeen.IsZero() {
+		t.Error("last_seen is zero for a drive with no attributes; " +
+			"it comes from the devices row, which exists")
 	}
 }
 
