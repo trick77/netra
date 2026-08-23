@@ -11,8 +11,15 @@ import (
 // package. The clock is a parameter so expiry is asserted exactly rather than
 // with a sleep; this file is compiled only into the test binary, so the seam
 // cannot reach a production call site.
-func NewSessionCookieForTest(adminToken string, now time.Time) *http.Cookie {
-	return newSessionCookie(adminToken, now)
+func NewSessionCookieForTest(adminToken, user string, now time.Time) *http.Cookie {
+	return newSessionCookie(adminToken, user, now)
+}
+
+// SessionUserForTest exposes sessionUser to the external test package. The
+// identity a cookie carries is signed, so it needs asserting directly and not
+// only through the boolean validSession collapses it into.
+func SessionUserForTest(adminToken string, r *http.Request, now time.Time) (string, bool) {
+	return sessionUser(adminToken, r, now)
 }
 
 // ValidSessionForTest exposes validSession to the external test package.

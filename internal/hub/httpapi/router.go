@@ -7,6 +7,7 @@ import (
 	"github.com/trick77/netra/internal/hub/admin"
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/config"
+	"github.com/trick77/netra/internal/hub/oidc"
 	"github.com/trick77/netra/internal/hub/read"
 	"github.com/trick77/netra/internal/hub/store"
 	"github.com/trick77/netra/internal/hub/web"
@@ -21,7 +22,7 @@ import (
 // minting, so RequireAdmin on everything outside /api/agent/ is load-bearing
 // rather than defence in depth -- do not mount a route here without deciding,
 // explicitly, which credential it answers to.
-func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Handler {
+func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc *oidc.Service) http.Handler {
 	svc := admin.NewService(s.Pool())
 	rd := read.NewService(s.Pool())
 
@@ -41,9 +42,15 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config) http.Ha
 
 	// /login and /logout sit outside RequireAdmin: this is where an
 	// unauthenticated browser is sent, so gating them would loop.
-	mux.Handle("GET /login", NewLoginHandler(cfg.AdminToken))
-	mux.Handle("POST /login", NewLoginHandler(cfg.AdminToken))
-	mux.Handle("POST /logout", NewLoginHandler(cfg.AdminToken))
+	//
+	// /auth/login and /auth/callback are the OpenID Connect flow and sit here
+	// for the same reason: an unauthenticated browser walks through them.
+	login := NewLoginHandler(cfg.AdminToken, oidcSvc)
+	mux.Handle("GET /login", login)
+	mux.Handle("POST /login", login)
+	mux.Handle("POST /logout", login)
+	mux.Handle("GET /auth/login", login)
+	mux.Handle("GET /auth/callback", login)
 
 	// Everything else is the single-page UI, behind the same admin token as
 	// the API. redirectToLogin stays true so a browser without a session

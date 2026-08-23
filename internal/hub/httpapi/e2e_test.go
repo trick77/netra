@@ -43,7 +43,7 @@ func newE2EFixture(t *testing.T) (*store.Store, int32, string, *httptest.Server)
 
 	srv := httptest.NewServer(
 		httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s,
-			hubconfig.Config{AdminToken: testAdminToken}))
+			hubconfig.Config{AdminToken: testAdminToken}, nil))
 	t.Cleanup(srv.Close)
 
 	return s, hostID, token, srv
