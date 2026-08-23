@@ -2718,8 +2718,15 @@ tbody:first-of-type .grouprow th {
 }
 /* A monospaced identifier inside a table cell -- an IP, an interface name, a
    MAC. --text-micro is sanctioned here for the same reason it is on the other
-   dense readings (spec 3.6): a v6 address at --text-label wraps the column. */
-.mono {
+   dense readings (spec 3.6): a v6 address at --text-label wraps the column.
+
+   Its OWN class rather than more properties on .mono above, which is the
+   identifier face shared by the container list. Declared later with equal
+   specificity, a second `.mono` block wins per-property everywhere: it was
+   overriding .host-cell-site's --text-label/--muted and .imgcell's --muted in
+   a table this change never touched. The font-family is repeated here rather
+   than paired as `class="mono ident"`, so one class carries one look. */
+.ident {
   font-family: var(--font-mono);
   font-size: var(--text-micro);
   color: var(--ink);

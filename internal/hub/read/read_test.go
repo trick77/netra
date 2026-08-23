@@ -511,6 +511,7 @@ func TestIntegrationDimensionListingsSeparateEmptyFromMissing(t *testing.T) {
 			"containers":  func() error { _, err := svc.Containers(ctx, 4242); return err },
 			"filesystems": func() error { _, err := svc.Filesystems(ctx, 4242); return err },
 			"addresses":   func() error { _, err := svc.Addresses(ctx, 4242); return err },
+			"interfaces":  func() error { _, err := svc.Interfaces(ctx, 4242); return err },
 			"packages":    func() error { _, err := svc.Packages(ctx, 4242); return err },
 			"units":       func() error { _, err := svc.Units(ctx, 4242); return err },
 		} {
@@ -1271,5 +1272,95 @@ func TestIntegrationEventsRunStraddlingTheLimitKeepsItsMarker(t *testing.T) {
 	if detail["more"] != float64(17) {
 		t.Errorf("more = %v, want 17 -- the one row that survived the cut must "+
 			"still say the run was bigger", detail["more"])
+	}
+}
+
+// Interfaces is a sibling of Addresses rather than more columns on it, and the
+// case that motivates the split is an interface with NO address -- a failed
+// bond, an unplugged spare NIC. That row is exactly what an address-keyed
+// listing cannot return, so it is the one this test insists on.
+func TestIntegrationInterfacesListLinksWithoutAddresses(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "linked")
+
+	exec(t, pool, `
+		INSERT INTO host_interfaces (
+			host_id, iface, if_index, oper_state, speed_mbps, duplex, mtu, mac, description)
+		VALUES ($1, 'eth0', 2, 'up', 1000, 'full', 1500, '52:54:00:3a:1c:07', 'uplink'),
+		       ($1, 'bond0', 3, 'lowerlayerdown', NULL, NULL, 9000, '52:54:00:3a:1c:09', NULL),
+		       ($1, 'lo', 1, 'unknown', NULL, NULL, 65536, NULL, NULL)`, id)
+	// One address, on one of the three interfaces.
+	exec(t, pool, `
+		INSERT INTO host_addresses (host_id, iface, if_index, address, family, scope)
+		VALUES ($1, 'eth0', 2, '10.0.0.5', 4, 'private')`, id)
+
+	got, err := svc.Interfaces(ctx, id)
+	if err != nil {
+		t.Fatalf("Interfaces: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d interfaces, want 3", len(got))
+	}
+
+	byName := map[string]read.Interface{}
+	for _, i := range got {
+		byName[i.Iface] = i
+	}
+
+	bond, ok := byName["bond0"]
+	if !ok {
+		t.Fatal("bond0 is missing; an interface with no address is the case this listing exists for")
+	}
+	if bond.OperState == nil || *bond.OperState != "lowerlayerdown" {
+		t.Errorf("bond0 oper_state = %v, want the kernel's own word", bond.OperState)
+	}
+	// NULL, not 0: a link that is down has no speed to report, and reporting
+	// "0 Mb/s" would put it in the same bucket as an idle 10 Gb link.
+	if bond.SpeedMbps != nil {
+		t.Errorf("bond0 speed_mbps = %v, want absent", *bond.SpeedMbps)
+	}
+	if bond.Duplex != nil {
+		t.Errorf("bond0 duplex = %v, want absent", *bond.Duplex)
+	}
+
+	eth := byName["eth0"]
+	if eth.SpeedMbps == nil || *eth.SpeedMbps != 1000 {
+		t.Errorf("eth0 speed_mbps = %v, want 1000", eth.SpeedMbps)
+	}
+	if eth.MTU == nil || *eth.MTU != 1500 {
+		t.Errorf("eth0 mtu = %v, want 1500", eth.MTU)
+	}
+	if eth.MAC == nil || *eth.MAC != "52:54:00:3a:1c:07" {
+		t.Errorf("eth0 mac = %v", eth.MAC)
+	}
+	// The alias reads from here now rather than from every address row.
+	if eth.Description == nil || *eth.Description != "uplink" {
+		t.Errorf("eth0 description = %v, want uplink", eth.Description)
+	}
+
+	// A device with no link layer of its own reports absence, not an empty
+	// string that every `?? ABSENT` downstream would treat as a measurement.
+	if lo := byName["lo"]; lo.MAC != nil {
+		t.Errorf("lo mac = %v, want absent", *lo.MAC)
+	}
+}
+
+// A registered host with no interfaces is an empty list, not a 404 -- the same
+// distinction every other dimension listing draws.
+func TestIntegrationInterfacesSeparateEmptyFromMissing(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "bare-links")
+
+	got, err := svc.Interfaces(ctx, id)
+	if err != nil {
+		t.Fatalf("Interfaces: %v", err)
+	}
+	if got == nil {
+		t.Fatal("interfaces = nil, want an empty slice so it renders as [] rather than null")
+	}
+	if len(got) != 0 {
+		t.Errorf("interfaces = %v, want empty", got)
 	}
 }

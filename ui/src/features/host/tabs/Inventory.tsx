@@ -446,7 +446,7 @@ const ADDRESS_COLUMNS: Column<Address>[] = [
     header: "Address",
     cell: (row) => (
       <span className="addr-cell">
-        <span className="mono">{row.address}</span>
+        <span className="ident">{row.address}</span>
         <ScopePill scope={row.scope} />
       </span>
     ),
@@ -562,7 +562,7 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
     header: "Interface",
     cell: (row) => (
       <span className="addr-cell">
-        <span className="mono">{row.iface}</span>
+        <span className="ident">{row.iface}</span>
         <LinkStatePill state={row.oper_state} />
       </span>
     ),
@@ -590,7 +590,7 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
     key: "mac",
     header: "MAC",
     cell: (row) =>
-      row.mac === null ? ABSENT : <span className="mono">{row.mac}</span>,
+      row.mac === null ? ABSENT : <span className="ident">{row.mac}</span>,
   },
   {
     key: "description",

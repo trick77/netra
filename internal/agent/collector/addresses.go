@@ -354,8 +354,15 @@ func (a *Addresses) Collect(_ context.Context) (*Result, error) {
 	// Prefixed so a link line can never collide with an address line: an
 	// interface called "x" with alias "y" would otherwise be able to
 	// fingerprint identically to some address row.
+	//
+	// if_index is in here because it is REPORTED: an interface destroyed and
+	// recreated under the same name -- a module reload, a netplan apply --
+	// keeps its name, MAC and attributes and gets a new index. Left out, that
+	// scrape fingerprints identically, the collector reports nothing, and the
+	// hub serves the old index until some unrelated attribute happens to move.
 	for _, l := range links {
-		fingerprint = append(fingerprint, "link "+l.GetIface()+" "+l.GetOperState()+" "+
+		fingerprint = append(fingerprint, "link "+l.GetIface()+" "+
+			formatUint32Ptr(l.IfIndex)+" "+l.GetOperState()+" "+
 			formatUint64Ptr(l.SpeedMbps)+" "+l.GetDuplex()+" "+
 			formatUint32Ptr(l.Mtu)+" "+l.GetMac()+" "+l.GetDescription())
 	}

@@ -1002,12 +1002,22 @@ function bandsFor(
     }
     return {
       res: other,
-      read: (column) =>
-        seriesOnGrid(
-          res,
-          optionalValues(other, 0, column),
-          seriesTimestamps(other, 0),
-        ),
+      read: (column) => {
+        const values = optionalValues(other, 0, column);
+        // The same guard griddedValues() carries, and for the same reason:
+        // seriesTimestamps THROWS on a response with no series at all, and
+        // both arguments are evaluated before seriesOnGrid can look at them.
+        //
+        // An empty series list is a real answer, not an error -- the hub
+        // initialises `out := []Series{}` and InsertHostSnmpSamples skips a
+        // sample with none of its seventy columns set, so a host reporting
+        // host_samples and no snmp rows in this window gets a 200 with
+        // `series: []`. Without this the fragmentation panel throws mid
+        // render, and there is no error boundary above it: the whole tab
+        // goes white.
+        if (values.length === 0) return [];
+        return seriesOnGrid(res, values, seriesTimestamps(other, 0));
+      },
     };
   };
 

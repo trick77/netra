@@ -1,3 +1,20 @@
+-- netra:no-transaction
+--
+-- Matching 0001, which carries the marker because TimescaleDB refuses to
+-- create a continuous aggregate inside a transaction block.
+--
+-- Measured against the pinned TimescaleDB 2.29.1, this file DOES apply inside
+-- one: both aggregates and all five policies are created, so the marker is not
+-- load-bearing today. It is here because the failure it prevents is the worst
+-- shape available -- Migrate returns an error, the hub exits, schema_migrations
+-- stays unwritten, and every restart fails identically -- and because the
+-- version that refuses is a version somebody may already be running. 0001 made
+-- the same trade.
+--
+-- Safe to run unwrapped: every statement below is IF NOT EXISTS or
+-- if_not_exists => TRUE, so a partial application self-heals on the next start
+-- rather than needing a hand-written repair.
+--
 -- host_proto_samples: the TCP and UDP volume counters, and host_interfaces:
 -- the links the addresses sit on.
 --
