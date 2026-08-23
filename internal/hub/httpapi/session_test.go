@@ -70,17 +70,19 @@ func TestSessionCookieFromAnotherAdminTokenIsRejected(t *testing.T) {
 	}
 }
 
-func TestSessionCookieIsHttpOnlyAndSameSiteStrict(t *testing.T) {
+func TestSessionCookieIsHttpOnlyAndSameSiteLax(t *testing.T) {
 	c := httpapi.NewSessionCookieForTest("s3cret", "", time.Unix(1_700_000_000, 0))
 
 	if !c.HttpOnly {
 		t.Error("cookie is not HttpOnly — script-readable session")
 	}
-	// Strict is what stops a cross-site form post from reaching the
+	// Lax is what stops a cross-site form post from reaching the
 	// state-changing UI routes with a live session attached, which is why
-	// this stage ships no separate CSRF token.
-	if c.SameSite != http.SameSiteStrictMode {
-		t.Errorf("SameSite = %v, want Strict", c.SameSite)
+	// this stage ships no separate CSRF token. Not Strict: browsers withhold
+	// a Strict cookie on the provider-initiated navigation out of the OIDC
+	// callback, so every first sign-in would land back on the login form.
+	if c.SameSite != http.SameSiteLaxMode {
+		t.Errorf("SameSite = %v, want Lax", c.SameSite)
 	}
 }
 

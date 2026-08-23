@@ -1,3 +1,4 @@
+// Package config turns NETRA_* environment variables into a hub Config.
 package config
 
 import (
@@ -6,17 +7,32 @@ import (
 	"strings"
 )
 
+// Config holds every hub setting. There is no config file: env only, so a
+// container is configured entirely by its compose file.
 type Config struct {
 	ListenAddr  string
 	DatabaseDSN string
 	AdminToken  string
 	LogLevel    string
 
-	// HubURL is the address agents post to, used only to render a
-	// copy-pasteable setup command in the UI -- and, when OIDC is configured,
-	// to derive the redirect URI. Deriving rather than configuring it means the
-	// value Authelia is told to redirect to cannot drift from the name Traefik
-	// actually routes on: both come from NETRA_HOSTNAME.
+	// HubURL is the address agents post to, used to render a
+	// ready-to-paste setup-agent.sh command in the UI and, when OIDC is
+	// configured, to derive the redirect URI. Deriving that rather than
+	// configuring it means the value Authelia is told to redirect to cannot
+	// drift from the name Traefik actually routes on: both come from
+	// NETRA_HOSTNAME.
+	//
+	// It is optional to the binary: the hub is reached on loopback by the
+	// browser and cannot infer its own public name from that request, so rather
+	// than guess, an unset value makes the UI render no setup command at all
+	// until an operator types one. A command correct except for its hostname
+	// would copy, run, succeed, and post that host's metrics to whoever owns the
+	// name.
+	//
+	// Optional here, required in compose.yaml, which derives it from
+	// NETRA_HOSTNAME and marks that `:?`. Running the binary directly with it
+	// unset is supported and degrades as described above -- browser sign-in is
+	// then unconfigurable too, since there is no redirect URI to derive.
 	HubURL string
 
 	// OIDC is the optional browser login. Zero value means the hub behaves
@@ -41,6 +57,8 @@ type OIDCConfig struct {
 // Load rejects, not a silent fallback to token-only login.
 func (c OIDCConfig) Enabled() bool { return c.Issuer != "" }
 
+// Load reads the environment and applies defaults. It fails rather than
+// starting with no database or an unauthenticated admin API.
 func Load() (Config, error) {
 	cfg := Config{
 		ListenAddr:  envOr("NETRA_LISTEN_ADDR", ":8080"),

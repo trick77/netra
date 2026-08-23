@@ -1,13 +1,13 @@
 package httpapi
 
 import (
-	"github.com/trick77/netra/internal/hub/oidc"
 	"net/http"
 	"time"
 
 	"github.com/trick77/netra/internal/hub/admin"
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/config"
+	"github.com/trick77/netra/internal/hub/oidc"
 	"github.com/trick77/netra/internal/hub/read"
 	"github.com/trick77/netra/internal/hub/store"
 	"github.com/trick77/netra/internal/hub/web"

@@ -36,9 +36,12 @@ func sessionKey(adminToken string) []byte {
 
 // sign returns the MAC over an expiry timestamp and the user it was issued to.
 //
-// The user is signed, not merely carried: it is displayed in the UI and written
-// to the audit trail, so an unsigned copy would let anyone holding a valid
-// cookie rename themselves. Empty means the session came from the admin token,
+// The user is signed, not merely carried: an unsigned copy would let anyone
+// holding a valid cookie rename themselves before anything reads it. Nothing
+// production-side reads it yet -- validSession discards the name, and the
+// sign-in log takes its username straight off the exchange, not off the cookie
+// -- so this binds the field ahead of the first reader rather than after it.
+// Empty means the session came from the admin token,
 // which is an identity too -- "whoever held the token" -- and binding it stops
 // a token session being edited into someone else's.
 //
@@ -77,13 +80,19 @@ func newSessionCookie(adminToken, user string, now time.Time) *http.Cookie {
 		// someone types http://<hostname>/ -- before any redirect to https
 		// can answer.
 		//
-		// HttpOnly keeps the session out of script. SameSite=Strict is what
-		// stops a cross-site form post from reaching the state-changing UI
-		// routes with a live session attached, which is why this stage ships
-		// no separate CSRF token.
+		// HttpOnly keeps the session out of script. SameSite=Lax is what stops
+		// a cross-site form post from reaching the state-changing UI routes
+		// with a live session attached, which is why this stage ships no
+		// separate CSRF token: Lax withholds the cookie from every cross-site
+		// request except a top-level GET navigation.
+		//
+		// Not Strict, which browsers do not send on a navigation the identity
+		// provider initiated -- including the redirect out of the OIDC
+		// callback that has just set this cookie. A sign-in that succeeded
+		// would land back on the login form until the user reloaded by hand.
 		Secure:   true,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: http.SameSiteLaxMode,
 		Expires:  expires,
 	}
 }
@@ -91,6 +100,10 @@ func newSessionCookie(adminToken, user string, now time.Time) *http.Cookie {
 // sessionUser returns the identity a valid session cookie was issued to, and
 // whether the cookie is valid at all. An empty user with ok true is a session
 // minted from the admin token.
+//
+// Only validSession calls this today, and it keeps the boolean and drops the
+// name. The identity is carried and signed so that whatever displays or records
+// it next can trust it, not because something already does.
 //
 // Sessions issued before the cookie carried an identity have two fields rather
 // than three and fail here. That is deliberate: they end at the deploy that

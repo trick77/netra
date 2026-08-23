@@ -69,7 +69,13 @@ func run() error {
 	// which is what makes failing here safe -- there is a way back in.
 	var oidcSvc *oidc.Service
 	if cfg.OIDC.Enabled() {
-		oidcSvc, err = oidc.New(ctx, cfg.OIDC.Issuer, cfg.OIDC.ClientID, cfg.OIDC.ClientSecret, cfg.RedirectURL())
+		// Bounded, because "cannot be reached" includes an issuer that drops
+		// packets rather than refusing them. On the process-lifetime context
+		// that discovery would hang here forever: the hub never binds, never
+		// logs a reason, and only a SIGTERM ends it.
+		discovery, cancel := context.WithTimeout(ctx, 15*time.Second)
+		oidcSvc, err = oidc.New(discovery, cfg.OIDC.Issuer, cfg.OIDC.ClientID, cfg.OIDC.ClientSecret, cfg.RedirectURL())
+		cancel()
 		if err != nil {
 			return fmt.Errorf("oidc init: %w", err)
 		}

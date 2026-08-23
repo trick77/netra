@@ -42,11 +42,12 @@ input[type=text], input[type=password] {
   font: inherit; padding: .45rem .6rem; border: 1px solid var(--border);
   border-radius: 5px; background: var(--surface); color: var(--text); min-width: 16rem;
 }
-button {
+button, a.button {
   font: inherit; padding: .45rem .9rem; border: 1px solid var(--border);
   border-radius: 5px; background: var(--surface); color: var(--text); cursor: pointer;
 }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+a.button { display: inline-block; text-decoration: none; }
+button.primary, a.button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.danger { color: var(--danger); }
 .card {
   background: var(--surface); border: 1px solid var(--border);
