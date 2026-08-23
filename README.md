@@ -49,6 +49,36 @@ works. An unset `NETRA_HOSTNAME` in particular used to default to a domain this
 project does not own, which started cleanly, reported healthy, and left agent
 ingest unreachable with nothing anywhere saying why.
 
+## Browser sign-in
+
+Optional. Leave `NETRA_OIDC_ISSUER` empty and the admin token is the only way
+in, exactly as before.
+
+| Variable | |
+|---|---|
+| `NETRA_OIDC_ISSUER` | the provider's issuer URL — setting it turns sign-in on |
+| `NETRA_OIDC_CLIENT_ID` | |
+| `NETRA_OIDC_CLIENT_SECRET` | |
+
+Register `https://<NETRA_HOSTNAME>/auth/callback` as the redirect URI. It is
+derived from `NETRA_HUB_URL` rather than configured separately, so it cannot
+drift from the name Traefik routes on.
+
+Setting the issuer without the credentials is refused at startup rather than
+falling back to token-only login: a half-configured provider should not look
+like a decision. Discovery runs once at startup for the same reason — a
+provider that cannot be reached stops the hub, instead of surfacing as a broken
+button to whoever tries first.
+
+**The admin token keeps working.** It is what `netra-sim` and `curl` present,
+and the way back in when the identity provider is the thing that is down —
+which, for a monitoring hub, is when you most need to look at it. The login
+page keeps the token form alongside the sign-in button.
+
+**Everyone who signs in is an admin.** Netra has one role, so no group or claim
+is read and none is requested. Who may sign in at all is decided at the
+provider, as an authorization policy on this client — not here.
+
 **Hex, not base64.** The password is interpolated raw into `NETRA_DB_DSN`, and
 base64's `/` terminates the URL authority — a base64 password makes the hub
 crash-loop against a perfectly healthy database. `.env.example` explains the

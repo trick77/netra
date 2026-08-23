@@ -2,12 +2,29 @@ package httpapi
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/subtle"
 	"embed"
+	"encoding/base64"
+	"errors"
 	"html/template"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/trick77/netra/internal/hub/oidc"
+)
+
+// Transient cookies holding the CSRF state and replay nonce for one sign-in.
+//
+// SameSite=Lax, unlike the session cookie's Strict: the callback is a top-level
+// navigation arriving from the identity provider's origin, and Strict would
+// withhold these exactly when they are needed, turning every login into a state
+// mismatch.
+const (
+	oidcStateCookie = "netra_oidc_state"
+	oidcNonceCookie = "netra_oidc_nonce"
+	oidcFlowTTL     = 10 * time.Minute
 )
 
 // templateFS carries the login page into the binary, the same way migrationFS
@@ -26,23 +43,143 @@ var templateFS embed.FS
 type loginHandler struct {
 	adminToken string
 	login      *template.Template
+
+	// oidc is nil when NETRA_OIDC_ISSUER is unset. Every OIDC route checks it
+	// and 404s rather than 500s: a hub without sign-in configured should look
+	// like it has no such endpoint, not like it has a broken one.
+	oidc *oidc.Service
 }
 
 // NewLoginHandler returns the /login and /logout routes. They sit OUTSIDE
 // RequireAdmin: this is where an unauthenticated browser is sent, so gating
 // them would loop.
-func NewLoginHandler(adminToken string) http.Handler {
+func NewLoginHandler(adminToken string, svc *oidc.Service) http.Handler {
 	h := &loginHandler{
 		adminToken: adminToken,
 		login: template.Must(template.ParseFS(templateFS,
 			"templates/layout.gohtml", "templates/login.gohtml")),
+		oidc: svc,
 	}
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /login", http.HandlerFunc(h.form))
 	mux.Handle("POST /login", http.HandlerFunc(h.submit))
 	mux.Handle("POST /logout", http.HandlerFunc(h.logout))
+	mux.Handle("GET /auth/login", http.HandlerFunc(h.oidcStart))
+	mux.Handle("GET /auth/callback", http.HandlerFunc(h.oidcCallback))
 	return mux
+}
+
+// oidcStart mints the state and nonce, then sends the browser to the provider.
+func (h *loginHandler) oidcStart(w http.ResponseWriter, r *http.Request) {
+	if h.oidc == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	state, err := randomToken()
+	if err == nil {
+		var nonce string
+		if nonce, err = randomToken(); err == nil {
+			http.SetCookie(w, flowCookie(oidcStateCookie, state))
+			http.SetCookie(w, flowCookie(oidcNonceCookie, nonce))
+			http.Redirect(w, r, h.oidc.AuthCodeURL(state, nonce), http.StatusSeeOther)
+			return
+		}
+	}
+
+	// Failing to read random bytes is not a user error and must not be
+	// presented as one -- retrying will not help.
+	slog.Error("login: mint oidc flow", "err", err)
+	h.render(w, http.StatusInternalServerError, map[string]any{
+		"Title": "Log in", "Error": "Could not start sign-in.", "OIDC": true,
+	})
+}
+
+// oidcCallback completes the flow: check state, exchange the code, mint the
+// session. Every failure renders the login page with a generic message; the
+// detail goes to the log, because a caller who reached here with a bad state is
+// as likely probing as mistaken.
+func (h *loginHandler) oidcCallback(w http.ResponseWriter, r *http.Request) {
+	if h.oidc == nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	fail := func(msg string, err error) {
+		slog.Warn("login: oidc callback", "reason", msg, "err", err)
+		clearCookie(w, oidcStateCookie)
+		clearCookie(w, oidcNonceCookie)
+		h.render(w, http.StatusUnauthorized, map[string]any{
+			"Title": "Log in", "Error": "Sign-in did not complete.", "OIDC": true,
+		})
+	}
+
+	// A provider that refuses is not an error to debug -- the user was denied.
+	if e := r.URL.Query().Get("error"); e != "" {
+		fail("provider returned error: "+e, nil)
+		return
+	}
+
+	stateCookie, err := r.Cookie(oidcStateCookie)
+	if err != nil {
+		fail("no state cookie", err)
+		return
+	}
+	nonceCookie, err := r.Cookie(oidcNonceCookie)
+	if err != nil {
+		fail("no nonce cookie", err)
+		return
+	}
+	// Constant time: the state is a secret for the length of one login.
+	if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("state")), []byte(stateCookie.Value)) != 1 {
+		fail("state mismatch", nil)
+		return
+	}
+
+	identity, err := h.oidc.Exchange(r.Context(), r.URL.Query().Get("code"), nonceCookie.Value)
+	if err != nil {
+		if errors.Is(err, oidc.ErrNonceMismatch) {
+			fail("nonce mismatch (replay?)", err)
+			return
+		}
+		fail("exchange", err)
+		return
+	}
+
+	// Single-use: leaving them set would let a captured callback URL be
+	// replayed for as long as the cookies lived.
+	clearCookie(w, oidcStateCookie)
+	clearCookie(w, oidcNonceCookie)
+
+	slog.Info("login: oidc sign-in", "user", identity.Username(), "subject", identity.Subject)
+	http.SetCookie(w, newSessionCookie(h.adminToken, identity.Username(), time.Now()))
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func randomToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func flowCookie(name, value string) *http.Cookie {
+	return &http.Cookie{
+		Name: name, Value: value, Path: "/",
+		MaxAge:   int(oidcFlowTTL.Seconds()),
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
+func clearCookie(w http.ResponseWriter, name string) {
+	http.SetCookie(w, &http.Cookie{
+		Name: name, Value: "", Path: "/", MaxAge: -1,
+		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func (h *loginHandler) form(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +188,7 @@ func (h *loginHandler) form(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
-	h.render(w, http.StatusOK, map[string]any{"Title": "Log in"})
+	h.render(w, http.StatusOK, map[string]any{"Title": "Log in", "OIDC": h.oidc != nil})
 }
 
 // submit is the form post. The submitted value is never echoed back into the
@@ -59,7 +196,7 @@ func (h *loginHandler) form(w http.ResponseWriter, r *http.Request) {
 func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		h.render(w, http.StatusBadRequest, map[string]any{
-			"Title": "Log in", "Error": "Could not read the form.",
+			"Title": "Log in", "Error": "Could not read the form.", "OIDC": h.oidc != nil,
 		})
 		return
 	}
@@ -67,12 +204,13 @@ func (h *loginHandler) submit(w http.ResponseWriter, r *http.Request) {
 	submitted := r.PostFormValue("token")
 	if subtle.ConstantTimeCompare([]byte(submitted), []byte(h.adminToken)) != 1 {
 		h.render(w, http.StatusUnauthorized, map[string]any{
-			"Title": "Log in", "Error": "That is not the admin token.",
+			"Title": "Log in", "Error": "That is not the admin token.", "OIDC": h.oidc != nil,
 		})
 		return
 	}
 
-	http.SetCookie(w, newSessionCookie(h.adminToken, time.Now()))
+	// Empty user: this session was minted by the token, not by a person.
+	http.SetCookie(w, newSessionCookie(h.adminToken, "", time.Now()))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

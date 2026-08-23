@@ -33,7 +33,7 @@ func newAdminFixture(t *testing.T) (*httptest.Server, *store.Store) {
 	}
 
 	cfg := config.Config{AdminToken: testAdminToken, HubURL: "https://netra.example.com"}
-	h := httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, cfg)
+	h := httpapi.NewRouter(auth.NewAuthenticator(s.Pool()), s, cfg, nil)
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
