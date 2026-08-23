@@ -535,7 +535,7 @@ func TestContainersRefusesToReadHostPidsWithoutThePidNamespace(t *testing.T) {
 	testee := collector.NewContainers(cgroupRoot, procRoot,
 		fakeLister(collector.ContainerMeta{
 			ID: "abc123", Name: "web", NetworkMode: "bridge",
-		}), false) // NETRA_PID_HOST=0
+		}), false) // AGENT_PID_HOST=0
 
 	containersAt(t, testee, base)
 	advanceNet(t, procRoot, "42", 3000, 1500)
@@ -601,7 +601,7 @@ func TestContainersSkipsAContainerSharingAPeersNamespace(t *testing.T) {
 // which a root agent passes only for a dumpable, root-owned process -- and it
 // earns different words, because "re-run setup-agent.sh" would not fix it.
 //
-// This is the test that pins the whole reason NETRA_PID_HOST is passed in:
+// This is the test that pins the whole reason AGENT_PID_HOST is passed in:
 // nothing in the fixture distinguishes the two runs, only what the operator
 // said about the container they deployed.
 func TestContainersReportsNoHostNSWhenThePidNamespaceIsPresent(t *testing.T) {

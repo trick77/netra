@@ -120,7 +120,7 @@ type Containers struct {
 	hostNetNS     string
 	hostNetNSOnce sync.Once
 
-	// pidHost is the operator's own statement, from NETRA_PID_HOST, mirroring
+	// pidHost is the operator's own statement, from AGENT_PID_HOST, mirroring
 	// what Procs is already given. It exists so containerNet can
 	// SAY why a namespace link was unreadable instead of inferring it from an
 	// errno: without the host PID namespace, cgroup.procs names host PIDs this
@@ -167,7 +167,7 @@ type Containers struct {
 // NewContainers builds a Containers collector. cgroupRoot is the mounted
 // cgroup v2 hierarchy, procRoot the mounted /proc that per-container network
 // counters are read through; lister may be nil when the Docker socket is not
-// available. pidHost is NETRA_PID_HOST, and is what lets an unreadable
+// available. pidHost is AGENT_PID_HOST, and is what lets an unreadable
 // namespace link be reported as the configuration it is rather than guessed at
 // from an errno -- see the field comment.
 func NewContainers(cgroupRoot, procRoot string, lister ContainerLister, pidHost bool) *Containers {
@@ -200,7 +200,7 @@ func (c *Containers) SetReadlinkForTest(fn func(string) (string, error)) { c.rea
 const (
 	// capNetNamespaced: cgroup.procs names host PIDs, and without pid: host
 	// the agent resolves them in its own namespace and finds nothing. Reported
-	// on the operator's own statement (NETRA_PID_HOST), never inferred from an
+	// on the operator's own statement (AGENT_PID_HOST), never inferred from an
 	// errno -- a process exiting mid-scrape produces the same ENOENT.
 	capNetNamespaced = "namespaced"
 
@@ -602,7 +602,7 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 	// and one short-lived container must not blank the panel for the rest. But
 	// if not one eligible container yielded counters, the cause is systemic:
 	// procRoot points somewhere that is not this container's /proc, which is
-	// reachable by setting NETRA_PROC_ROOT by hand and looks exactly like a
+	// reachable by setting AGENT_PROC_ROOT by hand and looks exactly like a
 	// fleet of quiet containers.
 	//
 	// Logged rather than raised as a capability. The capability values name
@@ -610,7 +610,7 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 	// the namespace is granted and the socket answered. A warning names the
 	// variable, which is the actionable part.
 	if netEligible > 0 && netMeasured == 0 {
-		slog.Warn("no container reported network counters; is NETRA_PROC_ROOT this container's own /proc?",
+		slog.Warn("no container reported network counters; is AGENT_PROC_ROOT this container's own /proc?",
 			"proc_root", c.procRoot, "containers", netEligible)
 	}
 
@@ -909,7 +909,7 @@ func (c *Containers) readNetDev(pid string) (rx, tx uint64, ok bool) {
 // A link that could not be read has exactly two causes: no host PID namespace,
 // or no ptrace access to a process owned by another user. The errno does not
 // separate them -- a missing PID and a process that exited during the scrape
-// are both ENOENT -- so this reads NETRA_PID_HOST, which the operator set to
+// are both ENOENT -- so this reads AGENT_PID_HOST, which the operator set to
 // describe the container they actually deployed.
 //
 // Getting it wrong is not cosmetic. Each value has its own remedy in the UI,

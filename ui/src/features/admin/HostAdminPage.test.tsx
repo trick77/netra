@@ -255,7 +255,7 @@ describe("HostAdminPage", () => {
 
   // The browser reaches the hub on loopback, so it cannot know the name
   // agents post to; only the hub does. Without this the operator retyped
-  // their hub URL by hand on every mint, and NETRA_HUB_URL was read by
+  // their hub URL by hand on every mint, and BACKEND_HUB_URL was read by
   // nothing at all.
   it("seeds the setup command with the hub's configured URL", async () => {
     const user = userEvent.setup();

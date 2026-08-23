@@ -428,7 +428,7 @@ export function patchSite(id: number, patch: SitePatch): Promise<void> {
   return request<void>(`/api/v1/sites/${id}`, { method: "PATCH", body: patch });
 }
 
-// NETRA_HUB_URL as the hub itself has it, or "" when it is unset. The
+// BACKEND_HUB_URL as the hub itself has it, or "" when it is unset. The
 // browser reaches the hub on loopback, so window.location says nothing about
 // the name agents post to; only the hub knows it, and the setup command is
 // wrong without it.

@@ -12,8 +12,8 @@ set -eu
 
 SETUP="$REPO/setup-agent.sh"
 
-NETRA_SOURCED=1
-export NETRA_SOURCED
+AGENT_SOURCED=1
+export AGENT_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
@@ -64,8 +64,8 @@ mkdisk "$R" mmcblk0 0 "pci0000:00/mmc_host/mmc0"
 # A virtual device that passes the name filter but has no `device` link.
 mkvirt "$R" vda
 
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 
 DEVS=$(block_devices | sort | tr '\n' ' ')
@@ -82,14 +82,14 @@ assert_eq "sata" "$(device_transport sda)" "an ata* path component means SATA"
 R="$TMP/r2"
 mkdisk "$R" sdc 3000 "pci0000:00/usb1/1-1/1-1:1.0/host4"
 mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 assert_eq "usb" "$(device_transport sdc)" "a usb1 path component means USB"
 assert_eq "nvme" "$(device_transport nvme0n1)" "an nvme path component means NVMe"
 assert_eq "unknown" "$(device_transport nosuchdisk)" "a device that is not there is unknown"
 
-# --- 3. the NETRA_SETUP_ROOT strip, which is the whole ballgame -------------
+# --- 3. the AGENT_SETUP_ROOT strip, which is the whole ballgame -------------
 #
 # A fixture root under a directory called `usb1` matches the USB pattern if the
 # prefix is not stripped before matching, and then EVERY device on the host is
@@ -98,8 +98,8 @@ assert_eq "unknown" "$(device_transport nosuchdisk)" "a device that is not there
 R="$TMP/usb1/root"
 mkdir -p "$R"
 mkdisk "$R" sdd 5000 "pci0000:00/ata3/host2"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 assert_contains "$R" "/usb1/" "the guard fixture root really does contain a usb pattern"
 assert_eq "sata" "$(device_transport sdd)" \
@@ -113,8 +113,8 @@ R="$TMP/r4"
 mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
 mkdisk "$R" nvme0n2 4000 "pci0000:00/nvme/nvme0"
 mkdir -p "$R/sys/class/nvme/nvme0"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 CTRLS=$(nvme_controllers | tr '\n' ' ')
 assert_eq "nvme0 " "$CTRLS" "two namespaces on one controller yield one controller"
@@ -129,8 +129,8 @@ assert_eq "nvme0 " "$CTRLS" "the namespace-name fallback also dedups to one cont
 R="$TMP/r5"
 mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
 mkdev "$R" sda
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 
 plan_smart >/dev/null 2>&1
@@ -140,11 +140,11 @@ assert_eq 1 "$CAP_RAWIO" "a SATA-only host gets SYS_RAWIO"
 assert_eq "sda" "$SMART_ATA_DEVICES" "the SATA device list survives plan_smart"
 assert_eq 0 "$CAP_SYS_ADMIN" "a SATA-only host is never even asked about SYS_ADMIN"
 assert_eq "/dev/sda" "$SMART_DEVICES" "the SATA device is emitted unprefixed"
-assert_not_contains "$SMART_DEVICES" "$R" "NETRA_SETUP_ROOT never leaks into devices:"
+assert_not_contains "$SMART_DEVICES" "$R" "AGENT_SETUP_ROOT never leaks into devices:"
 
 build_cap_block
-assert_contains "$NETRA_BLK_CAP_ADD" "SYS_RAWIO" "the cap block carries SYS_RAWIO"
-assert_not_contains "$NETRA_BLK_CAP_ADD" "SYS_ADMIN" "the cap block has no SYS_ADMIN"
+assert_contains "$AGENT_BLK_CAP_ADD" "SYS_RAWIO" "the cap block carries SYS_RAWIO"
+assert_not_contains "$AGENT_BLK_CAP_ADD" "SYS_ADMIN" "the cap block has no SYS_ADMIN"
 
 # --- 6. NVMe present, SYS_ADMIN declined --------------------------------------
 R="$TMP/r6"
@@ -153,29 +153,29 @@ mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
 mkdir -p "$R/sys/class/nvme/nvme0"
 mkdev "$R" sda
 mkdev "$R" nvme0
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 
 SKIPPED_NOTES=""
-NETRA_ANSWER_INDEX=0
+AGENT_ANSWER_INDEX=0
 # ONE prompt inside plan_smart: SYS_ADMIN. SYS_RAWIO is granted automatically
 # whenever a SATA/SAS device exists - it lets smartctl issue ATA passthrough
 # ioctls and nothing else, and without it every SATA drive reports SMART as
 # unavailable, which is not an agent anyone asked for.
 printf 'n\n' >"$TMP/ans-decline"
-NETRA_ANSWERS_FILE="$TMP/ans-decline"
-export NETRA_ANSWERS_FILE
+AGENT_ANSWERS_FILE="$TMP/ans-decline"
+export AGENT_ANSWERS_FILE
 run_capture plan_smart
 assert_contains "$RUN_OUT" "temperature" \
     "the SYS_ADMIN prompt states that NVMe temperature works without it"
 assert_contains "$RUN_OUT" "hwmon" "the SYS_ADMIN prompt names hwmon as the temperature source"
 
-NETRA_ANSWER_INDEX=0
+AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 plan_smart >/dev/null 2>&1
 assert_eq 1 "$CAP_RAWIO" "SYS_RAWIO is granted without being asked about"
-assert_eq 1 "$NETRA_ANSWER_INDEX" \
+assert_eq 1 "$AGENT_ANSWER_INDEX" \
     "exactly one answer is consumed: SYS_RAWIO is no longer a prompt"
 assert_eq 0 "$CAP_SYS_ADMIN" "declining leaves SYS_ADMIN off"
 assert_eq "/dev/sda" "$SMART_DEVICES" \
@@ -185,17 +185,17 @@ assert_contains "$SKIPPED_NOTES" "temperature still works" \
     "the skip note says what declining does NOT cost"
 
 # --- 7. NVMe present, SYS_ADMIN granted ---------------------------------------
-NETRA_ANSWER_INDEX=0
+AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 printf 'y\n' >"$TMP/ans-accept"
-NETRA_ANSWERS_FILE="$TMP/ans-accept"
-export NETRA_ANSWERS_FILE
+AGENT_ANSWERS_FILE="$TMP/ans-accept"
+export AGENT_ANSWERS_FILE
 plan_smart >/dev/null 2>&1
 assert_eq 1 "$CAP_SYS_ADMIN" "granting SYS_ADMIN sets the capability"
 assert_contains "$SMART_DEVICES" "/dev/nvme0" "the NVMe CONTROLLER is emitted, not the namespace"
 assert_not_contains "$SMART_DEVICES" "nvme0n1" "the NVMe namespace is never emitted"
 build_cap_block
-assert_contains "$NETRA_BLK_CAP_ADD" "SYS_ADMIN" "the cap block carries SYS_ADMIN"
+assert_contains "$AGENT_BLK_CAP_ADD" "SYS_ADMIN" "the cap block carries SYS_ADMIN"
 
 # --- 8. USB-attached drives are excluded with a note --------------------------
 #
@@ -206,16 +206,16 @@ mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
 mkdisk "$R" sdc 3000 "pci0000:00/usb1/1-1/1-1:1.0/host4"
 mkdev "$R" sda
 mkdev "$R" sdc
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
-NETRA_ANSWER_INDEX=0
+AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 # No NVMe on this host, so plan_smart asks nothing at all: an EMPTY answers file
 # is what proves it.
 : >"$TMP/ans-usb"
-NETRA_ANSWERS_FILE="$TMP/ans-usb"
-export NETRA_ANSWERS_FILE
+AGENT_ANSWERS_FILE="$TMP/ans-usb"
+export AGENT_ANSWERS_FILE
 plan_smart >/dev/null 2>&1
 assert_eq "/dev/sda" "$SMART_DEVICES" "a USB-attached drive is left out of devices:"
 assert_contains "$SKIPPED_NOTES" "sdc" "the excluded USB drive is named in the notes"
@@ -227,22 +227,22 @@ assert_contains "$SKIPPED_NOTES" "USB" "the note says it was excluded for being 
 R="$TMP/r9"
 mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
 mkdir -p "$R/dev"
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
-NETRA_ANSWER_INDEX=0
+AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 : >"$TMP/ans-nodev"
-NETRA_ANSWERS_FILE="$TMP/ans-nodev"
-export NETRA_ANSWERS_FILE
+AGENT_ANSWERS_FILE="$TMP/ans-nodev"
+export AGENT_ANSWERS_FILE
 plan_smart >/dev/null 2>&1
 assert_eq "" "$SMART_DEVICES" "a device with no node in /dev is not emitted"
 build_device_block
-assert_eq "" "$NETRA_BLK_DEVICES" "an empty device list deletes the devices: key entirely"
+assert_eq "" "$AGENT_BLK_DEVICES" "an empty device list deletes the devices: key entirely"
 
 # --- 10. --sys-admin grants without consuming a prompt ------------------------
 #
-# The discriminating assertion is NETRA_ANSWER_INDEX. An EMPTY answers file
+# The discriminating assertion is AGENT_ANSWER_INDEX. An EMPTY answers file
 # means a --sys-admin that still prompted would exhaust the file and die, so
 # "index is 0" is the proof that the prompt was skipped rather than answered.
 R="$TMP/r10"
@@ -251,27 +251,27 @@ mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
 mkdir -p "$R/sys/class/nvme/nvme0"
 mkdev "$R" sda
 mkdev "$R" nvme0
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 
 GRANT_SYS_ADMIN=1
-NETRA_ANSWER_INDEX=0
+AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 : >"$TMP/ans-grantflag"
-NETRA_ANSWERS_FILE="$TMP/ans-grantflag"
-export NETRA_ANSWERS_FILE
+AGENT_ANSWERS_FILE="$TMP/ans-grantflag"
+export AGENT_ANSWERS_FILE
 run_capture plan_smart
 assert_eq 0 "$RUN_RC" "--sys-admin consumes nothing from an empty answers file"
 assert_contains "$RUN_OUT" "--sys-admin" "the output says the capability came from the flag"
 
 # run_capture ran plan_smart in a command-substitution subshell, so none of its
 # assignments survived. Re-run it in this shell for the state assertions.
-NETRA_ANSWER_INDEX=0
+AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 plan_smart >/dev/null 2>&1
 assert_eq 1 "$CAP_SYS_ADMIN" "--sys-admin grants SYS_ADMIN"
-assert_eq 0 "$NETRA_ANSWER_INDEX" "--sys-admin consumes no answer: the prompt is skipped entirely"
+assert_eq 0 "$AGENT_ANSWER_INDEX" "--sys-admin consumes no answer: the prompt is skipped entirely"
 assert_contains "$SMART_DEVICES" "/dev/nvme0" "--sys-admin also emits the NVMe controller"
 
 # --- 11. --sys-admin on a SATA-only host is a no-op with a note ----------------
@@ -282,22 +282,22 @@ assert_contains "$SMART_DEVICES" "/dev/nvme0" "--sys-admin also emits the NVMe c
 R="$TMP/r11"
 mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
 mkdev "$R" sda
-NETRA_SETUP_ROOT="$R"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$R"
+export AGENT_SETUP_ROOT
 init_paths
 
 GRANT_SYS_ADMIN=1
-NETRA_ANSWER_INDEX=0
+AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 : >"$TMP/ans-satagrant"
-NETRA_ANSWERS_FILE="$TMP/ans-satagrant"
-export NETRA_ANSWERS_FILE
+AGENT_ANSWERS_FILE="$TMP/ans-satagrant"
+export AGENT_ANSWERS_FILE
 plan_smart >/dev/null 2>&1
 assert_eq 0 "$CAP_SYS_ADMIN" "--sys-admin grants nothing when there is no NVMe device"
 assert_contains "$SKIPPED_NOTES" "--sys-admin" "the unhonoured flag is recorded as a skip"
 assert_contains "$SKIPPED_NOTES" "no NVMe" "the note says why the flag was not honoured"
 build_cap_block
-assert_not_contains "$NETRA_BLK_CAP_ADD" "SYS_ADMIN" "the cap block still has no SYS_ADMIN"
+assert_not_contains "$AGENT_BLK_CAP_ADD" "SYS_ADMIN" "the cap block still has no SYS_ADMIN"
 GRANT_SYS_ADMIN=0
 
 exit_case

@@ -109,7 +109,7 @@ func TestFilesystemsDropsTheContainersOwnRoot(t *testing.T) {
 	}
 }
 
-// An agent upgraded ahead of its .env has no NETRA_FS_MOUNTS yet. It must still
+// An agent upgraded ahead of its .env has no AGENT_FS_MOUNTS yet. It must still
 // not report the container path: the bare label is a name the operator
 // recognises, and the next setup run replaces it with the real mountpoint.
 func TestFilesystemsFallsBackToTheLabelWithoutAMapping(t *testing.T) {

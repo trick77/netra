@@ -9,7 +9,7 @@
 # HOW THIS TEMPLATE IS SUBSTITUTED
 # ---------------------------------------------------------------------------
 # Substitution happens by WHOLE MARKER LINES, never by inline tokens. Each
-# `#__NETRA_*__` line below is replaced in full by a rendered block, and a block
+# `#__AGENT_*__` line below is replaced in full by a rendered block, and a block
 # that is empty deletes its marker line entirely. That is how a conditional
 # `cap_add:` or `devices:` vanishes without leaving a dangling key behind: the
 # KEY ITSELF lives inside the block, not in this file.
@@ -39,6 +39,6 @@ services:
       - no-new-privileges:true
 
     pid: host
-    #__NETRA_VOLUMES__
-    #__NETRA_DEVICES__
-    #__NETRA_CAP_ADD__
+    #__AGENT_VOLUMES__
+    #__AGENT_DEVICES__
+    #__AGENT_CAP_ADD__

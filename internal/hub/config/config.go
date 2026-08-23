@@ -1,4 +1,4 @@
-// Package config turns NETRA_* environment variables into a hub Config.
+// Package config turns BACKEND_* environment variables into a hub Config.
 package config
 
 import (
@@ -20,7 +20,7 @@ type Config struct {
 	// configured, to derive the redirect URI. Deriving that rather than
 	// configuring it means the value Authelia is told to redirect to cannot
 	// drift from the name Traefik actually routes on: both come from
-	// NETRA_HOSTNAME.
+	// BACKEND_HOSTNAME.
 	//
 	// It is optional to the binary: the hub is reached on loopback by the
 	// browser and cannot infer its own public name from that request, so rather
@@ -30,7 +30,7 @@ type Config struct {
 	// name.
 	//
 	// Optional here, required in compose.yaml, which derives it from
-	// NETRA_HOSTNAME and marks that `:?`. Running the binary directly with it
+	// BACKEND_HOSTNAME and marks that `:?`. Running the binary directly with it
 	// unset is supported and degrades as described above -- browser sign-in is
 	// then unconfigurable too, since there is no redirect URI to derive.
 	HubURL string
@@ -60,21 +60,25 @@ func (c OIDCConfig) Enabled() bool { return c.Issuer != "" }
 // Load reads the environment and applies defaults. It fails rather than
 // starting with no database or an unauthenticated admin API.
 func Load() (Config, error) {
+	if err := rejectOldPrefix(); err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
-		ListenAddr:  envOr("NETRA_LISTEN_ADDR", ":8080"),
-		DatabaseDSN: os.Getenv("NETRA_DB_DSN"),
-		AdminToken:  os.Getenv("NETRA_ADMIN_TOKEN"),
-		LogLevel:    envOr("NETRA_LOG_LEVEL", "info"),
-		HubURL:      strings.TrimRight(os.Getenv("NETRA_HUB_URL"), "/"),
+		ListenAddr:  envOr("BACKEND_LISTEN_ADDR", ":8080"),
+		DatabaseDSN: os.Getenv("BACKEND_DB_DSN"),
+		AdminToken:  os.Getenv("BACKEND_ADMIN_TOKEN"),
+		LogLevel:    envOr("BACKEND_LOG_LEVEL", "info"),
+		HubURL:      strings.TrimRight(os.Getenv("BACKEND_HUB_URL"), "/"),
 		OIDC: OIDCConfig{
-			Issuer:       strings.TrimRight(os.Getenv("NETRA_OIDC_ISSUER"), "/"),
-			ClientID:     os.Getenv("NETRA_OIDC_CLIENT_ID"),
-			ClientSecret: os.Getenv("NETRA_OIDC_CLIENT_SECRET"),
+			Issuer:       strings.TrimRight(os.Getenv("BACKEND_OIDC_ISSUER"), "/"),
+			ClientID:     os.Getenv("BACKEND_OIDC_CLIENT_ID"),
+			ClientSecret: os.Getenv("BACKEND_OIDC_CLIENT_SECRET"),
 		},
 	}
 
 	if cfg.DatabaseDSN == "" {
-		return Config{}, fmt.Errorf("NETRA_DB_DSN is required")
+		return Config{}, fmt.Errorf("BACKEND_DB_DSN is required")
 	}
 
 	// The admin token stays required even with OIDC configured. netra-sim and
@@ -82,24 +86,24 @@ func Load() (Config, error) {
 	// the identity provider is the thing that is down -- which, for a
 	// monitoring hub, is exactly when you need to look at it.
 	if cfg.AdminToken == "" {
-		return Config{}, fmt.Errorf("NETRA_ADMIN_TOKEN is required")
+		return Config{}, fmt.Errorf("BACKEND_ADMIN_TOKEN is required")
 	}
 
 	if cfg.OIDC.Enabled() {
 		if cfg.OIDC.ClientID == "" {
-			return Config{}, fmt.Errorf("NETRA_OIDC_CLIENT_ID is required when NETRA_OIDC_ISSUER is set")
+			return Config{}, fmt.Errorf("BACKEND_OIDC_CLIENT_ID is required when BACKEND_OIDC_ISSUER is set")
 		}
 		if cfg.OIDC.ClientSecret == "" {
-			return Config{}, fmt.Errorf("NETRA_OIDC_CLIENT_SECRET is required when NETRA_OIDC_ISSUER is set")
+			return Config{}, fmt.Errorf("BACKEND_OIDC_CLIENT_SECRET is required when BACKEND_OIDC_ISSUER is set")
 		}
-		// The redirect URI is derived from HubURL, so an unset NETRA_HUB_URL
+		// The redirect URI is derived from HubURL, so an unset BACKEND_HUB_URL
 		// would send the provider to "/auth/callback" with no host. Fail here
 		// rather than at the first login attempt.
 		if cfg.HubURL == "" {
-			return Config{}, fmt.Errorf("NETRA_HUB_URL is required when NETRA_OIDC_ISSUER is set (the OIDC redirect URI is derived from it)")
+			return Config{}, fmt.Errorf("BACKEND_HUB_URL is required when BACKEND_OIDC_ISSUER is set (the OIDC redirect URI is derived from it)")
 		}
 		if !strings.HasPrefix(cfg.HubURL, "https://") {
-			return Config{}, fmt.Errorf("NETRA_HUB_URL must be https:// when NETRA_OIDC_ISSUER is set (the session cookie is Secure and will not be sent over http)")
+			return Config{}, fmt.Errorf("BACKEND_HUB_URL must be https:// when BACKEND_OIDC_ISSUER is set (the session cookie is Secure and will not be sent over http)")
 		}
 	}
 
@@ -109,6 +113,24 @@ func Load() (Config, error) {
 // RedirectURL is the OIDC redirect URI, derived from HubURL. It must match the
 // redirect_uris entry registered for this client at the provider exactly.
 func (c Config) RedirectURL() string { return c.HubURL + "/auth/callback" }
+
+// rejectOldPrefix refuses to start while a NETRA_-prefixed variable is still
+// set. Every hub variable was renamed to BACKEND_ in one go, and the swap is
+// mechanical, so the message can name the replacement.
+//
+// Loud rather than ignored: a stale .env carried across the rename sets
+// NETRA_ADMIN_TOKEN, and silently reading nothing would start a hub that
+// refuses every login with no clue as to why -- or, worse for a variable with
+// a default like NETRA_LISTEN_ADDR, one that quietly listens somewhere else.
+func rejectOldPrefix() error {
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if old, found := strings.CutPrefix(key, "NETRA_"); found {
+			return fmt.Errorf("%s is no longer read; rename it to BACKEND_%s", key, old)
+		}
+	}
+	return nil
+}
 
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {

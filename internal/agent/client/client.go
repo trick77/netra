@@ -187,7 +187,7 @@ type Client struct {
 
 // New builds a Client scraping at the fixed config.ScrapeInterval. Buffer
 // capacity is derived from the configured window and that interval, so
-// NETRA_BUFFER_WINDOW is expressed in time rather than in a sample count
+// AGENT_BUFFER_WINDOW is expressed in time rather than in a sample count
 // nobody can reason about.
 func New(cfg config.Config, collectors []collector.Collector) *Client {
 	return newClient(cfg, collectors, config.ScrapeInterval)
@@ -235,7 +235,7 @@ func capacityFor(window, interval time.Duration) int {
 		// Loudly, not silently: the operator asked for a window and is about
 		// to get less of one. config.Load errors on the same coupling, so a
 		// quiet downgrade here would be the odd one out.
-		slog.Warn("buffer capacity clamped; the effective buffered window is shorter than NETRA_BUFFER_WINDOW",
+		slog.Warn("buffer capacity clamped; the effective buffered window is shorter than AGENT_BUFFER_WINDOW",
 			// The window the operator actually asked for, alongside the slot
 			// count it worked out to. Logging only the derived slot count under
 			// the name "requested" asked them to reverse the arithmetic to find

@@ -153,7 +153,7 @@ answers() {
     printf '%s\n' "$TMP/ans-$_ans_name"
 }
 
-# values NAME LINE... — the same for NETRA_VALUES_FILE (free-text prompts).
+# values NAME LINE... — the same for AGENT_VALUES_FILE (free-text prompts).
 # A separate file with its own index, so adding a value prompt never shifts a
 # y/n answers file by a line.
 values() {
@@ -179,32 +179,32 @@ fixture() {
 # on PATH exercises exactly the code path a real host takes.
 #
 # The shims read their behaviour from the environment AT RUN TIME
-# (NETRA_SHIM_INFO_RC, NETRA_SHIM_COMPOSE_V2_RC, NETRA_SHIM_HAVE_COMPOSE_V1,
-# NETRA_SHIM_CURL_RC, NETRA_SHIM_CURL_BODY) so a case can vary them without
+# (AGENT_SHIM_INFO_RC, AGENT_SHIM_COMPOSE_V2_RC, AGENT_SHIM_HAVE_COMPOSE_V1,
+# AGENT_SHIM_CURL_RC, AGENT_SHIM_CURL_BODY) so a case can vary them without
 # regenerating the shims.
 mkshims() {
     _mks_dir="$1"
     mkdir -p "$_mks_dir/bin"
-    NETRA_SHIM_LOG="$_mks_dir/calls.log"
-    : >"$NETRA_SHIM_LOG"
-    export NETRA_SHIM_LOG
+    AGENT_SHIM_LOG="$_mks_dir/calls.log"
+    : >"$AGENT_SHIM_LOG"
+    export AGENT_SHIM_LOG
 
     cat >"$_mks_dir/bin/docker" <<'SHIM'
 #!/bin/sh
-printf 'docker %s\n' "$*" >>"$NETRA_SHIM_LOG"
+printf 'docker %s\n' "$*" >>"$AGENT_SHIM_LOG"
 case "${1:-}" in
 info)
-    if [ "${NETRA_SHIM_INFO_RC:-0}" != 0 ]; then
+    if [ "${AGENT_SHIM_INFO_RC:-0}" != 0 ]; then
         printf 'Cannot connect to the Docker daemon\n' >&2
-        exit "${NETRA_SHIM_INFO_RC}"
+        exit "${AGENT_SHIM_INFO_RC}"
     fi
     printf 'Server Version: 27.0.0\n'
     exit 0
     ;;
 compose)
-    if [ "${NETRA_SHIM_COMPOSE_V2_RC:-0}" != 0 ]; then
+    if [ "${AGENT_SHIM_COMPOSE_V2_RC:-0}" != 0 ]; then
         printf "docker: 'compose' is not a docker command.\n" >&2
-        exit "${NETRA_SHIM_COMPOSE_V2_RC}"
+        exit "${AGENT_SHIM_COMPOSE_V2_RC}"
     fi
     printf 'Docker Compose version v2.29.0\n'
     exit 0
@@ -215,8 +215,8 @@ SHIM
 
     cat >"$_mks_dir/bin/docker-compose" <<'SHIM'
 #!/bin/sh
-printf 'docker-compose %s\n' "$*" >>"$NETRA_SHIM_LOG"
-if [ "${NETRA_SHIM_HAVE_COMPOSE_V1:-1}" != 1 ]; then
+printf 'docker-compose %s\n' "$*" >>"$AGENT_SHIM_LOG"
+if [ "${AGENT_SHIM_HAVE_COMPOSE_V1:-1}" != 1 ]; then
     printf 'docker-compose: unavailable\n' >&2
     exit 127
 fi
@@ -230,42 +230,42 @@ SHIM
     # every answers file with it. And a real modprobe in CI would load a kernel
     # module into the runner.
     #
-    # NETRA_SHIM_MODPROBE_HWMON makes the shim HONEST rather than merely
+    # AGENT_SHIM_MODPROBE_HWMON makes the shim HONEST rather than merely
     # successful: it creates the hwmon chip a working drivetemp would create, so
     # the verify-then-persist path is exercised end to end. Left unset, the shim
     # exits 0 and creates nothing, which is exactly the "loads but reports no SCT
     # temperature" hardware plan_drivetemp must detect and unload again.
     cat >"$_mks_dir/bin/modprobe" <<'SHIM'
 #!/bin/sh
-printf 'modprobe %s\n' "$*" >>"$NETRA_SHIM_LOG"
-if [ "${NETRA_SHIM_MODPROBE_RC:-0}" != 0 ]; then
+printf 'modprobe %s\n' "$*" >>"$AGENT_SHIM_LOG"
+if [ "${AGENT_SHIM_MODPROBE_RC:-0}" != 0 ]; then
     printf 'modprobe: FATAL: Module drivetemp not found.\n' >&2
-    exit "${NETRA_SHIM_MODPROBE_RC}"
+    exit "${AGENT_SHIM_MODPROBE_RC}"
 fi
 if [ "${1:-}" = "-r" ]; then
-    # Separate from NETRA_SHIM_MODPROBE_RC on purpose: the interesting case is a
+    # Separate from AGENT_SHIM_MODPROBE_RC on purpose: the interesting case is a
     # module that LOADS and then refuses to unload (held by something else),
     # which one shared exit code cannot express.
-    if [ "${NETRA_SHIM_MODPROBE_R_RC:-0}" != 0 ]; then
+    if [ "${AGENT_SHIM_MODPROBE_R_RC:-0}" != 0 ]; then
         printf 'modprobe: FATAL: Module drivetemp is in use.\n' >&2
-        exit "${NETRA_SHIM_MODPROBE_R_RC}"
+        exit "${AGENT_SHIM_MODPROBE_R_RC}"
     fi
-    [ -z "${NETRA_SHIM_MODPROBE_HWMON:-}" ] || rm -rf "$NETRA_SHIM_MODPROBE_HWMON/hwmon90"
+    [ -z "${AGENT_SHIM_MODPROBE_HWMON:-}" ] || rm -rf "$AGENT_SHIM_MODPROBE_HWMON/hwmon90"
     exit 0
 fi
-if [ -n "${NETRA_SHIM_MODPROBE_HWMON:-}" ]; then
-    mkdir -p "$NETRA_SHIM_MODPROBE_HWMON/hwmon90"
-    printf 'drivetemp\n' >"$NETRA_SHIM_MODPROBE_HWMON/hwmon90/name"
-    printf '38000\n' >"$NETRA_SHIM_MODPROBE_HWMON/hwmon90/temp1_input"
+if [ -n "${AGENT_SHIM_MODPROBE_HWMON:-}" ]; then
+    mkdir -p "$AGENT_SHIM_MODPROBE_HWMON/hwmon90"
+    printf 'drivetemp\n' >"$AGENT_SHIM_MODPROBE_HWMON/hwmon90/name"
+    printf '38000\n' >"$AGENT_SHIM_MODPROBE_HWMON/hwmon90/temp1_input"
 fi
 exit 0
 SHIM
 
     cat >"$_mks_dir/bin/curl" <<'SHIM'
 #!/bin/sh
-printf 'curl %s\n' "$*" >>"$NETRA_SHIM_LOG"
-printf '%s' "${NETRA_SHIM_CURL_BODY:-}"
-exit "${NETRA_SHIM_CURL_RC:-0}"
+printf 'curl %s\n' "$*" >>"$AGENT_SHIM_LOG"
+printf '%s' "${AGENT_SHIM_CURL_BODY:-}"
+exit "${AGENT_SHIM_CURL_RC:-0}"
 SHIM
 
     chmod +x "$_mks_dir/bin/docker" "$_mks_dir/bin/docker-compose" "$_mks_dir/bin/curl" \

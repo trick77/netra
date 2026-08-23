@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// RequireAdmin gates the admin API and the UI on NETRA_ADMIN_TOKEN.
+// RequireAdmin gates the admin API and the UI on BACKEND_ADMIN_TOKEN.
 //
 // One credential, two carriers: an Authorization: Bearer header for curl and
 // scripts, or a session cookie minted from the same token for the browser,
@@ -19,7 +19,7 @@ func RequireAdmin(token string, redirectToLogin bool, next http.Handler) http.Ha
 		// An empty configured token must deny everything, not match the empty
 		// bearer of a request that sent no header at all -- ConstantTimeCompare
 		// reports equal for two empty strings, which would authorize every
-		// caller. config.Load rejects an empty NETRA_ADMIN_TOKEN, but NewRouter
+		// caller. config.Load rejects an empty BACKEND_ADMIN_TOKEN, but NewRouter
 		// takes a Config by value and test code builds literals directly, so
 		// that guard is one struct literal away from being bypassed.
 		//

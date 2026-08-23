@@ -1,4 +1,4 @@
-// Package config turns NETRA_* environment variables into an agent Config.
+// Package config turns AGENT_* environment variables into an agent Config.
 package config
 
 import (
@@ -105,31 +105,35 @@ type Config struct {
 
 // Load reads the environment and applies defaults.
 func Load() (Config, error) {
-	cfg := Config{
-		HubURL:   os.Getenv("NETRA_HUB_URL"),
-		Token:    os.Getenv("NETRA_TOKEN"),
-		ProcRoot: envOr("NETRA_PROC_ROOT", "/proc"),
-		SysRoot:  envOr("NETRA_SYSFS_ROOT", "/sys"),
-		Location: os.Getenv("NETRA_LOCATION"),
-		Provider: os.Getenv("NETRA_PROVIDER"),
-		Facility: os.Getenv("NETRA_FACILITY"),
-		HostType: os.Getenv("NETRA_HOST_TYPE"),
-		LogLevel: envOr("NETRA_LOG_LEVEL", "info"),
-		UtmpPath: envOr("NETRA_UTMP_PATH", "/var/run/utmp"),
-		PidHost:  boolEnv("NETRA_PID_HOST"),
-		FsMounts: fsMounts(os.Getenv("NETRA_FS_MOUNTS")),
+	if err := rejectOldPrefix(); err != nil {
+		return Config{}, err
+	}
 
-		CgroupRoot:   envOr("NETRA_CGROUP_ROOT", "/host/sys/fs/cgroup"),
-		OsRelease:    envOr("NETRA_OS_RELEASE", "/host/etc/os-release"),
-		DpkgStatus:   envOr("NETRA_DPKG_STATUS", "/var/lib/dpkg/status"),
-		ApkInstalled: envOr("NETRA_APK_INSTALLED", "/lib/apk/db/installed"),
+	cfg := Config{
+		HubURL:   os.Getenv("AGENT_HUB_URL"),
+		Token:    os.Getenv("AGENT_TOKEN"),
+		ProcRoot: envOr("AGENT_PROC_ROOT", "/proc"),
+		SysRoot:  envOr("AGENT_SYSFS_ROOT", "/sys"),
+		Location: os.Getenv("AGENT_LOCATION"),
+		Provider: os.Getenv("AGENT_PROVIDER"),
+		Facility: os.Getenv("AGENT_FACILITY"),
+		HostType: os.Getenv("AGENT_HOST_TYPE"),
+		LogLevel: envOr("AGENT_LOG_LEVEL", "info"),
+		UtmpPath: envOr("AGENT_UTMP_PATH", "/var/run/utmp"),
+		PidHost:  boolEnv("AGENT_PID_HOST"),
+		FsMounts: fsMounts(os.Getenv("AGENT_FS_MOUNTS")),
+
+		CgroupRoot:   envOr("AGENT_CGROUP_ROOT", "/host/sys/fs/cgroup"),
+		OsRelease:    envOr("AGENT_OS_RELEASE", "/host/etc/os-release"),
+		DpkgStatus:   envOr("AGENT_DPKG_STATUS", "/var/lib/dpkg/status"),
+		ApkInstalled: envOr("AGENT_APK_INSTALLED", "/lib/apk/db/installed"),
 	}
 
 	if cfg.HubURL == "" {
-		return Config{}, fmt.Errorf("NETRA_HUB_URL is required")
+		return Config{}, fmt.Errorf("AGENT_HUB_URL is required")
 	}
 	if cfg.Token == "" {
-		return Config{}, fmt.Errorf("NETRA_TOKEN is required")
+		return Config{}, fmt.Errorf("AGENT_TOKEN is required")
 	}
 
 	var err error
@@ -137,31 +141,49 @@ func Load() (Config, error) {
 	// Two seconds is generous for a sysfs read that normally takes
 	// microseconds, and short enough that a wedged driver costs one scrape
 	// rather than the whole loop.
-	if cfg.SensorsTimeout, err = durationOr("NETRA_SENSORS_TIMEOUT", 2*time.Second); err != nil {
+	if cfg.SensorsTimeout, err = durationOr("AGENT_SENSORS_TIMEOUT", 2*time.Second); err != nil {
 		return Config{}, err
 	}
 
 	// One hour: SMART values move slowly, and reading them wakes sleeping
 	// drives.
-	if cfg.SmartInterval, err = durationOr("NETRA_SMART_INTERVAL", time.Hour); err != nil {
+	if cfg.SmartInterval, err = durationOr("AGENT_SMART_INTERVAL", time.Hour); err != nil {
 		return Config{}, err
 	}
 
 	// The buffer window is coupled to the hub's continuous-aggregate
 	// start_offset (MaxBufferWindow, 6h). Raising it past that would silently
 	// exclude replayed data from rollups forever, so it is rejected here.
-	if cfg.BufferWindow, err = durationOr("NETRA_BUFFER_WINDOW", time.Hour); err != nil {
+	if cfg.BufferWindow, err = durationOr("AGENT_BUFFER_WINDOW", time.Hour); err != nil {
 		return Config{}, err
 	}
 	if cfg.BufferWindow > MaxBufferWindow {
 		return Config{}, fmt.Errorf(
-			"NETRA_BUFFER_WINDOW must not exceed %s (the hub's continuous-aggregate "+
+			"AGENT_BUFFER_WINDOW must not exceed %s (the hub's continuous-aggregate "+
 				"start_offset); data buffered longer than that and then replayed would be "+
 				"silently excluded from rollups forever, got %s",
 			MaxBufferWindow, cfg.BufferWindow)
 	}
 
 	return cfg, nil
+}
+
+// rejectOldPrefix refuses to start while a NETRA_-prefixed variable is still
+// set. Every agent variable was renamed to AGENT_ in one go, and the swap is
+// mechanical, so the message can name the replacement.
+//
+// Loud rather than ignored, and it matters more here than on the hub: an agent
+// .env lives on a host nobody logs into, and an upgrade that started reading
+// nothing would leave AGENT_PID_HOST unset -- not a crash, just a fleet whose
+// process counts quietly went back to being guessed.
+func rejectOldPrefix() error {
+	for _, kv := range os.Environ() {
+		key, _, _ := strings.Cut(kv, "=")
+		if old, found := strings.CutPrefix(key, "NETRA_"); found {
+			return fmt.Errorf("%s is no longer read; rename it to AGENT_%s", key, old)
+		}
+	}
+	return nil
 }
 
 func envOr(key, fallback string) string {
@@ -201,7 +223,7 @@ func fsMounts(v string) map[string]string {
 	for _, pair := range strings.Split(v, ",") {
 		label, mountpoint, ok := strings.Cut(pair, "=")
 		if !ok || label == "" || mountpoint == "" {
-			slog.Warn("NETRA_FS_MOUNTS entry is not label=mountpoint, ignoring it",
+			slog.Warn("AGENT_FS_MOUNTS entry is not label=mountpoint, ignoring it",
 				"entry", pair)
 			continue
 		}

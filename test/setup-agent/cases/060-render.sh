@@ -39,8 +39,8 @@ cp -R "$(fixture root-full)/." "$ROOT/"
 
 OUT="$TMP/out"
 ANS=$(answers full y y)
-run_capture env NETRA_SETUP_ROOT="$ROOT" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS" NETRA_UID=0 \
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" AGENT_UID=0 \
     "$SH" "$SETUP" --sys-admin --pid-host \
     --token nta_testtoken --hub-url https://netra.example.com \
     --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
@@ -64,35 +64,35 @@ assert_is_file "$ROOT/mnt/ark/.netra" "the ark marker file is created"
 
 # --- 2. .env ------------------------------------------------------------------
 ENVOUT=$(cat "$OUT/.env")
-assert_contains "$ENVOUT" "NETRA_HUB_URL=https://netra.example.com" \
+assert_contains "$ENVOUT" "AGENT_HUB_URL=https://netra.example.com" \
     "the hub URL is substituted, slashes and all"
-assert_contains "$ENVOUT" "NETRA_TOKEN=nta_testtoken" "the token is substituted"
-assert_contains "$ENVOUT" "NETRA_PRIMARY_SENSOR=" \
+assert_contains "$ENVOUT" "AGENT_TOKEN=nta_testtoken" "the token is substituted"
+assert_contains "$ENVOUT" "AGENT_PRIMARY_SENSOR=" \
     "the primary sensor is present but empty (the agent picks at runtime)"
-assert_not_contains "$ENVOUT" "NETRA_PRIMARY_SENSOR=coretemp" \
+assert_not_contains "$ENVOUT" "AGENT_PRIMARY_SENSOR=coretemp" \
     "a setup-time auto-pick is NOT frozen into .env"
 # The three values the script asks for, and the one it deliberately does not.
-assert_contains "$ENVOUT" "NETRA_LOCATION=Zurich, CH" \
+assert_contains "$ENVOUT" "AGENT_LOCATION=Zurich, CH" \
     "the location reaches .env, comma and space intact"
-assert_contains "$ENVOUT" "NETRA_PROVIDER=Hetzner" "the provider reaches .env"
-assert_contains "$ENVOUT" "NETRA_HOST_TYPE=bare_metal" "the host type reaches .env"
-assert_contains "$ENVOUT" "NETRA_FACILITY=" "the facility is present but never asked for"
+assert_contains "$ENVOUT" "AGENT_PROVIDER=Hetzner" "the provider reaches .env"
+assert_contains "$ENVOUT" "AGENT_HOST_TYPE=bare_metal" "the host type reaches .env"
+assert_contains "$ENVOUT" "AGENT_FACILITY=" "the facility is present but never asked for"
 # This run passed --pid-host, so the agent is told so as a fact rather than
 # left to guess whether it is confined to a PID namespace.
-assert_contains "$ENVOUT" "NETRA_PID_HOST=1" \
+assert_contains "$ENVOUT" "AGENT_PID_HOST=1" \
     "--pid-host is recorded in .env, so the process collector need not guess"
-assert_contains "$ENVOUT" "NETRA_UTMP_PATH=/var/run/utmp" \
+assert_contains "$ENVOUT" "AGENT_UTMP_PATH=/var/run/utmp" \
     "the utmp path reaches .env"
 # The mapping that keeps the container's own paths out of the hub. Its labels
 # are the same ones the bind targets in the golden compose use, and its
 # mountpoints are what this host calls those filesystems.
-assert_contains "$ENVOUT" "NETRA_FS_MOUNTS=root=/,ark=/mnt/ark" \
+assert_contains "$ENVOUT" "AGENT_FS_MOUNTS=root=/,ark=/mnt/ark" \
     "each measured filesystem is mapped from its label to its host mount point"
 # The scrape interval is a fixed 60s constant, so there is no knob for it.
 # Matched against the ASSIGNMENTS only: the template's own header comment names
-# NETRA_INTERVAL in order to explain why it is absent.
+# AGENT_INTERVAL in order to explain why it is absent.
 ENVBODY=$(printf '%s\n' "$ENVOUT" | grep -v '^#' || true)
-assert_not_contains "$ENVBODY" "NETRA_INTERVAL" "there is no NETRA_INTERVAL assignment in .env"
+assert_not_contains "$ENVBODY" "AGENT_INTERVAL" "there is no AGENT_INTERVAL assignment in .env"
 assert_not_contains "$ENVBODY" "__" "no substitution token is left unreplaced"
 
 # --- 2b. a host with no utmp --------------------------------------------------
@@ -107,7 +107,7 @@ assert_not_contains "$ENVBODY" "__" "no substitution token is left unreplaced"
 # nothing but --sys-admin. A conditional mount and an unconditional namespace
 # side by side is exactly what this case is for.
 #
-# This runs BEFORE the script is sourced below: sourcing exports NETRA_BLK_*
+# This runs BEFORE the script is sourced below: sourcing exports AGENT_BLK_*
 # and the curl shim's return code, which a later subprocess run would inherit.
 ROOT2="$TMP/noutmp"
 mkdir -p "$ROOT2"
@@ -116,8 +116,8 @@ rm -f "$ROOT2/var/run/utmp"
 
 OUT2="$TMP/out-noutmp"
 ANS2=$(answers noutmp y y)
-run_capture env NETRA_SETUP_ROOT="$ROOT2" NETRA_TTY="$NO_TTY" \
-    NETRA_ANSWERS_FILE="$ANS2" NETRA_UID=0 \
+run_capture env AGENT_SETUP_ROOT="$ROOT2" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS2" AGENT_UID=0 \
     "$SH" "$SETUP" --sys-admin \
     --token nta_testtoken --hub-url https://netra.example.com \
     --location "Zurich, CH" --provider Hetzner --host-type bare_metal \
@@ -135,24 +135,24 @@ assert_contains "$COMPOSE2" "pid: host" \
     "pid: host is rendered anyway -- it is unconditional, not a grant"
 
 ENVOUT2=$(cat "$OUT2/.env" 2>/dev/null || true)
-assert_contains "$ENVOUT2" "NETRA_PID_HOST=1" \
+assert_contains "$ENVOUT2" "AGENT_PID_HOST=1" \
     "and .env states it, so the process collector need not guess"
 
 # The whole reason render_env is awk and not `sed s///`: a value containing `/`
 # or `&` turns a sed expression into something else entirely.
-NETRA_SOURCED=1
-export NETRA_SOURCED
+AGENT_SOURCED=1
+export AGENT_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
-NETRA_VAL_HUB_URL='https://h.example/a&b/c'
-NETRA_VAL_TOKEN='nta_a&b/c\d'
-NETRA_VAL_PRIMARY_SENSOR=''
-export NETRA_VAL_HUB_URL NETRA_VAL_TOKEN NETRA_VAL_PRIMARY_SENSOR
+AGENT_VAL_HUB_URL='https://h.example/a&b/c'
+AGENT_VAL_TOKEN='nta_a&b/c\d'
+AGENT_VAL_PRIMARY_SENSOR=''
+export AGENT_VAL_HUB_URL AGENT_VAL_TOKEN AGENT_VAL_PRIMARY_SENSOR
 ENVOUT=$(render_env "$TEMPLATES/env.tmpl")
-assert_contains "$ENVOUT" 'NETRA_HUB_URL=https://h.example/a&b/c' \
+assert_contains "$ENVOUT" 'AGENT_HUB_URL=https://h.example/a&b/c' \
     "a value containing & and / survives substitution intact"
-assert_contains "$ENVOUT" 'NETRA_TOKEN=nta_a&b/c\d' \
+assert_contains "$ENVOUT" 'AGENT_TOKEN=nta_a&b/c\d' \
     "a value containing a backslash is not escape-processed"
 
 # --- 3. an empty volumes block still renders valid YAML -----------------------
@@ -169,10 +169,10 @@ assert_contains "$ENVOUT" 'NETRA_TOKEN=nta_a&b/c\d' \
 #
 # `pid: host` is deliberately absent from this list: it is a literal line in the
 # template, not a marker, so no empty block can delete it.
-NETRA_BLK_VOLUMES=""
-NETRA_BLK_DEVICES=""
-NETRA_BLK_CAP_ADD=""
-export NETRA_BLK_VOLUMES NETRA_BLK_DEVICES NETRA_BLK_CAP_ADD
+AGENT_BLK_VOLUMES=""
+AGENT_BLK_DEVICES=""
+AGENT_BLK_CAP_ADD=""
+export AGENT_BLK_VOLUMES AGENT_BLK_DEVICES AGENT_BLK_CAP_ADD
 render_template "$TEMPLATES/compose.yaml.tmpl" >"$TMP/empty.yaml"
 if diff -u "$GOLDEN/empty-volumes.compose.yaml" "$TMP/empty.yaml" >"$TMP/diff.empty" 2>&1; then
     ok "an empty block deletes its marker line entirely"
@@ -190,7 +190,7 @@ assert_not_contains "$EMPTYBODY" "cap_add:" "no dangling cap_add: key remains"
 assert_not_contains "$EMPTYBODY" "devices:" "no dangling devices: key remains"
 assert_contains "$EMPTYBODY" "pid: host" \
     "pid: host survives an all-empty render -- it is a literal, not a marker"
-assert_not_contains "$EMPTYBODY" "#__NETRA_" "no marker line survives"
+assert_not_contains "$EMPTYBODY" "#__AGENT_" "no marker line survives"
 
 # --- 4. blocks travel through ENVIRON, never `awk -v` --------------------------
 #
@@ -201,14 +201,14 @@ assert_not_contains "$EMPTYBODY" "#__NETRA_" "no marker line survives"
 # SC2089/SC2090: the quotes below are YAML data bound for compose.yaml, not
 # shell quoting, and the variable is only exported for awk's ENVIRON.
 # shellcheck disable=SC2089
-NETRA_BLK_VOLUMES='    volumes:
+AGENT_BLK_VOLUMES='    volumes:
       - type: bind
         source: "/mnt/lit\040eral/.netra"
         target: /netra/fs/lit-eral
         read_only: true
 '
 # shellcheck disable=SC2090
-export NETRA_BLK_VOLUMES
+export AGENT_BLK_VOLUMES
 RENDERED=$(render_template "$TEMPLATES/compose.yaml.tmpl")
 assert_contains "$RENDERED" 'source: "/mnt/lit\040eral/.netra"' \
     'a literal \040 in a block reaches compose.yaml unchanged'
@@ -222,8 +222,8 @@ SCRATCH_DIR="$TMP/scratch"
 mkdir -p "$SCRATCH_DIR"
 TEMPLATE_DIR=""
 REF="v9.9.9-nope"
-NETRA_SHIM_CURL_RC=22
-export NETRA_SHIM_CURL_RC
+AGENT_SHIM_CURL_RC=22
+export AGENT_SHIM_CURL_RC
 run_capture fetch_template compose.yaml.tmpl
 assert_eq 1 "$RUN_RC" "a failed template download exits non-zero"
 assert_contains "$RUN_OUT" \
@@ -234,9 +234,9 @@ assert_contains "$RUN_OUT" "--template-dir" "the failure names --template-dir"
 
 # An empty 200 is a failure too: a proxy that returns a courtesy page with no
 # body would otherwise render an empty compose.yaml.
-NETRA_SHIM_CURL_RC=0
-NETRA_SHIM_CURL_BODY=""
-export NETRA_SHIM_CURL_RC NETRA_SHIM_CURL_BODY
+AGENT_SHIM_CURL_RC=0
+AGENT_SHIM_CURL_BODY=""
+export AGENT_SHIM_CURL_RC AGENT_SHIM_CURL_BODY
 run_capture fetch_template compose.yaml.tmpl
 assert_eq 1 "$RUN_RC" "an empty download is a failure, not an empty compose.yaml"
 assert_contains "$RUN_OUT" "empty" "the empty-download failure says so"
@@ -252,33 +252,33 @@ assert_contains "$RUN_OUT" "empty" "the empty-download failure says so"
 # The body is compact single-line JSON, which is what the API actually returns.
 TEMPLATE_DIR=""
 REF_EXPLICIT=0
-REF="v$NETRA_SETUP_VERSION"
-NETRA_SHIM_CURL_RC=0
+REF="v$AGENT_SETUP_VERSION"
+AGENT_SHIM_CURL_RC=0
 # SC2089/SC2090: the quotes are JSON syntax in a data string handed to a shim,
 # not shell quoting, and the variable is only exported into the environment.
 # shellcheck disable=SC2089
-NETRA_SHIM_CURL_BODY='{"url":"https://api.github.com/repos/trick77/netra/releases/1","id":1,"tag_name":"v1.2.3","name":"1.2.3","draft":false}'
+AGENT_SHIM_CURL_BODY='{"url":"https://api.github.com/repos/trick77/netra/releases/1","id":1,"tag_name":"v1.2.3","name":"1.2.3","draft":false}'
 # shellcheck disable=SC2090
-export NETRA_SHIM_CURL_RC NETRA_SHIM_CURL_BODY
+export AGENT_SHIM_CURL_RC AGENT_SHIM_CURL_BODY
 resolve_ref
 assert_eq "v1.2.3" "$REF" "the latest release tag is resolved at run time"
 
 # A failed lookup falls back to the setup script's own version tag, which is still
 # a tag. It must never fall back to a branch.
-REF="v$NETRA_SETUP_VERSION"
+REF="v$AGENT_SETUP_VERSION"
 SKIPPED_NOTES=""
-NETRA_SHIM_CURL_RC=22
-export NETRA_SHIM_CURL_RC
+AGENT_SHIM_CURL_RC=22
+export AGENT_SHIM_CURL_RC
 resolve_ref
-assert_eq "v$NETRA_SETUP_VERSION" "$REF" "a failed lookup keeps the version tag"
+assert_eq "v$AGENT_SETUP_VERSION" "$REF" "a failed lookup keeps the version tag"
 assert_not_contains "$REF" "master" "a failed lookup never falls back to master"
 assert_contains "$SKIPPED_NOTES" "--ref" "the failed lookup warns and names --ref"
 
 # An explicit --ref wins even when the API would answer.
 REF="v0.0.1-pinned"
 REF_EXPLICIT=1
-NETRA_SHIM_CURL_RC=0
-export NETRA_SHIM_CURL_RC
+AGENT_SHIM_CURL_RC=0
+export AGENT_SHIM_CURL_RC
 resolve_ref
 assert_eq "v0.0.1-pinned" "$REF" "an explicit --ref is never overridden by the API lookup"
 
@@ -286,10 +286,10 @@ assert_eq "v0.0.1-pinned" "$REF" "an explicit --ref is never overridden by the A
 # make no network call at all.
 TEMPLATE_DIR="$TEMPLATES"
 REF_EXPLICIT=0
-REF="v$NETRA_SETUP_VERSION"
-: >"$NETRA_SHIM_LOG"
+REF="v$AGENT_SETUP_VERSION"
+: >"$AGENT_SHIM_LOG"
 resolve_ref
-assert_eq "" "$(grep 'api.github.com' "$NETRA_SHIM_LOG" || true)" \
+assert_eq "" "$(grep 'api.github.com' "$AGENT_SHIM_LOG" || true)" \
     "--template-dir makes no network call at all"
 TEMPLATE_DIR=""
 

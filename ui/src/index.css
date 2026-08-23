@@ -2087,6 +2087,14 @@ details.sysfold > .body {
 .grid2 > * .card {
   margin-bottom: 0;
 }
+/* Forces the column break in front of one card. `display: block` is the point:
+   the rule above makes every column child inline-block for its margins, and an
+   inline-block box ignores break-before -- the property is silently dead
+   without this. */
+.grid2 > .colbreak {
+  display: block;
+  break-before: column;
+}
 .hosthead {
   display: flex;
   align-items: center;
