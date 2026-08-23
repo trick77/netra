@@ -343,40 +343,100 @@ func TestIntegrationReportingADriveKeepsItAlive(t *testing.T) {
 	s := openMigrated(t)
 	id := seedInterfaceHost(t, s, "drives")
 
-	smart := func(device string, raw int64) *netrav1.SmartAttribute {
+	smart := func(at time.Time, raw int64) *netrav1.SmartAttribute {
 		return &netrav1.SmartAttribute{
-			TsMs: 1_754_784_000_000, Device: device,
+			TsMs: at.UnixMilli(), Device: "sda",
 			Model: "ST16000NM000J", Serial: "ZR5A1M0K",
 			AttrId: 5, Raw: proto.Int64(raw),
 		}
 	}
 
+	// A reading from long past any horizon, then the drive reported again now.
 	if _, err := s.InsertSmartAttributes(ctx, id,
-		[]*netrav1.SmartAttribute{smart("sda", 0)}); err != nil {
+		[]*netrav1.SmartAttribute{
+			smart(time.Now().Add(-200*24*time.Hour), 0),
+		}); err != nil {
 		t.Fatalf("first insert: %v", err)
 	}
-
-	// Age the row past any horizon, then report the drive again.
-	if _, err := s.Pool().Exec(ctx,
-		`UPDATE devices SET last_seen = now() - INTERVAL '200 days' WHERE host_id = $1`,
-		id); err != nil {
-		t.Fatalf("age: %v", err)
-	}
 	if _, err := s.InsertSmartAttributes(ctx, id,
-		[]*netrav1.SmartAttribute{smart("sda", 1)}); err != nil {
+		[]*netrav1.SmartAttribute{smart(time.Now(), 1)}); err != nil {
 		t.Fatalf("second insert: %v", err)
 	}
 
-	var age time.Duration
 	var lastSeen time.Time
 	if err := s.Pool().QueryRow(ctx,
 		`SELECT last_seen FROM devices WHERE host_id = $1`, id).Scan(&lastSeen); err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	age = time.Since(lastSeen)
-	if age > time.Minute {
+	if age := time.Since(lastSeen); age > time.Minute {
 		t.Errorf("last_seen is %s old after the drive was reported again; "+
 			"the prune would eventually delete a live drive's history", age)
+	}
+}
+
+// last_seen is stamped from the READING's timestamp, not from the hub's clock.
+//
+// The agent's ring buffer replays buffered scrapes after a hub outage, so a
+// batch landing now can carry readings taken overnight. now() would date them
+// to arrival and report the drive as read "just now" -- the exact opposite of
+// the staleness cue the Drives table reads this column for.
+func TestIntegrationDeviceLastSeenComesFromTheReadingNotTheClock(t *testing.T) {
+	ctx := context.Background()
+	s := openMigrated(t)
+	id := seedInterfaceHost(t, s, "replayed")
+
+	sixHoursAgo := time.Now().Add(-6 * time.Hour)
+	if _, err := s.InsertSmartAttributes(ctx, id, []*netrav1.SmartAttribute{{
+		TsMs: sixHoursAgo.UnixMilli(), Device: "sda",
+		Model: "ST16000NM000J", Serial: "A", AttrId: 5, Raw: proto.Int64(0),
+	}}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	var lastSeen time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT last_seen FROM devices WHERE host_id = $1`, id).Scan(&lastSeen); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if age := time.Since(lastSeen); age < 5*time.Hour {
+		t.Errorf("last_seen is only %s old for a reading taken six hours ago; "+
+			"a replayed scrape must not report the drive as read just now", age)
+	}
+}
+
+// And a replay of OLDER readings must not walk it backwards, which would hand
+// the prune a drive that looks stale while its newest reading is current.
+func TestIntegrationDeviceLastSeenNeverMovesBackwards(t *testing.T) {
+	ctx := context.Background()
+	s := openMigrated(t)
+	id := seedInterfaceHost(t, s, "out-of-order")
+
+	row := func(at time.Time, raw int64) *netrav1.SmartAttribute {
+		return &netrav1.SmartAttribute{
+			TsMs: at.UnixMilli(), Device: "sda",
+			Model: "ST16000NM000J", Serial: "A", AttrId: 5, Raw: proto.Int64(raw),
+		}
+	}
+
+	current := time.Now()
+	if _, err := s.InsertSmartAttributes(ctx, id,
+		[]*netrav1.SmartAttribute{row(current, 1)}); err != nil {
+		t.Fatalf("current insert: %v", err)
+	}
+	// A late batch carrying week-old readings.
+	if _, err := s.InsertSmartAttributes(ctx, id,
+		[]*netrav1.SmartAttribute{row(current.Add(-7*24*time.Hour), 0)}); err != nil {
+		t.Fatalf("late insert: %v", err)
+	}
+
+	var lastSeen time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT last_seen FROM devices WHERE host_id = $1`, id).Scan(&lastSeen); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if age := time.Since(lastSeen); age > time.Minute {
+		t.Errorf("last_seen moved back to %s old after a late batch of older "+
+			"readings; the newest reading is current", age)
 	}
 }
 
@@ -387,13 +447,17 @@ func TestIntegrationStaleDevicesArePrunedAndLiveOnesAreNot(t *testing.T) {
 	s := openMigrated(t)
 	id := seedInterfaceHost(t, s, "mixed")
 
+	// Real time, not a fixed literal: last_seen is stamped from the reading's
+	// ts now, so a hardcoded instant becomes stale as the calendar moves and
+	// the test would eventually prune the drive it means to keep.
+	now := time.Now().UnixMilli()
 	rows := []*netrav1.SmartAttribute{
 		{
-			TsMs: 1_754_784_000_000, Device: "sda", Model: "ST16000NM000J",
+			TsMs: now, Device: "sda", Model: "ST16000NM000J",
 			Serial: "A", AttrId: 5, Raw: proto.Int64(0),
 		},
 		{
-			TsMs: 1_754_784_000_000, Device: "sdb", Model: "ST16000NM000J",
+			TsMs: now, Device: "sdb", Model: "ST16000NM000J",
 			Serial: "B", AttrId: 5, Raw: proto.Int64(0),
 		},
 	}

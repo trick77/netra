@@ -84,16 +84,18 @@ type Drive struct {
 	Attributes []DriveAttribute `json:"attributes"`
 
 	FirstSeen time.Time `json:"first_seen"`
-	// When the agent last REPORTED this drive, from devices.last_seen -- not
-	// when the newest attribute landed.
+	// When this drive's newest reading was TAKEN, from devices.last_seen.
 	//
-	// The two differ exactly where it matters. A drive smartctl can name but
-	// not read is still present and still reported, and it is the one the UI
-	// marks "not read": deriving this from the attributes would leave that
-	// drive with no timestamp at all, so the table could say neither how long
-	// it has been unreadable nor whether anyone is still looking. It is also
-	// the column netra_prune_stale_devices reads, so the table and the prune
-	// agree about what "gone" means.
+	// The same instant the newest attribute carries, but stored rather than
+	// derived, and that is the difference worth having: smart_attributes is
+	// dropped at 90 days by its own retention policy, so a drive whose
+	// readings have aged out has no attribute left to date. This column still
+	// dates it. It is also what netra_prune_stale_devices reads, so the table
+	// and the prune cannot disagree about how old a drive is.
+	//
+	// Stamped from the reading's ts, never from the hub's clock: the agent
+	// replays buffered scrapes after an outage, and now() would report
+	// overnight readings as taken on arrival.
 	LastSeen time.Time `json:"last_seen"`
 }
 

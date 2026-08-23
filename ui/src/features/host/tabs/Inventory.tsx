@@ -622,16 +622,17 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
     key: "last_seen",
     // The staleness cue the health pill cannot give.
     //
-    // "not read" covers a drive with no attributes at all. A drive whose
-    // attributes stopped arriving -- a permission change, a device pulled out
-    // of a container passthrough, an agent that died -- keeps every one of
-    // them, so its temperature, wear and findings go on rendering as current
-    // facts about hardware nobody has looked at in a week. This column is what
-    // says when they were last true.
+    // When this drive's newest reading was taken.
     //
-    // devices.last_seen, so it is filled for the "not read" rows too: a drive
-    // smartctl can name and cannot read is still being reported, and "how long
-    // has this been unreadable" is the question that row raises.
+    // Every other cell in the row -- temperature, wear, findings -- is the
+    // newest reading rendered as a current fact. Nothing else on the row says
+    // how old that is, and a host whose agent stopped an hour ago looks
+    // exactly like one reporting now.
+    //
+    // devices.last_seen rather than the newest attribute's own ts: the two are
+    // the same instant, but smart_attributes is dropped at 90 days by its
+    // retention policy and the devices row outlives it, so a drive whose
+    // readings have aged out still has a date rather than a dash.
     header: "Last read",
     cell: (row) => <When iso={row.last_seen} />,
   },

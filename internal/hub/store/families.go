@@ -603,30 +603,49 @@ func (s *Store) resolveDeviceIDs(ctx context.Context, hostID int32, rows []*netr
 		return out, nil
 	}
 
-	// See resolveContainerIDs on why the skip is keyed on attempts rather than
-	// on successful resolutions.
-	tried := make(map[string]bool, len(rows))
-
+	// The NEWEST row per device, not the first one seen.
+	//
+	// last_seen is stamped from the reading's own ts rather than from now(),
+	// so it survives a replay honestly: the agent's ring buffer hands over
+	// hours-old scrapes after a hub outage, and now() would date every one of
+	// them to the moment they happened to land -- reporting a drive as read
+	// "just now" on readings taken overnight, which is the exact opposite of
+	// the staleness cue the Drives table reads this column for.
+	//
+	// A batch can span several scrapes, so the newest wins; model and serial
+	// come from that same row rather than from whichever arrived first.
+	newest := make(map[string]*netrav1.SmartAttribute, len(rows))
+	order := make([]string, 0, len(rows))
 	for _, r := range rows {
 		name := r.GetDevice()
-		if name == "" || tried[name] {
+		if name == "" {
 			continue
 		}
-		tried[name] = true
+		if prev, ok := newest[name]; !ok {
+			newest[name] = r
+			order = append(order, name)
+		} else if r.GetTsMs() > prev.GetTsMs() {
+			newest[name] = r
+		}
+	}
 
-		// last_seen is what netra_prune_stale_devices reads, and this is the
-		// only place that can touch it: it means "the agent last mentioned
-		// this drive", which is a different fact from "a reading landed".
-		// A drive smartctl can name but not read still counts as present, and
-		// still keeps its history.
+	// Iterated in first-seen order rather than over the map, so a failure
+	// reports the same device twice in a row. See resolveContainerIDs on why
+	// the skip is keyed on attempts rather than on successful resolutions.
+	for _, name := range order {
+		r := newest[name]
+
+		// GREATEST, so an out-of-order replay cannot walk last_seen backwards
+		// and hand the prune a drive that looks stale while its newest reading
+		// is current.
 		id, ok, err := s.resolveOne(ctx, "device", name, `
-			INSERT INTO devices (host_id, device, model, serial)
-			VALUES ($1, $2, $3, $4)
+			INSERT INTO devices (host_id, device, model, serial, last_seen)
+			VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (host_id, device) DO UPDATE
 			   SET model = EXCLUDED.model, serial = EXCLUDED.serial,
-			       last_seen = now()
+			       last_seen = GREATEST(devices.last_seen, EXCLUDED.last_seen)
 			RETURNING id`,
-			hostID, name, r.GetModel(), r.GetSerial())
+			hostID, name, r.GetModel(), r.GetSerial(), tsOf(r.GetTsMs()))
 		if err != nil {
 			return nil, err
 		}

@@ -16,9 +16,23 @@
 -- than the stale row.
 --
 -- So: a timestamp, and a horizon far longer than any transient failure. A
--- device the agent has not mentioned in 90 days is gone, and by then its
--- readings have aged out under smart_attributes' own retention anyway -- the
--- row is deleted at the point where it has stopped being able to say anything.
+-- device with no reading in 90 days is gone, and by then its readings have
+-- aged out under smart_attributes' own retention anyway -- the row is deleted
+-- at the point where it has stopped being able to say anything.
+--
+-- "No reading", precisely, and NOT "the agent stopped mentioning it": the
+-- collector `continue`s past a drive whose --all fails, before appending any
+-- row (smart.go's device loop), and the wire carries no device-present-but-
+-- unreadable message. So a drive that --scan still finds while --all has
+-- started failing -- a dying controller, a passthrough removed from a
+-- container -- stops being reported at all, and this prune removes it after 90
+-- days along with its history.
+--
+-- That is a real gap and it is stated here rather than papered over: netra
+-- cannot currently distinguish "this disk was unplugged" from "this disk has
+-- stopped answering", and the second is the more interesting of the two.
+-- Closing it needs the collector to emit something for a drive it can name and
+-- cannot read, which is an agent and wire change rather than a schema one.
 
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS first_seen TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen  TIMESTAMPTZ NOT NULL DEFAULT now();
@@ -44,8 +58,13 @@ DECLARE
 BEGIN
     -- The CASCADE takes the drive's remaining smart_attributes with it. At
     -- this cutoff there are none left to take: the table's own retention
-    -- policy drops them at 90 days, so a device silent for that long has an
-    -- empty history by definition.
+    -- policy drops them at 90 days, so a device with no reading for that long
+    -- has an empty history by definition.
+    --
+    -- Both horizons default to 90 days and are read from their jobs' config,
+    -- so alter_job can move them apart. Moving THIS one below
+    -- smart_attributes' retention is what the cascade above would make
+    -- destructive, and is the reason that sentence is here.
     DELETE FROM devices WHERE last_seen < cutoff;
     COMMIT;
 END;

@@ -194,10 +194,10 @@ export type Drive = {
   serial: string | null;
   attributes: DriveAttribute[];
   first_seen: string;
-  /** When the agent last REPORTED this drive -- devices.last_seen -- not when
-   * the newest attribute landed. A drive smartctl can name but not read is
-   * still reported, so this is the one timestamp that exists for the drives
-   * the table marks "not read". */
+  /** When this drive's newest reading was TAKEN -- devices.last_seen. The
+   * same instant the newest attribute carries, but stored rather than
+   * derived, so a drive whose readings have aged out under the 90-day
+   * retention still has a date on it. */
   last_seen: string;
 };
 
