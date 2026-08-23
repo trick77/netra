@@ -12,7 +12,7 @@ import type {
 import { ABSENT } from "../../../lib/format";
 import {
   Containers,
-  Filesystems,
+  Mounts,
   Inventory,
   Network,
   Packages,
@@ -311,9 +311,9 @@ describe("Containers", () => {
   });
 });
 
-describe("Filesystems", () => {
+describe("Mounts", () => {
   it("lists label and mountpoint without inventing timestamps", () => {
-    render(<Filesystems rows={filesystems} />);
+    render(<Mounts rows={filesystems} />);
     expect(screen.getByText("/srv/data")).toBeInTheDocument();
     expect(
       screen.queryByRole("columnheader", { name: /last seen/i }),
@@ -342,7 +342,12 @@ describe("Network", () => {
   // The interface alias the agent reports. It was searchable and shown
   // nowhere, so an operator who had labelled every NIC still got a table of
   // bare kernel names.
-  it("shows the interface description, and the absent marker when there is none", () => {
+  // The alias is a fact about the INTERFACE, so it moved to the Interfaces
+  // table: on an address-keyed table one alias was printed once per address,
+  // so eth0 with a v4, a v6 and a link-local showed the same sentence three
+  // times. Only the COLUMN moved -- the field still arrives and is still
+  // searched here, so typing an alias still finds its addresses.
+  it("no longer repeats the interface alias once per address", () => {
     render(
       <Network
         rows={[
@@ -352,9 +357,31 @@ describe("Network", () => {
       />,
     );
     expect(
-      screen.getByRole("columnheader", { name: /description/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("uplink to core-sw1")).toBeInTheDocument();
+      screen.queryByRole("columnheader", { name: /description/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("uplink to core-sw1")).not.toBeInTheDocument();
+  });
+
+  // The hub already classified every address (AddressScope in
+  // internal/hub/store/scope.go); it was printed in a column two away from
+  // the address it described.
+  it("marks each address with the scope the hub derived", () => {
+    render(
+      <Network
+        rows={[
+          { ...addresses[0]!, scope: "public" },
+          { ...addresses[0]!, address: "10.0.0.1/8", scope: "private" },
+          { ...addresses[0]!, address: "127.0.0.1/8", scope: "loopback" },
+        ]}
+      />,
+    );
+    expect(screen.getByText("public")).toBeInTheDocument();
+    expect(screen.getByText("private")).toBeInTheDocument();
+    expect(screen.getByText("loopback")).toBeInTheDocument();
+    // The pill IS the scope, so the column is gone.
+    expect(
+      screen.queryByRole("columnheader", { name: /scope/i }),
+    ).not.toBeInTheDocument();
   });
 
   // sysfs cannot identify a VRF master -- drivers/net/vrf.c sets no DEVTYPE
@@ -448,7 +475,7 @@ describe("Units", () => {
   });
 });
 
-describe("Filesystems", () => {
+describe("Mounts", () => {
   const rows = [
     { id: 1, label: "root", mountpoint: "/", device_id: null },
     { id: 2, label: "data", mountpoint: "/data", device_id: null },
@@ -479,7 +506,7 @@ describe("Filesystems", () => {
   // the tab answered none of the question anyone opens it for. The sizes
   // come from the metrics family, joined by label.
   it("joins the sizes in from the metrics family", () => {
-    render(<Filesystems rows={rows} metrics={metrics} />);
+    render(<Mounts rows={rows} metrics={metrics} />);
 
     expect(screen.getByText("68 B")).toBeInTheDocument();
     expect(screen.getByText("32 B")).toBeInTheDocument();
@@ -487,7 +514,7 @@ describe("Filesystems", () => {
 
   // A filesystem the metrics did not answer for is not an empty disk.
   it("renders the absent marker for a filesystem with no samples", () => {
-    render(<Filesystems rows={rows} metrics={metrics} />);
+    render(<Mounts rows={rows} metrics={metrics} />);
 
     const dataRow = screen.getByText("data").closest("tr")!;
     expect(dataRow.textContent).toContain(ABSENT);

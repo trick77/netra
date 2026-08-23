@@ -48,6 +48,7 @@ message IngestRequest {
   // They ride the metadata hash the same way capabilities do.
   repeated HostAddress addresses = 18;
   repeated HostPackage packages = 19;
+  repeated HostInterface interfaces = 21;
 
   // Level-triggered systemd state, sent periodically alongside the deltas in
   // systemd_events. See SystemdSnapshot for why both exist.
@@ -420,6 +421,36 @@ message HostSample {
   optional double icmp6_out_router_solicits_per_s = 141;
   optional double icmp6_in_router_advertisements_per_s = 142;
   optional double icmp6_out_router_advertisements_per_s = 143;
+
+  // --- /proc/net/snmp: the TCP and UDP MIBs, minus their error counters ---
+  //
+  // These seven land in host_proto_samples, a THIRD host-level table, for
+  // exactly the reason the seventy above land in host_snmp_samples: a
+  // continuous aggregate cannot gain a column, so adding these to either
+  // existing table would drop and recreate its rollups and destroy everything
+  // older than the seven days of raw still on disk. host_snmp_samples is not
+  // the answer either -- it is an existing aggregate, and widening it costs
+  // the IP and ICMP history that table exists to hold.
+  //
+  // The error counters they belong beside (tcp_retrans_segs_per_s,
+  // udp_in_errors_per_s and the rest) stay in host_samples where they already
+  // are. Splitting one MIB across two tables reads wrong and IS wrong-looking,
+  // but moving a stored column costs the same rollup rebuild as adding one,
+  // and the UI joins across families anyway -- see the fragmentation panels.
+  //
+  // There is no tcp6_* mirror, for the reason netstat.go documents: Linux's
+  // Tcp: block is family-agnostic and /proc/net/snmp6 has no Tcp6 block.
+  optional double tcp_in_segs_per_s = 144;
+  optional double tcp_out_segs_per_s = 145;
+  // A connection torn down from ESTABLISHED by an RST or a timeout, rather
+  // than closed. tcp_curr_estab says how many are up; this says how many
+  // stopped being up the hard way.
+  optional double tcp_estab_resets_per_s = 146;
+
+  optional double udp_in_datagrams_per_s = 147;
+  optional double udp_out_datagrams_per_s = 148;
+  optional double udp6_in_datagrams_per_s = 149;
+  optional double udp6_out_datagrams_per_s = 150;
 }
 
 // AgentSample is the agent's telemetry about itself for one scrape.
@@ -726,6 +757,59 @@ message HostAddress {
   uint32 family = 4;
   string vrf = 5;
   string description = 6;
+}
+
+// HostInterface is one network interface, without its addresses.
+//
+// A sibling of HostAddress rather than more fields on it: HostAddress is keyed
+// by ADDRESS and an interface carries several, so an MTU reported there would
+// be repeated on every row and could disagree with itself. It also cannot
+// describe the case worth describing -- an interface with no address at all,
+// which is what a failed bond or an unplugged spare NIC looks like, and which
+// is invisible in an address-keyed table.
+//
+// Inventory, not samples: these change when an operator changes them, so they
+// ride the metadata beside addresses rather than a hypertable.
+message HostInterface {
+  string iface = 1;
+  optional uint32 if_index = 2;
+
+  // /sys/class/net/<iface>/operstate, verbatim: "up", "down", "unknown",
+  // "lowerlayerdown", "dormant", "testing", "notpresent".
+  //
+  // operstate and NOT the IFF_UP flag, which net.Interfaces() hands over for
+  // free. IFF_UP is administratively up -- a pulled cable leaves it set and
+  // drops the carrier, which is precisely the state this field exists to
+  // report. The kernel's own word is kept rather than mapped to a bool for
+  // the same reason the hub derives address scope: a classification that
+  // lives in the agent is frozen into every host in the fleet.
+  //
+  // "unknown" is the honest and common reading for a virtual device -- wg0,
+  // lo, a bridge -- which never sets an operstate at all.
+  string oper_state = 3;
+
+  // /sys/class/net/<iface>/speed, in Mbit/s. Absent, not zero, for every
+  // interface that has no link speed to report: the kernel writes -1 for a
+  // virtual device and the read fails outright (EINVAL) on one that is down.
+  optional uint64 speed_mbps = 4;
+
+  // /sys/class/net/<iface>/duplex: "full", "half", or absent on the same
+  // interfaces speed is absent on.
+  string duplex = 5;
+
+  optional uint32 mtu = 6;
+
+  // /sys/class/net/<iface>/address -- the MAC. Empty for a device with no
+  // link layer of its own (lo, wg0, a tunnel).
+  string mac = 7;
+
+  // The interface alias: ip link set dev eth0 alias "uplink to core-sw1".
+  //
+  // HostAddress.description carries the same string and keeps carrying it --
+  // removing it would break every agent older than this one, and the hub
+  // stores it. This is where the UI reads it from now: on an address-keyed
+  // table one alias was printed once per address.
+  string description = 8;
 }
 
 // HostPackage is one installed package.

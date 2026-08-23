@@ -738,6 +738,78 @@ func (s *Store) UpsertHostAddresses(ctx context.Context, hostID int32, rows []*n
 	return n, nil
 }
 
+// UpsertHostInterfaces replaces the host's interface set.
+//
+// The sibling of UpsertHostAddresses, and it prunes for the same reason: an
+// interface the host no longer has is a stale row, not inventory. Nothing is
+// derived here -- unlike scope, oper_state is the kernel's own word and the
+// agent passes it through.
+//
+// NULLIF on every text column, matching UpsertHostAddresses: proto3 has no
+// absent string, so a device with no MAC and one whose MAC could not be read
+// both arrive as "". Stored verbatim that ” is a measured empty value, and
+// the `?? ABSENT` in the UI becomes dead code -- a column of blank cells where
+// it meant to say "not reported".
+func (s *Store) UpsertHostInterfaces(ctx context.Context, hostID int32, rows []*netrav1.HostInterface) (int64, error) {
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	const stmt = `
+		INSERT INTO host_interfaces (
+			host_id, iface, if_index, oper_state, speed_mbps, duplex, mtu, mac, description)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, NULLIF($6, ''), $7, NULLIF($8, ''), NULLIF($9, ''))
+		ON CONFLICT (host_id, iface) DO UPDATE
+		   SET if_index = EXCLUDED.if_index, oper_state = EXCLUDED.oper_state,
+		       speed_mbps = EXCLUDED.speed_mbps, duplex = EXCLUDED.duplex,
+		       mtu = EXCLUDED.mtu, mac = EXCLUDED.mac,
+		       description = EXCLUDED.description, last_seen = now()`
+
+	batch := &pgx.Batch{}
+	for _, r := range rows {
+		var ifIndex *int32
+		if r.IfIndex != nil {
+			v := int32(r.GetIfIndex())
+			ifIndex = &v
+		}
+		var speed *int64
+		if r.SpeedMbps != nil {
+			v := int64(r.GetSpeedMbps())
+			speed = &v
+		}
+		var mtu *int32
+		if r.Mtu != nil {
+			v := int32(r.GetMtu())
+			mtu = &v
+		}
+		batch.Queue(stmt, hostID, r.GetIface(), ifIndex, r.GetOperState(),
+			speed, r.GetDuplex(), mtu, r.GetMac(), r.GetDescription())
+	}
+
+	n, err := execBatch(ctx, s.pool, batch, "host interface")
+	if err != nil {
+		return 0, err
+	}
+
+	// The agent sends the whole set whenever anything changes, so anything
+	// untouched by this batch is an interface the host no longer has.
+	//
+	// No poisonRow escape hatch here, unlike the address prune: that one
+	// exists because an INET the agent sent can be one Postgres refuses to
+	// compare, and iface is plain TEXT with no such failure mode.
+	keep := make([]string, 0, len(rows))
+	for _, r := range rows {
+		keep = append(keep, r.GetIface())
+	}
+	if _, err := s.pool.Exec(ctx, `
+		DELETE FROM host_interfaces WHERE host_id = $1 AND iface <> ALL($2)`,
+		hostID, keep); err != nil {
+		return 0, fmt.Errorf("prune host interfaces: %w", err)
+	}
+
+	return n, nil
+}
+
 // UpsertHostPackages replaces the host's package inventory.
 //
 // Packages that vanished are deleted, for the reason UpsertHostAddresses

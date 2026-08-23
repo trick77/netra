@@ -58,6 +58,31 @@ type Address struct {
 	LastSeen    time.Time `json:"last_seen"`
 }
 
+// Interface is one row of /hosts/{id}/interfaces: one link, with no addresses
+// on it.
+//
+// Separate from Address because an interface with no address is the case worth
+// showing -- a failed bond, an unplugged spare NIC -- and an address-keyed list
+// cannot hold one.
+type Interface struct {
+	Iface   string `json:"iface"`
+	IfIndex *int32 `json:"if_index"`
+	// The kernel's operstate verbatim: up, down, unknown, lowerlayerdown,
+	// dormant, testing, notpresent. Not a bool -- see HostInterface in the
+	// proto for why the agent does not classify.
+	OperState *string `json:"oper_state"`
+	// NULL, not 0, wherever the kernel has no answer: a virtual device has no
+	// link speed and a down one refuses to report its.
+	SpeedMbps   *int64  `json:"speed_mbps"`
+	Duplex      *string `json:"duplex"`
+	MTU         *int32  `json:"mtu"`
+	MAC         *string `json:"mac"`
+	Description *string `json:"description"`
+
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
 // Package is one row of /hosts/{id}/packages.
 type Package struct {
 	Name      string    `json:"name"`
@@ -184,6 +209,39 @@ func (s *Service) Addresses(ctx context.Context, hostID int32) ([]Address, error
 		out = append(out, a)
 	}
 	return out, rowsErr(rows.Err(), "addresses")
+}
+
+// Interfaces lists the host's network interfaces.
+//
+// Ordered by iface, the same key the Addresses list orders on first, so the
+// two tables on the page read down in the same order.
+func (s *Service) Interfaces(ctx context.Context, hostID int32) ([]Interface, error) {
+	if err := s.hostExists(ctx, hostID); err != nil {
+		return nil, err
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT iface, if_index, oper_state, speed_mbps, duplex, mtu, mac,
+		       description, first_seen, last_seen
+		  FROM host_interfaces
+		 WHERE host_id = $1
+		 ORDER BY iface`, hostID)
+	if err != nil {
+		return nil, fmt.Errorf("query interfaces: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Interface{}
+	for rows.Next() {
+		var i Interface
+		if err := rows.Scan(&i.Iface, &i.IfIndex, &i.OperState, &i.SpeedMbps,
+			&i.Duplex, &i.MTU, &i.MAC, &i.Description,
+			&i.FirstSeen, &i.LastSeen); err != nil {
+			return nil, fmt.Errorf("scan interface: %w", err)
+		}
+		out = append(out, i)
+	}
+	return out, rowsErr(rows.Err(), "interfaces")
 }
 
 // Packages lists the host's installed packages.

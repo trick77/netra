@@ -118,6 +118,7 @@ func TestFlushSendsEveryBufferedFamily(t *testing.T) {
 		"SystemdEvents": "SystemdEvents",
 		"PackageEvents": "PackageEvents",
 		"Addresses":     "Addresses",
+		"Interfaces":    "Interfaces",
 		"Packages":      "Packages",
 		"Collectors":    "Collectors",
 	}

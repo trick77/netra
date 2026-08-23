@@ -3,6 +3,7 @@ package sim
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -31,6 +32,7 @@ type Scrape struct {
 	SystemdEvents []*netrav1.SystemdUnitEvent
 	PackageEvents []*netrav1.PackageEvent
 	Addresses     []*netrav1.HostAddress
+	Interfaces    []*netrav1.HostInterface
 	Packages      []*netrav1.HostPackage
 
 	// SystemdSnapshot mirrors what a real agent sends every snapshotFloor.
@@ -49,7 +51,7 @@ func (s *Scrape) Rows() int {
 		len(s.Collectors) + len(s.Events) + len(s.Containers) +
 		len(s.Filesystems) + len(s.Smart) +
 		len(s.SystemdEvents) + len(s.PackageEvents) +
-		len(s.Addresses) + len(s.Packages) +
+		len(s.Addresses) + len(s.Interfaces) + len(s.Packages) +
 		len(s.SystemdSnapshot.GetUnits())
 	if s.Host != nil {
 		n++
@@ -149,6 +151,7 @@ func (g *Generator) Scrape(ts time.Time, opt Options) *Scrape {
 	}
 	if opt.Inventory {
 		s.Addresses = g.addresses()
+		s.Interfaces = g.interfaces()
 		s.Packages = g.packages(ts)
 	}
 
@@ -353,6 +356,20 @@ func (g *Generator) netstat(h *netrav1.HostSample, ts time.Time, cpu float64) {
 	h.IpReasmFailsPerS = proto.Float64(round2(g.sig.daily("ip.reasmfail", ts, 0.05, 1.4, 1.4)))
 	h.IpFragFailsPerS = proto.Float64(round2(g.sig.daily("ip.fragfail", ts, 0.03, 1.4, 1.4)))
 	h.IpFragCreatesPerS = proto.Float64(round2(g.sig.daily("ip.fragcreate", ts, 1.1, 0.9, 0.7)))
+
+	// The TCP and UDP volume counters, which land in host_proto_samples.
+	//
+	// Orders of magnitude above the error counters beside them on purpose:
+	// that gap IS the reading. A retransmit rate of 3/s is unremarkable
+	// against 9000 segments/s and alarming against 30, and the panels exist
+	// to let a reader see which one they are looking at.
+	h.TcpInSegsPerS = proto.Float64(round2(g.sig.daily("tcp.inseg", ts, 4200, 0.7, 0.3) * busy))
+	h.TcpOutSegsPerS = proto.Float64(round2(g.sig.daily("tcp.outseg", ts, 4800, 0.7, 0.3) * busy))
+	h.TcpEstabResetsPerS = proto.Float64(round2(g.sig.daily("tcp.estabreset", ts, 0.6, 1.1, 0.9) * busy))
+	h.UdpInDatagramsPerS = proto.Float64(round2(g.sig.daily("udp.indgram", ts, 640, 0.8, 0.4) * busy))
+	h.UdpOutDatagramsPerS = proto.Float64(round2(g.sig.daily("udp.outdgram", ts, 610, 0.8, 0.4) * busy))
+	h.Udp6InDatagramsPerS = proto.Float64(round2(g.sig.daily("udp6.indgram", ts, 41, 0.9, 0.5) * busy))
+	h.Udp6OutDatagramsPerS = proto.Float64(round2(g.sig.daily("udp6.outdgram", ts, 38, 0.9, 0.5) * busy))
 
 	// The rest of Ip:, and Icmp:. Volume scales with load; the error
 	// counters stay low and bursty, because a host discarding datagrams
@@ -941,6 +958,74 @@ func (g *Generator) addresses() []*netrav1.HostAddress {
 		})
 	}
 	return out
+}
+
+// interfaces derives the link set from the addresses the profile already
+// declares, rather than adding a second list to every profile that would then
+// have to be kept in step with the first.
+//
+// Attributes are assigned by name because that is what makes the result
+// readable: a simulated fleet where every interface reports "1 Gb/s, full" has
+// nothing in it to look at, and the states worth rendering -- a virtual device
+// with no speed at all, a bridge that is down -- are exactly the ones a
+// uniform generator would never produce.
+func (g *Generator) interfaces() []*netrav1.HostInterface {
+	// Distinct ifaces, in first-seen order, so the list is deterministic
+	// without sorting the addresses themselves.
+	seen := make(map[string]*netrav1.HostInterface)
+	order := make([]string, 0, len(g.p.Addresses))
+	for _, a := range g.p.Addresses {
+		if _, ok := seen[a.Iface]; ok {
+			continue
+		}
+		order = append(order, a.Iface)
+
+		link := &netrav1.HostInterface{
+			Iface:       a.Iface,
+			IfIndex:     proto.Uint32(a.IfIndex),
+			Description: a.Description,
+		}
+		switch {
+		case a.Iface == "lo":
+			// A loopback has no link layer and no speed, and the kernel
+			// reports its operstate as "unknown" rather than "up".
+			link.OperState = "unknown"
+			link.Mtu = proto.Uint32(65536)
+		case strings.HasPrefix(a.Iface, "wg"), strings.HasPrefix(a.Iface, "tun"):
+			link.OperState = "unknown"
+			link.Mtu = proto.Uint32(1420)
+		case strings.HasPrefix(a.Iface, "docker"), strings.HasPrefix(a.Iface, "br"):
+			// A bridge with nothing plugged into it is down, which is both
+			// the common real state and the one worth being able to see.
+			link.OperState = "down"
+			link.Mtu = proto.Uint32(1500)
+			link.Mac = simMAC(a.Iface, 0x02)
+		default:
+			link.OperState = "up"
+			link.SpeedMbps = proto.Uint64(1000)
+			link.Duplex = "full"
+			link.Mtu = proto.Uint32(1500)
+			link.Mac = simMAC(a.Iface, 0x52)
+		}
+		seen[a.Iface] = link
+	}
+
+	out := make([]*netrav1.HostInterface, 0, len(order))
+	for _, name := range order {
+		out = append(out, seen[name])
+	}
+	return out
+}
+
+// simMAC builds a stable, obviously-fake MAC from an interface name, so the
+// same simulated host reports the same address across restarts.
+func simMAC(iface string, oui byte) string {
+	var h uint32 = 2166136261
+	for i := 0; i < len(iface); i++ {
+		h = (h ^ uint32(iface[i])) * 16777619
+	}
+	return fmt.Sprintf("%02x:00:00:%02x:%02x:%02x",
+		oui, byte(h>>16), byte(h>>8), byte(h))
 }
 
 // packages renders the inventory AS OF ts: the profile's static set, with the

@@ -1,8 +1,33 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import type { MetricsResponse } from "../../../lib/api";
-import { Graphs } from "./Graphs";
+import {
+  NetworkGraphs,
+  StorageGraphs,
+  SystemGraphs,
+  type GraphsProps,
+} from "./Graphs";
 import { ABSENT } from "../../../lib/format";
+import { ALL_SPECS, groupedSlugs } from "../chartSpecs";
+
+/**
+ * All three subject tabs at once.
+ *
+ * The Graphs tab is gone -- see GROUP_SLUGS in ../chartSpecs -- but these
+ * tests are about how a PANEL behaves (gaps, ceilings, counters, absent
+ * columns), not about which tab it landed on, and asserting that against
+ * every panel in one render is what they have always done. The split itself
+ * is asserted separately, below.
+ */
+function Graphs(props: GraphsProps) {
+  return (
+    <>
+      <SystemGraphs {...props} />
+      <NetworkGraphs {...props} />
+      <StorageGraphs {...props} />
+    </>
+  );
+}
 
 function response(
   over: Partial<MetricsResponse> & { family: string },
@@ -108,11 +133,46 @@ const fullHost = response({
 });
 
 describe("Graphs", () => {
-  it("groups the small multiples System / Network / Storage", () => {
+  it("groups the small multiples under named headings", () => {
     render(<Graphs host={fullHost} />);
-    for (const group of ["System", "Network", "Storage"]) {
-      expect(screen.getByRole("heading", { name: group })).toBeInTheDocument();
+    for (const group of [
+      "Resources",
+      "Kernel",
+      "Agent",
+      "Traffic",
+      "IP",
+      "TCP",
+      "UDP",
+      "ICMP",
+      "Filesystems",
+      "Disks",
+    ]) {
+      // level 3, because a group heading and a panel title can be the same
+      // word: "Traffic" is both the group and the panel inside it. The
+      // groups are h3 (.grouphead) and the panels h4.
+      expect(
+        screen.getByRole("heading", { name: group, level: 3 }),
+      ).toBeInTheDocument();
     }
+  });
+
+  // The split itself, since the shim above deliberately renders all three at
+  // once. A panel drawn on two subject tabs, or on none, is the failure this
+  // catches -- and "on none" is invisible without it: a spec can be defined,
+  // exported and simply left out of every group.
+  it("draws each panel on exactly one subject tab", () => {
+    const slugs = groupedSlugs();
+    expect(new Set(slugs).size).toBe(slugs.length);
+    expect([...slugs].sort()).toEqual([...ALL_SPECS.map((s) => s.slug)].sort());
+  });
+
+  it("puts the network panels on Network and the disks on Storage", () => {
+    render(<NetworkGraphs host={fullHost} />);
+    expect(
+      screen.getByRole("heading", { name: "TCP statistics" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Kernel" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Disks" })).toBeNull();
   });
 
   // These three used to be hardcoded "not collected" panels: spec §11 listed
@@ -369,7 +429,9 @@ describe("Graphs", () => {
       series: [{ key: {}, points: [[1_754_784_000_000, 3600]] }],
     });
 
-    render(<Graphs host={clamped} />);
+    // ONE subject tab, not the all-tabs shim: the notice is per tab, and
+    // three tabs rendered together correctly say it three times.
+    render(<SystemGraphs host={clamped} />);
 
     expect(screen.getAllByText(/was clamped to/)).toHaveLength(1);
   });

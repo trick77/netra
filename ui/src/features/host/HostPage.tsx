@@ -9,6 +9,7 @@ import {
   getEvents,
   getFilesystems,
   getHost,
+  getInterfaces,
   getMetrics,
   getPackages,
   getUnits,
@@ -17,6 +18,7 @@ import {
   type Event,
   type Filesystem,
   type HostDetail,
+  type Iface,
   type MetricsResponse,
   type Pkg,
   type Unit,
@@ -36,10 +38,11 @@ import {
 import { loadRange } from "../settings/SettingsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
 import { Events } from "./tabs/Events";
-import { Graphs } from "./tabs/Graphs";
+import { NetworkGraphs, StorageGraphs, SystemGraphs } from "./tabs/Graphs";
 import {
   Containers,
-  Filesystems,
+  Interfaces,
+  Mounts,
   Network,
   Packages,
   Units,
@@ -48,23 +51,35 @@ import { Overview } from "./tabs/Overview";
 
 export type HostTab =
   | "overview"
-  | "graphs"
-  | "containers"
-  | "filesystems"
+  | "system"
   | "network"
+  | "storage"
+  | "containers"
   | "packages"
   | "units"
   | "events";
 
 /** The bar is built to take a ninth tab (Alerts, with the Stage 2 engine)
  * without relayout; it wraps at narrow widths rather than scrolling, and
- * there is deliberately no overflow menu -- a hidden tab is an unused tab. */
+ * there is deliberately no overflow menu -- a hidden tab is an unused tab.
+ *
+ * There is no Graphs tab. It named a RENDERING FORMAT rather than a subject,
+ * and the cost was that every subject was split across two tabs: Network held
+ * the address table while every network chart lived in Graphs, and
+ * Filesystems held the mount table while the disk charts lived in Graphs.
+ * Answering "what is this box's network doing" meant visiting both and
+ * knowing which half was where.
+ *
+ * So the charts moved to the tab that owns the subject, Filesystems widened
+ * into Storage (the mounts and the disks are one subject, and keeping them
+ * apart would rebuild the split being removed), and the count is unchanged.
+ * parseRoute still answers the old /graphs and /filesystems URLs. */
 export const HOST_TABS: readonly { id: HostTab; label: string }[] = [
   { id: "overview", label: "Overview" },
-  { id: "graphs", label: "Graphs" },
-  { id: "containers", label: "Containers" },
-  { id: "filesystems", label: "Filesystems" },
+  { id: "system", label: "System" },
   { id: "network", label: "Network" },
+  { id: "storage", label: "Storage" },
+  { id: "containers", label: "Containers" },
   { id: "packages", label: "Packages" },
   { id: "units", label: "Units" },
   { id: "events", label: "Events" },
@@ -87,6 +102,7 @@ export { RANGE_OPTIONS, RANGE_VALUES };
 interface TabData {
   hostMetrics: MetricsResponse | null;
   hostSnmpMetrics: MetricsResponse | null;
+  hostProtoMetrics: MetricsResponse | null;
   filesystemMetrics: MetricsResponse | null;
   agentMetrics: MetricsResponse | null;
   sensorMetrics: MetricsResponse | null;
@@ -98,6 +114,7 @@ interface TabData {
   containers: Container[] | null;
   filesystems: Filesystem[] | null;
   addresses: Address[] | null;
+  interfaces: Iface[] | null;
   packages: Pkg[] | null;
   units: Unit[] | null;
   events: Event[] | null;
@@ -106,6 +123,7 @@ interface TabData {
 const NO_DATA: TabData = {
   hostMetrics: null,
   hostSnmpMetrics: null,
+  hostProtoMetrics: null,
   filesystemMetrics: null,
   agentMetrics: null,
   sensorMetrics: null,
@@ -117,6 +135,7 @@ const NO_DATA: TabData = {
   containers: null,
   filesystems: null,
   addresses: null,
+  interfaces: null,
   packages: null,
   units: null,
   events: null,
@@ -276,40 +295,69 @@ export function HostPage({
             netMetrics,
           };
         }
-        case "graphs": {
-          const [
-            hostMetrics,
-            hostSnmpMetrics,
-            netMetrics,
-            diskIoMetrics,
-            filesystemMetrics,
-            collectorMetrics,
-            coreMetrics,
-            agentMetrics,
-          ] = await Promise.all([
-            metrics("host"),
-            // The IP and ICMP MIBs live in their own family because they live
-            // in their own table -- see 0003_host_snmp_samples.sql. orNull
-            // means a hub too old to answer it blanks those three panels and
-            // nothing else.
-            metrics("host_snmp"),
-            metrics("net"),
-            metrics("disk_io"),
-            metrics("filesystem"),
-            metrics("collector"),
-            metrics("cpu_core"),
-            metrics("agent"),
-          ]);
+        // Each subject tab fetches the families ITS panels draw, rather than
+        // all nine. The Graphs tab fetched everything because it drew
+        // everything; a Storage tab pulling the ICMP MIB would be paying for
+        // a panel it does not have.
+        case "system": {
+          const [hostMetrics, coreMetrics, collectorMetrics, agentMetrics] =
+            await Promise.all([
+              metrics("host"),
+              metrics("cpu_core"),
+              metrics("collector"),
+              metrics("agent"),
+            ]);
           return {
             hostMetrics,
-            hostSnmpMetrics,
-            netMetrics,
-            diskIoMetrics,
-            filesystemMetrics,
-            collectorMetrics,
             coreMetrics,
+            collectorMetrics,
             agentMetrics,
           };
+        }
+        case "network": {
+          const [
+            addresses,
+            interfaces,
+            hostMetrics,
+            hostSnmpMetrics,
+            hostProtoMetrics,
+            netMetrics,
+          ] = await Promise.all([
+            orNull(getAddresses(hostId)),
+            // orNull, like every other family: a hub too old to serve this
+            // route leaves the table empty and the rest of the tab intact.
+            orNull(getInterfaces(hostId)),
+            metrics("host"),
+            // The IP and ICMP MIBs, and the TCP/UDP volume counters, live in
+            // their own families because they live in their own tables -- a
+            // continuous aggregate cannot gain a column. See
+            // 0003_host_proto_samples.sql. The fragmentation panels read
+            // host and host_snmp TOGETHER, which is why both are here.
+            metrics("host_snmp"),
+            metrics("host_proto"),
+            metrics("net"),
+          ]);
+          return {
+            addresses,
+            interfaces,
+            hostMetrics,
+            hostSnmpMetrics,
+            hostProtoMetrics,
+            netMetrics,
+          };
+        }
+        case "storage": {
+          // The inventory row carries a label, a mountpoint and a device id
+          // and nothing else -- size, used and free live in the metrics
+          // family. Fetching both is what makes this tab answer the question
+          // anyone opens it for: how full is that disk.
+          const [filesystems, filesystemMetrics, diskIoMetrics] =
+            await Promise.all([
+              orNull(getFilesystems(hostId)),
+              metrics("filesystem"),
+              metrics("disk_io"),
+            ]);
+          return { filesystems, filesystemMetrics, diskIoMetrics };
         }
         case "containers": {
           // The list and its metrics, so the tab can show what each
@@ -320,19 +368,6 @@ export function HostPage({
           ]);
           return { containers, containerMetrics };
         }
-        case "filesystems": {
-          // The inventory row carries a label, a mountpoint and a device id
-          // and nothing else -- size, used and free live in the metrics
-          // family. Fetching both is what makes this tab answer the question
-          // anyone opens it for: how full is that disk.
-          const [filesystems, filesystemMetrics] = await Promise.all([
-            orNull(getFilesystems(hostId)),
-            metrics("filesystem"),
-          ]);
-          return { filesystems, filesystemMetrics };
-        }
-        case "network":
-          return { addresses: await orNull(getAddresses(hostId)) };
         case "packages":
           return { packages: await orNull(getPackages(hostId)) };
         case "units":
@@ -486,13 +521,9 @@ export function HostPage({
           fetchFamily={fetchFamily}
         />
       )}
-      {tab === "graphs" && (
-        <Graphs
+      {tab === "system" && (
+        <SystemGraphs
           host={data.hostMetrics}
-          hostSnmp={data.hostSnmpMetrics}
-          net={data.netMetrics}
-          diskIo={data.diskIoMetrics}
-          filesystem={data.filesystemMetrics}
           collector={data.collectorMetrics}
           cpuCore={data.coreMetrics}
           agent={data.agentMetrics}
@@ -515,13 +546,39 @@ export function HostPage({
           capabilities={host.capabilities}
         />
       )}
-      {tab === "filesystems" && (
-        <Filesystems
-          rows={data.filesystems ?? []}
-          metrics={data.filesystemMetrics ?? null}
-        />
+      {/* Tables first on both of these, then the charts.
+          What EXISTS, then how it behaves: the table reads instantly at any
+          window height, and it is also the shorter answer -- a reader who
+          came to check an MTU or a mount point is done without scrolling
+          past six charts to reach it. */}
+      {tab === "network" && (
+        <>
+          <Interfaces rows={data.interfaces ?? []} />
+          <Network rows={data.addresses ?? []} />
+          <NetworkGraphs
+            host={data.hostMetrics}
+            hostSnmp={data.hostSnmpMetrics}
+            hostProto={data.hostProtoMetrics}
+            net={data.netMetrics}
+            range={range}
+            fetchFamily={fetchFamily}
+          />
+        </>
       )}
-      {tab === "network" && <Network rows={data.addresses ?? []} />}
+      {tab === "storage" && (
+        <>
+          <Mounts
+            rows={data.filesystems ?? []}
+            metrics={data.filesystemMetrics ?? null}
+          />
+          <StorageGraphs
+            filesystem={data.filesystemMetrics}
+            diskIo={data.diskIoMetrics}
+            range={range}
+            fetchFamily={fetchFamily}
+          />
+        </>
+      )}
       {tab === "packages" && <Packages rows={data.packages ?? []} />}
       {tab === "units" && <Units rows={data.units ?? []} />}
       {tab === "events" && <Events events={data.events} />}

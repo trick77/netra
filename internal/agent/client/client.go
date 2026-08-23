@@ -664,6 +664,7 @@ func appendFamilies(s *buffer.Scrape, res *collector.Result) {
 	s.SystemdEvents = append(s.SystemdEvents, res.SystemdEvents...)
 	s.PackageEvents = append(s.PackageEvents, res.PackageEvents...)
 	s.Addresses = append(s.Addresses, res.Addresses...)
+	s.Interfaces = append(s.Interfaces, res.Interfaces...)
 	s.Packages = append(s.Packages, res.Packages...)
 }
 
@@ -680,8 +681,8 @@ func countRows(s *buffer.Scrape) int {
 		len(s.Cores) + len(s.Disks) + len(s.Sensors) + len(s.Nets) +
 		len(s.Containers) + len(s.Filesystems) + len(s.Smart) +
 		len(s.Events) + len(s.SystemdEvents) +
-		len(s.PackageEvents) + len(s.Addresses) + len(s.Packages) +
-		len(s.Collectors)
+		len(s.PackageEvents) + len(s.Addresses) + len(s.Interfaces) +
+		len(s.Packages) + len(s.Collectors)
 }
 
 // refreshCapabilities re-reads what each collector reports about its own
@@ -798,6 +799,11 @@ func (c *Client) Flush(ctx context.Context) error {
 		// direction for a bound that exists to stay under a size cap.
 		if len(s.Addresses) > 0 {
 			req.Addresses = s.Addresses
+		}
+		// Same replacement semantics: the addresses collector reports both
+		// slices together, so a scrape that carries one carries the other.
+		if len(s.Interfaces) > 0 {
+			req.Interfaces = s.Interfaces
 		}
 		if len(s.Packages) > 0 {
 			req.Packages = s.Packages

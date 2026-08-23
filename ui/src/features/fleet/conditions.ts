@@ -518,9 +518,9 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       since: fullest.since ?? null,
       sinceAtLeast: fullest.sinceAtLeast ?? false,
       evidence: { type: "meter", pct: fullest.pct },
-      // Only the fullest mount is named here; the filesystems tab is where
-      // this host's other mounts are.
-      tab: "filesystems",
+      // Only the fullest mount is named here; the Storage tab is where this
+      // host's other mounts are -- and now its disk charts too.
+      tab: "storage",
     });
   }
 

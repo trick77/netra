@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { isRange, type Range } from "./range";
+import { NETWORK_GROUPS, STORAGE_GROUPS } from "../features/host/chartSpecs";
 import type { HostTab } from "../features/host/HostPage";
 
 /**
@@ -28,14 +29,50 @@ export type Route =
 
 const HOST_TABS = new Set<HostTab>([
   "overview",
-  "graphs",
-  "containers",
-  "filesystems",
+  "system",
   "network",
+  "storage",
+  "containers",
   "packages",
   "units",
   "events",
 ]);
+
+/**
+ * Tabs that used to exist, and where their content went.
+ *
+ * /hosts/3/graphs and /hosts/3/filesystems are links people have sent each
+ * other, and 404 is the wrong answer to a page that still exists under
+ * another name. Graphs was split across three subject tabs, so there is no
+ * single right target -- System is where the CPU and memory panels went,
+ * which is what most Graphs links were about.
+ *
+ * Kept indefinitely rather than for a deprecation window: the map costs two
+ * lines and the alternative is a dead link in someone's runbook.
+ */
+const RENAMED_TABS: Record<string, HostTab> = {
+  graphs: "system",
+  filesystems: "storage",
+};
+
+/**
+ * The subject tab that draws a given panel slug.
+ *
+ * Derived from the groups rather than listed here, so a panel moved between
+ * tabs takes its old /chart/ links with it and nobody has to remember this
+ * file exists. An unknown slug -- a link to a panel that has since been
+ * removed -- lands on System, which is where the old behaviour sent
+ * everything.
+ */
+function hostTabForSlug(slug: string): HostTab {
+  if (NETWORK_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
+    return "network";
+  }
+  if (STORAGE_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
+    return "storage";
+  }
+  return "system";
+}
 
 // decodeURIComponent throws URIError on a malformed escape, and /hosts/50%
 // is a URL a browser will happily send. There is no error boundary in this
@@ -64,16 +101,22 @@ export function parseRoute(pathname: string): Route {
     if (tab === undefined) return { name: "host", hostId, tab: "overview" };
     // /hosts/3/chart/<slug> was a real page once. Every chart opens in a
     // dialog now, so the URL has nowhere of its own to land -- but it is a
-    // link a reader may have sent, and 404 is the wrong answer to it. The
-    // Graphs tab is where that chart is, so that is where it goes.
+    // link a reader may have sent, and 404 is the wrong answer to it. It
+    // goes to whichever subject tab now draws that panel, which is a better
+    // answer than it used to give: it landed on Graphs regardless of which
+    // chart was named, and Graphs is where everything was.
     if (tab === "chart" && parts[3] !== undefined && parts.length === 4) {
-      return { name: "host", hostId, tab: "graphs" };
+      return { name: "host", hostId, tab: hostTabForSlug(parts[3]) };
     }
     // A known tab and NOTHING after it. The length check is the point: this
     // used to accept /hosts/3/graphs/anything and render the graphs tab,
     // quietly swallowing the trailing segment.
     if (HOST_TABS.has(tab as HostTab) && parts.length === 3) {
       return { name: "host", hostId, tab: tab as HostTab };
+    }
+    const renamed = RENAMED_TABS[tab];
+    if (renamed !== undefined && parts.length === 3) {
+      return { name: "host", hostId, tab: renamed };
     }
     return { name: "notFound", path: pathname };
   }

@@ -35,6 +35,7 @@ func (h *readHandler) register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/hosts/{id}/containers", listing(h.svc.Containers))
 	mux.Handle("GET /api/v1/hosts/{id}/filesystems", listing(h.svc.Filesystems))
 	mux.Handle("GET /api/v1/hosts/{id}/addresses", listing(h.svc.Addresses))
+	mux.Handle("GET /api/v1/hosts/{id}/interfaces", listing(h.svc.Interfaces))
 	mux.Handle("GET /api/v1/hosts/{id}/packages", listing(h.svc.Packages))
 	mux.Handle("GET /api/v1/hosts/{id}/units", listing(h.svc.Units))
 	mux.Handle("GET /api/v1/hosts/{id}/metrics", http.HandlerFunc(h.metrics))
@@ -47,7 +48,7 @@ func (h *readHandler) register(mux *http.ServeMux) {
 	mux.Handle("GET /api/v1/events", http.HandlerFunc(h.events))
 }
 
-// listing adapts the five dimension listings, which differ only in their row
+// listing adapts the six dimension listings, which differ only in their row
 // type. A generic wrapper rather than five near-identical handlers, so a fix
 // to the id parsing or the error mapping cannot land on four of them.
 //

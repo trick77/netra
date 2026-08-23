@@ -27,6 +27,7 @@ type Scrape struct {
 	SystemdEvents []*netrav1.SystemdUnitEvent
 	PackageEvents []*netrav1.PackageEvent
 	Addresses     []*netrav1.HostAddress
+	Interfaces    []*netrav1.HostInterface
 	Packages      []*netrav1.HostPackage
 
 	// Collectors is the only family with no counterpart on collector.Result:

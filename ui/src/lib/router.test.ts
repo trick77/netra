@@ -4,10 +4,10 @@ import { parseRoute, rangeFromSearch, routePath, withParam } from "./router";
 describe("parseRoute", () => {
   it("routes the paths the spec names", () => {
     expect(parseRoute("/")).toEqual({ name: "fleet" });
-    expect(parseRoute("/hosts/3/graphs")).toEqual({
+    expect(parseRoute("/hosts/3/system")).toEqual({
       name: "host",
       hostId: "3",
-      tab: "graphs",
+      tab: "system",
     });
     expect(parseRoute("/containers/3/web%2Fapi")).toEqual({
       name: "container",
@@ -78,11 +78,45 @@ describe("the old chart-page route", () => {
   // so the URL has nowhere of its own to land -- and 404 is the wrong answer
   // to a link a reader may already have sent. It lands on the tab holding
   // that chart instead.
-  it("lands on the graphs tab rather than nowhere", () => {
+  // And on the tab that actually draws it, rather than on Graphs regardless
+  // of the slug -- which is what it did while Graphs held every panel.
+  it("lands on the tab holding that chart rather than nowhere", () => {
     expect(parseRoute("/hosts/3/chart/interface-throughput")).toEqual({
       name: "host",
       hostId: "3",
-      tab: "graphs",
+      tab: "network",
+    });
+    expect(parseRoute("/hosts/3/chart/disk-latency")).toEqual({
+      name: "host",
+      hostId: "3",
+      tab: "storage",
+    });
+    expect(parseRoute("/hosts/3/chart/load-averages")).toEqual({
+      name: "host",
+      hostId: "3",
+      tab: "system",
+    });
+    // A slug that names no panel any more still lands somewhere real.
+    expect(parseRoute("/hosts/3/chart/gone-long-ago")).toEqual({
+      name: "host",
+      hostId: "3",
+      tab: "system",
+    });
+  });
+
+  // The Graphs tab is gone and Filesystems is now Storage, but both are URLs
+  // people have sent each other and 404 is the wrong answer to a page that
+  // still exists under another name.
+  it("still answers the renamed tabs", () => {
+    expect(parseRoute("/hosts/3/graphs")).toEqual({
+      name: "host",
+      hostId: "3",
+      tab: "system",
+    });
+    expect(parseRoute("/hosts/3/filesystems")).toEqual({
+      name: "host",
+      hostId: "3",
+      tab: "storage",
     });
   });
 
@@ -98,10 +132,10 @@ describe("the old chart-page route", () => {
   });
 
   it("still parses a bare tab", () => {
-    expect(parseRoute("/hosts/3/graphs")).toEqual({
+    expect(parseRoute("/hosts/3/system")).toEqual({
       name: "host",
       hostId: "3",
-      tab: "graphs",
+      tab: "system",
     });
   });
 

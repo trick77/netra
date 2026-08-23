@@ -28,6 +28,7 @@ type aggregate struct {
 var aggregatePairs = [][2]aggregate{
 	{{"host_samples_5m", tier5m}, {"host_samples_1h", tier1h}},
 	{{"host_snmp_samples_5m", tier5m}, {"host_snmp_samples_1h", tier1h}},
+	{{"host_proto_samples_5m", tier5m}, {"host_proto_samples_1h", tier1h}},
 	{{"agent_samples_5m", tier5m}, {"agent_samples_1h", tier1h}},
 	{{"cpu_core_samples_5m", tier5m}, {"cpu_core_samples_1h", tier1h}},
 	{{"disk_io_samples_5m", tier5m}, {"disk_io_samples_1h", tier1h}},

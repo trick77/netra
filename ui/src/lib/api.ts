@@ -150,6 +150,28 @@ export type Address = {
   last_seen: string;
 };
 
+// internal/hub/read/inventory.go: Interface
+//
+// Named Iface rather than Interface: `interface` is a TypeScript keyword and
+// a type called Interface reads as one in every import that mentions it.
+export type Iface = {
+  iface: string;
+  if_index: number | null;
+  /** The kernel's operstate verbatim -- up, down, unknown, lowerlayerdown --
+   * not a bool. See HostInterface in the proto for why the agent does not
+   * classify it. */
+  oper_state: string | null;
+  /** null, not 0, wherever the kernel has no answer: a virtual device has no
+   * link speed and a down one refuses to report its. */
+  speed_mbps: number | null;
+  duplex: string | null;
+  mtu: number | null;
+  mac: string | null;
+  description: string | null;
+  first_seen: string;
+  last_seen: string;
+};
+
 // internal/hub/read/inventory.go: Package
 export type Pkg = {
   name: string;
@@ -302,6 +324,10 @@ export function getFilesystems(id: number | string): Promise<Filesystem[]> {
 
 export function getAddresses(id: number | string): Promise<Address[]> {
   return request<Address[]>(`/api/v1/hosts/${id}/addresses`);
+}
+
+export function getInterfaces(id: number | string): Promise<Iface[]> {
+  return request<Iface[]>(`/api/v1/hosts/${id}/interfaces`);
 }
 
 export function getPackages(id: number | string): Promise<Pkg[]> {

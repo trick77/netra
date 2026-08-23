@@ -3,6 +3,7 @@ import {
   carriesColumn,
   counterDeltas,
   griddedValues,
+  optionalValues,
   peakBase,
   seriesCells,
   seriesOnGrid,
@@ -79,6 +80,7 @@ const SERIES_VARS = [
 type Source =
   | "host"
   | "hostSnmp"
+  | "hostProto"
   | "net"
   | "diskIo"
   | "filesystem"
@@ -105,6 +107,7 @@ type Source =
 export const FAMILIES = [
   "host",
   "host_snmp",
+  "host_proto",
   "net",
   "disk_io",
   "filesystem",
@@ -129,6 +132,7 @@ export type Family = (typeof FAMILIES)[number];
 const FAMILY: Record<Source, Family> = {
   host: "host",
   hostSnmp: "host_snmp",
+  hostProto: "host_proto",
   net: "net",
   diskIo: "disk_io",
   filesystem: "filesystem",
@@ -153,8 +157,21 @@ interface PanelSpec {
   source: Source;
   /** One band per base for a single-series family; one band per base PER
    * SERIES for a keyed one (disk_io, net, filesystem), named by the key so
-   * "sda read" and "sdb read" stay distinguishable inside one panel. */
-  bases: { base: string; label: string }[];
+   * "sda read" and "sdb read" stay distinguishable inside one panel.
+   *
+   * `source` overrides the SPEC's source for that one band, so a panel can
+   * draw columns that live in two tables. The fragmentation panels are why:
+   * four of their six counters are on host_samples and reasm_oks/frag_oks are
+   * on host_snmp_samples, because a continuous aggregate cannot gain a column
+   * and the split is where the schema had to put them. The reader is owed one
+   * panel regardless of which table a counter landed in.
+   *
+   * Honoured for UNKEYED families only (host, hostSnmp, hostProto, agent). A
+   * keyed family draws one pass per entry in res.series, and two families'
+   * series do not correspond -- disk sda in one response is not disk sda in
+   * another's ordering. bandsFor asserts this rather than drawing something
+   * plausible and wrong. */
+  bases: { base: string; label: string; source?: Source }[];
   max?: number;
   /**
    * A fixed floor, for a non-stacked panel whose scale is the reading.
@@ -619,16 +636,52 @@ export const NETWORK: PanelSpec[] = [
     ],
     fmt: count,
   },
+  // Two panels of six, where there was one panel of four.
+  //
+  // The four were the FAILS, v4 and v6 mixed, and both halves of that were
+  // wrong. Fragmentation failures are zero on a healthy host, so the panel
+  // drew a flat line at zero and told a reader nothing -- while frag creates
+  // runs in the tens per second on the same host and is the shape that says
+  // what the stack is actually doing. And mixing the families put two
+  // unrelated readings on one axis: a host can fragment heavily on v4 and not
+  // at all on v6, and one panel cannot say so.
+  //
+  // This is the deliberate exception to the "four bands, resist completing
+  // these" rule below, and it is an exception because a reader asked for it
+  // with a working example in hand. It is not licence to widen the others.
+  //
+  // reasm ok and frag ok come from hostSnmp: the schema put the success
+  // counters in host_snmp_samples and the rest in host_samples, because a
+  // continuous aggregate cannot gain a column and that is where each landed
+  // when it was added. Which table a counter is in is not a fact about
+  // fragmentation, so the panel spans both -- see PanelSpec.bases.
   {
     title: "IP fragmentation",
     slug: "ip-fragmentation",
     unit: "/s",
     source: "host",
     bases: [
-      { base: "ip_frag_fails_per_s", label: "frag fails" },
-      { base: "ip_reasm_fails_per_s", label: "reasm fails" },
-      { base: "ip6_frag_fails_per_s", label: "frag fails (v6)" },
-      { base: "ip6_reasm_fails_per_s", label: "reasm fails (v6)" },
+      { base: "ip_reasm_reqds_per_s", label: "reasm reqd" },
+      { base: "ip_reasm_oks_per_s", label: "reasm ok", source: "hostSnmp" },
+      { base: "ip_reasm_fails_per_s", label: "reasm fail" },
+      { base: "ip_frag_oks_per_s", label: "frag ok", source: "hostSnmp" },
+      { base: "ip_frag_fails_per_s", label: "frag fail" },
+      { base: "ip_frag_creates_per_s", label: "frag create" },
+    ],
+    fmt: count,
+  },
+  {
+    title: "IPv6 fragmentation",
+    slug: "ip6-fragmentation",
+    unit: "/s",
+    source: "host",
+    bases: [
+      { base: "ip6_reasm_reqds_per_s", label: "reasm reqd" },
+      { base: "ip6_reasm_oks_per_s", label: "reasm ok", source: "hostSnmp" },
+      { base: "ip6_reasm_fails_per_s", label: "reasm fail" },
+      { base: "ip6_frag_oks_per_s", label: "frag ok", source: "hostSnmp" },
+      { base: "ip6_frag_fails_per_s", label: "frag fail" },
+      { base: "ip6_frag_creates_per_s", label: "frag create" },
     ],
     fmt: count,
   },
@@ -693,6 +746,59 @@ export const NETWORK: PanelSpec[] = [
       { base: "udp_no_ports_per_s", label: "no ports" },
       { base: "udp6_in_errors_per_s", label: "in errors (v6)" },
     ],
+    fmt: count,
+  },
+  // The denominator the panel above never had. UDP was error-only: four
+  // counters of things going wrong and no measure of how much was going
+  // right, so 0.5 rcvbuf errors a second read the same on a host doing
+  // nothing and one doing 600 datagrams a second.
+  {
+    title: "UDP datagrams",
+    slug: "udp-datagrams",
+    unit: "/s",
+    source: "hostProto",
+    bases: [
+      { base: "udp_in_datagrams_per_s", label: "in" },
+      { base: "udp_out_datagrams_per_s", label: "out" },
+      { base: "udp6_in_datagrams_per_s", label: "in (v6)" },
+      { base: "udp6_out_datagrams_per_s", label: "out (v6)" },
+    ],
+    fmt: count,
+  },
+  // And the same argument for TCP: "TCP statistics" draws retransmits against
+  // nothing, and a retransmit rate is only readable as a fraction of the
+  // segments carrying it.
+  //
+  // estab resets rides here rather than with the error panel because it is
+  // the same MIB block and the same table -- and because a reset is a
+  // connection ending, which is a fact about volume as much as about failure.
+  //
+  // No v6 peers: Linux's Tcp: block counts both families together, and
+  // /proc/net/snmp6 has no Tcp6 block at all.
+  {
+    title: "TCP segments",
+    slug: "tcp-segments",
+    unit: "/s",
+    source: "hostProto",
+    bases: [
+      { base: "tcp_in_segs_per_s", label: "in" },
+      { base: "tcp_out_segs_per_s", label: "out" },
+      { base: "tcp_estab_resets_per_s", label: "estab resets" },
+    ],
+    fmt: count,
+  },
+  // Time spent reading /proc, beside the two panels measuring time spent
+  // reaching the hub. Together they answer "the agent is slow -- is that this
+  // box or the network", which neither answers alone.
+  //
+  // The column has been written and rolled up since the schema was first
+  // laid down; nothing had ever read it back.
+  {
+    title: "Scrape duration",
+    slug: "scrape-duration",
+    unit: "ms",
+    source: "agent",
+    bases: [{ base: "scrape_duration_ms", label: "scrape" }],
     fmt: count,
   },
 ];
@@ -800,6 +906,17 @@ export interface BandOptions {
    * rather than a duplicate of the line.
    */
   withPeakBand?: boolean;
+
+  /**
+   * The responses for the OTHER families this spec's bases name, keyed by
+   * source. `res` still carries the spec's own.
+   *
+   * Only the sources a base actually overrides need an entry; anything else
+   * here is ignored. A base whose response is missing or null is dropped
+   * rather than drawn empty, which is the same treatment a base whose column
+   * this tier does not carry already gets.
+   */
+  extra?: Partial<Record<Source, MetricsResponse | null>>;
 }
 
 function bandsFor(
@@ -854,8 +971,58 @@ function bandsFor(
             : griddedValues(res, index, column),
       }));
 
+  /**
+   * The response a base reads from, and how to read it.
+   *
+   * Returns null for a base whose family was not handed over, which drops the
+   * band rather than drawing it empty.
+   *
+   * The other family's values are gridded onto the PRIMARY response's window
+   * and step, not their own. Both families answer the same requested range so
+   * they normally agree -- but "normally" is not "always": a family whose
+   * oldest sample is younger can be served a different tier, and two bands of
+   * different lengths in one chart are spread across their own lengths and so
+   * misaligned in time against each other. Gridding both against one window
+   * makes that impossible rather than unlikely.
+   */
+  const foreign = (
+    source: Source,
+  ): {
+    res: MetricsResponse;
+    read: (column: string) => (number | null)[];
+  } | null => {
+    const other = opts.extra?.[source] ?? null;
+    if (other === null) return null;
+    if (other.key_columns.length > 0) {
+      // A keyed family has one pass per series and no way to say which of
+      // this response's series corresponds to which of the primary's. Refusing
+      // is the point: the alternative is a plausible-looking chart pairing
+      // sda's reads with sdb's writes.
+      return null;
+    }
+    return {
+      res: other,
+      read: (column) =>
+        seriesOnGrid(
+          res,
+          optionalValues(other, 0, column),
+          seriesTimestamps(other, 0),
+        ),
+    };
+  };
+
   passes.forEach(({ prefix, read }) => {
-    for (const [baseIndex, { base, label }] of spec.bases.entries()) {
+    for (const [baseIndex, { base, label, source }] of spec.bases.entries()) {
+      // A base naming its own source reads from that family's response; every
+      // other base is unaffected and reads exactly as it did before.
+      let bandRes = res;
+      let bandRead = read;
+      if (source !== undefined && source !== spec.source) {
+        const other = foreign(source);
+        if (other === null) continue;
+        bandRes = other.res;
+        bandRead = other.read;
+      }
       // griddedValues, not optionalValues: the response carries only the
       // buckets that exist, so an outage arrives as a SHORTER series rather
       // than as nulls, and the geometry breaks a line only on a null. Drawn
@@ -863,7 +1030,7 @@ function bandsFor(
       // one unbroken line across the hole.
       // Resolved per response, not per tier constant: the raw table has no
       // _max peer, and there peakBase() falls back to the base name.
-      const peakColumn = spec.peak ? peakBase(res, base) : base;
+      const peakColumn = spec.peak ? peakBase(bandRes, base) : base;
       // With the envelope, the LINE is the mean and the band is the peak.
       // peakBase falls back to the bare name at the raw tier, and there the
       // two resolve to the same column -- which is the signal that this tier
@@ -879,8 +1046,8 @@ function bandsFor(
         spec.mirrored === true &&
         peakColumn !== base;
       const column = wantsBand ? base : peakColumn;
-      const gridded = read(column);
-      const band = wantsBand ? read(peakColumn) : undefined;
+      const gridded = bandRead(column);
+      const band = wantsBand ? bandRead(peakColumn) : undefined;
       // After the grid, never before: counterDeltas subtracts NEIGHBOURING
       // buckets, so it has to run on the window's own even spacing. Applied
       // to the raw response -- which omits the buckets a host did not
@@ -918,10 +1085,24 @@ function bandsFor(
 // reason is indistinguishable from a bug -- and the usual reason here is
 // recoverable by the reader: most per-state columns exist only at full
 // resolution, so a shorter range brings them back.
-export function missingReason(spec: PanelSpec, res: MetricsResponse): string {
+export function missingReason(
+  spec: PanelSpec,
+  res: MetricsResponse,
+  extra: Partial<Record<Source, MetricsResponse | null>> = {},
+): string {
+  // Each base against ITS OWN response, not all of them against the spec's:
+  // a cross-source panel whose foreign family answered a rolled-up tier would
+  // otherwise name a column as missing from a table that never held it, and
+  // send the reader to shorten a range that was never the problem.
   const missing = spec.bases
-    .map((b) => b.base)
-    .filter((base) => !carriesColumn(res, base));
+    .filter(({ base, source }) => {
+      const from =
+        source === undefined || source === spec.source
+          ? res
+          : (extra[source] ?? null);
+      return from === null || !carriesColumn(from, base);
+    })
+    .map((b) => b.base);
   if (missing.length === 0) {
     return `The host reported no ${spec.title.toLowerCase()} samples in this window.`;
   }
@@ -929,7 +1110,7 @@ export function missingReason(spec: PanelSpec, res: MetricsResponse): string {
 }
 
 /**
- * Every panel the Graphs tab draws, in one list.
+ * Every panel, in one list.
  *
  * The chart page resolves a URL slug against this, so the page and the tab
  * cannot disagree about what a chart IS -- same spec, same bases, same
@@ -940,6 +1121,127 @@ export const ALL_SPECS: readonly PanelSpec[] = [
   ...NETWORK,
   ...STORAGE,
 ];
+
+/** A named run of panels under one .grouphead. */
+export interface PanelGroup {
+  title: string;
+  specs: PanelSpec[];
+}
+
+/**
+ * The groups, by slug.
+ *
+ * There is no "Graphs" tab any more, and that is the point of this block.
+ * "Graphs" named a RENDERING FORMAT rather than a subject, and it split every
+ * subject in two: the Network tab held the address table while every network
+ * chart sat in Graphs, and Filesystems held the mount table while the disk
+ * charts sat in Graphs. A reader asking "what is this box's network doing"
+ * had to visit two tabs and know which half was where. Each subject tab now
+ * carries its own charts.
+ *
+ * Written as slugs rather than by moving the spec objects into groups: the
+ * specs above are long and heavily commented, and a reshuffle that moved them
+ * bodily would bury the actual change. resolveGroups throws on a slug that
+ * names no spec, and specsAreFullyGrouped() below is the other half -- a spec
+ * defined and then left out of every group renders nowhere at all, which is
+ * invisible without a check.
+ *
+ * The network groups run bottom-up the stack -- interface, IP, then the
+ * transports above it, then ICMP beside them. UDP and IP were briefly one
+ * group on the grounds that it balanced the panel counts, which is not an
+ * argument: fragmentation and reassembly happen at IP and UDP sits on top.
+ */
+const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
+  system: [
+    {
+      title: "Resources",
+      slugs: [
+        "host-cpu",
+        "host-memory",
+        "cpu-cores",
+        "cpu-time-breakdown",
+        "memory-pressure",
+        "uptime",
+      ],
+    },
+    {
+      title: "Kernel",
+      slugs: [
+        "load-averages",
+        "context-switches",
+        "interrupts",
+        "running-processes",
+        "total-processes",
+        "users-logged-in",
+      ],
+    },
+    // The agent's own health sits under System because it is a fact about
+    // this box, not about netra's networking -- and because three panels do
+    // not earn a tab.
+    {
+      title: "Agent",
+      slugs: [
+        "hub-latency",
+        "hub-connect-failures",
+        "scrape-duration",
+        "device-availability",
+      ],
+    },
+  ],
+  network: [
+    { title: "Traffic", slugs: ["host-traffic", "interface-throughput"] },
+    {
+      title: "IP",
+      slugs: ["ip-statistics", "ip-fragmentation", "ip6-fragmentation"],
+    },
+    {
+      title: "TCP",
+      slugs: ["tcp-statistics", "tcp-connections", "tcp-segments"],
+    },
+    { title: "UDP", slugs: ["udp-statistics", "udp-datagrams"] },
+    { title: "ICMP", slugs: ["icmp-statistics", "icmp-informational"] },
+  ],
+  storage: [
+    {
+      title: "Filesystems",
+      slugs: ["host-filesystem", "filesystem-space", "filesystem-inodes"],
+    },
+    {
+      title: "Disks",
+      slugs: ["disk-throughput", "disk-latency", "disk-utilisation"],
+    },
+  ],
+};
+
+function resolveGroups(key: string): PanelGroup[] {
+  return GROUP_SLUGS[key].map(({ title, slugs }) => ({
+    title,
+    specs: slugs.map((slug) => {
+      const spec = specForSlug(slug);
+      if (spec === undefined) {
+        // At module load, not at render: a mistyped slug that only failed on
+        // the tab it belongs to would ship.
+        throw new Error(`chartSpecs: no panel with slug "${slug}"`);
+      }
+      return spec;
+    }),
+  }));
+}
+
+export const SYSTEM_GROUPS: PanelGroup[] = resolveGroups("system");
+export const NETWORK_GROUPS: PanelGroup[] = resolveGroups("network");
+export const STORAGE_GROUPS: PanelGroup[] = resolveGroups("storage");
+
+/**
+ * Every slug that appears in some group, for the test that pairs with
+ * resolveGroups: that one catches a group naming a spec that does not exist,
+ * this one catches a spec that exists and is in no group.
+ */
+export function groupedSlugs(): string[] {
+  return [...SYSTEM_GROUPS, ...NETWORK_GROUPS, ...STORAGE_GROUPS].flatMap((g) =>
+    g.specs.map((s) => s.slug),
+  );
+}
 
 export function specForSlug(slug: string): PanelSpec | undefined {
   return ALL_SPECS.find((spec) => spec.slug === slug);
@@ -952,6 +1254,30 @@ export function specForSlug(slug: string): PanelSpec | undefined {
  */
 export function familyFor(spec: PanelSpec): Family {
   return FAMILY[spec.source];
+}
+
+/**
+ * Every source a spec reads from: its own, plus whatever its bases override.
+ *
+ * The list the enlarged view fetches. familyFor() alone is the spec's own
+ * family, and a dialog that fetched only that would widen a cross-source
+ * panel by dropping its foreign bands -- strictly less than the 260px panel
+ * it was opened from.
+ *
+ * Deduplicated and primary-first, so a caller can rely on [0] being the
+ * spec's own.
+ */
+export function sourcesFor(spec: PanelSpec): Source[] {
+  const out: Source[] = [spec.source];
+  for (const { source } of spec.bases) {
+    if (source !== undefined && !out.includes(source)) out.push(source);
+  }
+  return out;
+}
+
+/** The same list as wire family names. */
+export function familiesFor(spec: PanelSpec): Family[] {
+  return sourcesFor(spec).map((s) => FAMILY[s]);
 }
 
 export { bandsFor };

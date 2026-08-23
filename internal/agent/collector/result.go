@@ -50,4 +50,9 @@ type Result struct {
 	// change rather than every scrape.
 	Addresses []*netrav1.HostAddress
 	Packages  []*netrav1.HostPackage
+
+	// The links the addresses sit on. Reported by the same collector and in
+	// the same breath, because an interface with NO address still belongs in
+	// the answer and an address-keyed slice cannot hold it.
+	Interfaces []*netrav1.HostInterface
 }
