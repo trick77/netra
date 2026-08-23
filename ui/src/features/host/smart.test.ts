@@ -103,6 +103,23 @@ describe("driveFindings", () => {
     );
   });
 
+  // Sectors that failed even offline verification: unreadable and not
+  // recoverable by rewriting, so they rank with pending rather than with
+  // reallocated.
+  it("reports offline uncorrectable sectors as critical", () => {
+    const found = driveFindings(drive({ [ATA.offlineUncorrectable]: 2 }));
+    expect(found).toHaveLength(1);
+    expect(found[0]!.severity).toBe("critical");
+    expect(found[0]!.text).toBe("2 uncorrectable sectors");
+  });
+
+  it("reports uncorrectable errors as serious", () => {
+    const found = driveFindings(drive({ [ATA.reportedUncorrect]: 7 }));
+    expect(found).toHaveLength(1);
+    expect(found[0]!.severity).toBe("serious");
+    expect(found[0]!.text).toBe("7 uncorrectable errors");
+  });
+
   // CRC errors are corruption on the wire, not on the platter. Saying so is
   // the difference between changing a cable and replacing a healthy disk.
   it("points CRC errors at the cable", () => {

@@ -12,7 +12,7 @@
 // fixed struct of named fields -- so the collector maps those fields onto
 // SYNTHETIC ids from 1000 up (nvmeAttrs in internal/agent/collector/smart.go).
 // The two cannot collide, which is why the range starts where it does.
-import type { Drive, DriveAttribute } from "../../lib/api";
+import type { Drive } from "../../lib/api";
 import type { Severity } from "../../ui/Badge";
 
 /** ATA attribute ids this file knows how to read. */
@@ -60,10 +60,6 @@ export function driveKind(drive: Drive): DriveKind {
 export function attr(drive: Drive, id: number): number | null {
   const found = drive.attributes.find((a) => a.id === id);
   return found?.raw ?? null;
-}
-
-function attribute(drive: Drive, id: number): DriveAttribute | undefined {
-  return drive.attributes.find((a) => a.id === id);
 }
 
 /**
@@ -245,13 +241,4 @@ export function drivePowerOnHours(drive: Drive): number | null {
 export function driveWearPct(drive: Drive): number | null {
   if (driveKind(drive) !== "nvme") return null;
   return attr(drive, NVME.percentageUsed);
-}
-
-/**
- * The ATA normalized value for an attribute, when it is the reading worth
- * showing. Exported for the drive detail a later view may want; the table
- * shows raw counts, which is what an operator reasons about.
- */
-export function normalizedOf(drive: Drive, id: number): number | null {
-  return attribute(drive, id)?.normalized ?? null;
 }
