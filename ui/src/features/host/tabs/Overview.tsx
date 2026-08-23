@@ -563,15 +563,17 @@ function Panel({
   label,
   title,
   action,
+  className,
   children,
 }: {
   label: string;
   title: string;
   action?: ReactNode;
+  className?: string;
   children: ReactNode;
 }) {
   return (
-    <section aria-label={label}>
+    <section aria-label={label} className={className}>
       <Card title={title} action={action}>
         {children}
       </Card>
@@ -1313,6 +1315,48 @@ export function Overview({
           }
         />
 
+        <Panel label="Memory" title="Memory">
+          <Meter
+            label="used"
+            value={memUsed}
+            max={memTotal}
+            formatValue={(value, max) => binaryBytesPair(value, max)}
+          />
+          {/* Three states, not two. swap_total lives only in the raw table
+            (0001_init.sql) -- the 5m and 1h rollups do not carry it -- so at
+            any range above an hour the value is missing because the TIER
+            has no such column, not because the host has no swap. Collapsing
+            those told a host with 8 GB of swap in use that it had none: an
+            absent column rendered as a positive fact about the machine. */}
+          {!carriesColumn(hostMetrics, "swap_total") ? (
+            <div className="mrow">
+              <div>
+                <div className="lab">swap</div>
+              </div>
+              <div className="val">not at this resolution</div>
+            </div>
+          ) : swapTotal === null ? (
+            // Meter's absent state renders the em-dash marker and its
+            // noLimit state says "no limit" -- the container-limit wording.
+            // Neither is the fact here, which is that this host has no swap
+            // configured at all, so the row is written out in Meter's own
+            // markup with the one word that is true.
+            <div className="mrow">
+              <div>
+                <div className="lab">swap</div>
+              </div>
+              <div className="val">none</div>
+            </div>
+          ) : (
+            <Meter
+              label="swap"
+              value={swapUsed}
+              max={swapTotal}
+              formatValue={(value, max) => binaryBytesPair(value, max)}
+            />
+          )}
+        </Panel>
+
         {/* The stack and the meter answer different questions and both stay:
           the meter says how full the host is right now, the chart says how it
           got there. The ceiling is mem_total rather than the stack's own
@@ -1363,49 +1407,38 @@ export function Overview({
           }
         />
 
-        <Panel label="Memory" title="Memory">
-          <Meter
-            label="used"
-            value={memUsed}
-            max={memTotal}
-            formatValue={(value, max) => binaryBytesPair(value, max)}
+        <Panel label="Inventory" title="Inventory">
+          <Facts
+            rows={[
+              [
+                "Containers",
+                containers === null
+                  ? ABSENT
+                  : `${containers.length} containers`,
+              ],
+              [
+                "Units",
+                servicesTotal === null
+                  ? ABSENT
+                  : `${servicesTotal} units · ${failedUnits ?? 0} failed`,
+              ],
+              [
+                "Filesystems",
+                filesystems.length === 0
+                  ? ABSENT
+                  : `${filesystems.length} mounted`,
+              ],
+            ]}
           />
-          {/* Three states, not two. swap_total lives only in the raw table
-            (0001_init.sql) -- the 5m and 1h rollups do not carry it -- so at
-            any range above an hour the value is missing because the TIER
-            has no such column, not because the host has no swap. Collapsing
-            those told a host with 8 GB of swap in use that it had none: an
-            absent column rendered as a positive fact about the machine. */}
-          {!carriesColumn(hostMetrics, "swap_total") ? (
-            <div className="mrow">
-              <div>
-                <div className="lab">swap</div>
-              </div>
-              <div className="val">not at this resolution</div>
-            </div>
-          ) : swapTotal === null ? (
-            // Meter's absent state renders the em-dash marker and its
-            // noLimit state says "no limit" -- the container-limit wording.
-            // Neither is the fact here, which is that this host has no swap
-            // configured at all, so the row is written out in Meter's own
-            // markup with the one word that is true.
-            <div className="mrow">
-              <div>
-                <div className="lab">swap</div>
-              </div>
-              <div className="val">none</div>
-            </div>
-          ) : (
-            <Meter
-              label="swap"
-              value={swapUsed}
-              max={swapTotal}
-              formatValue={(value, max) => binaryBytesPair(value, max)}
-            />
-          )}
         </Panel>
 
-        <Panel label="Disk" title="Disk">
+        {/* The one card in the flow that is placed rather than poured: `colbreak`
+          starts the next column here, so Disk heads the right-hand column with
+          Temperature under it. Left to the balancer the break landed between
+          those two anyway -- Disk at the foot of one column, Temperature at the
+          head of the next -- which read as Temperature being the first thing on
+          the right. */}
+        <Panel label="Disk" title="Disk" className="colbreak">
           {filesystems.length === 0 ? (
             <p className="note">No filesystem samples in this window.</p>
           ) : (
@@ -1438,31 +1471,6 @@ export function Overview({
               </p>
             </div>
           )}
-        </Panel>
-
-        <Panel label="Inventory" title="Inventory">
-          <Facts
-            rows={[
-              [
-                "Containers",
-                containers === null
-                  ? ABSENT
-                  : `${containers.length} containers`,
-              ],
-              [
-                "Units",
-                servicesTotal === null
-                  ? ABSENT
-                  : `${servicesTotal} units · ${failedUnits ?? 0} failed`,
-              ],
-              [
-                "Filesystems",
-                filesystems.length === 0
-                  ? ABSENT
-                  : `${filesystems.length} mounted`,
-              ],
-            ]}
-          />
         </Panel>
 
         {/* All three sensor cards are rendered only when the host actually
