@@ -56,13 +56,13 @@ const internalErrorSQLState = "XX000"
 //
 // A database per test also means tests stop sharing one, which was its own
 // running cost: a red run in this package usually meant another checkout was
-// pointed at the same NETRA_TEST_DSN, not a fault in the branch under test.
+// pointed at the same BACKEND_TEST_DSN, not a fault in the branch under test.
 func OpenTest(t *testing.T) *Store {
 	t.Helper()
 
-	dsn := os.Getenv("NETRA_TEST_DSN")
+	dsn := os.Getenv("BACKEND_TEST_DSN")
 	if dsn == "" {
-		t.Skip("NETRA_TEST_DSN not set; skipping integration test")
+		t.Skip("BACKEND_TEST_DSN not set; skipping integration test")
 	}
 
 	s, err := openTestClone(t, dsn)
@@ -75,7 +75,7 @@ func OpenTest(t *testing.T) *Store {
 		// role that cannot CREATE DATABASE cannot run these tests either way
 		// -- a fallback here would only turn one clear error into a second,
 		// more confusing one further down. Say what is actually required.
-		t.Fatalf("the NETRA_TEST_DSN role cannot create databases, which these "+
+		t.Fatalf("the BACKEND_TEST_DSN role cannot create databases, which these "+
 			"tests need in order to clone a migrated template per test. It also "+
 			"needs to install the timescaledb extension, so in practice it has "+
 			"to be a superuser -- the role compose.yaml and CI both use: %v", err)
@@ -154,7 +154,7 @@ func isInsufficientPrivilege(err error) bool {
 //
 // Tests that need one are testing what happens when the store's own pool is
 // gone -- ingest failing while the request still authenticates -- so they
-// cannot share s.pool. Re-reading NETRA_TEST_DSN used to do the job, back
+// cannot share s.pool. Re-reading BACKEND_TEST_DSN used to do the job, back
 // when every test shared that one database. It silently stopped being the
 // same database when OpenTest began handing out clones: the second pool
 // connected to an unmigrated database, authentication failed on a missing
@@ -387,16 +387,16 @@ func adminExec(ctx context.Context, dsn, sql string) error {
 
 // dsnForDatabase rewrites the database name in a URL-style DSN.
 //
-// NETRA_TEST_DSN is a URL everywhere it is set (compose, CI, the README), and
+// BACKEND_TEST_DSN is a URL everywhere it is set (compose, CI, the README), and
 // a keyword/value DSN would fail here rather than silently connect to the
 // wrong database.
 func dsnForDatabase(dsn, database string) (string, error) {
 	u, err := url.Parse(dsn)
 	if err != nil {
-		return "", fmt.Errorf("parse NETRA_TEST_DSN: %w", err)
+		return "", fmt.Errorf("parse BACKEND_TEST_DSN: %w", err)
 	}
 	if u.Scheme != "postgres" && u.Scheme != "postgresql" {
-		return "", fmt.Errorf("NETRA_TEST_DSN is not a postgres:// URL: %q", u.Scheme)
+		return "", fmt.Errorf("BACKEND_TEST_DSN is not a postgres:// URL: %q", u.Scheme)
 	}
 	u.Path = "/" + database
 	return u.String(), nil

@@ -56,7 +56,7 @@ func (c *Client) CheckHub(ctx context.Context) {
 		// Error, not Warn: unlike an unreachable hub, this does not fix itself.
 		// The agent keeps running and keeps buffering, but every sample it
 		// takes meanwhile is destined for a hub that will refuse it.
-		slog.Error("hub rejected the agent token; check NETRA_TOKEN and that this host still exists",
+		slog.Error("hub rejected the agent token; check AGENT_TOKEN and that this host still exists",
 			"hub", c.cfg.HubURL, "err", err)
 
 	default:

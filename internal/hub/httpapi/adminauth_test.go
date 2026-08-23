@@ -29,7 +29,7 @@ func TestRequireAdminRejectsAMissingCredential(t *testing.T) {
 // The fail-open case. ConstantTimeCompare reports equal for two empty
 // strings, so an empty configured token would match the empty bearer of a
 // request that sent no header at all -- authorizing everyone. config.Load
-// rejects an empty NETRA_ADMIN_TOKEN, but NewRouter takes a Config by value
+// rejects an empty BACKEND_ADMIN_TOKEN, but NewRouter takes a Config by value
 // and test code builds literals directly, so that guard is one struct literal
 // away from being bypassed.
 func TestRequireAdminWithNoConfiguredTokenDeniesEverything(t *testing.T) {
@@ -57,7 +57,7 @@ func TestRequireAdminWithNoConfiguredTokenDeniesEverything(t *testing.T) {
 // strings.TrimPrefix, which returns a header lacking the prefix unchanged.
 // The agent path has always required the prefix, so the hub had two
 // definitions of a valid header and the admin one was the looser. The spec
-// specifies Authorization: Bearer $NETRA_ADMIN_TOKEN; this pins that the
+// specifies Authorization: Bearer $BACKEND_ADMIN_TOKEN; this pins that the
 // shared parser is not "simplified" back to a TrimPrefix.
 func TestRequireAdminRejectsATokenWithNoBearerPrefix(t *testing.T) {
 	h := httpapi.RequireAdmin("s3cret", false, okHandler())

@@ -14,7 +14,7 @@ import (
 )
 
 // procFixture writes the three files BuildMetadata reads its hardware facts
-// from, and returns the root to point NETRA_PROC_ROOT at.
+// from, and returns the root to point AGENT_PROC_ROOT at.
 func procFixture(t *testing.T, cpuinfo, meminfo, osrelease string) string {
 	t.Helper()
 

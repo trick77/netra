@@ -4,7 +4,7 @@
 // has no place on a production hub: it registers hosts, mints tokens for
 // them and writes three months of invented history.
 //
-//	netra-sim --admin-token "$NETRA_ADMIN_TOKEN" \
+//	netra-sim --admin-token "$BACKEND_ADMIN_TOKEN" \
 //	          --dsn "postgres://netra:...@127.0.0.1:5432/netra" \
 //	          --backfill 2160h --live
 package main
@@ -31,9 +31,9 @@ func main() {
 }
 
 func run() error {
-	hubURL := flag.String("hub", envOr("NETRA_HUB_URL", "http://127.0.0.1:8080"), "hub base URL")
-	adminToken := flag.String("admin-token", os.Getenv("NETRA_ADMIN_TOKEN"), "hub admin token")
-	dsn := flag.String("dsn", os.Getenv("NETRA_SIM_DSN"),
+	hubURL := flag.String("hub", envOr("BACKEND_HUB_URL", "http://127.0.0.1:8080"), "hub base URL")
+	adminToken := flag.String("admin-token", os.Getenv("BACKEND_ADMIN_TOKEN"), "hub admin token")
+	dsn := flag.String("dsn", os.Getenv("BACKEND_SIM_DSN"),
 		"hub database DSN, used only to materialise continuous aggregates over the backfill; "+
 			"without it only the last few hours roll up")
 	hosts := flag.String("hosts", "", "comma-separated profiles to simulate (default: all)")
@@ -47,7 +47,7 @@ func run() error {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLevel(*logLevel)})))
 
 	if *adminToken == "" {
-		return fmt.Errorf("--admin-token is required (or set NETRA_ADMIN_TOKEN)")
+		return fmt.Errorf("--admin-token is required (or set BACKEND_ADMIN_TOKEN)")
 	}
 
 	profiles := sim.Fleet()

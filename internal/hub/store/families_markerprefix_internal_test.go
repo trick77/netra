@@ -92,7 +92,7 @@ func TestIntegrationPrefixedLabelLandsOnTheExistingRow(t *testing.T) {
 
 // A mount point the hub already knows is never replaced by no mount point.
 //
-// An agent installed before NETRA_FS_MOUNTS existed sends the label and an
+// An agent installed before AGENT_FS_MOUNTS existed sends the label and an
 // empty mount point. A bare EXCLUDED.mountpoint let that blank the /mnt/ark a
 // better-informed agent had established, once per scrape, and the page fell
 // back to displaying the bare label for a disk whose real name the hub was

@@ -2,7 +2,7 @@
 #
 # Mount table parsing, filtering, deduplication and labelling.
 #
-# These are unit tests: setup-agent.sh is sourced with NETRA_SOURCED=1 so the
+# These are unit tests: setup-agent.sh is sourced with AGENT_SOURCED=1 so the
 # guarded entrypoint does not run.
 # Many variables set here are read by the SOURCED setup script, not by this file,
 # so shellcheck cannot see the use. The directive is file-wide rather than
@@ -14,8 +14,8 @@ set -eu
 
 SETUP="$REPO/setup-agent.sh"
 
-NETRA_SOURCED=1
-export NETRA_SOURCED
+AGENT_SOURCED=1
+export AGENT_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
@@ -160,8 +160,8 @@ assert_eq "fs8-16" "$(fs_label '/mnt/...' 8:16)" \
 # resolves them against.
 ROOT="$TMP/fsroot"
 mkdir -p "$ROOT/mnt/a/data" "$ROOT/mnt/b/data" "$ROOT/mnt/ark" "$ROOT/mnt/ro"
-NETRA_SETUP_ROOT="$ROOT"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$ROOT"
+export AGENT_SETUP_ROOT
 
 cat >"$TMP/mi.e2e" <<'EOF'
 25 0 8:1 / / rw shared:1 - ext4 /dev/sda1 rw
@@ -169,8 +169,8 @@ cat >"$TMP/mi.e2e" <<'EOF'
 32 25 8:48 / /mnt/a/data rw - ext4 /dev/sdd rw
 33 25 8:64 / /mnt/b/data rw - xfs /dev/sde rw
 EOF
-NETRA_MOUNTINFO_PATH="$TMP/mi.e2e"
-export NETRA_MOUNTINFO_PATH
+AGENT_MOUNTINFO_PATH="$TMP/mi.e2e"
+export AGENT_MOUNTINFO_PATH
 init_paths
 
 detect_filesystems >/dev/null 2>&1
@@ -182,19 +182,19 @@ assert_contains "$FS_MOUNTS" "8:64|/mnt/b/data|data-2" "the colliding label gets
 # The emitted volume block: real host paths, never the fixture prefix, and a
 # quoted source.
 build_volume_block
-assert_contains "$NETRA_BLK_VOLUMES" 'source: "/.netra"' "the root marker source is quoted"
-assert_contains "$NETRA_BLK_VOLUMES" "target: /netra/fs/root" "/ maps to target /netra/fs/root"
-assert_contains "$NETRA_BLK_VOLUMES" 'source: "/mnt/ark/.netra"' "the ark marker source is quoted"
-assert_not_contains "$NETRA_BLK_VOLUMES" "$ROOT" \
-    "NETRA_SETUP_ROOT never leaks into an emitted source path"
+assert_contains "$AGENT_BLK_VOLUMES" 'source: "/.netra"' "the root marker source is quoted"
+assert_contains "$AGENT_BLK_VOLUMES" "target: /netra/fs/root" "/ maps to target /netra/fs/root"
+assert_contains "$AGENT_BLK_VOLUMES" 'source: "/mnt/ark/.netra"' "the ark marker source is quoted"
+assert_not_contains "$AGENT_BLK_VOLUMES" "$ROOT" \
+    "AGENT_SETUP_ROOT never leaks into an emitted source path"
 
 # The cgroup hierarchy: unconditional, and to /host/sys/fs/cgroup rather than
 # over the container's own. Without it the container collector walks the agent's
 # own private-namespace cgroup, finds no sibling scopes, and reports nothing at
 # all -- silently, because an empty walk is not an error.
-assert_contains "$NETRA_BLK_VOLUMES" 'source: "/sys/fs/cgroup"' \
+assert_contains "$AGENT_BLK_VOLUMES" 'source: "/sys/fs/cgroup"' \
     "the host cgroup hierarchy is always mounted"
-assert_contains "$NETRA_BLK_VOLUMES" "target: /host/sys/fs/cgroup" \
+assert_contains "$AGENT_BLK_VOLUMES" "target: /host/sys/fs/cgroup" \
     "the cgroup hierarchy lands on /host/sys/fs/cgroup, not /sys/fs/cgroup"
 
 # The os-release bind: the agent reads PRETTY_NAME from it for the distro name
@@ -204,16 +204,16 @@ assert_contains "$NETRA_BLK_VOLUMES" "target: /host/sys/fs/cgroup" \
 # instead of falling back to the visible generic "linux".
 OSRELEASE_ENABLED=1
 build_volume_block
-assert_contains "$NETRA_BLK_VOLUMES" 'source: "/etc/os-release"' \
+assert_contains "$AGENT_BLK_VOLUMES" 'source: "/etc/os-release"' \
     "the host os-release is mounted when it exists"
-assert_contains "$NETRA_BLK_VOLUMES" "target: /host/etc/os-release" \
+assert_contains "$AGENT_BLK_VOLUMES" "target: /host/etc/os-release" \
     "os-release lands on /host/etc/os-release, never over the image's own"
 
 # A host without /etc/os-release emits no bind at all: a long-form bind does not
 # create a missing source, so the container would refuse to start.
 OSRELEASE_ENABLED=0
 build_volume_block
-assert_not_contains "$NETRA_BLK_VOLUMES" "os-release" \
+assert_not_contains "$AGENT_BLK_VOLUMES" "os-release" \
     "no os-release bind is emitted when the host has no /etc/os-release"
 OSRELEASE_ENABLED=1
 
@@ -224,13 +224,13 @@ cat >"$TMP/mi.space" <<'EOF'
 25 0 8:1 / / rw - ext4 /dev/sda1 rw
 30 25 8:16 / /mnt/my\040data rw - ext4 /dev/sdb rw
 EOF
-NETRA_MOUNTINFO_PATH="$TMP/mi.space"
-export NETRA_MOUNTINFO_PATH
+AGENT_MOUNTINFO_PATH="$TMP/mi.space"
+export AGENT_MOUNTINFO_PATH
 init_paths
 detect_filesystems >/dev/null 2>&1
 assert_contains "$FS_MOUNTS" "8:16|/mnt/my data|my-data" "a space in the mount point is labelled my-data"
 build_volume_block
-assert_contains "$NETRA_BLK_VOLUMES" 'source: "/mnt/my data/.netra"' \
+assert_contains "$AGENT_BLK_VOLUMES" 'source: "/mnt/my data/.netra"' \
     "a mount point containing a space renders as a quoted source"
 
 # --- 9. an unwritable mount point is demoted BEFORE any prompting -------------
@@ -250,8 +250,8 @@ else
 25 0 8:1 / / rw - ext4 /dev/sda1 rw
 31 25 8:80 / /mnt/ro rw - ext4 /dev/sdf rw
 EOF
-    NETRA_MOUNTINFO_PATH="$TMP/mi.ro"
-    export NETRA_MOUNTINFO_PATH
+    AGENT_MOUNTINFO_PATH="$TMP/mi.ro"
+    export AGENT_MOUNTINFO_PATH
     init_paths
     detect_filesystems >/dev/null 2>&1
     assert_not_contains "$FS_MOUNTS" "/mnt/ro" "an unwritable mount point is not accepted"
@@ -267,8 +267,8 @@ cat >"$TMP/mi.bad" <<'EOF'
 31 25 8:96 / /mnt/qu\042ote rw - ext4 /dev/sdg rw
 32 25 8:97 / /mnt/dol\044lar rw - ext4 /dev/sdh rw
 EOF
-NETRA_MOUNTINFO_PATH="$TMP/mi.bad"
-export NETRA_MOUNTINFO_PATH
+AGENT_MOUNTINFO_PATH="$TMP/mi.bad"
+export AGENT_MOUNTINFO_PATH
 init_paths
 detect_filesystems >/dev/null 2>&1
 assert_not_contains "$FS_MOUNTS" "ote" "a mount point containing a double quote is rejected"
@@ -283,8 +283,8 @@ assert_contains "$FS_SKIPS" "unsupported|" "the rejection is recorded as unsuppo
 # is noise, and noise is what makes operators stop reading the notes.
 SELROOT="$TMP/selroot"
 mkdir -p "$SELROOT/sys/fs/selinux"
-NETRA_SETUP_ROOT="$SELROOT"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$SELROOT"
+export AGENT_SETUP_ROOT
 init_paths
 
 printf '0\n' >"$SELROOT/sys/fs/selinux/enforce"
@@ -309,8 +309,8 @@ cat >"$TMP/mi.none" <<'EOF'
 26 25 0:22 / /proc rw - proc proc rw
 29 25 0:24 / /run rw - tmpfs tmpfs rw
 EOF
-NETRA_MOUNTINFO_PATH="$TMP/mi.none"
-export NETRA_MOUNTINFO_PATH
+AGENT_MOUNTINFO_PATH="$TMP/mi.none"
+export AGENT_MOUNTINFO_PATH
 init_paths
 run_capture detect_filesystems
 assert_eq 0 "$RUN_RC" "a host with no monitorable filesystem is not an error"

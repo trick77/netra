@@ -16,12 +16,12 @@
 # Every path in this script is exactly one of two kinds:
 #
 #   PROBE path — read during detection. It is resolved through _p(), so tests
-#                can redirect it under NETRA_SETUP_ROOT at a fixture tree.
+#                can redirect it under AGENT_SETUP_ROOT at a fixture tree.
 #
 #   EMIT path  — written into the rendered compose.yaml/.env. It must stay the
 #                REAL host path, always, with no prefix.
 #
-# NETRA_SETUP_ROOT applies ONLY when resolving a probe variable. It must never
+# AGENT_SETUP_ROOT applies ONLY when resolving a probe variable. It must never
 # reach a string that goes into a template. Prefix a marker file on its way
 # into compose.yaml and the installed agent measures /tmp/fixture/mnt/ark/.netra
 # — a path that does not exist on the host — and silently reports nothing.
@@ -72,7 +72,7 @@
 # require_tty() enforces this once, in netra_main, before any phase. It is
 # exempted in exactly one case:
 #
-#   NETRA_ANSWERS_FILE    the test seam, checked before $P_TTY in netra_ask.
+#   AGENT_ANSWERS_FILE    the test seam, checked before $P_TTY in netra_ask.
 #
 # That IS a non-interactive path, and the README says so rather than pretending
 # otherwise. It is an env var, not a flag, and its answers are positional — fit
@@ -97,7 +97,7 @@
 # ============================================================================
 # PROMPT ORDER — a contract, not an implementation detail
 # ============================================================================
-# Every prompt reads its answer from the same sequence, and NETRA_ANSWERS_FILE
+# Every prompt reads its answer from the same sequence, and AGENT_ANSWERS_FILE
 # in the tests is that sequence written down. Reordering these silently rewrites
 # what every answers file in test/setup-agent/cases/ means: line 3 stops being
 # "no to SYS_ADMIN" and becomes "no to the package mount", and the tests still
@@ -118,7 +118,7 @@
 # ever asked: that is the product.
 #
 # Free-text values (hub URL, token, location, provider, host type) are read by
-# netra_ask_value from NETRA_VALUES_FILE, a SEPARATE seam with its own index, so
+# netra_ask_value from AGENT_VALUES_FILE, a SEPARATE seam with its own index, so
 # adding one never shifts a y/n answers file by a line.
 #
 # --unsupported-os and --sys-admin REMOVE prompts 1 and 2 from this sequence:
@@ -139,14 +139,14 @@
 
 set -eu
 
-NETRA_SETUP_VERSION="0.1.0"
+AGENT_SETUP_VERSION="0.1.0"
 
 # ---------------------------------------------------------------------------
 # Shared state
 # ---------------------------------------------------------------------------
 
 # "" in production. Tests point it at a fixture tree. PROBE paths only.
-NETRA_SETUP_ROOT="${NETRA_SETUP_ROOT:-}"
+AGENT_SETUP_ROOT="${AGENT_SETUP_ROOT:-}"
 
 # Newline-delimited notes for the finish report: everything that was skipped,
 # declined or degraded, so the operator sees what the agent will NOT collect.
@@ -183,11 +183,11 @@ DRIVETEMP_CHANGED=""
 # first being loaded. The undo instructions must name only what happened.
 DRIVETEMP_PERSISTED=""
 
-# Consumed answers when NETRA_ANSWERS_FILE is set (test seam only). The two
+# Consumed answers when AGENT_ANSWERS_FILE is set (test seam only). The two
 # indexes are deliberately independent: a y/n prompt and a free-text prompt read
 # from different files, so neither can shift the other by a line.
-NETRA_ANSWER_INDEX=0
-NETRA_VALUE_INDEX=0
+AGENT_ANSWER_INDEX=0
+AGENT_VALUE_INDEX=0
 
 # Defined before any function can reference them: the tests source this file and
 # call individual functions without going through netra_main, and `set -u` would
@@ -387,7 +387,7 @@ netra_exec() {
 # CALL SITES MUST BE `if netra_ask ...; then` - see the errexit note in the
 # header. A bare call kills the script the moment the operator says no.
 #
-# NETRA_ANSWERS_FILE is a test seam: each call consumes the next line of that
+# AGENT_ANSWERS_FILE is a test seam: each call consumes the next line of that
 # file (an exhausted file is a hard error, not a silent default). Otherwise a
 # readable $P_TTY is required, which require_tty has already checked.
 netra_ask() {
@@ -400,13 +400,13 @@ netra_ask() {
     fi
 
     while :; do
-        if [ -n "${NETRA_ANSWERS_FILE:-}" ]; then
+        if [ -n "${AGENT_ANSWERS_FILE:-}" ]; then
             # sed -n "${n}p", not head/tail rewriting: rewriting would destroy
             # the test's own input and break on a read-only file.
-            NETRA_ANSWER_INDEX=$((NETRA_ANSWER_INDEX + 1))
-            _ask_reply=$(sed -n "${NETRA_ANSWER_INDEX}p" "$NETRA_ANSWERS_FILE")
+            AGENT_ANSWER_INDEX=$((AGENT_ANSWER_INDEX + 1))
+            _ask_reply=$(sed -n "${AGENT_ANSWER_INDEX}p" "$AGENT_ANSWERS_FILE")
             if [ -z "$_ask_reply" ]; then
-                die "NETRA_ANSWERS_FILE exhausted at answer $NETRA_ANSWER_INDEX (question: $_ask_q)"
+                die "AGENT_ANSWERS_FILE exhausted at answer $AGENT_ANSWER_INDEX (question: $_ask_q)"
             fi
             printf '%s %s %s\n' "$_ask_q" "$_ask_hint" "$_ask_reply"
         else
@@ -425,8 +425,8 @@ netra_ask() {
         n | no) return 1 ;;
         esac
 
-        if [ -n "${NETRA_ANSWERS_FILE:-}" ]; then
-            die "NETRA_ANSWERS_FILE line $NETRA_ANSWER_INDEX is '$_ask_reply', expected y or n"
+        if [ -n "${AGENT_ANSWERS_FILE:-}" ]; then
+            die "AGENT_ANSWERS_FILE line $AGENT_ANSWER_INDEX is '$_ask_reply', expected y or n"
         fi
         printf 'please answer y or n\n'
     done
@@ -438,13 +438,13 @@ netra_ask() {
 #
 # It assigns rather than printing to stdout for a reason that cost an afternoon:
 # `X=$(netra_ask_value ...)` runs the function in a SUBSHELL, so the
-# NETRA_VALUE_INDEX increment below would be discarded on every call. The values
+# AGENT_VALUE_INDEX increment below would be discarded on every call. The values
 # file would hand out its first line forever, and the host-type validation loop
 # below would spin on it without end. This is the same class of trap as the
 # `cmd | while read` note in the header: state does not survive a subshell.
 #
-# NETRA_VALUES_FILE is the test seam, with its OWN index. Keeping it separate
-# from NETRA_ANSWERS_FILE is the whole point: adding a value prompt must never
+# AGENT_VALUES_FILE is the test seam, with its OWN index. Keeping it separate
+# from AGENT_ANSWERS_FILE is the whole point: adding a value prompt must never
 # shift a y/n answers file by a line. Unlike the y/n seam an exhausted file is
 # NOT fatal - a case that cares about one value should not have to spell out
 # every other one.
@@ -457,9 +457,9 @@ netra_ask_value() {
     _av_def=""
     eval "_av_def=\$$_av_var"
 
-    if [ -n "${NETRA_VALUES_FILE:-}" ]; then
-        NETRA_VALUE_INDEX=$((NETRA_VALUE_INDEX + 1))
-        _av_reply=$(sed -n "${NETRA_VALUE_INDEX}p" "$NETRA_VALUES_FILE")
+    if [ -n "${AGENT_VALUES_FILE:-}" ]; then
+        AGENT_VALUE_INDEX=$((AGENT_VALUE_INDEX + 1))
+        _av_reply=$(sed -n "${AGENT_VALUE_INDEX}p" "$AGENT_VALUES_FILE")
     elif [ ! -r "$P_TTY" ]; then
         _av_reply=""
     else
@@ -594,7 +594,7 @@ parse_args() {
     # as exactly the default" are indistinguishable after parsing, and the
     # runtime latest-release lookup would either never run or override an
     # explicit --ref. Never master, in either branch.
-    REF="v$NETRA_SETUP_VERSION"
+    REF="v$AGENT_SETUP_VERSION"
     REF_EXPLICIT=0
     TEMPLATE_DIR=""
     # OUTPUT_DIR_EXPLICIT mirrors REF_EXPLICIT above, and for the same reason:
@@ -723,25 +723,25 @@ _valid_host_type() {
 # Paths
 # ---------------------------------------------------------------------------
 
-# _p PATH — prefix a PROBE path with NETRA_SETUP_ROOT. Never call this on a
+# _p PATH — prefix a PROBE path with AGENT_SETUP_ROOT. Never call this on a
 # path that ends up in a template; see the header.
 _p() {
-    printf '%s%s' "$NETRA_SETUP_ROOT" "$1"
+    printf '%s%s' "$AGENT_SETUP_ROOT" "$1"
 }
 
 init_paths() {
     # $P_TTY is a probe path but is deliberately NOT prefixed: it is a device,
-    # not part of the fixture tree. Tests point NETRA_TTY at an unopenable path
+    # not part of the fixture tree. Tests point AGENT_TTY at an unopenable path
     # because there is no portable way to drop a controlling terminal (no setsid
     # on macOS, and redirecting stdin does not touch /dev/tty).
-    P_TTY="${NETRA_TTY:-/dev/tty}"
+    P_TTY="${AGENT_TTY:-/dev/tty}"
 
-    P_OSRELEASE="${NETRA_OSRELEASE_PATH:-$(_p /etc/os-release)}"
-    P_MACHINEID="${NETRA_MACHINEID_PATH:-$(_p /etc/machine-id)}"
-    P_CGROUP="${NETRA_CGROUP_ROOT:-$(_p /sys/fs/cgroup)}"
-    P_MOUNTINFO="${NETRA_MOUNTINFO_PATH:-$(_p /proc/1/mountinfo)}"
+    P_OSRELEASE="${AGENT_OSRELEASE_PATH:-$(_p /etc/os-release)}"
+    P_MACHINEID="${AGENT_MACHINEID_PATH:-$(_p /etc/machine-id)}"
+    P_CGROUP="${AGENT_CGROUP_ROOT:-$(_p /sys/fs/cgroup)}"
+    P_MOUNTINFO="${AGENT_MOUNTINFO_PATH:-$(_p /proc/1/mountinfo)}"
 
-    P_SYSFS="${NETRA_SYSFS_ROOT:-$(_p /sys)}"
+    P_SYSFS="${AGENT_SYSFS_ROOT:-$(_p /sys)}"
     # /sys/block, NOT /sys/class/block. The two trees hold different things:
     # /sys/class/block is flat and lists every partition alongside its parent,
     # while /sys/block lists ONLY whole devices and keeps partitions as
@@ -752,39 +752,39 @@ init_paths() {
     P_SYSNVME="$P_SYSFS/class/nvme"
     P_HWMON="$P_SYSFS/class/hwmon"
 
-    P_DEV="${NETRA_DEV_ROOT:-$(_p /dev)}"
-    P_DPKG="${NETRA_DPKG_PATH:-$(_p /var/lib/dpkg/status)}"
-    P_APK="${NETRA_APK_PATH:-$(_p /lib/apk/db/installed)}"
-    P_DBUS="${NETRA_DBUS_PATH:-$(_p /run/dbus/system_bus_socket)}"
-    P_DOCKERSOCK="${NETRA_DOCKERSOCK_PATH:-$(_p /var/run/docker.sock)}"
+    P_DEV="${AGENT_DEV_ROOT:-$(_p /dev)}"
+    P_DPKG="${AGENT_DPKG_PATH:-$(_p /var/lib/dpkg/status)}"
+    P_APK="${AGENT_APK_PATH:-$(_p /lib/apk/db/installed)}"
+    P_DBUS="${AGENT_DBUS_PATH:-$(_p /run/dbus/system_bus_socket)}"
+    P_DOCKERSOCK="${AGENT_DOCKERSOCK_PATH:-$(_p /var/run/docker.sock)}"
     # utmp holds the logged-in session list. Absent on Alpine and other
     # busybox systems, which ship no utmp writer at all, so its presence is
     # detected rather than assumed.
-    P_UTMP="${NETRA_UTMP_PATH:-$(_p /var/run/utmp)}"
-    P_CPUINFO="${NETRA_CPUINFO_PATH:-$(_p /proc/cpuinfo)}"
-    P_DMIVENDOR="${NETRA_DMIVENDOR_PATH:-$(_p /sys/class/dmi/id/sys_vendor)}"
-    P_MACHINEID="${NETRA_MACHINEID_PATH:-$(_p /etc/machine-id)}"
-    P_MACHINEID_DBUS="${NETRA_MACHINEID_DBUS_PATH:-$(_p /var/lib/dbus/machine-id)}"
-    P_HYPERVISOR="${NETRA_HYPERVISOR_PATH:-$(_p /sys/hypervisor/type)}"
-    P_HYPERVISOR_CAPS="${NETRA_HYPERVISOR_CAPS_PATH:-$(_p /sys/hypervisor/properties/capabilities)}"
+    P_UTMP="${AGENT_UTMP_PATH:-$(_p /var/run/utmp)}"
+    P_CPUINFO="${AGENT_CPUINFO_PATH:-$(_p /proc/cpuinfo)}"
+    P_DMIVENDOR="${AGENT_DMIVENDOR_PATH:-$(_p /sys/class/dmi/id/sys_vendor)}"
+    P_MACHINEID="${AGENT_MACHINEID_PATH:-$(_p /etc/machine-id)}"
+    P_MACHINEID_DBUS="${AGENT_MACHINEID_DBUS_PATH:-$(_p /var/lib/dbus/machine-id)}"
+    P_HYPERVISOR="${AGENT_HYPERVISOR_PATH:-$(_p /sys/hypervisor/type)}"
+    P_HYPERVISOR_CAPS="${AGENT_HYPERVISOR_CAPS_PATH:-$(_p /sys/hypervisor/properties/capabilities)}"
     # A host WRITE path, not an emit path, and therefore prefixed: it never
     # reaches a template, and a test that persisted a module to the real
     # /etc/modules-load.d would be changing the machine running the suite.
-    P_MODULESLOAD="${NETRA_MODULESLOAD_DIR:-$(_p /etc/modules-load.d)}"
+    P_MODULESLOAD="${AGENT_MODULESLOAD_DIR:-$(_p /etc/modules-load.d)}"
 
     # The effective user id is a probe like any other. Not prefixed (it is not a
     # path), but seamed for the same reason $P_TTY is: the suite has to reach
     # both the root and the non-root branch of plan_drivetemp, and it runs as
     # neither reliably — a developer's laptop is not root and a CI runner is not
     # root either, so without this the root path would never be exercised.
-    P_UID="${NETRA_UID:-$(id -u)}"
+    P_UID="${AGENT_UID:-$(id -u)}"
 }
 
-# debug_paths — dump every resolved probe path. `NETRA_DEBUG_PATHS=1` makes the
+# debug_paths — dump every resolved probe path. `AGENT_DEBUG_PATHS=1` makes the
 # prefixing rule inspectable from the outside. Every probe path added to the
 # script belongs in this dump too.
 debug_paths() {
-    printf 'install_root|%s\n' "$NETRA_SETUP_ROOT"
+    printf 'install_root|%s\n' "$AGENT_SETUP_ROOT"
     printf 'tty|%s\n' "$P_TTY"
     printf 'osrelease|%s\n' "$P_OSRELEASE"
     printf 'machineid|%s\n' "$P_MACHINEID"
@@ -956,15 +956,15 @@ check_cgroup_v2() {
     info "  cgroup:          v2 (unified) at $P_CGROUP"
 
     # The emitted bind hardcodes /sys/fs/cgroup as its source, because a bind
-    # source is an EMIT path and $P_CGROUP carries $NETRA_SETUP_ROOT under test.
-    # So an operator who exported NETRA_CGROUP_ROOT because their hierarchy
+    # source is an EMIT path and $P_CGROUP carries $AGENT_SETUP_ROOT under test.
+    # So an operator who exported AGENT_CGROUP_ROOT because their hierarchy
     # genuinely lives elsewhere would have this script validate one path and
     # mount another. Say so rather than let the mismatch pass unremarked; the
     # test fixture root is not the case being warned about.
-    if [ -n "${NETRA_CGROUP_ROOT:-}" ] &&
-        [ "$NETRA_CGROUP_ROOT" != "/sys/fs/cgroup" ] &&
-        [ -z "${NETRA_SETUP_ROOT:-}" ]; then
-        warn "NETRA_CGROUP_ROOT is set to $NETRA_CGROUP_ROOT, which is the path this script" \
+    if [ -n "${AGENT_CGROUP_ROOT:-}" ] &&
+        [ "$AGENT_CGROUP_ROOT" != "/sys/fs/cgroup" ] &&
+        [ -z "${AGENT_SETUP_ROOT:-}" ]; then
+        warn "AGENT_CGROUP_ROOT is set to $AGENT_CGROUP_ROOT, which is the path this script" \
             "PROBED. The compose.yaml it writes still mounts /sys/fs/cgroup, so edit the" \
             "bind source by hand if that is not where this host's hierarchy lives."
     fi
@@ -1541,7 +1541,7 @@ block_devices() {
 # userlands). The resolved path is the sysfs devices-tree path, whose components
 # name the transport: .../ata1/host0/... or .../usb1/1-1/... or .../nvme/nvme0/.
 #
-# CRITICAL: strip NETRA_SETUP_ROOT from the resolved path BEFORE matching.
+# CRITICAL: strip AGENT_SETUP_ROOT from the resolved path BEFORE matching.
 # Without the strip, a fixture root that happens to live under a directory
 # containing `usb` or `ata` — and mktemp paths do contain surprising things —
 # classifies every device on the host by the name of a temporary directory, and
@@ -1558,8 +1558,8 @@ device_transport() {
         printf 'unknown\n'
         return 0
     fi
-    if [ -n "$NETRA_SETUP_ROOT" ]; then
-        _dt_real=${_dt_real#"$NETRA_SETUP_ROOT"}
+    if [ -n "$AGENT_SETUP_ROOT" ]; then
+        _dt_real=${_dt_real#"$AGENT_SETUP_ROOT"}
     fi
     case "$_dt_real" in
     */nvme*) printf 'nvme\n' ;;
@@ -1790,7 +1790,7 @@ EOF
 # detect_sensors — INFORMATIONAL, and deliberately so.
 #
 # The agent already auto-selects the primary sensor at runtime with the same
-# preference order. Writing NETRA_PRIMARY_SENSOR here would freeze an
+# preference order. Writing AGENT_PRIMARY_SENSOR here would freeze an
 # install-time guess into .env, where it outlives the CPU swap or kernel upgrade
 # that changed the chip — so it is written ONLY when --primary-sensor was passed
 # explicitly, or when two equally-ranked known CPU chips exist and the operator
@@ -2060,11 +2060,11 @@ fetch_template() {
 # mapping key cannot be left dangling if the key never existed.
 render_template() {
     awk '
-        /^[[:space:]]*#__NETRA_[A-Z_]+__[[:space:]]*$/ {
+        /^[[:space:]]*#__AGENT_[A-Z_]+__[[:space:]]*$/ {
             key = $0
-            sub(/^[[:space:]]*#__NETRA_/, "", key)
+            sub(/^[[:space:]]*#__AGENT_/, "", key)
             sub(/__[[:space:]]*$/, "", key)
-            blk = ENVIRON["NETRA_BLK_" key]
+            blk = ENVIRON["AGENT_BLK_" key]
             if (blk != "") printf "%s", blk
             next
         }
@@ -2085,7 +2085,7 @@ render_env() {
             out = ""
             while (match(line, /__[A-Z][A-Z0-9_]*__/)) {
                 key = substr(line, RSTART + 2, RLENGTH - 4)
-                out = out substr(line, 1, RSTART - 1) ENVIRON["NETRA_VAL_" key]
+                out = out substr(line, 1, RSTART - 1) ENVIRON["AGENT_VAL_" key]
                 line = substr(line, RSTART + RLENGTH)
             }
             print out line
@@ -2093,7 +2093,7 @@ render_env() {
     ' "$1"
 }
 
-# _env_value NAME VALUE — validate and export NETRA_VAL_<NAME>.
+# _env_value NAME VALUE — validate and export AGENT_VAL_<NAME>.
 #
 # Values are written UNQUOTED, because compose's env_file parser takes the rest
 # of the line literally and quotes would become part of the value. A newline or
@@ -2114,11 +2114,11 @@ _env_value() {
             "an env_file. Fix it and re-run."
         ;;
     esac
-    eval "NETRA_VAL_$1=\$2"
-    eval "export NETRA_VAL_$1"
+    eval "AGENT_VAL_$1=\$2"
+    eval "export AGENT_VAL_$1"
 }
 
-# _pct_encode STRING — percent-encode the three characters NETRA_FS_MOUNTS
+# _pct_encode STRING — percent-encode the three characters AGENT_FS_MOUNTS
 # cannot carry literally.
 #
 # The value is a `,`-joined list of `label=mountpoint`, and a mount point may
@@ -2130,7 +2130,7 @@ _pct_encode() {
     printf '%s' "$1" | sed -e 's/%/%25/g' -e 's/,/%2C/g' -e 's/=/%3D/g'
 }
 
-# build_fs_mounts_value — the NETRA_FS_MOUNTS value: `label=mountpoint,...`.
+# build_fs_mounts_value — the AGENT_FS_MOUNTS value: `label=mountpoint,...`.
 #
 # Walks the SAME FS_MOUNTS list that build_volume_block turns into bind mounts,
 # so the mapping and the mounts are rendered together and cannot drift apart.
@@ -2139,10 +2139,10 @@ _pct_encode() {
 # that path names nothing on the host. Reporting it is what produced
 # "/netra/fs/ark is 94 % full" on a host with no netra anywhere.
 build_fs_mounts_value() {
-    NETRA_BLK_FS_MOUNTS=""
+    AGENT_BLK_FS_MOUNTS=""
     while IFS='|' read -r _bf_mm _bf_mp _bf_lab; do
         [ -n "$_bf_mm" ] || continue
-        NETRA_BLK_FS_MOUNTS="${NETRA_BLK_FS_MOUNTS:+$NETRA_BLK_FS_MOUNTS,}$_bf_lab=$(_pct_encode "$_bf_mp")"
+        AGENT_BLK_FS_MOUNTS="${AGENT_BLK_FS_MOUNTS:+$AGENT_BLK_FS_MOUNTS,}$_bf_lab=$(_pct_encode "$_bf_mp")"
     done <<EOF
 ${FS_MOUNTS:-}
 EOF
@@ -2157,7 +2157,7 @@ EOF
 #
 # Every source here is an EMIT path — the real host path, never prefixed.
 build_volume_block() {
-    NETRA_BLK_VOLUMES=""
+    AGENT_BLK_VOLUMES=""
     _bv_body=""
 
     # SC2089/SC2090: the quotes in these blocks are DATA — they are YAML syntax
@@ -2190,7 +2190,7 @@ EOF
     # the Docker socket below.
     #
     # The literal, NOT $P_CGROUP: that is a PROBE path and carries
-    # $NETRA_SETUP_ROOT, and a source here is an emit path. Same rule every
+    # $AGENT_SETUP_ROOT, and a source here is an emit path. Same rule every
     # other bind in this function follows.
     #
     # The TARGET is not /sys/fs/cgroup. Docker's default cgroup namespace is
@@ -2222,25 +2222,25 @@ EOF
     fi
 
     if [ -n "$_bv_body" ]; then
-        NETRA_BLK_VOLUMES="    volumes:
+        AGENT_BLK_VOLUMES="    volumes:
 $_bv_body"
     fi
     # shellcheck disable=SC2090
-    export NETRA_BLK_VOLUMES
+    export AGENT_BLK_VOLUMES
 }
 
 build_device_block() {
-    NETRA_BLK_DEVICES=""
+    AGENT_BLK_DEVICES=""
     if [ -n "${SMART_DEVICES:-}" ]; then
-        NETRA_BLK_DEVICES="    devices:
+        AGENT_BLK_DEVICES="    devices:
 $(printf '%s\n' "$SMART_DEVICES" | sed 's/^/      - /')
 "
     fi
-    export NETRA_BLK_DEVICES
+    export AGENT_BLK_DEVICES
 }
 
 build_cap_block() {
-    NETRA_BLK_CAP_ADD=""
+    AGENT_BLK_CAP_ADD=""
     _bc_body=""
     # if/fi, not `[ … ] && …`: a false test as the last command of a function
     # makes the function return 1, which under `set -e` ends the script.
@@ -2253,10 +2253,10 @@ build_cap_block() {
 "
     fi
     if [ -n "$_bc_body" ]; then
-        NETRA_BLK_CAP_ADD="    cap_add:
+        AGENT_BLK_CAP_ADD="    cap_add:
 $_bc_body"
     fi
-    export NETRA_BLK_CAP_ADD
+    export AGENT_BLK_CAP_ADD
 }
 
 # No build_pid_block: `pid: host` is a literal line in compose.yaml.tmpl rather
@@ -2534,7 +2534,7 @@ plan_extras() {
     # PID namespace makes every process's /proc entry readable to this container,
     # cmdline and environ included. netra reads NEITHER. Since the per-process
     # collector was removed the only per-process file it opens is comm, for
-    # /proc/1 and /proc/self, and only when NETRA_PID_HOST is unset; the count
+    # /proc/1 and /proc/self, and only when AGENT_PID_HOST is unset; the count
     # itself comes from counting numeric directories in /proc.
     # internal/agent/collector/argv_guard_test.go fails the build if either name
     # appears in a Go string literal.
@@ -2549,7 +2549,7 @@ plan_extras() {
 #
 # The setup script NEVER invents a token: the hub mints them and stores only a
 # SHA-256, so a value made up here could never authenticate. An empty answer is
-# ALLOWED and is not an error: NETRA_TOKEN is written empty with a loud note
+# ALLOWED and is not an error: AGENT_TOKEN is written empty with a loud note
 # that the agent will refuse to start until it is filled in. An operator who has
 # not minted a token yet must still be able to finish the run, and dying here
 # would waste every answer already given.
@@ -2571,7 +2571,7 @@ resolve_token() {
             info "  token:           kept the one already in .env (no --token given)"
             return 0
         fi
-        warn "no agent token was provided (--token / --token-file). NETRA_TOKEN will be" \
+        warn "no agent token was provided (--token / --token-file). AGENT_TOKEN will be" \
             "written empty and the agent will refuse to start until you fill it in." \
             "Tokens are minted by the hub; the setup script cannot invent one."
         return 0
@@ -2612,7 +2612,7 @@ resolve_token() {
         TOKEN="$FORCE_PRIOR_TOKEN"
         info "  token:           kept the one already in .env (nothing entered)"
     elif [ -z "$TOKEN" ]; then
-        warn "no token entered. NETRA_TOKEN will be written empty and the agent will refuse" \
+        warn "no token entered. AGENT_TOKEN will be written empty and the agent will refuse" \
             "to start until you fill it in."
     fi
 }
@@ -2670,7 +2670,7 @@ keeps_hint() {
 # comes next, and a prompt is the last resort for a value nobody has supplied.
 #
 # KEYS narrows which ones are adopted, and defaults to all of them. It exists
-# for --force, which seeds every key EXCEPT NETRA_TOKEN: there the values are
+# for --force, which seeds every key EXCEPT AGENT_TOKEN: there the values are
 # defaults for prompts that still get asked, and seeding the token would skip
 # its prompt entirely. See configure -- the token is held aside there instead,
 # so that Enter means "keep" at every prompt including that one.
@@ -2681,7 +2681,7 @@ keeps_hint() {
 seed_from_env() {
     _se_file="$1"
     # Unquoted on purpose below: this is a list to split on whitespace.
-    _se_keys="${2:-NETRA_HUB_URL NETRA_TOKEN NETRA_LOCATION NETRA_PROVIDER NETRA_HOST_TYPE}"
+    _se_keys="${2:-AGENT_HUB_URL AGENT_TOKEN AGENT_LOCATION AGENT_PROVIDER AGENT_HOST_TYPE}"
     [ -r "$_se_file" ] || return 0
     _se_adopted=""
 
@@ -2696,16 +2696,16 @@ seed_from_env() {
         # --force the flag is what gets written -- so naming it as reused
         # would be a straight falsehood about the file being written.
         case "$_se_key" in
-            NETRA_HUB_URL) [ -z "$HUB_URL" ] || continue; HUB_URL="$_se_val" ;;
-            NETRA_TOKEN) [ -z "$TOKEN" ] || continue; TOKEN="$_se_val" ;;
-            NETRA_LOCATION) [ -z "$LOCATION" ] || continue; LOCATION="$_se_val" ;;
-            NETRA_PROVIDER) [ -z "$PROVIDER" ] || continue; PROVIDER="$_se_val" ;;
-            NETRA_HOST_TYPE) [ -z "$HOST_TYPE" ] || continue; HOST_TYPE="$_se_val" ;;
+            AGENT_HUB_URL) [ -z "$HUB_URL" ] || continue; HUB_URL="$_se_val" ;;
+            AGENT_TOKEN) [ -z "$TOKEN" ] || continue; TOKEN="$_se_val" ;;
+            AGENT_LOCATION) [ -z "$LOCATION" ] || continue; LOCATION="$_se_val" ;;
+            AGENT_PROVIDER) [ -z "$PROVIDER" ] || continue; PROVIDER="$_se_val" ;;
+            AGENT_HOST_TYPE) [ -z "$HOST_TYPE" ] || continue; HOST_TYPE="$_se_val" ;;
         esac
         _se_adopted="$_se_adopted $_se_key"
     done
 
-    # The KEYS, never the values: NETRA_TOKEN is in this list. Naming them is
+    # The KEYS, never the values: AGENT_TOKEN is in this list. Naming them is
     # what turns "nothing was asked" from something the operator has to take on
     # trust into something they can check.
     [ -z "$_se_adopted" ] ||
@@ -2717,7 +2717,7 @@ seed_from_env() {
 # Detection cannot guess any of these, and an .env without a hub URL or a token
 # cannot start the agent, so they are asked rather than left blank with a
 # comment telling the operator to come back later. Each prompt is skipped when
-# its flag was given. NETRA_FACILITY is deliberately NOT asked: it is a
+# its flag was given. AGENT_FACILITY is deliberately NOT asked: it is a
 # datacenter code most self-hosters do not have, and a prompt nobody can answer
 # is a prompt that teaches people to hit Enter through the rest of them.
 configure() {
@@ -2751,8 +2751,8 @@ configure() {
         # prompts are skipped and the gap is named instead. An .env written by a
         # run that had no token is exactly this case.
         _cfg_missing=""
-        [ -n "$HUB_URL" ] || _cfg_missing="$_cfg_missing NETRA_HUB_URL"
-        [ -n "$TOKEN" ] || _cfg_missing="$_cfg_missing NETRA_TOKEN"
+        [ -n "$HUB_URL" ] || _cfg_missing="$_cfg_missing AGENT_HUB_URL"
+        [ -n "$TOKEN" ] || _cfg_missing="$_cfg_missing AGENT_TOKEN"
         [ -z "$_cfg_missing" ] ||
             warn "and these are EMPTY in it:${_cfg_missing}. They are not asked for here," \
                 "because this run cannot write them. Edit $OUTPUT_DIR/.env directly, or" \
@@ -2770,11 +2770,11 @@ configure() {
         # this script treats Enter as "leave it alone". The second is the
         # suite's shape and a values file that runs out -- an unreadable
         # $P_TTY makes netra_ask_value return empty without printing anything
-        # at all, so `--force --token X --hub-url Y` rewrote NETRA_LOCATION,
-        # NETRA_PROVIDER and NETRA_HOST_TYPE empty with nothing on screen to
+        # at all, so `--force --token X --hub-url Y` rewrote AGENT_LOCATION,
+        # AGENT_PROVIDER and AGENT_HOST_TYPE empty with nothing on screen to
         # say it had happened.
         #
-        # NETRA_TOKEN is NOT seeded, because seeding would skip its prompt
+        # AGENT_TOKEN is NOT seeded, because seeding would skip its prompt
         # entirely and a rotation is the main reason to pass --force. It is
         # held aside instead, so the PROMPT still happens and an empty answer
         # keeps the token rather than destroying it -- Enter has to mean the
@@ -2785,9 +2785,9 @@ configure() {
         #
         # Never printed, never info'd, and cleared nowhere else: resolve_token
         # is its only reader.
-        FORCE_PRIOR_TOKEN=$(env_file_value "$OUTPUT_DIR/.env" NETRA_TOKEN)
+        FORCE_PRIOR_TOKEN=$(env_file_value "$OUTPUT_DIR/.env" AGENT_TOKEN)
 
-        # NETRA_PRIMARY_SENSOR is deliberately absent. It is written only when
+        # AGENT_PRIMARY_SENSOR is deliberately absent. It is written only when
         # the operator states it, and detect_sensors has ALREADY run and
         # reported by the time this executes -- so seeding it re-pinned a chip
         # the same run had just described as auto-selected, and re-pinned it
@@ -2804,7 +2804,7 @@ configure() {
         done
 
         seed_from_env "$OUTPUT_DIR/.env" \
-            "NETRA_HUB_URL NETRA_LOCATION NETRA_PROVIDER NETRA_HOST_TYPE"
+            "AGENT_HUB_URL AGENT_LOCATION AGENT_PROVIDER AGENT_HOST_TYPE"
 
         # Seeded means "was empty before, is not now" -- which is exactly the
         # set seed_from_env filled, and excludes anything a flag supplied. A
@@ -2826,7 +2826,7 @@ configure() {
         # Not on the reuse path, where this run writes no .env at all: "will be
         # written empty" would be false, and the empty key has already been
         # named with the remedy that actually applies.
-        warn "no hub URL was given. NETRA_HUB_URL will be written empty and the agent will" \
+        warn "no hub URL was given. AGENT_HUB_URL will be written empty and the agent will" \
             "refuse to start until you fill it in."
     elif [ -n "$HUB_URL" ]; then
         info "  hub url:         $HUB_URL"
@@ -2964,7 +2964,7 @@ write_outputs() {
     _env_value LOCATION "$LOCATION"
     _env_value PROVIDER "$PROVIDER"
     _env_value HOST_TYPE "$HOST_TYPE"
-    _env_value FS_MOUNTS "${NETRA_BLK_FS_MOUNTS:-}"
+    _env_value FS_MOUNTS "${AGENT_BLK_FS_MOUNTS:-}"
 
     # The gate. One question covering everything below it, so "no" means the
     # host is exactly as it was.
@@ -3060,7 +3060,7 @@ EOF
         warn "$OUTPUT_DIR/.env already exists and --force was not given, so it was left" \
             "untouched. Its existing token and settings still apply. Re-run with --force to" \
             "overwrite it."
-        # One exception, and only one: NETRA_FS_MOUNTS. It is DERIVED from the
+        # One exception, and only one: AGENT_FS_MOUNTS. It is DERIVED from the
         # same detection that just rendered the bind mounts, exactly like
         # compose.yaml, and it is the line that stops the agent naming a
         # filesystem after the container path it is measured through. An .env
@@ -3071,13 +3071,13 @@ EOF
 
         # The second exception, on the same argument and a sharper edge: the
         # compose this run just wrote always carries `pid: host`, so an .env
-        # still saying NETRA_PID_HOST=0 describes a container that no longer
+        # still saying AGENT_PID_HOST=0 describes a container that no longer
         # exists -- and the agent believes it, refusing to read counters it
         # could read perfectly well.
         sync_pid_host "$OUTPUT_DIR/.env"
 
         # The ONE case where leaving .env alone leaves the agent broken, and
-        # broken silently. NETRA_CGROUP_ROOT used to be documented as
+        # broken silently. AGENT_CGROUP_ROOT used to be documented as
         # /sys/fs/cgroup, so an operator who uncommented it then pins the agent
         # to its OWN cgroup hierarchy -- which under Docker's default private
         # cgroup namespace contains no other container's scope. The compose
@@ -3087,9 +3087,9 @@ EOF
         #
         # grep on the value, not the key: an operator whose hierarchy genuinely
         # lives elsewhere is not making this mistake.
-        if grep -qE '^[[:space:]]*NETRA_CGROUP_ROOT=/sys/fs/cgroup[[:space:]]*$' \
+        if grep -qE '^[[:space:]]*AGENT_CGROUP_ROOT=/sys/fs/cgroup[[:space:]]*$' \
             "$OUTPUT_DIR/.env" 2>/dev/null; then
-            warn "$OUTPUT_DIR/.env pins NETRA_CGROUP_ROOT=/sys/fs/cgroup, which is the" \
+            warn "$OUTPUT_DIR/.env pins AGENT_CGROUP_ROOT=/sys/fs/cgroup, which is the" \
                 "AGENT'S OWN cgroup hierarchy and holds no other container's scope. The" \
                 "container collector will report nothing, without an error. Delete that" \
                 "line (the default is now /host/sys/fs/cgroup, where this compose.yaml" \
@@ -3113,18 +3113,18 @@ EOF
         # value that differs from the existing file as a missing placeholder —
         # blaming the template for what the --force guard directly above just
         # did.
-        _check_env_value NETRA_HUB_URL "$HUB_URL" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_TOKEN "$TOKEN" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_LOCATION "$LOCATION" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_PROVIDER "$PROVIDER" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_HOST_TYPE "$HOST_TYPE" "$OUTPUT_DIR/.env"
-        _check_env_value NETRA_PRIMARY_SENSOR "$PRIMARY_SENSOR" "$OUTPUT_DIR/.env"
+        _check_env_value AGENT_HUB_URL "$HUB_URL" "$OUTPUT_DIR/.env"
+        _check_env_value AGENT_TOKEN "$TOKEN" "$OUTPUT_DIR/.env"
+        _check_env_value AGENT_LOCATION "$LOCATION" "$OUTPUT_DIR/.env"
+        _check_env_value AGENT_PROVIDER "$PROVIDER" "$OUTPUT_DIR/.env"
+        _check_env_value AGENT_HOST_TYPE "$HOST_TYPE" "$OUTPUT_DIR/.env"
+        _check_env_value AGENT_PRIMARY_SENSOR "$PRIMARY_SENSOR" "$OUTPUT_DIR/.env"
     fi
 
     rm -rf "$SCRATCH_DIR"
 }
 
-# netra_rewrite_fs_mounts FILE — replace (or append) the NETRA_FS_MOUNTS line.
+# netra_rewrite_fs_mounts FILE — replace (or append) the AGENT_FS_MOUNTS line.
 #
 # awk with ENVIRON, never `sed s///`: the value is built from mount points, and
 # a `/` in the replacement would end a sed expression early.
@@ -3136,8 +3136,8 @@ EOF
 netra_rewrite_fs_mounts() {
     _rf_tmp="$SCRATCH_DIR/env.fs_mounts"
     awk '
-        /^NETRA_FS_MOUNTS=/ {
-            print "NETRA_FS_MOUNTS=" ENVIRON["NETRA_VAL_FS_MOUNTS"]
+        /^AGENT_FS_MOUNTS=/ {
+            print "AGENT_FS_MOUNTS=" ENVIRON["AGENT_VAL_FS_MOUNTS"]
             seen = 1
             next
         }
@@ -3147,7 +3147,7 @@ netra_rewrite_fs_mounts() {
                 print ""
                 print "# What each measured filesystem is called on this host, added by"
                 print "# setup-agent.sh. Rendered from the same list as the bind mounts."
-                print "NETRA_FS_MOUNTS=" ENVIRON["NETRA_VAL_FS_MOUNTS"]
+                print "AGENT_FS_MOUNTS=" ENVIRON["AGENT_VAL_FS_MOUNTS"]
             }
         }
     ' "$1" >"$_rf_tmp" || return 1
@@ -3160,12 +3160,12 @@ netra_rewrite_fs_mounts() {
     rm -f "$_rf_tmp"
 }
 
-# netra_rewrite_pid_host FILE — replace (or append) the NETRA_PID_HOST line.
+# netra_rewrite_pid_host FILE — replace (or append) the AGENT_PID_HOST line.
 netra_rewrite_pid_host() {
     _rp_tmp="$SCRATCH_DIR/env.pid_host"
     awk '
-        /^NETRA_PID_HOST=/ {
-            print "NETRA_PID_HOST=1"
+        /^AGENT_PID_HOST=/ {
+            print "AGENT_PID_HOST=1"
             seen = 1
             next
         }
@@ -3176,7 +3176,7 @@ netra_rewrite_pid_host() {
                 print "# This container runs with `pid: host`, stated by setup-agent.sh so the"
                 print "# collectors need not guess. Required for the process count and for"
                 print "# per-container network traffic."
-                print "NETRA_PID_HOST=1"
+                print "AGENT_PID_HOST=1"
             }
         }
     ' "$1" >"$_rp_tmp" || return 1
@@ -3188,12 +3188,12 @@ netra_rewrite_pid_host() {
     rm -f "$_rp_tmp"
 }
 
-# sync_pid_host FILE — bring NETRA_PID_HOST in an existing .env up to date.
+# sync_pid_host FILE — bring AGENT_PID_HOST in an existing .env up to date.
 #
 # The second derived line that must not be left behind, and the one an upgrade
 # gets wrong most damagingly. compose.yaml is rewritten on every run and now
 # always carries `pid: host`; .env is not rewritten without --force. So a host
-# set up before this became unconditional keeps NETRA_PID_HOST=0 while actually
+# set up before this became unconditional keeps AGENT_PID_HOST=0 while actually
 # HAVING the namespace -- and the agent believes the .env over the kernel.
 #
 # That combination is worse than the bug it replaced: containers.go refuses to
@@ -3201,22 +3201,22 @@ netra_rewrite_pid_host() {
 # would report zero per-container traffic FOREVER, and the message they get
 # ("re-run setup-agent.sh") would be the very thing that just failed to fix it.
 #
-# Corrected without --force, like NETRA_FS_MOUNTS: the value is derived from
+# Corrected without --force, like AGENT_FS_MOUNTS: the value is derived from
 # what this run rendered, not supplied by the operator, and demanding a token
 # be re-supplied to correct a line the script itself wrote would be absurd.
 sync_pid_host() {
     [ -f "$1" ] || return 0
-    if [ -n "$(sed -n '/^NETRA_PID_HOST=1$/p' "$1")" ]; then
+    if [ -n "$(sed -n '/^AGENT_PID_HOST=1$/p' "$1")" ]; then
         return 0
     fi
     if ! netra_exec netra_rewrite_pid_host "$1"; then
-        warn "could not update NETRA_PID_HOST in $1. Until it says 1, the agent reports no" \
+        warn "could not update AGENT_PID_HOST in $1. Until it says 1, the agent reports no" \
             "process count and no per-container network traffic, even though this run" \
-            "granted the namespace. Set NETRA_PID_HOST=1 by hand."
+            "granted the namespace. Set AGENT_PID_HOST=1 by hand."
         return 0
     fi
-    record_change "updated NETRA_PID_HOST in $1"
-    info "  processes:       NETRA_PID_HOST corrected to 1 in the existing .env"
+    record_change "updated AGENT_PID_HOST in $1"
+    info "  processes:       AGENT_PID_HOST corrected to 1 in the existing .env"
 }
 
 # sync_fs_mounts FILE — bring one derived line of an existing .env up to date.
@@ -3225,19 +3225,19 @@ sync_pid_host() {
 # changed nothing about the host's filesystems.
 sync_fs_mounts() {
     [ -f "$1" ] || return 0
-    _sf_want="${NETRA_BLK_FS_MOUNTS:-}"
-    _sf_have=$(sed -n 's/^NETRA_FS_MOUNTS=//p' "$1" | head -1)
-    if [ -n "$(sed -n '/^NETRA_FS_MOUNTS=/p' "$1")" ] && [ "$_sf_have" = "$_sf_want" ]; then
+    _sf_want="${AGENT_BLK_FS_MOUNTS:-}"
+    _sf_have=$(sed -n 's/^AGENT_FS_MOUNTS=//p' "$1" | head -1)
+    if [ -n "$(sed -n '/^AGENT_FS_MOUNTS=/p' "$1")" ] && [ "$_sf_have" = "$_sf_want" ]; then
         return 0
     fi
     if ! netra_exec netra_rewrite_fs_mounts "$1"; then
-        warn "could not update NETRA_FS_MOUNTS in $1. Until it is set, the agent reports" \
+        warn "could not update AGENT_FS_MOUNTS in $1. Until it is set, the agent reports" \
             "each filesystem under its short label instead of its mount point. Set it by" \
             "hand to: ${_sf_want:-(empty)}"
         return 0
     fi
-    record_change "updated NETRA_FS_MOUNTS in $1"
-    info "  filesystems:     NETRA_FS_MOUNTS updated in the existing .env"
+    record_change "updated AGENT_FS_MOUNTS in $1"
+    info "  filesystems:     AGENT_FS_MOUNTS updated in the existing .env"
 }
 
 # _check_env_value KEY VALUE FILE — did a value the operator gave us actually
@@ -3437,9 +3437,9 @@ start_stack() {
 # `curl ... | sh` on a host with no terminal should fail in the first second,
 # not after three minutes of detection it is about to throw away.
 require_tty() {
-    # NETRA_ANSWERS_FILE is the test seam, checked ahead of $P_TTY inside
+    # AGENT_ANSWERS_FILE is the test seam, checked ahead of $P_TTY inside
     # netra_ask.
-    [ -z "${NETRA_ANSWERS_FILE:-}" ] || return 0
+    [ -z "${AGENT_ANSWERS_FILE:-}" ] || return 0
     [ -r "$P_TTY" ] && return 0
 
     die "no terminal available ($P_TTY is not readable), and this script is interactive." \
@@ -3463,14 +3463,14 @@ netra_main() {
     init_paths
     init_colors
 
-    if [ "${NETRA_DEBUG_PATHS:-0}" = 1 ]; then
+    if [ "${AGENT_DEBUG_PATHS:-0}" = 1 ]; then
         debug_paths
         return 0
     fi
 
     require_tty
 
-    info "netra agent setup $NETRA_SETUP_VERSION"
+    info "netra agent setup $AGENT_SETUP_VERSION"
     info ""
     describe_setup
 
@@ -3493,6 +3493,6 @@ netra_main() {
 }
 
 # Guarded entrypoint, and the last line of the file on purpose. Tests source
-# this script with NETRA_SOURCED=1 to unit-test individual functions; a
+# this script with AGENT_SOURCED=1 to unit-test individual functions; a
 # `curl ... | sh` pipeline runs it.
-[ "${NETRA_SOURCED:-0}" = 1 ] || netra_main "$@"
+[ "${AGENT_SOURCED:-0}" = 1 ] || netra_main "$@"

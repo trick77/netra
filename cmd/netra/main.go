@@ -40,7 +40,7 @@ func run() error {
 	}
 
 	// Before the first log line, or the level would not apply to it.
-	if err := logging.Setup(cfg.LogLevel); err != nil {
+	if err := logging.Setup("BACKEND_LOG_LEVEL", cfg.LogLevel); err != nil {
 		return err
 	}
 

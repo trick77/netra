@@ -40,28 +40,28 @@ Fill in the three values in `.env`:
 | Variable | How |
 | --- | --- |
 | `POSTGRES_PASSWORD` | `openssl rand -hex 32` |
-| `NETRA_ADMIN_TOKEN` | `openssl rand -hex 32` |
-| `NETRA_HOSTNAME` | the name Traefik routes to, and the address agents post to — `NETRA_HUB_URL` is derived from it |
+| `BACKEND_ADMIN_TOKEN` | `openssl rand -hex 32` |
+| `BACKEND_HOSTNAME` | the name Traefik routes to, and the address agents post to — `BACKEND_HUB_URL` is derived from it |
 
 All three ship empty and all three are required: `docker compose up` refuses to
 start until they are set, rather than falling back to a value that looks like it
-works. An unset `NETRA_HOSTNAME` in particular used to default to a domain this
+works. An unset `BACKEND_HOSTNAME` in particular used to default to a domain this
 project does not own, which started cleanly, reported healthy, and left agent
 ingest unreachable with nothing anywhere saying why.
 
 ## Browser sign-in
 
-Optional. Leave `NETRA_OIDC_ISSUER` empty and the admin token is the only way
+Optional. Leave `BACKEND_OIDC_ISSUER` empty and the admin token is the only way
 in, exactly as before.
 
 | Variable | |
 |---|---|
-| `NETRA_OIDC_ISSUER` | the provider's issuer URL — setting it turns sign-in on |
-| `NETRA_OIDC_CLIENT_ID` | |
-| `NETRA_OIDC_CLIENT_SECRET` | |
+| `BACKEND_OIDC_ISSUER` | the provider's issuer URL — setting it turns sign-in on |
+| `BACKEND_OIDC_CLIENT_ID` | |
+| `BACKEND_OIDC_CLIENT_SECRET` | |
 
-Register `https://<NETRA_HOSTNAME>/auth/callback` as the redirect URI. It is
-derived from `NETRA_HUB_URL` rather than configured separately, so it cannot
+Register `https://<BACKEND_HOSTNAME>/auth/callback` as the redirect URI. It is
+derived from `BACKEND_HUB_URL` rather than configured separately, so it cannot
 drift from the name Traefik routes on.
 
 Setting the issuer without the credentials is refused at startup rather than
@@ -79,7 +79,7 @@ page keeps the token form alongside the sign-in button.
 is read and none is requested. Who may sign in at all is decided at the
 provider, as an authorization policy on this client — not here.
 
-**Hex, not base64.** The password is interpolated raw into `NETRA_DB_DSN`, and
+**Hex, not base64.** The password is interpolated raw into `BACKEND_DB_DSN`, and
 base64's `/` terminates the URL authority — a base64 password makes the hub
 crash-loop against a perfectly healthy database. `.env.example` explains the
 rest of each variable.
@@ -129,11 +129,11 @@ apparently fresh directory ends up skipping initialisation.
 
 ### What is exposed
 
-Traefik fronts the whole hub on `NETRA_HOSTNAME` — agent ingest, the read API,
+Traefik fronts the whole hub on `BACKEND_HOSTNAME` — agent ingest, the read API,
 the admin API and the management UI. The container publishes no host port at
 all, so netra cannot collide with anything else on the box and there is no
 tunnel to set up: open <https://your-hostname/> and log in with
-`NETRA_ADMIN_TOKEN`.
+`BACKEND_ADMIN_TOKEN`.
 
 That makes the token the only thing between the internet and an API that mints
 agent tokens and deletes hosts. Generate it with `openssl rand -hex 32` — do
@@ -190,7 +190,7 @@ the admin API:
 
 ```sh
 curl -s -X POST https://your-hostname/api/v1/hosts \
-  -H "Authorization: Bearer $NETRA_ADMIN_TOKEN" \
+  -H "Authorization: Bearer $BACKEND_ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"hostname":"ark"}'
 ```
@@ -256,7 +256,7 @@ mkdir -p /.netra                                # filesystem marker directory
 docker compose up -d
 ```
 
-Only two variables are required: `NETRA_HUB_URL` and `NETRA_TOKEN`. The agent
+Only two variables are required: `AGENT_HUB_URL` and `AGENT_TOKEN`. The agent
 refuses to start without either. `deploy/agent/.env.example` marks every other
 variable as consumed today or specified-but-not-yet-consumed.
 
@@ -269,7 +269,7 @@ Two things that bite:
   `/mnt/ark/.netra`, …) bind-mounted to `/netra/fs/<label>`, never by mounting
   the data. `statfs()` reports the filesystem containing the path, so this gives
   full disk and inode metrics with zero data exposure. That target is where the
-  agent measures, never what it reports: `NETRA_FS_MOUNTS` in `.env` maps each
+  agent measures, never what it reports: `AGENT_FS_MOUNTS` in `.env` maps each
   label back to the host mount point, so the hub is told `/mnt/ark` rather than
   a path that exists only inside the container. `setup-agent.sh` writes both
   from the same detection, and repairs the mapping on a re-run.
@@ -278,7 +278,7 @@ Two things that bite:
 
 There is no unattended mode. Template `deploy/agent/compose.yaml.example` and
 `deploy/agent/.env.example` from whatever provisioning system you already run.
-(`NETRA_ANSWERS_FILE` exists, but it is the shell suite's test seam — positional
+(`AGENT_ANSWERS_FILE` exists, but it is the shell suite's test seam — positional
 answers, no compatibility promise — and is not a provisioning interface.)
 
 ---
@@ -303,7 +303,7 @@ cgroup v2 hierarchy — bound to `/host/sys/fs/cgroup`, granted automatically by
 both deploy paths — supplies the container **list** and every metric. The Docker
 socket only names them: without it containers still report in full, keyed by raw
 64-hex id instead of compose `project/service`. Do not point
-`NETRA_CGROUP_ROOT` at the agent's own `/sys/fs/cgroup`; Docker's default cgroup
+`AGENT_CGROUP_ROOT` at the agent's own `/sys/fs/cgroup`; Docker's default cgroup
 namespace is private, so that tree holds no other container's scope.
 
 `pid: host` is rendered unconditionally by both deploy paths, because two
@@ -370,7 +370,7 @@ build from the repository root as context (single `go.mod`), e.g.
 
 ```sh
 make test                                     # unit
-make test-integration                         # needs NETRA_TEST_DSN at a TimescaleDB
+make test-integration                         # needs BACKEND_TEST_DSN at a TimescaleDB
 make test-shell                               # shellcheck -s sh + the suite under dash
 ```
 

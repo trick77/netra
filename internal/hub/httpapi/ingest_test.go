@@ -231,7 +231,7 @@ func TestIntegrationIngestReasksOnHashDrift(t *testing.T) {
 	}
 
 	// A different hash means the agent's metadata (e.g. after an upgrade or
-	// an edited NETRA_LOCATION) no longer matches what the hub stored.
+	// an edited AGENT_LOCATION) no longer matches what the hub stored.
 	drifted := []byte{1, 1, 1, 1, 1, 1, 1, 1}
 	second := post(t, srv, token, &netrav1.IngestRequest{Seq: 2, MetadataHash: drifted})
 	decodeBody(t, second, &out)

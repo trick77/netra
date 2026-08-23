@@ -16,7 +16,7 @@ import (
 	"github.com/trick77/netra/internal/hub/store"
 )
 
-// testAdminToken is the NETRA_ADMIN_TOKEN the admin fixture is built with.
+// testAdminToken is the BACKEND_ADMIN_TOKEN the admin fixture is built with.
 const testAdminToken = "test-admin-token"
 
 // newAdminFixture builds a hub serving the full router -- ingest, health,

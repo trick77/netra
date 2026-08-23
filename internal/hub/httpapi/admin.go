@@ -14,7 +14,7 @@ import (
 
 type adminHandler struct {
 	svc *admin.Service
-	// hubURL is NETRA_HUB_URL, or empty when it is unset. Empty is passed
+	// hubURL is BACKEND_HUB_URL, or empty when it is unset. Empty is passed
 	// through as empty rather than as a guess: the UI says so and asks the
 	// operator, which is honest, where a wrong hostname in a setup command
 	// sends an agent token to whoever owns that name.
@@ -36,7 +36,7 @@ func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time,
 	mux := http.NewServeMux()
 	// The SPA cannot know the address agents post to: the browser reaches
 	// this hub on loopback, so its own location says nothing about the name
-	// agents use. NETRA_HUB_URL is that name, and the host admin page needs
+	// agents use. BACKEND_HUB_URL is that name, and the host admin page needs
 	// it to render a setup command an operator can paste.
 	//
 	// An unset value comes back as "" and the page renders no command at all,

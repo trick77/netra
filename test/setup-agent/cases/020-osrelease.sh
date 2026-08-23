@@ -2,15 +2,15 @@
 #
 # /etc/os-release parsing, the supported-OS floors, and package-manager
 # detection. These are unit tests: setup-agent.sh is sourced with
-# NETRA_SOURCED=1 so the guarded entrypoint does not run.
+# AGENT_SOURCED=1 so the guarded entrypoint does not run.
 set -eu
 # shellcheck source=/dev/null
 . "$LIB"
 
 SETUP="$REPO/setup-agent.sh"
 
-NETRA_SOURCED=1
-export NETRA_SOURCED
+AGENT_SOURCED=1
+export AGENT_SOURCED
 # shellcheck source=/dev/null
 . "$SETUP"
 
@@ -53,8 +53,8 @@ PWNED_BACKTICK=/tmp/netra-pwned-backtick
 # and make this case fail forever after.
 rm -f "$PWNED" "$PWNED_BACKTICK"
 
-NETRA_OSRELEASE_PATH=$(fixture os-release/injection)
-export NETRA_OSRELEASE_PATH
+AGENT_OSRELEASE_PATH=$(fixture os-release/injection)
+export AGENT_OSRELEASE_PATH
 init_paths
 OS_LINE=$(read_os_release)
 
@@ -76,8 +76,8 @@ assert_eq "" "$LIKE_" "a missing ID_LIKE yields an empty field"
 assert_eq 'Debian $(touch /tmp/netra-pwned)' "$PRETTY_" "PRETTY_NAME is unquoted verbatim"
 
 # Quoted and unquoted values from a real os-release.
-NETRA_OSRELEASE_PATH=$(fixture os-release/rocky9)
-export NETRA_OSRELEASE_PATH
+AGENT_OSRELEASE_PATH=$(fixture os-release/rocky9)
+export AGENT_OSRELEASE_PATH
 init_paths
 IFS='|' read -r ID_ VER_ LIKE_ PRETTY_ <<EOF
 $(read_os_release)
@@ -90,15 +90,15 @@ assert_eq "Rocky Linux 9.3 (Blue Onyx)" "$PRETTY_" "quoted PRETTY_NAME is unquot
 # --- 9. detect_pkgmgr ---------------------------------------------------------
 #
 # File existence first; ID/ID_LIKE only as the rpm fallback.
-NETRA_SETUP_ROOT=$(fixture root-debian12)
-export NETRA_SETUP_ROOT
-unset NETRA_OSRELEASE_PATH
+AGENT_SETUP_ROOT=$(fixture root-debian12)
+export AGENT_SETUP_ROOT
+unset AGENT_OSRELEASE_PATH
 init_paths
 assert_eq "dpkg" "$(detect_pkgmgr debian '')" "a dpkg status file wins"
 
 # rpm host: neither database exists and ID=rocky.
-NETRA_SETUP_ROOT=$(fixture root-rocky9)
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT=$(fixture root-rocky9)
+export AGENT_SETUP_ROOT
 init_paths
 assert_eq "rpm" "$(detect_pkgmgr rocky 'rhel centos fedora')" \
     "ID=rocky with no dpkg or apk database detects rpm"
@@ -110,8 +110,8 @@ assert_eq "none" "$(detect_pkgmgr voidlinux '')" \
 APKROOT="$TMP/apkroot"
 mkdir -p "$APKROOT/lib/apk/db"
 printf 'P:busybox\n' >"$APKROOT/lib/apk/db/installed"
-NETRA_SETUP_ROOT="$APKROOT"
-export NETRA_SETUP_ROOT
+AGENT_SETUP_ROOT="$APKROOT"
+export AGENT_SETUP_ROOT
 init_paths
 assert_eq "apk" "$(detect_pkgmgr alpine '')" "an apk installed database detects apk"
 
