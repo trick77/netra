@@ -14,6 +14,10 @@ export default defineConfig({
     proxy: {
       "/api": "http://127.0.0.1:8080",
       "/login": "http://127.0.0.1:8080",
+      // The rail's Sign out posts here. Without the entry the dev server
+      // answers it itself, and its SPA fallback only serves GET, so the post
+      // 404s instead of clearing the session.
+      "/logout": "http://127.0.0.1:8080",
     },
   },
   test: {
