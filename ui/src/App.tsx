@@ -65,6 +65,7 @@ import {
   Bell,
   CircleSlash,
   Gauge,
+  LogOut,
   Server,
   Settings2,
   type LucideIcon,
@@ -143,6 +144,17 @@ export default function App() {
             >
               Settings
             </NavLink>
+            {/* A form, not a link: POST /logout is what clears the cookie, and
+                a GET would let a prefetch or a link-scanner sign someone out.
+                Posting for real also means sign-out still works when the
+                bundle does not -- the same reason the login page it lands on
+                is server-rendered. */}
+            <form method="post" action="/logout" className="navform">
+              <button type="submit">
+                <LogOut aria-hidden="true" />
+                Sign out
+              </button>
+            </form>
           </div>
         </nav>
       </header>
