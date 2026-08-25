@@ -1220,7 +1220,8 @@ a:hover {
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
 }
-.nav a {
+.nav a,
+.nav button {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -1234,7 +1235,8 @@ a:hover {
     background 120ms ease,
     color 120ms ease;
 }
-.nav a:hover {
+.nav a:hover,
+.nav button:hover {
   background: var(--surface-2);
   color: var(--ink);
 }
@@ -1245,7 +1247,8 @@ a:hover {
    heavy and cluttered; 1.75 sits with the label instead of shouting over it.
    A CSS property beats the presentation attribute lucide sets, so this wins
    without threading a prop through every call site. */
-.nav a svg {
+.nav a svg,
+.nav button svg {
   width: 16px;
   height: 16px;
   stroke-width: 1.75;
@@ -1263,8 +1266,27 @@ a:hover {
   color: var(--ink);
   font-weight: 600;
 }
+/* Sign out is the one rail item that is a control rather than a destination,
+   because clearing the session is a POST. It is stripped back to the shape of
+   the links above it -- same padding, same icon size, same hover -- so the
+   rail reads as one list and not as four links and a button. */
+.nav button {
+  width: 100%;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* The form exists only to carry the method and action. display:contents keeps
+   it out of the layout so the button sits in .navgroup's flex column exactly
+   as a link would. */
+.navform {
+  display: contents;
+}
 @media (prefers-reduced-motion: reduce) {
-  .nav a {
+  .nav a,
+  .nav button {
     transition: none;
   }
 }

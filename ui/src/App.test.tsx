@@ -382,6 +382,23 @@ describe("the nav rail", () => {
     ).toHaveLength(1);
   });
 
+  // Sign-out is the one rail item that is not a link, and the distinction is
+  // load-bearing: POST /logout is what clears the cookie, and a GET would let
+  // anything that follows links end the session. The form's method and action
+  // are the whole feature, so they are what this pins.
+  it("signs out by posting to the route that clears the session", async () => {
+    render(<App />);
+    await screen.findByText("web-01");
+
+    const rail = within(screen.getByRole("navigation", { name: "Primary" }));
+    const button = rail.getByRole("button", { name: "Sign out" });
+
+    expect(button).toHaveAttribute("type", "submit");
+    const form = button.closest("form");
+    expect(form).toHaveAttribute("action", "/logout");
+    expect(form?.getAttribute("method")?.toLowerCase()).toBe("post");
+  });
+
   // The rail now precedes the content in DOM order on every page, so the skip
   // link is the only thing between a keyboard user and walking the whole nav.
   it("keeps a skip link that resolves to the main region", async () => {
