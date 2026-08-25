@@ -30,7 +30,7 @@ func TestSessionCookieExpires(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(c)
 
-	if httpapi.ValidSessionForTest("s3cret", req, now.Add(13*time.Hour)) {
+	if httpapi.ValidSessionForTest("s3cret", req, now.Add(31*24*time.Hour)) {
 		t.Error("an expired cookie validated")
 	}
 }

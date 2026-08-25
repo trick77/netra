@@ -1,29 +1,28 @@
 {{define "content"}}
-<h1>netra</h1>
+<main class="card">
+  <div class="brand">netra</div>
+  <p class="tag">Fleet monitoring for self-hosted Linux boxes.</p>
 
-<div class="card">
-  {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+  {{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
 
   {{if .OIDC}}
-  <p class="sub">Sign in to continue.</p>
-  <a href="/auth/login" class="primary button">Sign in</a>
+  <a href="/auth/login" class="btn primary go">Sign in</a>
 
   <details>
-    <summary class="muted">Use the admin token instead</summary>
-  {{else}}
-  <p class="sub">Enter the admin token to continue.</p>
+    <summary>Use the admin token instead</summary>
   {{end}}
 
-    <form method="post" action="/login">
-      <input type="password" name="token" placeholder="admin token"
+    <form method="post" action="/login" class="tokenform">
+      <input class="ctl" type="password" name="token" placeholder="Admin token"
+             autocomplete="current-password"
              {{if not .OIDC}}autofocus{{end}} required>
-      <button type="submit" class="primary">Log in</button>
+      <button type="submit" class="btn{{if not .OIDC}} primary go{{end}}">Log in</button>
+      <p class="note">This is <code>BACKEND_ADMIN_TOKEN</code> from the hub's
+      environment, not an agent token.</p>
     </form>
-    <p class="muted">This is <code>BACKEND_ADMIN_TOKEN</code> from the hub's
-    environment, not an agent token.</p>
 
   {{if .OIDC}}
   </details>
   {{end}}
-</div>
+</main>
 {{end}}

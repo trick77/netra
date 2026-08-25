@@ -51,6 +51,10 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	mux.Handle("POST /logout", login)
 	mux.Handle("GET /auth/login", login)
 	mux.Handle("GET /auth/callback", login)
+	// The login page's background art. Registered here rather than left to the
+	// catch-all below, which would send a signed-out browser's image request
+	// through RequireAdmin and answer it with a redirect to the login page.
+	mux.Handle("GET /login-cover.webp", login)
 
 	// Everything else is the single-page UI, behind the same admin token as
 	// the API. redirectToLogin stays true so a browser without a session

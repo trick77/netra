@@ -18,7 +18,15 @@ const sessionCookieName = "netra_session"
 
 // sessionTTL bounds how long a browser stays logged in without signing in
 // again -- with the admin token, or through the identity provider.
-const sessionTTL = 12 * time.Hour
+//
+// A month, because nothing renews it: the cookie is minted once and never
+// re-issued on use, so the TTL is the whole session and a short one means
+// signing in again on a schedule rather than after going idle. The provider
+// cannot set this for us -- the code flow ends at the callback, netra requests
+// no refresh token, and a hub with no issuer configured mints the same cookie
+// from the admin token. Rotating BACKEND_ADMIN_TOKEN still invalidates every
+// session at once, which is what keeps a long window affordable.
+const sessionTTL = 30 * 24 * time.Hour
 
 // sessionKey derives the cookie-signing key from the admin token.
 //
