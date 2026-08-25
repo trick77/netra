@@ -1,10 +1,14 @@
 package httpapi_test
 
 import (
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/trick77/netra/internal/hub/httpapi"
 )
 
 // The login page and the session it mints are all that is left of the
@@ -176,6 +180,41 @@ func TestIntegrationLoginFormRedirectsAnAlreadyValidSession(t *testing.T) {
 	}
 	if got := resp.Header.Get("Location"); got != "/" {
 		t.Errorf("Location = %q, want /", got)
+	}
+}
+
+// The login page's background art. A signed-out browser is the only kind that
+// ever asks for it, so it is served by the same handler as the page and stays
+// outside RequireAdmin. A wrong content type or a truncated body means a login
+// screen with a hole in it, which the page itself has no way to report.
+func TestLoginCoverIsServedWithoutASession(t *testing.T) {
+	// The handler alone, not newAdminFixture: this needs no database, and a
+	// test that skips without one would leave the route unexercised on every
+	// machine that has no DSN set.
+	srv := httptest.NewServer(httpapi.NewLoginHandler("token", nil))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL + "/login-cover.webp")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "image/webp" {
+		t.Errorf("content type = %q, want image/webp", got)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	// RIFF....WEBP, so this is the asset itself rather than an error page that
+	// happened to be labelled as an image.
+	if len(body) < 12 || string(body[:4]) != "RIFF" || string(body[8:12]) != "WEBP" {
+		t.Errorf("body is not webp (%d bytes)", len(body))
 	}
 }
 
