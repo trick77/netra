@@ -34,6 +34,18 @@ const (
 //go:embed templates/layout.gohtml templates/login.gohtml
 var templateFS embed.FS
 
+// loginCover is the sign-in screen's background art, carried in the binary for
+// the same reason the templates are: the login page is what an unauthenticated
+// browser sees, so everything it needs must be servable before the SPA bundle
+// is reachable and without a static directory to deploy alongside the hub.
+//
+// 71 KB of webp. It is decoration and nothing reads it, so the page states an
+// empty alt and the handler below is the only route outside RequireAdmin that
+// serves bytes rather than HTML.
+//
+//go:embed assets/login-cover.webp
+var loginCover []byte
+
 // loginHandler serves the no-JS login page and the session it mints.
 //
 // It stays server-rendered on purpose. The SPA posts to this same endpoint --
@@ -67,7 +79,22 @@ func NewLoginHandler(adminToken string, svc *oidc.Service) http.Handler {
 	mux.Handle("POST /logout", http.HandlerFunc(h.logout))
 	mux.Handle("GET /auth/login", http.HandlerFunc(h.oidcStart))
 	mux.Handle("GET /auth/callback", http.HandlerFunc(h.oidcCallback))
+	mux.Handle("GET /login-cover.webp", http.HandlerFunc(h.cover))
 	return mux
+}
+
+// cover serves the sign-in background.
+//
+// ServeContent rather than a bare Write so a conditional or ranged request is
+// answered properly; the zero modtime leaves Last-Modified off, which is right
+// for bytes that only ever change with the binary. The cache is long and the
+// name is not fingerprinted, so replacing the art means the old one lingers in
+// a browser that has it -- acceptable for a background nobody navigates to,
+// and the alternative is refetching it on every sign-in.
+func (h *loginHandler) cover(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "image/webp")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	http.ServeContent(w, r, "login-cover.webp", time.Time{}, bytes.NewReader(loginCover))
 }
 
 // oidcStart mints the state and nonce, then sends the browser to the provider.
