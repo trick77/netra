@@ -32,3 +32,20 @@ Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   writable: true,
 });
+
+// jsdom implements no layout and ships no ResizeObserver, and ChartPanel
+// measures its card to decide how wide to draw its chart. A stub that never
+// fires keeps every panel at the fallback width the charts were drawn at
+// before that measurement existed, which is the size the tests assert.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class NoopResizeObserver implements globalThis.ResizeObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    value: NoopResizeObserver,
+    configurable: true,
+    writable: true,
+  });
+}

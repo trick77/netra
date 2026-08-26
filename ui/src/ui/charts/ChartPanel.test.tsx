@@ -1,7 +1,64 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ChartPanel } from "./ChartPanel";
 import { ABSENT } from "../../lib/format";
+
+describe("ChartPanel width", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** A ResizeObserver that answers `px` for whatever it is asked to watch.
+   * jsdom implements no layout, so the measurement has to be stubbed rather
+   * than provoked -- test-setup installs one that never fires, which is what
+   * keeps every other test at the fallback width. */
+  function stubWidth(px: number) {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private cb: ResizeObserverCallback) {}
+        observe(el: Element) {
+          this.cb(
+            [{ target: el, contentRect: { width: px } } as ResizeObserverEntry],
+            this as unknown as ResizeObserver,
+          );
+        }
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  }
+
+  const series = [{ name: "busy", color: "var(--s1)", values: [1, 2, 3] }];
+
+  // The complaint: a card wider than the chart kept the difference as empty
+  // surface, because the drawing width was a constant and the CSS could only
+  // ever scale the SVG down.
+  it("draws the chart at the width its card gives it", () => {
+    stubWidth(520);
+    const { container } = render(<ChartPanel title="CPU" series={series} />);
+    expect(container.querySelector("svg.spark")?.getAttribute("width")).toBe(
+      "520",
+    );
+  });
+
+  // First paint, a detached container and jsdom all report nothing, and all
+  // three want the width the chart was drawn at before it was measured.
+  it("keeps the fallback width until a measurement arrives", () => {
+    const { container } = render(<ChartPanel title="CPU" series={series} />);
+    expect(container.querySelector("svg.spark")?.getAttribute("width")).toBe(
+      "260",
+    );
+  });
+
+  it("keeps the fallback width when the browser has no ResizeObserver", () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    const { container } = render(<ChartPanel title="CPU" series={series} />);
+    expect(container.querySelector("svg.spark")?.getAttribute("width")).toBe(
+      "260",
+    );
+  });
+});
 
 describe("ChartPanel", () => {
   it("draws one path per unbroken run, so a gap is a hole", () => {
