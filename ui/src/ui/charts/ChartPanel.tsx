@@ -19,6 +19,7 @@ import { minLabelGap, widestLabel } from "./plot";
 import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
 import { Enlargeable, type DetailData } from "./Enlargeable";
+import { useMeasuredWidth } from "./useMeasuredWidth";
 import type { Range } from "../../lib/range";
 
 /** A single plotted series. Re-exported as `Band` because that is the name
@@ -207,6 +208,16 @@ export function ChartPanel({
   fetchSeries,
   footer,
 }: ChartPanelProps) {
+  // The width the CARD gives the chart, not the constant it used to be drawn
+  // at -- see useMeasuredWidth for why the SVG is redrawn rather than scaled
+  // up. Called before the `unavailable` return below because a hook cannot
+  // sit behind a branch, and the measurement starts when the plot appears
+  // rather than on mount, which is the case that branch creates: a panel
+  // waiting on its family renders the not-collected card first and has no
+  // plot to measure yet.
+  const { ref: plotRef, width: plotWidth } =
+    useMeasuredWidth<HTMLDivElement>(width);
+
   if (unavailable !== undefined) {
     return (
       <section
@@ -309,9 +320,11 @@ export function ChartPanel({
           Date.parse(answered.from),
           Date.parse(answered.to),
           // Three labels is what 260px holds once the value gutter is taken
-          // out of it. timeTicks picks the coarsest step that yields at
-          // least this many, so they cannot collide.
-          3,
+          // out of it, and a panel drawn wider than that has room for more --
+          // a 520px chart with three time labels is a mostly unlabelled
+          // axis. timeTicks picks the coarsest step that yields at least
+          // this many, so they cannot collide however many are asked for.
+          Math.max(3, Math.round(plotWidth / 130)),
         );
   const tickText = (v: number) => (fmt ? fmt(v) : String(v));
   const widest =
@@ -334,88 +347,90 @@ export function ChartPanel({
       {/* The chart is the affordance -- see Enlargeable, which owns the
           button and the dialog so that a sparkline drawn without this card
           around it can carry the same one. */}
-      <Enlargeable
-        title={title}
-        unit={unit}
-        // The panel's own series, and its own `max` rather than
-        // `effectiveMax`: the dialog derives its ceiling from the data when
-        // no explicit one is given, which is what it has always done.
-        series={series}
-        detailSeries={detailSeries}
-        max={max}
-        // The panel's floor too, when it has a named one: a dialog opened
-        // from a 0-100 filesystem panel that rescaled itself to the data's
-        // own extent would redraw the shape the reader just clicked.
-        min={min}
-        fmt={fmt}
-        // A panel given neither a floor nor a ceiling derives BOTH from its
-        // own data (see `floor` above), and the dialog has to do the same or
-        // it redraws the shape the reader just clicked. Uptime is the case
-        // that shows it: a window from 39d 4h to 40d 3h is a rising diagonal
-        // in the panel and, against an assumed zero floor, a flat line
-        // pinned to the top of the dialog -- the enlarged view saying LESS
-        // than the 260px chart it was opened from.
-        //
-        // Only when nothing at all was pinned: a named max, a stack, a
-        // mirror or a reference rule each make the scale a decision rather
-        // than a derivation, and autoScale would throw it away.
-        autoScale={
-          !stacked &&
-          !mirrored &&
-          min === undefined &&
-          max === undefined &&
-          reference === undefined
-        }
-        stacked={stacked}
-        // The rule is unlabelled in both views: the enlarged view's y axis
-        // already names it at the height it sits, and the small panel names
-        // it in its header rather than inside the plot.
-        reference={reference}
-        mirrored={mirrored}
-        scaleFor={scaleFor}
-        tickBase={tickBase}
-        hideAxis={hideAxis}
-        window={answered}
-        range={range}
-        ranges={ranges}
-        fetchSeries={fetchSeries}
-      >
-        <Overlay
+      <div ref={plotRef} className="plotfit">
+        <Enlargeable
+          title={title}
+          unit={unit}
+          // The panel's own series, and its own `max` rather than
+          // `effectiveMax`: the dialog derives its ceiling from the data when
+          // no explicit one is given, which is what it has always done.
           series={series}
-          max={effectiveMax}
-          y={yTicks}
-          x={xTicks}
-          format={tickText}
-          grid={axis}
-          spine={axis}
-          labels={axis}
-          widestYLabel={widest}
-          // A stack is scaled from ZERO -- stackBands() has no min at all,
-          // it divides a running total by `max` -- so the reference rule has
-          // to be placed against the same floor. Without this, Overlay fell
-          // back to the data's own derived minimum: the dashed mem_total rule
-          // landed at the wrong height and the gap above the stack, which is
-          // the whole reading ("how much memory is free"), misstated it. The
-          // enlarged view has always passed min={0} and was already right,
-          // so the small panel and the chart it opened disagreed.
+          detailSeries={detailSeries}
+          max={max}
+          // The panel's floor too, when it has a named one: a dialog opened
+          // from a 0-100 filesystem panel that rescaled itself to the data's
+          // own extent would redraw the shape the reader just clicked.
+          min={min}
+          fmt={fmt}
+          // A panel given neither a floor nor a ceiling derives BOTH from its
+          // own data (see `floor` above), and the dialog has to do the same or
+          // it redraws the shape the reader just clicked. Uptime is the case
+          // that shows it: a window from 39d 4h to 40d 3h is a rising diagonal
+          // in the panel and, against an assumed zero floor, a flat line
+          // pinned to the top of the dialog -- the enlarged view saying LESS
+          // than the 260px chart it was opened from.
           //
-          // Scoped to the stacked case rather than passed unconditionally:
-          // effectiveMin also feeds linePath() for the non-stacked panels,
-          // where auto-scaling off the data's floor is deliberate -- a
-          // temperature series between 44 and 47 degrees must not be drawn
-          // as a flat line pinned to the bottom of a 0-47 box.
-          min={stacked ? 0 : min}
-          width={width}
-          height={height}
-          highlight={highlight}
+          // Only when nothing at all was pinned: a named max, a stack, a
+          // mirror or a reference rule each make the scale a decision rather
+          // than a derivation, and autoScale would throw it away.
+          autoScale={
+            !stacked &&
+            !mirrored &&
+            min === undefined &&
+            max === undefined &&
+            reference === undefined
+          }
           stacked={stacked}
-          legend={legend}
+          // The rule is unlabelled in both views: the enlarged view's y axis
+          // already names it at the height it sits, and the small panel names
+          // it in its header rather than inside the plot.
           reference={reference}
           mirrored={mirrored}
-          scale={scale}
-          label={`${title} over time`}
-        />
-      </Enlargeable>
+          scaleFor={scaleFor}
+          tickBase={tickBase}
+          hideAxis={hideAxis}
+          window={answered}
+          range={range}
+          ranges={ranges}
+          fetchSeries={fetchSeries}
+        >
+          <Overlay
+            series={series}
+            max={effectiveMax}
+            y={yTicks}
+            x={xTicks}
+            format={tickText}
+            grid={axis}
+            spine={axis}
+            labels={axis}
+            widestYLabel={widest}
+            // A stack is scaled from ZERO -- stackBands() has no min at all,
+            // it divides a running total by `max` -- so the reference rule has
+            // to be placed against the same floor. Without this, Overlay fell
+            // back to the data's own derived minimum: the dashed mem_total rule
+            // landed at the wrong height and the gap above the stack, which is
+            // the whole reading ("how much memory is free"), misstated it. The
+            // enlarged view has always passed min={0} and was already right,
+            // so the small panel and the chart it opened disagreed.
+            //
+            // Scoped to the stacked case rather than passed unconditionally:
+            // effectiveMin also feeds linePath() for the non-stacked panels,
+            // where auto-scaling off the data's floor is deliberate -- a
+            // temperature series between 44 and 47 degrees must not be drawn
+            // as a flat line pinned to the bottom of a 0-47 box.
+            min={stacked ? 0 : min}
+            width={plotWidth}
+            height={height}
+            highlight={highlight}
+            stacked={stacked}
+            legend={legend}
+            reference={reference}
+            mirrored={mirrored}
+            scale={scale}
+            label={`${title} over time`}
+          />
+        </Enlargeable>
+      </div>
       {notice && <p className="note">{notice}</p>}
       {/* Under the chart, inside the panel. The `unavailable` branch above
           returns before reaching this, which is the point: a meter beneath

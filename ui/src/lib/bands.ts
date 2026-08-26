@@ -161,18 +161,22 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
  * `normalise` decides which of two true charts this is, and the choice is
  * forced by where it is drawn:
  *
- * - Normalised (the fleet list): every core is divided by the core count, so
- *   the top of the stack is the MEAN across cores -- cpu_total -- and a
- *   4-core and a 32-core host can share one 0-100 cell and stay comparable.
- *   The cost is that a band's value is that core's share of the host total,
- *   not its own utilisation: a core at 43% busy on a 32-core box reads 1.3.
- * - Raw (the host page): each band is the core's real utilisation, so every
- *   number in the tooltip and the stats table is the number that core
- *   actually reported. The stack then runs to N x 100, which is why the
- *   chart drawing it hides its y axis -- the height is a shape, not a
- *   quantity. This is what beszel does, and it is right there: one host,
- *   no cross-host comparison to protect, and a reader who wants to know
- *   what core 7 is doing.
+ * - Normalised (the fleet list, and the host page's Overview and System
+ *   charts): every core is divided by the core count, so the top of the
+ *   stack is the MEAN across cores -- cpu_total -- and a 4-core and a
+ *   32-core host can share one 0-100 cell and stay comparable. It is also
+ *   what lets a panel be pinned to a 0-100 axis, so a reader can tell an
+ *   idle host from a busy one without enlarging it. The cost is that a
+ *   band's value is that core's share of the host total, not its own
+ *   utilisation: a core at 43% busy on a 32-core box reads 1.3, so a chart
+ *   drawing these needs a formatter with the decimals to say so.
+ * - Raw (the System tab's "CPU cores" panel, and nothing else): each band is
+ *   the core's real utilisation, so every number in the tooltip and the
+ *   stats table is the number that core actually reported. The stack then
+ *   runs to N x 100, which is why the chart drawing it hides its y axis --
+ *   the height is a shape, not a quantity. This is what beszel does, and it
+ *   is right there: one host, no cross-host comparison to protect, and a
+ *   reader who wants to know what core 7 is doing.
  *
  * N is the response's own series count, never the host's inventory `threads`:
  * the two disagree when a core stops reporting mid-window, and only the

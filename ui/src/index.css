@@ -2071,6 +2071,44 @@ details.sysfold > .body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The host overview's cards, in columns that are PLACED rather than poured.
+   Each column is its own stack, so cards pack top-down inside it and a
+   column ends where its cards end -- the same trade `.grid2` below makes,
+   without the balancing: which card goes in which column is stated in
+   Overview.tsx's CARD_COLUMNS, and the count here is the only thing the
+   viewport decides. Keep these two widths in step with TWO_COLUMNS and
+   THREE_COLUMNS there; a page that thinks it has three columns while this
+   file draws two would place a card nobody can see. */
+.cardcols {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+.cardcol {
+  /* 1 1 0, not `1`: `flex: 1` leaves the basis at 0% and a column holding a
+     chart drawn at the width it just measured would otherwise size itself
+     from that content and never give the width back. */
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* A card in a column owns its own bottom gap, as `.grid2 > *` does -- the
+   column is not a gapped flex container, because an empty card (a host with
+   no sensors renders nothing at all) would still take a gap. */
+.cardcol > * {
+  margin-bottom: var(--space-4);
+}
+/* A card WRAPPED in a section for its aria-label would otherwise add .card's
+   own margin to the wrapper's. Same rule, same reason, as `.grid2 > * .card`
+   below. */
+.cardcol > * .card {
+  margin-bottom: 0;
+}
+@media (max-width: 899px) {
+  .cardcols {
+    display: block;
+  }
+}
+
 /* Two columns that PACK rather than align.
    As a grid, every row was as tall as its taller card and the shorter one
    left a hole -- a 119px Processor beside a 204px Memory, with 85px of
@@ -2109,14 +2147,6 @@ details.sysfold > .body {
 .grid2 > * .card {
   margin-bottom: 0;
 }
-/* Forces the column break in front of one card. `display: block` is the point:
-   the rule above makes every column child inline-block for its margins, and an
-   inline-block box ignores break-before -- the property is silently dead
-   without this. */
-.grid2 > .colbreak {
-  display: block;
-  break-before: column;
-}
 .hosthead {
   display: flex;
   align-items: center;
@@ -2136,6 +2166,14 @@ details.sysfold > .body {
 .hosthead .meta {
   font-size: var(--text-label);
   color: var(--muted);
+}
+/* The box a panel MEASURES to decide how wide to draw its chart (see
+   useMeasuredWidth). It carries no look of its own -- min-width is the whole
+   rule, and for the reason .smp states: a grid item defaults to its
+   content's width, and a block holding a chart drawn at the width it just
+   measured would ratchet its own track wider and never shrink back. */
+.plotfit {
+  min-width: 0;
 }
 .chartwrap {
   position: relative;

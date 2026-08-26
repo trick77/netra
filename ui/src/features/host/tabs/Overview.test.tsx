@@ -141,6 +141,23 @@ function agentMetrics(dropped: number) {
   });
 }
 
+// family=cpu_core: one series per logical CPU, each reporting `busy`. Four
+// nearly idle cores, which is the shape the fixed axis exists for.
+function coreMetrics() {
+  return response({
+    family: "cpu_core",
+    key_columns: ["core"],
+    columns: ["busy"],
+    series: ["0", "1", "2", "3"].map((core) => ({
+      key: { core },
+      points: [
+        ["2026-08-10T00:59:00Z", 5],
+        ["2026-08-10T01:00:00Z", 6],
+      ] as [string, number][],
+    })),
+  });
+}
+
 function renderOverview(over: Partial<Parameters<typeof Overview>[0]> = {}) {
   return render(
     <Overview
@@ -435,13 +452,13 @@ describe("Overview", () => {
   // The band is the first thing on the tab and spans the page, so a healthy
   // host must not spend that position on a box saying nothing. One quiet line
   // confirms the check ran instead -- the same rule the fleet band follows.
-  // .grid2 is a CSS multi-column flow, so a card placed first inside it only
-  // reaches the top of the LEFT column. The band has to be outside the grid
-  // altogether to span the page and be read first.
+  // A card inside .cardcols only ever reaches the top of ONE column, at a
+  // third or a half of the page's width. The band has to be outside the
+  // columns altogether to span the page and be read first.
   it("puts the band above the card grid, not inside it", () => {
     const { container } = renderOverview({ agentMetrics: agentMetrics(12) });
     const band = screen.getByRole("region", { name: /needs attention/i });
-    const grid = container.querySelector(".grid2");
+    const grid = container.querySelector(".cardcols");
     expect(grid).not.toBeNull();
     expect(grid?.contains(band)).toBe(false);
     expect(
@@ -449,14 +466,13 @@ describe("Overview", () => {
     ).toBeTruthy();
   });
 
-  // The System card is lifted out for a different reason: a multi-column flow
-  // has no top-right slot to reorder a card into, so full width above the flow
-  // is the only position that holds. Inside .grid2 it drifts with the break
-  // point the browser picks from content height.
+  // The System card is lifted out for a different reason: it is a strip of
+  // eight facts about the machine rather than a reading, and full width above
+  // the columns is where it can be laid out four across.
   it("puts the System card above the card grid, not inside it", () => {
     const { container } = renderOverview();
     const system = screen.getByRole("region", { name: "System" });
-    const grid = container.querySelector(".grid2");
+    const grid = container.querySelector(".cardcols");
     expect(grid).not.toBeNull();
     expect(grid?.contains(system)).toBe(false);
     expect(
@@ -503,14 +519,53 @@ describe("Overview", () => {
     expect(processor.getAttribute("title")).toBe(processor.textContent);
   });
 
-  // Traffic took the slot System left: first in the flow is the top of the
-  // LEFT column, and the network is the subsystem most likely to explain a
-  // problem.
+  // Traffic heads the first column, as it heads the fleet table's charts.
   it("leads the card grid with Traffic", () => {
     const { container } = renderOverview();
-    const grid = container.querySelector(".grid2");
-    const first = grid?.firstElementChild;
+    const first = container.querySelector(".cardcol")?.firstElementChild;
     expect(first?.getAttribute("aria-label")).toBe("Traffic");
+  });
+
+  // The whole point of CARD_COLUMNS: a card sits where the table says, not
+  // where a balancer put it. jsdom answers no media query, so the page lays
+  // itself out in the single column, which is also the one arrangement whose
+  // order a test can read straight off the DOM.
+  it("places the cards in fleet order, one column, whatever the host carries", () => {
+    const { container } = renderOverview();
+    const columns = container.querySelectorAll(".cardcol");
+    expect(columns.length).toBe(1);
+
+    const titles = [...columns[0]!.children].map(
+      (card) =>
+        card.getAttribute("aria-label") ??
+        card.querySelector("h3, h4")?.textContent,
+    );
+    // Traffic, CPU, memory, disk -- the fleet row's own order -- and the
+    // cards this fixture's host has nothing to draw simply are not here.
+    expect(titles.slice(0, 5)).toEqual([
+      "Traffic",
+      "Processor",
+      "Memory",
+      // No memory series in this fixture, so the trend card states that --
+      // it is still the card in that slot.
+      "Memory, not collected",
+      "Disk",
+    ]);
+  });
+
+  // The complaint this replaced: an idle host filled the box exactly as a
+  // busy one did, because the per-core stack auto-scaled to its own peak with
+  // its axis hidden. The panel is a percentage of the host now, pinned 0-100
+  // like the fleet cell and the System tab's CPU panel.
+  it("draws the Processor panel against a fixed 0-100 axis", () => {
+    renderOverview({ coreMetrics: coreMetrics() });
+    const panel = screen.getByRole("region", { name: "Processor chart" });
+    const labels = [...panel.querySelectorAll("text.axislab")].map(
+      (t) => t.textContent,
+    );
+
+    expect(labels).toContain("0%");
+    expect(labels).toContain("100%");
   });
 
   it("says so in one line when nothing is wrong, without the band", () => {
