@@ -24,7 +24,9 @@ import { useCallback, useEffect, useState } from "react";
  * detached or zero-width container, and jsdom, which implements no layout at
  * all and reports 0 for everything.
  */
-export function useMeasuredWidth<T extends HTMLElement>(fallback: number): {
+export function useMeasuredWidth<T extends HTMLElement>(
+  fallback: number,
+): {
   ref: (node: T | null) => void;
   width: number;
 } {

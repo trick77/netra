@@ -452,9 +452,9 @@ describe("Overview", () => {
   // The band is the first thing on the tab and spans the page, so a healthy
   // host must not spend that position on a box saying nothing. One quiet line
   // confirms the check ran instead -- the same rule the fleet band follows.
-  // .grid2 is a CSS multi-column flow, so a card placed first inside it only
-  // reaches the top of the LEFT column. The band has to be outside the grid
-  // altogether to span the page and be read first.
+  // A card inside .cardcols only ever reaches the top of ONE column, at a
+  // third or a half of the page's width. The band has to be outside the
+  // columns altogether to span the page and be read first.
   it("puts the band above the card grid, not inside it", () => {
     const { container } = renderOverview({ agentMetrics: agentMetrics(12) });
     const band = screen.getByRole("region", { name: /needs attention/i });

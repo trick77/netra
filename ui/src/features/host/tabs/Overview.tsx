@@ -1157,7 +1157,25 @@ export function Overview({
             // tab's CPU panel, which is what those two comments already
             // claimed this panel was.
             max={100}
-            fmt={(n) => percent(n)}
+            // Two decimals once the bands are normalised, and for the reason
+            // the System tab's twin panel already formats that way: a band is
+            // that core's SHARE of the host, busy/N, so on a 32-core box a
+            // core at 43 % busy is 1.3 and an idle one is 0.15. Rounded to
+            // whole percent, the enlarged view's stats table -- latest, min,
+            // max, mean, per core -- reads "0%" in every cell on any host
+            // with more than a handful of cores, which is the table saying
+            // nothing at all. round() drops trailing zeros, so the y axis
+            // still reads 0%, 50%, 100%.
+            //
+            // Only the per-core branch: the cpu_total fallback is one band
+            // that already is a percentage of the host, and it keeps the
+            // whole-number reading it has always had.
+            fmt={perCore.length > 0 ? (n) => percent(n, 2) : (n) => percent(n)}
+            // The headline stays whole-percent whichever branch drew the
+            // bands. It is cpu_total -- the machine's own figure, read in
+            // passing beside the title -- and "12.34%" there is false
+            // precision next to the Memory card's "47%".
+            nowFmt={(n) => percent(n)}
             // The host's CPU, not core 0's.
             //
             // A panel with more than one band headlines series[0] and names
@@ -1597,12 +1615,13 @@ export function Overview({
   return (
     <>
       {/* Above the cards, not among them.
-          .grid2 is a CSS multi-column flow, so a card placed first in it only
-          reaches the top of the LEFT column -- what is wrong with the host sat
-          eighth, below the disk meters, at the width of half the page. It is
-          the first thing on this tab that must be read, so it is lifted out of
-          the flow entirely and spans the page. The System card below it is
-          hoisted the same way for a different reason -- see there.
+          A card inside .cardcols only ever reaches the top of ONE column, at
+          a third or a half of the page's width -- and under the old balanced
+          flow it did not even reach that reliably: what is wrong with the
+          host sat eighth, below the disk meters. It is the first thing on
+          this tab that must be read, so it is lifted out of the columns
+          entirely and spans the page. The System card below it is hoisted the
+          same way for a different reason -- see there.
 
           Present only when something is wrong, the same rule the fleet band
           follows: a permanently visible "All clear" box in the best position
@@ -1660,11 +1679,12 @@ export function Overview({
 
       {/* Out of the flow, like the attention band -- but not because it has to
           be read first. It is the machine's identity card, and it was asked
-          for at the top right of the page. .grid2 is a CSS multi-column flow,
-          not a grid: cards run down the left column and then down the right,
-          and the browser picks the break point from content height, so there
-          is no top-right slot to reorder a card into. Full width above the
-          flow is the position the mechanism can actually hold.
+          for at the top right of the page. The columns cannot give it one:
+          the head of the last .cardcol is a third of the page wide, and this
+          card is eight facts laid out four across -- at that width the strip
+          wraps to two facts a row and the card is taller than the chart
+          beside it. Full width above the columns is the position it can
+          actually hold.
 
           Shut by default, and that is the change here. Writing the eight
           facts label-above-value four across took the block from ~170px to
