@@ -127,6 +127,11 @@ export type Container = {
   name: string | null;
   image: string | null;
   is_agent: boolean;
+  /** When this container's newest sample was taken, from the agent's clock.
+   * The agent reports what is RUNNING, so a container that was removed --
+   * or stopped -- simply stops appearing, and this is the only thing that
+   * says so. Never null: the hub stamps it on the first upsert. */
+  last_seen: string;
 };
 
 // internal/hub/read/inventory.go: Filesystem
@@ -477,6 +482,24 @@ export function rotateHostToken(
 
 export function deleteHost(id: number | string): Promise<void> {
   return request<void>(`/api/v1/hosts/${id}`, { method: "DELETE" });
+}
+
+/**
+ * Removes one container from a host's inventory, its stored samples with it.
+ *
+ * The operator's answer to a row for a container that was removed on the
+ * host: nothing on the wire says a container is gone -- it just stops being
+ * reported, exactly as a stopped one does -- so netra cannot delete the row
+ * on its own without also deleting the history of everything that merely
+ * paused.
+ */
+export function purgeContainer(
+  hostId: number | string,
+  containerId: number | string,
+): Promise<void> {
+  return request<void>(`/api/v1/hosts/${hostId}/containers/${containerId}`, {
+    method: "DELETE",
+  });
 }
 
 // EventsParams mirrors internal/hub/httpapi/read.go's events() query

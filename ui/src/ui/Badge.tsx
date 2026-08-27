@@ -35,7 +35,16 @@ export function Badge({ severity = "neutral", children }: BadgeProps) {
   const className = severityClass ? `badge ${severityClass}` : "badge";
   return (
     <span className={className}>
-      <span className="dot" aria-hidden="true" />
+      {/* NO DOT ON A NEUTRAL BADGE. The dot is the severity mark -- it is
+          what carries meaning when hue cannot (see the file header) -- and a
+          neutral badge has no severity to mark: "agent" and "gone" are
+          identities and facts. Painted --muted it read as a status the badge
+          was declining to name, which is worse than saying nothing. What
+          makes a neutral badge an object is its chip ground, which it keeps
+          and a status badge sheds. */}
+      {severityClass === null ? null : (
+        <span className="dot" aria-hidden="true" />
+      )}
       {children}
     </span>
   );

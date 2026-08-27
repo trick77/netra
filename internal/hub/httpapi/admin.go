@@ -47,6 +47,8 @@ func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time,
 	mux.Handle("POST /api/v1/hosts", http.HandlerFunc(h.create))
 	mux.Handle("POST /api/v1/hosts/{id}/token", http.HandlerFunc(h.rotate))
 	mux.Handle("DELETE /api/v1/hosts/{id}", http.HandlerFunc(h.delete))
+	mux.Handle("DELETE /api/v1/hosts/{id}/containers/{containerID}",
+		http.HandlerFunc(h.deleteContainer))
 	mux.Handle("GET /api/v1/sites", http.HandlerFunc(h.listSites))
 	mux.Handle("POST /api/v1/sites", http.HandlerFunc(h.createSite))
 	mux.Handle("PATCH /api/v1/sites/{id}", http.HandlerFunc(h.patchSite))
@@ -116,6 +118,35 @@ func (h *adminHandler) delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.svc.DeleteHost(r.Context(), id); err != nil {
+		writeAdminError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteContainer purges one container from a host's inventory, samples and
+// all.
+//
+// A DELETE rather than a flag, because there is nothing to flag: the agent
+// reports what is RUNNING, so a container that was removed is simply absent
+// from every scrape after it, exactly like one that is stopped or one whose
+// host is offline. The UI marks a row gone from its last_seen and offers this
+// to the operator, who is the only party that knows which of the three it was.
+func (h *adminHandler) deleteContainer(w http.ResponseWriter, r *http.Request) {
+	hostID, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	containerID, ok := parseID(r.PathValue("containerID"))
+	if !ok {
+		writeJSON(w, http.StatusBadRequest,
+			map[string]string{"error": "container id must be an integer"})
+		return
+	}
+
+	if err := h.svc.DeleteContainer(r.Context(), hostID, containerID); err != nil {
 		writeAdminError(w, r, err)
 		return
 	}

@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ABSENT } from "../../lib/format";
 import { Table } from "../../ui/Table";
+import { userEvent } from "@testing-library/user-event";
 import {
   composeIdentity,
   containerColumns,
   containerGroupTotals,
   ContainerGroupTotals,
+  containerIsGone,
+  GONE_AFTER_S,
   lastReported,
   trendScales,
   type ContainerRow,
@@ -19,6 +22,7 @@ function makeRow(overrides: Partial<ContainerRow> = {}): ContainerRow {
     name: "shop-web-1",
     image: "nginx:1.27",
     is_agent: false,
+    last_seen: "2026-08-10T14:00:00Z",
     host_id: 7,
     hostname: "web-01",
     ...overrides,
@@ -112,11 +116,15 @@ describe("containerColumns", () => {
     expect(badge.className).not.toContain("st-ok");
   });
 
+  // Last seen is NOT a trend column: it comes off the listing itself, so it
+  // is there whether or not anyone asked for metrics -- and it is the only
+  // column that still says something about a container that has stopped
+  // reporting entirely.
   it("has no trend columns when nobody fetched metrics", () => {
     renderRows([makeRow()]);
     expect(
       screen.getAllByRole("columnheader").map((h) => h.textContent),
-    ).toEqual(["Container", "Image"]);
+    ).toEqual(["Container", "Image", "Last seen"]);
   });
 
   // The one filled colour a container row can honestly carry, and the one
@@ -253,5 +261,113 @@ describe("ContainerGroupTotals", () => {
     expect(container.querySelector(".meter")).toBeNull();
     expect(screen.getByText("/ 4.1 kB")).toBeInTheDocument();
     expect(screen.getAllByText(ABSENT)).toHaveLength(2);
+  });
+});
+
+// The rule that decides both the pill and whether a purge is offered.
+describe("containerIsGone", () => {
+  const HOST_SEEN = "2026-08-10T14:00:00Z";
+  const hostMs = Date.parse(HOST_SEEN);
+  const at = (offsetS: number) =>
+    new Date(hostMs - offsetS * 1000).toISOString();
+
+  it("is gone once its host kept reporting well past its own last sample", () => {
+    const row = makeRow({
+      host_last_seen: HOST_SEEN,
+      last_seen: at(GONE_AFTER_S + 60),
+    });
+    expect(containerIsGone(row)).toBe(true);
+  });
+
+  it("is not gone inside the window", () => {
+    const row = makeRow({
+      host_last_seen: HOST_SEEN,
+      last_seen: at(GONE_AFTER_S - 60),
+    });
+    expect(containerIsGone(row)).toBe(false);
+  });
+
+  // The whole reason the rule is not `now() - last_seen`. A host that has
+  // been offline for a week drags every container on it into the past
+  // together, and marking all of them gone would offer to delete the history
+  // of a machine that is merely unreachable.
+  it("marks nothing gone on a host that went quiet with it", () => {
+    const row = makeRow({
+      host_last_seen: at(0),
+      last_seen: at(30),
+    });
+    expect(containerIsGone(row)).toBe(false);
+  });
+
+  // Nothing to measure against, and the wrong direction to fail in is the
+  // one that offers to delete something.
+  it("is not gone when the host has never reported", () => {
+    expect(containerIsGone(makeRow({ host_last_seen: null }))).toBe(false);
+    expect(containerIsGone(makeRow({ host_last_seen: undefined }))).toBe(false);
+  });
+
+  it("is not gone when a timestamp does not parse", () => {
+    const row = makeRow({ host_last_seen: HOST_SEEN, last_seen: "not a date" });
+    expect(containerIsGone(row)).toBe(false);
+  });
+});
+
+describe("the gone pill and the purge action", () => {
+  const HOST_SEEN = "2026-08-10T14:00:00Z";
+  const goneRow = (overrides: Partial<ContainerRow> = {}) =>
+    makeRow({
+      host_last_seen: HOST_SEEN,
+      last_seen: new Date(
+        Date.parse(HOST_SEEN) - (GONE_AFTER_S + 3600) * 1000,
+      ).toISOString(),
+      ...overrides,
+    });
+
+  it("pills a gone row and leaves a reporting one alone", () => {
+    renderRows([goneRow()]);
+    expect(screen.getByText("gone")).toBeInTheDocument();
+
+    screen.getByText("gone").remove();
+    renderRows([makeRow({ host_last_seen: HOST_SEEN })]);
+    expect(screen.queryByText("gone")).toBeNull();
+  });
+
+  // The pill is a fact, not a severity: no status dot, the same shape the
+  // agent badge has.
+  it("draws the pill with no status dot", () => {
+    const { container } = renderRows([goneRow()]);
+    const badge = screen.getByText("gone").closest(".badge")!;
+    expect(badge.querySelector(".dot")).toBeNull();
+    expect(container.querySelector(".badge.st-crit")).toBeNull();
+  });
+
+  // The fleet list passes no onPurge, and this is what that buys: no column,
+  // no button, nothing to mis-click several hundred rows from the host.
+  it("offers no purge at all when the caller passed no handler", () => {
+    renderRows([goneRow()]);
+    expect(screen.queryByRole("button", { name: /purge/i })).toBeNull();
+  });
+
+  it("offers purge on a gone row only", () => {
+    renderRows([goneRow(), makeRow({ id: 2, host_last_seen: HOST_SEEN })], {
+      onPurge: () => {},
+    });
+    expect(screen.getAllByRole("button", { name: "Purge" })).toHaveLength(1);
+  });
+
+  it("asks for a confirm before it calls the handler", async () => {
+    const user = userEvent.setup();
+    const onPurge = vi.fn();
+    renderRows([goneRow()], { onPurge, purgeConfirming: null });
+    await user.click(screen.getByRole("button", { name: "Purge" }));
+    expect(onPurge).toHaveBeenCalledTimes(1);
+
+    // The caller owns the two-step state, so the second render is what a
+    // confirming row looks like.
+    screen.getByRole("button", { name: "Purge" }).remove();
+    renderRows([goneRow()], { onPurge, purgeConfirming: 1 });
+    expect(
+      screen.getByRole("button", { name: "Confirm purge" }),
+    ).toBeInTheDocument();
   });
 });

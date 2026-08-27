@@ -48,6 +48,7 @@ function makeContainer(overrides: Partial<ContainerRow> = {}): ContainerRow {
     name: "postgres",
     image: "postgres:16",
     is_agent: false,
+    last_seen: "2026-08-10T14:00:00Z",
     host_id: 1,
     hostname: "web-01",
     ...overrides,

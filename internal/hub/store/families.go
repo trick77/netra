@@ -339,10 +339,31 @@ func (s *Store) InsertSensorSamples(ctx context.Context, hostID int32, rows []*n
 // The image is updated on conflict because a service that was redeployed has a
 // new one, and leaving the old value would describe a container that no longer
 // exists.
+//
+// last_seen is stamped from the SAMPLE's own ts rather than from now(), for
+// the reason resolveDeviceIDs states at length: the agent's ring buffer hands
+// over hours-old scrapes after a hub outage, and now() would date every one of
+// them to the moment they landed -- reporting a container as seen "just now"
+// on samples taken overnight, which is the exact opposite of the staleness cue
+// the Containers table reads this column for.
 func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*netrav1.ContainerSample) (map[string]int32, error) {
 	out := make(map[string]int32)
 	if len(rows) == 0 {
 		return out, nil
+	}
+
+	// The NEWEST row per container, not the first one seen: a batch can span
+	// several scrapes, and name, image and last_seen all come from that same
+	// newest row rather than from whichever arrived first.
+	newest := make(map[string]*netrav1.ContainerSample, len(rows))
+	for _, r := range rows {
+		key := r.GetContainerKey()
+		if key == "" {
+			continue
+		}
+		if prev, ok := newest[key]; !ok || r.GetTsMs() > prev.GetTsMs() {
+			newest[key] = r
+		}
 	}
 
 	// tried records every key this batch has already attempted, INCLUDING the
@@ -353,20 +374,25 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 	// agent keeps re-sending it.
 	tried := make(map[string]bool, len(rows))
 
-	for _, r := range rows {
-		key := r.GetContainerKey()
+	for _, row := range rows {
+		key := row.GetContainerKey()
 		if key == "" || tried[key] {
 			continue
 		}
 		tried[key] = true
+		r := newest[key]
 
+		// GREATEST, so an out-of-order replay cannot walk last_seen backwards
+		// and mark a container gone in the UI while its newest sample is
+		// current.
 		id, ok, err := s.resolveOne(ctx, "container", key, `
-			INSERT INTO containers (host_id, container_key, name, image, is_agent)
-			VALUES ($1, $2, $3, $4, $5)
+			INSERT INTO containers (host_id, container_key, name, image, is_agent, last_seen)
+			VALUES ($1, $2, $3, $4, $5, $6)
 			ON CONFLICT (host_id, container_key) DO UPDATE
-			   SET name = EXCLUDED.name, image = EXCLUDED.image, is_agent = EXCLUDED.is_agent
+			   SET name = EXCLUDED.name, image = EXCLUDED.image, is_agent = EXCLUDED.is_agent,
+			       last_seen = GREATEST(containers.last_seen, EXCLUDED.last_seen)
 			RETURNING id`,
-			hostID, key, r.GetName(), r.GetImage(), r.GetIsAgent())
+			hostID, key, r.GetName(), r.GetImage(), r.GetIsAgent(), tsOf(r.GetTsMs()))
 		if err != nil {
 			return nil, err
 		}
