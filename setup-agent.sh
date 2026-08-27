@@ -531,10 +531,11 @@ Options:
                            cgroup v2 host netra has no name for. The warning is
                            still printed and still reported; only the prompt
                            goes away. A no-op on a known distro.
-      --assume-physical    Treat this host as bare metal even if it looks
-                           virtual. Virtual disks carry no SMART data, so SMART
-                           is skipped on a detected hypervisor; this overrides
-                           that.
+      --assume-physical    Accepted and does nothing. SMART is no longer
+                           skipped on a host that looks virtual: the agent
+                           scans for drives at runtime, so a guest with a
+                           passed-through controller finds them by itself and
+                           there is nothing left to override.
       --force              Required to overwrite an existing .env.
       --start              Run `docker compose up -d` at the end.
       --token VALUE        Agent token minted by the hub (starts with nta_).
@@ -1512,6 +1513,15 @@ check_selinux() {
 
 # block_devices — whole physical devices.
 #
+# The two probes below survive the move of drive discovery into the agent, and
+# only these two. They serve plan_drivetemp, which loads a kernel module and
+# writes /etc/modules-load.d on the host -- a change to the machine, which is
+# this script's job in a way that describing the machine to the agent is not.
+#
+# What they no longer feed is a devices: list. Nothing here decides which
+# drives are real or whether a host is virtual; a guest with a passed-through
+# controller has ATA drives like any other host, and drivetemp is verified
+# empirically rather than predicted.
 # $P_SYSBLOCK is /sys/block, where the entries are ALREADY only whole devices:
 # a partition is a subdirectory of its parent (/sys/block/sda/sda1), not a
 # top-level entry. Filtering partitions out is therefore not this function's
@@ -1569,165 +1579,58 @@ device_transport() {
     esac
 }
 
-# nvme_controllers — /dev/nvme0-style CONTROLLER names, never namespaces.
+# plan_smart — grants the SMART privileges. It probes NOTHING.
 #
-# /sys/block/nvme0n1 is a NAMESPACE. smartctl is given the controller, and a
-# drive with two namespaces must still produce ONE devices: entry — listing
-# nvme0n1 and nvme0n2 would ask the same controller twice and, worse, name
-# device nodes that smartctl cannot drive.
+# This function used to walk /sys/block, classify each device's transport,
+# resolve NVMe controllers and decide per host whether the disks were real,
+# then write the answer into a devices: list. Every one of those decisions was
+# wrong the moment the host changed: a disk swapped, a passthrough added, an
+# enclosure moved, and the agent went on reading a list that no longer
+# described the machine until somebody remembered to re-run this script.
 #
-# /sys/class/nvme is the direct answer where it exists; the namespace-name
-# fallback is for kernels old enough to predate it.
-nvme_controllers() {
-    _nc_found=0
-    if [ -d "$P_SYSNVME" ]; then
-        for _nc_p in "$P_SYSNVME"/nvme[0-9]*; do
-            [ -e "$_nc_p" ] || continue
-            _nc_found=1
-            printf '%s\n' "${_nc_p##*/}"
-        done
-    fi
-    [ "$_nc_found" = 0 ] || return 0
-
-    _nc_seen=""
-    for _nc_p in "$P_SYSBLOCK"/nvme*n*; do
-        [ -e "$_nc_p" ] || continue
-        _nc_ctrl=$(printf '%s' "${_nc_p##*/}" | sed 's/n[0-9]*$//')
-        [ -n "$_nc_ctrl" ] || continue
-        case " $_nc_seen " in
-        *" $_nc_ctrl "*) continue ;;
-        esac
-        _nc_seen="$_nc_seen $_nc_ctrl"
-        printf '%s\n' "$_nc_ctrl"
-    done
-}
-
-# _smart_dev NAME — append /dev/NAME to SMART_DEVICES if the node exists.
+# Worse, the judgment could not be made from here at all. A guest with a
+# passed-through controller has entirely real drives, and skipping ATA on
+# anything that looked virtual took SMART away from exactly the hosts that had
+# it -- with --assume-physical offered as the remedy, which is this script
+# asking the operator to answer a hardware question the agent can answer for
+# itself, every hour, for free.
 #
-# PROBE vs EMIT in two adjacent lines: existence is checked against $P_DEV/NAME
-# (prefixed under test), and the string that reaches compose.yaml is the
-# UNPREFIXED /dev/NAME. A prefixed device path in a devices: list names a node
-# that does not exist on the host, and Docker refuses to start the container.
-_smart_dev() {
-    if [ ! -e "$P_DEV/$1" ]; then
-        warn "SMART: $P_DEV/$1 does not exist, so /dev/$1 is left out of devices:" \
-            "(a devices: entry for a missing node prevents the container from starting)."
-        return 0
-    fi
-    SMART_DEVICES="${SMART_DEVICES:+$SMART_DEVICES
-}/dev/$1"
-}
-
-# plan_smart — fills SMART_DEVICES, CAP_RAWIO and CAP_SYS_ADMIN.
+# So it does not answer it. The container gets access to the device tree and
+# `smartctl --scan` finds what is actually there on every collection. An
+# emulated disk answers nothing and the agent reports that honestly; a disk
+# added next month is picked up on the next scan with no re-run of anything.
 #
-# Candidates are collected BEFORE any prompt so that a declined capability also
-# removes the devices: entries it would have driven. A devices: list that the
-# container has no capability to use is noise at best.
+# What stays here is what genuinely needs a write to the host's config -- the
+# capability grants and the compose file itself. That is this script's whole
+# job.
 plan_smart() {
     step "SMART"
-    SMART_DEVICES=""
-    SMART_ATA_DEVICES=""
-    CAP_RAWIO=0
+
+    # Not prompted, and no longer conditional on finding a SATA device first.
+    # SYS_RAWIO lets smartctl issue ATA passthrough ioctls and nothing else;
+    # without it every SATA drive reports SMART as unavailable, which is not an
+    # agent anyone asked for.
+    CAP_RAWIO=1
     CAP_SYS_ADMIN=0
-    _ps_ata=""
-    _ps_nvme=""
+    info "  SATA/SAS:        SYS_RAWIO granted; the agent scans for drives itself"
 
-    # An EMULATED SATA disk has no SMART data behind it. The hypervisor presents
-    # an /dev/sda that looks exactly like a real one from sysfs, so the transport
-    # probe below cannot tell the difference and would happily grant SYS_RAWIO,
-    # map a device, and ship an agent whose SMART collector reads nothing on
-    # every single scrape. Granting a capability for a metric that cannot exist
-    # is worse than collecting nothing.
+    # NVMe health and wear need admin passthrough. Asked unconditionally now,
+    # because this script no longer looks for an NVMe controller -- and it is
+    # still ASKED rather than taken, because SYS_ADMIN is root-adjacent and
+    # that has not changed.
     #
-    # NVMe is NOT in that boat and is deliberately still probed below. On
-    # passthrough and virtio-NVMe setups — AWS Nitro instance store and EBS
-    # among them — `nvme smart-log` returns real temperature, data units
-    # read/written and percentage_used. Skipping the whole function on any guest
-    # threw that away on hosts that had it, and SYS_ADMIN is behind its own
-    # prompt regardless, so nothing is granted here that was not asked for.
-    if [ -n "${VIRT:-}" ]; then
-        info "  SATA/SAS:        skipped on a virtual host ($VIRT)"
-        # warn, not info: SKIPPED_NOTES is "everything the agent will NOT
-        # collect", and this withholds every ATA SMART metric and every SATA
-        # drive temperature. An operator whose host was misjudged has to be able
-        # to find out from the finish report, without re-reading the scroll.
-        warn "ATA SMART is skipped on this host because it looks virtual ($VIRT), and a" \
-            "hypervisor's emulated disks carry no SMART data: no health, no wear, no" \
-            "drive temperatures. NVMe, if present, is still offered. Re-run with" \
-            "--assume-physical if this machine really does have disks of its own."
-    fi
-
-    for _ps_d in $(block_devices); do
-        _ps_t=$(device_transport "$_ps_d")
-        case "$_ps_t" in
-        usb)
-            warn "SMART: $_ps_d is USB-attached and is left out. Driving a USB bridge with" \
-                "'-d sat' is unreliable and can hang the enclosure, which would stall the" \
-                "whole scrape."
-            ;;
-        nvme) ;;
-        *)
-            _ps_ata="${_ps_ata:+$_ps_ata }$_ps_d"
-            ;;
-        esac
-    done
-
-    for _ps_c in $(nvme_controllers); do
-        _ps_nvme="${_ps_nvme:+$_ps_nvme }$_ps_c"
-    done
-
-    # On a guest the ATA candidates are dropped here rather than at collection
-    # time, so SYS_RAWIO is never granted and drivetemp is never offered for
-    # drives the hypervisor invented. Cleared AFTER the loop so the loop stays
-    # one shape.
-    if [ -n "${VIRT:-}" ]; then
-        _ps_ata=""
-    fi
-
-    # SMART_ATA_DEVICES outlives this function: detect_sensors reads it to decide
-    # whether the drivetemp module is worth offering. A probe result, never an
-    # emit value.
-    SMART_ATA_DEVICES="$_ps_ata"
-
-    if [ -n "$_ps_ata" ]; then
-        # Not prompted. SYS_RAWIO lets smartctl issue ATA passthrough ioctls and
-        # nothing else; without it every SATA drive reports SMART as
-        # unavailable, which is not an agent anyone asked for.
-        CAP_RAWIO=1
-        info "  SATA/SAS:        $_ps_ata (SYS_RAWIO)"
-        for _ps_d in $_ps_ata; do _smart_dev "$_ps_d"; done
-    fi
-
-    if [ -n "$_ps_nvme" ]; then
-        info "  NVMe:            $_ps_nvme (controllers, not namespaces)"
-        # --sys-admin takes the grant WITHOUT asking, and runs exactly the body
-        # the yes-branch runs — the flag is a pure grant, not a second code
-        # path that could drift from the prompted one.
-        _ps_grant=0
-        if [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
-            info "  SYS_ADMIN:       granted by --sys-admin (not prompted)"
-            _ps_grant=1
-        elif netra_ask "Grant SYS_ADMIN for NVMe SMART health and wear? NVMe temperature
-  works without it." n; then
-            _ps_grant=1
-        fi
-        if [ "$_ps_grant" = 1 ]; then
-            CAP_SYS_ADMIN=1
-            for _ps_c in $_ps_nvme; do _smart_dev "$_ps_c"; done
-        else
-            warn "SYS_ADMIN declined: no NVMe SMART health status or wear indicators." \
-                "NVMe temperature still works, from hwmon. --sys-admin grants it."
-        fi
-    elif [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
-        # An unhonoured request, not a neutral state: the operator asked for a
-        # capability they did not get, so it belongs in the finish report.
-        # Granting it anyway would expand privilege for no collected metric.
-        warn "--sys-admin was given but no NVMe device was found: SYS_ADMIN is NOT granted." \
-            "Nothing on this host would use it."
-    fi
-
-    if [ -z "$SMART_DEVICES" ]; then
-        info "  smart:           no devices (nothing to collect)"
+    # --sys-admin takes the grant WITHOUT asking, and runs exactly the body the
+    # yes-branch runs -- the flag is a pure grant, not a second code path that
+    # could drift from the prompted one.
+    if [ "${GRANT_SYS_ADMIN:-0}" = 1 ]; then
+        info "  SYS_ADMIN:       granted by --sys-admin (not prompted)"
+        CAP_SYS_ADMIN=1
+    elif netra_ask "Grant SYS_ADMIN for NVMe SMART health and wear? Needed only if this
+  host has NVMe drives; NVMe temperature works without it." n; then
+        CAP_SYS_ADMIN=1
+    else
+        warn "SYS_ADMIN declined: no NVMe SMART health status or wear indicators." \
+            "NVMe temperature still works, from hwmon. --sys-admin grants it."
     fi
 }
 
@@ -1841,6 +1744,13 @@ _sensor_module_hint() {
 plan_drivetemp() {
     [ -n "${SMART_ATA_DEVICES:-}" ] || return 0
 
+    # This function does
+    # not need the guess: it loads the module, re-reads the hwmon tree and
+    # keeps the persist ONLY when a chip actually appeared, unloading again
+    # when none did. That verification was always the real gate, and the probe
+    # in front of it could only ever withhold drivetemp from a host that would
+    # have produced a chip -- a passed-through controller on a guest, exactly
+    # the case the SMART probe got wrong too.
     if hwmon_chips | grep -q '|drivetemp|'; then
         info "  drivetemp:       already loaded"
         return 0
@@ -1919,9 +1829,34 @@ plan_drivetemp() {
     DRIVETEMP_PERSISTED=1
 }
 
+# detect_ata_devices — fills SMART_ATA_DEVICES for plan_drivetemp, and for
+# nothing else.
+#
+# The last surviving use of the block-device probe. It is here rather than in
+# plan_smart because drivetemp is the only decision left that genuinely needs
+# to know what is attached: it modprobes and writes /etc/modules-load.d, a
+# change to the machine. Describing the machine to the agent no longer happens
+# here at all -- the agent scans /dev itself.
+#
+# No virt filter, unlike the version that fed the devices: list. A guest with a
+# passed-through controller has real SATA drives, and a host with none is
+# handled by plan_drivetemp's own verification -- it loads the module, re-reads
+# hwmon and unloads again when no chip appears -- rather than by a guess here.
+detect_ata_devices() {
+    SMART_ATA_DEVICES=""
+    for _da_d in $(block_devices); do
+        case "$(device_transport "$_da_d")" in
+        sata | unknown)
+            SMART_ATA_DEVICES="${SMART_ATA_DEVICES:+$SMART_ATA_DEVICES }$_da_d"
+            ;;
+        esac
+    done
+}
+
 detect_sensors() {
     step "Sensors"
     SENSOR_ROWS=""
+    detect_ata_devices
     plan_drivetemp
     if [ ! -d "$P_HWMON" ]; then
         # A note, not an error: hwmon is absent inside some VMs and the agent
@@ -2199,6 +2134,25 @@ EOF
     # also means a missing mount fails loudly instead of walking an empty one.
     _bv_add "/sys/fs/cgroup" "/host/sys/fs/cgroup"
 
+    # The host's device tree, so `smartctl --scan` sees the drives that are
+    # there NOW rather than the ones this script saw when it ran. Paired with
+    # the cgroup rules in build_device_block: the bind supplies the nodes, the
+    # rules supply permission, and neither names a device.
+    #
+    # Mounted AT /dev, not at /host/dev like the other host paths here. That is
+    # the one place `smartctl --scan` looks, and scanning is the whole point:
+    # --scan also reports each device's TYPE (sat, nvme, scsi), which is what
+    # the collector passes back as -d. Enumerating /host/dev ourselves would
+    # mean reimplementing that classification, and getting it wrong on exactly
+    # the enclosures it exists for.
+    #
+    # read_only, like every other bind here, and it costs nothing that matters:
+    # a read-only mount refuses writes to REGULAR files, while a device node's
+    # I/O goes to the driver rather than the filesystem -- so smartctl still
+    # opens the drives it needs, and the agent cannot mknod into the host's
+    # devtmpfs.
+    _bv_add "/dev" "/dev"
+
     if [ "${DOCKERSOCK_ENABLED:-0}" = 1 ]; then
         _bv_add "/var/run/docker.sock" "/var/run/docker.sock"
     fi
@@ -2229,13 +2183,32 @@ $_bv_body"
     export AGENT_BLK_VOLUMES
 }
 
+# build_device_block — the device cgroup rules that let the agent reach the
+# drives it finds, in place of the devices: list this script used to compute.
+#
+# A devices: entry does two jobs: it creates the node inside the container AND
+# allows it in the device cgroup. The node now comes from the /dev bind in
+# build_volume_block, so only the second job is left, and a rule is what does
+# it. The pair is what makes runtime discovery real: a disk that appears after
+# this file was written is reachable without regenerating it.
+#
+# Wildcards rather than a computed major list. Block majors are stable enough
+# to enumerate; NVMe CHARACTER devices -- /dev/nvme0, the controller smartctl
+# talks to -- are not, they take a dynamically allocated major that differs
+# between kernels and can move across a reboot. A list narrow enough to be
+# worth writing is exactly the list that breaks silently later, which is the
+# failure this whole change exists to remove.
 build_device_block() {
-    AGENT_BLK_DEVICES=""
-    if [ -n "${SMART_DEVICES:-}" ]; then
-        AGENT_BLK_DEVICES="    devices:
-$(printf '%s\n' "$SMART_DEVICES" | sed 's/^/      - /')
+    # SC2089/SC2090: the quotes are DATA -- YAML syntax on their way into
+    # compose.yaml, not shell quoting -- and the variable is only ever exported
+    # for awk's ENVIRON, never expanded as a command. Same rule, same reason as
+    # build_volume_block.
+    # shellcheck disable=SC2089
+    AGENT_BLK_DEVICES="    device_cgroup_rules:
+      - \"b *:* rmw\"
+      - \"c *:* rmw\"
 "
-    fi
+    # shellcheck disable=SC2090
     export AGENT_BLK_DEVICES
 }
 
@@ -2366,16 +2339,13 @@ EOF
     check_machine_id
 
     VIRT=$(detect_virt)
-    if [ -n "$VIRT" ] && [ "${ASSUME_PHYSICAL:-0}" = 1 ]; then
-        info "  platform:        $VIRT, overridden by --assume-physical"
-        VIRT=""
-    elif [ "${ASSUME_PHYSICAL:-0}" = 1 ]; then
-        # An unhonoured request is not a neutral state — the same rule
-        # --sys-admin follows on a virtual host. Without this, an operator who
-        # suspects a misdetection passes the flag, detection returns physical
-        # for some unrelated reason, and they cannot tell whether the flag did
-        # anything at all.
-        info "  platform:        physical (--assume-physical had nothing to override)"
+    # VIRT no longer gates anything about the disks -- it only changes what the
+    # CPU-sensor hint says, because a guest genuinely is not given the CPU's
+    # thermal data and telling its operator to modprobe coretemp wastes their
+    # time. --assume-physical is accepted and ignored: there is no disk
+    # judgment left for it to override.
+    if [ "${ASSUME_PHYSICAL:-0}" = 1 ]; then
+        info "  platform:        ${VIRT:-physical} (--assume-physical no longer does anything)"
     elif [ -n "$VIRT" ]; then
         info "  platform:        virtual ($VIRT)"
     else
@@ -2928,8 +2898,8 @@ EOF
             awk -F'|' '{c[$1]++} END {s=""; for (k in c) s = s (s ? ", " : "") k ": " c[k]; print s}'))"
     fi
 
-    if [ -n "$SMART_DEVICES" ]; then
-        info "  smart devices:   $(printf '%s' "$SMART_DEVICES" | tr '\n' ' ')"
+    if [ "${CAP_RAWIO:-0}" = 1 ]; then
+        info "  smart devices:   found by the agent at runtime"
     else
         info "  smart devices:   none"
     fi
@@ -3368,7 +3338,7 @@ print_finish() {
     step "Summary"
     info "  os:              ${OS_PRETTY:-$OS_ID $OS_VER} [$OS_CLASS]"
     info "  filesystems:     $(printf '%s' "${FS_MOUNTS:-}" | grep -c . || true) measured"
-    info "  smart devices:   $(printf '%s' "$SMART_DEVICES" | tr '\n' ' ')"
+    info "  smart devices:   found by the agent at runtime"
     info "  capabilities:    $(_plan_caps)"
     info "  package manager: $PKGMGR${PKG_MOUNT:+ ($PKG_MOUNT)}"
     info "  primary sensor:  ${PRIMARY_SENSOR:-auto (chosen by the agent at runtime)}"

@@ -820,7 +820,8 @@ assert_contains "$RUN_OUT" "Skipped or degraded" "the declines reach the finish 
 # package or D-Bus prompt would consume a fourth and the run would die on an
 # exhausted answers file rather than quietly asserting the wrong thing.
 assert_contains "$YESBODY" "SYS_RAWIO" "SYS_RAWIO is granted automatically"
-assert_contains "$YESBODY" "/dev/sda" "the SATA device is still collected"
+assert_contains "$YESBODY" "device_cgroup_rules" \
+    "the agent is given the device tree rather than a computed device list"
 assert_contains "$YESBODY" "/var/lib/dpkg" "the package database is mounted automatically"
 assert_contains "$YESBODY" "system_bus_socket" "the D-Bus socket is mounted automatically"
 assert_contains "$YESBODY" "docker.sock" "the Docker socket is mounted"
@@ -841,7 +842,9 @@ run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
 assert_eq 0 "$RUN_RC" "--sys-admin succeeds while consuming no answer of its own"
 SABODY=$(grep -v '^[[:space:]]*#' "$TMP/out-sysadmin/compose.yaml")
 assert_contains "$SABODY" "SYS_ADMIN" "--sys-admin grants SYS_ADMIN"
-assert_contains "$SABODY" "/dev/nvme0" "--sys-admin also brings the NVMe controller back"
+# No device list to check any more: the rules are unconditional and name
+# nothing, so what --sys-admin changes is the capability and only that.
+assert_contains "$SABODY" "device_cgroup_rules" "--sys-admin leaves the device rules alone"
 
 # --- 14. --pid-host is accepted and changes nothing ---------------------------
 #

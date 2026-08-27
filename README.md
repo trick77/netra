@@ -263,8 +263,10 @@ variable as consumed today or specified-but-not-yet-consumed.
 Two things that bite:
 
 * Optional binds ship **commented out**. A long-form bind does not create a
-  missing source, and a `devices:` entry for a node this host lacks stops the
-  container from starting — uncomment only what this host actually has.
+  missing source — uncomment only what this host actually has. Drives are the
+  exception and need no editing: the agent is given `/dev` plus device cgroup
+  rules and scans for drives on every collection, so a disk swapped or passed
+  through later is picked up with nothing to re-run.
 * Disk usage is measured through **empty marker directories** (`/.netra`,
   `/mnt/ark/.netra`, …) bind-mounted to `/netra/fs/<label>`, never by mounting
   the data. `statfs()` reports the filesystem containing the path, so this gives
@@ -291,7 +293,7 @@ answers, no compatibility promise — and is not a provisioning interface.)
 | `network_mode: host` | network, addresses |
 | A mount | containers (the host's cgroup v2 hierarchy, plus the Docker socket for names **and** for per-container `net_rx`/`net_tx`), filesystems (marker dirs), systemd (D-Bus socket), packages (dpkg or apk db) |
 | `pid: host` | procs, and per-container `net_rx`/`net_tx` |
-| An explicit privilege | SMART (`SYS_RAWIO`, plus `SYS_ADMIN` for NVMe, plus `devices:`) |
+| An explicit privilege | SMART (`SYS_RAWIO`, plus `SYS_ADMIN` for NVMe, plus the `/dev` bind and its device cgroup rules) |
 
 A collector that cannot run reports **why** as a capability and is skipped. It
 never prevents the agent from starting, and an unavailable metric is left NULL

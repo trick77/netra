@@ -53,6 +53,10 @@ services:
         target: /host/sys/fs/cgroup
         read_only: true
       - type: bind
+        source: "/dev"
+        target: /dev
+        read_only: true
+      - type: bind
         source: "/var/run/docker.sock"
         target: /var/run/docker.sock
         read_only: true
@@ -80,9 +84,9 @@ services:
         source: "/var/run/utmp"
         target: /var/run/utmp
         read_only: true
-    devices:
-      - /dev/sda
-      - /dev/nvme0
+    device_cgroup_rules:
+      - "b *:* rmw"
+      - "c *:* rmw"
     cap_add:
       - SYS_RAWIO
       - SYS_ADMIN
