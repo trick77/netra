@@ -39,3 +39,8 @@ func CapContainerRowsForTest(rows []*netrav1.ContainerSample) []*netrav1.Contain
 }
 
 const MaxContainerRowsForTest = maxContainerRows
+
+// CountHumanSessionsForTest exposes the logind session-class allowlist, which
+// is the only judgement LogindSessions makes and the one thing a machine
+// without logind can still check.
+func CountHumanSessionsForTest(classes []string) int { return countHumanSessions(classes) }

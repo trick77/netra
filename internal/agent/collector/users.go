@@ -18,6 +18,19 @@ const (
 	usersCapUnsupportedFormat = "unsupported-format"
 )
 
+// The second capability this collector reports: WHICH source answered.
+//
+// "users: ok" alone cannot be acted on any more. A zero from logind means
+// nobody is logged in; a zero from utmp can also mean the file is there and
+// nothing writes it, which is what a musl host looks like -- and knowing
+// which one an operator is looking at is the difference between "nobody is
+// on this box" and "this box cannot tell me".
+const (
+	usersSourceKey    = "users_source"
+	usersSourceLogind = "logind"
+	usersSourceUtmp   = "utmp"
+)
+
 // utmp ut_type values. Only USER_PROCESS is counted: the others are the
 // runlevel, the boot timestamp, getty processes waiting on a tty that nobody
 // has logged into, and the tombstones of sessions that have ended.
@@ -75,18 +88,41 @@ const (
 // reports users=unavailable, which is the correct answer there.
 var utmpRecordSizes = []int{384, 400}
 
-// Users reports how many interactive sessions are logged in, from utmp.
+// SessionLister counts the sessions logind considers human logins.
+//
+// Injected for the same reason UnitLister is: the machines running these
+// tests have neither logind nor a system bus, and a collector that can only
+// be exercised on a systemd host is a collector nobody exercises.
+type SessionLister func(ctx context.Context) (int, error)
+
+// Users reports how many interactive sessions are logged in.
+//
+// TWO SOURCES, IN THIS ORDER: logind first, utmp second.
+//
+// utmp used to be the only one, and on a current distribution that answers
+// "unavailable" for ever. systemd 257 -- Ubuntu 25.10 onwards -- is built
+// without utmp support at all, because the record format overflows in 2038,
+// so /run/utmp does not exist on those hosts and no login will ever create
+// it. logind is asked first rather than as a fallback because where both
+// exist it is the better answer anyway: it counts SESSIONS, which is what
+// the panel claims to show, while utmp counts the records login programs
+// happened to write.
 //
 // Nothing about a session is transmitted -- not the user, not the tty, not
-// the remote host -- only the count. The parser reads ut_type and nothing
-// else, so the usernames and hostnames in the file are never even decoded.
+// the remote host -- only the count. The utmp parser reads ut_type and
+// nothing else, so the usernames and hostnames in the file are never even
+// decoded, and the logind path drops everything but the session class.
 //
-// Absence is the normal case rather than an error: Alpine and other
-// busybox-based systems ship no utmp writer at all, and a container without
-// the bind mount sees no file. Both report a capability and leave the field
+// Absence is still the normal case rather than an error: a host with no
+// system bus mounted and no utmp -- Alpine and other busybox-based systems
+// ship no utmp writer at all -- reports a capability and leaves the field
 // unset.
 type Users struct {
 	path string
+
+	// sessions is the logind source, or nil in a test that wants the utmp
+	// path exercised on its own.
+	sessions SessionLister
 
 	// recordSizes are the sizeof(struct utmp) candidates to try, in order. A
 	// field rather than the package variable directly so a test can pin a
@@ -97,10 +133,15 @@ type Users struct {
 	capabilities map[string]string
 }
 
-// NewUsers builds a Users collector reading the utmp file at path.
-func NewUsers(path string) *Users {
-	return &Users{path: path, recordSizes: utmpRecordSizes}
+// NewUsers builds a Users collector that asks logind first and falls back to
+// the utmp file at path.
+func NewUsers(sessions SessionLister, path string) *Users {
+	return &Users{path: path, sessions: sessions, recordSizes: utmpRecordSizes}
 }
+
+// SetSessionListerForTest swaps the logind source, so a test can drive the
+// fallback by handing it a lister that fails.
+func (u *Users) SetSessionListerForTest(l SessionLister) { u.sessions = l }
 
 // Name implements Collector.
 func (u *Users) Name() string { return "users" }
@@ -125,24 +166,45 @@ func (u *Users) Capabilities() map[string]string {
 	return out
 }
 
-func (u *Users) setCapability(value string) {
+// setCapability records the outcome, and the source when there was one. The
+// source is DELETED rather than left behind when nothing answered: a stale
+// "logind" beside "unavailable" would say the bus is still being read.
+func (u *Users) setCapability(value, source string) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 
 	if u.capabilities == nil {
-		u.capabilities = make(map[string]string, 1)
+		u.capabilities = make(map[string]string, 2)
 	}
 	u.capabilities["users"] = value
+	if source == "" {
+		delete(u.capabilities, usersSourceKey)
+		return
+	}
+	u.capabilities[usersSourceKey] = source
 }
 
 // Collect implements Collector.
-func (u *Users) Collect(_ context.Context) (*Result, error) {
+func (u *Users) Collect(ctx context.Context) (*Result, error) {
 	sample := &netrav1.HostSample{}
+
+	// logind first. Its errors are not reported anywhere: a host with no
+	// system bus is the ordinary case, not a fault, and the utmp path below
+	// still has to run before this collector knows whether it can answer at
+	// all.
+	if u.sessions != nil {
+		if count, err := u.sessions(ctx); err == nil {
+			u.setCapability(usersCapOK, usersSourceLogind)
+			n := uint32(count)
+			sample.UsersLoggedIn = &n
+			return &Result{Host: sample}, nil
+		}
+	}
 
 	raw, err := os.ReadFile(u.path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
-			u.setCapability(usersCapUnavailable)
+			u.setCapability(usersCapUnavailable, "")
 			return &Result{Host: sample}, nil
 		}
 		return nil, err
@@ -152,7 +214,7 @@ func (u *Users) Collect(_ context.Context) (*Result, error) {
 	// writes nothing. Zero sessions is the honest answer, and detection has
 	// nothing to work with anyway.
 	if len(raw) == 0 {
-		u.setCapability(usersCapOK)
+		u.setCapability(usersCapOK, usersSourceUtmp)
 		n := uint32(0)
 		sample.UsersLoggedIn = &n
 		return &Result{Host: sample}, nil
@@ -160,11 +222,11 @@ func (u *Users) Collect(_ context.Context) (*Result, error) {
 
 	count, ok := u.countSessions(raw)
 	if !ok {
-		u.setCapability(usersCapUnsupportedFormat)
+		u.setCapability(usersCapUnsupportedFormat, "")
 		return &Result{Host: sample}, nil
 	}
 
-	u.setCapability(usersCapOK)
+	u.setCapability(usersCapOK, usersSourceUtmp)
 	n := uint32(count)
 	sample.UsersLoggedIn = &n
 

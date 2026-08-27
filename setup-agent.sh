@@ -2498,26 +2498,37 @@ plan_extras() {
     fi
 
     # Read-only, like the two above, and for the same reason not prompted.
+    #
+    # Two collectors ride this one bind now: systemd's unit list, and the
+    # logged-in session count, which logind answers and utmp no longer can on
+    # a current distribution.
     DBUS_ENABLED=0
     if [ -e "$P_DBUS" ]; then
         DBUS_ENABLED=1
         info "  d-bus:           /run/dbus/system_bus_socket (read-only)"
     else
-        info "  d-bus:           $P_DBUS not present (no systemd collector)"
+        info "  d-bus:           $P_DBUS not present (no systemd collector, no session count)"
     fi
 
     # Detected, not prompted: the five-question design is deliberate, and a
     # read-only bind of a file that lists tty names is not worth a sixth. The
     # agent reads one 2-byte field per record and transmits only the count.
     #
+    # THE FALLBACK, NOT THE SOURCE, since the agent learned to ask logind.
     # Absent on Alpine and other busybox systems, which have no utmp writer at
-    # all -- so this is a genuinely common "no", not an edge case.
+    # all, and absent again on systemd 257 and later -- Ubuntu 25.10 onwards --
+    # which is built without utmp support because its record format overflows
+    # in 2038. On those hosts the count comes from the d-bus bind above and
+    # this file is never created, which is why its absence is reported as a
+    # fallback that is missing rather than as no session count at all.
     UTMP_ENABLED=0
     if [ -f "$P_UTMP" ]; then
         UTMP_ENABLED=1
         info "  logged-in users: /var/run/utmp (read-only, session count only)"
+    elif [ "$DBUS_ENABLED" = 1 ]; then
+        info "  logged-in users: logind over d-bus (no utmp on this host)"
     else
-        info "  logged-in users: $P_UTMP not present (no session count)"
+        info "  logged-in users: neither logind nor $P_UTMP (no session count)"
     fi
 
     # NOT PROMPTED, AND NOT OPTIONAL. It used to be opt-in behind --pid-host, on

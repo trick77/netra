@@ -1,7 +1,9 @@
 package collector_test
 
 import (
+	"context"
 	"encoding/binary"
+	"errors"
 	"os"
 	"testing"
 
@@ -26,7 +28,7 @@ func TestUsersCountsOnlyUserProcess(t *testing.T) {
 		{"glibc arm64", "testdata/utmp/glibc-arm64.utmp", 400},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			u := collector.NewUsers(tc.file)
+			u := collector.NewUsers(nil, tc.file)
 
 			var sample netrav1.HostSample
 			if err := collectInto(u, &sample); err != nil {
@@ -54,7 +56,7 @@ func TestUsersParsesWithThePinnedRecordSize(t *testing.T) {
 		{"testdata/utmp/glibc-amd64.utmp", 384},
 		{"testdata/utmp/glibc-arm64.utmp", 400},
 	} {
-		u := collector.NewUsers(tc.file)
+		u := collector.NewUsers(nil, tc.file)
 		u.SetRecordSizesForTest(tc.recordSize)
 
 		var sample netrav1.HostSample
@@ -72,7 +74,7 @@ func TestUsersParsesWithThePinnedRecordSize(t *testing.T) {
 // may be reading an arm64 host's utmp layout, or a glibc build a musl file.
 // Forcing the wrong size must fail loudly rather than return a number.
 func TestUsersWrongRecordSizeIsRejectedNotMiscounted(t *testing.T) {
-	u := collector.NewUsers("testdata/utmp/glibc-arm64.utmp")
+	u := collector.NewUsers(nil, "testdata/utmp/glibc-arm64.utmp")
 	u.SetRecordSizesForTest(384) // the file is 400-byte records
 
 	var sample netrav1.HostSample
@@ -93,7 +95,7 @@ func TestUsersWrongRecordSizeIsRejectedNotMiscounted(t *testing.T) {
 // without the bind mount sees no file. Neither is an error, and neither may
 // report zero sessions as though it had looked.
 func TestUsersMissingFileLeavesFieldUnsetAndReportsCapability(t *testing.T) {
-	u := collector.NewUsers(t.TempDir() + "/absent-utmp")
+	u := collector.NewUsers(nil, t.TempDir()+"/absent-utmp")
 
 	var sample netrav1.HostSample
 	if err := collectInto(u, &sample); err != nil {
@@ -116,7 +118,7 @@ func TestUsersEmptyFileCountsZero(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	u := collector.NewUsers(path)
+	u := collector.NewUsers(nil, path)
 
 	var sample netrav1.HostSample
 	if err := collectInto(u, &sample); err != nil {
@@ -148,7 +150,7 @@ func TestUsersTruncatedTrailingRecordIsRefused(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	u := collector.NewUsers(path)
+	u := collector.NewUsers(nil, path)
 	u.SetRecordSizesForTest(384)
 
 	var sample netrav1.HostSample
@@ -187,7 +189,7 @@ func TestUsersAmbiguousFileLengthPicksTheValidLayout(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	u := collector.NewUsers(path)
+	u := collector.NewUsers(nil, path)
 
 	var sample netrav1.HostSample
 	if err := collectInto(u, &sample); err != nil {
@@ -217,7 +219,7 @@ func TestUsersImplausibleRecordsReportUnsupportedFormat(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	u := collector.NewUsers(path)
+	u := collector.NewUsers(nil, path)
 
 	var sample netrav1.HostSample
 	if err := collectInto(u, &sample); err != nil {
@@ -293,7 +295,7 @@ func cstring(b []byte) string {
 }
 
 func TestUsersName(t *testing.T) {
-	u := collector.NewUsers("testdata/utmp/glibc-amd64.utmp")
+	u := collector.NewUsers(nil, "testdata/utmp/glibc-amd64.utmp")
 
 	if got := u.Name(); got != "users" {
 		t.Errorf("Name() = %q, want %q", got, "users")
@@ -301,5 +303,99 @@ func TestUsersName(t *testing.T) {
 }
 
 func TestUsersImplementsCapabilityReporter(t *testing.T) {
-	var _ collector.CapabilityReporter = collector.NewUsers("x")
+	var _ collector.CapabilityReporter = collector.NewUsers(nil, "x")
+}
+
+// The reason this collector grew a second source: a host running systemd 257
+// has no /run/utmp at all, and the utmp path alone reports "unavailable" for
+// ever while people are logged in.
+func TestUsersPrefersLogindOverUtmp(t *testing.T) {
+	// A utmp that WOULD parse, to prove the count came from logind rather
+	// than from the file happening to agree.
+	u := collector.NewUsers(
+		func(context.Context) (int, error) { return 5, nil },
+		"testdata/utmp/glibc-amd64.utmp",
+	)
+
+	var sample netrav1.HostSample
+	if err := collectInto(u, &sample); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if sample.UsersLoggedIn == nil || *sample.UsersLoggedIn != 5 {
+		t.Errorf("UsersLoggedIn = %v, want 5 from logind (utmp holds 3)", sample.UsersLoggedIn)
+	}
+	if got := u.Capabilities()["users"]; got != "ok" {
+		t.Errorf("capability = %q, want %q", got, "ok")
+	}
+	if got := u.Capabilities()["users_source"]; got != "logind" {
+		t.Errorf("source = %q, want %q", got, "logind")
+	}
+}
+
+// No system bus, or no logind on it: the utmp path is still there and still
+// answers, and the source says which one did.
+func TestUsersFallsBackToUtmpWhenLogindFails(t *testing.T) {
+	u := collector.NewUsers(
+		func(context.Context) (int, error) { return 0, errors.New("no such file: /run/dbus/system_bus_socket") },
+		"testdata/utmp/glibc-amd64.utmp",
+	)
+
+	var sample netrav1.HostSample
+	if err := collectInto(u, &sample); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if sample.UsersLoggedIn == nil || *sample.UsersLoggedIn != 3 {
+		t.Errorf("UsersLoggedIn = %v, want 3 from utmp", sample.UsersLoggedIn)
+	}
+	if got := u.Capabilities()["users_source"]; got != "utmp" {
+		t.Errorf("source = %q, want %q", got, "utmp")
+	}
+}
+
+// Neither source: the field stays unset and NO source is claimed. A stale
+// "logind" left beside "unavailable" would say the bus is still being read.
+func TestUsersReportsNoSourceWhenNothingAnswers(t *testing.T) {
+	u := collector.NewUsers(
+		func(context.Context) (int, error) { return 0, errors.New("no bus") },
+		t.TempDir()+"/absent-utmp",
+	)
+
+	var sample netrav1.HostSample
+	if err := collectInto(u, &sample); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if sample.UsersLoggedIn != nil {
+		t.Errorf("UsersLoggedIn = %v, want nil", *sample.UsersLoggedIn)
+	}
+	if got := u.Capabilities()["users"]; got != "unavailable" {
+		t.Errorf("capability = %q, want %q", got, "unavailable")
+	}
+	if got, ok := u.Capabilities()["users_source"]; ok {
+		t.Errorf("source = %q, want it absent when nothing answered", got)
+	}
+}
+
+// A logind that answers zero is a real zero -- nobody is logged in -- and it
+// must NOT fall through to utmp, which on a host that still has the file
+// would then report a count logind has just contradicted.
+func TestUsersZeroFromLogindIsNotAFallback(t *testing.T) {
+	u := collector.NewUsers(
+		func(context.Context) (int, error) { return 0, nil },
+		"testdata/utmp/glibc-amd64.utmp",
+	)
+
+	var sample netrav1.HostSample
+	if err := collectInto(u, &sample); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+
+	if sample.UsersLoggedIn == nil || *sample.UsersLoggedIn != 0 {
+		t.Errorf("UsersLoggedIn = %v, want 0", sample.UsersLoggedIn)
+	}
+	if got := u.Capabilities()["users_source"]; got != "logind" {
+		t.Errorf("source = %q, want %q", got, "logind")
+	}
 }
