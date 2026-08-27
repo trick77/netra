@@ -341,9 +341,9 @@ describe("Overview System summary", () => {
   // The worst case the store can actually produce: ingest.go NULLIFs every
   // one of these columns, and an agent in a container that cannot read the
   // host's /etc/os-release reports no os_name at all. Unguarded, the OS span
-  // rendered osLabel(null) and the whole summary read "—Details" -- a line
-  // whose only content is an em dash, which is the failure the omission rule
-  // exists to prevent rather than a milder version of it.
+  // rendered osLabel(null) and the whole summary read "—" -- a line whose
+  // only content is an em dash, which is the failure the omission rule exists
+  // to prevent rather than a milder version of it.
   it("writes no facts at all rather than a line of dashes", () => {
     renderOverview({
       host: {
@@ -358,7 +358,13 @@ describe("Overview System summary", () => {
     const summary = systemSummary();
 
     expect(summary.textContent).not.toContain(ABSENT);
-    expect(summary.textContent).toBe("Details");
+    // No FACTS. What is left is the screen-reader label, which is the whole
+    // point of it: a summary with no text at all is an unlabelled disclosure
+    // to anyone listening. The chevron is still there too -- it is the
+    // control, and a fold with nothing to click is not this state.
+    expect(summary.textContent).toBe("System details");
+    expect(summary.querySelector(".sr-only")).not.toBeNull();
+    expect(summary.querySelector("svg.chev")).not.toBeNull();
     expect(summary.querySelector("svg.osicon")).toBeNull();
     // The labelled strip still answers for all eight, dashes included.
     expect(within(systemStrip()).getAllByText(ABSENT).length).toBeGreaterThan(
@@ -800,11 +806,6 @@ describe("Overview", () => {
     expect(within(fans).getByText("0 RPM")).toBeInTheDocument();
     expect(within(fans).queryByText("1180 RPM")).toBeNull();
   });
-
-  it("reports a collector that is not running, with its reason", () => {
-    renderOverview();
-    expect(screen.getByText("not permitted")).toBeInTheDocument();
-  });
 });
 
 describe("Overview systemd units", () => {
@@ -1103,124 +1104,6 @@ describe("Overview processor panel", () => {
     expect(
       within(traffic).getAllByText(new RegExp(ABSENT)).length,
     ).toBeGreaterThan(0);
-  });
-});
-
-// The exhaustion gauges. Nothing else in netra answers "am I about to hit a
-// limit", and running out does not present as a resource problem: accept()
-// starts failing and conntrack drops flows while the CPU and memory cards
-// stay calm.
-describe("Overview limits card", () => {
-  function limitsResponse(
-    over: Partial<MetricsResponse> = {},
-  ): MetricsResponse {
-    return {
-      family: "host",
-      tier: "raw",
-      step_s: 60,
-      // A one-bucket window, so the sample below IS the latest bucket. The
-      // gauge deliberately reads the latest bucket rather than the last
-      // number the host ever sent: a host that stopped reporting an hour
-      // ago must read absent, not "comfortably at 40%".
-      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:01:00Z" },
-      requested_window: {
-        from: "2026-08-10T00:00:00Z",
-        to: "2026-08-10T00:01:00Z",
-      },
-      warnings: [],
-      key_columns: [],
-      columns: ["fd_used", "fd_limit", "conntrack_count", "conntrack_limit"],
-      series: [
-        {
-          key: {},
-          points: [[1_786_320_000_000, 48231, 262144, 1800, 262144]],
-        },
-      ],
-      truncated: false,
-      ...over,
-    };
-  }
-
-  it("shows a gauge against its ceiling, because the ratio is the story", () => {
-    renderOverview({ hostMetrics: limitsResponse() });
-    const limits = screen.getByRole("region", { name: "Limits" });
-    // Grouped digits, not a rounded magnitude: "48 k of 262 k" throws away
-    // the only digits that separate comfortable from nearly-full.
-    expect(within(limits).getByText(/48 231 of 262 144/)).toBeInTheDocument();
-  });
-
-  // At a rolled tier the mean hides the moment that matters: accept() fails
-  // at the peak, not at the average. candidates() prefers _avg, so the peak
-  // has to be asked for by name.
-  it("reads the peak at a rolled tier, not the average", () => {
-    renderOverview({
-      hostMetrics: limitsResponse({
-        tier: "5m",
-        step_s: 300,
-        columns: ["fd_used_avg", "fd_used_max", "fd_limit"],
-        series: [
-          {
-            key: {},
-            points: [[1_786_320_000_000, 40000, 250000, 262144]],
-          },
-        ],
-      }),
-    });
-    const limits = screen.getByRole("region", { name: "Limits" });
-    expect(within(limits).getByText(/250 000 of 262 144/)).toBeInTheDocument();
-    expect(within(limits).queryByText(/40 000/)).toBeNull();
-  });
-
-  // The capability the agent reported, in place of the meter it explains.
-  // An em-dash next to a bar that never fills is indistinguishable from a
-  // broken collector.
-  // /proc/sys/fs/file-max is int64 max on a great many hosts. A bar against
-  // 9.2 quintillion can never move, and past Number.MAX_SAFE_INTEGER the
-  // figure has already lost precision in transit -- so the ratio is both
-  // useless and wrong.
-  it("says no limit rather than drawing a ratio against an unbounded ceiling", () => {
-    renderOverview({
-      hostMetrics: limitsResponse({
-        columns: ["fd_used", "fd_limit"],
-        series: [
-          {
-            key: {},
-            points: [[1_786_320_000_000, 3352, 9223372036854775807]],
-          },
-        ],
-      }),
-    });
-    const limits = screen.getByRole("region", { name: "Limits" });
-    expect(within(limits).getByText(/3 352 · no limit/)).toBeInTheDocument();
-    // The number the host never reported must not appear.
-    expect(within(limits).queryByText(/776 000/)).toBeNull();
-  });
-
-  it("says why a gauge is missing when the agent explained it", () => {
-    renderOverview({
-      host: {
-        ...host,
-        capabilities: { ...host.capabilities, conntrack: "unavailable" },
-      },
-      hostMetrics: limitsResponse(),
-    });
-    const limits = screen.getByRole("region", { name: "Limits" });
-    expect(within(limits).getByText("unavailable")).toBeInTheDocument();
-  });
-
-  // sockets_used and tcp_alloc have no ceiling in the schema, so they cannot
-  // answer the headroom question this card exists for. They are deliberately
-  // not here, and this pins that decision rather than leaving it to be
-  // "fixed" later.
-  it("carries no row for a gauge that has no ceiling", () => {
-    renderOverview({ hostMetrics: limitsResponse() });
-    const limits = screen.getByRole("region", { name: "Limits" });
-    expect(within(limits).queryByText(/sockets used|tcp alloc/i)).toBeNull();
-  });
-
-  it("is absent entirely on a host that reported no limits at all", () => {
-    renderOverview();
-    expect(screen.queryByRole("region", { name: "Limits" })).toBeNull();
   });
 });
 

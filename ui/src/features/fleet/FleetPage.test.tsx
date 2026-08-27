@@ -170,13 +170,19 @@ describe("FleetPage toolbar", () => {
 });
 
 describe("FleetPage header", () => {
-  it("replaces the attention band with one quiet line when nothing is wrong", () => {
+  // The all-clear is the ABSENCE of the row, and nothing else. A line that
+  // only ever reads "nothing needs attention" is a line people stop reading,
+  // and it costs the page's best position on every healthy fleet -- the same
+  // reason the band it replaced was never a green card. What confirms the
+  // check ran is the rail's "since last check" figure, which is on the page
+  // in both states.
+  it("shows no attention row at all when nothing is wrong", () => {
     renderPage();
 
-    expect(screen.getByText(/nothing needs attention/i)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /by kind/i })).toBeNull();
   });
 
-  it("counts what is wrong by kind, and drops the all-clear line", () => {
+  it("counts what is wrong by kind", () => {
     renderPage({
       conditions: [
         {
@@ -201,7 +207,6 @@ describe("FleetPage header", () => {
       within(counts).getByText(/Filesystem nearly full/),
     ).toBeInTheDocument();
     expect(within(counts).getByText("1")).toBeInTheDocument();
-    expect(screen.queryByText(/nothing needs attention/i)).toBeNull();
   });
 
   it("counts only hosts that have actually reported recently", () => {
@@ -484,10 +489,22 @@ describe("FleetPage data fetching", () => {
     expect(screen.getByText("web-01")).toBeInTheDocument();
   });
 
-  it("dates the all-clear line from injected data too", () => {
+  it("dates the rail's check figure from injected data too", () => {
     renderPage({ checkedAt: "2026-08-10T13:59:20Z" });
 
-    expect(screen.getByText(/checked 40 s ago/)).toBeInTheDocument();
+    // The age alone, with the words that finish it as its label: the rail
+    // states figures, and "40 s ago since last check" is not a sentence.
+    expect(screen.getByText("40 s")).toBeInTheDocument();
+    expect(screen.getByText("since last check")).toBeInTheDocument();
+  });
+
+  // ABSENT under "since last check" reads as "the check failed", which is a
+  // claim the page has no basis for: a hub that did not say when it last
+  // looked has not said anything went wrong either.
+  it("omits the check figure entirely rather than dashing it", () => {
+    renderPage({ checkedAt: null });
+
+    expect(screen.queryByText("since last check")).toBeNull();
   });
 
   it("says what went wrong instead of rendering an empty fleet", async () => {
@@ -518,7 +535,6 @@ describe("FleetPage data fetching", () => {
 
     const counts = screen.getByRole("list", { name: /by kind/i });
     expect(within(counts).getByText(/OOM kills/)).toBeInTheDocument();
-    expect(screen.queryByText(/nothing needs attention/)).toBeNull();
   });
 
   // The point of the counts line, in one assertion: the number of entries is
@@ -687,8 +703,14 @@ describe("FleetPage data fetching", () => {
       />,
     );
 
-    // One host in trouble, two conditions on it.
-    expect(screen.getByText(/1 of 2 hosts/)).toBeInTheDocument();
+    // One host in trouble, two conditions on it -- so the segment says 1,
+    // not 2. The segments count HOSTS; the kind list beside them is what
+    // counts the conditions, and it has a line for each.
+    expect(
+      screen.getByRole("button", { name: "Critical 1" }),
+    ).toBeInTheDocument();
+    const counts = screen.getByRole("list", { name: /by kind/i });
+    expect(within(counts).getAllByRole("listitem")).toHaveLength(2);
   });
 
   // A filter is someone looking for one machine. Recomputing the band from
@@ -713,8 +735,10 @@ describe("FleetPage data fetching", () => {
 
     await user.type(screen.getByPlaceholderText(/filter hosts/i), "web");
     const counts = screen.getByRole("list", { name: /by kind/i });
+    // db-01 is filtered out of the list; its OOM kills are still counted,
+    // and the segment still knows the fleet has two hosts in it.
     expect(within(counts).getByText(/OOM kills/)).toBeInTheDocument();
-    expect(screen.getByText(/1 of 2 hosts/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All 2" })).toBeInTheDocument();
   });
 
   // The rail replaces the worst-first ordering: rows stay where the API put
@@ -740,11 +764,11 @@ describe("FleetPage data fetching", () => {
     expect(rows[0].querySelector(".sr-only")).toBeNull();
   });
 
-  it("still shows the quiet all-clear line for a healthy fleet", () => {
+  it("draws no attention row for a healthy fleet", () => {
     render(
       <FleetPage rows={[makeRow({ id: 1 })]} checkedAt={null} now={NOW} />,
     );
-    expect(screen.getByText(/nothing needs attention/)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /by kind/i })).toBeNull();
   });
 });
 

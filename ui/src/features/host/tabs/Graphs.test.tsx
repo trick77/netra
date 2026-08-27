@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import type { MetricsResponse } from "../../../lib/api";
 import {
+  CollectorGraphs,
   NetworkGraphs,
   StorageGraphs,
   SystemGraphs,
@@ -11,7 +12,7 @@ import { ABSENT } from "../../../lib/format";
 import { ALL_SPECS, groupedSlugs } from "../chartSpecs";
 
 /**
- * All three subject tabs at once.
+ * Every tab that draws panels, at once.
  *
  * The Graphs tab is gone -- see GROUP_SLUGS in ../chartSpecs -- but these
  * tests are about how a PANEL behaves (gaps, ceilings, counters, absent
@@ -23,6 +24,7 @@ function Graphs(props: GraphsProps) {
   return (
     <>
       <SystemGraphs {...props} />
+      <CollectorGraphs {...props} />
       <NetworkGraphs {...props} />
       <StorageGraphs {...props} />
     </>
@@ -160,7 +162,7 @@ describe("Graphs", () => {
   // once. A panel drawn on two subject tabs, or on none, is the failure this
   // catches -- and "on none" is invisible without it: a spec can be defined,
   // exported and simply left out of every group.
-  it("draws each panel on exactly one subject tab", () => {
+  it("draws each panel on exactly one tab", () => {
     const slugs = groupedSlugs();
     expect(new Set(slugs).size).toBe(slugs.length);
     expect([...slugs].sort()).toEqual([...ALL_SPECS.map((s) => s.slug)].sort());

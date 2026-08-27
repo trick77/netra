@@ -116,7 +116,7 @@ export default function App() {
                 rather than "admin panel". The other two are a server and a
                 cog in every set worth considering. */}
             <NavLink href="/" icon={Gauge} active={route.name === "fleet"}>
-              Overview
+              Fleet
             </NavLink>
             <NavLink
               href="/events"

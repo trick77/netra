@@ -8,7 +8,7 @@ import {
   type Host,
   type Site,
 } from "../../lib/api";
-import { ABSENT, byterate, relative } from "../../lib/format";
+import { ABSENT, byterate, duration } from "../../lib/format";
 import { Input } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import { StatFigure, StatRail } from "../../ui/StatRail";
@@ -191,9 +191,9 @@ export interface FleetPageProps {
    */
   attentionHref?: (next: AttentionFilter) => string;
   /**
-   * When the fleet was last read, for the all-clear line. Spec 4.3: the
-   * quiet line exists to confirm the check RAN, so a page handed its data
-   * from outside (Wave 5's poller, or a test) must be able to say when.
+   * When the fleet was last read, for the rail's "since last check" figure.
+   * Spec 4.3: the page has to confirm the check RAN, so a page handed its
+   * data from outside (Wave 5's poller, or a test) must be able to say when.
    */
   checkedAt?: string | null;
   /** Injectable so tests are deterministic instead of racing the clock. */
@@ -340,6 +340,10 @@ export function FleetPage({
   }, [injected]);
 
   const checkedAt = injectedCheckedAt ?? fetchedCheckedAt;
+  // The age, once: it is what the rail draws and what decides whether the
+  // rail draws it at all. See the figure itself on why the two questions
+  // must be the same one.
+  const checkedAge = checkedAt === null ? null : secondsSince(checkedAt, now);
   const hostRows = rows ?? fetchedRows ?? [];
   const containerRows = containers ?? fetchedContainers ?? [];
   const containerError = injectedContainerError ?? fetchedContainerError;
@@ -445,50 +449,33 @@ export function FleetPage({
         </p>
       ) : null}
 
-      {shown.length > 0 ? (
-        <>
-          {/* The count above the band, in the same place the all-clear line
-              sits when there is nothing wrong -- so the page answers "how
-              much of my fleet is in trouble" in one line whichever state it
-              is in, rather than only when the answer is none.
+      {/* What used to be a band of one block per host. Fifty warned hosts
+          made fifty blocks, capped at twenty, with an overflow line that was
+          not even a link -- so the conditions moved into the list below and
+          this is what is left above it: one line per KIND, which is one line
+          per problem however many machines have it.
 
-              It carries the problem count too, which the band used to state
-              in a header of its own reading "{n} on {m} hosts" -- the same
-              two numbers this line already had, in a form that has to be
-              decoded. One line, both counts, and the band starts at its
-              first host. */}
-          <p className="allclear">
-            <strong>
-              {troubled} of {hostRows.length} host
-              {hostRows.length === 1 ? "" : "s"}
-            </strong>{" "}
-            need{troubled === 1 ? "s" : ""} attention · {shown.length} problem
-            {shown.length === 1 ? "" : "s"}
-            {checkedAt === null ? "" : ` · checked ${relative(checkedAt, now)}`}
-          </p>
-          {/* What used to be a band of one block per host. Fifty warned
-              hosts made fifty blocks, capped at twenty, with an overflow
-              line that was not even a link -- so the conditions moved into
-              the list below and this is what is left above it: one line per
-              KIND, which is one line per problem however many machines have
-              it. */}
-          <AttentionCounts
-            kinds={kinds}
-            active={activeKind}
-            href={attentionHref}
-            onSelect={setAttention}
-          />
-        </>
-      ) : (
-        // Not a green "all clear" card: a permanently present banner is one
-        // people stop reading. One quiet line that still confirms the check
-        // ran (spec 4.3).
-        <p className="allclear">
-          All {reporting} host{reporting === 1 ? "" : "s"} reporting · nothing
-          needs attention
-          {checkedAt === null ? "" : ` · checked ${relative(checkedAt, now)}`}
-        </p>
-      )}
+          It is now the FIRST thing on the page. The summary sentence that
+          used to sit above it ("2 of 4 hosts need attention · 2 problems ·
+          checked 0 s ago") said, in prose, what these tiles and the rail
+          below them already say in figures -- and it said it in the page's
+          best line. The two counts it carried are the tiles themselves and
+          the rail's "of N hosts reporting"; the one fact it alone carried,
+          the age of the check, moved into the rail beside them.
+
+          Nothing takes its place on a healthy fleet: an empty attention row
+          IS the all-clear, and the rail underneath still confirms the check
+          ran. A line that only ever reads "nothing needs attention" is a line
+          people stop reading, which is the same reason the band it replaced
+          was not a green card. */}
+      {shown.length > 0 ? (
+        <AttentionCounts
+          kinds={kinds}
+          active={activeKind}
+          href={attentionHref}
+          onSelect={setAttention}
+        />
+      ) : null}
 
       {/* The ambient figures, on a rail rather than in cards.
           They were three cards with 28px numbers sitting directly under
@@ -537,6 +524,25 @@ export function FleetPage({
           // has no line for a qualifier that repeats for all three figures.
           label="in + out"
         />
+        {/* The age of the poll, in the place the fleet's other ambient
+            figures are read. It used to be the tail of a summary sentence
+            above the page; the sentence is gone and this is the fact on it
+            that was not said twice.
+
+            `duration`, not `relative`: the rail's shape is a figure and a
+            phrase finishing it, and "0 s ago since last check" is not a
+            sentence. No href, for the reason the traffic figure states.
+
+            Omitted entirely when the hub has not said when it last looked,
+            rather than shown as ABSENT -- an em dash under "since last
+            check" reads as "the check failed", which is a claim this page
+            has no basis for. The AGE is what is tested, not the timestamp:
+            null and an unparseable string are the same fact here, and
+            guarding on `checkedAt !== null` alone let a malformed one render
+            the very em dash this omits. */}
+        {checkedAge !== null && (
+          <StatFigure value={duration(checkedAge)} label="since last check" />
+        )}
       </StatRail>
 
       <Tabs
@@ -729,6 +735,19 @@ function describe(err: unknown): string {
 // this replaced did that job by accident; isReporting does it on purpose,
 // and it is the same predicate the "Hosts reporting" tile directly above
 // uses, so the two tiles cannot disagree about which hosts exist right now.
+// The age `relative()` computes before it appends "ago". The rail wants the
+// duration alone -- the words that finish the figure are its label -- and a
+// second copy of the arithmetic is how the rail and a tooltip come to
+// disagree about the same instant by a second.
+//
+// Clamped at zero like relative()'s is, for the same reason: a hub whose
+// clock is a moment ahead of the browser's must not produce a negative age.
+function secondsSince(iso: string, now: Date): number | null {
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return null;
+  return Math.max(0, Math.round((now.getTime() - then) / 1000));
+}
+
 function fleetTraffic(rows: readonly HostRow[], now: Date): string {
   let total = 0;
   let any = false;
