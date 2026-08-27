@@ -1396,4 +1396,28 @@ describe("needsAttention agrees with the fleet band", () => {
       "critical",
     ]);
   });
+
+  // The same four cases the fleet's conditions.test.ts pins, so the two pages
+  // can be seen agreeing about bytes and not only about percentages.
+  it("weighs the bytes left, not the percentage alone", () => {
+    const GB = 1024 ** 3;
+    const at = (used: number, free: number) =>
+      needsAttention({
+        ...quiet,
+        host,
+        now: new Date(host.last_seen as string),
+        filesystems: [{ label: "/mnt/ark", total: used + free, used, free }],
+      });
+
+    // Given 6.7 TB at 90%, 674 GB is left and there is nothing to do
+    expect(at(6100 * GB, 674 * GB)).toEqual([]);
+    // and the same percentage on a small root, where 2 GB is left, warns
+    expect(at(18 * GB, 2 * GB)[0]?.severity).toBe("warning");
+    // 96% of a big array with 67 GB left is worth a word, not an emergency,
+    // and with 500 GB left neither floor binds and there is nothing to say
+    expect(at(1600 * GB, 67 * GB)[0]?.severity).toBe("warning");
+    expect(at(12000 * GB, 500 * GB)).toEqual([]);
+    // and 96% with under 20 GiB left is the real thing
+    expect(at(19 * GB, 0.8 * GB)[0]?.severity).toBe("critical");
+  });
 });

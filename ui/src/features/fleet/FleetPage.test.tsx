@@ -184,7 +184,7 @@ describe("FleetPage header", () => {
           hostname: "web-01",
           kind: "disk",
           severity: "critical",
-          label: "Filesystem over 90%",
+          label: "Filesystem nearly full",
           what: "disk 99% full",
           since: "2026-08-10T13:00:00Z",
           evidence: { type: "meter", pct: 99 },
@@ -197,7 +197,9 @@ describe("FleetPage header", () => {
     // this page is still the monitoring list and the sentence is one click
     // away. That IS the change -- fifty warned hosts cannot each get a line.
     const counts = screen.getByRole("list", { name: /by kind/i });
-    expect(within(counts).getByText(/Filesystem over 90%/)).toBeInTheDocument();
+    expect(
+      within(counts).getByText(/Filesystem nearly full/),
+    ).toBeInTheDocument();
     expect(within(counts).getByText("1")).toBeInTheDocument();
     expect(screen.queryByText(/nothing needs attention/i)).toBeNull();
   });
