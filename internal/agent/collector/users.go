@@ -139,10 +139,6 @@ func NewUsers(sessions SessionLister, path string) *Users {
 	return &Users{path: path, sessions: sessions, recordSizes: utmpRecordSizes}
 }
 
-// SetSessionListerForTest swaps the logind source, so a test can drive the
-// fallback by handing it a lister that fails.
-func (u *Users) SetSessionListerForTest(l SessionLister) { u.sessions = l }
-
 // Name implements Collector.
 func (u *Users) Name() string { return "users" }
 

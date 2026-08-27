@@ -399,3 +399,22 @@ func TestUsersZeroFromLogindIsNotAFallback(t *testing.T) {
 		t.Errorf("source = %q, want %q", got, "logind")
 	}
 }
+
+// A read error that is NOT absence or permission is a real failure and is
+// reported as one: the collector knows the file is there and cannot say what
+// is in it, which is different from a host that has no utmp.
+func TestUsersReportsAnUnreadableUtmpAsAnError(t *testing.T) {
+	// A directory where the file should be: os.ReadFile answers EISDIR,
+	// which is neither ErrNotExist nor ErrPermission.
+	dir := t.TempDir() + "/utmp"
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	u := collector.NewUsers(nil, dir)
+
+	var sample netrav1.HostSample
+	if err := collectInto(u, &sample); err == nil {
+		t.Error("an unreadable utmp must be an error rather than a silent absence")
+	}
+}
