@@ -661,21 +661,21 @@ describe("Drives", () => {
       />,
     );
 
-    expect(screen.getByText(/answered SMART/)).toBeInTheDocument();
+    expect(screen.getByText(/produced a reading/)).toBeInTheDocument();
     expect(screen.getByRole("row", { name: /sdz/ })).toBeInTheDocument();
   });
 
   // It used to assert the passthrough was working, which is false as often as
-  // it is true: `smartctl --scan` enumerates /sys/block without opening
-  // anything, so a container with no /dev bind at all lists a full set of
-  // drives and then fails every read -- landing on exactly this value and
-  // being told to go and look at its hardware.
+  // it is true: `--scan` globs /dev and opens nothing, so a node the container
+  // can see but not open -- the device cgroup rule missing -- lists here and
+  // then fails every read, and the operator was told to go and look at their
+  // hardware instead of at the grant.
   it("does not claim device access works when no drive answered", () => {
     render(
       <Drives rows={[]} capabilities={{ smart: "no-readable-devices" }} />,
     );
 
-    expect(screen.getByText(/no device access/)).toBeInTheDocument();
+    expect(screen.getByText(/not open them/)).toBeInTheDocument();
     expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
   });
 
@@ -707,6 +707,6 @@ describe("Drives", () => {
     );
 
     expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
-    expect(screen.queryByText(/answered SMART/)).toBeNull();
+    expect(screen.queryByText(/produced a reading/)).toBeNull();
   });
 });

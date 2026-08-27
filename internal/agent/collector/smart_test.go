@@ -554,6 +554,93 @@ func TestSmartPrefersNoReadableDevicesOverNoAttributes(t *testing.T) {
 	}
 }
 
+// A smartctl that cannot OPEN the device still exits having written a full
+// JSON document, and SystemSmartctl treats output-with-content as success on
+// purpose. So err is nil, the unmarshal succeeds, and there is no attribute
+// table -- which looked exactly like a SAS drive answering with SCSI health
+// pages. The host then got no-attributes and was told "Nothing is
+// misconfigured", when what it actually has is device nodes it was never
+// granted permission to open: the one state setup-agent.sh exists to fix.
+func TestSmartCountsAnUnopenableDriveAsUnreadableRatherThanQuiet(t *testing.T) {
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--scan") {
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"scsi"}]}`), nil
+		}
+		// Exit bit 1: the device could not be opened. smartctl writes this
+		// document and exits non-zero, which SystemSmartctl reports as
+		// success because the upper bits are drive health.
+		return []byte(`{"smartctl":{"exit_status":2,
+			"messages":[{"severity":"error","string":"Permission denied"}]}}`), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) != 0 {
+		t.Fatalf("attributes = %d, want 0", len(res.Smart))
+	}
+	if got := testee.Capabilities()["smart"]; got != "no-readable-devices" {
+		t.Errorf("capability = %q, want no-readable-devices -- the open failed", got)
+	}
+}
+
+// A health verdict is not a read failure. Bit 3 is "DISK FAILING", which is
+// the single most important thing this collector can be told, and discarding
+// the reading that carries it would blind netra to exactly the drive it
+// exists to notice.
+func TestSmartKeepsTheReadingFromAFailingDrive(t *testing.T) {
+	failing := `{"smartctl":{"exit_status":8},
+		"model_name":"Samsung SSD 870","serial_number":"S123456",
+		"ata_smart_attributes":{"table":[
+			{"id":5,"name":"Reallocated_Sector_Ct","value":12,"raw":{"value":900}}]}}`
+	testee := collector.NewSmart(time.Hour,
+		fakeSmartctl(`{"devices":[{"name":"/dev/sda","type":"scsi"}]}`, failing), "")
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) != 1 {
+		t.Fatalf("attributes = %d, want the failing drive's 1", len(res.Smart))
+	}
+	if testee.Capabilities() != nil {
+		t.Errorf("capability = %v, want none -- the drive reported",
+			testee.Capabilities())
+	}
+}
+
+// Zero rows must always be explained by one value or the other. A host with
+// one drive failing and one answering quietly matched neither rule while they
+// keyed on their own count alone, so the emptiest Storage tab of all got no
+// capability -- the exact silence both values exist to end.
+func TestSmartNamesAZeroRowHostThatBothFailedAndAnswered(t *testing.T) {
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "--scan") {
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"scsi"},
+				{"name":"/dev/sdb","type":"scsi"}]}`), nil
+		}
+		if strings.Contains(joined, "/dev/sda") {
+			return nil, errors.New("timed out")
+		}
+		return []byte(`{"model_name":"HUH721212AL5200"}`), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) != 0 {
+		t.Fatalf("attributes = %d, want 0", len(res.Smart))
+	}
+	if got := testee.Capabilities()["smart"]; got != "no-readable-devices" {
+		t.Errorf("capability = %q, want no-readable-devices -- a read failed", got)
+	}
+}
+
 // Capabilities latch until they change, so no-attributes has to clear the way
 // every other value does -- otherwise a host whose drives start reporting goes
 // on explaining an empty tab that has rows in it.

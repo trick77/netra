@@ -13,10 +13,10 @@
  *   no-devices           smartctl ran and scanned nothing. On a container
  *                        agent that is a missing devices: mapping far more
  *                        often than a machine without disks.
- *   no-readable-devices  drives were scanned and not one answered. `--scan`
- *                        reads /sys/block and opens nothing, so this is a
- *                        container with no /dev mapped in every bit as often
- *                        as it is a drive that will not talk.
+ *   no-readable-devices  drives were scanned, at least one read failed and not
+ *                        one of them produced a reading. The node is there and
+ *                        smartctl cannot open it, which is the device cgroup
+ *                        rule far more often than it is the drive.
  *   usb-only-devices     every drive found hangs off a USB bridge, which the
  *                        agent deliberately leaves alone. Nothing is
  *                        misconfigured and nothing failed, so this one names
@@ -68,11 +68,12 @@ export function hostDriveNote(
       return "Every drive this host's agent found is USB-attached, and it leaves those alone: driving a USB bridge for SMART is unreliable and can hang the enclosure, stalling the whole scrape. Directly attached drives are read normally.";
     case "no-readable-devices":
       // Deliberately does NOT say the passthrough is working, which is what
-      // this sentence used to claim. `smartctl --scan` enumerates /sys/block
-      // and never opens a device, so an agent with no /dev bind at all still
-      // gets a full drive list and then fails every read -- landing here. The
-      // container is named first because it is the half an operator can fix.
-      return `This host's agent found drives and not one of them answered SMART. Either the container has no device access -- the agent can list drives from the host's /sys without being able to open them -- or the drives themselves are not answering. ${SMART_REMEDY}`;
+      // this sentence used to claim. `--scan` globs /dev and opens nothing, so
+      // a node the container can see but not open -- the device cgroup rule
+      // missing, or granted for the wrong device -- lists here and then fails
+      // every read. The grant is named first because it is the half an
+      // operator can fix.
+      return `This host's agent found drives and not one of them produced a reading. Either the container may see the device nodes but not open them, or the drives themselves are not answering. ${SMART_REMEDY}`;
     case "no-attributes":
       // No remedy, like usb-only-devices: this is what a SAS drive does. It
       // answers perfectly and reports SCSI health pages instead of the

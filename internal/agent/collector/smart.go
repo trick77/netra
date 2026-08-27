@@ -99,7 +99,30 @@ type smartctlDevice struct {
 	} `json:"ata_smart_attributes"`
 	// NVMe drives report a fixed health log rather than the ATA table.
 	NvmeSmartHealthInformationLog map[string]json.RawMessage `json:"nvme_smart_health_information_log"`
+
+	// Smartctl carries the run's own verdict on whether it reached the drive.
+	//
+	// Needed because a smartctl that could NOT open the device still exits
+	// having written a complete JSON document, and SystemSmartctl treats
+	// output-with-content as success on purpose (see its comment: the exit
+	// status is a bitfield whose upper bits are drive health, and failing on
+	// those would blind netra to failing drives). So `err == nil` and a clean
+	// unmarshal are not evidence that anything was read.
+	Smartctl struct {
+		ExitStatus int `json:"exit_status"`
+	} `json:"smartctl"`
 }
+
+// exitNotRead are the smartctl exit bits that mean no reading was obtained:
+// bit 0, the command line did not parse, and bit 1, the device could not be
+// opened or would not return an IDENTIFY structure.
+//
+// Deliberately NOT bit 2 and above. Bit 2 is a failed sub-command, which a
+// drive that returned a perfectly good attribute table can still set, and bits
+// 3+ are health verdicts -- "DISK FAILING" is the single most important thing
+// this collector can ever be told, and treating it as a read failure would
+// discard exactly the reading netra exists to take.
+const exitNotRead = 0x03
 
 // nvmeAttrs maps the NVMe health log keys netra reports onto synthetic
 // attr_ids, in the order they are emitted.
@@ -439,10 +462,10 @@ func nvmeRows(ts int64, device string, d smartctlDevice) []*netrav1.SmartAttribu
 
 // readType is the `-d` to pass to `--all`, or "" to let smartctl decide.
 //
-// `--scan` does NOT open the devices it lists. On Linux it walks /sys/block,
-// so it reports a device that has no node in this container at all -- an agent
-// with no /dev bind still gets a full list -- and the `type` it attaches is a
-// guess made without touching the hardware.
+// `--scan` finds its devices by globbing /dev (glob(3) over /dev/sd[a-z],
+// /dev/nvme[0-9] and friends, in linux_smart_interface::scan_smart_devices)
+// and does NOT open them. The `type` it attaches is therefore derived from the
+// node's NAME, not from anything the hardware said.
 //
 // That guess is "scsi" for every /dev/sd*, because libata presents SATA disks
 // through the SCSI layer. Passing it back as `-d scsi` FORCES the SCSI command
@@ -558,6 +581,17 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 			continue
 		}
 
+		// A drive smartctl could not open is unreadable, not quiet. Without
+		// this it landed in `silent` below and the host was told
+		// "nothing is misconfigured" -- which is the opposite of true for the
+		// case that produces it: device nodes present and the device cgroup
+		// rules never granted, so every open returns EACCES. That is the exact
+		// state setup-agent.sh exists to fix, and it must not be reassured.
+		if d.Smartctl.ExitStatus&exitNotRead != 0 {
+			unreadable++
+			continue
+		}
+
 		// Where this device's rows start, so a drive that answered with
 		// nothing storable can be counted. Length rather than a bool per
 		// branch: an ATA table and an NVMe log are both appended below, and
@@ -597,7 +631,17 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	// enclosure skipped nothing and read nothing, and calling that "no drive
 	// answered" would send its operator after a passthrough that is working.
 	attempted := len(scan.Devices) - len(skippedUSB)
-	s.noReadableDevices = attempted > 0 && unreadable == attempted
+
+	// At least one read FAILED and not one drive produced a reading.
+	//
+	// Not `unreadable == attempted`, which left a hole exactly where the
+	// silence was worst: two drives, one timing out and one answering with no
+	// attribute table, satisfied neither this nor noAttributes below, so a
+	// host with an empty Storage tab got no capability at all -- the state
+	// both of these exist to end. Every zero-row outcome is now named by one
+	// of the two.
+	s.noReadableDevices = attempted > 0 && unreadable > 0 &&
+		unreadable+silent == attempted
 
 	// Every device found, every one skipped. Reported as well as logged: the
 	// log answers the question on the host, and the capability answers it on
