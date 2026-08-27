@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ChartPanel } from "./ChartPanel";
 import { ABSENT } from "../../lib/format";
 
@@ -354,5 +355,56 @@ describe("ChartPanel", () => {
     });
     expect(panel.querySelector(".foot")).toBeNull();
     expect(panel).not.toHaveTextContent("90%");
+  });
+});
+
+// The (i) beside the title. Given only where the title is not enough, so its
+// ABSENCE is as much a decision as its presence -- see PanelSpec.about.
+describe("ChartPanel about", () => {
+  it("draws no glyph for a panel that was given no text", () => {
+    render(
+      <ChartPanel
+        title="Uptime"
+        series={[{ name: "uptime", color: "var(--s1)", values: [1, 2] }]}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /^About/ })).toBeNull();
+  });
+
+  it("names the panel it belongs to, and shows the text on focus", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChartPanel
+        title="TCP listen queue"
+        about="Connections the kernel dropped before the process accepted them."
+        series={[{ name: "drops", color: "var(--s1)", values: [1, 2] }]}
+      />,
+    );
+
+    const glyph = screen.getByRole("button", {
+      name: "About TCP listen queue",
+    });
+    await user.hover(glyph);
+
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Connections the kernel dropped",
+    );
+  });
+
+  // The one place a reader most needs to know what the panel WOULD have shown:
+  // "TCP listen queue, not collected" says nothing on its own.
+  it("keeps the glyph on the not-collected panel", () => {
+    render(
+      <ChartPanel
+        title="ICMP statistics"
+        about="ICMP errors this host sent and received."
+        unavailable="No ICMP columns at this resolution."
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "About ICMP statistics" }),
+    ).toBeTruthy();
   });
 });

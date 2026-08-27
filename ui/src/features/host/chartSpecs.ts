@@ -153,6 +153,20 @@ interface PanelSpec {
    */
   slug: string;
   title: string;
+  /**
+   * One or two sentences on what this panel measures and what a bad reading
+   * looks like, shown behind an (i) beside the title.
+   *
+   * Given ONLY where the title is not enough. Most of what is written here was
+   * already in this file as a source comment explaining why the panel exists;
+   * the reader looking at the chart had no way to see it.
+   *
+   * A spec without it draws no glyph, and that is deliberate rather than an
+   * omission: a sentence under "Uptime" teaches the reader that these are not
+   * worth opening, and then the one on "TCP listen queue" goes unread too. If
+   * the title already says it, say nothing.
+   */
+  about?: string;
   unit?: string;
   source: Source;
   /** One band per base for a single-series family; one band per base PER
@@ -406,6 +420,8 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "CPU cores",
     slug: "cpu-cores",
+    about:
+      "One band per logical CPU, each showing that core's own utilisation, so the stack runs to cores x 100 and has no axis. The CPU panel is the same data normalised to a 0-100 mean; this one answers whether a single core is pinned while the rest idle.",
     source: "cpuCore",
     bases: [{ base: "busy", label: "busy" }],
     stacked: true,
@@ -421,6 +437,8 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "CPU time breakdown",
     slug: "cpu-time-breakdown",
+    about:
+      "Where busy CPU time went. iowait is time blocked on disk and steal is time the hypervisor gave to someone else: in both the CPU was ready and something else held it up.",
     source: "host",
     bases: [
       { base: "cpu_user", label: "user" },
@@ -447,6 +465,8 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "Memory pressure",
     slug: "memory-pressure",
+    about:
+      "What the machine had to do to keep memory available. Major faults are reads that had to hit disk; swap-out climbing while faults stay flat is reclaim working, both climbing together is thrashing - on a host whose memory chart can still look half empty.",
     unit: "/s",
     source: "host",
     bases: [
@@ -462,6 +482,8 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "Device availability",
     slug: "device-availability",
+    about:
+      "One line per collector: 1 for a bucket where it ran, 0 where it did not. A collector that was down is why other panels on this page have holes.",
     source: "collector",
     bases: [{ base: "ok", label: "ok" }],
     boolean: true,
@@ -478,6 +500,8 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "Load averages",
     slug: "load-averages",
+    about:
+      "Processes runnable or stuck in uninterruptible sleep, averaged over 1, 5 and 15 minutes. Read it against the core count rather than against 1.0, and read the three together for the direction.",
     source: "host",
     bases: [
       { base: "load1", label: "1m" },
@@ -489,6 +513,8 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "Context switches",
     slug: "context-switches",
+    about:
+      "How often the kernel took one task off a CPU and put another on. A rate that climbs without matching CPU work points at contention or an interrupt-driven wake/sleep loop rather than at real work.",
     unit: "/s",
     source: "host",
     bases: [{ base: "ctxt_per_s", label: "ctxt" }],
@@ -497,6 +523,8 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "Interrupts",
     slug: "interrupts",
+    about:
+      "Hardware and timer interrupts per second. A jump with no matching traffic or disk load points at one device rather than at the workload.",
     unit: "/s",
     source: "host",
     bases: [{ base: "intr_per_s", label: "intr" }],
@@ -505,6 +533,8 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "Running processes",
     slug: "running-processes",
+    about:
+      "Blocked is the line to watch: those processes are stuck waiting on I/O rather than on CPU, and they count towards load average while using none of it.",
     source: "host",
     bases: [
       { base: "procs_running", label: "running" },
@@ -538,6 +568,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "Hub latency",
     slug: "hub-latency",
+    about:
+      "Handshake is the network path to the hub; round trip is the whole POST, TLS, the hub's own work and its database write included. The gap between the two is the hub, not the network.",
     unit: "ms",
     source: "agent",
     bases: [
@@ -559,6 +591,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "Hub connect failures",
     slug: "hub-connect-failures",
+    about:
+      "Attempts that never reached the hub. A failed attempt has no duration to report, so it shows up as a gap in Hub latency rather than as a spike in it - this is the panel that says why.",
     source: "agent",
     bases: [{ base: "hub_connect_failures_total", label: "failures" }],
     counter: true,
@@ -595,6 +629,8 @@ export const NETWORK: PanelSpec[] = [
     // interface has an in and an out; the schema and the wire are unchanged.)
     title: "Interface throughput",
     slug: "interface-throughput",
+    about:
+      "One in/out pair per interface. Traffic is every interface summed into a single pair, so on a one-NIC host the two panels look the same and on a bonded or multi-homed one only this one says which link carried it.",
     unit: "B/s",
     source: "net",
     bases: [
@@ -629,6 +665,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "Interface errors",
     slug: "interface-errors",
+    about:
+      "Frames the NIC counted as bad, per interface and direction. Throughput cannot show this: a card dropping frames moves the same bytes as a healthy one.",
     unit: "/s",
     source: "net",
     bases: [
@@ -640,6 +678,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "TCP statistics",
     slug: "tcp-statistics",
+    about:
+      "Retransmits, malformed inbound segments, and resets this host sent. Read the retransmit rate against TCP segments - it only means something as a fraction of the traffic carrying it.",
     unit: "/s",
     source: "host",
     bases: [
@@ -652,6 +692,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "TCP connections",
     slug: "tcp-connections",
+    about:
+      "Established is a level: sockets open right now. The other three are rates - connections this host opened, connections it accepted, and connection attempts that failed.",
     source: "host",
     bases: [
       { base: "tcp_curr_estab", label: "established" },
@@ -683,6 +725,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "IP fragmentation",
     slug: "ip-fragmentation",
+    about:
+      "Packets too large for the link, split on the way out and rebuilt on the way in. Creates and reassemblies run high on some paths and are not a fault; the fail lines are traffic that was lost.",
     unit: "/s",
     source: "host",
     bases: [
@@ -698,6 +742,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "IPv6 fragmentation",
     slug: "ip6-fragmentation",
+    about:
+      "The same counters for IPv6. Kept apart from v4 because a host can fragment heavily on one family and not at all on the other.",
     unit: "/s",
     source: "host",
     bases: [
@@ -721,6 +767,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "IP statistics",
     slug: "ip-statistics",
+    about:
+      "Datagrams the IP layer handled, v4 and v6 counted apart. This is the volume the fragmentation and transport panels should be read as a fraction of.",
     unit: "/s",
     source: "hostSnmp",
     bases: [
@@ -734,6 +782,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "ICMP statistics",
     slug: "icmp-statistics",
+    about:
+      "ICMP errors this host sent and received. Destination-unreachable arriving in bulk usually means something it was talking to went away.",
     unit: "/s",
     source: "hostSnmp",
     bases: [
@@ -750,6 +800,8 @@ export const NETWORK: PanelSpec[] = [
     // failure axis.
     title: "ICMP informational",
     slug: "icmp-informational",
+    about:
+      "Pings in and replies out - reachability, not failure. Flat here while something else reports this host as down means the probe never arrived.",
     unit: "/s",
     source: "hostSnmp",
     bases: [
@@ -776,6 +828,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "UDP errors",
     slug: "udp-statistics",
+    about:
+      "Datagrams UDP threw away: bad checksum, receive buffer full, send buffer full, and packets for a port nothing was listening on.",
     unit: "/s",
     source: "host",
     bases: [
@@ -789,6 +843,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "UDPv6 errors",
     slug: "udp6-statistics",
+    about:
+      "The same four counters for IPv6, kept apart because a host can be fine on one family and not the other.",
     unit: "/s",
     source: "host",
     bases: [
@@ -806,6 +862,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "UDP datagrams",
     slug: "udp-datagrams",
+    about:
+      "The volume the two UDP error panels are a fraction of. Half an rcvbuf error a second means nothing until you know whether the host is doing 5 datagrams a second or 5000.",
     unit: "/s",
     source: "hostProto",
     bases: [
@@ -829,6 +887,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "TCP segments",
     slug: "tcp-segments",
+    about:
+      "Total segments in and out, the denominator for the retransmit rate. Estab resets are connections torn down rather than closed.",
     unit: "/s",
     source: "hostProto",
     bases: [
@@ -852,6 +912,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "TCP listen queue",
     slug: "tcp-listen-queue",
+    about:
+      "Connections the kernel dropped before the process ever accepted them: the client sees a timeout and the application's own logs show nothing. Overflows alone means the app is not accepting fast enough; drops climbing without them is below the app.",
     unit: "/s",
     source: "host",
     bases: [
@@ -869,6 +931,8 @@ export const NETWORK: PanelSpec[] = [
   {
     title: "Scrape duration",
     slug: "scrape-duration",
+    about:
+      "How long the agent took to read /proc on this host. Read it beside Hub latency: slow here is this box, slow there is the network.",
     unit: "ms",
     source: "agent",
     bases: [{ base: "scrape_duration_ms", label: "scrape" }],
@@ -920,6 +984,8 @@ export const STORAGE: PanelSpec[] = [
     // on utilisation.
     title: "Disk latency",
     slug: "disk-latency",
+    about:
+      "How long an average request waited, queue time included. This is what separates a busy disk from a failing one: a busy disk is still fast per request.",
     unit: "ms",
     source: "diskIo",
     bases: [
@@ -933,6 +999,8 @@ export const STORAGE: PanelSpec[] = [
     // "12 % %". See ChartPanel's unit prop.
     title: "Disk utilisation",
     slug: "disk-utilisation",
+    about:
+      "The share of time the device had at least one request in flight. It says the disk was never idle, not that it was at its limit - a queue-capable SSD sits near 100% while barely working.",
     source: "diskIo",
     bases: [{ base: "io_util_pct", label: "utilisation" }],
     max: 100,
@@ -948,6 +1016,8 @@ export const STORAGE: PanelSpec[] = [
   {
     title: "Disk operations",
     slug: "disk-operations",
+    about:
+      "Requests per second rather than bytes. A small-random and a large-sequential workload are identical in throughput and differ here, and a cloud volume is rate-limited on this number.",
     unit: "/s",
     source: "diskIo",
     bases: [
@@ -972,6 +1042,8 @@ export const STORAGE: PanelSpec[] = [
     // and nothing else in this UI would explain it (spec §10).
     title: "Filesystem inodes",
     slug: "filesystem-inodes",
+    about:
+      "Inodes are the per-file slots, and a filesystem can run out of them with space to spare. That failure reads as 'disk full' everywhere else in this UI.",
     source: "filesystem",
     bases: [
       { base: "inodes_used", label: "used" },

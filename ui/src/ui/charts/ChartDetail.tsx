@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { OverlaySeries } from "./Overlay";
 import { ChartFigure } from "./ChartFigure";
 import { Segmented } from "../Segmented";
+import { InfoTip } from "../InfoTip";
 import { ABSENT } from "../../lib/format";
 import { RANGES, type Range } from "../../lib/range";
 import type { ScaleFactory } from "./scale";
@@ -17,6 +18,10 @@ const CHART_HEIGHT = 380;
 
 export interface ChartDetailProps {
   title: string;
+  /** The panel's explanation, shown behind an (i) beside the dialog title --
+   * the same text and the same affordance as the 260px panel this was opened
+   * from. See ChartPanel's prop of the same name. */
+  about?: string;
   unit?: string;
   series: OverlaySeries[];
   max?: number;
@@ -89,6 +94,7 @@ export interface ChartDetailProps {
  */
 export function ChartDetail({
   title,
+  about,
   unit,
   series,
   max,
@@ -168,6 +174,7 @@ export function ChartDetail({
     >
       <header>
         <h3>{title}</h3>
+        {about !== undefined && <InfoTip text={about} label={title} />}
         {unit && <span className="u">{unit}</span>}
         <div className="spacer" />
         {range !== undefined && onRangeChange !== undefined && (

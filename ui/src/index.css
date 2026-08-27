@@ -1098,6 +1098,73 @@ a:hover {
   font-size: var(--text-label);
   color: var(--muted);
 }
+/* InfoTip: the (i) after a chart title, and the sentence behind it. Written
+   against .itip rather than .smp .itip because the affordance is not a chart
+   thing -- a table header explaining a column is the obvious next caller. */
+.itip {
+  position: relative;
+  display: inline-flex;
+  /* The row it sits in is align-items: baseline, and an icon has no baseline
+     worth aligning: left alone the glyph hangs a third of its height below
+     the title's. Centred against the button's own line-height instead. */
+  align-self: center;
+}
+.itipb {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: help;
+  line-height: 1;
+}
+.itipb:hover,
+.itipb:focus-visible {
+  color: var(--ink);
+}
+.itipbub {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: -6px;
+  z-index: 20;
+  /* max-content up to the cap: a one-line tip is a one-line bubble rather
+     than a 260px box with 40px of air in it. */
+  width: max-content;
+  max-width: 260px;
+  padding: var(--space-2) 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-drawer);
+  font-size: var(--text-label);
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--ink);
+  /* The bubble overlaps the chart it describes; a pointer crossing it must
+     not count as leaving the button. */
+  pointer-events: none;
+  white-space: normal;
+}
+/* Anchored to the CARD rather than to the glyph, in the two headers that put
+   one after a title. The glyph sits at the end of the title, so a 260px
+   bubble hung off it runs past the right edge of its own panel -- and on the
+   right-most column of the .sm grid, off the page. Against the header the
+   bubble starts where the title does, and a .sm column is at least 292px, so
+   it cannot leave the card it belongs to. `position: static` on .itip is what
+   hands the absolute positioning up to the header. (.cd > header takes its
+   `position: relative` in its own rule, further down.) */
+.smp .t {
+  position: relative;
+}
+.smp .t .itip,
+.cd > header .itip {
+  position: static;
+}
+.smp .t .itipbub,
+.cd > header .itipbub {
+  left: 0;
+}
 .smp.na {
   border-style: dashed;
 }
@@ -2231,6 +2298,8 @@ details.sysfold > .body {
   align-items: center;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
+  /* What the InfoTip bubble is positioned against -- see .itipbub. */
+  position: relative;
 }
 .cd > header h3 {
   font-family: var(--font-serif);
