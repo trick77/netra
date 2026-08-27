@@ -28,20 +28,34 @@ export function InfoTip({ text, label }: InfoTipProps) {
 
   // Escape closes it, and a pointer down anywhere else does too. Both are for
   // the TAP case: a pointer that entered and will never leave -- a finger --
-  // has no pointerleave to close on, so without these a bubble opened by a
-  // tap would stay until the next tap on the same button.
+  // has no pointerleave to close on, so a bubble opened by a tap is closed by
+  // Escape or by a press elsewhere. (Tapping the glyph again does not close
+  // it: onClick opens rather than toggles, deliberately -- see below.)
+  //
+  // The keydown is registered in the CAPTURE phase and stops the event there,
+  // so Escape closes the topmost layer only. Inside the enlarged chart dialog
+  // both this and ChartDetail listen on `document`; without this, one press
+  // closed the tooltip and the dialog under it at once. document is visited
+  // twice per event -- capture on the way down, bubble on the way back up --
+  // so stopping it here is what keeps ChartDetail's bubble-phase listener
+  // from running. It is registered only while the bubble is open, so a press
+  // with no tooltip showing closes the dialog exactly as it always did. Only
+  // Escape is stopped; every other key still reaches the page (the fleet
+  // page's "/" shortcut among them).
   useEffect(() => {
     if (!open) return;
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setOpen(false);
     };
     const down = (e: PointerEvent) => {
       if (!wrap.current?.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("keydown", key);
+    document.addEventListener("keydown", key, true);
     document.addEventListener("pointerdown", down);
     return () => {
-      document.removeEventListener("keydown", key);
+      document.removeEventListener("keydown", key, true);
       document.removeEventListener("pointerdown", down);
     };
   }, [open]);

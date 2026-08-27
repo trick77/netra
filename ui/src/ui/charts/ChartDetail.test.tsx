@@ -326,4 +326,31 @@ describe("ChartDetail about", () => {
 
     expect(screen.queryByRole("button", { name: /^About/ })).toBeNull();
   });
+
+  // One press, one layer. Both the tooltip and the dialog listen for Escape
+  // on `document`, and a reader who opened the tooltip to read it should not
+  // lose the chart underneath it in the same keystroke.
+  it("closes the tooltip before the dialog, one Escape at a time", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(
+      <ChartDetail
+        title="TCP listen queue"
+        about="Connections the kernel dropped before the process accepted them."
+        series={series}
+        onClose={onClose}
+      />,
+    );
+
+    await user.hover(
+      screen.getByRole("button", { name: "About TCP listen queue" }),
+    );
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalled();
+  });
 });
