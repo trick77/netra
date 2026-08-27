@@ -407,6 +407,11 @@ func TestSmartDoesNotReadUsbOutOfTheSysfsRootItself(t *testing.T) {
 // produces no rows through no fault of anything, and reporting that as
 // "no drive answered SMART" would send a healthy host's operator after a
 // passthrough that is working.
+//
+// It reports no-attributes rather than nothing at all. Silence was the state
+// that hid the -d scsi bug: no rows and no capability made a host whose drives
+// were never read look exactly like one whose first hourly reading had not
+// landed yet.
 func TestSmartDoesNotBlameDrivesThatAnsweredWithNothingToRead(t *testing.T) {
 	run := func(_ context.Context, args ...string) ([]byte, error) {
 		if strings.Contains(strings.Join(args, " "), "--scan") {
@@ -424,8 +429,168 @@ func TestSmartDoesNotBlameDrivesThatAnsweredWithNothingToRead(t *testing.T) {
 	if len(res.Smart) != 0 {
 		t.Fatalf("attributes = %d, want 0", len(res.Smart))
 	}
+	if got := testee.Capabilities()["smart"]; got != "no-attributes" {
+		t.Errorf("capability = %q, want no-attributes -- the drive answered", got)
+	}
+}
+
+// `smartctl --scan` does not open the devices it lists: on Linux it walks
+// /sys/block, and the type it attaches is a guess made without touching the
+// hardware. That guess is "scsi" for every /dev/sd*, because libata presents
+// SATA disks through the SCSI layer -- so passing it back as `-d scsi` forced
+// the SCSI command path on drives that speak ATA, and their attribute table
+// was never read. Every ordinary SATA host reported no drives at all.
+//
+// The types that ARE detections still have to be passed. A RAID pseudo-device
+// is the one that cannot survive losing it: /dev/bus/0 says nothing about
+// which drive behind the controller is meant.
+func TestSmartDropsTheScanTypeThatIsNotADetection(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		scanned string
+		want    string // the -d value expected in the --all argv, "" for none
+	}{
+		{"scsi is a placeholder", "scsi", ""},
+		{"sat is a detection", "sat", "sat"},
+		{"nvme is a detection", "nvme", "nvme"},
+		{"a raid pseudo-device carries its drive", "megaraid,7", "megaraid,7"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var allArgs []string
+			run := func(_ context.Context, args ...string) ([]byte, error) {
+				if strings.Contains(strings.Join(args, " "), "--scan") {
+					return []byte(`{"devices":[{"name":"/dev/sda","type":"` +
+						tc.scanned + `"}]}`), nil
+				}
+				allArgs = args
+				return []byte(deviceJSON), nil
+			}
+			testee := collector.NewSmart(time.Hour, run, "")
+
+			if _, err := testee.Collect(context.Background()); err != nil {
+				t.Fatalf("Collect: %v", err)
+			}
+
+			got := ""
+			for i, a := range allArgs {
+				if a == "-d" && i+1 < len(allArgs) {
+					got = allArgs[i+1]
+				}
+			}
+			if got != tc.want {
+				t.Errorf("--all argv %v: -d = %q, want %q", allArgs, got, tc.want)
+			}
+		})
+	}
+}
+
+// The whole point of the fix: a scan that reports "scsi" -- which is what
+// every SATA host reports -- must still produce the drive's attributes.
+func TestSmartReadsTheDriveAScanCalledScsi(t *testing.T) {
+	testee := collector.NewSmart(time.Hour,
+		fakeSmartctl(`{"devices":[{"name":"/dev/sda","type":"scsi"}]}`, deviceJSON), "")
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) != 3 {
+		t.Fatalf("attributes = %d, want 3", len(res.Smart))
+	}
 	if testee.Capabilities() != nil {
-		t.Errorf("capability = %v, want none -- the drive answered", testee.Capabilities())
+		t.Errorf("capability = %v, want none -- the drive was read",
+			testee.Capabilities())
+	}
+}
+
+// no-attributes is about the WHOLE host, not one quiet drive. A host with one
+// drive reporting and one answering with SCSI health pages has a Storage tab
+// with rows in it, and hanging a capability on it would explain an emptiness
+// the operator is not looking at.
+func TestSmartDoesNotReportNoAttributesWhenOneDriveAnswered(t *testing.T) {
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "--scan") {
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"scsi"},
+				{"name":"/dev/sdb","type":"scsi"}]}`), nil
+		}
+		if strings.Contains(joined, "/dev/sdb") {
+			return []byte(`{"model_name":"HUH721212AL5200"}`), nil
+		}
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) != 3 {
+		t.Fatalf("attributes = %d, want the answering drive's 3", len(res.Smart))
+	}
+	if testee.Capabilities() != nil {
+		t.Errorf("capability = %v, want none -- sda reported", testee.Capabilities())
+	}
+}
+
+// A read that FAILS is still a different fact from one that answered with
+// nothing, and it keeps the value that names its own remedy: Capabilities
+// reports the first state that holds, and no-readable-devices is decided
+// before no-attributes.
+func TestSmartPrefersNoReadableDevicesOverNoAttributes(t *testing.T) {
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--scan") {
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"scsi"}]}`), nil
+		}
+		return nil, errors.New("no such device")
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.Capabilities()["smart"]; got != "no-readable-devices" {
+		t.Errorf("capability = %q, want no-readable-devices", got)
+	}
+}
+
+// Capabilities latch until they change, so no-attributes has to clear the way
+// every other value does -- otherwise a host whose drives start reporting goes
+// on explaining an empty tab that has rows in it.
+func TestSmartClearsNoAttributesOnRecovery(t *testing.T) {
+	clock := time.Now()
+	silent := true
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--scan") {
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"scsi"}]}`), nil
+		}
+		if silent {
+			return []byte(`{"model_name":"HUH721212AL5200"}`), nil
+		}
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, "")
+	testee.SetClockForTest(func() time.Time { return clock })
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.Capabilities()["smart"]; got != "no-attributes" {
+		t.Fatalf("capability = %q, want no-attributes", got)
+	}
+
+	silent = false
+	clock = clock.Add(time.Hour)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) == 0 {
+		t.Fatal("attributes = 0 after the drive started reporting, want the drive's")
+	}
+	if testee.Capabilities() != nil {
+		t.Errorf("capability = %v after the drive reported, want none",
+			testee.Capabilities())
 	}
 }
 

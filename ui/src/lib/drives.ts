@@ -13,26 +13,31 @@
  *   no-devices           smartctl ran and scanned nothing. On a container
  *                        agent that is a missing devices: mapping far more
  *                        often than a machine without disks.
- *   no-readable-devices  drives were scanned and not one answered. The
- *                        passthrough works; the drives, or the capability
- *                        behind them, do not.
+ *   no-readable-devices  drives were scanned and not one answered. `--scan`
+ *                        reads /sys/block and opens nothing, so this is a
+ *                        container with no /dev mapped in every bit as often
+ *                        as it is a drive that will not talk.
  *   usb-only-devices     every drive found hangs off a USB bridge, which the
  *                        agent deliberately leaves alone. Nothing is
  *                        misconfigured and nothing failed, so this one names
  *                        no remedy -- it is the one empty Storage tab that is
  *                        working as intended.
+ *   no-attributes        every drive answered and none of them reported a
+ *                        SMART attribute table. What a SAS drive does: it
+ *                        replies with SCSI health pages, which netra does not
+ *                        store. Nothing to fix here either.
  *
- * All three mirror internal/agent/collector/smart.go. The values are free text
+ * All five mirror internal/agent/collector/smart.go. The values are free text
  * on the wire -- capabilities is JSONB with no enum and no CHECK -- so an
  * unrecognised one still has to render as something the operator can act on,
  * the same rule hostContainerNote follows.
  */
 
 /**
- * The fix for the two states an operator can actually do something about. Both
- * are compose the setup script writes -- a devices: entry and the capability
- * that goes with it -- not a bug in the agent, so the sentence names the
- * script rather than describing the symptom twice.
+ * The fix for the three states an operator can actually do something about.
+ * All are compose the setup script writes -- the /dev bind, the device cgroup
+ * rules and the capabilities that go with them -- not a bug in the agent, so
+ * the sentence names the script rather than describing the symptom twice.
  */
 const SMART_REMEDY = "Re-run setup-agent.sh on the host.";
 
@@ -62,7 +67,18 @@ export function hostDriveNote(
       // make their agent worse.
       return "Every drive this host's agent found is USB-attached, and it leaves those alone: driving a USB bridge for SMART is unreliable and can hang the enclosure, stalling the whole scrape. Directly attached drives are read normally.";
     case "no-readable-devices":
-      return "This host's agent found drives and not one of them answered SMART. The passthrough is working, so the drives themselves, or the capability behind them, are what to look at.";
+      // Deliberately does NOT say the passthrough is working, which is what
+      // this sentence used to claim. `smartctl --scan` enumerates /sys/block
+      // and never opens a device, so an agent with no /dev bind at all still
+      // gets a full drive list and then fails every read -- landing here. The
+      // container is named first because it is the half an operator can fix.
+      return `This host's agent found drives and not one of them answered SMART. Either the container has no device access -- the agent can list drives from the host's /sys without being able to open them -- or the drives themselves are not answering. ${SMART_REMEDY}`;
+    case "no-attributes":
+      // No remedy, like usb-only-devices: this is what a SAS drive does. It
+      // answers perfectly and reports SCSI health pages instead of the
+      // attribute table netra stores, so there is nothing here to grant or
+      // map in.
+      return "This host's drives all answered SMART and none of them reported an attribute table, which is what SAS drives do: they reply with SCSI health pages that netra does not store. Nothing is misconfigured.";
     default:
       // A capability netra does not know the wording of is still the agent
       // saying something went wrong, and quoting it verbatim is more use than

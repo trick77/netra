@@ -652,7 +652,7 @@ describe("Drives", () => {
 
   // The value on a table that is fully present and still worth explaining:
   // drives were scanned and none answered, so nothing was collected for any
-  // of them even though the passthrough works.
+  // of them.
   it("explains drives that answered nothing", () => {
     render(
       <Drives
@@ -663,6 +663,32 @@ describe("Drives", () => {
 
     expect(screen.getByText(/answered SMART/)).toBeInTheDocument();
     expect(screen.getByRole("row", { name: /sdz/ })).toBeInTheDocument();
+  });
+
+  // It used to assert the passthrough was working, which is false as often as
+  // it is true: `smartctl --scan` enumerates /sys/block without opening
+  // anything, so a container with no /dev bind at all lists a full set of
+  // drives and then fails every read -- landing on exactly this value and
+  // being told to go and look at its hardware.
+  it("does not claim device access works when no drive answered", () => {
+    render(
+      <Drives rows={[]} capabilities={{ smart: "no-readable-devices" }} />,
+    );
+
+    expect(screen.getByText(/no device access/)).toBeInTheDocument();
+    expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
+  });
+
+  // A SAS host: every drive answers and reports SCSI health pages instead of
+  // an attribute table. Nothing to fix, so no remedy -- but it must not be
+  // silent, because silence is what made an unread SATA host look like one
+  // whose first hourly reading had not landed yet.
+  it("explains drives that answered without an attribute table", () => {
+    render(<Drives rows={[]} capabilities={{ smart: "no-attributes" }} />);
+
+    expect(screen.getByText(/SAS drives/)).toBeInTheDocument();
+    expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
+    expect(screen.getByText("No drives reported")).toBeInTheDocument();
   });
 
   // An empty table that is working as intended still has to say so. The one
