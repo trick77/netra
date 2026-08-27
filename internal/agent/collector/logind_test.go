@@ -10,10 +10,11 @@ import (
 	"github.com/trick77/netra/internal/agent/collector"
 )
 
-// fakeBus stands in for logind: a set of sessions, each with a class, and the
-// option of failing either call the way a real bus does.
+// fakeBus stands in for logind: a set of sessions, each with a class and a
+// state, and the option of failing either call the way a real bus does.
 type fakeBus struct {
 	classes  map[string]string
+	states   map[string]string
 	listErr  error
 	classErr map[string]error
 }
@@ -29,12 +30,19 @@ func (f fakeBus) Paths(context.Context) ([]dbus.ObjectPath, error) {
 	return collector.SessionPathsOfForTest(ids), nil
 }
 
-func (f fakeBus) Class(_ context.Context, path dbus.ObjectPath) (string, error) {
+func (f fakeBus) Info(_ context.Context, path dbus.ObjectPath) (collector.SessionForTest, error) {
 	id := string(path[len("/org/freedesktop/login1/session/"):])
 	if err, ok := f.classErr[id]; ok {
-		return "", err
+		return collector.SessionForTest{}, err
 	}
-	return f.classes[id], nil
+	// "active" unless a test says otherwise: a session logind is not tearing
+	// down is the ordinary case, and stating it on every fixture would bury
+	// the one place where the state is the subject.
+	state, ok := f.states[id]
+	if !ok {
+		state = "active"
+	}
+	return collector.SessionForTest{Class: f.classes[id], State: state}, nil
 }
 
 // The session-class allowlist, class by class.
@@ -69,7 +77,8 @@ func TestLogindCountsOnlyHumanSessionClasses(t *testing.T) {
 		{"something-new", 0},
 	} {
 		t.Run(tc.class, func(t *testing.T) {
-			if got := collector.CountHumanSessionsForTest([]string{tc.class}); got != tc.want {
+			one := []collector.SessionForTest{{Class: tc.class, State: "active"}}
+			if got := collector.CountHumanSessionsForTest(one); got != tc.want {
 				t.Errorf("count of %q = %d, want %d", tc.class, got, tc.want)
 			}
 		})
@@ -79,7 +88,12 @@ func TestLogindCountsOnlyHumanSessionClasses(t *testing.T) {
 // One ssh login on a systemd 256+ host is a `user` session AND a `manager`
 // session, plus whatever else the machine is running. The count is 1.
 func TestLogindCountsOneLoginOnce(t *testing.T) {
-	sessions := []string{"user", "manager", "background", "greeter"}
+	sessions := []collector.SessionForTest{
+		{Class: "user", State: "active"},
+		{Class: "manager", State: "active"},
+		{Class: "background", State: "active"},
+		{Class: "greeter", State: "active"},
+	}
 
 	if got := collector.CountHumanSessionsForTest(sessions); got != 1 {
 		t.Errorf("count = %d, want 1 -- the manager session is the same login", got)
@@ -157,14 +171,32 @@ func TestLogindCountsAnEmptyBusAsZero(t *testing.T) {
 	}
 }
 
-// The class property is a variant. Anything that is not a string means the
-// object is not the session this parser believes it is.
-func TestLogindRefusesANonStringClass(t *testing.T) {
-	if got, err := collector.ClassOfForTest("user"); err != nil || got != "user" {
-		t.Errorf("classOf(\"user\") = %q, %v; want user, nil", got, err)
+// THE STATE RULE, and the report that produced it: a host showed two logged-in
+// users with nobody on it. A session logind is tearing down -- the person has
+// logged out, something in their scope has not exited -- is still listed with
+// class "user", and counting it reports people who left.
+func TestLogindDoesNotCountASessionOnItsWayOut(t *testing.T) {
+	sessions := []collector.SessionForTest{
+		{Class: "user", State: "active"},
+		{Class: "user", State: "online"},
+		{Class: "user", State: "closing"},
 	}
-	if _, err := collector.ClassOfForTest(uint32(7)); err == nil {
-		t.Error("a non-string class must be an error rather than a counted session")
+
+	if got := collector.CountHumanSessionsForTest(sessions); got != 2 {
+		t.Errorf("count = %d, want 2 -- the closing session has logged out", got)
+	}
+}
+
+// A denylist, not an allowlist, and the asymmetry with the class rule is the
+// point: the state list has been online/active/closing for a decade, so a
+// state this build does not know is far likelier to be a live session than a
+// dead one -- and reporting nobody while somebody is logged in is the worse
+// failure.
+func TestLogindCountsASessionInAnUnknownState(t *testing.T) {
+	sessions := []collector.SessionForTest{{Class: "user", State: "something-new"}}
+
+	if got := collector.CountHumanSessionsForTest(sessions); got != 1 {
+		t.Errorf("count = %d, want 1 -- only closing is excluded", got)
 	}
 }
 

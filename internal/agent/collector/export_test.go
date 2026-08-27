@@ -43,17 +43,29 @@ func CapContainerRowsForTest(rows []*netrav1.ContainerSample) []*netrav1.Contain
 
 const MaxContainerRowsForTest = maxContainerRows
 
-// CountHumanSessionsForTest exposes the logind session-class allowlist, which
-// is the judgement LogindSessions makes and the one thing a machine without
-// logind can still check.
-func CountHumanSessionsForTest(classes []string) int { return countHumanSessions(classes) }
+// SessionForTest is one logind session as this collector reads it: the class
+// it belongs to, and whether it is still alive.
+type SessionForTest struct {
+	Class string
+	State string
+}
+
+// CountHumanSessionsForTest exposes both judgements LogindSessions makes --
+// the class allowlist and the closing-state denylist -- which are the things a
+// machine without logind can still check.
+func CountHumanSessionsForTest(sessions []SessionForTest) int {
+	out := make([]session, 0, len(sessions))
+	for _, s := range sessions {
+		out = append(out, session{class: s.Class, state: s.State})
+	}
+	return countHumanSessions(out)
+}
 
 // SessionSourceForTest is the bus seam LogindSessions sits on, so a test can
-// stand in for logind entirely: which sessions exist, and what each one's
-// class is.
+// stand in for logind entirely: which sessions exist, and what each one is.
 type SessionSourceForTest interface {
 	Paths(ctx context.Context) ([]dbus.ObjectPath, error)
-	Class(ctx context.Context, path dbus.ObjectPath) (string, error)
+	Info(ctx context.Context, path dbus.ObjectPath) (SessionForTest, error)
 }
 
 // CountLogindSessionsForTest runs the real counting path against a fake bus.
@@ -67,12 +79,16 @@ func (t testSource) sessionPaths(ctx context.Context) ([]dbus.ObjectPath, error)
 	return t.inner.Paths(ctx)
 }
 
-func (t testSource) sessionClass(ctx context.Context, p dbus.ObjectPath) (string, error) {
-	return t.inner.Class(ctx, p)
+func (t testSource) sessionInfo(ctx context.Context, p dbus.ObjectPath) (session, error) {
+	s, err := t.inner.Info(ctx, p)
+	if err != nil {
+		return session{}, err
+	}
+	return session{class: s.Class, state: s.State}, nil
 }
 
-// SessionPathsOfForTest and ClassOfForTest expose the two decoding helpers on
-// the bus side, which are the only parts of it that make a decision.
+// SessionPathsOfForTest exposes the ListSessions decoding helper on the bus
+// side. The property-map decode is reached through BusSessionsForTest.
 func SessionPathsOfForTest(ids []string) []dbus.ObjectPath {
 	sessions := make([]logindSession, 0, len(ids))
 	for _, id := range ids {
@@ -86,10 +102,8 @@ func SessionPathsOfForTest(ids []string) []dbus.ObjectPath {
 	return sessionPathsOf(sessions)
 }
 
-func ClassOfForTest(value any) (string, error) { return classOf(value) }
-
 // BusSessionsForTest builds the D-Bus half against a stand-in object, so the
-// two decodes it performs -- the ListSessions reply, and the Class variant --
+// two decodes it performs -- the ListSessions reply, and the property map --
 // are exercised without a bus. objects is called with the object path the
 // production code would have asked the connection for.
 func BusSessionsForTest(objects func(path dbus.ObjectPath) dbus.BusObject) SessionSourceForTest {
@@ -102,6 +116,10 @@ func (b busAdapter) Paths(ctx context.Context) ([]dbus.ObjectPath, error) {
 	return b.inner.sessionPaths(ctx)
 }
 
-func (b busAdapter) Class(ctx context.Context, p dbus.ObjectPath) (string, error) {
-	return b.inner.sessionClass(ctx, p)
+func (b busAdapter) Info(ctx context.Context, p dbus.ObjectPath) (SessionForTest, error) {
+	s, err := b.inner.sessionInfo(ctx, p)
+	if err != nil {
+		return SessionForTest{}, err
+	}
+	return SessionForTest{Class: s.class, State: s.state}, nil
 }
