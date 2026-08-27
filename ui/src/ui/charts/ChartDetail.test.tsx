@@ -297,3 +297,33 @@ describe("ChartPanel enlargement", () => {
     expect(within(dialog).queryByText("20")).toBeNull();
   });
 });
+
+// Enlarging a chart must not cost the reader the sentence that made it
+// readable, so the dialog carries the same glyph and the same text.
+describe("ChartDetail about", () => {
+  it("shows the panel's explanation in the dialog header", async () => {
+    const user = userEvent.setup();
+    render(
+      <ChartDetail
+        title="TCP listen queue"
+        about="Connections the kernel dropped before the process accepted them."
+        series={series}
+        onClose={() => {}}
+      />,
+    );
+
+    await user.hover(
+      screen.getByRole("button", { name: "About TCP listen queue" }),
+    );
+
+    expect(screen.getByRole("tooltip")).toHaveTextContent(
+      "Connections the kernel dropped",
+    );
+  });
+
+  it("draws no glyph when the panel had nothing to say", () => {
+    render(<ChartDetail title="Uptime" series={series} onClose={() => {}} />);
+
+    expect(screen.queryByRole("button", { name: /^About/ })).toBeNull();
+  });
+});

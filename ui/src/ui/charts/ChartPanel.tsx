@@ -20,6 +20,7 @@ import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
 import { Enlargeable, type DetailData } from "./Enlargeable";
 import { useMeasuredWidth } from "./useMeasuredWidth";
+import { InfoTip } from "../InfoTip";
 import type { Range } from "../../lib/range";
 
 /** A single plotted series. Re-exported as `Band` because that is the name
@@ -36,6 +37,15 @@ export { useDetailRange } from "./Enlargeable";
 
 export interface ChartPanelProps {
   title: string;
+  /**
+   * One or two sentences on what this panel measures and what a bad reading
+   * looks like, shown behind an (i) beside the title.
+   *
+   * Given ONLY where the title is not enough -- a panel without it draws no
+   * glyph, and that absence is the signal that there was nothing to say. See
+   * InfoTip, and PanelSpec.about for the copy itself.
+   */
+  about?: string;
   /** Printed after the value. Give one only when `fmt` does NOT already
    * carry it: percent() and bytes() name their own units, and a panel that
    * passes both renders "12 % %". A rate is the case that needs it -- bytes()
@@ -177,6 +187,7 @@ const AXIS_MIN_HEIGHT = 80;
 
 export function ChartPanel({
   title,
+  about,
   unit,
   series = [],
   detailSeries,
@@ -226,6 +237,10 @@ export function ChartPanel({
       >
         <div className="t">
           <h4>{title}</h4>
+          {/* On the not-collected panel too. This is exactly where a reader
+              wants to know what the panel WOULD have shown -- "TCP listen
+              queue, not collected" says nothing at all on its own. */}
+          {about !== undefined && <InfoTip text={about} label={title} />}
         </div>
         <div className="box">
           <span>{unavailableHeadline}</span>
@@ -338,6 +353,10 @@ export function ChartPanel({
     <section className="smp" aria-label={`${title} chart`}>
       <div className="t">
         <h4>{title}</h4>
+        {/* Beside the title, not at the right edge: the glyph is a question
+            about the words next to it, and .now already owns the right end of
+            this row. */}
+        {about !== undefined && <InfoTip text={about} label={title} />}
         <span className="now">
           {nowLabel ? `${nowLabel} ` : ""}
           {nowText}
@@ -350,6 +369,7 @@ export function ChartPanel({
       <div ref={plotRef} className="plotfit">
         <Enlargeable
           title={title}
+          about={about}
           unit={unit}
           // The panel's own series, and its own `max` rather than
           // `effectiveMax`: the dialog derives its ceiling from the data when

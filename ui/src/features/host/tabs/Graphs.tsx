@@ -167,6 +167,11 @@ function Panel({
   return (
     <ChartPanel
       title={spec.title}
+      // Undefined for a spec that has none, which is what keeps the glyph off
+      // the panels whose title already says everything. The host Overview tab
+      // builds its ChartPanels by hand and passes nothing at all, so it stays
+      // clean by construction rather than by an exception here.
+      about={spec.about}
       detailSeries={detailSeries}
       // "Not collected" would be a lie here: the bands exist, the scale to
       // read them against does not, and a reader sent looking for a broken

@@ -182,6 +182,10 @@ function fitted(
 export interface EnlargeableProps {
   /** Names the dialog, and the button unless `label` overrides it. */
   title: string;
+  /** The panel's explanation, carried into the dialog header so that
+   * enlarging a chart does not lose the sentence that made it readable. See
+   * ChartPanel's prop of the same name. */
+  about?: string;
   unit?: string;
   /** The bands the DIALOG draws. Usually the same data the child sparkline
    * is drawing, reshaped as bands -- the two must not disagree. */
@@ -257,6 +261,7 @@ export interface EnlargeableProps {
 
 export function Enlargeable({
   title,
+  about,
   unit,
   series,
   detailSeries,
@@ -317,6 +322,7 @@ export function Enlargeable({
       {enlarged && (
         <ChartDetail
           title={title}
+          about={about}
           unit={unit}
           series={shown}
           max={span.max}

@@ -575,3 +575,24 @@ describe("a cross-source panel with an empty foreign family", () => {
     expect(within(panel).getByText("reasm reqd")).toBeInTheDocument();
   });
 });
+
+// The tab passes each spec's own sentence through, and the specs that have
+// none stay bare. Both halves matter: a glyph on every panel is the same as a
+// glyph on none.
+describe("panel explanations", () => {
+  it("carries a spec's text to its panel", () => {
+    render(<StorageGraphs filesystem={null} diskIo={null} />);
+
+    expect(
+      screen.getByRole("button", { name: "About Disk utilisation" }),
+    ).toBeInTheDocument();
+  });
+
+  it("leaves a spec without one bare", () => {
+    render(<StorageGraphs filesystem={null} diskIo={null} />);
+
+    expect(
+      screen.queryByRole("button", { name: "About Disk throughput" }),
+    ).not.toBeInTheDocument();
+  });
+});
