@@ -97,43 +97,68 @@ func TestLogindListingErrorIsReported(t *testing.T) {
 	}
 }
 
-// The Class property comes back as a variant, and the string inside it is the
-// only thing this collector reads off a session.
-func TestLogindReadsTheClassProperty(t *testing.T) {
+// GetAll answers with the session's whole property map. Class and State are
+// the only two entries this collector reads out of it.
+func TestLogindReadsClassAndState(t *testing.T) {
 	src := collector.BusSessionsForTest(func(dbus.ObjectPath) dbus.BusObject {
-		return fakeObject{body: []any{dbus.MakeVariant("user")}}
+		return fakeObject{body: []any{map[string]dbus.Variant{
+			"Id":     dbus.MakeVariant("c1"),
+			"Class":  dbus.MakeVariant("user"),
+			"State":  dbus.MakeVariant("closing"),
+			"Remote": dbus.MakeVariant(true),
+		}}}
 	})
 
-	class, err := src.Class(context.Background(), "/org/freedesktop/login1/session/c1")
+	got, err := src.Info(context.Background(), "/org/freedesktop/login1/session/c1")
 	if err != nil {
-		t.Fatalf("Class: %v", err)
+		t.Fatalf("Info: %v", err)
 	}
-	if class != "user" {
-		t.Errorf("class = %q, want user", class)
+	if got.Class != "user" || got.State != "closing" {
+		t.Errorf("session = %+v, want class user and state closing", got)
+	}
+}
+
+// A property map missing one of the two is an error, not a zero value: an
+// empty class would silently read as "not a human session" and an empty state
+// as "not closing", moving the count in both directions without saying so.
+func TestLogindRefusesAPropertyMapMissingWhatItNeeds(t *testing.T) {
+	for _, props := range []map[string]dbus.Variant{
+		{"State": dbus.MakeVariant("active")},
+		{"Class": dbus.MakeVariant("user")},
+	} {
+		src := collector.BusSessionsForTest(func(dbus.ObjectPath) dbus.BusObject {
+			return fakeObject{body: []any{props}}
+		})
+		if _, err := src.Info(context.Background(), "/org/freedesktop/login1/session/c1"); err == nil {
+			t.Errorf("a map missing Class or State must be an error: %v", props)
+		}
 	}
 }
 
 // A session that ended between the listing and this read answers with an
-// error rather than a class. countLogindSessions is what decides that is a
-// skip; this asserts the error gets there at all.
-func TestLogindClassErrorIsReported(t *testing.T) {
+// error rather than a property map. countLogindSessions is what decides that
+// is a skip; this asserts the error gets there at all.
+func TestLogindPropertyErrorIsReported(t *testing.T) {
 	src := collector.BusSessionsForTest(func(dbus.ObjectPath) dbus.BusObject {
 		return fakeObject{err: errors.New("unknown object path")}
 	})
 
-	if _, err := src.Class(context.Background(), "/org/freedesktop/login1/session/c1"); err == nil {
-		t.Error("a bus error on the Class read must reach the caller")
+	if _, err := src.Info(context.Background(), "/org/freedesktop/login1/session/c1"); err == nil {
+		t.Error("a bus error on the property read must reach the caller")
 	}
 }
 
 // A variant holding something other than a string means the object is not the
 // session this parser believes it is.
-func TestLogindRefusesANonStringClassFromTheBus(t *testing.T) {
+func TestLogindRefusesANonStringPropertyFromTheBus(t *testing.T) {
 	src := collector.BusSessionsForTest(func(dbus.ObjectPath) dbus.BusObject {
-		return fakeObject{body: []any{dbus.MakeVariant(uint32(7))}}
+		return fakeObject{body: []any{map[string]dbus.Variant{
+			"Class": dbus.MakeVariant(uint32(7)),
+			"State": dbus.MakeVariant("active"),
+		}}}
 	})
 
-	if _, err := src.Class(context.Background(), "/org/freedesktop/login1/session/c1"); err == nil {
+	if _, err := src.Info(context.Background(), "/org/freedesktop/login1/session/c1"); err == nil {
 		t.Error("a non-string class must be an error rather than a counted session")
 	}
 }

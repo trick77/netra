@@ -15,7 +15,7 @@ const (
 	logindManager    = "org.freedesktop.login1.Manager"
 	logindSessionIf  = "org.freedesktop.login1.Session"
 	logindListMethod = logindManager + ".ListSessions"
-	propertiesGet    = "org.freedesktop.DBus.Properties.Get"
+	propertiesGetAll = "org.freedesktop.DBus.Properties.GetAll"
 )
 
 // humanSessionClasses are the session classes that mean a person is logged in.
@@ -46,6 +46,31 @@ var humanSessionClasses = map[string]bool{
 	"user-early-light": true,
 }
 
+// closingSessionState is the state of a session logind is TEARING DOWN: the
+// person has logged out and something in their scope has not exited yet -- a
+// nohup'd command, a screen server, a user unit that ignores SIGTERM.
+//
+// It is a DENYLIST of one, where the class filter above is an allowlist, and
+// the asymmetry is deliberate. The class taxonomy keeps growing and nearly
+// every addition has been another non-human session, so an unknown class must
+// not be counted. The state list is "online", "active", "closing" and has been
+// for a decade; a state this build has not heard of is far likelier to be a
+// live session than a dead one, and the wrong direction to fail in is the one
+// that reports nobody while somebody is logged in.
+const closingSessionState = "closing"
+
+// session is what one logind session tells this collector: what kind it is,
+// and whether it is still alive. Nothing else is read.
+type session struct {
+	class string
+	state string
+}
+
+// counts reports whether this session is a person who is logged in right now.
+func (s session) counts() bool {
+	return humanSessionClasses[s.class] && s.state != closingSessionState
+}
+
 // logindSession is one entry of ListSessions. Only the object path is used --
 // the id, uid, user name and seat are decoded because the D-Bus signature
 // requires it, and then dropped. Nothing about who is logged in leaves the
@@ -67,7 +92,7 @@ type logindSession struct {
 // which no test can stand in for.
 type sessionSource interface {
 	sessionPaths(ctx context.Context) ([]dbus.ObjectPath, error)
-	sessionClass(ctx context.Context, path dbus.ObjectPath) (string, error)
+	sessionInfo(ctx context.Context, path dbus.ObjectPath) (session, error)
 }
 
 // LogindSessions is the production SessionLister. It counts the sessions
@@ -110,10 +135,10 @@ func countLogindSessions(ctx context.Context, src sessionSource) (int, error) {
 		return 0, err
 	}
 
-	classes := make([]string, 0, len(paths))
+	sessions := make([]session, 0, len(paths))
 	var lastErr error
 	for _, path := range paths {
-		class, err := src.sessionClass(ctx, path)
+		s, err := src.sessionInfo(ctx, path)
 		if err != nil {
 			// A session that ended between the listing and this read is
 			// gone, not an error: its object is simply no longer on the
@@ -124,26 +149,27 @@ func countLogindSessions(ctx context.Context, src sessionSource) (int, error) {
 			lastErr = err
 			continue
 		}
-		classes = append(classes, class)
+		sessions = append(sessions, s)
 	}
 
 	// EVERY read failing is a different thing from one session ending, and it
 	// must not be reported as a count. A bus that dropped after the listing,
-	// or a policy that denies the Class property, would otherwise leave this
-	// with an empty slice and answer "0 sessions, from logind" -- authoritative,
+	// or a policy that denies the properties, would otherwise leave this with
+	// an empty slice and answer "0 sessions, from logind" -- authoritative,
 	// wrong, and never falling back to utmp, while people are logged in.
-	if len(paths) > 0 && len(classes) == 0 {
-		return 0, fmt.Errorf("read the class of any of %d sessions: %w", len(paths), lastErr)
+	if len(paths) > 0 && len(sessions) == 0 {
+		return 0, fmt.Errorf("read the properties of any of %d sessions: %w", len(paths), lastErr)
 	}
 
-	return countHumanSessions(classes), nil
+	return countHumanSessions(sessions), nil
 }
 
-// countHumanSessions applies the allowlist.
-func countHumanSessions(classes []string) int {
+// countHumanSessions applies both rules: the class allowlist, and the state
+// denylist that drops a session on its way out.
+func countHumanSessions(sessions []session) int {
 	count := 0
-	for _, class := range classes {
-		if humanSessionClasses[class] {
+	for _, s := range sessions {
+		if s.counts() {
 			count++
 		}
 	}
@@ -161,13 +187,34 @@ func sessionPathsOf(sessions []logindSession) []dbus.ObjectPath {
 	return paths
 }
 
-// classOf reads the Class property's value out of its variant.
-func classOf(value any) (string, error) {
-	class, ok := value.(string)
-	if !ok {
-		return "", fmt.Errorf("session class is %T, not a string", value)
+// sessionOf reads Class and State out of a GetAll reply.
+//
+// A property that is missing or is not a string is an error rather than an
+// empty value: an empty class would be counted as "not a human session" and an
+// empty state as "not closing", so a decode that quietly half-worked would
+// change the count in both directions without saying anything.
+func sessionOf(props map[string]dbus.Variant) (session, error) {
+	class, err := stringProp(props, "Class")
+	if err != nil {
+		return session{}, err
 	}
-	return class, nil
+	state, err := stringProp(props, "State")
+	if err != nil {
+		return session{}, err
+	}
+	return session{class: class, state: state}, nil
+}
+
+func stringProp(props map[string]dbus.Variant, name string) (string, error) {
+	v, ok := props[name]
+	if !ok {
+		return "", fmt.Errorf("session has no %s property", name)
+	}
+	s, ok := v.Value().(string)
+	if !ok {
+		return "", fmt.Errorf("session %s is %T, not a string", name, v.Value())
+	}
+	return s, nil
 }
 
 // busSessions is the D-Bus half: the two calls, and nothing else.
@@ -175,9 +222,9 @@ func classOf(value any) (string, error) {
 // It holds a way to REACH an object rather than the connection itself, and
 // that is what makes the decoding testable. dbus.BusObject is an interface, so
 // a test hands this a stand-in whose CallWithContext returns a canned
-// *dbus.Call -- and the two things that can go wrong on this side, a
-// ListSessions reply that does not decode and a Class variant that is not a
-// string, are exercised without a bus anywhere.
+// *dbus.Call -- and the things that can go wrong on this side, a ListSessions
+// reply that does not decode and a property that is absent or is not a string,
+// are exercised without a bus anywhere.
 type busSessions struct {
 	object func(path dbus.ObjectPath) dbus.BusObject
 }
@@ -196,14 +243,15 @@ func (b busSessions) sessionPaths(ctx context.Context) ([]dbus.ObjectPath, error
 // utmp are the older ones, so the newer method would work exactly where it is
 // not needed and fail where it is.
 //
-// Properties.Get through CallWithContext rather than GetProperty, which takes
-// no context: this runs once per session, and a hung logind would otherwise
-// hold the scrape past its own deadline with nothing to cancel.
-func (b busSessions) sessionClass(ctx context.Context, path dbus.ObjectPath) (string, error) {
-	var v dbus.Variant
-	call := b.object(path).CallWithContext(ctx, propertiesGet, 0, logindSessionIf, "Class")
-	if err := call.Store(&v); err != nil {
-		return "", err
+// GetAll rather than two Gets: Class and State are both wanted and this is a
+// round trip per session on the bus. Through CallWithContext rather than
+// GetProperty, which takes no context -- a hung logind would otherwise hold
+// the scrape past its own deadline with nothing to cancel.
+func (b busSessions) sessionInfo(ctx context.Context, path dbus.ObjectPath) (session, error) {
+	var props map[string]dbus.Variant
+	call := b.object(path).CallWithContext(ctx, propertiesGetAll, 0, logindSessionIf)
+	if err := call.Store(&props); err != nil {
+		return session{}, err
 	}
-	return classOf(v.Value())
+	return sessionOf(props)
 }
