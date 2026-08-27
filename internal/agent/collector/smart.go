@@ -373,15 +373,22 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	// Recorded BEFORE the per-device loop so the two states are decided in the
 	// order they are discovered, and cleared here on the way past so a host
 	// whose passthrough was just fixed stops claiming it has none.
-	s.noDevices = len(scan.Devices) == 0
-	if s.noDevices {
+	//
+	// Logged on the TRANSITION only. A legitimately diskless VPS is a healthy
+	// host in this state permanently, and a line every interval forever is
+	// noise it would learn to ignore -- including on the hour it stops being
+	// true.
+	empty := len(scan.Devices) == 0
+	if empty && !s.noDevices {
 		slog.Info("smartctl found no devices to read",
 			"collector", "smart",
 			"hint", "a container agent needs the device mapped in; see setup-agent.sh")
 	}
+	s.noDevices = empty
 
 	ts := time.Now().UnixMilli()
 	var rows []*netrav1.SmartAttribute
+	unreadable := 0
 
 	for _, dev := range scan.Devices {
 		args := []string{"--json", "--all", dev.Name}
@@ -392,11 +399,13 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 		out, err := s.run(ctx, args...)
 		if err != nil {
 			// One unreadable drive must not cost the others their reading.
+			unreadable++
 			continue
 		}
 
 		var d smartctlDevice
 		if err := json.Unmarshal(out, &d); err != nil {
+			unreadable++
 			continue
 		}
 
@@ -415,11 +424,17 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 		rows = append(rows, nvmeRows(ts, name, d)...)
 	}
 
-	// Drives were found and not one of them produced a row: every --all
-	// failed, timed out or would not parse. A different fault from an empty
-	// scan and a different remedy, so it gets its own value rather than
-	// sharing one.
-	s.noReadableDevices = !s.noDevices && len(rows) == 0
+	// Drives were found and the --all on every one of them failed, timed out
+	// or would not parse. A different fault from an empty scan and a different
+	// remedy, so it gets its own value rather than sharing one.
+	//
+	// Counted from the reads that FAILED rather than from len(rows) == 0. A
+	// SAS drive answers --all perfectly and returns a SCSI error counter log,
+	// which carries no ata_smart_attributes table and no NVMe health log --
+	// so it produces no rows through no fault of anything, and keying on the
+	// row count would tell a healthy SAS host its drives had stopped
+	// answering and send its operator after the passthrough.
+	s.noReadableDevices = len(scan.Devices) > 0 && unreadable == len(scan.Devices)
 
 	// Deterministic order so failures read the same way twice.
 	slices.SortFunc(rows, func(a, b *netrav1.SmartAttribute) int {

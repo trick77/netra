@@ -185,6 +185,33 @@ func TestSmartReportsDevicesThatAnswerNothing(t *testing.T) {
 	}
 }
 
+// A SAS drive answers --all perfectly and returns a SCSI error counter log,
+// which carries neither an ATA attribute table nor an NVMe health log. It
+// produces no rows through no fault of anything, and reporting that as
+// "no drive answered SMART" would send a healthy host's operator after a
+// passthrough that is working.
+func TestSmartDoesNotBlameDrivesThatAnsweredWithNothingToRead(t *testing.T) {
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--scan") {
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"scsi"}]}`), nil
+		}
+		return []byte(`{"model_name":"HUH721212AL5200","serial_number":"8DJ0X1AH",
+			"scsi_error_counter_log":{"read":{"errors_corrected_by_eccfast":0}}}`), nil
+	}
+	testee := collector.NewSmart(time.Hour, run)
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) != 0 {
+		t.Fatalf("attributes = %d, want 0", len(res.Smart))
+	}
+	if testee.Capabilities() != nil {
+		t.Errorf("capability = %v, want none -- the drive answered", testee.Capabilities())
+	}
+}
+
 // Capabilities ride the metadata hash and latch until they change, so one that
 // never clears leaves a stale "no devices" notice standing on a host whose
 // passthrough the operator has just fixed -- which is the exact dishonesty
