@@ -1348,9 +1348,16 @@ const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
         "users-logged-in",
       ],
     },
-    // The agent's own health sits under System because it is a fact about
-    // this box, not about netra's networking -- and because three panels do
-    // not earn a tab.
+  ],
+  // The agent's own health. It sat under System, because it is a fact about
+  // this box rather than about netra's networking and because four panels do
+  // not earn a tab of their own. They no longer have to: the Collectors list
+  // -- which collector ran, and what stopped the ones that did not -- is the
+  // same subject asked as a state, and these four are it asked over time. The
+  // list without the charts cannot say whether a collector has been failing
+  // all day; the charts without the list cannot name a collector that never
+  // started. Together they are a tab.
+  collectors: [
     {
       title: "Agent",
       slugs: [
@@ -1418,6 +1425,7 @@ function resolveGroups(key: string): PanelGroup[] {
 }
 
 export const SYSTEM_GROUPS: PanelGroup[] = resolveGroups("system");
+export const COLLECTOR_GROUPS: PanelGroup[] = resolveGroups("collectors");
 export const NETWORK_GROUPS: PanelGroup[] = resolveGroups("network");
 export const STORAGE_GROUPS: PanelGroup[] = resolveGroups("storage");
 
@@ -1427,9 +1435,12 @@ export const STORAGE_GROUPS: PanelGroup[] = resolveGroups("storage");
  * this one catches a spec that exists and is in no group.
  */
 export function groupedSlugs(): string[] {
-  return [...SYSTEM_GROUPS, ...NETWORK_GROUPS, ...STORAGE_GROUPS].flatMap((g) =>
-    g.specs.map((s) => s.slug),
-  );
+  return [
+    ...SYSTEM_GROUPS,
+    ...COLLECTOR_GROUPS,
+    ...NETWORK_GROUPS,
+    ...STORAGE_GROUPS,
+  ].flatMap((g) => g.specs.map((s) => s.slug));
 }
 
 export function specForSlug(slug: string): PanelSpec | undefined {

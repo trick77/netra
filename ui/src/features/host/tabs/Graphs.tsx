@@ -17,6 +17,7 @@ import { ChartPanel } from "../../../ui/charts/ChartPanel";
 import { RANGE_VALUES } from "../ranges";
 import { trafficScale } from "../../../ui/charts/scale";
 import {
+  COLLECTOR_GROUPS,
   NETWORK_GROUPS,
   REFERENCE_HEADROOM,
   STORAGE_GROUPS,
@@ -299,6 +300,13 @@ export function PanelGroups({
 // groups they draw, and that lives in chartSpecs beside the panels.
 export function SystemGraphs(props: GraphsProps) {
   return <PanelGroups groups={SYSTEM_GROUPS} sources={props} />;
+}
+
+/** The agent's own panels, which the Collectors tab draws under its
+ * capability list. Same shape as the three subject tabs: what differs is the
+ * groups, and those live in chartSpecs. */
+export function CollectorGraphs(props: GraphsProps) {
+  return <PanelGroups groups={COLLECTOR_GROUPS} sources={props} />;
 }
 
 export function NetworkGraphs(props: GraphsProps) {

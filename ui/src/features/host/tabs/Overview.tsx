@@ -3,6 +3,7 @@
 // answers "is this worth opening the tab for?", and none of them
 // reproduces the tab's own content.
 import { Fragment, useEffect, useState, type ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
 import type {
   Container,
   HostDetail,
@@ -37,7 +38,8 @@ import {
   STALE_THRESHOLD_MS,
 } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
-import { Card } from "../../../ui/Card";
+import { Facts } from "./Facts";
+import { Panel } from "./Panel";
 import { Meter } from "../../../ui/Meter";
 import { OsIcon } from "../../../ui/OsIcon";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
@@ -304,56 +306,6 @@ function formatSensor(kind: string, value: number | null): string {
   }
 }
 
-/**
- * The exhaustion gauges, each with the kernel ceiling it runs against.
- *
- * The RATIO is the whole point, which is why every row here has a limit and
- * why sockets_used and tcp_alloc are absent from the list: they have no
- * ceiling in the schema, so they cannot answer "how much headroom is left"
- * and would only be two more numbers to scroll past.
- *
- * Running out of these does not present as a resource problem. accept()
- * starts failing, conntrack silently drops new flows, and the operator sees
- * a broken network on a host whose CPU and memory panels look fine -- so
- * this is the one question netra answers nowhere else.
- *
- * `capability` names the host.capabilities key whose value explains an
- * empty row: the agent says "conntrack: unavailable" when the module is not
- * loaded, and that sentence next to the empty meter is the answer, where a
- * bare em-dash is a mystery.
- */
-const LIMITS: {
-  label: string;
-  gauge: string;
-  ceiling: string;
-  capability: string;
-}[] = [
-  {
-    label: "file descriptors",
-    gauge: "fd_used",
-    ceiling: "fd_limit",
-    capability: "file_descriptors",
-  },
-  {
-    label: "conntrack",
-    gauge: "conntrack_count",
-    ceiling: "conntrack_limit",
-    capability: "conntrack",
-  },
-  {
-    label: "TIME_WAIT sockets",
-    gauge: "tcp_tw",
-    ceiling: "tcp_tw_limit",
-    capability: "sockets",
-  },
-  {
-    label: "orphan sockets",
-    gauge: "tcp_orphan",
-    ceiling: "tcp_orphan_limit",
-    capability: "sockets",
-  },
-];
-
 // When a host counts as stale rather than merely late. Imported, never
 // restated: this used to be its own five-minute constant while hostStatus()
 // used three, so a host last seen four minutes ago had its own header call it
@@ -554,30 +506,6 @@ function agentBuild(host: HostDetail): string {
   return `${version} · ${commit}`;
 }
 
-/** A labelled landmark around a Card, so each summary is reachable by name
- * (Card itself renders a plain div and has no labelling of its own). */
-function Panel({
-  label,
-  title,
-  action,
-  className,
-  children,
-}: {
-  label: string;
-  title: string;
-  action?: ReactNode;
-  className?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section aria-label={label} className={className}>
-      <Card title={title} action={action}>
-        {children}
-      </Card>
-    </section>
-  );
-}
-
 /**
  * One card's worth of sensor rows: name, recent history, current reading.
  *
@@ -728,34 +656,6 @@ function FactStrip({ rows }: { rows: [string, ReactNode][] }) {
   );
 }
 
-/** `wide` lays the pairs out two across instead of one, for a card that spans
- * the page rather than half of it. See .kv.wide. */
-function Facts({
-  rows,
-  wide = false,
-}: {
-  rows: [string, ReactNode][];
-  wide?: boolean;
-}) {
-  return (
-    <dl className={wide ? "kv wide" : "kv"}>
-      {/* Fragment, not a `display: contents` div. The div was invisible in
-        every sense but the one that mattered: display affects box generation,
-        not selector matching, so each dt was the only dt under its own
-        wrapper and `.kv dt:last-of-type` matched EVERY row -- no card built
-        here drew the separators .kv specifies, while ContainerPage, which
-        writes its dt/dd out by hand as direct children, drew them normally.
-        The same class, two appearances, decided by which file you were in. */}
-      {rows.map(([key, value]) => (
-        <Fragment key={key}>
-          <dt>{key}</dt>
-          <dd>{value}</dd>
-        </Fragment>
-      ))}
-    </dl>
-  );
-}
-
 /**
  * The cards this tab draws, and the column each one sits in.
  *
@@ -781,10 +681,14 @@ type CardKey =
   | "disk"
   | "temperature"
   | "fans"
-  | "power"
-  | "limits"
-  | "collectors";
+  | "power";
 
+// Limits and Collectors were the last two keys here. Neither answered the
+// question this tab asks -- one states how the box is configured, the other
+// how much of the agent's answer to trust -- and both sat at the foot of the
+// last column, which is where a card nobody placed deliberately ends up.
+// Limits opens the System tab (see LimitsCard); the capability list is the
+// Collectors tab (see CollectorsTab).
 const CARD_COLUMNS: Record<1 | 2 | 3, readonly (readonly CardKey[])[]> = {
   1: [
     [
@@ -798,26 +702,16 @@ const CARD_COLUMNS: Record<1 | 2 | 3, readonly (readonly CardKey[])[]> = {
       "temperature",
       "fans",
       "power",
-      "limits",
-      "collectors",
     ],
   ],
   2: [
     ["traffic", "processor", "memory", "memoryTrend", "disk"],
-    [
-      "cpuTime",
-      "inventory",
-      "temperature",
-      "fans",
-      "power",
-      "limits",
-      "collectors",
-    ],
+    ["cpuTime", "inventory", "temperature", "fans", "power"],
   ],
   3: [
     ["traffic", "processor", "memory", "memoryTrend"],
     ["disk", "cpuTime", "inventory"],
-    ["temperature", "fans", "power", "limits", "collectors"],
+    ["temperature", "fans", "power"],
   ],
 };
 
@@ -966,7 +860,6 @@ export function Overview({
   // a single broken service. These are the counts the agent reported.
   const servicesTotal = host.services_total ?? null;
   const failedUnits = host.services_failed ?? null;
-  const capabilities = Object.entries(host.capabilities);
 
   // The sensor family carries fans, voltages, currents and power alongside
   // temperatures, and only temperatures have a `temp` column -- so mapping
@@ -988,57 +881,10 @@ export function Overview({
     "power",
   ]);
 
-  // How close each kernel ceiling came to being hit.
-  //
-  // The gauge reads the PEAK bucket where the tier has one: at 5m a mean of
-  // 40% descriptor use across five minutes can hide a moment at 99%, and
-  // the moment is the whole question -- accept() fails at the peak, not at
-  // the average. The suffixed name has to be spelled out because
-  // candidates() prefers _avg. At the raw tier there is no _max peer and
-  // the sample is itself the instant, so the bare name is exact.
-  //
-  // The ceiling is read as the last value the host ever reported rather
-  // than the latest bucket: a configured kernel limit does not stop being
-  // the limit because the newest bucket has not materialised yet. Same
-  // reasoning Inventory applies to a container's mem_limit.
-  const limitRows = LIMITS.map((limit) => {
-    const peak = `${limit.gauge}_max`;
-    const gauge = carriesColumn(hostMetrics, peak) ? peak : limit.gauge;
-    const history = griddedValues(hostMetrics, 0, gauge);
-    const capability = host.capabilities[limit.capability];
-    return {
-      ...limit,
-      // "ok" is the agent saying the collector ran; only a real reason
-      // stands in for a reading.
-      reason:
-        capability !== undefined && capability !== "ok" ? capability : null,
-      value: latestValue(history),
-      ceiling: latest(hostMetrics, limit.ceiling),
-      carried: carriesColumn(hostMetrics, limit.gauge) && hasReading(history),
-    };
-  }).map((row) => ({
-    ...row,
-    // A ceiling so high it is not a ceiling.
-    //
-    // fd_limit is /proc/sys/fs/file-max, and a great many hosts set it to
-    // int64 max as "no practical limit". Drawing 3352 against 9.2
-    // quintillion is a bar that can never move, and the number beside it is
-    // worse than useless: past Number.MAX_SAFE_INTEGER a JSON integer has
-    // already lost precision by the time it reaches this line, so
-    // 9223372036854775807 renders as ...776000 -- a figure the host never
-    // reported. Say "no limit", which is both true and what the operator
-    // means when they set it.
-    unbounded: row.ceiling !== null && row.ceiling > Number.MAX_SAFE_INTEGER,
-  }));
-
   // Read once and used twice -- the summary line and the strip's Uptime row.
   // Two copies of this expression is how the two come to disagree on a host
   // whose metric and whose host row say different things.
   const uptime = latest(hostMetrics, "uptime_s") ?? host.uptime_s;
-
-  const limitsWorthShowing = limitRows.some(
-    (row) => row.carried || row.reason !== null,
-  );
 
   const columns = useColumnCount();
 
@@ -1447,10 +1293,6 @@ export function Overview({
                   }
                 />
               ))}
-              <p className="note">
-                Bytes as measured: used and free do not sum to size, and the
-                difference is the root reserve.
-              </p>
             </div>
           )}
         </Panel>
@@ -1465,8 +1307,8 @@ export function Overview({
           column this page is made of. Why it is emptiness in the WINDOW
           rather than the agent's `sensors: absent` capability: the three
           cards then say the same thing the same way, and the capability is
-          still spelled out on the Collectors card below for anyone asking
-          why the readings are gone. The cost is that a host which does have
+          still spelled out on the Collectors tab for anyone asking why the
+          readings are gone. The cost is that a host which does have
           sensors but reported none in the selected range loses the card
           instead of showing the sentence -- which is also why the `empty`
           strings below can no longer render, and are kept only so a future
@@ -1525,86 +1367,6 @@ export function Overview({
             />
           </Panel>
         )}
-      </>
-    ),
-    limits: (
-      <>
-        {/* Headroom against the kernel's own ceilings. Nothing else on this
-          page answers "am I about to hit a limit": a host at 98% of its
-          conntrack table has a perfectly calm CPU, memory and disk card,
-          and the first symptom is a network that appears broken. */}
-        {limitsWorthShowing && (
-          <Panel label="Limits" title="Limits">
-            {limitRows.map((row) =>
-              row.reason !== null ? (
-                // The capability the agent reported, in place of the meter it
-                // explains. "conntrack: unavailable" is an answer; an
-                // em-dash next to a bar that never fills is a mystery, and
-                // the reader cannot tell it from a collector that broke.
-                //
-                // Written out in Meter's own markup rather than passed INTO
-                // Meter: that component backs the memory and disk cards too,
-                // and its absent state is deliberately one thing. Same shape
-                // the swap row above uses for the same reason.
-                <div className="mrow" key={row.label}>
-                  <div>
-                    <div className="lab">{row.label}</div>
-                  </div>
-                  <div className="val">{row.reason}</div>
-                </div>
-              ) : row.unbounded ? (
-                // The count still matters -- it is the only figure here --
-                // but there is no ratio to draw it against.
-                <div className="mrow" key={row.label}>
-                  <div>
-                    <div className="lab">{row.label}</div>
-                  </div>
-                  <div className="val">
-                    {/* A no-break space inside "no limit": the value column
-                      is narrow, and the default break put "no" on one line
-                      and "limit" on the next. It wraps after the separator
-                      instead. */}
-                    {row.value === null
-                      ? ABSENT
-                      : `${cardinal(row.value)} · no limit`}
-                  </div>
-                </div>
-              ) : (
-                <Meter
-                  key={row.label}
-                  label={row.label}
-                  value={row.value}
-                  max={row.ceiling}
-                  formatValue={(value, max) =>
-                    `${cardinal(value)} of ${cardinal(max)}`
-                  }
-                />
-              ),
-            )}
-          </Panel>
-        )}
-      </>
-    ),
-    collectors: (
-      <>
-        <Panel label="Collectors" title="Collectors">
-          {capabilities.length === 0 ? (
-            <p className="note">The agent reported no capabilities.</p>
-          ) : (
-            <Facts
-              rows={capabilities.map(([name, state]) => [
-                name,
-                // The reason is the value the agent sent; a collector that
-                // cannot run says why rather than showing an empty chart.
-                state === "ok" ? (
-                  <Badge severity="ok">ok</Badge>
-                ) : (
-                  <span>{state}</span>
-                ),
-              ])}
-            />
-          )}
-        </Panel>
       </>
     ),
   };
@@ -1713,6 +1475,23 @@ export function Overview({
               strip below keeps ABSENT, because a labelled table is where a
               gap does need a mark. */}
           <summary>
+            {/* The disclosure mark, and the whole of it: the word "Details"
+                that used to sit at the right end was a label on a control
+                that a chevron says without spending a fact's worth of line
+                on it.
+
+                Leading rather than trailing, matching the group toggle in
+                ui/Table.tsx: a mark at the start of the line is read before
+                the line, which is the order "this opens" has to be learned
+                in. One icon rotated in two states, never two icons.
+
+                A bare <svg>, deliberately NOT wrapped in a span: the dot
+                separator is drawn by `summary span + span::before`, so a
+                leading span would hand the OS name a dot with nothing to
+                its left. aria-hidden because <details>/<summary> announces
+                the open state itself -- a screen reader that also read the
+                icon would hear the control twice. */}
+            <ChevronRight className="chev" aria-hidden="true" />
             {/* The distribution mark, in currentColor rather than in Ubuntu
                 orange or Fedora blue -- see lib/osIcon.ts. It is inside the
                 OS span so it cannot be separated from the name it labels by
@@ -1754,7 +1533,6 @@ export function Overview({
             {uptime !== null && (
               <span className="dim">up {duration(uptime)}</span>
             )}
-            <span className="more">Details</span>
           </summary>
           <div className="body">
             <FactStrip

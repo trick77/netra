@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { isRange, type Range } from "./range";
-import { NETWORK_GROUPS, STORAGE_GROUPS } from "../features/host/chartSpecs";
+import {
+  COLLECTOR_GROUPS,
+  NETWORK_GROUPS,
+  STORAGE_GROUPS,
+} from "../features/host/chartSpecs";
 import type { HostTab } from "../features/host/HostPage";
 
 /**
@@ -35,6 +39,7 @@ const HOST_TABS = new Set<HostTab>([
   "containers",
   "packages",
   "units",
+  "collectors",
   "events",
 ]);
 
@@ -70,6 +75,9 @@ function hostTabForSlug(slug: string): HostTab {
   }
   if (STORAGE_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
     return "storage";
+  }
+  if (COLLECTOR_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
+    return "collectors";
   }
   return "system";
 }

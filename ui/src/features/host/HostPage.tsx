@@ -41,6 +41,8 @@ import { loadRange } from "../settings/SettingsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
 import { Events } from "./tabs/Events";
 import { NetworkGraphs, StorageGraphs, SystemGraphs } from "./tabs/Graphs";
+import { CollectorsTab } from "./tabs/CollectorsTab";
+import { LimitsCard } from "./tabs/LimitsCard";
 import {
   Containers,
   Drives,
@@ -60,9 +62,10 @@ export type HostTab =
   | "containers"
   | "packages"
   | "units"
+  | "collectors"
   | "events";
 
-/** The bar is built to take a ninth tab (Alerts, with the Stage 2 engine)
+/** The bar is built to take a tenth tab (Alerts, with the Stage 2 engine)
  * without relayout; it wraps at narrow widths rather than scrolling, and
  * there is deliberately no overflow menu -- a hidden tab is an unused tab.
  *
@@ -85,6 +88,9 @@ export const HOST_TABS: readonly { id: HostTab; label: string }[] = [
   { id: "containers", label: "Containers" },
   { id: "packages", label: "Packages" },
   { id: "units", label: "Units" },
+  // Between the inventories and the log, at the quiet end of the bar: it is
+  // the tab you open when you doubt what the other tabs are telling you.
+  { id: "collectors", label: "Collectors" },
   { id: "events", label: "Events" },
 ];
 
@@ -305,16 +311,25 @@ export function HostPage({
         // everything; a Storage tab pulling the ICMP MIB would be paying for
         // a panel it does not have.
         case "system": {
-          const [hostMetrics, coreMetrics, collectorMetrics, agentMetrics] =
-            await Promise.all([
-              metrics("host"),
-              metrics("cpu_core"),
-              metrics("collector"),
-              metrics("agent"),
-            ]);
+          // No collector or agent family any more: the four panels that read
+          // them are the Collectors tab's now, and this tab would be paying
+          // for two requests nothing on it draws. hostMetrics is what the
+          // Limits card reads, and it was already being fetched.
+          const [hostMetrics, coreMetrics] = await Promise.all([
+            metrics("host"),
+            metrics("cpu_core"),
+          ]);
           return {
             hostMetrics,
             coreMetrics,
+          };
+        }
+        case "collectors": {
+          const [collectorMetrics, agentMetrics] = await Promise.all([
+            metrics("collector"),
+            metrics("agent"),
+          ]);
+          return {
             collectorMetrics,
             agentMetrics,
           };
@@ -531,13 +546,31 @@ export function HostPage({
         />
       )}
       {tab === "system" && (
-        <SystemGraphs
-          host={data.hostMetrics}
-          collector={data.collectorMetrics}
-          cpuCore={data.coreMetrics}
-          agent={data.agentMetrics}
-          range={range}
-          fetchFamily={fetchFamily}
+        <>
+          <SystemGraphs
+            host={data.hostMetrics}
+            cpuCore={data.coreMetrics}
+            range={range}
+            fetchFamily={fetchFamily}
+          />
+          {/* At the FOOT of the tab, below the charts. Four bars that do not
+              move on a healthy host are not what this tab opens with -- the
+              reader came for what CPU, memory and the kernel have been doing,
+              and the ceilings are the reference they read those against. It
+              renders nothing at all on a host whose agent reports no limits.
+          */}
+          <LimitsCard host={host} hostMetrics={data.hostMetrics} />
+        </>
+      )}
+      {tab === "collectors" && (
+        <CollectorsTab
+          host={host}
+          sources={{
+            collector: data.collectorMetrics,
+            agent: data.agentMetrics,
+            range,
+            fetchFamily,
+          }}
         />
       )}
       {tab === "containers" && (

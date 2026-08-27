@@ -456,7 +456,7 @@ a:hover {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   /* Uncapped, five kinds ran the full 1180px above a summary that stopped
      short of it, and the two rows meant to read as one system visibly
-     disagreed. The rail below is narrower still (640px) -- deliberately, it
+     disagreed. The rail below is narrower still (840px) -- deliberately, it
      is subordinate -- but both start at the same left edge and neither runs
      the window. */
   max-width: 960px;
@@ -1453,8 +1453,9 @@ a:hover {
 .srail {
   display: flex;
   /* Wraps rather than scrolls or squeezes. It has to: this box is capped at
-     640px at every width, and a 412-host fleet spends that on its figures
-     alone ("398 of 412 hosts reporting · 1042 containers · 1.2 GB/s"). */
+     840px at every width, and a 412-host fleet spends that on its figures
+     alone ("398 of 412 hosts reporting · 1042 containers · 1.2 GB/s ·
+     0 s since last check"). */
   flex-wrap: wrap;
   /* The dividers are 1px of the container's own ground showing between the
      segments -- NOT a border-left on each one. A border-left has to be
@@ -1471,8 +1472,13 @@ a:hover {
      corners sit outside the radius at all four corners of the rail. */
   overflow: hidden;
   /* Narrower than the .atiles cap above it. The rail is subordinate, and a
-     box the full width of the row it sits under does not read that way. */
-  max-width: 640px;
+     box the full width of the row it sits under does not read that way.
+
+     840, not the 640 it carried while there were three figures: the fourth
+     ("0 s since last check") wrapped at every window width, so a rail that
+     wraps only on a big fleet or a long rate instead spent a whole second
+     row on one segment on every fleet. Still short of .atiles' 960. */
+  max-width: 840px;
   /* The same gap the tiles left between themselves and the entity tabs
      below: the fleet's summary and the control for what you are looking at
      must not read as one crowded block. */
@@ -1930,22 +1936,51 @@ details.sysfold > summary .cpu {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Pushed to the right edge, and NOT given a separator dot: it is the control,
-   not another fact. */
-details.sysfold > summary .more {
-  margin-left: auto;
-  padding-left: var(--space-4);
-  color: var(--accent);
-  font-size: var(--text-micro);
+/* The disclosure mark, at the head of the line -- what the word "Details"
+   used to say from the right edge. Quieter than the facts it opens: this is
+   the control, and a mark louder than the line it belongs to would be the
+   first thing read on the card.
+
+   align-self rather than the summary's own baseline: an <svg> has no
+   baseline of its own, so on a flex row of text it sits with its BOTTOM on
+   the text baseline and hangs a third of its height below the line. */
+details.sysfold > summary .chev {
+  width: 16px;
+  height: 16px;
+  align-self: center;
+  flex: none;
+  margin-right: var(--space-2);
+  color: var(--muted);
+  /* One icon in two states, not two icons: the rotation is what reads as
+     "this opens". Same treatment .gtoggle .chev gets, keyed off [open]
+     because a <details> owns its state rather than carrying aria-expanded. */
+  transition: transform 120ms ease;
 }
-details.sysfold > summary .more::before {
-  content: none;
+details.sysfold[open] > summary .chev {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  details.sysfold > summary .chev {
+    transition: none;
+  }
 }
 details.sysfold[open] > summary {
   border-bottom: 1px solid var(--border);
 }
 details.sysfold > .body {
   padding: var(--space-4);
+}
+
+/* The Limits card, at the foot of the System tab.
+   Capped rather than left to span the page: a meter is read as a bar against
+   its own length, and one 1300px wide puts the ratio and the figure that
+   states it at opposite ends of the window. Two panel columns' worth (the
+   grid below it fills at 292px a track), so it sits on the same rhythm as
+   the charts underneath. */
+.limits {
+  display: block;
+  max-width: 640px;
+  margin-top: var(--space-4);
 }
 
 /* The host System card's eight facts, label ABOVE value and four across —

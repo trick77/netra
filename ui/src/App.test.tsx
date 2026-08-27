@@ -341,7 +341,7 @@ describe("the range sticks", () => {
 // place a broken href strands a keyboard user with no way out.
 describe("the nav rail", () => {
   const DESTINATIONS = [
-    ["Overview", "/"],
+    ["Fleet", "/"],
     ["Events", "/events"],
     ["Hosts", "/admin/hosts"],
     ["Settings", "/settings"],
