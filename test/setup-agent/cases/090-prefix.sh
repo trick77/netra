@@ -64,7 +64,7 @@ sed 's/#__AGENT_/#__NETRA_/' "$TEMPLATES/compose.yaml.tmpl" >"$OLD/compose.yaml.
 cp "$TEMPLATES/env.tmpl" "$OLD/env.tmpl"
 
 OUT2="$TMP/out2"
-ANS2=$(answers full y y)
+ANS2=$(answers full y y y)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS2" AGENT_UID=0 \
     "$SH" "$SETUP" --sys-admin --pid-host \

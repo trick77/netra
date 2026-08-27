@@ -1,7 +1,13 @@
 #!/bin/sh
 #
-# Block device enumeration, transport classification, NVMe controller
-# resolution, and the one SMART capability prompt that remains.
+# The SMART privileges and the compose blocks that carry them.
+#
+# This case used to test a hardware probe: block device enumeration, transport
+# classification, NVMe controller resolution. All of it is gone. The script no
+# longer decides which drives are real -- it grants access to the device tree
+# and the agent scans it on every collection -- so what is left to test is that
+# plan_smart probes NOTHING and that the two compose blocks which replace the
+# devices: list are always rendered.
 # Many variables set here are read by the SOURCED setup script, not by this file,
 # so shellcheck cannot see the use. The directive is file-wide rather than
 # repeated at a dozen assignments.
@@ -19,11 +25,18 @@ export AGENT_SOURCED
 
 PRIMARY_SENSOR=""
 
-# mkdisk ROOT NAME SIZE PATHPART — build a sysfs devices-tree entry for a whole
-# device and link /sys/block/NAME at it, the way the kernel does.
+# --- 0. the block-device probes that survived, and their root strip -----------
 #
-# The link is what makes device_transport meaningful: the transport is named by
-# the components of the RESOLVED path, not by anything in /sys/block itself.
+# block_devices and device_transport no longer feed a devices: list, but they
+# are still live code: detect_ata_devices calls them, and plan_drivetemp
+# modprobes a kernel module and writes /etc/modules-load.d on the strength of
+# the answer. Deleting their coverage along with the SMART probe left them with
+# none, and the strip below is the part that must never go untested.
+
+# mkdisk ROOT NAME SIZE PATHPART — a sysfs devices-tree entry for a whole
+# device, with /sys/block/NAME linked at it the way the kernel does. The link
+# is what makes device_transport meaningful: the transport is named by the
+# components of the RESOLVED path, not by anything in /sys/block itself.
 mkdisk() {
     _md_root="$1"
     _md_name="$2"
@@ -36,65 +49,38 @@ mkdisk() {
     ln -s "../devices/$_md_part/block/$_md_name" "$_md_root/sys/block/$_md_name"
 }
 
-# mkvirt ROOT NAME — a virtual device: present in /sys/block, no `device` link.
+# mkvirt ROOT NAME — a virtual device: in /sys/block, with no `device` link.
 mkvirt() {
     mkdir -p "$1/sys/block/$2"
     printf '1024\n' >"$1/sys/block/$2/size"
 }
 
-mkdev() {
-    mkdir -p "$1/dev"
-    : >"$1/dev/$2"
-}
-
-# --- 1. block_devices lists whole physical devices only -----------------------
-R="$TMP/r1"
+R="$TMP/probe"
 mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
-mkdisk "$R" sdb 2000 "pci0000:00/ata2/host1"
-# Virtual devices. loop/dm/md/sr also have no `device` link in reality, but the
-# name filter is what must reject them: a dm-0 with a device link (multipath)
-# exists and is still not a drive smartctl should be pointed at.
-mkvirt "$R" loop0
-mkvirt "$R" dm-0
-mkvirt "$R" md0
-mkvirt "$R" sr0
-mkvirt "$R" zram0
+mkdisk "$R" sdc 3000 "pci0000:00/usb1/1-1/1-1:1.0/host4"
+mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
 # An empty card reader slot: a real device link, size 0.
 mkdisk "$R" mmcblk0 0 "pci0000:00/mmc_host/mmc0"
-# A virtual device that passes the name filter but has no `device` link.
-mkvirt "$R" vda
-
+mkvirt "$R" loop0
+mkvirt "$R" dm-0
 AGENT_SETUP_ROOT="$R"
 export AGENT_SETUP_ROOT
 init_paths
 
 DEVS=$(block_devices | sort | tr '\n' ' ')
-assert_eq "sda sdb " "$DEVS" "only real whole devices survive (loop/dm/md/sr/zram/empty reader are out)"
-
-# The P_SYSBLOCK probe is /sys/block, where partitions are SUBDIRECTORIES of
-# their parent and so are never top-level entries. Excluding them is not this
-# function's job, and this asserts the tree it is actually reading.
-assert_contains "$P_SYSBLOCK" "/sys/block" "block devices are probed from /sys/block"
-
-# --- 2. device_transport ------------------------------------------------------
+assert_eq "nvme0n1 sda sdc " "$DEVS" \
+    "only real whole devices survive (loop/dm and the empty card slot are out)"
 assert_eq "sata" "$(device_transport sda)" "an ata* path component means SATA"
-
-R="$TMP/r2"
-mkdisk "$R" sdc 3000 "pci0000:00/usb1/1-1/1-1:1.0/host4"
-mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
-AGENT_SETUP_ROOT="$R"
-export AGENT_SETUP_ROOT
-init_paths
 assert_eq "usb" "$(device_transport sdc)" "a usb1 path component means USB"
 assert_eq "nvme" "$(device_transport nvme0n1)" "an nvme path component means NVMe"
 assert_eq "unknown" "$(device_transport nosuchdisk)" "a device that is not there is unknown"
 
-# --- 3. the AGENT_SETUP_ROOT strip, which is the whole ballgame -------------
-#
-# A fixture root under a directory called `usb1` matches the USB pattern if the
-# prefix is not stripped before matching, and then EVERY device on the host is
-# classified as USB — silently, and with the test suite agreeing. This fixture
-# exists only to fail if the strip is ever removed.
+# THE STRIP, and the fixture that exists only to fail without it. A root under a
+# directory called usb1 matches the USB pattern if AGENT_SETUP_ROOT is not
+# stripped before matching -- and then every device on the host classifies as
+# USB, SMART_ATA_DEVICES comes back empty, drivetemp is silently never offered,
+# and the suite goes on passing. The Go port of this check carries the same
+# guard for the same reason (TestSmartDoesNotReadUsbOutOfTheSysfsRootItself).
 R="$TMP/usb1/root"
 mkdir -p "$R"
 mkdisk "$R" sdd 5000 "pci0000:00/ata3/host2"
@@ -105,160 +91,69 @@ assert_contains "$R" "/usb1/" "the guard fixture root really does contain a usb 
 assert_eq "sata" "$(device_transport sdd)" \
     "a fixture root path containing usb1 does not misclassify a SATA device"
 
-# --- 4. NVMe controllers, not namespaces --------------------------------------
+# And the consumer that depends on it: detect_ata_devices must still find the
+# drive plan_drivetemp would be offered for.
+detect_ata_devices
+assert_eq "sdd" "$SMART_ATA_DEVICES" "the ATA candidate survives the strip"
+
+# --- 1. plan_smart on a root with no block devices at all ---------------------
 #
-# Two namespaces on one controller must yield ONE devices: entry. /sys/class/nvme
-# is the primary source.
-R="$TMP/r4"
-mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
-mkdisk "$R" nvme0n2 4000 "pci0000:00/nvme/nvme0"
-mkdir -p "$R/sys/class/nvme/nvme0"
-AGENT_SETUP_ROOT="$R"
-export AGENT_SETUP_ROOT
-init_paths
-CTRLS=$(nvme_controllers | tr '\n' ' ')
-assert_eq "nvme0 " "$CTRLS" "two namespaces on one controller yield one controller"
-
-# The old-kernel fallback: no /sys/class/nvme, derive it from the namespace names.
-rm -rf "$R/sys/class/nvme"
-init_paths
-CTRLS=$(nvme_controllers | tr '\n' ' ')
-assert_eq "nvme0 " "$CTRLS" "the namespace-name fallback also dedups to one controller"
-
-# --- 5. SATA only: SYS_RAWIO present, SYS_ADMIN absent ------------------------
-R="$TMP/r5"
-mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
-mkdev "$R" sda
+# The discriminating fixture. An empty root once meant "no drives, nothing to
+# collect" and produced no capability; now it must produce exactly the same
+# grants as a root full of disks, because the answer no longer comes from here.
+R="$TMP/empty"
+mkdir -p "$R/sys" "$R/dev"
 AGENT_SETUP_ROOT="$R"
 export AGENT_SETUP_ROOT
 init_paths
 
-plan_smart >/dev/null 2>&1
-assert_eq 1 "$CAP_RAWIO" "a SATA-only host gets SYS_RAWIO"
-# Read by plan_drivetemp in the sensor phase to decide whether the drivetemp
-# module is worth offering, so it has to outlive plan_smart.
-assert_eq "sda" "$SMART_ATA_DEVICES" "the SATA device list survives plan_smart"
-assert_eq 0 "$CAP_SYS_ADMIN" "a SATA-only host is never even asked about SYS_ADMIN"
-assert_eq "/dev/sda" "$SMART_DEVICES" "the SATA device is emitted unprefixed"
-assert_not_contains "$SMART_DEVICES" "$R" "AGENT_SETUP_ROOT never leaks into devices:"
-
-build_cap_block
-assert_contains "$AGENT_BLK_CAP_ADD" "SYS_RAWIO" "the cap block carries SYS_RAWIO"
-assert_not_contains "$AGENT_BLK_CAP_ADD" "SYS_ADMIN" "the cap block has no SYS_ADMIN"
-
-# --- 6. NVMe present, SYS_ADMIN declined --------------------------------------
-R="$TMP/r6"
-mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
-mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
-mkdir -p "$R/sys/class/nvme/nvme0"
-mkdev "$R" sda
-mkdev "$R" nvme0
-AGENT_SETUP_ROOT="$R"
-export AGENT_SETUP_ROOT
-init_paths
-
-SKIPPED_NOTES=""
 AGENT_ANSWER_INDEX=0
-# ONE prompt inside plan_smart: SYS_ADMIN. SYS_RAWIO is granted automatically
-# whenever a SATA/SAS device exists - it lets smartctl issue ATA passthrough
-# ioctls and nothing else, and without it every SATA drive reports SMART as
-# unavailable, which is not an agent anyone asked for.
-printf 'n\n' >"$TMP/ans-decline"
+SKIPPED_NOTES=""
+printf 'y\nn\n' >"$TMP/ans-decline"
 AGENT_ANSWERS_FILE="$TMP/ans-decline"
 export AGENT_ANSWERS_FILE
-run_capture plan_smart
-assert_contains "$RUN_OUT" "temperature" \
-    "the SYS_ADMIN prompt states that NVMe temperature works without it"
-assert_contains "$RUN_OUT" "hwmon" "the SYS_ADMIN prompt names hwmon as the temperature source"
-
-AGENT_ANSWER_INDEX=0
-SKIPPED_NOTES=""
 plan_smart >/dev/null 2>&1
-assert_eq 1 "$CAP_RAWIO" "SYS_RAWIO is granted without being asked about"
-assert_eq 1 "$AGENT_ANSWER_INDEX" \
-    "exactly one answer is consumed: SYS_RAWIO is no longer a prompt"
+assert_eq 1 "$CAP_RAWIO" "SYS_RAWIO is granted on a host with no visible block devices"
 assert_eq 0 "$CAP_SYS_ADMIN" "declining leaves SYS_ADMIN off"
-assert_eq "/dev/sda" "$SMART_DEVICES" \
-    "a declined SYS_ADMIN also drops the NVMe controller from devices:"
+assert_eq 2 "$AGENT_ANSWER_INDEX" \
+    "exactly two prompts: the device-tree grant and SYS_ADMIN, and nothing else"
 assert_contains "$SKIPPED_NOTES" "SYS_ADMIN declined" "declining SYS_ADMIN is recorded as a skip"
 assert_contains "$SKIPPED_NOTES" "temperature still works" \
     "the skip note says what declining does NOT cost"
 
-# --- 7. NVMe present, SYS_ADMIN granted ---------------------------------------
+# --- 2. the prompt still explains what it does and does not cost --------------
 AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
-printf 'y\n' >"$TMP/ans-accept"
+run_capture plan_smart
+assert_contains "$RUN_OUT" "temperature" \
+    "the SYS_ADMIN prompt states that NVMe temperature works without it"
+assert_contains "$RUN_OUT" "scans for drives itself" "the run says the agent finds the drives itself"
+
+# --- 3. SYS_ADMIN granted -----------------------------------------------------
+AGENT_ANSWER_INDEX=0
+SKIPPED_NOTES=""
+printf 'y\ny\n' >"$TMP/ans-accept"
 AGENT_ANSWERS_FILE="$TMP/ans-accept"
 export AGENT_ANSWERS_FILE
 plan_smart >/dev/null 2>&1
 assert_eq 1 "$CAP_SYS_ADMIN" "granting SYS_ADMIN sets the capability"
-assert_contains "$SMART_DEVICES" "/dev/nvme0" "the NVMe CONTROLLER is emitted, not the namespace"
-assert_not_contains "$SMART_DEVICES" "nvme0n1" "the NVMe namespace is never emitted"
 build_cap_block
+assert_contains "$AGENT_BLK_CAP_ADD" "SYS_RAWIO" "the cap block carries SYS_RAWIO"
 assert_contains "$AGENT_BLK_CAP_ADD" "SYS_ADMIN" "the cap block carries SYS_ADMIN"
 
-# --- 8. USB-attached drives are excluded with a note --------------------------
-#
-# `-d sat` through a USB bridge is unreliable and can hang the enclosure, which
-# would stall the whole scrape.
-R="$TMP/r8"
-mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
-mkdisk "$R" sdc 3000 "pci0000:00/usb1/1-1/1-1:1.0/host4"
-mkdev "$R" sda
-mkdev "$R" sdc
-AGENT_SETUP_ROOT="$R"
-export AGENT_SETUP_ROOT
-init_paths
-AGENT_ANSWER_INDEX=0
-SKIPPED_NOTES=""
-# No NVMe on this host, so plan_smart asks nothing at all: an EMPTY answers file
-# is what proves it.
-: >"$TMP/ans-usb"
-AGENT_ANSWERS_FILE="$TMP/ans-usb"
-export AGENT_ANSWERS_FILE
-plan_smart >/dev/null 2>&1
-assert_eq "/dev/sda" "$SMART_DEVICES" "a USB-attached drive is left out of devices:"
-assert_contains "$SKIPPED_NOTES" "sdc" "the excluded USB drive is named in the notes"
-assert_contains "$SKIPPED_NOTES" "USB" "the note says it was excluded for being USB-attached"
-
-# --- 9. a device node that does not exist is not emitted ----------------------
-# A devices: entry for a missing node prevents the container from starting, so a
-# probe miss must drop the entry rather than render it hopefully.
-R="$TMP/r9"
-mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
-mkdir -p "$R/dev"
-AGENT_SETUP_ROOT="$R"
-export AGENT_SETUP_ROOT
-init_paths
-AGENT_ANSWER_INDEX=0
-SKIPPED_NOTES=""
-: >"$TMP/ans-nodev"
-AGENT_ANSWERS_FILE="$TMP/ans-nodev"
-export AGENT_ANSWERS_FILE
-plan_smart >/dev/null 2>&1
-assert_eq "" "$SMART_DEVICES" "a device with no node in /dev is not emitted"
-build_device_block
-assert_eq "" "$AGENT_BLK_DEVICES" "an empty device list deletes the devices: key entirely"
-
-# --- 10. --sys-admin grants without consuming a prompt ------------------------
+# --- 4. --sys-admin grants without consuming a prompt -------------------------
 #
 # The discriminating assertion is AGENT_ANSWER_INDEX. An EMPTY answers file
 # means a --sys-admin that still prompted would exhaust the file and die, so
 # "index is 0" is the proof that the prompt was skipped rather than answered.
-R="$TMP/r10"
-mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
-mkdisk "$R" nvme0n1 4000 "pci0000:00/nvme/nvme0"
-mkdir -p "$R/sys/class/nvme/nvme0"
-mkdev "$R" sda
-mkdev "$R" nvme0
-AGENT_SETUP_ROOT="$R"
-export AGENT_SETUP_ROOT
-init_paths
-
+#
+# Note what is NOT asserted any more: that the flag goes unhonoured on a host
+# with no NVMe. The script cannot know that, and pretending to would be the
+# probe coming back through a side door.
 GRANT_SYS_ADMIN=1
 AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
-: >"$TMP/ans-grantflag"
+printf 'y\n' >"$TMP/ans-grantflag"
 AGENT_ANSWERS_FILE="$TMP/ans-grantflag"
 export AGENT_ANSWERS_FILE
 run_capture plan_smart
@@ -271,33 +166,34 @@ AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 plan_smart >/dev/null 2>&1
 assert_eq 1 "$CAP_SYS_ADMIN" "--sys-admin grants SYS_ADMIN"
-assert_eq 0 "$AGENT_ANSWER_INDEX" "--sys-admin consumes no answer: the prompt is skipped entirely"
-assert_contains "$SMART_DEVICES" "/dev/nvme0" "--sys-admin also emits the NVMe controller"
-
-# --- 11. --sys-admin on a SATA-only host is a no-op with a note ----------------
-#
-# Nothing on such a host can use SYS_ADMIN, so honouring the flag would expand
-# privilege for no collected metric. It has to be visible in the finish report,
-# not silently dropped: the operator asked for something they did not get.
-R="$TMP/r11"
-mkdisk "$R" sda 1000 "pci0000:00/ata1/host0"
-mkdev "$R" sda
-AGENT_SETUP_ROOT="$R"
-export AGENT_SETUP_ROOT
-init_paths
-
-GRANT_SYS_ADMIN=1
-AGENT_ANSWER_INDEX=0
-SKIPPED_NOTES=""
-: >"$TMP/ans-satagrant"
-AGENT_ANSWERS_FILE="$TMP/ans-satagrant"
-export AGENT_ANSWERS_FILE
-plan_smart >/dev/null 2>&1
-assert_eq 0 "$CAP_SYS_ADMIN" "--sys-admin grants nothing when there is no NVMe device"
-assert_contains "$SKIPPED_NOTES" "--sys-admin" "the unhonoured flag is recorded as a skip"
-assert_contains "$SKIPPED_NOTES" "no NVMe" "the note says why the flag was not honoured"
-build_cap_block
-assert_not_contains "$AGENT_BLK_CAP_ADD" "SYS_ADMIN" "the cap block still has no SYS_ADMIN"
+assert_eq 1 "$AGENT_ANSWER_INDEX" \
+    "--sys-admin consumes no answer of its own: the one line read is the SMART grant"
 GRANT_SYS_ADMIN=0
+
+# --- 5. the device block is rules, not a device list --------------------------
+#
+# Unconditional, and that is the point: there is no host state that can empty
+# it, because there is no host state it reads.
+build_device_block
+assert_contains "$AGENT_BLK_DEVICES" "device_cgroup_rules" "the device block is cgroup rules"
+assert_contains "$AGENT_BLK_DEVICES" 'b *:* rw' "block devices are permitted"
+assert_contains "$AGENT_BLK_DEVICES" 'c *:* rw' \
+    "character devices are permitted, which is what /dev/nvme0 is"
+# rw, never rmw. The m is mknod, and Docker's default caps include CAP_MKNOD,
+# so with it the container could make a block node on its own writable layer -
+# where the read-only /dev bind does not reach - and write the raw disk.
+assert_not_contains "$AGENT_BLK_DEVICES" "rmw" "mknod is never granted"
+assert_not_contains "$AGENT_BLK_DEVICES" "devices:" "no devices: key is rendered any more"
+
+# --- 6. /dev is bound, at /dev ------------------------------------------------
+#
+# The target is the assertion that matters. `smartctl --scan` looks at /dev and
+# nowhere else, so a bind landing on /host/dev like the other host paths would
+# render a compose file in which the scan finds nothing -- silently, and only
+# on real hosts.
+FS_MOUNTS=""
+build_volume_block
+assert_contains "$AGENT_BLK_VOLUMES" "source: \"/dev\"" "the host's device tree is bound"
+assert_contains "$AGENT_BLK_VOLUMES" "target: /dev" "it is bound AT /dev, where smartctl looks"
 
 exit_case

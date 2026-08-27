@@ -84,7 +84,7 @@ func run() error {
 		// Group 4: privileged, opt-in. SMART gates itself to cfg.SmartInterval
 		// internally -- the scrape loop runs every collector on every tick, and
 		// waking sleeping drives once a minute would shorten their life.
-		collector.NewSmart(cfg.SmartInterval, collector.SystemSmartctl),
+		collector.NewSmart(cfg.SmartInterval, collector.SystemSmartctl, cfg.SysRoot),
 	}
 
 	c := client.New(cfg, collectors)

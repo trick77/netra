@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -158,6 +159,7 @@ var nvmeAttrs = []struct {
 type Smart struct {
 	interval time.Duration
 	run      SmartRunner
+	sysRoot  string
 
 	now     func() time.Time
 	lastRun time.Time
@@ -181,6 +183,17 @@ type Smart struct {
 	// a single attribute row: every --all failed, timed out or would not
 	// parse. The drives are there and none of them answered.
 	noReadableDevices bool
+
+	// usbSkipped is the device list the previous scan left alone for being
+	// USB-attached, so the log fires on the transition rather than every
+	// interval forever.
+	usbSkipped []string
+
+	// usbOnly is a scan that found devices and skipped every one of them for
+	// being USB-attached. The host has drives; this collector will not drive
+	// them. A state of its own because the remedy is not any of the others:
+	// nothing is misconfigured and nothing failed.
+	usbOnly bool
 }
 
 // failureBackoff is the wait after a failed --scan, doubling per consecutive
@@ -200,8 +213,73 @@ type Smart struct {
 const failureBackoff = time.Minute
 
 // NewSmart builds a Smart collector.
-func NewSmart(interval time.Duration, run SmartRunner) *Smart {
-	return &Smart{interval: interval, run: run, now: time.Now}
+//
+// sysRoot is where /sys is readable. It is used for one thing: telling a
+// USB-attached drive from a directly attached one. Empty disables that check,
+// which is what the tests pass -- a collector that filtered on a sysfs it
+// cannot read would drop every drive on the host.
+func NewSmart(interval time.Duration, run SmartRunner, sysRoot string) *Smart {
+	return &Smart{interval: interval, run: run, sysRoot: sysRoot, now: time.Now}
+}
+
+// usbAttached reports whether a scanned device hangs off a USB bridge.
+//
+// Driving one with `-d sat` is unreliable and can hang the enclosure, and a
+// hung enclosure does not die on SIGKILL -- it stalls the scrape until
+// smartctlWaitDelay gives up on it, once per drive, every interval. The setup
+// script used to keep these out by leaving them out of the devices: list it
+// computed. The agent finds its own drives now, so the exclusion has to live
+// here or not at all.
+//
+// sysfs, not smartctl: `--scan` reports a transport TYPE (sat, scsi, nvme),
+// which a USB bridge shares with the directly attached drives it emulates.
+// /sys/block/<name> is a symlink into the devices tree whose path names the
+// bus -- .../usb1/1-1/... -- which is the same signal the setup script read.
+//
+// Only /dev/sdX is checked. A USB bridge presents as a SCSI disk and nothing
+// else; an NVMe controller or a RAID pseudo-device (/dev/bus/0) has no
+// /sys/block entry under that name, and guessing at one would drop drives that
+// answer perfectly.
+func (s *Smart) usbAttached(devName string) bool {
+	if s.sysRoot == "" {
+		return false
+	}
+	base, ok := strings.CutPrefix(devName, "/dev/")
+	if !ok || !strings.HasPrefix(base, "sd") {
+		return false
+	}
+
+	// EvalSymlinks rather than Readlink: /sys/block/sda is a relative link
+	// (../devices/...) and only the resolved path names the bus.
+	resolved, err := filepath.EvalSymlinks(filepath.Join(s.sysRoot, "block", base))
+	if err != nil {
+		// Unreadable sysfs is not evidence of USB. Reporting it as such would
+		// silently drop every drive the moment the mount changed.
+		return false
+	}
+
+	// CRITICAL: match on the path RELATIVE to sysRoot. A sysfs root that
+	// itself sits under a directory named usb1 -- a fixture tree, a bind
+	// mount, an AGENT_SYSFS_ROOT someone picked -- would otherwise classify
+	// EVERY sd* drive on the host as USB-attached and silently drop all of
+	// them. setup-agent.sh's device_transport strips AGENT_SETUP_ROOT before
+	// matching for exactly this reason, and carries a fixture that fails if
+	// the strip is ever removed; the port must not lose it.
+	//
+	// The root is resolved too, because only two resolved paths are
+	// comparable: /sys is a symlink on some layouts, and macOS resolves a
+	// temp root under /var to /private/var.
+	root, err := filepath.EvalSymlinks(s.sysRoot)
+	if err != nil {
+		root = s.sysRoot
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		// Resolved outside the tree we were pointed at: nothing this check can
+		// reason about, and not evidence of USB.
+		return false
+	}
+	return strings.Contains(string(filepath.Separator)+rel, "/usb")
 }
 
 // SetClockForTest replaces the clock used for the interval gate.
@@ -274,6 +352,8 @@ func (s *Smart) Capabilities() map[string]string {
 		return map[string]string{"smart": "no-device-access"}
 	case s.noDevices:
 		return map[string]string{"smart": "no-devices"}
+	case s.usbOnly:
+		return map[string]string{"smart": "usb-only-devices"}
 	case s.noReadableDevices:
 		return map[string]string{"smart": "no-readable-devices"}
 	}
@@ -290,7 +370,7 @@ func (s *Smart) fail() {
 	// still be asserting what it did or did not find last hour, and
 	// Capabilities reports the first state that holds -- so a stale flag here
 	// would be invisible rather than wrong, which is worse.
-	s.noDevices, s.noReadableDevices = false, false
+	s.noDevices, s.noReadableDevices, s.usbOnly = false, false, false
 }
 
 // nvmeRows turns an NVMe drive's health log into attribute rows.
@@ -389,8 +469,16 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	ts := time.Now().UnixMilli()
 	var rows []*netrav1.SmartAttribute
 	unreadable := 0
+	var skippedUSB []string
 
 	for _, dev := range scan.Devices {
+		if s.usbAttached(dev.Name) {
+			// Counted as unreadable would be a lie -- nothing was attempted.
+			// It is simply not a drive this collector drives.
+			skippedUSB = append(skippedUSB, dev.Name)
+			continue
+		}
+
 		args := []string{"--json", "--all", dev.Name}
 		if dev.Type != "" {
 			args = append(args, "-d", dev.Type)
@@ -434,7 +522,34 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	// so it produces no rows through no fault of anything, and keying on the
 	// row count would tell a healthy SAS host its drives had stopped
 	// answering and send its operator after the passthrough.
-	s.noReadableDevices = len(scan.Devices) > 0 && unreadable == len(scan.Devices)
+	// Against the devices actually ATTEMPTED. A host whose only disk is a USB
+	// enclosure skipped nothing and read nothing, and calling that "no drive
+	// answered" would send its operator after a passthrough that is working.
+	attempted := len(scan.Devices) - len(skippedUSB)
+	s.noReadableDevices = attempted > 0 && unreadable == attempted
+
+	// Every device found, every one skipped. Reported as well as logged: the
+	// log answers the question on the host, and the capability answers it on
+	// the Storage tab of an operator who is not going to read agent logs.
+	s.usbOnly = attempted == 0 && len(skippedUSB) > 0
+
+	// A skip nobody is told about is the same silence the empty scan used to
+	// be. The setup script used to name the excluded USB drive in its finish
+	// report; now that the exclusion happens here, the operator of a host
+	// whose only disk is a USB enclosure would otherwise see an empty Storage
+	// tab with no capability, no row and nothing anywhere saying why.
+	//
+	// Logged on the TRANSITION only, for the same reason the empty scan is: a
+	// host with a permanently attached enclosure is healthy in this state
+	// forever, and a line every interval is noise it would learn to ignore.
+	if len(skippedUSB) > 0 && !slices.Equal(skippedUSB, s.usbSkipped) {
+		slog.Info("smartctl found USB-attached drives and left them alone",
+			"collector", "smart",
+			"devices", strings.Join(skippedUSB, ","),
+			"attempted", attempted,
+			"hint", "driving a USB bridge with -d sat can hang the enclosure and stall the scrape")
+	}
+	s.usbSkipped = skippedUSB
 
 	// Deterministic order so failures read the same way twice.
 	slices.SortFunc(rows, func(a, b *netrav1.SmartAttribute) int {

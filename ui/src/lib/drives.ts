@@ -16,6 +16,11 @@
  *   no-readable-devices  drives were scanned and not one answered. The
  *                        passthrough works; the drives, or the capability
  *                        behind them, do not.
+ *   usb-only-devices     every drive found hangs off a USB bridge, which the
+ *                        agent deliberately leaves alone. Nothing is
+ *                        misconfigured and nothing failed, so this one names
+ *                        no remedy -- it is the one empty Storage tab that is
+ *                        working as intended.
  *
  * All three mirror internal/agent/collector/smart.go. The values are free text
  * on the wire -- capabilities is JSONB with no enum and no CHECK -- so an
@@ -49,6 +54,13 @@ export function hostDriveNote(
       // reports exactly this. The sentence says what smartctl saw and offers
       // the remedy without claiming the host is broken.
       return `This host's agent ran smartctl and it found no drive to read. A container agent sees only the devices mapped into it, so a host with disks needs them mapped in. ${SMART_REMEDY}`;
+    case "usb-only-devices":
+      // No remedy offered on purpose. Driving a USB bridge with -d sat is
+      // unreliable and can hang the enclosure, and a hung enclosure stalls the
+      // scrape for every other collector too -- so this is a decision, not a
+      // gap, and telling the operator to "fix" it would be telling them to
+      // make their agent worse.
+      return "Every drive this host's agent found is USB-attached, and it leaves those alone: driving a USB bridge for SMART is unreliable and can hang the enclosure, stalling the whole scrape. Directly attached drives are read normally.";
     case "no-readable-devices":
       return "This host's agent found drives and not one of them answered SMART. The passthrough is working, so the drives themselves, or the capability behind them, are what to look at.";
     default:

@@ -57,9 +57,8 @@
 #
 # Every OPTIONAL mount, device and capability below ships COMMENTED
 # OUT. Uncommenting one whose source does not exist is not a no-op: a long-form
-# bind does not create a missing source, and a `devices:` entry for a node this
-# host lacks stops the container from starting at all. Uncomment what this host
-# actually has.
+# bind does not create a missing source, so the container fails to start rather
+# than warning. Uncomment what this host actually has.
 #
 # The mounts left ACTIVE are the ones a Docker host has by definition —
 # /var/run/docker.sock, /proc/1/mountinfo — plus /.netra, which the quickstart
@@ -157,7 +156,6 @@ services:
       # and DELETE it if this host has no second filesystem. A long-form bind
       # does not create a missing source the way the short form does, so a
       # source that is not there is a container startup failure, not a warning.
-      # Same rule as the `devices:` list below.
       # - type: bind
       #   source: /mnt/ark/.netra
       #   target: /netra/fs/ark
@@ -190,6 +188,28 @@ services:
         source: /sys/fs/cgroup
         target: /host/sys/fs/cgroup
         read_only: true
+
+      # --- SMART: the host's device tree --------------------------------------
+      #
+      # Mounted AT /dev, not at /host/dev like every other host path here, and
+      # that is deliberate: /dev is the one place `smartctl --scan` looks. The
+      # scan is also what classifies each device (sat, nvme, scsi) and hands the
+      # collector the -d type it passes back, so enumerating some other path
+      # ourselves would mean reimplementing that classification and getting it
+      # wrong on exactly the enclosures it exists for.
+      #
+      # This is what makes the agent self-configuring: with the device cgroup
+      # rules below, a drive attached after this file was written is found on
+      # the next hourly scan, with nothing to re-run.
+      #
+      # read_only, and it costs nothing that matters. A read-only mount refuses
+      # writes to REGULAR files; a device node's I/O goes to the driver rather
+      # than the filesystem, so smartctl still opens the drives it needs while
+      # the agent cannot mknod into the host's devtmpfs.
+      # - type: bind
+      #   source: /dev
+      #   target: /dev
+      #   read_only: true
 
       # --- Containers: names, labels, and the network mode --------------------
       #
@@ -415,16 +435,39 @@ services:
       # NVMe drives, leaving this commented out still gives you drive temps.
       # - SYS_ADMIN
 
-    # The physical controllers/whole devices, never partitions: /dev/sda, not
-    # /dev/sda1; /dev/nvme0 (the controller), not /dev/nvme0n1 (the namespace).
-    # smartctl talks to the device, and a partition node cannot answer.
+    # No devices: list. The agent finds the drives itself.
     #
-    # Edit this list to match the host — `lsblk -d` lists the whole devices.
-    # A device listed here that does not exist prevents the container starting,
-    # so remove the ones this host lacks.
-    # devices:
-    #   - /dev/sda
-    #   - /dev/nvme0
+    # This used to be a hand-maintained list of whole devices — /dev/sda, not
+    # /dev/sda1; /dev/nvme0 (the controller), not /dev/nvme0n1 (the namespace).
+    # It was wrong the moment the host changed: a disk swapped, a controller
+    # passed through, an enclosure moved, and the agent went on reading a list
+    # that no longer described the machine. A listed device that does not exist
+    # also prevents the container from starting outright.
+    #
+    # A devices: entry does two jobs — it creates the node inside the container
+    # and allows it in the device cgroup. The bind of /dev above does the first;
+    # these rules do the second. Together they mean `smartctl --scan` sees what
+    # is on the host RIGHT NOW, on every collection, and a drive added next
+    # month needs no edit here.
+    #
+    # Wildcards rather than a major list: block majors could be enumerated, but
+    # NVMe character devices take a dynamically allocated major that differs
+    # between kernels. A list narrow enough to be worth writing is the list that
+    # breaks silently after a kernel upgrade.
+    #
+    # WHAT THIS ACTUALLY PERMITS, plainly: read/write access to every block and
+    # character device on the host, /dev/mem and the raw disks included. It is
+    # a wider grant than the explicit devices: list it replaces, and it is the
+    # price of the agent finding drives without being told about them. The
+    # container is not privileged and gains no other capability, but do not
+    # read these two lines as narrow.
+    # rw, not rmw: the `m` is mknod, and Docker's default capabilities include
+    # CAP_MKNOD -- with it the container could create a block node on its own
+    # writable layer, which the read-only /dev bind does not cover, and write
+    # the raw disk through it. smartctl opens device nodes, it never makes them.
+    # device_cgroup_rules:
+    #   - "b *:* rw"
+    #   - "c *:* rw"
 
     # --- Host PID namespace (required) ---------------------------------------
     #

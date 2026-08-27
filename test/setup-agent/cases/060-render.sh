@@ -38,7 +38,7 @@ mkdir -p "$ROOT"
 cp -R "$(fixture root-full)/." "$ROOT/"
 
 OUT="$TMP/out"
-ANS=$(answers full y y)
+ANS=$(answers full y y y)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS" AGENT_UID=0 \
     "$SH" "$SETUP" --sys-admin --pid-host \
@@ -115,7 +115,7 @@ cp -R "$(fixture root-full)/." "$ROOT2/"
 rm -f "$ROOT2/var/run/utmp"
 
 OUT2="$TMP/out-noutmp"
-ANS2=$(answers noutmp y y)
+ANS2=$(answers noutmp y y y)
 run_capture env AGENT_SETUP_ROOT="$ROOT2" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS2" AGENT_UID=0 \
     "$SH" "$SETUP" --sys-admin \

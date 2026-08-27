@@ -33,8 +33,8 @@ SH_ABS=$(command -v "$SH")
 #
 #   root-full, uid 0     -> SYS_ADMIN, drivetemp, write gate
 #   root-full, uid 1000  -> SYS_ADMIN, write gate   (drivetemp returns early)
-ANS_ROOT=$(answers plat-root n y y)
-ANS_USER=$(answers plat-user n y)
+ANS_ROOT=$(answers plat-root y n y y)
+ANS_USER=$(answers plat-user y n y)
 
 # AGENT_SOURCED=0 on every subprocess run below. This case SOURCES the script to
 # unit-test _wrap, detect_virt and friends, and AGENT_SOURCED has to be exported
@@ -200,12 +200,19 @@ printf 'xen-3.0-x86_64 xen-3.0-x86_32p hvm-3.0-x86_32\n' \
 init_paths
 assert_eq "xen" "$(detect_virt)" "a Xen guest with capabilities but no control_d is virtual"
 
-# --- 3. SMART is skipped on a virtual host ------------------------------------
+# --- 3. a virtual host is NOT denied SMART ------------------------------------
 #
-# The hypervisor presents an /dev/sda that looks exactly like a real one from
-# sysfs, so the transport probe cannot tell the difference. Granting SYS_RAWIO
-# and mapping a device for a metric that cannot exist is worse than collecting
-# nothing.
+# This case used to assert the opposite, and the assertion was the bug. The
+# reasoning was that a hypervisor's emulated /dev/sda looks exactly like a real
+# one from sysfs, so the transport probe cannot tell them apart -- true, and
+# the wrong conclusion. A guest with a passed-through controller has entirely
+# real drives, and skipping ATA on anything that looked virtual took SMART away
+# from exactly the hosts that had it.
+#
+# The probe is gone. plan_smart grants the privileges and the agent scans /dev
+# on every collection, where an emulated disk answers nothing and says so. VIRT
+# still exists -- it changes what the CPU-sensor hint says, see case 4 -- but
+# it no longer decides anything about the disks.
 R="$TMP/vm-smart"
 mkdir -p "$R/sys/devices/pci0000:00/ata1/host0/block/sda/device" "$R/sys/block" "$R/dev"
 printf '1000\n' >"$R/sys/devices/pci0000:00/ata1/host0/block/sda/size"
@@ -214,42 +221,38 @@ ln -sf "../devices/pci0000:00/ata1/host0/block/sda" "$R/sys/block/sda"
 AGENT_SETUP_ROOT="$R"
 export AGENT_SETUP_ROOT
 init_paths
+
 VIRT="QEMU"
 SKIPPED_NOTES=""
 GRANT_SYS_ADMIN=0
+AGENT_ANSWER_INDEX=0
+printf 'y\nn\n' >"$TMP/ans-vm"
+AGENT_ANSWERS_FILE="$TMP/ans-vm"
+export AGENT_ANSWERS_FILE
 run_capture plan_smart
 assert_eq 0 "$RUN_RC" "a virtual host is not an error"
-assert_contains "$RUN_OUT" "skipped on a virtual host" "the run says SMART was skipped and why"
+assert_not_contains "$RUN_OUT" "skipped on a virtual host" \
+    "and is no longer told SMART was skipped for being a guest"
+
+AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 plan_smart >/dev/null 2>&1
-assert_eq 0 "$CAP_RAWIO" "no SYS_RAWIO is granted for a disk that has no SMART data"
-# SKIPPED_NOTES is "everything the agent will NOT collect", and this withholds
-# every SMART metric and every SATA drive temperature. An operator whose host
-# was misjudged has to find that in the finish report without re-reading the
-# scroll - which means warn, not info.
-assert_contains "$(flatten "$SKIPPED_NOTES")" "SMART is skipped" \
-    "the skip reaches the finish report"
-assert_contains "$(flatten "$SKIPPED_NOTES")" "--assume-physical" \
-    "and names the flag that overrides the detection"
-assert_eq "" "$SMART_DEVICES" "no device is mapped either"
-assert_eq "" "$SMART_ATA_DEVICES" "and drivetemp is therefore never offered"
+assert_eq 1 "$CAP_RAWIO" "a guest gets SYS_RAWIO like any other host"
 
-# --sys-admin on a virtual host is an unhonoured request, which belongs in the
-# report rather than being silently dropped.
-SKIPPED_NOTES=""
-GRANT_SYS_ADMIN=1
-plan_smart >/dev/null 2>&1
-assert_eq 0 "$CAP_SYS_ADMIN" "--sys-admin grants nothing on a virtual host"
-assert_contains "$SKIPPED_NOTES" "--assume-physical" "the note names the override"
-GRANT_SYS_ADMIN=0
-
-# The same fixture WITHOUT the virtualisation verdict still finds the disk, so
-# the assertions above are about VIRT and not about an empty fixture.
+# The same fixture with no virtualisation verdict behaves identically, which is
+# the whole point: the verdict no longer reaches this decision.
 VIRT=""
+AGENT_ANSWER_INDEX=0
 SKIPPED_NOTES=""
 plan_smart >/dev/null 2>&1
-assert_eq 1 "$CAP_RAWIO" "the same host, detected as physical, does get SYS_RAWIO"
-assert_eq "sda" "$SMART_ATA_DEVICES" "and does offer its SATA device"
+assert_eq 1 "$CAP_RAWIO" "a physical host gets exactly the same grant"
+
+# drivetemp is a separate question, and it still asks the disks -- it modprobes
+# and writes to the host, so it genuinely needs to know. No virt filter there
+# either: a passed-through controller on a guest has SATA drives.
+VIRT="QEMU"
+detect_ata_devices
+assert_eq "sda" "$SMART_ATA_DEVICES" "a guest's SATA device still reaches drivetemp"
 
 # --- 4. the sensor hint does not tell a VM to modprobe coretemp ---------------
 VIRT="QEMU"
