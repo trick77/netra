@@ -258,6 +258,11 @@ func smartBaremetal() *Profile {
 			{Label: "tank-backups", Mountpoint: "/tank/backups", DeviceID: 44, Total: 44000 * gib, InodesTotal: 0, UsedStart: 0.60, UsedEnd: 0.74},
 			// The one that fills up: 62% to 91% over the window.
 			{Label: "var-log", Mountpoint: "/var/log", DeviceID: 66307, Total: 32 * gib, InodesTotal: 2097152, UsedStart: 0.62, UsedEnd: 0.91},
+			// The one that is high but not short: 90% of 6.8 TB still leaves
+			// 680 GB, which is nothing to do. Here so the fleet page can be
+			// seen staying quiet about it while /var/log above, at the same
+			// percentage and 2.9 GB left, is still called out.
+			{Label: "ark", Mountpoint: "/mnt/ark", DeviceID: 45, Total: 6800 * gib, InodesTotal: 0, UsedStart: 0.88, UsedEnd: 0.90},
 			{Label: "nvme-scratch", Mountpoint: "/scratch", DeviceID: 66560, Total: 1800 * gib, InodesTotal: 117440512, UsedStart: 0.12, UsedEnd: 0.37},
 		},
 		Units: []string{

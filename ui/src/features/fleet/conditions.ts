@@ -83,7 +83,7 @@ export interface Condition {
   severity: Severity;
   /**
    * The kind's own name, identical for every host carrying it -- "Failed
-   * units", "Filesystem over 90%". This is what the counts line prints; the
+   * units", "Filesystem nearly full". This is what the counts line prints; the
    * per-host detail lives in `what`. Sentence case, because it heads a count
    * rather than labelling a column.
    */
@@ -142,6 +142,68 @@ export interface Condition {
  */
 export const DISK_WARN_PCT = 90;
 export const DISK_CRIT_PCT = 95;
+
+/**
+ * How little room has to be LEFT before a percentage means anything.
+ *
+ * A percentage on its own is the wrong unit for a disk. Ten per cent of a
+ * 20 GB root is 2 GB and genuinely urgent; ten per cent of a 6.7 TB array is
+ * 674 GB and a week of headroom, and netra used to say "/mnt/ark is 90% full
+ * -- 674.4 GB free" in one breath and expect someone to act on it. What an
+ * operator actually runs out of is bytes.
+ *
+ * So both halves have to agree: the disk is a high proportion full AND there
+ * is little enough left that filling it is near. Under roughly a terabyte
+ * these floors never bind and the rule is exactly the percentage rule it has
+ * always been -- they exist for the volumes where the percentage stopped
+ * being the interesting number.
+ */
+export const DISK_WARN_FREE = 100 * 1024 ** 3;
+export const DISK_CRIT_FREE = 20 * 1024 ** 3;
+
+/** How bad a filesystem is, or null for one nobody needs to look at. */
+export type DiskSeverity = "critical" | "warning" | null;
+
+/**
+ * The severity a percentage earns given the headroom behind it.
+ *
+ * `free` is bytes, and `null`/undefined is "not known" rather than "none
+ * left": a caller that cannot say how much room is left falls back to the
+ * percentage alone. A row that has lost track of the bytes must not go silent
+ * about a disk at 97%.
+ */
+export function diskSeverityFor(
+  pct: number,
+  free: number | null | undefined,
+): DiskSeverity {
+  const room = free ?? null;
+  if (pct >= DISK_CRIT_PCT && (room === null || room < DISK_CRIT_FREE)) {
+    return "critical";
+  }
+  if (pct >= DISK_WARN_PCT && (room === null || room < DISK_WARN_FREE)) {
+    return "warning";
+  }
+  return null;
+}
+
+/**
+ * df's Use% for one filesystem, plus what that percentage is worth.
+ *
+ * used / (used + free), never used / total: total includes the root reserve,
+ * so dividing by it reports a disk as less full than df does -- the number an
+ * operator has already seen over SSH. null is a filesystem with nothing
+ * measurable behind it, which is not the same as an empty one.
+ */
+export function diskState(
+  used: number | null,
+  free: number | null,
+): { pct: number; severity: DiskSeverity } | null {
+  if (used === null || free === null) return null;
+  const capacity = used + free;
+  if (capacity === 0) return null;
+  const pct = (used / capacity) * 100;
+  return { pct, severity: diskSeverityFor(pct, free) };
+}
 
 // Higher rank == worse. `ok` and `neutral` never appear in practice (a
 // condition is definitionally something wrong), but are ranked lowest so a
@@ -231,8 +293,8 @@ export type AttentionFilter = "all" | "critical" | "warning" | ConditionKind;
  *
  * The severity here is the kind's ENTRY severity, used only when nothing is
  * carrying the kind any more; a kind that is present takes its severity from
- * the conditions themselves (see groupByKind), because disk warns at 90% and
- * turns critical at 95% and the counts line must not understate that.
+ * the conditions themselves (see groupByKind), because one disk warns where
+ * another criticals and the counts line must not understate that.
  */
 const CONDITION_KIND_INFO: Record<
   ConditionKind,
@@ -244,7 +306,7 @@ const CONDITION_KIND_INFO: Record<
   oom: { label: "OOM kills", severity: "critical" },
   "post-failures": { label: "Failed deliveries", severity: "warning" },
   "failed-units": { label: "Failed units", severity: "warning" },
-  disk: { label: `Filesystem over ${DISK_WARN_PCT}%`, severity: "warning" },
+  disk: { label: "Filesystem nearly full", severity: "warning" },
 };
 
 const CONDITION_KINDS = Object.keys(
@@ -279,9 +341,10 @@ export function filterKind(filter: AttentionFilter): ConditionKind | null {
 
 export interface KindGroup {
   kind: ConditionKind;
-  /** The worst severity any host carries this kind at: the disk rule is 90%
-   * warning and 95% critical, so one kind can be both, and a counts line that
-   * dotted it warning while a host is at 97% would understate the fleet. */
+  /** The worst severity any host carries this kind at: the disk rule warns
+   * and criticals at different points, so one kind can be both, and a counts
+   * line that dotted it warning while a host is out of room would understate
+   * the fleet. */
   severity: Severity;
   label: string;
   /** Hosts carrying this kind, in the order the rows were read. */
@@ -500,16 +563,19 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
     });
   }
 
-  // df's Use%, already computed as used / (used + free) by fullestFilesystem.
-  // Only the fullest one: the row carries a single pre-picked summary, and a
-  // second mount at 91% is not a second thing to do -- the disk column
-  // already says "+N".
+  // df's Use%, already computed as used / (used + free) by fullestFilesystem,
+  // which also passes the winner's remaining bytes through -- the percentage
+  // alone cannot say whether this is worth waking up for. Only the fullest
+  // one: the row carries a single pre-picked summary, and a second mount at
+  // 91% is not a second thing to do -- the disk column already says "+N".
   const fullest = row.fullest;
-  if (fullest !== null && fullest.pct >= DISK_WARN_PCT) {
+  const fullestSeverity =
+    fullest === null ? null : diskSeverityFor(fullest.pct, fullest.free);
+  if (fullest !== null && fullestSeverity !== null) {
     out.push({
       ...base,
       kind: "disk",
-      severity: fullest.pct >= DISK_CRIT_PCT ? "critical" : "warning",
+      severity: fullestSeverity,
       label: kindLabel("disk"),
       what: `${fullest.mount} is ${percent(fullest.pct)} full`,
       // Walked back through THIS mount's own series -- see fullestFilesystem

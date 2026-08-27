@@ -11,6 +11,9 @@ import type { HostRow } from "./hostColumns";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
 
+const GB = 1024 ** 3;
+const MB = 1024 ** 2;
+
 function makeRow(overrides: Partial<HostRow> = {}): HostRow {
   return {
     id: 1,
@@ -204,6 +207,69 @@ describe("hostConditions", () => {
       NOW,
     );
     expect(crit[0]?.severity).toBe("critical");
+  });
+
+  // The report this rule exists for: "/mnt/ark is 90% full -- 674.4 GB free"
+  // is a sentence that argues with itself, and nobody has anything to do
+  // about it.
+  it("stays quiet about a big volume with room left, at any percentage", () => {
+    const rows = hostConditions(
+      makeRow({
+        fullest: { mount: "/mnt/ark", pct: 90, free: 674 * GB, others: 3 },
+      }),
+      NOW,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it("warns on the same percentage when the bytes are nearly gone", () => {
+    const [c] = hostConditions(
+      makeRow({ fullest: { mount: "/", pct: 90, free: 2 * GB, others: 3 } }),
+      NOW,
+    );
+    expect(c?.severity).toBe("warning");
+    expect(String(c?.what)).toMatch(/\/ is 90% full/);
+  });
+
+  // Both floors have to bind for the worse word to apply. 96% of a 6.8 TB
+  // array with 67 GB left is under the warning floor and over the critical
+  // one: worth a word, not an emergency. With 500 GB left neither binds and
+  // the percentage on its own buys nothing.
+  it("holds a deep-but-roomy volume below critical", () => {
+    const [warn] = hostConditions(
+      makeRow({
+        fullest: { mount: "/mnt/ark", pct: 96, free: 67 * GB, others: 3 },
+      }),
+      NOW,
+    );
+    expect(warn?.severity).toBe("warning");
+
+    expect(
+      hostConditions(
+        makeRow({
+          fullest: { mount: "/mnt/ark", pct: 96, free: 500 * GB, others: 3 },
+        }),
+        NOW,
+      ),
+    ).toEqual([]);
+  });
+
+  it("criticals when the same percentage leaves under 20 GiB", () => {
+    const [c] = hostConditions(
+      makeRow({ fullest: { mount: "/", pct: 96, free: 800 * MB, others: 3 } }),
+      NOW,
+    );
+    expect(c?.severity).toBe("critical");
+  });
+
+  // A row that has lost track of the bytes must not go silent about a disk at
+  // 97%: unknown headroom falls back to the percentage alone.
+  it("judges on the percentage alone when free bytes are unknown", () => {
+    const [c] = hostConditions(
+      makeRow({ fullest: { mount: "/", pct: 97, free: null, others: 0 } }),
+      NOW,
+    );
+    expect(c?.severity).toBe("critical");
   });
 
   it("leaves a comfortable disk alone", () => {

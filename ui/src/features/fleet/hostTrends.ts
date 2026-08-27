@@ -17,7 +17,8 @@ import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import type { HostRow } from "./hostColumns";
-import { DISK_WARN_PCT } from "./conditions";
+import { diskState } from "./conditions";
+import type { DiskSeverity } from "./conditions";
 
 /**
  * The fleet list's trends: four families per host, turned into the series
@@ -186,7 +187,7 @@ function totalBand(values: (number | null)[]): Band[] {
  * this definition lives here.
  */
 /**
- * When this filesystem last crossed the threshold and stayed over it.
+ * When this filesystem last became notable and stayed that way.
  *
  * Walked backwards from the newest reading through THIS series and no other:
  * the row names one mount, and dating it from whichever series crossed first
@@ -205,7 +206,6 @@ function totalBand(values: (number | null)[]): Band[] {
 function crossedAt(
   res: MetricsResponse,
   index: number,
-  threshold: number,
 ): { since: string | null; atLeast: boolean } {
   const used = griddedValues(res, index, "used");
   const free = griddedValues(res, index, "free");
@@ -217,7 +217,7 @@ function crossedAt(
   }
 
   let start = -1;
-  // Whether the walk ever SAW this filesystem under the threshold. That, not
+  // Whether the walk ever SAW this filesystem below notable. That, not
   // reaching index 0, is what separates a crossing from a floor: the loop
   // steps over gap buckets, so an agent that restarted at the window edge
   // leaves bucket 0 empty and the walk stops at bucket 1 having never seen a
@@ -231,7 +231,11 @@ function crossedAt(
     // A bucket with no reading, or one whose two halves add to nothing, says
     // nothing either way -- keep walking.
     if (u === null || f === null || u + f === 0) continue;
-    if ((u / (u + f)) * 100 < threshold) {
+    // The same compound rule the condition itself is judged by, not a bare
+    // percentage: dating a mount from when it crossed 90% would put a
+    // timestamp on a disk that only became worth reading about days later,
+    // when the bytes ran low.
+    if (diskState(u, f)?.severity == null) {
       dropped = true;
       break;
     }
@@ -249,7 +253,13 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
   if (res === null || res.series.length === 0) return null;
   if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return null;
 
-  let best: { mount: string; pct: number; index: number } | null = null;
+  let best: {
+    mount: string;
+    pct: number;
+    free: number;
+    severity: DiskSeverity;
+    index: number;
+  } | null = null;
   let measured = 0;
   for (let i = 0; i < res.series.length; i++) {
     // latestValue, not lastNumber: this picks the MAXIMUM across a host's
@@ -265,24 +275,58 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
     const free = latestValue(griddedValues(res, i, "free"));
     if (used === null || free === null || used + free === 0) continue;
     measured++;
-    const pct = (used / (used + free)) * 100;
+    const state = diskState(used, free)!;
     const mount = fsName(res.series[i]!.key, "?");
-    if (best === null || pct > best.pct) best = { mount, pct, index: i };
+    const candidate = {
+      mount,
+      pct: state.pct,
+      free,
+      severity: state.severity,
+      index: i,
+    };
+    if (best === null || outranks(candidate, best)) best = candidate;
   }
   if (best === null) return null;
-  // The onset is computed for the winner only, and only when it is over the
-  // threshold at all: every other mount on the host is a walk nobody reads.
+  // The onset is computed for the winner only, and only when it is notable at
+  // all: every other mount on the host is a walk nobody reads.
   const crossed =
-    best.pct >= DISK_WARN_PCT
-      ? crossedAt(res, best.index, DISK_WARN_PCT)
+    best.severity !== null
+      ? crossedAt(res, best.index)
       : { since: null, atLeast: false };
   return {
     mount: best.mount,
     pct: best.pct,
+    free: best.free,
     others: Math.max(0, measured - 1),
     since: crossed.since,
     sinceAtLeast: crossed.atLeast,
   };
+}
+
+const FULLEST_RANK: Record<"critical" | "warning" | "none", number> = {
+  critical: 2,
+  warning: 1,
+  none: 0,
+};
+
+/**
+ * Which of two filesystems this row should name: the one worth acting on,
+ * and only then the bigger number.
+ *
+ * Highest percentage alone is the wrong pick now that a percentage no longer
+ * decides anything on its own. A host with /mnt/ark at 92% (674 GB free, not
+ * worth a word) beside / at 91% (2 GB free, nearly out) would name ark and
+ * then have nothing to say about it, while the disk that is actually filling
+ * sat behind a "+1".
+ */
+function outranks(
+  a: { pct: number; severity: DiskSeverity },
+  b: { pct: number; severity: DiskSeverity },
+): boolean {
+  const ra = FULLEST_RANK[a.severity ?? "none"];
+  const rb = FULLEST_RANK[b.severity ?? "none"];
+  if (ra !== rb) return ra > rb;
+  return a.pct > b.pct;
 }
 
 /** The latest non-null value, or null when the series never reported.

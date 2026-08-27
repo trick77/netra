@@ -55,7 +55,7 @@ import {
 // comment on them in fleet/conditions.ts spells out why: this page and that
 // one must agree on when a filesystem is worth mentioning, or a host warns
 // in one place and reads clean in the other.
-import { DISK_WARN_PCT, DISK_CRIT_PCT } from "../../fleet/conditions";
+import { diskState } from "../../fleet/conditions";
 // The one derivation of a host's traffic pair, shared with the fleet row and
 // the Traffic chart spec -- its own comment carries why the three cannot be
 // allowed to disagree, and scale.ts why they share a bent axis.
@@ -483,19 +483,16 @@ export function needsAttention(input: {
   }
 
   for (const fs of input.filesystems) {
-    // df's Use%: used / (used + free). total is not the denominator -- see
-    // filesystemRows above. Used only to decide whether to warn; the card
-    // itself still shows bytes.
-    if (fs.used === null || fs.free === null) continue;
-    const capacity = fs.used + fs.free;
-    if (capacity === 0) continue;
-    const full = (fs.used / capacity) * 100;
-    if (full >= DISK_WARN_PCT) {
-      out.push({
-        severity: full >= DISK_CRIT_PCT ? "critical" : "warning",
-        what: `${fs.label} is ${percent(full)} full — ${bytes(fs.free)} free`,
-      });
-    }
+    // df's Use% and the bytes behind it, judged by the same rule the fleet
+    // page uses -- see diskState in fleet/conditions.ts. total is not the
+    // denominator -- see filesystemRows above. Used only to decide whether to
+    // warn; the card itself still shows bytes.
+    const disk = diskState(fs.used, fs.free);
+    if (disk === null || disk.severity === null) continue;
+    out.push({
+      severity: disk.severity,
+      what: `${fs.label} is ${percent(disk.pct)} full — ${bytes(fs.free)} free`,
+    });
   }
 
   for (const unit of input.units ?? []) {

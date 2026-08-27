@@ -366,11 +366,44 @@ describe("fetchHostTrends", () => {
     expect(trends.fullest).toEqual({
       mount: "data",
       pct: 88,
+      // Carried through beside the percentage: the condition rule needs the
+      // bytes, not only the ratio.
+      free: 12,
       others: 2,
       // Under DISK_WARN_PCT, so there is no crossing to date.
       since: null,
       sinceAtLeast: false,
     });
+  });
+
+  // Highest percentage is the wrong pick once a percentage no longer decides
+  // anything on its own: the array is fuller but has 674 GB left, the root is
+  // a hair behind it and nearly out. Naming the array would leave the row
+  // with nothing to say while the disk that is actually filling sat behind a
+  // "+1".
+  it("names the mount worth acting on, not the biggest percentage", async () => {
+    const GB = 1024 ** 3;
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem", "mountpoint"],
+        columns: ["used", "free", "total"],
+        series: [
+          {
+            key: { filesystem: "ark", mountpoint: "/mnt/ark" },
+            points: [[tNow, 6126 * GB, 674 * GB, 6800 * GB]],
+          },
+          {
+            key: { filesystem: "root", mountpoint: "/" },
+            points: [[tNow, 18 * GB, 2 * GB, 21 * GB]],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.fullest?.mount).toBe("/");
+    expect(trends.fullest?.others).toBe(1);
   });
 
   // A filesystem is named to an operator by its mount point -- the thing they
@@ -433,10 +466,41 @@ describe("fetchHostTrends", () => {
     expect(trends.fullest).toEqual({
       mount: "/mnt/ark",
       pct: 20,
+      free: 80,
       others: 0,
       since: null,
       sinceAtLeast: false,
     });
+  });
+
+  // The onset is dated from when the mount became worth reading about, which
+  // on a big array is not when it crossed 90%. This one is over 90% for the
+  // whole window and only runs short of bytes in the last bucket.
+  it("dates the onset from the bytes, not from the percentage", async () => {
+    const GB = 1024 ** 3;
+    serve({
+      filesystem: response({
+        key_columns: ["filesystem"],
+        columns: ["used", "free", "total"],
+        series: [
+          {
+            key: { filesystem: "ark" },
+            points: [
+              // 91%, and 600 GB still left: nothing to say.
+              [t0, 6060 * GB, 600 * GB, 6800 * GB],
+              [t0 + hour, 6260 * GB, 400 * GB, 6800 * GB],
+              // 99%, and now under the 100 GiB floor.
+              [tNow, 6610 * GB, 50 * GB, 6800 * GB],
+            ],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    expect(trends.fullest?.sinceAtLeast).toBe(false);
+    expect(trends.fullest?.since).toBe("2026-08-10T02:00:00.000Z");
   });
 
   // The onset walk, and the case that made it lie. A gap at the start of the

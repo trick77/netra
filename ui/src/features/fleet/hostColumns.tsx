@@ -91,14 +91,20 @@ export type HostRow = Host & {
   // null when the host has reported no filesystems at all. Non-nullable, the
   // only way to say "never collected" was pct: 0, which renders as an empty,
   // healthy, green disk -- absent read as a fact.
-  // `since` is when this mount last crossed DISK_WARN_PCT and stayed over it,
-  // walked back through its own series -- see crossedAt in hostTrends.ts.
-  // `sinceAtLeast` marks the case where it was already over at the start of
-  // the window, which is a floor rather than a moment: the row says "over
-  // 24 h" instead of naming a bucket where nothing actually happened.
+  // `since` is when this mount last became notable under the compound disk
+  // rule -- high enough AND with little enough left, see diskSeverityFor in
+  // conditions.ts -- and stayed there, walked back through its own series by
+  // crossedAt in hostTrends.ts. `sinceAtLeast` marks the case where it was
+  // already notable at the start of the window, which is a floor rather than
+  // a moment: the row says "over 24 h" instead of naming a bucket where
+  // nothing actually happened.
   fullest: {
     mount: string;
     pct: number;
+    // Bytes left on THIS mount. The percentage cannot decide on its own
+    // whether the mount is worth surfacing: 90% of a 6.7 TB array is 674 GB
+    // free. Null is "not known", which falls back to the percentage alone.
+    free?: number | null;
     others: number;
     // Optional, unlike the two fields above: hostTrends always sets both, and
     // the hand-built row literals across the tests predate them. Same
