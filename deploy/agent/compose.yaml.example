@@ -273,10 +273,13 @@ services:
         target: /host/etc/os-release
         read_only: true
 
-      # --- OPTIONAL: systemd units ------------------------------------------
+      # --- OPTIONAL: systemd units + logged-in sessions ---------------------
       #
       # Enables the systemd collector, which calls
-      # org.freedesktop.systemd1.Manager.ListUnits on the system bus. This
+      # org.freedesktop.systemd1.Manager.ListUnits on the system bus, AND the
+      # logged-in session count, which calls
+      # org.freedesktop.login1.Manager.ListSessions on the same one and counts
+      # the sessions logind classes as human logins. This
       # socket is the ONLY thing it needs: the agent speaks D-Bus itself and
       # does not run systemctl, which is absent from the image (netra-agent
       # ships on Alpine, and systemd is not packaged for musl).
@@ -291,7 +294,9 @@ services:
       # Without it: the collector reports a "systemd: unavailable" capability
       # rather than an error, so the host still reports everything else. There
       # is no unit inventory, no failed-service alerting, and
-      # services_total / services_failed stay unset on every host sample.
+      # services_total / services_failed stay unset on every host sample. The
+      # session count falls back to the utmp bind below, which on systemd 257
+      # and later does not exist -- see that block.
       #
       # Only unit state CHANGES are stored, plus that summary. The first
       # scrape after an agent start emits one baseline event per service, so a
@@ -338,10 +343,16 @@ services:
       # (ut_type) and counts the ones marked USER_PROCESS; the usernames and
       # hostnames in the file are never even decoded.
       #
-      # Absent, the count is reported as unavailable and left NULL. That is
-      # also the normal outcome on Alpine and other busybox-based systems,
-      # which ship no utmp writer at all — there the file is missing or empty
-      # no matter what you mount.
+      # THE FALLBACK, NOT THE SOURCE. logind answers this over the D-Bus
+      # socket above and is asked first; utmp is read only when that fails.
+      # On systemd 257 and later — Ubuntu 25.10 onwards — there is nothing to
+      # mount here at all: systemd is built without utmp support because the
+      # record format overflows in 2038, so /run/utmp is never created.
+      #
+      # Absent with no bus either, the count is reported as unavailable and
+      # left NULL. That is also the normal outcome on Alpine and other
+      # busybox-based systems, which ship no utmp writer at all — there the
+      # file is missing or empty no matter what you mount.
       # - type: bind
       #   source: /var/run/utmp
       #   target: /var/run/utmp

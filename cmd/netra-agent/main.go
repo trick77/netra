@@ -63,7 +63,7 @@ func run() error {
 		collector.NewLimits(cfg.ProcRoot),
 		collector.NewProcs(cfg.ProcRoot, cfg.PidHost),
 		collector.NewNetstat(cfg.ProcRoot),
-		collector.NewUsers(cfg.UtmpPath),
+		collector.NewUsers(collector.LogindSessions, cfg.UtmpPath),
 
 		// Group 1: no privileges, no dependencies.
 		collector.NewDiskIO(cfg.ProcRoot),

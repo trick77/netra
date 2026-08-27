@@ -344,9 +344,12 @@ host's kernel log, which is the log netra exists to help an operator read. The
 process **count** is unaffected: it comes from counting entries in `/proc`,
 which needs no such read.
 
-One long-standing exception remains: the logged-in session count needs the
-`/var/run/utmp` bind — which yields nothing on Alpine and other busybox systems
-that ship no utmp writer.
+One long-standing exception remains: the logged-in session count needs either
+the D-Bus socket, where logind answers it, or the `/var/run/utmp` bind. Modern
+distributions have only the first — systemd 257 and later, Ubuntu 25.10 onwards,
+are built without utmp because its record format overflows in 2038, so
+`/run/utmp` is never created — while Alpine and other busybox systems have
+neither, shipping no utmp writer and usually no logind either.
 
 ---
 
