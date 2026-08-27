@@ -531,11 +531,14 @@ Options:
                            cgroup v2 host netra has no name for. The warning is
                            still printed and still reported; only the prompt
                            goes away. A no-op on a known distro.
-      --assume-physical    Accepted and does nothing. SMART is no longer
-                           skipped on a host that looks virtual: the agent
-                           scans for drives at runtime, so a guest with a
-                           passed-through controller finds them by itself and
-                           there is nothing left to override.
+      --assume-physical    Treat this host as bare metal even if it looks
+                           virtual. It no longer affects SMART at all -- the
+                           agent scans for drives at runtime, so a guest with a
+                           passed-through controller finds them by itself. What
+                           is left is the CPU sensor hint: a misjudged physical
+                           host is told "no thermal data, normal on a guest"
+                           instead of which driver to modprobe, and this is the
+                           way back to that advice.
       --force              Required to overwrite an existing .env.
       --start              Run `docker compose up -d` at the end.
       --token VALUE        Agent token minted by the hub (starts with nta_).
@@ -2348,8 +2351,16 @@ EOF
     # thermal data and telling its operator to modprobe coretemp wastes their
     # time. --assume-physical is accepted and ignored: there is no disk
     # judgment left for it to override.
-    if [ "${ASSUME_PHYSICAL:-0}" = 1 ]; then
-        info "  platform:        ${VIRT:-physical} (--assume-physical no longer does anything)"
+    if [ -n "$VIRT" ] && [ "${ASSUME_PHYSICAL:-0}" = 1 ]; then
+        # Still honoured, for the one consumer that is left. It no longer
+        # restores SMART -- nothing took SMART away -- but a physical host
+        # misread as a guest is otherwise told there is no thermal hardware
+        # rather than which driver to load, and that operator had a remedy
+        # before this change and must keep one.
+        info "  platform:        $VIRT, overridden by --assume-physical (sensor hint only)"
+        VIRT=""
+    elif [ "${ASSUME_PHYSICAL:-0}" = 1 ]; then
+        info "  platform:        physical (--assume-physical had nothing to override)"
     elif [ -n "$VIRT" ]; then
         info "  platform:        virtual ($VIRT)"
     else

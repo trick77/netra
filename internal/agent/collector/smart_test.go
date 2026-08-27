@@ -3,6 +3,7 @@ package collector_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -244,6 +245,61 @@ func TestSmartLeavesUsbAttachedDrivesAlone(t *testing.T) {
 	}
 }
 
+// The USB skip clears like every other state. An enclosure unplugged, or a
+// directly attached drive added beside it, must not leave the tab still saying
+// the host has nothing but USB.
+func TestSmartClearsTheUsbOnlyCapabilityWhenADriveAppears(t *testing.T) {
+	root := t.TempDir()
+	usb := filepath.Join(root, "devices", "pci0000:00", "usb1", "1-1", "host4", "block", "sdb")
+	sata := filepath.Join(root, "devices", "pci0000:00", "ata1", "host0", "block", "sda")
+	for _, d := range []string{usb, sata, filepath.Join(root, "block")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	if err := os.Symlink(usb, filepath.Join(root, "block", "sdb")); err != nil {
+		t.Fatalf("symlink sdb: %v", err)
+	}
+	if err := os.Symlink(sata, filepath.Join(root, "block", "sda")); err != nil {
+		t.Fatalf("symlink sda: %v", err)
+	}
+
+	clock := time.Now()
+	usbOnly := true
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--scan") {
+			if usbOnly {
+				return []byte(`{"devices":[{"name":"/dev/sdb","type":"sat"}]}`), nil
+			}
+			return []byte(`{"devices":[{"name":"/dev/sdb","type":"sat"},
+				{"name":"/dev/sda","type":"sat"}]}`), nil
+		}
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, root)
+	testee.SetClockForTest(func() time.Time { return clock })
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.Capabilities()["smart"]; got != "usb-only-devices" {
+		t.Fatalf("capability = %q, want usb-only-devices", got)
+	}
+
+	usbOnly = false
+	clock = clock.Add(time.Hour)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) == 0 {
+		t.Fatal("attributes = 0 after the directly attached drive appeared")
+	}
+	if testee.Capabilities() != nil {
+		t.Errorf("capability = %v after a drive appeared, want none", testee.Capabilities())
+	}
+}
+
 // A host whose ONLY disk is a USB enclosure attempted nothing and read
 // nothing. Calling that "no drive answered SMART" would send its operator
 // after a passthrough that is working perfectly.
@@ -269,11 +325,80 @@ func TestSmartDoesNotBlameAHostWhoseOnlyDriveIsUsb(t *testing.T) {
 	}
 	testee := collector.NewSmart(time.Hour, run, root)
 
+	logs := captureSmartLogs(t)
 	if _, err := testee.Collect(context.Background()); err != nil {
 		t.Fatalf("Collect: %v", err)
 	}
 	if got := testee.Capabilities()["smart"]; got == "no-readable-devices" {
 		t.Error("a host with only a USB drive is not a host whose drives stopped answering")
+	}
+	// And it is not silent either. An empty Storage tab with no capability is
+	// exactly the dead end these values exist to remove -- this one is working
+	// as intended, and has to say so.
+	if got := testee.Capabilities()["smart"]; got != "usb-only-devices" {
+		t.Errorf("capability = %q, want usb-only-devices", got)
+	}
+	// Not blaming the host is only half the job. Such a host produces no rows,
+	// no capability and -- without this -- no log either, which is the exact
+	// silence the empty-scan branch exists to end: an empty Storage tab and
+	// nothing anywhere saying why. The setup script used to name the excluded
+	// drive in its finish report; the exclusion lives here now, so the line
+	// has to as well.
+	if !strings.Contains(logs.String(), "/dev/sdb") {
+		t.Errorf("the skipped USB drive is never named anywhere: %q", logs.String())
+	}
+}
+
+// smartLogBuf collects the default logger's output for one test.
+type smartLogBuf struct{ b strings.Builder }
+
+func (l *smartLogBuf) Write(p []byte) (int, error) { return l.b.Write(p) }
+func (l *smartLogBuf) String() string              { return l.b.String() }
+
+func captureSmartLogs(t *testing.T) *smartLogBuf {
+	t.Helper()
+	out := &smartLogBuf{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(out, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return out
+}
+
+// The guard fixture, ported from the setup script's case 3.
+//
+// device_transport strips AGENT_SETUP_ROOT before matching the transport, and
+// the shell suite carries a fixture root under a directory called `usb1` that
+// fails if the strip is ever removed -- because without it EVERY device on the
+// host classifies as USB, silently, with the suite agreeing. The collector runs
+// the same match against AGENT_SYSFS_ROOT and needs the same guard.
+func TestSmartDoesNotReadUsbOutOfTheSysfsRootItself(t *testing.T) {
+	// A sysfs root that itself lives under a `usb1` directory.
+	root := filepath.Join(t.TempDir(), "usb1", "sys")
+	sata := filepath.Join(root, "devices", "pci0000:00", "ata1", "host0", "block", "sda")
+	if err := os.MkdirAll(sata, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "block"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Symlink(sata, filepath.Join(root, "block", "sda")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--scan") {
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"sat"}]}`), nil
+		}
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run, root)
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) == 0 {
+		t.Error("a directly attached drive was dropped because the sysfs ROOT path said usb")
 	}
 }
 

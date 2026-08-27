@@ -665,6 +665,16 @@ describe("Drives", () => {
     expect(screen.getByRole("row", { name: /sdz/ })).toBeInTheDocument();
   });
 
+  // An empty table that is working as intended still has to say so. The one
+  // capability that names no remedy, because there is nothing to fix.
+  it("explains a host whose only drives are USB-attached", () => {
+    render(<Drives rows={[]} capabilities={{ smart: "usb-only-devices" }} />);
+
+    expect(screen.getByText(/USB-attached/)).toBeInTheDocument();
+    expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
+    expect(screen.getByText("No drives reported")).toBeInTheDocument();
+  });
+
   it("stays silent when the agent reported no trouble", () => {
     render(
       <Drives rows={[ata]} capabilities={{ containers: "no-docker-socket" }} />,
