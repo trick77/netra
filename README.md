@@ -264,9 +264,13 @@ Two things that bite:
 
 * Optional binds ship **commented out**. A long-form bind does not create a
   missing source — uncomment only what this host actually has. Drives are the
-  exception and need no editing: the agent is given `/dev` plus device cgroup
-  rules and scans for drives on every collection, so a disk swapped or passed
-  through later is picked up with nothing to re-run.
+  exception in the compose file `setup-agent.sh` renders: it grants `/dev` plus
+  device cgroup rules unconditionally, and the agent scans for drives on every
+  collection, so a disk swapped or passed through later is picked up with
+  nothing to re-run. In this example both ship commented out, like every other
+  privilege, and they have to be uncommented together — the bind supplies the
+  device nodes and the rules supply permission to open them, so either alone
+  collects nothing.
 * Disk usage is measured through **empty marker directories** (`/.netra`,
   `/mnt/ark/.netra`, …) bind-mounted to `/netra/fs/<label>`, never by mounting
   the data. `statfs()` reports the filesystem containing the path, so this gives

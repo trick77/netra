@@ -211,7 +211,7 @@ func TestBaselineCollectorsDeclareThemselves(t *testing.T) {
 		{"systemd", collector.NewSystemd(nil)},
 		{"mdraid", collector.NewMdraid("/sys")},
 		{"packages", collector.NewPackages("/var/lib/dpkg/status", "/lib/apk/db/installed")},
-		{"smart", collector.NewSmart(time.Hour, nil)},
+		{"smart", collector.NewSmart(time.Hour, nil, "")},
 	} {
 		b, ok := c.col.(collector.BaselineEmitter)
 		if !ok {

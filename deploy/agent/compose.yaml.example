@@ -57,9 +57,8 @@
 #
 # Every OPTIONAL mount, device and capability below ships COMMENTED
 # OUT. Uncommenting one whose source does not exist is not a no-op: a long-form
-# bind does not create a missing source, and a `devices:` entry for a node this
-# host lacks stops the container from starting at all. Uncomment what this host
-# actually has.
+# bind does not create a missing source, so the container fails to start rather
+# than warning. Uncomment what this host actually has.
 #
 # The mounts left ACTIVE are the ones a Docker host has by definition —
 # /var/run/docker.sock, /proc/1/mountinfo — plus /.netra, which the quickstart
@@ -157,7 +156,6 @@ services:
       # and DELETE it if this host has no second filesystem. A long-form bind
       # does not create a missing source the way the short form does, so a
       # source that is not there is a container startup failure, not a warning.
-      # Same rule as the `devices:` list below.
       # - type: bind
       #   source: /mnt/ark/.netra
       #   target: /netra/fs/ark
@@ -208,10 +206,10 @@ services:
       # writes to REGULAR files; a device node's I/O goes to the driver rather
       # than the filesystem, so smartctl still opens the drives it needs while
       # the agent cannot mknod into the host's devtmpfs.
-      - type: bind
-        source: /dev
-        target: /dev
-        read_only: true
+      # - type: bind
+      #   source: /dev
+      #   target: /dev
+      #   read_only: true
 
       # --- Containers: names, labels, and the network mode --------------------
       #
@@ -456,6 +454,13 @@ services:
     # NVMe character devices take a dynamically allocated major that differs
     # between kernels. A list narrow enough to be worth writing is the list that
     # breaks silently after a kernel upgrade.
+    #
+    # WHAT THIS ACTUALLY PERMITS, plainly: read/write access to every block and
+    # character device on the host, /dev/mem and the raw disks included. It is
+    # a wider grant than the explicit devices: list it replaces, and it is the
+    # price of the agent finding drives without being told about them. The
+    # container is not privileged and gains no other capability, but do not
+    # read these two lines as narrow.
     # device_cgroup_rules:
     #   - "b *:* rmw"
     #   - "c *:* rmw"

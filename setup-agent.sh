@@ -579,8 +579,10 @@ parse_args() {
     # Not privilege, but the same shape: a prompt that defaults n, which an
     # operator who means it takes by name.
     GRANT_UNSUPPORTED_OS=0
-    # Not a grant: an override of a DETECTION. A virtual host has no SMART data
-    # behind its disks, and this says "you detected wrong, this box is real".
+    # Accepted and ignored. It used to override the virtualisation verdict so
+    # that a misjudged host kept SMART; the verdict no longer decides anything
+    # about the disks, so there is nothing left for it to override. Still
+    # parsed, because an existing invocation must not start failing.
     ASSUME_PHYSICAL=0
     FORCE=0
     START=0
@@ -750,10 +752,8 @@ init_paths() {
     # devices (/dev/sda, never /dev/sda1), so /sys/block is the tree that
     # answers the question being asked, and no partition filter is needed.
     P_SYSBLOCK="$P_SYSFS/block"
-    P_SYSNVME="$P_SYSFS/class/nvme"
     P_HWMON="$P_SYSFS/class/hwmon"
 
-    P_DEV="${AGENT_DEV_ROOT:-$(_p /dev)}"
     P_DPKG="${AGENT_DPKG_PATH:-$(_p /var/lib/dpkg/status)}"
     P_APK="${AGENT_APK_PATH:-$(_p /lib/apk/db/installed)}"
     P_DBUS="${AGENT_DBUS_PATH:-$(_p /run/dbus/system_bus_socket)}"
@@ -793,9 +793,7 @@ debug_paths() {
     printf 'mountinfo|%s\n' "$P_MOUNTINFO"
     printf 'sysfs|%s\n' "$P_SYSFS"
     printf 'sysblock|%s\n' "$P_SYSBLOCK"
-    printf 'sysnvme|%s\n' "$P_SYSNVME"
     printf 'hwmon|%s\n' "$P_HWMON"
-    printf 'dev|%s\n' "$P_DEV"
     printf 'dpkg|%s\n' "$P_DPKG"
     printf 'apk|%s\n' "$P_APK"
     printf 'dbus|%s\n' "$P_DBUS"
@@ -1041,20 +1039,20 @@ check_docker() {
 
 # detect_virt — prints the hypervisor's name, or nothing on bare metal.
 #
-# It exists because three separate pieces of this script were giving a VPS
-# advice that could not possibly apply to it: offering SMART on a disk the
-# hypervisor invented, offering a drivetemp module for drives that are not
-# there, and telling the operator to modprobe coretemp on a machine with no
-# thermal hardware at all. All three are the same question asked once.
+# One consumer is left: the CPU-sensor hint, which must not tell the operator
+# of a guest to modprobe coretemp on a machine with no thermal hardware at all.
+# It no longer decides anything about the disks -- neither SMART nor drivetemp
+# reads the verdict, because a guest with a passed-through controller has real
+# drives and both of those are now settled by what is actually there.
 #
 # Three signals, cheapest first. The `hypervisor` CPU flag is the reliable one on
 # x86 and is always readable; DMI names the hypervisor PRODUCT where the flag is
 # absent (see the warning on that branch); /sys/hypervisor/type catches Xen PV,
 # which sets neither.
 #
-# Deliberately conservative: a guest this misses merely gets offered SMART that
-# reads nothing, while a physical host it misjudges loses SMART, drive
-# temperatures and the sensor hint on hardware that has them.
+# Deliberately conservative: a guest this misses merely gets a sensor hint it
+# cannot use, while a physical host it misjudges is denied the hint on hardware
+# that has the thermal data.
 detect_virt() {
     if [ -r "$P_CPUINFO" ] && grep -q '^flags.*[[:space:]]hypervisor' "$P_CPUINFO" 2>/dev/null; then
         _dv_vendor=$(cat "$P_DMIVENDOR" 2>/dev/null || printf '')
@@ -1071,9 +1069,9 @@ detect_virt() {
         # An earlier version listed "Google", "Microsoft Corporation",
         # "Hetzner" and friends; every one of those companies also ships
         # physical machines, and sys_vendor on a Chromebox is "Google". The
-        # cost of that mistake is not symmetric: a missed guest merely offers
-        # SMART that reads nothing, while a misjudged physical host loses SMART,
-        # drive temperatures and the sensor hint on hardware that has them.
+        # cost of that mistake is not symmetric: a missed guest merely gets a
+        # sensor hint it cannot use, while a misjudged physical host is denied
+        # the hint on hardware that has the thermal data.
         case "$_dv_vendor" in
         QEMU* | *VMware* | Xen* | *VirtualBox* | innotek* | Bochs* | Parallels*)
             printf '%s' "$_dv_vendor"
@@ -1087,10 +1085,10 @@ detect_virt() {
         # A Xen dom0 is REAL HARDWARE with real disks, and it reads `xen` here
         # exactly like a guest does: the CPU flag is absent on dom0 and
         # sys_vendor is the real board vendor, so both branches above fall
-        # through. Calling it virtual costs it SMART, drive temperatures and the
-        # sensor hint on hardware that has all of them — the asymmetric cost the
-        # DMI branch above already refuses to pay. systemd-detect-virt
-        # discriminates on the `control_d` capability; so do we.
+        # through. Calling it virtual costs it the sensor hint on hardware that
+        # has the thermal data — the asymmetric cost the DMI branch above
+        # already refuses to pay. systemd-detect-virt discriminates on the
+        # `control_d` capability; so do we.
         if [ -n "$_dv_type" ] && [ -r "$P_HYPERVISOR_CAPS" ] &&
             grep -q 'control_d' "$P_HYPERVISOR_CAPS" 2>/dev/null; then
             return 0
@@ -1744,13 +1742,13 @@ _sensor_module_hint() {
 plan_drivetemp() {
     [ -n "${SMART_ATA_DEVICES:-}" ] || return 0
 
-    # This function does
-    # not need the guess: it loads the module, re-reads the hwmon tree and
-    # keeps the persist ONLY when a chip actually appeared, unloading again
-    # when none did. That verification was always the real gate, and the probe
-    # in front of it could only ever withhold drivetemp from a host that would
-    # have produced a chip -- a passed-through controller on a guest, exactly
-    # the case the SMART probe got wrong too.
+    # No probe stands in front of this any more, and none is wanted. This
+    # function does not need the guess: it loads the module, re-reads the
+    # hwmon tree and keeps the persist ONLY when a chip actually appeared,
+    # unloading again when none did. That verification was always the real
+    # gate, and the probe in front of it could only ever withhold drivetemp
+    # from a host that would have produced a chip -- a passed-through
+    # controller on a guest, exactly the case the SMART probe got wrong too.
     if hwmon_chips | grep -q '|drivetemp|'; then
         info "  drivetemp:       already loaded"
         return 0
@@ -2191,6 +2189,12 @@ $_bv_body"
 # build_volume_block, so only the second job is left, and a rule is what does
 # it. The pair is what makes runtime discovery real: a disk that appears after
 # this file was written is reachable without regenerating it.
+#
+# What this permits, plainly: read/write access to every block and character
+# device on the host, /dev/mem and the raw disks included. A wider grant than
+# the explicit devices: list it replaces, and the price of the agent finding
+# drives without being told about them. The container is not privileged and
+# gains no other capability, but this is not a narrow rule.
 #
 # Wildcards rather than a computed major list. Block majors are stable enough
 # to enumerate; NVMe CHARACTER devices -- /dev/nvme0, the controller smartctl
@@ -2898,11 +2902,7 @@ EOF
             awk -F'|' '{c[$1]++} END {s=""; for (k in c) s = s (s ? ", " : "") k ": " c[k]; print s}'))"
     fi
 
-    if [ "${CAP_RAWIO:-0}" = 1 ]; then
-        info "  smart devices:   found by the agent at runtime"
-    else
-        info "  smart devices:   none"
-    fi
+    info "  smart devices:   found by the agent at runtime"
     info "  capabilities:    $(_plan_caps)"
     info "  package mount:   ${PKG_MOUNT:-none}"
     info "  d-bus socket:    $(if [ "$DBUS_ENABLED" = 1 ]; then printf 'yes'; else printf 'no'; fi)"

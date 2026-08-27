@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -158,6 +159,7 @@ var nvmeAttrs = []struct {
 type Smart struct {
 	interval time.Duration
 	run      SmartRunner
+	sysRoot  string
 
 	now     func() time.Time
 	lastRun time.Time
@@ -200,8 +202,51 @@ type Smart struct {
 const failureBackoff = time.Minute
 
 // NewSmart builds a Smart collector.
-func NewSmart(interval time.Duration, run SmartRunner) *Smart {
-	return &Smart{interval: interval, run: run, now: time.Now}
+//
+// sysRoot is where /sys is readable. It is used for one thing: telling a
+// USB-attached drive from a directly attached one. Empty disables that check,
+// which is what the tests pass -- a collector that filtered on a sysfs it
+// cannot read would drop every drive on the host.
+func NewSmart(interval time.Duration, run SmartRunner, sysRoot string) *Smart {
+	return &Smart{interval: interval, run: run, sysRoot: sysRoot, now: time.Now}
+}
+
+// usbAttached reports whether a scanned device hangs off a USB bridge.
+//
+// Driving one with `-d sat` is unreliable and can hang the enclosure, and a
+// hung enclosure does not die on SIGKILL -- it stalls the scrape until
+// smartctlWaitDelay gives up on it, once per drive, every interval. The setup
+// script used to keep these out by leaving them out of the devices: list it
+// computed. The agent finds its own drives now, so the exclusion has to live
+// here or not at all.
+//
+// sysfs, not smartctl: `--scan` reports a transport TYPE (sat, scsi, nvme),
+// which a USB bridge shares with the directly attached drives it emulates.
+// /sys/block/<name> is a symlink into the devices tree whose path names the
+// bus -- .../usb1/1-1/... -- which is the same signal the setup script read.
+//
+// Only /dev/sdX is checked. A USB bridge presents as a SCSI disk and nothing
+// else; an NVMe controller or a RAID pseudo-device (/dev/bus/0) has no
+// /sys/block entry under that name, and guessing at one would drop drives that
+// answer perfectly.
+func (s *Smart) usbAttached(devName string) bool {
+	if s.sysRoot == "" {
+		return false
+	}
+	base, ok := strings.CutPrefix(devName, "/dev/")
+	if !ok || !strings.HasPrefix(base, "sd") {
+		return false
+	}
+
+	// EvalSymlinks rather than Readlink: /sys/block/sda is a relative link
+	// (../devices/...) and only the resolved path names the bus.
+	resolved, err := filepath.EvalSymlinks(filepath.Join(s.sysRoot, "block", base))
+	if err != nil {
+		// Unreadable sysfs is not evidence of USB. Reporting it as such would
+		// silently drop every drive the moment the mount changed.
+		return false
+	}
+	return strings.Contains(resolved, "/usb")
 }
 
 // SetClockForTest replaces the clock used for the interval gate.
@@ -388,9 +433,16 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 
 	ts := time.Now().UnixMilli()
 	var rows []*netrav1.SmartAttribute
-	unreadable := 0
+	unreadable, skippedUSB := 0, 0
 
 	for _, dev := range scan.Devices {
+		if s.usbAttached(dev.Name) {
+			// Counted as unreadable would be a lie -- nothing was attempted.
+			// It is simply not a drive this collector drives.
+			skippedUSB++
+			continue
+		}
+
 		args := []string{"--json", "--all", dev.Name}
 		if dev.Type != "" {
 			args = append(args, "-d", dev.Type)
@@ -434,7 +486,11 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	// so it produces no rows through no fault of anything, and keying on the
 	// row count would tell a healthy SAS host its drives had stopped
 	// answering and send its operator after the passthrough.
-	s.noReadableDevices = len(scan.Devices) > 0 && unreadable == len(scan.Devices)
+	// Against the devices actually ATTEMPTED. A host whose only disk is a USB
+	// enclosure skipped nothing and read nothing, and calling that "no drive
+	// answered" would send its operator after a passthrough that is working.
+	attempted := len(scan.Devices) - skippedUSB
+	s.noReadableDevices = attempted > 0 && unreadable == attempted
 
 	// Deterministic order so failures read the same way twice.
 	slices.SortFunc(rows, func(a, b *netrav1.SmartAttribute) int {
