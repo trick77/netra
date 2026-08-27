@@ -426,11 +426,13 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
   );
 }
 
-// The fullest filesystem, named, plus a +N count of the rest -- never a
-// sum across filesystems (spec: a 503 GB root at 68% and a 7.8 TB array at
+// The filesystem worth acting on, named, plus a +N count of the rest -- never
+// a sum across filesystems (spec: a 503 GB root at 68% and a 7.8 TB array at
 // 88% average to a number that hides a root at 99%). `fullest` is a
 // single pre-picked summary, not a list, so there is nothing here to sum:
-// the row's assembler already did the picking.
+// the row's assembler already did the picking -- and it picks by severity
+// before percentage, so this is not always the highest number on the host.
+// See outranks() in hostTrends.ts.
 // Free-scaled to 0-100 with a fixed ceiling, like CPU: a disk at 40% and one
 // at 95% must not draw the same silhouette, which is exactly what a
 // self-scaled sparkline would do.
@@ -548,9 +550,14 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       key: "disk",
       header: "Disk",
       cell: (row) => <DiskCell row={row} />,
-      // The fullest filesystem's percentage -- the number the cell shows.
-      // Sorting on bytes would put the biggest disk first rather than the
-      // one closest to filling up, which is what this column is for.
+      // The percentage of the mount the cell NAMES -- sorting on anything the
+      // row does not show would order the list by a number nobody can see.
+      // Which is why this is no longer strictly "fullest first": the row
+      // picks the mount worth acting on, so a host showing / at 91% with 2 GB
+      // left sorts under one showing an array at 92% with 674 GB left. The
+      // column is for finding the disks in trouble, and they are still at the
+      // top. Sorting on bytes would put the biggest disk first instead, which
+      // answers no question at all.
       sortValue: (row) => row.fullest?.pct ?? null,
     },
   ];

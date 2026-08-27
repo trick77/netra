@@ -6,6 +6,7 @@ import {
   groupByKind,
   hostConditions,
   isConditionKind,
+  kindLabel,
 } from "./conditions";
 import type { HostRow } from "./hostColumns";
 
@@ -450,7 +451,7 @@ describe("groupByKind", () => {
     hostname: `host-${hostId}`,
     kind,
     severity,
-    label: kind === "disk" ? "Filesystem over 90%" : "Failed units",
+    label: kind === "disk" ? "Filesystem nearly full" : "Failed units",
     what: kind,
     since: null,
     evidence: null,
@@ -491,6 +492,17 @@ describe("groupByKind", () => {
 
 // A ?attn= nobody recognises is "all", never a filter that silently matches
 // nothing.
+// The fixtures elsewhere in this file supply their own labels, so nothing
+// else pins the copy: the kind was renamed from "Filesystem over 90%" the
+// moment the rule stopped being a bare percentage, and every one of those
+// fixtures went on passing with the old wording in it.
+describe("kindLabel", () => {
+  it("names the disk kind without quoting a percentage the rule outgrew", () => {
+    expect(kindLabel("disk")).toBe("Filesystem nearly full");
+    expect(kindLabel("disk")).not.toMatch(/%/);
+  });
+});
+
 describe("isConditionKind", () => {
   it("accepts the kinds and rejects everything else", () => {
     expect(isConditionKind("disk")).toBe(true);

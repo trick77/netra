@@ -153,10 +153,17 @@ export const DISK_CRIT_PCT = 95;
  * operator actually runs out of is bytes.
  *
  * So both halves have to agree: the disk is a high proportion full AND there
- * is little enough left that filling it is near. Under roughly a terabyte
- * these floors never bind and the rule is exactly the percentage rule it has
- * always been -- they exist for the volumes where the percentage stopped
- * being the interesting number.
+ * is little enough left that filling it is near.
+ *
+ * Where each floor starts to bite follows from its own percentage, and they
+ * are NOT the same point. At 90% the tenth that is left passes 100 GiB once
+ * the volume is over a terabyte, so nothing under that size warns any
+ * differently than before. At 95% the twentieth that is left passes 20 GiB at
+ * about 400 GiB of capacity -- so a 512 GB SSD at 96%, which has 20.5 GB
+ * free, is now a warning where it used to be critical, and stays one until
+ * roughly 96.1%. That is the intended reading of "critical": twenty gigabytes
+ * is the point where filling up is hours away, and five per cent of a
+ * half-terabyte disk is not.
  */
 export const DISK_WARN_FREE = 100 * 1024 ** 3;
 export const DISK_CRIT_FREE = 20 * 1024 ** 3;

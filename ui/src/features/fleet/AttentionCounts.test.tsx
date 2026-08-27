@@ -17,7 +17,7 @@ const UNITS: KindGroup = {
 const DISK: KindGroup = {
   kind: "disk",
   severity: "critical",
-  label: "Filesystem over 90%",
+  label: "Filesystem nearly full",
   hostIds: ["40", "41"],
 };
 
@@ -66,7 +66,7 @@ describe("AttentionCounts", () => {
     expect(screen.getByText("Warning")).toBeInTheDocument();
     expect(container.querySelector(".atile.st-crit")).toBeInTheDocument();
     expect(container.querySelector(".atile.st-warn")).toBeInTheDocument();
-    expect(screen.getByText("Filesystem over 90%")).toBeInTheDocument();
+    expect(screen.getByText("Filesystem nearly full")).toBeInTheDocument();
   });
 
   // A link, so a filtered fleet is something you can send someone. App
