@@ -70,7 +70,26 @@ export type ContainerRow = Container & {
    * it is about, and the fleet fan-out has the host each listing came from.
    */
   host_last_seen?: string | null;
+  /**
+   * The host's `containers` capability, when the agent reported one.
+   *
+   * Also for containerIsGone: `no-cgroup-scopes` means no container sample
+   * can land on that host at all, while its host samples keep arriving. See
+   * lib/containers.ts.
+   */
+  host_containers_capability?: string | undefined;
 };
+
+/**
+ * Capability values that stop container samples reaching the hub entirely.
+ *
+ * `no-cgroup-scopes` is the one: the Docker socket names containers the
+ * cgroup walk cannot find, so NOTHING is collected for that host
+ * (lib/containers.ts). `no-docker-socket` is not here -- cgroup v2 still
+ * yields CPU, memory and I/O, so samples keep landing and last_seen keeps
+ * advancing; only the names are missing.
+ */
+const NO_CONTAINER_SAMPLES = new Set(["no-cgroup-scopes"]);
 
 /**
  * How far a container's last sample may lag its HOST's before the row reads
@@ -103,6 +122,17 @@ export function containerIsGone(
   row: ContainerRow,
   goneAfterS: number = GONE_AFTER_S,
 ): boolean {
+  // A host whose cgroup mount is gone keeps reporting host samples while no
+  // container sample can land, so every container on it would age past the
+  // window together -- and be offered a purge that deletes a still-running
+  // container's history. The lists already say what is wrong there
+  // (hostContainerNote); this must not contradict them with a pill.
+  if (
+    row.host_containers_capability !== undefined &&
+    NO_CONTAINER_SAMPLES.has(row.host_containers_capability)
+  ) {
+    return false;
+  }
   if (row.host_last_seen === undefined || row.host_last_seen === null) {
     return false;
   }
@@ -338,12 +368,12 @@ function NameCell({
             reads as a workload someone deployed. Neutral, never severity="ok":
             "agent" is an identity, not a health state, and green would assert
             a state netra does not collect. */}
-        {row.is_agent ? <Badge>agent</Badge> : null}
+        {row.is_agent ? <Badge label>agent</Badge> : null}
         {/* No status dot, and no severity: the dot is what carries severity
             in this app, and a container that is gone is a FACT, not a state
             netra is ranking. The agent badge beside it is the same shape for
             the same reason. */}
-        {containerIsGone(row) ? <Badge>gone</Badge> : null}
+        {containerIsGone(row) ? <Badge label>gone</Badge> : null}
       </div>
       {identity === null ? null : (
         <div className="host-cell-site mono">{identity}</div>

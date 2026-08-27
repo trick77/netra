@@ -321,7 +321,12 @@ const NETWORK_UNAVAILABLE: Record<string, string> = {
 
 export interface ContainerPageProps {
   container: Container;
-  host: { id: number; hostname: string; last_seen: string | null };
+  host: {
+    id: number;
+    hostname: string;
+    last_seen: string | null;
+    capabilities?: Record<string, string>;
+  };
   /** A family=container response. The series for this container is picked
    * out by its key, so a whole-host response is as acceptable as a narrowed
    * one. */
@@ -408,6 +413,7 @@ export function ContainerPage({
     host_id: host.id,
     hostname: host.hostname,
     host_last_seen: host.last_seen,
+    host_containers_capability: host.capabilities?.containers,
   });
 
   async function onPurge() {

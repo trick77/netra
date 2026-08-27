@@ -1602,7 +1602,8 @@ srail b {
   flex: none;
   /* Visible default for a neutral/unclassified badge (Badge.tsx renders no
      st-* class for severity "neutral") -- without this the dot is
-     transparent and invisible on both surfaces. */
+     transparent and invisible on both surfaces. A LABEL badge renders no dot
+     at all and never reaches this rule. */
   background: var(--muted);
 }
 /* Both spellings, and both are load-bearing. Inside a Badge the status class

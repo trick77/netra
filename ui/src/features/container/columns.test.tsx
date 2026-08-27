@@ -371,3 +371,35 @@ describe("the gone pill and the purge action", () => {
     ).toBeInTheDocument();
   });
 });
+
+// A host whose cgroup hierarchy is not mounted reports host samples and no
+// container samples at all (lib/containers.ts: no-cgroup-scopes means NOTHING
+// is collected), so every container on it ages past the window together.
+// Marking them gone would offer to delete a running container's history.
+describe("a host that cannot collect containers at all", () => {
+  const HOST_SEEN = "2026-08-10T14:00:00Z";
+  const stale = new Date(
+    Date.parse(HOST_SEEN) - (GONE_AFTER_S + 3600) * 1000,
+  ).toISOString();
+
+  it("marks nothing gone when the cgroup scopes are missing", () => {
+    const row = makeRow({
+      host_last_seen: HOST_SEEN,
+      last_seen: stale,
+      host_containers_capability: "no-cgroup-scopes",
+    });
+    expect(containerIsGone(row)).toBe(false);
+  });
+
+  // The milder one: cgroup v2 still yields CPU, memory and I/O, so samples
+  // keep landing and last_seen keeps advancing -- only the names are missing.
+  // A container that stopped being sampled there really has stopped.
+  it("still marks gone when only the Docker socket is unreadable", () => {
+    const row = makeRow({
+      host_last_seen: HOST_SEEN,
+      last_seen: stale,
+      host_containers_capability: "no-docker-socket",
+    });
+    expect(containerIsGone(row)).toBe(true);
+  });
+});

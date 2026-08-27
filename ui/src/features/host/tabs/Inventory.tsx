@@ -15,13 +15,7 @@ import type {
   MetricsResponse,
 } from "../../../lib/api";
 import { purgeContainer } from "../../../lib/api";
-import {
-  ABSENT,
-  absolute,
-  bytes,
-  duration,
-  relative,
-} from "../../../lib/format";
+import { ABSENT, bytes, duration } from "../../../lib/format";
 import {
   driveFindings,
   drivePowerOnHours,
@@ -292,8 +286,10 @@ export function Containers({
     host_id: host.id,
     hostname: host.hostname,
     // What "gone" is measured against: a container whose host went quiet
-    // with it has not gone anywhere. See containerIsGone.
+    // with it has not gone anywhere, and neither has one on a host that
+    // cannot collect containers at all. See containerIsGone.
     host_last_seen: host.last_seen,
+    host_containers_capability: capabilities?.containers,
     window: metrics?.window ?? null,
     ...byKey.get(row.container_key),
   }));
