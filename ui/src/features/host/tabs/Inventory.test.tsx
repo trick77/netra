@@ -652,7 +652,7 @@ describe("Drives", () => {
 
   // The value on a table that is fully present and still worth explaining:
   // drives were scanned and none answered, so nothing was collected for any
-  // of them even though the passthrough works.
+  // of them.
   it("explains drives that answered nothing", () => {
     render(
       <Drives
@@ -661,8 +661,34 @@ describe("Drives", () => {
       />,
     );
 
-    expect(screen.getByText(/answered SMART/)).toBeInTheDocument();
+    expect(screen.getByText(/produced a reading/)).toBeInTheDocument();
     expect(screen.getByRole("row", { name: /sdz/ })).toBeInTheDocument();
+  });
+
+  // It used to assert the passthrough was working, which is false as often as
+  // it is true: `--scan` globs /dev and opens nothing, so a node the container
+  // can see but not open -- the device cgroup rule missing -- lists here and
+  // then fails every read, and the operator was told to go and look at their
+  // hardware instead of at the grant.
+  it("does not claim device access works when no drive answered", () => {
+    render(
+      <Drives rows={[]} capabilities={{ smart: "no-readable-devices" }} />,
+    );
+
+    expect(screen.getByText(/not open them/)).toBeInTheDocument();
+    expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
+  });
+
+  // A SAS host: every drive answers and reports SCSI health pages instead of
+  // an attribute table. Nothing to fix, so no remedy -- but it must not be
+  // silent, because silence is what made an unread SATA host look like one
+  // whose first hourly reading had not landed yet.
+  it("explains drives that answered without an attribute table", () => {
+    render(<Drives rows={[]} capabilities={{ smart: "no-attributes" }} />);
+
+    expect(screen.getByText(/SAS drives/)).toBeInTheDocument();
+    expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
+    expect(screen.getByText("No drives reported")).toBeInTheDocument();
   });
 
   // An empty table that is working as intended still has to say so. The one
@@ -681,6 +707,6 @@ describe("Drives", () => {
     );
 
     expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
-    expect(screen.queryByText(/answered SMART/)).toBeNull();
+    expect(screen.queryByText(/produced a reading/)).toBeNull();
   });
 });

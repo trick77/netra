@@ -2185,11 +2185,15 @@ EOF
     # rules supply permission, and neither names a device.
     #
     # Mounted AT /dev, not at /host/dev like the other host paths here. That is
-    # the one place `smartctl --scan` looks, and scanning is the whole point:
-    # --scan also reports each device's TYPE (sat, nvme, scsi), which is what
-    # the collector passes back as -d. Enumerating /host/dev ourselves would
-    # mean reimplementing that classification, and getting it wrong on exactly
-    # the enclosures it exists for.
+    # the one place `smartctl --scan` looks -- it globs /dev and nothing else --
+    # and scanning is the whole point: enumerating /host/dev ourselves would
+    # mean reimplementing the discovery, and getting it wrong on exactly the
+    # enclosures it exists for.
+    #
+    # --scan also reports a TYPE per device, which the collector does NOT take
+    # at face value. The scan opens nothing, so "scsi" is a guess from the node
+    # name that covers every SATA disk behind libata; see readType in
+    # internal/agent/collector/smart.go.
     #
     # read_only, like every other bind here, and it costs nothing that matters:
     # a read-only mount refuses writes to REGULAR files, while a device node's
