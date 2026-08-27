@@ -33,8 +33,8 @@ SH_ABS=$(command -v "$SH")
 #
 #   root-full, uid 0     -> SYS_ADMIN, drivetemp, write gate
 #   root-full, uid 1000  -> SYS_ADMIN, write gate   (drivetemp returns early)
-ANS_ROOT=$(answers plat-root n y y)
-ANS_USER=$(answers plat-user n y)
+ANS_ROOT=$(answers plat-root y n y y)
+ANS_USER=$(answers plat-user y n y)
 
 # AGENT_SOURCED=0 on every subprocess run below. This case SOURCES the script to
 # unit-test _wrap, detect_virt and friends, and AGENT_SOURCED has to be exported
@@ -226,7 +226,7 @@ VIRT="QEMU"
 SKIPPED_NOTES=""
 GRANT_SYS_ADMIN=0
 AGENT_ANSWER_INDEX=0
-printf 'n\n' >"$TMP/ans-vm"
+printf 'y\nn\n' >"$TMP/ans-vm"
 AGENT_ANSWERS_FILE="$TMP/ans-vm"
 export AGENT_ANSWERS_FILE
 run_capture plan_smart

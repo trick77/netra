@@ -32,7 +32,7 @@ export AGENT_UID
 # The three defaults on this fixture: SYS_ADMIN no, drivetemp yes, write gate
 # yes. Named rather than repeated so a change to the prompt sequence is one
 # edit, not fourteen.
-ANS_DEFAULT=$(answers default n y y)
+ANS_DEFAULT=$(answers default y n y y)
 
 mkroot() {
     _mkroot_dst="$TMP/$1"
@@ -51,7 +51,7 @@ ROOT=$(mkroot declined)
 CWD="$TMP/emptycwd"
 mkdir -p "$CWD"
 : >"$AGENT_SHIM_LOG"
-ANS_DECLINE=$(answers decline n n n)
+ANS_DECLINE=$(answers decline y n n n)
 
 # A subshell so the case's own working directory is not disturbed. OUTPUT_DIR
 # defaults to ./netra-agent, so a declined run that leaked would leave it here.
@@ -259,7 +259,7 @@ assert_file_absent "$TMP/out-notty/compose.yaml" "nothing is written when consen
 # write prompts, so declining left a littered host, possibly a .env, and a
 # finish report cheerfully printing `cd <dir> && docker compose up -d`.
 ROOT=$(mkroot decline)
-ANS=$(answers decline n n n n)
+ANS=$(answers decline y n n n n)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" \
     --token nta_x --hub-url https://h \
@@ -290,7 +290,7 @@ assert_contains "$RUN_OUT" "Skipped or degraded" "everything declined is reporte
 # (a) drivetemp accepted, works, persisted, THEN the gate is declined.
 ROOT=$(mkroot declinedt)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
-    AGENT_ANSWERS_FILE="$(answers declinedt n y n)" \
+    AGENT_ANSWERS_FILE="$(answers declinedt y n y n)" \
     AGENT_MODULESLOAD_DIR="$ROOT/etc/modules-load.d" \
     AGENT_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
     "$SH" "$SETUP" --token nta_x --hub-url https://h \
@@ -834,7 +834,7 @@ assert_is_file "$ROOT/.netra" "the marker files are created"
 # --sys-admin that still asked would run one line short and die with "answers
 # file exhausted" rather than passing quietly.
 ROOT=$(mkroot grantsysadmin)
-ANS=$(answers sysadmin y y)
+ANS=$(answers sysadmin y y y)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --sys-admin \
     --token nta_x --hub-url https://h \
@@ -842,9 +842,27 @@ run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
 assert_eq 0 "$RUN_RC" "--sys-admin succeeds while consuming no answer of its own"
 SABODY=$(grep -v '^[[:space:]]*#' "$TMP/out-sysadmin/compose.yaml")
 assert_contains "$SABODY" "SYS_ADMIN" "--sys-admin grants SYS_ADMIN"
-# No device list to check any more: the rules are unconditional and name
-# nothing, so what --sys-admin changes is the capability and only that.
+# No device list to check any more: the rules name nothing, so what --sys-admin
+# changes is the capability and only that.
 assert_contains "$SABODY" "device_cgroup_rules" "--sys-admin leaves the device rules alone"
+
+# --- 13a. --no-smart declines the device tree without being asked -------------
+#
+# The widest grant the rendered compose can carry, and the only one that used to
+# be taken silently. An answers file one line SHORTER than case 13's is the
+# proof it was not prompted: SYS_ADMIN is not asked either once SMART is gone.
+ROOT=$(mkroot nosmart)
+ANS=$(answers nosmart y y)
+run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
+    AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --no-smart \
+    --token nta_x --hub-url https://h \
+    --template-dir "$TEMPLATES" --output-dir "$TMP/out-nosmart"
+assert_eq 0 "$RUN_RC" "--no-smart succeeds while consuming no answer of its own"
+NSBODY=$(grep -v '^[[:space:]]*#' "$TMP/out-nosmart/compose.yaml")
+assert_not_contains "$NSBODY" "device_cgroup_rules" "no device rules are rendered"
+assert_not_contains "$NSBODY" "target: /dev" "the host device tree is not bound"
+assert_not_contains "$NSBODY" "SYS_RAWIO" "and no SYS_RAWIO either"
+assert_contains "$RUN_OUT" "SMART declined" "the decline reaches the finish report"
 
 # --- 14. --pid-host is accepted and changes nothing ---------------------------
 #
@@ -897,12 +915,12 @@ assert_contains "$UONOTES" "not a distribution/version" \
     "the unsupported OS is recorded as a note in the finish report"
 
 # The teeth: this file holds EXACTLY the three prompts that remain once prompt 1
-# is gone (SYS_ADMIN, drivetemp, the write gate). An --unsupported-os that still
+# is gone (SMART, SYS_ADMIN, drivetemp, the write gate). An --unsupported-os that still
 # asked prompt 1 would run the file one line short and die with "answers file
 # exhausted".
 ROOT=$(mkroot unsupportedcount)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
-ANS=$(answers unsupported3 y y y)
+ANS=$(answers unsupported3 y y y y)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --unsupported-os \
     --token nta_x --hub-url https://h \

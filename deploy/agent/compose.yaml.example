@@ -461,9 +461,13 @@ services:
     # price of the agent finding drives without being told about them. The
     # container is not privileged and gains no other capability, but do not
     # read these two lines as narrow.
+    # rw, not rmw: the `m` is mknod, and Docker's default capabilities include
+    # CAP_MKNOD -- with it the container could create a block node on its own
+    # writable layer, which the read-only /dev bind does not cover, and write
+    # the raw disk through it. smartctl opens device nodes, it never makes them.
     # device_cgroup_rules:
-    #   - "b *:* rmw"
-    #   - "c *:* rmw"
+    #   - "b *:* rw"
+    #   - "c *:* rw"
 
     # --- Host PID namespace (required) ---------------------------------------
     #

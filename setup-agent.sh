@@ -105,12 +105,16 @@
 # answers files with it.
 #
 #   1. continue on an unsupported OS   (only when the distro is unrecognised)
-#   2. SYS_ADMIN                       (only when NVMe exists; default NO)
-#   3. load the drivetemp module       (only with SATA drives and no such chip)
-#   4. write everything                (the single gate; default YES)
+#   2. collect SMART                   (default YES; --smart / --no-smart)
+#   3. SYS_ADMIN                       (only when 2 was granted; default NO)
+#   4. load the drivetemp module       (only with SATA drives and no such chip)
+#   5. write everything                (the single gate; default YES)
 #
-# Only ONE of the four is asked on every host. Everything read-only — the
-# package database, the D-Bus socket, SYS_RAWIO — is enabled automatically, on
+# Note the dependency: declining 2 skips 3 entirely, so an answers file that
+# says no to SMART is one line shorter than one that says yes.
+#
+# Two of the five are asked on every host. Everything read-only — the
+# package database, the D-Bus socket — is enabled automatically, on
 # exactly the argument plan_extras already makes for the Docker socket: it is
 # read-only, and an agent configured without it is not the thing the operator
 # asked for. The primary-sensor tie is resolved by --primary-sensor, not by a
@@ -539,6 +543,11 @@ Options:
                            host is told "no thermal data, normal on a guest"
                            instead of which driver to modprobe, and this is the
                            way back to that advice.
+      --no-smart           Decline SMART without being asked: no /dev bind, no
+                           device cgroup rules, no SYS_RAWIO. Everything else
+                           netra collects is unaffected.
+      --smart              Grant it without being asked. The default when the
+                           prompt is answered by hand is yes.
       --force              Required to overwrite an existing .env.
       --start              Run `docker compose up -d` at the end.
       --token VALUE        Agent token minted by the hub (starts with nta_).
@@ -587,6 +596,8 @@ parse_args() {
     # about the disks, so there is nothing left for it to override. Still
     # parsed, because an existing invocation must not start failing.
     ASSUME_PHYSICAL=0
+    DECLINE_SMART=0
+    GRANT_SMART=0
     FORCE=0
     START=0
     TOKEN=""
@@ -620,6 +631,8 @@ parse_args() {
         --pid-host) ;;
         --unsupported-os) GRANT_UNSUPPORTED_OS=1 ;;
         --assume-physical) ASSUME_PHYSICAL=1 ;;
+        --no-smart) DECLINE_SMART=1 ;;
+        --smart) GRANT_SMART=1 ;;
         --force) FORCE=1 ;;
         --start) START=1 ;;
         --include-network-fs) INCLUDE_NETWORK_FS=1 ;;
@@ -1607,12 +1620,43 @@ device_transport() {
 plan_smart() {
     step "SMART"
 
-    # Not prompted, and no longer conditional on finding a SATA device first.
-    # SYS_RAWIO lets smartctl issue ATA passthrough ioctls and nothing else;
-    # without it every SATA drive reports SMART as unavailable, which is not an
-    # agent anyone asked for.
-    CAP_RAWIO=1
+    SMART_ENABLED=0
+    CAP_RAWIO=0
     CAP_SYS_ADMIN=0
+
+    # ASKED, and it is the one grant on this host that must be. Runtime
+    # discovery costs the device tree: a /dev bind plus cgroup rules covering
+    # every block and character device, which is wider than the devices: list
+    # it replaces and wider than SYS_ADMIN two prompts down. An operator who
+    # declines everything else and still ends up shipping a container that can
+    # write the raw disk was never asked the only question that mattered.
+    #
+    # Declining is a supported answer, not a broken install: the agent reports
+    # smart: no-devices and the Storage tab says so in words. Everything else
+    # netra collects is unaffected.
+    if [ "${DECLINE_SMART:-0}" = 1 ]; then
+        info "  smart:           declined by --no-smart (not prompted)"
+    elif [ "${GRANT_SMART:-0}" = 1 ]; then
+        info "  smart:           granted by --smart (not prompted)"
+        SMART_ENABLED=1
+    elif netra_ask "Collect SMART? The agent needs the host's /dev and device cgroup
+  rules to find drives by itself, which is read/write access to every block and
+  character device on this host. Everything else works without it." y; then
+        SMART_ENABLED=1
+    fi
+
+    if [ "$SMART_ENABLED" = 0 ]; then
+        warn "SMART declined: no drive health, wear or SATA drive temperatures. The" \
+            "agent reports it as a capability rather than showing an empty panel," \
+            "and nothing else it collects is affected. Re-run with --smart to grant it."
+        return 0
+    fi
+
+    # Not prompted separately: it is the same grant the question above asked
+    # for. SYS_RAWIO lets smartctl issue ATA passthrough ioctls and nothing
+    # else; without it every SATA drive reports SMART as unavailable, which is
+    # not the agent the operator just said yes to.
+    CAP_RAWIO=1
     info "  SATA/SAS:        SYS_RAWIO granted; the agent scans for drives itself"
 
     # NVMe health and wear need admin passthrough. Asked unconditionally now,
@@ -2152,7 +2196,9 @@ EOF
     # I/O goes to the driver rather than the filesystem -- so smartctl still
     # opens the drives it needs, and the agent cannot mknod into the host's
     # devtmpfs.
-    _bv_add "/dev" "/dev"
+    if [ "${SMART_ENABLED:-0}" = 1 ]; then
+        _bv_add "/dev" "/dev"
+    fi
 
     if [ "${DOCKERSOCK_ENABLED:-0}" = 1 ]; then
         _bv_add "/var/run/docker.sock" "/var/run/docker.sock"
@@ -2199,6 +2245,13 @@ $_bv_body"
 # drives without being told about them. The container is not privileged and
 # gains no other capability, but this is not a narrow rule.
 #
+# rw, NOT rmw. The `m` is mknod, and Docker's default capability set includes
+# CAP_MKNOD -- so with it the container could mknod a block node on its own
+# writable layer, where the read-only /dev bind does not reach, and write the
+# host's raw disk through it. smartctl needs to open device nodes, never to
+# create them, so the m buys nothing and costs the property the read-only bind
+# exists to give.
+#
 # Wildcards rather than a computed major list. Block majors are stable enough
 # to enumerate; NVMe CHARACTER devices -- /dev/nvme0, the controller smartctl
 # talks to -- are not, they take a dynamically allocated major that differs
@@ -2206,14 +2259,22 @@ $_bv_body"
 # worth writing is exactly the list that breaks silently later, which is the
 # failure this whole change exists to remove.
 build_device_block() {
+    AGENT_BLK_DEVICES=""
+    if [ "${SMART_ENABLED:-0}" != 1 ]; then
+        # Declined. The key vanishes entirely rather than rendering an empty
+        # list, the same way every other conditional block in this file does.
+        export AGENT_BLK_DEVICES
+        return 0
+    fi
+
     # SC2089/SC2090: the quotes are DATA -- YAML syntax on their way into
     # compose.yaml, not shell quoting -- and the variable is only ever exported
     # for awk's ENVIRON, never expanded as a command. Same rule, same reason as
     # build_volume_block.
     # shellcheck disable=SC2089
     AGENT_BLK_DEVICES="    device_cgroup_rules:
-      - \"b *:* rmw\"
-      - \"c *:* rmw\"
+      - \"b *:* rw\"
+      - \"c *:* rw\"
 "
     # shellcheck disable=SC2090
     export AGENT_BLK_DEVICES
@@ -2913,7 +2974,11 @@ EOF
             awk -F'|' '{c[$1]++} END {s=""; for (k in c) s = s (s ? ", " : "") k ": " c[k]; print s}'))"
     fi
 
-    info "  smart devices:   found by the agent at runtime"
+    if [ "${SMART_ENABLED:-0}" = 1 ]; then
+        info "  smart devices:   found by the agent at runtime"
+    else
+        info "  smart devices:   none (declined)"
+    fi
     info "  capabilities:    $(_plan_caps)"
     info "  package mount:   ${PKG_MOUNT:-none}"
     info "  d-bus socket:    $(if [ "$DBUS_ENABLED" = 1 ]; then printf 'yes'; else printf 'no'; fi)"

@@ -85,8 +85,8 @@ services:
         target: /var/run/utmp
         read_only: true
     device_cgroup_rules:
-      - "b *:* rmw"
-      - "c *:* rmw"
+      - "b *:* rw"
+      - "c *:* rw"
     cap_add:
       - SYS_RAWIO
       - SYS_ADMIN

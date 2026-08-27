@@ -111,7 +111,7 @@ assert_contains "$RUN_OUT" "empty" "empty machine-id failure says it is empty"
 # legitimately report skips. "Everything accepted" is --sys-admin --pid-host
 # plus a y to the two prompts that remain (drivetemp, the write gate).
 ROOT=$(mkroot healthy)
-ANS=$(answers healthy y y)
+ANS=$(answers healthy y y y)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS" AGENT_SHIM_MODPROBE_HWMON="$ROOT/sys/class/hwmon" \
     "$SH" "$SETUP" --sys-admin --pid-host \
@@ -131,7 +131,7 @@ assert_file_present "$ROOT/etc/modules-load.d/drivetemp.conf" \
 # time, which is why check_docker's three outcomes are reachable without
 # rebuilding them.
 ROOT=$(mkroot composev1)
-ANS=$(answers composev1 n n n n)
+ANS=$(answers composev1 y n n n n)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS" \
     AGENT_SHIM_COMPOSE_V2_RC=1 "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
@@ -171,7 +171,7 @@ assert_not_contains "$RUN_OUT" "Summary" \
 # supported provisioning interface: an env var, not a flag, with positional
 # answers that the PROMPT ORDER contract in the script header defines.
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
-    AGENT_ANSWERS_FILE="$(answers notty n n y)" \
+    AGENT_ANSWERS_FILE="$(answers notty y n n y)" \
     "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
 assert_eq 0 "$RUN_RC" "an answers file needs no terminal"
@@ -203,7 +203,7 @@ assert_file_absent "$ROOT/out/compose.yaml" "nothing is written after the abort"
 # default taken, not about an unreachable prompt.
 ROOT=$(mkroot unsupportedy)
 cp "$(fixture os-release)/void" "$ROOT/etc/os-release"
-ANS=$(answers unsupported y y y y y)
+ANS=$(answers unsupported y y y y y y)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" \
     --token nta_test --hub-url https://hub.example \
@@ -223,7 +223,7 @@ assert_contains "$RUN_OUT" "continuing at operator request" "the run says it con
 # exhausted answers file is a hard error in netra_ask, so this count is checked
 # by the test rather than assumed.
 ROOT=$(mkroot answern)
-ANS=$(answers n4 n n n n)
+ANS=$(answers n4 y n n n n)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
@@ -243,7 +243,7 @@ assert_contains "$RUN_OUT" "package mount:   /var/lib/dpkg" \
 # ...and answering y to the same prompts also completes, so the assertion above
 # is about errexit and not about the prompts being unreachable.
 ROOT=$(mkroot answery)
-ANS=$(answers y4 y y y y)
+ANS=$(answers y4 y y y y y)
 run_capture env AGENT_SETUP_ROOT="$ROOT" AGENT_TTY="$NO_TTY" \
     AGENT_ANSWERS_FILE="$ANS" "$SH" "$SETUP" --token nta_test --hub-url https://hub.example \
     --template-dir "$REPO/deploy/agent" --output-dir "$ROOT/out"
