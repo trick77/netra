@@ -232,6 +232,41 @@ func (s *Service) DeleteHost(ctx context.Context, hostID int32) error {
 	return nil
 }
 
+// DeleteContainer removes one container from a host's inventory. Its samples
+// go with it through container_samples' ON DELETE CASCADE.
+//
+// This is the operator's answer to a container that was removed on the host
+// and keeps its row: the agent enumerates RUNNING containers, so nothing on
+// the wire ever says "this one is gone", and the hub cannot tell a removal
+// from a stop or from a host having a bad minute. netra_prune_stale_containers
+// eventually reaps the row at 120 days; this is the same decision made
+// deliberately, by someone who knows which of the three it was.
+//
+// Scoped by host_id as well as id, so a container id from one host cannot
+// delete a row belonging to another -- the id alone is a global sequence and
+// the path carries both.
+//
+// Retried on a deadlock for the same reason DeleteHost is: the cascade reaches
+// container_samples' chunks, which policy_retention concurrently wants to
+// drop.
+func (s *Service) DeleteContainer(ctx context.Context, hostID, containerID int32) error {
+	var tag pgconn.CommandTag
+
+	err := retryOnDeadlock(ctx, func() error {
+		var err error
+		tag, err = s.pool.Exec(ctx,
+			`DELETE FROM containers WHERE id = $1 AND host_id = $2`, containerID, hostID)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("delete container: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // deleteAttempts is how many times the statement is run in TOTAL -- one
 // initial attempt and two retries, not three retries.
 //

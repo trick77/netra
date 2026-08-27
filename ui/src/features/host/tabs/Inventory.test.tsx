@@ -29,6 +29,7 @@ const containers: Container[] = [
     name: "netra-hub-1",
     image: "netra:0.4",
     is_agent: false,
+    last_seen: "2026-08-10T14:00:00Z",
   },
   {
     id: 42,
@@ -36,6 +37,7 @@ const containers: Container[] = [
     name: "shop-web-1",
     image: "nginx:1.27",
     is_agent: false,
+    last_seen: "2026-08-10T14:00:00Z",
   },
 ];
 
@@ -146,7 +148,11 @@ describe("Inventory", () => {
 });
 
 describe("Containers", () => {
-  const host = { id: 7, hostname: "web-01" };
+  const host = {
+    id: 7,
+    hostname: "web-01",
+    last_seen: "2026-08-10T14:00:00Z",
+  };
 
   // The service, never the project beside it: this list GROUPS by project, so
   // the project is already the heading these rows sit under, and printing it
@@ -177,6 +183,7 @@ describe("Containers", () => {
             name: "grafana",
             image: "grafana/grafana:11.2.0",
             is_agent: false,
+            last_seen: "2026-08-10T14:00:00Z",
           },
           {
             id: 52,
@@ -184,6 +191,7 @@ describe("Containers", () => {
             name: "monitoring_loki_1",
             image: "grafana/loki:3.1.1",
             is_agent: false,
+            last_seen: "2026-08-10T14:00:00Z",
           },
         ]}
         host={host}
@@ -244,6 +252,7 @@ describe("Containers", () => {
             name: null,
             image: null,
             is_agent: false,
+            last_seen: "2026-08-10T14:00:00Z",
           },
         ]}
         host={host}
@@ -255,14 +264,18 @@ describe("Containers", () => {
     expect(heads.at(-1)).toContain("No compose project");
   });
 
-  it("carries no first_seen/last_seen columns, because the schema has none", () => {
+  // last_seen is on containers now (0006_container_seen.sql) and is what the
+  // gone pill is derived from. first_seen stays off the wire: it is the
+  // prune's hub-clocked floor, and beside an agent-clocked last_seen it
+  // could read first_seen > last_seen after a replay.
+  it("carries a last_seen column and no first_seen, matching the schema", () => {
     render(<Containers rows={containers} host={host} />);
     expect(
       screen.queryByRole("columnheader", { name: /first seen/i }),
     ).toBeNull();
     expect(
-      screen.queryByRole("columnheader", { name: /last seen/i }),
-    ).toBeNull();
+      screen.getByRole("columnheader", { name: /last seen/i }),
+    ).toBeInTheDocument();
   });
 
   // "This host has reported no containers" is true of a host running none and

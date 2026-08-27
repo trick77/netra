@@ -133,7 +133,7 @@ describe("the list sparklines enlarge", () => {
 
       render(
         <Containers
-          host={{ id: 7, hostname: "ark" }}
+          host={{ id: 7, hostname: "ark", last_seen: "2026-08-10T14:00:00Z" }}
           rows={[
             {
               container_key: "shop/api",

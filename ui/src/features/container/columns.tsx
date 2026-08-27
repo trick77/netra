@@ -20,7 +20,14 @@
 // come here either: it needs sample timestamps, which the host page has and
 // the fleet fan-out does not, so it would appear on one list and not the
 // other -- the exact asymmetry this module exists to remove.
+//
+// ONE thing about time does reach both lists now: containers.last_seen, which
+// the listing endpoint carries on every row. That is not a state -- it says
+// when a container was last SEEN, nothing about what it is doing -- and it is
+// what the "gone" pill below is derived from.
 import { Badge } from "../../ui/Badge";
+import { Button } from "../../ui/Button";
+import { When } from "../../ui/When";
 import { Meter, severityFromPercent } from "../../ui/Meter";
 import type { Column } from "../../ui/Table";
 import { ABSENT, bytes, percent } from "../../lib/format";
@@ -55,7 +62,85 @@ export type ContainerRow = Container & {
   /** The container's own memory ceiling, or null when it runs unlimited.
    * One name for one quantity: the host tab used to call this `memLimit`. */
   mem_limit_bytes?: number | null;
+  /**
+   * When the HOST this container runs on last reported anything.
+   *
+   * Carried on the row because "gone" is measured against it -- see
+   * containerIsGone. Both lists already hold it: the host page has the host
+   * it is about, and the fleet fan-out has the host each listing came from.
+   */
+  host_last_seen?: string | null;
+  /**
+   * The host's `containers` capability, when the agent reported one.
+   *
+   * Also for containerIsGone: `no-cgroup-scopes` means no container sample
+   * can land on that host at all, while its host samples keep arriving. See
+   * lib/containers.ts.
+   */
+  host_containers_capability?: string | undefined;
 };
+
+/**
+ * Capability values that stop container samples reaching the hub entirely.
+ *
+ * `no-cgroup-scopes` is the one: the Docker socket names containers the
+ * cgroup walk cannot find, so NOTHING is collected for that host
+ * (lib/containers.ts). `no-docker-socket` is not here -- cgroup v2 still
+ * yields CPU, memory and I/O, so samples keep landing and last_seen keeps
+ * advancing; only the names are missing.
+ */
+const NO_CONTAINER_SAMPLES = new Set(["no-cgroup-scopes"]);
+
+/**
+ * How far a container's last sample may lag its HOST's before the row reads
+ * as gone.
+ *
+ * Fifteen minutes, not the detail page's three (SILENT_AFTER_S): that badge
+ * watches a live sample stream on one container, while this is an inventory
+ * listing refetched on its own schedule, and a threshold near the scrape
+ * interval makes rows flicker in and out of "gone" at every refetch boundary.
+ */
+export const GONE_AFTER_S = 15 * 60;
+
+/**
+ * Has this container stopped being reported while its host kept reporting?
+ *
+ * MEASURED AGAINST THE HOST, never against the wall clock, and that is the
+ * whole design. A container's last_seen only advances while samples arrive,
+ * so a host that is offline -- or rebooting, or on the far side of a network
+ * problem -- drags every container on it into the past at once. Against
+ * now(), all of them would read "gone" and each would be offered a purge
+ * button that deletes a live container's history. Against the host's own
+ * last report, an offline host marks nothing gone: the whole machine went
+ * quiet, which the host page says for itself.
+ *
+ * A host that has never reported, or a row whose timestamps do not parse,
+ * reports false: there is nothing to measure, and the wrong direction to
+ * fail in is the one that offers to delete something.
+ */
+export function containerIsGone(
+  row: ContainerRow,
+  goneAfterS: number = GONE_AFTER_S,
+): boolean {
+  // A host whose cgroup mount is gone keeps reporting host samples while no
+  // container sample can land, so every container on it would age past the
+  // window together -- and be offered a purge that deletes a still-running
+  // container's history. The lists already say what is wrong there
+  // (hostContainerNote); this must not contradict them with a pill.
+  if (
+    row.host_containers_capability !== undefined &&
+    NO_CONTAINER_SAMPLES.has(row.host_containers_capability)
+  ) {
+    return false;
+  }
+  if (row.host_last_seen === undefined || row.host_last_seen === null) {
+    return false;
+  }
+  const host = Date.parse(row.host_last_seen);
+  const seen = Date.parse(row.last_seen);
+  if (Number.isNaN(host) || Number.isNaN(seen)) return false;
+  return host - seen > goneAfterS * 1000;
+}
 
 /**
  * The compose identity behind a container_key.
@@ -283,7 +368,12 @@ function NameCell({
             reads as a workload someone deployed. Neutral, never severity="ok":
             "agent" is an identity, not a health state, and green would assert
             a state netra does not collect. */}
-        {row.is_agent ? <Badge>agent</Badge> : null}
+        {row.is_agent ? <Badge label>agent</Badge> : null}
+        {/* No status dot, and no severity: the dot is what carries severity
+            in this app, and a container that is gone is a FACT, not a state
+            netra is ranking. The agent badge beside it is the same shape for
+            the same reason. */}
+        {containerIsGone(row) ? <Badge label>gone</Badge> : null}
       </div>
       {identity === null ? null : (
         <div className="host-cell-site mono">{identity}</div>
@@ -385,6 +475,25 @@ export interface ContainerColumnsOptions {
    * must not be able to ask for a window its own page could not express.
    */
   ranges?: readonly Range[];
+  /**
+   * Adds the purge action, on gone rows only.
+   *
+   * The FLEET list deliberately leaves this off. It is a fan-out over every
+   * host in the estate, several hundred rows deep, and a per-row button that
+   * deletes a container's history is at its most dangerous in exactly that
+   * list -- the rows are far from the host they belong to and a mis-click has
+   * nothing to undo it. Purging is done where the container belongs: its
+   * host's own tab, or its detail page.
+   *
+   * Called with the row; the caller owns the confirmation and the refetch.
+   */
+  onPurge?: (row: ContainerRow) => void;
+  /** Which row is one click from being purged, by container id. The
+   * two-step confirm is the app's existing pattern -- see the host admin
+   * table's Delete / Confirm delete pair. */
+  purgeConfirming?: number | null;
+  /** Set while a purge request for that row is in flight. */
+  purgeBusy?: number | null;
 }
 
 export function containerColumns({
@@ -394,6 +503,9 @@ export function containerColumns({
   memMax,
   range = "24h",
   ranges,
+  onPurge,
+  purgeConfirming = null,
+  purgeBusy = null,
 }: ContainerColumnsOptions = {}): Column<ContainerRow>[] {
   const columns: Column<ContainerRow>[] = [
     {
@@ -497,6 +609,47 @@ export function containerColumns({
       // fleets is nearly all of them. The latest reported byte count is
       // always there and always means the same thing.
       sortValue: (row) => lastReported(row.mem),
+    });
+  }
+
+  // When a container was last SEEN, which is a different question from what
+  // the trend columns answer: they show the window a reader chose, and this
+  // is the only column that keeps saying something once a container has
+  // stopped reporting entirely.
+  columns.push({
+    key: "last_seen",
+    header: "Last seen",
+    cell: (row) => <When iso={row.last_seen} />,
+    // The instant, not the formatted string: "6 days ago" sorts
+    // alphabetically, which puts 6 days before 7 minutes.
+    sortValue: (row) => Date.parse(row.last_seen),
+  });
+
+  if (onPurge !== undefined) {
+    columns.push({
+      key: "purge",
+      header: "",
+      // Only on a gone row. A running container's row has nothing to purge:
+      // the next scrape would recreate it, minus its history.
+      cell: (row) =>
+        !containerIsGone(row) ? null : (
+          <Button
+            small
+            variant={purgeConfirming === row.id ? "danger" : undefined}
+            busy={purgeBusy === row.id}
+            disabled={purgeBusy !== null}
+            onClick={() => onPurge(row)}
+            // The consequence, where the click is, rather than in a
+            // paragraph above the table nobody reads twice.
+            title={
+              purgeConfirming === row.id
+                ? "Deletes this container's row and its stored CPU and memory history"
+                : undefined
+            }
+          >
+            {purgeConfirming === row.id ? "Confirm purge" : "Purge"}
+          </Button>
+        ),
     });
   }
 

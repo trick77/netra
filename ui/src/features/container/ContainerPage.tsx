@@ -5,7 +5,11 @@
 // The page takes its data and its range as props rather than fetching:
 // Wave 5 owns the router and the polling loop, and a page that fetches for
 // itself cannot be driven from a URL.
+import { useState } from "react";
 import { Badge, type Severity } from "../../ui/Badge";
+import { Button } from "../../ui/Button";
+import { containerIsGone } from "./columns";
+import { purgeContainer } from "../../lib/api";
 import { Card } from "../../ui/Card";
 import { Meter } from "../../ui/Meter";
 import { Segmented } from "../../ui/Segmented";
@@ -317,7 +321,12 @@ const NETWORK_UNAVAILABLE: Record<string, string> = {
 
 export interface ContainerPageProps {
   container: Container;
-  host: { id: number; hostname: string };
+  host: {
+    id: number;
+    hostname: string;
+    last_seen: string | null;
+    capabilities?: Record<string, string>;
+  };
   /** A family=container response. The series for this container is picked
    * out by its key, so a whole-host response is as acceptable as a narrowed
    * one. */
@@ -348,6 +357,14 @@ export interface ContainerPageProps {
   containerNetwork?: string;
   /** Injectable so "last sample" is deterministic in tests. */
   now?: Date;
+  /**
+   * Called after this container has been purged, so the caller can leave a
+   * page whose subject no longer exists.
+   *
+   * Absent, no purge control is offered at all -- which is what a caller
+   * with nowhere to go afterwards should do.
+   */
+  onPurged?: () => void;
 }
 
 export function ContainerPage({
@@ -359,7 +376,14 @@ export function ContainerPage({
   fetchMetrics,
   containerNetwork,
   now = new Date(),
+  onPurged,
 }: ContainerPageProps) {
+  // Two-step, like the host admin table's Delete / Confirm delete: this app
+  // has no modal, and one click that deletes a container's history would be
+  // the only such click in it.
+  const [confirming, setConfirming] = useState(false);
+  const [purging, setPurging] = useState(false);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
   const sampled = read(metrics, container.container_key);
   const notice = windowNotice(metrics);
 
@@ -380,6 +404,35 @@ export function ContainerPage({
   });
 
   const { cpuBands, memBands, netBands, ioBands } = bandsFor(sampled);
+
+  // Gone, by the same rule the lists use: this container stopped being
+  // reported while its host kept reporting. Measured against the host, never
+  // against the clock, so an offline host offers no purge for anything on it.
+  const gone = containerIsGone({
+    ...container,
+    host_id: host.id,
+    hostname: host.hostname,
+    host_last_seen: host.last_seen,
+    host_containers_capability: host.capabilities?.containers,
+  });
+
+  async function onPurge() {
+    setPurgeError(null);
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
+    setPurging(true);
+    try {
+      await purgeContainer(host.id, container.id);
+      onPurged?.();
+    } catch (err) {
+      setPurgeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPurging(false);
+    }
+  }
 
   // One family, one other range, for an enlarged chart alone -- the page
   // keeps showing what its own picker asked for. Each panel narrows the
@@ -416,7 +469,28 @@ export function ContainerPage({
           value={range}
           onChange={onRangeChange}
         />
+        {/* Only once the container is gone, and only when the caller can
+            navigate away afterwards. A running container has nothing to
+            purge: the next scrape recreates the row, minus its history. */}
+        {gone && onPurged !== undefined ? (
+          <Button
+            small
+            variant={confirming ? "danger" : undefined}
+            busy={purging}
+            onClick={() => void onPurge()}
+            title={
+              confirming
+                ? "Deletes this container's row and its stored CPU and memory history"
+                : undefined
+            }
+          >
+            {confirming ? "Confirm purge" : "Purge container"}
+          </Button>
+        ) : null}
       </div>
+      {purgeError === null ? null : (
+        <p className="note">Purge failed: {purgeError}</p>
+      )}
 
       {/* .sm is index.css's small-multiples grid; .smp is what ChartPanel
           renders into it. */}

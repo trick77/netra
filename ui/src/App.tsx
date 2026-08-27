@@ -420,6 +420,13 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
             ...container,
             host_id: host.id,
             hostname: host.hostname,
+            // "Gone" is measured against the HOST's own last report, never
+            // against the wall clock: an offline host must not mark every
+            // container on it gone. Nor must a host whose agent cannot see
+            // cgroup scopes, which reports host samples and no container
+            // ones. See containerIsGone.
+            host_last_seen: host.last_seen,
+            host_containers_capability: host.capabilities?.containers,
             // Still per ROW, and now the same window on every one of them:
             // this list spans hosts, and one request answered all of them
             // from one plan. It was per row because it had to be -- N
@@ -618,15 +625,32 @@ function ContainerScreen({
     );
   }
 
+  // Narrowed once, above the JSX: the guard higher up has already ruled null
+  // out, but a closure passed as a prop is checked on its own.
+  const hostRow = poll.data.host;
+
   return (
     <ContainerPage
       container={container}
-      host={{ id: poll.data.host.id, hostname: poll.data.host.hostname }}
+      host={{
+        id: hostRow.id,
+        hostname: hostRow.hostname,
+        // The clock "gone" is measured against, so a host that is merely
+        // offline does not offer to purge everything it runs.
+        last_seen: hostRow.last_seen,
+        // For the same rule the lists apply: a host that cannot collect
+        // containers at all reports no container samples, and nothing on it
+        // is gone. See containerIsGone.
+        capabilities: hostRow.capabilities,
+      }}
       containerNetwork={poll.data.host.capabilities?.container_network}
       metrics={poll.data.metrics as MetricsResponse}
       range={range}
       onRangeChange={chooseRange}
       fetchMetrics={fetchContainerMetrics}
+      // The page's subject is gone once purged, so the only sensible place
+      // to be afterwards is the host it ran on.
+      onPurged={() => go(`/hosts/${hostRow.id}/containers`)}
     />
   );
 }

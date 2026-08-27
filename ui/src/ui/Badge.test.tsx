@@ -62,4 +62,24 @@ describe("Badge", () => {
     const missingChildren = <Badge severity="critical" />;
     expect(missingChildren).toBeDefined();
   });
+
+  // A LABEL -- "agent", "gone" -- is an identity or a fact, with no severity
+  // for a dot to mark. Painted --muted the dot read as a status the badge was
+  // declining to name.
+  it("draws no dot on a label", () => {
+    const { container } = render(<Badge label>agent</Badge>);
+    const badge = container.querySelector(".badge")!;
+    expect(badge.querySelector(".dot")).toBeNull();
+    expect(screen.getByText("agent")).toBeInTheDocument();
+    // The chip ground is what makes it an object, and it keeps that.
+    expect(badge.className).toBe("badge");
+  });
+
+  // Opt-in, not inferred from neutral: a systemd unit that is `inactive` and
+  // a container with "No samples" are real states that simply are not severe,
+  // and they sit in a column beside dotted `active` and `failed` badges.
+  it("keeps the dot on a neutral badge that is a state", () => {
+    const { container } = render(<Badge severity="neutral">inactive</Badge>);
+    expect(container.querySelector(".badge .dot")).toBeInTheDocument();
+  });
 });

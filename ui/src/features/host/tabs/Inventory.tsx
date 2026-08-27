@@ -14,13 +14,8 @@ import type {
   Unit,
   MetricsResponse,
 } from "../../../lib/api";
-import {
-  ABSENT,
-  absolute,
-  bytes,
-  duration,
-  relative,
-} from "../../../lib/format";
+import { purgeContainer } from "../../../lib/api";
+import { ABSENT, bytes, duration } from "../../../lib/format";
 import {
   driveFindings,
   drivePowerOnHours,
@@ -36,6 +31,7 @@ import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column, type TableProps } from "../../../ui/Table";
 import { Meter } from "../../../ui/Meter";
+import { When } from "../../../ui/When";
 import { type Range } from "../../../lib/range";
 import { RANGE_VALUES } from "../ranges";
 import { griddedValues } from "../../../lib/metrics";
@@ -175,12 +171,6 @@ export function Inventory<T>({
   );
 }
 
-/** A timestamp reads relative, with the absolute time on hover (spec §9). */
-function When({ iso }: { iso: string | null }) {
-  if (iso === null) return <>{ABSENT}</>;
-  return <span title={absolute(iso)}>{relative(iso)}</span>;
-}
-
 // --- Containers -----------------------------------------------------------
 
 // The row shape, the column set and composeIdentity all live in
@@ -237,6 +227,7 @@ export function Containers({
   metrics = null,
   range = "24h",
   capabilities,
+  onPurged,
 }: {
   rows: readonly Container[];
   /**
@@ -248,7 +239,7 @@ export function Containers({
    * knows the name, so both come down from there rather than being
    * re-derived here.
    */
-  host: { id: number; hostname: string };
+  host: { id: number; hostname: string; last_seen: string | null };
   /** A family=container response for this host. */
   metrics?: MetricsResponse | null;
   range?: Range;
@@ -257,7 +248,22 @@ export function Containers({
    * containers" is true of a host running none and of a host whose agent
    * cannot see the ones it runs. */
   capabilities?: Record<string, string>;
+  /**
+   * Called after a container has been purged, so the page can refetch its
+   * listing. This tab does not own the fetch and must not pretend to: it is
+   * handed `rows`, and a local copy edited in place would disagree with the
+   * next poll.
+   */
+  onPurged?: () => void;
 }) {
+  // Which row is one click from being purged, and which one is in flight.
+  // The two-step confirm is the app's existing pattern -- the host admin
+  // table's Delete / Confirm delete pair -- rather than a dialog this app
+  // has nowhere else.
+  const [confirming, setConfirming] = useState<number | null>(null);
+  const [purging, setPurging] = useState<number | null>(null);
+  const [purgeError, setPurgeError] = useState<string | null>(null);
+
   // The same trends the fleet's container list shows, for the same reason: a
   // list of containers with no time in it says what is there and nothing
   // about what any of it is doing.
@@ -280,9 +286,32 @@ export function Containers({
     ...row,
     host_id: host.id,
     hostname: host.hostname,
+    // What "gone" is measured against: a container whose host went quiet
+    // with it has not gone anywhere, and neither has one on a host that
+    // cannot collect containers at all. See containerIsGone.
+    host_last_seen: host.last_seen,
+    host_containers_capability: capabilities?.containers,
     window: metrics?.window ?? null,
     ...byKey.get(row.container_key),
   }));
+
+  async function onPurge(row: ContainerRow) {
+    setPurgeError(null);
+    if (confirming !== row.id) {
+      setConfirming(row.id);
+      return;
+    }
+    setConfirming(null);
+    setPurging(row.id);
+    try {
+      await purgeContainer(host.id, row.id);
+      onPurged?.();
+    } catch (err) {
+      setPurgeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPurging(null);
+    }
+  }
 
   // trendScales, not a second copy of the same loop: shared ceilings across
   // the list are what make a column readable downwards, and there is one
@@ -294,6 +323,11 @@ export function Containers({
     // This page's own windows, so a chart enlarged out of a row cannot ask
     // for one the toolbar above it could not express.
     ranges: RANGE_VALUES,
+    // The purge action, which the FLEET list deliberately does not get --
+    // see ContainerColumnsOptions.onPurge.
+    onPurge: (row: ContainerRow) => void onPurge(row),
+    purgeConfirming: confirming,
+    purgeBusy: purging,
     ...(metrics === null ? {} : trendScales(charted)),
   });
 
@@ -313,7 +347,19 @@ export function Containers({
       searchText={(row) =>
         [row.container_key, row.name, row.image].filter(Boolean).join(" ")
       }
-      notice={note === null ? undefined : <p className="note">{note}</p>}
+      notice={
+        note === null && purgeError === null ? undefined : (
+          <>
+            {note === null ? null : <p className="note">{note}</p>}
+            {/* A failed purge is reported where the button is, not swallowed:
+                the row is still there afterwards and without this the click
+                simply appeared to do nothing. */}
+            {purgeError === null ? null : (
+              <p className="note">Purge failed: {purgeError}</p>
+            )}
+          </>
+        )
+      }
       groupBy={BY_PROJECT}
     />
   );

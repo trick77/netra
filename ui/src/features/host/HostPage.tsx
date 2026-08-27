@@ -547,9 +547,19 @@ export function HostPage({
           // /containers/{host_id}/{key}, and this component is the only
           // party that has both. Without them the tab could not offer a
           // link at all, which is exactly what it did for a long time.
-          host={{ id: host.id, hostname: host.hostname }}
+          // last_seen too: a container is "gone" only when its HOST kept
+          // reporting and it stopped, so the tab cannot decide that without
+          // the host's own clock. See containerIsGone.
+          host={{
+            id: host.id,
+            hostname: host.hostname,
+            last_seen: host.last_seen,
+          }}
           metrics={data.containerMetrics ?? null}
           range={range}
+          // A purged container is gone from the inventory, so the page
+          // refetches rather than editing a copy of the list it does not own.
+          onPurged={refresh}
           // Why the list is empty, or why its rows are named after 64 hex
           // digits. The agent is the only party that knows, and it said so.
           capabilities={host.capabilities}

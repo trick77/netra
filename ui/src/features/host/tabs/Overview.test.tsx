@@ -585,6 +585,7 @@ describe("Overview", () => {
           name: "web",
           image: "nginx",
           is_agent: false,
+          last_seen: "2026-08-10T14:00:00Z",
         },
         {
           id: 2,
@@ -592,6 +593,7 @@ describe("Overview", () => {
           name: "db",
           image: "pg",
           is_agent: false,
+          last_seen: "2026-08-10T14:00:00Z",
         },
       ],
       units: [

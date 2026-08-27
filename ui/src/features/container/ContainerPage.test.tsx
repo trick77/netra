@@ -64,9 +64,14 @@ const CONTAINER: Container = {
   name: "shop-web-1",
   image: "nginx:1.27",
   is_agent: false,
+  last_seen: "2026-08-10T14:00:00Z",
 };
 
-const HOST = { id: 3, hostname: "web-01" };
+const HOST = {
+  id: 3,
+  hostname: "web-01",
+  last_seen: "2026-08-10T14:00:00Z",
+};
 
 function renderPage(
   overrides: Partial<Parameters<typeof ContainerPage>[0]> = {},

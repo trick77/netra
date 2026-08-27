@@ -27,6 +27,23 @@ type Container struct {
 	// IsAgent marks netra's own container. A fleet view that does not
 	// separate it reports the monitoring as part of the workload.
 	IsAgent bool `json:"is_agent"`
+	// When this container's newest sample was TAKEN, from
+	// containers.last_seen.
+	//
+	// The agent enumerates running containers, so a container that was
+	// removed -- or merely stopped -- simply stops appearing, and this is the
+	// only thing that says so: nothing on the wire announces a removal, and
+	// the row itself is kept until someone purges it or the nightly prune
+	// reaches it at 120 days.
+	//
+	// Stamped from the sample's ts, never from the hub's clock, for the same
+	// reason as Drive.LastSeen: the agent replays buffered scrapes after an
+	// outage, and now() would report overnight samples as taken on arrival.
+	//
+	// containers.first_seen is deliberately NOT here -- a hub timestamp, the
+	// prune's floor, and shipping it beside an agent-clocked last_seen would
+	// put a pair on the wire that can read first_seen > last_seen.
+	LastSeen time.Time `json:"last_seen"`
 }
 
 // Filesystem is one row of /hosts/{id}/filesystems.
@@ -190,7 +207,7 @@ func (s *Service) Containers(ctx context.Context, hostID int32) ([]Container, er
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, container_key, name, image, is_agent
+		SELECT id, container_key, name, image, is_agent, last_seen
 		  FROM containers
 		 WHERE host_id = $1
 		 ORDER BY container_key`, hostID)
@@ -202,7 +219,7 @@ func (s *Service) Containers(ctx context.Context, hostID int32) ([]Container, er
 	out := []Container{}
 	for rows.Next() {
 		var c Container
-		if err := rows.Scan(&c.ID, &c.Key, &c.Name, &c.Image, &c.IsAgent); err != nil {
+		if err := rows.Scan(&c.ID, &c.Key, &c.Name, &c.Image, &c.IsAgent, &c.LastSeen); err != nil {
 			return nil, fmt.Errorf("scan container: %w", err)
 		}
 		out = append(out, c)

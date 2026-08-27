@@ -26,16 +26,38 @@ const SEVERITY_CLASS: Record<Severity, string | null> = {
 
 export interface BadgeProps {
   severity?: Severity;
+  /**
+   * This badge is a LABEL, not a status: an identity ("agent") or a fact
+   * ("gone"), with no severity for a dot to mark.
+   *
+   * Opt-in rather than inferred from severity="neutral", because neutral has
+   * a second, genuine use: a state that is real and simply not severe -- a
+   * systemd unit that is `inactive`, a container with "No samples". Those
+   * keep their dot, because they sit in a column beside dotted `active` and
+   * `failed` badges and losing it would read as a different KIND of thing
+   * rather than as a quieter one.
+   */
+  label?: boolean;
   // Deliberately required, not `children?: ReactNode` -- see file header.
   children: ReactNode;
 }
 
-export function Badge({ severity = "neutral", children }: BadgeProps) {
+export function Badge({
+  severity = "neutral",
+  label = false,
+  children,
+}: BadgeProps) {
   const severityClass = SEVERITY_CLASS[severity];
   const className = severityClass ? `badge ${severityClass}` : "badge";
   return (
     <span className={className}>
-      <span className="dot" aria-hidden="true" />
+      {/* NO DOT ON A LABEL. The dot is the severity mark -- it is what
+          carries meaning when hue cannot (see the file header) -- and a label
+          has no severity to mark. Painted --muted beside a word like "agent"
+          it read as a status the badge was declining to name, which is worse
+          than saying nothing. What makes a label an object is its chip
+          ground, which it keeps and a status badge sheds. */}
+      {label ? null : <span className="dot" aria-hidden="true" />}
       {children}
     </span>
   );
