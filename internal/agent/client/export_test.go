@@ -76,3 +76,8 @@ func (c *Client) SetScrapeTimeoutForTest(d time.Duration) { c.scrapeTimeout = d 
 // ScrapeTimeoutForTest exposes the production deadline so a test can assert it
 // stays inside the scrape cadence without restating the arithmetic.
 const ScrapeTimeoutForTest = scrapeTimeout
+
+// LogStartupInventoryForTest runs the startup inventory log, so a test can
+// assert what an operator is told about a collector that reported a
+// capability.
+func LogStartupInventoryForTest(ran []collector.Collector) { logStartupInventory(ran) }

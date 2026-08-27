@@ -402,6 +402,12 @@ func (c *Client) Prime(ctx context.Context) {
 // warning that is false by construction. A warning that is always there is one
 // nobody reads, and it would sit one line from the genuine no-cgroup-scopes
 // warning this function exists to surface.
+// capabilitySourceSuffix marks a capability key that names where a reading
+// came from rather than what is missing. A convention rather than a list, so a
+// second collector that learns to read one metric from two places does not
+// have to be added here to stop warning about its success.
+const capabilitySourceSuffix = "_source"
+
 func logStartupInventory(ran []collector.Collector) {
 	for _, col := range ran {
 		if s, ok := col.(collector.StartupSummarizer); ok {
@@ -420,6 +426,18 @@ func logStartupInventory(ran []collector.Collector) {
 			// log two limitations at every start, which is the opposite of
 			// what this function is for and buries the one that matters.
 			if value == "" || value == "ok" {
+				continue
+			}
+			// A "_source" key names WHICH of several sources answered, not
+			// something the operator failed to grant: the Users collector
+			// reports users_source=logind on the path where everything worked,
+			// so warning on it told every healthy host it was limited. It is
+			// still worth printing -- it is the difference between a zero
+			// nobody is logged in and a zero from a file nothing writes -- so
+			// it drops to Info rather than being dropped.
+			if strings.HasSuffix(key, capabilitySourceSuffix) {
+				slog.Info("collector source", "collector", col.Name(),
+					"capability", key, "source", value)
 				continue
 			}
 			// Warn, not Info: every capability left is something the operator
