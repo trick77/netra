@@ -87,8 +87,8 @@ func (t testSource) sessionInfo(ctx context.Context, p dbus.ObjectPath) (session
 	return session{class: s.Class, state: s.State}, nil
 }
 
-// SessionPathsOfForTest and SessionOfForTest expose the two decoding helpers
-// on the bus side, which are the only parts of it that make a decision.
+// SessionPathsOfForTest exposes the ListSessions decoding helper on the bus
+// side. The property-map decode is reached through BusSessionsForTest.
 func SessionPathsOfForTest(ids []string) []dbus.ObjectPath {
 	sessions := make([]logindSession, 0, len(ids))
 	for _, id := range ids {
@@ -100,14 +100,6 @@ func SessionPathsOfForTest(ids []string) []dbus.ObjectPath {
 		})
 	}
 	return sessionPathsOf(sessions)
-}
-
-func SessionOfForTest(props map[string]dbus.Variant) (SessionForTest, error) {
-	s, err := sessionOf(props)
-	if err != nil {
-		return SessionForTest{}, err
-	}
-	return SessionForTest{Class: s.class, State: s.state}, nil
 }
 
 // BusSessionsForTest builds the D-Bus half against a stand-in object, so the

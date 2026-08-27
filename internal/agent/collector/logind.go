@@ -8,7 +8,8 @@ import (
 )
 
 // logind D-Bus names. The manager object answers ListSessions; each session it
-// returns is its own object carrying the Class property this file filters on.
+// returns is its own object carrying the Class and State properties this file
+// filters on.
 const (
 	logindService    = "org.freedesktop.login1"
 	logindPath       = dbus.ObjectPath("/org/freedesktop/login1")
@@ -85,11 +86,12 @@ type logindSession struct {
 
 // sessionSource is the bus, seamed.
 //
-// Everything this file DECIDES -- which classes count, what a session that
-// vanished mid-scrape means, what an unreadable class is -- sits behind this
-// interface in countLogindSessions, so it is exercised on a machine with no
-// logind on it. What remains on the other side is the D-Bus call itself,
-// which no test can stand in for.
+// Everything this file DECIDES -- which classes count, which state means the
+// session is on its way out, what a session that vanished mid-scrape means,
+// what an unreadable property is -- sits behind this interface in
+// countLogindSessions, so it is exercised on a machine with no logind on it.
+// What remains on the other side is the D-Bus call itself, which no test can
+// stand in for.
 type sessionSource interface {
 	sessionPaths(ctx context.Context) ([]dbus.ObjectPath, error)
 	sessionInfo(ctx context.Context, path dbus.ObjectPath) (session, error)
