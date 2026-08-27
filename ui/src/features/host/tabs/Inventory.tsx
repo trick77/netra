@@ -29,6 +29,7 @@ import {
   driveWearPct,
 } from "../smart";
 import { hostContainerNote } from "../../../lib/containers";
+import { hostDriveNote } from "../../../lib/drives";
 import { FLAP_THRESHOLD } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Input } from "../../../ui/Control";
@@ -673,7 +674,19 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
  * colour alone fails the reader who cannot see it -- the same rule the fleet
  * list follows.
  */
-export function Drives({ rows }: { rows: readonly Drive[] }) {
+export function Drives({
+  rows,
+  capabilities,
+}: {
+  rows: readonly Drive[];
+  capabilities?: Record<string, string>;
+}) {
+  // Above the list rather than instead of it, exactly as Containers does:
+  // "what was collected" and "what stopped the rest" are two facts, and a
+  // drive that answered does not make the one that could not be scanned
+  // stop mattering.
+  const note = hostDriveNote(capabilities);
+
   return (
     <Inventory
       label="Drives"
@@ -695,8 +708,12 @@ export function Drives({ rows }: { rows: readonly Drive[] }) {
         const severity = driveSeverity(row);
         return severity === "ok" ? null : severity;
       }}
+      notice={note === null ? undefined : <p className="note">{note}</p>}
       emptyTitle="No drives reported"
-      emptyBody="SMART needs smartctl on the host and a drive that answers it. A container agent also needs the device passed through."
+      // The plain fact only. Why it is empty now comes from the agent's own
+      // capability, in the notice above -- which also fires on a list that
+      // has rows in it, where an empty-state body never would.
+      emptyBody="No drive on this host has reported SMART data."
     />
   );
 }

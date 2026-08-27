@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os/exec"
 	"slices"
 	"strings"
@@ -167,6 +168,19 @@ type Smart struct {
 	failures int
 
 	unavailable bool
+
+	// noDevices is a scan that RAN and returned an empty device list. It is a
+	// different fact from unavailable and needs its own flag: smartctl worked,
+	// so nothing failed, yet the host has nothing to read. On a container
+	// agent that is almost always a missing devices: mapping rather than a
+	// machine without disks, and until this flag existed the collector
+	// reported the two the same way -- as silence.
+	noDevices bool
+
+	// noReadableDevices is a scan that found devices of which not one produced
+	// a single attribute row: every --all failed, timed out or would not
+	// parse. The drives are there and none of them answered.
+	noReadableDevices bool
 }
 
 // failureBackoff is the wait after a failed --scan, doubling per consecutive
@@ -251,8 +265,17 @@ func (s *Smart) Name() string { return "smart" }
 // operator declined to grant it, and "no SMART data" must be distinguishable
 // from "no drives".
 func (s *Smart) Capabilities() map[string]string {
-	if s.unavailable {
+	// Ordered by how far the collector got, so the value names the FIRST thing
+	// that stopped it: smartctl would not run, or it ran and found nothing, or
+	// it found drives that would not answer. Reporting a later state while an
+	// earlier one holds would send the operator to the wrong remedy.
+	switch {
+	case s.unavailable:
 		return map[string]string{"smart": "no-device-access"}
+	case s.noDevices:
+		return map[string]string{"smart": "no-devices"}
+	case s.noReadableDevices:
+		return map[string]string{"smart": "no-readable-devices"}
 	}
 	return nil
 }
@@ -263,6 +286,11 @@ func (s *Smart) fail() {
 	s.lastRun, s.hasRun = s.now(), true
 	s.failures++
 	s.unavailable = true
+	// Cleared, not left standing: a scan that no longer runs at all cannot
+	// still be asserting what it did or did not find last hour, and
+	// Capabilities reports the first state that holds -- so a stale flag here
+	// would be invisible rather than wrong, which is worse.
+	s.noDevices, s.noReadableDevices = false, false
 }
 
 // nvmeRows turns an NVMe drive's health log into attribute rows.
@@ -335,6 +363,23 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 	s.lastRun, s.hasRun = s.now(), true
 	s.failures, s.unavailable = 0, false
 
+	// An empty scan is the quietest way SMART goes missing, and it was silent:
+	// no rows, no capability, no log. On a container agent it means no device
+	// was passed through -- the host's Storage tab then said "no drives
+	// reported" and nothing anywhere said why. Logged as well as reported,
+	// because the log answers the question without a round trip through the
+	// hub and the UI.
+	//
+	// Recorded BEFORE the per-device loop so the two states are decided in the
+	// order they are discovered, and cleared here on the way past so a host
+	// whose passthrough was just fixed stops claiming it has none.
+	s.noDevices = len(scan.Devices) == 0
+	if s.noDevices {
+		slog.Info("smartctl found no devices to read",
+			"collector", "smart",
+			"hint", "a container agent needs the device mapped in; see setup-agent.sh")
+	}
+
 	ts := time.Now().UnixMilli()
 	var rows []*netrav1.SmartAttribute
 
@@ -369,6 +414,12 @@ func (s *Smart) Collect(ctx context.Context) (*Result, error) {
 		}
 		rows = append(rows, nvmeRows(ts, name, d)...)
 	}
+
+	// Drives were found and not one of them produced a row: every --all
+	// failed, timed out or would not parse. A different fault from an empty
+	// scan and a different remedy, so it gets its own value rather than
+	// sharing one.
+	s.noReadableDevices = !s.noDevices && len(rows) == 0
 
 	// Deterministic order so failures read the same way twice.
 	slices.SortFunc(rows, func(a, b *netrav1.SmartAttribute) int {
