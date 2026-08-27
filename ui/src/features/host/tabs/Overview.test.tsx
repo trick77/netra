@@ -358,9 +358,12 @@ describe("Overview System summary", () => {
     const summary = systemSummary();
 
     expect(summary.textContent).not.toContain(ABSENT);
-    // Empty of TEXT. The chevron is still there -- it is the control, and a
-    // fold with nothing to click is not the state this is asserting.
-    expect(summary.textContent).toBe("");
+    // No FACTS. What is left is the screen-reader label, which is the whole
+    // point of it: a summary with no text at all is an unlabelled disclosure
+    // to anyone listening. The chevron is still there too -- it is the
+    // control, and a fold with nothing to click is not this state.
+    expect(summary.textContent).toBe("System details");
+    expect(summary.querySelector(".sr-only")).not.toBeNull();
     expect(summary.querySelector("svg.chev")).not.toBeNull();
     expect(summary.querySelector("svg.osicon")).toBeNull();
     // The labelled strip still answers for all eight, dashes included.

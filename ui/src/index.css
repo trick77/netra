@@ -1906,6 +1906,12 @@ details.sysfold > summary span + span::before {
   color: var(--border-strong);
   margin: 0 var(--space-2);
 }
+/* The screen-reader label is a span, so without this the FIRST visible fact
+   is a second span and takes a separator dot with nothing to its left. The
+   rule above cannot know the difference; this one does. */
+details.sysfold > summary .sr-only + span::before {
+  content: none;
+}
 details.sysfold > summary .strong {
   color: var(--ink);
   font-weight: 500;
@@ -2454,11 +2460,12 @@ svg.spark {
 
 /* The rest of an apt run, folded. Modelled on `.attn .more` -- the same
    dashed accent pill the fleet band uses to say "there is more behind this"
-   -- but its own class rather than that one: `.attn .more` and
-   `details.sysfold > summary .more` are both scoped to an ancestor this fold
-   has neither of, so reusing the bare class name would have styled nothing
-   at all and rendered a plain blue link. Kept unscoped because both the
-   events log and the host Events tab's table cell draw it. */
+   -- but its own class rather than that one: `.attn .more` is scoped to an
+   ancestor this fold does not have, so reusing the bare class name would
+   have styled nothing at all and rendered a plain blue link. (The host
+   System fold carried a second such rule until its "Details" became a
+   chevron.) Kept unscoped because both the events log and the host Events
+   tab's table cell draw it. */
 .runfold {
   display: inline-block;
   margin-left: var(--space-2);

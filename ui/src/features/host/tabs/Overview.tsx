@@ -16,7 +16,6 @@ import {
   counterIncrease,
   fsName,
   griddedValues,
-  hasReading,
   latestValue,
   optionalValues,
 } from "../../../lib/metrics";
@@ -26,7 +25,6 @@ import {
   binaryBytesPair,
   byterate,
   bytes,
-  cardinal,
   duration,
   percent,
   relative,
@@ -1475,6 +1473,19 @@ export function Overview({
               strip below keeps ABSENT, because a labelled table is where a
               gap does need a mark. */}
           <summary>
+            {/* What the word "Details" used to say out loud, kept for the
+                readers who only ever heard it.
+
+                The facts on this line ARE the summary's accessible name, and
+                a host can have none of them: an agent in a container that
+                reports no os_name, kernel, cpu_model, memory_total or uptime
+                leaves the line empty, and a screen reader then announces an
+                unlabelled collapsed disclosure. Visually hidden text rather
+                than aria-label, because a label REPLACES the name -- every
+                host would be announced as "System details" and the five facts
+                a sighted reader gets for free would be gone. This prefixes
+                them instead, and stands alone when there are none. */}
+            <span className="sr-only">System details</span>
             {/* The disclosure mark, and the whole of it: the word "Details"
                 that used to sit at the right end was a label on a control
                 that a chevron says without spending a fact's worth of line

@@ -29,7 +29,7 @@ describe("SettingsPage", () => {
     render(<SettingsPage />);
 
     expect(
-      pressed(screen.getByRole("group", { name: "Default overview view" })),
+      pressed(screen.getByRole("group", { name: "Default fleet view" })),
     ).toEqual(["Cards"]);
     expect(
       pressed(screen.getByRole("group", { name: "Default time range" })),

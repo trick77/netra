@@ -340,6 +340,10 @@ export function FleetPage({
   }, [injected]);
 
   const checkedAt = injectedCheckedAt ?? fetchedCheckedAt;
+  // The age, once: it is what the rail draws and what decides whether the
+  // rail draws it at all. See the figure itself on why the two questions
+  // must be the same one.
+  const checkedAge = checkedAt === null ? null : secondsSince(checkedAt, now);
   const hostRows = rows ?? fetchedRows ?? [];
   const containerRows = containers ?? fetchedContainers ?? [];
   const containerError = injectedContainerError ?? fetchedContainerError;
@@ -532,12 +536,12 @@ export function FleetPage({
             Omitted entirely when the hub has not said when it last looked,
             rather than shown as ABSENT -- an em dash under "since last
             check" reads as "the check failed", which is a claim this page
-            has no basis for. */}
-        {checkedAt !== null && (
-          <StatFigure
-            value={duration(secondsSince(checkedAt, now))}
-            label="since last check"
-          />
+            has no basis for. The AGE is what is tested, not the timestamp:
+            null and an unparseable string are the same fact here, and
+            guarding on `checkedAt !== null` alone let a malformed one render
+            the very em dash this omits. */}
+        {checkedAge !== null && (
+          <StatFigure value={duration(checkedAge)} label="since last check" />
         )}
       </StatRail>
 

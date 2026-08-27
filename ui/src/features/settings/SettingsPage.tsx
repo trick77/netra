@@ -109,8 +109,8 @@ export function SettingsPage() {
           after a choice nobody has. */}
       <Card title="Defaults">
         <Setting
-          legend="Default overview view"
-          hint="What the fleet overview opens as. Narrow screens always use cards."
+          legend="Default fleet view"
+          hint="What the Fleet page opens as. Narrow screens always use cards."
         >
           <Segmented
             options={[
