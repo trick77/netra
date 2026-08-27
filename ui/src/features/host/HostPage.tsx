@@ -583,7 +583,7 @@ export function HostPage({
             rows={data.filesystems ?? []}
             metrics={data.filesystemMetrics ?? null}
           />
-          <Drives rows={data.drives ?? []} />
+          <Drives rows={data.drives ?? []} capabilities={host.capabilities} />
           <StorageGraphs
             filesystem={data.filesystemMetrics}
             diskIo={data.diskIoMetrics}

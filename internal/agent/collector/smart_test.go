@@ -132,8 +132,8 @@ func TestSmartSkipsOneUnreadableDriveAndKeepsTheRest(t *testing.T) {
 	}
 }
 
-// A host with no drives smartctl can see -- a VPS on virtio -- reports nothing
-// and no error.
+// A host with no drives smartctl can see -- a VPS on virtio, or a container
+// agent with no devices mapped in -- reports nothing and no error.
 func TestSmartReportsNothingWhenNoDrivesAreFound(t *testing.T) {
 	testee := collector.NewSmart(time.Hour, fakeSmartctl(`{"devices":[]}`, ""))
 
@@ -143,6 +143,113 @@ func TestSmartReportsNothingWhenNoDrivesAreFound(t *testing.T) {
 	}
 	if len(res.Smart) != 0 {
 		t.Errorf("attributes = %d, want 0", len(res.Smart))
+	}
+}
+
+// The empty scan is not a failure and must not read as one -- but it is also
+// not silence. Until this, a container agent with no devices: mapping produced
+// no rows, no capability and no log, and the host's Storage tab could only say
+// "no drives reported" without ever saying why.
+func TestSmartReportsAnEmptyScanAsACapability(t *testing.T) {
+	testee := collector.NewSmart(time.Hour, fakeSmartctl(`{"devices":[]}`, ""))
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.Capabilities()["smart"]; got != "no-devices" {
+		t.Errorf("capability = %q, want no-devices", got)
+	}
+}
+
+// Drives that are there and will not answer are a different fault from no
+// drives at all, and send the operator somewhere else: the passthrough is
+// working, the drive or the capability behind it is not.
+func TestSmartReportsDevicesThatAnswerNothing(t *testing.T) {
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--scan") {
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"sat"}]}`), nil
+		}
+		return nil, errors.New("device is failing to respond")
+	}
+	testee := collector.NewSmart(time.Hour, run)
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) != 0 {
+		t.Fatalf("attributes = %d, want 0", len(res.Smart))
+	}
+	if got := testee.Capabilities()["smart"]; got != "no-readable-devices" {
+		t.Errorf("capability = %q, want no-readable-devices", got)
+	}
+}
+
+// A SAS drive answers --all perfectly and returns a SCSI error counter log,
+// which carries neither an ATA attribute table nor an NVMe health log. It
+// produces no rows through no fault of anything, and reporting that as
+// "no drive answered SMART" would send a healthy host's operator after a
+// passthrough that is working.
+func TestSmartDoesNotBlameDrivesThatAnsweredWithNothingToRead(t *testing.T) {
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "--scan") {
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"scsi"}]}`), nil
+		}
+		return []byte(`{"model_name":"HUH721212AL5200","serial_number":"8DJ0X1AH",
+			"scsi_error_counter_log":{"read":{"errors_corrected_by_eccfast":0}}}`), nil
+	}
+	testee := collector.NewSmart(time.Hour, run)
+
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) != 0 {
+		t.Fatalf("attributes = %d, want 0", len(res.Smart))
+	}
+	if testee.Capabilities() != nil {
+		t.Errorf("capability = %v, want none -- the drive answered", testee.Capabilities())
+	}
+}
+
+// Capabilities ride the metadata hash and latch until they change, so one that
+// never clears leaves a stale "no devices" notice standing on a host whose
+// passthrough the operator has just fixed -- which is the exact dishonesty
+// these values exist to remove.
+func TestSmartClearsTheEmptyScanCapabilityOnRecovery(t *testing.T) {
+	clock := time.Now()
+	empty := true
+	run := func(_ context.Context, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "--scan") {
+			if empty {
+				return []byte(`{"devices":[]}`), nil
+			}
+			return []byte(`{"devices":[{"name":"/dev/sda","type":"sat"}]}`), nil
+		}
+		return []byte(deviceJSON), nil
+	}
+	testee := collector.NewSmart(time.Hour, run)
+	testee.SetClockForTest(func() time.Time { return clock })
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got := testee.Capabilities()["smart"]; got != "no-devices" {
+		t.Fatalf("capability = %q, want no-devices", got)
+	}
+
+	empty = false
+	clock = clock.Add(time.Hour)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Smart) == 0 {
+		t.Fatal("attributes = 0 after the drive appeared, want the drive's")
+	}
+	if testee.Capabilities() != nil {
+		t.Errorf("capability = %v after the drive appeared, want none", testee.Capabilities())
 	}
 }
 

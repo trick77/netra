@@ -614,12 +614,50 @@ describe("Drives", () => {
     ).not.toBeInTheDocument();
   });
 
-  // SMART needs smartctl on the host and a device that answers it, and a
-  // containerised agent needs the device passed through. An empty table that
-  // said "this host has reported no drives" would send somebody looking for a
-  // disk rather than for the three reasons the reading is missing.
-  it("explains an empty table rather than stating the host has no disks", () => {
+  // The empty state states the fact and no more. Why the table is empty is
+  // the agent's to say, and it says it in the notice below -- guessing at all
+  // three reasons here sent somebody looking for whichever one did not apply.
+  it("states an empty table as a fact rather than guessing at the cause", () => {
     render(<Drives rows={[]} />);
+    expect(screen.getByText("No drives reported")).toBeInTheDocument();
+    expect(
+      screen.getByText("No drive on this host has reported SMART data."),
+    ).toBeInTheDocument();
+  });
+
+  // "No drives reported" is true of a host with no disks and of a container
+  // agent with no device mapped in. Only the second is something to go and
+  // fix, and only the agent knows which it is.
+  it("says why the table is empty when the agent explained it", () => {
+    render(<Drives rows={[]} capabilities={{ smart: "no-devices" }} />);
+
     expect(screen.getByText(/smartctl/)).toBeInTheDocument();
+    expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
+    // Alongside the empty state, not instead of it.
+    expect(screen.getByText("No drives reported")).toBeInTheDocument();
+  });
+
+  // The value on a table that is fully present and still worth explaining:
+  // drives were scanned and none answered, so nothing was collected for any
+  // of them even though the passthrough works.
+  it("explains drives that answered nothing", () => {
+    render(
+      <Drives
+        rows={[unread]}
+        capabilities={{ smart: "no-readable-devices" }}
+      />,
+    );
+
+    expect(screen.getByText(/answered SMART/)).toBeInTheDocument();
+    expect(screen.getByRole("row", { name: /sdz/ })).toBeInTheDocument();
+  });
+
+  it("stays silent when the agent reported no trouble", () => {
+    render(
+      <Drives rows={[ata]} capabilities={{ containers: "no-docker-socket" }} />,
+    );
+
+    expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
+    expect(screen.queryByText(/answered SMART/)).toBeNull();
   });
 });
