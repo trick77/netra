@@ -95,7 +95,11 @@ func LogindSessions(ctx context.Context) (int, error) {
 	}
 	defer conn.Close()
 
-	return countLogindSessions(ctx, busSessions{conn: conn})
+	return countLogindSessions(ctx, busSessions{
+		object: func(path dbus.ObjectPath) dbus.BusObject {
+			return conn.Object(logindService, path)
+		},
+	})
 }
 
 // countLogindSessions asks the source for every session and counts the human
@@ -167,15 +171,21 @@ func classOf(value any) (string, error) {
 }
 
 // busSessions is the D-Bus half: the two calls, and nothing else.
+//
+// It holds a way to REACH an object rather than the connection itself, and
+// that is what makes the decoding testable. dbus.BusObject is an interface, so
+// a test hands this a stand-in whose CallWithContext returns a canned
+// *dbus.Call -- and the two things that can go wrong on this side, a
+// ListSessions reply that does not decode and a Class variant that is not a
+// string, are exercised without a bus anywhere.
 type busSessions struct {
-	conn *dbus.Conn
+	object func(path dbus.ObjectPath) dbus.BusObject
 }
 
 func (b busSessions) sessionPaths(ctx context.Context) ([]dbus.ObjectPath, error) {
 	var sessions []logindSession
-	err := b.conn.Object(logindService, logindPath).
-		CallWithContext(ctx, logindListMethod, 0).Store(&sessions)
-	if err != nil {
+	call := b.object(logindPath).CallWithContext(ctx, logindListMethod, 0)
+	if err := call.Store(&sessions); err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
 	return sessionPathsOf(sessions), nil
@@ -185,14 +195,14 @@ func (b busSessions) sessionPaths(ctx context.Context) ([]dbus.ObjectPath, error
 // class inline but exists only from systemd 256. The hosts that still have
 // utmp are the older ones, so the newer method would work exactly where it is
 // not needed and fail where it is.
+//
+// Properties.Get through CallWithContext rather than GetProperty, which takes
+// no context: this runs once per session, and a hung logind would otherwise
+// hold the scrape past its own deadline with nothing to cancel.
 func (b busSessions) sessionClass(ctx context.Context, path dbus.ObjectPath) (string, error) {
-	// Properties.Get through CallWithContext rather than GetProperty, which
-	// takes no context: this runs once per session, and a hung logind would
-	// otherwise hold the scrape past its own deadline with nothing to cancel.
 	var v dbus.Variant
-	err := b.conn.Object(logindService, path).
-		CallWithContext(ctx, propertiesGet, 0, logindSessionIf, "Class").Store(&v)
-	if err != nil {
+	call := b.object(path).CallWithContext(ctx, propertiesGet, 0, logindSessionIf, "Class")
+	if err := call.Store(&v); err != nil {
 		return "", err
 	}
 	return classOf(v.Value())

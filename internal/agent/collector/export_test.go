@@ -87,3 +87,21 @@ func SessionPathsOfForTest(ids []string) []dbus.ObjectPath {
 }
 
 func ClassOfForTest(value any) (string, error) { return classOf(value) }
+
+// BusSessionsForTest builds the D-Bus half against a stand-in object, so the
+// two decodes it performs -- the ListSessions reply, and the Class variant --
+// are exercised without a bus. objects is called with the object path the
+// production code would have asked the connection for.
+func BusSessionsForTest(objects func(path dbus.ObjectPath) dbus.BusObject) SessionSourceForTest {
+	return busAdapter{busSessions{object: objects}}
+}
+
+type busAdapter struct{ inner busSessions }
+
+func (b busAdapter) Paths(ctx context.Context) ([]dbus.ObjectPath, error) {
+	return b.inner.sessionPaths(ctx)
+}
+
+func (b busAdapter) Class(ctx context.Context, p dbus.ObjectPath) (string, error) {
+	return b.inner.sessionClass(ctx, p)
+}
