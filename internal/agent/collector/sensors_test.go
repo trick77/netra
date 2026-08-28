@@ -483,4 +483,58 @@ func TestSensorsSkipsAChipWhoseBlockDeviceExistsButCannotBeRead(t *testing.T) {
 	if len(res.Sensors) != 0 {
 		t.Fatalf("sensors = %d, want 0 -- an unreadable attachment must not report under a colliding identity", len(res.Sensors))
 	}
+	// And it is not silent. A chip that vanishes from the scrape looks
+	// exactly like a chip that stopped existing; only the agent can say
+	// which happened, and the timeout path's `wedged` set does not cover a
+	// permission error that returns immediately.
+	if caps := testee.Capabilities(); caps["sensors"] != "degraded" {
+		t.Errorf("capabilities = %v, want sensors=degraded for a chip that was dropped", caps)
+	}
+}
+
+// A chip that is attached to no disk is never put behind that read.
+//
+// The instance is resolved ONLY for the drivers that share a chip name. It
+// used to be resolved for every chip, which put coretemp, k10temp and acpitz
+// behind a directory read they gain nothing from -- their instance is empty
+// either way -- and made a chip whose device directory could not be read
+// disappear entirely. Through readDir's wedged backoff a single slow read
+// cost all sixteen core temperatures for up to 1024 scrapes, about
+// seventeen hours, in exchange for a field those chips never populate.
+func TestSensorsKeepsABoardChipWhoseDeviceDirectoryCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "class", "hwmon", "hwmon0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "name"), []byte("coretemp\n"), 0o644); err != nil {
+		t.Fatalf("write name: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "temp1_label"), []byte("Core 0\n"), 0o644); err != nil {
+		t.Fatalf("write label: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "temp1_input"), []byte("42000\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	// A device link that is present and unreadable -- the shape a hardened
+	// /sys or a partial bind mount gives a containerised agent.
+	if err := os.WriteFile(filepath.Join(dir, "device"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write device: %v", err)
+	}
+
+	testee := collector.NewSensors(root, time.Second)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Sensors) != 1 {
+		t.Fatalf("sensors = %d, want 1 -- a board chip's readings do not depend on a disk it does not have", len(res.Sensors))
+	}
+	if got := res.Sensors[0].GetInstance(); got != "" {
+		t.Errorf("instance = %q, want empty", got)
+	}
+	// Nothing was lost, so nothing is degraded.
+	if caps := testee.Capabilities(); caps["sensors"] != "" {
+		t.Errorf("capabilities = %v, want nothing reported", caps)
+	}
 }

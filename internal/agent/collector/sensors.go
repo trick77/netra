@@ -116,6 +116,20 @@ type Sensors struct {
 	// in. Scrapes rather than wall time because the retry is only meaningful
 	// when a scrape actually happens.
 	scrapes uint64
+
+	// unresolved records that a storage chip was dropped because its block
+	// device could not be read.
+	//
+	// Reported as degraded for the reason `wedged` is: the rows simply stop
+	// arriving, and a disk whose temperature vanished is indistinguishable
+	// from a disk that was removed unless the agent says which happened. Not
+	// covered by `wedged` alone -- that one is set on a TIMEOUT, and the
+	// permission and ENOTDIR cases return immediately.
+	//
+	// Latched rather than cleared per scrape: it describes this host's
+	// configuration -- a hardened /sys, a partial bind mount -- and not one
+	// bad minute.
+	unresolved bool
 }
 
 // wedgedPath is one path's backoff state.
@@ -152,7 +166,7 @@ func (s *Sensors) Capabilities() map[string]string {
 	if s.absent {
 		return map[string]string{"sensors": "absent"}
 	}
-	if len(s.wedged) > 0 {
+	if len(s.wedged) > 0 || s.unresolved {
 		// A sensor abandoned for a wedged driver stops producing rows, which
 		// is indistinguishable from a sensor that vanished unless it is said
 		// out loud. "degraded" rather than "absent": the other chips on this
@@ -167,6 +181,32 @@ func (s *Sensors) Capabilities() map[string]string {
 // hang directly off it, and the namespace is the thing with a name an
 // operator recognises.
 var nvmeNamespace = regexp.MustCompile(`^nvme[0-9]+n[0-9]+$`)
+
+// storageChips are the hwmon drivers that register ONE CHIP PER DISK under a
+// single shared name, which is what makes chip + label ambiguous.
+//
+// A NAMED SET RATHER THAN EVERY CHIP, and the difference is not tidiness.
+// Resolving an attachment costs a directory read, and a chip whose
+// attachment cannot be read has to be dropped rather than reported under an
+// identity that might collide. Doing that for every chip put coretemp,
+// k10temp and acpitz behind a read they gain nothing from: they are attached
+// to no disk, so their instance is empty either way, and a single slow read
+// of one platform device's directory would have cost all sixteen core
+// temperatures for up to 1024 scrapes -- seventeen hours -- through
+// readDir's wedged backoff. That is a large regression bought for a field
+// those chips never populate.
+//
+// Adding a driver here is a one-line change with a test beside it. Leaving
+// one out costs what this collector cost before the field existed, which is
+// the safe direction to be wrong in.
+var storageChips = map[string]bool{
+	// One chip per SATA disk, all called "drivetemp", none of them
+	// publishing a tempN_label.
+	"drivetemp": true,
+	// One chip per controller, all called "nvme", and every one of them
+	// labels its first sensor "Composite".
+	"nvme": true,
+}
 
 // blockDeviceOf reports which block device this hwmon chip measures --
 // "sda", "nvme0n1" -- and whether the answer can be trusted.
@@ -262,9 +302,24 @@ func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 
 		// Before any row is built: an unreadable attachment makes every row
 		// from this chip unidentifiable, not just the instance field.
-		instance, resolved := s.blockDeviceOf(ctx, chipDir)
-		if !resolved {
-			continue
+		//
+		// Only for the drivers that share a chip name -- see storageChips.
+		// Every other chip is attached to no disk, so its instance is empty
+		// and nothing has to be read to know it.
+		instance := ""
+		if storageChips[chip] {
+			resolved := false
+			if instance, resolved = s.blockDeviceOf(ctx, chipDir); !resolved {
+				// Said out loud, because a chip that vanishes from the scrape
+				// looks exactly like a chip that stopped existing. readDir
+				// already logs and marks a TIMEOUT; a permission error on
+				// /sys -- a hardened container, a partial bind mount --
+				// returns immediately and would otherwise be silent.
+				slog.Warn("hwmon chip skipped: its block device could not be resolved",
+					"chip", chip, "dir", chipDir)
+				s.unresolved = true
+				continue
+			}
 		}
 
 		labels, err := s.readDir(ctx, chipDir)
