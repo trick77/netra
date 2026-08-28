@@ -408,7 +408,7 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
     // six times the pixels and is entitled to six times the detail. Same
     // reduction, same reading, more of it.
     return {
-      series: trafficDetailSeries(trafficSeries(net, DETAIL_WIDTH)),
+      series: trafficDetailSeries(trafficSeries(net, DETAIL_WIDTH), net.window),
       window: net.window,
     };
   };
@@ -432,7 +432,7 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         // line with the peak as the envelope. Without it the dialog shows the
         // cell's peak series and its stats table prints peak numbers under
         // Min and Mean headers until somebody touches the range picker.
-        detailSeries={trafficDetailSeries(row)}
+        detailSeries={trafficDetailSeries(row, row.window)}
         fmt={bytes}
         window={row.window}
         range={range}
