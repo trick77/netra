@@ -27,9 +27,10 @@ import type { Band } from "../ui/charts/StackedSparkline";
  * THE RAMP DARKENS, IT DOES NOT LIGHTEN. Cached was a light grey (#b6b3ab,
  * 8.23:1 on --surface) and that inverted the argument: the most reclaimable
  * band was the brightest mark in a 32px fleet cell, glaring on the dark
- * surface. Cached now takes the darker neutral that buffers held, and buffers
- * takes --s-slate, a muted steel blue one step of chroma above it. Nothing in
- * the stack is brighter than ARC any more.
+ * surface. Cached is now --s-neutral at 2.47:1, the DIMMEST band in the
+ * stack, and buffers takes --s-slate, a muted steel blue one step of chroma
+ * above it. The band the host will hand back first is the one your eye
+ * reaches last.
  *
  * Cached is still NEUTRAL rather than another hue. A hue claims page cache is
  * a subsystem with an identity, the way ARC and shmem are; it is really the
@@ -50,10 +51,10 @@ import type { Band } from "../ui/charts/StackedSparkline";
  * decided by which bands touch, so re-run the check if the stacking order
  * changes. Adjacent separation, dE2000 under normal vision and Machado
  * protan/deutan/tritan at full severity, worst figure per pair: used/shared
- * 21.3, shared/ARC 15.2, ARC/buffers 15.5, buffers/cached 18.5 -- the two
- * pairs this recolour touches land above the floor the palette already had.
- * Every band clears 4:1 on --surface (#1b1b1a) and every band sits above
- * --reference, so the dashed total-RAM rule stays the quietest mark.
+ * 21.3, shared/ARC 15.2, ARC/buffers 15.5, buffers/cached 23.6 -- the two
+ * pairs this recolour touches land above the 15.2 floor the palette already
+ * had. Every band clears 4:1 on --surface (#1b1b1a) except cached, which is
+ * held below it on purpose -- see the token's own note in index.css.
  */
 const USED = "var(--s4)";
 const SHARED = "var(--s3)";

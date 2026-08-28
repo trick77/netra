@@ -220,17 +220,21 @@
      argument -- see lib/bands.ts.
 
      Neutral, not grey-of-the-theme: it carries Clay's warm tint so it reads
-     as part of the palette rather than as unstyled default. There used to be
-     a second, lighter neutral (#b6b3ab) above it for cached, and it was the
-     brightest thing in a fleet row -- a band that means "you can have this
-     back" glared harder than the one that means "you cannot". Cached takes
-     this darker neutral instead and buffers takes the slate below.
+     as part of the palette rather than as unstyled default. Cached used to be
+     a light grey (#b6b3ab, 8.23:1) and was the brightest thing in a fleet row
+     -- a band that means "you can have this back" glared harder than the one
+     that means "you cannot". It is now the DIMMEST band in the stack, which
+     is the argument stated in the one place a reader cannot miss.
 
-     It sits ABOVE --reference (#6e6c66), the dashed total-RAM rule drawn
-     across the same chart, by 1.23:1 -- the annotation stays the quietest
-     mark in the frame, which is the rule --reference's own note sets out. On
-     --surface it measures 4.02:1. */
-  --s-neutral: #7d7a73;
+     2.47:1 on --surface, which is deliberately under the 4:1 the other series
+     hold. That floor is for a mark a reader has to resolve -- a hairline, a
+     dot, a word. This is a filled area several pixels tall whose whole job is
+     to be seen last. It also now sits BELOW --reference (#6e6c66), the dashed
+     total-RAM rule drawn across the same chart, rather than above it: where
+     the rule crosses a full host's cache band it reads 1.33:1 lighter, so the
+     annotation stays legible against it, which is what --reference's own note
+     is protecting. */
+  --s-neutral: #5c5954;
   /* Buffers, one step of chroma above the neutral and well below --s6's cyan.
      The stack's ramp runs full chroma -> neutral, so the band under cached
      has to read as "nearly gone, but not nothing": a muted steel blue at
