@@ -409,6 +409,60 @@ func TestIntegrationANonPoisonFailureStill503s(t *testing.T) {
 	}
 }
 
+// version_changed_at is the one timestamp on a package row that answers "what
+// moved on this host recently".
+//
+// first_seen cannot: the row is keyed (host_id, name, arch), so an upgrade
+// rewrites it in place and the install date survives. last_seen cannot
+// either: the packages collector re-emits a whole unchanged inventory once a
+// day, and last_seen moves with it. A column that moves for everything says
+// nothing about anything.
+func TestIntegrationPackageVersionChangedAtMovesOnlyOnUpgrade(t *testing.T) {
+	srv, token, s := newFixture(t)
+	ctx := context.Background()
+
+	req := fullRequest(1, time.Now().Add(-3*time.Minute).UnixMilli())
+	req.Packages = []*netrav1.HostPackage{
+		{Name: "bash", Version: "5.3", Arch: "amd64", Format: "dpkg"},
+		{Name: "nginx", Version: "1.24", Arch: "amd64", Format: "dpkg"},
+	}
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	changedAt := func(name string) time.Time {
+		t.Helper()
+		var ts time.Time
+		if err := s.Pool().QueryRow(ctx,
+			`SELECT version_changed_at FROM host_packages WHERE name = $1`,
+			name).Scan(&ts); err != nil {
+			t.Fatalf("read version_changed_at for %s: %v", name, err)
+		}
+		return ts
+	}
+	bashFirst, nginxFirst := changedAt("bash"), changedAt("nginx")
+
+	// The daily re-emit: nginx is upgraded, bash is the same package it was.
+	req = fullRequest(2, time.Now().Add(-time.Minute).UnixMilli())
+	req.Packages = []*netrav1.HostPackage{
+		{Name: "bash", Version: "5.3", Arch: "amd64", Format: "dpkg"},
+		{Name: "nginx", Version: "1.26", Arch: "amd64", Format: "dpkg"},
+	}
+	if resp := post(t, srv, token, req); resp.StatusCode != http.StatusOK {
+		t.Fatalf("second status = %d, want 200", resp.StatusCode)
+	}
+
+	if got := changedAt("bash"); !got.Equal(bashFirst) {
+		t.Errorf("bash version_changed_at moved from %s to %s -- a re-emit of the same "+
+			"version is not a change, and a list sorted on this would put every "+
+			"installed package at the top every day", bashFirst, got)
+	}
+	if got := changedAt("nginx"); !got.After(nginxFirst) {
+		t.Errorf("nginx version_changed_at = %s, want later than %s -- 1.24 to 1.26 is "+
+			"the upgrade this column exists to record", got, nginxFirst)
+	}
+}
+
 // A package the host no longer has installed must go, and the multiarch case
 // must survive the pruning.
 //

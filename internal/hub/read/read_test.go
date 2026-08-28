@@ -648,6 +648,11 @@ func TestIntegrationDimensionListingsProjectTheirTables(t *testing.T) {
 		if got[0].Version != "5.2.15" || got[0].Format != "dpkg" {
 			t.Errorf("package = %+v, want bash 5.2.15 from dpkg", got[0])
 		}
+		// The column the list sorts on by default. A zero value here is a
+		// packages tab that arrives ordered by nothing.
+		if got[0].VersionChangedAt.IsZero() {
+			t.Errorf("version_changed_at is zero for %q", got[0].Name)
+		}
 	})
 }
 
