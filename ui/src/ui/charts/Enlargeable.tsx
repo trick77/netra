@@ -222,6 +222,9 @@ export interface EnlargeableProps {
    */
   detailSeries?: OverlaySeries[];
   fmt?: (n: number | null) => string;
+  /** Fill the area under a line. Forwarded so the enlarged view draws the
+   * same mark as the panel it was opened from; see Overlay's prop. */
+  filled?: boolean;
   stacked?: boolean;
   reference?: number;
   mirrored?: boolean;
@@ -266,6 +269,7 @@ export function Enlargeable({
   min,
   autoScale,
   fmt,
+  filled,
   stacked,
   reference,
   mirrored,
@@ -324,6 +328,7 @@ export function Enlargeable({
           max={span.max}
           min={span.min}
           fmt={fmt}
+          filled={filled}
           stacked={stacked}
           reference={reference}
           mirrored={mirrored}

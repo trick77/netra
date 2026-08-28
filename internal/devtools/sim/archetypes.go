@@ -4,13 +4,24 @@ import "fmt"
 
 // Fleet returns the simulated machines in a stable order.
 //
-// The four are chosen for what they DO NOT have as much as for what they do:
-// a Pi with no SMART and no swap, a VPS with steal time and no sensors, a
-// baremetal box that reports everything, and a 1 vCPU box with no Docker at
-// all. A fleet of four identical hosts would leave every NULL path and every
-// "capability absent" branch untested.
+// They are chosen for what they DO NOT have as much as for what they do: a Pi
+// with no SMART and no swap, a VPS with steal time and no sensors, a baremetal
+// box that reports everything, and a 1 vCPU box with no Docker at all. A fleet
+// of identical hosts would leave every NULL path and every "capability absent"
+// branch untested.
+//
+// The NAS is there for its DATA rather than its hardware: it is the only host
+// whose traffic is heavy-tailed, and a chart that averages a burst away looks
+// perfectly healthy on the other four. Appended rather than inserted -- the
+// tests index this slice.
 func Fleet() []*Profile {
-	return []*Profile{rpi5(), nvmeVPS(), smartBaremetal(), minimalVPS()}
+	return []*Profile{
+		rpi5(),
+		nvmeVPS(),
+		smartBaremetal(),
+		minimalVPS(),
+		homeNAS(),
+	}
 }
 
 // ByName selects profiles by their Name, preserving Fleet's order and
@@ -398,6 +409,77 @@ func minimalVPS() *Profile {
 			"conntrack": "unavailable",
 		},
 		Packages: packages("x86_64", 48),
+	}
+}
+
+// homeNAS is the fleet's HEAVY-TAILED host: a box that does nothing all day
+// and then moves a backup.
+//
+// Every other archetype's traffic is a gentle daily curve that occasionally
+// triples, which draws as a smooth hump at every range and cannot show the
+// difference between a chart that keeps a burst and one that averages it
+// away. Both look correct. This host is the one that tells them apart: 26
+// kB/s of idle chatter against 90 MB/s bursts, the ~3500:1 range measured on
+// a real box when the traffic axis was first argued about.
+//
+// The rest of it is deliberately unremarkable -- one filesystem that matters,
+// no sensors, no SMART -- because the interesting thing here is the traffic
+// and a second baremetal box's worth of hardware detail would only slow the
+// simulator down.
+func homeNAS() *Profile {
+	return &Profile{
+		Name:        "home-nas",
+		Hostname:    "sim-nas",
+		Arch:        "amd64",
+		OSName:      "Debian GNU/Linux 12 (bookworm)",
+		Kernel:      "6.1.0-23-amd64",
+		CPUModel:    "Intel Celeron J4125",
+		Cores:       4,
+		Threads:     4,
+		MemoryTotal: 8 * gib,
+		HostType:    "physical",
+		Provider:    "self-hosted",
+		Facility:    "basement",
+		Location:    "Zurich, CH",
+		PkgFormat:   "deb",
+		CPUBase:     6,
+		MemUsedFrac: 0.41,
+
+		SwapTotal: 2 * gib,
+
+		Disks: []DiskSpec{
+			{Device: "sda", ReadBase: 90 * 1024, WriteBase: 1400 * 1024, AwaitBase: 8.2},
+		},
+		Nets: []NetSpec{
+			// 26 kB/s idle, 90 MB/s when a backup runs. The magnitude is what
+			// makes this host worth simulating; the chance is roughly one
+			// burst per hour at a 60 s scrape.
+			{
+				Iface:          "enp2s0",
+				RxBase:         26 * 1024,
+				TxBase:         31 * 1024,
+				BurstChance:    0.017,
+				BurstMagnitude: 3500,
+			},
+		},
+		Filesystems: []FSSpec{
+			{Label: "root", Mountpoint: "/", DeviceID: 2049, Total: 60 * gib, InodesTotal: 3932160, UsedStart: 0.29, UsedEnd: 0.31},
+			{Label: "tank", Mountpoint: "/srv/tank", DeviceID: 2050, Total: 8000 * gib, InodesTotal: 488378368, UsedStart: 0.61, UsedEnd: 0.68},
+		},
+		Addresses: []AddressSpec{
+			{Iface: "lo", IfIndex: 1, Address: "127.0.0.1", Family: 4, Description: "loopback"},
+			{Iface: "enp2s0", IfIndex: 2, Address: "192.168.1.10", Family: 4, Description: "lan"},
+		},
+		Collectors: []string{
+			"cpu", "percpu", "memory", "load", "kernelstat", "vmstat", "limits", "procs", "netstat",
+			"users", "diskio", "network", "addresses", "filesystems", "packages", "units",
+		},
+		Capabilities: map[string]string{
+			"containers": "no-docker-socket",
+			"sensors":    "absent",
+			"smart":      "no-device-access",
+		},
+		Packages: packages("x86_64", 61),
 	}
 }
 

@@ -11,11 +11,14 @@ import {
   fsName,
   griddedValues,
   latestValue,
+  peakBase,
+  reduceToColumns,
   sumSeries,
 } from "../../lib/metrics";
 import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
+import { SPARK_WIDTH } from "../../ui/charts/size";
 import type { HostRow } from "./hostColumns";
 import { diskState } from "./conditions";
 import type { DiskSeverity } from "./conditions";
@@ -417,37 +420,48 @@ export function cpuBands(
 }
 
 /**
- * A host's traffic pair, summed over its interfaces at each bucket's MEAN.
+ * A host's traffic pair, summed over its interfaces and read at the bucket's
+ * PEAK, folded to the width of the chart that will draw it.
  *
- * The mean, and not the peak this used to read through peakBase(). Two
- * reasons, and both of them outlived the reason for the peak:
+ * Both halves of that are what RRDtool does, and the reason it looks like
+ * every traffic graph an operator has already read.
  *
- *  - Summing is only valid on means. The sum of each interface's mean IS the
- *    mean of the summed traffic; the sum of each interface's peak is not the
- *    peak of anything -- it adds bursts that happened in different minutes of
- *    the same bucket as though they had happened at once. The old call site
- *    knew this and accepted the bias deliberately.
- *  - The peak existed so a fleet row could answer "did this host spike".
- *    The mean answers it too, because the cell is scaled to the mean series'
- *    OWN maximum: the loudest bucket of the window always reaches the top of
- *    the cell, whichever of the two is drawn. What the peak bought was a
- *    taller ceiling -- measured on ark.o11.net, a factor of 2.7 -- which
- *    every quieter bucket in the same cell then paid for.
+ * The peak, through peakBase(): a rate is read as a shape and the burst is
+ * what the reader is looking for in it, and the rolled-up tiers materialise
+ * max(rx_bytes) beside avg(rx_bytes) precisely so it can be. At 1h the raw
+ * tier has no _max peer and the sample IS its own peak, so peakBase() falls
+ * back and nothing changes there.
  *
- * It also puts traffic on the same footing as the CPU and memory cells, which
- * have always read _avg, and matches the host page's throughput panel, which
- * draws the mean as its line and the peak as an envelope over it.
+ * The fold, through reduceToColumns(): a 24 h window is 285 five-minute
+ * buckets and the cell is 170 px, so without it every pixel column carries
+ * about 1.7 buckets and a burst is one more notch in a serrated edge. Folded
+ * with MAX, each column is the loudest thing that happened in it.
+ *
+ * Summing peaks is a known bias and it is accepted here deliberately: the sum
+ * of each interface's peak is not the peak of anything, because two links can
+ * burst in different seconds of the same bucket and this adds them as though
+ * they had not. The alternative is a cell that cannot show a burst at all,
+ * and on a one-NIC host -- most hosts -- there is no bias to speak of.
+ *
+ * `columns` is the pixel width of the chart. Omitted, nothing is folded: the
+ * caller is drawing at the data's own resolution or does not know its width
+ * yet.
  *
  * Shared with the enlarged view so it cannot disagree with the cell it was
- * opened from.
+ * opened from -- the dialog folds to its own, wider, width.
  */
-export function trafficSeries(net: MetricsResponse | null | undefined): {
+export function trafficSeries(
+  net: MetricsResponse | null | undefined,
+  columns?: number,
+): {
   rx: (number | null)[];
   tx: (number | null)[];
 } {
+  const fold = (vals: (number | null)[]) =>
+    columns === undefined ? vals : reduceToColumns(vals, columns);
   return {
-    rx: sumSeries(net, "rx_bytes"),
-    tx: sumSeries(net, "tx_bytes"),
+    rx: fold(sumSeries(net, peakBase(net, "rx_bytes"))),
+    tx: fold(sumSeries(net, peakBase(net, "tx_bytes"))),
   };
 }
 
@@ -566,7 +580,9 @@ export function hostTrendsFrom(
   // status badge is judged from it; cpuBands() grids it again for the
   // silhouette when the host was too large to fetch per-core.
   const total = griddedValues(host, 0, "cpu_total");
-  const traffic = trafficSeries(net);
+  // Folded to the cell it will be drawn in, not left at the tier's
+  // resolution: 24 h is 285 buckets and the cell is 170 px.
+  const traffic = trafficSeries(net, SPARK_WIDTH);
 
   return {
     // Whichever family answered. They are all asked for the same window, so
@@ -576,11 +592,10 @@ export function hostTrendsFrom(
     cpu: cpuBands(host, cores).bands,
     mem: memoryBands(host),
     reporting: total,
-    // The MEAN of each bucket, summed across interfaces -- trafficSeries()
-    // carries why that is the pair of choices, and why the peak this used to
-    // read is no longer what makes a spike visible. The interface that
-    // actually burst is still one click away on the host page, where the
-    // pairs are drawn per interface.
+    // The PEAK of each pixel column, summed across interfaces --
+    // trafficSeries() carries why both halves of that are what RRDtool does.
+    // The interface that actually burst is one click away on the host page,
+    // where the pairs are drawn per interface.
     rx: traffic.rx,
     tx: traffic.tx,
     fullest: fullestFilesystem(filesystem),

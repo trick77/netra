@@ -261,9 +261,15 @@ describe("the Traffic page on a rolled-up tier", () => {
     });
     const cell = trafficSeries(res);
 
-    // Then the stack is the mean -- and summed, it is still the cell's curve
+    // Then the stack is the MEAN of each bucket
     expect(page.map((b) => b.values[0])).toEqual([10, 1, 1, 1]);
-    expect(cell.rx[0]).toBe(11);
+
+    // ...and the fleet cell is the PEAK, so the two are deliberately not the
+    // same number any more. The panel draws one band per interface and a
+    // stack of per-interface peaks would state a throughput no bucket ever
+    // carried; the cell draws a single summed pair at 170 px, where a mean
+    // of a mean is a burst nobody can see. Same host, two questions.
+    expect(cell.rx[0]).toBe(105);
 
     // And no band carries an envelope. `band` lives on Band (the chart-panel
     // type bandsFor returns) but not on the narrower OverlaySeries the array

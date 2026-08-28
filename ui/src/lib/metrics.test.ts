@@ -8,6 +8,7 @@ import {
   hasGaps,
   optionalValues,
   peakBase,
+  reduceToColumns,
   seriesCells,
   seriesTimestamps,
   seriesValues,
@@ -605,5 +606,59 @@ describe("counterIncrease", () => {
 
   it("skips a reset instead of subtracting through it", () => {
     expect(counterIncrease([90, 95, 3, 7])).toBe(9);
+  });
+});
+
+describe("reduceToColumns", () => {
+  // The fold RRDtool does before it draws: one value per pixel column,
+  // keeping the largest reading in each. A chart handed more buckets than it
+  // has pixels otherwise zigzags between neighbouring buckets inside a single
+  // column, and a burst comes out as one more notch in a serrated edge.
+  it("keeps the largest reading in each column", () => {
+    // Given six buckets folded into three columns
+    const out = reduceToColumns([1, 9, 2, 3, 4, 5], 3);
+
+    // Then each column is the loudest thing that happened in it -- never the
+    // mean, which would have drawn the 9 as a 5.
+    expect(out).toEqual([9, 3, 5]);
+  });
+
+  it("leaves a series shorter than the chart alone", () => {
+    // Nothing to fold: a chart with more pixels than data draws at the data's
+    // own resolution rather than stretching it.
+    expect(reduceToColumns([1, 2, 3], 10)).toEqual([1, 2, 3]);
+    expect(reduceToColumns([1, 2, 3], 3)).toEqual([1, 2, 3]);
+  });
+
+  it("reads through a null rather than widening it into a hole", () => {
+    // A column holding both a null and a number is the number: a gap inside
+    // one pixel is not a gap anyone can see, and widening it would draw an
+    // outage that did not happen.
+    expect(reduceToColumns([1, null, 5, 2], 2)).toEqual([1, 5]);
+  });
+
+  it("keeps a column that has no reading at all as a hole", () => {
+    // A host that stopped reporting for a stretch wide enough to own a whole
+    // column still leaves a break in the line.
+    expect(reduceToColumns([1, 2, null, null, 7, 8], 3)).toEqual([2, null, 8]);
+  });
+
+  it("covers the whole window, with no column left half-empty", () => {
+    // Boundaries come from the exact ratio rather than a rounded stride: with
+    // a rounded one the error accumulates across the width and the last
+    // column reads a fraction of the span the others do. 100 buckets into 7
+    // columns is the case that exposes it -- every value must survive into
+    // some column, so the largest of the whole series is the largest here.
+    const vals = Array.from({ length: 100 }, (_, i) => i);
+    const out = reduceToColumns(vals, 7);
+    expect(out).toHaveLength(7);
+    expect(Math.max(...(out as number[]))).toBe(99);
+    // And strictly rising input folds to strictly rising columns, which it
+    // cannot do if two columns overlap or one is skipped.
+    expect([...(out as number[])].sort((a, b) => a - b)).toEqual(out);
+  });
+
+  it("refuses a nonsense width instead of dividing by zero", () => {
+    expect(reduceToColumns([1, 2, 3], 0)).toEqual([1, 2, 3]);
   });
 });

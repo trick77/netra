@@ -314,6 +314,22 @@ export function ChartPanel({
   // five labels at 12px do not fit a 58px plot -- they collided in the panel
   // before this was tuned. One interval yields the two or three that do.
   // The chart page, with room for eight, asks for more.
+  // Fill a line chart's area only where the floor is the data's own.
+  //
+  // Same condition as autoScale below, and for the same reason stated the
+  // other way round: a chart nobody pinned is scaled between its own quietest
+  // and loudest readings, so the area under the line is the band the series
+  // moved through and the fill is that band. Pin a floor -- a filesystem's
+  // fixed 0-100, a memory stack's mem_total -- and the fill stops meaning
+  // that and becomes a block whose bottom edge is an axis decision. Stacks
+  // and mirrors are filled by construction and ignore this.
+  const filled =
+    !stacked &&
+    !mirrored &&
+    min === undefined &&
+    max === undefined &&
+    reference === undefined;
+
   const yTicks = !valueAxis
     ? undefined
     : mirrored
@@ -384,13 +400,12 @@ export function ChartPanel({
           // Only when nothing at all was pinned: a named max, a stack, a
           // mirror or a reference rule each make the scale a decision rather
           // than a derivation, and autoScale would throw it away.
-          autoScale={
-            !stacked &&
-            !mirrored &&
-            min === undefined &&
-            max === undefined &&
-            reference === undefined
-          }
+          //
+          // Which is the same set of panels that fill their line, and one
+          // flag rather than two identical expressions: a chart free-scales
+          // and fills for one reason, that its floor is its own data.
+          autoScale={filled}
+          filled={filled}
           stacked={stacked}
           // The rule is unlabelled in both views: the enlarged view's y axis
           // already names it at the height it sits, and the small panel names
@@ -428,6 +443,7 @@ export function ChartPanel({
             // where auto-scaling off the data's floor is deliberate -- a
             // temperature series between 44 and 47 degrees must not be drawn
             // as a flat line pinned to the bottom of a 0-47 box.
+            filled={filled}
             min={stacked ? 0 : min}
             width={plotWidth}
             height={height}

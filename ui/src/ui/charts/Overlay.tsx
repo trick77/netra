@@ -50,6 +50,23 @@ export interface OverlayProps {
   highlight?: string;
   label?: string;
   /**
+   * Fill the area under a line, rather than drawing the line alone.
+   *
+   * For a FREE-SCALED chart only, and that restriction is the whole design.
+   * A filled area reads as a mass, and a mass is only honest when its bottom
+   * edge means something: on a free-scaled chart the floor is the quietest
+   * reading in the window, so the fill is the band the series actually moved
+   * through. On a chart pinned to a declared floor it is not -- filesystem
+   * usage between 40 % and 95 % against a fixed 0-100 draws four hosts as
+   * four solid blocks differing only along their top edge, which is the
+   * argument Sparkline.tsx has always made for turning its own fill off
+   * there.
+   *
+   * Ignored by the stack and mirror marks, which are filled by construction.
+   */
+  filled?: boolean;
+
+  /**
    * Draw the series as a cumulative stack rather than as independent lines.
    *
    * The maths is stackBands() from geometry.ts, the same function the fleet
@@ -123,6 +140,7 @@ export function Overlay({
   pad = 2,
   highlight,
   label = "overlaid metrics chart",
+  filled = false,
   stacked = false,
   legend = true,
   reference,
@@ -151,7 +169,9 @@ export function Overlay({
               : "mirror"
             : stacked
               ? "stack"
-              : "line"
+              : filled
+                ? "area"
+                : "line"
         }
         highlight={highlight}
         reference={reference}

@@ -51,6 +51,7 @@ import {
   UP_COLOR,
   UpDownSparkline,
 } from "../../../ui/charts/UpDownSparkline";
+import { DETAIL_WIDTH } from "../../../ui/charts/size";
 // The fleet band's thresholds, imported rather than written out again. The
 // comment on them in fleet/conditions.ts spells out why: this page and that
 // one must agree on when a filesystem is worth mentioning, or a host warns
@@ -572,6 +573,14 @@ function SensorList({
               // chart that snapped to a zero floor on being enlarged would
               // draw a 44-47 degree package as a flat line.
               autoScale
+              // Filled, like the Sparkline below it. The sparkline has always
+              // drawn an area and the dialog drew a bare line, so opening a
+              // 44-47 degree package swapped a shaded band for a hairline --
+              // the enlarged view saying less than the 110px chart it came
+              // from. Honest here because the chart free-scales: the fill's
+              // bottom edge is the quietest reading in the window, not an
+              // axis decision.
+              filled
               fmt={(n) => formatSensor(kind, n)}
               range={range}
               ranges={RANGE_VALUES}
@@ -824,10 +833,12 @@ export function Overview({
   // counting it as zero would draw a dip that never happened. Same rule the
   // fleet row uses, so the two agree about one host.
   //
-  // Through trafficSeries(), which is where the bucket MEAN is argued for
-  // over its peak. Called rather than re-derived here: this card, the fleet
-  // row and the Traffic chart page are one chart, and a second copy of the
-  // sum is exactly how they came to disagree.
+  // Through trafficSeries(), which is where reading the bucket's PEAK and
+  // folding to the pixel column are argued for. Called rather than
+  // re-derived here: this card, the fleet row and the Traffic chart page are
+  // one chart, and a second copy of the sum is exactly how they came to
+  // disagree. No width passed -- this card is wider than the window has
+  // buckets, so there is nothing to fold.
   const { rx: ingress, tx: egress } = trafficSeries(netMetrics);
   // The Traffic card's NUMBERS, as opposed to the series beside them: gauges
   // off host_current, blanked when the host is not reporting. isReporting is
@@ -928,7 +939,7 @@ export function Overview({
                 ? undefined
                 : async (next) => {
                     const answered = await fetchFamily("net", next);
-                    const traffic = trafficSeries(answered);
+                    const traffic = trafficSeries(answered, DETAIL_WIDTH);
                     return {
                       series: [
                         { name: "in", color: UP_COLOR, values: traffic.rx },

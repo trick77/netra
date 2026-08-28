@@ -11,7 +11,7 @@ import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
 import { Overlay } from "../../ui/charts/Overlay";
-import { SPARK_WIDTH } from "../../ui/charts/size";
+import { DETAIL_WIDTH, SPARK_WIDTH } from "../../ui/charts/size";
 import {
   DOWN_COLOR,
   UP_COLOR,
@@ -356,7 +356,10 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
   // view of a cell must be the same chart, larger, not a different one.
   const fetchSeries = async (next: Range): Promise<DetailData> => {
     const net = await fetchHostFamily(row.id, "net", next);
-    const traffic = trafficSeries(net);
+    // Folded to the DIALOG's width, not the cell's: the enlarged view has
+    // six times the pixels and is entitled to six times the detail. Same
+    // reduction, same reading, more of it.
+    const traffic = trafficSeries(net, DETAIL_WIDTH);
     return {
       series: [
         { name: "in", color: UP_COLOR, values: traffic.rx },
