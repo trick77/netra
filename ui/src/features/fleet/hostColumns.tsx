@@ -89,12 +89,12 @@ export type HostRow = Host & {
   // was down" rendered as "traffic was steady".
   rx: (number | null)[];
   tx: (number | null)[];
-  /** The same pair as the bucket mean, drawn only by the ENLARGED view --
+  /** The same pair as the bucket peak, drawn only by the ENLARGED view --
    * see HostTrends. Empty at the raw tier, where the sample is its own peak,
    * and optional because a row assembled without it simply opens into a
    * chart with no envelope rather than failing to compile. */
-  rxMean?: (number | null)[];
-  txMean?: (number | null)[];
+  rxPeak?: (number | null)[];
+  txPeak?: (number | null)[];
   // null when the host has reported no filesystems at all. Non-nullable, the
   // only way to say "never collected" was pct: 0, which renders as an empty,
   // healthy, green disk -- absent read as a fact.

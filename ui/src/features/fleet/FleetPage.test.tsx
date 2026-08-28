@@ -27,8 +27,8 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     mem: [{ name: "used", color: "var(--s1)", values: [3e9, 4e9] }],
     rx: [1e6, 2e6],
     tx: [5e5, 6e5],
-    rxMean: [],
-    txMean: [],
+    rxPeak: [],
+    txPeak: [],
     // The gauges the traffic cell and the fleet tile actually read. The
     // series above are the sparkline, which still follows the range; these
     // do not, which is the whole point of them being separate.

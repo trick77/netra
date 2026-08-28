@@ -87,19 +87,18 @@ export interface HostTrends {
   rx: (number | null)[];
   tx: (number | null)[];
   /**
-   * The same pair read as the bucket mean, for the ENLARGED view alone.
+   * The same pair read as the bucket peak, for the ENLARGED view alone.
    *
-   * The cell draws peaks and is right to: at 170 px a mean of a mean is a
-   * burst nobody can see. The dialog has a stats table printing Mean, so it
-   * draws the mean as its line with the peak as the envelope over it -- and
-   * it must have that pair the moment it OPENS, not only after a range
-   * change, or the numbers under the chart are peak statistics wearing mean
-   * headers for as long as nobody touches the picker.
+   * The cell draws the mean, as Observium does. A dialog has the room for
+   * both, so it draws the mean as its line with the peak as an envelope
+   * behind it -- and it must have that pair the moment it OPENS, not only
+   * after a range change, or the enlarged view is a bare line where the cell
+   * it came from had a band.
    *
    * Empty at the raw tier, where the sample is its own peak.
    */
-  rxMean: (number | null)[];
-  txMean: (number | null)[];
+  rxPeak: (number | null)[];
+  txPeak: (number | null)[];
   fullest: HostRow["fullest"];
   /** Every filesystem's usage over the window, as df's Use%, one band each.
    * The meter beside it says how full the worst one is now; these say which
@@ -436,27 +435,27 @@ export function cpuBands(
 
 /**
  * A host's traffic pair, summed over its interfaces and read at the bucket's
- * PEAK, folded to the width of the chart that will draw it.
+ * MEAN, folded to the width of the chart that will draw it.
  *
  * Both halves of that are what RRDtool does, and the reason it looks like
  * every traffic graph an operator has already read.
  *
- * The peak, through peakBase(): a rate is read as a shape and the burst is
- * what the reader is looking for in it, and the rolled-up tiers materialise
- * max(rx_bytes) beside avg(rx_bytes) precisely so it can be. At 1h the raw
- * tier has no _max peer and the sample IS its own peak, so peakBase() falls
- * back and nothing changes there.
+ * The mean, and this is the correction of a mistake worth writing down. The
+ * cell read the bucket PEAK for one release, on the argument that a burst is
+ * the reading -- judged against a simulated host whose bursts are 3500x its
+ * floor, where no linear axis is legible anyway. On a real host it is wrong,
+ * because reading the bucket peak AND then folding each pixel column to its
+ * peak compounds: the same 24 h reads a ceiling of 7.3 MB/s through the mean
+ * and 26.6 MB/s through that pair of maxima. Everything under the peak is
+ * squashed by 3.7x, and the quiet body of the chart -- which is most of it --
+ * drops below one pixel. Observium's DEF asks for AVERAGE and rrdtool reduces
+ * with the same function; rendered side by side at 170x32 on identical
+ * numbers, that is the difference between a dense band and an empty cell.
  *
  * The fold, through reduceToColumns(): a 24 h window is 285 five-minute
  * buckets and the cell is 170 px, so without it every pixel column carries
- * about 1.7 buckets and a burst is one more notch in a serrated edge. Folded
- * with MAX, each column is the loudest thing that happened in it.
- *
- * Summing peaks is a known bias and it is accepted here deliberately: the sum
- * of each interface's peak is not the peak of anything, because two links can
- * burst in different seconds of the same bucket and this adds them as though
- * they had not. The alternative is a cell that cannot show a burst at all,
- * and on a one-NIC host -- most hosts -- there is no bias to speak of.
+ * about 1.7 buckets and the polyline zigzags between neighbours inside a
+ * single pixel. Folded, each column is one reading.
  *
  * `columns` is the pixel width of the chart. Omitted, nothing is folded: the
  * caller is drawing at the data's own resolution or does not know its width
@@ -469,38 +468,37 @@ export function trafficSeries(
   net: MetricsResponse | null | undefined,
   columns?: number,
 ): {
+  /** What a chart DRAWS: the bucket mean, folded to the pixel column with the
+   * same function. Observium's `DEF ... AVERAGE`. */
   rx: (number | null)[];
   tx: (number | null)[];
   /**
-   * The same pair read as the bucket MEAN, for a chart with room to say a
-   * number as well as draw a shape.
+   * The bucket PEAK, folded with the peak -- the envelope an enlarged view
+   * has the room to draw behind the mean, and which the rolled-up tiers
+   * materialise max(rx_bytes) for.
    *
-   * The enlarged view's stats table prints Latest / Min / Max / Mean off the
-   * series it is given, and a "Mean" computed over per-column peaks is not
-   * the mean throughput -- on the simulated NAS it reads several times the
-   * real one, while the host page's Traffic dialog, same host and same
-   * header, prints the true mean off rx_bytes_avg. Two dialogs, one label,
-   * two answers. So the dialog draws the mean as its line and the peak as
-   * the envelope over it: the shape the cell showed is still the outer edge,
-   * and every number under the chart means what it says.
+   * Summing per-interface peaks is a known bias and it is accepted only here:
+   * two links can burst in different seconds of one bucket and this adds them
+   * as though they had not. A band behind a line can carry that; the line an
+   * operator reads a number off cannot.
    *
    * Empty at the raw tier, where peakBase() falls back to the bare column and
    * the two series are the same numbers -- an envelope drawn exactly on its
    * own line is ink for nothing.
    */
-  rxMean: (number | null)[];
-  txMean: (number | null)[];
+  rxPeak: (number | null)[];
+  txPeak: (number | null)[];
 } {
-  const fold = (vals: (number | null)[]) =>
-    columns === undefined ? vals : reduceToColumns(vals, columns);
-  const rxPeak = peakBase(net, "rx_bytes");
-  const txPeak = peakBase(net, "tx_bytes");
-  const rolledUp = rxPeak !== "rx_bytes" || txPeak !== "tx_bytes";
+  const fold = (vals: (number | null)[], combine: "mean" | "max") =>
+    columns === undefined ? vals : reduceToColumns(vals, columns, combine);
+  const rxPeakColumn = peakBase(net, "rx_bytes");
+  const txPeakColumn = peakBase(net, "tx_bytes");
+  const rolledUp = rxPeakColumn !== "rx_bytes" || txPeakColumn !== "tx_bytes";
   return {
-    rx: fold(sumSeries(net, rxPeak)),
-    tx: fold(sumSeries(net, txPeak)),
-    rxMean: rolledUp ? fold(sumSeries(net, "rx_bytes")) : [],
-    txMean: rolledUp ? fold(sumSeries(net, "tx_bytes")) : [],
+    rx: fold(sumSeries(net, "rx_bytes"), "mean"),
+    tx: fold(sumSeries(net, "tx_bytes"), "mean"),
+    rxPeak: rolledUp ? fold(sumSeries(net, rxPeakColumn), "max") : [],
+    txPeak: rolledUp ? fold(sumSeries(net, txPeakColumn), "max") : [],
   };
 }
 
@@ -522,8 +520,8 @@ export function trafficSeries(
 export function trafficDetailSeries(t: {
   rx: (number | null)[];
   tx: (number | null)[];
-  rxMean?: (number | null)[];
-  txMean?: (number | null)[];
+  rxPeak?: (number | null)[];
+  txPeak?: (number | null)[];
 }): {
   name: string;
   color: string;
@@ -533,15 +531,15 @@ export function trafficDetailSeries(t: {
   const pair = (
     name: string,
     color: string,
-    peak: (number | null)[],
     mean: (number | null)[],
+    peak: (number | null)[],
   ) =>
-    mean.length === 0
-      ? { name, color, values: peak }
+    peak.length === 0
+      ? { name, color, values: mean }
       : { name, color, values: mean, band: peak };
   return [
-    pair("in", UP_COLOR, t.rx, t.rxMean ?? []),
-    pair("out", DOWN_COLOR, t.tx, t.txMean ?? []),
+    pair("in", UP_COLOR, t.rx, t.rxPeak ?? []),
+    pair("out", DOWN_COLOR, t.tx, t.txPeak ?? []),
   ];
 }
 
@@ -672,14 +670,14 @@ export function hostTrendsFrom(
     cpu: cpuBands(host, cores).bands,
     mem: memoryBands(host),
     reporting: total,
-    // The PEAK of each pixel column, summed across interfaces --
+    // The MEAN of each pixel column, summed across interfaces --
     // trafficSeries() carries why both halves of that are what RRDtool does.
     // The interface that actually burst is one click away on the host page,
     // where the pairs are drawn per interface.
     rx: traffic.rx,
     tx: traffic.tx,
-    rxMean: traffic.rxMean,
-    txMean: traffic.txMean,
+    rxPeak: traffic.rxPeak,
+    txPeak: traffic.txPeak,
     fullest: fullestFilesystem(filesystem),
     disk: filesystemBands(filesystem),
     oomKills: counterIncrease(griddedValues(host, 0, "oom_kill_total")),
@@ -832,8 +830,8 @@ export function buildRows(
       reporting: trend?.reporting ?? [],
       rx: trend?.rx ?? [],
       tx: trend?.tx ?? [],
-      rxMean: trend?.rxMean ?? [],
-      txMean: trend?.txMean ?? [],
+      rxPeak: trend?.rxPeak ?? [],
+      txPeak: trend?.txPeak ?? [],
       // null, not a zero percentage: a host whose filesystems have not been
       // read has no fullest one, and an empty green meter would say its
       // disks are empty.
