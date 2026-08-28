@@ -182,6 +182,11 @@ export interface HostPageProps {
    * what decides. */
   range?: Range;
   onRangeChange?: (range: Range) => void;
+  /** Called with this page's host-record poll error, and with null when a
+   * later poll succeeds. The screen above routes on it -- a 401 is the
+   * session expiring, which is a routing decision rather than something to
+   * render, and this page is the only one that had no way to report it. */
+  onPollError?: (error: Error | null) => void;
 }
 
 // A host that came up inside the last five minutes is the most interesting
@@ -196,6 +201,7 @@ export function HostPage({
   onTabChange,
   range: controlledRange,
   onRangeChange,
+  onPollError,
 }: HostPageProps) {
   // The host record, on the same 60-second tick as every other screen. It
   // used to be fetched once and never again, while the badge it drives reads
@@ -442,6 +448,10 @@ export function HostPage({
     setData((prev) => ({ ...prev, ...loaded }));
   }, [tabPoll.data]);
 
+  useEffect(() => {
+    onPollError?.(hostPoll.error);
+  }, [hostPoll.error, onPollError]);
+
   // Both halves: the header's record and the tab's families are two polls,
   // and a reader pressing Refresh is asking for the page, not for half of it.
   // usePoll's refresh is stable, so this identity is too -- it is handed to
@@ -494,6 +504,16 @@ export function HostPage({
     // the header, the tab bar and the entire small-multiples grid out side
     // by side in a 359px strip down the right of the page.
     <div className="hostpage">
+      {/* A failed poll leaves the last good record on screen, which is right
+          -- but silently, everything below would be a frozen page that looks
+          live, and pressing Refresh would change nothing visible. The numbers
+          stay and the page says they have stopped moving; how stale they are
+          is the header's own "last seen". */}
+      {hostPoll.error !== null && (
+        <p className="note" role="alert">
+          These readings have stopped refreshing: {hostPoll.error.message}
+        </p>
+      )}
       {/* The header is identical on every tab -- it is what you are
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">

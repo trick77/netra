@@ -324,4 +324,66 @@ describe("HostPage", () => {
       vi.useRealTimers();
     }
   });
+
+  // usePoll keeps the last good record when a poll fails, which is right --
+  // but silently it is a frozen page that looks live, and Refresh would
+  // change nothing visible. The numbers stay and the page says so.
+  it("says the readings stopped refreshing rather than replacing the page", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.getHost)
+        .mockResolvedValueOnce(host)
+        .mockRejectedValue(new Error("network down"));
+
+      render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
+      await screen.findByRole("heading", { name: "kessel" });
+
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "stopped refreshing",
+      );
+      // Still the host's page, not an error page: the hostname and the
+      // readings under it are what the reader was looking at.
+      expect(
+        screen.getByRole("heading", { name: "kessel" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Host detail was the one screen that handed its poll error nowhere, so an
+  // expired session left it on data it could no longer refresh while every
+  // other screen went to the login page.
+  it("hands a poll failure to the screen above it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const failure = new Error("unauthorized");
+      vi.mocked(api.getHost)
+        .mockResolvedValueOnce(host)
+        .mockRejectedValue(failure);
+      const onPollError = vi.fn();
+
+      render(
+        <HostPage
+          hostId={7}
+          tab="overview"
+          onTabChange={() => {}}
+          onPollError={onPollError}
+        />,
+      );
+      await screen.findByRole("heading", { name: "kessel" });
+
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+
+      expect(onPollError).toHaveBeenCalledWith(failure);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
