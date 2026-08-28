@@ -345,6 +345,93 @@ describe("geometry", () => {
       expect(up.match(/M/g)).toHaveLength(2);
     });
 
+    // A traffic floor is routinely a thousandth of its ceiling, and a fleet
+    // cell has fourteen pixels either side of the midline. Straight
+    // arithmetic puts that reading 0.014px off the line, round1 snaps it to
+    // zero, and the polygon has no area -- a host moving 26 kB/s all day drew
+    // exactly as much ink as a host moving nothing. RRDtool keeps full
+    // precision and cairo paints the same value as a dim continuous row,
+    // which is why an Observium sparkline has a floor where ours had bare
+    // background.
+    it("keeps a real reading off the midline even when it rounds to nothing", () => {
+      // Given a floor a thousandth of the ceiling, drawn in a fleet cell
+      const { up, mid } = mirrorPaths([1, 1, 1000], [], 170, 32, 1000, 2);
+      const ys = [...up.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
+        parseFloat(m[1]!),
+      );
+
+      // Then the quiet columns sit a WHOLE pixel above the midline rather
+      // than on it. y grows downward and `up` is drawn upward, so off the
+      // line is a smaller y. A whole pixel rather than a fraction because a
+      // fractional bar is antialiased into a grey smear -- see barHeight.
+      const quiet = ys.filter((y) => y < mid && mid - y <= 1);
+      expect(quiet.length).toBeGreaterThan(0);
+      for (const y of quiet) expect(mid - y).toBeCloseTo(1, 6);
+
+      // And the loud one is unaffected -- the minimum is a floor, never a
+      // scale.
+      expect(mid - Math.min(...ys.map((y) => y))).toBeCloseTo(14, 6);
+    });
+
+    // RRDtool's scaling, and the reason its peaks reach the edge of the cell
+    // where ours stopped short. One scale for BOTH halves -- so a taller bar
+    // still means more bytes, whichever direction it points -- with the zero
+    // line placed where the data puts it, so the combined range fills the box
+    // instead of each half being given exactly half of it.
+    it("shares one scale and places zero where the data puts it", () => {
+      // Given a pair whose halves peak at 5 and 10 in a 32px box
+      const { up, down, mid } = mirrorPaths(
+        [5, 5],
+        [10, 10],
+        100,
+        32,
+        10,
+        2,
+        true,
+      );
+      const ys = (d: string) =>
+        [...d.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
+          parseFloat(m[1]!),
+        );
+
+      // Then zero sits a third of the way down, not at the middle: the up
+      // half needs 5 of the combined 15 and the down half needs 10. On the
+      // whole pixel nearest that, so the whole-pixel bars measured from it
+      // fill their rows rather than straddling two.
+      expect(mid).toBe(Math.round((32 * 5) / 15));
+
+      // And both peaks reach their own edge of the box, so nothing is wasted
+      expect(Math.min(...ys(up))).toBeCloseTo(0, 0);
+      expect(Math.max(...ys(down))).toBeCloseTo(32, 0);
+
+      // ...while staying on ONE scale: the down half is twice the up half,
+      // exactly as 10 is twice 5. Given each half its own ceiling both would
+      // be full height and the cell would claim they were equal.
+      // Within the rounding, since bar heights are whole pixels: 10.7 and
+      // 21.3 land on 11 and 21, which is 1.91 rather than a clean 2.
+      const upHeight = mid - Math.min(...ys(up));
+      const downHeight = Math.max(...ys(down)) - mid;
+      expect(downHeight / upHeight).toBeCloseTo(2, 0);
+    });
+
+    it("centres zero when nothing is drawn", () => {
+      // An all-zero pair has no range to place a line by, and a midline that
+      // jumped to the top of an empty cell would be a statement about a host
+      // that reported nothing.
+      expect(mirrorPaths([0, 0], [0, 0], 100, 32, 10, 2, true).mid).toBe(16);
+    });
+
+    it("leaves a genuine zero on the midline", () => {
+      // "Nothing moved" and "almost nothing moved" are different answers, and
+      // this mark is what distinguishes them. Lifting a zero would make every
+      // idle interface claim a reading it never had.
+      const { up, mid } = mirrorPaths([0, 0, 1000], [], 170, 32, 1000, 2);
+      const ys = [...up.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
+        parseFloat(m[1]!),
+      );
+      expect(ys.filter((y) => y === mid).length).toBeGreaterThan(0);
+    });
+
     it("lets an out-of-range value escape the plot box rather than clamping it, matching linePath", () => {
       const { up, mid } = mirrorPaths([20, 20], [], 100, 20, 10);
       const ys = [...up.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>

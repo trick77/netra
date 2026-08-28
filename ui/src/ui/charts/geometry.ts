@@ -296,6 +296,40 @@ export function stackBands(
  * is itself informative. (Previously this function clamped and `linePath`
  * did not; that inconsistency is resolved here in `linePath`'s favour.)
  */
+/**
+ * A bar's height, in WHOLE pixels, with a real reading never rounding away.
+ *
+ * Two problems, one answer, and both were measured against rrdtool rendering
+ * the identical numbers at the identical size.
+ *
+ * A traffic chart's floor is routinely a thousandth of its ceiling, and a
+ * fleet cell has fourteen pixels either side of the midline. Straight
+ * arithmetic puts such a reading 0.014 px off the line, `round1` snaps that to
+ * 0.0, and the polygon has no area at all -- a host that moved 26 kB/s all day
+ * drew exactly as much ink as a host that moved nothing. On a heavy-tailed
+ * host, 149 of 170 inbound columns vanished that way.
+ *
+ * And a bar of fractional height is antialiased along its top edge, so it
+ * lands as a washed-out fringe rather than as a mark. Measured on a normal
+ * host: rrdtool inks 1581 pixels of which 1581 are fully saturated, while the
+ * same bars at fractional heights inked 1219 of which only 1004 were. An
+ * eighth of our ink was a grey smear, which is most of what "rrdtool looks
+ * richer at the same size" was.
+ *
+ * Whole pixels fix both: nothing to antialias, and `Math.max(1, ...)` means a
+ * reading that exists is a reading you can see. It costs sub-pixel precision
+ * -- about 7 % of a fourteen-pixel half -- and that is rrdtool's own trade,
+ * made for the same reason. A sparkline is read as a shape.
+ *
+ * A genuine zero still draws on the midline. "Nothing moved" and "almost
+ * nothing moved" are different answers, and this is the mark that separates
+ * them.
+ */
+function barHeight(px: number, value: number): number {
+  if (value === 0) return 0;
+  return Math.max(1, Math.round(px));
+}
+
 export function mirrorPaths(
   up: (number | null)[],
   down: (number | null)[],
@@ -303,31 +337,115 @@ export function mirrorPaths(
   h: number,
   max: number,
   pad = 0,
+  independent = false,
 ): { up: string; down: string; mid: number } {
-  const mid = h / 2;
   const n = Math.max(up.length, down.length);
-  const baseline = round1(mid);
+
+  /**
+   * The ceiling each half is drawn against, and how much room it gets.
+   *
+   * `independent` is RRDtool's model, and it is why an Observium sparkline's
+   * peaks reach the edge of the cell where ours stopped well short of it.
+   * Two things were costing height:
+   *
+   *  - `pad`. It exists so a LINE's stroke does not clip at the box edge. A
+   *    bar has no stroke, so on this mark it is four pixels of a
+   *    thirty-two-pixel cell thrown away for nothing.
+   *  - one ceiling for both halves. Measured on a normal host, in peaks at
+   *    5.9 MB/s against out's 7.3: dividing both by 7.3 means the inbound
+   *    half can never reach higher than eleven of its fourteen pixels, no
+   *    matter what the host does.
+   *
+   * Given its own ceiling and the whole half-height, each direction fills the
+   * cell -- 16 px instead of 11.3 and 14. What it costs is the comparison
+   * BETWEEN the halves: a taller purple bar no longer means more bytes than a
+   * shorter green one, only more than other purple ones. RRDtool accepts that
+   * trade on a sparkline and so do we, but only where nothing on screen
+   * claims otherwise, which is why Chart turns this on for a chart with no
+   * value ladder and leaves a chart that has one on the shared ceiling its
+   * ticks are labelled from.
+   */
+  const halfMax = (vals: (number | null)[]): number => {
+    let m = 0;
+    for (const v of vals) if (v !== null && v > m) m = v;
+    return m;
+  };
+  const upMax = halfMax(up);
+  const downMax = halfMax(down);
+  const span = upMax + downMax;
+  // Where zero sits. Centred when nothing is drawn, or when the caller is on
+  // the shared ceiling; otherwise placed so the combined range fills the box.
+  //
+  // Snapped to a whole pixel, because the bars measured from it are a whole
+  // number of pixels tall. Left at its exact position -- 19.3 on a real host
+  // -- every bar in the cell would begin and end on a third of a pixel, and
+  // each one would be antialiased across two rows instead of filling one.
+  const zero = independent && span > 0 ? Math.round((h * upMax) / span) : h / 2;
+  const baseline = round1(zero);
+  const scaleOf = (direction: 1 | -1) =>
+    independent
+      ? {
+          ceiling: span,
+          usable: h,
+          from: direction === -1 ? zero : h - zero,
+        }
+      : { ceiling: max, usable: h / 2 - pad, from: h / 2 - pad };
+
+  // Columns TILED across the full width, edge to edge, rather than centred on
+  // scaleX's positions.
+  //
+  // scaleX insets by `pad` at both ends, so 170 readings in a 170px cell get
+  // 166px of span and every bar straddles two pixel columns -- a smear at
+  // partial alpha instead of a mark. Tiled, a fold to the plot's own width
+  // lands each bar on an exact pixel boundary, which is what lets it be
+  // saturated rather than grey.
+  //
+  // The cost is that a bar's centre is up to half a column from where the
+  // crosshair puts its dot. Half a column is half a pixel on a fleet cell,
+  // and on a chart wide enough for that to be visible the bars are wide
+  // enough that the dot still lands inside its own bar.
+  const columnWidth = n > 0 ? w / n : w;
 
   const build = (vals: (number | null)[], direction: 1 | -1): string => {
-    const usable = h / 2 - pad;
+    const { ceiling, usable } = scaleOf(direction);
     const runs = splitRuns(vals.length, (i) => vals[i] === null).filter(
       (run) => run.length >= 2,
     );
 
     return runs
       .map((run) => {
-        const pts = run.map((i) => {
-          const x = scaleX(i, n, w, pad);
+        // One BAR per reading, midline to value, rather than a polyline
+        // through the readings with the area filled under it.
+        //
+        // This is the whole difference between our sparkline and the RRDtool
+        // graph it is meant to look like, and it is not a small one. A
+        // polyline joins the top of each column to the top of its neighbours
+        // with a diagonal, so two adjacent buckets merge into one slope and a
+        // run of them reads as a single smooth mass. Per-column bars keep
+        // every bucket separate: the picket fence an operator can count. Same
+        // numbers, same size, same colours -- the readings are simply legible
+        // in one and not the other. rrd_graph.c draws AREA exactly this way.
+        //
+        // Measured the wrong way first: bars lay down about 7 % LESS ink than
+        // the polyline, and that was taken as evidence against them. Ink is
+        // not detail. Nobody was asking for more colour on the cell, they
+        // were asking to be able to tell one five-minute bucket from the
+        // next.
+        const edges: string[] = [];
+        for (const i of run) {
           const v = vals[i] as number;
-          const t = max === 0 ? 0 : v / max;
-          const y = mid + direction * t * usable;
-          return point(x, y);
-        });
-        const first = pts[0]!.split(",")[0];
-        const last = pts[pts.length - 1]!.split(",")[0];
+          const t = ceiling === 0 ? 0 : v / ceiling;
+          const y = zero + direction * barHeight(t * usable, v);
+          edges.push(
+            point(i * columnWidth, y),
+            point((i + 1) * columnWidth, y),
+          );
+        }
+        const first = edges[0]!.split(",")[0];
+        const last = edges[edges.length - 1]!.split(",")[0];
         return (
           `M${first},${baseline} ` +
-          pts.map((p) => `L${p}`).join(" ") +
+          edges.map((p) => `L${p}`).join(" ") +
           ` L${last},${baseline} Z`
         );
       })
@@ -337,7 +455,7 @@ export function mirrorPaths(
   return {
     up: build(up, -1),
     down: build(down, 1),
-    mid,
+    mid: zero,
   };
 }
 
@@ -386,8 +504,13 @@ export function mirrorStackBands(
       (run) => run.length >= 2,
     );
 
+    // The same whole-pixel rule a plain mirror gives a real reading, so a
+    // quiet interface is a visible layer here rather than nothing. Applied to
+    // the running TOTAL, not to each layer's own value: the total is what the
+    // edge is drawn at, and lifting every layer separately would stack the
+    // minimum as many times as there are interfaces.
     const y = (v: number): number =>
-      mid + direction * (max === 0 ? 0 : v / max) * usable;
+      mid + direction * barHeight((max === 0 ? 0 : v / max) * usable, v);
 
     const bands: string[] = series.map(() => "");
     for (const run of runs) {

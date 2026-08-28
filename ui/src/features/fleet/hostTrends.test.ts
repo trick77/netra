@@ -767,8 +767,8 @@ describe("buildRows", () => {
       reporting: [1, 2],
       rx: [10],
       tx: [20],
-      rxMean: [],
-      txMean: [],
+      rxPeak: [],
+      txPeak: [],
       fullest: { mount: "/", pct: 50, others: 0 },
       disk: [],
       oomKills: 0,
@@ -847,57 +847,59 @@ describe("trafficSeries", () => {
     } as unknown as MetricsResponse;
   }
 
-  it("draws the bucket peak, not the mean", () => {
+  it("draws the bucket mean, with the peak kept aside", () => {
     // Given a rolled-up response where the two columns differ
     const t = trafficSeries(rolledUp());
 
-    // Then the drawn pair is the sum of the peaks. A mean of a mean is the
-    // burst nobody can see at 170px, which is the whole reason for this.
-    expect(t.rx).toEqual([105, 206, 307]);
-    expect(t.rxMean).toEqual([11, 22, 33]);
+    // Then the DRAWN pair is the sum of the means -- Observium's
+    // `DEF ... AVERAGE`. Reading the peak here and folding columns to their
+    // peak as well compounds into a ceiling several times the real one, and
+    // everything under it drops below a pixel.
+    expect(t.rx).toEqual([11, 22, 33]);
+    // The peak is still read, for the envelope an enlarged view can draw.
+    expect(t.rxPeak).toEqual([105, 206, 307]);
   });
 
-  it("folds to the pixel column, keeping the loudest reading in each", () => {
+  it("folds each pixel column with the same function it read", () => {
     // Given three buckets folded into two columns
     const t = trafficSeries(rolledUp(), 2);
 
-    // Then each column is its own maximum. Three buckets over two columns
-    // splits one/two, so the second column holds 206 and 307 and reports the
-    // larger of them -- never their average, which is the whole point.
-    expect(t.rx).toEqual([105, 307]);
-    // And the mean series folds the same way, so the line and the envelope
-    // over it are sampled at the same instants.
-    expect(t.rxMean).toHaveLength(2);
+    // Then the drawn series averages within a column, as rrdtool's reduce
+    // does with an AVERAGE RRA. Three buckets over two columns splits
+    // one/two, so the second column is the mean of 22 and 33.
+    expect(t.rx).toEqual([11, 27.5]);
+    // And the envelope keeps taking the loudest, so a band behind a line is
+    // still the peak it claims to be.
+    expect(t.rxPeak).toEqual([105, 307]);
   });
 
-  it("has no separate mean at the raw tier", () => {
+  it("has no separate peak at the raw tier", () => {
     // peakBase() falls back to the bare column there, so the two series
     // would be the same numbers and an envelope drawn on its own line is
     // ink for nothing.
     const t = trafficSeries(raw());
     expect(t.rx).toEqual([10, 20, 30]);
-    expect(t.rxMean).toEqual([]);
+    expect(t.rxPeak).toEqual([]);
   });
 
   it("builds the pair from a row, so the dialog has it on OPEN", () => {
     // The cell hands its Enlargeable a detailSeries built from the row it
-    // already holds. Without that the dialog draws the cell's peak series
-    // until somebody touches the range picker, and its stats table prints
-    // peak numbers under Min and Mean headers for as long as they do not.
+    // already holds. Without that the dialog draws a bare line until somebody
+    // touches the range picker.
     const [rx] = trafficDetailSeries({
-      rx: [105, 206],
-      tx: [2, 4],
-      rxMean: [11, 22],
-      txMean: [1, 2],
+      rx: [11, 22],
+      tx: [1, 2],
+      rxPeak: [105, 206],
+      txPeak: [2, 4],
     });
     expect(rx?.values).toEqual([11, 22]);
     expect(rx?.band).toEqual([105, 206]);
 
-    // A row without the mean pair -- assembled before it existed, or answered
+    // A row without the peak pair -- assembled before it existed, or answered
     // by the raw tier -- opens into a chart with no envelope rather than one
     // with a wrong axis.
-    const [bare] = trafficDetailSeries({ rx: [105, 206], tx: [2, 4] });
-    expect(bare?.values).toEqual([105, 206]);
+    const [bare] = trafficDetailSeries({ rx: [11, 22], tx: [1, 2] });
+    expect(bare?.values).toEqual([11, 22]);
     expect(bare?.band).toBeUndefined();
   });
 

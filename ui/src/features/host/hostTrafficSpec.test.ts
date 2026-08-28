@@ -264,12 +264,12 @@ describe("the Traffic page on a rolled-up tier", () => {
     // Then the stack is the MEAN of each bucket
     expect(page.map((b) => b.values[0])).toEqual([10, 1, 1, 1]);
 
-    // ...and the fleet cell is the PEAK, so the two are deliberately not the
-    // same number any more. The panel draws one band per interface and a
-    // stack of per-interface peaks would state a throughput no bucket ever
-    // carried; the cell draws a single summed pair at 170 px, where a mean
-    // of a mean is a burst nobody can see. Same host, two questions.
-    expect(cell.rx[0]).toBe(105);
+    // ...and so is the fleet cell, so the stack's envelope and the cell's
+    // pair are the same number again. Both read the bucket mean, which is
+    // what Observium's DEF asks for and what keeps a quiet host visible.
+    expect(cell.rx[0]).toBe(11);
+    // The peak is still carried, for the envelope an enlarged view draws.
+    expect(cell.rxPeak[0]).toBe(105);
 
     // And no band carries an envelope. `band` lives on Band (the chart-panel
     // type bandsFor returns) but not on the narrower OverlaySeries the array

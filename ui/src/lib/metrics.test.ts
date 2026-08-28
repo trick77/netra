@@ -614,13 +614,19 @@ describe("reduceToColumns", () => {
   // keeping the largest reading in each. A chart handed more buckets than it
   // has pixels otherwise zigzags between neighbouring buckets inside a single
   // column, and a burst comes out as one more notch in a serrated edge.
-  it("keeps the largest reading in each column", () => {
+  it("averages within a column by default", () => {
     // Given six buckets folded into three columns
     const out = reduceToColumns([1, 9, 2, 3, 4, 5], 3);
 
-    // Then each column is the loudest thing that happened in it -- never the
-    // mean, which would have drawn the 9 as a 5.
-    expect(out).toEqual([9, 3, 5]);
+    // Then each column is the mean of what landed in it, which is what
+    // rrdtool's reduce does against an AVERAGE RRA -- and what Observium's
+    // DEF asks for.
+    expect(out).toEqual([5, 2.5, 4.5]);
+  });
+
+  it("keeps the largest reading in each column when asked", () => {
+    // The envelope behind a line wants the peak, not the mean.
+    expect(reduceToColumns([1, 9, 2, 3, 4, 5], 3, "max")).toEqual([9, 3, 5]);
   });
 
   it("leaves a series shorter than the chart alone", () => {
@@ -631,16 +637,27 @@ describe("reduceToColumns", () => {
   });
 
   it("reads through a null rather than widening it into a hole", () => {
-    // A column holding both a null and a number is the number: a gap inside
+    // A column holding both a null and a number is that number: a gap inside
     // one pixel is not a gap anyone can see, and widening it would draw an
-    // outage that did not happen.
-    expect(reduceToColumns([1, null, 5, 2], 2)).toEqual([1, 5]);
+    // outage that did not happen. The null is skipped rather than counted as
+    // a zero, so it cannot drag the column's mean down either.
+    expect(reduceToColumns([1, null, 5, 2], 2)).toEqual([1, 3.5]);
+    expect(reduceToColumns([1, null, 5, 2], 2, "max")).toEqual([1, 5]);
   });
 
   it("keeps a column that has no reading at all as a hole", () => {
     // A host that stopped reporting for a stretch wide enough to own a whole
     // column still leaves a break in the line.
-    expect(reduceToColumns([1, 2, null, null, 7, 8], 3)).toEqual([2, null, 8]);
+    expect(reduceToColumns([1, 2, null, null, 7, 8], 3)).toEqual([
+      1.5,
+      null,
+      7.5,
+    ]);
+    expect(reduceToColumns([1, 2, null, null, 7, 8], 3, "max")).toEqual([
+      2,
+      null,
+      8,
+    ]);
   });
 
   it("covers the whole window, with no column left half-empty", () => {
@@ -650,7 +667,7 @@ describe("reduceToColumns", () => {
     // columns is the case that exposes it -- every value must survive into
     // some column, so the largest of the whole series is the largest here.
     const vals = Array.from({ length: 100 }, (_, i) => i);
-    const out = reduceToColumns(vals, 7);
+    const out = reduceToColumns(vals, 7, "max");
     expect(out).toHaveLength(7);
     expect(Math.max(...(out as number[]))).toBe(99);
     // And strictly rising input folds to strictly rising columns, which it

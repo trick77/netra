@@ -403,8 +403,8 @@ export function sumSeries(
 }
 
 /**
- * Fold a series to one value per PIXEL COLUMN, keeping the largest reading in
- * each. What RRDtool does before it draws.
+ * Fold a series to one value per PIXEL COLUMN. What RRDtool does before it
+ * draws.
  *
  * A chart is handed more buckets than it has pixels far more often than the
  * other way round: the fleet's traffic cell is 170 px wide and a 24 h window
@@ -417,10 +417,17 @@ export function sumSeries(
  * group. Which function is the whole decision: AVERAGE smooths a burst away,
  * MAX keeps it.
  *
- * MAX here, because the caller is traffic and a burst is the reading. Measured
- * on the simulated NAS, 24 h folded to 170 columns: the mean of each column
- * peaks at a third of what the max of each column peaks at, and the two draw
- * as a hump and as a spike over a flat floor.
+ * Which function `combine` is, is the caller's decision and it is not a small
+ * one. It was MAX here for one release, on the argument that a burst is the
+ * reading -- and that was measured against a simulated host whose bursts are
+ * 3500x its floor, where nothing is legible either way. On a real host it is
+ * the wrong answer, because taking the bucket peak AND then the peak of each
+ * column compounds: the same 24 h reads a ceiling of 7.3 MB/s through the mean
+ * and 26.6 MB/s through that pair of maxima, so the whole quiet body of the
+ * chart is squashed by 3.7x and falls under one pixel. Observium's DEF asks
+ * for AVERAGE and rrdtool reduces with the same function; rendered side by
+ * side at 170x32 on identical numbers, that is the difference between a dense
+ * band and an empty cell.
  *
  * A column with no reading at all is null, so a host that stopped reporting
  * still leaves a hole. A column holding both a null and a number is the
@@ -436,6 +443,7 @@ export function sumSeries(
 export function reduceToColumns(
   vals: readonly (number | null)[],
   columns: number,
+  combine: "mean" | "max" = "mean",
 ): (number | null)[] {
   if (columns < 1 || vals.length <= columns) return [...vals];
   const out: (number | null)[] = [];
@@ -445,13 +453,17 @@ export function reduceToColumns(
     // column reading half the window.
     const from = Math.floor((c * vals.length) / columns);
     const to = Math.floor(((c + 1) * vals.length) / columns);
-    let best: number | null = null;
+    let sum = 0;
+    let seen = 0;
+    let peak: number | null = null;
     for (let i = from; i < to; i++) {
       const v = vals[i];
       if (v === undefined || v === null) continue;
-      if (best === null || v > best) best = v;
+      sum += v;
+      seen++;
+      if (peak === null || v > peak) peak = v;
     }
-    out.push(best);
+    out.push(seen === 0 ? null : combine === "max" ? peak : sum / seen);
   }
   return out;
 }
