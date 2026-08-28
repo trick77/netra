@@ -729,9 +729,9 @@ a:hover {
    themselves. min-width:0 here would drop it much further, and letting this
    cell WRAP (what .card does below, where the chart is the only item that can
    give) would make traffic the largest chart in the row and put the row height
-   straight back. A viewport too narrow for the wider cell is already handled:
-   .tablewrap scrolls, and below the mobile breakpoint the list is cards, which
-   restore the stack below. */
+   straight back. A viewport too narrow for the wider cell is handled by
+   .tablewrap, which scrolls the row rather than compressing it -- see
+   `.tablewrap svg.spark` for the half of that which is not automatic. */
 .traffic-rates {
   display: flex;
   /* Stacked, so the pair is two short lines against the chart rather than one
@@ -2349,6 +2349,17 @@ details.sysfold > .body {
 svg.spark {
   max-width: 100%;
   height: auto;
+}
+/* Except inside a scrolling table, where shrinking is the wrong answer to a
+   narrow viewport. A fleet row's other cells do not give -- .traffic-rates is
+   flex:none, the host name and the disk meter have their own minimums -- so
+   the charts are the only thing that can, and they absorb the entire squeeze:
+   at a 390px viewport a 170x32 CPU sparkline rendered 38x7, which is not a
+   chart. .tablewrap already carries overflow-x:auto for exactly this, so the
+   row keeps its width and the BOX scrolls instead. The page still never
+   scrolls sideways, which is all the rule above was protecting. */
+.tablewrap svg.spark {
+  max-width: none;
 }
 /* Axis labels, drawn INSIDE the chart image as SVG text rather than beside
    it as HTML. That is what keeps a label glued to the gridline it names at

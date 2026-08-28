@@ -41,8 +41,8 @@ import { FLEET_RANGE } from "./ranges";
 export type Entity = "hosts" | "containers";
 
 /**
- * Joins the fleet list to its site names and produces the rows both the
- * table and the card grid render from.
+ * Joins the fleet list to its site names and produces the rows the table
+ * renders from.
  *
  * `GET /api/v1/hosts` carries `site_id` and no name; the per-host detail
  * call that does carry one would be an N+1 across the whole fleet, so the
