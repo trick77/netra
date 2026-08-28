@@ -3000,6 +3000,28 @@ tbody:first-of-type .grouprow th {
   color: var(--st-crit-text);
 }
 
+/* The Storage tab's drive table, Temp column: the sparkline and the reading
+   on one line, both pushed to the right edge the column is aligned to.
+
+   The line comes first and the number last, so a column of drives reads as a
+   column of numbers with their movement leading into each -- the same order
+   the sensor rows on Overview use. Right-aligned as a whole, because the cell
+   is still a number column and a ragged right edge is what makes four
+   temperatures hard to compare. */
+.temp-cell {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+.temp-cell .reading {
+  font-variant-numeric: tabular-nums;
+  /* "49 °C" is one word. Without this the cell is narrow enough on a laptop
+     that it breaks at the space, and the column reads as a stack of numbers
+     with their units on the line below. */
+  white-space: nowrap;
+}
+
 /* The Storage tab's mount table, Usage column. The third table cell to draw
    a Meter and the only one that had no override, so every mount's bar came
    with a rule the row already had and a percentage pinned 92px away from it.

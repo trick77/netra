@@ -8,7 +8,9 @@ import {
   driveKind,
   driveSeverity,
   driveTemperature,
+  driveTempAttrId,
   driveWearPct,
+  temperatureFromRaw,
 } from "./smart";
 
 function drive(
@@ -231,6 +233,35 @@ describe("the readings the table prints", () => {
         drive({ [NVME.temperature]: 52, [NVME.percentageUsed]: 3 }),
       ),
     ).toBe(52);
+  });
+
+  // The same mask, applied to every point of a series rather than to the
+  // latest value alone.
+  //
+  // The Drives table's Temp column draws 24 hours of history beside its
+  // reading, and both come out of the same raw 48-bit field. A series built
+  // without the mask draws a flat line at a hundred and twenty billion beside
+  // a cell that reads 28 °C -- and because the simulator writes clean
+  // single-byte values, every local run and every browser check would show it
+  // working.
+  it("applies the same mask to a raw series point as to the latest reading", () => {
+    expect(temperatureFromRaw(0x1c0000001c, "ata")).toBe(28);
+    expect(temperatureFromRaw(34, "ata")).toBe(34);
+    // NVMe is already degrees, so masking would corrupt anything above 255.
+    expect(temperatureFromRaw(52, "nvme")).toBe(52);
+    // A bucket the drive did not report stays a gap rather than becoming 0.
+    expect(temperatureFromRaw(null, "ata")).toBeNull();
+  });
+
+  // The id the history is keyed on has to agree with the id the cell reads,
+  // or a chart silently plots a different attribute of the same drive.
+  it("names the attribute id each drive's temperature comes from", () => {
+    expect(driveTempAttrId(drive({ [ATA.temperature]: 34 }))).toBe(
+      ATA.temperature,
+    );
+    expect(driveTempAttrId(drive({ [NVME.temperature]: 52 }))).toBe(
+      NVME.temperature,
+    );
   });
 
   // ATA has no universal wear attribute: the SSD life-left counters are

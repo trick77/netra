@@ -669,7 +669,11 @@ func (g *Generator) diskIO(ts time.Time, cpu float64) []*netrav1.DiskIoSample {
 func (g *Generator) sensors(ts time.Time, cpu float64) []*netrav1.SensorSample {
 	out := make([]*netrav1.SensorSample, 0, len(g.p.Sensors))
 	for _, s := range g.p.Sensors {
-		key := "sensor/" + s.Chip + "/" + s.Label
+		// The instance is in the signal key too, not only on the wire: two
+		// drivetemp chips sharing a key would draw the identical curve, and
+		// a pair of disks that track each other to the decimal is the one
+		// thing a reader would call a bug in the simulator.
+		key := "sensor/" + s.Chip + "/" + s.Label + "/" + s.Instance
 		kind := s.Kind
 		if kind == "" {
 			kind = "temperature"
@@ -714,10 +718,11 @@ func (g *Generator) sensors(ts time.Time, cpu float64) []*netrav1.SensorSample {
 		}
 
 		sample := &netrav1.SensorSample{
-			TsMs:  ts.UnixMilli(),
-			Chip:  s.Chip,
-			Label: s.Label,
-			Kind:  kind,
+			TsMs:     ts.UnixMilli(),
+			Chip:     s.Chip,
+			Label:    s.Label,
+			Kind:     kind,
+			Instance: s.Instance,
 			// Set for every kind, temperature included. The real agent
 			// writes value unconditionally and temp only for temperatures,
 			// so leaving it unset here would send simulated hosts down a

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -161,6 +162,66 @@ func (s *Sensors) Capabilities() map[string]string {
 	return nil
 }
 
+// nvmeNamespace matches an NVMe namespace directory: nvme0n1, nvme1n2. An
+// NVMe controller has no block/ subdirectory of its own -- the namespaces
+// hang directly off it, and the namespace is the thing with a name an
+// operator recognises.
+var nvmeNamespace = regexp.MustCompile(`^nvme[0-9]+n[0-9]+$`)
+
+// blockDeviceOf reports which block device this hwmon chip measures --
+// "sda", "nvme0n1" -- and whether the answer can be trusted.
+//
+// WHY A CHIP NEEDS ONE AT ALL. Identity is chip + label, and for storage
+// chips that is not unique. The drivetemp driver names every chip it
+// registers "drivetemp" and publishes no tempN_label, so a host with four
+// SATA disks reports four sensors that all call themselves drivetemp/temp1;
+// two NVMe drives both report nvme/Composite. The hub keys sensors on chip +
+// label, so those four readings collapsed onto ONE sensor and each scrape
+// kept exactly one of them -- four drives, one temperature, nothing raised.
+//
+// THE SECOND RETURN IS THE SAME RULE THE LABEL FALLBACK FOLLOWS: presence
+// decides an identity, never a read result. A chip whose attachment could not
+// be read is skipped by the caller rather than reported with an empty
+// instance, because an empty instance is precisely the colliding identity
+// this exists to avoid -- one slow read of a drivetemp chip would put that
+// drive's readings back on top of another drive's, which is worse than the
+// gap. An absent device link is a different thing entirely: it is an ANSWER,
+// this chip measures no block device, and coretemp, k10temp and acpitz all
+// take that path and keep the identity they have always had.
+func (s *Sensors) blockDeviceOf(ctx context.Context, chipDir string) (string, bool) {
+	devDir := filepath.Join(chipDir, "device")
+
+	entries, err := s.readDir(ctx, devDir)
+	if err != nil {
+		return "", os.IsNotExist(err)
+	}
+
+	// os.ReadDir sorts, so both picks below are stable across scrapes. That
+	// matters more than which name is chosen: a controller with two
+	// namespaces offers two, and an identity that alternates between them
+	// forks the drive's history every scrape.
+	for _, e := range entries {
+		if e.Name() != "block" {
+			continue
+		}
+		blocks, err := s.readDir(ctx, filepath.Join(devDir, "block"))
+		if err != nil {
+			return "", false
+		}
+		if len(blocks) == 0 {
+			return "", true
+		}
+		return blocks[0].Name(), true
+	}
+
+	for _, e := range entries {
+		if nvmeNamespace.MatchString(e.Name()) {
+			return e.Name(), true
+		}
+	}
+	return "", true
+}
+
 // Collect implements Collector.
 func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 	s.scrapes++
@@ -196,6 +257,13 @@ func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 			// No name means no stable chip identity. Reporting it under the
 			// directory name would reintroduce exactly the hwmonN keying this
 			// collector exists to avoid.
+			continue
+		}
+
+		// Before any row is built: an unreadable attachment makes every row
+		// from this chip unidentifiable, not just the instance field.
+		instance, resolved := s.blockDeviceOf(ctx, chipDir)
+		if !resolved {
 			continue
 		}
 
@@ -261,11 +329,12 @@ func (s *Sensors) Collect(ctx context.Context) (*Result, error) {
 			value := n / sensorScale(kind)
 
 			row := &netrav1.SensorSample{
-				TsMs:  ts,
-				Chip:  chip,
-				Label: label,
-				Kind:  kind,
-				Value: ptrTo(value),
+				TsMs:     ts,
+				Chip:     chip,
+				Label:    label,
+				Kind:     kind,
+				Value:    ptrTo(value),
+				Instance: instance,
 			}
 			if kind == sensorTemperature {
 				// Still set, and still the column existing panels read.

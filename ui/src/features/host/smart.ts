@@ -239,13 +239,39 @@ export function driveSeverity(drive: Drive): Finding["severity"] {
  * in a local fleet -- which is why it survived a browser check.
  */
 export function driveTemperature(drive: Drive): number | null {
-  if (driveKind(drive) === "nvme") {
-    // smartctl reports the NVMe health log's temperature in degrees, already
-    // converted from the raw log's Kelvin. Nothing is packed into it.
-    return attr(drive, NVME.temperature);
-  }
-  const raw = attr(drive, ATA.temperature);
-  return raw === null ? null : raw & 0xff;
+  const kind = driveKind(drive);
+  return temperatureFromRaw(attr(drive, driveTempAttrId(drive)), kind);
+}
+
+/**
+ * Which attribute id carries this drive's temperature.
+ *
+ * Separate from driveTemperature because the history needs it on its own: a
+ * series arrives keyed by (device, attr_id) and has to be matched to the row
+ * it belongs to before there is a value to convert.
+ */
+export function driveTempAttrId(drive: Drive): number {
+  return driveKind(drive) === "nvme" ? NVME.temperature : ATA.temperature;
+}
+
+/**
+ * One raw reading in degrees Celsius.
+ *
+ * Split out of driveTemperature so the masking rule above is applied ONCE and
+ * to everything. The latest value and every point of a 24-hour series are the
+ * same field read at different instants, and a chart that skipped the mask
+ * would draw a flat line at a hundred and twenty billion beside a table cell
+ * reading 28 °C.
+ */
+export function temperatureFromRaw(
+  raw: number | null,
+  kind: DriveKind,
+): number | null {
+  if (raw === null) return null;
+  // smartctl reports the NVMe health log's temperature in degrees, already
+  // converted from the raw log's Kelvin. Nothing is packed into it.
+  if (kind === "nvme") return raw;
+  return raw & 0xff;
 }
 
 /** Power-on hours, from whichever id this drive uses. */

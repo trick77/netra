@@ -339,3 +339,148 @@ func TestSensorsReportsItsAvailabilityAsACapability(t *testing.T) {
 		t.Errorf("capabilities = %v, want nothing reported when sensors work", caps)
 	}
 }
+
+// Chip + label is not a unique identity for storage chips, and the block
+// device is what makes it one.
+//
+// The drivetemp driver registers one chip per SATA disk, names every one of
+// them "drivetemp" and publishes no tempN_label. Four disks therefore arrive
+// as four rows that all call themselves drivetemp/temp1, the hub keys sensors
+// on chip + label, and three of every four readings were dropped by an ON
+// CONFLICT DO NOTHING with nothing raised.
+func TestSensorsNamesTheBlockDeviceEachStorageChipMeasures(t *testing.T) {
+	root := t.TempDir()
+
+	chip := func(dirName, name, blockDev string) {
+		t.Helper()
+		dir := filepath.Join(root, "class", "hwmon", dirName)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "name"), []byte(name+"\n"), 0o644); err != nil {
+			t.Fatalf("write name: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "temp1_input"), []byte("40000\n"), 0o644); err != nil {
+			t.Fatalf("write input: %v", err)
+		}
+		if blockDev == "" {
+			return
+		}
+		// The real tree reaches this through a symlink; what the collector
+		// walks is the directory it lands on.
+		if err := os.MkdirAll(filepath.Join(dir, "device", "block", blockDev), 0o755); err != nil {
+			t.Fatalf("mkdir block: %v", err)
+		}
+	}
+
+	chip("hwmon0", "drivetemp", "sda")
+	chip("hwmon1", "drivetemp", "sdb")
+	chip("hwmon2", "coretemp", "")
+
+	testee := collector.NewSensors(root, time.Second)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Sensors) != 3 {
+		t.Fatalf("sensors = %d, want 3", len(res.Sensors))
+	}
+
+	instances := map[string]bool{}
+	for _, r := range res.Sensors {
+		if r.GetChip() != "drivetemp" {
+			continue
+		}
+		if r.GetLabel() != "temp1" {
+			t.Errorf("drivetemp label = %q, want temp1", r.GetLabel())
+		}
+		instances[r.GetInstance()] = true
+	}
+	if !instances["sda"] || !instances["sdb"] {
+		t.Errorf("drivetemp instances = %v, want sda and sdb -- two disks that cannot be told apart are one sensor to the hub", instances)
+	}
+
+	// A chip attached to no block device keeps the identity it has always
+	// had. Populating this field for coretemp would fork the history of
+	// every sensor that has been reporting correctly all along.
+	for _, r := range res.Sensors {
+		if r.GetChip() == "coretemp" && r.GetInstance() != "" {
+			t.Errorf("coretemp instance = %q, want empty", r.GetInstance())
+		}
+	}
+}
+
+// An NVMe controller has no block/ subdirectory: its namespaces hang directly
+// off it, and the namespace is the name an operator recognises.
+func TestSensorsNamesTheNamespaceForAnNvmeChip(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "class", "hwmon", "hwmon0")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "name"), []byte("nvme\n"), 0o644); err != nil {
+		t.Fatalf("write name: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "temp1_label"), []byte("Composite\n"), 0o644); err != nil {
+		t.Fatalf("write label: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "temp1_input"), []byte("38000\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	// Two namespaces and a pile of controller attributes around them. The
+	// pick must be the sorted first, every scrape: an identity that
+	// alternates between nvme0n1 and nvme0n2 forks the drive's history.
+	for _, name := range []string{"nvme0n2", "nvme0n1", "power", "subsystem"} {
+		if err := os.MkdirAll(filepath.Join(dir, "device", name), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+	}
+
+	testee := collector.NewSensors(root, time.Second)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Sensors) != 1 {
+		t.Fatalf("sensors = %d, want 1", len(res.Sensors))
+	}
+	if got := res.Sensors[0].GetInstance(); got != "nvme0n1" {
+		t.Errorf("instance = %q, want nvme0n1", got)
+	}
+}
+
+// PRESENCE decides an identity, never the result of a read -- the same rule
+// the label fallback follows.
+//
+// An empty instance is not a neutral default here: it is precisely the
+// colliding identity this field exists to remove. A drivetemp chip whose
+// attachment cannot be read would land its readings back on top of another
+// drive's, silently, and that is worse than the gap.
+func TestSensorsSkipsAChipWhoseBlockDeviceExistsButCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "class", "hwmon", "hwmon0")
+	if err := os.MkdirAll(filepath.Join(dir, "device"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "name"), []byte("drivetemp\n"), 0o644); err != nil {
+		t.Fatalf("write name: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "temp1_input"), []byte("41000\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	// block is present in the listing but is not a directory, so the read
+	// fails while the dirent still shows it -- the shape of a wedged or
+	// permission-denied attachment.
+	if err := os.WriteFile(filepath.Join(dir, "device", "block"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write block: %v", err)
+	}
+
+	testee := collector.NewSensors(root, time.Second)
+	res, err := testee.Collect(context.Background())
+	if err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if len(res.Sensors) != 0 {
+		t.Fatalf("sensors = %d, want 0 -- an unreadable attachment must not report under a colliding identity", len(res.Sensors))
+	}
+}

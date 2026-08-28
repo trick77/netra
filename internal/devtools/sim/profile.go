@@ -134,6 +134,16 @@ type SensorSpec struct {
 	// value_min path that makes it visible is never exercised against real
 	// data.
 	Stalls bool
+
+	// The block device this chip measures: "sda", "nvme0n1". Empty for a
+	// chip that measures no disk, which is every board sensor.
+	//
+	// Without it no simulated host can reproduce the shape that made this
+	// field necessary -- several chips sharing one name. A real NAS reports
+	// four drivetemp/temp1 chips and the archetypes reported none, so the
+	// collapse those hosts were suffering was invisible to every local run
+	// and every test.
+	Instance string
 }
 
 // DiskSpec is one block device's I/O baseline, in bytes per second.
