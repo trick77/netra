@@ -314,29 +314,30 @@ export function ChartPanel({
   // five labels at 12px do not fit a 58px plot -- they collided in the panel
   // before this was tuned. One interval yields the two or three that do.
   // The chart page, with room for eight, asks for more.
-  // Fill a line chart's area only where the floor is the data's own AND
-  // there is one line to fill.
+  // Fill a line chart's area wherever the floor is the data's own, however
+  // many lines it draws.
   //
-  // The floor half is autoScale's condition stated the other way round: a
-  // chart nobody pinned is scaled between its own quietest and loudest
-  // readings, so the area under the line is the band the series moved through
-  // and the fill is that band. Pin a floor -- a filesystem's fixed 0-100, a
-  // memory stack's mem_total -- and the fill becomes a block whose bottom
-  // edge is an axis decision instead.
+  // This is autoScale's condition stated the other way round: a chart nobody
+  // pinned is scaled between its own quietest and loudest readings, so the
+  // area under the line is the band the series moved through and the fill is
+  // that band. Pin a floor -- a filesystem's fixed 0-100, a memory stack's
+  // mem_total -- and the fill becomes a block whose bottom edge is an axis
+  // decision instead.
   //
-  // The count half is about what OVERLAPPING fills say. These panels draw
-  // independent lines, and six translucent areas from a common baseline
-  // compound where they overlap: the IP fragmentation panels declare six
-  // bases each, and at 0.15 opacity the lower band darkens toward 0.6 and
-  // reads as a cumulative stack -- the one thing a non-stacked panel must
-  // not look like. The lowest series also ends up buried under every other.
-  // A single line has nothing to compound with.
+  // It used to ask for a single series as well, because six translucent
+  // areas from a common baseline compound where they overlap and a panel of
+  // independent lines then reads as a cumulative stack. That is a fact about
+  // the WEIGHT of a fill rather than about whether one belongs, and it is
+  // answered where the weight is chosen: areaFillOpacity() in size.ts thins
+  // each area by the count sharing the baseline. Excluding the multi-series
+  // panels instead left the app saying two different things about the same
+  // free-scaled reading depending on how many counters a family happens to
+  // have -- one line under Load shaded, four under IP statistics bare.
   //
   // Stacks and mirrors are filled by construction and ignore this.
   const filled =
     !stacked &&
     !mirrored &&
-    series.length === 1 &&
     min === undefined &&
     max === undefined &&
     reference === undefined;
@@ -419,9 +420,10 @@ export function ChartPanel({
             max === undefined &&
             reference === undefined
           }
-          // NOT the same condition: free-scaling is about the axis and holds
-          // however many series a panel draws, while the fill also asks that
-          // there be only one of them to fill. See `filled` above.
+          // The same condition as autoScale above, and now literally the
+          // same expression: a fill is honest exactly where the floor is the
+          // data's own. See `filled` above for why the series count dropped
+          // out of it.
           filled={filled}
           stacked={stacked}
           // The rule is unlabelled in both views: the enlarged view's y axis

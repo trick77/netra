@@ -56,6 +56,42 @@ export const REFERENCE_DASH = "4 3";
 export const REFERENCE_WIDTH = 1;
 
 /**
+ * The weight of the area under a line, and how it thins as a panel draws
+ * more of them.
+ *
+ * 0.15 is what a lone filled series has always been drawn at. The divisor is
+ * about what OVERLAPPING fills say: these panels draw INDEPENDENT lines, and
+ * translucent areas from a common baseline compound where they overlap. Left
+ * at 0.15 apiece, the six bases an IP fragmentation panel declares darken the
+ * lower band toward 0.6, so it reads as a cumulative stack -- the one thing a
+ * non-stacked panel must not look like -- and the lowest series ends up
+ * buried under every other.
+ *
+ * Dividing by sqrt(count) holds the deepest overlap under half rather than
+ * letting it run away: six series at 0.061 compound to about 0.31 where all
+ * six cover each other, against 0.60 undivided, and the twelve a six-mount
+ * Filesystem space panel draws reach 0.41 against 0.86. Not 1/count,
+ * which over-corrects -- six at 0.025 is a fill nobody can see, and the point
+ * is to keep the mark, not to concede it. Not the exact 1-(1-0.15)^(1/n)
+ * either, which pins the worst case at 0.15 by making the common case, where
+ * two or three series overlap, fainter than it needs to be.
+ *
+ * Series count rather than plot width because compounding is a fact about
+ * how many areas share a baseline, not about how wide they are drawn. A
+ * panel and its enlarged view therefore weight the fill identically, which
+ * is what keeps a chart the same chart on click.
+ *
+ * The count is what the panel DRAWS, not what its spec declares: the keyed
+ * panels multiply bases by entities, so Filesystem space on six mounts
+ * arrives here as twelve.
+ */
+export const AREA_FILL_OPACITY = 0.15;
+
+export function areaFillOpacity(count: number): number {
+  return count > 1 ? AREA_FILL_OPACITY / Math.sqrt(count) : AREA_FILL_OPACITY;
+}
+
+/**
  * How a mirrored up/down area is drawn -- a dimmed fill with a solid edge of
  * the same series colour.
  *

@@ -22,6 +22,7 @@ import {
   stackBands,
 } from "./geometry";
 import {
+  areaFillOpacity,
   AXIS_STROKE,
   AXIS_WIDTH,
   MIRROR_FILL_OPACITY,
@@ -673,6 +674,10 @@ function LineMarks({
   floor: number;
   filled: boolean;
 }) {
+  // One weight for the whole panel, read off the series count rather than
+  // per series: every fill on this chart shares the baseline, so what makes
+  // an overlap dark is how many of them there are.
+  const fillOpacity = areaFillOpacity(series.length);
   return (
     <>
       {series.map((s) => {
@@ -687,7 +692,7 @@ function LineMarks({
                 data-area
                 d={d}
                 fill={s.color}
-                fillOpacity={0.15}
+                fillOpacity={fillOpacity}
                 stroke="none"
               />
             ))}

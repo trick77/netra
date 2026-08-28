@@ -1,10 +1,55 @@
 import { describe, expect, it } from "vitest";
 import {
+  AREA_FILL_OPACITY,
+  areaFillOpacity,
   MIRROR_FILL_OPACITY,
   MIRROR_STROKE_WIDTH,
   mirrorEdge,
   SPARK_WIDTH,
 } from "./size";
+
+describe("areaFillOpacity", () => {
+  it("draws a lone series at the weight a single fill has always had", () => {
+    expect(areaFillOpacity(1)).toBe(AREA_FILL_OPACITY);
+  });
+
+  // The property that matters, stated as a property: compounding is what
+  // makes overlapping fills read as a stack, so the weight has to fall as
+  // the count rises. Every step, not just the first.
+  it("thins the fill as more areas share the baseline", () => {
+    const counts = [1, 2, 3, 4, 6, 8, 12];
+    const weights = counts.map(areaFillOpacity);
+    for (let i = 1; i < weights.length; i++) {
+      expect(weights[i]!).toBeLessThan(weights[i - 1]!);
+    }
+  });
+
+  // Thinned, not conceded. 1/count would put the six-series fragmentation
+  // panel at 0.025, which is a fill nobody can see; sqrt keeps a mark there.
+  it("keeps the worst declared panel visible", () => {
+    expect(areaFillOpacity(6)).toBeGreaterThan(0.05);
+  });
+
+  // The deepest overlap a panel can produce is every area covering every
+  // other, which composites to 1 - (1 - a)^count. Undivided that runs to 0.60
+  // at the six bases a fragmentation panel declares and 0.86 at the twelve
+  // Filesystem space draws on a six-mount host, both of which read as a
+  // cumulative stack. Divided it stays under half: 0.31 at six, 0.41 at
+  // twelve. The bound is what the rule promises -- the ground under a panel
+  // never goes darker than the data drawn on it.
+  it("holds the deepest overlap under half, however many series share it", () => {
+    for (const count of [2, 4, 6, 8, 12]) {
+      const deepest = 1 - (1 - areaFillOpacity(count)) ** count;
+      expect(deepest).toBeLessThan(0.45);
+    }
+  });
+
+  // A panel with no series has no fill to weight, and a caller that hands
+  // one over must not get NaN or a division by zero into the markup.
+  it("answers the single-series weight for an empty panel", () => {
+    expect(areaFillOpacity(0)).toBe(AREA_FILL_OPACITY);
+  });
+});
 
 describe("mirrorEdge", () => {
   // The threshold is a relation between the ink and the data: an edge is only

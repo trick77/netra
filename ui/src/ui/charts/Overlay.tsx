@@ -62,6 +62,10 @@ export interface OverlayProps {
    * argument Sparkline.tsx has always made for turning its own fill off
    * there.
    *
+   * Says nothing about how MANY series may be filled: areaFillOpacity() in
+   * size.ts thins each area by the count sharing the baseline, so a panel of
+   * six independent lines cannot compound into something stack-shaped.
+   *
    * Ignored by the stack and mirror marks, which are filled by construction.
    */
   filled?: boolean;

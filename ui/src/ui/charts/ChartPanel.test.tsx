@@ -320,6 +320,78 @@ describe("ChartPanel", () => {
     expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan(50);
   });
 
+  // The clause this replaced -- `series.length === 1` -- was never pinned by
+  // a test, so a panel of four counters could have silently lost or regained
+  // its shading. Both halves of the rule are asserted here: a free-scaled
+  // panel fills whatever it draws, a pinned one fills nothing.
+  it("fills a multi-series panel, because free-scaling is what a fill asks for", () => {
+    const { container } = render(
+      <ChartPanel
+        title="IP statistics"
+        series={[
+          { name: "received", color: "var(--s1)", values: [4, 9] },
+          { name: "sent", color: "var(--s2)", values: [3, 7] },
+          { name: "received (v6)", color: "var(--s3)", values: [1, 6] },
+          { name: "sent (v6)", color: "var(--s4)", values: [2, 5] },
+        ]}
+        height={112}
+      />,
+    );
+
+    expect(container.querySelectorAll("svg [data-area]").length).toBe(4);
+  });
+
+  // Four areas from one baseline compound where they overlap, so each is
+  // drawn lighter than the lone fill under Load -- see areaFillOpacity().
+  it("thins a multi-series panel's fill by the count sharing the baseline", () => {
+    function opacityOf(
+      series: { name: string; color: string; values: number[] }[],
+    ) {
+      const { container } = render(
+        <ChartPanel title="Panel" series={series} height={112} />,
+      );
+      return Number(
+        container
+          .querySelector("svg [data-area]")!
+          .getAttribute("fill-opacity"),
+      );
+    }
+
+    const alone = opacityOf([
+      { name: "load", color: "var(--s1)", values: [4, 9] },
+    ]);
+    const four = opacityOf([
+      { name: "received", color: "var(--s1)", values: [4, 9] },
+      { name: "sent", color: "var(--s2)", values: [3, 7] },
+      { name: "received (v6)", color: "var(--s3)", values: [1, 6] },
+      { name: "sent (v6)", color: "var(--s4)", values: [2, 5] },
+    ]);
+
+    expect(four).toBeLessThan(alone);
+    // Thinned, not conceded: the fill is still a mark a reader can see.
+    expect(four).toBeGreaterThan(alone / 4);
+  });
+
+  // The floor half of the rule, which did NOT change: a filesystem pinned to
+  // 0-100 draws a block whose bottom edge is an axis decision, not a band the
+  // series moved through.
+  it("leaves a pinned multi-series panel unfilled", () => {
+    const { container } = render(
+      <ChartPanel
+        title="Filesystem usage"
+        series={[
+          { name: "/", color: "var(--s1)", values: [41, 44] },
+          { name: "/var", color: "var(--s2)", values: [88, 91] },
+        ]}
+        min={0}
+        max={100}
+        height={112}
+      />,
+    );
+
+    expect(container.querySelector("svg [data-area]")).toBeNull();
+  });
+
   // `footer` exists so a reading that qualifies a chart can be drawn with it
   // rather than after the grid the chart sits in -- see the prop's own comment.
   it("draws a footer under the chart", () => {
