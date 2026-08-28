@@ -85,29 +85,34 @@ describe("memoryBands", () => {
     ]);
   });
 
-  // The colours are not decoration and neither is their ORDER: the set was
-  // validated on the pairs that end up ADJACENT in the stack above, so the
+  // The colours are not decoration and neither is their ORDER: the ramp runs
+  // from full chroma to neutral as the bands get more reclaimable, so the
   // assignment and the stacking order are one decision. This pins the
-  // sequence that was measured (s1 -> s2 -> s3 -> s4 -> s8, worst adjacent
-  // pair dE 13.2 deuteranopia on the #1b1b1a surface) so that reordering the
-  // stack, or reassigning a hue, fails here rather than silently shipping a
-  // pair nobody checked.
+  // sequence that was measured (s4 -> s3 -> s6 -> the two neutrals, worst
+  // adjacent pair dE 15.3 on the #1b1b1a surface across normal vision and
+  // simulated protan/deutan/tritan) so that reordering the stack, or
+  // reassigning a hue, fails here rather than silently shipping a pair nobody
+  // checked.
   it("paints the stack in the validated hue sequence", () => {
     expect(memoryBands(full).map((b) => b.color)).toEqual([
-      "var(--s1)",
-      "var(--s2)",
-      "var(--s3)",
       "var(--s4)",
-      "var(--s8)",
+      "var(--s3)",
+      "var(--s6)",
+      "var(--s-neutral)",
+      "var(--s-neutral-2)",
     ]);
   });
 
-  // --s7 is --accent's hue and --st-serious's neighbour. It carried the ARC
-  // band until the palette reserved warm for attention. These bands are drawn
-  // in a 32px fleet cell with a severity badge two columns away, which is the
-  // case the rule exists for -- a large legended chart may still use --s7.
-  it("keeps attention's orange out of the memory stack", () => {
-    expect(memoryBands(full).map((b) => b.color)).not.toContain("var(--s7)");
+  // --s7 is --accent's hue and --st-serious's neighbour, and --s8 is the amber
+  // beside it; between them they carried ARC and cached until the palette
+  // reserved warm for attention and gave page cache the neutrals. These bands
+  // are drawn in a 32px fleet cell with a severity badge two columns away,
+  // which is the case the rule exists for -- a large legended chart may still
+  // use either.
+  it("keeps attention's warm hues out of the memory stack", () => {
+    const colors = memoryBands(full).map((b) => b.color);
+    expect(colors).not.toContain("var(--s7)");
+    expect(colors).not.toContain("var(--s8)");
   });
 
   // Dropping a band a host does not have must not shuffle the ones it does:

@@ -187,10 +187,11 @@
      never exists: never in a dense list (a 32px fleet cell, a container row),
      where a reader has only hue to go on and a severity mark sits two columns
      away; allowed on a large chart that carries a legend and a stats table.
-     The one exception inside that rule is the memory stack, which needs a
-     warm hue to make five bands separable at all and is argued for in
-     lib/bands.ts. ("Orange never appears" is what this comment used to say,
-     directly above the line defining an orange.)
+     The memory stack used to be the one exception, drawing --s8 amber for
+     its cached band. It no longer is: its two cache bands are the neutrals
+     below and the argument is in lib/bands.ts. ("Orange never appears" is
+     what this comment used to say, directly above the line defining an
+     orange.)
 
      s5/s6 sit in the gaps between the existing four hues (~213°, 159°,
      249°, 337°) rather than crowding any of them: s6 ≈180° (cyan) falls
@@ -211,6 +212,21 @@
      normal-vision dE 19.6. Every chart drawing them carries a legend. */
   --s7: #d95926;
   --s8: #c98500;
+  /* Two neutrals, for a band whose meaning is "the kernel is holding this
+     for now and will hand it back the moment anything wants it". The memory
+     stack draws buffers and cached in these: a hue would claim page cache is
+     a subsystem with an identity, the way ARC or shmem is, when it is really
+     the absence of one. Draining the colour out as the stack rises is the
+     chart's argument -- see lib/bands.ts.
+
+     Neutral, not grey-of-the-theme: both carry Clay's warm tint so they read
+     as part of the palette rather than as unstyled default. They sit ABOVE
+     --reference (#6e6c66), the dashed total-RAM rule drawn across the same
+     chart, by 1.23:1 and 2.51:1 -- the annotation stays the quietest mark in
+     the frame, which is the rule --reference's own note sets out. On
+     --surface they measure 4.02:1 and 8.23:1. */
+  --s-neutral: #7d7a73;
+  --s-neutral-2: #b6b3ab;
   /* Traffic's in/out pair, one step lighter per interface.
 
      The per-interface Traffic panel stacks in above the midline and out
