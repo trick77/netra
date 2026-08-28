@@ -104,12 +104,12 @@ describe("ChartDetail y axis", () => {
   // it, so the midline is ZERO and both edges are a peak. The shared
   // [ceiling, ceiling/2, 0] axis said the opposite -- zero at the bottom,
   // where the largest egress actually sits -- so a saturated downlink read
-  // as an idle one. Both mirrored callers ("Interface throughput" and the
+  // as an idle one. Both mirrored callers (the host page's "Traffic" and the
   // container page's "Network") left the axis on.
   it("labels a mirrored chart with zero at the midline and a peak at each edge", () => {
     render(
       <ChartDetail
-        title="Interface throughput"
+        title="Traffic"
         series={[
           { name: "ingress", color: "var(--s2)", values: [10, 40] },
           { name: "egress", color: "var(--s5)", values: [5, 20] },
@@ -137,7 +137,7 @@ describe("ChartDetail y axis", () => {
   it("derives its ceiling from the peak band, not from the mean line", () => {
     render(
       <ChartDetail
-        title="Interface throughput"
+        title="Traffic"
         series={[
           {
             name: "in",

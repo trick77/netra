@@ -81,7 +81,7 @@ describe("the old chart-page route", () => {
   // And on the tab that actually draws it, rather than on Graphs regardless
   // of the slug -- which is what it did while Graphs held every panel.
   it("lands on the tab holding that chart rather than nowhere", () => {
-    expect(parseRoute("/hosts/3/chart/interface-throughput")).toEqual({
+    expect(parseRoute("/hosts/3/chart/host-traffic")).toEqual({
       name: "host",
       hostId: "3",
       tab: "network",
@@ -101,6 +101,17 @@ describe("the old chart-page route", () => {
       name: "host",
       hostId: "3",
       tab: "system",
+    });
+  });
+
+  // A RETIRED slug, as opposed to an unknown one: Traffic absorbed Interface
+  // throughput, so a link to it has a real successor and the System fallback
+  // above would be a worse answer than the one this file used to give.
+  it("sends a retired slug to the panel that absorbed it", () => {
+    expect(parseRoute("/hosts/3/chart/interface-throughput")).toEqual({
+      name: "host",
+      hostId: "3",
+      tab: "network",
     });
   });
 

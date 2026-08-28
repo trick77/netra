@@ -427,12 +427,12 @@ export function cpuBands(
  *    peak of anything -- it adds bursts that happened in different minutes of
  *    the same bucket as though they had happened at once. The old call site
  *    knew this and accepted the bias deliberately.
- *  - The peak existed so a fleet row could answer "did this host spike",
- *    which the mean on a proportional axis genuinely hid. That is no longer
- *    what makes a spike visible: UpDownSparkline scales through asinh now, so
- *    a burst still reaches the top of the cell without flattening the other
- *    23 hours to a hairline. Measured on ark.o11.net, the peak cost a factor
- *    of 2.7 in ceiling and bought an answer the scale now gives for free.
+ *  - The peak existed so a fleet row could answer "did this host spike".
+ *    The mean answers it too, because the cell is scaled to the mean series'
+ *    OWN maximum: the loudest bucket of the window always reaches the top of
+ *    the cell, whichever of the two is drawn. What the peak bought was a
+ *    taller ceiling -- measured on ark.o11.net, a factor of 2.7 -- which
+ *    every quieter bucket in the same cell then paid for.
  *
  * It also puts traffic on the same footing as the CPU and memory cells, which
  * have always read _avg, and matches the host page's throughput panel, which

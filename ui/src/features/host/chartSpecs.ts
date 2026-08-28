@@ -659,12 +659,11 @@ export const NETWORK: PanelSpec[] = [
     fmt: bytes,
   },
   // Half of net_samples, stored since the collector was written and drawn
-  // nowhere. Traffic and Interface throughput read rx_bytes and tx_bytes and
-  // nothing else, so a NIC dropping frames looked exactly like a healthy one
-  // carrying the same load -- which is the failure somebody opens a network
-  // tab to find.
+  // nowhere. Traffic reads rx_bytes and tx_bytes and nothing else, so a NIC
+  // dropping frames looked exactly like a healthy one carrying the same load
+  // -- which is the failure somebody opens a network tab to find.
   //
-  // Not mirrored, unlike the two throughput panels above: a mirror states that
+  // Not mirrored, unlike the throughput panel above: a mirror states that
   // a quantity has a direction and invites the reader to compare the two
   // halves, and "which direction are the errors on" is a real question here
   // rather than a shape. Both climb together on a bad cable and separately on

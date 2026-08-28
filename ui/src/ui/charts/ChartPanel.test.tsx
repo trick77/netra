@@ -234,7 +234,7 @@ describe("ChartPanel", () => {
   it("prints the unit beside a formatted value", () => {
     render(
       <ChartPanel
-        title="Interface throughput"
+        title="Traffic"
         unit="B/s"
         fmt={(v) => (v === null ? "none" : `${v} MB`)}
         series={[{ name: "rx", color: "var(--s1)", values: [12] }]}

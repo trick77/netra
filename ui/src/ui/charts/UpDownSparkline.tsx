@@ -3,12 +3,12 @@
 // independently at its own gaps and never lets one side's null force a gap
 // on the other -- this component supplies the shared max and the colours.
 //
-// The mark weights come from size.ts, not from here. Interface throughput
-// plots the same rx/tx pair through the same mirrorPaths() geometry, and the
-// two are read on the same screen: a fleet row's traffic cell and the
-// throughput panel must be the same mark at two sizes, or the operator has
-// to learn the chart twice. Sharing the constants is what makes that true by
-// construction rather than by everyone remembering to edit both files.
+// The mark weights come from size.ts, not from here. The host page's Traffic
+// panel plots the same rx/tx pair through the same geometry, and the two are
+// read on the same screen: a fleet row's traffic cell and the panel it opens
+// must be the same mark at two sizes, or the operator has to learn the chart
+// twice. Sharing the constants is what makes that true by construction rather
+// than by everyone remembering to edit both files.
 import { extent } from "./geometry";
 import { Chart } from "./Chart";
 // The mirror weights and the midline stroke are Chart's now; only the shared

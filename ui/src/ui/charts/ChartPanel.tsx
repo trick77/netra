@@ -275,8 +275,8 @@ export function ChartPanel({
   // `unit` is printed whenever it is given, formatter or not. Suppressing it
   // for every formatted panel was an over-correction: it fixed percent()
   // with unit="%" printing "12 % %" and broke five panels whose formatter
-  // carries a magnitude but not a rate -- "Interface throughput" showed
-  // 1.2 MB for a 1.2 MB/s link, a rate reading as a total. A formatter that
+  // carries a magnitude but not a rate -- the traffic panel showed 1.2 MB
+  // for a 1.2 MB/s link, a rate reading as a total. A formatter that
   // already carries its own unit must simply not be given one; that is the
   // caller's contract, and it is stated on the prop.
   // With more than one series the headline is series[0]'s alone, so it says

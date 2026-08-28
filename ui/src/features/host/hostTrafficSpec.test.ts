@@ -151,6 +151,27 @@ describe("the host-traffic spec", () => {
     expect(bands.map((b) => b.color)).toEqual([UP_SHADES[0], DOWN_SHADES[0]]);
   });
 
+  it("drops an interface that can only draw half its pair", () => {
+    // Given an interface whose rx is null at every bucket -- the case a bare
+    // metal host's cpu_steal is on the CPU stack: correctly absent, not zero
+    // -- while its tx reports normally
+    const res = net();
+    res.series[1]!.points = res.series[1]!.points.map(([at], i) => [
+      at,
+      null,
+      i + 1,
+    ]) as (typeof res.series)[number]["points"];
+
+    // When the page's bands are built
+    const bands = bandsFor(specForSlug("host-traffic")!, res);
+
+    // Then eth1 is left out ENTIRELY, both halves. A stacked mirror reads its
+    // halves off band position, so contributing "eth1 out" alone would shift
+    // it to an even index and draw an outbound reading above the midline.
+    // Losing one interface's half-reading is the smaller lie.
+    expect(bands.map((b) => b.name)).toEqual(["eth0 in", "eth0 out"]);
+  });
+
   it("keeps an interface that moved once", () => {
     // Given an interface idle but for a single bucket
     const res = net();

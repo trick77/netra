@@ -1,8 +1,8 @@
 // The one test that exists to fail when the two mirrored charts drift apart.
 //
 // UpDownSparkline (a fleet row's traffic cell) and Overlay's mirrored branch
-// (the host page's Interface throughput panel) draw the same reading -- rx
-// above the midline, tx below it -- through the same mirrorPaths() geometry,
+// (the host page's Traffic panel) draw the same reading -- rx above the
+// midline, tx below it -- through the same mirrorPaths() geometry,
 // and an operator scans one and then the other. They HAVE drifted before: the
 // sparkline sat at a fully opaque fill with no edge while the panel had a
 // dimmed fill and a solid one, so the same fact about the same host was two

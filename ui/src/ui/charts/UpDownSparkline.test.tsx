@@ -100,8 +100,8 @@ describe("UpDownSparkline", () => {
 
   // The mark itself: a dimmed fill with a solid edge of the same token, and
   // the mirror axis. Every number here is Overlay's mirrored branch verbatim
-  // -- Interface throughput draws the same rx/tx pair, and the two are read
-  // on the same screen. These assertions exist so a divergence fails here
+  // -- the host page's Traffic panel draws the same rx/tx pair, and the two
+  // are read on the same screen. These assertions exist so a divergence fails here
   // rather than being noticed as "the fleet row looks a bit off".
   describe("mark weights", () => {
     it("dims the fill and strokes the same token on both sides", () => {
