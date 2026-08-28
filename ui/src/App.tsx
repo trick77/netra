@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   getContainers,
@@ -534,13 +534,29 @@ function HostScreen({
   const setParam = paramSetter(`/hosts/${hostId}/${tab}`, search, go);
   const [range, chooseRange] = rangeParam(search, HOST_RANGE_VALUES, setParam);
 
+  // Host detail was the one screen that handed its poll error nowhere, so an
+  // expired session left it sitting on data it could no longer refresh while
+  // every other screen went to the login page. It fetches on a tick now, so
+  // it has an error to hand over on every tick as well.
+  const [pollError, setPollError] = useState<Error | null>(null);
+  useAuthRedirect(pollError, go, { name: "host", hostId, tab });
+
   return (
     <HostPage
+      // A different host is a different page. HostPage polls its record and
+      // its tab families now, and usePoll deliberately keeps the last good
+      // data across a dependency change -- so without a remount the previous
+      // host's inventory would sit under the new host's name until the new
+      // fetch lands, which is the one kind of wrong netra must never be. The
+      // tab and the range live in the URL, so a remount resets nothing the
+      // reader chose.
+      key={hostId}
       hostId={hostId}
       tab={tab}
       onTabChange={(next: HostTab) => go(`/hosts/${hostId}/${next}${search}`)}
       range={range}
       onRangeChange={chooseRange}
+      onPollError={setPollError}
     />
   );
 }
