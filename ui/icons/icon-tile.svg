@@ -1,0 +1,33 @@
+<!--
+  The iOS home-screen icon (apple-touch-icon.png, 180px). A copy of icon.svg
+  with two departures, both forced by the OS rather than chosen.
+
+  OPAQUE, edge to edge. iOS flattens alpha onto BLACK, so a transparent source
+  ships as a black square on a real iPhone — which looks fine in every viewer on
+  the way there. The ground is #131312, netra's own color-bg, and the chip sits
+  on it.
+
+  The tile's corners stay SQUARE. iOS applies its own superellipse mask, and
+  rounding them here would double-round them under it. That puts one rounded
+  shape inside a square one: the chip's own rx-4 corners are the mark and are
+  meant to be seen — only the TILE's corners meet the OS mask.
+
+  The chip also sits far further in, at 60% coverage against the master's 100%,
+  because here the tile itself is visible and the mark has to be set in it rather
+  than pressed against its edge. Everything inside the chip is in glyph units, so
+  shrinking it thins the trace in step and the weight stays proportional. The
+  transform is scale = 64*0.60/18, translate = 32 - 12*scale, per icon.svg.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
+    <stop offset="0" stop-color="#e08a68"/>
+    <stop offset="1" stop-color="#c25f34"/>
+  </linearGradient>
+  <rect width="64" height="64" fill="#131312"/>
+  <g transform="translate(6.4 6.4) scale(2.13333)">
+    <rect x="3" y="3" width="18" height="18" rx="4" fill="url(#og)"/>
+    <g transform="translate(5.6842 5.6842) scale(0.526316)" fill="none" stroke="#131312" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M2 12h4.7L9 5l6 14 2.3-7H22"/>
+    </g>
+  </g>
+</svg>

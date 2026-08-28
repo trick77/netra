@@ -56,6 +56,16 @@ func NewRouter(a *auth.Authenticator, s *store.Store, cfg config.Config, oidcSvc
 	// through RequireAdmin and answer it with a redirect to the login page.
 	mux.Handle("GET /login-cover.webp", login)
 
+	// The tab icon, the touch and launcher icons, and the web manifest, for
+	// the same reason as the line above: a signed-out browser is on the login
+	// page and asks for them, and the catch-all would answer each with a
+	// redirect to the page it is already on. The handler enforces its own
+	// allowlist, so these routes cannot reach anything else in dist/.
+	publicAssets := web.PublicAssets()
+	for _, p := range web.PublicAssetPaths {
+		mux.Handle("GET /"+p, publicAssets)
+	}
+
 	// Everything else is the single-page UI, behind the same admin token as
 	// the API. redirectToLogin stays true so a browser without a session
 	// lands on the login page rather than reading a bare 401 -- the SPA
