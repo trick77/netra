@@ -699,6 +699,23 @@ function Crosshair({
   const cx = xAt(rect, fraction);
   const h = plotHeight(rect);
 
+  /**
+   * Whether the stack band `i` belongs to is broken at this index.
+   *
+   * The same test the geometry makes, and it has to be: a mirrored stack's
+   * halves are every other series, so a hole in the up half leaves the down
+   * half whole. A non-stacked mark has no stack to break.
+   */
+  const stackBroken = (i: number): boolean => {
+    if (!stacked && !mirrorStacked) return false;
+    const step = mirrorStacked ? 2 : 1;
+    for (let k = i % step; k < series.length; k += step) {
+      const v = series[k]?.values[index];
+      if (v === null || v === undefined) return true;
+    }
+    return false;
+  };
+
   return (
     <g data-crosshair>
       <line
@@ -727,6 +744,15 @@ function Crosshair({
           : stacked
             ? runningTotal(series, index, i)
             : null;
+        // Both stack geometries break EVERY band of a stack at an index
+        // where any of that stack's series is null -- the running total is
+        // undefined there for the layers below the hole as much as for the
+        // ones above it. So the whole stack loses its dots, not just the
+        // layers over the gap: a dot at a raw value there would float over a
+        // hole, stating a height nothing was drawn at. The rule the
+        // docstring gives for a null bucket applies to the stack a band
+        // belongs to, not only to the band itself.
+        if (stackBroken(i)) return null;
         const shown = stackedTo ?? v;
         const t = max === min ? 0.5 : (shown - min) / (max - min);
         const cy = mirrored

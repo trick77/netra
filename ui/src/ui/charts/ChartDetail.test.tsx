@@ -85,6 +85,57 @@ describe("ChartDetail", () => {
   });
 });
 
+describe("ChartDetail marks", () => {
+  // The enlarged view is a different renderer from the panel (ChartFigure,
+  // not Overlay), and the two choose their mark independently. They must
+  // choose the SAME one: a panel that opens into a different chart is the
+  // one thing clicking a chart must not do. ChartFigure once knew only
+  // "mirror", so the per-interface Traffic panel opened into a dialog that
+  // OVERLAID its pairs while its ceiling stayed the stacked half-total --
+  // every band squashed, the outer edge no longer the host's total, and
+  // eth0's pair covering eth1's. A one-NIC host hides it exactly: one pair
+  // overlapping is one pair stacked.
+  it("stacks a mirrored stack rather than overlaying its pairs", () => {
+    render(
+      <ChartDetail
+        title="Traffic"
+        series={[
+          { name: "eth0 in", color: "var(--s2)", values: [10, 12] },
+          { name: "eth0 out", color: "var(--s5)", values: [20, 22] },
+          { name: "eth1 in", color: "var(--in-2)", values: [30, 32] },
+          { name: "eth1 out", color: "var(--out-2)", values: [40, 42] },
+        ]}
+        max={100}
+        mirrored
+        stacked
+        onClose={() => {}}
+      />,
+    );
+    // The stacked mirror tags its layers data-band; the plain mirror wraps
+    // each pair in a data-mirror group and draws a midline per pair.
+    expect(document.querySelectorAll("[data-band][data-up]").length).toBe(2);
+    expect(document.querySelectorAll("[data-band][data-down]").length).toBe(2);
+    expect(document.querySelectorAll("[data-mirror]").length).toBe(0);
+  });
+
+  it("still overlays a plain mirrored pair", () => {
+    render(
+      <ChartDetail
+        title="Traffic"
+        series={[
+          { name: "in", color: "var(--s2)", values: [10, 12] },
+          { name: "out", color: "var(--s5)", values: [20, 22] },
+        ]}
+        max={100}
+        mirrored
+        onClose={() => {}}
+      />,
+    );
+    expect(document.querySelectorAll("[data-mirror]").length).toBe(1);
+    expect(document.querySelectorAll("[data-band]").length).toBe(0);
+  });
+});
+
 describe("ChartDetail y axis", () => {
   // The labels are SVG text inside the plot now, not an HTML gutter beside
   // it, and that is the point rather than an implementation detail: both

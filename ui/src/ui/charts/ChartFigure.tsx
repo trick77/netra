@@ -107,7 +107,18 @@ export function ChartFigure({
         min={min}
         max={max}
         reference={reference}
-        mark={mirrored ? "mirror" : stacked ? "stack" : "line"}
+        // The same four-way choice Overlay makes, and it has to stay the
+        // same one: this is the ENLARGED view of a panel Overlay drew, and a
+        // mark that differs here is a different chart on click.
+        mark={
+          mirrored
+            ? stacked
+              ? "mirrorStack"
+              : "mirror"
+            : stacked
+              ? "stack"
+              : "line"
+        }
         label={label}
         y={yTicks}
         x={xTicks}

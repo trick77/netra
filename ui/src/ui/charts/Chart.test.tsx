@@ -334,6 +334,39 @@ describe("Chart", () => {
     });
   });
 
+  describe("crosshair over a hole in a stack", () => {
+    // The docstring's rule -- the rule says WHERE, the dot says HOW MUCH,
+    // and at a hole there is no value to mark -- applies to the STACK a band
+    // belongs to, not only to the band itself. Both stack geometries break
+    // every band at an index where any of their series is null, so a dot
+    // drawn at a raw value there floats over a hole nothing was drawn in.
+    it("draws no dot for a half whose stack is broken there", () => {
+      const holed: ChartSeries[] = [
+        { name: "eth0 in", color: "var(--s2)", values: [10, 12] },
+        { name: "eth0 out", color: "var(--s5)", values: [20, 22] },
+        { name: "eth1 in", color: "var(--in-2)", values: [null, 32] },
+        { name: "eth1 out", color: "var(--out-2)", values: [40, 42] },
+      ];
+      const c = draw(
+        <Chart
+          series={holed}
+          width={200}
+          height={100}
+          max={100}
+          min={0}
+          mark="mirrorStack"
+          cursor={0}
+        />,
+      );
+      // eth1's inbound is the hole, and it takes eth0's inbound dot with it:
+      // the up half draws no band at that index at all. The down half is
+      // whole and keeps both of its dots.
+      expect(c.querySelectorAll("[data-cursor-dot]").length).toBe(2);
+      // And the rule itself is still drawn -- it says WHERE.
+      expect(c.querySelector("[data-cursor]")).not.toBeNull();
+    });
+  });
+
   describe("crosshair on a stack", () => {
     it("puts each dot on its own band, not on its raw value", () => {
       const c = draw(
