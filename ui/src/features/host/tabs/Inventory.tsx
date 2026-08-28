@@ -679,7 +679,9 @@ function DriveTempCell({
   const now = driveTemperature(row);
   if (now === null) return ABSENT;
 
-  const reading = <span className="reading">{now} °C</span>;
+  // .val, the name every other cell in the app gives the number beside its
+  // chart or meter -- .mem-cell .val, .usage-cell .val, .sensor-row .val.
+  const reading = <span className="val">{now} °C</span>;
   // No history is not an error: SMART is hourly, so a drive first seen this
   // hour has a reading and no line yet, and the number is still the answer.
   if (values.length === 0) {
@@ -715,7 +717,6 @@ function DriveTempCell({
         title={`Temperature · ${row.device}`}
         label={`Enlarge temperature for ${row.device}`}
         className="inline"
-        unit="°C"
         series={[
           { name: `${row.device} temperature`, color: "var(--s1)", values },
         ]}
@@ -735,10 +736,6 @@ function DriveTempCell({
           color="var(--s1)"
           width={110}
           height={24}
-          // Never anchored at zero: a drive lives between 30 and 50 °C, and
-          // an area filled from 0 floods the cell with a block whose top
-          // edge is the only part carrying information.
-          fill={false}
           label={
             range === undefined
               ? `${row.device} temperature trend`
@@ -760,13 +757,12 @@ function driveColumns(
     column.key === "temperature"
       ? {
           ...column,
-          // The cadence, in the header rather than in a footnote. SMART is
-          // polled hourly (read/tier.go pins the family to one raw tier), so
-          // the line is 24 points over a day and a single point at the 1 h
-          // range -- a reader who is not told that reads a sparse line as a
-          // broken one. The window itself is the page's range selector and
-          // is not restated here.
-          header: "Temp · hourly",
+          // Just "Temp". The line covers the range chosen at the top of the
+          // page like every other chart on it, so a header saying "hourly"
+          // described the sampling cadence in the one place a reader looks
+          // for what is being shown -- and at the 24h range what is shown is
+          // 24 hours. The sampling cadence is not a column heading.
+          header: "Temp",
           // Wide enough for the line at the size it was drawn plus the
           // reading. Charts shrink to fit rather than widening the page
           // (svg.spark, max-width:100%), so without a width of its own the

@@ -3000,21 +3000,23 @@ tbody:first-of-type .grouprow th {
   color: var(--st-crit-text);
 }
 
-/* The Storage tab's drive table, Temp column: the sparkline and the reading
-   on one line, both pushed to the right edge the column is aligned to.
-
-   The line comes first and the number last, so a column of drives reads as a
-   column of numbers with their movement leading into each -- the same order
-   the sensor rows on Overview use. Right-aligned as a whole, because the cell
-   is still a number column and a ragged right edge is what makes four
-   temperatures hard to compare. */
+/* The Storage tab's drive table, Temp column: a sparkline and its reading on
+   one line. The same shape as .traffic-cell, which is the fleet list's
+   sparkline-plus-number cell, down to the gap -- this is that cell, in
+   another table. Right-aligned as a whole because the column is a number
+   column, and a ragged right edge is what makes four temperatures hard to
+   compare. */
 .temp-cell {
   display: flex;
+  flex-direction: row;
   align-items: center;
   justify-content: flex-end;
   gap: var(--space-3);
 }
-.temp-cell .reading {
+.temp-cell .val {
+  /* --text-label, like .uptime-cell, .mem-cell .val and .traffic-cell .rate:
+     the same job, a quiet secondary reading inside a table cell. */
+  font-size: var(--text-label);
   font-variant-numeric: tabular-nums;
   /* "49 °C" is one word. Without this the cell is narrow enough on a laptop
      that it breaks at the space, and the column reads as a stack of numbers
