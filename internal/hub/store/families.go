@@ -919,12 +919,19 @@ func (s *Store) UpsertHostPackages(ctx context.Context, hostID int32, rows []*ne
 		return 0, nil
 	}
 
+	// version_changed_at is left out of the INSERT: a row this statement
+	// creates takes the column's DEFAULT now(), and on the conflict path it
+	// moves only when the version actually differs. A daily re-emit of an
+	// unchanged inventory must not make every package look upgraded today.
 	const stmt = `
 		INSERT INTO host_packages (host_id, name, version, arch, format, size_bytes)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (host_id, name, arch) DO UPDATE
 		   SET version = EXCLUDED.version, format = EXCLUDED.format,
-		       size_bytes = EXCLUDED.size_bytes, last_seen = now()`
+		       size_bytes = EXCLUDED.size_bytes, last_seen = now(),
+		       version_changed_at = CASE
+		           WHEN host_packages.version IS DISTINCT FROM EXCLUDED.version
+		           THEN now() ELSE host_packages.version_changed_at END`
 
 	batch := &pgx.Batch{}
 	for _, r := range rows {

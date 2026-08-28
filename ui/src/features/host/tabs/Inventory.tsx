@@ -60,9 +60,9 @@ export interface InventoryProps<T> {
   /** Everything a search should match, flattened by the caller -- this
    * component never guesses which fields of an unknown row are text. */
   searchText: (row: T) => string;
-  /** List-specific filters (Packages' 30-day toggle), rendered beside the
-   * search box. The caller applies them to `rows`; this component only
-   * gives them a home so every list's toolbar looks the same. */
+  /** List-specific filters, rendered beside the search box. The caller
+   * applies them to `rows`; this component only gives them a home so every
+   * list's toolbar looks the same. */
   controls?: ReactNode;
   /** Why this list is short, when the agent said so. Rendered above the list
    * rather than in place of it: the two facts are "what was collected" and
@@ -83,6 +83,9 @@ export interface InventoryProps<T> {
   /** Marks a row that needs attention, drawn as a rail down its leading
    * edge. Handed straight to Table; see its note. */
   rowSeverity?: TableProps<T>["rowSeverity"];
+  /** The order this list arrives in. Handed straight to Table; see its
+   * note. */
+  defaultSort?: TableProps<T>["defaultSort"];
   /** Print `label` as a visible heading above the toolbar, in the same
    * .grouphead the chart groups below use.
    *
@@ -105,6 +108,7 @@ export function Inventory<T>({
   emptyBody,
   groupBy,
   rowSeverity,
+  defaultSort,
   heading = false,
 }: InventoryProps<T>) {
   const [query, setQuery] = useState("");
@@ -171,6 +175,7 @@ export function Inventory<T>({
           rowKey={rowKey}
           rowSeverity={rowSeverity}
           groupBy={grouping}
+          defaultSort={defaultSort}
         />
       )}
     </section>
@@ -616,10 +621,11 @@ const ADDRESS_COLUMNS: Column<Address>[] = [
     // it stays healthy. Headed "Last seen" that read as the host having gone
     // quiet; it is the exact opposite.
     //
-    // The packages table keeps "Last seen" and is not the same bug: its
-    // collector re-emits the whole inventory when the daily confirmation
-    // falls due, changed or not, so there the timestamp really is a
-    // last-seen.
+    // The packages table heads its own column "Last changed" for a different
+    // reason: its collector re-emits the whole inventory when the daily
+    // confirmation falls due, changed or not, so last_seen there is a real
+    // last-seen and says nothing about change. It carries a dedicated
+    // version_changed_at instead.
     header: "Last changed",
     cell: (row) => <When iso={row.last_seen} />,
   },
@@ -1205,7 +1211,9 @@ const PACKAGE_COLUMNS: Column<Pkg>[] = [
     align: "right",
     cell: (row) => bytes(row.size_bytes),
     // Bytes, not the formatted string -- see the filesystem table's own size
-    // columns for what that costs.
+    // columns for what that costs. Null stays null rather than becoming 0: a
+    // package that reported no size is not the smallest one installed, and
+    // sorting must not claim it is.
     sortValue: (row) => row.size_bytes,
   },
   {
@@ -1215,59 +1223,30 @@ const PACKAGE_COLUMNS: Column<Pkg>[] = [
     sortValue: (row) => Date.parse(row.first_seen),
   },
   {
-    key: "last_seen",
-    header: "Last seen",
-    cell: (row) => <When iso={row.last_seen} />,
-    sortValue: (row) => Date.parse(row.last_seen),
+    key: "changed",
+    header: "Last changed",
+    cell: (row) => <When iso={row.version_changed_at} />,
+    sortValue: (row) => Date.parse(row.version_changed_at),
   },
 ];
 
 /**
- * Whether this package row appeared inside the window -- the "what changed
- * before this broke" question.
+ * Newest version change first, which is the question this list is opened
+ * with: "what moved on this host recently".
  *
- * first_seen is the only usable signal: an install or an upgrade writes a
- * new (name, version) row and so a new first_seen, while last_seen is
- * refreshed by every scrape and would mark every installed package as
- * changed.
+ * Alphabetical order answers "is X installed", which the search box already
+ * answers in one keystroke, and it buries the four packages that changed
+ * this week somewhere in the middle of two thousand that did not.
  */
-export function changedSince(row: Pkg, now: Date, days: number): boolean {
-  const cutoff = now.getTime() - days * 24 * 60 * 60 * 1000;
-  return new Date(row.first_seen).getTime() >= cutoff;
-}
-
-const CHANGED_WINDOW_DAYS = 30;
-
-export function Packages({
-  rows,
-  now = new Date(),
-}: {
-  rows: readonly Pkg[];
-  /** Injected by tests so the 30-day window is deterministic. */
-  now?: Date;
-}) {
-  const [onlyChanged, setOnlyChanged] = useState(false);
-  const visible = onlyChanged
-    ? rows.filter((row) => changedSince(row, now, CHANGED_WINDOW_DAYS))
-    : rows;
-
+export function Packages({ rows }: { rows: readonly Pkg[] }) {
   return (
     <Inventory
       label="Packages"
       columns={PACKAGE_COLUMNS}
-      rows={visible}
+      rows={rows}
       rowKey={(row) => `${row.name}/${row.arch}/${row.version}`}
       searchText={(row) => `${row.name} ${row.version} ${row.arch}`}
-      controls={
-        <label>
-          <input
-            type="checkbox"
-            checked={onlyChanged}
-            onChange={(e) => setOnlyChanged(e.target.checked)}
-          />{" "}
-          changed in the last {CHANGED_WINDOW_DAYS} days
-        </label>
-      }
+      defaultSort={{ key: "changed", dir: "desc" }}
     />
   );
 }

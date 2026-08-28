@@ -154,9 +154,19 @@ export interface TableProps<T> {
      */
     forceExpanded?: boolean;
   };
+  /**
+   * The order this list is worth reading in, before anyone clicks a header.
+   *
+   * Names a column's `key` and a direction, and only seeds the initial state:
+   * the reader's first click on any header takes it from there, and nothing
+   * puts it back. A list whose most useful order is not alphabetical -- the
+   * packages list, where "what changed last" is the question -- should say so
+   * rather than make every reader sort it by hand on arrival.
+   */
+  defaultSort?: SortState;
 }
 
-type SortState = { key: string; dir: "asc" | "desc" };
+export type SortState = { key: string; dir: "asc" | "desc" };
 
 /** What each rail hue means, in a word. Only the three severities a rail is
  * ever drawn for -- see rowSeverity. */
@@ -172,10 +182,17 @@ export function Table<T>({
   rowKey,
   rowSeverity,
   groupBy,
+  defaultSort,
 }: TableProps<T>) {
   // Uncontrolled: every caller wants the same click-to-sort behaviour, and
-  // threading identical state through each of them buys nothing.
-  const [sort, setSort] = useState<SortState | null>(null);
+  // threading identical state through each of them buys nothing. defaultSort
+  // seeds it once; a caller that changes the prop later is not answered,
+  // because by then the order on screen is the reader's, not the caller's.
+  const [sort, setSort] = useState<SortState | null>(defaultSort ?? null);
+  // Which direction the current column's cycle began in. See toggle.
+  const [cycleStart, setCycleStart] = useState<SortState["dir"]>(
+    defaultSort?.dir ?? "asc",
+  );
 
   // The groups the reader has CLOSED, not the ones they opened. Collapsible
   // groups start open, so the empty set is the initial state and no group key
@@ -248,17 +265,28 @@ export function Table<T>({
     });
   }, [sorted, groupBy]);
 
-  const toggle = (key: string) =>
-    setSort((prev) =>
-      prev === null || prev.key !== key
-        ? { key, dir: "asc" }
-        : prev.dir === "asc"
-          ? { key, dir: "desc" }
-          : // Third click clears it, back to the order the caller gave --
-            // which for the fleet is the server's own ordering, and is a
-            // state a reader otherwise cannot get back to without a reload.
-            null,
-    );
+  // Three stops per column, and the cycle starts where the column already
+  // stands: ascending for one the reader clicked, and the caller's own
+  // direction for the column defaultSort seeded. Starting the seeded column
+  // at "asc" regardless would make its FIRST click the third stop -- the
+  // packages list, which arrives newest-changed first, would answer a click
+  // on that header by clearing the sort and dropping back to the server's
+  // name order, and oldest-first would cost three clicks.
+  const toggle = (key: string) => {
+    if (sort === null || sort.key !== key) {
+      setCycleStart("asc");
+      setSort({ key, dir: "asc" });
+      return;
+    }
+    if (sort.dir === cycleStart) {
+      setSort({ key, dir: cycleStart === "asc" ? "desc" : "asc" });
+      return;
+    }
+    // Last stop clears it, back to the order the caller gave -- which for the
+    // fleet is the server's own ordering, and is a state a reader otherwise
+    // cannot get back to without a reload.
+    setSort(null);
+  };
 
   const cellStyle = (col: Column<T>): CSSProperties | undefined => {
     if (!col.width && !col.align) return undefined;
