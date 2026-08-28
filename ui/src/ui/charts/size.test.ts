@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AREA_FILL_OPACITY,
   areaFillOpacity,
+  AREA_OVERLAP_CEILING,
   MIRROR_FILL_OPACITY,
   MIRROR_STROKE_WIDTH,
   mirrorEdge,
@@ -34,13 +35,26 @@ describe("areaFillOpacity", () => {
   // other, which composites to 1 - (1 - a)^count. Undivided that runs to 0.60
   // at the six bases a fragmentation panel declares and 0.86 at the twelve
   // Filesystem space draws on a six-mount host, both of which read as a
-  // cumulative stack. Divided it stays under half: 0.31 at six, 0.41 at
-  // twelve. The bound is what the rule promises -- the ground under a panel
-  // never goes darker than the data drawn on it.
-  it("holds the deepest overlap under half, however many series share it", () => {
-    for (const count of [2, 4, 6, 8, 12]) {
+  // cumulative stack.
+  //
+  // Counts well past those are reachable, because the keyed panels take one
+  // pass per mount or disk and nothing caps that -- so the bound is asserted
+  // over a range no host is going to exceed rather than over the handful the
+  // curve was tuned against. 24 is a twelve-mount Filesystem space panel,
+  // where sqrt alone would reach 0.53 and the ceiling is what holds it.
+  it("holds the deepest overlap at the ceiling, however many series share it", () => {
+    for (const count of [2, 4, 6, 8, 12, 16, 24, 32, 64]) {
       const deepest = 1 - (1 - areaFillOpacity(count)) ** count;
-      expect(deepest).toBeLessThan(0.45);
+      expect(deepest).toBeLessThanOrEqual(AREA_OVERLAP_CEILING + 1e-9);
+    }
+  });
+
+  // The ceiling is a backstop, not the rule: every count a panel's own spec
+  // can declare is still drawn on the sqrt curve the weights above reason
+  // about, and only the uncapped keyed panels ever reach the clamp.
+  it("leaves the declared panel sizes on the sqrt curve", () => {
+    for (const count of [2, 3, 4, 6, 8, 12]) {
+      expect(areaFillOpacity(count)).toBe(AREA_FILL_OPACITY / Math.sqrt(count));
     }
   });
 
