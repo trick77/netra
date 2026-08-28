@@ -1,8 +1,6 @@
-// HostTable and HostCards are two renderings of ONE column definition
-// (hostColumns, Task 11). Neither may invent a cell, drop one, or reorder
-// them: the whole point of the shared definition is that adding a column
-// makes it appear in both. HostCards.test.tsx holds the equivalence test
-// that pins the two against each other.
+// HostTable renders ONE column definition (hostColumns, Task 11) and may not
+// invent a cell, drop one, or reorder them: the whole point of the shared
+// definition is that adding a column there is what puts it on the page.
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { HostTable } from "./HostTable";

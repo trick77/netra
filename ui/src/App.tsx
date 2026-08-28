@@ -22,12 +22,11 @@ import {
   type Route,
 } from "./lib/router";
 import { clampRange, rangeWindow, EVENT_LIMITS, type Range } from "./lib/range";
-import { DENSITY_KEY, RANGE_KEY, writePref } from "./lib/prefs";
+import { RANGE_KEY, writePref } from "./lib/prefs";
 import { EmptyState } from "./ui/EmptyState";
 import {
   FleetPage,
-  FLEET_RANGE_VALUES,
-  type Density,
+  FLEET_RANGE,
   type Entity,
 } from "./features/fleet/FleetPage";
 import {
@@ -55,11 +54,7 @@ import {
   filtersFromQuery,
   filtersToQuery,
 } from "./features/events/EventsPage";
-import {
-  SettingsPage,
-  loadRange,
-  loadView,
-} from "./features/settings/SettingsPage";
+import { SettingsPage, loadRange } from "./features/settings/SettingsPage";
 import { LoginPage } from "./features/auth/LoginPage";
 import { HostAdminPage } from "./features/admin/HostAdminPage";
 import {
@@ -346,7 +341,7 @@ function rangeParam(
 }
 
 /**
- * replace, not push: a range, density or filter change is a way of looking
+ * replace, not push: a range or filter change is a way of looking
  * at this page, not a different place. Pushing one entry per toggle turns
  * Back into an undo of fiddling rather than a way out of the page.
  */
@@ -356,18 +351,13 @@ function paramSetter(path: string, search: string, go: Go) {
 }
 
 function FleetScreen({ search, go }: { search: string; go: Go }) {
-  // Entity, density and range all live in the URL: a fleet view someone
-  // sends must arrive as the view they were looking at, not as whatever the
-  // recipient's browser last remembered.
+  // Entity lives in the URL: a fleet view someone sends must arrive as the
+  // view they were looking at, not as whatever the recipient's browser last
+  // remembered. The window does not, because there is only one -- every row
+  // is drawn over FLEET_RANGE.
   const params = new URLSearchParams(search);
   const entity: Entity =
     params.get("entity") === "containers" ? "containers" : "hosts";
-  // Both directions, not just one: ?view=table used to be ignored whenever
-  // the recipient's browser remembered "cards", which is exactly the case a
-  // shared link exists to override.
-  const viewParam = params.get("view");
-  const density: Density =
-    viewParam === "cards" || viewParam === "table" ? viewParam : loadView();
   // What is wrong is a view of this page like any other, so it is a link:
   // "the fleet, filtered to failed units" is a URL someone can paste into a
   // chat. An unrecognised value is "all" rather than a filter that silently
@@ -380,7 +370,7 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
         ? attnParam
         : "all";
   const setParam = paramSetter("/", search, go);
-  const [range, chooseRange] = rangeParam(search, FLEET_RANGE_VALUES, setParam);
+  const range = FLEET_RANGE;
 
   const poll = usePoll(
     async () => {
@@ -495,24 +485,14 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       onEntityChange={(next) =>
         setParam("entity", next === "containers" ? "containers" : "")
       }
-      density={density}
-      // Both halves, here rather than inside FleetPage: the preference is
-      // what makes the choice survive leaving the page, and the URL is what
-      // makes it survivable as a link. One write path for one key.
-      onDensityChange={(next) => {
-        writePref(DENSITY_KEY, next);
-        setParam("view", next);
-      }}
-      range={range}
-      onRangeChange={chooseRange}
       attention={attention}
       // "" clears the parameter -- withParam drops an empty value, so the
       // unfiltered fleet is the bare URL rather than /?attn=all.
       onAttentionChange={(next) => setParam("attn", next === "all" ? "" : next)}
-      // Built from the CURRENT query string, so the density, entity and range
-      // the reader is on survive a cmd-click or a copied link -- withParam
-      // drops the value when it is empty, which is how "all" becomes the bare
-      // fleet URL rather than ?attn=all.
+      // Built from the CURRENT query string, so the entity the reader is on
+      // survives a cmd-click or a copied link -- withParam drops the value
+      // when it is empty, which is how "all" becomes the bare fleet URL
+      // rather than ?attn=all.
       attentionHref={(next) =>
         "/" + withParam(search, "attn", next === "all" ? "" : next)
       }

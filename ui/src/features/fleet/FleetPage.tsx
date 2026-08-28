@@ -31,27 +31,18 @@ import {
   type HostGroup,
 } from "./conditions";
 import { FleetContainers, type ContainerRow } from "./FleetContainers";
-import { HostCards } from "./HostCards";
 import { HostTable } from "./HostTable";
-import { hostLocation, type HostRow, type Range } from "./hostColumns";
+import { hostLocation, type HostRow } from "./hostColumns";
 import { isReporting } from "../../lib/host";
 import { buildRows } from "./hostTrends";
-import { DENSITY_KEY, readPref, writePref } from "../../lib/prefs";
+import { FLEET_RANGE } from "./ranges";
 
 /** What you are looking at (spec 4.5's first axis). */
 export type Entity = "hosts" | "containers";
-/** How densely (spec 4.5's second axis). Independent of the entity. */
-export type Density = "table" | "cards";
-
-/** Spec 4.5: density is remembered per browser and defaulted in Settings.
- * The key lives in lib/prefs now and is re-exported here because Settings
- * (Task 19) and this page's tests import it from this module -- what matters
- * is that there is one key, not a second one that silently disagrees. */
-export { DENSITY_KEY };
 
 /**
- * Joins the fleet list to its site names and produces the rows both the
- * table and the card grid render from.
+ * Joins the fleet list to its site names and produces the rows the table
+ * renders from.
  *
  * `GET /api/v1/hosts` carries `site_id` and no name; the per-host detail
  * call that does carry one would be an N+1 across the whole fleet, so the
@@ -107,53 +98,10 @@ function useSlashToFocus() {
   return ref;
 }
 
-/** The mobile breakpoint, matching index.css's own. */
-const NARROW = "(max-width: 640px)";
-
-/**
- * True below the mobile breakpoint. matchMedia rather than a resize
- * listener, because the browser already knows the answer and re-asking it on
- * every resize event is work for nothing; the listener fires only when the
- * answer changes.
- *
- * Guarded because jsdom has no matchMedia unless a test installs one, and a
- * missing one must mean "not narrow" rather than a thrown render.
- */
-function useIsNarrow(): boolean {
-  const [narrow, setNarrow] = useState(
-    () => window.matchMedia?.(NARROW).matches ?? false,
-  );
-
-  useEffect(() => {
-    const query = window.matchMedia?.(NARROW);
-    if (!query) return;
-    const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches);
-    setNarrow(query.matches);
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
-
-  return narrow;
-}
-
-function readStoredDensity(): Density | null {
-  // readPref is the guarded read (lib/prefs): storage can be unavailable
-  // (private mode, blocked cookies), and a remembered preference is a
-  // nicety -- losing it must not blank the page.
-  const stored = readPref(DENSITY_KEY);
-  return stored === "cards" || stored === "table" ? stored : null;
-}
-
 // They live in ./ranges now, so the container list and the host columns can
 // read them without importing this page. Re-exported because App.tsx and
 // this page's own tests have always taken them from here.
-export { FLEET_RANGES, FLEET_RANGE_VALUES } from "./ranges";
-import { FLEET_RANGES } from "./ranges";
-
-const DENSITIES: { value: Density; label: string }[] = [
-  { value: "table", label: "Table" },
-  { value: "cards", label: "Cards" },
-];
+export { FLEET_RANGE, FLEET_RANGE_VALUES } from "./ranges";
 
 export interface FleetPageProps {
   /** Injected rows. When omitted the page fetches its own. */
@@ -174,7 +122,6 @@ export interface FleetPageProps {
    */
   conditions?: Condition[];
   entity?: Entity;
-  density?: Density;
   /**
    * Which part of what is wrong the reader asked for: everything, one
    * severity, or one condition kind.
@@ -193,8 +140,8 @@ export interface FleetPageProps {
    * rendered on its own. A page whose URL is in charge passes one built from
    * the current query string instead: cmd-click and copy-link go to the href
    * rather than through onAttentionChange, and "/?attn=disk" would land the
-   * recipient on a fleet with the density, entity and range reset -- exactly
-   * what App's own comment says a shared fleet view must not do.
+   * recipient on a fleet with the entity reset -- exactly what App's own
+   * comment says a shared fleet view must not do.
    */
   attentionHref?: (next: AttentionFilter) => string;
   /**
@@ -216,10 +163,7 @@ export interface FleetPageProps {
    * could not be asked. Partial data must say it is partial: a list quietly
    * missing three hosts looks exactly like three hosts running none. */
   containerError?: string | null;
-  range?: Range;
-  onRangeChange?: (range: Range) => void;
   onEntityChange?: (entity: Entity) => void;
-  onDensityChange?: (density: Density) => void;
 }
 
 export function FleetPage({
@@ -227,23 +171,15 @@ export function FleetPage({
   containers,
   conditions: injectedConditions,
   entity: controlledEntity = "hosts",
-  density: controlledDensity,
   attention: controlledAttention,
   onAttentionChange,
   attentionHref = (next) => (next === "all" ? "/" : `/?attn=${next}`),
   checkedAt: injectedCheckedAt,
   containerError: injectedContainerError,
   now = new Date(),
-  range: controlledRange,
-  onRangeChange,
   onEntityChange,
-  onDensityChange,
 }: FleetPageProps) {
   const [localEntity, setLocalEntity] = useState<Entity>(controlledEntity);
-  const [localDensity, setLocalDensity] = useState<Density>(
-    () => controlledDensity ?? readStoredDensity() ?? "table",
-  );
-  const [localRange, setLocalRange] = useState<Range>(controlledRange ?? "24h");
   const [localAttention, setLocalAttention] = useState<AttentionFilter>(
     controlledAttention ?? "all",
   );
@@ -253,25 +189,15 @@ export function FleetPage({
   // the setter is what decides.
   const entity = onEntityChange ? controlledEntity : localEntity;
   const setEntity = onEntityChange ?? setLocalEntity;
-  const density = onDensityChange
-    ? (controlledDensity ?? localDensity)
-    : localDensity;
-  const setDensity = onDensityChange ?? setLocalDensity;
-  const range = onRangeChange ? (controlledRange ?? localRange) : localRange;
-  const setRange = onRangeChange ?? setLocalRange;
   const attention = onAttentionChange
     ? (controlledAttention ?? "all")
     : localAttention;
   const setAttention = onAttentionChange ?? setLocalAttention;
   const [filter, setFilter] = useState("");
-  // Below the mobile breakpoint cards are automatic, not a preference (spec
-  // 4.5): a six-column host table does not survive 390px, and a stored
-  // "table" choice must not be able to produce a page that scrolls
-  // sideways. The stored preference is left alone -- it is what the browser
-  // goes back to at a width where it applies.
-  const narrow = useIsNarrow();
+  // The one window every row is drawn over. Not a preference and not in the
+  // URL: see FLEET_RANGE.
+  const range = FLEET_RANGE;
   const filterRef = useSlashToFocus();
-  const effectiveDensity: Density = narrow ? "cards" : density;
 
   const [fetchedRows, setFetchedRows] = useState<HostRow[] | null>(null);
   const [fetchedContainers, setFetchedContainers] = useState<
@@ -580,9 +506,8 @@ export function FleetPage({
           aria-label={entity === "hosts" ? "Filter hosts" : "Filter containers"}
           onChange={(e) => setFilter(e.target.value)}
         />
-        {/* Left of the spacer, beside the filter it composes with: the two
-            on the right (range, density) change how the same list is drawn,
-            these two change WHICH hosts are in it. Hosts only -- every
+        {/* Left of the spacer, beside the filter it composes with: both of
+            them change WHICH hosts are in the list. Hosts only -- every
             condition netra has is host-level, so on the Containers tab this
             control would offer three segments that all show the same list. */}
         {entity === "hosts" && troubled > 0 ? (
@@ -615,23 +540,6 @@ export function FleetPage({
           />
         ) : null}
         <div className="spacer" />
-        <Segmented options={FLEET_RANGES} value={range} onChange={setRange} />
-        {/* Density is a hosts-only axis: a card grid of 247 containers is
-            not useful (spec 4.5). */}
-        {entity === "hosts" ? (
-          <Segmented
-            options={DENSITIES}
-            value={effectiveDensity}
-            // The store write happens here only when nothing controls this
-            // page. Controlled, the screen owns both halves -- writing the
-            // preference and putting it in the URL -- and a second write
-            // from inside would be two paths to one key.
-            onChange={(next) => {
-              setDensity(next);
-              if (onDensityChange === undefined) writePref(DENSITY_KEY, next);
-            }}
-          />
-        ) : null}
       </div>
 
       {entity === "hosts" && !filtered ? (
@@ -668,21 +576,12 @@ export function FleetPage({
       ) : null}
 
       {entity === "hosts" ? (
-        effectiveDensity === "table" ? (
-          <HostTable
-            rows={attentionHosts}
-            range={range}
-            severity={railSeverity}
-            filtered={hostRows.length > 0}
-          />
-        ) : (
-          <HostCards
-            rows={attentionHosts}
-            range={range}
-            severity={railSeverity}
-            filtered={hostRows.length > 0}
-          />
-        )
+        <HostTable
+          rows={attentionHosts}
+          range={range}
+          severity={railSeverity}
+          filtered={hostRows.length > 0}
+        />
       ) : (
         <FleetContainers
           rows={visibleContainers}

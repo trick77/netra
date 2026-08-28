@@ -14,10 +14,10 @@
  * events log over an hour is usually empty), but every page can now be
  * HANDED any of them, which is what a shared default requires.
  */
-export type Range = "1h" | "6h" | "24h" | "7d" | "30d";
+export type Range = "1h" | "6h" | "12h" | "24h" | "7d" | "30d";
 
 /** Every range, in ascending order — the order a picker should show them. */
-export const RANGES: readonly Range[] = ["1h", "6h", "24h", "7d", "30d"];
+export const RANGES: readonly Range[] = ["1h", "6h", "12h", "24h", "7d", "30d"];
 
 export function isRange(value: unknown): value is Range {
   return (
@@ -75,6 +75,10 @@ export function clampRange(requested: Range, offered: readonly Range[]): Range {
 const SPEC: Record<Range, { seconds: number; step: string }> = {
   "1h": { seconds: 3600, step: "60s" },
   "6h": { seconds: 6 * 3600, step: "5m" },
+  // The fleet's fixed window. 144 five-minute buckets, which is close enough
+  // to the 170px the row's sparkline is drawn in that a bucket is about a
+  // pixel and the fold has almost nothing to throw away.
+  "12h": { seconds: 12 * 3600, step: "5m" },
   "24h": { seconds: 24 * 3600, step: "5m" },
   "7d": { seconds: 7 * 24 * 3600, step: "1h" },
   "30d": { seconds: 30 * 24 * 3600, step: "1h" },
@@ -132,6 +136,7 @@ export function rangeMs(range: Range): number {
 export const EVENT_LIMITS: Record<Range, number> = {
   "1h": 500,
   "6h": 500,
+  "12h": 500,
   "24h": 500,
   "7d": 2000,
   "30d": 5000,
