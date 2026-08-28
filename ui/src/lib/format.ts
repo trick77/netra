@@ -262,6 +262,53 @@ export function relative(iso: string | null, now: Date = new Date()): string {
 }
 
 /**
+ * A country's name from its ISO 3166-1 alpha-2 code: "FR" is France.
+ *
+ * Through Intl rather than a table in this repo. A country list is a
+ * maintenance liability with no upside -- it goes stale, it is wrong about
+ * the contested entries, and every runtime this app has ever run in already
+ * ships one that a browser vendor keeps current.
+ *
+ * Returns null rather than ABSENT for an absent or unrecognised code,
+ * because both callers -- the fleet's location line and the Overview's
+ * Country fact -- want to omit the fact entirely rather than write a dash
+ * for a site whose operator simply never filled the field in. A code Intl
+ * does not know comes back unchanged from `of()`, which is the honest
+ * answer: the hub stored "XK" and this cannot name it, so it shows "XK"
+ * rather than nothing at all.
+ */
+export function countryName(code: string | null | undefined): string | null {
+  // `== null`, so an undefined reaches the same answer as a null. The type
+  // says the field is always present, and a hand-built row in a test or a
+  // response from a hub older than the field is how it turns out not to be
+  // -- and a location line is not worth a white screen. Same defensiveness
+  // lastReported() carries for the same reason.
+  if (code == null) return null;
+  const trimmed = code.trim();
+  if (trimmed === "") return null;
+  // ZZ is ISO 3166-1's own "unknown or invalid region", and CLDR duly names
+  // it "Unknown Region" -- a phrase that lands on the page reading like a
+  // place. It is the one code where Intl's answer is worse than the code
+  // itself, so it is the one code not asked about. Everything else ICU can
+  // name gets named, including the user-assigned codes that are real in
+  // practice: XK is Kosovo, and blacklisting the whole X range to catch ZZ
+  // would lose it.
+  if (trimmed.toUpperCase() === "ZZ") return trimmed;
+  try {
+    // Constructed per call rather than hoisted to module scope: this runs
+    // once per host per render at most, and a module-scope Intl object is a
+    // locale frozen at import time.
+    const names = new Intl.DisplayNames(["en"], { type: "region" });
+    return names.of(trimmed.toUpperCase()) ?? trimmed;
+  } catch {
+    // `of()` throws RangeError on a structurally invalid code ("Switzerland"
+    // typed into the country field, a three-letter code). The stored string
+    // is still what the operator meant, so it is shown rather than swallowed.
+    return trimmed;
+  }
+}
+
+/**
  * Fixed-instant rendering for hover titles, where the reader wants the
  * exact wall-clock time rather than an age that keeps ticking.
  *

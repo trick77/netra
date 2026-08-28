@@ -17,7 +17,13 @@ import {
   UP_COLOR,
   UpDownSparkline,
 } from "../../ui/charts/UpDownSparkline";
-import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
+import {
+  binaryBytes,
+  byterate,
+  bytes,
+  countryName,
+  percent,
+} from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
@@ -73,6 +79,28 @@ export type { Range };
  */
 export type HostRow = Host & {
   site_name: string | null;
+  /**
+   * Where the machine physically is, and whose it is.
+   *
+   * The site NAME is an internal label -- "gra-rack-7", "sim-ZRH2" -- which
+   * is the only thing this row ever carried about location, and it answers
+   * neither question an operator actually has: who do I raise a ticket with,
+   * and which building is this in. All three come off the same `sites` row
+   * the name comes from (plus one join to `providers`), so carrying them
+   * costs one extra fetch of a list that is already small enough to be
+   * fetched whole -- see lib/api.ts's getSites note about the N+1 this
+   * avoids.
+   *
+   * Each is independently nullable, and deliberately not collapsed into one
+   * pre-formatted string here: the fleet cell joins them into a line, and
+   * the Overview lists them as separate labelled facts. A row that stored
+   * the line could not produce the facts.
+   */
+  provider_name: string | null;
+  facility: string | null;
+  /** ISO 3166-1 alpha-2, as the hub stores it. Named for the country
+   * rather than for the code at the point it is shown -- see countryName. */
+  country_code: string | null;
   /** The window the hub answered, for the enlarged view's time axis. See
    * HostTrends.window for why it is the answer rather than the ask. */
   window: { from: string; to: string } | null;
@@ -134,6 +162,40 @@ export type HostRow = Host & {
   postFailures: number | null;
 };
 
+/**
+ * The location line under a hostname: "OVH · Gravelines, France".
+ *
+ * Facility and country are joined with a comma because they are one address
+ * read together, while the provider is a separate fact and takes the dot
+ * this app uses everywhere else to separate peers. "Gravelines, France" is
+ * how a person says a place; "Gravelines · France" is how a UI does.
+ *
+ * Every part is optional and an absent one is simply left out, never written
+ * as a dash -- the rule the site line already followed. A site with a
+ * facility and no provider on record reads "Gravelines, France", which is
+ * true; "— · Gravelines, France" would be a claim that something is missing.
+ * Returns null when there is nothing at all to say, which is what a host
+ * with no site gets, and the caller then writes no line rather than an empty
+ * one.
+ */
+export function hostLocation(row: {
+  provider_name?: string | null;
+  facility?: string | null;
+  country_code?: string | null;
+}): string | null {
+  // Optional rather than required fields, and every filter tests for a
+  // truthy string rather than for null: a row assembled before these
+  // existed -- a fixture, a cached response -- must render a hostname with
+  // no location line, not throw on the way to drawing the whole table.
+  const place = [row.facility, countryName(row.country_code)]
+    .filter((part): part is string => typeof part === "string" && part !== "")
+    .join(", ");
+  const parts = [row.provider_name, place].filter(
+    (part): part is string => typeof part === "string" && part !== "",
+  );
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
 function HostCell({ row }: { row: HostRow }) {
   // Judged from row.reporting -- cpu_total, from the `host` family -- and
   // never from row.cpu[0], which is a per-core band under 32 threads and the
@@ -144,6 +206,7 @@ function HostCell({ row }: { row: HostRow }) {
   // dropping scrapes reads as sporadic rather than healthy; the gaps are
   // already visible in its sparkline, and this says the same thing in a word.
   const status = hostStatus(row, undefined, row.reporting);
+  const location = hostLocation(row);
   return (
     <div className="host-cell">
       <div className="host-cell-top">
@@ -173,10 +236,20 @@ function HostCell({ row }: { row: HostRow }) {
           dash is a placeholder for a value that should be there and is
           missing, and an unassigned host is not missing anything -- it is
           simply not in a site yet. A column of dashes under every hostname
-          reads as a fleet full of holes. */}
-      {row.site_name !== null && (
-        <div className="host-cell-site">{row.site_name}</div>
-      )}
+          reads as a fleet full of holes.
+
+          What the line SAYS is the provider and the place, not the site
+          name it said before. The site name is an internal label -- a reader
+          scanning a fleet learns nothing from "gra-rack-7" that they did not
+          already know from the hostname beside it, whereas "OVH ·
+          Gravelines, France" answers whose machine this is and which
+          building it is in. The name is not lost: it leads the host page's
+          own location facts, and it is what the grouped views group by.
+
+          Still one line, deliberately. This column had two and keeps two --
+          a third would put height back on every row of the table, which is
+          the opposite of what the header change just spent itself on. */}
+      {location !== null && <div className="host-cell-site">{location}</div>}
     </div>
   );
 }
