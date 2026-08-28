@@ -664,9 +664,8 @@ func TestIntegrationIngestCpuCoreStorageFailureReturns503(t *testing.T) {
 // Two hosts reporting the SAME hostname must both keep ingesting.
 //
 // The regression this pins: SaveMetadata used to write `hostname = $2` from the
-// agent. Every host created through the UI has site_id NULL and
-// hosts_site_id_hostname_key is NULLS NOT DISTINCT, so the second host's
-// metadata save raised 23505 -- and that statement has no poisonRow
+// agent. hosts_hostname_key is UNIQUE and NULLS NOT DISTINCT, so the second
+// host's metadata save raised 23505 -- and that statement has no poisonRow
 // quarantine, so it became a 503. The agent answers a 503 by re-sending the
 // IDENTICAL batch, which wedges that host permanently.
 //

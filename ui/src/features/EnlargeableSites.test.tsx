@@ -164,7 +164,6 @@ describe("the list sparklines enlarge", () => {
     const host = {
       id: 7,
       hostname: "ark",
-      site_id: null,
       last_seen: new Date(t0).toISOString(),
       cpu_total: 12,
       mem_used: 1,

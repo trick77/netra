@@ -10,7 +10,6 @@ vi.mock("./lib/api", async () => {
   return {
     ...actual,
     getHosts: vi.fn(),
-    getSites: vi.fn(),
     getEvents: vi.fn(),
     getHost: vi.fn(),
     getContainers: vi.fn(),
@@ -19,7 +18,6 @@ vi.mock("./lib/api", async () => {
     getAddresses: vi.fn(),
     getPackages: vi.fn(),
     getUnits: vi.fn(),
-    getProviders: vi.fn(),
     getConfig: vi.fn(),
   };
 });
@@ -27,7 +25,6 @@ vi.mock("./lib/api", async () => {
 const host: api.Host = {
   id: 3,
   hostname: "web-01",
-  site_id: null,
   last_seen: new Date().toISOString(),
   cpu_total: 4,
   mem_used: 1,
@@ -45,7 +42,6 @@ function goTo(path: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.getHosts).mockResolvedValue([host]);
-  vi.mocked(api.getSites).mockResolvedValue([]);
   vi.mocked(api.getEvents).mockResolvedValue([]);
   // Every call the host page fans out to. A vi.fn() with no resolved value
   // returns undefined, and the page's orNull() then reads .then on it --
@@ -58,7 +54,6 @@ beforeEach(() => {
   // The host admin page's own two calls. Unmocked they fall through to the
   // real fetch, so a test that only asks which nav link is current would make
   // a network request in jsdom and settle after the test had finished.
-  vi.mocked(api.getProviders).mockResolvedValue([]);
   vi.mocked(api.getConfig).mockResolvedValue({ hub_url: "http://hub.test" });
   goTo("/");
 });

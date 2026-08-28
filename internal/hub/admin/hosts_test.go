@@ -26,7 +26,7 @@ func TestCreateHostMintsAWorkingToken(t *testing.T) {
 	svc, s := newService(t)
 	ctx := context.Background()
 
-	host, plain, err := svc.CreateHost(ctx, "web01", nil)
+	host, plain, err := svc.CreateHost(ctx, "web01")
 	if err != nil {
 		t.Fatalf("CreateHost: %v", err)
 	}
@@ -43,105 +43,31 @@ func TestCreateHostMintsAWorkingToken(t *testing.T) {
 	}
 }
 
-// Absent is NULL, never 0 -- the same rule the collectors follow. A 0 here
-// would be a foreign key to a host id that can never exist.
-func TestCreateHostWithNoSiteStoresNullNotZero(t *testing.T) {
-	svc, s := newService(t)
-	ctx := context.Background()
-
-	host, _, err := svc.CreateHost(ctx, "web01", nil)
-	if err != nil {
-		t.Fatalf("CreateHost: %v", err)
-	}
-
-	var siteID *int32
-	if err := s.Pool().QueryRow(ctx,
-		`SELECT site_id FROM hosts WHERE id = $1`, host.ID).Scan(&siteID); err != nil {
-		t.Fatalf("query: %v", err)
-	}
-	if siteID != nil {
-		t.Errorf("site_id = %d, want NULL", *siteID)
-	}
-}
-
 func TestCreateHostRejectsAnEmptyHostname(t *testing.T) {
 	svc, _ := newService(t)
 
-	if _, _, err := svc.CreateHost(context.Background(), "  ", nil); !errors.Is(err, admin.ErrInvalid) {
+	if _, _, err := svc.CreateHost(context.Background(), "  "); !errors.Is(err, admin.ErrInvalid) {
 		t.Errorf("err = %v, want ErrInvalid", err)
 	}
 }
 
-// Two machines at the same site cannot share a name: every view that shows a
-// hostname would show two identical rows.
-func TestCreateHostRejectsADuplicateHostnameAtTheSameSite(t *testing.T) {
-	svc, s := newService(t)
+// A hostname is the identity now.
+//
+// It used to be (site_id, hostname): two machines at different sites sharing a
+// name was normal, and that was what sites were for. With sites gone there is
+// no second half to the key, so the same protection has to hold against the
+// name alone -- otherwise the admin API creates rows indistinguishable in
+// every view that shows a hostname.
+func TestCreateHostRejectsADuplicateHostname(t *testing.T) {
+	svc, _ := newService(t)
 	ctx := context.Background()
 
-	var siteID int32
-	if err := s.Pool().QueryRow(ctx,
-		`INSERT INTO sites (name) VALUES ('zrh') RETURNING id`).Scan(&siteID); err != nil {
-		t.Fatalf("insert site: %v", err)
-	}
-
-	if _, _, err := svc.CreateHost(ctx, "web01", &siteID); err != nil {
+	if _, _, err := svc.CreateHost(ctx, "web01"); err != nil {
 		t.Fatalf("CreateHost: %v", err)
 	}
 
-	if _, _, err := svc.CreateHost(ctx, "web01", &siteID); !errors.Is(err, admin.ErrConflict) {
+	if _, _, err := svc.CreateHost(ctx, "web01"); !errors.Is(err, admin.ErrConflict) {
 		t.Errorf("err = %v, want ErrConflict", err)
-	}
-}
-
-// The reason the constraint is on (site_id, hostname) and not hostname alone:
-// two machines at different sites sharing a name is normal.
-func TestCreateHostAllowsTheSameHostnameAtDifferentSites(t *testing.T) {
-	svc, s := newService(t)
-	ctx := context.Background()
-
-	var zrh, fsn int32
-	if err := s.Pool().QueryRow(ctx,
-		`INSERT INTO sites (name) VALUES ('zrh') RETURNING id`).Scan(&zrh); err != nil {
-		t.Fatalf("insert site: %v", err)
-	}
-	if err := s.Pool().QueryRow(ctx,
-		`INSERT INTO sites (name) VALUES ('fsn1') RETURNING id`).Scan(&fsn); err != nil {
-		t.Fatalf("insert site: %v", err)
-	}
-
-	if _, _, err := svc.CreateHost(ctx, "web01", &zrh); err != nil {
-		t.Fatalf("CreateHost at zrh: %v", err)
-	}
-	if _, _, err := svc.CreateHost(ctx, "web01", &fsn); err != nil {
-		t.Errorf("CreateHost at fsn1: %v — the same name at another site is legitimate", err)
-	}
-}
-
-// The NULLS NOT DISTINCT case, and the reason that clause exists. Postgres
-// treats every NULL as unique by default, so without it two hosts with no
-// site assigned -- the common case on a new hub -- would collide freely and
-// the constraint would protect nothing where it is needed most.
-func TestCreateHostRejectsADuplicateHostnameWithNoSite(t *testing.T) {
-	svc, _ := newService(t)
-	ctx := context.Background()
-
-	if _, _, err := svc.CreateHost(ctx, "web01", nil); err != nil {
-		t.Fatalf("CreateHost: %v", err)
-	}
-
-	if _, _, err := svc.CreateHost(ctx, "web01", nil); !errors.Is(err, admin.ErrConflict) {
-		t.Errorf("err = %v, want ErrConflict — NULL site_id must not defeat the constraint", err)
-	}
-}
-
-// A site id that does not exist is the caller's mistake, so it must read as
-// invalid input rather than as a hub failure the operator cannot act on.
-func TestCreateHostRejectsAnUnknownSite(t *testing.T) {
-	svc, _ := newService(t)
-
-	siteID := int32(4242)
-	if _, _, err := svc.CreateHost(context.Background(), "web01", &siteID); !errors.Is(err, admin.ErrInvalid) {
-		t.Errorf("err = %v, want ErrInvalid", err)
 	}
 }
 
@@ -152,7 +78,7 @@ func TestRotateTokenInvalidatesTheOldToken(t *testing.T) {
 	svc, s := newService(t)
 	ctx := context.Background()
 
-	host, first, err := svc.CreateHost(ctx, "web01", nil)
+	host, first, err := svc.CreateHost(ctx, "web01")
 	if err != nil {
 		t.Fatalf("CreateHost: %v", err)
 	}
@@ -204,7 +130,7 @@ func TestRotateTokenOnUnknownHostLeavesOtherHostsAlone(t *testing.T) {
 	svc, s := newService(t)
 	ctx := context.Background()
 
-	host, plain, err := svc.CreateHost(ctx, "web01", nil)
+	host, plain, err := svc.CreateHost(ctx, "web01")
 	if err != nil {
 		t.Fatalf("CreateHost: %v", err)
 	}
@@ -222,7 +148,7 @@ func TestDeleteHostCascadesItsTokens(t *testing.T) {
 	svc, s := newService(t)
 	ctx := context.Background()
 
-	host, plain, err := svc.CreateHost(ctx, "web01", nil)
+	host, plain, err := svc.CreateHost(ctx, "web01")
 	if err != nil {
 		t.Fatalf("CreateHost: %v", err)
 	}
@@ -259,10 +185,10 @@ func TestListHostsReportsLastSeenAndOrdersByHostname(t *testing.T) {
 	svc, s := newService(t)
 	ctx := context.Background()
 
-	if _, _, err := svc.CreateHost(ctx, "web02", nil); err != nil {
+	if _, _, err := svc.CreateHost(ctx, "web02"); err != nil {
 		t.Fatalf("CreateHost: %v", err)
 	}
-	first, _, err := svc.CreateHost(ctx, "web01", nil)
+	first, _, err := svc.CreateHost(ctx, "web01")
 	if err != nil {
 		t.Fatalf("CreateHost: %v", err)
 	}

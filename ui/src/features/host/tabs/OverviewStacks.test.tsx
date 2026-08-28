@@ -6,7 +6,6 @@ import { Overview } from "./Overview";
 const host: HostDetail = {
   id: 7,
   hostname: "kessel",
-  site_id: 3,
   last_seen: "2026-08-10T01:00:00Z",
   cpu_total: 12,
   mem_used: 4_000_000_000,

@@ -42,15 +42,22 @@ func TestIntegrationDiscreteEventPruneJobIsRegistered(t *testing.T) {
 	}
 }
 
-// The migration re-runs from the top on an existing schema (see the file
-// header), so applying it twice must not leave two prune jobs behind.
+// A migration that fails part-way is unrecorded and re-runs from the top on
+// its next start, so applying it twice must not leave two prune jobs behind.
+//
+// Only 0005's own row is forgotten, not the whole table: a migration re-runs
+// against the schema its predecessors left, never against the finished one.
+// Replaying everything would drag 0001 over a schema from its own future,
+// where 0010 has already dropped the sites tables and hosts.site_id -- see
+// TestIntegrationMigrateRerunsUnrecordedNoTransactionMigration.
 func TestIntegrationDiscreteEventPruneJobSurvivesAReRun(t *testing.T) {
 	ctx := context.Background()
 	s := store.OpenTest(t)
 	if err := s.Migrate(ctx); err != nil {
 		t.Fatalf("first Migrate: %v", err)
 	}
-	if _, err := s.Pool().Exec(ctx, `DELETE FROM schema_migrations`); err != nil {
+	if _, err := s.Pool().Exec(ctx,
+		`DELETE FROM schema_migrations WHERE name = '0005_prune_devices.sql'`); err != nil {
 		t.Fatalf("forget the applied migration: %v", err)
 	}
 	if err := s.Migrate(ctx); err != nil {

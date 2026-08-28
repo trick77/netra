@@ -21,7 +21,6 @@ import (
 type HostSummary struct {
 	ID       int32      `json:"id"`
 	Hostname string     `json:"hostname"`
-	SiteID   *int32     `json:"site_id"`
 	LastSeen *time.Time `json:"last_seen"`
 	CPUTotal *float64   `json:"cpu_total"`
 	MemUsed  *int64     `json:"mem_used"`
@@ -116,9 +115,6 @@ type HostSummary struct {
 	// the variables, and is distinct from an empty string (SaveMetadata's
 	// NULLIF keeps those out).
 	//
-	// Unrelated to SiteID above and to the sites/providers tables it points
-	// at. That pair is filled in by a human through the admin UI; this is the
-	// machine's own account of itself, and nothing here creates a site.
 	Location *string `json:"location"`
 	Provider *string `json:"provider"`
 	Facility *string `json:"facility"`
@@ -159,14 +155,6 @@ type HostSummary struct {
 // series.
 type HostDetail struct {
 	HostSummary
-
-	// The site join is gone. It served site_name, provider_name and the site's
-	// own facility and country, and every one of those answered "where is this
-	// machine" from a table a human has to fill in by hand -- while the agent
-	// had been reporting the answer on every metadata post and the hub had
-	// been discarding it. Location/Provider/Facility on the embedded
-	// HostSummary are that answer. The sites tables still exist and SiteID
-	// still points at them; nothing reads them for a location any more.
 
 	Fingerprint  *string `json:"fingerprint"`
 	HostType     *string `json:"host_type"`
@@ -212,7 +200,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 	// names here have to be the same units the /units endpoint lists, and that
 	// endpoint applies the same predicate from the same place.
 	rows, err := s.pool.Query(ctx, `
-		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
+		SELECT h.id, coalesce(h.hostname, ''),
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.threads, coalesce(h.capabilities, '{}'::jsonb),
@@ -240,7 +228,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 	hosts := []HostSummary{}
 	for rows.Next() {
 		var h HostSummary
-		if err := rows.Scan(&h.ID, &h.Hostname, &h.SiteID,
+		if err := rows.Scan(&h.ID, &h.Hostname,
 			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 			&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 			&h.Threads, &h.Capabilities,
@@ -268,7 +256,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 	// Capabilities comments both warn about, and the one the detail test for
 	// services_failed exists to catch.
 	err := s.pool.QueryRow(ctx, `
-		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
+		SELECT h.id, coalesce(h.hostname, ''),
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.location, h.provider, h.facility,
@@ -288,7 +276,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		        WHERE host_id = h.id AND `+systemdstate.NotableSQL("")+`
 		  ) fu ON TRUE
 		 WHERE h.id = $1`, hostID, failedUnitNames).Scan(
-		&h.ID, &h.Hostname, &h.SiteID,
+		&h.ID, &h.Hostname,
 		&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 		&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 		&h.Location, &h.Provider, &h.Facility,

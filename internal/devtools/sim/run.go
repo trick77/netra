@@ -144,11 +144,7 @@ func provision(ctx context.Context, hub *Hub, profiles []*Profile, cfg Config, f
 
 	hosts := make([]*host, 0, len(profiles))
 	for _, p := range profiles {
-		siteID, err := hub.EnsureSite(ctx, siteFor(p))
-		if err != nil {
-			return nil, fmt.Errorf("site for %s: %w", p.Hostname, err)
-		}
-		id, token, err := hub.EnsureHost(ctx, p.Hostname, &siteID)
+		id, token, err := hub.EnsureHost(ctx, p.Hostname)
 		if err != nil {
 			return nil, fmt.Errorf("host %s: %w", p.Hostname, err)
 		}
@@ -163,7 +159,11 @@ func provision(ctx context.Context, hub *Hub, profiles []*Profile, cfg Config, f
 			metaHash: HashMetadata(meta),
 			sendMeta: true,
 		})
-		log.Info("simulating host", "hostname", p.Hostname, "id", id, "site_id", siteID)
+		// Where the host is rides its metadata now, the way a real agent
+		// reports it -- see Profile.Metadata, which has always carried
+		// Location/Provider/Facility even while the hub discarded them.
+		log.Info("simulating host", "hostname", p.Hostname, "id", id,
+			"location", p.Location)
 	}
 	return hosts, nil
 }
@@ -475,47 +475,4 @@ func maxTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
-}
-
-// place is where a site sits. The coordinates are filled in because a site
-// without them is invisible to anything that draws a map.
-type place struct {
-	country  string
-	timezone string
-	lat      float64
-	lon      float64
-}
-
-// places maps the handful of locations the fleet sits in. A geocoder would be
-// a network dependency for four constants.
-var places = map[string]place{
-	"Zurich, CH":      {"CH", "Europe/Zurich", 47.3769, 8.5417},
-	"Winterthur, CH":  {"CH", "Europe/Zurich", 47.5001, 8.7501},
-	"Falkenstein, DE": {"DE", "Europe/Berlin", 50.4779, 12.3713},
-	"Amsterdam, NL":   {"NL", "Europe/Amsterdam", 52.3676, 4.9041},
-}
-
-// siteFor turns a profile's location into the site the hub should file it
-// under.
-//
-// The site and provider NAMES carry the same sim- prefix the hostnames do,
-// and that is a safety property rather than labelling. EnsureSite matches an
-// existing site by (name, provider), so unprefixed names would let a run
-// aimed at a real hub attach four invented hosts to a REAL site -- and every
-// per-site rollup and map marker for that site would then mix invented data
-// with production data. --fresh deletes hosts only, so those rows would
-// survive and the tool could not undo it. The facility field keeps the
-// unprefixed name, so the site still reads correctly wherever it is
-// displayed.
-func siteFor(p *Profile) SiteSpec {
-	pl := places[p.Location]
-	return SiteSpec{
-		Name:        HostnamePrefix + p.Facility,
-		Provider:    HostnamePrefix + p.Provider,
-		Facility:    p.Facility,
-		CountryCode: pl.country,
-		Timezone:    pl.timezone,
-		Latitude:    pl.lat,
-		Longitude:   pl.lon,
-	}
 }

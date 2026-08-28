@@ -279,17 +279,28 @@ func TestIntegrationChunkIntervalIsSmallEnoughForItsRetention(t *testing.T) {
 	}
 }
 
-// Migrate() records 0001 in schema_migrations only after every statement has
-// succeeded, and matches by filename with no checksum -- so calling Migrate
-// twice (TestIntegrationMigrateIsIdempotent) proves the runner SKIPS a
-// recorded migration and proves nothing about the file being re-runnable.
+// Migrate() records a migration in schema_migrations only after every
+// statement has succeeded, and matches by filename with no checksum -- so
+// calling Migrate twice (TestIntegrationMigrateIsIdempotent) proves the runner
+// SKIPS a recorded migration and proves nothing about the file being
+// re-runnable.
 //
 // The scenario the file header is written for is the other one: a failure
 // part-way through leaves the schema half-built and the migration unrecorded,
-// and the hub re-runs the file from the top on its next start. Deleting the
+// and the hub re-runs the file from the top on its next start. Forgetting the
 // schema_migrations row reproduces exactly that. Any statement missing an
 // IF NOT EXISTS, or any add_*_policy that errors rather than warns on re-add,
 // fails here.
+//
+// The NEWEST migration's row, not every row. A migration re-runs against the
+// schema its predecessors left: its row is missing only because it did not
+// finish, so nothing after it can have run. Clearing the whole table replayed
+// 0001 over the FINISHED schema, which is not a state the hub can reach and,
+// since 0010, is not coherent either -- 0001 indexes a column 0010 dropped and
+// its CREATE TABLE IF NOT EXISTS would re-create the two tables 0010 removed.
+// Once anything is ever dropped, no file is replayable over a schema from its
+// own future; each is replayable where it actually runs, which is what this
+// pins.
 func TestIntegrationMigrationIsRerunnableAgainstItsOwnSchema(t *testing.T) {
 	ctx := context.Background()
 	s := store.OpenTest(t)
@@ -297,12 +308,14 @@ func TestIntegrationMigrationIsRerunnableAgainstItsOwnSchema(t *testing.T) {
 		t.Fatalf("first Migrate: %v", err)
 	}
 
-	if _, err := s.Pool().Exec(ctx, `DELETE FROM schema_migrations`); err != nil {
-		t.Fatalf("clear schema_migrations: %v", err)
+	if _, err := s.Pool().Exec(ctx,
+		`DELETE FROM schema_migrations
+		  WHERE name = (SELECT max(name) FROM schema_migrations)`); err != nil {
+		t.Fatalf("forget the newest migration: %v", err)
 	}
 
 	if err := s.Migrate(ctx); err != nil {
-		t.Fatalf("re-running 0001 against its own schema: %v", err)
+		t.Fatalf("re-running the newest migration against its own schema: %v", err)
 	}
 
 	// Re-running must not duplicate anything either: a second

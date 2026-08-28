@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Host, Site } from "../../lib/api";
+import type { Host } from "../../lib/api";
 import { ABSENT } from "../../lib/format";
 import type { HostRow } from "./hostColumns";
 import type { ContainerRow } from "./FleetContainers";
@@ -13,7 +13,6 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
   return {
     id: 1,
     hostname: "web-01",
-    site_id: 3,
     window: null,
     last_seen: "2026-08-10T13:59:30Z",
     cpu_total: 42,
@@ -337,7 +336,6 @@ describe("buildHostRows", () => {
     {
       id: 1,
       hostname: "web-01",
-      site_id: 3,
       last_seen: "2026-08-10T13:59:30Z",
       cpu_total: 42,
       mem_used: 4e9,
@@ -352,7 +350,6 @@ describe("buildHostRows", () => {
     {
       id: 2,
       hostname: "db-01",
-      site_id: null,
       last_seen: null,
       cpu_total: null,
       mem_used: null,
@@ -399,7 +396,6 @@ describe("FleetPage data fetching", () => {
             {
               id: 1,
               hostname: "web-01",
-              site_id: null,
               last_seen: "2026-08-10T13:59:30Z",
               cpu_total: 1,
               mem_used: null,
@@ -449,7 +445,6 @@ describe("FleetPage data fetching", () => {
                   {
                     id: 1,
                     hostname: "web-01",
-                    site_id: null,
                     last_seen: "2026-08-10T13:59:30Z",
                     cpu_total: 1,
                     mem_used: null,
