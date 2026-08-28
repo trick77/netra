@@ -165,7 +165,7 @@ export function Chart({
   const floor = min ?? autoMin;
 
   const mirrorStacked = mark === "mirrorStack";
-  const stackedMark = mark === "stack";
+  const stacked = mark === "stack";
 
   /* The vertical inset a STACK spends, against `pad` for everything else.
    *
@@ -177,7 +177,7 @@ export function Chart({
    * Everything that has to agree with the bands reads this: the marks, the
    * furniture below, and the reference rule, which on the memory cell is the
    * host's total RAM and has to land on the band edge that reaches it. */
-  const markYPad = stackedMark ? BAND_Y_PAD : pad;
+  const markYPad = stacked ? BAND_Y_PAD : pad;
 
   const referenceY =
     reference === undefined || max <= floor
@@ -208,7 +208,6 @@ export function Chart({
       )
     : { up: 0, down: 0, zero: 0.5 };
   const mirrorZero = mirrorScale.zero;
-  const stacked = mark === "stack";
 
   // Where the DATA actually lives. geometry.ts insets every mark by `pad`
   // inside the box it is given (scaleX/scaleY map into [pad, w-pad]), so
@@ -271,11 +270,11 @@ export function Chart({
    * scaleX, which IS inset by `pad`, so the time axis stays where it was. */
   const furnitureRect = mirrored
     ? { ...axisRect, top: rect.top, bottom: rect.bottom }
-    : stackedMark
+    : stacked
       ? {
           ...axisRect,
-          top: rect.top + BAND_Y_PAD,
-          bottom: rect.bottom - BAND_Y_PAD,
+          top: rect.top + markYPad,
+          bottom: rect.bottom - markYPad,
         }
       : axisRect;
 
@@ -888,6 +887,19 @@ function Crosshair({
   const fraction = count <= 1 ? 0 : index / (count - 1);
   const cx = xAt(rect, fraction);
 
+  /* Where a plain STACK's bands actually are, vertically.
+   *
+   * Same reason the mirrored branch reads `plot`: the bands are inset by
+   * BAND_Y_PAD (half their own edge) rather than by `pad`, so a dot placed
+   * in the axis rect sits `pad - BAND_Y_PAD` off the band it names -- at the
+   * ceiling and at the baseline both, and only at mid-scale not at all.
+   * Horizontally unchanged, so the rule and the dot stay on one column. */
+  const stackRect = {
+    ...rect,
+    top: plot.top + BAND_Y_PAD,
+    bottom: plot.bottom - BAND_Y_PAD,
+  };
+
   /**
    * Where the mirrored marks put their zero line, in the MARK rect.
    *
@@ -984,7 +996,7 @@ function Crosshair({
             : (shown / mirrorSpan) * mirrorH;
         const cy = mirrored
           ? plot.top + mirrorMid + direction * Math.min(reach, room)
-          : yAt(rect, t);
+          : yAt(stacked ? stackRect : rect, t);
         return (
           <circle
             key={s.name}

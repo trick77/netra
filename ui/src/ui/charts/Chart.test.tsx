@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { Chart, type ChartSeries } from "./Chart";
 import { mirroredTicks, niceTicks, timeTicks } from "./ticks";
+import { BAND_Y_PAD } from "./size";
 
 const series: ChartSeries[] = [
   { name: "busy", color: "var(--s1)", values: [10, 40, 20, 60] },
@@ -355,6 +356,28 @@ describe("Chart", () => {
       );
       expect(c.querySelector("[data-cursor]")).not.toBeNull();
       expect(c.querySelectorAll("[data-cursor-dot]").length).toBe(2);
+    });
+
+    // A stack's bands are inset by BAND_Y_PAD, not by `pad`, so a dot placed
+    // in the axis rect floats `pad - BAND_Y_PAD` above the band it names --
+    // the same mismatch the mirrored dots were fixed for.
+    it("puts a stacked dot on the band it names, not in the axis rect", () => {
+      const full: ChartSeries[] = [
+        { name: "busy", color: "var(--s1)", values: [100, 100] },
+      ];
+      const c = draw(
+        <Chart
+          series={full}
+          width={200}
+          height={100}
+          max={100}
+          min={0}
+          mark="stack"
+          cursor={0}
+        />,
+      );
+      const dot = c.querySelector("[data-cursor-dot]")!;
+      expect(Number(dot.getAttribute("cy"))).toBeCloseTo(BAND_Y_PAD, 5);
     });
 
     // The rule says WHERE, the dot says HOW MUCH. At a hole there is no value
