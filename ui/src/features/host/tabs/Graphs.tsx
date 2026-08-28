@@ -13,6 +13,7 @@
 import type { MetricsResponse } from "../../../lib/api";
 import type { Range } from "../../../lib/range";
 import { windowNotice } from "../../../lib/metrics";
+import { drawsPeakBand } from "../../fleet/hostTrends";
 import { ChartPanel } from "../../../ui/charts/ChartPanel";
 import { RANGE_VALUES } from "../ranges";
 import {
@@ -87,7 +88,14 @@ function Panel({
   // bandsFor only builds an envelope for the specs that can carry one (a
   // mirrored rate chart at a rollup tier), so every other panel is handed
   // exactly what it already had.
-  const detailSeries = bandsFor(spec, res, { withPeakBand: true, extra });
+  // The window decides whether an envelope is drawn at all -- below 48 hours
+  // the reference draws none, and a banded pair is scaled to its band, so
+  // drawing one there also lifts the ceiling off the reading. See
+  // drawsPeakBand() in fleet/hostTrends.
+  const detailSeries = bandsFor(spec, res, {
+    withPeakBand: drawsPeakBand(res?.window),
+    extra,
+  });
 
   // The same bandsFor the panel uses, over a response for one family at one
   // other range -- so an enlarged chart draws its wider window exactly as
@@ -117,7 +125,7 @@ function Panel({
         const primary = answers[0];
         return {
           series: bandsFor(spec, primary, {
-            withPeakBand: true,
+            withPeakBand: drawsPeakBand(primary.window),
             extra: widened,
           }),
           window: primary.window ?? null,

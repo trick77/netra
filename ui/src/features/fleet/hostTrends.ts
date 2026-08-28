@@ -502,8 +502,40 @@ export function trafficSeries(
 }
 
 /**
+ * How long a window has to be before a chart draws the peak envelope.
+ *
+ * 48 hours, which is the reference's own threshold. Observium's
+ * common.inc.php:167:
+ *
+ *     if ($to - $from <= 172800) { $graph_max = 0; }
+ *     // Do not graph MAX areas for intervals less then 48 hours
+ *
+ * Below that a bucket is short enough that its mean IS the reading, and the
+ * envelope costs more than it says. It cost two things here. It drew a layer
+ * the reference does not draw at these windows -- the pale column behind
+ * every spike. And because a banded pair is scaled to its BAND (mirrorHalves
+ * in Chart.tsx, so the envelope cannot overflow the mean it contains), it
+ * also set the ceiling: on a real host the 24h dialog ran its axis to 65 MB
+ * while the reading topped out at 20.5 MB, drawing the whole quiet band at a
+ * third of the height it had earned.
+ */
+export const PEAK_BAND_MIN_SPAN_MS = 48 * 60 * 60 * 1000;
+
+export function drawsPeakBand(
+  window?: { from: string; to: string } | null,
+): boolean {
+  // No window is no reason to drop a layer: a caller that cannot say gets
+  // what it always got.
+  if (!window) return true;
+  const span = Date.parse(window.to) - Date.parse(window.from);
+  if (!Number.isFinite(span)) return true;
+  return span > PEAK_BAND_MIN_SPAN_MS;
+}
+
+/**
  * The in/out pair an ENLARGED traffic view draws: the mean as the line, the
- * bucket peak as the envelope over it.
+ * bucket peak as the envelope over it where the window is long enough to
+ * want one -- see drawsPeakBand().
  *
  * One function rather than a copy in each dialog. The fleet row's cell and
  * the host overview's Traffic card are the same chart at two sizes and both
@@ -516,24 +548,31 @@ export function trafficSeries(
  * the pair collapses to one series, which is honest: the sample is its own
  * peak there.
  */
-export function trafficDetailSeries(t: {
-  rx: (number | null)[];
-  tx: (number | null)[];
-  rxPeak?: (number | null)[];
-  txPeak?: (number | null)[];
-}): {
+export function trafficDetailSeries(
+  t: {
+    rx: (number | null)[];
+    tx: (number | null)[];
+    rxPeak?: (number | null)[];
+    txPeak?: (number | null)[];
+  },
+  /* The window the chart covers. Without one the envelope is drawn, which is
+     the old behaviour and what a caller that genuinely cannot say should
+     get. See drawsPeakBand(). */
+  window?: { from: string; to: string } | null,
+): {
   name: string;
   color: string;
   values: (number | null)[];
   band?: (number | null)[];
 }[] {
+  const band = drawsPeakBand(window);
   const pair = (
     name: string,
     color: string,
     mean: (number | null)[],
     peak: (number | null)[],
   ) =>
-    peak.length === 0
+    !band || peak.length === 0
       ? { name, color, values: mean }
       : { name, color, values: mean, band: peak };
   return [
