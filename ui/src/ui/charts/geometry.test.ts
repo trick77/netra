@@ -376,10 +376,10 @@ describe("geometry", () => {
       expect(quiet.length).toBeGreaterThan(0);
       for (const y of quiet) expect(y).toBeCloseTo(mid, 6);
 
-      // And the loud one is unaffected -- removing the floor changed nothing
-      // about the scale. 14, not 16: this call is on the shared ceiling,
-      // where a half is h/2 minus pad.
-      expect(mid - Math.min(...ys)).toBeCloseTo(14, 6);
+      // And the loud one reaches the far edge. There is no down half here,
+      // so the axis is [0, +1000] and the whole box is the up half: `pad` is
+      // not spent, because a bar has no stroke to keep off the edge.
+      expect(mid - Math.min(...ys)).toBeCloseTo(32, 6);
     });
 
     // RRDtool's scaling, and the reason its peaks reach the edge of the cell
@@ -389,15 +389,7 @@ describe("geometry", () => {
     // instead of each half being given exactly half of it.
     it("shares one scale and places zero where the data puts it", () => {
       // Given a pair whose halves peak at 5 and 10 in a 32px box
-      const { up, down, mid } = mirrorPaths(
-        [5, 5],
-        [10, 10],
-        100,
-        32,
-        10,
-        2,
-        true,
-      );
+      const { up, down, mid } = mirrorPaths([5, 5], [10, 10], 100, 32, 10, 2);
       const ys = (d: string) =>
         [...d.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
           parseFloat(m[1]!),
@@ -431,7 +423,7 @@ describe("geometry", () => {
       // An all-zero pair has no range to place a line by, and a midline that
       // jumped to the top of an empty cell would be a statement about a host
       // that reported nothing.
-      expect(mirrorPaths([0, 0], [0, 0], 100, 32, 10, 2, true).mid).toBe(16);
+      expect(mirrorPaths([0, 0], [0, 0], 100, 32, 10, 2).mid).toBe(16);
     });
 
     it("leaves a genuine zero on the midline", () => {
@@ -455,7 +447,6 @@ describe("geometry", () => {
         32,
         1e6,
         2,
-        true,
       );
       const ys = (d: string) =>
         [...d.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
@@ -524,7 +515,8 @@ describe("geometry", () => {
 
     it("stacks each half away from the midline, in layer order", () => {
       // Given two layers of 10 either side, against a ceiling of 40 in a
-      // 40-tall box: the half-height is 20, so 10 is a quarter of it.
+      // Both halves total 20, so the axis is [-20, +20], zero is the middle
+      // of a 40-tall box and each half spends its whole 20 rows.
       const { up, down, mid } = mirrorStackBands(
         [
           [10, 10],
@@ -536,21 +528,20 @@ describe("geometry", () => {
         ],
         100,
         40,
-        40,
       );
       expect(mid).toBe(20);
 
-      // Then the first layer sits between the midline and 5 units above it,
-      // and the second between 5 and 10 -- the second stacked ON the first,
-      // never overlapping it.
-      expect(Math.min(...ys(up[0]!))).toBeCloseTo(15, 6);
+      // Then the first layer sits between the midline and half way up it,
+      // and the second between there and the top -- the second stacked ON
+      // the first, never overlapping it.
+      expect(Math.min(...ys(up[0]!))).toBeCloseTo(10, 6);
       expect(Math.max(...ys(up[0]!))).toBeCloseTo(20, 6);
-      expect(Math.min(...ys(up[1]!))).toBeCloseTo(10, 6);
-      expect(Math.max(...ys(up[1]!))).toBeCloseTo(15, 6);
+      expect(Math.min(...ys(up[1]!))).toBeCloseTo(0, 6);
+      expect(Math.max(...ys(up[1]!))).toBeCloseTo(10, 6);
 
       // And the down half is the same distances on the other side.
-      expect(Math.max(...ys(down[0]!))).toBeCloseTo(25, 6);
-      expect(Math.max(...ys(down[1]!))).toBeCloseTo(30, 6);
+      expect(Math.max(...ys(down[0]!))).toBeCloseTo(30, 6);
+      expect(Math.max(...ys(down[1]!))).toBeCloseTo(40, 6);
     });
 
     it("scales each half against its own stack, not against both", () => {

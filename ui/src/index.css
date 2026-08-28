@@ -259,9 +259,9 @@
      fleet row cell, the host overview card and this panel are the same fact
      at three sizes and the cell has only two bands to spend on it -- a panel
      that re-hued them per interface would be a different chart on click.
-     So the hue stays s2 above / s5 below and the interface is a LIGHTNESS
-     step within it. Index 0 is s2/s5 exactly, which is what makes a one-NIC
-     host draw the cell's own pair.
+     So the hue stays in-1 above / out-1 below and the interface is a
+     LIGHTNESS step within it. Index 0 is in-1/out-1 exactly, which is what
+     makes a one-NIC host draw the cell's own pair.
 
      Three steps, not eight: the fourth interface on a box is rare, the steps
      have to stay apart at a 112px panel, and a fifth would land on the

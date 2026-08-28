@@ -30,7 +30,7 @@ describe("UpDownSparkline", () => {
     // `true`: a sparkline carries no tick ladder, so each half is drawn
     // against its own ceiling over the whole half-height -- RRDtool's
     // scaling. See mirrorPaths.
-    const expected = mirrorPaths(up, down, width, height, max, pad, true);
+    const expected = mirrorPaths(up, down, width, height, max, pad);
     const { container } = render(
       <UpDownSparkline
         up={up}
@@ -68,7 +68,7 @@ describe("UpDownSparkline", () => {
     // Then the mark is exactly the proportional one, against the window's
     // own peak
     const max = 37_040_000;
-    const proportional = mirrorPaths(up, down, 170, height, max, pad, true);
+    const proportional = mirrorPaths(up, down, 170, height, max, pad);
     const drawn = container.querySelector("path[data-up]")?.getAttribute("d");
     expect(drawn).toBe(proportional.up);
 

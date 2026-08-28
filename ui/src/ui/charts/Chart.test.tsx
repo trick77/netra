@@ -262,7 +262,7 @@ describe("Chart", () => {
           max={100}
           mark="mirror"
           spine
-          y={mirroredTicks(100, 3)}
+          y={mirroredTicks(100)}
         />,
       );
       expect(c.querySelector("[data-zero]")).not.toBeNull();
@@ -299,6 +299,42 @@ describe("Chart", () => {
       ).toBeLessThanOrEqual(1);
       // And it is not the midline of the box: `pair` is lopsided.
       expect(Number(zero!.getAttribute("y1"))).not.toBeCloseTo(320 / 2, 0);
+    });
+
+    // A mirror has no floor -- both halves label a magnitude -- but every
+    // mirrored chart is handed a `min` anyway: ChartPanel passes 0 for a
+    // stack, and ChartFigure's is required and defaults to 0. While that was
+    // read as "the caller pinned the range", the enlarged view and the
+    // per-interface Traffic panel drew a centred midline under a ladder
+    // whose own zero sat where the data put it.
+    it("scales by the data even when the caller passes a floor", () => {
+      const withFloor = draw(
+        <Chart
+          series={pair}
+          width={900}
+          height={320}
+          max={100}
+          min={0}
+          mark="mirror"
+          spine
+        />,
+      );
+      const free = draw(
+        <Chart
+          series={pair}
+          width={900}
+          height={320}
+          max={100}
+          mark="mirror"
+          spine
+        />,
+      );
+      expect(withFloor.querySelector("[data-mid]")?.getAttribute("y1")).toBe(
+        free.querySelector("[data-mid]")?.getAttribute("y1"),
+      );
+      expect(
+        Number(withFloor.querySelector("[data-zero]")!.getAttribute("y1")),
+      ).not.toBeCloseTo(320 / 2, 0);
     });
   });
 
@@ -353,14 +389,18 @@ describe("Chart", () => {
       const ys = [...c.querySelectorAll("[data-cursor-dot]")].map((d) =>
         Number(d.getAttribute("cy")),
       );
-      // The crosshair reads the INSET rect, as the marks do, so on a
-      // 100-tall box the midline is 50 and a half-height is 48. twoPairs at
-      // index 0 is eth0 in 10 / out 20, eth1 in 30 / out 40, so the up half
-      // stacks to 10 then 40 and the down half to 20 then 60. Summing ALL
-      // four in order -- what the plain stack does -- would put eth1's
-      // inbound dot at 60, on top of an outbound reading it is not drawn
-      // over.
-      const at = (total: number, dir: 1 | -1) => 50 + dir * (total / 100) * 48;
+      // On the geometry's own scale, not the box's middle: twoPairs stacks
+      // to 44 in and 64 out across the window, so zero sits at
+      // round(100 * 44 / 108) = 41 and each half divides its own ceiling
+      // into its own room -- 41 rows above, 59 below.
+      //
+      // twoPairs at index 0 is eth0 in 10 / out 20, eth1 in 30 / out 40, so
+      // the up half stacks to 10 then 40 and the down half to 20 then 60.
+      // Summing ALL four in order -- what the plain stack does -- would put
+      // eth1's inbound dot at 60, on top of an outbound reading it is not
+      // drawn over.
+      const at = (total: number, dir: 1 | -1) =>
+        dir === -1 ? 41 - (total / 44) * 41 : 41 + (total / 64) * 59;
       expect(ys[0]!).toBeCloseTo(at(10, -1), 6);
       expect(ys[1]!).toBeCloseTo(at(20, 1), 6);
       expect(ys[2]!).toBeCloseTo(at(40, -1), 6);

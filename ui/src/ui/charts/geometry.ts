@@ -376,10 +376,21 @@ export function mirrorPeaks(
  * it is why the fleet cell and the Traffic panel of the same host disagreed
  * about how thick a quiet band is.
  *
- * RRDtool has no such split: one linear axis over [-down, +up], padded, with
- * zero wherever that puts it and the labels generated from the same range.
- * An operator's own graph reads 500k at the top and -100k at the bottom for
+ * RRDtool has no such split: one linear axis over [-down, +up], with zero
+ * wherever that puts it and the labels generated from the same range. An
+ * operator's own graph reads 500k at the top and -100k at the bottom for
  * exactly this reason.
+ *
+ * There is no opting out, and there used to be. A flag let a caller ask for
+ * both halves against one ceiling with zero at mid-height, and it was wired
+ * to `y === undefined` (a chart with a tick ladder) and then to
+ * `min === undefined` (a caller who pinned the range). Both were wrong, the
+ * second invisibly: ChartPanel passes min 0 for a stack and ChartFigure's
+ * min defaults to 0, so EVERY mirrored panel and enlarged view in the app
+ * took the shared ceiling while its ladder -- built from this function, with
+ * no such condition -- was asymmetric. They drew a centred midline under an
+ * axis whose "0" sat a fifth of the way up the box. Nothing wants a mirror
+ * scaled any other way, so the choice is gone rather than corrected.
  */
 export function mirrorCeilings(
   upPeak: number,
@@ -416,7 +427,6 @@ export function mirrorPaths(
   h: number,
   max: number,
   pad = 0,
-  independent = false,
   /* The ceilings to scale against, when the caller has already derived them.
      A pair drawn WITH a peak envelope is two calls -- the envelope and the
      mean inside it -- handed different values, so left to derive their own
@@ -432,8 +442,8 @@ export function mirrorPaths(
   /**
    * The ceiling each half is drawn against, and how much room it gets.
    *
-   * `independent` is RRDtool's model, and it is why an Observium sparkline's
-   * peaks reach the edge of the cell where ours stopped well short of it.
+   * This is RRDtool's model, and it is why an Observium sparkline's peaks
+   * reach the edge of the cell where ours stopped well short of it.
    * Two things were costing height:
    *
    *  - `pad`. It exists so a LINE's stroke does not clip at the box edge. A
@@ -490,8 +500,8 @@ export function mirrorPaths(
   // and both ends of one range.
   const raw = ceiling ?? { up: halfMax(up), down: halfMax(down) };
   const scale = mirrorCeilings(raw.up, raw.down);
-  const upMax = independent ? scale.up : raw.up;
-  const downMax = independent ? scale.down : raw.down;
+  const upMax = scale.up;
+  const downMax = scale.down;
   const span = upMax + downMax;
   // Where zero sits. Centred when nothing is drawn, or when the caller is on
   // the shared ceiling; otherwise placed so the combined range fills the box.
@@ -507,7 +517,7 @@ export function mirrorPaths(
   // pixel is then drawn from row 0 to row -1, outside the viewport. Each
   // direction that has a reading keeps one row to draw it in.
   const placeZero = (): number => {
-    if (!independent || span === 0) return h / 2;
+    if (span === 0) return h / 2;
     let z = Math.round((h * upMax) / span);
     if (upMax > 0) z = Math.max(z, 1);
     if (downMax > 0) z = Math.min(z, h - 1);
@@ -516,20 +526,18 @@ export function mirrorPaths(
   const zero = placeZero();
   const baseline = round1(zero);
   // `room` is how many rows the direction actually has between the zero line
-  // and the edge of the box. It matters only under `independent`, where the
-  // scale is derived from the data and a bar longer than its room is pure
-  // rounding: h*up/span at exactly x.5 rounds the zero line one way and the
-  // opposite half's height the other, and the tallest bar loses its last row
-  // off the bottom of the cell. On the shared ceiling a value ABOVE `max` is
-  // a real reading and is left to escape the box -- see the docstring.
-  const scaleOf = (direction: 1 | -1) =>
-    independent
-      ? {
-          ceiling: span,
-          usable: h,
-          room: direction === -1 ? zero : h - zero,
-        }
-      : { ceiling: max, usable: h / 2 - pad, room: Infinity };
+  // and the edge of the box. A bar longer than its room is pure rounding:
+  // h*up/span at exactly x.5 rounds the zero line one way and the opposite
+  // half's height the other, and the tallest bar loses its last row off the
+  // bottom of the cell.
+  const scaleOf = (direction: 1 | -1) => ({
+    // One linear axis: a value maps through the COMBINED span over the whole
+    // box, so the same magnitude is the same height above the line as below
+    // it. `room` is only how far each half can reach before it runs out.
+    ceiling: span,
+    usable: h,
+    room: direction === -1 ? zero : h - zero,
+  });
 
   // Columns TILED across the full width, edge to edge, rather than centred on
   // scaleX's positions.
@@ -631,9 +639,7 @@ export function mirrorStackBands(
   down: (number | null)[][],
   w: number,
   h: number,
-  max: number,
   pad = 0,
-  independent = false,
 ): { up: string[]; down: string[]; mid: number } {
   // The stack's own totals, which is what the outer edge of each half is
   // drawn at -- not any one layer's peak.
@@ -653,7 +659,7 @@ export function mirrorStackBands(
 
   /* One linear axis over [-out_max, +in_max], with zero wherever that puts
      it -- rrdtool's `--alt-autoscale`, and what the fleet cell already does
-     through mirrorPaths' `independent`.
+     through mirrorPaths.
 
      Centring zero and measuring BOTH halves against the larger one is what
      this did before, and on a host that pulls four times what it pushes it
@@ -668,14 +674,14 @@ export function mirrorStackBands(
      two sizes rather than two charts that happen to share colours. */
   const raw = { up: stackMax(up), down: stackMax(down) };
   const scale = mirrorCeilings(raw.up, raw.down);
-  const upMax = independent ? scale.up : max;
-  const downMax = independent ? scale.down : max;
+  const upMax = scale.up;
+  const downMax = scale.down;
   const span = upMax + downMax;
 
   // Whole-pixel, and never on the box edge while the half beyond it has
   // something to draw -- the same rule mirrorPaths' placeZero() follows.
   const placeZero = (): number => {
-    if (!independent || span === 0) return h / 2;
+    if (span === 0) return h / 2;
     let z = Math.round((h * upMax) / span);
     if (upMax > 0) z = Math.max(z, 1);
     if (downMax > 0) z = Math.min(z, h - 1);
@@ -699,14 +705,14 @@ export function mirrorStackBands(
     // to each layer's own value: the total is what the edge is drawn at.
     const ceiling = direction === -1 ? upMax : downMax;
     const room = direction === -1 ? mid : h - mid;
-    const usable = independent ? room : h / 2 - pad;
+    const usable = room;
     // Clamped only where the scale is DERIVED here, exactly as mirrorPaths
     // does: there a bar longer than its room is pure rounding. On a
     // caller-supplied ceiling a total above `max` is a real reading and is
     // left to escape the box.
     const y = (v: number): number => {
       const px = barHeight((ceiling === 0 ? 0 : v / ceiling) * usable, v);
-      return mid + direction * (independent ? Math.min(px, room) : px);
+      return mid + direction * Math.min(px, room);
     };
 
     const bands: string[] = series.map(() => "");
