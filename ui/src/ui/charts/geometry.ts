@@ -297,37 +297,127 @@ export function stackBands(
  * did not; that inconsistency is resolved here in `linePath`'s favour.)
  */
 /**
- * A bar's height, in WHOLE pixels, with a real reading never rounding away.
+ * A bar's height, at SUB-PIXEL precision.
  *
- * Two problems, one answer, and both were measured against rrdtool rendering
- * the identical numbers at the identical size.
+ * Not rounded to a whole pixel. Whole pixels were argued for here on an ink
+ * measurement "against rrdtool rendering the identical numbers" -- but that
+ * rrdtool render was one this repo built for itself, not the reference. The
+ * operator's actual Observium sparkline carries 110 distinct series colours
+ * over 173 columns; this cell, rounding, carried 24. Those extra hundred are
+ * partial-coverage tops: a 3.4px reading draws three solid rows and a fourth
+ * at 40 %.
  *
- * A traffic chart's floor is routinely a thousandth of its ceiling, and a
- * fleet cell has fourteen pixels either side of the midline. Straight
- * arithmetic puts such a reading 0.014 px off the line, `round1` snaps that to
- * 0.0, and the polygon has no area at all -- a host that moved 26 kB/s all day
- * drew exactly as much ink as a host that moved nothing. On a heavy-tailed
- * host, 149 of 170 inbound columns vanished that way.
+ * That is the whole difference between the two pictures. Rounding leaves a
+ * 14px half exactly fifteen possible heights, so neighbouring buckets that
+ * differ by a fifth of a pixel draw identically and every bar ends in a hard
+ * flat edge -- the "stubby tower". A fractional height ends in an antialiased
+ * row instead, which both restores the variation and lets a spike taper to a
+ * point.
  *
- * And a bar of fractional height is antialiased along its top edge, so it
- * lands as a washed-out fringe rather than as a mark. Measured on a normal
- * host: rrdtool inks 1581 pixels of which 1581 are fully saturated, while the
- * same bars at fractional heights inked 1219 of which only 1004 were. An
- * eighth of our ink was a grey smear, which is most of what "rrdtool looks
- * richer at the same size" was.
- *
- * Whole pixels fix both: nothing to antialias, and `Math.max(1, ...)` means a
- * reading that exists is a reading you can see. It costs sub-pixel precision
- * -- about 7 % of a fourteen-pixel half -- and that is rrdtool's own trade,
- * made for the same reason. A sparkline is read as a shape.
- *
- * A genuine zero still draws on the midline. "Nothing moved" and "almost
- * nothing moved" are different answers, and this is the mark that separates
- * them.
+ * There is deliberately NO floor either. It used to read `Math.max(1, ...)`,
+ * so that a reading which exists is a reading you can see -- which sounds
+ * right and is what makes the quiet stretch of a bursty host a dead straight
+ * line. A traffic floor is routinely a thousandth of its ceiling, so on such
+ * a host EVERY quiet column clamped to exactly one pixel and the cell said
+ * the same thing 149 times. rrdtool lets those columns fall where they land,
+ * and the variation IS the detail.
  */
 function barHeight(px: number, value: number): number {
   if (value === 0) return 0;
-  return Math.max(1, Math.round(px));
+  return px;
+}
+
+/**
+ * The two halves' peaks, by the same even-up / odd-down convention the
+ * mirrored marks use and with the same stacking rule.
+ *
+ * Exported so a panel can build its tick ladder from the numbers its marks
+ * will actually be drawn against, rather than from a single shared `max`.
+ */
+export function mirrorPeaks(
+  seriesValues: readonly (number | null)[][],
+  stacked: boolean,
+): { up: number; down: number } {
+  const peak = (rows: readonly (number | null)[][]): number => {
+    if (rows.length === 0) return 0;
+    const n = rows.reduce((longest, r) => Math.max(longest, r.length), 0);
+    let m = 0;
+    for (let i = 0; i < n; i++) {
+      // Stacked, the outer edge is the running total; overlaid, it is the
+      // tallest single layer.
+      let v = 0;
+      for (const row of rows) {
+        const x = row[i];
+        if (x == null) continue;
+        if (stacked) v += x;
+        else if (x > v) v = x;
+      }
+      if (v > m) m = v;
+    }
+    return m;
+  };
+  return {
+    up: peak(seriesValues.filter((_, i) => i % 2 === 0)),
+    down: peak(seriesValues.filter((_, i) => i % 2 === 1)),
+  };
+}
+
+/**
+ * The ceilings a mirrored chart's two halves are drawn against, and where
+ * zero falls between them.
+ *
+ * ONE computation, exported because three things have to agree about it: the
+ * plain mirror, the stacked mirror, and the tick ladder a panel hangs beside
+ * them. They did not agree before. `mirrorPaths` derived an asymmetric scale
+ * from the data whenever no ladder was present, and a panel WITH a ladder
+ * got the symmetric fallback instead -- both halves measured against the
+ * larger peak, zero pinned to mid-height. On a host pulling four times what
+ * it pushes that spends four fifths of the outbound range on empty box, and
+ * it is why the fleet cell and the Traffic panel of the same host disagreed
+ * about how thick a quiet band is.
+ *
+ * RRDtool has no such split: one linear axis over [-down, +up], with zero
+ * wherever that puts it and the labels generated from the same range. An
+ * operator's own graph reads 500k at the top and -100k at the bottom for
+ * exactly this reason.
+ *
+ * There is no opting out, and there used to be. A flag let a caller ask for
+ * both halves against one ceiling with zero at mid-height, and it was wired
+ * to `y === undefined` (a chart with a tick ladder) and then to
+ * `min === undefined` (a caller who pinned the range). Both were wrong, the
+ * second invisibly: ChartPanel passes min 0 for a stack and ChartFigure's
+ * min defaults to 0, so EVERY mirrored panel and enlarged view in the app
+ * took the shared ceiling while its ladder -- built from this function, with
+ * no such condition -- was asymmetric. They drew a centred midline under an
+ * axis whose "0" sat a fifth of the way up the box. Nothing wants a mirror
+ * scaled any other way, so the choice is gone rather than corrected.
+ */
+export function mirrorCeilings(
+  upPeak: number,
+  downPeak: number,
+): { up: number; down: number; zero: number } {
+  /* NO headroom. The range is the data's own, and the peak touches the edge.
+   *
+   * This used to add rrdtool's `expand_range()` padding -- a tenth of the
+   * combined range at each end -- ported from the ALTAUTOSCALE branch after
+   * reading it. Reading the branch was not enough; the CALL had to be read
+   * too. rrd_graph.c:4042:
+   *
+   *     if ((!im->rigid || im->allow_shrink) && !im->logarithmic)
+   *         expand_range(im);
+   *
+   * Observium's common.inc.php appends `--alt-autoscale --rigid` and never
+   * `--allow-shrink`, so the reference never calls expand_range at all. The
+   * padding widened the span by a fifth and so drew every mark 20 % shorter
+   * than the graph it was copying -- which is what an operator reported by
+   * eye, independently, as "still missing about 20 %".
+   */
+  const span = upPeak + downPeak;
+  return {
+    up: upPeak,
+    down: downPeak,
+    zero: span === 0 ? 0.5 : upPeak / span,
+  };
 }
 
 export function mirrorPaths(
@@ -337,15 +427,23 @@ export function mirrorPaths(
   h: number,
   max: number,
   pad = 0,
-  independent = false,
+  /* The ceilings to scale against, when the caller has already derived them.
+     A pair drawn WITH a peak envelope is two calls -- the envelope and the
+     mean inside it -- handed different values, so left to derive their own
+     they would place their zero lines at different heights and the envelope
+     would neither contain the mean nor share its midline. The caller derives
+     one pair from the peak, the tallest thing on the chart, and hands the
+     same pair to both. It is also what the tick ladder is built from, so the
+     labels name the heights the marks are actually drawn at. */
+  ceiling?: { up: number; down: number },
 ): { up: string; down: string; mid: number } {
   const n = Math.max(up.length, down.length);
 
   /**
    * The ceiling each half is drawn against, and how much room it gets.
    *
-   * `independent` is RRDtool's model, and it is why an Observium sparkline's
-   * peaks reach the edge of the cell where ours stopped well short of it.
+   * This is RRDtool's model, and it is why an Observium sparkline's peaks
+   * reach the edge of the cell where ours stopped well short of it.
    * Two things were costing height:
    *
    *  - `pad`. It exists so a LINE's stroke does not clip at the box edge. A
@@ -370,13 +468,40 @@ export function mirrorPaths(
    * ladder and leaves a chart that has one on the shared ceiling its ticks
    * are labelled from.
    */
+  // The ceiling a half is drawn against: the window's own peak.
+  //
+  // A percentile ceiling was tried three times and is not here, which is
+  // worth recording so it is not tried a fourth. The reference does not clip:
+  // Observium runs rrdtool with `--alt-autoscale --rigid` (common.inc.php,
+  // the branch taken when no explicit scale is set), which pads the data's
+  // own range and never truncates it.
+  //
+  // It does not need to, and netra arguably does: measured on one real host,
+  // inbound median 545 B/s with three isolated FIVE-MINUTE buckets at about
+  // 100 kB/s -- 190x the median, on round hours, ordinary neighbours either
+  // side. Scaled to one of those the rest of the day shares a pixel. But the
+  // clip that fixes it is a dial with no defensible setting: p98 leaves the
+  // cell nearly as flat, p90 fills it with a solid block, and the right value
+  // differs per host. Picking one by eye is how this file acquired, and then
+  // lost, a one-pixel floor.
   const halfMax = (vals: (number | null)[]): number => {
     let m = 0;
     for (const v of vals) if (v !== null && v > m) m = v;
     return m;
   };
-  const upMax = halfMax(up);
-  const downMax = halfMax(down);
+
+  // Padded the way `--alt-autoscale` pads, but only where the scale is
+  // derived here. A chart with a tick ladder gets `max` from its caller and
+  // its labels are drawn from that number: widening it underneath would put
+  // every mark at a height its own axis denies.
+  //
+  // The padding is shared between the halves rather than added to each, which
+  // is what rrdtool does -- it moves minval and maxval apart by `adj` each,
+  // and both ends of one range.
+  const raw = ceiling ?? { up: halfMax(up), down: halfMax(down) };
+  const scale = mirrorCeilings(raw.up, raw.down);
+  const upMax = scale.up;
+  const downMax = scale.down;
   const span = upMax + downMax;
   // Where zero sits. Centred when nothing is drawn, or when the caller is on
   // the shared ceiling; otherwise placed so the combined range fills the box.
@@ -388,14 +513,11 @@ export function mirrorPaths(
   //
   // And never on the box edge while the half above or below it has something
   // to draw. A host pulling a hundredth of what it pushes puts the exact zero
-  // at 0.3, which rounds to 0 -- and every inbound bar, floored to one whole
-  // pixel by barHeight, is then drawn from row 0 to row -1, outside the
-  // viewport. The half that reads "nothing at all" and the half that reads
-  // "a thousandth of the other one" are different answers, which is the whole
-  // point of the one-pixel floor, so each direction that has a reading keeps
-  // one row to draw it in.
+  // at 0.3, which rounds to 0 -- and any inbound bar that does reach a whole
+  // pixel is then drawn from row 0 to row -1, outside the viewport. Each
+  // direction that has a reading keeps one row to draw it in.
   const placeZero = (): number => {
-    if (!independent || span === 0) return h / 2;
+    if (span === 0) return h / 2;
     let z = Math.round((h * upMax) / span);
     if (upMax > 0) z = Math.max(z, 1);
     if (downMax > 0) z = Math.min(z, h - 1);
@@ -404,20 +526,18 @@ export function mirrorPaths(
   const zero = placeZero();
   const baseline = round1(zero);
   // `room` is how many rows the direction actually has between the zero line
-  // and the edge of the box. It matters only under `independent`, where the
-  // scale is derived from the data and a bar longer than its room is pure
-  // rounding: h*up/span at exactly x.5 rounds the zero line one way and the
-  // opposite half's height the other, and the tallest bar loses its last row
-  // off the bottom of the cell. On the shared ceiling a value ABOVE `max` is
-  // a real reading and is left to escape the box -- see the docstring.
-  const scaleOf = (direction: 1 | -1) =>
-    independent
-      ? {
-          ceiling: span,
-          usable: h,
-          room: direction === -1 ? zero : h - zero,
-        }
-      : { ceiling: max, usable: h / 2 - pad, room: Infinity };
+  // and the edge of the box. A bar longer than its room is pure rounding:
+  // h*up/span at exactly x.5 rounds the zero line one way and the opposite
+  // half's height the other, and the tallest bar loses its last row off the
+  // bottom of the cell.
+  const scaleOf = (direction: 1 | -1) => ({
+    // One linear axis: a value maps through the COMBINED span over the whole
+    // box, so the same magnitude is the same height above the line as below
+    // it. `room` is only how far each half can reach before it runs out.
+    ceiling: span,
+    usable: h,
+    room: direction === -1 ? zero : h - zero,
+  });
 
   // Columns TILED across the full width, edge to edge, rather than centred on
   // scaleX's positions.
@@ -519,11 +639,55 @@ export function mirrorStackBands(
   down: (number | null)[][],
   w: number,
   h: number,
-  max: number,
   pad = 0,
 ): { up: string[]; down: string[]; mid: number } {
-  const mid = h / 2;
-  const usable = h / 2 - pad;
+  // The stack's own totals, which is what the outer edge of each half is
+  // drawn at -- not any one layer's peak.
+  const stackMax = (series: (number | null)[][]): number => {
+    const n = series.reduce((longest, s) => Math.max(longest, s.length), 0);
+    let m = 0;
+    for (let i = 0; i < n; i++) {
+      let sum = 0;
+      for (const s of series) {
+        const v = s[i];
+        if (v != null) sum += v;
+      }
+      if (sum > m) m = sum;
+    }
+    return m;
+  };
+
+  /* One linear axis over [-out_max, +in_max], with zero wherever that puts
+     it -- rrdtool's `--alt-autoscale`, and what the fleet cell already does
+     through mirrorPaths.
+
+     Centring zero and measuring BOTH halves against the larger one is what
+     this did before, and on a host that pulls four times what it pushes it
+     throws away four fifths of the outbound range: zen's out peak is 24.6k
+     against an in peak of 101.6k, so the out half got 105 rows to draw 24.6k
+     in and its 4k baseline landed on 4 pixels. On the reference's own axis
+     the same baseline is 11. The band was not thin because of the mark, it
+     was thin because three quarters of the box below the midline could never
+     be reached.
+
+     This is also what makes the panel and the fleet cell the same chart at
+     two sizes rather than two charts that happen to share colours. */
+  const raw = { up: stackMax(up), down: stackMax(down) };
+  const scale = mirrorCeilings(raw.up, raw.down);
+  const upMax = scale.up;
+  const downMax = scale.down;
+  const span = upMax + downMax;
+
+  // Whole-pixel, and never on the box edge while the half beyond it has
+  // something to draw -- the same rule mirrorPaths' placeZero() follows.
+  const placeZero = (): number => {
+    if (span === 0) return h / 2;
+    let z = Math.round((h * upMax) / span);
+    if (upMax > 0) z = Math.max(z, 1);
+    if (downMax > 0) z = Math.min(z, h - 1);
+    return z;
+  };
+  const mid = placeZero();
 
   const half = (series: (number | null)[][], direction: 1 | -1): string[] => {
     if (series.length === 0) return [];
@@ -536,13 +700,20 @@ export function mirrorStackBands(
       (run) => run.length >= 2,
     );
 
-    // The same whole-pixel rule a plain mirror gives a real reading, so a
-    // quiet interface is a visible layer here rather than nothing. Applied to
-    // the running TOTAL, not to each layer's own value: the total is what the
-    // edge is drawn at, and lifting every layer separately would stack the
-    // minimum as many times as there are interfaces.
-    const y = (v: number): number =>
-      mid + direction * barHeight((max === 0 ? 0 : v / max) * usable, v);
+    // Each half against its OWN ceiling and its own room, which is the whole
+    // point of the placement above. Applied to the running TOTAL rather than
+    // to each layer's own value: the total is what the edge is drawn at.
+    const ceiling = direction === -1 ? upMax : downMax;
+    const room = direction === -1 ? mid : h - mid;
+    const usable = room;
+    // Clamped only where the scale is DERIVED here, exactly as mirrorPaths
+    // does: there a bar longer than its room is pure rounding. On a
+    // caller-supplied ceiling a total above `max` is a real reading and is
+    // left to escape the box.
+    const y = (v: number): number => {
+      const px = barHeight((ceiling === 0 ? 0 : v / ceiling) * usable, v);
+      return mid + direction * Math.min(px, room);
+    };
 
     const bands: string[] = series.map(() => "");
     for (const run of runs) {
@@ -554,6 +725,23 @@ export function mirrorStackBands(
         prefix.push([...running]);
       }
 
+      // A POLYLINE through the bucket tops, deliberately, and NOT the
+      // column-per-bucket staircase mirrorPaths' build() draws.
+      //
+      // Tried the staircase here on the theory that it was why the panel
+      // inked less of the box than the reference. It was not: at the
+      // reference's own plot size the ink went from 5.4 % to 5.5 % against
+      // its 8.4 %, so the mark was never the cause -- the scale was, see
+      // mirrorCeilings and the ceiling each half is given. What the staircase
+      // did cost is the shape of a spike. At roughly four pixels per bucket a
+      // column is a flat-topped rectangle four wide, where a polyline rises
+      // and falls across its neighbours and tapers to a point. The reference
+      // draws needles, and so does this.
+      //
+      // The cell is the other way round for a reason that does not apply
+      // here: at 170 px it folds many buckets into one pixel column, and
+      // there a diagonal between two columns merges adjacent buckets into a
+      // single smooth mass. It has no room to taper; this chart does.
       for (let k = 0; k < series.length; k++) {
         const bottom = prefix[k]!;
         const top = prefix[k + 1]!;

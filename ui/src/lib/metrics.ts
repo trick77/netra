@@ -446,13 +446,27 @@ export function reduceToColumns(
   combine: "mean" | "max" = "mean",
 ): (number | null)[] {
   if (columns < 1 || vals.length <= columns) return [...vals];
+  // An INTEGER reduction factor, and consecutive groups of exactly that many
+  // -- which is rrd_reduce_data(): `reduce_factor = ceil(step / cur_step)`,
+  // then one output row per `reduce_factor` input rows.
+  //
+  // Proportional boundaries were the obvious alternative and are what this
+  // did first. The difference shows up on an isolated spike. At 289 buckets
+  // into 170 columns the factor is 2, so every column here is the mean of a
+  // fixed PAIR and a one-bucket burst is always averaged with a quiet
+  // neighbour: it draws at about half its value. Proportional boundaries give
+  // a column 1 or 2 buckets depending on where it falls, so the same burst
+  // often lands alone and keeps its full height -- measured against the
+  // reference, spikes stood about 1.4x too tall for that reason.
+  //
+  // It returns FEWER than `columns` values (145 for 170 here). That is
+  // deliberate and also what rrdtool does: the marks tile across the full
+  // width whatever their count, so the result is slightly wider bars rather
+  // than a short chart.
+  const factor = Math.ceil(vals.length / columns);
   const out: (number | null)[] = [];
-  for (let c = 0; c < columns; c++) {
-    // Boundaries from the exact ratio rather than a rounded stride, so the
-    // rounding error cannot accumulate across the width and leave the last
-    // column reading half the window.
-    const from = Math.floor((c * vals.length) / columns);
-    const to = Math.floor(((c + 1) * vals.length) / columns);
+  for (let from = 0; from < vals.length; from += factor) {
+    const to = Math.min(from + factor, vals.length);
     let sum = 0;
     let seen = 0;
     let peak: number | null = null;

@@ -50,8 +50,8 @@ export interface UpDownSparklineProps {
  * Overlay rather than by this component, and a chart that changed colour on
  * being clicked open would be a different chart.
  */
-export const UP_COLOR = "var(--s2)";
-export const DOWN_COLOR = "var(--s5)";
+export const UP_COLOR = "var(--in-1)";
+export const DOWN_COLOR = "var(--out-1)";
 
 /**
  * The same pair, one lightness step per interface, for the panel that stacks

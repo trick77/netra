@@ -259,21 +259,44 @@
      fleet row cell, the host overview card and this panel are the same fact
      at three sizes and the cell has only two bands to spend on it -- a panel
      that re-hued them per interface would be a different chart on click.
-     So the hue stays s2 above / s5 below and the interface is a LIGHTNESS
-     step within it. Index 0 is s2/s5 exactly, which is what makes a one-NIC
-     host draw the cell's own pair.
+     So the hue stays in-1 above / out-1 below and the interface is a
+     LIGHTNESS step within it. Index 0 is in-1/out-1 exactly, which is what
+     makes a one-NIC host draw the cell's own pair.
 
      Three steps, not eight: the fourth interface on a box is rare, the steps
      have to stay apart at a 112px panel, and a fifth would land on the
      background. The walk wraps rather than growing -- a host with five
      reportable NICs repeats a shade and the legend, which that panel always
      carries, is what tells them apart. */
-  --in-2: #3fbf90;
-  --in-3: #79d9b4;
-  --in-4: #a9ecd0;
-  --out-2: #c795ea;
-  --out-3: #ddbcf3;
-  --out-4: #ece0f9;
+  /* The traffic pair is RRDtool's own, sampled out of the operator's
+     Observium graphs rather than derived from the series ramp: #aeca4f green
+     for in, #9596de blue-violet for out. An operator reads the same two
+     hosts in both tools on the same screen, and a traffic chart that swaps
+     the hues between them is a chart they have to re-learn each time. The
+     ramp above stays as it is -- it is for charts with no such counterpart.
+
+     Used exactly as sampled, and NOT compensated for the fill.
+
+     A mirrored area is filled at MIRROR_FILL_OPACITY over --surface, so what
+     reaches the eye is 45 % of the way from #1b1b1a to the token: these
+     render as #657143 and #5d5e75, duller than the graph they come from.
+     Brightening the tokens to compensate was tried and reverted -- on a dark
+     ground with nothing behind the band, "translucent" IS "dimmer", so
+     pushing the token toward white makes the band read as SOLID, which is
+     the opposite of what was wanted. The two cannot both hold: an exact
+     match through a 45 % fill would need rgb(354, 416, 144), and anything
+     approaching it costs the see-through look.
+
+     Keeping the sampled values means the token names the reference colour
+     honestly, and the fill weight is the one dial left to turn. */
+  --in-1: #aeca4f;
+  --in-2: #c0d977;
+  --in-3: #d2e6a0;
+  --in-4: #e4f2c9;
+  --out-1: #9596de;
+  --out-2: #aeafe6;
+  --out-3: #c7c8ee;
+  --out-4: #e0e0f6;
   /* The per-core sweep computes its own hues -- there is no fixed set of
      steps to name when the ramp has to subdivide to fit the host -- but
      saturation and lightness stay here so the ramp still follows the theme

@@ -866,12 +866,16 @@ describe("trafficSeries", () => {
     const t = trafficSeries(rolledUp(), 2);
 
     // Then the drawn series averages within a column, as rrdtool's reduce
-    // does with an AVERAGE RRA. Three buckets over two columns splits
-    // one/two, so the second column is the mean of 22 and 33.
-    expect(t.rx).toEqual([11, 27.5]);
+    // does with an AVERAGE RRA. The groups are rrd_reduce_data()'s: an
+    // INTEGER factor of ceil(3 / 2) = 2, then consecutive pairs -- so the
+    // first column is the mean of 11 and 22 and the second is 33 alone, and
+    // the result is one column SHORTER than asked for. Proportional
+    // boundaries would split one/two instead and let an isolated burst land
+    // in a column of its own, which is why they drew spikes too tall.
+    expect(t.rx).toEqual([16.5, 33]);
     // And the envelope keeps taking the loudest, so a band behind a line is
     // still the peak it claims to be.
-    expect(t.rxPeak).toEqual([105, 307]);
+    expect(t.rxPeak).toEqual([206, 307]);
   });
 
   it("has no separate peak at the raw tier", () => {

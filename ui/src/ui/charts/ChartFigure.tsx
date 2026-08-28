@@ -15,6 +15,7 @@
 
 import { useState } from "react";
 import { Chart, type ChartSeries } from "./Chart";
+import { mirrorPeaks } from "./geometry";
 import { mirroredTicks, niceTicks, timeLabel, timeTicks } from "./ticks";
 import { widestLabel } from "./plot";
 import { ABSENT, absolute } from "../../lib/format";
@@ -94,10 +95,18 @@ export function ChartFigure({
   const [cursor, setCursor] = useState<number | null>(null);
 
   const valueAxis = !hideAxis;
+  // Same two peaks the marks use -- see ChartPanel.
+  const figureHalves = mirrorPeaks(
+    // The BAND where a series carries one: it is the peak envelope drawn
+    // behind the mean and is always the taller of the two, so a ceiling
+    // taken from the mean alone would draw the envelope outside the plot.
+    series.map((s) => (s.band && s.band.length > 0 ? s.band : s.values)),
+    stacked ?? false,
+  );
   const yTicks = !valueAxis
     ? undefined
     : mirrored
-      ? mirroredTicks(max, 3, tickBase)
+      ? mirroredTicks(figureHalves.up, figureHalves.down, 3, tickBase)
       : niceTicks(min, max, 3, tickBase);
 
   const xTicks = answered

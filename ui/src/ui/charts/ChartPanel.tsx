@@ -7,7 +7,7 @@
 // collected now, and per-container networking is the remaining caller.
 import type { ReactNode } from "react";
 import { ABSENT } from "../../lib/format";
-import { extent } from "./geometry";
+import { extent, mirrorPeaks } from "./geometry";
 import { mirroredTicks, niceTicks, timeTicks } from "./ticks";
 import { widestLabel } from "./plot";
 import type { OverlaySeries } from "./Overlay";
@@ -341,10 +341,20 @@ export function ChartPanel({
     max === undefined &&
     reference === undefined;
 
+  // The ladder is built from the SAME two peaks the marks are scaled to, so
+  // an asymmetric chart gets an asymmetric axis instead of the geometry
+  // being forced back onto one shared ceiling by the presence of a ladder.
+  const mirrorHalves = mirrorPeaks(
+    // The BAND where a series carries one: it is the peak envelope drawn
+    // behind the mean and is always the taller of the two, so a ceiling
+    // taken from the mean alone would draw the envelope outside the plot.
+    series.map((s) => (s.band && s.band.length > 0 ? s.band : s.values)),
+    stacked ?? false,
+  );
   const yTicks = !valueAxis
     ? undefined
     : mirrored
-      ? mirroredTicks(effectiveMax, 1, tickBase)
+      ? mirroredTicks(mirrorHalves.up, mirrorHalves.down, 1, tickBase)
       : niceTicks(floor, effectiveMax, 1, tickBase);
   const xTicks =
     !axis || answered === null

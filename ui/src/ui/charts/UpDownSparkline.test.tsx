@@ -30,7 +30,7 @@ describe("UpDownSparkline", () => {
     // `true`: a sparkline carries no tick ladder, so each half is drawn
     // against its own ceiling over the whole half-height -- RRDtool's
     // scaling. See mirrorPaths.
-    const expected = mirrorPaths(up, down, width, height, max, pad, true);
+    const expected = mirrorPaths(up, down, width, height, max, pad);
     const { container } = render(
       <UpDownSparkline
         up={up}
@@ -68,15 +68,19 @@ describe("UpDownSparkline", () => {
     // Then the mark is exactly the proportional one, against the window's
     // own peak
     const max = 37_040_000;
-    const proportional = mirrorPaths(up, down, 170, height, max, pad, true);
+    const proportional = mirrorPaths(up, down, 170, height, max, pad);
     const drawn = container.querySelector("path[data-up]")?.getAttribute("d");
     expect(drawn).toBe(proportional.up);
 
-    // And the spike reaches the top of the box. Not half the box minus pad:
-    // `pad` keeps a line's stroke off the edge and a bar has no stroke, and
-    // the zero line is placed by the data rather than pinned to the middle,
-    // so the combined range fills the cell. y grows downward and `up` is
-    // drawn upward, so the top is the smallest y.
+    // And the spike very nearly reaches the top of the box. Not half the box
+    // minus pad: `pad` keeps a line's stroke off the edge and a bar has no
+    // stroke, and the zero line is placed by the data rather than pinned to
+    // the middle, so the combined range fills the cell. y grows downward and
+    // `up` is drawn upward, so the top is the smallest y.
+    //
+    // Right at the top: the reference passes --rigid, so rrdtool skips
+    // expand_range() and leaves no headroom (rrd_graph.c:4042). The window's
+    // peak IS the ceiling.
     const ys = drawn!
       .split(" ")
       .map((p) => Number(p.split(",")[1]))
@@ -125,7 +129,10 @@ describe("UpDownSparkline", () => {
       const upPath = container.querySelector("path[data-up]");
       const downPath = container.querySelector("path[data-down]");
 
-      // Then the fill is translucent and the edge is that same colour, solid
+      // Then the fill is translucent and the edge is that same colour, solid.
+      // The edge is what makes the area read as a shape with something inside
+      // it: without one, a translucent fill over a dark ground with nothing
+      // behind it is simply a dimmer flat block.
       expect(upPath?.getAttribute("fill-opacity")).toBe("0.45");
       expect(upPath?.getAttribute("stroke")).toBe("var(--s3)");
       expect(upPath?.getAttribute("stroke-width")).toBe("1.25");
@@ -173,11 +180,15 @@ describe("UpDownSparkline", () => {
       // When the axis rule is read
       const mid = container.querySelector("line[data-mid]");
 
-      // Then it spans the box at the midline mirrorPaths() anchors to
+      // Then it spans the box, half a row below the midline mirrorPaths()
+      // anchors to. The offset is what makes a 1px stroke fill exactly one
+      // row instead of straddling two: centred on the integer itself it
+      // renders as two grey half-rows with the bars standing off it.
       expect(mid?.getAttribute("x1")).toBe("0");
       expect(mid?.getAttribute("x2")).toBe(String(width));
-      expect(mid?.getAttribute("y1")).toBe(String(height / 2));
-      expect(mid?.getAttribute("y2")).toBe(String(height / 2));
+      expect(mid?.getAttribute("y1")).toBe(String(height / 2 + 0.5));
+      expect(mid?.getAttribute("y2")).toBe(String(height / 2 + 0.5));
+      expect(mid?.getAttribute("shape-rendering")).toBe("crispEdges");
       expect(mid?.getAttribute("stroke")).toBe("var(--border)");
     });
 
