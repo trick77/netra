@@ -222,30 +222,35 @@
      out of, and the ramp runs bright-to-dim in the order the kernel can take
      the bytes back. lib/bands.ts owns the argument and the measurements.
 
-     Amber for used, and that is a knowing exception to the rule above. The
-     0-41 degree band belongs to --accent (18) and the status palette, and
-     --mem-used at ~38 degrees sits dE 5.8 from --accent. It is allowed here
-     because the band it colours is a QUANTITY, not a state: it is always
-     present, it never appears or disappears to mean something, and severity
-     on the same row is carried by a rail, a dot and a word as well as a hue.
-     What it buys is a warm bottom that separates from everything above it by
-     dE 34.9 without the magenta that made the cell shout.
+     Amber for used, and that is a knowing exception to the rule above -- a
+     much smaller one than it looks. The 0-41 degree band belongs to --accent
+     (18) and the status palette; --mem-used is at ~38 degrees but its whole
+     register is darker, so it measures dE 11.2 from --accent rather than the
+     5.8 a full-brightness amber would. It is allowed because the band it
+     colours is a QUANTITY, not a state: always present, never appearing or
+     disappearing to mean something, with severity on the same row carried by
+     a rail, a dot and a word as well as a hue. What it buys is a warm bottom
+     that separates from everything above it by dE 32.7 without the magenta
+     that made the cell shout.
 
      Adjacent separation, dE2000, worst of normal vision and Machado
-     protan/deutan/tritan at full severity: 34.9 / 13.4 / 11.0 / 17.7. On
-     --surface: 5.06, 4.24, 4.82, 3.35, 2.47.
+     protan/deutan/tritan at full severity: 32.7 / 13.1 / 10.9 / 18.7. On
+     --surface: 3.76, 3.22, 3.60, 2.42, 2.02 -- the whole family sits under
+     the series ramp's brightness on purpose.
 
-     Cached is under the 4:1 the series hold, on purpose. That floor is for a
-     mark a reader has to resolve -- a hairline, a dot, a word. Cached is a
-     filled area several pixels tall whose whole job is to be seen last, and
-     it sits BELOW --reference (#6e6c66), the dashed total-RAM rule drawn
-     across the same chart: where the rule crosses a full host's cache band it
-     reads 1.33:1 lighter and stays legible against it. */
-  --mem-used: #b8802b;
-  --mem-shared: #7d74c4;
-  --mem-arc: #339595;
-  --mem-buffers: #47738a;
-  --mem-cached: #5c5954;
+     None of these clear the 4:1 the series hold, and cached at 2.02:1 is the
+     furthest under. That floor is for a mark a reader has to resolve -- a
+     hairline, a dot, a word. These are filled areas several pixels tall in a
+     cell that exists to be scanned, not read; the fleet page is a wall of
+     them and the brightness is what made it tiring. Every band still sits
+     BELOW --reference (#6e6c66), the dashed total-RAM rule drawn across the
+     same chart, so where the rule crosses a full host's cache band it reads
+     1.63:1 lighter and stays legible against it. */
+  --mem-used: #9c6c23;
+  --mem-shared: #6a62a8;
+  --mem-arc: #2b7e7e;
+  --mem-buffers: #2f5c7d;
+  --mem-cached: #4f4c48;
   /* Traffic's in/out pair, one step lighter per interface.
 
      The per-interface Traffic panel stacks in above the midline and out

@@ -31,28 +31,29 @@ import type { Band } from "../ui/charts/StackedSparkline";
  *
  * CACHED IS THE DIMMEST BAND, NOT THE BRIGHTEST. It was #b6b3ab, 8.23:1 on
  * --surface, so the band meaning "you can have this back" glared harder than
- * the one meaning you cannot. It is now #5c5954 at 2.47:1: the band the host
- * will hand back first is the one your eye reaches last. Buffers is a muted
- * steel blue one step above it, dim rather than pale, so the TOP of a memory
- * cell is never the loudest thing on the row.
+ * the one meaning you cannot. It is now #4f4c48 at 2.02:1: the band the host
+ * will hand back first is the one your eye reaches last. Buffers is a dark
+ * steel blue one step above it, so the TOP of a memory cell is never the
+ * loudest thing on the row.
  *
  * AMBER IS BACK, KNOWINGLY. ARC was --s7 (#d95926) and cached was --s8 amber
  * (#c98500); both were taken out because a memory band, "something needs
- * attention" and a severity were the same colour two columns apart. --mem-used
- * is amber again at ~38 degrees, dE 5.8 from --accent, and it is allowed
- * because the band it colours is a QUANTITY rather than a state: always
- * present, never appearing or disappearing to mean something, with severity on
- * the same row carried by a rail, a dot and a word as well as a hue. The
- * magenta it replaces was correct by the rule and still made the cell shout.
+ * attention" and a severity were the same colour two columns apart.
+ * --mem-used is amber again at ~38 degrees, but a dark one: dE 11.2 from
+ * --accent where a full-brightness amber measures 5.8. It is allowed because
+ * the band it colours is a QUANTITY rather than a state: always present, never
+ * appearing or disappearing to mean something, with severity on the same row
+ * carried by a rail, a dot and a word as well as a hue. The magenta it
+ * replaces was correct by the rule and still made the cell shout.
  *
  * ORDER IS STILL THE SAFETY MECHANISM. The pairs that have to separate are
  * decided by which bands touch, so re-check if the stacking order changes.
  * Adjacent separation, dE2000 under normal vision and Machado
  * protan/deutan/tritan at full severity, worst figure per pair: used/shared
- * 34.9, shared/ARC 13.4, ARC/buffers 11.0, buffers/cached 17.7 -- every pair
- * above the 9.1 the --s7/--s8 set was shipped at. On --surface every band
- * clears 3:1 except cached, which is held under it on purpose; see the token's
- * own note in index.css.
+ * 32.7, shared/ARC 13.1, ARC/buffers 10.9, buffers/cached 18.7 -- every pair
+ * above the 9.1 the --s7/--s8 set was shipped at. On --surface the bands run
+ * 3.76 down to 2.02, all under the 4:1 the series hold and deliberately so;
+ * see the tokens' own note in index.css.
  */
 const USED = "var(--mem-used)";
 const SHARED = "var(--mem-shared)";
