@@ -97,9 +97,13 @@ check_alpha "$OUT/icon-maskable-512.png" true
 # assert it. Three samples, one per way this file can quietly go wrong:
 #
 #   corner (0,0)     must be CLEAR, or the icon is a square tile and not a chip
-#   ground (256,96)  must be OPAQUE — a point inside the chip, 1.2 glyph units
-#                    above the trace's own bounding box, so it reads the chip and
-#                    never the mark
+#   ground (256,64)  must be OPAQUE — a point inside the chip and 1.66 units clear
+#                    of the top of the trace's bounding box (which sits at y 6.909
+#                    in the 24-space), so it reads the chip and never the mark.
+#                    It was at y=96 when the arms ran full width; cropping them
+#                    scaled the mark up and left only 0.5 units of margin there,
+#                    which is the kind of clearance that silently becomes zero on
+#                    the next retune
 #   ink (256,256)    must be netra's #131312 — the chip's exact centre, which the
 #                    trace's descending stroke passes through by construction:
 #                    the centreline runs (9,5) to (15,19), so its midpoint is
@@ -118,7 +122,7 @@ check_alpha "$OUT/icon-maskable-512.png" true
 # channel bookkeeping rather than the icon.
 rsvg-convert -b none -w 512 -h 512 "$OUT/icon.svg" -o "$TMP/icon-favicon.png"
 fav_corner="$(magick "$TMP/icon-favicon.png" -alpha on -format '%[fx:p{0,0}.a]' info:)"
-fav_ground="$(magick "$TMP/icon-favicon.png" -alpha on -format '%[fx:p{256,96}.a]' info:)"
+fav_ground="$(magick "$TMP/icon-favicon.png" -alpha on -format '%[fx:p{256,64}.a]' info:)"
 fav_ink="$(magick "$TMP/icon-favicon.png" -alpha on -format '%[hex:p{256,256}]' info: | tr '[:upper:]' '[:lower:]')"
 if [[ "$fav_corner" != "0" ]]; then
 	echo "gen-icons: icon.svg's canvas corner has alpha $fav_corner, expected 0" >&2

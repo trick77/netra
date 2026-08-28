@@ -8,7 +8,19 @@
          committed. The manifest link stays bare on purpose: that fetch is
          credential-less. There is no favicon.ico — the clients that want one are
          RSS readers, Windows bookmark thumbnails and old IE, none of which an
-         authenticated fleet console targets. -->
+         authenticated fleet console targets.
+
+         TWO icon links, PNG first and SVG second, and the order is the whole
+         point: a browser walks the list and keeps the LAST type it understands,
+         so anything that groks SVG still takes icon.svg and only the rest fall
+         back to the raster. Safari is the reason there is a fallback at all —
+         it gained SVG favicon support in Safari 26 and every version before
+         that ignores the link entirely, which on a self-hosted console (whose
+         operator's browser is not ours to choose) means a blank tab. This is
+         one line more than ../peeq and ../ismimodown ship; they predate the
+         check and would take the same line. No new asset: icon-192.png already
+         exists and is already in web.PublicAssetPaths. -->
+    <link rel="icon" href="/icon-192.png" sizes="192x192" type="image/png" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />

@@ -8,6 +8,7 @@ package web
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
 	"slices"
 	"strings"
@@ -27,6 +28,17 @@ import (
 //
 //go:embed all:dist
 var distFS embed.FS
+
+// Go's built-in MIME table has no .webmanifest entry, and the scratch image the
+// hub ships in has no /etc/mime.types to fall back on, so without this
+// http.FileServer sniffs site.webmanifest and serves it as text/plain -- which
+// Chrome rejects, ignoring the manifest entirely. Registered in an init rather
+// than as a header on one route so every path that can ever serve the file gets
+// the right type. ../peeq and ../ismimodown carry the same three lines; keep the
+// family in step.
+func init() {
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // Handler serves the SPA.
 //

@@ -1,8 +1,10 @@
 package web
 
 import (
+	"mime"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -51,6 +53,20 @@ func TestPublicAssetsServesTheManifest(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != `{"name":"netra"}` {
 		t.Fatalf("body = %q, want the manifest", got)
+	}
+	// Go's mime table has no .webmanifest entry, so without the package's init
+	// this sniffs to text/plain and Chrome ignores the manifest outright.
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/manifest+json") {
+		t.Fatalf("Content-Type = %q, want application/manifest+json", got)
+	}
+}
+
+// The registration the test above depends on, asserted directly: a served
+// header can be right for the wrong reason (a sniff that happened to land
+// well), and this is the line that actually has to exist.
+func TestWebmanifestTypeIsRegistered(t *testing.T) {
+	if got := mime.TypeByExtension(".webmanifest"); !strings.HasPrefix(got, "application/manifest+json") {
+		t.Fatalf("mime.TypeByExtension(\".webmanifest\") = %q, want application/manifest+json", got)
 	}
 }
 

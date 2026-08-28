@@ -32,11 +32,25 @@
     (1,12) (6.7,12) (9,5) (15,19) (17.3,12) (23,12)
 
   — offset by 1 unit either side, mitred, with flat ends. Kept as a stroke, the
-  weight stays a number this file can set, and the caps and joins become round,
-  which is what the chip's own rx-4 corners are. The arms are pulled in to x 2
-  and x 22 so the round caps land where remix's flat ends did rather than
-  overhanging them. The path is remix's (Apache 2.0), copied rather than
-  imported — nothing loads an icon library to draw a static asset.
+  weight and the arm length stay numbers this file can set, and the caps and
+  joins become round, which is what the chip's own rx-4 corners are. The path is
+  remix's (Apache 2.0), copied rather than imported — nothing loads an icon
+  library to draw a static asset.
+
+  THE ARMS ARE CROPPED to x 3.5 and x 20.5, from remix's 1 and 23. The spike
+  itself — (9,5) to (15,19), and the two short transitions at 6.7 and 17.3 —
+  is untouched, so this is only a decision about how much flat baseline runs out
+  either side of it.
+
+  It is the one free parameter in the mark, because the inner scale is derived
+  from the drawn width: shorter arms make the glyph narrower, a narrower glyph
+  scales up to hit the same 12-unit width, and scaling up makes the SPIKE
+  taller. Arms and spike trade against each other at constant width. Full arms
+  (remix's own, pulled to 2 and 22) put the spike at 8.84 units of the chip's 18
+  and the mark reads as a baseline with a wobble; cropping to 5 and 19 puts it at
+  12 and the arms stop reading as a trace at all, leaving a zigzag. 3.5 and 20.5
+  is the midpoint: spike 10.18, arms still long enough to run out toward both
+  edges.
 
   THE WEIGHT IS 2.8, not remix's 2. At 16px the chip is 18 units wide, so one
   glyph unit draws at about 0.89px and the flat baseline sections — the thinnest
@@ -72,21 +86,22 @@
   THE TRANSFORMS ARE DERIVED, not typed:
 
     outer: scale = 64*C/18,          translate = 32 - 12*scale
-    inner: scale = 12/22.8 = 0.5263, translate = 12*(1 - scale)
+    inner: scale = 12/19.8 = 0.6061, translate = 12*(1 - scale)
 
   where C is the file's coverage of the canvas: 1.0 here, 0.60 in icon-tile.svg,
   0.46 in icon-maskable.svg — peeq's three coverages, unchanged.
 
-  The inner scale's denominator is 22.8 and not 22, and that is the whole reason
-  it is written as a division. 22.8 is the mark's DRAWN width: the centreline
-  spans x 2 to 22, and a 2.8-wide stroke with round caps adds half its weight at
-  each end. Sizing off the centreline alone would ship a mark 4% over the target
-  and quietly break the one thing this line exists to guarantee — that the
-  mark's longest dimension draws at 12 of the chip's 18 units, which is what
-  ismimodown's bars measure and therefore what makes these two icons look like
-  siblings. Its drawn height, 16.8 units, is the shorter one and does not
-  constrain the fit. The mark is symmetric about (12,12) in both axes, so no
-  optical nudge is needed.
+  The inner scale's denominator is 19.8 and not 17, and that is the whole reason
+  it is written as a division. 19.8 is the mark's DRAWN width: the centreline
+  spans x 3.5 to 20.5, which is 17, and a 2.8-wide stroke with round caps adds
+  half its weight at each end. Sizing off the centreline alone would ship a mark
+  16% over the target and quietly break the one thing this line exists to
+  guarantee — that the mark's longest dimension draws at 12 of the chip's 18
+  units, which is what ismimodown's bars measure and therefore what makes these
+  two icons look like siblings. Its drawn height, 16.8*0.6061 = 10.18 units, is
+  the shorter one and does not constrain the fit. The mark is symmetric about
+  (12,12) in both axes — with the arms cropped by the same amount at each end,
+  deliberately, so that stays true — so no optical nudge is needed.
 
   Change the weight OR the arm length and the inner scale has to be recomputed
   from the new drawn width, or the mark silently stops filling the coverage its
@@ -104,8 +119,8 @@
   </linearGradient>
   <g transform="translate(-10.6667 -10.6667) scale(3.55556)">
     <rect x="3" y="3" width="18" height="18" rx="4" fill="url(#og)"/>
-    <g transform="translate(5.6842 5.6842) scale(0.526316)" fill="none" stroke="#131312" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M2 12h4.7L9 5l6 14 2.3-7H22"/>
+    <g transform="translate(4.7273 4.7273) scale(0.606061)" fill="none" stroke="#131312" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3.5 12h3.2L9 5l6 14 2.3-7H20.5"/>
     </g>
   </g>
 </svg>
