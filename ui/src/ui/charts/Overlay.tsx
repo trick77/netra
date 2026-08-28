@@ -13,7 +13,6 @@
 // to make possible.
 import { Chart } from "./Chart";
 import type { Tick, TimeTick } from "./ticks";
-import type { Scale } from "./scale";
 
 export interface OverlaySeries {
   name: string;
@@ -96,15 +95,6 @@ export interface OverlayProps {
    * catches up.
    */
   mirrored?: boolean;
-  /**
-   * How a value becomes a height, when proportional is the wrong answer.
-   *
-   * Forwarded verbatim to Chart, and Overlay derives nothing from it -- the
-   * caller that chose the scale is the one that must also choose ticks
-   * matching it, for the same reason the furniture below is forwarded rather
-   * than computed here. See scale.ts.
-   */
-  scale?: Scale;
 
   /**
    * Axis furniture, forwarded verbatim to Chart.
@@ -137,7 +127,6 @@ export function Overlay({
   legend = true,
   reference,
   mirrored = false,
-  scale,
   y,
   x,
   format,
@@ -154,9 +143,16 @@ export function Overlay({
         height={height}
         max={max}
         min={min}
-        scale={scale}
         pad={pad}
-        mark={mirrored ? "mirror" : stacked ? "stack" : "line"}
+        mark={
+          mirrored
+            ? stacked
+              ? "mirrorStack"
+              : "mirror"
+            : stacked
+              ? "stack"
+              : "line"
+        }
         highlight={highlight}
         reference={reference}
         label={label}

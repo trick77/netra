@@ -5,7 +5,6 @@ import { Segmented } from "../Segmented";
 import { InfoTip } from "../InfoTip";
 import { ABSENT } from "../../lib/format";
 import { RANGES, type Range } from "../../lib/range";
-import type { ScaleFactory } from "./scale";
 
 // Where it lives now. Re-exported because this is where it was.
 export { summarise } from "./ChartFigure";
@@ -66,9 +65,6 @@ export interface ChartDetailProps {
   reference?: number;
   /** Draw the series as mirrored in/out pairs about a midline. */
   mirrored?: boolean;
-  /** A non-proportional value axis, forwarded so the enlarged chart draws the
-   * same curve as the small one it was opened from. See scale.ts. */
-  scaleFor?: ScaleFactory;
   /** 1024 for byte quantities, so the axis steps 512 MB rather than 500 MB.
    * The small panel has always passed this; the enlarged view ignored it,
    * because its HTML gutter stepped the axis itself and knew nothing about
@@ -110,7 +106,6 @@ export function ChartDetail({
   stacked,
   reference,
   mirrored,
-  scaleFor,
   tickBase,
   hideAxis,
 }: ChartDetailProps) {
@@ -156,7 +151,7 @@ export function ChartDetail({
     };
   }, []);
 
-  const ceiling = max ?? peak(series, stacked);
+  const ceiling = max ?? peak(series, stacked, mirrored);
   // The figure only ever formats a real number -- a tick, or a value under
   // the cursor. The null case belongs to the caller's fmt, which the stats
   // table used to reach through for its absent cells and no longer does.
@@ -211,7 +206,6 @@ export function ChartDetail({
         stacked={stacked}
         reference={reference}
         mirrored={mirrored}
-        scaleFor={scaleFor}
         hideAxis={hideAxis}
         format={format}
         tickBase={tickBase}
@@ -243,8 +237,25 @@ function formatNumber(v: number | null): string {
 export function peak(
   series: readonly OverlaySeries[],
   stacked = false,
+  mirrored = false,
 ): number {
   let max = 0;
+  if (stacked && mirrored) {
+    // Two stacks about a midline, each accumulating every OTHER series.
+    // Summing all of them would answer in-plus-out, and neither half is ever
+    // that tall -- the chart would be drawn against a ceiling nothing on it
+    // reaches.
+    return Math.max(
+      peak(
+        series.filter((_, i) => i % 2 === 0),
+        true,
+      ),
+      peak(
+        series.filter((_, i) => i % 2 === 1),
+        true,
+      ),
+    );
+  }
   if (stacked) {
     const n = series.reduce(
       (longest, s) => Math.max(longest, s.values.length),

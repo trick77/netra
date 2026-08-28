@@ -56,11 +56,11 @@ import {
 // one must agree on when a filesystem is worth mentioning, or a host warns
 // in one place and reads clean in the other.
 import { diskState } from "../../fleet/conditions";
-// The one derivation of a host's traffic pair, shared with the fleet row and
-// the Traffic chart spec -- its own comment carries why the three cannot be
-// allowed to disagree, and scale.ts why they share a bent axis.
+// The one derivation of a host's traffic pair, shared with the fleet row --
+// its own comment carries why the two cannot be allowed to disagree. The
+// Traffic panel on the Network tab draws the same total as the envelope of a
+// per-interface stack; see its spec for why that is the same chart.
 import { trafficSeries } from "../../fleet/hostTrends";
-import { trafficScale } from "../../../ui/charts/scale";
 
 /**
  * column() in lib/metrics.ts THROWS for a column the answering tier does
@@ -913,10 +913,6 @@ export function Overview({
               { name: "out", color: DOWN_COLOR, values: egress },
             ]}
             mirrored
-            // The same bent axis the fleet row draws this pair on. Without
-            // it this card was the one place a host's traffic still scaled
-            // proportionally, so one day was two shapes.
-            scaleFor={trafficScale}
             fmt={bytes}
             unavailable={
               ingress.length === 0 && egress.length === 0

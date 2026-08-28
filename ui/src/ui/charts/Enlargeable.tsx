@@ -12,7 +12,6 @@ import type { OverlaySeries } from "./Overlay";
 import { extent } from "./geometry";
 import { ChartDetail, peak } from "./ChartDetail";
 import type { Range } from "../../lib/range";
-import type { ScaleFactory } from "./scale";
 
 /** What fetchSeries answers: the bands to draw and the window they cover,
  * already shaped -- the caller owns the response-to-bands conversion because
@@ -174,9 +173,10 @@ function fitted(
   max: number | undefined,
   refetched: OverlaySeries[] | null,
   stacked: boolean | undefined,
+  mirrored: boolean | undefined,
 ): number | undefined {
   if (max === undefined || refetched === null) return max;
-  return Math.max(max, peak(refetched, stacked));
+  return Math.max(max, peak(refetched, stacked, mirrored));
 }
 
 export interface EnlargeableProps {
@@ -225,9 +225,6 @@ export interface EnlargeableProps {
   stacked?: boolean;
   reference?: number;
   mirrored?: boolean;
-  /** A non-proportional value axis, forwarded so the enlarged chart draws the
-   * same curve as the small one it was opened from. See scale.ts. */
-  scaleFor?: ScaleFactory;
   /** The ladder the enlarged view's value ticks step on: 1024 for a byte
    * quantity, 1000 otherwise. See ChartPanel's prop of the same name. */
   tickBase?: 1000 | 1024;
@@ -272,7 +269,6 @@ export function Enlargeable({
   stacked,
   reference,
   mirrored,
-  scaleFor,
   tickBase,
   hideAxis,
   window: answered = null,
@@ -301,7 +297,7 @@ export function Enlargeable({
   const shown = detail.series ?? detailSeries ?? series;
   const span = autoScale
     ? derived(shown)
-    : { min, max: fitted(max, detail.series, stacked) };
+    : { min, max: fitted(max, detail.series, stacked, mirrored) };
 
   return (
     <>
@@ -331,7 +327,6 @@ export function Enlargeable({
           stacked={stacked}
           reference={reference}
           mirrored={mirrored}
-          scaleFor={scaleFor}
           tickBase={tickBase}
           hideAxis={hideAxis}
           window={detail.window ?? answered}

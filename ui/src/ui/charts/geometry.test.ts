@@ -4,6 +4,7 @@ import {
   extent,
   linePath,
   mirrorPaths,
+  mirrorStackBands,
   stackBands,
 } from "./geometry";
 
@@ -355,6 +356,128 @@ describe("geometry", () => {
       for (const y of ys) {
         if (y !== mid) expect(y).toBeLessThan(mid - usable * 0.99);
       }
+    });
+  });
+
+  describe("mirrorStackBands", () => {
+    // Every case below reads y off the path text. A band is
+    // "M x,y Lx,y ... Lx,y Z", so the first coordinate pair of the TOP edge
+    // is what says how tall the layer's running total is.
+    const ys = (d: string) =>
+      [...d.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
+        parseFloat(m[1]!),
+      );
+
+    it("stacks each half away from the midline, in layer order", () => {
+      // Given two layers of 10 either side, against a ceiling of 40 in a
+      // 40-tall box: the half-height is 20, so 10 is a quarter of it.
+      const { up, down, mid } = mirrorStackBands(
+        [
+          [10, 10],
+          [10, 10],
+        ],
+        [
+          [10, 10],
+          [10, 10],
+        ],
+        100,
+        40,
+        40,
+      );
+      expect(mid).toBe(20);
+
+      // Then the first layer sits between the midline and 5 units above it,
+      // and the second between 5 and 10 -- the second stacked ON the first,
+      // never overlapping it.
+      expect(Math.min(...ys(up[0]!))).toBeCloseTo(15, 6);
+      expect(Math.max(...ys(up[0]!))).toBeCloseTo(20, 6);
+      expect(Math.min(...ys(up[1]!))).toBeCloseTo(10, 6);
+      expect(Math.max(...ys(up[1]!))).toBeCloseTo(15, 6);
+
+      // And the down half is the same distances on the other side.
+      expect(Math.max(...ys(down[0]!))).toBeCloseTo(25, 6);
+      expect(Math.max(...ys(down[1]!))).toBeCloseTo(30, 6);
+    });
+
+    it("scales each half against its own stack, not against both", () => {
+      // One layer of 20 up and one of 20 down, ceiling 20: each half fills
+      // its own side exactly. A ceiling read off in-plus-out would draw both
+      // at half height and say the link was half loaded.
+      const { up, mid } = mirrorStackBands([[20, 20]], [[20, 20]], 100, 40, 20);
+      expect(Math.min(...ys(up[0]!))).toBeCloseTo(mid - 20, 6);
+    });
+
+    it("breaks a half at a null in ANY of its own layers", () => {
+      // eth1 reported nothing in the middle bucket, so the running total is
+      // undefined there for eth0 too -- both up bands break, and the DOWN
+      // half, which has no hole, does not.
+      const { up, down } = mirrorStackBands(
+        [
+          [5, 5, 5, 5, 5],
+          [5, 5, null, 5, 5],
+        ],
+        [
+          [1, 1, 1, 1, 1],
+          [1, 1, 1, 1, 1],
+        ],
+        100,
+        20,
+        20,
+      );
+      expect(up[0]!.match(/M/g)).toHaveLength(2);
+      expect(up[1]!.match(/M/g)).toHaveLength(2);
+      expect(down[0]!.match(/M/g)).toHaveLength(1);
+    });
+
+    it("lets the stack escape the box rather than clamping it", () => {
+      // Two layers of 20 against a ceiling of 20: the total is double the
+      // half-height and must visibly overflow, as mirrorPaths and linePath
+      // both do.
+      const { up, mid } = mirrorStackBands(
+        [
+          [20, 20],
+          [20, 20],
+        ],
+        [],
+        100,
+        40,
+        20,
+      );
+      expect(Math.min(...ys(up[1]!))).toBeLessThan(mid - 20);
+    });
+
+    it("puts an all-zero stack on the midline rather than mid-half", () => {
+      // max === 0 is the degenerate case stackY() exists for: a host that
+      // genuinely moved nothing must draw nothing, not a band floating at
+      // half height that reads as "about half loaded".
+      const { up, mid } = mirrorStackBands([[0, 0]], [[0, 0]], 100, 40, 0);
+      for (const y of ys(up[0]!)) expect(y).toBeCloseTo(mid, 6);
+    });
+
+    it("answers an empty half without inventing a band", () => {
+      const { up, down } = mirrorStackBands([[1, 1]], [], 100, 20, 1);
+      expect(up).toHaveLength(1);
+      expect(down).toEqual([]);
+    });
+
+    it("measures off the longest layer, not the first", () => {
+      // Rows arrive ragged. Measured off the first, a longer second layer
+      // read `undefined` past its end -- neither null nor a number -- and
+      // scaled to NaN, which erased the band. Same trap stackBands documents.
+      const { up } = mirrorStackBands(
+        [
+          [5, 5],
+          [5, 5, 5, 5],
+        ],
+        [],
+        100,
+        20,
+        10,
+      );
+      // The short layer's own run ends where it ends, and nothing is drawn
+      // past it: an index where any layer is missing is a gap for both.
+      expect(up[0]).not.toContain("NaN");
+      expect(up[1]).not.toContain("NaN");
     });
   });
 });

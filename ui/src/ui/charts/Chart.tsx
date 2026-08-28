@@ -18,6 +18,7 @@ import {
   extent,
   linePath,
   mirrorPaths,
+  mirrorStackBands,
   stackBands,
 } from "./geometry";
 import {
@@ -40,7 +41,6 @@ import {
 } from "./plot";
 import { AxisLabels, Grid, Spine, ZeroRule } from "./Axis";
 import type { Tick, TimeTick } from "./ticks";
-import { linearScale, type Scale } from "./scale";
 
 export interface ChartSeries {
   name: string;
@@ -59,7 +59,7 @@ export interface ChartSeries {
   band?: (number | null)[];
 }
 
-export type ChartMark = "line" | "area" | "stack" | "mirror";
+export type ChartMark = "line" | "area" | "stack" | "mirror" | "mirrorStack";
 
 export interface ChartProps {
   series: ChartSeries[];
@@ -67,17 +67,6 @@ export interface ChartProps {
   height: number;
   /** The ceiling the shape is scaled to. */
   max: number;
-  /**
-   * How a value becomes a height, when proportional is the wrong answer.
-   *
-   * Omitted everywhere but the traffic charts, and they need it: their range
-   * runs to thousands to one, where a proportional axis draws the typical
-   * reading at a fraction of a pixel. See scale.ts, which carries the
-   * measurement. Mirror marks only for now -- the stack and line branches
-   * still scale proportionally, and a caller that passes this with another
-   * mark would get the ceiling it asked for and the shape it did not.
-   */
-  scale?: Scale;
   /** The floor. Defaults to the data's own minimum, for a free-scaled chart. */
   min?: number;
   mark?: ChartMark;
@@ -136,7 +125,6 @@ export function Chart({
   height,
   max,
   min,
-  scale,
   mark = "line",
   pad = 2,
   label = "chart",
@@ -176,7 +164,12 @@ export function Chart({
       ? null
       : h - pad - ((reference - floor) / (max - floor)) * (h - 2 * pad);
 
-  const mirrored = mark === "mirror";
+  const mirrorStacked = mark === "mirrorStack";
+  // Both mirror marks share every piece of furniture that hangs off a
+  // midline -- the zero rule, the crosshair's placement, the axis half-range
+  // -- so `mirrored` stays the question "is there a midline", and the mark
+  // dispatch below asks the narrower one.
+  const mirrored = mark === "mirror" || mirrorStacked;
   const stacked = mark === "stack";
 
   // Where the DATA actually lives. geometry.ts insets every mark by `pad`
@@ -273,7 +266,12 @@ export function Chart({
           />
         )}
 
-        {mirrored && <MirrorMarks {...{ series, w, h, max, pad, scale }} />}
+        {mirrorStacked && (
+          <MirrorStackMarks {...{ series, w, h, max, pad, highlight }} />
+        )}
+        {mirrored && !mirrorStacked && (
+          <MirrorMarks {...{ series, w, h, max, pad }} />
+        )}
         {!mirrored && stacked && (
           <StackMarks {...{ series, w, h, max, pad, highlight, bandStroke }} />
         )}
@@ -306,9 +304,9 @@ export function Chart({
           series={series}
           max={max}
           min={floor}
-          scale={scale}
           mirrored={mirrored}
           stacked={stacked}
+          mirrorStacked={mirrorStacked}
         />
       )}
     </svg>
@@ -342,14 +340,21 @@ function MarkGroup({
   );
 }
 
-/** The stack's height through series `upto` at `index`, or null at a hole. */
+/**
+ * The stack's height through series `upto` at `index`, or null at a hole.
+ *
+ * `step` is 2 for a mirrored stack, where a half is every OTHER series: band
+ * 4 sits on top of bands 0 and 2 alone, and summing 0..4 would place its dot
+ * above the outbound bytes it never stacked on.
+ */
 function runningTotal(
   series: readonly ChartSeries[],
   index: number,
   upto: number,
+  step = 1,
 ): number | null {
   let sum = 0;
-  for (let k = 0; k <= upto; k++) {
+  for (let k = upto % step; k <= upto; k += step) {
     const v = series[k]?.values[index];
     if (v === null || v === undefined) return null;
     sum += v;
@@ -372,14 +377,12 @@ function MirrorMarks({
   h,
   max,
   pad,
-  scale,
 }: {
   series: ChartSeries[];
   w: number;
   h: number;
   max: number;
   pad: number;
-  scale?: Scale;
 }) {
   return (
     <>
@@ -394,22 +397,13 @@ function MirrorMarks({
           h,
           max,
           pad,
-          scale,
         );
         // The envelope, when the tier carries a peak column. Drawn first so
         // the mean sits over it, and with no stroke -- it is a region, not a
         // reading, and an edge on it would compete with the line that is.
         const bands =
           up.band || down?.band
-            ? mirrorPaths(
-                up.band ?? [],
-                down?.band ?? [],
-                w,
-                h,
-                max,
-                pad,
-                scale,
-              )
+            ? mirrorPaths(up.band ?? [], down?.band ?? [], w, h, max, pad)
             : null;
         return (
           <g key={up.name} data-series={up.name} data-mirror>
@@ -467,6 +461,93 @@ function MirrorMarks({
           </g>
         );
       })}
+    </>
+  );
+}
+
+/**
+ * Cumulative bands about a midline: the even series stack upward, the odd
+ * ones downward, so the envelope of each half is the total in that direction.
+ *
+ * The even-up / odd-down convention is MirrorMarks', unchanged -- the bands
+ * arrive as consecutive in/out pairs, one pair per interface, and layer order
+ * is pair order so the same interface sits at the same depth on both sides.
+ *
+ * No peak envelope here, unlike MirrorMarks. A stacked band's height is a
+ * running total, and the sum of each interface's peak is not the host's peak:
+ * the interfaces do not peak in the same bucket. Drawing one would state a
+ * number no bucket ever held.
+ */
+function MirrorStackMarks({
+  series,
+  w,
+  h,
+  max,
+  pad,
+  highlight,
+}: {
+  series: ChartSeries[];
+  w: number;
+  h: number;
+  max: number;
+  pad: number;
+  highlight?: string;
+}) {
+  const ups = series.filter((_, i) => i % 2 === 0);
+  const downs = series.filter((_, i) => i % 2 === 1);
+  const paths = mirrorStackBands(
+    ups.map((s) => s.values),
+    downs.map((s) => s.values),
+    w,
+    h,
+    max,
+    pad,
+  );
+  const dim = (s: ChartSeries): number =>
+    highlight !== undefined && highlight !== s.name ? 0.35 : 1;
+  return (
+    <>
+      {ups.map((s, i) =>
+        (paths.up[i] ?? "") === "" ? null : (
+          <path
+            key={s.name}
+            data-series={s.name}
+            data-band
+            data-up
+            d={paths.up[i]!}
+            fill={s.color}
+            fillOpacity={MIRROR_FILL_OPACITY}
+            stroke={s.color}
+            strokeWidth={MIRROR_STROKE_WIDTH}
+            opacity={dim(s)}
+          />
+        ),
+      )}
+      {downs.map((s, i) =>
+        (paths.down[i] ?? "") === "" ? null : (
+          <path
+            key={s.name}
+            data-series={s.name}
+            data-band
+            data-down
+            d={paths.down[i]!}
+            fill={s.color}
+            fillOpacity={MIRROR_FILL_OPACITY}
+            stroke={s.color}
+            strokeWidth={MIRROR_STROKE_WIDTH}
+            opacity={dim(s)}
+          />
+        ),
+      )}
+      <line
+        data-mid
+        x1={0}
+        x2={w}
+        y1={paths.mid}
+        y2={paths.mid}
+        stroke={AXIS_STROKE}
+        strokeWidth={AXIS_WIDTH}
+      />
     </>
   );
 }
@@ -599,9 +680,9 @@ function Crosshair({
   series,
   max,
   min,
-  scale,
   mirrored,
   stacked,
+  mirrorStacked,
 }: {
   rect: PlotRect;
   index: number;
@@ -609,14 +690,31 @@ function Crosshair({
   series: ChartSeries[];
   max: number;
   min: number;
-  scale?: Scale;
   mirrored: boolean;
   stacked: boolean;
+  mirrorStacked: boolean;
 }) {
   if (count <= 0) return null;
   const fraction = count <= 1 ? 0 : index / (count - 1);
   const cx = xAt(rect, fraction);
   const h = plotHeight(rect);
+
+  /**
+   * Whether the stack band `i` belongs to is broken at this index.
+   *
+   * The same test the geometry makes, and it has to be: a mirrored stack's
+   * halves are every other series, so a hole in the up half leaves the down
+   * half whole. A non-stacked mark has no stack to break.
+   */
+  const stackBroken = (i: number): boolean => {
+    if (!stacked && !mirrorStacked) return false;
+    const step = mirrorStacked ? 2 : 1;
+    for (let k = i % step; k < series.length; k += step) {
+      const v = series[k]?.values[index];
+      if (v === null || v === undefined) return true;
+    }
+    return false;
+  };
 
   return (
     <g data-crosshair>
@@ -638,15 +736,29 @@ function Crosshair({
         // the raw value points at whatever band happens to sit at that
         // height -- on a per-core stack every dot bunched near the baseline
         // while its own band was somewhere above.
-        const stackedTo = stacked ? runningTotal(series, index, i) : null;
+        // A mirrored stack has the same problem on each half, one series in
+        // two: band 4 is drawn on top of bands 0 and 2, never on top of the
+        // outbound bands between them.
+        const stackedTo = mirrorStacked
+          ? runningTotal(series, index, i, 2)
+          : stacked
+            ? runningTotal(series, index, i)
+            : null;
+        // Both stack geometries break EVERY band of a stack at an index
+        // where any of that stack's series is null -- the running total is
+        // undefined there for the layers below the hole as much as for the
+        // ones above it. So the whole stack loses its dots, not just the
+        // layers over the gap: a dot at a raw value there would float over a
+        // hole, stating a height nothing was drawn at. The rule the
+        // docstring gives for a null bucket applies to the stack a band
+        // belongs to, not only to the band itself.
+        if (stackBroken(i)) return null;
         const shown = stackedTo ?? v;
         const t = max === min ? 0.5 : (shown - min) / (max - min);
-        // Through the SAME scale the mark was drawn with, never `v / max`:
-        // on a non-linear axis the two disagree, and the dot would float
-        // above the line it is supposed to be reading.
-        const toFraction = scale ?? linearScale(max);
         const cy = mirrored
-          ? rect.top + h / 2 + (i % 2 === 0 ? -1 : 1) * toFraction(v) * (h / 2)
+          ? rect.top +
+            h / 2 +
+            ((i % 2 === 0 ? -1 : 1) * (max === 0 ? 0 : shown / max) * h) / 2
           : yAt(rect, t);
         return (
           <circle

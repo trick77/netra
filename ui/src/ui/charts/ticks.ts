@@ -10,8 +10,6 @@
 // reading; the minor ticks between are unlabelled helpers, and they are what
 // let a reader judge "a bit over 400M" without a label at 450M.
 
-import { TRAFFIC_KNEE } from "./scale";
-
 /** A position on an axis, as a fraction of the plot box, and its value. */
 export interface Tick {
   /** 0 at the bottom of the plot box, 1 at the top. */
@@ -155,125 +153,6 @@ export function mirroredTicks(
     const major = isMultiple(value, step);
     ticks.push({ fraction: 0.5 + half, value, major });
     ticks.push({ fraction: 0.5 - half, value, major });
-  }
-  return ticks;
-}
-
-/** How much room a compressed axis has for its furniture. */
-export interface DecadeTickOptions {
-  /**
-   * The smallest gap, as a fraction of the plot box, between two LABELLED
-   * ticks -- and between the lowest one and the midline.
-   *
-   * A decade ladder over an asinh axis is not evenly spaced in the box: on
-   * ark's 37 MB/s ceiling the 1 kB/s decade sits 0.039 of the box off the
-   * midline while the 1 MB/s one sits 0.384 off it. Emitting every decade as
-   * a label put eleven of them on a 260x112 panel -- "0 B", "1 kB" and
-   * "1 kB" within three units of each other at a 12px font, which is one
-   * smear rather than three readings. A decade too close to the last label
-   * is demoted to a minor tick: the gridline stays, the text goes.
-   *
-   * Given as a fraction because the caller knows its own plot height and
-   * this file knows nothing about pixels. 0 keeps every decade labelled.
-   */
-  minGap?: number;
-  /**
-   * Draw the 2..9 multiples inside each decade.
-   *
-   * They are where a log axis's texture comes from -- they crowd towards the
-   * top of each decade, and that crowding is itself a reading. Five decades
-   * of them is also 79 ticks and 87 gridlines, which on a 112px panel is a
-   * wash rather than a lattice, so the small panel turns them off.
-   */
-  minors?: boolean;
-  /** The lowest decade worth labelling. Defaults to the throughput knee,
-   * below which the axis is linear and a decade means nothing. */
-  floor?: number;
-}
-
-/**
- * Mirrored ticks for an axis that is NOT proportional -- decades, positioned
- * by the same scale the mark was drawn with.
- *
- * mirroredTicks() above cannot serve a non-linear axis twice over. Its
- * positions come from `value / ceiling`, which is the proportional
- * assumption written down; and its VALUES come from niceStep, an even ladder
- * that on a compressed axis crowds every label it produces into the top
- * fifth of the box -- a 100 MB/s ceiling stepped evenly gives 25 / 50 / 75,
- * and all three land above the line where the interesting readings are.
- * Decades are what a compressed axis wants: 1 k, 10 k, 100 k, 1 M spread up
- * the box, because that is what asinh does to them.
- *
- * `scale` is the caller's own -- the same function passed to Chart, so a
- * label cannot sit anywhere but on the height its value is drawn at.
- *
- * Not every decade gets a LABEL, though: see DecadeTickOptions.minGap. The
- * ladder is generated once and thinned, rather than the caller being asked
- * for a target count, because which decades fit depends on where the curve
- * put them and only this function knows that.
- */
-export function mirroredDecadeTicks(
-  ceiling: number,
-  scale: (value: number) => number,
-  { minGap = 0, minors = true, floor = TRAFFIC_KNEE }: DecadeTickOptions = {},
-): Tick[] {
-  const zero: Tick[] = [{ fraction: 0.5, value: 0, major: true }];
-  if (!(ceiling > 0) || !(floor > 0)) return zero;
-
-  // A ceiling under the knee has no decade above `floor` to label, and an
-  // axis whose only label is "0" states nothing about the host it is drawn
-  // for. Drop to the decade the data actually lives in rather than falling
-  // back to mirroredTicks(), whose proportional positions would sit off the
-  // asinh line the mark was drawn on.
-  const lowest =
-    ceiling < floor ? Math.pow(10, Math.floor(Math.log10(ceiling))) : floor;
-  if (!(lowest > 0)) return zero;
-
-  // Every rung first, then the labels, because whether a decade can carry
-  // one depends on the decade below it having taken the room.
-  //
-  // Walked as an EXPONENT rather than by multiplying a running decade by ten:
-  // a sub-1 starting decade makes `decade * 10` a value that rounding pulls
-  // to zero (0.01 -> 0.1 -> Math.round -> 0), and a decade of zero never
-  // exceeds the ceiling, so the loop pushes ticks until the tab stops
-  // responding. Powers taken from the exponent cannot drift and cannot stall.
-  const rungs: { value: number; half: number; decade: boolean }[] = [];
-  let exponent = Math.round(Math.log10(lowest));
-  if (Math.pow(10, exponent) < lowest) exponent += 1;
-  for (; Math.pow(10, exponent) <= ceiling; exponent++) {
-    const decade = Math.pow(10, exponent);
-    for (let m = 1; m <= 9; m++) {
-      if (m > 1 && !minors) break;
-      const value = decade * m;
-      if (value > ceiling) break;
-      const half = scale(value) * 0.5;
-      // A tick outside the box would be drawn on the frame, or past it.
-      if (half > 0.5) break;
-      rungs.push({ value, half, decade: m === 1 });
-    }
-  }
-
-  // `lastLabel` starts at the midline: "0" is a label too, and the lowest
-  // decade has to clear it just as it has to clear any other.
-  let lastLabel = 0;
-  const ticks = [...zero];
-  for (const rung of rungs) {
-    const major = rung.decade && rung.half - lastLabel >= minGap;
-    if (major) lastLabel = rung.half;
-    ticks.push({ fraction: 0.5 + rung.half, value: rung.value, major });
-    ticks.push({ fraction: 0.5 - rung.half, value: rung.value, major });
-  }
-
-  // One reading besides zero, always. On a very short box every decade can
-  // fail the gap test, and an axis labelled only "0" is worse than a crowded
-  // one: it names no magnitude at all. The HIGHEST DECADE is the one
-  // promoted -- furthest from the midline, so it collides with nothing, and
-  // a decade rather than whatever multiple happened to be last so that a
-  // panel and the dialog it opens name the same value.
-  const highest = rungs.filter((r) => r.decade).at(-1) ?? rungs.at(-1);
-  if (lastLabel === 0 && highest !== undefined) {
-    for (const tick of ticks)
-      if (tick.value === highest.value) tick.major = true;
   }
   return ticks;
 }

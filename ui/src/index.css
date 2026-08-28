@@ -196,6 +196,29 @@
      normal-vision dE 19.6. Every chart drawing them carries a legend. */
   --s7: #d95926;
   --s8: #c98500;
+  /* Traffic's in/out pair, one step lighter per interface.
+
+     The per-interface Traffic panel stacks in above the midline and out
+     below it, and its colour has to answer TWO questions at once: which way
+     is this going, and which link carried it. Direction wins, because the
+     fleet row cell, the host overview card and this panel are the same fact
+     at three sizes and the cell has only two bands to spend on it -- a panel
+     that re-hued them per interface would be a different chart on click.
+     So the hue stays s2 above / s5 below and the interface is a LIGHTNESS
+     step within it. Index 0 is s2/s5 exactly, which is what makes a one-NIC
+     host draw the cell's own pair.
+
+     Three steps, not eight: the fourth interface on a box is rare, the steps
+     have to stay apart at a 112px panel, and a fifth would land on the
+     background. The walk wraps rather than growing -- a host with five
+     reportable NICs repeats a shade and the legend, which that panel always
+     carries, is what tells them apart. */
+  --in-2: #3fbf90;
+  --in-3: #79d9b4;
+  --in-4: #a9ecd0;
+  --out-2: #c795ea;
+  --out-3: #ddbcf3;
+  --out-4: #ece0f9;
   /* The per-core sweep computes its own hues -- there is no fixed set of
      steps to name when the ramp has to subdivide to fit the host -- but
      saturation and lightness stay here so the ramp still follows the theme

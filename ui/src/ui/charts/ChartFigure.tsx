@@ -15,15 +15,8 @@
 
 import { useState } from "react";
 import { Chart, type ChartSeries } from "./Chart";
-import {
-  mirroredDecadeTicks,
-  mirroredTicks,
-  niceTicks,
-  timeLabel,
-  timeTicks,
-} from "./ticks";
-import type { ScaleFactory } from "./scale";
-import { minLabelGap, widestLabel } from "./plot";
+import { mirroredTicks, niceTicks, timeLabel, timeTicks } from "./ticks";
+import { widestLabel } from "./plot";
 import { ABSENT, absolute } from "../../lib/format";
 
 export interface ChartFigureProps {
@@ -41,16 +34,6 @@ export interface ChartFigureProps {
   reference?: number;
   stacked?: boolean;
   mirrored?: boolean;
-  /**
-   * A non-proportional value axis, applied to `max` here rather than handed
-   * in already bound -- this figure's ceiling is its own, and on the enlarged
-   * view it is not the ceiling the cell that opened it drew. See scale.ts.
-   *
-   * The ticks follow it: a decade ladder positioned through the same curve,
-   * because niceStep's even ladder over a compressed axis puts every label it
-   * produces in the top fifth of the box.
-   */
-  scaleFor?: ScaleFactory;
   /**
    * Drop the VALUE axis -- and only that.
    *
@@ -81,7 +64,6 @@ export function ChartFigure({
   reference,
   stacked,
   mirrored,
-  scaleFor,
   hideAxis,
   format,
   tickBase,
@@ -94,14 +76,11 @@ export function ChartFigure({
   // states one nobody asked for.
   const [cursor, setCursor] = useState<number | null>(null);
 
-  const scale = scaleFor?.(max);
   const valueAxis = !hideAxis;
   const yTicks = !valueAxis
     ? undefined
     : mirrored
-      ? scale
-        ? mirroredDecadeTicks(max, scale, { minGap: minLabelGap(height) })
-        : mirroredTicks(max, 3, tickBase)
+      ? mirroredTicks(max, 3, tickBase)
       : niceTicks(min, max, 3, tickBase);
 
   const xTicks = answered
@@ -127,9 +106,19 @@ export function ChartFigure({
         height={height}
         min={min}
         max={max}
-        scale={scale}
         reference={reference}
-        mark={mirrored ? "mirror" : stacked ? "stack" : "line"}
+        // The same four-way choice Overlay makes, and it has to stay the
+        // same one: this is the ENLARGED view of a panel Overlay drew, and a
+        // mark that differs here is a different chart on click.
+        mark={
+          mirrored
+            ? stacked
+              ? "mirrorStack"
+              : "mirror"
+            : stacked
+              ? "stack"
+              : "line"
+        }
         label={label}
         y={yTicks}
         x={xTicks}

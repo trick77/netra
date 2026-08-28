@@ -1,21 +1,20 @@
 // The fleet's traffic cell and the Traffic chart page are ONE chart.
 //
-// That is the whole reason host-traffic exists as its own slug rather than
-// the cell linking to interface-throughput: the cell sums every interface
-// into one in/out pair, the throughput panel draws a pair per interface and
-// sums nothing, and an enlarged view that quietly becomes a different chart
-// is the one thing clicking a chart must not do.
+// The cell sums every interface into one in/out pair; the page STACKS them,
+// one pair per interface. That is the same chart and not a different one only
+// because the stack's envelope is the sum -- which is an arithmetic claim, so
+// this file makes it as one: the per-interface bands, added up at every
+// bucket, have to BE the cell's series, gap and all.
 //
-// So this compares the two READINGS, not their implementations. Both now go
-// through sumSeries in lib/metrics, and asserting that they import the same
-// function would pass forever while one of them started scaling, averaging
+// It compares READINGS, not implementations. Asserting that both import
+// sumSeries would pass forever while one of them started scaling, averaging
 // or dropping a null.
 import { describe, expect, it } from "vitest";
 import type { MetricsResponse } from "../../lib/api";
 import { bandsFor, familyFor, specForSlug } from "./chartSpecs";
 import { cpuBands, trafficSeries } from "../fleet/hostTrends";
 import { perCoreBands } from "../../lib/bands";
-import { DOWN_COLOR, UP_COLOR } from "../../ui/charts/UpDownSparkline";
+import { DOWN_SHADES, UP_SHADES } from "../../ui/charts/UpDownSparkline";
 
 // Two interfaces, at the raw tier -- where peakBase() falls back to the bare
 // column and there is no _max peer, so no envelope is drawn. A null in eth0's
@@ -66,19 +65,27 @@ describe("the host-traffic spec", () => {
     expect(specForSlug("host-traffic")?.title).toBe("Traffic");
   });
 
-  it("folds every interface into one in/out pair", () => {
+  it("draws one in/out pair per interface, in that order", () => {
     // Given a two-interface response
     const res = net();
 
     // When the page's bands are built
     const bands = bandsFor(specForSlug("host-traffic")!, res);
 
-    // Then there are two bands, not two per interface -- and they are named
-    // for the direction, never for an interface that was summed away.
-    expect(bands.map((b) => b.name)).toEqual(["in", "out"]);
+    // Then there is a pair per interface, named for the link that carried it
+    // -- and the two of a pair are ADJACENT, in in/out order. Chart's
+    // mirrored stack reads its halves off band position (even is up, odd is
+    // down), so an interleaving that put both "in" bands first would draw
+    // eth1's inbound below the midline.
+    expect(bands.map((b) => b.name)).toEqual([
+      "eth0 in",
+      "eth0 out",
+      "eth1 in",
+      "eth1 out",
+    ]);
   });
 
-  it("draws exactly what the fleet cell draws", () => {
+  it("stacks to exactly what the fleet cell draws", () => {
     // Given the same response the fleet row reads
     const res = net();
 
@@ -86,31 +93,97 @@ describe("the host-traffic spec", () => {
     const cell = trafficSeries(res);
     const page = bandsFor(specForSlug("host-traffic")!, res);
 
-    // Then the page's values ARE the cell's, gap and all
-    expect(page[0]?.values).toEqual(cell.rx);
-    expect(page[1]?.values).toEqual(cell.tx);
+    // Then each half of the stack, summed, IS the cell's series -- which is
+    // what makes the cell and the chart it opens the same chart. A null
+    // survives as a gap rather than shrinking the total: the stack cannot
+    // draw a bucket one interface never reported, and neither can the cell.
+    const half = (offset: number) =>
+      page[0]!.values.map((_, i) => {
+        const at = page
+          .filter((_, b) => b % 2 === offset)
+          .map((b) => b.values[i]);
+        return at.some((v) => v === null)
+          ? null
+          : at.reduce<number>((a, v) => a + v!, 0);
+      });
+    expect(half(0)).toEqual(cell.rx);
+    expect(half(1)).toEqual(cell.tx);
     expect(cell.rx[2]).toBeNull();
   });
 
-  it("keeps green above and purple below", () => {
+  it("keeps green above and purple below, one step per interface", () => {
     // Given the page's bands
     const bands = bandsFor(specForSlug("host-traffic")!, net());
 
-    // Then the colours are the sparkline's pinned pair, NOT the --s1/--s2
-    // the SERIES_VARS index walk would have handed positions 0 and 1. Green
-    // means "in" on the fleet row; it has to mean "in" here.
-    expect(bands.map((b) => b.color)).toEqual([UP_COLOR, DOWN_COLOR]);
+    // Then the FIRST interface draws the sparkline's pinned pair exactly, so
+    // a one-NIC host's panel is the fleet cell at another size; the second
+    // steps within the same two hues rather than taking the --s1/--s3 the
+    // SERIES_VARS index walk would have handed it. Green means "in" on the
+    // fleet row; it has to mean "in" here.
+    expect(bands.map((b) => b.color)).toEqual([
+      UP_SHADES[0],
+      DOWN_SHADES[0],
+      UP_SHADES[1],
+      DOWN_SHADES[1],
+    ]);
   });
 
-  it("leaves interface-throughput on its per-interface hues", () => {
-    // Given the same two-interface response through the OTHER net spec
-    const bands = bandsFor(specForSlug("interface-throughput")!, net());
+  it("leaves out an interface that moved nothing all window", () => {
+    // Given a response whose second interface read zero in both directions
+    // at every bucket
+    const res = net();
+    res.series[1]!.points = res.series[1]!.points.map(([at]) => [
+      at,
+      0,
+      0,
+    ]) as (typeof res.series)[number]["points"];
 
-    // Then every band has its own colour: that panel answers "which
-    // interface", and four bands in two colours is the collision
-    // SERIES_VARS was widened to eight to fix.
-    expect(bands).toHaveLength(4);
-    expect(new Set(bands.map((b) => b.color)).size).toBe(4);
+    // When the page's bands are built
+    const bands = bandsFor(specForSlug("host-traffic")!, res);
+
+    // Then it is not drawn and not named: a flat line on the midline and a
+    // legend row are what the panel would spend on it, and the address table
+    // on the same tab is where "this NIC exists" belongs.
+    expect(bands.map((b) => b.name)).toEqual(["eth0 in", "eth0 out"]);
+
+    // And the live interface keeps the FIRST shade, so which step a link
+    // draws in follows what was drawn rather than what was answered.
+    expect(bands.map((b) => b.color)).toEqual([UP_SHADES[0], DOWN_SHADES[0]]);
+  });
+
+  it("drops an interface that can only draw half its pair", () => {
+    // Given an interface whose rx is null at every bucket -- the case a bare
+    // metal host's cpu_steal is on the CPU stack: correctly absent, not zero
+    // -- while its tx reports normally
+    const res = net();
+    res.series[1]!.points = res.series[1]!.points.map(([at], i) => [
+      at,
+      null,
+      i + 1,
+    ]) as (typeof res.series)[number]["points"];
+
+    // When the page's bands are built
+    const bands = bandsFor(specForSlug("host-traffic")!, res);
+
+    // Then eth1 is left out ENTIRELY, both halves. A stacked mirror reads its
+    // halves off band position, so contributing "eth1 out" alone would shift
+    // it to an even index and draw an outbound reading above the midline.
+    // Losing one interface's half-reading is the smaller lie.
+    expect(bands.map((b) => b.name)).toEqual(["eth0 in", "eth0 out"]);
+  });
+
+  it("keeps an interface that moved once", () => {
+    // Given an interface idle but for a single bucket
+    const res = net();
+    res.series[1]!.points = res.series[1]!.points.map(([at], i) => [
+      at,
+      i === 2 ? 7 : 0,
+      0,
+    ]) as (typeof res.series)[number]["points"];
+
+    // Then it stays: that one bucket is the thing somebody opened the panel
+    // to find.
+    const bands = bandsFor(specForSlug("host-traffic")!, res);
     expect(bands.map((b) => b.name)).toEqual([
       "eth0 in",
       "eth0 out",
@@ -136,11 +209,13 @@ describe("the host-traffic spec", () => {
   });
 });
 
-// The 5m tier, where rx_bytes and rx_bytes_max are different columns and the
-// page therefore draws an envelope. The raw fixture above cannot exercise
-// that path at all: peakBase falls back to the bare name there, so the line
-// and the band resolve to the same column and any identity claim passes
-// trivially.
+// The 5m tier, where rx_bytes and rx_bytes_max are different columns.
+//
+// Traffic draws no envelope any more, and this is the tier that would show
+// one: stacked, the mark would be the running total of each interface's
+// bucket MAXIMUM, and the interfaces do not peak in the same bucket -- it
+// would state a throughput no bucket ever carried. The line stays the mean,
+// which is what the fleet cell reads.
 function netRolledUp(): MetricsResponse {
   const at = (i: number) => Date.parse(`2026-08-10T00:0${i}:00Z`);
   const iso = (i: number) => `2026-08-10T00:0${i}:00Z`;
@@ -175,17 +250,8 @@ function netRolledUp(): MetricsResponse {
   } as unknown as MetricsResponse;
 }
 
-describe("the Traffic page's envelope", () => {
-  // The design claim is "the sparkline, enlarged -- nothing moves", and this
-  // pins it across the two places traffic is drawn. It used to hold the other
-  // way up: the cell read the bucket's PEAK, so what had to equal the cell was
-  // the page's BAND. The cell reads the mean now (trafficSeries), which makes
-  // the agreement a stronger one -- the cell and the page's LINE are the same
-  // series, and the envelope is the extra the larger chart has room for.
-  // Asserted on the options the page actually passes (ChartPage:
-  // withPeakBand: true), because on the default options the line is the peak
-  // and the claim is true for free.
-  it("draws the cell's own curve as the line, with the peak as an envelope over it", () => {
+describe("the Traffic page on a rolled-up tier", () => {
+  it("draws the mean, and no peak envelope over it", () => {
     // Given a rolled-up response, where peak and mean are separate columns
     const res = netRolledUp();
 
@@ -195,19 +261,21 @@ describe("the Traffic page's envelope", () => {
     });
     const cell = trafficSeries(res);
 
-    // Then the page's line IS the fleet cell's curve, both being the mean
-    expect(page[0]?.values).toEqual(cell.rx);
-    expect(page[1]?.values).toEqual(cell.tx);
-    expect(page[0]?.values).toEqual([11, 22, 33]);
+    // Then the stack is the mean -- and summed, it is still the cell's curve
+    expect(page.map((b) => b.values[0])).toEqual([10, 1, 1, 1]);
+    expect(cell.rx[0]).toBe(11);
 
-    // And the envelope over it is the peak -- a different, higher series.
-    // `band` lives on Band (the chart-panel type bandsFor returns) but not on
-    // the narrower OverlaySeries the array is typed as here, so it is read
-    // off explicitly.
+    // And no band carries an envelope. `band` lives on Band (the chart-panel
+    // type bandsFor returns) but not on the narrower OverlaySeries the array
+    // is typed as here, so it is read off explicitly.
     const envelope = (b: (typeof page)[number]) =>
       (b as { band?: (number | null)[] }).band;
-    expect(envelope(page[0]!)).toEqual([105, 206, 307]);
-    expect(envelope(page[0]!)).not.toEqual(cell.rx);
+    expect(page.map(envelope)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
   });
 });
 
