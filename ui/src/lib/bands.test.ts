@@ -86,33 +86,31 @@ describe("memoryBands", () => {
   });
 
   // The colours are not decoration and neither is their ORDER: the ramp runs
-  // from full chroma to neutral as the bands get more reclaimable, so the
-  // assignment and the stacking order are one decision. This pins the
-  // sequence that was measured (s4 -> s3 -> s6 -> the two neutrals, worst
-  // adjacent pair dE 15.3 on the #1b1b1a surface across normal vision and
-  // simulated protan/deutan/tritan) so that reordering the stack, or
-  // reassigning a hue, fails here rather than silently shipping a pair nobody
-  // checked.
+  // warm to cool AND bright to dim as the bands get more reclaimable, so the
+  // assignment and the stacking order are one decision. This pins the sequence
+  // that was measured (worst adjacent pair dE 11.0 on the #1b1b1a surface
+  // across normal vision and simulated protan/deutan/tritan) so that
+  // reordering the stack, or reassigning a hue, fails here rather than
+  // silently shipping a pair nobody checked.
   it("paints the stack in the validated hue sequence", () => {
     expect(memoryBands(full).map((b) => b.color)).toEqual([
-      "var(--s4)",
-      "var(--s3)",
-      "var(--s6)",
-      "var(--s-neutral)",
-      "var(--s-neutral-2)",
+      "var(--mem-used)",
+      "var(--mem-shared)",
+      "var(--mem-arc)",
+      "var(--mem-buffers)",
+      "var(--mem-cached)",
     ]);
   });
 
-  // --s7 is --accent's hue and --st-serious's neighbour, and --s8 is the amber
-  // beside it; between them they carried ARC and cached until the palette
-  // reserved warm for attention and gave page cache the neutrals. These bands
-  // are drawn in a 32px fleet cell with a severity badge two columns away,
-  // which is the case the rule exists for -- a large legended chart may still
-  // use either.
-  it("keeps attention's warm hues out of the memory stack", () => {
+  // The stack draws from --mem-* and nothing else. It used to borrow s-tokens,
+  // and every borrowed one dragged the series ramp's brightness into a 32px
+  // fleet cell -- --s7 was --accent's hue and --s8 the amber beside it, and
+  // both had to be argued out one at a time. --mem-used is amber again, but it
+  // is THIS chart's amber: dimmer than --s8 and tuned against the four bands
+  // above it. Reaching back into the series ramp for a memory band fails here.
+  it("draws the stack from the memory palette only", () => {
     const colors = memoryBands(full).map((b) => b.color);
-    expect(colors).not.toContain("var(--s7)");
-    expect(colors).not.toContain("var(--s8)");
+    colors.forEach((c) => expect(c).toMatch(/^var\(--mem-/));
   });
 
   // Dropping a band a host does not have must not shuffle the ones it does:
