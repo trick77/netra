@@ -115,6 +115,12 @@ var families = map[string]*family{
 			// these has to know a 1200 RPM fan does not belong on the same
 			// axis as a 45 degree package.
 			{name: "kind", expr: "d.kind"},
+			// The block device a storage chip measures, and empty for every
+			// other chip. Without it two drivetemp chips are two series a
+			// client cannot name apart -- both would render as
+			// "drivetemp temp1", and which disk is the hot one is the whole
+			// question being asked.
+			{name: "instance", expr: "d.instance"},
 		},
 		join:             "JOIN sensors d ON d.id = s.sensor_id AND d.host_id = s.host_id",
 		dimensionColumns: []string{"sensor_id"},

@@ -317,8 +317,24 @@ func smartBaremetal() *Profile {
 
 	p.Sensors = append(p.Sensors,
 		SensorSpec{Chip: "coretemp", Label: "Package id 0", Base: 44, Swing: 22},
-		SensorSpec{Chip: "nvme", Label: "Composite", Base: 38, Swing: 11},
+		SensorSpec{Chip: "nvme", Label: "Composite", Instance: "nvme0n1", Base: 38, Swing: 11},
 		SensorSpec{Chip: "acpitz", Label: "temp1", Base: 32, Swing: 6},
+
+		// The four SATA disks, as the drivetemp module reports them: one
+		// chip per drive, every one of them named "drivetemp", none of them
+		// carrying a temp1_label. This is the shape that has no unique
+		// identity without the instance -- four chips indistinguishable by
+		// chip and label alone -- and no archetype had it, so the collapse
+		// real multi-disk hosts were suffering could not be seen locally.
+		//
+		// sdc runs warm, matching the drive the SMART profile above fails:
+		// a disk that is reallocating sectors and running eight degrees
+		// hotter than its three neighbours is one story told twice, which
+		// is what makes the temperature worth charting beside the table.
+		SensorSpec{Chip: "drivetemp", Label: "temp1", Instance: "sda", Base: 34, Swing: 7},
+		SensorSpec{Chip: "drivetemp", Label: "temp1", Instance: "sdb", Base: 33, Swing: 7},
+		SensorSpec{Chip: "drivetemp", Label: "temp1", Instance: "sdc", Base: 42, Swing: 8},
+		SensorSpec{Chip: "drivetemp", Label: "temp1", Instance: "sdd", Base: 35, Swing: 6},
 
 		// Bare metal is the only place these exist, and they are the two
 		// hardware failures a temperature cannot show: a stopped fan and a

@@ -117,6 +117,7 @@ interface TabData {
   sensorMetrics: MetricsResponse | null;
   netMetrics: MetricsResponse | null;
   diskIoMetrics: MetricsResponse | null;
+  smartMetrics: MetricsResponse | null;
   collectorMetrics: MetricsResponse | null;
   coreMetrics: MetricsResponse | null;
   containerMetrics: MetricsResponse | null;
@@ -139,6 +140,7 @@ const NO_DATA: TabData = {
   sensorMetrics: null,
   netMetrics: null,
   diskIoMetrics: null,
+  smartMetrics: null,
   collectorMetrics: null,
   coreMetrics: null,
   containerMetrics: null,
@@ -371,17 +373,34 @@ export function HostPage({
           // and nothing else -- size, used and free live in the metrics
           // family. Fetching both is what makes this tab answer the question
           // anyone opens it for: how full is that disk.
-          const [filesystems, drives, filesystemMetrics, diskIoMetrics] =
-            await Promise.all([
-              orNull(getFilesystems(hostId)),
-              // The physical disks under those mounts. orNull, like every
-              // other family: a hub too old to serve the route leaves the
-              // table empty and the rest of the tab intact.
-              orNull(getDrives(hostId)),
-              metrics("filesystem"),
-              metrics("disk_io"),
-            ]);
-          return { filesystems, drives, filesystemMetrics, diskIoMetrics };
+          const [
+            filesystems,
+            drives,
+            filesystemMetrics,
+            diskIoMetrics,
+            smartMetrics,
+          ] = await Promise.all([
+            orNull(getFilesystems(hostId)),
+            // The physical disks under those mounts. orNull, like every
+            // other family: a hub too old to serve the route leaves the
+            // table empty and the rest of the tab intact.
+            orNull(getDrives(hostId)),
+            metrics("filesystem"),
+            metrics("disk_io"),
+            // The SMART readings over time, which is what turns the Drives
+            // table's temperature from a number into a movement. The family
+            // carries every attribute of every drive -- the read API takes no
+            // key filter -- but at an hourly cadence that is a few hundred
+            // points, and it is the only route to this history.
+            metrics("smart"),
+          ]);
+          return {
+            filesystems,
+            drives,
+            filesystemMetrics,
+            diskIoMetrics,
+            smartMetrics,
+          };
         }
         case "containers": {
           // The list and its metrics, so the tab can show what each
@@ -626,7 +645,13 @@ export function HostPage({
             rows={data.filesystems ?? []}
             metrics={data.filesystemMetrics ?? null}
           />
-          <Drives rows={data.drives ?? []} capabilities={host.capabilities} />
+          <Drives
+            rows={data.drives ?? []}
+            capabilities={host.capabilities}
+            metrics={data.smartMetrics}
+            range={range}
+            fetchFamily={fetchFamily}
+          />
           <StorageGraphs
             filesystem={data.filesystemMetrics}
             diskIo={data.diskIoMetrics}

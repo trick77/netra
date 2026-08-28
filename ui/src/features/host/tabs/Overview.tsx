@@ -261,7 +261,16 @@ function sensorHistory(
   return griddedValues(res, index, "value");
 }
 
-/** What a reader calls this sensor: chip and label, in that order.
+/** What a reader calls this sensor: chip and label, then the block device
+ * where there is one.
+ *
+ * The instance is what tells four disks apart. The drivetemp driver names
+ * every chip it registers "drivetemp" and publishes no tempN_label, so a
+ * four-disk host draws four rows that would otherwise all read
+ * "drivetemp temp1" -- four identical names for four different disks, and no
+ * way to tell which one is the hot one. Empty for every chip that measures no
+ * disk, which is every board sensor, so coretemp and the fans read exactly as
+ * they always have.
  *
  * Also its identity across two responses -- the enlarged view re-finds its
  * own series by this name after a range change rather than by the index it
@@ -269,7 +278,9 @@ function sensorHistory(
  * and the chart would silently become another sensor's. */
 function sensorName(series: MetricsSeries): string {
   return (
-    [series.key.chip, series.key.label].filter(Boolean).join(" ") || ABSENT
+    [series.key.chip, series.key.label, series.key.instance]
+      .filter(Boolean)
+      .join(" ") || ABSENT
   );
 }
 

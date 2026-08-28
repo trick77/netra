@@ -18,10 +18,13 @@ import { purgeContainer } from "../../../lib/api";
 import { ABSENT, bytes, duration } from "../../../lib/format";
 import {
   driveFindings,
+  driveKind,
   drivePowerOnHours,
   driveSeverity,
   driveTemperature,
+  driveTempAttrId,
   driveWearPct,
+  temperatureFromRaw,
 } from "../smart";
 import { hostContainerNote } from "../../../lib/containers";
 import { hostDriveNote } from "../../../lib/drives";
@@ -32,9 +35,11 @@ import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column, type TableProps } from "../../../ui/Table";
 import { Meter } from "../../../ui/Meter";
 import { When } from "../../../ui/When";
-import { type Range } from "../../../lib/range";
+import { rangeLabel, type Range } from "../../../lib/range";
 import { RANGE_VALUES } from "../ranges";
 import { griddedValues } from "../../../lib/metrics";
+import { Sparkline } from "../../../ui/charts/Sparkline";
+import { Enlargeable, type DetailData } from "../../../ui/charts/Enlargeable";
 import {
   composeIdentity,
   containerColumns,
@@ -612,6 +617,177 @@ function DriveHealthPill({ drive }: { drive: Drive }) {
   return <span className={`badge drive drive-${severity}`}>{label}</span>;
 }
 
+/**
+ * A drive's temperature series out of the smart family.
+ *
+ * The family carries EVERY attribute of every drive on the host -- the read
+ * API has no key filter -- so the series this row wants is picked by device
+ * and attribute id, the same pair the hub keys them on. attr_id arrives as
+ * text (s.attr_id::text in read/family.go), so the comparison is made in
+ * strings rather than by coercing the response.
+ */
+function driveTempSeries(
+  res: MetricsResponse | null,
+  drive: Drive,
+): (number | null)[] {
+  if (res === null) return [];
+  const wanted = String(driveTempAttrId(drive));
+  const index = res.series.findIndex(
+    (s) => s.key.device === drive.device && s.key.attr_id === wanted,
+  );
+  if (index === -1) return [];
+  // Through the same mask the cell's current reading uses. The hub returns
+  // smartctl's raw 48-bit field verbatim, so an unmasked ATA series draws a
+  // flat line at a hundred and twenty billion beside a cell reading 28 °C.
+  const kind = driveKind(drive);
+  return griddedValues(res, index, "raw").map((v) =>
+    temperatureFromRaw(v, kind),
+  );
+}
+
+/**
+ * The Temp cell: the current reading, and the movement behind it.
+ *
+ * A temperature is only interesting as a movement -- 47 °C is fine on an
+ * NVMe under load and alarming on an idle spinning disk -- which is the same
+ * argument the Overview tab's sensor rows make, and the reason the sparkline
+ * belongs in this cell rather than in a panel below the table. This is where
+ * the number already is.
+ *
+ * FREE-SCALED PER ROW, no shared extent. Every drive draws between its own
+ * min and max, so a disk moving two degrees still has a shape. The trade is
+ * that two rows with identical silhouettes are not at the same temperature,
+ * and the reading beside each line is what carries magnitude -- exactly the
+ * call SensorList makes, and for the same reason: a shared axis across an
+ * NVMe at 47 °C and a platter at 34 flattens both.
+ */
+function DriveTempCell({
+  row,
+  values,
+  window: answered = null,
+  range,
+  fetchFamily,
+}: {
+  row: Drive;
+  values: (number | null)[];
+  /** The window the values were answered for, for the enlarged view's time
+   * axis. Absent, no axis is drawn rather than a guessed one. */
+  window?: { from: string; to: string } | null;
+  range?: Range;
+  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
+}) {
+  const now = driveTemperature(row);
+  if (now === null) return ABSENT;
+
+  const reading = <span className="reading">{now} °C</span>;
+  // No history is not an error: SMART is hourly, so a drive first seen this
+  // hour has a reading and no line yet, and the number is still the answer.
+  if (values.length === 0) {
+    return <span className="temp-cell">{reading}</span>;
+  }
+
+  // The dialog can only refetch where the page gave it a fetcher. Without
+  // one it still opens on the data already drawn -- which is the whole point
+  // of Enlargeable's fetchSeries being optional -- so the line is never
+  // withheld over a range change the caller cannot serve.
+  const fetchSeries = async (next: Range): Promise<DetailData> => {
+    if (fetchFamily === undefined) return { series: [], window: null };
+    const res = await fetchFamily("smart", next);
+    // Re-picked by device and attr_id rather than by the index this row had,
+    // for the reason SensorList re-picks by name: a drive that stopped
+    // reporting shifts every series after it, and the widened chart would
+    // silently become another disk's.
+    return {
+      series: [
+        {
+          name: `${row.device} temperature`,
+          color: "var(--s1)",
+          values: driveTempSeries(res, row),
+        },
+      ],
+      window: res.window,
+    };
+  };
+
+  return (
+    <span className="temp-cell">
+      <Enlargeable
+        title={`Temperature · ${row.device}`}
+        label={`Enlarge temperature for ${row.device}`}
+        className="inline"
+        unit="°C"
+        series={[
+          { name: `${row.device} temperature`, color: "var(--s1)", values },
+        ]}
+        // Free-scaled in the dialog too, matching the sparkline that was
+        // clicked. A zero floor draws a drive living between 37 and 49 °C as
+        // a flat line across the top quarter of the chart, which is a
+        // strictly worse picture than the 110px cell it was opened from.
+        autoScale
+        fmt={(n) => (n === null ? ABSENT : `${Math.round(n)} °C`)}
+        window={answered}
+        range={range}
+        ranges={RANGE_VALUES}
+        fetchSeries={fetchFamily === undefined ? undefined : fetchSeries}
+      >
+        <Sparkline
+          values={values}
+          color="var(--s1)"
+          width={110}
+          height={24}
+          // Never anchored at zero: a drive lives between 30 and 50 °C, and
+          // an area filled from 0 floods the cell with a block whose top
+          // edge is the only part carrying information.
+          fill={false}
+          label={
+            range === undefined
+              ? `${row.device} temperature trend`
+              : `${row.device} temperature trend, ${rangeLabel(range)}`
+          }
+        />
+      </Enlargeable>
+      {reading}
+    </span>
+  );
+}
+
+function driveColumns(
+  metrics: MetricsResponse | null,
+  range?: Range,
+  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>,
+): Column<Drive>[] {
+  return DRIVE_COLUMNS.map((column) =>
+    column.key === "temperature"
+      ? {
+          ...column,
+          // The cadence, in the header rather than in a footnote. SMART is
+          // polled hourly (read/tier.go pins the family to one raw tier), so
+          // the line is 24 points over a day and a single point at the 1 h
+          // range -- a reader who is not told that reads a sparse line as a
+          // broken one. The window itself is the page's range selector and
+          // is not restated here.
+          header: "Temp · hourly",
+          // Wide enough for the line at the size it was drawn plus the
+          // reading. Charts shrink to fit rather than widening the page
+          // (svg.spark, max-width:100%), so without a width of its own the
+          // column takes the share the table hands it -- and the model and
+          // serial beside it are long. The line came out 40px wide and
+          // unreadable, which is a chart in name only.
+          width: "190px",
+          cell: (row: Drive) => (
+            <DriveTempCell
+              row={row}
+              values={driveTempSeries(metrics, row)}
+              window={metrics?.window ?? null}
+              range={range}
+              fetchFamily={fetchFamily}
+            />
+          ),
+        }
+      : column,
+  );
+}
+
 const DRIVE_COLUMNS: Column<Drive>[] = [
   {
     key: "device",
@@ -723,9 +899,18 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
 export function Drives({
   rows,
   capabilities,
+  metrics = null,
+  range,
+  fetchFamily,
 }: {
   rows: readonly Drive[];
   capabilities?: Record<string, string>;
+  /** The smart family, for the temperature column's history. Optional: the
+   * table is a complete answer without it, and was one before the column
+   * could draw. */
+  metrics?: MetricsResponse | null;
+  range?: Range;
+  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
 }) {
   // Above the list rather than instead of it, exactly as Containers does:
   // "what was collected" and "what stopped the rest" are two facts, and a
@@ -737,7 +922,7 @@ export function Drives({
     <Inventory
       label="Drives"
       heading
-      columns={DRIVE_COLUMNS}
+      columns={driveColumns(metrics, range, fetchFamily)}
       rows={rows}
       rowKey={(row) => row.device}
       searchText={(row) =>

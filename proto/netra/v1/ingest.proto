@@ -614,6 +614,24 @@ message SensorSample {
   // panels use, while value is the one column a reader can chart without
   // knowing which kind it asked for.
   optional double value = 6;
+
+  // What this chip is attached to, when that is a block device: "sda",
+  // "nvme0n1". Empty for every other chip, and empty from an agent predating
+  // the field.
+  //
+  // Chip + label is not a unique identity for storage chips. Every drivetemp
+  // chip is named "drivetemp" and publishes no tempN_label, so a host with
+  // four SATA disks reports four sensors that call themselves
+  // drivetemp/temp1; two NVMe drives both report nvme/Composite. The hub
+  // keys sensors on chip + label, so those readings collapsed onto ONE
+  // sensor and every scrape kept exactly one of them, with nothing raised.
+  //
+  // Set ONLY where a block device resolves, never as a general
+  // disambiguator. Populating it for coretemp or k10temp would change the
+  // identity of sensors that have been reporting correctly for as long as
+  // the host has been up, and fork every one of their histories at the
+  // agent upgrade.
+  string instance = 7;
 }
 
 // NetSample is one interface over one scrape interval. Rates, for the same

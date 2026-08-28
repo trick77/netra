@@ -276,7 +276,7 @@ func (s *Store) resolveSensorIDs(ctx context.Context, hostID int32, rows []*netr
 
 	seen := make(map[string]bool, len(rows))
 	for _, r := range rows {
-		key := r.GetChip() + "\x00" + r.GetLabel()
+		key := sensorKey(r)
 		if seen[key] {
 			continue
 		}
@@ -291,10 +291,10 @@ func (s *Store) resolveSensorIDs(ctx context.Context, hostID int32, rows []*netr
 			kind = "temperature"
 		}
 
-		id, ok, err := s.resolveOne(ctx, "sensor", r.GetChip()+"/"+r.GetLabel(), `
-			INSERT INTO sensors (host_id, chip, label, kind) VALUES ($1, $2, $3, $4)
-			ON CONFLICT (host_id, chip, label) DO UPDATE SET kind = EXCLUDED.kind
-			RETURNING id`, hostID, r.GetChip(), r.GetLabel(), kind)
+		id, ok, err := s.resolveOne(ctx, "sensor", sensorName(r), `
+			INSERT INTO sensors (host_id, chip, label, kind, instance) VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (host_id, chip, label, instance) DO UPDATE SET kind = EXCLUDED.kind
+			RETURNING id`, hostID, r.GetChip(), r.GetLabel(), kind, r.GetInstance())
 		if err != nil {
 			return nil, err
 		}
@@ -306,7 +306,38 @@ func (s *Store) resolveSensorIDs(ctx context.Context, hostID int32, rows []*netr
 	return out, nil
 }
 
-// InsertSensorSamples resolves chip+label to sensor ids and writes the rows.
+// sensorKey is one sensor's identity, and the ONE place it is built.
+//
+// Instance is part of it because chip + label is not unique: every drivetemp
+// chip is named "drivetemp" and publishes no tempN_label, so four SATA disks
+// on one host arrive as four rows all calling themselves drivetemp/temp1, and
+// two NVMe drives both arrive as nvme/Composite. Keyed without the instance,
+// resolveSensorIDs mapped all four onto one id and InsertSensorSamples' ON
+// CONFLICT DO NOTHING then discarded three of every four readings.
+//
+// A function rather than the expression written out at each call site: the two
+// callers below build this key independently, and teaching only the resolver
+// about the instance leaves the sample loop looking sensors up by the OLD key.
+// That version compiles, creates the four sensor rows, and still funnels every
+// sample into whichever one the map happens to hold -- the same data loss with
+// a more convincing schema behind it.
+func sensorKey(r *netrav1.SensorSample) string {
+	return r.GetChip() + "\x00" + r.GetLabel() + "\x00" + r.GetInstance()
+}
+
+// sensorName is what a resolve failure is reported under -- an operator has to
+// recognise the sensor in a log line, and "drivetemp/temp1" names four of them
+// on a four-disk host.
+func sensorName(r *netrav1.SensorSample) string {
+	name := r.GetChip() + "/" + r.GetLabel()
+	if r.GetInstance() == "" {
+		return name
+	}
+	return name + " (" + r.GetInstance() + ")"
+}
+
+// InsertSensorSamples resolves each sensor's identity to an id and writes the
+// rows.
 func (s *Store) InsertSensorSamples(ctx context.Context, hostID int32, rows []*netrav1.SensorSample) (int64, error) {
 	if len(rows) == 0 {
 		return 0, nil
@@ -324,7 +355,7 @@ func (s *Store) InsertSensorSamples(ctx context.Context, hostID int32, rows []*n
 
 	batch := &pgx.Batch{}
 	for _, r := range rows {
-		id, ok := ids[r.GetChip()+"\x00"+r.GetLabel()]
+		id, ok := ids[sensorKey(r)]
 		if !ok {
 			continue
 		}

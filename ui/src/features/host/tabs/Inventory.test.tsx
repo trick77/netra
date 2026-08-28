@@ -604,6 +604,67 @@ describe("Drives", () => {
     expect(screen.getAllByText("49 °C")).toHaveLength(2);
   });
 
+  // The smart family, keyed by device and attr_id. attr_id is TEXT on the
+  // wire (s.attr_id::text in read/family.go), which is why the join compares
+  // strings -- a numeric comparison type-checks and matches nothing, and the
+  // column then renders exactly as it did before the history existed.
+  const smart = {
+    family: "smart",
+    tier: "raw",
+    step_s: 3600,
+    window: { from: "2026-08-23T09:00:00Z", to: "2026-08-23T12:00:00Z" },
+    requested_window: {
+      from: "2026-08-23T09:00:00Z",
+      to: "2026-08-23T12:00:00Z",
+    },
+    warnings: [],
+    key_columns: ["device", "attr_id"],
+    columns: ["raw", "normalized"],
+    series: [
+      {
+        key: { device: "sdc", attr_id: "194" },
+        points: [
+          // Packed, as a real drive reports it: 0x1C0000001C is 28 °C.
+          [Date.parse("2026-08-23T09:00:00Z"), 0x1c0000001c, 71],
+          [Date.parse("2026-08-23T10:00:00Z"), 0x1d0000001d, 71],
+          [Date.parse("2026-08-23T11:00:00Z"), 0x1e0000001e, 71],
+        ],
+      },
+      // Another attribute of the same drive, which must not be plotted as a
+      // temperature.
+      {
+        key: { device: "sdc", attr_id: "9" },
+        points: [[Date.parse("2026-08-23T09:00:00Z"), 21_402, 98]],
+      },
+    ],
+    truncated: false,
+  } as unknown as MetricsResponse;
+
+  // A temperature is only interesting as a movement, which is the whole
+  // reason the history is in this cell rather than in a panel below the
+  // table: this is where the number already is.
+  it("draws each drive's temperature history beside its reading", () => {
+    render(<Drives rows={[ata, nvme]} range="24h" metrics={smart} />);
+
+    const row = screen.getByRole("row", { name: /sdc/ });
+    expect(
+      within(row).getByRole("img", { name: /sdc temperature trend/ }),
+    ).toBeInTheDocument();
+    // The reading is still the drive's own current one, unchanged.
+    expect(within(row).getByText("49 °C")).toBeInTheDocument();
+  });
+
+  // A drive the family answered nothing for still has a reading, and a
+  // reading with no line is a complete answer -- SMART is hourly, so a drive
+  // first seen this hour has exactly that.
+  it("renders the reading alone for a drive with no history", () => {
+    render(<Drives rows={[ata, nvme]} range="24h" metrics={smart} />);
+
+    const row = screen.getByRole("row", { name: /nvme0n1/ });
+    expect(within(row).getByText("49 °C")).toBeInTheDocument();
+    expect(within(row).queryByRole("img")).toBeNull();
+  });
+
   // NVMe reports consumed endurance; ATA has no comparable figure, and a
   // vendor-specific life-left counter read as though it were standard would
   // print a confident number meaning something different per model.

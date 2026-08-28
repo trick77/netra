@@ -237,8 +237,13 @@ func TestIntegrationMetricsJoinsTheDimensionForItsKey(t *testing.T) {
 	// and power: it identifies the series rather than measuring anything, and
 	// a client needs it to know a 1200 RPM fan does not share an axis with a
 	// 45 degree package.
-	if !slices.Equal(res.KeyColumns, []string{"chip", "label", "kind"}) {
-		t.Fatalf("key_columns = %v, want [chip label kind]", res.KeyColumns)
+	//
+	// instance joined it when the collector learned to name the block device
+	// a storage chip measures, for a blunter reason: without it two drivetemp
+	// chips are two series a client cannot tell apart, and both render as
+	// "drivetemp temp1".
+	if !slices.Equal(res.KeyColumns, []string{"chip", "label", "kind", "instance"}) {
+		t.Fatalf("key_columns = %v, want [chip label kind instance]", res.KeyColumns)
 	}
 	if len(res.Series) != 1 {
 		t.Fatalf("got %d series, want 1", len(res.Series))
@@ -255,6 +260,56 @@ func TestIntegrationMetricsJoinsTheDimensionForItsKey(t *testing.T) {
 	// The surrogate id identifies the series; it never appears as a value.
 	if slices.Contains(res.Columns, "sensor_id") {
 		t.Errorf("columns = %v, want sensor_id excluded -- it identifies the series", res.Columns)
+	}
+	// A board sensor is attached to no block device, and its key says so
+	// rather than inventing one.
+	if key["instance"] != "" {
+		t.Errorf("instance = %q, want empty for a chip that measures no disk", key["instance"])
+	}
+}
+
+// Two disks on one drivetemp chip name are two series, and the block device
+// is what a client has to name them by.
+//
+// The drivetemp driver registers one chip per SATA disk, names every one of
+// them "drivetemp" and publishes no tempN_label. Keyed on chip and label
+// alone, a four-disk host answers with four series whose keys are identical
+// -- a response a client cannot draw, whatever it does with it.
+func TestIntegrationMetricsTellsTwoStorageChipsApartByTheirBlockDevice(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	now := time.Now()
+	id := seedHost(t, pool, "four-disk")
+
+	for _, dev := range []string{"sda", "sdb"} {
+		var sensorID int32
+		if err := pool.QueryRow(ctx, `
+			INSERT INTO sensors (host_id, chip, label, kind, instance)
+			VALUES ($1, 'drivetemp', 'temp1', 'temperature', $2)
+			RETURNING id`, id, dev).Scan(&sensorID); err != nil {
+			t.Fatalf("insert sensor %s: %v", dev, err)
+		}
+		exec(t, pool, `
+			INSERT INTO sensor_samples (host_id, ts, sensor_id, temp)
+			VALUES ($1, now() - INTERVAL '5 minutes', $2, 34)`, id, sensorID)
+	}
+
+	res, err := svc.Metrics(ctx, read.MetricsQuery{
+		HostID: id, Family: "sensor", From: now.Add(-time.Hour), To: now,
+	}, now)
+	if err != nil {
+		t.Fatalf("Metrics: %v", err)
+	}
+	if len(res.Series) != 2 {
+		t.Fatalf("got %d series, want 2 -- one per disk", len(res.Series))
+	}
+
+	instances := map[string]bool{}
+	for _, s := range res.Series {
+		instances[s.Key["instance"]] = true
+	}
+	if !instances["sda"] || !instances["sdb"] {
+		t.Errorf("instances = %v, want sda and sdb", instances)
 	}
 }
 
