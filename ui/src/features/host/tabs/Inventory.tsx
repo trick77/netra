@@ -725,6 +725,12 @@ function DriveTempCell({
         // a flat line across the top quarter of the chart, which is a
         // strictly worse picture than the 110px cell it was opened from.
         autoScale
+        // Filled, like the Sparkline it was opened from, and for the reason
+        // the Overview sensor rows pass it: the small chart draws an area, so
+        // a dialog drawing a bare line would say less than the 110px cell.
+        // Honest because the chart free-scales -- the fill's bottom edge is
+        // the coolest reading in the window, not an axis decision.
+        filled
         fmt={(n) => (n === null ? ABSENT : `${Math.round(n)} °C`)}
         window={answered}
         range={range}

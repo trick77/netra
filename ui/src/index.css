@@ -3015,8 +3015,13 @@ tbody:first-of-type .grouprow th {
 }
 .temp-cell .val {
   /* --text-label, like .uptime-cell, .mem-cell .val and .traffic-cell .rate:
-     the same job, a quiet secondary reading inside a table cell. */
+     the same job, a quiet secondary reading inside a table cell. --muted for
+     the same reason those carry it (.sensor-row .val, .mrow .val, which is
+     where .mem-cell and .usage-cell get theirs): at the table body's own ink
+     the temperature reads a step louder than every other number-beside-a-
+     chart in the app. */
   font-size: var(--text-label);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
   /* "49 °C" is one word. Without this the cell is narrow enough on a laptop
      that it breaks at the space, and the column reads as a stack of numbers
