@@ -244,7 +244,10 @@ function HostCell({ row }: { row: HostRow }) {
           already know from the hostname beside it, whereas "OVH ·
           Gravelines, France" answers whose machine this is and which
           building it is in. The name is not lost: it leads the host page's
-          own location facts, and it is what the grouped views group by.
+          own location facts, and the fleet's filter still matches it -- an
+          operator who named the place can still search for what they named.
+          (It is not what anything groups by: the fleet groups by host and by
+          kind, never by site.)
 
           Still one line, deliberately. This column had two and keeps two --
           a third would put height back on every row of the table, which is

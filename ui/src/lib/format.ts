@@ -261,6 +261,10 @@ export function relative(iso: string | null, now: Date = new Date()): string {
   return `${duration(seconds)} ago`;
 }
 
+// Built on first use by countryName below, never at module scope -- see the
+// comment there.
+let regionNames: Intl.DisplayNames | null = null;
+
 /**
  * A country's name from its ISO 3166-1 alpha-2 code: "FR" is France.
  *
@@ -293,13 +297,26 @@ export function countryName(code: string | null | undefined): string | null {
   // name gets named, including the user-assigned codes that are real in
   // practice: XK is Kosovo, and blacklisting the whole X range to catch ZZ
   // would lose it.
-  if (trimmed.toUpperCase() === "ZZ") return trimmed;
+  const upper = trimmed.toUpperCase();
+  // Uppercased on the way out, so a hub that stored "zz" reads the same as
+  // one that stored "ZZ": every other code comes back canonicalised by
+  // `of()`, and this path must not be the one that leaks the raw casing.
+  if (upper === "ZZ") return upper;
   try {
-    // Constructed per call rather than hoisted to module scope: this runs
-    // once per host per render at most, and a module-scope Intl object is a
-    // locale frozen at import time.
-    const names = new Intl.DisplayNames(["en"], { type: "region" });
-    return names.of(trimmed.toUpperCase()) ?? trimmed;
+    // Built once and kept: the locale is a hardcoded "en", so there is
+    // nothing here that a later render could want built differently, and
+    // this runs once per host per render -- a fleet of four hundred rows
+    // re-constructed an ICU object per row per poll tick. Lazily rather
+    // than at module scope, and inside the try: a runtime without
+    // Intl.DisplayNames must lose one location line, not fail at import
+    // and take the whole app with it.
+    regionNames ??= new Intl.DisplayNames(["en"], { type: "region" });
+    // `upper`, not `trimmed`, for the same reason the ZZ path above returns
+    // it: this is the code path, and a code renders canonically whatever
+    // casing the hub happens to hold. The catch below keeps `trimmed`
+    // deliberately -- what lands there is not a code but whatever somebody
+    // typed into the field, and "Switzerland" must not come back shouted.
+    return regionNames.of(upper) ?? upper;
   } catch {
     // `of()` throws RangeError on a structurally invalid code ("Switzerland"
     // typed into the country field, a three-letter code). The stored string

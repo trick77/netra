@@ -10,6 +10,7 @@ import {
   bytes,
   bytesPair,
   cardinal,
+  countryName,
   duration,
   percent,
   relative,
@@ -225,5 +226,48 @@ describe("cardinal", () => {
 
   it("keeps a negative sign outside the grouping", () => {
     expect(cardinal(-4200)).toBe("-4\u202f200");
+  });
+});
+
+describe("countryName", () => {
+  it("names a country from its code", () => {
+    expect(countryName("FR")).toBe("France");
+  });
+
+  // The hub stores whatever the operator typed. A code renders canonically
+  // whichever casing that was, so two sites entered by two people do not
+  // read differently on the same page.
+  it("canonicalises the casing", () => {
+    expect(countryName("fr")).toBe("France");
+    expect(countryName("qq")).toBe("QQ");
+    expect(countryName("zz")).toBe("ZZ");
+  });
+
+  // ZZ is ISO's own "unknown or invalid region", and CLDR duly names it
+  // "Unknown Region" -- a phrase that reads like a place when it lands under
+  // a hostname. It is the one code whose name is worse than the code.
+  it("shows ZZ as the code rather than as Unknown Region", () => {
+    expect(countryName("ZZ")).toBe("ZZ");
+  });
+
+  // A user-assigned code that is real in practice still resolves: the rule
+  // is about ZZ specifically, not about the ranges it sits near.
+  it("still names the user-assigned codes that mean something", () => {
+    expect(countryName("XK")).toBe("Kosovo");
+  });
+
+  // Not a code at all -- somebody typed the country into the field. Echoed
+  // as typed rather than shouted back, and never thrown from.
+  it("echoes free text rather than throwing", () => {
+    expect(countryName("Switzerland")).toBe("Switzerland");
+  });
+
+  // Absent stays absent: both callers omit the fact rather than dash it. An
+  // undefined has to reach the same answer as a null -- a row assembled
+  // before the field existed must not take the page down with it.
+  it("has no answer for an absent code", () => {
+    expect(countryName(null)).toBeNull();
+    expect(countryName(undefined)).toBeNull();
+    expect(countryName("  ")).toBeNull();
   });
 });
