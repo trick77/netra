@@ -193,22 +193,25 @@ function HostCell({ row }: { row: HostRow }) {
       </div>
       {/* The location goes under the name rather than beside it: the two are
           a heading and its subtitle, not two peers, and the row has the
-          vertical space. Inline, a long site name pushed the hostname off
+          vertical space. Inline, a long place name pushed the hostname off
           the eye's scan line down the column.
 
-          A host with no site gets no line at all rather than an em dash: the
-          dash is a placeholder for a value that should be there and is
-          missing, and an unassigned host is not missing anything -- it is
-          simply not in a site yet. A column of dashes under every hostname
-          reads as a fleet full of holes.
+          A host whose agent reports no location gets no line at all rather
+          than an em dash: the dash is a placeholder for a value that should
+          be there and is missing, and an agent with neither AGENT_LOCATION
+          nor AGENT_PROVIDER set is not missing anything -- it was never told
+          where it is. A column of dashes under every hostname reads as a
+          fleet full of holes. Note this is about what the AGENT reported and
+          not about sites: a host can be in a site and still draw no line.
 
-          What the line SAYS is the provider and the place, not the site
-          name it said before. The site name is an internal label -- a reader
-          scanning a fleet learns nothing from "gra-rack-7" that they did not
-          already know from the hostname beside it, whereas "OVH ·
-          Gravelines, France" answers whose machine this is and which
-          building it is in. Both come from the host's own agent, so a fleet
-          says where it is without anyone maintaining a table of places.
+          What the line SAYS is the provider and the place, not the site name
+          it said before. The site name was an internal label out of a table
+          somebody fills in by hand -- a reader scanning a fleet learns
+          nothing from "gra-rack-7" that the hostname beside it had not
+          already told them, whereas "OVH · Roubaix, France" answers whose
+          machine this is and where it sits. Both come from the host's own
+          agent, so a fleet says where it is with nobody maintaining a table
+          of places.
 
           Still one line, deliberately. This column had two and keeps two --
           a third would put height back on every row of the table, which is

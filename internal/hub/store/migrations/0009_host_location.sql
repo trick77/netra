@@ -22,3 +22,26 @@
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS location TEXT;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS provider TEXT;
 ALTER TABLE hosts ADD COLUMN IF NOT EXISTS facility TEXT;
+
+-- Now make every agent say it again, because otherwise not one of them ever
+-- will and these columns stay NULL on every existing host forever.
+--
+-- Metadata is sent once and then only on change, and "change" is decided by a
+-- hash the AGENT computes over the whole Metadata message -- which has carried
+-- location, provider and facility all along (client/metadata.go: HashMetadata).
+-- So a host that reported "Roubaix, France" months ago has a stored hash that
+-- still matches exactly what its agent would send today. reconcileMetadata
+-- (httpapi/ingest.go) asks for metadata only when the stored hash DIFFERS or is
+-- empty, and the agent's own sendMetadata flag starts false and is set only by
+-- such a request -- so not even an agent restart resends it. Adding the columns
+-- alone would leave every upgraded hub exactly as blank as before, which is the
+-- bug this migration exists to fix.
+--
+-- Clearing the hash makes `len(stored) == 0` true once per host, the hub asks
+-- for metadata on that host's next post, and the agent answers with what it has
+-- been holding all along. One extra Metadata block per host, once.
+--
+-- NULL rather than a sentinel: the column is nullable and empty is already the
+-- "never stored one" state the same branch tests for, so this asks the question
+-- the code was already able to answer.
+UPDATE hosts SET metadata_hash = NULL;

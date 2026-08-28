@@ -37,15 +37,15 @@ import { FLEET_RANGE } from "./ranges";
 export type Entity = "hosts" | "containers";
 
 /**
- * Joins the fleet list to its site names and produces the rows the table
- * renders from.
+ * Produces the rows the table renders from.
  *
- * `GET /api/v1/hosts` carries `site_id` and no name; the per-host detail
- * call that does carry one would be an N+1 across the whole fleet, so the
- * site list is fetched once and joined here by id.
+ * Nothing is joined. `GET /api/v1/hosts` carries everything a row states
+ * about where a host is, reported by that host's own agent -- this used to
+ * fetch the sites table whole to resolve a name by `site_id`, and then the
+ * providers table on top of it.
  *
  * The chart series come back empty here: this path has the host list and
- * the site names, not the per-host metrics. App's poll fetches those and
+ * nothing else, not the per-host metrics. App's poll fetches those and
  * builds the same rows with them (see hostTrends).
  */
 export function buildHostRows(hosts: Host[]): HostRow[] {
