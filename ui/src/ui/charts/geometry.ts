@@ -6,6 +6,11 @@
 // SVG's y-axis grows downward, so every value-to-y mapping below inverts
 // the value: a higher value must land at a smaller y.
 
+// The one import here: a stacked band's vertical inset is a property of the
+// MARK -- half the edge it draws -- rather than a number a caller picks, so
+// it lives with the other mark weights. size.ts imports nothing, no cycle.
+import { BAND_Y_PAD } from "./size";
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -214,7 +219,25 @@ export function stackBands(
   w: number,
   h: number,
   max: number,
+  /* Horizontal inset only; the vertical one is `yPad` below. */
   pad = 0,
+  /* The VERTICAL inset, defaulting to half a band's own edge.
+   *
+   * `pad` exists so a LINE's stroke does not clip at the box edge, and it is
+   * two pixels because that is what a line needs. A stacked band is a filled
+   * region carrying a BAND_STROKE_WIDTH outline, so half that stroke is all
+   * the headroom it can use; the rest is box the data can never reach. Spent
+   * at both ends of a 32px fleet cell it was an eighth of the chart -- on a
+   * CPU column whose hosts idle in single-digit percent, an eighth of what
+   * little signal there is.
+   *
+   * The same reasoning mirrorPaths already applies by spending the whole
+   * height: its mark carries no stroke at cell density, so it spends
+   * everything. Horizontal padding is untouched; the time axis is unmoved.
+   *
+   * Overridable so a caller that draws no edge, and the tests that pin the
+   * degenerate baseline cases, can ask for none. */
+  yPad = BAND_Y_PAD,
 ): string[] {
   if (series.length === 0) return [];
   // The longest series, not series[0]'s: rows arrive ragged. querySeries
@@ -249,10 +272,10 @@ export function stackBands(
       const top = prefix[k + 1]!;
 
       const topPts = top.map((v, j) =>
-        point(scaleX(run[j]!, n, w, pad), stackY(v, max, h, pad)),
+        point(scaleX(run[j]!, n, w, pad), stackY(v, max, h, yPad)),
       );
       const bottomPts = bottom.map((v, j) =>
-        point(scaleX(run[j]!, n, w, pad), stackY(v, max, h, pad)),
+        point(scaleX(run[j]!, n, w, pad), stackY(v, max, h, yPad)),
       );
 
       const d =
