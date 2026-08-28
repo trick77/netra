@@ -796,6 +796,23 @@ describe("inventory sorting", () => {
     );
   }
 
+  /**
+   * Clicks every column header of the rendered table, asserting each one is a
+   * control and that no click loses a row.
+   *
+   * Every header, not a sample: the point of these tables is that all of
+   * their columns sort now, and an accessor that throws on a null or reads
+   * the wrong field only shows itself when its own column is clicked.
+   */
+  async function sortByEveryColumn() {
+    const before = screen.getAllByRole("row").length;
+
+    for (const cell of screen.getAllByRole("columnheader")) {
+      await userEvent.click(within(cell).getByRole("button"));
+      expect(screen.getAllByRole("row")).toHaveLength(before);
+    }
+  }
+
   describe("Mounts", () => {
     // The sizes are joined in from the metrics family by label, so a row
     // literal cannot carry them -- see Mounts itself.
@@ -831,12 +848,10 @@ describe("inventory sorting", () => {
       truncated: false,
     } as unknown as MetricsResponse;
 
-    it("offers a sort control on every column", () => {
+    it("sorts on every column", async () => {
       render(<Mounts rows={mounts} metrics={sizes} />);
 
-      for (const cell of screen.getAllByRole("columnheader")) {
-        expect(within(cell).getByRole("button")).toBeInTheDocument();
-      }
+      await sortByEveryColumn();
     });
 
     // The cells read "500 GB" and "8 TB", which as strings put the 8 TB mount
@@ -864,12 +879,10 @@ describe("inventory sorting", () => {
       { ...addresses[0]!, iface: "eth1", address: "192.0.2.9/24", family: 6 },
     ];
 
-    it("offers a sort control on every column", () => {
+    it("sorts on every column", async () => {
       render(<Network rows={two} />);
 
-      for (const cell of screen.getAllByRole("columnheader")) {
-        expect(within(cell).getByRole("button")).toBeInTheDocument();
-      }
+      await sortByEveryColumn();
     });
 
     // .10 above .9: the shared comparator is numeric-aware, which is the one
@@ -918,12 +931,10 @@ describe("inventory sorting", () => {
       },
     ];
 
-    it("offers a sort control on every column", () => {
+    it("sorts on every column", async () => {
       render(<Interfaces rows={ifaces} />);
 
-      for (const cell of screen.getAllByRole("columnheader")) {
-        expect(within(cell).getByRole("button")).toBeInTheDocument();
-      }
+      await sortByEveryColumn();
     });
 
     // "10 Gb/s" and "100 Mb/s" as strings put the 10 Gb link first, which is
@@ -968,12 +979,10 @@ describe("inventory sorting", () => {
       last_seen: "2026-08-23T11:00:00Z",
     };
 
-    it("offers a sort control on every column", () => {
+    it("sorts on every column", async () => {
       render(<Drives rows={[failing, healthy]} />);
 
-      for (const cell of screen.getAllByRole("columnheader")) {
-        expect(within(cell).getByRole("button")).toBeInTheDocument();
-      }
+      await sortByEveryColumn();
     });
 
     // The reason the table exists: the drives in trouble have to collect at
@@ -1009,12 +1018,10 @@ describe("inventory sorting", () => {
       pkg({ name: "openssl", size_bytes: 2_000_000_000 }),
     ];
 
-    it("offers a sort control on every column", () => {
+    it("sorts on every column", async () => {
       render(<Packages rows={rows} now={new Date("2026-08-10T00:00:00Z")} />);
 
-      for (const cell of screen.getAllByRole("columnheader")) {
-        expect(within(cell).getByRole("button")).toBeInTheDocument();
-      }
+      await sortByEveryColumn();
     });
 
     it("orders Size by bytes", async () => {
@@ -1031,12 +1038,10 @@ describe("inventory sorting", () => {
       { ...units[1]!, restarts_1h: 0 },
     ];
 
-    it("offers a sort control on every column", () => {
+    it("sorts on every column", async () => {
       render(<Units rows={flapping} />);
 
-      for (const cell of screen.getAllByRole("columnheader")) {
-        expect(within(cell).getByRole("button")).toBeInTheDocument();
-      }
+      await sortByEveryColumn();
     });
 
     // The badge above the threshold must not change how the number orders.

@@ -82,6 +82,24 @@ describe("Events", () => {
   });
 });
 
+/**
+ * Clicks every column header of the rendered table, asserting each one is a
+ * control and that no click loses a row.
+ *
+ * Every header, not a sample: the point of these tables is that all of their
+ * columns sort now, and a per-column accessor that throws on a null or reads
+ * the wrong field only shows itself when that column is the one clicked.
+ */
+async function sortByEveryColumn() {
+  const before = screen.getAllByRole("row").length;
+
+  for (const cell of screen.getAllByRole("columnheader")) {
+    const control = within(cell).getByRole("button");
+    await userEvent.click(control);
+    expect(screen.getAllByRole("row")).toHaveLength(before);
+  }
+}
+
 // The events log shipped with no sortable column at all -- five columns of
 // timestamps, categories and words, and the only order available was the
 // newest-first this tab imposes on arrival.
@@ -116,12 +134,10 @@ describe("Events sorting", () => {
     );
   }
 
-  it("offers a sort control on every column", () => {
+  it("sorts on every column", async () => {
     render(<Events events={rows} />);
 
-    for (const cell of screen.getAllByRole("columnheader")) {
-      expect(within(cell).getByRole("button")).toBeInTheDocument();
-    }
+    await sortByEveryColumn();
   });
 
   // The tab lands newest-first; one click on When gives oldest-first, which
