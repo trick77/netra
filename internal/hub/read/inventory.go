@@ -169,6 +169,9 @@ type Package struct {
 	SizeBytes *int64    `json:"size_bytes"`
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
+	// When this package's version last moved, as opposed to when the row was
+	// first written or last re-emitted. See migration 0008.
+	VersionChangedAt time.Time `json:"version_changed_at"`
 }
 
 // Unit is one row of /hosts/{id}/units: a unit that needs attention, and the
@@ -414,7 +417,8 @@ func (s *Service) Packages(ctx context.Context, hostID int32) ([]Package, error)
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT name, version, arch, format, size_bytes, first_seen, last_seen
+		SELECT name, version, arch, format, size_bytes, first_seen, last_seen,
+		       version_changed_at
 		  FROM host_packages
 		 WHERE host_id = $1
 		 ORDER BY name, arch`, hostID)
@@ -427,7 +431,8 @@ func (s *Service) Packages(ctx context.Context, hostID int32) ([]Package, error)
 	for rows.Next() {
 		var p Package
 		if err := rows.Scan(&p.Name, &p.Version, &p.Arch, &p.Format,
-			&p.SizeBytes, &p.FirstSeen, &p.LastSeen); err != nil {
+			&p.SizeBytes, &p.FirstSeen, &p.LastSeen,
+			&p.VersionChangedAt); err != nil {
 			return nil, fmt.Errorf("scan package: %w", err)
 		}
 		out = append(out, p)

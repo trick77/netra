@@ -19,7 +19,6 @@ import {
   Network,
   Packages,
   Units,
-  changedSince,
 } from "./Inventory";
 
 const containers: Container[] = [
@@ -69,6 +68,7 @@ function pkg(over: Partial<Pkg> = {}): Pkg {
     size_bytes: 2_000_000,
     first_seen: "2026-01-01T00:00:00Z",
     last_seen: "2026-08-10T00:00:00Z",
+    version_changed_at: "2026-01-01T00:00:00Z",
     ...over,
   };
 }
@@ -410,32 +410,53 @@ describe("Network", () => {
 });
 
 describe("Packages", () => {
-  const now = new Date("2026-08-10T00:00:00Z");
   const rows = [
-    pkg({ name: "openssl", first_seen: "2026-08-05T00:00:00Z" }),
     pkg({
       name: "vim",
       first_seen: "2026-01-01T00:00:00Z",
-      last_seen: "2026-08-10T00:00:00Z",
+      version_changed_at: "2026-01-01T00:00:00Z",
+    }),
+    pkg({
+      name: "openssl",
+      first_seen: "2026-01-01T00:00:00Z",
+      version_changed_at: "2026-08-05T00:00:00Z",
     }),
   ];
 
-  it("filters to what changed in the last 30 days", async () => {
-    render(<Packages rows={rows} now={now} />);
-    expect(screen.getByText("vim")).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("checkbox", { name: /30 days/i }));
-    expect(screen.getByText("openssl")).toBeInTheDocument();
-    expect(screen.queryByText("vim")).toBeNull();
+  // The list arrives answering "what moved on this host recently", which is
+  // not the order the server sends (name, arch) and not an order the reader
+  // should have to ask for.
+  it("arrives sorted by what changed last", () => {
+    render(<Packages rows={rows} />);
+    const names = screen
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => row.querySelector("td")?.textContent);
+    expect(names).toEqual(["openssl", "vim"]);
   });
 
-  it("counts a package as changed when it first appeared inside the window", () => {
+  it("lets the reader sort by any column from there", async () => {
+    render(<Packages rows={rows} />);
+    await userEvent.click(screen.getByRole("button", { name: /name/i }));
+    const names = screen
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => row.querySelector("td")?.textContent);
+    expect(names).toEqual(["openssl", "vim"]);
+  });
+
+  // It filtered on first_seen, which an upgrade never moves: the row is keyed
+  // (host_id, name, arch) and rewritten in place. Last changed is the column
+  // that answers what it claimed to.
+  it("carries no 30-day filter", () => {
+    render(<Packages rows={rows} />);
+    expect(screen.queryByRole("checkbox")).toBeNull();
     expect(
-      changedSince(pkg({ first_seen: "2026-08-05T00:00:00Z" }), now, 30),
-    ).toBe(true);
+      screen.getByRole("columnheader", { name: /last changed/i }),
+    ).toBeInTheDocument();
     expect(
-      changedSince(pkg({ first_seen: "2026-01-01T00:00:00Z" }), now, 30),
-    ).toBe(false);
+      screen.queryByRole("columnheader", { name: /last seen/i }),
+    ).toBeNull();
   });
 });
 

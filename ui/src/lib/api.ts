@@ -218,6 +218,9 @@ export type Pkg = {
   size_bytes: number | null;
   first_seen: string;
   last_seen: string;
+  /** When the version last moved, as opposed to when the row was first
+   * written or last re-emitted. */
+  version_changed_at: string;
 };
 
 // internal/hub/read/inventory.go: Unit

@@ -154,9 +154,19 @@ export interface TableProps<T> {
      */
     forceExpanded?: boolean;
   };
+  /**
+   * The order this list is worth reading in, before anyone clicks a header.
+   *
+   * Names a column's `key` and a direction, and only seeds the initial state:
+   * the reader's first click on any header takes it from there, and nothing
+   * puts it back. A list whose most useful order is not alphabetical -- the
+   * packages list, where "what changed last" is the question -- should say so
+   * rather than make every reader sort it by hand on arrival.
+   */
+  defaultSort?: SortState;
 }
 
-type SortState = { key: string; dir: "asc" | "desc" };
+export type SortState = { key: string; dir: "asc" | "desc" };
 
 /** What each rail hue means, in a word. Only the three severities a rail is
  * ever drawn for -- see rowSeverity. */
@@ -172,10 +182,13 @@ export function Table<T>({
   rowKey,
   rowSeverity,
   groupBy,
+  defaultSort,
 }: TableProps<T>) {
   // Uncontrolled: every caller wants the same click-to-sort behaviour, and
-  // threading identical state through each of them buys nothing.
-  const [sort, setSort] = useState<SortState | null>(null);
+  // threading identical state through each of them buys nothing. defaultSort
+  // seeds it once; a caller that changes the prop later is not answered,
+  // because by then the order on screen is the reader's, not the caller's.
+  const [sort, setSort] = useState<SortState | null>(defaultSort ?? null);
 
   // The groups the reader has CLOSED, not the ones they opened. Collapsible
   // groups start open, so the empty set is the initial state and no group key

@@ -93,6 +93,38 @@ describe("Table sorting", () => {
     expect(names()).toEqual(["host-10", "host-1", "host-2"]);
   });
 
+  // A list whose most useful order is not the one the server sent should
+  // arrive in it, rather than making every reader sort it by hand.
+  it("arrives in the caller's defaultSort order", () => {
+    render(
+      <Table
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        defaultSort={{ key: "uptime", dir: "desc" }}
+      />,
+    );
+
+    expect(names()).toEqual(["host-10", "host-1", "host-2"]);
+    expect(
+      screen.getByRole("columnheader", { name: /Uptime/ }),
+    ).toHaveAttribute("aria-sort", "descending");
+  });
+
+  it("hands the order to the reader from there, and does not take it back", async () => {
+    render(
+      <Table
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        defaultSort={{ key: "uptime", dir: "desc" }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Host" }));
+    expect(names()).toEqual(["host-1", "host-2", "host-10"]);
+  });
+
   it("tells assistive tech which column is sorted, and how", async () => {
     render(<Table columns={columns} rows={rows} rowKey={(r) => r.id} />);
     await userEvent.click(screen.getByRole("button", { name: "Host" }));
