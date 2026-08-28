@@ -533,6 +533,19 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 			cores         = NULLIF($11, 0),
 			threads       = NULLIF($12, 0),
 			memory_total  = NULLIF($13, 0::BIGINT),
+			-- Where the host is, as the agent reports it. Same NULLIF rule as
+			-- every optional field above, and for a sharper reason here: these
+			-- three are set by an operator editing a unit file or a compose
+			-- env, so "" is what an agent sends when somebody has declared the
+			-- variable and left it blank. A host whose location is the empty
+			-- string would render a separator with nothing either side of it.
+			--
+			-- These do NOT feed sites/providers and nothing here creates one.
+			-- That pair is filled in by hand through the admin UI; this is the
+			-- machine's own account of itself.
+			location      = NULLIF($16, ''),
+			provider      = NULLIF($17, ''),
+			facility      = NULLIF($18, ''),
 			metadata_hash = $14,
 			-- The column is NOT NULL DEFAULT '{}', so an agent reporting no
 			-- capabilities writes an empty object. Unlike the sample columns,
@@ -546,7 +559,8 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 		md.GetAgentVersion(), md.GetGoVersion(), md.GetBuildCommit(),
 		md.GetKernel(), md.GetOsName(), md.GetArch(), md.GetCpuModel(),
 		int32(md.GetCores()), int32(md.GetThreads()), int64(md.GetMemoryTotal()),
-		hash, capabilitiesJSON(md.GetCapabilities()))
+		hash, capabilitiesJSON(md.GetCapabilities()),
+		md.GetLocation(), md.GetProvider(), md.GetFacility())
 	if err != nil {
 		return fmt.Errorf("save metadata: %w", err)
 	}

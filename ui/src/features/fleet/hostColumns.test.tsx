@@ -16,10 +16,6 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     id: 1,
     hostname: "web-01",
     site_id: 3,
-    site_name: "zurich-dc1",
-    provider_name: null,
-    facility: null,
-    country_code: null,
     window: null,
     last_seen: "2026-08-10T13:59:30Z",
     cpu_total: 42,
@@ -211,167 +207,61 @@ describe("hostColumns", () => {
   });
 
   describe("host cell", () => {
-    // The provider and the place, not the site's internal label. "zurich-dc1"
-    // told a reader scanning the fleet nothing the hostname beside it had not
-    // already said; who runs the machine and which building it is in are the
-    // two questions they actually have.
+    // The provider and the place, both reported by the host's own agent. The
+    // fleet used to print the site NAME here -- an internal label out of a
+    // table somebody fills in by hand, which told a reader scanning the list
+    // nothing the hostname beside it had not already said.
     it("writes the provider and the location under the hostname", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
       const { container } = render(
         <>
-          {col.cell(
-            makeRow({
-              provider_name: "OVH",
-              facility: "Gravelines",
-              country_code: "FR",
-            }),
-          )}
-        </>,
-      );
-
-      // The country as a country: "FR" is a database value, France is the
-      // fact. The comma joins the one address; the dot separates two facts.
-      expect(container.querySelector(".host-cell-site")!.textContent).toBe(
-        "OVH · Gravelines, France",
-      );
-      expect(container.textContent).not.toContain("zurich-dc1");
-    });
-
-    // The case that matters on a real hub: createSite writes a name and a
-    // provider and nothing else, so facility and country are empty until
-    // somebody opens the site Edit form. Built from the address alone this
-    // line vanished, and the fleet went from naming the site to saying
-    // nothing at all.
-    it("falls back to the site name when there is no address", () => {
-      const col = hostColumns("1h").find((c) => c.header === "Host")!;
-      const cell = (over: Partial<HostRow>) =>
-        render(<>{col.cell(makeRow(over))}</>).container.querySelector(
-          ".host-cell-site",
-        )?.textContent;
-
-      // A site with a name and a provider, which is all the create form asks
-      // for.
-      expect(
-        cell({
-          site_name: "zrh-colo",
-          provider_name: "Init7",
-          facility: null,
-          country_code: null,
-        }),
-      ).toBe("Init7 · zrh-colo");
-
-      // A site with only a name -- exactly what the column showed before it
-      // knew about providers, which is the floor this must not drop below.
-      expect(
-        cell({
-          site_name: "zrh-colo",
-          provider_name: null,
-          facility: null,
-          country_code: null,
-        }),
-      ).toBe("zrh-colo");
-    });
-
-    // The name gives way the moment there is a real address: a site called
-    // "gra-rack-7" whose facility says "Gravelines" is one place named
-    // twice, and the row has one line to spend.
-    it("prefers the address over the site name, never both", () => {
-      const col = hostColumns("1h").find((c) => c.header === "Host")!;
-      const { container } = render(
-        <>
-          {col.cell(
-            makeRow({
-              site_name: "gra-rack-7",
-              provider_name: "OVH",
-              facility: "Gravelines",
-              country_code: "FR",
-            }),
-          )}
+          {col.cell(makeRow({ provider: "OVH", location: "Roubaix, France" }))}
         </>,
       );
 
       expect(container.querySelector(".host-cell-site")!.textContent).toBe(
-        "OVH · Gravelines, France",
+        "OVH · Roubaix, France",
       );
-      expect(container.textContent).not.toContain("gra-rack-7");
     });
 
-    // Each part stands on its own. A site with a facility and no provider on
-    // record says where it is, rather than leading with a dash for the fact
-    // nobody recorded.
-    it("leaves out the parts the site does not have", () => {
+    // The place exactly as the agent sent it. AGENT_LOCATION is free text an
+    // operator wrote, so anything this did to that string -- splitting a
+    // country off the end, resolving a code, changing the case -- would be
+    // this UI overruling the person who typed it.
+    it("prints the reported location verbatim", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
-      const cell = (over: Partial<HostRow>) =>
-        render(<>{col.cell(makeRow(over))}</>).container.querySelector(
-          ".host-cell-site",
-        )?.textContent;
-
-      expect(
-        cell({
-          provider_name: null,
-          facility: "Gravelines",
-          country_code: "FR",
-        }),
-      ).toBe("Gravelines, France");
-      expect(
-        cell({ provider_name: "OVH", facility: null, country_code: "FR" }),
-      ).toBe("OVH · France");
-      // Not "OVH" alone: the provider is only known because the host is in a
-      // site, so there is always a name to fall back to here. A bare provider
-      // would say who runs the machine and drop the one label the operator
-      // gave the place.
-      expect(
-        cell({ provider_name: "OVH", facility: null, country_code: null }),
-      ).toBe("OVH · zurich-dc1");
-    });
-
-    // A code Intl cannot name is still what the operator typed, so it is
-    // shown rather than swallowed -- the alternative is a host that silently
-    // loses its country because somebody entered a code this runtime's ICU
-    // build has never heard of.
-    //
-    // ZZ is the case worth pinning: it is structurally valid, so nothing
-    // throws, and CLDR has a name for it -- "Unknown Region" -- which would
-    // sit under a hostname reading like somewhere a machine actually is.
-    it("falls back to the raw code for a country it cannot name", () => {
-      const col = hostColumns("1h").find((c) => c.header === "Host")!;
-      const line = (country: string) =>
+      const line = (location: string) =>
         render(
-          <>
-            {col.cell(
-              makeRow({
-                provider_name: null,
-                facility: null,
-                country_code: country,
-              }),
-            )}
-          </>,
-        ).container.querySelector(".host-cell-site")!.textContent;
+          <>{col.cell(makeRow({ provider: null, location }))}</>,
+        ).container.querySelector(".host-cell-site")?.textContent;
 
-      expect(line("ZZ")).toBe("ZZ");
-      expect(line("QQ")).toBe("QQ");
-      // Not over-corrected into a blanket rule about user-assigned codes:
-      // XK is one, and it is Kosovo.
-      expect(line("XK")).toBe("Kosovo");
+      expect(line("Roubaix, France")).toBe("Roubaix, France");
+      expect(line("basement")).toBe("basement");
+      expect(line("AWS eu-west-1a")).toBe("AWS eu-west-1a");
     });
 
-    // An unassigned host is not a host with a missing site: it is one that
-    // has not been put in a site yet, and an em dash under every such
-    // hostname reads as a fleet full of holes.
-    it("writes no site line at all when the host has no site", () => {
+    // Each half stands on its own: an operator who set only one of the two
+    // variables gets the one they set, not a separator with a gap beside it.
+    it("leaves out the half the agent did not report", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const cell = (over: Partial<HostRow>) =>
+        render(<>{col.cell(makeRow(over))}</>).container.querySelector(
+          ".host-cell-site",
+        )?.textContent;
+
+      expect(cell({ provider: null, location: "Roubaix, France" })).toBe(
+        "Roubaix, France",
+      );
+      expect(cell({ provider: "OVH", location: null })).toBe("OVH");
+    });
+
+    // Setting neither variable is the common case, and it must write no line
+    // rather than an em dash: a column of dashes under every hostname reads as
+    // a fleet full of holes, where nothing at all reads as nothing to say.
+    it("writes no line at all when the agent reported no location", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
       const { container } = render(
-        <>
-          {col.cell(
-            makeRow({
-              site_id: null,
-              site_name: null,
-              provider_name: null,
-              facility: null,
-              country_code: null,
-            }),
-          )}
-        </>,
+        <>{col.cell(makeRow({ provider: null, location: null }))}</>,
       );
 
       expect(container.querySelector(".host-cell-site")).toBeNull();

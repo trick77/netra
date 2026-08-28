@@ -14,10 +14,6 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     id: 1,
     hostname: "web-01",
     site_id: 3,
-    site_name: "zurich-dc1",
-    provider_name: null,
-    facility: null,
-    country_code: null,
     window: null,
     last_seen: "2026-08-10T13:59:30Z",
     cpu_total: 42,
@@ -350,6 +346,8 @@ describe("buildHostRows", () => {
       net_rx_bytes: 1.5e6,
       net_tx_bytes: 5.5e5,
       threads: null,
+      location: "Roubaix, France",
+      provider: "OVH",
     },
     {
       id: 2,
@@ -365,29 +363,19 @@ describe("buildHostRows", () => {
       threads: null,
     },
   ];
-  const sites: Site[] = [
-    {
-      id: 3,
-      provider_id: null,
-      name: "zurich-dc1",
-      facility: null,
-      address: null,
-      latitude: null,
-      longitude: null,
-      country_code: null,
-      timezone: null,
-    },
-  ];
+  // Where a host is arrives ON the host, reported by its own agent, so there
+  // is nothing to join. This used to fetch the sites table whole and resolve
+  // a name per row by id, and then the providers table on top of it.
+  it("carries the location the host reported, with nothing to join", () => {
+    const rows = buildHostRows(hosts);
 
-  it("joins the site name client-side by site_id", () => {
-    const rows = buildHostRows(hosts, sites);
-
-    expect(rows[0]!.site_name).toBe("zurich-dc1");
-    expect(rows[1]!.site_name).toBeNull();
+    expect(rows[0]!.location).toBe("Roubaix, France");
+    expect(rows[0]!.provider).toBe("OVH");
+    expect(rows[1]!.location).toBeUndefined();
   });
 
   it("leaves every unfetched series empty rather than inventing a zero", () => {
-    const rows = buildHostRows(hosts, sites);
+    const rows = buildHostRows(hosts);
 
     expect(rows[0]!.cpu).toEqual([]);
     expect(rows[0]!.rx).toEqual([]);
@@ -398,36 +386,30 @@ describe("buildHostRows", () => {
 });
 
 describe("FleetPage data fetching", () => {
-  it("resolves the location with one /sites and one /providers call, never one detail call per host", async () => {
+  // The location arrives with the host list. It used to take a second
+  // whole-table read of /sites to resolve a name by id, and then a third of
+  // /providers on top of that -- all to answer a question every agent had
+  // been answering on every metadata post.
+  it("draws the location from the host list alone, asking for nothing else", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      const body = url.includes("/providers")
-        ? [{ id: 9, name: "OVH" }]
-        : url.includes("/sites")
-          ? [
-              {
-                id: 3,
-                name: "zurich-dc1",
-                provider_id: 9,
-                facility: "Gravelines",
-                country_code: "FR",
-              },
-            ]
-          : url.includes("/containers")
-            ? []
-            : [
-                {
-                  id: 1,
-                  hostname: "web-01",
-                  site_id: 3,
-                  last_seen: "2026-08-10T13:59:30Z",
-                  cpu_total: 1,
-                  mem_used: null,
-                  mem_total: null,
-                  uptime_s: 10,
-                  threads: null,
-                },
-              ];
+      const body = url.includes("/containers")
+        ? []
+        : [
+            {
+              id: 1,
+              hostname: "web-01",
+              site_id: null,
+              last_seen: "2026-08-10T13:59:30Z",
+              cpu_total: 1,
+              mem_used: null,
+              mem_total: null,
+              uptime_s: 10,
+              threads: null,
+              location: "Roubaix, France",
+              provider: "OVH",
+            },
+          ];
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -438,15 +420,13 @@ describe("FleetPage data fetching", () => {
     render(<FleetPage now={NOW} />);
 
     await waitFor(() => expect(screen.getByText("web-01")).toBeInTheDocument());
-    // The provider and the place, not the site's internal label -- and the
-    // country as a country, from the stored "FR".
-    expect(screen.getByText("OVH · Gravelines, France")).toBeInTheDocument();
-    expect(screen.queryByText("zurich-dc1")).toBeNull();
+    expect(screen.getByText("OVH \u00b7 Roubaix, France")).toBeInTheDocument();
 
     const urls = fetchMock.mock.calls.map(([u]) => String(u));
-    expect(urls.filter((u) => u.endsWith("/api/v1/sites"))).toHaveLength(1);
-    // One whole-table read, the same bargain /sites already makes.
-    expect(urls.filter((u) => u.endsWith("/api/v1/providers"))).toHaveLength(1);
+    expect(urls.filter((u) => u.endsWith("/api/v1/sites"))).toHaveLength(0);
+    expect(urls.filter((u) => u.endsWith("/api/v1/providers"))).toHaveLength(0);
+    // And still never one detail call per host, which is what the site join
+    // was avoiding in the first place.
     expect(urls.filter((u) => /\/api\/v1\/hosts\/\d+$/.test(u))).toHaveLength(
       0,
     );

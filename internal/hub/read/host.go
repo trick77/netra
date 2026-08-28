@@ -97,6 +97,31 @@ type HostSummary struct {
 	// per core. Without it every host would be asked blind, including the
 	// 128-thread ones the read API has no way to reduce server-side.
 	Threads *int32 `json:"threads"`
+	// Where the host is, verbatim as its own agent reports it
+	// (AGENT_LOCATION, AGENT_PROVIDER, AGENT_FACILITY -- see
+	// internal/agent/config/config.go and the 0009 migration).
+	//
+	// On the SUMMARY rather than the detail, and that placement is the whole
+	// reason the fleet needs no extra request: the list is what draws a
+	// location under every hostname, and resolving it any other way meant a
+	// second whole-table read joined client-side by id. HostDetail embeds this
+	// struct, so the host page gets the same three fields for free -- and they
+	// must not be redeclared there, for the reason the Threads comment above
+	// gives.
+	//
+	// Free text, not identifiers. The agent sends whatever the operator wrote,
+	// so Location is "Roubaix, France" and nothing parses it into a city and a
+	// country -- there is no ISO code here to look up and nothing to guess at.
+	// NULL is "not reported", which is every host whose operator set none of
+	// the variables, and is distinct from an empty string (SaveMetadata's
+	// NULLIF keeps those out).
+	//
+	// Unrelated to SiteID above and to the sites/providers tables it points
+	// at. That pair is filled in by a human through the admin UI; this is the
+	// machine's own account of itself, and nothing here creates a site.
+	Location *string `json:"location"`
+	Provider *string `json:"provider"`
+	Facility *string `json:"facility"`
 
 	// Capabilities is what each collector reported about its own
 	// availability, verbatim from hosts.capabilities.
@@ -135,22 +160,13 @@ type HostSummary struct {
 type HostDetail struct {
 	HostSummary
 
-	SiteName     *string `json:"site_name"`
-	ProviderName *string `json:"provider_name"`
-	// The rest of the site's address. The join that produces SiteName and
-	// ProviderName already reaches the row these sit on, so serving them is
-	// two more columns rather than another query -- and without them the
-	// host page could name the provider but not say which building, which is
-	// the half of "where is this machine" an operator actually acts on.
-	//
-	// Facility is the operator's own free text ("Gravelines", "FSN1-DC14");
-	// SiteCountry is ISO 3166-1 alpha-2, named for what it holds rather than
-	// for what it will be shown as. Both are per-SITE, hence the prefix: an
-	// unprefixed Country on a struct that also carries the host's own
-	// Latitude and Longitude reads as the host's country, and those
-	// coordinates are the HOST's (hosts.latitude), not the site's.
-	SiteFacility *string `json:"site_facility"`
-	SiteCountry  *string `json:"site_country_code"`
+	// The site join is gone. It served site_name, provider_name and the site's
+	// own facility and country, and every one of those answered "where is this
+	// machine" from a table a human has to fill in by hand -- while the agent
+	// had been reporting the answer on every metadata post and the hub had
+	// been discarding it. Location/Provider/Facility on the embedded
+	// HostSummary are that answer. The sites tables still exist and SiteID
+	// still points at them; nothing reads them for a location any more.
 
 	Fingerprint  *string `json:"fingerprint"`
 	HostType     *string `json:"host_type"`
@@ -200,6 +216,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.threads, coalesce(h.capabilities, '{}'::jsonb),
+		       h.location, h.provider, h.facility,
 		       coalesce(fu.names, '{}'::text[]), fu.since
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
@@ -226,7 +243,9 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		if err := rows.Scan(&h.ID, &h.Hostname, &h.SiteID,
 			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 			&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
-			&h.Threads, &h.Capabilities, &h.FailedUnits, &h.FailedSince); err != nil {
+			&h.Threads, &h.Capabilities,
+			&h.Location, &h.Provider, &h.Facility,
+			&h.FailedUnits, &h.FailedSince); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}
 		hosts = append(hosts, h)
@@ -252,15 +271,13 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
-		       si.name, p.name, si.facility, si.country_code,
+		       h.location, h.provider, h.facility,
 		       h.fingerprint, h.host_type, h.agent_version, h.go_version, h.build_commit,
 		       h.kernel, h.os_name, h.arch, h.cpu_model, h.cores, h.threads, h.memory_total,
 		       h.latitude, h.longitude, h.created_at, h.capabilities,
 		       coalesce(fu.names, '{}'::text[]), fu.since
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
-		  LEFT JOIN sites si ON si.id = h.site_id
-		  LEFT JOIN providers p ON p.id = si.provider_id
 		  LEFT JOIN LATERAL (
 		       -- The same one-pass shape as ListHosts above; the detail
 		       -- embeds the summary, so selecting on one side only would
@@ -274,7 +291,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		&h.ID, &h.Hostname, &h.SiteID,
 		&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 		&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
-		&h.SiteName, &h.ProviderName, &h.SiteFacility, &h.SiteCountry,
+		&h.Location, &h.Provider, &h.Facility,
 		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion, &h.BuildCommit,
 		&h.Kernel, &h.OSName, &h.Arch, &h.CPUModel, &h.Cores, &h.Threads, &h.MemoryTotal,
 		&h.Latitude, &h.Longitude, &h.CreatedAt, &h.Capabilities, &h.FailedUnits,

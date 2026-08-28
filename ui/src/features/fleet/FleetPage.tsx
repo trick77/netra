@@ -3,12 +3,8 @@ import {
   ApiError,
   getContainers,
   getHosts,
-  getProviders,
-  getSites,
   type Container,
   type Host,
-  type Provider,
-  type Site,
 } from "../../lib/api";
 import { ABSENT, byterate } from "../../lib/format";
 import { Input } from "../../ui/Control";
@@ -52,16 +48,12 @@ export type Entity = "hosts" | "containers";
  * the site names, not the per-host metrics. App's poll fetches those and
  * builds the same rows with them (see hostTrends).
  */
-export function buildHostRows(
-  hosts: Host[],
-  sites: Site[],
-  providers: Provider[] = [],
-): HostRow[] {
+export function buildHostRows(hosts: Host[]): HostRow[] {
   // One builder, in hostTrends: this page's self-fetching path and App's
   // polling path must not be able to disagree about what a row is. Without
   // trends every series is empty, which renders as a gap and as the absent
   // marker -- the truth, since not fetched is not zero.
-  return buildRows(hosts, sites, new Map(), providers);
+  return buildRows(hosts, new Map());
 }
 
 /**
@@ -217,18 +209,9 @@ export function FleetPage({
     void (async () => {
       let hosts: Host[];
       try {
-        // Providers alongside the sites, not after them: the two are both
-        // small whole-table reads and the row needs each of them to say
-        // where a host is. Serial, the fleet would wait a round trip to
-        // learn a word.
-        const [fetchedHosts, sites, providers] = await Promise.all([
-          getHosts(),
-          getSites(),
-          getProviders(),
-        ]);
-        hosts = fetchedHosts;
+        hosts = await getHosts();
         if (!live) return;
-        setFetchedRows(buildHostRows(hosts, sites, providers));
+        setFetchedRows(buildHostRows(hosts));
         setFetchedCheckedAt(new Date().toISOString());
       } catch (err) {
         if (!live) return;
@@ -291,15 +274,12 @@ export function FleetPage({
     (row) =>
       needle === "" ||
       row.hostname.toLowerCase().includes(needle) ||
-      // The site NAME still matches even though the row no longer prints it:
-      // it is what the operator called the place, and someone who types
-      // "gra-rack-7" is searching for the thing they named. The three facts
-      // the row does print match too, so "OVH" and "France" both narrow the
-      // list -- a filter that cannot find what is on screen is broken.
-      (row.site_name ?? "").toLowerCase().includes(needle) ||
-      (row.provider_name ?? "").toLowerCase().includes(needle) ||
-      (row.facility ?? "").toLowerCase().includes(needle) ||
-      (hostLocation(row) ?? "").toLowerCase().includes(needle),
+      // What the row actually prints, so typing "OVH" or "Roubaix" narrows
+      // the list -- a filter that cannot find what is on screen is broken.
+      // The facility is matched too though the line omits it: an operator who
+      // set AGENT_FACILITY=RBX2 will search for RBX2.
+      (hostLocation(row) ?? "").toLowerCase().includes(needle) ||
+      (row.facility ?? "").toLowerCase().includes(needle),
   );
   const visibleContainers = containerRows.filter(
     (row) =>

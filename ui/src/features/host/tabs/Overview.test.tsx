@@ -11,6 +11,9 @@ const host: HostDetail = {
   id: 7,
   hostname: "kessel",
   site_id: 3,
+  location: "Roubaix, France",
+  provider: "OVH",
+  facility: "RBX2",
   last_seen: "2026-08-10T01:00:00Z",
   cpu_total: 12,
   mem_used: 4_000_000_000,
@@ -20,10 +23,6 @@ const host: HostDetail = {
   net_tx_bytes: 4e5,
   services_total: 397,
   services_failed: 1,
-  site_name: "Zurich",
-  provider_name: "Hetzner",
-  site_facility: null,
-  site_country_code: null,
   fingerprint: "fp",
   host_type: "vps",
   agent_version: "0.4.1",
@@ -501,15 +500,14 @@ describe("Overview", () => {
 
     expect(dl.className).toContain("sysstrip");
     // Every pair is its own grid item -- a name-value group -- and all
-    // twelve facts survive the shape change.
-    expect(dl.querySelectorAll(":scope > .f").length).toBe(12);
-    // Where the machine is, ahead of what it is: the reader asks whose
-    // hardware this is and which building before they ask which processor.
+    // eleven facts survive the shape change.
+    expect(dl.querySelectorAll(":scope > .f").length).toBe(11);
+    // Where the machine is, ahead of what it is: the reader asks where this
+    // box sits and whose it is before they ask which processor.
     expect([...dl.querySelectorAll("dt")].map((dt) => dt.textContent)).toEqual([
-      "Site",
+      "Location",
       "Provider",
       "Facility",
-      "Country",
       "OS",
       "Kernel",
       "Architecture",
@@ -521,12 +519,14 @@ describe("Overview", () => {
     ]);
   });
 
-  // An unsited host is not missing four facts -- it has not been put in a
-  // site yet, and four dashes would say otherwise. Inside a site the rule
-  // flips: a blank Facility IS a gap somebody meant to fill, and a labelled
-  // strip is exactly where a gap gets marked.
-  it("writes no location facts at all for a host with no site", () => {
-    renderOverview({ host: { ...host, site_id: null, site_name: null } });
+  // A host whose agent reports none of the three is not missing three facts,
+  // it was never given them, and three dashes would say otherwise. Report ANY
+  // of them and the rule flips: a provider with no facility beside it IS a gap
+  // somebody meant to fill, and a labelled strip is where a gap gets marked.
+  it("writes no location facts at all for a host that reports none", () => {
+    renderOverview({
+      host: { ...host, location: null, provider: null, facility: null },
+    });
     const dl = screen
       .getByRole("region", { name: "System" })
       .querySelector("dl")!;
@@ -543,16 +543,28 @@ describe("Overview", () => {
     ]);
   });
 
-  it("names the country from the code the hub stores", () => {
-    renderOverview({ host: { ...host, site_country_code: "FR" } });
+  // The strip marks the gap where the fleet row would not: an agent that set
+  // a provider and no facility has a field somebody meant to fill, and this
+  // is the labelled place that can say so without spending a fleet row on it.
+  it("dashes a fact the agent left unset once it reports any of them", () => {
+    renderOverview({
+      host: {
+        ...host,
+        location: "Roubaix, France",
+        provider: "OVH",
+        facility: null,
+      },
+    });
     const dl = screen
       .getByRole("region", { name: "System" })
       .querySelector("dl")!;
-    const facts = [...dl.querySelectorAll(":scope > .f")].map(
-      (f) => f.textContent,
-    );
+    const value = (label: string) =>
+      [...dl.querySelectorAll("dt")].find((dt) => dt.textContent === label)!
+        .nextElementSibling!.textContent;
 
-    expect(facts.some((f) => f?.includes("France"))).toBe(true);
+    expect(value("Location")).toBe("Roubaix, France");
+    expect(value("Provider")).toBe("OVH");
+    expect(value("Facility")).toBe(ABSENT);
   });
 
   // The processor model is the one value long enough to be cut off by the
