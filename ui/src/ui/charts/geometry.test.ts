@@ -432,6 +432,48 @@ describe("geometry", () => {
       expect(ys.filter((y) => y === mid).length).toBeGreaterThan(0);
     });
 
+    it("keeps the quieter half inside the box, however lopsided the pair", () => {
+      // Given a host pulling a hundredth of what it pushes -- a backup target,
+      // a mirror, any box whose traffic is one-way
+      const { up, down, mid } = mirrorPaths(
+        [10_000, 10_000],
+        [1_000_000, 1_000_000],
+        170,
+        32,
+        1e6,
+        2,
+        true,
+      );
+      const ys = (d: string) =>
+        [...d.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
+          parseFloat(m[1]!),
+        );
+
+      // Then the zero line keeps a row for the half it has readings for. Its
+      // exact position is 0.3, and rounded to the edge every inbound bar --
+      // floored to a whole pixel by barHeight -- would be drawn from row 0 to
+      // row -1, outside the viewport: the one-pixel floor exists precisely so
+      // that a reading this small is still visible.
+      expect(mid).toBe(1);
+      expect(Math.min(...ys(up))).toBe(0);
+
+      // And the loud half still stops at the edge rather than a row past it.
+      expect(Math.max(...ys(down))).toBe(32);
+    });
+
+    it("draws a reading that stands alone between two holes", () => {
+      // A bar is a rectangle over its own column, so one is drawable where a
+      // polyline needed two points to be a line. A host that reported in a
+      // single column of the window drew an empty cell, which reads as a host
+      // that reported nothing at all.
+      const { up, mid } = mirrorPaths([null, 500, null], [], 100, 32, 500, 2);
+      expect(up).not.toBe("");
+      const ys = [...up.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
+        parseFloat(m[1]!),
+      );
+      expect(Math.min(...ys)).toBeLessThan(mid);
+    });
+
     it("lets an out-of-range value escape the plot box rather than clamping it, matching linePath", () => {
       const { up, mid } = mirrorPaths([20, 20], [], 100, 20, 10);
       const ys = [...up.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>

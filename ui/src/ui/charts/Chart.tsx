@@ -409,6 +409,15 @@ function MirrorMarks({
         // a half, and only one of those can carry a 1.25px outline without
         // the outline becoming the mark. See mirrorEdge().
         const edge = mirrorEdge(w, longest([up, ...(down ? [down] : [])]), pad);
+        // A pair drawn with an envelope goes back on the shared ceiling.
+        // `independent` derives the scale and the zero line from the values
+        // it is handed, and the band is handed different values -- the peak,
+        // not the mean -- so the two calls would place their zero lines at
+        // different heights and the envelope would neither contain the line
+        // nor share its midline. Nothing reaches this today (every chart
+        // carrying a band also carries a tick ladder, which already turns
+        // `independent` off), so this is the guard that keeps it true.
+        const scaled = independent && !up.band && !down?.band;
         const paths = mirrorPaths(
           up.values,
           down?.values ?? [],
@@ -416,7 +425,7 @@ function MirrorMarks({
           h,
           max,
           pad,
-          independent,
+          scaled,
         );
         // The envelope, when the tier carries a peak column. Drawn first so
         // the mean sits over it, and with no stroke -- it is a region, not a
@@ -430,7 +439,7 @@ function MirrorMarks({
                 h,
                 max,
                 pad,
-                independent,
+                scaled,
               )
             : null;
         return (

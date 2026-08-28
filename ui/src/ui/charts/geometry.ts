@@ -356,14 +356,19 @@ export function mirrorPaths(
    *    half can never reach higher than eleven of its fourteen pixels, no
    *    matter what the host does.
    *
-   * Given its own ceiling and the whole half-height, each direction fills the
-   * cell -- 16 px instead of 11.3 and 14. What it costs is the comparison
-   * BETWEEN the halves: a taller purple bar no longer means more bytes than a
-   * shorter green one, only more than other purple ones. RRDtool accepts that
-   * trade on a sparkline and so do we, but only where nothing on screen
-   * claims otherwise, which is why Chart turns this on for a chart with no
-   * value ladder and leaves a chart that has one on the shared ceiling its
-   * ticks are labelled from.
+   * Drawn against the COMBINED range with the zero line placed inside the box
+   * rather than pinned to its middle, each direction fills the cell -- 14 and
+   * 18 px of a 32 px cell for a host peaking at 5.9 in against 7.3 out,
+   * instead of 11.3 and 14. Both halves still divide by the same number, so a
+   * taller bar means more bytes whichever way it points.
+   *
+   * What it costs is the comparison BETWEEN CELLS: the midline sits at a
+   * different height in each one, so a reader cannot lay two rows side by
+   * side and read the zero off the same row. RRDtool accepts that trade on a
+   * sparkline and so do we, but only where nothing on screen claims
+   * otherwise, which is why Chart turns this on for a chart with no value
+   * ladder and leaves a chart that has one on the shared ceiling its ticks
+   * are labelled from.
    */
   const halfMax = (vals: (number | null)[]): number => {
     let m = 0;
@@ -380,16 +385,39 @@ export function mirrorPaths(
   // number of pixels tall. Left at its exact position -- 19.3 on a real host
   // -- every bar in the cell would begin and end on a third of a pixel, and
   // each one would be antialiased across two rows instead of filling one.
-  const zero = independent && span > 0 ? Math.round((h * upMax) / span) : h / 2;
+  //
+  // And never on the box edge while the half above or below it has something
+  // to draw. A host pulling a hundredth of what it pushes puts the exact zero
+  // at 0.3, which rounds to 0 -- and every inbound bar, floored to one whole
+  // pixel by barHeight, is then drawn from row 0 to row -1, outside the
+  // viewport. The half that reads "nothing at all" and the half that reads
+  // "a thousandth of the other one" are different answers, which is the whole
+  // point of the one-pixel floor, so each direction that has a reading keeps
+  // one row to draw it in.
+  const placeZero = (): number => {
+    if (!independent || span === 0) return h / 2;
+    let z = Math.round((h * upMax) / span);
+    if (upMax > 0) z = Math.max(z, 1);
+    if (downMax > 0) z = Math.min(z, h - 1);
+    return z;
+  };
+  const zero = placeZero();
   const baseline = round1(zero);
+  // `room` is how many rows the direction actually has between the zero line
+  // and the edge of the box. It matters only under `independent`, where the
+  // scale is derived from the data and a bar longer than its room is pure
+  // rounding: h*up/span at exactly x.5 rounds the zero line one way and the
+  // opposite half's height the other, and the tallest bar loses its last row
+  // off the bottom of the cell. On the shared ceiling a value ABOVE `max` is
+  // a real reading and is left to escape the box -- see the docstring.
   const scaleOf = (direction: 1 | -1) =>
     independent
       ? {
           ceiling: span,
           usable: h,
-          from: direction === -1 ? zero : h - zero,
+          room: direction === -1 ? zero : h - zero,
         }
-      : { ceiling: max, usable: h / 2 - pad, from: h / 2 - pad };
+      : { ceiling: max, usable: h / 2 - pad, room: Infinity };
 
   // Columns TILED across the full width, edge to edge, rather than centred on
   // scaleX's positions.
@@ -407,10 +435,14 @@ export function mirrorPaths(
   const columnWidth = n > 0 ? w / n : w;
 
   const build = (vals: (number | null)[], direction: 1 | -1): string => {
-    const { ceiling, usable } = scaleOf(direction);
-    const runs = splitRuns(vals.length, (i) => vals[i] === null).filter(
-      (run) => run.length >= 2,
-    );
+    const { ceiling, usable, room } = scaleOf(direction);
+    // A run of ONE is a run. The polyline this used to draw needed two points
+    // to be a line and a lone reading between two holes was dropped; a bar is
+    // a rectangle over its own column and draws perfectly well alone. A host
+    // that reported in a single column of the window -- one bucket surviving
+    // reduceToColumns' fold, the rest of the day silent -- drew an empty cell
+    // that said it had reported nothing at all.
+    const runs = splitRuns(vals.length, (i) => vals[i] === null);
 
     return runs
       .map((run) => {
@@ -435,7 +467,7 @@ export function mirrorPaths(
         for (const i of run) {
           const v = vals[i] as number;
           const t = ceiling === 0 ? 0 : v / ceiling;
-          const y = zero + direction * barHeight(t * usable, v);
+          const y = zero + direction * Math.min(barHeight(t * usable, v), room);
           edges.push(
             point(i * columnWidth, y),
             point((i + 1) * columnWidth, y),
