@@ -615,3 +615,73 @@ describe("heading rows", () => {
     }
   });
 });
+
+// Both admin tables were hand-rolled <table> markup, which is also how they
+// came to be the only two lists in the app with no sorting: the shared Table
+// is where click-to-sort lives, and a page writing its own <thead> opts out
+// of it without ever saying so.
+describe("admin table sorting", () => {
+  function headerButton(table: HTMLElement, name: RegExp) {
+    return within(within(table).getByRole("columnheader", { name })).getByRole(
+      "button",
+    );
+  }
+
+  /** The first cell of every body row of the table holding `marker`. */
+  function firstCells(table: HTMLElement): string[] {
+    const [, ...body] = within(table).getAllByRole("row");
+    return body.map((row) => within(row).getAllByRole("cell")[0]!.textContent!);
+  }
+
+  it("sorts the host list on the columns that hold a value", async () => {
+    getHosts.mockResolvedValue([
+      { ...host, id: 7, hostname: "web-10", last_seen: null },
+      {
+        ...host,
+        id: 8,
+        hostname: "web-2",
+        last_seen: "2026-08-10T00:00:00Z",
+      },
+    ]);
+    render(<HostAdminPage />);
+    const table = (await screen.findByText("web-10")).closest(
+      "table",
+    ) as HTMLElement;
+
+    // Numeric-aware, so web-2 comes before web-10 rather than after it.
+    await userEvent.click(headerButton(table, /host/i));
+    expect(firstCells(table)).toEqual(["web-2", "web-10"]);
+
+    // A host with a token and no agent yet has never reported. That is an
+    // unknown, not the oldest reading on the page, so it sorts last whichever
+    // way the arrow points.
+    await userEvent.click(headerButton(table, /last seen/i));
+    expect(firstCells(table)).toEqual(["web-2", "web-10"]);
+  });
+
+  it("sorts the site list, Actions excepted", async () => {
+    getSites.mockResolvedValue([
+      { ...site, id: 1, name: "zrh1", facility: "rack-b" },
+      { ...site, id: 2, name: "ams1", facility: null },
+    ]);
+    render(<HostAdminPage />);
+    const table = (await screen.findByText("ams1")).closest(
+      "table",
+    ) as HTMLElement;
+
+    await userEvent.click(headerButton(table, /^site$/i));
+    expect(firstCells(table)).toEqual(["ams1", "zrh1"]);
+
+    // A button has no order, so Actions is the one column with no control.
+    expect(
+      within(
+        within(table).getByRole("columnheader", { name: /actions/i }),
+      ).queryByRole("button"),
+    ).toBeNull();
+
+    // A site with no facility is not a site whose facility is called "none":
+    // it sorts as unknown, at the end.
+    await userEvent.click(headerButton(table, /facility/i));
+    expect(firstCells(table)).toEqual(["zrh1", "ams1"]);
+  });
+});

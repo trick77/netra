@@ -458,7 +458,8 @@ func TestIntegrationHostResolvesItsSiteAndProvider(t *testing.T) {
 		t.Fatalf("insert provider: %v", err)
 	}
 	if err := pool.QueryRow(ctx,
-		`INSERT INTO sites (provider_id, name) VALUES ($1, 'fsn1') RETURNING id`,
+		`INSERT INTO sites (provider_id, name, facility, country_code)
+		 VALUES ($1, 'fsn1', 'FSN1-DC14', 'DE') RETURNING id`,
 		providerID).Scan(&siteID); err != nil {
 		t.Fatalf("insert site: %v", err)
 	}
@@ -474,6 +475,49 @@ func TestIntegrationHostResolvesItsSiteAndProvider(t *testing.T) {
 	}
 	if host.ProviderName == nil || *host.ProviderName != "hetzner" {
 		t.Errorf("provider_name = %v, want hetzner", host.ProviderName)
+	}
+	// The rest of the address. Naming the provider without saying which
+	// building answers half of "where is this machine", and the half an
+	// operator acts on is the other one.
+	if host.SiteFacility == nil || *host.SiteFacility != "FSN1-DC14" {
+		t.Errorf("site_facility = %v, want FSN1-DC14", host.SiteFacility)
+	}
+	if host.SiteCountry == nil || *host.SiteCountry != "DE" {
+		t.Errorf("site_country_code = %v, want DE", host.SiteCountry)
+	}
+}
+
+// A site is created with a name and nothing else -- the admin UI's create
+// form only asks for one -- so the columns behind the address are nullable
+// and routinely null. They must arrive as null rather than as an empty
+// string, which the UI would print as a country called "".
+func TestIntegrationHostLeavesAnUnfilledSiteAddressNull(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+
+	var siteID int32
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO sites (name) VALUES ('bare') RETURNING id`).Scan(&siteID); err != nil {
+		t.Fatalf("insert site: %v", err)
+	}
+	id := seedHost(t, pool, "bare-sited")
+	exec(t, pool, `UPDATE hosts SET site_id = $1 WHERE id = $2`, siteID, id)
+
+	host, err := svc.Host(ctx, id)
+	if err != nil {
+		t.Fatalf("Host: %v", err)
+	}
+	if host.SiteName == nil || *host.SiteName != "bare" {
+		t.Errorf("site_name = %v, want bare", host.SiteName)
+	}
+	if host.ProviderName != nil {
+		t.Errorf("provider_name = %v, want nil", *host.ProviderName)
+	}
+	if host.SiteFacility != nil {
+		t.Errorf("site_facility = %v, want nil", *host.SiteFacility)
+	}
+	if host.SiteCountry != nil {
+		t.Errorf("site_country_code = %v, want nil", *host.SiteCountry)
 	}
 }
 

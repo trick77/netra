@@ -137,6 +137,20 @@ type HostDetail struct {
 
 	SiteName     *string `json:"site_name"`
 	ProviderName *string `json:"provider_name"`
+	// The rest of the site's address. The join that produces SiteName and
+	// ProviderName already reaches the row these sit on, so serving them is
+	// two more columns rather than another query -- and without them the
+	// host page could name the provider but not say which building, which is
+	// the half of "where is this machine" an operator actually acts on.
+	//
+	// Facility is the operator's own free text ("Gravelines", "FSN1-DC14");
+	// SiteCountry is ISO 3166-1 alpha-2, named for what it holds rather than
+	// for what it will be shown as. Both are per-SITE, hence the prefix: an
+	// unprefixed Country on a struct that also carries the host's own
+	// Latitude and Longitude reads as the host's country, and those
+	// coordinates are the HOST's (hosts.latitude), not the site's.
+	SiteFacility *string `json:"site_facility"`
+	SiteCountry  *string `json:"site_country_code"`
 
 	Fingerprint  *string `json:"fingerprint"`
 	HostType     *string `json:"host_type"`
@@ -238,7 +252,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		SELECT h.id, coalesce(h.hostname, ''), h.site_id,
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
-		       si.name, p.name,
+		       si.name, p.name, si.facility, si.country_code,
 		       h.fingerprint, h.host_type, h.agent_version, h.go_version, h.build_commit,
 		       h.kernel, h.os_name, h.arch, h.cpu_model, h.cores, h.threads, h.memory_total,
 		       h.latitude, h.longitude, h.created_at, h.capabilities,
@@ -260,7 +274,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		&h.ID, &h.Hostname, &h.SiteID,
 		&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 		&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
-		&h.SiteName, &h.ProviderName,
+		&h.SiteName, &h.ProviderName, &h.SiteFacility, &h.SiteCountry,
 		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion, &h.BuildCommit,
 		&h.Kernel, &h.OSName, &h.Arch, &h.CPUModel, &h.Cores, &h.Threads, &h.MemoryTotal,
 		&h.Latitude, &h.Longitude, &h.CreatedAt, &h.Capabilities, &h.FailedUnits,

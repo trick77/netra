@@ -27,7 +27,10 @@ describe("UpDownSparkline", () => {
     const height = 20;
     const pad = 2;
     const max = 4;
-    const expected = mirrorPaths(up, down, width, height, max, pad);
+    // `true`: a sparkline carries no tick ladder, so each half is drawn
+    // against its own ceiling over the whole half-height -- RRDtool's
+    // scaling. See mirrorPaths.
+    const expected = mirrorPaths(up, down, width, height, max, pad, true);
     const { container } = render(
       <UpDownSparkline
         up={up}
@@ -65,19 +68,20 @@ describe("UpDownSparkline", () => {
     // Then the mark is exactly the proportional one, against the window's
     // own peak
     const max = 37_040_000;
-    const proportional = mirrorPaths(up, down, 170, height, max, pad);
+    const proportional = mirrorPaths(up, down, 170, height, max, pad, true);
     const drawn = container.querySelector("path[data-up]")?.getAttribute("d");
     expect(drawn).toBe(proportional.up);
 
-    // And the spike reaches the top of the half it is drawn in, which is the
-    // reading a proportional axis is chosen for. y grows downward and `up` is
-    // drawn above the midline, so a taller reading is a SMALLER y.
-    const midline = height / 2;
+    // And the spike reaches the top of the box. Not half the box minus pad:
+    // `pad` keeps a line's stroke off the edge and a bar has no stroke, and
+    // the zero line is placed by the data rather than pinned to the middle,
+    // so the combined range fills the cell. y grows downward and `up` is
+    // drawn upward, so the top is the smallest y.
     const ys = drawn!
       .split(" ")
       .map((p) => Number(p.split(",")[1]))
       .filter((y) => Number.isFinite(y));
-    expect(midline - Math.min(...ys)).toBeCloseTo(height / 2 - pad, 6);
+    expect(Math.min(...ys)).toBeCloseTo(0, 0);
   });
 
   it("takes colours from the caller, defaulting to series tokens not hex", () => {

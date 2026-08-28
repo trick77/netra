@@ -25,6 +25,7 @@ import {
   binaryBytesPair,
   byterate,
   bytes,
+  countryName,
   duration,
   percent,
   relative,
@@ -645,6 +646,34 @@ function SensorList({
       })}
     </div>
   );
+}
+
+/**
+ * Where this host is, as labelled facts for the System strip.
+ *
+ * Empty for a host with no site, which is what makes the caller's spread a
+ * no-op there rather than four em dashes: an unsited host is not missing an
+ * address, it has not been given one. Site membership is the test, not the
+ * individual fields -- inside a site, a blank Facility IS a gap worth
+ * marking, because somebody meant to fill it in.
+ *
+ * Site name first and provider second, reversing the fleet row's order on
+ * purpose. The row is scanned across a fleet, where the provider is what
+ * distinguishes one host from the next; this page is about one machine the
+ * reader has already chosen, and the site is the thing they will type into
+ * the admin page or grep the inventory for.
+ */
+function locationFacts(host: HostDetail): [string, ReactNode][] {
+  if (host.site_id === null) return [];
+  return [
+    ["Site", host.site_name ?? ABSENT],
+    ["Provider", host.provider_name ?? ABSENT],
+    ["Facility", host.site_facility ?? ABSENT],
+    // The country, not the code: "FR" is a database value and France is the
+    // fact. An unrecognised code falls back to itself rather than to a dash
+    // -- see countryName.
+    ["Country", countryName(host.site_country_code) ?? ABSENT],
+  ];
 }
 
 /** The same pairs as Facts, written label-above-value four across instead of
@@ -1559,6 +1588,25 @@ export function Overview({
           <div className="body">
             <FactStrip
               rows={[
+                // Where the machine is, ahead of what it is. An operator
+                // reading this card top to bottom asks whose hardware this
+                // is and which building it sits in before they ask which
+                // processor it has -- and those are the two questions the
+                // page could not answer at all: the header printed the site
+                // NAME, an internal label, and nothing anywhere named the
+                // provider or the facility.
+                //
+                // Written as four labelled facts rather than as the one
+                // joined line the fleet row prints. A labelled strip is
+                // where a gap does need a mark (see the summary above), and
+                // "Facility: —" on a site whose operator never filled the
+                // field in is a useful prompt, where the same dash in a
+                // fleet row would be one of forty.
+                //
+                // Only rendered at all when the host is in a site: an
+                // unsited host is not missing four facts, it is not in a
+                // site yet, and four dashes would say otherwise.
+                ...locationFacts(host),
                 ["OS", osLabel(host.os_name)],
                 ["Kernel", host.kernel ?? ABSENT],
                 ["Architecture", host.arch ?? ABSENT],

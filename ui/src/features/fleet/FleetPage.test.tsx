@@ -15,6 +15,9 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     hostname: "web-01",
     site_id: 3,
     site_name: "zurich-dc1",
+    provider_name: null,
+    facility: null,
+    country_code: null,
     window: null,
     last_seen: "2026-08-10T13:59:30Z",
     cpu_total: 42,
@@ -27,8 +30,8 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     mem: [{ name: "used", color: "var(--s1)", values: [3e9, 4e9] }],
     rx: [1e6, 2e6],
     tx: [5e5, 6e5],
-    rxMean: [],
-    txMean: [],
+    rxPeak: [],
+    txPeak: [],
     // The gauges the traffic cell and the fleet tile actually read. The
     // series above are the sparkline, which still follows the range; these
     // do not, which is the whole point of them being separate.
@@ -410,26 +413,36 @@ describe("buildHostRows", () => {
 });
 
 describe("FleetPage data fetching", () => {
-  it("resolves site names with one /sites call, never one detail call per host", async () => {
+  it("resolves the location with one /sites and one /providers call, never one detail call per host", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      const body = url.includes("/sites")
-        ? [{ id: 3, name: "zurich-dc1" }]
-        : url.includes("/containers")
-          ? []
-          : [
+      const body = url.includes("/providers")
+        ? [{ id: 9, name: "OVH" }]
+        : url.includes("/sites")
+          ? [
               {
-                id: 1,
-                hostname: "web-01",
-                site_id: 3,
-                last_seen: "2026-08-10T13:59:30Z",
-                cpu_total: 1,
-                mem_used: null,
-                mem_total: null,
-                uptime_s: 10,
-                threads: null,
+                id: 3,
+                name: "zurich-dc1",
+                provider_id: 9,
+                facility: "Gravelines",
+                country_code: "FR",
               },
-            ];
+            ]
+          : url.includes("/containers")
+            ? []
+            : [
+                {
+                  id: 1,
+                  hostname: "web-01",
+                  site_id: 3,
+                  last_seen: "2026-08-10T13:59:30Z",
+                  cpu_total: 1,
+                  mem_used: null,
+                  mem_total: null,
+                  uptime_s: 10,
+                  threads: null,
+                },
+              ];
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -440,10 +453,15 @@ describe("FleetPage data fetching", () => {
     render(<FleetPage now={NOW} />);
 
     await waitFor(() => expect(screen.getByText("web-01")).toBeInTheDocument());
-    expect(screen.getByText("zurich-dc1")).toBeInTheDocument();
+    // The provider and the place, not the site's internal label -- and the
+    // country as a country, from the stored "FR".
+    expect(screen.getByText("OVH · Gravelines, France")).toBeInTheDocument();
+    expect(screen.queryByText("zurich-dc1")).toBeNull();
 
     const urls = fetchMock.mock.calls.map(([u]) => String(u));
     expect(urls.filter((u) => u.endsWith("/api/v1/sites"))).toHaveLength(1);
+    // One whole-table read, the same bargain /sites already makes.
+    expect(urls.filter((u) => u.endsWith("/api/v1/providers"))).toHaveLength(1);
     expect(urls.filter((u) => /\/api\/v1\/hosts\/\d+$/.test(u))).toHaveLength(
       0,
     );

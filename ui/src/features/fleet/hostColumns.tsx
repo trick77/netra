@@ -17,7 +17,13 @@ import {
   UP_COLOR,
   UpDownSparkline,
 } from "../../ui/charts/UpDownSparkline";
-import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
+import {
+  binaryBytes,
+  byterate,
+  bytes,
+  countryName,
+  percent,
+} from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
@@ -31,6 +37,7 @@ import {
   trafficSeries,
 } from "./hostTrends";
 import { FLEET_RANGE_VALUES } from "./ranges";
+import { lastReported } from "../container/columns";
 
 // The range is only ever a label here: this file never resolves one into a
 // getMetrics() call, it labels a chart that has already been handed
@@ -72,6 +79,28 @@ export type { Range };
  */
 export type HostRow = Host & {
   site_name: string | null;
+  /**
+   * Where the machine physically is, and whose it is.
+   *
+   * The site NAME is an internal label -- "gra-rack-7", "sim-ZRH2" -- which
+   * is the only thing this row ever carried about location, and it answers
+   * neither question an operator actually has: who do I raise a ticket with,
+   * and which building is this in. All three come off the same `sites` row
+   * the name comes from (plus one join to `providers`), so carrying them
+   * costs one extra fetch of a list that is already small enough to be
+   * fetched whole -- see lib/api.ts's getSites note about the N+1 this
+   * avoids.
+   *
+   * Each is independently nullable, and deliberately not collapsed into one
+   * pre-formatted string here: the fleet cell joins them into a line, and
+   * the Overview lists them as separate labelled facts. A row that stored
+   * the line could not produce the facts.
+   */
+  provider_name: string | null;
+  facility: string | null;
+  /** ISO 3166-1 alpha-2, as the hub stores it. Named for the country
+   * rather than for the code at the point it is shown -- see countryName. */
+  country_code: string | null;
   /** The window the hub answered, for the enlarged view's time axis. See
    * HostTrends.window for why it is the answer rather than the ask. */
   window: { from: string; to: string } | null;
@@ -88,12 +117,12 @@ export type HostRow = Host & {
   // was down" rendered as "traffic was steady".
   rx: (number | null)[];
   tx: (number | null)[];
-  /** The same pair as the bucket mean, drawn only by the ENLARGED view --
+  /** The same pair as the bucket peak, drawn only by the ENLARGED view --
    * see HostTrends. Empty at the raw tier, where the sample is its own peak,
    * and optional because a row assembled without it simply opens into a
    * chart with no envelope rather than failing to compile. */
-  rxMean?: (number | null)[];
-  txMean?: (number | null)[];
+  rxPeak?: (number | null)[];
+  txPeak?: (number | null)[];
   // null when the host has reported no filesystems at all. Non-nullable, the
   // only way to say "never collected" was pct: 0, which renders as an empty,
   // healthy, green disk -- absent read as a fact.
@@ -133,6 +162,40 @@ export type HostRow = Host & {
   postFailures: number | null;
 };
 
+/**
+ * The location line under a hostname: "OVH · Gravelines, France".
+ *
+ * Facility and country are joined with a comma because they are one address
+ * read together, while the provider is a separate fact and takes the dot
+ * this app uses everywhere else to separate peers. "Gravelines, France" is
+ * how a person says a place; "Gravelines · France" is how a UI does.
+ *
+ * Every part is optional and an absent one is simply left out, never written
+ * as a dash -- the rule the site line already followed. A site with a
+ * facility and no provider on record reads "Gravelines, France", which is
+ * true; "— · Gravelines, France" would be a claim that something is missing.
+ * Returns null when there is nothing at all to say, which is what a host
+ * with no site gets, and the caller then writes no line rather than an empty
+ * one.
+ */
+export function hostLocation(row: {
+  provider_name?: string | null;
+  facility?: string | null;
+  country_code?: string | null;
+}): string | null {
+  // Optional rather than required fields, and every filter tests for a
+  // truthy string rather than for null: a row assembled before these
+  // existed -- a fixture, a cached response -- must render a hostname with
+  // no location line, not throw on the way to drawing the whole table.
+  const place = [row.facility, countryName(row.country_code)]
+    .filter((part): part is string => typeof part === "string" && part !== "")
+    .join(", ");
+  const parts = [row.provider_name, place].filter(
+    (part): part is string => typeof part === "string" && part !== "",
+  );
+  return parts.length === 0 ? null : parts.join(" · ");
+}
+
 function HostCell({ row }: { row: HostRow }) {
   // Judged from row.reporting -- cpu_total, from the `host` family -- and
   // never from row.cpu[0], which is a per-core band under 32 threads and the
@@ -143,6 +206,7 @@ function HostCell({ row }: { row: HostRow }) {
   // dropping scrapes reads as sporadic rather than healthy; the gaps are
   // already visible in its sparkline, and this says the same thing in a word.
   const status = hostStatus(row, undefined, row.reporting);
+  const location = hostLocation(row);
   return (
     <div className="host-cell">
       <div className="host-cell-top">
@@ -172,10 +236,23 @@ function HostCell({ row }: { row: HostRow }) {
           dash is a placeholder for a value that should be there and is
           missing, and an unassigned host is not missing anything -- it is
           simply not in a site yet. A column of dashes under every hostname
-          reads as a fleet full of holes. */}
-      {row.site_name !== null && (
-        <div className="host-cell-site">{row.site_name}</div>
-      )}
+          reads as a fleet full of holes.
+
+          What the line SAYS is the provider and the place, not the site
+          name it said before. The site name is an internal label -- a reader
+          scanning a fleet learns nothing from "gra-rack-7" that they did not
+          already know from the hostname beside it, whereas "OVH ·
+          Gravelines, France" answers whose machine this is and which
+          building it is in. The name is not lost: it leads the host page's
+          own location facts, and the fleet's filter still matches it -- an
+          operator who named the place can still search for what they named.
+          (It is not what anything groups by: the fleet groups by host and by
+          kind, never by site.)
+
+          Still one line, deliberately. This column had two and keeps two --
+          a third would put height back on every row of the table, which is
+          the opposite of what the header change just spent itself on. */}
+      {location !== null && <div className="host-cell-site">{location}</div>}
     </div>
   );
 }
@@ -519,6 +596,43 @@ function DiskCell({ row }: { row: HostRow }) {
 // (HostPage.tsx, RECENT_BOOT_S), which is where a reader who has asked
 // about one machine can act on it.
 
+/**
+ * The stack's latest total: what a stacked sparkline's right-hand edge is
+ * standing at, summed across every band.
+ *
+ * Per-band lastReported rather than one shared index, because the bands are
+ * gridded independently and a host whose newest cpu_core bucket has landed
+ * for six cores and not the seventh must not read as having lost that core's
+ * load. Null only when NO band ever reported -- which is the "unknown" the
+ * table sorts last, and is not the same as a host genuinely sitting at 0.
+ */
+function latestStackTotal(bands: readonly Band[]): number | null {
+  let total: number | null = null;
+  for (const band of bands) {
+    const v = lastReported(band.values);
+    if (v !== null) total = (total ?? 0) + v;
+  }
+  return total;
+}
+
+/**
+ * The highest reading across a set of independently gridded series.
+ *
+ * What the Filesystem cell is scanned for: it draws one line per mount and
+ * the question a reader brings to it is which host has a mount running out,
+ * so the column orders on the topmost line rather than on an average across
+ * mounts -- the same argument the Disk column's own comment makes about not
+ * summing filesystems.
+ */
+function latestPeak(bands: readonly Band[]): number | null {
+  let peak: number | null = null;
+  for (const band of bands) {
+    const v = lastReported(band.values);
+    if (v !== null && (peak === null || v > peak)) peak = v;
+  }
+  return peak;
+}
+
 export function hostColumns(range: Range): Column<HostRow>[] {
   return [
     {
@@ -535,21 +649,58 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       key: "traffic",
       header: "Traffic",
       cell: (row) => <TrafficCell row={row} range={range} />,
+      // The two rates the cell PRINTS, added: the cell shows in and out as a
+      // pair and the fleet question is which host is moving the most, not
+      // which direction it moved it in. Read through the same isReporting
+      // guard the cell reads them through, so a host whose last rates are
+      // hours stale sorts as unknown rather than as busy -- the sparkline
+      // beside them has already gone to a gap, and ordering the list by a
+      // number the cell refuses to draw would put a silent host at the top.
+      sortValue: (row) => {
+        if (!isReporting(row)) return null;
+        const rx = row.net_rx_bytes;
+        const tx = row.net_tx_bytes;
+        if (rx === null && tx === null) return null;
+        return (rx ?? 0) + (tx ?? 0);
+      },
     },
     {
       key: "cpu",
       header: "CPU",
       cell: (row) => <CpuCell row={row} range={range} />,
+      // Where the stack stands now. The cell prints no figure -- it is a
+      // sparkline and nothing else -- so "sort on what the row shows" means
+      // its right-hand edge, which is the reading a reader takes off it.
+      // Normalised against cpu_total by the assembler, so this is percent of
+      // THIS host and a 32-core box does not outrank a busy 4-core one.
+      sortValue: (row) => latestStackTotal(row.cpu),
     },
     {
       key: "memory",
       header: "Memory",
       cell: (row) => <MemoryCell row={row} range={range} />,
+      // A FRACTION of mem_total, not the bytes: the cell draws its stack
+      // against that ceiling and the dashed rule says where the ceiling is,
+      // so what it shows is how full the host is. Sorting on bytes would
+      // order the fleet by how much RAM each machine has, which is the one
+      // question this column is not asking. No ceiling means the cell draws
+      // nothing at all (see MemoryCell), so there is nothing to order on.
+      sortValue: (row) => {
+        if (row.mem_total === null) return null;
+        const used = latestStackTotal(row.mem);
+        return used === null ? null : used / row.mem_total;
+      },
     },
     {
       key: "diskTrend",
       header: "Filesystem",
       cell: (row) => <DiskTrendCell row={row} range={range} />,
+      // The topmost line's current value -- see latestPeak. Deliberately not
+      // the same reading as the Disk column beside it: that one orders by the
+      // mount its row NAMES, which is picked by severity before percentage,
+      // so the two columns can disagree about which host is worst and each is
+      // answering its own question.
+      sortValue: (row) => latestPeak(row.disk),
     },
     {
       key: "disk",

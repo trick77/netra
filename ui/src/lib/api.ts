@@ -96,6 +96,12 @@ export type Host = {
 export type HostDetail = Host & {
   site_name: string | null;
   provider_name: string | null;
+  /** The rest of the site's address -- see HostDetail in
+   * internal/hub/read/host.go for why these carry a `site_` prefix while
+   * latitude/longitude below do not. `site_country_code` is ISO 3166-1
+   * alpha-2; countryName() in lib/format.ts turns it into a country. */
+  site_facility: string | null;
+  site_country_code: string | null;
 
   fingerprint: string | null;
   host_type: string | null;

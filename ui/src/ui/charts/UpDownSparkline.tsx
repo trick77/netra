@@ -18,7 +18,13 @@ import { SPARK_WIDTH } from "./size";
 export interface UpDownSparklineProps {
   up: (number | null)[];
   down: (number | null)[];
-  /** Shared scale for both sides. Auto-computed from up/down when omitted. */
+  /** Shared scale for both sides. Auto-computed from up/down when omitted.
+   *
+   * Read only by furniture that names a value: a sparkline carries no tick
+   * ladder, so mirrorPaths scales it against the combined range of the pair
+   * it was handed (see `independent` there) and a caller's ceiling does not
+   * reach the mark. Passing one to force two cells onto the same scale will
+   * not do that. */
   max?: number;
   width?: number;
   height?: number;
@@ -82,7 +88,9 @@ export function UpDownSparkline({
 }: UpDownSparklineProps) {
   // Both directions share one ceiling, which is what makes the two halves
   // comparable -- scaling each to its own extent would draw a trickle of
-  // egress the same size as a saturated ingress.
+  // egress the same size as a saturated ingress. The mark derives that
+  // ceiling from the pair itself now (mirrorPaths' `independent`); this is
+  // still computed for the furniture a caller may hang on the same Chart.
   const effectiveMax = max ?? Math.max(extent(up).max, extent(down).max);
 
   /* Proportional, and the ceiling is the window's own peak -- what RRDtool

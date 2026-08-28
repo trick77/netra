@@ -17,6 +17,9 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     hostname: "web-01",
     site_id: 3,
     site_name: "zurich-dc1",
+    provider_name: null,
+    facility: null,
+    country_code: null,
     window: null,
     last_seen: "2026-08-10T13:59:30Z",
     cpu_total: 42,
@@ -104,27 +107,189 @@ describe("hostColumns", () => {
       expect(disk.sortValue!(makeRow({ fullest: null }))).toBeNull();
     });
 
-    // A sparkline has no order. Offering a control that cannot sort is worse
-    // than offering none.
-    it("offers no ordering on the chart columns", () => {
+    // The chart columns sort too. They did not, on the argument that a
+    // sparkline has no order -- true of the picture, and not of the reading
+    // it draws: the right-hand edge is a number, it is the number the reader
+    // takes off the cell, and four of six columns offering no control at all
+    // read as a broken table rather than as a considered one.
+    it("orders every column, charts included", () => {
       const cols = hostColumns("1h");
 
-      for (const header of ["CPU", "Memory", "Traffic", "Filesystem"]) {
-        expect(
-          cols.find((c) => c.header === header)!.sortValue,
-        ).toBeUndefined();
+      for (const col of cols) {
+        expect(col.sortValue, `${col.header} has no sortValue`).toBeDefined();
       }
+    });
+
+    it("sorts CPU on the stack's latest total", () => {
+      const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
+
+      // The last bucket of each band: 11 + 6 + 2 + 0.
+      expect(cpu.sortValue!(makeRow())).toBe(19);
+    });
+
+    // Per band, not one shared index: the bands are gridded independently, so
+    // a band whose newest bucket has not landed must contribute its last
+    // REPORTED value rather than drop out of the total.
+    it("reads each CPU band's own last reported value", () => {
+      const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
+      const row = makeRow({
+        cpu: [
+          { name: "user", color: "var(--s1)", values: [10, 12, null] },
+          { name: "system", color: "var(--s2)", values: [5, 4, 6] },
+        ],
+      });
+
+      expect(cpu.sortValue!(row)).toBe(18);
+    });
+
+    it("gives a host that has never reported CPU no sort value", () => {
+      const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
+
+      expect(cpu.sortValue!(makeRow({ cpu: [] }))).toBeNull();
+    });
+
+    // A fraction of the ceiling the cell draws against, never the bytes: on
+    // bytes the fleet would order by how much RAM each machine HAS.
+    it("sorts Memory on the fraction of mem_total in use", () => {
+      const memory = hostColumns("1h").find((c) => c.header === "Memory")!;
+      const row = makeRow({
+        mem_total: 16_000_000_000,
+        mem: [{ name: "used", color: "var(--s1)", values: [null, 4e9] }],
+      });
+
+      expect(memory.sortValue!(row)).toBeCloseTo(0.25);
+    });
+
+    it("gives a host with no memory ceiling no sort value", () => {
+      const memory = hostColumns("1h").find((c) => c.header === "Memory")!;
+
+      expect(memory.sortValue!(makeRow({ mem_total: null }))).toBeNull();
+    });
+
+    // Both directions summed: the cell prints in AND out, and the fleet
+    // question is which host is moving the most.
+    it("sorts Traffic on the two rates the cell prints", () => {
+      const traffic = hostColumns("1h").find((c) => c.header === "Traffic")!;
+      const row = makeRow({
+        last_seen: new Date().toISOString(),
+        net_rx_bytes: 1.5e6,
+        net_tx_bytes: 4e5,
+      });
+
+      expect(traffic.sortValue!(row)).toBe(1.9e6);
+    });
+
+    // The cell prints nothing for a host that has gone quiet, and a list
+    // ordered by a number it refuses to draw would put that host at the top.
+    it("gives a host that is no longer reporting no traffic sort value", () => {
+      const traffic = hostColumns("1h").find((c) => c.header === "Traffic")!;
+      const row = makeRow({ last_seen: "2020-01-01T00:00:00Z" });
+
+      expect(traffic.sortValue!(row)).toBeNull();
+    });
+
+    // The fullest mount's CURRENT reading, not an average across mounts: a
+    // 503 GB root at 68% beside a 7.8 TB array at 88% averages to a number
+    // that hides whichever one is about to fill.
+    it("sorts Filesystem on the highest mount, not the mean", () => {
+      const fs = hostColumns("1h").find((c) => c.header === "Filesystem")!;
+      const row = makeRow({
+        disk: [
+          { name: "/", color: "var(--s1)", values: [60, 68] },
+          { name: "/tank", color: "var(--s2)", values: [80, 88] },
+        ],
+      });
+
+      expect(fs.sortValue!(row)).toBe(88);
+    });
+
+    it("gives a host with no filesystem series no sort value", () => {
+      const fs = hostColumns("1h").find((c) => c.header === "Filesystem")!;
+
+      expect(fs.sortValue!(makeRow({ disk: [] }))).toBeNull();
     });
   });
 
   describe("host cell", () => {
-    it("writes the site under the hostname", () => {
+    // The provider and the place, not the site's internal label. "zurich-dc1"
+    // told a reader scanning the fleet nothing the hostname beside it had not
+    // already said; who runs the machine and which building it is in are the
+    // two questions they actually have.
+    it("writes the provider and the location under the hostname", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
-      const { container } = render(<>{col.cell(makeRow())}</>);
-
-      expect(container.querySelector(".host-cell-site")!.textContent).toBe(
-        "zurich-dc1",
+      const { container } = render(
+        <>
+          {col.cell(
+            makeRow({
+              provider_name: "OVH",
+              facility: "Gravelines",
+              country_code: "FR",
+            }),
+          )}
+        </>,
       );
+
+      // The country as a country: "FR" is a database value, France is the
+      // fact. The comma joins the one address; the dot separates two facts.
+      expect(container.querySelector(".host-cell-site")!.textContent).toBe(
+        "OVH · Gravelines, France",
+      );
+      expect(container.textContent).not.toContain("zurich-dc1");
+    });
+
+    // Each part stands on its own. A site with a facility and no provider on
+    // record says where it is, rather than leading with a dash for the fact
+    // nobody recorded.
+    it("leaves out the parts the site does not have", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const cell = (over: Partial<HostRow>) =>
+        render(<>{col.cell(makeRow(over))}</>).container.querySelector(
+          ".host-cell-site",
+        )?.textContent;
+
+      expect(
+        cell({
+          provider_name: null,
+          facility: "Gravelines",
+          country_code: "FR",
+        }),
+      ).toBe("Gravelines, France");
+      expect(
+        cell({ provider_name: "OVH", facility: null, country_code: "FR" }),
+      ).toBe("OVH · France");
+      expect(
+        cell({ provider_name: "OVH", facility: null, country_code: null }),
+      ).toBe("OVH");
+    });
+
+    // A code Intl cannot name is still what the operator typed, so it is
+    // shown rather than swallowed -- the alternative is a host that silently
+    // loses its country because somebody entered a code this runtime's ICU
+    // build has never heard of.
+    //
+    // ZZ is the case worth pinning: it is structurally valid, so nothing
+    // throws, and CLDR has a name for it -- "Unknown Region" -- which would
+    // sit under a hostname reading like somewhere a machine actually is.
+    it("falls back to the raw code for a country it cannot name", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const line = (country: string) =>
+        render(
+          <>
+            {col.cell(
+              makeRow({
+                provider_name: null,
+                facility: null,
+                country_code: country,
+              }),
+            )}
+          </>,
+        ).container.querySelector(".host-cell-site")!.textContent;
+
+      expect(line("ZZ")).toBe("ZZ");
+      expect(line("QQ")).toBe("QQ");
+      // Not over-corrected into a blanket rule about user-assigned codes:
+      // XK is one, and it is Kosovo.
+      expect(line("XK")).toBe("Kosovo");
     });
 
     // An unassigned host is not a host with a missing site: it is one that
@@ -133,7 +298,17 @@ describe("hostColumns", () => {
     it("writes no site line at all when the host has no site", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
       const { container } = render(
-        <>{col.cell(makeRow({ site_id: null, site_name: null }))}</>,
+        <>
+          {col.cell(
+            makeRow({
+              site_id: null,
+              site_name: null,
+              provider_name: null,
+              facility: null,
+              country_code: null,
+            }),
+          )}
+        </>,
       );
 
       expect(container.querySelector(".host-cell-site")).toBeNull();

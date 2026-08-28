@@ -271,7 +271,15 @@ export function Chart({
           <MirrorStackMarks {...{ series, w, h, max, pad, highlight }} />
         )}
         {mirrored && !mirrorStacked && (
-          <MirrorMarks {...{ series, w, h, max, pad }} />
+          // `independent` only where nothing on screen states a shared scale.
+          // A chart given a tick ladder has its halves labelled off one
+          // ceiling, and letting each half pick its own would put marks at
+          // heights its own axis denies. A sparkline has no ladder, so it
+          // takes RRDtool's scaling and the density that comes with it.
+          <MirrorMarks
+            {...{ series, w, h, max, pad }}
+            independent={y === undefined}
+          />
         )}
         {!mirrored && stacked && (
           <StackMarks {...{ series, w, h, max, pad, highlight, bandStroke }} />
@@ -378,12 +386,16 @@ function MirrorMarks({
   h,
   max,
   pad,
+  independent,
 }: {
   series: ChartSeries[];
   w: number;
   h: number;
   max: number;
   pad: number;
+  /** Let each half use its own ceiling and the whole half-height. See
+   * mirrorPaths -- true only where no tick ladder claims a shared scale. */
+  independent: boolean;
 }) {
   return (
     <>
@@ -397,6 +409,15 @@ function MirrorMarks({
         // a half, and only one of those can carry a 1.25px outline without
         // the outline becoming the mark. See mirrorEdge().
         const edge = mirrorEdge(w, longest([up, ...(down ? [down] : [])]), pad);
+        // A pair drawn with an envelope goes back on the shared ceiling.
+        // `independent` derives the scale and the zero line from the values
+        // it is handed, and the band is handed different values -- the peak,
+        // not the mean -- so the two calls would place their zero lines at
+        // different heights and the envelope would neither contain the line
+        // nor share its midline. Nothing reaches this today (every chart
+        // carrying a band also carries a tick ladder, which already turns
+        // `independent` off), so this is the guard that keeps it true.
+        const scaled = independent && !up.band && !down?.band;
         const paths = mirrorPaths(
           up.values,
           down?.values ?? [],
@@ -404,13 +425,22 @@ function MirrorMarks({
           h,
           max,
           pad,
+          scaled,
         );
         // The envelope, when the tier carries a peak column. Drawn first so
         // the mean sits over it, and with no stroke -- it is a region, not a
         // reading, and an edge on it would compete with the line that is.
         const bands =
           up.band || down?.band
-            ? mirrorPaths(up.band ?? [], down?.band ?? [], w, h, max, pad)
+            ? mirrorPaths(
+                up.band ?? [],
+                down?.band ?? [],
+                w,
+                h,
+                max,
+                pad,
+                scaled,
+              )
             : null;
         return (
           <g key={up.name} data-series={up.name} data-mirror>

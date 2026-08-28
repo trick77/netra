@@ -215,6 +215,23 @@ export function driveSeverity(drive: Drive): Finding["severity"] {
 }
 
 /**
+ * The drive's state as a number a column can be ORDERED by, worst highest.
+ *
+ * Inverted against RANK above, which is worst-first because it drives a
+ * sort of findings within a row. A table column is read the other way round:
+ * clicking a header once gives ascending, and the reader who clicks Findings
+ * is looking for the drives in trouble, which have to arrive together at one
+ * end rather than be split by an alphabetical accident.
+ *
+ * Lives here rather than in the table so RANK stays the single statement of
+ * how these severities compare.
+ */
+export function driveSeverityRank(drive: Drive): number {
+  const worst = driveSeverity(drive);
+  return Object.keys(RANK).length - RANK[worst];
+}
+
+/**
  * Temperature in degrees Celsius, from whichever id this drive uses.
  *
  * ATA's attribute 194 needs masking and NVMe's 1008 does not, which is the
