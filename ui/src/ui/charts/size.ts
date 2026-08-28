@@ -65,12 +65,14 @@ export const REFERENCE_WIDTH = 1;
  * panel are both rx above the midline and tx below it, through the same
  * mirrorPaths() geometry, and an operator scans one and then the other.
  *
- * Deliberately NOT shared with the stacked branches. A stack's 0.55 looks
- * like the same kind of number, but it answers a different question: bands
- * are layered over each other and the fill has to stay readable through the
- * one above it, where a mirrored pair has nothing behind it and only needs
- * to sit below its own edge. Tying them together would mean a future tune of
- * one silently moving the other.
+ * Deliberately NOT shared with the stacked branches, which draw their bands
+ * opaque. That used to read "a stack's 0.55 answers a different question:
+ * bands are layered over each other and the fill has to stay readable
+ * through the one above it" -- which is not what stackBands builds. Band k
+ * is the ribbon between running total k-1 and running total k, so the bands
+ * are disjoint and nothing sits behind one except the grid. The translucency
+ * only let the gridline show through the data. Tying the two together would
+ * still be wrong: a future tune of one would silently move the other.
  *
  * These are the SPARSE weights -- see mirrorEdge() below for when an edge is
  * drawn at all.
