@@ -174,11 +174,30 @@ export type HostRow = Host & {
  * as a dash -- the rule the site line already followed. A site with a
  * facility and no provider on record reads "Gravelines, France", which is
  * true; "— · Gravelines, France" would be a claim that something is missing.
- * Returns null when there is nothing at all to say, which is what a host
- * with no site gets, and the caller then writes no line rather than an empty
+ *
+ * THE SITE NAME IS THE FALLBACK for the place, and that is not a nicety --
+ * it is what keeps this from being a regression on most hubs. createSite
+ * (lib/api.ts) writes a name and a provider and nothing else: facility and
+ * country are reachable only through the site Edit form, so a hub whose
+ * operator has never opened that form has sites carrying a name alone.
+ * Built from the provider and the address only, this returned null for
+ * every one of those hosts and the cell drew no line at all -- the fleet
+ * went from naming the site to saying nothing, which is how this shipped
+ * and what it broke.
+ *
+ * The name earns the position rather than merely filling it: it is the
+ * operator's own label for the place, which is exactly what the facility
+ * field would otherwise hold. So the line degrades one step at a time --
+ * "OVH · Gravelines, France", then "OVH · zrh-colo", then "zrh-colo" --
+ * and never drops below what was on screen before this column knew about
+ * providers at all.
+ *
+ * Returns null only when there is genuinely nothing to say, which now means
+ * a host with no site. The caller then writes no line rather than an empty
  * one.
  */
 export function hostLocation(row: {
+  site_name?: string | null;
   provider_name?: string | null;
   facility?: string | null;
   country_code?: string | null;
@@ -187,12 +206,17 @@ export function hostLocation(row: {
   // truthy string rather than for null: a row assembled before these
   // existed -- a fixture, a cached response -- must render a hostname with
   // no location line, not throw on the way to drawing the whole table.
-  const place = [row.facility, countryName(row.country_code)]
-    .filter((part): part is string => typeof part === "string" && part !== "")
+  const known = (part: string | null | undefined): part is string =>
+    typeof part === "string" && part !== "";
+
+  const address = [row.facility, countryName(row.country_code)]
+    .filter(known)
     .join(", ");
-  const parts = [row.provider_name, place].filter(
-    (part): part is string => typeof part === "string" && part !== "",
-  );
+  // The site name only when the address is empty, never beside it: a site
+  // called "gra-rack-7" whose facility says "Gravelines" is one place named
+  // twice, and the row has one line to spend.
+  const place = address !== "" ? address : (row.site_name ?? "");
+  const parts = [row.provider_name, place].filter(known);
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
