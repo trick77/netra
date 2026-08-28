@@ -192,7 +192,7 @@ describe("ChartDetail y axis", () => {
   // where the largest egress actually sits -- so a saturated downlink read
   // as an idle one. Both mirrored callers (the host page's "Traffic" and the
   // container page's "Network") left the axis on.
-  it("labels a mirrored chart with zero at the midline and a peak at each edge", () => {
+  it("labels a mirrored chart with zero where the data puts it", () => {
     render(
       <ChartDetail
         title="Traffic"
@@ -206,12 +206,16 @@ describe("ChartDetail y axis", () => {
       />,
     );
 
-    // Symmetric about a zero midline: whatever magnitudes the tick chooser
-    // lands on, the top half must mirror the bottom half and 0 must sit
-    // between them.
+    // One axis over [-out, +in], so zero sits where the data puts it rather
+    // than on the midline: in peaks at 40 against out's 20, so there is more
+    // ladder above the line than below. Both halves still label MAGNITUDES
+    // -- a minus sign below the line would state a negative rate.
     const labels = axisLabels();
-    expect(labels).toEqual([...labels].reverse());
-    expect(labels[Math.floor(labels.length / 2)]).toBe("0");
+    expect(labels).toContain("0");
+    expect(labels.every((t) => !t?.startsWith("-"))).toBe(true);
+
+    const zeroAt = labels.indexOf("0");
+    expect(zeroAt).toBeGreaterThan(labels.length - 1 - zeroAt);
   });
 
   // The mean-plus-peak pair: the line is the bucket's mean and the band is

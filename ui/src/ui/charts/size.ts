@@ -133,7 +133,18 @@ export function areaFillOpacity(count: number): number {
  * drawn at all.
  */
 export const MIRROR_FILL_OPACITY = 0.45;
-export const MIRROR_STROKE_WIDTH = 1.25;
+
+/**
+ * The edge on a filled band, whatever kind of band it is.
+ *
+ * One constant, because it is one mark: a CPU stack's ribbon, a memory
+ * stack's ribbon and a mirrored traffic half are the same object drawn in
+ * three panels an operator reads on one screen. Chart.tsx carried its own
+ * `bandStroke = 1.25` default for the stacked marks while the mirrored ones
+ * read this, so the two agreed by coincidence and a tune of either would
+ * have silently moved only half the charts.
+ */
+export const BAND_STROKE_WIDTH = 1.25;
 
 /**
  * Whether a mirrored chart at this density gets an edge, and how its fill is
@@ -160,8 +171,23 @@ export const MIRROR_STROKE_WIDTH = 1.25;
  *
  * Stated as a threshold rather than as two hard-coded sets of weights,
  * because the property that matters is a relation between the ink and the
- * data -- a chart with room for an edge keeps one, a chart without room
- * does not, and neither has to be listed here by name.
+ * data -- a chart with room for an edge keeps one, a chart without room does
+ * not, and neither has to be listed here by name.
+ *
+ * It was collapsed to a single answer once, on the reasoning that rrdtool
+ * fills an AREA solid and draws no LINE at any size, so a threshold was an
+ * invention. That is true of rrdtool and it made the charts worse, for a
+ * reason the fidelity argument cannot see: a translucent fill with nothing
+ * behind it is not translucent to look at, it is just a dimmer flat block.
+ * Measured through the band of a rendered panel, every row reads the same
+ * #5d5e75 -- uniform, which is to say solid. The EDGE is the only thing that
+ * makes an area read as an outline with something inside it, and an operator
+ * asking for the band not to be "a solid fill" is asking for that edge.
+ *
+ * So the threshold stands, and it is doing two jobs rather than one: the
+ * panel gets the outline that makes it read as a shape, and the cell -- where
+ * a 1.25px stroke on a column of about the same width runs down both sides of
+ * a spike and has its apex chopped square by the miter limit -- does not.
  */
 export function mirrorEdge(
   plotWidth: number,
@@ -175,8 +201,8 @@ export function mirrorEdge(
   // so the rule would keep a 1.25 edge on a column narrower than it -- the
   // one case it exists to catch.
   const column = points > 1 ? (plotWidth - 2 * pad) / (points - 1) : Infinity;
-  return MIRROR_STROKE_WIDTH < column
-    ? { fillOpacity: MIRROR_FILL_OPACITY, strokeWidth: MIRROR_STROKE_WIDTH }
+  return BAND_STROKE_WIDTH < column
+    ? { fillOpacity: MIRROR_FILL_OPACITY, strokeWidth: BAND_STROKE_WIDTH }
     : { fillOpacity: 1, strokeWidth: 0 };
 }
 

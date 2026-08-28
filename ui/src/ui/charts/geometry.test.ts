@@ -353,24 +353,33 @@ describe("geometry", () => {
     // precision and cairo paints the same value as a dim continuous row,
     // which is why an Observium sparkline has a floor where ours had bare
     // background.
-    it("keeps a real reading off the midline even when it rounds to nothing", () => {
+    // The area has NO floor, deliberately. A floor sounds like it protects a
+    // small reading and what it actually does is make every small reading
+    // identical: on a host whose median is a thousandth of its burst, every
+    // quiet column clamps to the same one pixel and the cell draws a dead
+    // straight line. rrdtool lets those columns fall to nothing, and the
+    // variation that survives is the detail. Nothing is drawn in its place:
+    // the reference draws nothing there either -- in the operator's own
+    // Observium sparkline the inbound series is absent from 111 of 173
+    // columns -- and a line laid over the area to keep it visible put a
+    // saturated rule across every column instead.
+    it("lets a sub-pixel reading round away, as rrdtool does", () => {
       // Given a floor a thousandth of the ceiling, drawn in a fleet cell
       const { up, mid } = mirrorPaths([1, 1, 1000], [], 170, 32, 1000, 2);
       const ys = [...up.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
         parseFloat(m[1]!),
       );
 
-      // Then the quiet columns sit a WHOLE pixel above the midline rather
-      // than on it. y grows downward and `up` is drawn upward, so off the
-      // line is a smaller y. A whole pixel rather than a fraction because a
-      // fractional bar is antialiased into a grey smear -- see barHeight.
-      const quiet = ys.filter((y) => y < mid && mid - y <= 1);
+      // Then the quiet columns sit ON the midline: 1/1000 of 16px is 0.016,
+      // which is not a pixel and is not drawn as one.
+      const quiet = ys.filter((y) => mid - y < 1);
       expect(quiet.length).toBeGreaterThan(0);
-      for (const y of quiet) expect(mid - y).toBeCloseTo(1, 6);
+      for (const y of quiet) expect(y).toBeCloseTo(mid, 6);
 
-      // And the loud one is unaffected -- the minimum is a floor, never a
-      // scale.
-      expect(mid - Math.min(...ys.map((y) => y))).toBeCloseTo(14, 6);
+      // And the loud one reaches the far edge. There is no down half here,
+      // so the axis is [0, +1000] and the whole box is the up half: `pad` is
+      // not spent, because a bar has no stroke to keep off the edge.
+      expect(mid - Math.min(...ys)).toBeCloseTo(32, 6);
     });
 
     // RRDtool's scaling, and the reason its peaks reach the edge of the cell
@@ -380,29 +389,25 @@ describe("geometry", () => {
     // instead of each half being given exactly half of it.
     it("shares one scale and places zero where the data puts it", () => {
       // Given a pair whose halves peak at 5 and 10 in a 32px box
-      const { up, down, mid } = mirrorPaths(
-        [5, 5],
-        [10, 10],
-        100,
-        32,
-        10,
-        2,
-        true,
-      );
+      const { up, down, mid } = mirrorPaths([5, 5], [10, 10], 100, 32, 10, 2);
       const ys = (d: string) =>
         [...d.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
           parseFloat(m[1]!),
         );
 
-      // Then zero sits a third of the way down, not at the middle: the up
-      // half needs 5 of the combined 15 and the down half needs 10. On the
-      // whole pixel nearest that, so the whole-pixel bars measured from it
-      // fill their rows rather than straddling two.
-      expect(mid).toBe(Math.round((32 * 5) / 15));
+      // Then zero sits above the middle, not at it: the up half needs 5 of
+      // the combined 15 and the down half needs 10, so zero lands a third of
+      // the way down -- on the whole pixel nearest it, which keeps the bars
+      // measured from it inside their own rows.
+      const span = 5 + 10;
+      expect(mid).toBe(Math.round((32 * 5) / span));
 
-      // And both peaks reach their own edge of the box, so nothing is wasted
+      // And each peak reaches its OWN edge. No headroom: the reference
+      // passes --rigid, which makes rrdtool skip expand_range() altogether
+      // (rrd_graph.c:4042), so the window's peak is the ceiling.
       expect(Math.min(...ys(up))).toBeCloseTo(0, 0);
       expect(Math.max(...ys(down))).toBeCloseTo(32, 0);
+      expect(Math.max(...ys(down))).toBeGreaterThan(32 * 0.8);
 
       // ...while staying on ONE scale: the down half is twice the up half,
       // exactly as 10 is twice 5. Given each half its own ceiling both would
@@ -418,7 +423,7 @@ describe("geometry", () => {
       // An all-zero pair has no range to place a line by, and a midline that
       // jumped to the top of an empty cell would be a statement about a host
       // that reported nothing.
-      expect(mirrorPaths([0, 0], [0, 0], 100, 32, 10, 2, true).mid).toBe(16);
+      expect(mirrorPaths([0, 0], [0, 0], 100, 32, 10, 2).mid).toBe(16);
     });
 
     it("leaves a genuine zero on the midline", () => {
@@ -442,23 +447,34 @@ describe("geometry", () => {
         32,
         1e6,
         2,
-        true,
       );
       const ys = (d: string) =>
         [...d.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
           parseFloat(m[1]!),
         );
 
-      // Then the zero line keeps a row for the half it has readings for. Its
-      // exact position is 0.3, and rounded to the edge every inbound bar --
-      // floored to a whole pixel by barHeight -- would be drawn from row 0 to
-      // row -1, outside the viewport: the one-pixel floor exists precisely so
-      // that a reading this small is still visible.
-      expect(mid).toBe(1);
-      expect(Math.min(...ys(up))).toBe(0);
+      // Then the zero line is off the edge, keeping a row for the half that
+      // has readings: pinned to 0, any inbound bar reaching a whole pixel
+      // would be drawn from row 0 to row -1 and clipped away. The padding
+      // lifts it further off on its own -- a hundredth of the other half is
+      // 0.3 of a row unpadded, and about 3 once both ends are widened.
+      expect(mid).toBeGreaterThanOrEqual(1);
+      expect(mid).toBeLessThan(32 / 4);
 
-      // And the loud half still stops at the edge rather than a row past it.
-      expect(Math.max(...ys(down))).toBe(32);
+      // This half's own readings are a hundredth of the other's, which at 32
+      // rows is a third of a pixel. It is DRAWN at a third of a pixel rather
+      // than rounded away: heights are sub-pixel, so the renderer lays down a
+      // partly-covered row and the reading survives as a tint. Rounding it to
+      // nothing -- or up to a whole row -- is what flattened a bursty host's
+      // quiet stretch into a dead line.
+      const top = Math.min(...ys(up));
+      expect(top).toBeLessThan(mid);
+      expect(mid - top).toBeLessThan(1);
+
+      // And the loud half stops inside the box rather than a row past it --
+      // short of the edge, because the range is padded before it is drawn.
+      expect(Math.max(...ys(down))).toBeLessThanOrEqual(32);
+      expect(Math.max(...ys(down))).toBeGreaterThan(32 * 0.8);
     });
 
     it("draws a reading that stands alone between two holes", () => {
@@ -499,7 +515,8 @@ describe("geometry", () => {
 
     it("stacks each half away from the midline, in layer order", () => {
       // Given two layers of 10 either side, against a ceiling of 40 in a
-      // 40-tall box: the half-height is 20, so 10 is a quarter of it.
+      // Both halves total 20, so the axis is [-20, +20], zero is the middle
+      // of a 40-tall box and each half spends its whole 20 rows.
       const { up, down, mid } = mirrorStackBands(
         [
           [10, 10],
@@ -511,21 +528,20 @@ describe("geometry", () => {
         ],
         100,
         40,
-        40,
       );
       expect(mid).toBe(20);
 
-      // Then the first layer sits between the midline and 5 units above it,
-      // and the second between 5 and 10 -- the second stacked ON the first,
-      // never overlapping it.
-      expect(Math.min(...ys(up[0]!))).toBeCloseTo(15, 6);
+      // Then the first layer sits between the midline and half way up it,
+      // and the second between there and the top -- the second stacked ON
+      // the first, never overlapping it.
+      expect(Math.min(...ys(up[0]!))).toBeCloseTo(10, 6);
       expect(Math.max(...ys(up[0]!))).toBeCloseTo(20, 6);
-      expect(Math.min(...ys(up[1]!))).toBeCloseTo(10, 6);
-      expect(Math.max(...ys(up[1]!))).toBeCloseTo(15, 6);
+      expect(Math.min(...ys(up[1]!))).toBeCloseTo(0, 6);
+      expect(Math.max(...ys(up[1]!))).toBeCloseTo(10, 6);
 
       // And the down half is the same distances on the other side.
-      expect(Math.max(...ys(down[0]!))).toBeCloseTo(25, 6);
-      expect(Math.max(...ys(down[1]!))).toBeCloseTo(30, 6);
+      expect(Math.max(...ys(down[0]!))).toBeCloseTo(30, 6);
+      expect(Math.max(...ys(down[1]!))).toBeCloseTo(40, 6);
     });
 
     it("scales each half against its own stack, not against both", () => {
