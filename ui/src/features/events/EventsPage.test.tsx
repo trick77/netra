@@ -211,7 +211,7 @@ describe("EventsPage", () => {
     // left where the marker is the honest rendering.
     renderPage({ events: [event({ subject: null, detail: {} })] });
 
-    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByText("–")).toBeInTheDocument();
   });
 
   it("says what happened rather than naming the subject and stopping", () => {

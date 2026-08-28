@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { Table, type Column } from "./Table";
+import { ABSENT } from "../lib/format";
 
 interface Row {
   id: string;
@@ -20,6 +21,26 @@ const columns: Column<Row>[] = [
 ];
 
 describe("Table", () => {
+  // A column where most rows have nothing to report draws a stack of dashes,
+  // and at full data contrast the stack is read before the rows that do say
+  // something. A cell that merely CONTAINS the marker is a real reading with
+  // half of it missing and keeps its contrast.
+  it("dims a cell whose whole output is the absent marker, and only that", () => {
+    const { container } = render(
+      <Table
+        columns={[
+          { key: "a", header: "Absent", cell: () => ABSENT },
+          { key: "b", header: "Partial", cell: () => `${ABSENT} · 8 GiB` },
+        ]}
+        rows={[{ id: "h1", name: "host-a", cpu: 1 }]}
+        rowKey={(r) => r.id}
+      />,
+    );
+    const dimmed = container.querySelectorAll("tbody .absent");
+    expect(dimmed).toHaveLength(1);
+    expect(dimmed[0]!.textContent).toBe(ABSENT);
+  });
+
   it("renders one <tr> per row in tbody", () => {
     render(<Table columns={columns} rows={rows} rowKey={(r) => r.id} />);
     const body = screen.getByRole("table").querySelector("tbody")!;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { Meter } from "./Meter";
+import { ABSENT } from "../lib/format";
 
 describe("Meter", () => {
   // A Docker container with no memory limit has nothing to be a
@@ -13,11 +14,11 @@ describe("Meter", () => {
 
   it("renders the absent marker rather than a bar when value or max is unknown", () => {
     const { container, rerender } = render(<Meter value={null} max={100} />);
-    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByText(ABSENT)).toBeInTheDocument();
     expect(container.querySelector(".meter")).not.toBeInTheDocument();
 
     rerender(<Meter value={50} max={null} />);
-    expect(screen.getByText("—")).toBeInTheDocument();
+    expect(screen.getByText(ABSENT)).toBeInTheDocument();
     expect(container.querySelector(".meter")).not.toBeInTheDocument();
   });
 
@@ -38,7 +39,7 @@ describe("Meter", () => {
     const fill = container.querySelector(".meter i") as HTMLElement;
     expect(fill.style.width).toBe("0%");
     expect(screen.getByText("0%")).toBeInTheDocument();
-    expect(screen.queryByText("—")).not.toBeInTheDocument();
+    expect(screen.queryByText(ABSENT)).not.toBeInTheDocument();
   });
 
   // Pins that the value text comes from format.ts's `percent()` rather

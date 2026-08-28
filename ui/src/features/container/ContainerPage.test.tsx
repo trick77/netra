@@ -356,7 +356,7 @@ describe("ContainerPage", () => {
   it("renders an absent name or image as the absent marker, never blank", () => {
     renderPage({ container: { ...CONTAINER, name: null, image: null } });
 
-    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("–").length).toBeGreaterThanOrEqual(2);
   });
 
   // The four fields that reach neither the wire (ingest.proto's

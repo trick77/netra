@@ -11,7 +11,13 @@
 // Exported so every call site renders the same absent marker instead of
 // each inventing its own dash (or worse, a hardcoded "-" that silently
 // stops matching this one when this changes).
-export const ABSENT = "—";
+//
+// An EN dash, not an em: at the em's width a column where most rows have no
+// value -- Description on a fleet nobody sets `ip link set ... alias` on --
+// reads as a row of rules drawn through the table. The shorter mark says the
+// same thing without competing with the data beside it. Table dims it further
+// (.absent in index.css) wherever a cell renders exactly this string.
+export const ABSENT = "–";
 
 function round(n: number, digits: number): number {
   const f = 10 ** digits;

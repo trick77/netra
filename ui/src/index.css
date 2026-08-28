@@ -2945,6 +2945,14 @@ tbody:first-of-type .grouprow th {
   font-size: var(--text-micro);
   color: var(--ink);
 }
+/* The "nothing to report" marker, one step under the data around it. Applied
+   by Table to any cell whose whole output is ABSENT -- see dimAbsent there for
+   why it is done in one place rather than at every call site. --muted, not
+   --muted-2: the mark carries a fact of its own and stays above the body-text
+   floor. */
+.absent {
+  color: var(--muted);
+}
 /* The scope and link-state pills reuse .badge (defined above) for the neutral
    case and override only the colour. Both are ANNOTATIONS on an identifier,
    not severity badges, so neither takes a status FILL -- the word carries the

@@ -8,6 +8,9 @@ import { ABSENT, absolute, relative } from "../lib/format";
  * how two columns headed the same thing come to format differently.
  */
 export function When({ iso }: { iso: string | null }) {
-  if (iso === null) return <>{ABSENT}</>;
+  // Wrapped rather than bare, so a column of never-reported timestamps dims
+  // the same way every other absent cell does -- Table only dims a cell whose
+  // own output IS the string, and this component's is an element.
+  if (iso === null) return <span className="absent">{ABSENT}</span>;
   return <span title={absolute(iso)}>{relative(iso)}</span>;
 }
