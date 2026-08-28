@@ -454,10 +454,11 @@ describe("hostColumns", () => {
       const { container } = render(<>{trafficCol.cell(row)}</>);
 
       expect(container.textContent).not.toContain("MB/s");
-      // Nothing at all, not a dash: stacked two deep beside a chart, "↑ — ↓ —"
+      // Nothing at all, not a dash: stacked two deep beside a chart, "↑ – ↓ –"
       // reads as a pair of readings rather than as their absence. The gap in
-      // the sparkline says the host stopped talking.
-      expect(container.textContent).not.toContain("—");
+      // the sparkline says the host stopped talking. ABSENT, not a literal:
+      // a hardcoded dash stops matching the marker the moment it changes.
+      expect(container.textContent).not.toContain(ABSENT);
       expect(container.querySelectorAll(".rate")).toHaveLength(0);
     });
   });

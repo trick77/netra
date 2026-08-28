@@ -18,6 +18,7 @@ import {
   severityOf,
   type EventFilters,
 } from "./EventsPage";
+import { ABSENT } from "../../lib/format";
 
 const NOW = new Date("2026-08-10T14:00:00Z");
 
@@ -211,7 +212,7 @@ describe("EventsPage", () => {
     // left where the marker is the honest rendering.
     renderPage({ events: [event({ subject: null, detail: {} })] });
 
-    expect(screen.getByText("–")).toBeInTheDocument();
+    expect(screen.getByText(ABSENT)).toBeInTheDocument();
   });
 
   it("says what happened rather than naming the subject and stopping", () => {
