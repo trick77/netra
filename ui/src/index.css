@@ -109,6 +109,21 @@
   --ink: #c7c4bb;
   --ink-2: #a3a099;
   --muted: #94918a;
+  /* One step under --muted, and the first value in this palette that is
+     deliberately BELOW the 4.5 body-text floor: 3.5:1 on --surface.
+     Measured, not picked -- it is what the browser already draws a
+     placeholder as, `--ink` at 50% alpha over --surface, which is the grey
+     "Filter hosts" reads at. Matching it by token rather than by opacity
+     keeps the value greppable and stops it drifting with whatever the UA
+     decides an unstyled ::placeholder should be.
+
+     Reserved for a line that ANNOTATES the one above it and is never the
+     reading: the fleet row's location under a hostname. A reader who cannot
+     resolve it has lost the site, not the host -- the hostname, the badge and
+     every figure in the row are --ink or --ink-2 and unaffected. Nothing that
+     carries a fact of its own may use this; --muted is still the floor for
+     anything a reader has to be able to read. */
+  --muted-2: #71706b;
   --accent: #d97757;
   /* Darkened one step from #c25f34: white-on-fill (.btn.primary) measured
      4.22:1, under the 4.5:1 floor. #b85a30 keeps the same clay hue/chroma
@@ -696,7 +711,12 @@ a:hover {
 }
 .host-cell-site {
   font-size: var(--text-label);
-  color: var(--muted);
+  /* Quieter than --muted, matching the search box's placeholder -- see
+     --muted-2. This line is a subtitle under the hostname and the one thing
+     in the row a reader never scans FOR: they scan for a busy chart or a full
+     disk and read the location once they have stopped. At --muted it competed
+     with the figures across the row for the same attention. */
+  color: var(--muted-2);
 }
 
 /* Traffic cell — the up/down sparkline with both rates BESIDE it, not under
