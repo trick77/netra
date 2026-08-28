@@ -3,8 +3,6 @@ import {
   getMetrics,
   type Host,
   type MetricsResponse,
-  type Provider,
-  type Site,
 } from "../../lib/api";
 import {
   carriesColumn,
@@ -812,46 +810,20 @@ export async function fetchFleetContainerTrends(
   return { trends, window: answered?.window ?? null };
 }
 
-/**
- * Joins hosts, where they are, and their trends into the rows the columns
- * read.
- *
- * `providers` is optional and defaults to none, so a caller that has not
- * fetched the list yet -- or a test that does not care -- gets rows whose
- * provider is null rather than a compile error. Every other location field
- * comes off the site itself and needs no second list.
- */
+/** Joins hosts and their trends into the rows the columns read. */
 export function buildRows(
   hosts: readonly Host[],
-  sites: readonly Site[],
   trends: ReadonlyMap<number, HostTrends>,
-  providers: readonly Provider[] = [],
 ): HostRow[] {
-  const byId = new Map(sites.map((site) => [site.id, site]));
-  const providerNames = new Map(
-    providers.map((provider) => [provider.id, provider.name]),
-  );
   return hosts.map((host) => {
     const trend = trends.get(host.id);
-    // One lookup for all four location facts: they are columns of one row,
-    // and resolving them separately would let them disagree about which site
-    // this host is in.
-    const site =
-      host.site_id === null ? null : (byId.get(host.site_id) ?? null);
     return {
+      // Where the host is comes with it: location, provider and facility are
+      // on the list response, reported by the host's own agent. There is
+      // nothing to join, which is why this function no longer takes the
+      // sites and providers lists -- it used to fetch both whole to resolve
+      // a name per row.
       ...host,
-      site_name: site?.name ?? null,
-      // A site whose provider_id points at a provider this list does not
-      // carry resolves to null rather than to "#3": the fleet row has no
-      // room to explain an unresolved id, and the admin page -- which does
-      // -- already prints one. Absent here means "not shown", and the line
-      // simply goes on without it.
-      provider_name:
-        site?.provider_id == null
-          ? null
-          : (providerNames.get(site.provider_id) ?? null),
-      facility: site?.facility ?? null,
-      country_code: site?.country_code ?? null,
       window: trend?.window ?? null,
       cpu: trend?.cpu ?? [],
       mem: trend?.mem ?? [],

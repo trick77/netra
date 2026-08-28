@@ -101,7 +101,6 @@ describe("App routing", () => {
   it("renders a deep link straight from the address bar", async () => {
     vi.mocked(api.getHost).mockResolvedValue({
       ...host,
-      site_name: null,
       os: null,
       kernel: null,
       arch: null,
@@ -206,7 +205,6 @@ describe("the range sticks", () => {
   function hostDetail() {
     return {
       ...host,
-      site_name: null,
       os: null,
       kernel: null,
       arch: null,
@@ -408,8 +406,6 @@ describe("the old chart-page URL", () => {
   beforeEach(() => {
     vi.mocked(api.getHost).mockResolvedValue({
       ...host,
-      site_name: null,
-      provider_name: null,
     } as unknown as api.HostDetail);
     vi.mocked(api.getMetrics).mockResolvedValue({
       family: "net",

@@ -30,6 +30,7 @@ import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { ABSENT, duration, relative } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
+import { hostLocation } from "../fleet/hostColumns";
 import {
   clampRange,
   rangeWindow,
@@ -487,6 +488,9 @@ export function HostPage({
   }
 
   const status = hostStatus(host);
+  // The same line the fleet row draws, from the same function -- see the
+  // header below.
+  const location = hostLocation(host);
   // Only while the host is still answering. uptime_s is host_current's LAST
   // REPORTED value, not a live clock: a machine that booted and then died
   // stays at "40 s" in the database forever, and rendering that as "rebooted
@@ -518,20 +522,24 @@ export function HostPage({
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">
         <h1 className="serif">{host.hostname}</h1>
-        {/* The site alone. OS, kernel and arch used to sit here too, and all
-            three are printed a few centimetres below in the Overview tab's
-            System card, which owns them -- the header was spending its most
-            prominent line restating the card.  The site is the one of the four
-            that appears nowhere else on host detail, so it stays.
+        {/* Where the host is, the same line the fleet row prints and from the
+            same function -- one definition, so the two pages cannot come to
+            disagree about how a place is written. It replaces the site name,
+            which was an internal label out of a table somebody fills in by
+            hand; this is what the host's own agent says about itself.
 
-            Rendered conditionally rather than as `?? ABSENT`: on an unsited
-            host that put a lone em dash under the hostname with nothing beside
-            it to say what was missing, which reads as a rendering fault rather
-            than as "no site". .hosthead is a wrapping flex row, so the badge
-            simply takes the space back. */}
-        {host.site_name !== null && (
-          <span className="meta">{host.site_name}</span>
-        )}
+            OS, kernel and arch used to sit here too, and all three are printed
+            a few centimetres below in the Overview tab's System card, which
+            owns them -- the header was spending its most prominent line
+            restating the card. Location appears in that card as well, but
+            folded away behind a disclosure, so the header still earns it.
+
+            Rendered conditionally rather than as `?? ABSENT`: on a host whose
+            agent reports no location that put a lone em dash under the
+            hostname with nothing beside it to say what was missing, which
+            reads as a rendering fault. .hosthead is a wrapping flex row, so
+            the badge simply takes the space back. */}
+        {location !== null && <span className="meta">{location}</span>}
         <Badge severity={status.severity}>{status.label}</Badge>
         {/* Beside the reporting status, not instead of it: the two answer
             different questions, and a host can be online AND four minutes

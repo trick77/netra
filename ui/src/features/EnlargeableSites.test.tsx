@@ -177,7 +177,6 @@ describe("the list sparklines enlarge", () => {
 
     const row = {
       ...host,
-      site_name: null,
       cpu: [{ name: "busy", color: "var(--s1)", values: [1, 2, 3] }],
       mem: [{ name: "used", color: "var(--s2)", values: [1, 2, 3] }],
       reporting: [1, 2, 3],

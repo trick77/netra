@@ -90,19 +90,34 @@ export type Host = {
   // tests predate the field -- requiring it would mean touching each of them
   // to add {} without a single assertion changing.
   capabilities?: Record<string, string>;
+  /**
+   * Where the host is, verbatim as its own agent reports it -- the
+   * AGENT_LOCATION, AGENT_PROVIDER and AGENT_FACILITY variables set wherever
+   * the agent runs.
+   *
+   * On the LIST for the same reason capabilities is: it is what the fleet
+   * draws under every hostname, and resolving it any other way meant fetching
+   * the sites and providers tables whole and joining them by id on the client.
+   *
+   * Free text. `location` is "Roubaix, France" -- a place as a person writes
+   * it, not a city and a country code to be recombined -- so nothing here is
+   * parsed and nothing is looked up. Null is "the agent did not report one",
+   * which is every host whose operator set none of the variables.
+   *
+   * Nothing to do with `site_id` above. Sites are filled in by a human through
+   * the admin UI; these are the machine's own account of itself, and reporting
+   * them creates no site.
+   *
+   * Optional, like capabilities and for the same reason: the hand-built host
+   * literals across the tests predate the fields.
+   */
+  location?: string | null;
+  provider?: string | null;
+  facility?: string | null;
 };
 
 // internal/hub/read/host.go: HostDetail (embeds HostSummary)
 export type HostDetail = Host & {
-  site_name: string | null;
-  provider_name: string | null;
-  /** The rest of the site's address -- see HostDetail in
-   * internal/hub/read/host.go for why these carry a `site_` prefix while
-   * latitude/longitude below do not. `site_country_code` is ISO 3166-1
-   * alpha-2; countryName() in lib/format.ts turns it into a country. */
-  site_facility: string | null;
-  site_country_code: string | null;
-
   fingerprint: string | null;
   host_type: string | null;
   agent_version: string | null;

@@ -223,6 +223,80 @@ func TestIntegrationNewHostColumnsReachTheRollup(t *testing.T) {
 	}
 }
 
+// The agent's own account of where it is.
+//
+// This test exists because the fields did not: the agent read AGENT_LOCATION,
+// AGENT_PROVIDER and AGENT_FACILITY, put all three on every Metadata post, and
+// this UPDATE simply never listed the columns -- so three variables an
+// operator could set reached the hub and went on the floor, with nothing
+// anywhere that could have shown them. Nothing failed; the data was silently
+// dropped.
+func TestIntegrationSaveMetadataStoresTheReportedLocation(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	hostID := seedHost(t, s)
+
+	md := &netrav1.Metadata{
+		Hostname: "h1",
+		Location: "Roubaix, France",
+		Provider: "OVH",
+		Facility: "RBX2",
+	}
+	if err := s.SaveMetadata(ctx, hostID, []byte("hash"), md); err != nil {
+		t.Fatalf("SaveMetadata: %v", err)
+	}
+
+	var location, provider, facility *string
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT location, provider, facility FROM hosts WHERE id = $1`,
+		hostID).Scan(&location, &provider, &facility); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if location == nil || *location != "Roubaix, France" {
+		t.Errorf("location = %v, want Roubaix, France", location)
+	}
+	if provider == nil || *provider != "OVH" {
+		t.Errorf("provider = %v, want OVH", provider)
+	}
+	if facility == nil || *facility != "RBX2" {
+		t.Errorf("facility = %v, want RBX2", facility)
+	}
+}
+
+// Declared and left blank is the same as not declared: an operator who writes
+// AGENT_LOCATION= in a unit file sends "", and a host whose location is the
+// empty string would draw a separator with nothing either side of it. NULLIF
+// is what keeps that out, the same way it does for kernel and os_name.
+func TestIntegrationSaveMetadataStoresABlankLocationAsNull(t *testing.T) {
+	ctx := context.Background()
+	s := store.OpenTest(t)
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	hostID := seedHost(t, s)
+
+	if err := s.SaveMetadata(ctx, hostID, []byte("hash"),
+		&netrav1.Metadata{Hostname: "h1", Location: "", Provider: ""}); err != nil {
+		t.Fatalf("SaveMetadata: %v", err)
+	}
+
+	var location, provider *string
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT location, provider FROM hosts WHERE id = $1`,
+		hostID).Scan(&location, &provider); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if location != nil {
+		t.Errorf("location = %q, want nil", *location)
+	}
+	if provider != nil {
+		t.Errorf("provider = %q, want nil", *provider)
+	}
+}
+
 // Capabilities are the hub's only record of why a metric is NULL.
 func TestIntegrationSaveMetadataStoresCapabilities(t *testing.T) {
 	ctx := context.Background()

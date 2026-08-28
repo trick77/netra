@@ -448,76 +448,83 @@ func TestIntegrationHostWithoutCapabilitiesReportsAnEmptyObject(t *testing.T) {
 	}
 }
 
-func TestIntegrationHostResolvesItsSiteAndProvider(t *testing.T) {
+// Where a host is comes from its own agent, not from a table somebody fills
+// in by hand. The agent has always reported AGENT_LOCATION/AGENT_PROVIDER/
+// AGENT_FACILITY and the hub always discarded them; these two tests are what
+// stops that happening again.
+//
+// On the SUMMARY, which is what makes the fleet list free: it draws a location
+// under every hostname out of the call it already makes. HostDetail embeds
+// HostSummary, so the detail path is asserted here too -- a column selected by
+// one query and not the other comes back as a confident null on the side that
+// missed it, which is the trap the Threads and Capabilities comments warn
+// about and the reason both queries are checked.
+func TestIntegrationHostCarriesTheLocationItsAgentReported(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
 
-	var providerID, siteID int32
-	if err := pool.QueryRow(ctx,
-		`INSERT INTO providers (name) VALUES ('hetzner') RETURNING id`).Scan(&providerID); err != nil {
-		t.Fatalf("insert provider: %v", err)
-	}
-	if err := pool.QueryRow(ctx,
-		`INSERT INTO sites (provider_id, name, facility, country_code)
-		 VALUES ($1, 'fsn1', 'FSN1-DC14', 'DE') RETURNING id`,
-		providerID).Scan(&siteID); err != nil {
-		t.Fatalf("insert site: %v", err)
-	}
-	id := seedHost(t, pool, "sited")
-	exec(t, pool, `UPDATE hosts SET site_id = $1 WHERE id = $2`, siteID, id)
+	id := seedHost(t, pool, "located")
+	exec(t, pool,
+		`UPDATE hosts SET location = $1, provider = $2, facility = $3 WHERE id = $4`,
+		"Roubaix, France", "OVH", "RBX2", id)
 
 	host, err := svc.Host(ctx, id)
 	if err != nil {
 		t.Fatalf("Host: %v", err)
 	}
-	if host.SiteName == nil || *host.SiteName != "fsn1" {
-		t.Errorf("site_name = %v, want fsn1", host.SiteName)
+	if host.Location == nil || *host.Location != "Roubaix, France" {
+		t.Errorf("location = %v, want Roubaix, France", host.Location)
 	}
-	if host.ProviderName == nil || *host.ProviderName != "hetzner" {
-		t.Errorf("provider_name = %v, want hetzner", host.ProviderName)
+	if host.Provider == nil || *host.Provider != "OVH" {
+		t.Errorf("provider = %v, want OVH", host.Provider)
 	}
-	// The rest of the address. Naming the provider without saying which
-	// building answers half of "where is this machine", and the half an
-	// operator acts on is the other one.
-	if host.SiteFacility == nil || *host.SiteFacility != "FSN1-DC14" {
-		t.Errorf("site_facility = %v, want FSN1-DC14", host.SiteFacility)
+	if host.Facility == nil || *host.Facility != "RBX2" {
+		t.Errorf("facility = %v, want RBX2", host.Facility)
 	}
-	if host.SiteCountry == nil || *host.SiteCountry != "DE" {
-		t.Errorf("site_country_code = %v, want DE", host.SiteCountry)
+
+	hosts, err := svc.ListHosts(ctx)
+	if err != nil {
+		t.Fatalf("ListHosts: %v", err)
+	}
+	var listed *read.HostSummary
+	for i := range hosts {
+		if hosts[i].ID == id {
+			listed = &hosts[i]
+		}
+	}
+	if listed == nil {
+		t.Fatal("host missing from the list")
+	}
+	if listed.Location == nil || *listed.Location != "Roubaix, France" {
+		t.Errorf("list location = %v, want Roubaix, France", listed.Location)
+	}
+	if listed.Provider == nil || *listed.Provider != "OVH" {
+		t.Errorf("list provider = %v, want OVH", listed.Provider)
 	}
 }
 
-// A site is created with a name and nothing else -- the admin UI's create
-// form only asks for one -- so the columns behind the address are nullable
-// and routinely null. They must arrive as null rather than as an empty
-// string, which the UI would print as a country called "".
-func TestIntegrationHostLeavesAnUnfilledSiteAddressNull(t *testing.T) {
+// Setting none of the variables is the common case, and it has to arrive as
+// null rather than as an empty string: the fleet row writes no line at all for
+// a host with no location, and "" would render a separator with nothing either
+// side of it.
+func TestIntegrationHostReportingNoLocationIsNull(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
 
-	var siteID int32
-	if err := pool.QueryRow(ctx,
-		`INSERT INTO sites (name) VALUES ('bare') RETURNING id`).Scan(&siteID); err != nil {
-		t.Fatalf("insert site: %v", err)
-	}
-	id := seedHost(t, pool, "bare-sited")
-	exec(t, pool, `UPDATE hosts SET site_id = $1 WHERE id = $2`, siteID, id)
+	id := seedHost(t, pool, "unlocated")
 
 	host, err := svc.Host(ctx, id)
 	if err != nil {
 		t.Fatalf("Host: %v", err)
 	}
-	if host.SiteName == nil || *host.SiteName != "bare" {
-		t.Errorf("site_name = %v, want bare", host.SiteName)
+	if host.Location != nil {
+		t.Errorf("location = %v, want nil", *host.Location)
 	}
-	if host.ProviderName != nil {
-		t.Errorf("provider_name = %v, want nil", *host.ProviderName)
+	if host.Provider != nil {
+		t.Errorf("provider = %v, want nil", *host.Provider)
 	}
-	if host.SiteFacility != nil {
-		t.Errorf("site_facility = %v, want nil", *host.SiteFacility)
-	}
-	if host.SiteCountry != nil {
-		t.Errorf("site_country_code = %v, want nil", *host.SiteCountry)
+	if host.Facility != nil {
+		t.Errorf("facility = %v, want nil", *host.Facility)
 	}
 }
 

@@ -16,13 +16,7 @@ import {
   UP_COLOR,
   UpDownSparkline,
 } from "../../ui/charts/UpDownSparkline";
-import {
-  binaryBytes,
-  byterate,
-  bytes,
-  countryName,
-  percent,
-} from "../../lib/format";
+import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
 import { rangeLabel, type Range } from "../../lib/range";
@@ -52,23 +46,13 @@ export type { Range };
  * the one that matters plus a count of the rest, see the Disk column
  * below).
  *
- * `site_name` is additive beyond the brief's literal `Host & {...}` --
- * `Host` (HostSummary) carries only `site_id: number | null`, which has no
- * displayable name. Rendering the raw ID under the hostname would read as
- * a label ("Site 3") for an internal foreign key, which is worse than not
- * having a site name at all. `HostDetail` proves the name is resolvable
- * server-side, so this field asserts that a future assembly step joins it
- * in alongside the summary, the same way it builds `cpu`/`mem`/etc. It
- * changes nothing about the table/card contract: both renderers only ever
- * read fields off `Column.cell(row)`, never `HostRow`'s shape directly.
- *
- * Confirmed against the live read API where this join should happen:
- * `GET /api/v1/hosts` (the fleet list) returns only `site_id`;
- * `GET /api/v1/hosts/{id}` returns `site_name` but is a per-host detail
- * call, so calling it once per row would be an N+1 against the fleet
- * endpoint just to resolve a label. `GET /api/v1/sites` returns every
- * site with its name in one call -- the assembler should fetch that once
- * and join client-side by `site_id`, not hit the detail endpoint per host.
+ * Nothing about WHERE a host is is derived here. `GET /api/v1/hosts` carries
+ * location, provider and facility on every row, straight from what each
+ * host's own agent reported, so the cell reads them off `Host` and this type
+ * adds nothing for them. It briefly did the opposite -- a site_name joined in
+ * from a second fetch of the sites table, then a provider name from a third
+ * fetch of providers -- to answer a question the agent had been answering all
+ * along.
  *
  * `cpu`/`mem`: bytes/percent-per-second bands, already named and coloured
  * (`var(--sN)`) by whatever builds this row -- this file never invents a
@@ -77,29 +61,12 @@ export type { Range };
  * extra band -- see the Memory column below for why.
  */
 export type HostRow = Host & {
-  site_name: string | null;
-  /**
-   * Where the machine physically is, and whose it is.
-   *
-   * The site NAME is an internal label -- "gra-rack-7", "sim-ZRH2" -- which
-   * is the only thing this row ever carried about location, and it answers
-   * neither question an operator actually has: who do I raise a ticket with,
-   * and which building is this in. All three come off the same `sites` row
-   * the name comes from (plus one join to `providers`), so carrying them
-   * costs one extra fetch of a list that is already small enough to be
-   * fetched whole -- see lib/api.ts's getSites note about the N+1 this
-   * avoids.
-   *
-   * Each is independently nullable, and deliberately not collapsed into one
-   * pre-formatted string here: the fleet cell joins them into a line, and
-   * the Overview lists them as separate labelled facts. A row that stored
-   * the line could not produce the facts.
-   */
-  provider_name: string | null;
-  facility: string | null;
-  /** ISO 3166-1 alpha-2, as the hub stores it. Named for the country
-   * rather than for the code at the point it is shown -- see countryName. */
-  country_code: string | null;
+  // location/provider/facility are NOT declared here: they ride `Host`,
+  // straight off the fleet list endpoint. This row briefly carried its own
+  // site_name/provider_name/facility/country_code, assembled by joining the
+  // sites and providers tables client-side -- two extra whole-table fetches
+  // to answer a question the agent was already answering on every metadata
+  // post and the hub was discarding.
   /** The window the hub answered, for the enlarged view's time axis. See
    * HostTrends.window for why it is the answer rather than the ask. */
   window: { from: string; to: string } | null;
@@ -162,60 +129,34 @@ export type HostRow = Host & {
 };
 
 /**
- * The location line under a hostname: "OVH · Gravelines, France".
+ * The location line under a hostname: "OVH · Roubaix, France".
  *
- * Facility and country are joined with a comma because they are one address
- * read together, while the provider is a separate fact and takes the dot
- * this app uses everywhere else to separate peers. "Gravelines, France" is
- * how a person says a place; "Gravelines · France" is how a UI does.
+ * Both halves come off the host itself, reported by its own agent. The
+ * provider is a separate fact from the place and takes the dot this app uses
+ * everywhere else to separate peers.
  *
- * Every part is optional and an absent one is simply left out, never written
- * as a dash -- the rule the site line already followed. A site with a
- * facility and no provider on record reads "Gravelines, France", which is
- * true; "— · Gravelines, France" would be a claim that something is missing.
+ * The place is printed exactly as the agent sent it. AGENT_LOCATION is free
+ * text an operator wrote -- "Roubaix, France", "basement", "AWS eu-west-1a" --
+ * so there is no city to split off, no country code to resolve, and nothing
+ * to normalise. Anything this did to that string would be this UI overruling
+ * the person who typed it.
  *
- * THE SITE NAME IS THE FALLBACK for the place, and that is not a nicety --
- * it is what keeps this from being a regression on most hubs. createSite
- * (lib/api.ts) writes a name and a provider and nothing else: facility and
- * country are reachable only through the site Edit form, so a hub whose
- * operator has never opened that form has sites carrying a name alone.
- * Built from the provider and the address only, this returned null for
- * every one of those hosts and the cell drew no line at all -- the fleet
- * went from naming the site to saying nothing, which is how this shipped
- * and what it broke.
- *
- * The name earns the position rather than merely filling it: it is the
- * operator's own label for the place, which is exactly what the facility
- * field would otherwise hold. So the line degrades one step at a time --
- * "OVH · Gravelines, France", then "OVH · zrh-colo", then "zrh-colo" --
- * and never drops below what was on screen before this column knew about
- * providers at all.
- *
- * Returns null only when there is genuinely nothing to say, which now means
- * a host with no site. The caller then writes no line rather than an empty
- * one.
+ * An absent half is left out rather than dashed, and null means neither was
+ * reported -- the common case for a fleet nobody has set the variables on.
+ * The caller then writes no line at all, because a dash under every hostname
+ * reads as a fleet full of holes.
  */
 export function hostLocation(row: {
-  site_name?: string | null;
-  provider_name?: string | null;
-  facility?: string | null;
-  country_code?: string | null;
+  provider?: string | null;
+  location?: string | null;
 }): string | null {
-  // Optional rather than required fields, and every filter tests for a
-  // truthy string rather than for null: a row assembled before these
-  // existed -- a fixture, a cached response -- must render a hostname with
-  // no location line, not throw on the way to drawing the whole table.
-  const known = (part: string | null | undefined): part is string =>
-    typeof part === "string" && part !== "";
-
-  const address = [row.facility, countryName(row.country_code)]
-    .filter(known)
-    .join(", ");
-  // The site name only when the address is empty, never beside it: a site
-  // called "gra-rack-7" whose facility says "Gravelines" is one place named
-  // twice, and the row has one line to spend.
-  const place = address !== "" ? address : (row.site_name ?? "");
-  const parts = [row.provider_name, place].filter(known);
+  // Truthy-string tests rather than null checks: both fields are optional on
+  // Host, so a row built before they existed -- a fixture, a cached response
+  // -- must render a hostname with no location line rather than throw on the
+  // way to drawing the whole table.
+  const parts = [row.provider, row.location].filter(
+    (part): part is string => typeof part === "string" && part !== "",
+  );
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
@@ -252,25 +193,25 @@ function HostCell({ row }: { row: HostRow }) {
       </div>
       {/* The location goes under the name rather than beside it: the two are
           a heading and its subtitle, not two peers, and the row has the
-          vertical space. Inline, a long site name pushed the hostname off
+          vertical space. Inline, a long place name pushed the hostname off
           the eye's scan line down the column.
 
-          A host with no site gets no line at all rather than an em dash: the
-          dash is a placeholder for a value that should be there and is
-          missing, and an unassigned host is not missing anything -- it is
-          simply not in a site yet. A column of dashes under every hostname
-          reads as a fleet full of holes.
+          A host whose agent reports no location gets no line at all rather
+          than an em dash: the dash is a placeholder for a value that should
+          be there and is missing, and an agent with neither AGENT_LOCATION
+          nor AGENT_PROVIDER set is not missing anything -- it was never told
+          where it is. A column of dashes under every hostname reads as a
+          fleet full of holes. Note this is about what the AGENT reported and
+          not about sites: a host can be in a site and still draw no line.
 
-          What the line SAYS is the provider and the place, not the site
-          name it said before. The site name is an internal label -- a reader
-          scanning a fleet learns nothing from "gra-rack-7" that they did not
-          already know from the hostname beside it, whereas "OVH ·
-          Gravelines, France" answers whose machine this is and which
-          building it is in. The name is not lost: it leads the host page's
-          own location facts, and the fleet's filter still matches it -- an
-          operator who named the place can still search for what they named.
-          (It is not what anything groups by: the fleet groups by host and by
-          kind, never by site.)
+          What the line SAYS is the provider and the place, not the site name
+          it said before. The site name was an internal label out of a table
+          somebody fills in by hand -- a reader scanning a fleet learns
+          nothing from "gra-rack-7" that the hostname beside it had not
+          already told them, whereas "OVH · Roubaix, France" answers whose
+          machine this is and where it sits. Both come from the host's own
+          agent, so a fleet says where it is with nobody maintaining a table
+          of places.
 
           Still one line, deliberately. This column had two and keeps two --
           a third would put height back on every row of the table, which is

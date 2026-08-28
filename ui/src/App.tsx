@@ -6,13 +6,10 @@ import {
   getHost,
   getHosts,
   getMetrics,
-  getProviders,
-  getSites,
   type Container,
   type Event,
   type Host,
   type MetricsResponse,
-  type Site,
 } from "./lib/api";
 import { POLL_MS, usePoll } from "./lib/poll";
 import {
@@ -374,13 +371,11 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
 
   const poll = usePoll(
     async () => {
-      // Providers with the sites: both are small whole-table reads, and a
-      // fleet row names its host's provider.
-      const [hosts, sites, providers] = await Promise.all([
-        getHosts(),
-        getSites(),
-        getProviders(),
-      ]);
+      // No /sites, and no /providers either. Both were fetched whole on
+      // every poll tick to resolve a place name per row; the host list now
+      // carries what its own agents reported, so the fleet asks for one
+      // thing instead of three.
+      const hosts = await getHosts();
 
       // Three requests' worth of work in ONE wave, where this used to be two
       // fan-outs of one request per host per family, the second waiting on
@@ -444,8 +439,6 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
 
       return {
         hosts,
-        sites,
-        providers,
         trends,
         containers,
         unreachable,
@@ -458,13 +451,7 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   useAuthRedirect(poll.error, go, { name: "fleet" });
 
   const rows = useMemo(
-    () =>
-      buildRows(
-        poll.data?.hosts ?? [],
-        poll.data?.sites ?? [],
-        poll.data?.trends ?? new Map(),
-        poll.data?.providers ?? [],
-      ),
+    () => buildRows(poll.data?.hosts ?? [], poll.data?.trends ?? new Map()),
     [poll.data],
   );
 
@@ -730,5 +717,3 @@ function EventsScreen({ search, go }: { search: string; go: Go }) {
     />
   );
 }
-
-export type { Site };

@@ -25,6 +25,9 @@ const host: HostDetail = {
   id: 7,
   hostname: "kessel",
   site_id: 3,
+  location: "Zurich, Switzerland",
+  provider: "Init7",
+  facility: "ZRH2",
   last_seen: new Date().toISOString(),
   cpu_total: 12,
   mem_used: 4_000_000_000,
@@ -32,10 +35,6 @@ const host: HostDetail = {
   uptime_s: 86_400,
   net_rx_bytes: null,
   net_tx_bytes: null,
-  site_name: "Zurich",
-  provider_name: "Hetzner",
-  site_facility: null,
-  site_country_code: null,
   fingerprint: "fp",
   host_type: "vps",
   agent_version: "0.4.1",
@@ -120,10 +119,10 @@ describe("HostPage", () => {
       <HostPage hostId={7} tab="overview" onTabChange={() => {}} />,
     );
     await screen.findByRole("heading", { name: "kessel" });
-    // The site is all the header states about the machine. OS, kernel and
+    // The location is all the header states about the machine. OS, kernel and
     // arch were here too until the System card was found to be printing the
-    // same three a few centimetres below; the site is the one of the four
-    // that card does not carry.
+    // same three a few centimetres below; this one stays because the card
+    // keeps it folded away behind a disclosure.
     const header = within(screen.getByRole("banner", { name: "Host summary" }));
     expect(header.getByText(/Zurich/)).toBeInTheDocument();
     expect(header.queryByText(/Ubuntu 24\.04/)).toBeNull();
@@ -190,12 +189,16 @@ describe("HostPage", () => {
     expect(badge.className).toContain("badge");
   });
 
-  // A host with no site is the common case on a fresh install, and the header
-  // used to answer it with a bare em dash: a placeholder with no label beside
-  // it to say which fact was missing, which reads as a rendering fault. The
-  // line is simply not there instead.
-  it("says nothing at all about the site of a host that has none", async () => {
-    vi.mocked(api.getHost).mockResolvedValue({ ...host, site_name: null });
+  // An agent with neither AGENT_LOCATION nor AGENT_PROVIDER set is the common
+  // case, and the header used to answer it with a bare em dash: a placeholder
+  // with no label beside it to say which fact was missing, which reads as a
+  // rendering fault. The line is simply not there instead.
+  it("says nothing at all about the location of a host that reports none", async () => {
+    vi.mocked(api.getHost).mockResolvedValue({
+      ...host,
+      location: null,
+      provider: null,
+    });
 
     render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
 

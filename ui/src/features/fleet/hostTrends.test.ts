@@ -740,19 +740,21 @@ describe("buildRows", () => {
     net_rx_bytes: null,
     net_tx_bytes: null,
     threads: null,
+    location: "Roubaix, France",
   };
-  const site = { id: 3, name: "zrh1" } as Site;
+  // Nothing is joined any more: the location rides the host, so this takes
+  // the host list and the trends and nothing else.
+  it("carries the host through untouched", () => {
+    const rows = buildRows([host], new Map());
 
-  it("joins the site name from the one /sites call", () => {
-    const rows = buildRows([host], [site], new Map());
-
-    expect(rows[0]!.site_name).toBe("zrh1");
+    expect(rows[0]!.hostname).toBe(host.hostname);
+    expect(rows[0]!.location).toBe("Roubaix, France");
   });
 
   // A host whose trends have not arrived yet must render as gaps and absent
   // markers, never as zeroes: not fetched is not the same as measured zero.
   it("leaves a host without trends empty rather than at zero", () => {
-    const rows = buildRows([host], [site], new Map());
+    const rows = buildRows([host], new Map());
 
     expect(rows[0]!.cpu).toEqual([]);
     expect(rows[0]!.rx).toEqual([]);
@@ -776,7 +778,7 @@ describe("buildRows", () => {
       postFailures: 0,
     };
 
-    const rows = buildRows([host], [site], new Map([[1, trends]]));
+    const rows = buildRows([host], new Map([[1, trends]]));
 
     expect(rows[0]!.cpu).toEqual(trends.cpu);
     expect(rows[0]!.fullest).toEqual(trends.fullest);

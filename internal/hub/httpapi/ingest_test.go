@@ -141,6 +141,48 @@ func TestIntegrationIngestStopsAskingOnceMetadataMatches(t *testing.T) {
 	}
 }
 
+// Clearing a host's metadata_hash is how a migration gets every agent to say
+// something it has already said.
+//
+// The 0009 migration needs this and could not work without it: it added the
+// location columns, but the hash an agent computes covers the whole Metadata
+// message and has always included location, so an existing host's stored hash
+// still matches exactly what its agent would send. Metadata is sent once and
+// then only on change, and not even an agent restart resends it -- so the new
+// columns would have stayed NULL on every upgraded hub, which is the bug that
+// migration exists to fix. Emptying the hash is the one lever the protocol
+// already offers, and this pins that it still works.
+func TestIntegrationIngestAsksAgainOnceTheStoredHashIsCleared(t *testing.T) {
+	srv, token, s := newFixture(t)
+	hash := []byte{9, 9, 9, 9, 9, 9, 9, 9}
+
+	post(t, srv, token, &netrav1.IngestRequest{
+		Seq:          1,
+		MetadataHash: hash,
+		Metadata:     &netrav1.Metadata{Hostname: "h1", Location: "Roubaix, France"},
+	})
+
+	// The steady state: same hash, nothing asked for.
+	var out netrav1.IngestResponse
+	decodeBody(t, post(t, srv, token,
+		&netrav1.IngestRequest{Seq: 2, MetadataHash: hash}), &out)
+	if out.RequestMetadata {
+		t.Fatal("RequestMetadata = true, want false while the hash matches")
+	}
+
+	// What the migration does.
+	if _, err := s.Pool().Exec(context.Background(),
+		`UPDATE hosts SET metadata_hash = NULL`); err != nil {
+		t.Fatalf("clear metadata_hash: %v", err)
+	}
+
+	decodeBody(t, post(t, srv, token,
+		&netrav1.IngestRequest{Seq: 3, MetadataHash: hash}), &out)
+	if !out.RequestMetadata {
+		t.Fatal("RequestMetadata = false, want true once the stored hash is empty")
+	}
+}
+
 func TestIntegrationIngestRejectsMalformedBody(t *testing.T) {
 	srv, token, s := newFixture(t)
 
