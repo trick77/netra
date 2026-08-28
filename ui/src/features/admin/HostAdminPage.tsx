@@ -4,6 +4,7 @@ import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import { Input, Select } from "../../ui/Control";
 import { EmptyState } from "../../ui/EmptyState";
+import { Table, type Column } from "../../ui/Table";
 import { relative } from "../../lib/format";
 import {
   createHost,
@@ -251,6 +252,77 @@ function sitePatchOf(site: Site, draft: SiteDraft): SitePatch {
  * (site_id, hostname)). A site created after its hosts cannot be applied to
  * them.
  */
+/**
+ * The site list's columns.
+ *
+ * Every column that holds a value sorts; Actions does not, because a button
+ * has no order. Each sortValue returns null where the cell prints "none" --
+ * a site with no facility is not a site whose facility is called "none", and
+ * Table already puts the unknowns at one end whichever way the arrow points.
+ */
+function siteColumns(
+  providerName: (id: number | null) => string | null,
+  editing: number | null,
+  startEdit: (site: Site) => void,
+): Column<Site>[] {
+  return [
+    {
+      key: "name",
+      header: "Site",
+      cell: (site) => site.name,
+      sortValue: (site) => site.name,
+    },
+    {
+      key: "provider",
+      header: "Provider",
+      cell: (site) => providerName(site.provider_id) ?? "none",
+      sortValue: (site) => providerName(site.provider_id),
+    },
+    {
+      key: "facility",
+      header: "Facility",
+      cell: (site) => site.facility ?? "none",
+      sortValue: (site) => site.facility,
+    },
+    {
+      key: "country",
+      header: "Country",
+      cell: (site) => site.country_code ?? "none",
+      sortValue: (site) => site.country_code,
+    },
+    {
+      key: "coordinates",
+      header: "Coordinates",
+      /* 0,0 is a real place in the Gulf of Guinea, so the test is against
+         null and not against falsiness. */
+      cell: (site) =>
+        site.latitude === null || site.longitude === null
+          ? "none"
+          : `${site.latitude}, ${site.longitude}`,
+      // By LATITUDE, which is the half of the pair that orders sites the way
+      // an operator thinks of them -- north to south. A pair rendered as one
+      // string would sort "9.1, 2.0" above "10.4, 2.0", and there is no
+      // single number a coordinate honestly reduces to.
+      sortValue: (site) => site.latitude,
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      cell: (site) => (
+        <div className="toolbar">
+          <Button
+            small
+            disabled={editing !== null && editing !== site.id}
+            onClick={() => startEdit(site)}
+          >
+            Edit
+          </Button>
+        </div>
+      ),
+    },
+  ];
+}
+
 function SitesSection({
   sites,
   providers,
@@ -450,52 +522,18 @@ function SitesSection({
       ) : null}
 
       {sites.length > 0 ? (
-        <>
-          {/* Same wrapper the Table primitive uses: a wide table must scroll
-              inside its own box rather than widening the page. */}
-          <div className="tablewrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Site</th>
-                  <th>Provider</th>
-                  <th>Facility</th>
-                  <th>Country</th>
-                  <th>Coordinates</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sites.map((site) => (
-                  <tr key={site.id}>
-                    <td>{site.name}</td>
-                    <td>{providerName(site.provider_id) ?? "none"}</td>
-                    <td>{site.facility ?? "none"}</td>
-                    <td>{site.country_code ?? "none"}</td>
-                    <td>
-                      {/* 0,0 is a real place in the Gulf of Guinea, so the
-                          test is against null and not against falsiness. */}
-                      {site.latitude === null || site.longitude === null
-                        ? "none"
-                        : `${site.latitude}, ${site.longitude}`}
-                    </td>
-                    <td>
-                      <div className="toolbar">
-                        <Button
-                          small
-                          disabled={editing !== null && editing !== site.id}
-                          onClick={() => startEdit(site)}
-                        >
-                          Edit
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+        // The shared Table, not a hand-rolled one. It was hand-rolled for the
+        // markup, which is trivial -- but the markup was never the point: the
+        // primitive is where click-to-sort lives, and a page that writes its
+        // own <thead> is a page whose columns silently cannot sort. Built
+        // inline rather than at module scope because the Actions cell closes
+        // over `editing` and `startEdit`; the list is a handful of rows, so
+        // re-deriving it per render costs nothing worth memoising.
+        <Table
+          columns={siteColumns(providerName, editing, startEdit)}
+          rows={sites}
+          rowKey={(site) => site.id}
+        />
       ) : null}
 
       {edited !== undefined && draft !== null ? (
@@ -624,6 +662,87 @@ function SitesSection({
  * SPA (spec §9). Every call rides the session cookie same-origin; no bearer
  * token is ever held by this page.
  */
+/**
+ * The host list's columns.
+ *
+ * Named `hostColumns` like the fleet's, and deliberately not shared with it:
+ * that one is a monitoring row -- charts, meters, a status rail -- and this
+ * one is a registry row with a token to rotate. They answer different
+ * questions about the same machine.
+ *
+ * Bundled into one options object rather than six positional parameters,
+ * which past two or three is a call nobody can read at the call site.
+ */
+function hostColumns({
+  siteName,
+  rotating,
+  confirming,
+  onRotate,
+  onDelete,
+  setConfirming,
+}: {
+  siteName: (id: number | null) => string | null;
+  rotating: number | null;
+  confirming: number | null;
+  onRotate: (host: Host) => Promise<void>;
+  onDelete: (host: Host) => Promise<void>;
+  setConfirming: (id: number | null) => void;
+}): Column<Host>[] {
+  return [
+    {
+      key: "hostname",
+      header: "Host",
+      cell: (host) => host.hostname,
+      sortValue: (host) => host.hostname,
+    },
+    {
+      key: "site",
+      header: "Site",
+      cell: (host) => siteName(host.site_id) ?? "none",
+      sortValue: (host) => siteName(host.site_id),
+    },
+    {
+      key: "last_seen",
+      header: "Last seen",
+      /* A host with a token but no agent yet has never reported, which is a
+         different fact from "the age is unknown" -- and on this page it is
+         the expected state right after creation. */
+      cell: (host) =>
+        host.last_seen === null ? "never" : relative(host.last_seen),
+      // The instant, not the "3 minutes ago" the cell prints. A host that has
+      // never reported is the unknown Table sorts last, which is where a row
+      // waiting for its agent belongs at either end of this column.
+      sortValue: (host) =>
+        host.last_seen === null ? null : Date.parse(host.last_seen),
+    },
+    {
+      key: "actions",
+      header: "Actions",
+      cell: (host) => (
+        <div className="toolbar">
+          <Button
+            small
+            busy={rotating === host.id}
+            disabled={rotating !== null}
+            onClick={() => void onRotate(host)}
+          >
+            Rotate token
+          </Button>
+          {confirming === host.id ? (
+            <Button small variant="danger" onClick={() => void onDelete(host)}>
+              Confirm delete
+            </Button>
+          ) : (
+            <Button small onClick={() => setConfirming(host.id)}>
+              Delete
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
+}
+
 export function HostAdminPage() {
   const [hosts, setHosts] = useState<Host[] | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
@@ -878,63 +997,20 @@ export function HostAdminPage() {
             </div>
           ) : null}
 
-          {/* Same wrapper the Table primitive uses: a wide table must
-              scroll inside its own box rather than widening the page and
-              taking the nav with it. */}
-          <div className="tablewrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Host</th>
-                  <th>Site</th>
-                  <th>Last seen</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {hosts.map((host) => (
-                  <tr key={host.id}>
-                    <td>{host.hostname}</td>
-                    <td>{siteName(host.site_id) ?? "none"}</td>
-                    <td>
-                      {/* A host with a token but no agent yet has never
-                        reported, which is a different fact from "the age is
-                        unknown" -- and on this page it is the expected state
-                        right after creation. */}
-                      {host.last_seen === null
-                        ? "never"
-                        : relative(host.last_seen)}
-                    </td>
-                    <td>
-                      <div className="toolbar">
-                        <Button
-                          small
-                          busy={rotating === host.id}
-                          disabled={rotating !== null}
-                          onClick={() => void onRotate(host)}
-                        >
-                          Rotate token
-                        </Button>
-                        {confirming === host.id ? (
-                          <Button
-                            small
-                            variant="danger"
-                            onClick={() => void onDelete(host)}
-                          >
-                            Confirm delete
-                          </Button>
-                        ) : (
-                          <Button small onClick={() => setConfirming(host.id)}>
-                            Delete
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {/* The shared Table, for the reason the site list above gives:
+              hand-rolling the markup also hand-rolls away the sorting. */}
+          <Table
+            columns={hostColumns({
+              siteName,
+              rotating,
+              confirming,
+              onRotate,
+              onDelete,
+              setConfirming,
+            })}
+            rows={hosts}
+            rowKey={(host) => host.id}
+          />
         </>
       ) : null}
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Event } from "../../../lib/api";
 import { Events, eventSeverity } from "./Events";
 
@@ -78,5 +79,68 @@ describe("Events", () => {
     expect(
       screen.getByRole("heading", { name: /nothing/i }),
     ).toBeInTheDocument();
+  });
+});
+
+// The events log shipped with no sortable column at all -- five columns of
+// timestamps, categories and words, and the only order available was the
+// newest-first this tab imposes on arrival.
+describe("Events sorting", () => {
+  const rows = [
+    event({ id: "e:1", ts: "2026-08-10T09:00:00Z", type: "package" }),
+    event({
+      id: "e:2",
+      ts: "2026-08-10T10:00:00Z",
+      type: "drive",
+      subject: "sda",
+      detail: { severity: "critical" },
+    }),
+    event({
+      id: "e:3",
+      ts: "2026-08-10T08:00:00Z",
+      type: "unit",
+      subject: "cron.service",
+      detail: { severity: "warning" },
+    }),
+  ];
+
+  /** The Subject cell of every body row, in order. */
+  function subjects(): string[] {
+    const [, ...body] = screen.getAllByRole("row");
+    return body.map((row) => within(row).getAllByRole("cell")[3]!.textContent!);
+  }
+
+  function header(name: RegExp) {
+    return within(screen.getByRole("columnheader", { name })).getByRole(
+      "button",
+    );
+  }
+
+  it("offers a sort control on every column", () => {
+    render(<Events events={rows} />);
+
+    for (const cell of screen.getAllByRole("columnheader")) {
+      expect(within(cell).getByRole("button")).toBeInTheDocument();
+    }
+  });
+
+  // The tab lands newest-first; one click on When gives oldest-first, which
+  // is what a reader chasing a cause is after.
+  it("orders When oldest-first on the first click", async () => {
+    render(<Events events={rows} />);
+    await userEvent.click(header(/when/i));
+
+    expect(subjects()).toEqual(["cron.service", "openssl", "sda"]);
+  });
+
+  // By RANK, not alphabetically: "critical" collates above "warning", so a
+  // string sort is right in one direction and backwards in the other -- and
+  // an event the collector said nothing about is not the calmest on the page,
+  // so it sorts last either way.
+  it("orders Severity by rank and leaves the unstated ones last", async () => {
+    render(<Events events={rows} />);
+    await userEvent.click(header(/severity/i));
+
+    expect(subjects()).toEqual(["cron.service", "sda", "openssl"]);
   });
 });

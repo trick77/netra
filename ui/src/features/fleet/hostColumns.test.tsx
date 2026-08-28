@@ -104,16 +104,106 @@ describe("hostColumns", () => {
       expect(disk.sortValue!(makeRow({ fullest: null }))).toBeNull();
     });
 
-    // A sparkline has no order. Offering a control that cannot sort is worse
-    // than offering none.
-    it("offers no ordering on the chart columns", () => {
+    // The chart columns sort too. They did not, on the argument that a
+    // sparkline has no order -- true of the picture, and not of the reading
+    // it draws: the right-hand edge is a number, it is the number the reader
+    // takes off the cell, and four of six columns offering no control at all
+    // read as a broken table rather than as a considered one.
+    it("orders every column, charts included", () => {
       const cols = hostColumns("1h");
 
-      for (const header of ["CPU", "Memory", "Traffic", "Filesystem"]) {
-        expect(
-          cols.find((c) => c.header === header)!.sortValue,
-        ).toBeUndefined();
+      for (const col of cols) {
+        expect(col.sortValue, `${col.header} has no sortValue`).toBeDefined();
       }
+    });
+
+    it("sorts CPU on the stack's latest total", () => {
+      const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
+
+      // The last bucket of each band: 11 + 6 + 2 + 0.
+      expect(cpu.sortValue!(makeRow())).toBe(19);
+    });
+
+    // Per band, not one shared index: the bands are gridded independently, so
+    // a band whose newest bucket has not landed must contribute its last
+    // REPORTED value rather than drop out of the total.
+    it("reads each CPU band's own last reported value", () => {
+      const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
+      const row = makeRow({
+        cpu: [
+          { name: "user", color: "var(--s1)", values: [10, 12, null] },
+          { name: "system", color: "var(--s2)", values: [5, 4, 6] },
+        ],
+      });
+
+      expect(cpu.sortValue!(row)).toBe(18);
+    });
+
+    it("gives a host that has never reported CPU no sort value", () => {
+      const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
+
+      expect(cpu.sortValue!(makeRow({ cpu: [] }))).toBeNull();
+    });
+
+    // A fraction of the ceiling the cell draws against, never the bytes: on
+    // bytes the fleet would order by how much RAM each machine HAS.
+    it("sorts Memory on the fraction of mem_total in use", () => {
+      const memory = hostColumns("1h").find((c) => c.header === "Memory")!;
+      const row = makeRow({
+        mem_total: 16_000_000_000,
+        mem: [{ name: "used", color: "var(--s1)", values: [null, 4e9] }],
+      });
+
+      expect(memory.sortValue!(row)).toBeCloseTo(0.25);
+    });
+
+    it("gives a host with no memory ceiling no sort value", () => {
+      const memory = hostColumns("1h").find((c) => c.header === "Memory")!;
+
+      expect(memory.sortValue!(makeRow({ mem_total: null }))).toBeNull();
+    });
+
+    // Both directions summed: the cell prints in AND out, and the fleet
+    // question is which host is moving the most.
+    it("sorts Traffic on the two rates the cell prints", () => {
+      const traffic = hostColumns("1h").find((c) => c.header === "Traffic")!;
+      const row = makeRow({
+        last_seen: new Date().toISOString(),
+        net_rx_bytes: 1.5e6,
+        net_tx_bytes: 4e5,
+      });
+
+      expect(traffic.sortValue!(row)).toBe(1.9e6);
+    });
+
+    // The cell prints nothing for a host that has gone quiet, and a list
+    // ordered by a number it refuses to draw would put that host at the top.
+    it("gives a host that is no longer reporting no traffic sort value", () => {
+      const traffic = hostColumns("1h").find((c) => c.header === "Traffic")!;
+      const row = makeRow({ last_seen: "2020-01-01T00:00:00Z" });
+
+      expect(traffic.sortValue!(row)).toBeNull();
+    });
+
+    // The fullest mount's CURRENT reading, not an average across mounts: a
+    // 503 GB root at 68% beside a 7.8 TB array at 88% averages to a number
+    // that hides whichever one is about to fill.
+    it("sorts Filesystem on the highest mount, not the mean", () => {
+      const fs = hostColumns("1h").find((c) => c.header === "Filesystem")!;
+      const row = makeRow({
+        disk: [
+          { name: "/", color: "var(--s1)", values: [60, 68] },
+          { name: "/tank", color: "var(--s2)", values: [80, 88] },
+        ],
+      });
+
+      expect(fs.sortValue!(row)).toBe(88);
+    });
+
+    it("gives a host with no filesystem series no sort value", () => {
+      const fs = hostColumns("1h").find((c) => c.header === "Filesystem")!;
+
+      expect(fs.sortValue!(makeRow({ disk: [] }))).toBeNull();
     });
   });
 

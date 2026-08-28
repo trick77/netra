@@ -6,6 +6,7 @@ import type {
   Container,
   Drive,
   Filesystem,
+  Iface,
   MetricsResponse,
   Pkg,
   Unit,
@@ -14,6 +15,7 @@ import { ABSENT } from "../../../lib/format";
 import {
   Containers,
   Drives,
+  Interfaces,
   Mounts,
   Inventory,
   Network,
@@ -769,5 +771,287 @@ describe("Drives", () => {
 
     expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
     expect(screen.queryByText(/produced a reading/)).toBeNull();
+  });
+});
+
+// Every inventory table shipped with zero sortable columns: the shared Table
+// sorts any column that hands it a `sortValue`, and none of these ever did.
+// Forty columns of strings, byte counts and timestamps, each of them an
+// obvious thing to order a list by, and the only order available was the
+// hub's own ORDER BY.
+//
+// These tests click through the real header buttons rather than reaching for
+// the accessors, because the accessor is only half of it -- a column with a
+// sortValue and no button in its header sorts nothing.
+describe("inventory sorting", () => {
+  /** The visible text of the first cell of every body row, in order. */
+  function firstCells(): string[] {
+    const [, ...rows] = screen.getAllByRole("row");
+    return rows.map((row) => within(row).getAllByRole("cell")[0]!.textContent!);
+  }
+
+  function header(name: RegExp) {
+    return within(screen.getByRole("columnheader", { name })).getByRole(
+      "button",
+    );
+  }
+
+  describe("Mounts", () => {
+    // The sizes are joined in from the metrics family by label, so a row
+    // literal cannot carry them -- see Mounts itself.
+    const mounts = [
+      { id: 1, label: "root", mountpoint: "/", device_id: null },
+      { id: 2, label: "data", mountpoint: "/data", device_id: null },
+    ];
+
+    // root: 500 GB, 450 used, 50 free -> 90% of what df counts.
+    // data: 8 TB, 800 used, 7200 free -> 10%.
+    const sizes = {
+      family: "filesystem",
+      tier: "raw",
+      step_s: 60,
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:01:00Z" },
+      requested_window: {
+        from: "2026-08-10T00:00:00Z",
+        to: "2026-08-10T00:01:00Z",
+      },
+      warnings: [],
+      key_columns: ["filesystem"],
+      columns: ["total", "used", "free"],
+      series: [
+        {
+          key: { filesystem: "root" },
+          points: [[Date.parse("2026-08-10T00:00:00Z"), 500e9, 450e9, 50e9]],
+        },
+        {
+          key: { filesystem: "data" },
+          points: [[Date.parse("2026-08-10T00:00:00Z"), 8000e9, 800e9, 7200e9]],
+        },
+      ],
+      truncated: false,
+    } as unknown as MetricsResponse;
+
+    it("offers a sort control on every column", () => {
+      render(<Mounts rows={mounts} metrics={sizes} />);
+
+      for (const cell of screen.getAllByRole("columnheader")) {
+        expect(within(cell).getByRole("button")).toBeInTheDocument();
+      }
+    });
+
+    // The cells read "500 GB" and "8 TB", which as strings put the 8 TB mount
+    // first. Sorting on the byte count is the whole point of the column
+    // having its own accessor.
+    it("orders Size by bytes and not by the formatted string", async () => {
+      render(<Mounts rows={mounts} metrics={sizes} />);
+      await userEvent.click(header(/size/i));
+
+      expect(firstCells()).toEqual(["root", "data"]);
+    });
+
+    // The bigger disk is the emptier one, so Usage and Size must not agree.
+    it("orders Usage by the same Use% the meter draws", async () => {
+      render(<Mounts rows={mounts} metrics={sizes} />);
+      await userEvent.click(header(/usage/i));
+
+      expect(firstCells()).toEqual(["data", "root"]);
+    });
+  });
+
+  describe("Network", () => {
+    const two = [
+      addresses[0]!,
+      { ...addresses[0]!, iface: "eth1", address: "192.0.2.9/24", family: 6 },
+    ];
+
+    it("offers a sort control on every column", () => {
+      render(<Network rows={two} />);
+
+      for (const cell of screen.getAllByRole("columnheader")) {
+        expect(within(cell).getByRole("button")).toBeInTheDocument();
+      }
+    });
+
+    // .10 above .9: the shared comparator is numeric-aware, which is the one
+    // property that makes an address column worth sorting at all.
+    it("orders addresses numerically, not lexically", async () => {
+      render(<Network rows={two} />);
+      await userEvent.click(header(/address/i));
+
+      expect(firstCells()).toEqual(["eth1", "eth0"]);
+    });
+
+    // The family NUMBER, so v4 groups before v6 whatever they are called.
+    it("orders Family by the number behind the name", async () => {
+      render(<Network rows={two} />);
+      await userEvent.click(header(/family/i));
+
+      expect(firstCells()).toEqual(["eth0", "eth1"]);
+    });
+  });
+
+  describe("Interfaces", () => {
+    const ifaces: Iface[] = [
+      {
+        iface: "eth0",
+        if_index: 2,
+        oper_state: "up",
+        speed_mbps: 10_000,
+        duplex: "full",
+        mtu: 9000,
+        mac: "aa:bb:cc:dd:ee:01",
+        description: "uplink",
+        first_seen: "2026-07-01T00:00:00Z",
+        last_seen: "2026-08-01T00:00:00Z",
+      },
+      {
+        iface: "eth1",
+        if_index: 3,
+        oper_state: "down",
+        speed_mbps: 100,
+        duplex: null,
+        mtu: 1500,
+        mac: null,
+        description: null,
+        first_seen: "2026-07-01T00:00:00Z",
+        last_seen: "2026-08-02T00:00:00Z",
+      },
+    ];
+
+    it("offers a sort control on every column", () => {
+      render(<Interfaces rows={ifaces} />);
+
+      for (const cell of screen.getAllByRole("columnheader")) {
+        expect(within(cell).getByRole("button")).toBeInTheDocument();
+      }
+    });
+
+    // "10 Gb/s" and "100 Mb/s" as strings put the 10 Gb link first, which is
+    // the wrong end. Megabits do not.
+    it("orders Speed by megabits and not by the printed unit", async () => {
+      render(<Interfaces rows={ifaces} />);
+      await userEvent.click(header(/speed/i));
+
+      expect(firstCells()[0]).toMatch(/eth1/);
+    });
+
+    it("orders MTU by the number, so 9000 sorts above 1500", async () => {
+      render(<Interfaces rows={ifaces} />);
+      await userEvent.click(header(/mtu/i));
+
+      expect(firstCells()[0]).toMatch(/eth1/);
+    });
+  });
+
+  describe("Drives", () => {
+    // 197 pending sectors is a finding; a drive with no attributes has none
+    // to judge and reads as ok.
+    const failing: Drive = {
+      device: "sda",
+      model: "ST16000NM000J",
+      serial: "ZR5A1PQ2",
+      attributes: [
+        { id: 9, raw: 40_000, normalized: 98 },
+        { id: 194, raw: 49, normalized: 71 },
+        { id: 197, raw: 15, normalized: 68 },
+      ],
+      last_seen: "2026-08-23T11:00:00Z",
+    };
+    const healthy: Drive = {
+      device: "sdb",
+      model: "WDC WD40EFRX",
+      serial: "WD-WCC4E",
+      attributes: [
+        { id: 9, raw: 100, normalized: 99 },
+        { id: 194, raw: 30, normalized: 80 },
+      ],
+      last_seen: "2026-08-23T11:00:00Z",
+    };
+
+    it("offers a sort control on every column", () => {
+      render(<Drives rows={[failing, healthy]} />);
+
+      for (const cell of screen.getAllByRole("columnheader")) {
+        expect(within(cell).getByRole("button")).toBeInTheDocument();
+      }
+    });
+
+    // The reason the table exists: the drives in trouble have to collect at
+    // one end, which ordering on the finding TEXT would never do.
+    it("orders Findings by severity, worst last ascending", async () => {
+      render(<Drives rows={[failing, healthy]} />);
+      await userEvent.click(header(/findings/i));
+
+      expect(firstCells()[0]).toMatch(/sdb/);
+    });
+
+    // 49 °C against 30 °C, and the cell prints "49 °C" -- a string sort would
+    // agree here by luck, so the assertion is on the reading being numeric.
+    it("orders Temp by degrees", async () => {
+      render(<Drives rows={[failing, healthy]} />);
+      await userEvent.click(header(/temp/i));
+
+      expect(firstCells()[0]).toMatch(/sdb/);
+    });
+
+    // The cell prints "4 y" and "4 d"; hours are what separate them.
+    it("orders Power on by hours and not by the printed duration", async () => {
+      render(<Drives rows={[failing, healthy]} />);
+      await userEvent.click(header(/power on/i));
+
+      expect(firstCells()[0]).toMatch(/sdb/);
+    });
+  });
+
+  describe("Packages", () => {
+    const rows = [
+      pkg({ name: "vim", size_bytes: 900_000_000 }),
+      pkg({ name: "openssl", size_bytes: 2_000_000_000 }),
+    ];
+
+    it("offers a sort control on every column", () => {
+      render(<Packages rows={rows} now={new Date("2026-08-10T00:00:00Z")} />);
+
+      for (const cell of screen.getAllByRole("columnheader")) {
+        expect(within(cell).getByRole("button")).toBeInTheDocument();
+      }
+    });
+
+    it("orders Size by bytes", async () => {
+      render(<Packages rows={rows} now={new Date("2026-08-10T00:00:00Z")} />);
+      await userEvent.click(header(/size/i));
+
+      expect(firstCells()).toEqual(["vim", "openssl"]);
+    });
+  });
+
+  describe("Units", () => {
+    const flapping = [
+      { ...units[0]!, restarts_1h: 9 },
+      { ...units[1]!, restarts_1h: 0 },
+    ];
+
+    it("offers a sort control on every column", () => {
+      render(<Units rows={flapping} />);
+
+      for (const cell of screen.getAllByRole("columnheader")) {
+        expect(within(cell).getByRole("button")).toBeInTheDocument();
+      }
+    });
+
+    // The badge above the threshold must not change how the number orders.
+    it("orders Restarts by the count, badge or no badge", async () => {
+      render(<Units rows={flapping} />);
+      await userEvent.click(header(/restarts/i));
+
+      expect(firstCells()).toEqual(["cron.service", "ssh.service"]);
+    });
+
+    it("orders Since by the instant behind the relative phrase", async () => {
+      render(<Units rows={flapping} />);
+      await userEvent.click(header(/since/i));
+
+      expect(firstCells()).toEqual(["ssh.service", "cron.service"]);
+    });
   });
 });

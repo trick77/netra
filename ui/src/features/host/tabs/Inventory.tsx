@@ -21,6 +21,7 @@ import {
   driveKind,
   drivePowerOnHours,
   driveSeverity,
+  driveSeverityRank,
   driveTemperature,
   driveTempAttrId,
   driveWearPct,
@@ -383,15 +384,39 @@ type FilesystemRow = Filesystem & {
 };
 
 const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
-  { key: "label", header: "Label", cell: (row) => row.label },
+  {
+    key: "label",
+    header: "Label",
+    cell: (row) => row.label,
+    sortValue: (row) => row.label,
+  },
   {
     key: "mountpoint",
     header: "Mountpoint",
     cell: (row) => row.mountpoint ?? ABSENT,
+    sortValue: (row) => row.mountpoint ?? null,
   },
-  { key: "size", header: "Size", cell: (row) => bytes(row.total) },
-  { key: "used", header: "Used", cell: (row) => bytes(row.used) },
-  { key: "free", header: "Free", cell: (row) => bytes(row.free) },
+  // The three byte columns sort on the RAW bytes, never on the "1.4 TB" the
+  // cell prints: those strings collate "999 GB" above "1.4 TB", which is the
+  // one thing a size column must not do.
+  {
+    key: "size",
+    header: "Size",
+    cell: (row) => bytes(row.total),
+    sortValue: (row) => row.total,
+  },
+  {
+    key: "used",
+    header: "Used",
+    cell: (row) => bytes(row.used),
+    sortValue: (row) => row.used,
+  },
+  {
+    key: "free",
+    header: "Free",
+    cell: (row) => bytes(row.free),
+    sortValue: (row) => row.free,
+  },
   {
     key: "usage",
     header: "Usage",
@@ -416,6 +441,13 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
           />
         </div>
       ),
+    // The same Use% the meter is drawn from, computed once here rather than
+    // read back off the bar. A mount the metrics have not answered for draws
+    // ABSENT and sorts as unknown, not as empty.
+    sortValue: (row) =>
+      row.used === null || row.free === null || row.used + row.free === 0
+        ? null
+        : (row.used / (row.used + row.free)) * 100,
   },
 ];
 
@@ -512,7 +544,12 @@ function ScopePill({ scope }: { scope: string | null }) {
 }
 
 const ADDRESS_COLUMNS: Column<Address>[] = [
-  { key: "iface", header: "Interface", cell: (row) => row.iface },
+  {
+    key: "iface",
+    header: "Interface",
+    cell: (row) => row.iface,
+    sortValue: (row) => row.iface,
+  },
   {
     key: "address",
     header: "Address",
@@ -522,11 +559,18 @@ const ADDRESS_COLUMNS: Column<Address>[] = [
         <ScopePill scope={row.scope} />
       </span>
     ),
+    // The address itself, not the scope pill beside it. Table's string
+    // comparison is numeric-aware, which is what keeps 10.0.0.2 above
+    // 10.0.0.10 -- a plain lexical sort puts them the other way round.
+    sortValue: (row) => row.address,
   },
   {
     key: "family",
     header: "Family",
     cell: (row) => FAMILY_NAME[row.family] ?? String(row.family),
+    // The number, so v4 groups before v6. The printed name would order by
+    // whatever FAMILY_NAME happens to call them.
+    sortValue: (row) => row.family,
   },
   // The Description column moved to the Interfaces table above, and only the
   // column did: Address.description still arrives, and is still searched
@@ -553,9 +597,13 @@ const ADDRESS_COLUMNS: Column<Address>[] = [
     key: "first_seen",
     header: "First seen",
     cell: (row) => <When iso={row.first_seen} />,
+    // The instant, not the relative phrase When prints -- see the Events
+    // tab's When column for the same argument.
+    sortValue: (row) => Date.parse(row.first_seen),
   },
   {
     key: "last_seen",
+    sortValue: (row) => Date.parse(row.last_seen),
     // "Last changed", not "Last seen", because that is what the column holds.
     //
     // The hub does bump last_seen on every upsert
@@ -800,8 +848,16 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
         <DriveHealthPill drive={row} />
       </span>
     ),
+    // The device name, not the health pill beside it -- Findings is the
+    // column for ordering by state.
+    sortValue: (row) => row.device,
   },
-  { key: "model", header: "Model", cell: (row) => row.model ?? ABSENT },
+  {
+    key: "model",
+    header: "Model",
+    cell: (row) => row.model ?? ABSENT,
+    sortValue: (row) => row.model ?? null,
+  },
   {
     key: "serial",
     header: "Serial",
@@ -811,6 +867,7 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
       ) : (
         <span className="ident">{row.serial}</span>
       ),
+    sortValue: (row) => row.serial ?? null,
   },
   {
     key: "temperature",
@@ -820,6 +877,10 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
       const c = driveTemperature(row);
       return c === null ? ABSENT : `${c} °C`;
     },
+    // Degrees, so the order survives driveColumns() swapping this cell for
+    // the sparkline version: that spread keeps everything it does not
+    // override, and the reading is the same either way.
+    sortValue: (row) => driveTemperature(row),
   },
   {
     key: "power_on",
@@ -832,6 +893,10 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
       const hours = drivePowerOnHours(row);
       return hours === null ? ABSENT : duration(hours * 3600);
     },
+    // Hours, not the "5 y" the cell prints: duration() rounds to a unit, so
+    // ordering on its string would tie every drive between five and six
+    // years and then break the tie alphabetically.
+    sortValue: (row) => drivePowerOnHours(row),
   },
   {
     key: "wear",
@@ -843,6 +908,9 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
       const pct = driveWearPct(row);
       return pct === null ? ABSENT : `${pct}%`;
     },
+    // An ATA drive has no figure here, so it sorts as unknown rather than as
+    // a drive with no wear on it.
+    sortValue: (row) => driveWearPct(row),
   },
   {
     key: "last_seen",
@@ -861,10 +929,18 @@ const DRIVE_COLUMNS: Column<Drive>[] = [
     // readings have aged out still has a date rather than a dash.
     header: "Last read",
     cell: (row) => <When iso={row.last_seen} />,
+    sortValue: (row) => Date.parse(row.last_seen),
   },
   {
     key: "findings",
     header: "Findings",
+    // By SEVERITY, not by the text of the first finding: this column exists
+    // so a reader can pull the drives in trouble to one end of the table, and
+    // "3 pending sectors" alphabetises next to nothing useful. A drive with
+    // no findings still ranks (as ok) rather than sorting away as unknown --
+    // "we checked, it is fine" is a reading here, which is the same argument
+    // DriveHealthPill makes about not leaving a healthy drive blank.
+    sortValue: (row) => driveSeverityRank(row),
     // The reason the table exists. Every finding, worst first, in the words an
     // operator would use -- "3 pending sectors", not "attribute 197 = 3".
     cell: (row) => {
@@ -995,6 +1071,10 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
         <LinkStatePill state={row.oper_state} />
       </span>
     ),
+    // The name, not the link state riding on it. Ordering this column by
+    // state would make the one column a reader scans for a device name stop
+    // being alphabetical, which is what it is scanned for.
+    sortValue: (row) => row.iface,
   },
   {
     key: "speed",
@@ -1007,24 +1087,38 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
     // somehow idle.
     cell: (row) =>
       row.speed_mbps === null ? ABSENT : linkSpeed(row.speed_mbps),
+    // Megabits, not the "10 Gb/s" the cell prints: linkSpeed picks a unit, so
+    // the string sorts "1 Gb/s" above "100 Mb/s". A device with no speed to
+    // report stays unknown rather than sorting in at zero -- the same call
+    // the cell makes about not printing one.
+    sortValue: (row) => row.speed_mbps,
   },
-  { key: "duplex", header: "Duplex", cell: (row) => row.duplex ?? ABSENT },
+  {
+    key: "duplex",
+    header: "Duplex",
+    cell: (row) => row.duplex ?? ABSENT,
+    sortValue: (row) => row.duplex ?? null,
+  },
   {
     key: "mtu",
     header: "MTU",
     align: "right",
     cell: (row) => (row.mtu === null ? ABSENT : String(row.mtu)),
+    // The number, so 9000 sorts above 1500 rather than below it.
+    sortValue: (row) => row.mtu,
   },
   {
     key: "mac",
     header: "MAC",
     cell: (row) =>
       row.mac === null ? ABSENT : <span className="ident">{row.mac}</span>,
+    sortValue: (row) => row.mac ?? null,
   },
   {
     key: "description",
     header: "Description",
     cell: (row) => row.description ?? ABSENT,
+    sortValue: (row) => row.description ?? null,
   },
   {
     key: "last_seen",
@@ -1034,6 +1128,7 @@ const INTERFACE_COLUMNS: Column<Iface>[] = [
     // the longer it stays healthy.
     header: "Last changed",
     cell: (row) => <When iso={row.last_seen} />,
+    sortValue: (row) => Date.parse(row.last_seen),
   },
 ];
 
@@ -1077,25 +1172,53 @@ export function Interfaces({ rows }: { rows: readonly Iface[] }) {
 // --- Packages -------------------------------------------------------------
 
 const PACKAGE_COLUMNS: Column<Pkg>[] = [
-  { key: "name", header: "Name", cell: (row) => row.name },
-  { key: "version", header: "Version", cell: (row) => row.version },
-  { key: "arch", header: "Arch", cell: (row) => row.arch },
-  { key: "format", header: "Format", cell: (row) => row.format },
+  {
+    key: "name",
+    header: "Name",
+    cell: (row) => row.name,
+    sortValue: (row) => row.name,
+  },
+  {
+    key: "version",
+    header: "Version",
+    cell: (row) => row.version,
+    // Table's numeric-aware string compare, which gets "1.9" under "1.10"
+    // right and makes no claim to understand an epoch or a "~rc1" suffix.
+    // Ordering Debian versions properly is dpkg's job, not a column's.
+    sortValue: (row) => row.version,
+  },
+  {
+    key: "arch",
+    header: "Arch",
+    cell: (row) => row.arch,
+    sortValue: (row) => row.arch,
+  },
+  {
+    key: "format",
+    header: "Format",
+    cell: (row) => row.format,
+    sortValue: (row) => row.format,
+  },
   {
     key: "size",
     header: "Size",
     align: "right",
     cell: (row) => bytes(row.size_bytes),
+    // Bytes, not the formatted string -- see the filesystem table's own size
+    // columns for what that costs.
+    sortValue: (row) => row.size_bytes,
   },
   {
     key: "first_seen",
     header: "First seen",
     cell: (row) => <When iso={row.first_seen} />,
+    sortValue: (row) => Date.parse(row.first_seen),
   },
   {
     key: "last_seen",
     header: "Last seen",
     cell: (row) => <When iso={row.last_seen} />,
+    sortValue: (row) => Date.parse(row.last_seen),
   },
 ];
 
@@ -1161,7 +1284,12 @@ const UNIT_SEVERITY: Record<string, Severity> = {
 };
 
 const UNIT_COLUMNS: Column<Unit>[] = [
-  { key: "unit", header: "Unit", cell: (row) => row.unit_name },
+  {
+    key: "unit",
+    header: "Unit",
+    cell: (row) => row.unit_name,
+    sortValue: (row) => row.unit_name,
+  },
   {
     key: "state",
     header: "State",
@@ -1173,11 +1301,18 @@ const UNIT_COLUMNS: Column<Unit>[] = [
           {row.state}
         </Badge>
       ),
+    // The state's own word, not the severity the badge is tinted from:
+    // UNIT_SEVERITY collapses several states onto one tint, so ordering by it
+    // would shuffle rows a reader can see are different. This list is already
+    // filtered to what needs attention and is short, so alphabetical is
+    // enough to bring the failed units together.
+    sortValue: (row) => row.state ?? null,
   },
   {
     key: "substate",
     header: "Substate",
     cell: (row) => row.substate ?? ABSENT,
+    sortValue: (row) => row.substate ?? null,
   },
   {
     // The reason a unit that reads active/running is in this table at all. A
@@ -1192,8 +1327,19 @@ const UNIT_COLUMNS: Column<Unit>[] = [
       ) : (
         row.restarts_1h
       ),
+    // The count, badge or no badge: the threshold decides how the number is
+    // drawn, not how it orders.
+    sortValue: (row) => row.restarts_1h,
   },
-  { key: "since", header: "Since", cell: (row) => <When iso={row.since} /> },
+  {
+    key: "since",
+    header: "Since",
+    cell: (row) => <When iso={row.since} />,
+    // Nullable, unlike the other timestamps in these tables: a unit systemd
+    // has no state-change instant for has no age, and Date.parse(null!) would
+    // sort it in as NaN rather than as the unknown it is.
+    sortValue: (row) => (row.since === null ? null : Date.parse(row.since)),
+  },
 ];
 
 export function Units({ rows }: { rows: readonly Unit[] }) {

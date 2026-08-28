@@ -31,6 +31,7 @@ import {
   trafficSeries,
 } from "./hostTrends";
 import { FLEET_RANGE_VALUES } from "./ranges";
+import { lastReported } from "../container/columns";
 
 // The range is only ever a label here: this file never resolves one into a
 // getMetrics() call, it labels a chart that has already been handed
@@ -519,6 +520,43 @@ function DiskCell({ row }: { row: HostRow }) {
 // (HostPage.tsx, RECENT_BOOT_S), which is where a reader who has asked
 // about one machine can act on it.
 
+/**
+ * The stack's latest total: what a stacked sparkline's right-hand edge is
+ * standing at, summed across every band.
+ *
+ * Per-band lastReported rather than one shared index, because the bands are
+ * gridded independently and a host whose newest cpu_core bucket has landed
+ * for six cores and not the seventh must not read as having lost that core's
+ * load. Null only when NO band ever reported -- which is the "unknown" the
+ * table sorts last, and is not the same as a host genuinely sitting at 0.
+ */
+function latestStackTotal(bands: readonly Band[]): number | null {
+  let total: number | null = null;
+  for (const band of bands) {
+    const v = lastReported(band.values);
+    if (v !== null) total = (total ?? 0) + v;
+  }
+  return total;
+}
+
+/**
+ * The highest reading across a set of independently gridded series.
+ *
+ * What the Filesystem cell is scanned for: it draws one line per mount and
+ * the question a reader brings to it is which host has a mount running out,
+ * so the column orders on the topmost line rather than on an average across
+ * mounts -- the same argument the Disk column's own comment makes about not
+ * summing filesystems.
+ */
+function latestPeak(bands: readonly Band[]): number | null {
+  let peak: number | null = null;
+  for (const band of bands) {
+    const v = lastReported(band.values);
+    if (v !== null && (peak === null || v > peak)) peak = v;
+  }
+  return peak;
+}
+
 export function hostColumns(range: Range): Column<HostRow>[] {
   return [
     {
@@ -535,21 +573,58 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       key: "traffic",
       header: "Traffic",
       cell: (row) => <TrafficCell row={row} range={range} />,
+      // The two rates the cell PRINTS, added: the cell shows in and out as a
+      // pair and the fleet question is which host is moving the most, not
+      // which direction it moved it in. Read through the same isReporting
+      // guard the cell reads them through, so a host whose last rates are
+      // hours stale sorts as unknown rather than as busy -- the sparkline
+      // beside them has already gone to a gap, and ordering the list by a
+      // number the cell refuses to draw would put a silent host at the top.
+      sortValue: (row) => {
+        if (!isReporting(row)) return null;
+        const rx = row.net_rx_bytes;
+        const tx = row.net_tx_bytes;
+        if (rx === null && tx === null) return null;
+        return (rx ?? 0) + (tx ?? 0);
+      },
     },
     {
       key: "cpu",
       header: "CPU",
       cell: (row) => <CpuCell row={row} range={range} />,
+      // Where the stack stands now. The cell prints no figure -- it is a
+      // sparkline and nothing else -- so "sort on what the row shows" means
+      // its right-hand edge, which is the reading a reader takes off it.
+      // Normalised against cpu_total by the assembler, so this is percent of
+      // THIS host and a 32-core box does not outrank a busy 4-core one.
+      sortValue: (row) => latestStackTotal(row.cpu),
     },
     {
       key: "memory",
       header: "Memory",
       cell: (row) => <MemoryCell row={row} range={range} />,
+      // A FRACTION of mem_total, not the bytes: the cell draws its stack
+      // against that ceiling and the dashed rule says where the ceiling is,
+      // so what it shows is how full the host is. Sorting on bytes would
+      // order the fleet by how much RAM each machine has, which is the one
+      // question this column is not asking. No ceiling means the cell draws
+      // nothing at all (see MemoryCell), so there is nothing to order on.
+      sortValue: (row) => {
+        if (row.mem_total === null) return null;
+        const used = latestStackTotal(row.mem);
+        return used === null ? null : used / row.mem_total;
+      },
     },
     {
       key: "diskTrend",
       header: "Filesystem",
       cell: (row) => <DiskTrendCell row={row} range={range} />,
+      // The topmost line's current value -- see latestPeak. Deliberately not
+      // the same reading as the Disk column beside it: that one orders by the
+      // mount its row NAMES, which is picked by severity before percentage,
+      // so the two columns can disagree about which host is worst and each is
+      // answering its own question.
+      sortValue: (row) => latestPeak(row.disk),
     },
     {
       key: "disk",
