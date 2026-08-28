@@ -19,7 +19,6 @@ import {
   type Drive,
   type Event,
   type Filesystem,
-  type HostDetail,
   type Iface,
   type MetricsResponse,
   type Pkg,
@@ -37,6 +36,7 @@ import {
   EVENT_LIMITS,
   type Range,
 } from "../../lib/range";
+import { POLL_MS, usePoll } from "../../lib/poll";
 import { loadRange } from "../settings/SettingsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
 import { Events } from "./tabs/Events";
@@ -197,8 +197,15 @@ export function HostPage({
   range: controlledRange,
   onRangeChange,
 }: HostPageProps) {
-  const [host, setHost] = useState<HostDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // The host record, on the same 60-second tick as every other screen. It
+  // used to be fetched once and never again, while the badge it drives reads
+  // the clock at every render: a page left open past STALE_THRESHOLD_MS then
+  // called a host that had been posting all along "offline", blanked its
+  // traffic gauges and told the Overview it last reported four minutes ago --
+  // on the next render of any kind, which is a tab click. A record judged
+  // against a live clock has to move with it.
+  const hostPoll = usePoll(() => getHost(hostId), POLL_MS, [hostId]);
+  const host = hostPoll.data;
   // The time range is shared state across tabs: switching tabs never resets
   // it. It used to be held here and hardcoded to "6h", which meant this page
   // had never heard of the range you picked on the fleet and Settings'
@@ -211,7 +218,6 @@ export function HostPage({
   const range = onRangeChange ? (controlledRange ?? localRange) : localRange;
   const setRange = onRangeChange ?? setLocalRange;
   const [data, setData] = useState<TabData>(NO_DATA);
-  const [reloads, setReloads] = useState(0);
 
   // One family at one range, for an enlarged chart that wants a different
   // window from the page's. It resolves the window exactly the way the tab
@@ -238,219 +244,223 @@ export function HostPage({
     [hostId],
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    // A different host is a different page: without this, the previous
-    // host's inventory would sit under the new host's name until its own
-    // fetch lands, which is the one kind of wrong netra must never be.
-    setHost(null);
-    setData(NO_DATA);
-    getHost(hostId).then(
-      (h) => {
-        if (!cancelled) setHost(h);
-      },
-      (e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [hostId, reloads]);
+  // The active tab's own families, on that same tick. usePoll owns the
+  // cancellation this effect used to hand-roll, and the window is resolved
+  // INSIDE the call rather than once per range change, so each poll slides
+  // `to` forward instead of pinning it at the instant the tab was opened --
+  // the same reason EventsScreen gives in App.tsx.
+  const tabPoll = usePoll(
+    async (): Promise<Partial<TabData>> => {
+      const window = rangeWindow(range);
+      const metrics = (family: string) =>
+        orNull(
+          getMetrics(hostId, {
+            family,
+            from: window.from,
+            to: window.to,
+            step: window.step,
+          }),
+        );
 
-  useEffect(() => {
-    let cancelled = false;
-    const window = rangeWindow(range);
-    const metrics = (family: string) =>
-      orNull(
-        getMetrics(hostId, {
-          family,
-          from: window.from,
-          to: window.to,
-          step: window.step,
-        }),
-      );
-
-    async function load(): Promise<Partial<TabData>> {
-      switch (tab) {
-        case "overview": {
-          const [
-            hostMetrics,
-            filesystemMetrics,
-            agentMetrics,
-            sensorMetrics,
-            containers,
-            units,
-            coreMetrics,
-            netMetrics,
-          ] = await Promise.all([
-            metrics("host"),
-            metrics("filesystem"),
-            metrics("agent"),
-            metrics("sensor"),
-            orNull(getContainers(hostId)),
-            orNull(getUnits(hostId)),
-            // The headline Processor chart is a per-core stack, the same one
-            // the fleet row for this host draws.
-            metrics("cpu_core"),
-            // Traffic: the overview summarised every subsystem except the
-            // one most likely to explain a problem.
-            metrics("net"),
-          ]);
-          return {
-            hostMetrics,
-            filesystemMetrics,
-            agentMetrics,
-            sensorMetrics,
-            containers,
-            units,
-            coreMetrics,
-            netMetrics,
-          };
+      async function load(): Promise<Partial<TabData>> {
+        switch (tab) {
+          case "overview": {
+            const [
+              hostMetrics,
+              filesystemMetrics,
+              agentMetrics,
+              sensorMetrics,
+              containers,
+              units,
+              coreMetrics,
+              netMetrics,
+            ] = await Promise.all([
+              metrics("host"),
+              metrics("filesystem"),
+              metrics("agent"),
+              metrics("sensor"),
+              orNull(getContainers(hostId)),
+              orNull(getUnits(hostId)),
+              // The headline Processor chart is a per-core stack, the same one
+              // the fleet row for this host draws.
+              metrics("cpu_core"),
+              // Traffic: the overview summarised every subsystem except the
+              // one most likely to explain a problem.
+              metrics("net"),
+            ]);
+            return {
+              hostMetrics,
+              filesystemMetrics,
+              agentMetrics,
+              sensorMetrics,
+              containers,
+              units,
+              coreMetrics,
+              netMetrics,
+            };
+          }
+          // Each subject tab fetches the families ITS panels draw, rather than
+          // all nine. The Graphs tab fetched everything because it drew
+          // everything; a Storage tab pulling the ICMP MIB would be paying for
+          // a panel it does not have.
+          case "system": {
+            // No collector or agent family any more: the four panels that read
+            // them are the Collectors tab's now, and this tab would be paying
+            // for two requests nothing on it draws. hostMetrics is what the
+            // Limits card reads, and it was already being fetched.
+            const [hostMetrics, coreMetrics] = await Promise.all([
+              metrics("host"),
+              metrics("cpu_core"),
+            ]);
+            return {
+              hostMetrics,
+              coreMetrics,
+            };
+          }
+          case "collectors": {
+            const [collectorMetrics, agentMetrics] = await Promise.all([
+              metrics("collector"),
+              metrics("agent"),
+            ]);
+            return {
+              collectorMetrics,
+              agentMetrics,
+            };
+          }
+          case "network": {
+            const [
+              addresses,
+              interfaces,
+              hostMetrics,
+              hostSnmpMetrics,
+              hostProtoMetrics,
+              netMetrics,
+            ] = await Promise.all([
+              orNull(getAddresses(hostId)),
+              // orNull, like every other family: a hub too old to serve this
+              // route leaves the table empty and the rest of the tab intact.
+              orNull(getInterfaces(hostId)),
+              metrics("host"),
+              // The IP and ICMP MIBs, and the TCP/UDP volume counters, live in
+              // their own families because they live in their own tables -- a
+              // continuous aggregate cannot gain a column. See
+              // 0003_host_proto_samples.sql. The fragmentation panels read
+              // host and host_snmp TOGETHER, which is why both are here.
+              metrics("host_snmp"),
+              metrics("host_proto"),
+              metrics("net"),
+            ]);
+            return {
+              addresses,
+              interfaces,
+              hostMetrics,
+              hostSnmpMetrics,
+              hostProtoMetrics,
+              netMetrics,
+            };
+          }
+          case "storage": {
+            // The inventory row carries a label, a mountpoint and a device id
+            // and nothing else -- size, used and free live in the metrics
+            // family. Fetching both is what makes this tab answer the question
+            // anyone opens it for: how full is that disk.
+            const [
+              filesystems,
+              drives,
+              filesystemMetrics,
+              diskIoMetrics,
+              smartMetrics,
+            ] = await Promise.all([
+              orNull(getFilesystems(hostId)),
+              // The physical disks under those mounts. orNull, like every
+              // other family: a hub too old to serve the route leaves the
+              // table empty and the rest of the tab intact.
+              orNull(getDrives(hostId)),
+              metrics("filesystem"),
+              metrics("disk_io"),
+              // The SMART readings over time, which is what turns the Drives
+              // table's temperature from a number into a movement. The family
+              // carries every attribute of every drive -- the read API takes no
+              // key filter -- but at an hourly cadence that is a few hundred
+              // points, and it is the only route to this history.
+              metrics("smart"),
+            ]);
+            return {
+              filesystems,
+              drives,
+              filesystemMetrics,
+              diskIoMetrics,
+              smartMetrics,
+            };
+          }
+          case "containers": {
+            // The list and its metrics, so the tab can show what each
+            // container is doing rather than only that it exists.
+            const [containers, containerMetrics] = await Promise.all([
+              orNull(getContainers(hostId)),
+              metrics("container"),
+            ]);
+            return { containers, containerMetrics };
+          }
+          case "packages":
+            return { packages: await orNull(getPackages(hostId)) };
+          case "units":
+            return { units: await orNull(getUnits(hostId)) };
+          case "events":
+            return {
+              events: await orNull(
+                getEvents({
+                  host: hostId,
+                  since: window.from,
+                  until: window.to,
+                  // The same table the fleet log uses. A flat 500 is fine at
+                  // 1h and a silent truncation at 7d, which this page offers:
+                  // one host's dist-upgrade plus a week of ordinary churn
+                  // reaches it, and the rows lost are the oldest -- exactly the
+                  // ones someone widening the window is looking for.
+                  limit: EVENT_LIMITS[range],
+                }),
+              ),
+            };
         }
-        // Each subject tab fetches the families ITS panels draw, rather than
-        // all nine. The Graphs tab fetched everything because it drew
-        // everything; a Storage tab pulling the ICMP MIB would be paying for
-        // a panel it does not have.
-        case "system": {
-          // No collector or agent family any more: the four panels that read
-          // them are the Collectors tab's now, and this tab would be paying
-          // for two requests nothing on it draws. hostMetrics is what the
-          // Limits card reads, and it was already being fetched.
-          const [hostMetrics, coreMetrics] = await Promise.all([
-            metrics("host"),
-            metrics("cpu_core"),
-          ]);
-          return {
-            hostMetrics,
-            coreMetrics,
-          };
-        }
-        case "collectors": {
-          const [collectorMetrics, agentMetrics] = await Promise.all([
-            metrics("collector"),
-            metrics("agent"),
-          ]);
-          return {
-            collectorMetrics,
-            agentMetrics,
-          };
-        }
-        case "network": {
-          const [
-            addresses,
-            interfaces,
-            hostMetrics,
-            hostSnmpMetrics,
-            hostProtoMetrics,
-            netMetrics,
-          ] = await Promise.all([
-            orNull(getAddresses(hostId)),
-            // orNull, like every other family: a hub too old to serve this
-            // route leaves the table empty and the rest of the tab intact.
-            orNull(getInterfaces(hostId)),
-            metrics("host"),
-            // The IP and ICMP MIBs, and the TCP/UDP volume counters, live in
-            // their own families because they live in their own tables -- a
-            // continuous aggregate cannot gain a column. See
-            // 0003_host_proto_samples.sql. The fragmentation panels read
-            // host and host_snmp TOGETHER, which is why both are here.
-            metrics("host_snmp"),
-            metrics("host_proto"),
-            metrics("net"),
-          ]);
-          return {
-            addresses,
-            interfaces,
-            hostMetrics,
-            hostSnmpMetrics,
-            hostProtoMetrics,
-            netMetrics,
-          };
-        }
-        case "storage": {
-          // The inventory row carries a label, a mountpoint and a device id
-          // and nothing else -- size, used and free live in the metrics
-          // family. Fetching both is what makes this tab answer the question
-          // anyone opens it for: how full is that disk.
-          const [
-            filesystems,
-            drives,
-            filesystemMetrics,
-            diskIoMetrics,
-            smartMetrics,
-          ] = await Promise.all([
-            orNull(getFilesystems(hostId)),
-            // The physical disks under those mounts. orNull, like every
-            // other family: a hub too old to serve the route leaves the
-            // table empty and the rest of the tab intact.
-            orNull(getDrives(hostId)),
-            metrics("filesystem"),
-            metrics("disk_io"),
-            // The SMART readings over time, which is what turns the Drives
-            // table's temperature from a number into a movement. The family
-            // carries every attribute of every drive -- the read API takes no
-            // key filter -- but at an hourly cadence that is a few hundred
-            // points, and it is the only route to this history.
-            metrics("smart"),
-          ]);
-          return {
-            filesystems,
-            drives,
-            filesystemMetrics,
-            diskIoMetrics,
-            smartMetrics,
-          };
-        }
-        case "containers": {
-          // The list and its metrics, so the tab can show what each
-          // container is doing rather than only that it exists.
-          const [containers, containerMetrics] = await Promise.all([
-            orNull(getContainers(hostId)),
-            metrics("container"),
-          ]);
-          return { containers, containerMetrics };
-        }
-        case "packages":
-          return { packages: await orNull(getPackages(hostId)) };
-        case "units":
-          return { units: await orNull(getUnits(hostId)) };
-        case "events":
-          return {
-            events: await orNull(
-              getEvents({
-                host: hostId,
-                since: window.from,
-                until: window.to,
-                // The same table the fleet log uses. A flat 500 is fine at
-                // 1h and a silent truncation at 7d, which this page offers:
-                // one host's dist-upgrade plus a week of ordinary churn
-                // reaches it, and the rows lost are the oldest -- exactly the
-                // ones someone widening the window is looking for.
-                limit: EVENT_LIMITS[range],
-              }),
-            ),
-          };
       }
-    }
 
-    load().then((loaded) => {
-      // A response that arrived after the tab or the range changed is
-      // about a question nobody is asking any more.
-      if (!cancelled) setData((prev) => ({ ...prev, ...loaded }));
-    });
+      return load();
+    },
+    POLL_MS,
+    [hostId, tab, range],
+  );
 
-    return () => {
-      cancelled = true;
-    };
-  }, [hostId, tab, range, reloads]);
+  // Merged rather than replaced: a tab fetches only the families its own
+  // panels draw, so the families a previously visited tab loaded have to
+  // survive the switch. usePoll has already dropped the late answer of a
+  // superseded run -- a response about a tab or a range nobody is on any
+  // more -- which is what the cancelled flag here used to do.
+  useEffect(() => {
+    const loaded = tabPoll.data;
+    if (loaded === null) return;
+    setData((prev) => ({ ...prev, ...loaded }));
+  }, [tabPoll.data]);
 
-  const refresh = useCallback(() => setReloads((n) => n + 1), []);
+  // Both halves: the header's record and the tab's families are two polls,
+  // and a reader pressing Refresh is asking for the page, not for half of it.
+  // usePoll's refresh is stable, so this identity is too -- it is handed to
+  // the Containers tab as onPurged.
+  const refresh = useCallback(() => {
+    hostPoll.refresh();
+    tabPoll.refresh();
+  }, [hostPoll.refresh, tabPoll.refresh]);
 
-  if (error !== null) {
+  // Only while there is nothing to show. A poll that fails after the page
+  // has rendered leaves the last good record in place -- usePoll's own rule,
+  // and the right one here: replacing a host's page with an error because one
+  // refresh timed out loses everything the reader was looking at.
+  if (hostPoll.error !== null && host === null) {
     return (
       <div className="hostpage">
-        <p className="note">This host could not be loaded: {error}</p>
+        <p className="note">
+          This host could not be loaded: {hostPoll.error.message}
+        </p>
         <Button variant="secondary" onClick={refresh}>
           Try again
         </Button>

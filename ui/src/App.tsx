@@ -536,6 +536,14 @@ function HostScreen({
 
   return (
     <HostPage
+      // A different host is a different page. HostPage polls its record and
+      // its tab families now, and usePoll deliberately keeps the last good
+      // data across a dependency change -- so without a remount the previous
+      // host's inventory would sit under the new host's name until the new
+      // fetch lands, which is the one kind of wrong netra must never be. The
+      // tab and the range live in the URL, so a remount resets nothing the
+      // reader chose.
+      key={hostId}
       hostId={hostId}
       tab={tab}
       onTabChange={(next: HostTab) => go(`/hosts/${hostId}/${next}${search}`)}

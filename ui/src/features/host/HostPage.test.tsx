@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { HostDetail, MetricsResponse } from "../../lib/api";
 import { ABSENT } from "../../lib/format";
@@ -236,5 +236,92 @@ describe("HostPage", () => {
     const header = await screen.findByRole("banner", { name: "Host summary" });
     expect(within(header).getByText("offline")).toBeInTheDocument();
     expect(within(header).queryByText(/rebooted/)).toBeNull();
+  });
+
+  // This page fetched its record once and never again, while the badge beside
+  // the hostname judges that record against the clock at every render. Left
+  // open past the three-scrape threshold, the next render of any kind -- a tab
+  // click is enough -- called a host that had been posting the whole time
+  // offline, blanked its traffic gauges and told the Overview it had last
+  // reported four minutes ago. A record judged against a live clock has to
+  // move with it.
+  it("keeps a host that is still posting online after the page has been open past the stale threshold", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.getHost).mockImplementation(() =>
+        Promise.resolve({ ...host, last_seen: new Date().toISOString() }),
+      );
+
+      const { rerender } = render(
+        <HostPage hostId={7} tab="overview" onTabChange={() => {}} />,
+      );
+      const header = await screen.findByRole("banner", {
+        name: "Host summary",
+      });
+      expect(within(header).getByText("online")).toBeInTheDocument();
+
+      // Five minutes, well past the 180s in lib/host.ts.
+      await act(async () => {
+        vi.advanceTimersByTime(5 * 60_000);
+      });
+      // The tab click that used to expose it: nothing re-rendered this page
+      // between polls, so the frozen record only reached the badge when
+      // something else made it paint.
+      rerender(<HostPage hostId={7} tab="system" onTabChange={() => {}} />);
+      await screen.findByText("Resources");
+
+      expect(within(header).getByText("online")).toBeInTheDocument();
+      expect(within(header).queryByText("offline")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The other half of the same fact: the fix must not be "never say offline".
+  // A host whose record stops advancing while someone watches its page is
+  // exactly what the badge is for.
+  it("says offline once the record it polls stops advancing", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.getHost).mockResolvedValue({
+        ...host,
+        last_seen: new Date().toISOString(),
+      });
+
+      render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
+      const header = await screen.findByRole("banner", {
+        name: "Host summary",
+      });
+      expect(within(header).getByText("online")).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(5 * 60_000);
+      });
+
+      expect(within(header).getByText("offline")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The charts under the header are on the same tick, for the same reason:
+  // a page that looks live and is frozen is the bug, not just the badge.
+  it("refetches the active tab's families on the tick", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostPage hostId={7} tab="system" onTabChange={() => {}} />);
+      await waitFor(() => expect(api.getMetrics).toHaveBeenCalled());
+      const before = vi.mocked(api.getMetrics).mock.calls.length;
+
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+
+      expect(vi.mocked(api.getMetrics).mock.calls.length).toBeGreaterThan(
+        before,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
