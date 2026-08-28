@@ -16,37 +16,43 @@ import type { Band } from "../ui/charts/StackedSparkline";
  *
  * Colours are token references; index.css owns the palette.
  *
- * ORANGE IS GONE FROM HERE, and that is the point of this assignment. ARC was
- * --s7 (#d95926), which sits a few degrees from --accent (#d97757) and from
- * --st-serious (#ec835a) -- so a memory band, "something needs attention" and
- * a severity were all the same colour, two columns apart, on the same row.
- * ARC takes --s3 (violet), the hue the set had spare.
+ * THE RAMP IS THE EXPLANATION. The stack is ordered by how readily the kernel
+ * can take the bytes back, and the colour now says the same thing the order
+ * does: full chroma at the bottom for the pages nobody can have back, cooling
+ * through the reclaimable subsystems, draining to neutral for page cache.
+ * Magenta -> violet -> cyan -> grey -> light grey. A reader who has never
+ * been told what a band means can still see that the bright part at the
+ * bottom is the part that costs something and the pale part on top is not.
  *
- * The rule that buys is narrower than "orange is never a series": it is that
- * no warm hue is drawn in a DENSE list, where hue is all a reader has and a
- * severity mark sits two columns away. chartSpecs.ts still hands --s7 to the
- * seventh slot of its ramp, and that is fine -- those are large charts with a
- * legend under them.
+ * That is why buffers and cached are NEUTRAL rather than two more hues. A hue
+ * claims page cache is a subsystem with an identity, the way ARC and shmem
+ * are; it is really the absence of one, and the grey pair says so while still
+ * separating from each other by lightness alone (dE 18.5, identical under
+ * every CVD simulation because neither has a hue to lose).
  *
- * The remaining amber (--s8, cached) is the one warm hue this stack keeps,
- * and it is kept knowingly: five bands need five separable hues, and without
- * a warm one no ordering clears the floors -- blue/violet collapse under
- * protanopia and green/magenta under deuteranopia. It is safe because
- * severity never rides on colour alone here: a warned row also carries a
- * rail, a dot and a word.
+ * ORANGE AND AMBER ARE BOTH GONE FROM HERE. ARC was --s7 (#d95926), a few
+ * degrees from --accent (#d97757) and --st-serious (#ec835a), so a memory
+ * band, "something needs attention" and a severity were all the same colour
+ * two columns apart on the same row. Cached was --s8 amber (#c98500), kept as
+ * the one warm hue because five bands needed five separable hues -- neutrals
+ * for the cache pair mean they no longer do, and the stack now holds the
+ * 0-41 degree accent/status band clear with nothing argued for as an
+ * exception. chartSpecs.ts still hands --s7 and --s8 to its ramp, and that is
+ * fine: those are large charts with a legend under them.
  *
- * ORDER IS THE SAFETY MECHANISM, not decoration. Assigned so that bands
- * ADJACENT in the stack below follow s1 -> s2 -> s3 -> s4 -> s8, which is the
- * sequence validated on the #1b1b1a surface: every adjacent pair passes, with
- * the worst at dE 13.2 deuteranopia and 19.3 normal vision. Re-run the
- * validator if the stacking order ever changes -- the pairs it checks are
- * decided by that order, not by this list.
+ * ORDER IS STILL THE SAFETY MECHANISM. The pairs that have to separate are
+ * decided by which bands touch, so re-run the check if the stacking order
+ * changes. Adjacent separation, dE2000 under normal vision and Machado
+ * protan/deutan/tritan at full severity, worst figure per pair: used/shared
+ * 21.1, shared/ARC 15.3, ARC/buffers 20.6, buffers/cached 18.5 -- against 10.0
+ * for the worst pair of the palette this replaces. Every band clears 4:1 on
+ * --surface (#1b1b1a).
  */
-const USED = "var(--s1)";
-const SHARED = "var(--s2)";
-const ARC = "var(--s3)";
-const BUFFERS = "var(--s4)";
-const CACHED = "var(--s8)";
+const USED = "var(--s4)";
+const SHARED = "var(--s3)";
+const ARC = "var(--s6)";
+const BUFFERS = "var(--s-neutral)";
+const CACHED = "var(--s-neutral-2)";
 
 /**
  * The memory stack, bottom to top, as a partition of mem_total.
@@ -143,9 +149,11 @@ export function memoryBands(res: MetricsResponse | null): Band[] {
   // because it is reclaimable but stickier than page cache.
   //
   // This order is also what the palette above is validated against -- the
-  // colours were assigned to fit it, not the other way round. Reordering these
-  // five lines changes which pairs sit next to each other and therefore which
-  // pairs have to clear the separation floors; re-run the validator if you do.
+  // colours were assigned to fit it, not the other way round, and the ramp
+  // from full chroma to neutral only reads as reclaimability while the bands
+  // stay in this sequence. Reordering these five lines changes which pairs sit
+  // next to each other and therefore which pairs have to clear the separation
+  // floors; re-check the figures in that comment if you do.
   return [
     { name: "used", color: USED, values: used },
     { name: "shared", color: SHARED, values: shared },
