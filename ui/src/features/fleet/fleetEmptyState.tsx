@@ -2,11 +2,12 @@ import { Server } from "lucide-react";
 import { EmptyState } from "../../ui/EmptyState";
 
 /**
- * The fleet list's empty state, defined once and rendered by both the table
- * and the card grid. It lived as a copy in each of them, with a comment in
- * each asserting the two must stay identical -- in the one pair of files
- * whose stated purpose is that they cannot drift. Which density toggle a
- * browser happens to remember must not change what "no hosts" says.
+ * The fleet list's empty state, defined once. It lived as a copy in the
+ * table and a copy in the card grid that used to sit beside it, with a
+ * comment in each asserting the two must stay identical -- in the one pair
+ * of files whose stated purpose was that they could not drift. The grid is
+ * gone; the copy stays here, where the next renderer will find it rather
+ * than write its own.
  *
  * `filtered` is the difference between a hub nobody has pointed an agent at
  * and a hundred-host fleet with a filter that currently matches none of it.

@@ -2,11 +2,7 @@ import { useState } from "react";
 import { Card } from "../../ui/Card";
 import { Segmented } from "../../ui/Segmented";
 import { isRange, RANGES, type Range } from "../../lib/range";
-import { DENSITY_KEY, RANGE_KEY, readPref, writePref } from "../../lib/prefs";
-
-/** Density of the fleet overview (spec §4.5). Below the mobile breakpoint
- * cards are automatic and this preference does not apply. */
-export type OverviewView = "table" | "cards";
+import { RANGE_KEY, readPref, writePref } from "../../lib/prefs";
 
 /** The stored default range. It is lib/range's type and deliberately the
  * whole union: this value is handed to whichever page the user opens next,
@@ -14,19 +10,15 @@ export type OverviewView = "table" | "cards";
  * one shared type prevents. A page still chooses which options to offer. */
 export type RangeKey = Range;
 
-// lib/prefs owns the keys now -- one "netra." namespace, greppable in
-// devtools as a group -- and these two names are re-exported because this
-// page's tests and App.tsx import them from here. VIEW_KEY is DENSITY_KEY:
-// Settings used to write "netra.view" while the fleet page read
-// "netra.fleet.density", so choosing Cards here changed nothing at all: the
-// overview came back as a table on every reload.
-export const VIEW_KEY = DENSITY_KEY;
+// lib/prefs owns the key now -- one "netra." namespace, greppable in devtools
+// as a group -- and the name is re-exported because this page's tests and
+// App.tsx import it from here.
 export { RANGE_KEY };
 
-const VIEWS: OverviewView[] = ["table", "cards"];
 const RANGE_LABELS: Record<RangeKey, string> = {
   "1h": "1 h",
   "6h": "6 h",
+  "12h": "12 h",
   "24h": "24 h",
   "7d": "7 d",
   "30d": "30 d",
@@ -41,11 +33,6 @@ const RANGE_LABELS: Record<RangeKey, string> = {
  * readPref is the guarded read (lib/prefs): localStorage throws outright in
  * Safari with cookies blocked, and these run inside useState initialisers.
  */
-export function loadView(): OverviewView {
-  const v = readPref(VIEW_KEY);
-  return VIEWS.includes(v as OverviewView) ? (v as OverviewView) : "table";
-}
-
 export function loadRange(): RangeKey {
   // isRange, not a membership test on a local list: the stored value comes
   // from a place the user can edit, and an unrecognised one must fall back
@@ -80,17 +67,11 @@ function Setting({
  * it reaches the hub, so nothing on this page needs saving or can fail.
  */
 export function SettingsPage() {
-  const [view, setView] = useState<OverviewView>(loadView);
   const [range, setRange] = useState<RangeKey>(loadRange);
 
-  function chooseView(next: OverviewView) {
+  function chooseRange(next: RangeKey) {
     // writePref is guarded for the same reason readPref is: a store that
     // refuses to save costs the preference, never the click.
-    writePref(VIEW_KEY, next);
-    setView(next);
-  }
-
-  function chooseRange(next: RangeKey) {
     writePref(RANGE_KEY, next);
     setRange(next);
   }
@@ -108,20 +89,6 @@ export function SettingsPage() {
           so the card went with it rather than becoming an empty box titled
           after a choice nobody has. */}
       <Card title="Defaults">
-        <Setting
-          legend="Default fleet view"
-          hint="What the Fleet page opens as. Narrow screens always use cards."
-        >
-          <Segmented
-            options={[
-              { value: "table", label: "Table" },
-              { value: "cards", label: "Cards" },
-            ]}
-            value={view}
-            onChange={chooseView}
-          />
-        </Setting>
-
         <Setting
           legend="Default time range"
           hint="A link carrying its own range wins over this; the range lives in the URL."

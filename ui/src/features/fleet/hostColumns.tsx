@@ -1,8 +1,7 @@
-// The single host column definition. `HostTable` (Task 12) and `HostCards`
-// (Task 13) both render the exact Column<HostRow>[] this file produces --
-// neither owns its own idea of "what a host row looks like". A column
-// added here appears in both the table and the card grid; there is no
-// second place a column could go missing from.
+// The single host column definition. `HostTable` renders the exact
+// Column<HostRow>[] this file produces and owns no idea of its own about
+// "what a host row looks like", so a column added here is a column the fleet
+// shows; there is no second place one could go missing from.
 //
 // `width`/`align` (Table-only, see ui/Table.tsx) are deliberately never
 // set below: this file has no opinion on layout, only on content.

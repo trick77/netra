@@ -672,10 +672,7 @@ a:hover {
 
 /* Entity cell — a linked name, an optional badge beside it, and a quieter
    second line underneath. Named for the Host column it was written for
-   (hostColumns, shown both as a table cell and as a card header: the
-   card-header hooks .hcard .hn/.hs are scoped to the card, so a cell
-   rendered in the table would go unstyled; these classes carry the same look
-   in both places). The container list's name cell is the same shape and now
+   (hostColumns). The container list's name cell is the same shape and now
    uses the same classes — it had been left behind on the older .host/.name/
    .site set below, which is how two lists of the same kind of thing ended up
    looking like two different designs. */
@@ -757,22 +754,6 @@ a:hover {
      equally important columns look ranked. */
   color: var(--muted);
 }
-/* Cards put the same cell in a 2-up tile roughly 165px wide, where a 170px
-   chart with a rates column beside it does not fit -- the sparkline would
-   scale down to a few pixels tall. Inside a card the axes go back to what they
-   were: chart above, rates in a row beneath. Scoped to .hcard rather than to
-   the mobile breakpoint because "Cards" is also a density a reader can pick by
-   hand at full width. */
-.hcard .traffic-cell {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
-}
-.hcard .traffic-rates {
-  flex-direction: row;
-  gap: var(--space-3);
-  line-height: 1.55;
-}
 /* The host page's Overview Traffic card is the one place this cell is neither
    a tile nor inside a scrolling table: it is a column of .grid2, so it simply
    gets narrower with the window and the chart is the only item that can give.
@@ -840,21 +821,6 @@ a:hover {
   box-shadow: inset 3px 0 0 var(--st-serious);
 }
 .rail-critical td:first-child {
-  box-shadow: inset 3px 0 0 var(--st-crit);
-}
-
-/* The same mark on a card, down its own leading edge. An inset shadow like
-   the table's rather than a thicker left border: the border would eat 2px of
-   the card's content box, so a marked card's charts -- fixed-width
-   sparklines under overflow: hidden -- would clip while its neighbours' did
-   not. */
-.rail-card.rail-warning {
-  box-shadow: inset 3px 0 0 var(--st-warn);
-}
-.rail-card.rail-serious {
-  box-shadow: inset 3px 0 0 var(--st-serious);
-}
-.rail-card.rail-critical {
   box-shadow: inset 3px 0 0 var(--st-crit);
 }
 
@@ -958,62 +924,6 @@ a:hover {
 .error {
   font-size: var(--text-label);
   color: var(--st-crit-text);
-}
-
-.cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-  gap: var(--space-4);
-  /* A card grid has no trailing border of its own, so it ends flush against
-     whatever follows it. */
-  margin-bottom: var(--space-4);
-}
-.hcard {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ui);
-  overflow: hidden;
-}
-.hcard.attn {
-  border-color: var(--st-crit);
-}
-.hcard > header {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 12px var(--space-4);
-  border-bottom: 1px solid var(--border);
-}
-.hcard .hn {
-  font-weight: 500;
-  font-size: var(--text-ui);
-}
-.hcard .hs {
-  font-size: var(--text-label);
-  color: var(--muted);
-}
-.hcard .grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-.hcard .m {
-  padding: 11px var(--space-4);
-  border-top: 1px solid var(--border);
-}
-.hcard .m:nth-child(odd) {
-  border-right: 1px solid var(--border);
-}
-.hcard .mk {
-  font-size: var(--text-label);
-  color: var(--muted);
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 5px;
-}
-.hcard .mk b {
-  color: var(--ink);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── Tabs + small multiples ───────────────────────────────────────── */
@@ -1390,7 +1300,7 @@ a:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius-ui);
   /* Every stacked block on a page owns its own bottom gap here (.toolbar,
-     .srail, .cards, .setting all do). Cards used to get theirs from a
+     .srail, .setting all do). Cards used to get theirs from a
      gapped flex parent, so two of them as plain siblings -- Settings'
      Appearance and Defaults, or the token panel above the new-host form --
      met at a single shared border and read as one box. `.grid2 > *` sets
@@ -2112,7 +2022,8 @@ details.sysfold > .body {
 
 /* Sortable column headers. The arrow is a pseudo-element so it stays out of
    the header's textContent -- the column name is read by tests and by the
-   card grid, and neither wants an arrow glued to it. Dimmed until the column
+   sort control's accessible name, and neither wants an arrow glued to it.
+   Dimmed until the column
    is the one being sorted on, so the header row does not read as six
    competing controls. */
 .th-sort {
@@ -2603,12 +2514,10 @@ svg.spark {
 }
 
 /* ── Below the mobile breakpoint ───────────────────────────────────────
-   Cards are automatic here, not a preference (spec §4.5): a six-column host
-   table does not survive 390px, and a stored "table" choice must not be able
-   to produce a page that scrolls sideways. The switch itself is in
-   FleetPage's useIsNarrow, not in this file: rendering both and hiding one
-   would put every host in the DOM twice, which a screen reader reads twice.
-   What lives here is everything else that has to give at this width. */
+   The fleet keeps its table at every width now -- the card grid that used to
+   replace it here is gone, and .tablewrap scrolls the six columns sideways
+   inside their own box rather than moving the page. What lives here is
+   everything else that has to give at this width. */
 @media (max-width: 640px) {
   .app > main {
     padding: var(--space-3) var(--space-3) 64px;
@@ -2653,7 +2562,7 @@ svg.spark {
    it, including the nav.
 
    It is also the table's SURFACE. Every other block on every page is a
-   filled, bordered panel -- .card, .tile, .smp, .hcard -- and a table alone
+   filled, bordered panel -- .card, .tile, .smp -- and a table alone
    sat unpainted on --bg between them, which is what "it's all white" was.
    Here rather than on `table` itself so a table always gets its chrome and
    its scroll box as one thing; here rather than in one feature's stylesheet
@@ -2664,8 +2573,8 @@ svg.spark {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-ui);
-  /* Every stacked block on a page owns its own bottom gap -- .card, .srail,
-     .cards and .toolbar all do, for the reason spelled out above .card. */
+  /* Every stacked block on a page owns its own bottom gap -- .card, .srail
+     and .toolbar all do, for the reason spelled out above .card. */
   margin-bottom: var(--space-4);
 }
 /* The header rail carried a --surface-2 fill, so that it separated from the

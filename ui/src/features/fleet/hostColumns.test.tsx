@@ -1,8 +1,8 @@
 // hostColumns() is the single source of truth for what a "host row" looks
-// like: Task 12 (HostTable) and Task 13 (HostCards) both render the same
-// Column<HostRow>[] this file produces, so a column added here cannot go
-// missing from either renderer. These tests pin the contract they both
-// depend on: column order, the disk cell's fullest-mount naming, and the
+// like: HostTable (Task 12) renders the Column<HostRow>[] this file
+// produces, so a column added here cannot go missing from the page. These
+// tests pin the contract it depends on: column order, the disk cell's
+// fullest-mount naming, and the
 // sub-300s uptime severity -- see task-11-brief.md.
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";

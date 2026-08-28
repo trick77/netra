@@ -8,29 +8,25 @@ import {
 import { ChevronRight } from "lucide-react";
 
 /**
- * A single column definition shared by Table (this file) and, in later
- * tasks, the host card grid — a row and a card render from the same
- * Column[] so they cannot drift apart.
+ * A single column definition for Table.
  *
- * Design rule: every REQUIRED field must be meaningful to both a table row
- * and a card tile. Table-only affordances (width, align) are optional so
- * the card grid can simply ignore them.
+ * It was once shared with a host card grid, so that a row and a card
+ * rendered from the same Column[] and could not drift apart. That grid is
+ * gone; two of the constraints it imposed are kept deliberately, because
+ * both earn their place without it:
  *
  *  - `key` is a plain string, not `keyof T`: computed columns (a status
  *    badge, a sparkline) have no backing field on the row, and typing this
  *    to `keyof T` would make those columns impossible to express.
- *  - `header` is a plain string, not ReactNode: the card grid renders it as
- *    a label in `.hcard .mk` and may need it verbatim in a `title`/
- *    aria-label. A ReactNode header would be unusable there, so this field
- *    stays string on purpose even though it's the one most likely to see a
- *    "can I pass a node" request later.
+ *  - `header` is a plain string, not ReactNode: it is read verbatim by the
+ *    sort control's accessible name and by every test that finds a column by
+ *    its title, and a node would be unusable in both.
  */
 export interface Column<T> {
   key: string;
   header: string;
-  /** CSS width (e.g. "120px"); table-only, ignored by the card grid. */
+  /** CSS width (e.g. "120px"). */
   width?: string;
-  /** Table-only text alignment; ignored by the card grid. */
   align?: "left" | "center" | "right";
   cell: (row: T) => ReactNode;
   /**
@@ -301,8 +297,8 @@ export function Table<T>({
                     // than rendered as a text node: it is decoration, the
                     // state it shows is already on the th as aria-sort, and
                     // as a DOM node it lands inside the header's own
-                    // textContent -- where every test and the card grid
-                    // reading a column name would find "Host".
+                    // textContent -- where every test reading a column name
+                    // would find "Host".
                     data-sort={sort?.key === col.key ? sort.dir : "none"}
                     onClick={() => toggle(col.key)}
                   >

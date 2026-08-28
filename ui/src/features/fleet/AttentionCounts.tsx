@@ -38,9 +38,9 @@ export interface AttentionCountsProps {
   onSelect: (next: AttentionFilter) => void;
   /**
    * Where each entry points. Supplied by the page, because the URL this link
-   * belongs in carries the reader's density, entity and range as well -- and
-   * a cmd-click goes to the href without ever reaching onSelect, so an href
-   * that names only the filter silently resets the other three.
+   * belongs in carries the reader's entity as well -- and a cmd-click goes to
+   * the href without ever reaching onSelect, so an href that names only the
+   * filter silently resets it.
    */
   href?: (next: AttentionFilter) => string;
 }

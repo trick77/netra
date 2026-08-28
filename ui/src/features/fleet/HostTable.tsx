@@ -15,9 +15,8 @@ export interface HostTableProps {
 }
 
 /**
- * The table rendering of the fleet list. It owns layout and nothing else:
- * every cell comes from hostColumns(), which HostCards renders from too, so
- * the two cannot drift apart. There is deliberately no per-column special
+ * The rendering of the fleet list. It owns layout and nothing else: every
+ * cell comes from hostColumns(). There is deliberately no per-column special
  * case in here -- a column that needed one would belong in hostColumns.
  *
  * Rows are keyed by host id rather than by position. The page above sorts

@@ -168,41 +168,25 @@ describe("App routing", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/login"));
   });
 
-  // Filters and ranges live in the URL so a filtered view is a link someone
-  // can send.
-  it("keeps the fleet range in the URL", async () => {
+  // The fleet draws every row over one fixed window, so it has no picker and
+  // takes no range from the URL. A link carrying one is not an error: it is
+  // ignored, and the page still renders the fleet.
+  it("ignores a range in the URL on the fleet", async () => {
     goTo("/?range=6h");
 
     render(<App />);
 
     expect(await screen.findByText("web-01")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "6h" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-  });
-
-  // The fleet offers three windows; Settings can store five, and a link can
-  // carry any of them. Being handed one this page does not offer used to
-  // leave every button unpressed, which reads as "no range selected". It is
-  // clamped to the widest this page has instead.
-  it("clamps a range it does not offer to one it can show", async () => {
-    goTo("/?range=30d");
-
-    render(<App />);
-
-    expect(await screen.findByText("web-01")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "24h" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.queryByRole("button", { name: "6h" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "24h" })).toBeNull();
   });
 
   // A toggle is a way of looking at this page, not a different place:
   // pushing an entry per click would turn Back into an undo of fiddling.
-  it("replaces rather than pushes when a view toggle changes", async () => {
+  it("replaces rather than pushes when a range toggle changes", async () => {
+    goTo("/hosts/3/graphs");
     render(<App />);
-    await screen.findByText("web-01");
+    await screen.findByRole("button", { name: "6h" });
     const before = window.history.length;
 
     await userEvent.click(screen.getByRole("button", { name: "1h" }));
@@ -262,9 +246,10 @@ describe("the range sticks", () => {
     return screen.getByRole("button", { name }).getAttribute("aria-pressed");
   }
 
-  it("carries a fleet choice to the host page", async () => {
-    const fleet = render(<App />);
-    await screen.findByText("web-01");
+  it("carries a host page choice to the next page that offers one", async () => {
+    goTo("/hosts/3/graphs");
+    const hostPage = render(<App />);
+    await screen.findByRole("button", { name: "1h" });
 
     await userEvent.click(screen.getByRole("button", { name: "1h" }));
     await waitFor(() => expect(localStorage.getItem("netra.range")).toBe("1h"));
@@ -272,7 +257,7 @@ describe("the range sticks", () => {
     // Unmounted, not left on screen: a second App beside the first would put
     // two "1h" buttons in the document and the query below could not tell
     // which page it was asking about.
-    fleet.unmount();
+    hostPage.unmount();
     goTo("/hosts/3/graphs");
     render(<App />);
 
@@ -282,28 +267,29 @@ describe("the range sticks", () => {
     expect(pressed("6h")).toBe("false");
   });
 
-  // The host page offers 7d and the fleet does not. The fleet has to show
-  // something it can press, but the CHOICE is not overwritten -- coming back
-  // to a page that offers 7d shows 7d again, not the narrowed version some
-  // other page had to display.
+  // The events page offers 30d and the host page does not. The host page has
+  // to show something it can press, but the CHOICE is not overwritten --
+  // coming back to a page that offers 30d shows 30d again, not the narrowed
+  // version some other page had to display.
   it("shows a wider choice clamped without forgetting it", async () => {
-    localStorage.setItem("netra.range", "7d");
+    localStorage.setItem("netra.range", "30d");
+    goTo("/hosts/3/graphs");
 
     render(<App />);
-    await screen.findByText("web-01");
+    await screen.findByRole("button", { name: "7d" });
 
-    expect(pressed("24h")).toBe("true");
-    expect(localStorage.getItem("netra.range")).toBe("7d");
+    expect(pressed("7d")).toBe("true");
+    expect(localStorage.getItem("netra.range")).toBe("30d");
   });
 
   // A link is the one thing that must beat the preference: it exists to show
   // someone the view you were looking at, not the view they last chose.
   it("lets an explicit link win over the remembered choice", async () => {
     localStorage.setItem("netra.range", "24h");
-    goTo("/?range=1h");
+    goTo("/hosts/3/graphs?range=1h");
 
     render(<App />);
-    await screen.findByText("web-01");
+    await screen.findByRole("button", { name: "1h" });
 
     expect(pressed("1h")).toBe("true");
   });
@@ -329,10 +315,11 @@ describe("the range sticks", () => {
   // The store is user-editable and also whatever an older build wrote.
   it("falls back to the default rather than erroring on a stored nonsense", async () => {
     localStorage.setItem("netra.range", "99y");
+    goTo("/hosts/3/graphs");
 
     render(<App />);
 
-    expect(await screen.findByText("web-01")).toBeInTheDocument();
+    await screen.findByRole("button", { name: "24h" });
     expect(pressed("24h")).toBe("true");
   });
 });

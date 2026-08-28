@@ -5,7 +5,7 @@ import type { Host, Site } from "../../lib/api";
 import { ABSENT } from "../../lib/format";
 import type { HostRow } from "./hostColumns";
 import type { ContainerRow } from "./FleetContainers";
-import { FleetPage, buildHostRows, DENSITY_KEY } from "./FleetPage";
+import { FleetPage, buildHostRows } from "./FleetPage";
 
 const NOW = new Date("2026-08-10T14:00:00Z");
 
@@ -131,34 +131,19 @@ describe("FleetPage entity tabs", () => {
     // Once for the one container: the group heading, and nothing else.
     expect(screen.getAllByRole("link", { name: "web-01" })).toHaveLength(1);
   });
-
-  // A card grid of 247 containers is not useful, so density is a hosts-only
-  // axis (spec 4.5).
-  it("hides the density toggle in the containers view", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    expect(screen.getByRole("button", { name: "Cards" })).toBeInTheDocument();
-
-    await user.click(containersTab());
-
-    expect(screen.queryByRole("button", { name: "Cards" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Table" })).toBeNull();
-  });
 });
 
 describe("FleetPage toolbar", () => {
-  it("switches the host list between table and cards, and remembers it", async () => {
-    const user = userEvent.setup();
-    const { unmount } = renderPage();
-
-    await user.click(screen.getByRole("button", { name: "Cards" }));
-    expect(screen.queryByRole("table")).toBeNull();
-    expect(window.localStorage.getItem(DENSITY_KEY)).toBe("cards");
-
-    unmount();
+  // The card grid and its toggle are gone: the fleet is one rendering of one
+  // window, so the toolbar carries the tabs, the filter and the attention
+  // band and nothing that reshapes the page.
+  it("offers neither a density toggle nor a range picker", () => {
     renderPage();
-    expect(screen.queryByRole("table")).toBeNull();
+
+    expect(screen.queryByRole("button", { name: "Cards" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Table" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "24h" })).toBeNull();
+    expect(screen.getByRole("table")).toBeInTheDocument();
   });
 
   it("filters the list by what the tab is showing", async () => {
@@ -677,14 +662,15 @@ describe("FleetPage data fetching", () => {
   });
 
   // A cmd-click never reaches onAttentionChange -- it follows the href -- so
-  // an href naming only the filter would drop the density, entity and range
-  // the reader is on.
+  // an href naming only the filter would drop the entity the reader is on.
   it("lets the page decide where a filter link points", () => {
     render(
       <FleetPage
         rows={[makeRow({ id: 1, hostname: "web-01", oomKills: 3 })]}
         attentionHref={(next) =>
-          next === "all" ? "/?view=cards" : `/?view=cards&attn=${next}`
+          next === "all"
+            ? "/?entity=containers"
+            : `/?entity=containers&attn=${next}`
         }
         checkedAt={null}
         now={NOW}
@@ -693,7 +679,7 @@ describe("FleetPage data fetching", () => {
 
     expect(screen.getByRole("link", { name: /OOM kills/ })).toHaveAttribute(
       "href",
-      "/?view=cards&attn=oom",
+      "/?entity=containers&attn=oom",
     );
   });
 
