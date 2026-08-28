@@ -10,7 +10,6 @@ import { STALE_THRESHOLD_MS } from "../../../lib/host";
 const host: HostDetail = {
   id: 7,
   hostname: "kessel",
-  site_id: 3,
   location: "Roubaix, France",
   provider: "OVH",
   facility: "RBX2",

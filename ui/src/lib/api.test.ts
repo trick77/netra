@@ -5,8 +5,6 @@ import {
   getMetrics,
   createHost,
   deleteHost,
-  createSite,
-  patchSite,
   ApiError,
 } from "./api";
 
@@ -128,56 +126,16 @@ describe("api", () => {
     mockFetch(201, {
       id: 4,
       hostname: "web-04",
-      site_id: null,
       last_seen: null,
       token: "t",
     });
 
-    await createHost("web-04", 3);
+    await createHost("web-04");
 
     const [url, init] = (fetch as unknown as Mock).mock.calls[0];
     expect(url).toBe("/api/v1/hosts");
     expect(init.method).toBe("POST");
     expect(init.headers["Content-Type"]).toBe("application/json");
-    expect(JSON.parse(init.body)).toEqual({ hostname: "web-04", site_id: 3 });
-  });
-
-  // CreateSite takes a name and a provider and nothing else; a site with no
-  // provider sends null rather than omitting the key, so the hub's decode
-  // sees a nil pointer either way.
-  it("creates a site with an explicit null provider", async () => {
-    mockFetch(201, { id: 2, name: "fsn1", provider_id: null });
-
-    await createSite("fsn1");
-
-    const [url, init] = (fetch as unknown as Mock).mock.calls[0];
-    expect(url).toBe("/api/v1/sites");
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toEqual({ name: "fsn1", provider_id: null });
-  });
-
-  // PatchSite leaves every column the body does not mention alone, which is
-  // what keeps a manually set coordinate safe from a caller that only meant
-  // to set an address -- so the patch must carry exactly the changed fields
-  // and no others. It answers 204, which request() must not try to parse.
-  it("patches only the fields it is given, and parses no body out of the 204", async () => {
-    (globalThis.fetch as unknown as Mock) = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 204,
-      json: () =>
-        Promise.reject(new SyntaxError("Unexpected end of JSON input")),
-    });
-
-    await expect(
-      patchSite(2, { facility: "DC15", latitude: 47.37 }),
-    ).resolves.toBeUndefined();
-
-    const [url, init] = (fetch as unknown as Mock).mock.calls[0];
-    expect(url).toBe("/api/v1/sites/2");
-    expect(init.method).toBe("PATCH");
-    expect(JSON.parse(init.body)).toEqual({
-      facility: "DC15",
-      latitude: 47.37,
-    });
+    expect(JSON.parse(init.body)).toEqual({ hostname: "web-04" });
   });
 });

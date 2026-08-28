@@ -27,7 +27,6 @@ export class ApiError extends Error {
 export type Host = {
   id: number;
   hostname: string;
-  site_id: number | null;
   last_seen: string | null;
   cpu_total: number | null;
   mem_used: number | null;
@@ -103,10 +102,6 @@ export type Host = {
    * it, not a city and a country code to be recombined -- so nothing here is
    * parsed and nothing is looked up. Null is "the agent did not report one",
    * which is every host whose operator set none of the variables.
-   *
-   * Nothing to do with `site_id` above. Sites are filled in by a human through
-   * the admin UI; these are the machine's own account of itself, and reporting
-   * them creates no site.
    *
    * Optional, like capabilities and for the same reason: the hand-built host
    * literals across the tests predate the fields.
@@ -403,66 +398,6 @@ export function getUnits(id: number | string): Promise<Unit[]> {
   return request<Unit[]>(`/api/v1/hosts/${id}/units`);
 }
 
-// internal/hub/httpapi/dimensions.go: siteJSON. Every optional column is a
-// pointer server-side so an unset one arrives as null rather than as a zero
-// reading as a fact -- 0,0 in particular is a real place, not "no
-// coordinates".
-export type Site = {
-  id: number;
-  provider_id: number | null;
-  name: string;
-  facility: string | null;
-  address: string | null;
-  latitude: number | null;
-  longitude: number | null;
-  country_code: string | null;
-  timezone: string | null;
-};
-
-// internal/hub/httpapi/dimensions.go: the providerJSON declared inside
-// listProviders.
-export type Provider = {
-  id: number;
-  name: string;
-};
-
-// The fleet list (GET /api/v1/hosts) carries site_id but no site name, and
-// the per-host detail call that does carry one would be an N+1 across the
-// fleet. Fetch this once and join client-side by site_id.
-export function getSites(): Promise<Site[]> {
-  return request<Site[]>("/api/v1/sites");
-}
-
-// POST /api/v1/sites takes name and provider_id and NOTHING else
-// (internal/hub/admin/dimensions.go: CreateSite). Facility, address,
-// coordinates, country and timezone are reachable only through patchSite, so
-// a form offering all eight at creation would be a create-then-patch pair
-// with a half-created site as its failure mode.
-export function createSite(
-  name: string,
-  providerId?: number | null,
-): Promise<Site> {
-  return request<Site>("/api/v1/sites", {
-    method: "POST",
-    body: { name, provider_id: providerId ?? null },
-  });
-}
-
-// The fields of a site to change. An omitted key is left alone -- that is
-// what keeps a manually set latitude and longitude safe from a caller that
-// only meant to set an address (internal/hub/admin/dimensions.go: PatchSite).
-//
-// The converse does NOT hold: PatchSite writes every field it is given
-// verbatim, so sending "" for a column does not clear it back to null, it
-// stores an empty string. No caller should ever send one; a field the
-// operator left blank must be omitted from the patch entirely.
-export type SitePatch = Partial<Omit<Site, "id">>;
-
-// Returns 204 with no body, which request() already handles.
-export function patchSite(id: number, patch: SitePatch): Promise<void> {
-  return request<void>(`/api/v1/sites/${id}`, { method: "PATCH", body: patch });
-}
-
 // BACKEND_HUB_URL as the hub itself has it, or "" when it is unset. The
 // browser reaches the hub on loopback, so window.location says nothing about
 // the name agents post to; only the hub knows it, and the setup command is
@@ -471,28 +406,20 @@ export function getConfig(): Promise<{ hub_url: string }> {
   return request<{ hub_url: string }>("/api/v1/config");
 }
 
-export function getProviders(): Promise<Provider[]> {
-  return request<Provider[]>("/api/v1/providers");
-}
-
 // The token is returned exactly once, at creation and at each rotation, and
 // is never readable again: the hub stores only its hash
 // (internal/hub/admin). A UI that loses it can only rotate, never recover.
 export type CreatedHost = {
   id: number;
   hostname: string;
-  site_id: number | null;
   last_seen: string | null;
   token: string;
 };
 
-export function createHost(
-  hostname: string,
-  siteId?: number | null,
-): Promise<CreatedHost> {
+export function createHost(hostname: string): Promise<CreatedHost> {
   return request<CreatedHost>("/api/v1/hosts", {
     method: "POST",
-    body: { hostname, site_id: siteId ?? null },
+    body: { hostname },
   });
 }
 

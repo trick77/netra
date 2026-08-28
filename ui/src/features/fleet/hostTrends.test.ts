@@ -8,7 +8,7 @@ import {
   type HostTrends,
 } from "./hostTrends";
 import * as api from "../../lib/api";
-import type { Host, MetricsResponse, Site } from "../../lib/api";
+import type { Host, MetricsResponse } from "../../lib/api";
 
 vi.mock("../../lib/api", async () => {
   const actual = await vi.importActual<typeof api>("../../lib/api");
@@ -731,7 +731,6 @@ describe("buildRows", () => {
   const host: Host = {
     id: 1,
     hostname: "web-01",
-    site_id: 3,
     last_seen: null,
     cpu_total: null,
     mem_used: null,

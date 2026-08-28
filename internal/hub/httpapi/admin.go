@@ -49,12 +49,6 @@ func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time,
 	mux.Handle("DELETE /api/v1/hosts/{id}", http.HandlerFunc(h.delete))
 	mux.Handle("DELETE /api/v1/hosts/{id}/containers/{containerID}",
 		http.HandlerFunc(h.deleteContainer))
-	mux.Handle("GET /api/v1/sites", http.HandlerFunc(h.listSites))
-	mux.Handle("POST /api/v1/sites", http.HandlerFunc(h.createSite))
-	mux.Handle("PATCH /api/v1/sites/{id}", http.HandlerFunc(h.patchSite))
-	mux.Handle("GET /api/v1/providers", http.HandlerFunc(h.listProviders))
-	mux.Handle("POST /api/v1/providers", http.HandlerFunc(h.createProvider))
-	mux.Handle("PATCH /api/v1/providers/{id}", http.HandlerFunc(h.patchProvider))
 
 	(&readHandler{svc: rd, now: now}).register(mux)
 	return mux
@@ -65,21 +59,19 @@ func NewAdminHandler(svc *admin.Service, rd *read.Service, now func() time.Time,
 type hostJSON struct {
 	ID       int32      `json:"id"`
 	Hostname string     `json:"hostname"`
-	SiteID   *int32     `json:"site_id"`
 	LastSeen *time.Time `json:"last_seen"`
 }
 
 func (h *adminHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Hostname string `json:"hostname"`
-		SiteID   *int32 `json:"site_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "malformed JSON body"})
 		return
 	}
 
-	host, token, err := h.svc.CreateHost(r.Context(), req.Hostname, req.SiteID)
+	host, token, err := h.svc.CreateHost(r.Context(), req.Hostname)
 	if err != nil {
 		writeAdminError(w, r, err)
 		return
@@ -91,7 +83,7 @@ func (h *adminHandler) create(w http.ResponseWriter, r *http.Request) {
 		hostJSON
 		Token string `json:"token"`
 	}{
-		hostJSON: hostJSON{ID: host.ID, Hostname: host.Hostname, SiteID: host.SiteID},
+		hostJSON: hostJSON{ID: host.ID, Hostname: host.Hostname},
 		Token:    token,
 	})
 }

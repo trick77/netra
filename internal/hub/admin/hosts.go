@@ -75,14 +75,8 @@ const (
 // map, but not friendly enough to show.
 func describeConstraint(pgErr *pgconn.PgError) string {
 	switch pgErr.ConstraintName {
-	case "providers_name_key":
-		return "a provider with that name"
-	case "sites_provider_id_name_key":
-		return "a site with that name for that provider"
-	case "hosts_site_id_hostname_key":
-		return "a host with that name at that site"
-	case "hosts_site_id_fkey", "sites_provider_id_fkey":
-		return "the referenced row"
+	case "hosts_hostname_key":
+		return "a host with that name"
 	case "tokens_token_hash_key":
 		return "that token"
 	default:
@@ -94,8 +88,6 @@ func describeConstraint(pgErr *pgconn.PgError) string {
 type Host struct {
 	ID       int32
 	Hostname string
-	// SiteID is nil, never 0, when the host is not assigned to a site.
-	SiteID *int32
 	// LastSeen is nil when the host has never posted a sample.
 	LastSeen *time.Time
 }
@@ -116,7 +108,7 @@ func NewService(pool *pgxpool.Pool) *Service {
 // who loses it rotates rather than reads.
 //
 // Both writes share a transaction so a host is never created without a token.
-func (s *Service) CreateHost(ctx context.Context, hostname string, siteID *int32) (Host, string, error) {
+func (s *Service) CreateHost(ctx context.Context, hostname string) (Host, string, error) {
 	hostname = strings.TrimSpace(hostname)
 	if hostname == "" {
 		return Host{}, "", fmt.Errorf("%w: hostname is required", ErrInvalid)
@@ -130,8 +122,8 @@ func (s *Service) CreateHost(ctx context.Context, hostname string, siteID *int32
 
 	var id int32
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO hosts (hostname, site_id) VALUES ($1, $2) RETURNING id`,
-		hostname, siteID).Scan(&id); err != nil {
+		`INSERT INTO hosts (hostname) VALUES ($1) RETURNING id`,
+		hostname).Scan(&id); err != nil {
 		return Host{}, "", fmt.Errorf("insert host: %w", classify(err))
 	}
 
@@ -148,7 +140,7 @@ func (s *Service) CreateHost(ctx context.Context, hostname string, siteID *int32
 		return Host{}, "", fmt.Errorf("commit: %w", err)
 	}
 
-	return Host{ID: id, Hostname: hostname, SiteID: siteID}, plain, nil
+	return Host{ID: id, Hostname: hostname}, plain, nil
 }
 
 // RotateToken mints a replacement token for a host and revokes every previous
@@ -331,7 +323,7 @@ func isDeadlock(err error) bool {
 // stay cheap however much history exists behind it.
 func (s *Service) ListHosts(ctx context.Context) ([]Host, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT h.id, coalesce(h.hostname, ''), h.site_id, c.last_seen
+		`SELECT h.id, coalesce(h.hostname, ''), c.last_seen
 		   FROM hosts h
 		   LEFT JOIN host_current c ON c.host_id = h.id
 		  ORDER BY h.hostname, h.id`)
@@ -343,7 +335,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]Host, error) {
 	hosts := []Host{}
 	for rows.Next() {
 		var h Host
-		if err := rows.Scan(&h.ID, &h.Hostname, &h.SiteID, &h.LastSeen); err != nil {
+		if err := rows.Scan(&h.ID, &h.Hostname, &h.LastSeen); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}
 		hosts = append(hosts, h)

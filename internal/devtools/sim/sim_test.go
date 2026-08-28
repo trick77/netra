@@ -480,7 +480,7 @@ func TestTheSimulatorRefusesToTouchAHostItDidNotCreate(t *testing.T) {
 	if err := hub.DeleteHost(t.Context(), 1, "prod-db-01"); err == nil {
 		t.Error("DeleteHost accepted a host the simulator does not manage")
 	}
-	if _, _, err := hub.EnsureHost(t.Context(), "prod-db-01", nil); err == nil {
+	if _, _, err := hub.EnsureHost(t.Context(), "prod-db-01"); err == nil {
 		t.Error("EnsureHost accepted a host the simulator does not manage")
 	}
 }
@@ -647,28 +647,13 @@ func TestAProfileNeverEmitsAFamilyItsCollectorListDoesNotCover(t *testing.T) {
 	}
 }
 
-// The prefix guard has to cover sites and providers, not just hosts:
-// EnsureSite matches an existing site BY NAME, so an unguarded run against a
-// real hub would attach its invented hosts to a real site.
-func TestSitesAndProvidersCarryTheSimulatorPrefix(t *testing.T) {
-	for _, p := range Fleet() {
-		spec := siteFor(p)
-		if !strings.HasPrefix(spec.Name, HostnamePrefix) {
-			t.Errorf("%s: site %q would match a real site of the same name", p.Name, spec.Name)
-		}
-		if !strings.HasPrefix(spec.Provider, HostnamePrefix) {
-			t.Errorf("%s: provider %q is unprefixed", p.Name, spec.Provider)
-		}
-	}
-
-	hub := NewHub("http://127.0.0.1:1", "token")
-	if _, err := hub.EnsureSite(t.Context(), SiteSpec{Name: "ZRH2", Provider: "sim-Init7"}); err == nil {
-		t.Error("EnsureSite accepted an unprefixed site name")
-	}
-	if _, err := hub.EnsureProvider(t.Context(), "Init7"); err == nil {
-		t.Error("EnsureProvider accepted an unprefixed provider name")
-	}
-}
+// The prefix guard covered sites and providers as well as hosts, because
+// EnsureSite matched an existing site by name and an unguarded run against a
+// real hub would have attached its invented hosts to a real one. Sites are
+// gone, and with them that whole class of collateral: the simulator now writes
+// its location into each host's own row through the metadata it already sends,
+// so the only thing it can touch is a host it created, which checkSimulated
+// still guards by hostname.
 
 // A 503 carries retry_after_s precisely so the client waits and re-posts.
 // Treating it as fatal threw away a ninety-day backfill over a condition the

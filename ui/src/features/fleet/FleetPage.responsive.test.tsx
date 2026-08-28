@@ -8,7 +8,6 @@ function row(overrides: Partial<HostRow> = {}): HostRow {
   return {
     id: 1,
     hostname: "web-01",
-    site_id: null,
     window: null,
     last_seen: new Date().toISOString(),
     cpu_total: null,

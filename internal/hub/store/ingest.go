@@ -483,10 +483,10 @@ func (s *Store) MetadataHash(ctx context.Context, hostID int32) ([]byte, error) 
 // hostname is NOT written here, on purpose. The operator names a host when they
 // create it, and that name is what rotate and delete are reasoned about in the
 // UI. Letting the agent overwrite it renamed the row out from under them — and
-// worse, could not be stored at all in the common case: every host created
-// through the UI has site_id NULL, hosts_site_id_hostname_key is NULLS NOT
-// DISTINCT, so two cloned VMs both reporting `raspberrypi` (or two agents both
-// reporting nothing, writing ”) collide on 23505. This statement has no
+// worse, could not be stored at all in the common case: hosts_hostname_key is
+// UNIQUE and NULLS NOT DISTINCT, so two cloned VMs both reporting
+// `raspberrypi` (or two agents both reporting nothing, writing ”) collide on
+// 23505. This statement has no
 // poisonRow quarantine, so that 23505 became a 503, and the agent answers a 503
 // by re-sending the IDENTICAL batch — a permanent wedge on that host. The
 // fingerprint warning above already covers the case reading the reported
@@ -540,9 +540,8 @@ func (s *Store) SaveMetadata(ctx context.Context, hostID int32, hash []byte, md 
 			-- variable and left it blank. A host whose location is the empty
 			-- string would render a separator with nothing either side of it.
 			--
-			-- These do NOT feed sites/providers and nothing here creates one.
-			-- That pair is filled in by hand through the admin UI; this is the
-			-- machine's own account of itself.
+			-- The host's own account of where it is, and the only one: the
+			-- sites and providers tables that used to answer this are gone.
 			location      = NULLIF($16, ''),
 			provider      = NULLIF($17, ''),
 			facility      = NULLIF($18, ''),

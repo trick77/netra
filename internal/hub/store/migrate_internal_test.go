@@ -247,13 +247,24 @@ CREATE INDEX CONCURRENTLY idx_concurrent_index_target_name ON concurrent_index_t
 // a migration "is retried". Retrying only works if every statement in the file
 // is individually re-runnable, and nothing else enforces that.
 //
-// The worst case is reproduced directly: apply 0001_init.sql fully, then
-// forget it in schema_migrations, which is exactly the state an interrupted
-// run leaves behind (partial application is strictly easier to recover
-// from). Migrate must then re-run the file from the top and succeed. Without
-// IF NOT EXISTS on every statement this fails on the first one with 42P07,
-// and because the hub migrates on every start it would refuse to boot from
-// then on.
+// The worst case is reproduced directly: apply the no-transaction file fully,
+// then forget it in schema_migrations, which is exactly the state an
+// interrupted run leaves behind (partial application is strictly easier to
+// recover from). Migrate must then re-run the file from the top and succeed.
+// Without IF NOT EXISTS on every statement this fails on the first one with
+// 42P07, and because the hub migrates on every start it would refuse to boot
+// from then on.
+//
+// 0003, not 0001, and the difference is the whole shape of this invariant.
+// A migration re-runs against the schema its PREDECESSORS left, never against
+// the final one: its row is missing only because it did not finish, and
+// nothing after it can have run. Replaying 0001 over the finished schema is
+// therefore not a state the hub can reach -- and since 0010 dropped the sites
+// tables and hosts.site_id, it is not even coherent: 0001 would fail on its
+// index over a dropped column, and its CREATE TABLE IF NOT EXISTS would
+// resurrect the two tables 0010 removed. Every migration is re-runnable where
+// it actually runs; none is re-runnable over a schema from its own future,
+// and no file can be once anything is ever dropped.
 func TestIntegrationMigrateRerunsUnrecordedNoTransactionMigration(t *testing.T) {
 	ctx := context.Background()
 	s := OpenTest(t)
@@ -263,8 +274,8 @@ func TestIntegrationMigrateRerunsUnrecordedNoTransactionMigration(t *testing.T) 
 	}
 
 	if _, err := s.pool.Exec(ctx,
-		`DELETE FROM schema_migrations WHERE name = '0001_init.sql'`); err != nil {
-		t.Fatalf("forget 0001_init.sql in schema_migrations: %v", err)
+		`DELETE FROM schema_migrations WHERE name = '0003_host_proto_samples.sql'`); err != nil {
+		t.Fatalf("forget 0003_host_proto_samples.sql in schema_migrations: %v", err)
 	}
 
 	if err := s.Migrate(ctx); err != nil {
@@ -274,7 +285,7 @@ func TestIntegrationMigrateRerunsUnrecordedNoTransactionMigration(t *testing.T) 
 	// And it must still be recorded afterwards, so a third start is a no-op.
 	var recorded bool
 	if err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '0001_init.sql')`,
+		`SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '0003_host_proto_samples.sql')`,
 	).Scan(&recorded); err != nil {
 		t.Fatalf("query schema_migrations: %v", err)
 	}

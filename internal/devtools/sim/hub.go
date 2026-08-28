@@ -45,19 +45,18 @@ func NewHub(baseURL, adminToken string) *Hub {
 type HostRef struct {
 	ID       int32  `json:"id"`
 	Hostname string `json:"hostname"`
-	SiteID   *int32 `json:"site_id"`
 }
 
 // EnsureHost finds the simulated host by hostname or creates it, and returns
 // a working token either way.
 //
 // Finding before creating is not an optimisation. hosts carries a unique
-// (site_id, hostname) with NULLS NOT DISTINCT, so a second run that blindly
-// POSTed would get a 409 for every host in the fleet. The plaintext token is
+// hostname with NULLS NOT DISTINCT, so a second run that blindly POSTed would
+// get a 409 for every host in the fleet. The plaintext token is
 // shown once at creation and is not readable back, so an existing host gets
 // its token rotated -- which is also the documented way an operator recovers
 // a token they lost.
-func (h *Hub) EnsureHost(ctx context.Context, hostname string, siteID *int32) (int32, string, error) {
+func (h *Hub) EnsureHost(ctx context.Context, hostname string) (int32, string, error) {
 	if err := checkSimulated(hostname); err != nil {
 		return 0, "", err
 	}
@@ -68,16 +67,6 @@ func (h *Hub) EnsureHost(ctx context.Context, hostname string, siteID *int32) (i
 	for _, existing := range hosts {
 		if existing.Hostname != hostname {
 			continue
-		}
-		// The site is reported, not corrected: the admin API has no way to
-		// move a host between sites, and the unique index is on
-		// (site_id, hostname), so a host created under an older site keeps
-		// it. Silently writing the new history against the old site while
-		// logging the new site_id was actively misleading.
-		if siteID != nil && (existing.SiteID == nil || *existing.SiteID != *siteID) {
-			slog.Warn("existing simulated host is filed under a different site; "+
-				"its history will be written there. Re-run with --fresh to move it",
-				"hostname", hostname, "existing_site_id", existing.SiteID, "wanted_site_id", *siteID)
 		}
 		// Rotating is the only way to get a usable token: the plaintext is
 		// shown once at creation and is not readable back. It also revokes
@@ -92,7 +81,7 @@ func (h *Hub) EnsureHost(ctx context.Context, hostname string, siteID *int32) (i
 		}
 		return existing.ID, token, nil
 	}
-	return h.CreateHost(ctx, hostname, siteID)
+	return h.CreateHost(ctx, hostname)
 }
 
 // ListHosts returns every host the hub knows about.
@@ -105,12 +94,12 @@ func (h *Hub) ListHosts(ctx context.Context) ([]HostRef, error) {
 }
 
 // CreateHost registers a host and returns its id and freshly minted token.
-func (h *Hub) CreateHost(ctx context.Context, hostname string, siteID *int32) (int32, string, error) {
+func (h *Hub) CreateHost(ctx context.Context, hostname string) (int32, string, error) {
 	var out struct {
 		ID    int32  `json:"id"`
 		Token string `json:"token"`
 	}
-	body := map[string]any{"hostname": hostname, "site_id": siteID}
+	body := map[string]any{"hostname": hostname}
 	if err := h.adminJSON(ctx, http.MethodPost, "/api/v1/hosts", body, &out); err != nil {
 		return 0, "", err
 	}
@@ -149,92 +138,6 @@ func checkSimulated(name string) error {
 		return fmt.Errorf("refusing to touch %q: netra-sim only manages records named %s*", name, HostnamePrefix)
 	}
 	return nil
-}
-
-// EnsureProvider returns the id of a provider with this name, creating it if
-// it does not exist.
-func (h *Hub) EnsureProvider(ctx context.Context, name string) (int32, error) {
-	if err := checkSimulated(name); err != nil {
-		return 0, err
-	}
-	var list []struct {
-		ID   int32  `json:"id"`
-		Name string `json:"name"`
-	}
-	if err := h.adminJSON(ctx, http.MethodGet, "/api/v1/providers", nil, &list); err != nil {
-		return 0, err
-	}
-	for _, p := range list {
-		if p.Name == name {
-			return p.ID, nil
-		}
-	}
-
-	var out struct {
-		ID int32 `json:"id"`
-	}
-	if err := h.adminJSON(ctx, http.MethodPost, "/api/v1/providers", map[string]any{"name": name}, &out); err != nil {
-		return 0, err
-	}
-	return out.ID, nil
-}
-
-// SiteSpec is the location a simulated host sits at.
-type SiteSpec struct {
-	Name        string
-	Provider    string
-	Facility    string
-	CountryCode string
-	Timezone    string
-	Latitude    float64
-	Longitude   float64
-}
-
-// EnsureSite returns the id of a site with this name under this provider,
-// creating and describing it if it does not exist. The coordinates are filled
-// in because a site without them is invisible to anything that draws a map.
-func (h *Hub) EnsureSite(ctx context.Context, spec SiteSpec) (int32, error) {
-	if err := checkSimulated(spec.Name); err != nil {
-		return 0, err
-	}
-	providerID, err := h.EnsureProvider(ctx, spec.Provider)
-	if err != nil {
-		return 0, err
-	}
-
-	var list []struct {
-		ID         int32  `json:"id"`
-		Name       string `json:"name"`
-		ProviderID *int32 `json:"provider_id"`
-	}
-	if err := h.adminJSON(ctx, http.MethodGet, "/api/v1/sites", nil, &list); err != nil {
-		return 0, err
-	}
-	for _, s := range list {
-		if s.Name == spec.Name && s.ProviderID != nil && *s.ProviderID == providerID {
-			return s.ID, nil
-		}
-	}
-
-	var out struct {
-		ID int32 `json:"id"`
-	}
-	body := map[string]any{"name": spec.Name, "provider_id": providerID}
-	if err := h.adminJSON(ctx, http.MethodPost, "/api/v1/sites", body, &out); err != nil {
-		return 0, err
-	}
-
-	patch := map[string]any{
-		"facility":     spec.Facility,
-		"country_code": spec.CountryCode,
-		"timezone":     spec.Timezone,
-		"latitude":     spec.Latitude,
-		"longitude":    spec.Longitude,
-	}
-	if err := h.adminJSON(ctx, http.MethodPatch, fmt.Sprintf("/api/v1/sites/%d", out.ID), patch, nil); err != nil {
-		return 0, err
-	}
-	return out.ID, nil
 }
 
 // ingestAttempts is how many times a batch is posted before the run gives up.

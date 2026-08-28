@@ -24,7 +24,6 @@ import { HostPage, HOST_TABS, hostTabHref } from "./HostPage";
 const host: HostDetail = {
   id: 7,
   hostname: "kessel",
-  site_id: 3,
   location: "Zurich, Switzerland",
   provider: "Init7",
   facility: "ZRH2",
