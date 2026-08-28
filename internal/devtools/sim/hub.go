@@ -130,9 +130,13 @@ func (h *Hub) DeleteHost(ctx context.Context, id int32, hostname string) error {
 	return h.adminJSON(ctx, http.MethodDelete, fmt.Sprintf("/api/v1/hosts/%d", id), nil, nil)
 }
 
-// checkSimulated refuses to touch anything the simulator did not create. It
-// covers sites and providers as well as hosts: a site is matched by name, so
-// an unguarded EnsureSite would silently adopt a real one.
+// checkSimulated refuses to touch anything the simulator did not create.
+//
+// Hosts are all it has to cover now. It also guarded sites and providers,
+// which were matched BY NAME -- an unguarded EnsureSite would silently adopt a
+// real one and mix invented data into its rollups. Those are gone, and with
+// them that whole class of collateral: a host is matched by id and the
+// simulator can only reach one it made.
 func checkSimulated(name string) error {
 	if !strings.HasPrefix(name, HostnamePrefix) {
 		return fmt.Errorf("refusing to touch %q: netra-sim only manages records named %s*", name, HostnamePrefix)

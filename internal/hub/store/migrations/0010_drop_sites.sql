@@ -22,26 +22,19 @@
 -- alone or the admin API goes back to creating rows indistinguishable in every
 -- view that shows a name.
 --
--- Which leaves the one case that cannot be waved through: a hub that really
--- does have two hosts sharing a name at two sites. Creating the new index over
--- them fails, and a failed migration means the hub does not start -- so this
--- cannot simply be attempted and hoped for.
+-- Re-keying cannot fail, and the NULLS NOT DISTINCT on the OLD index is what
+-- guarantees it. The feature went unused: no host was ever assigned a site, so
+-- every site_id is NULL -- and with NULLS NOT DISTINCT a second (NULL, 'web-01')
+-- already violated the old index. Duplicate hostnames were therefore impossible
+-- before this migration, and the new index has nothing to trip over.
 --
--- Every such host keeps its row, its history and its token; the duplicates are
--- renamed with their own id appended, and the OLDEST (lowest id) of each group
--- keeps the bare name. A renamed host is visible immediately -- it is the name
--- on the fleet list -- which is the point: this is a collision only an operator
--- can really resolve, and it must not be resolved silently by dropping a row.
--- The agent never writes hostname back (SaveMetadata reads every metadata field
--- except that one, deliberately), so the rename stands until someone changes it.
-UPDATE hosts h
-   SET hostname = h.hostname || '-' || h.id
- WHERE EXISTS (
-       SELECT 1 FROM hosts o
-        WHERE o.hostname IS NOT DISTINCT FROM h.hostname
-          AND o.id < h.id
- );
-
+-- This deliberately does NOT de-duplicate first. An earlier draft renamed
+-- colliding hosts by appending their id, which was both unreachable here and
+-- wrong where it would have run: `web-01`, `web-01` and an unrelated `web-01-2`
+-- rename into a fresh collision, the index still fails, the whole file rolls
+-- back unrecorded, and a hub that migrates on every start never boots again.
+-- Guarding a rename properly is a loop, and writing one for a case that cannot
+-- occur is how a migration acquires a bug nothing will ever exercise.
 DROP INDEX IF EXISTS hosts_site_id_hostname_key;
 
 -- NULLS NOT DISTINCT for the reason 0001 gives: hostname is nullable, and

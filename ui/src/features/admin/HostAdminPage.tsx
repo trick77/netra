@@ -56,8 +56,8 @@ function setupCommand(hubURL: string, token: string): string {
 
 function message(err: unknown): string {
   // ApiError.message is the hub's own `error` field -- "a host with that name
-  // already exists at that site" is the operator's mistake to fix, and they
-  // can only fix it if the page says which one it was.
+  // already exists" is the operator's mistake to fix, and they can only fix it
+  // if the page says which one it was.
   return err instanceof Error ? err.message : "Something went wrong.";
 }
 

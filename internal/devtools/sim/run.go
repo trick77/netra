@@ -476,21 +476,3 @@ func maxTime(a, b time.Time) time.Time {
 	}
 	return b
 }
-
-// place is where a site sits. The coordinates are filled in because a site
-// without them is invisible to anything that draws a map.
-type place struct {
-	country  string
-	timezone string
-	lat      float64
-	lon      float64
-}
-
-// places maps the handful of locations the fleet sits in. A geocoder would be
-// a network dependency for four constants.
-var places = map[string]place{
-	"Zurich, CH":      {"CH", "Europe/Zurich", 47.3769, 8.5417},
-	"Winterthur, CH":  {"CH", "Europe/Zurich", 47.5001, 8.7501},
-	"Falkenstein, DE": {"DE", "Europe/Berlin", 50.4779, 12.3713},
-	"Amsterdam, NL":   {"NL", "Europe/Amsterdam", 52.3676, 4.9041},
-}
