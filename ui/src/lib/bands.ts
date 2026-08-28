@@ -17,18 +17,24 @@ import type { Band } from "../ui/charts/StackedSparkline";
  * Colours are token references; index.css owns the palette.
  *
  * THE RAMP IS THE EXPLANATION. The stack is ordered by how readily the kernel
- * can take the bytes back, and the colour now says the same thing the order
- * does: full chroma at the bottom for the pages nobody can have back, cooling
- * through the reclaimable subsystems, draining to neutral for page cache.
- * Magenta -> violet -> cyan -> grey -> light grey. A reader who has never
- * been told what a band means can still see that the bright part at the
- * bottom is the part that costs something and the pale part on top is not.
+ * can take the bytes back, and the colour says the same thing the order does:
+ * full chroma at the bottom for the pages nobody can have back, cooling
+ * through the reclaimable subsystems, draining out for page cache.
+ * Magenta -> violet -> cyan -> slate -> grey. A reader who has never been
+ * told what a band means can still see that the bright part at the bottom is
+ * the part that costs something and the quiet part on top is not.
  *
- * That is why buffers and cached are NEUTRAL rather than two more hues. A hue
- * claims page cache is a subsystem with an identity, the way ARC and shmem
- * are; it is really the absence of one, and the grey pair says so while still
- * separating from each other by lightness alone (dE 18.5, identical under
- * every CVD simulation because neither has a hue to lose).
+ * THE RAMP DARKENS, IT DOES NOT LIGHTEN. Cached was a light grey (#b6b3ab,
+ * 8.23:1 on --surface) and that inverted the argument: the most reclaimable
+ * band was the brightest mark in a 32px fleet cell, glaring on the dark
+ * surface. Cached now takes the darker neutral that buffers held, and buffers
+ * takes --s-slate, a muted steel blue one step of chroma above it. Nothing in
+ * the stack is brighter than ARC any more.
+ *
+ * Cached is still NEUTRAL rather than another hue. A hue claims page cache is
+ * a subsystem with an identity, the way ARC and shmem are; it is really the
+ * absence of one. Buffers keeps just enough chroma to separate from it under
+ * every CVD simulation without claiming to be a subsystem either.
  *
  * ORANGE AND AMBER ARE BOTH GONE FROM HERE. ARC was --s7 (#d95926), a few
  * degrees from --accent (#d97757) and --st-serious (#ec835a), so a memory
@@ -44,15 +50,16 @@ import type { Band } from "../ui/charts/StackedSparkline";
  * decided by which bands touch, so re-run the check if the stacking order
  * changes. Adjacent separation, dE2000 under normal vision and Machado
  * protan/deutan/tritan at full severity, worst figure per pair: used/shared
- * 21.1, shared/ARC 15.3, ARC/buffers 20.6, buffers/cached 18.5 -- against 10.0
- * for the worst pair of the palette this replaces. Every band clears 4:1 on
- * --surface (#1b1b1a).
+ * 21.3, shared/ARC 15.2, ARC/buffers 15.5, buffers/cached 18.5 -- the two
+ * pairs this recolour touches land above the floor the palette already had.
+ * Every band clears 4:1 on --surface (#1b1b1a) and every band sits above
+ * --reference, so the dashed total-RAM rule stays the quietest mark.
  */
 const USED = "var(--s4)";
 const SHARED = "var(--s3)";
 const ARC = "var(--s6)";
-const BUFFERS = "var(--s-neutral)";
-const CACHED = "var(--s-neutral-2)";
+const BUFFERS = "var(--s-slate)";
+const CACHED = "var(--s-neutral)";
 
 /**
  * The memory stack, bottom to top, as a partition of mem_total.

@@ -86,20 +86,20 @@ describe("memoryBands", () => {
   });
 
   // The colours are not decoration and neither is their ORDER: the ramp runs
-  // from full chroma to neutral as the bands get more reclaimable, so the
-  // assignment and the stacking order are one decision. This pins the
-  // sequence that was measured (s4 -> s3 -> s6 -> the two neutrals, worst
-  // adjacent pair dE 15.3 on the #1b1b1a surface across normal vision and
-  // simulated protan/deutan/tritan) so that reordering the stack, or
-  // reassigning a hue, fails here rather than silently shipping a pair nobody
-  // checked.
+  // from full chroma to neutral AND from bright to dim as the bands get more
+  // reclaimable, so the assignment and the stacking order are one decision.
+  // This pins the sequence that was measured (s4 -> s3 -> s6 -> slate ->
+  // neutral, worst adjacent pair dE 15.2 on the #1b1b1a surface across normal
+  // vision and simulated protan/deutan/tritan) so that reordering the stack,
+  // or reassigning a hue, fails here rather than silently shipping a pair
+  // nobody checked.
   it("paints the stack in the validated hue sequence", () => {
     expect(memoryBands(full).map((b) => b.color)).toEqual([
       "var(--s4)",
       "var(--s3)",
       "var(--s6)",
+      "var(--s-slate)",
       "var(--s-neutral)",
-      "var(--s-neutral-2)",
     ]);
   });
 
