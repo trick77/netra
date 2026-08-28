@@ -3,6 +3,8 @@ import {
   buildRows,
   fetchFleetTrends,
   fetchHostTrends,
+  trafficDetailSeries,
+  trafficSeries,
   type HostTrends,
 } from "./hostTrends";
 import * as api from "../../lib/api";
@@ -765,6 +767,8 @@ describe("buildRows", () => {
       reporting: [1, 2],
       rx: [10],
       tx: [20],
+      rxMean: [],
+      txMean: [],
       fullest: { mount: "/", pct: 50, others: 0 },
       disk: [],
       oomKills: 0,
@@ -776,5 +780,140 @@ describe("buildRows", () => {
 
     expect(rows[0]!.cpu).toEqual(trends.cpu);
     expect(rows[0]!.fullest).toEqual(trends.fullest);
+  });
+});
+
+describe("trafficSeries", () => {
+  // A rolled-up response, where the mean and the peak are separate columns.
+  // Two interfaces, so the sum is a real sum.
+  function rolledUp(): MetricsResponse {
+    const at = (i: number) => Date.parse(`2026-08-10T00:0${i}:00Z`);
+    const iso = (i: number) => `2026-08-10T00:0${i}:00Z`;
+    return {
+      family: "net",
+      tier: "5m",
+      step_s: 60,
+      window: { from: iso(0), to: iso(3) },
+      requested_window: { from: iso(0), to: iso(3) },
+      warnings: [],
+      key_columns: ["iface"],
+      columns: ["rx_bytes", "rx_bytes_max", "tx_bytes", "tx_bytes_max"],
+      series: [
+        {
+          key: { iface: "eth0" },
+          points: [
+            [at(0), 10, 100, 1, 10],
+            [at(1), 20, 200, 2, 20],
+            [at(2), 30, 300, 3, 30],
+          ],
+        },
+        {
+          key: { iface: "eth1" },
+          points: [
+            [at(0), 1, 5, 1, 2],
+            [at(1), 2, 6, 2, 4],
+            [at(2), 3, 7, 3, 6],
+          ],
+        },
+      ],
+      truncated: false,
+    } as unknown as MetricsResponse;
+  }
+
+  // The raw tier has no _max peer at all: the sample IS its own peak.
+  function raw(): MetricsResponse {
+    const at = (i: number) => Date.parse(`2026-08-10T00:0${i}:00Z`);
+    const iso = (i: number) => `2026-08-10T00:0${i}:00Z`;
+    return {
+      family: "net",
+      tier: "raw",
+      step_s: 60,
+      window: { from: iso(0), to: iso(3) },
+      requested_window: { from: iso(0), to: iso(3) },
+      warnings: [],
+      key_columns: ["iface"],
+      columns: ["rx_bytes", "tx_bytes"],
+      series: [
+        {
+          key: { iface: "eth0" },
+          points: [
+            [at(0), 10, 1],
+            [at(1), 20, 2],
+            [at(2), 30, 3],
+          ],
+        },
+      ],
+      truncated: false,
+    } as unknown as MetricsResponse;
+  }
+
+  it("draws the bucket peak, not the mean", () => {
+    // Given a rolled-up response where the two columns differ
+    const t = trafficSeries(rolledUp());
+
+    // Then the drawn pair is the sum of the peaks. A mean of a mean is the
+    // burst nobody can see at 170px, which is the whole reason for this.
+    expect(t.rx).toEqual([105, 206, 307]);
+    expect(t.rxMean).toEqual([11, 22, 33]);
+  });
+
+  it("folds to the pixel column, keeping the loudest reading in each", () => {
+    // Given three buckets folded into two columns
+    const t = trafficSeries(rolledUp(), 2);
+
+    // Then each column is its own maximum. Three buckets over two columns
+    // splits one/two, so the second column holds 206 and 307 and reports the
+    // larger of them -- never their average, which is the whole point.
+    expect(t.rx).toEqual([105, 307]);
+    // And the mean series folds the same way, so the line and the envelope
+    // over it are sampled at the same instants.
+    expect(t.rxMean).toHaveLength(2);
+  });
+
+  it("has no separate mean at the raw tier", () => {
+    // peakBase() falls back to the bare column there, so the two series
+    // would be the same numbers and an envelope drawn on its own line is
+    // ink for nothing.
+    const t = trafficSeries(raw());
+    expect(t.rx).toEqual([10, 20, 30]);
+    expect(t.rxMean).toEqual([]);
+  });
+
+  it("builds the pair from a row, so the dialog has it on OPEN", () => {
+    // The cell hands its Enlargeable a detailSeries built from the row it
+    // already holds. Without that the dialog draws the cell's peak series
+    // until somebody touches the range picker, and its stats table prints
+    // peak numbers under Min and Mean headers for as long as they do not.
+    const [rx] = trafficDetailSeries({
+      rx: [105, 206],
+      tx: [2, 4],
+      rxMean: [11, 22],
+      txMean: [1, 2],
+    });
+    expect(rx?.values).toEqual([11, 22]);
+    expect(rx?.band).toEqual([105, 206]);
+
+    // A row without the mean pair -- assembled before it existed, or answered
+    // by the raw tier -- opens into a chart with no envelope rather than one
+    // with a wrong axis.
+    const [bare] = trafficDetailSeries({ rx: [105, 206], tx: [2, 4] });
+    expect(bare?.values).toEqual([105, 206]);
+    expect(bare?.band).toBeUndefined();
+  });
+
+  it("hands the enlarged view a mean line under a peak envelope", () => {
+    // The stats table under an enlarged chart prints Latest/Min/Max/Mean off
+    // the LINE, so the line has to be the mean or the dialog states a mean
+    // that is not one -- and the host page's Traffic dialog, same host and
+    // same header, would print a different number.
+    const [rx, tx] = trafficDetailSeries(trafficSeries(rolledUp(), 3));
+    expect(rx?.values).toEqual([11, 22, 33]);
+    expect(rx?.band).toEqual([105, 206, 307]);
+    expect(tx?.values).toEqual([2, 4, 6]);
+
+    // At the raw tier there is one series and no envelope.
+    const [rawRx] = trafficDetailSeries(trafficSeries(raw(), 3));
+    expect(rawRx?.values).toEqual([10, 20, 30]);
+    expect(rawRx?.band).toBeUndefined();
   });
 });

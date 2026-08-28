@@ -27,6 +27,7 @@ import {
   MAX_PER_CORE,
   cpuBands,
   fetchHostFamily,
+  trafficDetailSeries,
   trafficSeries,
 } from "./hostTrends";
 import { FLEET_RANGE_VALUES } from "./ranges";
@@ -87,6 +88,12 @@ export type HostRow = Host & {
   // was down" rendered as "traffic was steady".
   rx: (number | null)[];
   tx: (number | null)[];
+  /** The same pair as the bucket mean, drawn only by the ENLARGED view --
+   * see HostTrends. Empty at the raw tier, where the sample is its own peak,
+   * and optional because a row assembled without it simply opens into a
+   * chart with no envelope rather than failing to compile. */
+  rxMean?: (number | null)[];
+  txMean?: (number | null)[];
   // null when the host has reported no filesystems at all. Non-nullable, the
   // only way to say "never collected" was pct: 0, which renders as an empty,
   // healthy, green disk -- absent read as a fact.
@@ -359,12 +366,8 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
     // Folded to the DIALOG's width, not the cell's: the enlarged view has
     // six times the pixels and is entitled to six times the detail. Same
     // reduction, same reading, more of it.
-    const traffic = trafficSeries(net, DETAIL_WIDTH);
     return {
-      series: [
-        { name: "in", color: UP_COLOR, values: traffic.rx },
-        { name: "out", color: DOWN_COLOR, values: traffic.tx },
-      ],
+      series: trafficDetailSeries(trafficSeries(net, DETAIL_WIDTH)),
       window: net.window,
     };
   };
@@ -384,6 +387,11 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
           { name: "out", color: DOWN_COLOR, values: row.tx },
         ]}
         mirrored
+        // What the DIALOG draws on open, before any refetch: the mean as the
+        // line with the peak as the envelope. Without it the dialog shows the
+        // cell's peak series and its stats table prints peak numbers under
+        // Min and Mean headers until somebody touches the range picker.
+        detailSeries={trafficDetailSeries(row)}
         fmt={bytes}
         window={row.window}
         range={range}

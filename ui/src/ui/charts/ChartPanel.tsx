@@ -314,18 +314,29 @@ export function ChartPanel({
   // five labels at 12px do not fit a 58px plot -- they collided in the panel
   // before this was tuned. One interval yields the two or three that do.
   // The chart page, with room for eight, asks for more.
-  // Fill a line chart's area only where the floor is the data's own.
+  // Fill a line chart's area only where the floor is the data's own AND
+  // there is one line to fill.
   //
-  // Same condition as autoScale below, and for the same reason stated the
-  // other way round: a chart nobody pinned is scaled between its own quietest
-  // and loudest readings, so the area under the line is the band the series
-  // moved through and the fill is that band. Pin a floor -- a filesystem's
-  // fixed 0-100, a memory stack's mem_total -- and the fill stops meaning
-  // that and becomes a block whose bottom edge is an axis decision. Stacks
-  // and mirrors are filled by construction and ignore this.
+  // The floor half is autoScale's condition stated the other way round: a
+  // chart nobody pinned is scaled between its own quietest and loudest
+  // readings, so the area under the line is the band the series moved through
+  // and the fill is that band. Pin a floor -- a filesystem's fixed 0-100, a
+  // memory stack's mem_total -- and the fill becomes a block whose bottom
+  // edge is an axis decision instead.
+  //
+  // The count half is about what OVERLAPPING fills say. These panels draw
+  // independent lines, and six translucent areas from a common baseline
+  // compound where they overlap: the IP fragmentation panels declare six
+  // bases each, and at 0.15 opacity the lower band darkens toward 0.6 and
+  // reads as a cumulative stack -- the one thing a non-stacked panel must
+  // not look like. The lowest series also ends up buried under every other.
+  // A single line has nothing to compound with.
+  //
+  // Stacks and mirrors are filled by construction and ignore this.
   const filled =
     !stacked &&
     !mirrored &&
+    series.length === 1 &&
     min === undefined &&
     max === undefined &&
     reference === undefined;
@@ -401,10 +412,16 @@ export function ChartPanel({
           // mirror or a reference rule each make the scale a decision rather
           // than a derivation, and autoScale would throw it away.
           //
-          // Which is the same set of panels that fill their line, and one
-          // flag rather than two identical expressions: a chart free-scales
-          // and fills for one reason, that its floor is its own data.
-          autoScale={filled}
+          autoScale={
+            !stacked &&
+            !mirrored &&
+            min === undefined &&
+            max === undefined &&
+            reference === undefined
+          }
+          // NOT the same condition: free-scaling is about the axis and holds
+          // however many series a panel draws, while the fill also asks that
+          // there be only one of them to fill. See `filled` above.
           filled={filled}
           stacked={stacked}
           // The rule is unlabelled in both views: the enlarged view's y axis

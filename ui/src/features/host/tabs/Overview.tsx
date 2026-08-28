@@ -61,7 +61,7 @@ import { diskState } from "../../fleet/conditions";
 // its own comment carries why the two cannot be allowed to disagree. The
 // Traffic panel on the Network tab draws the same total as the envelope of a
 // per-interface stack; see its spec for why that is the same chart.
-import { trafficSeries } from "../../fleet/hostTrends";
+import { trafficDetailSeries, trafficSeries } from "../../fleet/hostTrends";
 
 /**
  * column() in lib/metrics.ts THROWS for a column the answering tier does
@@ -939,12 +939,10 @@ export function Overview({
                 ? undefined
                 : async (next) => {
                     const answered = await fetchFamily("net", next);
-                    const traffic = trafficSeries(answered, DETAIL_WIDTH);
                     return {
-                      series: [
-                        { name: "in", color: UP_COLOR, values: traffic.rx },
-                        { name: "out", color: DOWN_COLOR, values: traffic.tx },
-                      ],
+                      series: trafficDetailSeries(
+                        trafficSeries(answered, DETAIL_WIDTH),
+                      ),
                       window: answered.window,
                     };
                   }

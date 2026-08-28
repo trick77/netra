@@ -19,6 +19,7 @@ import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { SPARK_WIDTH } from "../../ui/charts/size";
+import { DOWN_COLOR, UP_COLOR } from "../../ui/charts/UpDownSparkline";
 import type { HostRow } from "./hostColumns";
 import { diskState } from "./conditions";
 import type { DiskSeverity } from "./conditions";
@@ -85,6 +86,20 @@ export interface HostTrends {
   reporting: (number | null)[];
   rx: (number | null)[];
   tx: (number | null)[];
+  /**
+   * The same pair read as the bucket mean, for the ENLARGED view alone.
+   *
+   * The cell draws peaks and is right to: at 170 px a mean of a mean is a
+   * burst nobody can see. The dialog has a stats table printing Mean, so it
+   * draws the mean as its line with the peak as the envelope over it -- and
+   * it must have that pair the moment it OPENS, not only after a range
+   * change, or the numbers under the chart are peak statistics wearing mean
+   * headers for as long as nobody touches the picker.
+   *
+   * Empty at the raw tier, where the sample is its own peak.
+   */
+  rxMean: (number | null)[];
+  txMean: (number | null)[];
   fullest: HostRow["fullest"];
   /** Every filesystem's usage over the window, as df's Use%, one band each.
    * The meter beside it says how full the worst one is now; these say which
@@ -456,13 +471,78 @@ export function trafficSeries(
 ): {
   rx: (number | null)[];
   tx: (number | null)[];
+  /**
+   * The same pair read as the bucket MEAN, for a chart with room to say a
+   * number as well as draw a shape.
+   *
+   * The enlarged view's stats table prints Latest / Min / Max / Mean off the
+   * series it is given, and a "Mean" computed over per-column peaks is not
+   * the mean throughput -- on the simulated NAS it reads several times the
+   * real one, while the host page's Traffic dialog, same host and same
+   * header, prints the true mean off rx_bytes_avg. Two dialogs, one label,
+   * two answers. So the dialog draws the mean as its line and the peak as
+   * the envelope over it: the shape the cell showed is still the outer edge,
+   * and every number under the chart means what it says.
+   *
+   * Empty at the raw tier, where peakBase() falls back to the bare column and
+   * the two series are the same numbers -- an envelope drawn exactly on its
+   * own line is ink for nothing.
+   */
+  rxMean: (number | null)[];
+  txMean: (number | null)[];
 } {
   const fold = (vals: (number | null)[]) =>
     columns === undefined ? vals : reduceToColumns(vals, columns);
+  const rxPeak = peakBase(net, "rx_bytes");
+  const txPeak = peakBase(net, "tx_bytes");
+  const rolledUp = rxPeak !== "rx_bytes" || txPeak !== "tx_bytes";
   return {
-    rx: fold(sumSeries(net, peakBase(net, "rx_bytes"))),
-    tx: fold(sumSeries(net, peakBase(net, "tx_bytes"))),
+    rx: fold(sumSeries(net, rxPeak)),
+    tx: fold(sumSeries(net, txPeak)),
+    rxMean: rolledUp ? fold(sumSeries(net, "rx_bytes")) : [],
+    txMean: rolledUp ? fold(sumSeries(net, "tx_bytes")) : [],
   };
+}
+
+/**
+ * The in/out pair an ENLARGED traffic view draws: the mean as the line, the
+ * bucket peak as the envelope over it.
+ *
+ * One function rather than a copy in each dialog. The fleet row's cell and
+ * the host overview's Traffic card are the same chart at two sizes and both
+ * open into this; two hand-built copies of the same pair is exactly how they
+ * came to disagree before.
+ *
+ * The envelope's outer edge is the silhouette the cell drew, so enlarging
+ * does not change the shape -- and the stats table under the chart reads the
+ * LINE, so its Mean is a mean. At the raw tier there is no separate peak and
+ * the pair collapses to one series, which is honest: the sample is its own
+ * peak there.
+ */
+export function trafficDetailSeries(t: {
+  rx: (number | null)[];
+  tx: (number | null)[];
+  rxMean?: (number | null)[];
+  txMean?: (number | null)[];
+}): {
+  name: string;
+  color: string;
+  values: (number | null)[];
+  band?: (number | null)[];
+}[] {
+  const pair = (
+    name: string,
+    color: string,
+    peak: (number | null)[],
+    mean: (number | null)[],
+  ) =>
+    mean.length === 0
+      ? { name, color, values: peak }
+      : { name, color, values: mean, band: peak };
+  return [
+    pair("in", UP_COLOR, t.rx, t.rxMean ?? []),
+    pair("out", DOWN_COLOR, t.tx, t.txMean ?? []),
+  ];
 }
 
 /**
@@ -598,6 +678,8 @@ export function hostTrendsFrom(
     // where the pairs are drawn per interface.
     rx: traffic.rx,
     tx: traffic.tx,
+    rxMean: traffic.rxMean,
+    txMean: traffic.txMean,
     fullest: fullestFilesystem(filesystem),
     disk: filesystemBands(filesystem),
     oomKills: counterIncrease(griddedValues(host, 0, "oom_kill_total")),
@@ -750,6 +832,8 @@ export function buildRows(
       reporting: trend?.reporting ?? [],
       rx: trend?.rx ?? [],
       tx: trend?.tx ?? [],
+      rxMean: trend?.rxMean ?? [],
+      txMean: trend?.txMean ?? [],
       // null, not a zero percentage: a host whose filesystems have not been
       // read has no fullest one, and an empty green meter would say its
       // disks are empty.

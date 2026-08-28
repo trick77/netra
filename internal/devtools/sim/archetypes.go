@@ -441,7 +441,7 @@ func homeNAS() *Profile {
 		Provider:    "self-hosted",
 		Facility:    "basement",
 		Location:    "Zurich, CH",
-		PkgFormat:   "deb",
+		PkgFormat:   "dpkg",
 		CPUBase:     6,
 		MemUsedFrac: 0.41,
 
@@ -479,7 +479,7 @@ func homeNAS() *Profile {
 			"sensors":    "absent",
 			"smart":      "no-device-access",
 		},
-		Packages: packages("x86_64", 61),
+		Packages: packages("amd64", 61),
 	}
 }
 
