@@ -574,12 +574,12 @@ describe("Overview", () => {
     expect(labels).toContain("100%");
   });
 
-  it("says so in one line when nothing is wrong, without the band", () => {
+  it("says nothing at all when nothing is wrong", () => {
     renderOverview();
     expect(
       screen.queryByRole("region", { name: /needs attention/i }),
     ).toBeNull();
-    expect(screen.getByText(/nothing needs attention/i)).toBeInTheDocument();
+    expect(screen.queryByText(/needs attention/i)).toBeNull();
   });
 
   it("summarises the tabs instead of duplicating them", () => {
