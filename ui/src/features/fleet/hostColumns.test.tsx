@@ -237,6 +237,65 @@ describe("hostColumns", () => {
       expect(container.textContent).not.toContain("zurich-dc1");
     });
 
+    // The case that matters on a real hub: createSite writes a name and a
+    // provider and nothing else, so facility and country are empty until
+    // somebody opens the site Edit form. Built from the address alone this
+    // line vanished, and the fleet went from naming the site to saying
+    // nothing at all.
+    it("falls back to the site name when there is no address", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const cell = (over: Partial<HostRow>) =>
+        render(<>{col.cell(makeRow(over))}</>).container.querySelector(
+          ".host-cell-site",
+        )?.textContent;
+
+      // A site with a name and a provider, which is all the create form asks
+      // for.
+      expect(
+        cell({
+          site_name: "zrh-colo",
+          provider_name: "Init7",
+          facility: null,
+          country_code: null,
+        }),
+      ).toBe("Init7 · zrh-colo");
+
+      // A site with only a name -- exactly what the column showed before it
+      // knew about providers, which is the floor this must not drop below.
+      expect(
+        cell({
+          site_name: "zrh-colo",
+          provider_name: null,
+          facility: null,
+          country_code: null,
+        }),
+      ).toBe("zrh-colo");
+    });
+
+    // The name gives way the moment there is a real address: a site called
+    // "gra-rack-7" whose facility says "Gravelines" is one place named
+    // twice, and the row has one line to spend.
+    it("prefers the address over the site name, never both", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const { container } = render(
+        <>
+          {col.cell(
+            makeRow({
+              site_name: "gra-rack-7",
+              provider_name: "OVH",
+              facility: "Gravelines",
+              country_code: "FR",
+            }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector(".host-cell-site")!.textContent).toBe(
+        "OVH · Gravelines, France",
+      );
+      expect(container.textContent).not.toContain("gra-rack-7");
+    });
+
     // Each part stands on its own. A site with a facility and no provider on
     // record says where it is, rather than leading with a dash for the fact
     // nobody recorded.
@@ -257,9 +316,13 @@ describe("hostColumns", () => {
       expect(
         cell({ provider_name: "OVH", facility: null, country_code: "FR" }),
       ).toBe("OVH · France");
+      // Not "OVH" alone: the provider is only known because the host is in a
+      // site, so there is always a name to fall back to here. A bare provider
+      // would say who runs the machine and drop the one label the operator
+      // gave the place.
       expect(
         cell({ provider_name: "OVH", facility: null, country_code: null }),
-      ).toBe("OVH");
+      ).toBe("OVH · zurich-dc1");
     });
 
     // A code Intl cannot name is still what the operator typed, so it is
