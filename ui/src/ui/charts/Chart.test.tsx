@@ -431,5 +431,67 @@ describe("Chart", () => {
       );
       expect(c.querySelector("[data-reference]")).not.toBeNull();
     });
+
+    // A threshold is only worth drawing where the series has reached it,
+    // which is exactly where an opaque band covers it. It is not furniture
+    // like the grid: the grid says where the values are, this says which
+    // value matters.
+    it("draws over the marks, not under them", () => {
+      const c = draw(
+        <Chart
+          series={pair}
+          width={170}
+          height={32}
+          max={100}
+          min={0}
+          mark="stack"
+          reference={80}
+        />,
+      );
+
+      const nodes = [...c.querySelectorAll("[data-band], [data-reference]")];
+      expect(nodes.at(-1)!.hasAttribute("data-reference")).toBe(true);
+    });
+  });
+
+  // The grid is furniture and belongs behind what it measures. It IS painted
+  // first, but a translucent band let it show straight through the data --
+  // and where a gridline crossed a band's own edge stroke, that edge read as
+  // broken. Being behind is only half of it; the data has to be able to hide
+  // it.
+  describe("the grid stays behind the data", () => {
+    it("fills stacked bands opaquely", () => {
+      const c = draw(
+        <Chart series={pair} width={170} height={32} max={100} mark="stack" />,
+      );
+
+      for (const band of c.querySelectorAll("[data-band]")) {
+        expect(band.getAttribute("fill-opacity")).toBe("1");
+      }
+    });
+
+    it("paints the grid before any mark", () => {
+      const c = draw(
+        <Chart
+          series={pair}
+          width={260}
+          height={112}
+          max={100}
+          mark="stack"
+          grid
+          y={niceTicks(0, 100)}
+        />,
+      );
+
+      const svg = c.querySelector("svg")!;
+      // A layer is the element itself when MarkGroup renders no wrapper.
+      const holds = (l: Element, sel: string) =>
+        l.matches(sel) || l.querySelector(sel) !== null;
+      const layers = [...svg.children];
+      const grid = layers.findIndex((l) => holds(l, "[data-grid]"));
+      const marks = layers.findIndex((l) => holds(l, "[data-band]"));
+      expect(grid).toBeGreaterThanOrEqual(0);
+      expect(grid).toBeLessThan(marks);
+    });
   });
 });
