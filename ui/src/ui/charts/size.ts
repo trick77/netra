@@ -109,8 +109,15 @@ export const MIRROR_STROKE_WIDTH = 1.25;
 export function mirrorEdge(
   plotWidth: number,
   points: number,
+  pad = 0,
 ): { fillOpacity: number; strokeWidth: number } {
-  const column = points > 0 ? plotWidth / points : Infinity;
+  // Spaced exactly as scaleX() spaces them -- inset by `pad` at both ends and
+  // divided by the GAPS rather than the points. Measuring plotWidth/points
+  // instead is close enough almost everywhere and wrong at the boundary: a
+  // 170px cell with 134 points reads 1.269 that way and 1.248 the real way,
+  // so the rule would keep a 1.25 edge on a column narrower than it -- the
+  // one case it exists to catch.
+  const column = points > 1 ? (plotWidth - 2 * pad) / (points - 1) : Infinity;
   return MIRROR_STROKE_WIDTH < column
     ? { fillOpacity: MIRROR_FILL_OPACITY, strokeWidth: MIRROR_STROKE_WIDTH }
     : { fillOpacity: 1, strokeWidth: 0 };

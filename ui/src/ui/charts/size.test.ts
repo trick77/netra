@@ -38,7 +38,31 @@ describe("mirrorEdge", () => {
   // width means the outline covers the whole column, which is the failure
   // this exists to prevent rather than a borderline case worth keeping.
   it("drops the edge at exactly one edge-width per column", () => {
-    expect(mirrorEdge(MIRROR_STROKE_WIDTH * 10, 10).strokeWidth).toBe(0);
+    // Ten gaps between eleven points across ten edge-widths.
+    expect(mirrorEdge(MIRROR_STROKE_WIDTH * 10, 11).strokeWidth).toBe(0);
+  });
+
+  // The column has to be measured the way scaleX() actually spaces points:
+  // inset by `pad` at both ends, divided by the gaps rather than the points.
+  // 170px with 134 points is 1.269 measured carelessly and 1.248 measured
+  // properly, and the edge is 1.25 -- so the careless reading keeps an
+  // outline on a column narrower than the outline, which is the one case
+  // this function exists to catch.
+  it("measures a column the way the geometry spaces one", () => {
+    expect(mirrorEdge(SPARK_WIDTH, 134, 2).strokeWidth).toBe(0);
+    // Without the inset the same chart reads as having room, which is the
+    // bug. Pinned so the two cannot drift apart again.
+    expect(mirrorEdge(SPARK_WIDTH, 134, 0).strokeWidth).toBe(
+      MIRROR_STROKE_WIDTH,
+    );
+  });
+
+  it("keeps the edge for a chart of one point", () => {
+    // A single point has no gap to measure, and draws no run anyway --
+    // mirrorPaths drops a run of one. Answering "no edge" would make an
+    // empty-looking chart disagree with every other one for no visible
+    // reason.
+    expect(mirrorEdge(170, 1, 2).strokeWidth).toBe(MIRROR_STROKE_WIDTH);
   });
 
   it("keeps the edge for a chart with no points to measure", () => {

@@ -396,7 +396,7 @@ function MirrorMarks({
         // fleet cell at one point per pixel and a 1000px dialog at three and
         // a half, and only one of those can carry a 1.25px outline without
         // the outline becoming the mark. See mirrorEdge().
-        const edge = mirrorEdge(w, longest([up, ...(down ? [down] : [])]));
+        const edge = mirrorEdge(w, longest([up, ...(down ? [down] : [])]), pad);
         const paths = mirrorPaths(
           up.values,
           down?.values ?? [],
