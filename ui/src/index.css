@@ -1727,14 +1727,31 @@ table {
   width: 100%;
   border-collapse: collapse;
 }
+/* A column label is the quietest thing in a table, not the loudest. It shipped
+   at Label 14px, which put it 2px above every other uppercase eyebrow in the
+   UI (.grouphead, .attn-sev, .gstat .lbl, .sysstrip dt are all Micro) and made
+   the header rail the first thing the eye landed on. It was never actually
+   BIGGER than the data -- td inherits body's --text-ui 15px, so the label was a
+   pixel smaller -- but caps set every glyph at cap height, which is taller than
+   the x-height of the lowercase beneath it, and 0.07em spreads the run wider
+   still. Micro is the size the rest of the system already uses for exactly this
+   job, and the tighter padding takes the row from ~38px to ~27px of height
+   spent on text that carries no reading.
+
+   The colour stays --muted. It is already the dimmest text token that clears
+   4.5:1 on this ground (5.06:1); the next step down, --reference, measures
+   3.03:1 and fails outright at 12px. What quiets the rail is taking away its
+   fill -- see the note where .tablewrap's header rule used to be -- rather than
+   dimming its ink. */
 th {
   text-align: left;
-  font-size: var(--text-label);
+  font-size: var(--text-micro);
+  line-height: 1.4;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--muted);
   font-weight: 500;
-  padding: 8px var(--space-4);
+  padding: 5px var(--space-4);
   border-bottom: 1px solid var(--border);
 }
 td {
@@ -2379,9 +2396,13 @@ details.sysfold > .body {
   font-weight: 500;
 }
 /* A row header is a NAME, not a column label: the global th rule uppercases
-   and letter-spaces, which turned the load average "1m" into "1 M". */
+   and letter-spaces, which turned the load average "1m" into "1 M". The size
+   has to come back for the same reason -- that rule now sets Micro, which is
+   right for the labels across the top and wrong for a name sitting in a row of
+   Label-sized figures. */
 .cd-stats th[scope="row"] {
   text-align: left;
+  font-size: var(--text-label);
   font-weight: 500;
   text-transform: none;
   letter-spacing: normal;
@@ -2647,15 +2668,21 @@ svg.spark {
      .cards and .toolbar all do, for the reason spelled out above .card. */
   margin-bottom: var(--space-4);
 }
-/* The header rail, filled so it separates from the rows without another
-   border. Deliberately NOT sticky: `overflow-x: auto` makes .tablewrap a
-   scroll container on both axes, so `position: sticky; top: 0` would anchor
-   to this box rather than to the viewport and do nothing without a
-   max-height on it. Scoped to .tablewrap so ChartDetail's own .cd-stats
-   table, which is not wrapped, keeps its own header rules. */
-.tablewrap thead th {
-  background: var(--surface-2);
-}
+/* The header rail carried a --surface-2 fill, so that it separated from the
+   rows without another border. It had one all along: the bare `th` rule sets
+   the same bottom border every td gets, and the fill was doing the separating
+   twice. What the second channel cost is that a band of ground reads as an
+   object -- the eye stops on it before it reaches a single row -- and no amount
+   of shrinking the type fixes that while the block is still there. A line of
+   labels over a line, and the rows are what the table shows.
+
+   Nothing is left to scope to .tablewrap, so the rule is gone rather than
+   emptied. Two notes it was carrying that still hold: the header is
+   deliberately NOT sticky (`overflow-x: auto` makes .tablewrap a scroll
+   container on both axes, so `position: sticky; top: 0` anchors to this box
+   rather than the viewport and does nothing without a max-height on it), and
+   ChartDetail's .cd-stats table is not wrapped, so it never took the fill and
+   keeps its own header rules either way. */
 /* A table inside a card is already on a surface. Nothing does this today;
    the reset is here so the next one does not nest two borders. */
 .card .tablewrap {

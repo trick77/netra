@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { Event } from "../../../lib/api";
 import { Events, eventSeverity } from "./Events";
 
@@ -78,5 +79,84 @@ describe("Events", () => {
     expect(
       screen.getByRole("heading", { name: /nothing/i }),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * Clicks every column header of the rendered table, asserting each one is a
+ * control and that no click loses a row.
+ *
+ * Every header, not a sample: the point of these tables is that all of their
+ * columns sort now, and a per-column accessor that throws on a null or reads
+ * the wrong field only shows itself when that column is the one clicked.
+ */
+async function sortByEveryColumn() {
+  const before = screen.getAllByRole("row").length;
+
+  for (const cell of screen.getAllByRole("columnheader")) {
+    const control = within(cell).getByRole("button");
+    await userEvent.click(control);
+    expect(screen.getAllByRole("row")).toHaveLength(before);
+  }
+}
+
+// The events log shipped with no sortable column at all -- five columns of
+// timestamps, categories and words, and the only order available was the
+// newest-first this tab imposes on arrival.
+describe("Events sorting", () => {
+  const rows = [
+    event({ id: "e:1", ts: "2026-08-10T09:00:00Z", type: "package" }),
+    event({
+      id: "e:2",
+      ts: "2026-08-10T10:00:00Z",
+      type: "drive",
+      subject: "sda",
+      detail: { severity: "critical" },
+    }),
+    event({
+      id: "e:3",
+      ts: "2026-08-10T08:00:00Z",
+      type: "unit",
+      subject: "cron.service",
+      detail: { severity: "warning" },
+    }),
+  ];
+
+  /** The Subject cell of every body row, in order. */
+  function subjects(): string[] {
+    const [, ...body] = screen.getAllByRole("row");
+    return body.map((row) => within(row).getAllByRole("cell")[3]!.textContent!);
+  }
+
+  function header(name: RegExp) {
+    return within(screen.getByRole("columnheader", { name })).getByRole(
+      "button",
+    );
+  }
+
+  it("sorts on every column", async () => {
+    render(<Events events={rows} />);
+
+    await sortByEveryColumn();
+  });
+
+  // The tab lands newest-first; one click on When gives oldest-first, which
+  // is what a reader chasing a cause is after.
+  it("orders When oldest-first on the first click", async () => {
+    render(<Events events={rows} />);
+    await userEvent.click(header(/when/i));
+
+    expect(subjects()).toEqual(["cron.service", "openssl", "sda"]);
+  });
+
+  // By RANK, not alphabetically: "critical" collates above "warning", so a
+  // string sort is right in one direction and backwards in the other -- and
+  // an event the collector said nothing about is not the calmest on the page,
+  // so it sorts last either way.
+  it("orders Severity by rank and leaves the unstated ones last", async () => {
+    render(<Events events={rows} />);
+    await userEvent.click(header(/severity/i));
+
+    expect(subjects()).toEqual(["cron.service", "sda", "openssl"]);
   });
 });
