@@ -22,6 +22,8 @@ const host: HostDetail = {
   services_failed: 1,
   site_name: "Zurich",
   provider_name: "Hetzner",
+  site_facility: null,
+  site_country_code: null,
   fingerprint: "fp",
   host_type: "vps",
   agent_version: "0.4.1",
@@ -498,9 +500,37 @@ describe("Overview", () => {
     const dl = system.querySelector("dl")!;
 
     expect(dl.className).toContain("sysstrip");
-    // Every pair is its own grid item -- a name-value group -- and all eight
-    // facts survive the shape change.
-    expect(dl.querySelectorAll(":scope > .f").length).toBe(8);
+    // Every pair is its own grid item -- a name-value group -- and all
+    // twelve facts survive the shape change.
+    expect(dl.querySelectorAll(":scope > .f").length).toBe(12);
+    // Where the machine is, ahead of what it is: the reader asks whose
+    // hardware this is and which building before they ask which processor.
+    expect([...dl.querySelectorAll("dt")].map((dt) => dt.textContent)).toEqual([
+      "Site",
+      "Provider",
+      "Facility",
+      "Country",
+      "OS",
+      "Kernel",
+      "Architecture",
+      "Processor",
+      "Cores",
+      "Memory",
+      "Uptime",
+      "Agent",
+    ]);
+  });
+
+  // An unsited host is not missing four facts -- it has not been put in a
+  // site yet, and four dashes would say otherwise. Inside a site the rule
+  // flips: a blank Facility IS a gap somebody meant to fill, and a labelled
+  // strip is exactly where a gap gets marked.
+  it("writes no location facts at all for a host with no site", () => {
+    renderOverview({ host: { ...host, site_id: null, site_name: null } });
+    const dl = screen
+      .getByRole("region", { name: "System" })
+      .querySelector("dl")!;
+
     expect([...dl.querySelectorAll("dt")].map((dt) => dt.textContent)).toEqual([
       "OS",
       "Kernel",
@@ -511,6 +541,18 @@ describe("Overview", () => {
       "Uptime",
       "Agent",
     ]);
+  });
+
+  it("names the country from the code the hub stores", () => {
+    renderOverview({ host: { ...host, site_country_code: "FR" } });
+    const dl = screen
+      .getByRole("region", { name: "System" })
+      .querySelector("dl")!;
+    const facts = [...dl.querySelectorAll(":scope > .f")].map(
+      (f) => f.textContent,
+    );
+
+    expect(facts.some((f) => f?.includes("France"))).toBe(true);
   });
 
   // The processor model is the one value long enough to be cut off by the

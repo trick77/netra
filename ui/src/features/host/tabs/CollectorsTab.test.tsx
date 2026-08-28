@@ -18,6 +18,8 @@ const host: HostDetail = {
   services_failed: 1,
   site_name: "Zurich",
   provider_name: "Hetzner",
+  site_facility: null,
+  site_country_code: null,
   fingerprint: "fp",
   host_type: "vps",
   agent_version: "0.4.1",

@@ -6,6 +6,7 @@ import {
   getHost,
   getHosts,
   getMetrics,
+  getProviders,
   getSites,
   type Container,
   type Event,
@@ -383,7 +384,13 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
 
   const poll = usePoll(
     async () => {
-      const [hosts, sites] = await Promise.all([getHosts(), getSites()]);
+      // Providers with the sites: both are small whole-table reads, and a
+      // fleet row names its host's provider.
+      const [hosts, sites, providers] = await Promise.all([
+        getHosts(),
+        getSites(),
+        getProviders(),
+      ]);
 
       // Three requests' worth of work in ONE wave, where this used to be two
       // fan-outs of one request per host per family, the second waiting on
@@ -448,6 +455,7 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       return {
         hosts,
         sites,
+        providers,
         trends,
         containers,
         unreachable,
@@ -465,6 +473,7 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
         poll.data?.hosts ?? [],
         poll.data?.sites ?? [],
         poll.data?.trends ?? new Map(),
+        poll.data?.providers ?? [],
       ),
     [poll.data],
   );

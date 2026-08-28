@@ -3,9 +3,11 @@ import {
   ApiError,
   getContainers,
   getHosts,
+  getProviders,
   getSites,
   type Container,
   type Host,
+  type Provider,
   type Site,
 } from "../../lib/api";
 import { ABSENT, byterate } from "../../lib/format";
@@ -31,7 +33,7 @@ import {
 import { FleetContainers, type ContainerRow } from "./FleetContainers";
 import { HostCards } from "./HostCards";
 import { HostTable } from "./HostTable";
-import type { HostRow, Range } from "./hostColumns";
+import { hostLocation, type HostRow, type Range } from "./hostColumns";
 import { isReporting } from "../../lib/host";
 import { buildRows } from "./hostTrends";
 import { DENSITY_KEY, readPref, writePref } from "../../lib/prefs";
@@ -59,12 +61,16 @@ export { DENSITY_KEY };
  * the site names, not the per-host metrics. App's poll fetches those and
  * builds the same rows with them (see hostTrends).
  */
-export function buildHostRows(hosts: Host[], sites: Site[]): HostRow[] {
+export function buildHostRows(
+  hosts: Host[],
+  sites: Site[],
+  providers: Provider[] = [],
+): HostRow[] {
   // One builder, in hostTrends: this page's self-fetching path and App's
   // polling path must not be able to disagree about what a row is. Without
   // trends every series is empty, which renders as a gap and as the absent
   // marker -- the truth, since not fetched is not zero.
-  return buildRows(hosts, sites, new Map());
+  return buildRows(hosts, sites, new Map(), providers);
 }
 
 /**
@@ -285,13 +291,18 @@ export function FleetPage({
     void (async () => {
       let hosts: Host[];
       try {
-        const [fetchedHosts, sites] = await Promise.all([
+        // Providers alongside the sites, not after them: the two are both
+        // small whole-table reads and the row needs each of them to say
+        // where a host is. Serial, the fleet would wait a round trip to
+        // learn a word.
+        const [fetchedHosts, sites, providers] = await Promise.all([
           getHosts(),
           getSites(),
+          getProviders(),
         ]);
         hosts = fetchedHosts;
         if (!live) return;
-        setFetchedRows(buildHostRows(hosts, sites));
+        setFetchedRows(buildHostRows(hosts, sites, providers));
         setFetchedCheckedAt(new Date().toISOString());
       } catch (err) {
         if (!live) return;
@@ -354,7 +365,15 @@ export function FleetPage({
     (row) =>
       needle === "" ||
       row.hostname.toLowerCase().includes(needle) ||
-      (row.site_name ?? "").toLowerCase().includes(needle),
+      // The site NAME still matches even though the row no longer prints it:
+      // it is what the operator called the place, and someone who types
+      // "gra-rack-7" is searching for the thing they named. The three facts
+      // the row does print match too, so "OVH" and "France" both narrow the
+      // list -- a filter that cannot find what is on screen is broken.
+      (row.site_name ?? "").toLowerCase().includes(needle) ||
+      (row.provider_name ?? "").toLowerCase().includes(needle) ||
+      (row.facility ?? "").toLowerCase().includes(needle) ||
+      (hostLocation(row) ?? "").toLowerCase().includes(needle),
   );
   const visibleContainers = containerRows.filter(
     (row) =>

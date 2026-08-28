@@ -17,6 +17,9 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     hostname: "web-01",
     site_id: 3,
     site_name: "zurich-dc1",
+    provider_name: null,
+    facility: null,
+    country_code: null,
     window: null,
     last_seen: "2026-08-10T13:59:30Z",
     cpu_total: 42,
@@ -208,13 +211,85 @@ describe("hostColumns", () => {
   });
 
   describe("host cell", () => {
-    it("writes the site under the hostname", () => {
+    // The provider and the place, not the site's internal label. "zurich-dc1"
+    // told a reader scanning the fleet nothing the hostname beside it had not
+    // already said; who runs the machine and which building it is in are the
+    // two questions they actually have.
+    it("writes the provider and the location under the hostname", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
-      const { container } = render(<>{col.cell(makeRow())}</>);
-
-      expect(container.querySelector(".host-cell-site")!.textContent).toBe(
-        "zurich-dc1",
+      const { container } = render(
+        <>
+          {col.cell(
+            makeRow({
+              provider_name: "OVH",
+              facility: "Gravelines",
+              country_code: "FR",
+            }),
+          )}
+        </>,
       );
+
+      // The country as a country: "FR" is a database value, France is the
+      // fact. The comma joins the one address; the dot separates two facts.
+      expect(container.querySelector(".host-cell-site")!.textContent).toBe(
+        "OVH · Gravelines, France",
+      );
+      expect(container.textContent).not.toContain("zurich-dc1");
+    });
+
+    // Each part stands on its own. A site with a facility and no provider on
+    // record says where it is, rather than leading with a dash for the fact
+    // nobody recorded.
+    it("leaves out the parts the site does not have", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const cell = (over: Partial<HostRow>) =>
+        render(<>{col.cell(makeRow(over))}</>).container.querySelector(
+          ".host-cell-site",
+        )?.textContent;
+
+      expect(
+        cell({
+          provider_name: null,
+          facility: "Gravelines",
+          country_code: "FR",
+        }),
+      ).toBe("Gravelines, France");
+      expect(
+        cell({ provider_name: "OVH", facility: null, country_code: "FR" }),
+      ).toBe("OVH · France");
+      expect(
+        cell({ provider_name: "OVH", facility: null, country_code: null }),
+      ).toBe("OVH");
+    });
+
+    // A code Intl cannot name is still what the operator typed, so it is
+    // shown rather than swallowed -- the alternative is a host that silently
+    // loses its country because somebody entered a code this runtime's ICU
+    // build has never heard of.
+    //
+    // ZZ is the case worth pinning: it is structurally valid, so nothing
+    // throws, and CLDR has a name for it -- "Unknown Region" -- which would
+    // sit under a hostname reading like somewhere a machine actually is.
+    it("falls back to the raw code for a country it cannot name", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const line = (country: string) =>
+        render(
+          <>
+            {col.cell(
+              makeRow({
+                provider_name: null,
+                facility: null,
+                country_code: country,
+              }),
+            )}
+          </>,
+        ).container.querySelector(".host-cell-site")!.textContent;
+
+      expect(line("ZZ")).toBe("ZZ");
+      expect(line("QQ")).toBe("QQ");
+      // Not over-corrected into a blanket rule about user-assigned codes:
+      // XK is one, and it is Kosovo.
+      expect(line("XK")).toBe("Kosovo");
     });
 
     // An unassigned host is not a host with a missing site: it is one that
@@ -223,7 +298,17 @@ describe("hostColumns", () => {
     it("writes no site line at all when the host has no site", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
       const { container } = render(
-        <>{col.cell(makeRow({ site_id: null, site_name: null }))}</>,
+        <>
+          {col.cell(
+            makeRow({
+              site_id: null,
+              site_name: null,
+              provider_name: null,
+              facility: null,
+              country_code: null,
+            }),
+          )}
+        </>,
       );
 
       expect(container.querySelector(".host-cell-site")).toBeNull();
