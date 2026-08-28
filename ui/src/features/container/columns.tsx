@@ -403,7 +403,11 @@ function MemoryCell({
   range: Range;
   ranges?: readonly Range[];
 }) {
-  if (row.mem === undefined || row.mem.length === 0) return <>{ABSENT}</>;
+  // Wrapped, for the reason When's absent branch is: Table dims a cell whose
+  // own output IS the marker string, and this one's is an element, so the
+  // dimming cannot reach it from there.
+  if (row.mem === undefined || row.mem.length === 0)
+    return <span className="absent">{ABSENT}</span>;
   const limit = row.mem_limit_bytes ?? null;
   return (
     <div className="mem-cell">

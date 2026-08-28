@@ -380,7 +380,28 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 // Interfaces lists the host's network interfaces.
 //
 // Ordered by iface, the same key the Addresses list orders on first, so the
-// two tables on the page read down in the same order.
+// two tables on the page read down in the same order -- except that a link the
+// kernel calls down or lowerlayerdown sinks below every other interface.
+//
+// A host's interface list is mostly scenery: lo, docker0, a stack of veths,
+// and one or two links that carry traffic. Alphabetically the dead ones scatter
+// through that stack and are found only by reading every row. Sorted to the
+// bottom they are a block at the end of the table, which is where a reader who
+// is looking for "what is wrong here" can stop scanning.
+//
+// Only down and lowerlayerdown sink; unknown does not. unknown is what every
+// virtual device reports -- wg0, lo, a bridge -- so sinking it would push half
+// a healthy host's list to the bottom and say nothing.
+//
+// Name remains the sort WITHIN each group, so the table is still alphabetical
+// wherever the reader happens to be in it. The UI's Interface column still
+// sorts on the name alone (see INTERFACE_COLUMNS in Inventory.tsx): this is the
+// order the list ARRIVES in, not a rule about what a header click may do.
+//
+// The COALESCE is load-bearing: oper_state is nullable, `NULL IN (...)` is
+// NULL, and Postgres sorts NULL last in an ascending order -- an interface
+// whose state was never reported would have sunk BELOW the down block, which
+// is the one place a reader would read it as "down".
 func (s *Service) Interfaces(ctx context.Context, hostID int32) ([]Interface, error) {
 	if err := s.hostExists(ctx, hostID); err != nil {
 		return nil, err
@@ -391,7 +412,8 @@ func (s *Service) Interfaces(ctx context.Context, hostID int32) ([]Interface, er
 		       description, first_seen, last_seen
 		  FROM host_interfaces
 		 WHERE host_id = $1
-		 ORDER BY iface`, hostID)
+		 ORDER BY (COALESCE(oper_state, '') IN ('down', 'lowerlayerdown')),
+		          iface`, hostID)
 	if err != nil {
 		return nil, fmt.Errorf("query interfaces: %w", err)
 	}

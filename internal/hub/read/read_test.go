@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1399,6 +1400,42 @@ func TestIntegrationInterfacesListLinksWithoutAddresses(t *testing.T) {
 	// string that every `?? ABSENT` downstream would treat as a measurement.
 	if lo := byName["lo"]; lo.MAC != nil {
 		t.Errorf("lo mac = %v, want absent", *lo.MAC)
+	}
+}
+
+// Down links sink to the end of the list, alphabetical within each group.
+//
+// The names are chosen so a plain ORDER BY iface would interleave them: eth0
+// down sorts between enp1s0 and lo, and wg0 up sorts after both down links.
+// Only down and lowerlayerdown sink -- unknown is what every virtual device
+// reports and stays with the healthy block.
+func TestIntegrationInterfacesSortDownLinksLast(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "sunken")
+
+	exec(t, pool, `
+		INSERT INTO host_interfaces (host_id, iface, if_index, oper_state)
+		VALUES ($1, 'eth0', 2, 'down'),
+		       ($1, 'wg0', 5, 'up'),
+		       ($1, 'lo', 1, 'unknown'),
+		       ($1, 'bond0', 3, 'lowerlayerdown'),
+		       ($1, 'enp1s0', 4, 'up'),
+		       ($1, 'tap9', 6, NULL)`, id)
+
+	got, err := svc.Interfaces(ctx, id)
+	if err != nil {
+		t.Fatalf("Interfaces: %v", err)
+	}
+	names := make([]string, len(got))
+	for i, iface := range got {
+		names[i] = iface.Iface
+	}
+	// tap9 has never reported a state. It belongs with the healthy block, NOT
+	// below the down one, where a reader would take its position as a verdict.
+	want := []string{"enp1s0", "lo", "tap9", "wg0", "bond0", "eth0"}
+	if !slices.Equal(names, want) {
+		t.Errorf("order = %v, want %v", names, want)
 	}
 }
 

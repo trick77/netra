@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { ChevronRight } from "lucide-react";
+import { ABSENT } from "../lib/format";
 
 /**
  * A single column definition for Table.
@@ -439,10 +440,29 @@ export function Table<T>({
             {i === 0 && severity !== null ? (
               <span className="sr-only">{SEVERITY_WORD[severity]}</span>
             ) : null}
-            {col.cell(row)}
+            {dimAbsent(col.cell(row))}
           </td>
         ))}
       </tr>
     );
   }
+}
+
+/**
+ * Dims a cell that has nothing to report.
+ *
+ * A column where most rows have no value -- Description on a fleet where
+ * nobody has run `ip link set ... alias` -- draws a stack of dashes at full
+ * data contrast, and the eye reads the stack before the rows that DO say
+ * something. The marker still has to be legible ("we have no value" is a
+ * fact), so it drops to --muted rather than to the annotation grey.
+ *
+ * Done here, once, rather than at the sixty-odd `?? ABSENT` call sites: the
+ * marker is a plain string by design -- format's helpers build it into longer
+ * ones -- and a cell whose ENTIRE output is that string is exactly the case
+ * worth dimming. A cell that merely contains it, "– · 8 GiB", is a real
+ * reading with half of it missing and keeps its contrast.
+ */
+function dimAbsent(cell: ReactNode): ReactNode {
+  return cell === ABSENT ? <span className="absent">{ABSENT}</span> : cell;
 }

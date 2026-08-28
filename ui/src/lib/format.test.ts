@@ -28,11 +28,11 @@ describe("format", () => {
 
   // null means "not collected". Rendering it as 0 states a measurement
   // that was never taken.
-  it("renders null as an em dash, never zero", () => {
-    expect(bytes(null)).toBe("—");
-    expect(bitrate(null)).toBe("—");
-    expect(percent(null)).toBe("—");
-    expect(duration(null)).toBe("—");
+  it("renders null as the absent dash, never zero", () => {
+    expect(bytes(null)).toBe("–");
+    expect(bitrate(null)).toBe("–");
+    expect(percent(null)).toBe("–");
+    expect(duration(null)).toBe("–");
   });
 
   it("distinguishes zero from absent", () => {
@@ -65,7 +65,7 @@ describe("format", () => {
   });
 
   it("renders absent and zero memory the same way decimal bytes do", () => {
-    expect(binaryBytes(null)).toBe("—");
+    expect(binaryBytes(null)).toBe("–");
     expect(binaryBytes(0)).toBe("0 B");
   });
 
@@ -117,7 +117,7 @@ describe("format", () => {
   });
 
   it("ABSENT is exported so call sites share one absent marker", () => {
-    expect(ABSENT).toBe("—");
+    expect(ABSENT).toBe("–");
   });
 
   // relativeMs/absoluteMs are the epoch-millis counterparts consumed by
@@ -176,13 +176,13 @@ describe("a value against its ceiling", () => {
   // An absent reading is still absent next to a ceiling that is known: the
   // host has 31 GiB whether or not it reported what it is using.
   it("marks an absent value without losing the ceiling", () => {
-    expect(binaryBytesPair(null, 33_260_000_000)).toBe("— · 31 GiB");
+    expect(binaryBytesPair(null, 33_260_000_000)).toBe("– · 31 GiB");
   });
 
   // No ceiling is not a pair. The value alone is still a measurement.
   it("falls back to the value alone when there is no ceiling", () => {
     expect(bytesPair(1_200_000, null)).toBe("1.2 MB");
-    expect(bytesPair(null, null)).toBe("—");
+    expect(bytesPair(null, null)).toBe("–");
   });
 
   // 4 MB of swap against 8 GiB is 0.0037 GiB. Printed at the ceiling's unit

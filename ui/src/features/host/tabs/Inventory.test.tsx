@@ -409,6 +409,15 @@ describe("Network", () => {
     render(<Network rows={addresses} />);
     expect(screen.queryByRole("columnheader", { name: /vrf/i })).toBeNull();
   });
+
+  // The Interfaces table above prints the same device name in .ident. The two
+  // stack on one tab, and rendered in two faces the same string read as two
+  // different kinds of thing depending on which table the eye was in.
+  it("prints the interface name in the same face the Interfaces table uses", () => {
+    const { container } = render(<Network rows={addresses} />);
+    const cell = container.querySelector("tbody td .ident");
+    expect(cell?.textContent).toBe(addresses[0]!.iface);
+  });
 });
 
 describe("Packages", () => {

@@ -28,7 +28,7 @@ import type { MetricsResponse } from "./api";
 //     at a non-numeric column -- so they belong behind a component-level
 //     error boundary, not a try/catch a user-facing message is built from.
 //   - format.ts never throws: null and unparseable input both become
-//     ABSENT ("—"). A formatter call never needs a boundary.
+//     ABSENT ("–"). A formatter call never needs a boundary.
 //   - windowNotice() (below) never throws either: it returns null for
 //     "nothing to say". Treat null as "no banner", not as an error.
 //

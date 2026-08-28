@@ -552,7 +552,12 @@ const ADDRESS_COLUMNS: Column<Address>[] = [
   {
     key: "iface",
     header: "Interface",
-    cell: (row) => row.iface,
+    // .ident, the same face the Interfaces table above prints the name in.
+    // Bare, it rendered in the body font while the identical string one table
+    // up was monospaced, and the two tables stack on one tab: the same device
+    // name looked like two different kinds of thing depending on which table
+    // the reader's eye was in.
+    cell: (row) => <span className="ident">{row.iface}</span>,
     sortValue: (row) => row.iface,
   },
   {
