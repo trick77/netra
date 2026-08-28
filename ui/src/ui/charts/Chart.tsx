@@ -29,6 +29,7 @@ import {
   AXIS_WIDTH,
   MIRROR_FILL_OPACITY,
   BAND_STROKE_WIDTH,
+  BAND_Y_PAD,
   mirrorEdge,
   REFERENCE_DASH,
   REFERENCE_STROKE,
@@ -163,12 +164,28 @@ export function Chart({
   const { min: autoMin } = extent(series.flatMap((s) => s.values));
   const floor = min ?? autoMin;
 
+  const mirrorStacked = mark === "mirrorStack";
+  const stackedMark = mark === "stack";
+
+  /* The vertical inset a STACK spends, against `pad` for everything else.
+   *
+   * A stacked band is a filled region with a BAND_STROKE_WIDTH edge, so half
+   * a stroke is the only headroom it can use. `pad` is two pixels because
+   * that is what a LINE's stroke needs, and on a 32px fleet cell spending it
+   * at both ends costs an eighth of the chart -- see stackBands' `yPad`.
+   *
+   * Everything that has to agree with the bands reads this: the marks, the
+   * furniture below, and the reference rule, which on the memory cell is the
+   * host's total RAM and has to land on the band edge that reaches it. */
+  const markYPad = stackedMark ? BAND_Y_PAD : pad;
+
   const referenceY =
     reference === undefined || max <= floor
       ? null
-      : h - pad - ((reference - floor) / (max - floor)) * (h - 2 * pad);
+      : h -
+        markYPad -
+        ((reference - floor) / (max - floor)) * (h - 2 * markYPad);
 
-  const mirrorStacked = mark === "mirrorStack";
   // Both mirror marks share every piece of furniture that hangs off a
   // midline -- the zero rule, the crosshair's placement, the axis half-range
   // -- so `mirrored` stays the question "is there a midline", and the mark
@@ -254,7 +271,13 @@ export function Chart({
    * scaleX, which IS inset by `pad`, so the time axis stays where it was. */
   const furnitureRect = mirrored
     ? { ...axisRect, top: rect.top, bottom: rect.bottom }
-    : axisRect;
+    : stackedMark
+      ? {
+          ...axisRect,
+          top: rect.top + BAND_Y_PAD,
+          bottom: rect.bottom - BAND_Y_PAD,
+        }
+      : axisRect;
 
   return (
     <svg

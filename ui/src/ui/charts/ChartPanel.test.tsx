@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { BAND_Y_PAD } from "./size";
 import { ChartPanel } from "./ChartPanel";
 import { ABSENT } from "../../lib/format";
 
@@ -267,10 +268,11 @@ describe("ChartPanel", () => {
     );
 
     const rule = container.querySelector("svg [data-reference]")!;
-    // height - pad - (reference / max) * (height - 2 * pad), pad = 2:
-    // 64 - 2 - 1 * 60 = 2. A derived floor of 800 would put it at 2 as well
-    // only by coincidence, so the mid-scale case below is the real check.
-    expect(Number(rule.getAttribute("y1"))).toBeCloseTo(2, 5);
+    // height - yPad - (reference / max) * (height - 2 * yPad), and a stack's
+    // yPad is BAND_Y_PAD (half its own edge) rather than `pad`:
+    // 64 - 0.625 - 1 * 62.75 = 0.625. A derived floor of 800 would land there
+    // too, by coincidence, so the mid-scale case below is the real check.
+    expect(Number(rule.getAttribute("y1"))).toBeCloseTo(BAND_Y_PAD, 5);
   });
 
   it("keeps the rule where zero-scaling puts it, not where the data floor would", () => {

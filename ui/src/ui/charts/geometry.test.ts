@@ -283,6 +283,7 @@ describe("geometry", () => {
     // flat on the baseline, not floating at mid-chart -- mid-chart reads as
     // "about half loaded", which is a worse lie than drawing nothing.
     it("draws an all-zero stack on the baseline, not at mid-chart", () => {
+      // yPad 0: this pins the BASELINE rule, not the band's headroom.
       const bands = stackBands(
         [
           [0, 0],
@@ -290,6 +291,8 @@ describe("geometry", () => {
         ],
         100,
         20,
+        0,
+        0,
         0,
       );
       expect(bands).toHaveLength(2);
@@ -311,7 +314,7 @@ describe("geometry", () => {
     // of the chart while its bottom edge (zero, the implicit floor) still
     // sits on the baseline: a full-height band, not a flat one.
     it("draws a non-zero flat stack as a full-height band, not collapsed onto the baseline", () => {
-      const bands = stackBands([[5, 5]], 100, 20, 5);
+      const bands = stackBands([[5, 5]], 100, 20, 5, 0, 0);
       expect(bands).toHaveLength(1);
       const ys = [...bands[0]!.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map(
         (m) => parseFloat(m[1]!),

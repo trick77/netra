@@ -147,6 +147,28 @@ export const MIRROR_FILL_OPACITY = 0.45;
 export const BAND_STROKE_WIDTH = 1.25;
 
 /**
+ * The vertical headroom a stacked band spends, against `pad` for a line.
+ *
+ * Half its own edge, and nothing more. `pad` is two pixels because that is
+ * what a LINE's stroke needs to clear the box edge; a filled band with a
+ * BAND_STROKE_WIDTH outline needs half of that stroke, and the difference is
+ * box the data can never reach. Spent at both ends of a 32px fleet cell it
+ * was an eighth of the chart -- on a CPU column whose hosts idle in
+ * single-digit percent, an eighth of what little signal there is.
+ *
+ * The same reasoning mirrorPaths already applies by spending the whole
+ * height: its mark carries no stroke at cell density, so it spends
+ * everything. Horizontal padding is untouched; the time axis is unmoved.
+ *
+ * Here rather than in Chart.tsx because four things have to agree on it: the
+ * marks (stackBands' `yPad`), the axis furniture, the reference rule -- which
+ * on the memory cell is the host's total RAM and has to land on the band edge
+ * that reaches it -- and the tests that recompute stackBands to prove a panel
+ * and its enlarged view cannot diverge.
+ */
+export const BAND_Y_PAD = BAND_STROKE_WIDTH / 2;
+
+/**
  * Whether a mirrored chart at this density gets an edge, and how its fill is
  * weighted.
  *
