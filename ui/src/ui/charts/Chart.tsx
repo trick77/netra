@@ -254,19 +254,6 @@ export function Chart({
       )}
 
       <MarkGroup inset={inset} clipId={clipId} rect={rect}>
-        {referenceY !== null && (
-          <line
-            data-reference
-            x1={0}
-            x2={w}
-            y1={referenceY}
-            y2={referenceY}
-            stroke={REFERENCE_STROKE}
-            strokeWidth={REFERENCE_WIDTH}
-            strokeDasharray={REFERENCE_DASH}
-          />
-        )}
-
         {mirrorStacked && (
           <MirrorStackMarks {...{ series, w, h, max, pad, highlight }} />
         )}
@@ -288,6 +275,26 @@ export function Chart({
           <LineMarks
             {...{ series, w, h, max, pad, highlight, floor }}
             filled={mark === "area"}
+          />
+        )}
+
+        {/* Over the marks, not under them.
+            A threshold is not furniture: the grid says where the values are,
+            this says which value MATTERS -- a memory limit, a disk ceiling --
+            and it is only worth drawing where the series has reached it,
+            which is exactly where an opaque band would bury it. It stays
+            inside the clip so it cannot paint over the axis labels, and it
+            keeps its dashes so it never reads as data. */}
+        {referenceY !== null && (
+          <line
+            data-reference
+            x1={0}
+            x2={w}
+            y1={referenceY}
+            y2={referenceY}
+            stroke={REFERENCE_STROKE}
+            strokeWidth={REFERENCE_WIDTH}
+            strokeDasharray={REFERENCE_DASH}
           />
         )}
       </MarkGroup>
@@ -624,7 +631,17 @@ function StackMarks({
             data-band
             d={bands[i]!}
             fill={s.color}
-            fillOpacity={0.55}
+            // Opaque. A band used to be drawn at 0.55 "so it stays readable
+            // through the one above it", which is not a thing that happens:
+            // stackBands emits band k as the ribbon between running total
+            // k-1 and running total k, so the bands are disjoint and there
+            // is nothing behind any of them except the grid. All the
+            // translucency bought was the dotted gridline showing THROUGH
+            // the data -- and where a gridline crossed a band's own edge
+            // stroke, that edge read as broken. A grid is furniture; it
+            // belongs behind what it measures, which means being hidden by
+            // it.
+            fillOpacity={1}
             stroke={s.color}
             strokeWidth={bandStroke}
             strokeLinejoin="round"
