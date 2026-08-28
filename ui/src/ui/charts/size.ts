@@ -61,13 +61,9 @@ export const REFERENCE_WIDTH = 1;
  *
  * One definition, imported by both UpDownSparkline and Overlay's mirrored
  * branch, for the same reason the reference rule above has one: the two draw
- * the SAME reading. A fleet row's traffic cell and the host page's Interface
- * throughput panel are both rx above the midline and tx below it, through the
- * same mirrorPaths() geometry, and an operator scans one and then the other.
- * They were last reconciled by hand -- the sparkline had been left at a fully
- * opaque fill with no edge, so the same fact about the same host was two
- * different pictures -- and a comment saying "do not retune this on one side
- * alone" is not something a test can enforce. These constants are.
+ * the SAME reading. A fleet row's traffic cell and the host page's Traffic
+ * panel are both rx above the midline and tx below it, through the same
+ * mirrorPaths() geometry, and an operator scans one and then the other.
  *
  * Deliberately NOT shared with the stacked branches. A stack's 0.55 looks
  * like the same kind of number, but it answers a different question: bands
@@ -75,9 +71,50 @@ export const REFERENCE_WIDTH = 1;
  * one above it, where a mirrored pair has nothing behind it and only needs
  * to sit below its own edge. Tying them together would mean a future tune of
  * one silently moving the other.
+ *
+ * These are the SPARSE weights -- see mirrorEdge() below for when an edge is
+ * drawn at all.
  */
 export const MIRROR_FILL_OPACITY = 0.45;
 export const MIRROR_STROKE_WIDTH = 1.25;
+
+/**
+ * Whether a mirrored chart at this density gets an edge, and how its fill is
+ * weighted.
+ *
+ * An edge is only an edge while it is narrower than the thing it outlines.
+ * The fleet's traffic cell draws one point per pixel, so a lone burst is a
+ * triangle two pixels wide at its base -- and a 1.25px stroke at full opacity
+ * runs down BOTH of those sides and along the midline, then has its apex
+ * chopped square by the miter limit. What reaches the eye is a three-pixel
+ * block whose edges are the stroke rather than the data: the pixel tower an
+ * operator reported after comparing the cell against the same host in
+ * Observium. The fill underneath, at 0.45, is the quieter mark.
+ *
+ * Antialiasing cannot rescue it. It softens the edges of what is drawn, and a
+ * stroke is opaque in its middle by definition, so the mark stops fading
+ * exactly where it should be finest. An un-stroked area has nothing but its
+ * antialiased edge and therefore tapers to its apex, which is the shape a
+ * spike is supposed to have.
+ *
+ * This is RRDtool's rule rather than an invention: a mirrored port graph in
+ * Observium/LibreNMS is `AREA:in` plus `AREA:out_neg` with no `LINE`
+ * directive on either half, and no alpha on the default inverted graph.
+ *
+ * Stated as a threshold rather than as two hard-coded sets of weights,
+ * because the property that matters is a relation between the ink and the
+ * data -- a chart with room for an edge keeps one, a chart without room
+ * does not, and neither has to be listed here by name.
+ */
+export function mirrorEdge(
+  plotWidth: number,
+  points: number,
+): { fillOpacity: number; strokeWidth: number } {
+  const column = points > 0 ? plotWidth / points : Infinity;
+  return MIRROR_STROKE_WIDTH < column
+    ? { fillOpacity: MIRROR_FILL_OPACITY, strokeWidth: MIRROR_STROKE_WIDTH }
+    : { fillOpacity: 1, strokeWidth: 0 };
+}
 
 /**
  * The rule marking a mirrored chart's midline -- where zero is.

@@ -1,0 +1,50 @@
+import { describe, expect, it } from "vitest";
+import {
+  MIRROR_FILL_OPACITY,
+  MIRROR_STROKE_WIDTH,
+  mirrorEdge,
+  SPARK_WIDTH,
+} from "./size";
+
+describe("mirrorEdge", () => {
+  // The threshold is a relation between the ink and the data: an edge is only
+  // an edge while it is narrower than the thing it outlines.
+  it("keeps the edge while a data column is wider than it", () => {
+    // A dialog: 285 five-minute buckets across 1000px is 3.5px a column, and
+    // a 1.25px edge sits comfortably inside one.
+    expect(mirrorEdge(1000, 285)).toEqual({
+      fillOpacity: MIRROR_FILL_OPACITY,
+      strokeWidth: MIRROR_STROKE_WIDTH,
+    });
+  });
+
+  it("drops the edge once a column is no wider than it", () => {
+    // The fleet cell: one point per pixel, so the edge would run down both
+    // sides of a two-pixel spike and be the mark rather than its outline.
+    expect(mirrorEdge(SPARK_WIDTH, SPARK_WIDTH)).toEqual({
+      fillOpacity: 1,
+      strokeWidth: 0,
+    });
+  });
+
+  it("takes the fill to opaque when it drops the edge", () => {
+    // The fill is dimmed only because an edge sits over it. Without one it
+    // has to carry the shape alone, which is also what lets it taper: a
+    // translucent area with no edge reads as a smudge rather than a spike.
+    expect(mirrorEdge(170, 400).fillOpacity).toBe(1);
+  });
+
+  // Exactly at the threshold the edge goes. A column and an edge of the same
+  // width means the outline covers the whole column, which is the failure
+  // this exists to prevent rather than a borderline case worth keeping.
+  it("drops the edge at exactly one edge-width per column", () => {
+    expect(mirrorEdge(MIRROR_STROKE_WIDTH * 10, 10).strokeWidth).toBe(0);
+  });
+
+  it("keeps the edge for a chart with no points to measure", () => {
+    // An empty series draws nothing; answering "no edge" would leave the
+    // weights of an empty chart disagreeing with every other one for no
+    // reason a reader could see.
+    expect(mirrorEdge(170, 0).strokeWidth).toBe(MIRROR_STROKE_WIDTH);
+  });
+});
