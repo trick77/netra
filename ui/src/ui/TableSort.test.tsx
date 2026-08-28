@@ -111,6 +111,28 @@ describe("Table sorting", () => {
     ).toHaveAttribute("aria-sort", "descending");
   });
 
+  it("flips a defaulted column on the first click rather than clearing it", async () => {
+    render(
+      <Table
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.id}
+        defaultSort={{ key: "uptime", dir: "desc" }}
+      />,
+    );
+    const uptime = screen.getByRole("button", { name: "Uptime" });
+
+    await userEvent.click(uptime);
+    expect(names()).toEqual(["host-1", "host-10", "host-2"]);
+
+    // Three stops from where it stood, not four: descending was the first of
+    // them, so the next click is the last one and clears it back to the
+    // caller's order.
+    await userEvent.click(uptime);
+    expect(names()).toEqual(["host-10", "host-2", "host-1"]);
+    expect(uptime).toHaveAttribute("data-sort", "none");
+  });
+
   it("hands the order to the reader from there, and does not take it back", async () => {
     render(
       <Table

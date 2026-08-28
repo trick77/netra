@@ -410,14 +410,16 @@ describe("Network", () => {
 });
 
 describe("Packages", () => {
+  // Alphabetical order is the REVERSE of the change order here, so a test
+  // claiming to have re-sorted the list has to have actually done it.
   const rows = [
     pkg({
-      name: "vim",
+      name: "apt",
       first_seen: "2026-01-01T00:00:00Z",
       version_changed_at: "2026-01-01T00:00:00Z",
     }),
     pkg({
-      name: "openssl",
+      name: "zlib1g",
       first_seen: "2026-01-01T00:00:00Z",
       version_changed_at: "2026-08-05T00:00:00Z",
     }),
@@ -432,7 +434,7 @@ describe("Packages", () => {
       .getAllByRole("row")
       .slice(1)
       .map((row) => row.querySelector("td")?.textContent);
-    expect(names).toEqual(["openssl", "vim"]);
+    expect(names).toEqual(["zlib1g", "apt"]);
   });
 
   it("lets the reader sort by any column from there", async () => {
@@ -442,7 +444,21 @@ describe("Packages", () => {
       .getAllByRole("row")
       .slice(1)
       .map((row) => row.querySelector("td")?.textContent);
-    expect(names).toEqual(["openssl", "vim"]);
+    expect(names).toEqual(["apt", "zlib1g"]);
+  });
+
+  // The first click on the column the list ARRIVED sorted on has to flip it,
+  // not clear it: a reader after oldest-changed-first gets it in one.
+  it("flips the column it arrived sorted on", async () => {
+    render(<Packages rows={rows} />);
+    await userEvent.click(
+      screen.getByRole("button", { name: /last changed/i }),
+    );
+    const names = screen
+      .getAllByRole("row")
+      .slice(1)
+      .map((row) => row.querySelector("td")?.textContent);
+    expect(names).toEqual(["apt", "zlib1g"]);
   });
 
   // It filtered on first_seen, which an upgrade never moves: the row is keyed

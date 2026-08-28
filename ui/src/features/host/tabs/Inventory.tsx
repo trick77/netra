@@ -573,10 +573,11 @@ const ADDRESS_COLUMNS: Column<Address>[] = [
     // it stays healthy. Headed "Last seen" that read as the host having gone
     // quiet; it is the exact opposite.
     //
-    // The packages table keeps "Last seen" and is not the same bug: its
-    // collector re-emits the whole inventory when the daily confirmation
-    // falls due, changed or not, so there the timestamp really is a
-    // last-seen.
+    // The packages table heads its own column "Last changed" for a different
+    // reason: its collector re-emits the whole inventory when the daily
+    // confirmation falls due, changed or not, so last_seen there is a real
+    // last-seen and says nothing about change. It carries a dedicated
+    // version_changed_at instead.
     header: "Last changed",
     cell: (row) => <When iso={row.last_seen} />,
   },
