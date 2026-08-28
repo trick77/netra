@@ -16,51 +16,49 @@ import type { Band } from "../ui/charts/StackedSparkline";
  *
  * Colours are token references; index.css owns the palette.
  *
+ * THE STACK HAS ITS OWN PALETTE, --mem-*, and does not draw from s1-s8. That
+ * is the point. The series ramp is tuned for a chart with a legend under it
+ * that a reader is looking AT; this chart is drawn once per fleet row at 32px
+ * and is meant to be looked PAST until something is wrong. Every --mem-*
+ * colour is a dimmer relative of the s-token it grew out of.
+ *
  * THE RAMP IS THE EXPLANATION. The stack is ordered by how readily the kernel
  * can take the bytes back, and the colour says the same thing the order does:
- * full chroma at the bottom for the pages nobody can have back, cooling
- * through the reclaimable subsystems, draining out for page cache.
- * Magenta -> violet -> cyan -> slate -> grey. A reader who has never been
- * told what a band means can still see that the bright part at the bottom is
- * the part that costs something and the quiet part on top is not.
+ * warm and present at the bottom for the pages nobody can have back, cooling
+ * and dimming upward, ending in a grey you have to look for. Amber -> violet
+ * -> teal -> slate -> dark grey. A reader who has never been told what a band
+ * means can still see that the bottom is the part that costs something.
  *
- * THE RAMP DARKENS, IT DOES NOT LIGHTEN. Cached was a light grey (#b6b3ab,
- * 8.23:1 on --surface) and that inverted the argument: the most reclaimable
- * band was the brightest mark in a 32px fleet cell, glaring on the dark
- * surface. Cached is now --s-neutral at 2.47:1, the DIMMEST band in the
- * stack, and buffers takes --s-slate, a muted steel blue one step of chroma
- * above it. The band the host will hand back first is the one your eye
- * reaches last.
+ * CACHED IS THE DIMMEST BAND, NOT THE BRIGHTEST. It was #b6b3ab, 8.23:1 on
+ * --surface, so the band meaning "you can have this back" glared harder than
+ * the one meaning you cannot. It is now #5c5954 at 2.47:1: the band the host
+ * will hand back first is the one your eye reaches last. Buffers is a muted
+ * steel blue one step above it, dim rather than pale, so the TOP of a memory
+ * cell is never the loudest thing on the row.
  *
- * Cached is still NEUTRAL rather than another hue. A hue claims page cache is
- * a subsystem with an identity, the way ARC and shmem are; it is really the
- * absence of one. Buffers keeps just enough chroma to separate from it under
- * every CVD simulation without claiming to be a subsystem either.
- *
- * ORANGE AND AMBER ARE BOTH GONE FROM HERE. ARC was --s7 (#d95926), a few
- * degrees from --accent (#d97757) and --st-serious (#ec835a), so a memory
- * band, "something needs attention" and a severity were all the same colour
- * two columns apart on the same row. Cached was --s8 amber (#c98500), kept as
- * the one warm hue because five bands needed five separable hues -- neutrals
- * for the cache pair mean they no longer do, and the stack now holds the
- * 0-41 degree accent/status band clear with nothing argued for as an
- * exception. chartSpecs.ts still hands --s7 and --s8 to its ramp, and that is
- * fine: those are large charts with a legend under them.
+ * AMBER IS BACK, KNOWINGLY. ARC was --s7 (#d95926) and cached was --s8 amber
+ * (#c98500); both were taken out because a memory band, "something needs
+ * attention" and a severity were the same colour two columns apart. --mem-used
+ * is amber again at ~38 degrees, dE 5.8 from --accent, and it is allowed
+ * because the band it colours is a QUANTITY rather than a state: always
+ * present, never appearing or disappearing to mean something, with severity on
+ * the same row carried by a rail, a dot and a word as well as a hue. The
+ * magenta it replaces was correct by the rule and still made the cell shout.
  *
  * ORDER IS STILL THE SAFETY MECHANISM. The pairs that have to separate are
- * decided by which bands touch, so re-run the check if the stacking order
- * changes. Adjacent separation, dE2000 under normal vision and Machado
+ * decided by which bands touch, so re-check if the stacking order changes.
+ * Adjacent separation, dE2000 under normal vision and Machado
  * protan/deutan/tritan at full severity, worst figure per pair: used/shared
- * 21.3, shared/ARC 15.2, ARC/buffers 15.5, buffers/cached 23.6 -- the two
- * pairs this recolour touches land above the 15.2 floor the palette already
- * had. Every band clears 4:1 on --surface (#1b1b1a) except cached, which is
- * held below it on purpose -- see the token's own note in index.css.
+ * 34.9, shared/ARC 13.4, ARC/buffers 11.0, buffers/cached 17.7 -- every pair
+ * above the 9.1 the --s7/--s8 set was shipped at. On --surface every band
+ * clears 3:1 except cached, which is held under it on purpose; see the token's
+ * own note in index.css.
  */
-const USED = "var(--s4)";
-const SHARED = "var(--s3)";
-const ARC = "var(--s6)";
-const BUFFERS = "var(--s-slate)";
-const CACHED = "var(--s-neutral)";
+const USED = "var(--mem-used)";
+const SHARED = "var(--mem-shared)";
+const ARC = "var(--mem-arc)";
+const BUFFERS = "var(--mem-buffers)";
+const CACHED = "var(--mem-cached)";
 
 /**
  * The memory stack, bottom to top, as a partition of mem_total.

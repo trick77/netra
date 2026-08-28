@@ -187,11 +187,11 @@
      never exists: never in a dense list (a 32px fleet cell, a container row),
      where a reader has only hue to go on and a severity mark sits two columns
      away; allowed on a large chart that carries a legend and a stats table.
-     The memory stack used to be the one exception, drawing --s8 amber for
-     its cached band. It no longer is: its cache bands are the slate and the
-     neutral below and the argument is in lib/bands.ts. ("Orange never appears" is
-     what this comment used to say, directly above the line defining an
-     orange.)
+     The memory stack is no longer drawn from s1-s8 at all. It has its own
+     --mem-* family below, deliberately dimmer than the series ramp because it
+     is the one chart repeated in every fleet row; the argument is in
+     lib/bands.ts. ("Orange never appears" is what this comment used to say,
+     directly above the line defining an orange.)
 
      s5/s6 sit in the gaps between the existing four hues (~213°, 159°,
      249°, 337°) rather than crowding any of them: s6 ≈180° (cyan) falls
@@ -212,41 +212,40 @@
      normal-vision dE 19.6. Every chart drawing them carries a legend. */
   --s7: #d95926;
   --s8: #c98500;
-  /* The neutral, for the band whose meaning is "the kernel is holding this
-     for now and will hand it back the moment anything wants it". The memory
-     stack draws cached in it: a hue would claim page cache is a subsystem
-     with an identity, the way ARC or shmem is, when it is really the absence
-     of one. Draining the colour out as the stack rises is the chart's
-     argument -- see lib/bands.ts.
+  /* THE MEMORY STACK's own five colours.
 
-     Neutral, not grey-of-the-theme: it carries Clay's warm tint so it reads
-     as part of the palette rather than as unstyled default. Cached used to be
-     a light grey (#b6b3ab, 8.23:1) and was the brightest thing in a fleet row
-     -- a band that means "you can have this back" glared harder than the one
-     that means "you cannot". It is now the DIMMEST band in the stack, which
-     is the argument stated in the one place a reader cannot miss.
+     This chart is not like the others. It is drawn once per fleet row, at
+     32px, five bands deep, next to a severity badge -- and it is drawn again
+     at panel size on every host page. The series ramp is tuned for a legended
+     chart you look AT; these are tuned for a chart you look PAST until
+     something is wrong. Every one of them is dimmer than the s-token it grew
+     out of, and the ramp runs bright-to-dim in the order the kernel can take
+     the bytes back. lib/bands.ts owns the argument and the measurements.
 
-     2.47:1 on --surface, which is deliberately under the 4:1 the other series
-     hold. That floor is for a mark a reader has to resolve -- a hairline, a
-     dot, a word. This is a filled area several pixels tall whose whole job is
-     to be seen last. It also now sits BELOW --reference (#6e6c66), the dashed
-     total-RAM rule drawn across the same chart, rather than above it: where
-     the rule crosses a full host's cache band it reads 1.33:1 lighter, so the
-     annotation stays legible against it, which is what --reference's own note
-     is protecting. */
-  --s-neutral: #5c5954;
-  /* Buffers, one step of chroma above the neutral and well below --s6's cyan.
-     The stack's ramp runs full chroma -> neutral, so the band under cached
-     has to read as "nearly gone, but not nothing": a muted steel blue at
-     ~200 degrees does that, and it is deliberately dim rather than pale so
-     the top of a memory cell never becomes the loudest thing on the row.
+     Amber for used, and that is a knowing exception to the rule above. The
+     0-41 degree band belongs to --accent (18) and the status palette, and
+     --mem-used at ~38 degrees sits dE 5.8 from --accent. It is allowed here
+     because the band it colours is a QUANTITY, not a state: it is always
+     present, it never appears or disappears to mean something, and severity
+     on the same row is carried by a rail, a dot and a word as well as a hue.
+     What it buys is a warm bottom that separates from everything above it by
+     dE 34.9 without the magenta that made the cell shout.
 
-     Not --s1 (#3987e5): that is a saturated blue for legended charts, twice
-     this chroma. Measured on --surface 4.19:1, 1.28:1 above --reference.
-     Adjacent separation in the stack, dE2000, worst of normal vision and
-     Machado protan/deutan/tritan at full severity: 15.5 against ARC below,
-     18.5 against cached above. */
-  --s-slate: #4984a2;
+     Adjacent separation, dE2000, worst of normal vision and Machado
+     protan/deutan/tritan at full severity: 34.9 / 13.4 / 11.0 / 17.7. On
+     --surface: 5.06, 4.24, 4.82, 3.35, 2.47.
+
+     Cached is under the 4:1 the series hold, on purpose. That floor is for a
+     mark a reader has to resolve -- a hairline, a dot, a word. Cached is a
+     filled area several pixels tall whose whole job is to be seen last, and
+     it sits BELOW --reference (#6e6c66), the dashed total-RAM rule drawn
+     across the same chart: where the rule crosses a full host's cache band it
+     reads 1.33:1 lighter and stays legible against it. */
+  --mem-used: #b8802b;
+  --mem-shared: #7d74c4;
+  --mem-arc: #339595;
+  --mem-buffers: #47738a;
+  --mem-cached: #5c5954;
   /* Traffic's in/out pair, one step lighter per interface.
 
      The per-interface Traffic panel stacks in above the midline and out
