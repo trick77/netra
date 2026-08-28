@@ -56,6 +56,61 @@ export const REFERENCE_DASH = "4 3";
 export const REFERENCE_WIDTH = 1;
 
 /**
+ * The weight of the area under a line, and how it thins as a panel draws
+ * more of them.
+ *
+ * 0.15 is what a lone filled series has always been drawn at. The divisor is
+ * about what OVERLAPPING fills say: these panels draw INDEPENDENT lines, and
+ * translucent areas from a common baseline compound where they overlap. Left
+ * at 0.15 apiece, the six bases an IP fragmentation panel declares darken the
+ * lower band toward 0.6, so it reads as a cumulative stack -- the one thing a
+ * non-stacked panel must not look like -- and the lowest series ends up
+ * buried under every other.
+ *
+ * Dividing by sqrt(count) thins it fast enough to stay readable without
+ * conceding the mark: six series at 0.061 compound to about 0.31 where all
+ * six cover each other, against 0.60 undivided, and the twelve a six-mount
+ * Filesystem space panel draws reach 0.41 against 0.86. Not 1/count, which
+ * over-corrects -- six at 0.025 is a fill nobody can see, and the point is to
+ * keep the mark, not to give it up. Not the exact 1-(1-0.15)^(1/n) either,
+ * which pins the worst case at 0.15 by making the common case, where two or
+ * three series overlap, fainter than it needs to be.
+ *
+ * The ceiling is what makes the promise hold at counts nobody sized the
+ * curve for. sqrt alone keeps climbing: it crosses half at about twenty
+ * areas and reaches 0.53 at the twenty-four a twelve-mount Filesystem space
+ * panel draws, which is back inside the cumulative-stack reading this exists
+ * to prevent. The keyed panels are UNCAPPED -- bandsFor emits one pass per
+ * key, so the count is however many mounts or disks a host happens to have,
+ * and no formula tuned against six can be trusted there. Inverting the
+ * composite gives the weight at which n areas land exactly on the ceiling,
+ * and taking whichever is lower means the ground under a panel never goes
+ * darker than AREA_OVERLAP_CEILING however many series share it. It only
+ * binds past ~16 areas, so every count the paragraph above reasons about is
+ * still the sqrt curve.
+ *
+ * Series count rather than plot width because compounding is a fact about
+ * how many areas share a baseline, not about how wide they are drawn. A
+ * panel and its enlarged view therefore weight the fill identically, which
+ * is what keeps a chart the same chart on click.
+ *
+ * The count is what the panel DRAWS, not what its spec declares: the keyed
+ * panels multiply bases by entities, so Filesystem space on six mounts
+ * arrives here as twelve.
+ */
+export const AREA_FILL_OPACITY = 0.15;
+
+/** How dark the deepest overlap on a panel is ever allowed to composite to. */
+export const AREA_OVERLAP_CEILING = 0.45;
+
+export function areaFillOpacity(count: number): number {
+  if (count <= 1) return AREA_FILL_OPACITY;
+  // 1 - (1 - a)^count = ceiling, solved for a.
+  const capped = 1 - (1 - AREA_OVERLAP_CEILING) ** (1 / count);
+  return Math.min(AREA_FILL_OPACITY / Math.sqrt(count), capped);
+}
+
+/**
  * How a mirrored up/down area is drawn -- a dimmed fill with a solid edge of
  * the same series colour.
  *
