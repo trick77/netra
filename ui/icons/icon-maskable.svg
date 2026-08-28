@@ -1,0 +1,32 @@
+<!--
+  The Android maskable icon (icon-maskable-512.png). A copy of icon.svg.
+
+  OPAQUE for the same reason icon-tile.svg is, with a different flattening
+  colour behind it: Android fills a maskable icon's alpha with the LAUNCHER's
+  own background, which is often light. The ground here is #131312, netra's
+  color-bg.
+
+  The chip pulls in further still — 46% coverage — because Android crops this one
+  to whatever shape the launcher picks, and only the middle 80% of the square is
+  guaranteed to survive. The geometry caps coverage at 65%: the chip's rx-4
+  corner bulges sqrt(2)*(12-3-4) + 4 = 11.071 units out from the centre in the
+  24-space, and 25.6/11.071 = 2.312 is the largest outer scale that fits, i.e.
+  2.312*18/64. 46% sits comfortably under it, and the trace inside the chip is
+  narrower than the chip's own corners, so the corners are what the safe circle
+  actually has to clear.
+
+  Transform is scale = 64*0.46/18, translate = 32 - 12*scale, per icon.svg.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <linearGradient id="og" x1="0" y1="0" x2="0.72" y2="1">
+    <stop offset="0" stop-color="#e08a68"/>
+    <stop offset="1" stop-color="#c25f34"/>
+  </linearGradient>
+  <rect width="64" height="64" fill="#131312"/>
+  <g transform="translate(12.3733 12.3733) scale(1.63556)">
+    <rect x="3" y="3" width="18" height="18" rx="4" fill="url(#og)"/>
+    <g transform="translate(4.7273 4.7273) scale(0.606061)" fill="none" stroke="#131312" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3.5 12h3.2L9 5l6 14 2.3-7H20.5"/>
+    </g>
+  </g>
+</svg>
