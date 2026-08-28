@@ -5,6 +5,7 @@ import { Segmented } from "../Segmented";
 import { InfoTip } from "../InfoTip";
 import { ABSENT } from "../../lib/format";
 import { RANGES, type Range } from "../../lib/range";
+import { DETAIL_WIDTH } from "./size";
 
 // Where it lives now. Re-exported because this is where it was.
 export { summarise } from "./ChartFigure";
@@ -12,7 +13,6 @@ export { summarise } from "./ChartFigure";
 // The size the enlarged chart is DRAWN at. It scales down to whatever the
 // panel gives it -- svg.spark carries max-width:100% and a viewBox -- so
 // this is the shape of the image, not a minimum width the dialog demands.
-const CHART_WIDTH = 1000;
 const CHART_HEIGHT = 380;
 
 export interface ChartDetailProps {
@@ -63,6 +63,9 @@ export interface ChartDetailProps {
   stacked?: boolean;
   /** A value to mark with a dashed rule, e.g. a host's total memory. */
   reference?: number;
+  /** Fill the area under a line. Forwarded so the enlarged view draws the
+   * same mark as the panel it was opened from; see Overlay's prop. */
+  filled?: boolean;
   /** Draw the series as mirrored in/out pairs about a midline. */
   mirrored?: boolean;
   /** 1024 for byte quantities, so the axis steps 512 MB rather than 500 MB.
@@ -103,6 +106,7 @@ export function ChartDetail({
   loading = false,
   error = null,
   onClose,
+  filled,
   stacked,
   reference,
   mirrored,
@@ -201,8 +205,9 @@ export function ChartDetail({
         series={series}
         min={min}
         max={ceiling}
-        width={CHART_WIDTH}
+        width={DETAIL_WIDTH}
         height={CHART_HEIGHT}
+        filled={filled}
         stacked={stacked}
         reference={reference}
         mirrored={mirrored}

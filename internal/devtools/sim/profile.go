@@ -171,6 +171,42 @@ type NetSpec struct {
 	Iface  string
 	RxBase float64
 	TxBase float64
+	// BurstChance and BurstMagnitude shape the occasional transfer on top of
+	// the daily curve: for BurstChance of samples the value is multiplied by
+	// BurstMagnitude. Zero means the default a busy server has always had --
+	// a half-percent chance of roughly tripling -- so an archetype that says
+	// nothing keeps the traffic it had.
+	//
+	// They are per interface because the ratio between the two is the whole
+	// character of a link. A server pushing 40 MB/s that occasionally triples
+	// and a NAS idling at 30 kB/s that occasionally moves a 90 MB/s backup
+	// are the same daily curve and completely different charts: the first is
+	// a hump, the second is a flat floor with three spikes on it. Only the
+	// second can show whether a chart keeps a burst or averages it away, and
+	// until one existed every screenshot in this repo was the first.
+	BurstChance    float64
+	BurstMagnitude float64
+}
+
+// Default burst shape for an interface that names none. What every archetype
+// generated before NetSpec could say otherwise.
+const (
+	defaultBurstChance      = 0.005
+	defaultRxBurstMagnitude = 3.2
+	defaultTxBurstMagnitude = 3.0
+)
+
+// burst returns the chance and magnitude to use for one direction, filling in
+// the default for a spec that leaves them at zero.
+func (n NetSpec) burst(defaultMagnitude float64) (chance, magnitude float64) {
+	chance, magnitude = n.BurstChance, n.BurstMagnitude
+	if chance == 0 {
+		chance = defaultBurstChance
+	}
+	if magnitude == 0 {
+		magnitude = defaultMagnitude
+	}
+	return chance, magnitude
 }
 
 // FSSpec is one filesystem. UsedStart and UsedEnd are the fraction full at

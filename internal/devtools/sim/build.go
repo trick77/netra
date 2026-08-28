@@ -737,8 +737,18 @@ func (g *Generator) nets(ts time.Time) []*netrav1.NetSample {
 	out := make([]*netrav1.NetSample, 0, len(g.p.Nets))
 	for _, n := range g.p.Nets {
 		key := "net/" + n.Iface
-		rx := g.sig.spike(key+"/rx", ts, g.sig.daily(key+"/rx", ts, n.RxBase, 0.85, 0.3), 0.005, 3.2)
-		tx := g.sig.spike(key+"/tx", ts, g.sig.daily(key+"/tx", ts, n.TxBase, 0.85, 0.3), 0.005, 3.0)
+		rxChance, rxMagnitude := n.burst(defaultRxBurstMagnitude)
+		txChance, txMagnitude := n.burst(defaultTxBurstMagnitude)
+		rx := g.sig.spike(
+			key+"/rx", ts,
+			g.sig.daily(key+"/rx", ts, n.RxBase, 0.85, 0.3),
+			rxChance, rxMagnitude,
+		)
+		tx := g.sig.spike(
+			key+"/tx", ts,
+			g.sig.daily(key+"/tx", ts, n.TxBase, 0.85, 0.3),
+			txChance, txMagnitude,
+		)
 		out = append(out, &netrav1.NetSample{
 			TsMs:    ts.UnixMilli(),
 			Iface:   n.Iface,

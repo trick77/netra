@@ -402,6 +402,60 @@ export function sumSeries(
   return out;
 }
 
+/**
+ * Fold a series to one value per PIXEL COLUMN, keeping the largest reading in
+ * each. What RRDtool does before it draws.
+ *
+ * A chart is handed more buckets than it has pixels far more often than the
+ * other way round: the fleet's traffic cell is 170 px wide and a 24 h window
+ * at the 5-minute tier is 285 buckets, so every pixel column carries about
+ * 1.7 readings. Drawn straight, the polyline zigzags between neighbouring
+ * buckets inside a single column and a burst comes out as one more notch in a
+ * serrated edge rather than as a spike. rrd_graph.c's reduce_data() folds the
+ * fetched rows to the graph's own width first -- `reduce_factor =
+ * ceil(step / cur_step)` -- and applies the consolidation function across each
+ * group. Which function is the whole decision: AVERAGE smooths a burst away,
+ * MAX keeps it.
+ *
+ * MAX here, because the caller is traffic and a burst is the reading. Measured
+ * on the simulated NAS, 24 h folded to 170 columns: the mean of each column
+ * peaks at a third of what the max of each column peaks at, and the two draw
+ * as a hump and as a spike over a flat floor.
+ *
+ * A column with no reading at all is null, so a host that stopped reporting
+ * still leaves a hole. A column holding both a null and a number is the
+ * number: a gap inside a single pixel is not a gap anyone can see, and
+ * widening one bucket's null into a visible break would state an outage that
+ * did not happen. This is the one place that rule differs from a stack's,
+ * where a null in any layer breaks the running total for real.
+ *
+ * `columns` at or above the input length returns the input unchanged -- there
+ * is nothing to fold, and a chart with more pixels than data is drawn at the
+ * data's own resolution.
+ */
+export function reduceToColumns(
+  vals: readonly (number | null)[],
+  columns: number,
+): (number | null)[] {
+  if (columns < 1 || vals.length <= columns) return [...vals];
+  const out: (number | null)[] = [];
+  for (let c = 0; c < columns; c++) {
+    // Boundaries from the exact ratio rather than a rounded stride, so the
+    // rounding error cannot accumulate across the width and leave the last
+    // column reading half the window.
+    const from = Math.floor((c * vals.length) / columns);
+    const to = Math.floor(((c + 1) * vals.length) / columns);
+    let best: number | null = null;
+    for (let i = from; i < to; i++) {
+      const v = vals[i];
+      if (v === undefined || v === null) continue;
+      if (best === null || v > best) best = v;
+    }
+    out.push(best);
+  }
+  return out;
+}
+
 /** True when any value in the series is null -- the host reported nothing. */
 export function hasGaps(vals: readonly (number | null)[]): boolean {
   return vals.some((v) => v === null);

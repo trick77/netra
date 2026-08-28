@@ -438,7 +438,7 @@ export const SYSTEM: PanelSpec[] = [
     title: "CPU cores",
     slug: "cpu-cores",
     about:
-      "One band per logical CPU, each showing that core's own utilisation, so the stack runs to cores x 100 and has no axis. The CPU panel is the same data normalised to a 0-100 mean; this one answers whether a single core is pinned while the rest idle.",
+      "One band per logical CPU, each showing that core's own utilisation, so the stack runs to cores x 100 and has no axis. The CPU panel is the same data normalised to a 0-100 mean, where a single core pinned while the rest idle averages away.",
     source: "cpuCore",
     bases: [{ base: "busy", label: "busy" }],
     stacked: true,
@@ -500,7 +500,7 @@ export const SYSTEM: PanelSpec[] = [
     title: "Device availability",
     slug: "device-availability",
     about:
-      "One line per collector: 1 for a bucket where it ran, 0 where it did not. A collector that was down is why other panels on this page have holes.",
+      "One line per collector: 1 for a bucket where it ran, 0 where it did not. A collector that was down leaves holes in every panel that reads it.",
     source: "collector",
     bases: [{ base: "ok", label: "ok" }],
     boolean: true,
@@ -551,7 +551,7 @@ export const SYSTEM: PanelSpec[] = [
     title: "Running processes",
     slug: "running-processes",
     about:
-      "Blocked is the line to watch: those processes are stuck waiting on I/O rather than on CPU, and they count towards load average while using none of it.",
+      "Blocked processes are stuck waiting on I/O rather than on CPU, and count towards load average while using none of it.",
     source: "host",
     bases: [
       { base: "procs_running", label: "running" },
@@ -609,20 +609,24 @@ export const NETWORK: PanelSpec[] = [
     title: "Hub connect failures",
     slug: "hub-connect-failures",
     about:
-      "Attempts that never reached the hub. A failed attempt has no duration to report, so it shows up as a gap in Hub latency rather than as a spike in it - this is the panel that says why.",
+      "Attempts that never reached the hub. A failed attempt has no duration to report, so it shows up as a gap in Hub latency rather than as a spike in it.",
     source: "agent",
     bases: [{ base: "hub_connect_failures_total", label: "failures" }],
     counter: true,
     fmt: count,
   },
-  // The fleet row's traffic cell and the host overview's Traffic card, on a
-  // page. Those two sum every interface into one in/out pair; this panel
-  // STACKS them, one pair per interface, so its outer envelope is that same
-  // sum and the cell can link straight here. The sum survives the stack
-  // exactly -- the mean of the summed traffic is the sum of the per-interface
-  // means, see trafficSeries() in fleet/hostTrends.ts -- so the enlarged view
-  // is the cell's own chart with the interfaces separated out, rather than a
-  // different chart on click.
+  // One in/out pair per interface, stacked about a midline, so the outer
+  // envelope is the host's total and each layer is the link that carried it.
+  //
+  // The MEAN of each bucket, which is where this panel and the fleet row's
+  // traffic cell part company: the cell reads the peak, because at 170 px a
+  // mean of a mean is a burst nobody can see (trafficSeries in
+  // fleet/hostTrends.ts carries the measurement). Stacking peaks would be a
+  // different matter -- two links can burst in different seconds of the same
+  // bucket, so an envelope of summed peaks states a throughput no bucket ever
+  // carried, and a per-interface chart is exactly where that lie would be
+  // read as a per-interface fact. The cell accepts that bias for one summed
+  // pair; this panel does not.
   //
   // This absorbed "Interface throughput", which drew the same per-interface
   // pairs unstacked and beside a summed Traffic panel. Two panels over the
@@ -675,7 +679,7 @@ export const NETWORK: PanelSpec[] = [
     title: "Interface errors",
     slug: "interface-errors",
     about:
-      "Frames the NIC counted as bad, per interface and direction. Throughput cannot show this: a card dropping frames moves the same bytes as a healthy one.",
+      "Frames the NIC counted as bad, per interface and direction. A card dropping frames moves the same bytes as a healthy one, so throughput alone never shows it.",
     unit: "/s",
     source: "net",
     bases: [
@@ -777,7 +781,7 @@ export const NETWORK: PanelSpec[] = [
     title: "IP statistics",
     slug: "ip-statistics",
     about:
-      "Datagrams the IP layer handled, v4 and v6 counted apart. This is the volume the fragmentation and transport panels should be read as a fraction of.",
+      "Datagrams the IP layer handled, v4 and v6 counted apart. The volume the fragmentation and transport panels are a fraction of.",
     unit: "/s",
     source: "hostSnmp",
     bases: [
@@ -872,7 +876,7 @@ export const NETWORK: PanelSpec[] = [
     title: "UDP datagrams",
     slug: "udp-datagrams",
     about:
-      "The volume the two UDP error panels are a fraction of. Half an rcvbuf error a second means nothing until you know whether the host is doing 5 datagrams a second or 5000.",
+      "The volume the two UDP error panels are a fraction of. Half an rcvbuf error a second reads differently at 5 datagrams a second than at 5000.",
     unit: "/s",
     source: "hostProto",
     bases: [
@@ -922,7 +926,7 @@ export const NETWORK: PanelSpec[] = [
     title: "TCP listen queue",
     slug: "tcp-listen-queue",
     about:
-      "Connections the kernel dropped before the process ever accepted them: the client sees a timeout and the application's own logs show nothing. Overflows alone means the app is not accepting fast enough; drops climbing without them is below the app.",
+      "Connections the kernel dropped before the process ever accepted them: the client sees a timeout and the application's own logs show nothing. Overflows alone is an app not accepting fast enough; drops climbing without them is below the app.",
     unit: "/s",
     source: "host",
     bases: [
@@ -941,7 +945,7 @@ export const NETWORK: PanelSpec[] = [
     title: "Scrape duration",
     slug: "scrape-duration",
     about:
-      "How long the agent took to read /proc on this host. Read it beside Hub latency: slow here is this box, slow there is the network.",
+      "How long the agent took to read /proc on this host. Slow here is this box; slow in Hub latency is the network.",
     unit: "ms",
     source: "agent",
     bases: [{ base: "scrape_duration_ms", label: "scrape" }],
@@ -994,7 +998,7 @@ export const STORAGE: PanelSpec[] = [
     title: "Disk latency",
     slug: "disk-latency",
     about:
-      "How long an average request waited, queue time included. This is what separates a busy disk from a failing one: a busy disk is still fast per request.",
+      "How long an average request waited, queue time included. A busy disk is still fast per request; a failing one is not.",
     unit: "ms",
     source: "diskIo",
     bases: [
@@ -1052,7 +1056,7 @@ export const STORAGE: PanelSpec[] = [
     title: "Filesystem inodes",
     slug: "filesystem-inodes",
     about:
-      "Inodes are the per-file slots, and a filesystem can run out of them with space to spare. That failure reads as 'disk full' everywhere else in this UI.",
+      "Inodes are the per-file slots, and a filesystem can run out of them with space to spare. The error a program gets is the one it gets for a full disk.",
     source: "filesystem",
     bases: [
       { base: "inodes_used", label: "used" },

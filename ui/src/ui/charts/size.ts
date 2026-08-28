@@ -11,6 +11,17 @@
 export const SPARK_WIDTH = 170;
 
 /**
+ * The width of the chart inside an enlarged view.
+ *
+ * Here rather than in ChartDetail because it is no longer only that
+ * component's layout: a caller that folds its data to the pixel column it
+ * will be drawn in -- see reduceToColumns() in lib/metrics -- has to know how
+ * wide the dialog is before it fetches, and reading the number off the
+ * component that draws it is what keeps the fold and the plot agreeing.
+ */
+export const DETAIL_WIDTH = 1000;
+
+/**
  * How a reference rule is drawn -- the dashed line marking a ceiling, such
  * as a host's total memory.
  *

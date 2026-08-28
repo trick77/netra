@@ -94,6 +94,10 @@ export function ContainerChart({
       series={[{ name: spec.title, color: spec.color, values }]}
       max={max}
       fmt={spec.fmt}
+      // The Sparkline below fills its area, and the enlarged view has to draw
+      // the same mark: a chart that loses its fill on being clicked open is a
+      // different picture of the same reading.
+      filled
       window={answered}
       range={range}
       ranges={ranges}

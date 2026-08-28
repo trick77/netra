@@ -11,11 +11,15 @@ import {
   fsName,
   griddedValues,
   latestValue,
+  peakBase,
+  reduceToColumns,
   sumSeries,
 } from "../../lib/metrics";
 import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
+import { SPARK_WIDTH } from "../../ui/charts/size";
+import { DOWN_COLOR, UP_COLOR } from "../../ui/charts/UpDownSparkline";
 import type { HostRow } from "./hostColumns";
 import { diskState } from "./conditions";
 import type { DiskSeverity } from "./conditions";
@@ -82,6 +86,20 @@ export interface HostTrends {
   reporting: (number | null)[];
   rx: (number | null)[];
   tx: (number | null)[];
+  /**
+   * The same pair read as the bucket mean, for the ENLARGED view alone.
+   *
+   * The cell draws peaks and is right to: at 170 px a mean of a mean is a
+   * burst nobody can see. The dialog has a stats table printing Mean, so it
+   * draws the mean as its line with the peak as the envelope over it -- and
+   * it must have that pair the moment it OPENS, not only after a range
+   * change, or the numbers under the chart are peak statistics wearing mean
+   * headers for as long as nobody touches the picker.
+   *
+   * Empty at the raw tier, where the sample is its own peak.
+   */
+  rxMean: (number | null)[];
+  txMean: (number | null)[];
   fullest: HostRow["fullest"];
   /** Every filesystem's usage over the window, as df's Use%, one band each.
    * The meter beside it says how full the worst one is now; these say which
@@ -417,38 +435,114 @@ export function cpuBands(
 }
 
 /**
- * A host's traffic pair, summed over its interfaces at each bucket's MEAN.
+ * A host's traffic pair, summed over its interfaces and read at the bucket's
+ * PEAK, folded to the width of the chart that will draw it.
  *
- * The mean, and not the peak this used to read through peakBase(). Two
- * reasons, and both of them outlived the reason for the peak:
+ * Both halves of that are what RRDtool does, and the reason it looks like
+ * every traffic graph an operator has already read.
  *
- *  - Summing is only valid on means. The sum of each interface's mean IS the
- *    mean of the summed traffic; the sum of each interface's peak is not the
- *    peak of anything -- it adds bursts that happened in different minutes of
- *    the same bucket as though they had happened at once. The old call site
- *    knew this and accepted the bias deliberately.
- *  - The peak existed so a fleet row could answer "did this host spike".
- *    The mean answers it too, because the cell is scaled to the mean series'
- *    OWN maximum: the loudest bucket of the window always reaches the top of
- *    the cell, whichever of the two is drawn. What the peak bought was a
- *    taller ceiling -- measured on ark.o11.net, a factor of 2.7 -- which
- *    every quieter bucket in the same cell then paid for.
+ * The peak, through peakBase(): a rate is read as a shape and the burst is
+ * what the reader is looking for in it, and the rolled-up tiers materialise
+ * max(rx_bytes) beside avg(rx_bytes) precisely so it can be. At 1h the raw
+ * tier has no _max peer and the sample IS its own peak, so peakBase() falls
+ * back and nothing changes there.
  *
- * It also puts traffic on the same footing as the CPU and memory cells, which
- * have always read _avg, and matches the host page's throughput panel, which
- * draws the mean as its line and the peak as an envelope over it.
+ * The fold, through reduceToColumns(): a 24 h window is 285 five-minute
+ * buckets and the cell is 170 px, so without it every pixel column carries
+ * about 1.7 buckets and a burst is one more notch in a serrated edge. Folded
+ * with MAX, each column is the loudest thing that happened in it.
+ *
+ * Summing peaks is a known bias and it is accepted here deliberately: the sum
+ * of each interface's peak is not the peak of anything, because two links can
+ * burst in different seconds of the same bucket and this adds them as though
+ * they had not. The alternative is a cell that cannot show a burst at all,
+ * and on a one-NIC host -- most hosts -- there is no bias to speak of.
+ *
+ * `columns` is the pixel width of the chart. Omitted, nothing is folded: the
+ * caller is drawing at the data's own resolution or does not know its width
+ * yet.
  *
  * Shared with the enlarged view so it cannot disagree with the cell it was
- * opened from.
+ * opened from -- the dialog folds to its own, wider, width.
  */
-export function trafficSeries(net: MetricsResponse | null | undefined): {
+export function trafficSeries(
+  net: MetricsResponse | null | undefined,
+  columns?: number,
+): {
   rx: (number | null)[];
   tx: (number | null)[];
+  /**
+   * The same pair read as the bucket MEAN, for a chart with room to say a
+   * number as well as draw a shape.
+   *
+   * The enlarged view's stats table prints Latest / Min / Max / Mean off the
+   * series it is given, and a "Mean" computed over per-column peaks is not
+   * the mean throughput -- on the simulated NAS it reads several times the
+   * real one, while the host page's Traffic dialog, same host and same
+   * header, prints the true mean off rx_bytes_avg. Two dialogs, one label,
+   * two answers. So the dialog draws the mean as its line and the peak as
+   * the envelope over it: the shape the cell showed is still the outer edge,
+   * and every number under the chart means what it says.
+   *
+   * Empty at the raw tier, where peakBase() falls back to the bare column and
+   * the two series are the same numbers -- an envelope drawn exactly on its
+   * own line is ink for nothing.
+   */
+  rxMean: (number | null)[];
+  txMean: (number | null)[];
 } {
+  const fold = (vals: (number | null)[]) =>
+    columns === undefined ? vals : reduceToColumns(vals, columns);
+  const rxPeak = peakBase(net, "rx_bytes");
+  const txPeak = peakBase(net, "tx_bytes");
+  const rolledUp = rxPeak !== "rx_bytes" || txPeak !== "tx_bytes";
   return {
-    rx: sumSeries(net, "rx_bytes"),
-    tx: sumSeries(net, "tx_bytes"),
+    rx: fold(sumSeries(net, rxPeak)),
+    tx: fold(sumSeries(net, txPeak)),
+    rxMean: rolledUp ? fold(sumSeries(net, "rx_bytes")) : [],
+    txMean: rolledUp ? fold(sumSeries(net, "tx_bytes")) : [],
   };
+}
+
+/**
+ * The in/out pair an ENLARGED traffic view draws: the mean as the line, the
+ * bucket peak as the envelope over it.
+ *
+ * One function rather than a copy in each dialog. The fleet row's cell and
+ * the host overview's Traffic card are the same chart at two sizes and both
+ * open into this; two hand-built copies of the same pair is exactly how they
+ * came to disagree before.
+ *
+ * The envelope's outer edge is the silhouette the cell drew, so enlarging
+ * does not change the shape -- and the stats table under the chart reads the
+ * LINE, so its Mean is a mean. At the raw tier there is no separate peak and
+ * the pair collapses to one series, which is honest: the sample is its own
+ * peak there.
+ */
+export function trafficDetailSeries(t: {
+  rx: (number | null)[];
+  tx: (number | null)[];
+  rxMean?: (number | null)[];
+  txMean?: (number | null)[];
+}): {
+  name: string;
+  color: string;
+  values: (number | null)[];
+  band?: (number | null)[];
+}[] {
+  const pair = (
+    name: string,
+    color: string,
+    peak: (number | null)[],
+    mean: (number | null)[],
+  ) =>
+    mean.length === 0
+      ? { name, color, values: peak }
+      : { name, color, values: mean, band: peak };
+  return [
+    pair("in", UP_COLOR, t.rx, t.rxMean ?? []),
+    pair("out", DOWN_COLOR, t.tx, t.txMean ?? []),
+  ];
 }
 
 /**
@@ -566,7 +660,9 @@ export function hostTrendsFrom(
   // status badge is judged from it; cpuBands() grids it again for the
   // silhouette when the host was too large to fetch per-core.
   const total = griddedValues(host, 0, "cpu_total");
-  const traffic = trafficSeries(net);
+  // Folded to the cell it will be drawn in, not left at the tier's
+  // resolution: 24 h is 285 buckets and the cell is 170 px.
+  const traffic = trafficSeries(net, SPARK_WIDTH);
 
   return {
     // Whichever family answered. They are all asked for the same window, so
@@ -576,13 +672,14 @@ export function hostTrendsFrom(
     cpu: cpuBands(host, cores).bands,
     mem: memoryBands(host),
     reporting: total,
-    // The MEAN of each bucket, summed across interfaces -- trafficSeries()
-    // carries why that is the pair of choices, and why the peak this used to
-    // read is no longer what makes a spike visible. The interface that
-    // actually burst is still one click away on the host page, where the
-    // pairs are drawn per interface.
+    // The PEAK of each pixel column, summed across interfaces --
+    // trafficSeries() carries why both halves of that are what RRDtool does.
+    // The interface that actually burst is one click away on the host page,
+    // where the pairs are drawn per interface.
     rx: traffic.rx,
     tx: traffic.tx,
+    rxMean: traffic.rxMean,
+    txMean: traffic.txMean,
     fullest: fullestFilesystem(filesystem),
     disk: filesystemBands(filesystem),
     oomKills: counterIncrease(griddedValues(host, 0, "oom_kill_total")),
@@ -735,6 +832,8 @@ export function buildRows(
       reporting: trend?.reporting ?? [],
       rx: trend?.rx ?? [],
       tx: trend?.tx ?? [],
+      rxMean: trend?.rxMean ?? [],
+      txMean: trend?.txMean ?? [],
       // null, not a zero percentage: a host whose filesystems have not been
       // read has no fullest one, and an empty green meter would say its
       // disks are empty.

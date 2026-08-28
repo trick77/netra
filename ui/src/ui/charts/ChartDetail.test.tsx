@@ -86,6 +86,41 @@ describe("ChartDetail", () => {
 });
 
 describe("ChartDetail marks", () => {
+  // A chart that loses its fill on being clicked open is a different picture
+  // of the same reading. The sensor list is where it showed: its 110px
+  // sparkline has always drawn an area and the dialog drew a bare line, so a
+  // 44-47 degree package opened into a hairline -- the enlarged view saying
+  // less than the small chart it came from.
+  it("fills a line when the panel it was opened from filled one", () => {
+    render(
+      <ChartDetail
+        title="coretemp Core 0"
+        series={[{ name: "temp", color: "var(--s1)", values: [44, 47, 45] }]}
+        max={47}
+        min={44}
+        filled
+        onClose={() => {}}
+      />,
+    );
+    expect(document.querySelector("[data-area]")).not.toBeNull();
+    // The stroke stays: the fill reads as the band, the edge is the value.
+    expect(document.querySelector("[data-line]")).not.toBeNull();
+  });
+
+  it("leaves a pinned line unfilled", () => {
+    render(
+      <ChartDetail
+        title="Filesystem usage"
+        series={[{ name: "/", color: "var(--s1)", values: [88, 90, 91] }]}
+        max={100}
+        min={0}
+        onClose={() => {}}
+      />,
+    );
+    expect(document.querySelector("[data-area]")).toBeNull();
+    expect(document.querySelector("[data-line]")).not.toBeNull();
+  });
+
   // The enlarged view is a different renderer from the panel (ChartFigure,
   // not Overlay), and the two choose their mark independently. They must
   // choose the SAME one: a panel that opens into a different chart is the
