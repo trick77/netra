@@ -1,3 +1,4 @@
+import { mirrorCeilings } from "./geometry";
 // Where the numbers on an axis come from.
 //
 // Pure, with no React import and no DOM access, for the same reason
@@ -126,33 +127,72 @@ export function niceTicks(
 }
 
 /**
- * Ticks for an axis mirrored about zero -- ingress above the midline, egress
- * below -- where both edges are a magnitude of `ceiling` away from a zero in
- * the middle.
+ * Ticks for an axis mirrored about zero -- in above the line, out below.
  *
- * Its own function rather than niceTicks(-ceiling, ceiling): the two halves
- * must be symmetric about the midline, and both label a MAGNITUDE. Running
- * a signed range through niceTicks would put "-200 M" below the line, which
- * states a negative rate -- traffic has a direction, not a sign.
+ * Its own function rather than niceTicks(-ceiling, ceiling): both halves
+ * label a MAGNITUDE. Running a signed range through niceTicks would put
+ * "-200 M" below the line, which states a negative rate -- traffic has a
+ * direction, not a sign.
+ *
+ * ASYMMETRIC when the two halves are. `down` defaults to `up`, which is the
+ * old symmetric ladder and still what a chart with one ceiling wants. Given
+ * two, zero moves off the midline to where the data puts it and each half
+ * gets its own spacing -- the same scale mirrorCeilings() hands the geometry,
+ * so the marks and the labels cannot disagree.
+ *
+ * Symmetric was not a neutral default. It forced the geometry to fall back
+ * to one shared ceiling whenever a panel carried a ladder, so the Traffic
+ * panel measured a host's outbound half against its INBOUND peak: on a box
+ * pulling four times what it pushes, four fifths of the outbound range was
+ * unreachable and its quiet band was drawn a third of its proper height. An
+ * operator comparing the panel against the same host in Observium -- whose
+ * axis reads 500k over -100k for exactly this reason -- saw a band far
+ * thinner than the reference, and the fleet cell of that same host, which
+ * carries no ladder and so kept the asymmetric scale, disagreed with the
+ * panel it opened into.
  */
 export function mirroredTicks(
-  ceiling: number,
+  up: number,
+  down = up,
   count = 3,
   base: 1000 | 1024 = 1000,
 ): Tick[] {
-  if (!(ceiling > 0)) return [{ fraction: 0.5, value: 0, major: true }];
-
-  const step = niceStep(ceiling / count, base);
+  const zero = mirrorCeilings(Math.max(up, 0), Math.max(down, 0));
+  if (!(zero.up > 0) && !(zero.down > 0)) {
+    return [{ fraction: 0.5, value: 0, major: true }];
+  }
+  // One step for both halves, from the taller of them: a ladder whose rungs
+  // are 100k above the line and 40k below reads as two different axes.
+  const tallest = Math.max(zero.up, zero.down);
+  const step = niceStep(tallest / count, base);
   const minor = step / MINOR_PER_MAJOR;
-  const ticks: Tick[] = [{ fraction: 0.5, value: 0, major: true }];
+  // mirrorCeilings() measures zero from the TOP, matching the y coordinate
+  // the geometry places its midline at. A tick fraction runs the other way
+  // -- yAt() puts fraction 1 at the top -- so this is the complement.
+  const atZero = 1 - zero.zero;
+  const ticks: Tick[] = [{ fraction: atZero, value: 0, major: true }];
 
   for (let i = 1; ; i++) {
     const value = i * minor;
-    if (value > ceiling + ceiling * 1e-9) break;
-    const half = (value / ceiling) * 0.5;
+    if (value > tallest + tallest * 1e-9) break;
     const major = isMultiple(value, step);
-    ticks.push({ fraction: 0.5 + half, value, major });
-    ticks.push({ fraction: 0.5 - half, value, major });
+    // One linear axis: the same magnitude is the same distance either side
+    // of the line. What differs is how far each half REACHES -- the half
+    // with less range runs out of box sooner and stops carrying labels.
+    if (zero.up > 0 && value <= zero.up + zero.up * 1e-9) {
+      ticks.push({
+        fraction: atZero + (value / zero.up) * (1 - atZero),
+        value,
+        major,
+      });
+    }
+    if (zero.down > 0 && value <= zero.down + zero.down * 1e-9) {
+      ticks.push({
+        fraction: atZero - (value / zero.down) * atZero,
+        value,
+        major,
+      });
+    }
   }
   return ticks;
 }

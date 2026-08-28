@@ -135,23 +135,58 @@ describe("ticks", () => {
 
   describe("mirroredTicks", () => {
     // Traffic has a direction, not a sign: both halves label a magnitude,
-    // and zero is the midline. A signed range would put "-200 M" below the
-    // line and state a negative rate.
-    it("is symmetric about a zero midline and labels magnitudes", () => {
+    // and a signed range would put "-200 M" below the line and state a
+    // negative rate.
+    it("labels magnitudes on both sides of zero", () => {
       const ticks = mirroredTicks(800);
-      expect(ticks.find((t) => t.fraction === 0.5)?.value).toBe(0);
       expect(ticks.every((t) => t.value >= 0)).toBe(true);
-
-      const above = ticks.find((t) => t.value === 400 && t.fraction > 0.5);
-      const below = ticks.find((t) => t.value === 400 && t.fraction < 0.5);
-      expect(above?.fraction).toBeCloseTo(0.75, 10);
-      expect(below?.fraction).toBeCloseTo(0.25, 10);
+      // Equal halves put zero on the midline.
+      expect(ticks.find((t) => t.value === 0)?.fraction).toBeCloseTo(0.5, 10);
+      // And each magnitude appears once above the line and once below.
+      const v = ticks.filter((t) => t.value > 0)[0]!.value;
+      expect(ticks.filter((t) => t.value === v)).toHaveLength(2);
     });
 
-    it("reaches both edges of the box at the ceiling", () => {
+    it("reaches the edges, because the range is the data's own", () => {
+      // No headroom: the reference passes --rigid, which skips rrdtool's
+      // expand_range() entirely (rrd_graph.c:4042), so the peak touches the
+      // edge of the box. The ladder is built from the same ceilings as the
+      // marks, so its outermost label lands there too.
       const ticks = mirroredTicks(800);
-      expect(ticks.some((t) => t.value === 800 && t.fraction === 1)).toBe(true);
-      expect(ticks.some((t) => t.value === 800 && t.fraction === 0)).toBe(true);
+      expect(Math.max(...ticks.map((t) => t.fraction))).toBeCloseTo(1, 10);
+      expect(Math.min(...ticks.map((t) => t.fraction))).toBeCloseTo(0, 10);
+    });
+
+    // The case the symmetric ladder could not state, and the reason the
+    // Traffic panel drew a host's quiet outbound band a third of its proper
+    // height: given two ceilings, zero moves to where the data puts it and
+    // each half is spaced against its own.
+    it("puts zero where the data puts it when the halves differ", () => {
+      // Four times as much in as out, and no padding, so zero sits a fifth
+      // of the way up the box.
+      const ticks = mirroredTicks(4000, 1000);
+      // Fraction 1 is the TOP (see yAt), so a chart with four times as much
+      // inbound as outbound puts zero a quarter of the way UP the box.
+      const zero = ticks.find((t) => t.value === 0)!.fraction;
+      expect(zero).toBeCloseTo(0.2, 10);
+
+      // And a magnitude is the SAME distance above the line as below it,
+      // which is what makes this ONE axis rather than two. The asymmetry is
+      // in where zero sits and how far each half reaches, not in the
+      // spacing -- the half with less range runs out of box sooner.
+      const v = ticks.filter((t) => t.value > 0)[0]!.value;
+      const above = ticks.find((t) => t.value === v && t.fraction > zero)!;
+      const below = ticks.find((t) => t.value === v && t.fraction < zero)!;
+      expect(above.fraction - zero).toBeCloseTo(zero - below.fraction, 10);
+
+      // The taller half carries labels the shorter one cannot reach.
+      const top = Math.max(...ticks.map((t) => t.value));
+      expect(ticks.filter((t) => t.value === top)).toHaveLength(1);
+    });
+
+    it("is symmetric when it is given one ceiling", () => {
+      const ticks = mirroredTicks(800);
+      expect(ticks.find((t) => t.value === 0)?.fraction).toBeCloseTo(0.5, 10);
     });
 
     it("states an idle interface once, at zero", () => {

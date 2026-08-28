@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { Chart, type ChartSeries } from "./Chart";
-import { niceTicks, timeTicks } from "./ticks";
+import { mirroredTicks, niceTicks, timeTicks } from "./ticks";
 
 const series: ChartSeries[] = [
   { name: "busy", color: "var(--s1)", values: [10, 40, 20, 60] },
@@ -262,9 +262,43 @@ describe("Chart", () => {
           max={100}
           mark="mirror"
           spine
+          y={mirroredTicks(100, 3)}
         />,
       );
       expect(c.querySelector("[data-zero]")).not.toBeNull();
+    });
+
+    it("rules zero where the data puts it, not across the middle", () => {
+      // The mirror puts zero wherever the two halves' ranges land -- four
+      // fifths of the way down on a host that pulls far more than it pushes.
+      // The rule used to be pinned to 0.5 regardless, so it drew a grey line
+      // across the middle of the box, over the marks and through the spikes.
+      const c = draw(
+        <Chart
+          series={pair}
+          width={900}
+          height={320}
+          max={100}
+          mark="mirror"
+          spine
+        />,
+      );
+      const zero = c.querySelector("[data-zero]");
+      const mid = c.querySelector("[data-mid]");
+      expect(zero).not.toBeNull();
+      expect(mid).not.toBeNull();
+      // Both name the same height, which is the point: the axis furniture and
+      // the marks measure from one line. Within a pixel rather than exactly:
+      // the marks snap their midline to a whole row so the bars measured from
+      // it fill rows rather than straddling them, and this rule is drawn at
+      // the exact fraction.
+      expect(
+        Math.abs(
+          Number(zero!.getAttribute("y1")) - Number(mid!.getAttribute("y1")),
+        ),
+      ).toBeLessThanOrEqual(1);
+      // And it is not the midline of the box: `pair` is lopsided.
+      expect(Number(zero!.getAttribute("y1"))).not.toBeCloseTo(320 / 2, 0);
     });
   });
 

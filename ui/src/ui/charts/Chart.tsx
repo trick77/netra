@@ -17,7 +17,9 @@ import {
   dotPath,
   extent,
   linePath,
+  mirrorCeilings,
   mirrorPaths,
+  mirrorPeaks,
   mirrorStackBands,
   stackBands,
 } from "./geometry";
@@ -25,7 +27,7 @@ import {
   AXIS_STROKE,
   AXIS_WIDTH,
   MIRROR_FILL_OPACITY,
-  MIRROR_STROKE_WIDTH,
+  BAND_STROKE_WIDTH,
   mirrorEdge,
   REFERENCE_DASH,
   REFERENCE_STROKE,
@@ -140,7 +142,7 @@ export function Chart({
   widestYLabel,
   cursor = null,
   onCursorChange,
-  bandStroke = 1.25,
+  bandStroke = BAND_STROKE_WIDTH,
 }: ChartProps) {
   // React's useId, not a counter: two charts on one page must not mint the
   // same clip-path id, and a module-level counter is not stable across a
@@ -171,6 +173,35 @@ export function Chart({
   // -- so `mirrored` stays the question "is there a midline", and the mark
   // dispatch below asks the narrower one.
   const mirrored = mark === "mirror" || mirrorStacked;
+  /* Whether the mirrored marks derive their own asymmetric scale.
+   *
+   * This used to be `y === undefined` -- a chart with a tick ladder had to
+   * fall back to one shared ceiling with zero at mid-height, because the
+   * ladder was symmetric and marks placed anywhere else would sit at heights
+   * its own labels denied. mirroredTicks() is built from mirrorCeilings()
+   * now, the same function the geometry uses, so the ladder follows the data
+   * instead of overruling it and there is nothing left to fall back FROM.
+   *
+   * A caller that pins `max` for a reason unrelated to the ladder still gets
+   * the shared ceiling: `min` set means the range is the caller's to state. */
+  const mirrorScaled = min === undefined;
+  /* Where zero falls, as a fraction measured from the TOP -- the same number
+     mirrorPaths and mirrorStackBands place their midline at, so the axis
+     furniture and the marks cannot disagree about where the line is. */
+  const mirrorZero = !mirrored
+    ? 0.5
+    : mirrorScaled
+      ? mirrorCeilings(
+          ...(({ up, down }) => [up, down] as const)(
+            mirrorPeaks(
+              series.map((s) =>
+                s.band && s.band.length > 0 ? s.band : s.values,
+              ),
+              mirrorStacked,
+            ),
+          ),
+        ).zero
+      : 0.5;
   const stacked = mark === "stack";
 
   // Where the DATA actually lives. geometry.ts insets every mark by `pad`
@@ -255,7 +286,10 @@ export function Chart({
 
       <MarkGroup inset={inset} clipId={clipId} rect={rect}>
         {mirrorStacked && (
-          <MirrorStackMarks {...{ series, w, h, max, pad, highlight }} />
+          <MirrorStackMarks
+            {...{ series, w, h, max, pad, highlight }}
+            independent={mirrorScaled}
+          />
         )}
         {mirrored && !mirrorStacked && (
           // `independent` only where nothing on screen states a shared scale.
@@ -265,7 +299,7 @@ export function Chart({
           // takes RRDtool's scaling and the density that comes with it.
           <MirrorMarks
             {...{ series, w, h, max, pad }}
-            independent={y === undefined}
+            independent={mirrorScaled}
           />
         )}
         {!mirrored && stacked && (
@@ -307,8 +341,17 @@ export function Chart({
           cell, the Overview traffic card and every range thumbnail. The
           sparkline's own test did not catch it because it asserts on
           [data-mid], which is the line underneath. */}
+      {/* At the height the DATA puts zero, not at 0.5.
+          
+          It was hard-coded to the midline, which was true only while both
+          halves shared one ceiling. They no longer do -- a host that pulls
+          four times what it pushes puts zero four fifths of the way down --
+          and a rule pinned to 0.5 then ran across the middle of the box, over
+          the marks, straight through the spikes. Same fraction the marks
+          measure from, so it lands on the edge of the band rather than
+          through it. */}
       {mirrored && (spine || grid || labels) && (
-        <ZeroRule rect={axisRect} at={0.5} />
+        <ZeroRule rect={axisRect} at={1 - mirrorZero} />
       )}
       {labels && <AxisLabels rect={axisRect} y={y} x={x} format={format} />}
 
@@ -378,6 +421,29 @@ function runningTotal(
   return sum;
 }
 
+/**
+ * The two ceilings a mirrored PAIR is drawn against -- the peak envelope
+ * where the tier carries one, the mean otherwise.
+ *
+ * The same rule mirrorPeaks() applies to a whole chart, for the one-pair
+ * case. Exists so the marks, the midline and the tick ladder derive their
+ * scale from one place; they disagreed about where zero was when they did
+ * not.
+ */
+function mirrorHalves(
+  up: ChartSeries,
+  down: ChartSeries | undefined,
+): { up: number; down: number } {
+  const peak = (s: ChartSeries | undefined): number => {
+    if (s === undefined) return 0;
+    const vals = s.band && s.band.length > 0 ? s.band : s.values;
+    let m = 0;
+    for (const v of vals) if (v !== null && v > m) m = v;
+    return m;
+  };
+  return { up: peak(up), down: peak(down) };
+}
+
 function longest(series: readonly ChartSeries[]): number {
   return series.reduce((n, s) => Math.max(n, s.values.length), 0);
 }
@@ -416,15 +482,20 @@ function MirrorMarks({
         // a half, and only one of those can carry a 1.25px outline without
         // the outline becoming the mark. See mirrorEdge().
         const edge = mirrorEdge(w, longest([up, ...(down ? [down] : [])]), pad);
-        // A pair drawn with an envelope goes back on the shared ceiling.
-        // `independent` derives the scale and the zero line from the values
-        // it is handed, and the band is handed different values -- the peak,
-        // not the mean -- so the two calls would place their zero lines at
-        // different heights and the envelope would neither contain the line
-        // nor share its midline. Nothing reaches this today (every chart
-        // carrying a band also carries a tick ladder, which already turns
-        // `independent` off), so this is the guard that keeps it true.
-        const scaled = independent && !up.band && !down?.band;
+        // Both calls on ONE pair of ceilings, derived from the peak where
+        // there is one. The envelope and the mean inside it are handed
+        // different values, so left to derive their own they would place
+        // their zero lines at different heights and the envelope would
+        // neither contain the mean nor share its midline.
+        //
+        // This used to be a guard that simply turned the derived scale off
+        // for a banded pair, on the reasoning that such a chart always
+        // carries a tick ladder and the ladder turned it off anyway. The
+        // ladder no longer does -- it is built from these same ceilings now
+        // -- so the guard would have left the marks centred while the axis
+        // furniture sat where the data puts zero, and ruled a line through
+        // the chart.
+        const ceiling = independent ? mirrorHalves(up, down) : undefined;
         const paths = mirrorPaths(
           up.values,
           down?.values ?? [],
@@ -432,7 +503,8 @@ function MirrorMarks({
           h,
           max,
           pad,
-          scaled,
+          independent,
+          ceiling,
         );
         // The envelope, when the tier carries a peak column. Drawn first so
         // the mean sits over it, and with no stroke -- it is a region, not a
@@ -446,11 +518,34 @@ function MirrorMarks({
                 h,
                 max,
                 pad,
-                scaled,
+                independent,
+                ceiling,
               )
             : null;
         return (
           <g key={up.name} data-series={up.name} data-mirror>
+            {/* BEHIND the series, and half a row down from `mid`.
+
+                Behind, because it is the axis the data is measured from and
+                not an annotation over it: drawn last it ran a grey rule
+                straight through the band, striking it out. rrdtool draws its
+                grid first and fills the AREA on top for the same reason.
+
+                Half a row down, because a 1px stroke is centred on its
+                coordinate: at an integer y it covers half the row above and
+                half the row below, rendering as a two-row smear that the
+                marks stand off rather than on. Offset, it fills exactly the
+                row the down half begins in. */}
+            <line
+              data-mid
+              x1={0}
+              x2={w}
+              y1={paths.mid + AXIS_WIDTH / 2}
+              y2={paths.mid + AXIS_WIDTH / 2}
+              stroke={AXIS_STROKE}
+              strokeWidth={AXIS_WIDTH}
+              shapeRendering="crispEdges"
+            />
             {bands && (
               <>
                 {bands.up !== "" && (
@@ -481,6 +576,7 @@ function MirrorMarks({
                 fillOpacity={edge.fillOpacity}
                 stroke={edge.strokeWidth === 0 ? "none" : up.color}
                 strokeWidth={edge.strokeWidth}
+                strokeLinejoin="round"
               />
             )}
             {down !== undefined && paths.down !== "" && (
@@ -491,17 +587,9 @@ function MirrorMarks({
                 fillOpacity={edge.fillOpacity}
                 stroke={edge.strokeWidth === 0 ? "none" : down.color}
                 strokeWidth={edge.strokeWidth}
+                strokeLinejoin="round"
               />
             )}
-            <line
-              data-mid
-              x1={0}
-              x2={w}
-              y1={paths.mid}
-              y2={paths.mid}
-              stroke={AXIS_STROKE}
-              strokeWidth={AXIS_WIDTH}
-            />
           </g>
         );
       })}
@@ -529,6 +617,7 @@ function MirrorStackMarks({
   max,
   pad,
   highlight,
+  independent,
 }: {
   series: ChartSeries[];
   w: number;
@@ -536,9 +625,18 @@ function MirrorStackMarks({
   max: number;
   pad: number;
   highlight?: string;
+  /* Same rule as the plain mirror above: each half on its own ceiling with
+     zero placed by the data, but only where no tick ladder has already
+     labelled the halves off one number. */
+  independent: boolean;
 }) {
   const ups = series.filter((_, i) => i % 2 === 0);
   const downs = series.filter((_, i) => i % 2 === 1);
+  // The same weights the plain mirror uses, at this chart's own density.
+  // This half used to hard-code the roomy pair whatever the density, so a
+  // mirrored STACK folded to one point per pixel drew an outline where the
+  // plain mirror had already learned not to.
+  const edge = mirrorEdge(w, longest(series), pad);
   const paths = mirrorStackBands(
     ups.map((s) => s.values),
     downs.map((s) => s.values),
@@ -546,11 +644,24 @@ function MirrorStackMarks({
     h,
     max,
     pad,
+    independent,
   );
   const dim = (s: ChartSeries): number =>
     highlight !== undefined && highlight !== s.name ? 0.35 : 1;
   return (
     <>
+      {/* Behind the bands, and half a row down -- see MirrorMarks for both
+          reasons. Drawn last it struck a grey rule through the band. */}
+      <line
+        data-mid
+        x1={0}
+        x2={w}
+        y1={paths.mid + AXIS_WIDTH / 2}
+        y2={paths.mid + AXIS_WIDTH / 2}
+        stroke={AXIS_STROKE}
+        strokeWidth={AXIS_WIDTH}
+        shapeRendering="crispEdges"
+      />
       {ups.map((s, i) =>
         (paths.up[i] ?? "") === "" ? null : (
           <path
@@ -560,9 +671,10 @@ function MirrorStackMarks({
             data-up
             d={paths.up[i]!}
             fill={s.color}
-            fillOpacity={MIRROR_FILL_OPACITY}
-            stroke={s.color}
-            strokeWidth={MIRROR_STROKE_WIDTH}
+            fillOpacity={edge.fillOpacity}
+            stroke={edge.strokeWidth === 0 ? "none" : s.color}
+            strokeWidth={edge.strokeWidth}
+            strokeLinejoin="round"
             opacity={dim(s)}
           />
         ),
@@ -576,22 +688,14 @@ function MirrorStackMarks({
             data-down
             d={paths.down[i]!}
             fill={s.color}
-            fillOpacity={MIRROR_FILL_OPACITY}
-            stroke={s.color}
-            strokeWidth={MIRROR_STROKE_WIDTH}
+            fillOpacity={edge.fillOpacity}
+            stroke={edge.strokeWidth === 0 ? "none" : s.color}
+            strokeWidth={edge.strokeWidth}
+            strokeLinejoin="round"
             opacity={dim(s)}
           />
         ),
       )}
-      <line
-        data-mid
-        x1={0}
-        x2={w}
-        y1={paths.mid}
-        y2={paths.mid}
-        stroke={AXIS_STROKE}
-        strokeWidth={AXIS_WIDTH}
-      />
     </>
   );
 }
