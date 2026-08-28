@@ -616,18 +616,6 @@ a:hover {
   margin-bottom: var(--space-3);
   overflow: hidden;
 }
-.attn > header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 10px var(--space-4);
-  border-bottom: 1px solid var(--border);
-}
-.attn > header h3 {
-  font-size: var(--text-label);
-  font-weight: 600;
-  color: var(--ink);
-}
 /* The severity is a heading over the conditions at that severity, not a word
    repeated on every row: with three critical rows under it, "Critical" three
    times is three copies of one fact and the eye stops reading it. Same
@@ -645,7 +633,7 @@ a:hover {
   letter-spacing: 0.07em;
   font-weight: 600;
 }
-.attn > .attn-sev:first-of-type {
+.attn > div:first-child .attn-sev {
   border-top: 0;
 }
 .attn-sev .n {
@@ -680,14 +668,6 @@ a:hover {
   list-style: none;
   margin: 0;
   padding: 0;
-}
-.allclear {
-  font-size: var(--text-label);
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 2px 0 var(--space-3);
 }
 
 /* Entity cell — a linked name, an optional badge beside it, and a quieter
@@ -1521,7 +1501,7 @@ a:hover {
      the divider colour, so the leftover would read as one wide border. */
   flex: 1 1 auto;
 }
-srail b {
+.srail b {
   font-size: var(--text-ui);
   font-weight: 600;
   color: var(--ink);
@@ -1890,9 +1870,10 @@ svg.spark {
    read once and scrolled past. So the summary replaces the card header
    outright and .sysstrip becomes what OPENS.
 
-   A bordered surface, not loose text, and that is load-bearing: this block
-   sits directly under either the quiet one-line .allclear or the .attn band,
-   and without a ground of its own it merges into both. */
+   A bordered surface, not loose text, and that is load-bearing: on a host
+   with something wrong this block sits directly under the .attn band, and
+   without a ground of its own the two merge; on a healthy host nothing
+   precedes it and it is the first thing on the tab. */
 details.sysfold {
   background: var(--surface);
   border: 1px solid var(--border);

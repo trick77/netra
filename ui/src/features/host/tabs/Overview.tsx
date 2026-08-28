@@ -1388,18 +1388,13 @@ export function Overview({
           Present only when something is wrong, the same rule the fleet band
           follows: a permanently visible "All clear" box in the best position
           on the page is a box people stop reading, and it costs that position
-          on every healthy host. When there is nothing to say, one quiet line
-          says the check ran. */}
-      {attention.length === 0 ? (
-        <p className="allclear">Nothing needs attention on this host</p>
-      ) : (
+          on every healthy host. When there is nothing to say this tab says
+          nothing -- the line that used to sit here reported that a check had
+          run and found nothing, which is the one thing a reader can already
+          see, in the position the real answer occupies on every other host.
+          AttentionCounts does the same on the fleet page. */}
+      {attention.length > 0 && (
         <section className="attn" aria-label="Needs attention">
-          <header>
-            <h3>
-              {attention.length} thing{attention.length === 1 ? "" : "s"} need
-              {attention.length === 1 ? "s" : ""} attention
-            </h3>
-          </header>
           {/* The severity is a heading over the rows at that severity, said
               once, rather than a chip repeated on every one of them. Three
               critical rows do not need the word "critical" three times, and
@@ -1418,10 +1413,10 @@ export function Overview({
             if (rows.length === 0) return null;
             return (
               <div key={severity}>
-                <h4 className={`attn-sev ${SEVERITY_CLASS[severity]}`}>
+                <h3 className={`attn-sev ${SEVERITY_CLASS[severity]}`}>
                   {SEVERITY_WORD[severity]}{" "}
                   <span className="n">{rows.length}</span>
-                </h4>
+                </h3>
                 <ul className="attn-list">
                   {rows.map((a, index) => (
                     <li className="attn-row" key={index}>

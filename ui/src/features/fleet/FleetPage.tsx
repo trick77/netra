@@ -8,12 +8,13 @@ import {
   type Host,
   type Site,
 } from "../../lib/api";
-import { ABSENT, byterate, duration } from "../../lib/format";
+import { ABSENT, byterate } from "../../lib/format";
 import { Input } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import { StatFigure, StatRail } from "../../ui/StatRail";
 import { Tabs } from "../../ui/Tabs";
 import { AttentionCounts } from "./AttentionCounts";
+import { SinceLastCheck } from "./SinceLastCheck";
 import {
   filterKind,
   fleetConditions,
@@ -340,10 +341,6 @@ export function FleetPage({
   }, [injected]);
 
   const checkedAt = injectedCheckedAt ?? fetchedCheckedAt;
-  // The age, once: it is what the rail draws and what decides whether the
-  // rail draws it at all. See the figure itself on why the two questions
-  // must be the same one.
-  const checkedAge = checkedAt === null ? null : secondsSince(checkedAt, now);
   const hostRows = rows ?? fetchedRows ?? [];
   const containerRows = containers ?? fetchedContainers ?? [];
   const containerError = injectedContainerError ?? fetchedContainerError;
@@ -529,20 +526,13 @@ export function FleetPage({
             above the page; the sentence is gone and this is the fact on it
             that was not said twice.
 
-            `duration`, not `relative`: the rail's shape is a figure and a
-            phrase finishing it, and "0 s ago since last check" is not a
-            sentence. No href, for the reason the traffic figure states.
-
-            Omitted entirely when the hub has not said when it last looked,
-            rather than shown as ABSENT -- an em dash under "since last
-            check" reads as "the check failed", which is a claim this page
-            has no basis for. The AGE is what is tested, not the timestamp:
-            null and an unparseable string are the same fact here, and
-            guarding on `checkedAt !== null` alone let a malformed one render
-            the very em dash this omits. */}
-        {checkedAge !== null && (
-          <StatFigure value={duration(checkedAge)} label="since last check" />
-        )}
+            Its own component because it is the only figure here that has to
+            move between renders: computed from this page's `now` it read
+            "0 s" forever, since the poll landing is both what sets the
+            timestamp and what repaints the page. It owns a clock, and the
+            reasons for `duration` over `relative` and for omitting rather
+            than dashing moved there with it. */}
+        <SinceLastCheck checkedAt={checkedAt} now={now} />
       </StatRail>
 
       <Tabs
@@ -735,19 +725,6 @@ function describe(err: unknown): string {
 // this replaced did that job by accident; isReporting does it on purpose,
 // and it is the same predicate the "Hosts reporting" tile directly above
 // uses, so the two tiles cannot disagree about which hosts exist right now.
-// The age `relative()` computes before it appends "ago". The rail wants the
-// duration alone -- the words that finish the figure are its label -- and a
-// second copy of the arithmetic is how the rail and a tooltip come to
-// disagree about the same instant by a second.
-//
-// Clamped at zero like relative()'s is, for the same reason: a hub whose
-// clock is a moment ahead of the browser's must not produce a negative age.
-function secondsSince(iso: string, now: Date): number | null {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return null;
-  return Math.max(0, Math.round((now.getTime() - then) / 1000));
-}
-
 function fleetTraffic(rows: readonly HostRow[], now: Date): string {
   let total = 0;
   let any = false;
