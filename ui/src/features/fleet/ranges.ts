@@ -18,11 +18,13 @@ import type { Range } from "../../lib/range";
  * Fixed rather than chosen. A range picker over a list of sparklines asks
  * the reader to set up the question before they can ask it, and the answer
  * they wanted -- is anything unusual right now -- has one sensible window.
- * 12h also keeps the cell's fold honest: 144 five-minute buckets into 170
- * pixels is roughly one bucket per column, so almost nothing is averaged
- * away before it is drawn.
+ *
+ * A day, matching what the same hosts are graphed over elsewhere, so the two
+ * pictures can be read against each other. It costs a little resolution in
+ * the fold: 288 five-minute buckets into 170 pixels averages roughly 1.7 of
+ * them per column, where 12h was about one.
  */
-export const FLEET_RANGE: Range = "12h";
+export const FLEET_RANGE: Range = "24h";
 
 /**
  * Exported so the screen that fetches for an enlarged chart can clamp a
