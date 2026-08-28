@@ -6,8 +6,6 @@
 // SVG's y-axis grows downward, so every value-to-y mapping below inverts
 // the value: a higher value must land at a smaller y.
 
-import { linearScale, type Scale } from "./scale";
-
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }
@@ -305,15 +303,10 @@ export function mirrorPaths(
   h: number,
   max: number,
   pad = 0,
-  scale?: Scale,
 ): { up: string; down: string; mid: number } {
   const mid = h / 2;
   const n = Math.max(up.length, down.length);
   const baseline = round1(mid);
-  // Proportional unless the caller says otherwise, so every existing caller
-  // draws exactly what it drew before this parameter existed. See scale.ts
-  // for when a chart wants the other one.
-  const toFraction = scale ?? linearScale(max);
 
   const build = (vals: (number | null)[], direction: 1 | -1): string => {
     const usable = h / 2 - pad;
@@ -326,7 +319,7 @@ export function mirrorPaths(
         const pts = run.map((i) => {
           const x = scaleX(i, n, w, pad);
           const v = vals[i] as number;
-          const t = toFraction(v);
+          const t = max === 0 ? 0 : v / max;
           const y = mid + direction * t * usable;
           return point(x, y);
         });
@@ -346,6 +339,93 @@ export function mirrorPaths(
     down: build(down, 1),
     mid,
   };
+}
+
+/**
+ * A mirrored STACK: `up` layers accumulate upward from the midline, `down`
+ * layers accumulate downward from it, both against one shared `max`.
+ *
+ * This is the shape a per-interface traffic chart wants and neither
+ * `stackBands` nor `mirrorPaths` can draw. `mirrorPaths` overlays its pairs,
+ * so four interfaces hide each other and the silhouette is whichever one is
+ * loudest rather than the host's total; `stackBands` totals correctly but has
+ * one baseline, so in and out would share a direction and the reader loses
+ * the one comparison a traffic chart exists to make. Stacked about a midline,
+ * the outer envelope IS the host's total in each direction -- which is what
+ * the fleet row cell draws as a single summed pair, so the cell and the chart
+ * it opens agree about the same host.
+ *
+ * The two halves keep their own gaps. Within a half an index is a gap if ANY
+ * of that half's series is null there, exactly as `stackBands` argues: the
+ * running total at that index is undefined for every layer, and `v ?? 0`
+ * would draw an interface that reported nothing as one reporting zero. A gap
+ * on the up side does not force one on the down side.
+ *
+ * Values above `max` are left to overflow, matching `mirrorPaths` and
+ * `linePath`: the overflow is itself informative.
+ */
+export function mirrorStackBands(
+  up: (number | null)[][],
+  down: (number | null)[][],
+  w: number,
+  h: number,
+  max: number,
+  pad = 0,
+): { up: string[]; down: string[]; mid: number } {
+  const mid = h / 2;
+  const usable = h / 2 - pad;
+
+  const half = (series: (number | null)[][], direction: 1 | -1): string[] => {
+    if (series.length === 0) return [];
+    // The longest series, not series[0]'s -- rows arrive ragged, and the same
+    // trap stackBands documents applies here.
+    const n = series.reduce((longest, s) => Math.max(longest, s.length), 0);
+    if (n === 0) return series.map(() => "");
+
+    const runs = splitRuns(n, (i) => series.some((s) => s[i] == null)).filter(
+      (run) => run.length >= 2,
+    );
+
+    const y = (v: number): number =>
+      mid + direction * (max === 0 ? 0 : v / max) * usable;
+
+    const bands: string[] = series.map(() => "");
+    for (const run of runs) {
+      const prefix: number[][] = [];
+      let running: number[] = new Array(run.length).fill(0);
+      prefix.push([...running]);
+      for (const s of series) {
+        running = running.map((v, j) => v + (s[run[j]!] as number));
+        prefix.push([...running]);
+      }
+
+      for (let k = 0; k < series.length; k++) {
+        const bottom = prefix[k]!;
+        const top = prefix[k + 1]!;
+        const topPts = top.map((v, j) =>
+          point(scaleX(run[j]!, n, w, pad), y(v)),
+        );
+        const bottomPts = bottom.map((v, j) =>
+          point(scaleX(run[j]!, n, w, pad), y(v)),
+        );
+        const d =
+          `M${topPts[0]} ` +
+          topPts
+            .slice(1)
+            .map((pt) => `L${pt}`)
+            .join(" ") +
+          ` ${bottomPts
+            .slice()
+            .reverse()
+            .map((pt) => `L${pt}`)
+            .join(" ")} Z`;
+        bands[k] = bands[k] ? `${bands[k]} ${d}` : d;
+      }
+    }
+    return bands;
+  };
+
+  return { up: half(up, -1), down: half(down, 1), mid };
 }
 
 /**

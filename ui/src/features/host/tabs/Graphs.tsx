@@ -15,7 +15,6 @@ import type { Range } from "../../../lib/range";
 import { windowNotice } from "../../../lib/metrics";
 import { ChartPanel } from "../../../ui/charts/ChartPanel";
 import { RANGE_VALUES } from "../ranges";
-import { trafficScale } from "../../../ui/charts/scale";
 import {
   COLLECTOR_GROUPS,
   NETWORK_GROUPS,
@@ -196,13 +195,15 @@ function Panel({
       fmt={spec.fmt}
       stacked={spec.stacked}
       mirrored={spec.mirrored}
-      // Only where the spec asks for it -- see PanelSpec.compressed for why
-      // this is not read off `mirrored`.
-      scaleFor={spec.compressed === true ? trafficScale : undefined}
       // A 32-core legend is longer than the chart it explains. Suppressed
       // with legend, not highlight: the latter also dims every other series
       // to 35% and washed the whole stack out.
-      legend={series.length <= 6}
+      //
+      // Twelve rather than six for a mirrored stack: its bands come in
+      // pairs, so six was three interfaces, and naming which interface
+      // carried the traffic is the whole reason that panel is drawn per
+      // interface rather than summed. Six pairs still fits.
+      legend={series.length <= (spec.mirrored && spec.stacked ? 12 : 6)}
       // Boolean panels join the per-core stack in having no VALUE axis:
       // their 0 and 1 are states, and ticking them would label a chart
       // "up" / 0.5 / "down". Both keep their time axis.

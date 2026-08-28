@@ -11,7 +11,6 @@
 // construction rather than by everyone remembering to edit both files.
 import { extent } from "./geometry";
 import { Chart } from "./Chart";
-import { trafficScale } from "./scale";
 // The mirror weights and the midline stroke are Chart's now; only the shared
 // sparkline width is still read here.
 import { SPARK_WIDTH } from "./size";
@@ -48,6 +47,28 @@ export interface UpDownSparklineProps {
 export const UP_COLOR = "var(--s2)";
 export const DOWN_COLOR = "var(--s5)";
 
+/**
+ * The same pair, one lightness step per interface, for the panel that stacks
+ * traffic per interface rather than summing it.
+ *
+ * Index 0 IS the pair above, so a one-NIC host draws exactly what its fleet
+ * cell draws -- which is the property that lets the cell open into the panel
+ * without the chart changing under the click. The walk wraps; see index.css
+ * for why three steps and not eight.
+ */
+export const UP_SHADES = [
+  UP_COLOR,
+  "var(--in-2)",
+  "var(--in-3)",
+  "var(--in-4)",
+];
+export const DOWN_SHADES = [
+  DOWN_COLOR,
+  "var(--out-2)",
+  "var(--out-3)",
+  "var(--out-4)",
+];
+
 export function UpDownSparkline({
   up,
   down,
@@ -64,16 +85,11 @@ export function UpDownSparkline({
   // egress the same size as a saturated ingress.
   const effectiveMax = max ?? Math.max(extent(up).max, extent(down).max);
 
-  /* Non-linear, and this is the whole reason scale.ts exists. Traffic has no
-     ceiling and a very heavy tail: measured on ark.o11.net over 24 h, the
-     typical five-minute bucket is 29 kB/s and the day's peak is 101 MB/s,
-     ~3500:1. Against a proportional axis the typical bucket drew 0.004 px of
-     this chart's 14 px half-height, so the cell was a hairline on the midline
-     with three spikes -- the whole day unreadable, which is the bug this
-     replaced. Through asinh the same bucket draws 5.03 px and the spikes
-     still reach the top. See scale.ts for why asinh and not log, and why the
-     knee is a constant. */
-  const toFraction = trafficScale(effectiveMax);
+  /* Proportional, and the ceiling is the window's own peak -- what RRDtool
+     and the graphs an operator already reads draw. A bursty host's quiet
+     baseline goes flat next to its spikes, and that is the reading: heights
+     mean the same thing in every cell of the column, which a bent axis
+     cannot promise. */
 
   return (
     <Chart
@@ -84,7 +100,6 @@ export function UpDownSparkline({
       width={width}
       height={height}
       max={effectiveMax}
-      scale={toFraction}
       pad={pad}
       mark="mirror"
       label={label}

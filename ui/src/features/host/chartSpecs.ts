@@ -18,7 +18,7 @@ import {
   percent,
 } from "../../lib/format";
 import { type Band } from "../../ui/charts/ChartPanel";
-import { DOWN_COLOR, UP_COLOR } from "../../ui/charts/UpDownSparkline";
+import { DOWN_SHADES, UP_SHADES } from "../../ui/charts/UpDownSparkline";
 import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
 
 /** See Overview.tsx for why every column lookup on these pages is
@@ -237,46 +237,63 @@ interface PanelSpec {
    * below. Only meaningful when the bases come in twos, in that order. */
   mirrored?: boolean;
   /**
-   * Scale the value axis through asinh rather than proportionally.
+   * Drop a series that read zero (or nothing) at every bucket in the window.
    *
-   * For a quantity with no ceiling and a heavy tail, where the typical
-   * reading and the peak are orders of magnitude apart and a proportional
-   * axis can only show one of them. Measured on ark.o11.net: 29 kB/s typical
-   * against a 101 MB/s peak, and the typical reading drew at four thousandths
-   * of a pixel.
+   * For a keyed family drawn per series, where an entry that exists and did
+   * nothing is chart furniture rather than a reading: a four-NIC box with one
+   * live uplink draws three flat lines on the midline and spends three legend
+   * rows saying so. The agent already refuses the interfaces that are not
+   * traffic at all -- lo, veth, br-, docker, tunnels, CNI plumbing, see
+   * collector/network.go -- so what this drops is a REAL interface that was
+   * idle, which is a statement the panel can afford to leave to the address
+   * table on the same tab.
    *
-   * Declared per spec rather than inferred from `mirrored`. Every mirrored
-   * panel here happens to be throughput today, so the two look
-   * interchangeable -- but the scale is a statement about a quantity's
-   * DISTRIBUTION and the mirror is a statement about its having a direction,
-   * and the first mirrored panel of something evenly distributed would
-   * silently get an axis bent for traffic. See scale.ts.
+   * Zero and null are treated alike here, and only for the whole window: a
+   * series with one non-zero bucket in twenty-four hours stays, because that
+   * bucket is exactly the thing somebody opened the panel to find.
    */
-  compressed?: boolean;
+  hideIdleSeries?: boolean;
   /**
    * Fold a keyed family across its series: ONE band per base, summed, rather
    * than one band per base per series.
    *
    * Only honest where the sum is itself the reading. A host's traffic is --
    * "how much is this box moving" is not a question about eth0 -- while the
-   * sum of two filesystems' used bytes is a number nobody asked for. It is
-   * also a different QUESTION from the per-series panel rather than a
-   * tidier version of it, which is why host-traffic and
-   * interface-throughput are two specs and not one with a flag.
+   * sum of two filesystems' used bytes is a number nobody asked for.
+   *
+   * Traffic no longer needs it: stacked about a midline, the panel's outer
+   * envelope IS the sum, so the per-interface chart answers the summed
+   * question too. Nothing in the spec list sets this today; it stays because
+   * the argument above is about a FAMILY rather than about traffic, and the
+   * next keyed family whose sum is the reading will want it.
    */
   summed?: boolean;
   /**
    * Colours for the bases, positional against `bases`, overriding the
    * per-index walk through SERIES_VARS.
    *
-   * For a summed spec the index walk is actively wrong: a chart drawn in
-   * whatever two hues happened to land at positions 0 and 1 is a third
-   * colour scheme for a fact the fleet row and the host overview already
-   * draw in a fixed pair. Direction is the reading here, so the colour has
-   * to carry direction. A per-series spec must NOT use this -- see
-   * SERIES_VARS on why interface-throughput needs eight of them.
+   * For a spec whose colour carries DIRECTION rather than identity the index
+   * walk is actively wrong: a chart drawn in whatever two hues happened to
+   * land at positions 0 and 1 is a third colour scheme for a fact the fleet
+   * row and the host overview already draw in a fixed pair. A per-series
+   * spec must NOT use this -- see SERIES_VARS.
    */
   colors?: string[];
+  /**
+   * Colours for a keyed spec whose hue carries DIRECTION and whose series are
+   * told apart by a step within it: outer index positional against `bases`,
+   * inner index walked per series, wrapping.
+   *
+   * `colors` cannot express this -- it is one hue per base, so every
+   * interface would draw in the same green -- and the SERIES_VARS walk cannot
+   * either, because it hands each band whatever hue its position lands on and
+   * loses the in/out pairing the mirror exists to show. Traffic is the case:
+   * see the spec, and index.css for the ladder itself.
+   *
+   * Takes precedence over `colors`; a spec setting both means the narrower
+   * statement wins.
+   */
+  shades?: string[][];
   /**
    * Build this panel's bands with a shared helper instead of the base loop.
    *
@@ -599,53 +616,46 @@ export const NETWORK: PanelSpec[] = [
     fmt: count,
   },
   // The fleet row's traffic cell and the host overview's Traffic card, on a
-  // page. Both draw every interface summed into one in/out pair, which is a
-  // different chart from the per-interface panel below -- so this is a
-  // different spec, and the cell links HERE. Pointing it at
-  // interface-throughput would have swapped one chart for another on click,
-  // which is the one thing an enlarged view must not do.
-  {
-    title: "Traffic",
-    slug: "host-traffic",
-    unit: "B/s",
-    source: "net",
-    bases: [
-      { base: "rx_bytes", label: "in" },
-      { base: "tx_bytes", label: "out" },
-    ],
-    // The same green-above / purple-below the sparkline draws, pinned rather
-    // than taken from the index walk. See PanelSpec.colors.
-    colors: [UP_COLOR, DOWN_COLOR],
-    mirrored: true,
-    compressed: true,
-    peak: true,
-    summed: true,
-    fmt: bytes,
-  },
+  // page. Those two sum every interface into one in/out pair; this panel
+  // STACKS them, one pair per interface, so its outer envelope is that same
+  // sum and the cell can link straight here. The sum survives the stack
+  // exactly -- the mean of the summed traffic is the sum of the per-interface
+  // means, see trafficSeries() in fleet/hostTrends.ts -- so the enlarged view
+  // is the cell's own chart with the interfaces separated out, rather than a
+  // different chart on click.
+  //
+  // This absorbed "Interface throughput", which drew the same per-interface
+  // pairs unstacked and beside a summed Traffic panel. Two panels over the
+  // same two columns, differing only in whether they added them up, made the
+  // reader work out which one they were looking at.
   {
     // "in" and "out", not rx and tx: the direction is the point of this
     // chart, and "rx" is the kernel's word for it rather than the reader's.
     // (It read "ingress"/"egress" until an operator pointed out that an
     // interface has an in and an out; the schema and the wire are unchanged.)
-    title: "Interface throughput",
-    slug: "interface-throughput",
+    title: "Traffic",
+    slug: "host-traffic",
     about:
-      "One in/out pair per interface. Traffic is every interface summed into a single pair, so on a one-NIC host the two panels look the same and on a bonded or multi-homed one only this one says which link carried it.",
+      "One in/out pair per interface, stacked, so the outer edge is the host's total and each band is the link that carried it. An interface that moved nothing across the whole window is left out.",
     unit: "B/s",
     source: "net",
     bases: [
       { base: "rx_bytes", label: "in" },
       { base: "tx_bytes", label: "out" },
     ],
-    // Mirrored about a midline, the way the fleet row has always drawn
-    // traffic: two lines climbing one axis make a reader compare shapes to
-    // answer "which way is this going".
+    // Green above / purple below, one lightness step per interface. Direction
+    // is the strong read and the interface the weak one, which is the way
+    // round the fleet cell forces: it has two bands and no legend, and this
+    // panel must not re-hue the pair it was opened from. See PanelSpec.shades.
+    shades: [UP_SHADES, DOWN_SHADES],
     mirrored: true,
-    compressed: true,
-    // Read the bucket's peak, not its mean -- see peakBase(). Unlike the
-    // fleet cell this panel draws one pair per interface and sums nothing,
-    // so the mark here is a true per-interface maximum.
-    peak: true,
+    stacked: true,
+    hideIdleSeries: true,
+    // No `peak`, and it is the one thing the stack costs. The envelope would
+    // be the running total of each interface's bucket MAXIMUM, and the
+    // interfaces do not peak in the same bucket -- it would state a
+    // throughput no bucket ever carried. The mean stack is a true reading;
+    // an invented peak is not.
     fmt: bytes,
   },
   // Half of net_samples, stored since the collector was written and drawn
@@ -1134,6 +1144,28 @@ function bandsFor(
             : griddedValues(res, index, column),
       }));
 
+  // Idle series dropped BEFORE the colour walk, so the shade ladder counts
+  // interfaces that were drawn rather than interfaces that were answered --
+  // otherwise a box whose first NIC is dark would start its live one on the
+  // second step and disagree with the fleet cell about the same host.
+  //
+  // Every base is read, not just the first: an interface is idle only when
+  // NOTHING it reports moved, and rx alone would drop a receive-silent link
+  // that was still sending. See PanelSpec.hideIdleSeries.
+  const drawn =
+    spec.hideIdleSeries === true
+      ? passes.filter(({ read }) =>
+          spec.bases
+            // A base pointing at another family is not this response's to
+            // read; `read` would hand back that family's column of the same
+            // name, or nothing.
+            .filter(
+              ({ source }) => source === undefined || source === spec.source,
+            )
+            .some(({ base }) => read(base).some((v) => v !== null && v !== 0)),
+        )
+      : passes;
+
   /**
    * The response a base reads from, and how to read it.
    *
@@ -1184,7 +1216,14 @@ function bandsFor(
     };
   };
 
-  passes.forEach(({ prefix, read }) => {
+  drawn.forEach(({ prefix, read }, passIndex) => {
+    // This pass's own bands, appended to `bands` only once the pass is
+    // complete. A mirrored stack reads its halves off band POSITION -- even
+    // is up, odd is down -- so a pass that contributed one band of its pair
+    // and not the other would shift every interface after it to the wrong
+    // side of the midline. Dropping the incomplete pass instead loses one
+    // interface's half-reading and keeps the other four honest.
+    const pass: Band[] = [];
     for (const [baseIndex, { base, label, source }] of spec.bases.entries()) {
       // A base naming its own source reads from that family's response; every
       // other base is unaffected and reads exactly as it did before.
@@ -1235,7 +1274,7 @@ function bandsFor(
       // cpu_steal (correctly NULL, there is no hypervisor) did to the CPU
       // time breakdown.
       if (spec.stacked && values.every((v) => v === null)) continue;
-      bands.push({
+      pass.push({
         name: prefix ? `${prefix} ${label}` : label,
         // Indexed by BASE when the spec pins its colours, not by how many
         // bands happen to have been pushed: a spec that names its hues is
@@ -1243,15 +1282,30 @@ function bandsFor(
         // hand the second interface of a keyed spec the wrong end of the
         // pair.
         color:
+          shadeFor(spec, baseIndex, passIndex) ??
           spec.colors?.[baseIndex] ??
-          SERIES_VARS[bands.length % SERIES_VARS.length],
+          SERIES_VARS[(bands.length + pass.length) % SERIES_VARS.length],
         values,
         ...(band && band.length > 0 ? { band } : {}),
       });
     }
+    if (spec.stacked && spec.mirrored && pass.length !== spec.bases.length)
+      return;
+    bands.push(...pass);
   });
 
   return bands;
+}
+
+/** The base's hue at this series' step, or undefined for a spec with none. */
+function shadeFor(
+  spec: PanelSpec,
+  baseIndex: number,
+  passIndex: number,
+): string | undefined {
+  const ladder = spec.shades?.[baseIndex];
+  if (ladder === undefined || ladder.length === 0) return undefined;
+  return ladder[passIndex % ladder.length];
 }
 
 // Names the columns this tier is missing, because "not collected" without a
@@ -1371,7 +1425,7 @@ const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
   network: [
     {
       title: "Traffic",
-      slugs: ["host-traffic", "interface-throughput", "interface-errors"],
+      slugs: ["host-traffic", "interface-errors"],
     },
     {
       title: "IP",

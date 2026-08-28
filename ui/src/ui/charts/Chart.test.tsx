@@ -10,6 +10,14 @@ const pair: ChartSeries[] = [
   { name: "in", color: "var(--s2)", values: [10, 40, 20, 60] },
   { name: "out", color: "var(--s5)", values: [5, 20, 10, 30] },
 ];
+// Two interfaces, as the mirrored stack takes them: consecutive in/out
+// pairs, even up and odd down.
+const twoPairs: ChartSeries[] = [
+  { name: "eth0 in", color: "var(--s2)", values: [10, 12] },
+  { name: "eth0 out", color: "var(--s5)", values: [20, 22] },
+  { name: "eth1 in", color: "var(--in-2)", values: [30, 32] },
+  { name: "eth1 out", color: "var(--out-2)", values: [40, 42] },
+];
 
 function draw(ui: React.ReactElement) {
   return render(ui).container;
@@ -93,6 +101,25 @@ describe("Chart", () => {
       expect(c.querySelector("[data-up]")).not.toBeNull();
       expect(c.querySelector("[data-down]")).not.toBeNull();
       expect(c.querySelector("[data-mid]")).not.toBeNull();
+    });
+
+    // Two interfaces as in/out pairs: even series stack up, odd stack down.
+    it("stacks mirrored pairs on either side of one midline", () => {
+      const c = draw(
+        <Chart
+          series={twoPairs}
+          width={170}
+          height={32}
+          max={100}
+          mark="mirrorStack"
+        />,
+      );
+      expect(c.querySelectorAll("[data-band][data-up]").length).toBe(2);
+      expect(c.querySelectorAll("[data-band][data-down]").length).toBe(2);
+      // ONE midline for the whole mark. The plain mirror draws its own
+      // inside each pair's group, and four of them at the same y is a
+      // heavier line than any other chart draws.
+      expect(c.querySelectorAll("[data-mid]").length).toBe(1);
     });
 
     // A null is a host that reported nothing. It must leave a hole, not a
@@ -276,6 +303,37 @@ describe("Chart", () => {
 
   // A stack draws band k at the RUNNING TOTAL through k. Dots placed at the
   // raw value bunched near the baseline while their own bands sat above.
+  describe("crosshair on a mirrored stack", () => {
+    it("reads each dot up its own half, skipping the other direction", () => {
+      const c = draw(
+        <Chart
+          series={twoPairs}
+          width={200}
+          height={100}
+          max={100}
+          min={0}
+          mark="mirrorStack"
+          cursor={0}
+        />,
+      );
+      const ys = [...c.querySelectorAll("[data-cursor-dot]")].map((d) =>
+        Number(d.getAttribute("cy")),
+      );
+      // The crosshair reads the INSET rect, as the marks do, so on a
+      // 100-tall box the midline is 50 and a half-height is 48. twoPairs at
+      // index 0 is eth0 in 10 / out 20, eth1 in 30 / out 40, so the up half
+      // stacks to 10 then 40 and the down half to 20 then 60. Summing ALL
+      // four in order -- what the plain stack does -- would put eth1's
+      // inbound dot at 60, on top of an outbound reading it is not drawn
+      // over.
+      const at = (total: number, dir: 1 | -1) => 50 + dir * (total / 100) * 48;
+      expect(ys[0]!).toBeCloseTo(at(10, -1), 6);
+      expect(ys[1]!).toBeCloseTo(at(20, 1), 6);
+      expect(ys[2]!).toBeCloseTo(at(40, -1), 6);
+      expect(ys[3]!).toBeCloseTo(at(60, 1), 6);
+    });
+  });
+
   describe("crosshair on a stack", () => {
     it("puts each dot on its own band, not on its raw value", () => {
       const c = draw(

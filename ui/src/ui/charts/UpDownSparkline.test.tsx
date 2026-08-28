@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { mirrorPaths } from "./geometry";
-import { trafficScale } from "./scale";
 import { UpDownSparkline } from "./UpDownSparkline";
 
 describe("UpDownSparkline", () => {
@@ -47,11 +46,12 @@ describe("UpDownSparkline", () => {
     );
   });
 
-  // The reason this component exists in its current form. Its own test rather
-  // than a line in the geometry one above: that test draws values of 1 to 4,
-  // where asinh is indistinguishable from proportional, so it would pass just
-  // as happily against the linear scale this replaced.
-  it("compresses a heavy-tailed day instead of flattening it", () => {
+  // The trade this component makes, pinned so it cannot be un-made by
+  // accident. A heavy-tailed day drawn proportionally IS a flat line with a
+  // spike on it -- that is what RRDtool draws and what an operator reads
+  // traffic as -- and the alternative, a bent axis, buys the baseline back
+  // by making two cells in one column mean different heights.
+  it("draws a heavy-tailed day proportionally, spike and all", () => {
     // Given a day like ark's: a quiet baseline and one transfer three orders
     // of magnitude above it
     const up = [29_000, 31_000, 37_040_000, 30_000, 28_000];
@@ -62,30 +62,22 @@ describe("UpDownSparkline", () => {
       <UpDownSparkline up={up} down={down} height={height} pad={pad} />,
     );
 
-    // Then the mark is the one asinh draws, not the one proportion does
+    // Then the mark is exactly the proportional one, against the window's
+    // own peak
     const max = 37_040_000;
-    const compressed = mirrorPaths(
-      up,
-      down,
-      170,
-      height,
-      max,
-      pad,
-      trafficScale(max),
-    );
     const proportional = mirrorPaths(up, down, 170, height, max, pad);
     const drawn = container.querySelector("path[data-up]")?.getAttribute("d");
-    expect(drawn).toBe(compressed.up);
-    expect(drawn).not.toBe(proportional.up);
+    expect(drawn).toBe(proportional.up);
 
-    // And concretely: the quiet buckets sit ~5px off the midline instead of
-    // the hundredth of a pixel that made this cell a flat line. y grows
-    // downward and `up` is drawn above the midline, so a taller reading is a
-    // SMALLER y.
+    // And the spike reaches the top of the half it is drawn in, which is the
+    // reading a proportional axis is chosen for. y grows downward and `up` is
+    // drawn above the midline, so a taller reading is a SMALLER y.
     const midline = height / 2;
-    const firstY = Number(drawn!.split(" ")[1]!.split(",")[1]);
-    expect(midline - firstY).toBeGreaterThan(4.5);
-    expect(midline - firstY).toBeLessThan(5.5);
+    const ys = drawn!
+      .split(" ")
+      .map((p) => Number(p.split(",")[1]))
+      .filter((y) => Number.isFinite(y));
+    expect(midline - Math.min(...ys)).toBeCloseTo(height / 2 - pad, 6);
   });
 
   it("takes colours from the caller, defaulting to series tokens not hex", () => {

@@ -8,14 +8,8 @@
 import type { ReactNode } from "react";
 import { ABSENT } from "../../lib/format";
 import { extent } from "./geometry";
-import {
-  mirroredDecadeTicks,
-  mirroredTicks,
-  niceTicks,
-  timeTicks,
-} from "./ticks";
-import type { ScaleFactory } from "./scale";
-import { minLabelGap, widestLabel } from "./plot";
+import { mirroredTicks, niceTicks, timeTicks } from "./ticks";
+import { widestLabel } from "./plot";
 import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
 import { Enlargeable, type DetailData } from "./Enlargeable";
@@ -101,9 +95,6 @@ export interface ChartPanelProps {
   reference?: number;
   /** Draw the series as mirrored in/out pairs about a midline. */
   mirrored?: boolean;
-  /** A non-proportional value axis, applied to this panel's own ceiling, with
-   * ticks to match. See scale.ts and ChartFigure's copy of this prop. */
-  scaleFor?: ScaleFactory;
   /**
    * The ladder the value ticks step on: 1000 for a decimal quantity, 1024
    * for one formatted with binaryBytes.
@@ -210,7 +201,6 @@ export function ChartPanel({
   nowFmt,
   nowValue,
   mirrored,
-  scaleFor,
   hideAxis,
   tickBase = 1000,
   window: answered = null,
@@ -254,9 +244,19 @@ export function ChartPanel({
   // single value understates it and the top of the stack would be drawn
   // outside the box. Only matters when no explicit ceiling is given, which
   // is the unnormalised per-core chart: N cores stack to N x 100.
-  const autoMax = stacked
-    ? runningTotalMax(series)
-    : extent(series.flatMap((s) => s.values)).max;
+  //
+  // A MIRRORED stack is two stacks, and each half accumulates every OTHER
+  // series -- summing all of them would scale a traffic chart against
+  // in-plus-out, and neither half is ever that tall.
+  const autoMax =
+    stacked && mirrored
+      ? Math.max(
+          runningTotalMax(series.filter((_, i) => i % 2 === 0)),
+          runningTotalMax(series.filter((_, i) => i % 2 === 1)),
+        )
+      : stacked
+        ? runningTotalMax(series)
+        : extent(series.flatMap((s) => s.values)).max;
   const effectiveMax = max ?? autoMax;
 
   // The value at the LATEST bucket, trailing nulls included. Filtering the
@@ -314,19 +314,10 @@ export function ChartPanel({
   // five labels at 12px do not fit a 58px plot -- they collided in the panel
   // before this was tuned. One interval yields the two or three that do.
   // The chart page, with room for eight, asks for more.
-  const scale = scaleFor?.(effectiveMax);
   const yTicks = !valueAxis
     ? undefined
     : mirrored
-      ? scale
-        ? // The panel's own room, and no minor rungs: five decades of 2..9
-          // multiples is 87 gridlines in a 260x112 box, which reads as a
-          // wash. The enlarged view has the height for them.
-          mirroredDecadeTicks(effectiveMax, scale, {
-            minGap: minLabelGap(height),
-            minors: false,
-          })
-        : mirroredTicks(effectiveMax, 1, tickBase)
+      ? mirroredTicks(effectiveMax, 1, tickBase)
       : niceTicks(floor, effectiveMax, 1, tickBase);
   const xTicks =
     !axis || answered === null
@@ -406,7 +397,6 @@ export function ChartPanel({
           // it in its header rather than inside the plot.
           reference={reference}
           mirrored={mirrored}
-          scaleFor={scaleFor}
           tickBase={tickBase}
           hideAxis={hideAxis}
           window={answered}
@@ -446,7 +436,6 @@ export function ChartPanel({
             legend={legend}
             reference={reference}
             mirrored={mirrored}
-            scale={scale}
             label={`${title} over time`}
           />
         </Enlargeable>

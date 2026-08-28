@@ -69,7 +69,23 @@ const RENAMED_TABS: Record<string, HostTab> = {
  * removed -- lands on System, which is where the old behaviour sent
  * everything.
  */
-function hostTabForSlug(slug: string): HostTab {
+/**
+ * A slug that no longer exists, and the panel that absorbed it.
+ *
+ * The group walk below cannot find a retired slug and falls through to
+ * System, which for a link about the network is a worse answer than the one
+ * this file used to give. Resolved here rather than left as a stale entry in
+ * chartSpecs: the panel is genuinely gone, and a spec kept alive only to keep
+ * a URL working is a panel somebody will eventually draw.
+ */
+const RETIRED_SLUGS: Record<string, string> = {
+  // Traffic draws one stacked in/out pair per interface now, which is what
+  // this panel was for.
+  "interface-throughput": "host-traffic",
+};
+
+function hostTabForSlug(retiring: string): HostTab {
+  const slug = RETIRED_SLUGS[retiring] ?? retiring;
   if (NETWORK_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
     return "network";
   }
