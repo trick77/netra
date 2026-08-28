@@ -26,6 +26,7 @@ import {
   AXIS_WIDTH,
   MIRROR_FILL_OPACITY,
   MIRROR_STROKE_WIDTH,
+  mirrorEdge,
   REFERENCE_DASH,
   REFERENCE_STROKE,
   REFERENCE_WIDTH,
@@ -390,6 +391,12 @@ function MirrorMarks({
         const up = series[p * 2];
         const down = series[p * 2 + 1];
         if (up === undefined) return null;
+        // Whether this chart has room for an edge at all. Derived from the
+        // plot, not from the call site: the same component draws a 170px
+        // fleet cell at one point per pixel and a 1000px dialog at three and
+        // a half, and only one of those can carry a 1.25px outline without
+        // the outline becoming the mark. See mirrorEdge().
+        const edge = mirrorEdge(w, longest([up, ...(down ? [down] : [])]), pad);
         const paths = mirrorPaths(
           up.values,
           down?.values ?? [],
@@ -434,9 +441,9 @@ function MirrorMarks({
                 data-up
                 d={paths.up}
                 fill={up.color}
-                fillOpacity={MIRROR_FILL_OPACITY}
-                stroke={up.color}
-                strokeWidth={MIRROR_STROKE_WIDTH}
+                fillOpacity={edge.fillOpacity}
+                stroke={edge.strokeWidth === 0 ? "none" : up.color}
+                strokeWidth={edge.strokeWidth}
               />
             )}
             {down !== undefined && paths.down !== "" && (
@@ -444,9 +451,9 @@ function MirrorMarks({
                 data-down
                 d={paths.down}
                 fill={down.color}
-                fillOpacity={MIRROR_FILL_OPACITY}
-                stroke={down.color}
-                strokeWidth={MIRROR_STROKE_WIDTH}
+                fillOpacity={edge.fillOpacity}
+                stroke={edge.strokeWidth === 0 ? "none" : down.color}
+                strokeWidth={edge.strokeWidth}
               />
             )}
             <line

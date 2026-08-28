@@ -104,8 +104,9 @@ describe("UpDownSparkline", () => {
   // are read on the same screen. These assertions exist so a divergence fails here
   // rather than being noticed as "the fleet row looks a bit off".
   describe("mark weights", () => {
-    it("dims the fill and strokes the same token on both sides", () => {
-      // Given a chart with an explicit colour per side
+    it("dims the fill and strokes the same token on both sides, given room", () => {
+      // Given a chart with an explicit colour per side and two points across
+      // 170px -- 85px per point, room for an edge many times over
       const { container } = render(
         <UpDownSparkline
           up={[1, 2]}
@@ -127,6 +128,28 @@ describe("UpDownSparkline", () => {
       expect(downPath?.getAttribute("fill-opacity")).toBe("0.45");
       expect(downPath?.getAttribute("stroke")).toBe("var(--s4)");
       expect(downPath?.getAttribute("stroke-width")).toBe("1.25");
+    });
+
+    // The case the fleet actually draws, and the one an operator complained
+    // about: a 24h window folded to one point per pixel. A 1.25px edge on a
+    // spike whose whole base is two pixels runs down both of its sides and
+    // has its apex chopped square by the miter limit, so the mark becomes a
+    // three-pixel block made of stroke. RRDtool's answer, which Observium
+    // inherits, is to draw the area and no line at all.
+    it("drops the edge once a point is narrower than the edge", () => {
+      // Given a series with one point per pixel of the 170px cell
+      const dense = Array.from({ length: 170 }, (_, i) => (i === 80 ? 100 : 1));
+      const { container } = render(
+        <UpDownSparkline up={dense} down={dense} max={100} />,
+      );
+
+      // Then there is no edge, and the fill carries the shape on its own --
+      // which is what lets it taper: antialiasing softens the edge of a fill,
+      // and can do nothing about the opaque middle of a stroke.
+      const upPath = container.querySelector("path[data-up]");
+      expect(upPath?.getAttribute("stroke")).toBe("none");
+      expect(upPath?.getAttribute("stroke-width")).toBe("0");
+      expect(upPath?.getAttribute("fill-opacity")).toBe("1");
     });
 
     it("rules the mirror axis across the full width at mid-height", () => {
