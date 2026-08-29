@@ -309,7 +309,7 @@ export function Enlargeable({
           has to work from the keyboard, and the chart IS the affordance --
           the zoom-in pointer and the focus ring say so, and nothing is drawn
           on top of it. A (+) badge was tried here and taken off again: in
-          the corner of a 170x32 table cell it read as clutter in the row,
+          the corner of a 150x45 table cell it read as clutter in the row,
           not as an invitation, and a fleet page carries sixty of them. */}
       <button
         type="button"

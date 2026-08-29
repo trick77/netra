@@ -407,9 +407,9 @@ export function sumSeries(
  * draws.
  *
  * A chart is handed more buckets than it has pixels far more often than the
- * other way round: the fleet's traffic cell is 170 px wide and a 24 h window
+ * other way round: the fleet's traffic cell is 150 px wide and a 24 h window
  * at the 5-minute tier is 285 buckets, so every pixel column carries about
- * 1.7 readings. Drawn straight, the polyline zigzags between neighbouring
+ * 1.9 readings. Drawn straight, the polyline zigzags between neighbouring
  * buckets inside a single column and a burst comes out as one more notch in a
  * serrated edge rather than as a spike. rrd_graph.c's reduce_data() folds the
  * fetched rows to the graph's own width first -- `reduce_factor =
@@ -426,7 +426,7 @@ export function sumSeries(
  * and 26.6 MB/s through that pair of maxima, so the whole quiet body of the
  * chart is squashed by 3.7x and falls under one pixel. Observium's DEF asks
  * for AVERAGE and rrdtool reduces with the same function; rendered side by
- * side at 170x32 on identical numbers, that is the difference between a dense
+ * side at 150x45 on identical numbers, that is the difference between a dense
  * band and an empty cell.
  *
  * A column with no reading at all is null, so a host that stopped reporting
@@ -452,14 +452,14 @@ export function reduceToColumns(
   //
   // Proportional boundaries were the obvious alternative and are what this
   // did first. The difference shows up on an isolated spike. At 289 buckets
-  // into 170 columns the factor is 2, so every column here is the mean of a
+  // into 150 columns the factor is 2, so every column here is the mean of a
   // fixed PAIR and a one-bucket burst is always averaged with a quiet
   // neighbour: it draws at about half its value. Proportional boundaries give
   // a column 1 or 2 buckets depending on where it falls, so the same burst
   // often lands alone and keeps its full height -- measured against the
   // reference, spikes stood about 1.4x too tall for that reason.
   //
-  // It returns FEWER than `columns` values (145 for 170 here). That is
+  // It returns FEWER than `columns` values (145 for 150 here). That is
   // deliberate and also what rrdtool does: the marks tile across the full
   // width whatever their count, so the result is slightly wider bars rather
   // than a short chart.

@@ -18,7 +18,7 @@ import type { Band } from "../ui/charts/StackedSparkline";
  *
  * THE STACK HAS ITS OWN PALETTE, --mem-*, and does not draw from s1-s8. That
  * is the point. The series ramp is tuned for a chart with a legend under it
- * that a reader is looking AT; this chart is drawn once per fleet row at 32px
+ * that a reader is looking AT; this chart is drawn once per fleet row at 45px
  * and is meant to be looked PAST until something is wrong. Every --mem-*
  * colour is a dimmer relative of the s-token it grew out of.
  *

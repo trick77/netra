@@ -393,7 +393,7 @@ export const SYSTEM: PanelSpec[] = [
   //
   // On a host with more than MAX_PER_CORE threads the cell and the page do
   // differ, deliberately: the fleet row will not fetch 128 series to draw a
-  // 170px chart, so it falls back to a single cpu_total band, while this page
+  // 150px chart, so it falls back to a single cpu_total band, while this page
   // has the room and draws all 128. The SILHOUETTE is identical either way --
   // a normalised per-core stack sums to cpu_total, which is exactly what that
   // fallback band is -- so the shape the reader clicked is the shape they
@@ -619,7 +619,7 @@ export const NETWORK: PanelSpec[] = [
   // envelope is the host's total and each layer is the link that carried it.
   //
   // The MEAN of each bucket, which is where this panel and the fleet row's
-  // traffic cell part company: the cell reads the peak, because at 170 px a
+  // traffic cell part company: the cell reads the peak, because at 150 px a
   // mean of a mean is a burst nobody can see (trafficSeries in
   // fleet/hostTrends.ts carries the measurement). Stacking peaks would be a
   // different matter -- two links can burst in different seconds of the same

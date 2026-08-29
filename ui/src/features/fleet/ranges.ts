@@ -21,7 +21,7 @@ import type { Range } from "../../lib/range";
  *
  * A day, matching what the same hosts are graphed over elsewhere, so the two
  * pictures can be read against each other. It costs a little resolution in
- * the fold: 288 five-minute buckets into 170 pixels averages roughly 1.7 of
+ * the fold: 288 five-minute buckets into 150 pixels averages roughly 1.9 of
  * them per column, where 12h was about one.
  */
 export const FLEET_RANGE: Range = "24h";

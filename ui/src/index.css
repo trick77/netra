@@ -184,7 +184,7 @@
      s1-s6 hold the 0-41 degree band clear, which is the band --accent and
      the status palette live in. s7 and s8 do NOT -- see their own note below
      -- so the rule is about WHERE a warm series may be drawn, not that one
-     never exists: never in a dense list (a 32px fleet cell, a container row),
+     never exists: never in a dense list (a 45px fleet cell, a container row),
      where a reader has only hue to go on and a severity mark sits two columns
      away; allowed on a large chart that carries a legend and a stats table.
      The memory stack is no longer drawn from s1-s8 at all. It has its own
@@ -206,7 +206,7 @@
   --s5: #b06fe0;
   --s6: #2bbcbc;
   /* Orange and yellow, the two hues the series ramp never had. The memory
-     stack needs five bands that stay apart at 32px tall, and blue/aqua/
+     stack needs five bands that stay apart at 45px tall, and blue/aqua/
      violet/magenta alone read as one muddy mass at that size. Validated as a
      set with s1 and s2: worst adjacent CVD dE 9.1, worst adjacent
      normal-vision dE 19.6. Every chart drawing them carries a legend. */
@@ -215,7 +215,7 @@
   /* THE MEMORY STACK's own five colours.
 
      This chart is not like the others. It is drawn once per fleet row, at
-     32px, five bands deep, next to a severity badge -- and it is drawn again
+     45px, five bands deep, next to a severity badge -- and it is drawn again
      at panel size on every host page. The series ramp is tuned for a legended
      chart you look AT; these are tuned for a chart you look PAST until
      something is wrong. Every one of them is dimmer than the s-token it grew
@@ -799,22 +799,20 @@ a:hover {
    `max-width:100%; height:auto`, so a horizontal squeeze costs HEIGHT as well
    as width -- and height is the one thing moving the rates out of the way was
    meant to buy. Every sparkline in a fleet row gives way together under that
-   rule, and the table's own column sizing already spreads them: measured at
-   1440px, traffic renders 29.6 tall beside CPU at 29.9, memory at 30.5 and
-   filesystem at 30.8, all from the same 170x32 intrinsic size.
+   rule.
 
-   Traffic does end up the smallest of the four, and this is the honest cost of
-   the layout above: .traffic-rates never shrinks, so ~110px of the cell is
-   spoken for before the chart gets any. With long FQDN hostnames, which widen
-   the Host column and squeeze every chart, the same row measures traffic 23.8
-   against CPU 25.9, memory 27.6 and filesystem 28.6 -- a couple of pixels
-   under its neighbours, inside the spread they already have between
-   themselves. min-width:0 here would drop it much further, and letting this
-   cell WRAP (what .card does below, where the chart is the only item that can
-   give) would make traffic the largest chart in the row and put the row height
-   straight back. A viewport too narrow for the wider cell is handled by
-   .tablewrap, which scrolls the row rather than compressing it -- see
-   `.tablewrap svg.spark` for the half of that which is not automatic. */
+   In the fleet table it never comes to that: `.tablewrap svg.spark` takes the
+   max-width off, so the four cells hold their 150x45 and the BOX scrolls.
+   Measured against the simulated fleet, traffic, CPU, memory and filesystem
+   all render exactly 150x45 at 1440px, and still 150x45 at 1100px, where the
+   wrap is 987 wide inside 823 and scrolls. What this rule protects is
+   therefore the OTHER placements of the cell, and the shape of the failure it
+   protects them from: .traffic-rates never shrinks, so ~110px of the cell is
+   spoken for before the chart gets any, and min-width:0 would hand the whole
+   squeeze to the chart -- which pays for it in height. Letting this cell WRAP
+   (what .card does below, where the chart is the only item that can give)
+   would make traffic the largest chart in the row and put the row height
+   straight back. */
 .traffic-rates {
   display: flex;
   /* Stacked, so the pair is two short lines against the chart rather than one
@@ -825,10 +823,13 @@ a:hover {
      that gave way would wrap a byterate mid-number. */
   flex: none;
   font-size: var(--text-label);
-  /* Two lines at exactly the chart's 32px, so the rates align with the mark
-     they annotate and the cell is no taller than the sparkline. The body's
-     1.55 would draw them 43px tall -- taller than the chart, which is the
-     row height this change exists to remove. */
+  /* A tight pair, so the rates sit inside the chart's 45px rather than
+     setting the row height themselves. It was tuned when the chart was 32px,
+     where the body's 1.55 drew them 43px tall -- taller than the mark they
+     annotate, which is the row height this rule exists to remove. At 45 both
+     values would fit, and 1.15 stays: two numbers read as one annotation to
+     the chart beside them, and loosening them would make the pair a block of
+     type in its own right. */
   line-height: 1.15;
   /* --muted, matching the disk percentage in the same row (.mrow .val).
      These are both the number BESIDE a chart -- a reading the sparkline or
@@ -2437,8 +2438,8 @@ svg.spark {
    narrow viewport. A fleet row's other cells do not give -- .traffic-rates is
    flex:none, the host name and the disk meter have their own minimums -- so
    the charts are the only thing that can, and they absorb the entire squeeze:
-   at a 390px viewport a 170x32 CPU sparkline rendered 38x7, which is not a
-   chart. .tablewrap already carries overflow-x:auto for exactly this, so the
+   at a 390px viewport a CPU sparkline rendered 38x7 back when the cell was
+   170x32, which is not a chart. .tablewrap already carries overflow-x:auto for exactly this, so the
    row keeps its width and the BOX scrolls instead. The page still never
    scrolls sideways, which is all the rule above was protecting. */
 .tablewrap svg.spark {

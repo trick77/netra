@@ -4,7 +4,7 @@
 // markup and never recomputes or "fixes up" a coordinate itself.
 import { extent } from "./geometry";
 import { Chart } from "./Chart";
-import { SPARK_WIDTH } from "./size";
+import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";
 
 export interface SparklineProps {
   values: (number | null)[];
@@ -41,7 +41,7 @@ export interface SparklineProps {
 export function Sparkline({
   values,
   width = SPARK_WIDTH,
-  height = 32,
+  height = SPARK_HEIGHT,
   color = "var(--s1)",
   label = "trend sparkline",
   pad = 2,

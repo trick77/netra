@@ -10,7 +10,7 @@ import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
 import { Overlay } from "../../ui/charts/Overlay";
-import { DETAIL_WIDTH, SPARK_WIDTH } from "../../ui/charts/size";
+import { DETAIL_WIDTH, SPARK_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
 import {
   DOWN_COLOR,
   UP_COLOR,
@@ -355,7 +355,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
         // argued the five memory bands carry identity a legend should name and
         // turned it back on here; that is not the call. These are sparklines
         // in a dense list -- the shape is the message, and naming five bands
-        // under a 32px chart costs more row height than the names are worth.
+        // under a 45px chart costs more row height than the names are worth.
         // The host page's Memory panel is where the breakdown gets named.
         //
         // The ENLARGED view does name them: it has the room, and "which part
@@ -514,10 +514,10 @@ function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
         min={0}
         max={100}
         width={SPARK_WIDTH}
-        height={32}
+        height={SPARK_HEIGHT}
         // Lines rather than filled areas, and no legend: usage sits between
         // 40% and 95%, so masses anchored at zero would pile into one solid
-        // block, and naming six mounts under a 32px chart is the same
+        // block, and naming six mounts under a 45px chart is the same
         // row-height problem the CPU column already solved by not naming
         // thirty-two cores.
         legend={false}
