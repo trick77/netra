@@ -981,7 +981,6 @@ export function Overview({
                     return {
                       series: trafficDetailSeries(
                         trafficSeries(answered, DETAIL_WIDTH),
-                        answered.window,
                       ),
                       window: answered.window,
                     };

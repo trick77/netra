@@ -262,13 +262,8 @@ export function mirrorEdge(
  * and it is the same structural hairline as a card edge or a table rule.
  * Solid, not dashed, for that reason too.
  */
-/* Stays --border, NOT the retuned --axis. This constant is the midline of a
-   SPARKLINE -- the fleet row's traffic cell draws it -- and a sparkline
-   carries no axis furniture at all, so its midline is a structural hairline
-   like a table rule rather than an axis. Pointing it at --axis darkened
-   every traffic cell in the fleet table, which UpDownSparkline's own test
-   caught. A chart WITH furniture uses ZERO_STROKE below, which is a
-   different mark answering a different question. */
+/* The spine and the tick marks only. The midline of a mirrored chart is
+   ZERO_STROKE below, on every size of that chart -- see the note there. */
 export const AXIS_STROKE = "var(--border)";
 export const AXIS_WIDTH = 1;
 
@@ -298,8 +293,15 @@ export const GRID_WIDTH = 1;
  * Stronger than a gridline and stronger than the spine, because on a
  * mirrored chart it is the line every reading is measured FROM. --border was
  * too quiet for that once a real grid sat behind it: zero looked like one
- * more helper line. Only for charts that draw furniture -- a sparkline's
- * midline is AXIS_STROKE above and does not change.
+ * more helper line, and --border-strong was only one step better.
+ *
+ * --axis, the ink this file's own note measures at 3.08:1, and on EVERY size
+ * of the chart. A sparkline's midline was held at AXIS_STROKE on the argument
+ * that a cell with no axis furniture wants a structural hairline rather than
+ * an axis; but the traffic cell is a mirrored chart whose whole reading is
+ * "how far above or below zero", and at --border that line was the one thing
+ * on the cell you could not see. One zero line, one ink, at 150px and at
+ * 1000px.
  */
-export const ZERO_STROKE = "var(--border-strong)";
+export const ZERO_STROKE = "var(--axis)";
 export const ZERO_WIDTH = 1;

@@ -3,7 +3,6 @@ import {
   buildRows,
   fetchFleetTrends,
   fetchHostTrends,
-  drawsPeakBand,
   trafficDetailSeries,
   trafficSeries,
   type HostTrends,
@@ -909,59 +908,28 @@ describe("trafficSeries", () => {
     expect(bare?.band).toBeUndefined();
   });
 
-  // The reference draws no MAX layer below 48 hours -- Observium's
-  // common.inc.php:167, `if ($to - $from <= 172800) { $graph_max = 0; }`.
-  // Drawing one anyway cost more than the extra layer: a banded pair is
-  // scaled to its BAND, so the envelope also lifted the ceiling off the
-  // reading. On a real host the 24h dialog ran its axis to 66.3 MB while the
-  // reading topped out at 33.2 MB, drawing everything at half its height --
-  // and on a quieter host at a fifth of it.
-  describe("drawsPeakBand", () => {
-    const span = (hours: number) => ({
-      from: "2026-08-27T00:00:00Z",
-      to: new Date(Date.parse("2026-08-27T00:00:00Z") + hours * 3600_000)
-        .toISOString()
-        .replace(".000", ""),
-    });
-
-    it("draws no envelope at or below 48 hours", () => {
-      expect(drawsPeakBand(span(24))).toBe(false);
-      expect(drawsPeakBand(span(48))).toBe(false);
-    });
-
-    it("draws one above 48 hours, where the reference does", () => {
-      expect(drawsPeakBand(span(49))).toBe(true);
-      expect(drawsPeakBand(span(24 * 7))).toBe(true);
-    });
-
-    it("keeps the envelope when it cannot tell", () => {
-      // No window, or one that will not parse, is no reason to drop a layer:
-      // a caller that cannot say gets what it always got.
-      expect(drawsPeakBand()).toBe(true);
-      expect(drawsPeakBand(null)).toBe(true);
-      expect(drawsPeakBand({ from: "not a date", to: "nor this" })).toBe(true);
-    });
-  });
-
-  it("drops the envelope on a window the reference would not draw one for", () => {
+  // The window no longer decides. The envelope was gated at 48 hours, the
+  // reference's own threshold (Observium's common.inc.php:167,
+  // `if ($to - $from <= 172800) { $graph_max = 0; }`), and the gate is gone:
+  // a chart draws the max wherever its tier materialised one. What that
+  // costs is the ceiling -- a banded pair is scaled to its BAND, so a 24h
+  // dialog's axis now runs to the peak rather than to the reading.
+  it("draws the envelope on every window the tier has one for", () => {
     const t = {
       rx: [11, 22],
       tx: [1, 2],
       rxPeak: [105, 206],
       txPeak: [2, 4],
     };
-    const day = { from: "2026-08-27T00:00:00Z", to: "2026-08-28T00:00:00Z" };
-    const week = { from: "2026-08-21T00:00:00Z", to: "2026-08-28T00:00:00Z" };
 
-    // The LINE is the same reading either way -- only the envelope goes, so
-    // the stats table under the chart is unaffected.
-    const [dayIn] = trafficDetailSeries(t, day);
-    expect(dayIn?.values).toEqual([11, 22]);
-    expect(dayIn?.band).toBeUndefined();
-
-    const [weekIn] = trafficDetailSeries(t, week);
-    expect(weekIn?.values).toEqual([11, 22]);
-    expect(weekIn?.band).toEqual([105, 206]);
+    // The LINE is the reading either way -- the stats table under the chart
+    // reads it, so its Mean stays a mean -- and the band is the peak beside
+    // it, on a 24h window as much as on a week.
+    const [inSeries, outSeries] = trafficDetailSeries(t);
+    expect(inSeries?.values).toEqual([11, 22]);
+    expect(inSeries?.band).toEqual([105, 206]);
+    expect(outSeries?.values).toEqual([1, 2]);
+    expect(outSeries?.band).toEqual([2, 4]);
   });
 
   it("hands the enlarged view a mean line under a peak envelope", () => {

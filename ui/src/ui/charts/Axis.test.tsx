@@ -143,7 +143,7 @@ describe("Axis", () => {
     it("is drawn in stronger ink than any gridline", () => {
       const c = draw(<ZeroRule rect={RECT} at={0.5} />);
       const zero = c.querySelector("[data-zero]");
-      expect(zero?.getAttribute("stroke")).toBe("var(--border-strong)");
+      expect(zero?.getAttribute("stroke")).toBe("var(--axis)");
     });
 
     it("sits at the fraction it is given", () => {

@@ -25,6 +25,45 @@ function draw(ui: React.ReactElement) {
 }
 
 describe("Chart", () => {
+  // The envelope is not the mirror mark's alone. A plain rate panel whose
+  // tier materialised a max column throws it away otherwise -- strictly less
+  // than the same numbers drawn about a midline.
+  describe("the peak envelope on an unstacked line", () => {
+    const banded: ChartSeries[] = [
+      {
+        name: "busy",
+        color: "var(--s1)",
+        values: [10, 40, 20, 60],
+        band: [30, 80, 50, 90],
+      },
+    ];
+
+    it("draws the band under the line it belongs to", () => {
+      const c = draw(
+        <Chart series={banded} width={170} height={32} max={100} />,
+      );
+      const g = c.querySelector('[data-series="busy"]')!;
+      const band = g.querySelector("[data-band]");
+      expect(band).not.toBeNull();
+      // A region, not a reading: no stroke, and pale enough that the line
+      // over it stays the mark being read.
+      expect(band!.getAttribute("stroke")).toBe("none");
+      expect(Number(band!.getAttribute("fill-opacity"))).toBeLessThan(0.5);
+      // Behind the line, so the reading sits on top of it.
+      const marks = [...g.children];
+      expect(marks.indexOf(band!)).toBeLessThan(
+        marks.findIndex((n) => n.hasAttribute("data-line")),
+      );
+    });
+
+    it("draws none for a series that has no peak column", () => {
+      const c = draw(
+        <Chart series={series} width={170} height={32} max={100} />,
+      );
+      expect(c.querySelector('[data-series="busy"] [data-band]')).toBeNull();
+    });
+  });
+
   // The property the whole library rests on: a caller that asks for no
   // furniture gets exactly the mark it drew before. That is what lets every
   // sparkline in the app move onto this renderer without changing.
@@ -254,7 +293,12 @@ describe("Chart", () => {
       expect(c.querySelector("[data-mid]")).not.toBeNull();
     });
 
-    it("draws the zero rule once there is furniture to outrank", () => {
+    it("draws one zero line, not a second rule beside it", () => {
+      // The mark draws its own midline in ZERO_STROKE. A separate rule in the
+      // same ink is not a darker line, it is a smeared one: the mark snaps
+      // zero to a whole row and offsets by half a stroke, a rule at the raw
+      // fraction lands between rows, and on a 400x140 panel the two sat at
+      // 117.5 and 116.667 -- about two pixels of antialiased grey.
       const c = draw(
         <Chart
           series={pair}
@@ -266,13 +310,14 @@ describe("Chart", () => {
           y={mirroredTicks(100)}
         />,
       );
-      expect(c.querySelector("[data-zero]")).not.toBeNull();
+      expect(c.querySelector("[data-zero]")).toBeNull();
+      expect(c.querySelectorAll("[data-mid]")).toHaveLength(1);
     });
 
     it("rules zero where the data puts it, not across the middle", () => {
       // The mirror puts zero wherever the two halves' ranges land -- four
       // fifths of the way down on a host that pulls far more than it pushes.
-      // The rule used to be pinned to 0.5 regardless, so it drew a grey line
+      // The line used to be pinned to 0.5 regardless, so it drew a grey rule
       // across the middle of the box, over the marks and through the spikes.
       const c = draw(
         <Chart
@@ -284,22 +329,10 @@ describe("Chart", () => {
           spine
         />,
       );
-      const zero = c.querySelector("[data-zero]");
       const mid = c.querySelector("[data-mid]");
-      expect(zero).not.toBeNull();
       expect(mid).not.toBeNull();
-      // Both name the same height, which is the point: the axis furniture and
-      // the marks measure from one line. Within a pixel rather than exactly:
-      // the marks snap their midline to a whole row so the bars measured from
-      // it fill rows rather than straddling them, and this rule is drawn at
-      // the exact fraction.
-      expect(
-        Math.abs(
-          Number(zero!.getAttribute("y1")) - Number(mid!.getAttribute("y1")),
-        ),
-      ).toBeLessThanOrEqual(1);
-      // And it is not the midline of the box: `pair` is lopsided.
-      expect(Number(zero!.getAttribute("y1"))).not.toBeCloseTo(320 / 2, 0);
+      // `pair` is lopsided, so zero is not the midline of the box.
+      expect(Number(mid!.getAttribute("y1"))).not.toBeCloseTo(320 / 2, 0);
     });
 
     // A mirror has no floor -- both halves label a magnitude -- but every
@@ -330,12 +363,10 @@ describe("Chart", () => {
           spine
         />,
       );
-      expect(withFloor.querySelector("[data-mid]")?.getAttribute("y1")).toBe(
-        free.querySelector("[data-mid]")?.getAttribute("y1"),
-      );
-      expect(
-        Number(withFloor.querySelector("[data-zero]")!.getAttribute("y1")),
-      ).not.toBeCloseTo(320 / 2, 0);
+      const y = (c: HTMLElement) =>
+        Number(c.querySelector("[data-mid]")!.getAttribute("y1"));
+      expect(y(withFloor)).toBe(y(free));
+      expect(y(withFloor)).not.toBeCloseTo(320 / 2, 0);
     });
   });
 

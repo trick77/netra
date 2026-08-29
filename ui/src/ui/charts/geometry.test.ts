@@ -332,6 +332,42 @@ describe("geometry", () => {
       expect(down.startsWith("M")).toBe(true);
     });
 
+    it("keeps a lone reading's sliver inside the plot at either end", () => {
+      // A polyline needs two points, so a run of one is drawn as a sliver
+      // over its own column -- and scaleX puts index 0 at `pad` and the last
+      // index at `w - pad`, so a sliver centred on either would hang half
+      // outside the box. The host this branch exists for is exactly the one
+      // that reported in a single bucket, which is usually the newest.
+      const xs = (d: string) =>
+        [...d.matchAll(/[ML](-?\d+\.?\d*),/g)].map((m) => parseFloat(m[1]!));
+
+      const first = mirrorPaths([500, null, null], [], 100, 32, 500, 2);
+      const last = mirrorPaths([null, null, 500], [], 100, 32, 500, 2);
+
+      for (const d of [first.up, last.up]) {
+        const at = xs(d);
+        expect(Math.min(...at)).toBeGreaterThanOrEqual(2);
+        expect(Math.max(...at)).toBeLessThanOrEqual(98);
+        // Full width either way -- slid inside, not clipped down.
+        expect(Math.max(...at) - Math.min(...at)).toBeCloseTo(48, 1);
+      }
+    });
+
+    it("draws one point per reading, not a column per reading", () => {
+      // The mark is a polyline through the readings, not a staircase of
+      // flat-topped columns. A column needs two points at the same height to
+      // draw its top edge, so a staircase over three readings carries six
+      // x positions and a run of them reads as a row of towers; the polyline
+      // carries three and tapers to a point at each one.
+      const { up } = mirrorPaths([1, 5, 1], [], 90, 20, 5, 0);
+      const xs = [...up.matchAll(/[ML](-?\d+\.?\d*),/g)].map((m) =>
+        parseFloat(m[1]!),
+      );
+      // Three readings, plus the two closers back down to the zero line,
+      // which repeat the first and last x.
+      expect(xs).toEqual([0, 0, 45, 90, 90]);
+    });
+
     it("places the midline at half the chart height", () => {
       const { mid } = mirrorPaths([1, 1], [1, 1], 100, 40, 10);
       expect(mid).toBe(20);

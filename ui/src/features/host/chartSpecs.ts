@@ -1250,15 +1250,19 @@ function bandsFor(
       // peakBase falls back to the bare name at the raw tier, and there the
       // two resolve to the same column -- which is the signal that this tier
       // has no envelope to draw.
-      // Mirrored only, for now, and deliberately: Chart draws the envelope in
-      // its mirror branch alone. Without this guard the first non-mirrored
-      // `peak` spec added would silently switch its LINE to the mean and
-      // then draw no envelope at all -- strictly less than the 260px panel
-      // it was opened from. Widen this when LineMarks learns the band.
+      // Any UNSTACKED chart. It was mirrored-only while Chart drew the
+      // envelope in its mirror branch alone; LineMarks draws it now, so a
+      // plain rate panel gets the max its tier already materialised instead
+      // of throwing it away.
+      //
+      // Never a stacked one, and that is not an omission: a stacked band's
+      // height is a running total, and the sum of each interface's peak is
+      // not the host's peak -- the interfaces do not peak in the same
+      // bucket. Drawing one there would state a number no bucket ever held.
       const wantsBand =
         opts.withPeakBand === true &&
         spec.peak === true &&
-        spec.mirrored === true &&
+        spec.stacked !== true &&
         peakColumn !== base;
       const column = wantsBand ? base : peakColumn;
       const gridded = bandRead(column);

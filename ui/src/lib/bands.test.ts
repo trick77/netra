@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { memoryBands, perCoreBands } from "./bands";
+import { CPU_SHADES, memoryBands, perCoreBands } from "./bands";
 import type { MetricsResponse } from "./api";
 
 const t0 = Date.parse("2026-08-10T00:00:00Z");
@@ -392,35 +392,42 @@ describe("perCoreBands", () => {
 
   // Colour cannot carry identity across thirty-two bands; all it can do is
   // keep neighbours apart. Two alternating tokens gave the stack no internal
-  // structure, and a single-hue light-to-dark ramp fails the palette
+  // structure, and a single-hue light-to-DARK ramp fails the palette
   // validator's adjacent-lightness check outright -- 0.047 apart over eight
-  // steps, and it read as a blob of blues. Hue is the only channel with the
-  // range, so every band gets its own.
-  it("gives every core a distinct hue rather than a repeating pair", () => {
+  // steps, and it read as a blob of blues. A four-step walk that WRAPS is
+  // neither: it never subdivides, so every adjacent pair stays a full step
+  // apart however many cores the host has.
+  it("walks four shades and wraps rather than spreading a sweep", () => {
     const colors = perCoreBands(cores).map((b) => b.color);
 
-    expect(new Set(colors).size).toBe(colors.length);
-    for (const c of colors) expect(c).toMatch(/^hsl\(/);
+    expect(colors).toEqual(CPU_SHADES);
+    for (const c of colors) expect(c).toMatch(/^var\(--cpu-\d\)$/);
   });
 
-  // The sweep has to subdivide to fit the host: 32 cores land about 9 degrees
-  // apart, 4 cores about 95. Either way no two neighbours share a hue, which
-  // is the whole job.
-  it("spreads the sweep across however many cores the host has", () => {
-    const hueOf = (c: string) => Number(/^hsl\((\d+(?:\.\d+)?)/.exec(c)![1]);
-    const four = perCoreBands(cores).map((b) => hueOf(b.color));
+  // Neighbours, not identity: on a host with more cores than shades the walk
+  // repeats, and what must hold is that no band is drawn in the colour of the
+  // band touching it.
+  it("never repeats a shade between two touching bands", () => {
+    const many = response({
+      family: "cpu_core",
+      key_columns: ["core"],
+      columns: ["busy"],
+      series: Array.from({ length: 32 }, (_, i) => ({
+        key: { core: String(i) },
+        points: [[t0, 50]],
+      })),
+    });
 
-    expect(new Set(four).size).toBe(4);
-    // Adjacent cores are far enough apart to tell without a legend.
-    for (let i = 1; i < four.length; i++) {
-      const gap = Math.abs(four[i]! - four[i - 1]!);
-      expect(Math.min(gap, 360 - gap)).toBeGreaterThan(20);
+    const colors = perCoreBands(many).map((b) => b.color);
+    expect(colors).toHaveLength(32);
+    for (let i = 1; i < colors.length; i++) {
+      expect(colors[i]).not.toBe(colors[i - 1]!);
     }
   });
 
-  // A single-core host must not divide by zero working out its position in
-  // the sweep.
-  it("colours a single-core host without dividing by zero", () => {
+  // A single-core host draws the shade a host with no per-core series draws
+  // its cpu_total silhouette in, so the two are the same chart.
+  it("colours a single-core host in the silhouette's own shade", () => {
     const one = response({
       family: "cpu_core",
       key_columns: ["core"],
@@ -430,9 +437,7 @@ describe("perCoreBands", () => {
 
     const bands = perCoreBands(one);
     expect(bands).toHaveLength(1);
-    expect(bands[0]!.color).toMatch(
-      /^hsl\(\d+(\.\d+)? var\(--chart-saturation\) var\(--chart-lightness\)\)$/,
-    );
+    expect(bands[0]!.color).toBe("var(--cpu-1)");
   });
 
   it("has nothing to draw for a host that reported no cores", () => {

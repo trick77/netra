@@ -232,37 +232,48 @@ export function perCoreBands(
 }
 
 /**
+ * The shades one core's band is drawn in, walked and wrapped.
+ *
+ * Index 0 IS --s1, which is what a host with no per-core series draws its
+ * cpu_total silhouette in (totalCpuBand in tabs/Overview.tsx) -- so a
+ * single-core host draws the same chart either way, the same property
+ * UP_SHADES has against UP_COLOR.
+ */
+export const CPU_SHADES = [
+  "var(--cpu-1)",
+  "var(--cpu-2)",
+  "var(--cpu-3)",
+  "var(--cpu-4)",
+];
+
+/**
  * The colour of one core's band in a stack of `n`.
  *
- * A spectrum sweep, and deliberately NOT a design token or a single-hue ramp.
- * Both of those were tried and both are unreadable here:
+ * A four-step walk through one hue, wrapping -- the same construction the
+ * traffic stack uses for a host's interfaces, and the reason every stack in
+ * a fleet row now reads as the same kind of mark.
  *
- * - Two alternating tokens gave a 32-band stack no internal structure at all.
- * - A one-hue light-to-dark ramp -- the textbook answer for ordered bands --
- *   puts adjacent steps 0.047 apart in L across eight steps, let alone
- *   thirty-two. The palette validator fails it outright, and on screen it is
- *   a blob of blues.
+ * This was a computed spectrum sweep, and the argument for it was sound as
+ * far as it went: hue is the only channel with the range to keep thirty-two
+ * neighbours apart, and a MONOTONIC one-hue ramp is genuinely unreadable
+ * here -- 0.047 apart in L per step across thirty-two bands, which the
+ * palette validator fails outright. A wrapping walk is not that ramp. It
+ * holds every adjacent pair a full lightness step apart no matter how many
+ * cores the host has, because it never has to subdivide.
  *
- * Hue is the only channel with enough range to separate this many neighbours,
- * which is what every tool that draws this chart well does. It encodes nothing
- * -- core 7 is not "hotter" than core 3 for being further round the wheel --
- * and nobody reads a core's identity off its colour. The job is purely to keep
- * one band distinguishable from the next, and the hairline stroke each band
- * carries does the rest.
+ * What it costs is identity across the whole stack: the sweep let colour tell
+ * core 3 from core 19, and the walk only tells a band from the one beside it.
+ * Nobody was reading a core's number off its hue -- the band's key names the
+ * core, and the hairline stroke each band carries does the separating -- and
+ * the cost of the sweep was that the CPU cell was the only chart in the fleet
+ * table drawn as a category rather than as a family.
  *
- * Raw HSL rather than a var(): the ramp has to subdivide to fit the host, so
- * there is no fixed set of steps to name, and mid-lightness saturated hues sit
- * legibly on both the light and the dark surface.
+ * `n` is no longer read: a walk that wraps does not need to know how many
+ * bands share it. Kept in the signature because the caller has it and a
+ * future ramp would want it back.
  */
-function coreColor(i: number, n: number): string {
-  // Violet through blue, teal, green and yellow to red -- the long way round,
-  // so even 32 cores land ~9 degrees apart. n === 1 takes the first hue rather
-  // than dividing by zero.
-  const hue = n <= 1 ? 265 : 265 - (285 * i) / (n - 1);
-  // Saturation and lightness come from index.css so the ramp follows the
-  // theme; only the hue is computed here, because the sweep has to subdivide
-  // to fit the host and there is no fixed set of steps to name.
-  return `hsl(${((hue % 360) + 360) % 360} var(--chart-saturation) var(--chart-lightness))`;
+function coreColor(i: number, _n: number): string {
+  return CPU_SHADES[i % CPU_SHADES.length]!;
 }
 
 function optional(res: MetricsResponse, base: string): (number | null)[] {

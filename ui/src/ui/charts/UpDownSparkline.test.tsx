@@ -193,7 +193,11 @@ describe("UpDownSparkline", () => {
       expect(mid?.getAttribute("y1")).toBe(String(height / 2 + 0.5));
       expect(mid?.getAttribute("y2")).toBe(String(height / 2 + 0.5));
       expect(mid?.getAttribute("shape-rendering")).toBe("crispEdges");
-      expect(mid?.getAttribute("stroke")).toBe("var(--border)");
+      // And in the axis ink, not the quieter --border a table rule uses. On a
+      // chart whose whole reading is "how far above or below zero", the line
+      // everything is measured from was the one mark on the cell you could
+      // not see. Same ink as the enlarged view's ZeroRule.
+      expect(mid?.getAttribute("stroke")).toBe("var(--axis)");
     });
 
     it("still rules the axis when the host reported nothing", () => {
