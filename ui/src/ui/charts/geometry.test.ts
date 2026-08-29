@@ -348,9 +348,20 @@ describe("geometry", () => {
         const at = xs(d);
         expect(Math.min(...at)).toBeGreaterThanOrEqual(2);
         expect(Math.max(...at)).toBeLessThanOrEqual(98);
-        // Full width either way -- slid inside, not clipped down.
-        expect(Math.max(...at) - Math.min(...at)).toBeCloseTo(48, 1);
+        // Full width either way -- slid inside, not clipped down. One
+        // reading's share of the plot is w/n, a third of 100 here.
+        expect(Math.max(...at) - Math.min(...at)).toBeCloseTo(100 / 3, 1);
       }
+    });
+
+    it("does not let a two-bucket window's lone reading fill the plot", () => {
+      // scaleX's spacing is the whole plot at n = 2, so a sliver measured on
+      // it said a host that reported once had reported all window.
+      const { up } = mirrorPaths([500, null], [], 100, 32, 500, 2);
+      const xs = [...up.matchAll(/[ML](-?\d+\.?\d*),/g)].map((m) =>
+        parseFloat(m[1]!),
+      );
+      expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(50, 1);
     });
 
     it("draws one point per reading, not a column per reading", () => {

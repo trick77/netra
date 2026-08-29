@@ -566,11 +566,13 @@ export function mirrorPaths(
   // of one reading, which has no neighbour to slope towards. That run gets a
   // sliver over its own column instead of vanishing.
   //
-  // Measured on scaleX's OWN spacing, not on w/n. scaleX insets by `pad` at
-  // both ends and puts n readings at n-1 gaps across what is left, so w/n is
-  // the wrong number everywhere and wrong by a whole column at small n.
-  const columnWidth =
-    n > 1 ? (w - 2 * pad) / (n - 1) : Math.max(w - 2 * pad, 0);
+  // One reading's SHARE of the plot, w/n. scaleX's own spacing --
+  // (w-2*pad)/(n-1) -- is the other candidate and is n/(n-1) too wide: on a
+  // two-bucket window it spans the entire plot, so a host that reported once
+  // and then went quiet drew a sliver claiming it had reported all window.
+  // The two converge above about twenty-five buckets, which is every window
+  // a chart is actually drawn over.
+  const columnWidth = n > 0 ? w / n : w;
 
   const build = (vals: (number | null)[], direction: 1 | -1): string => {
     const { ceiling, usable, room } = scaleOf(direction);

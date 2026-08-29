@@ -561,28 +561,6 @@ function MirrorMarks({
             : null;
         return (
           <g key={up.name} data-series={up.name} data-mirror>
-            {/* BEHIND the series, and half a row down from `mid`.
-
-                Behind, because it is the axis the data is measured from and
-                not an annotation over it: drawn last it ran a grey rule
-                straight through the band, striking it out. rrdtool draws its
-                grid first and fills the AREA on top for the same reason.
-
-                Half a row down, because a 1px stroke is centred on its
-                coordinate: at an integer y it covers half the row above and
-                half the row below, rendering as a two-row smear that the
-                marks stand off rather than on. Offset, it fills exactly the
-                row the down half begins in. */}
-            <line
-              data-mid
-              x1={0}
-              x2={w}
-              y1={paths.mid + AXIS_WIDTH / 2}
-              y2={paths.mid + AXIS_WIDTH / 2}
-              stroke={ZERO_STROKE}
-              strokeWidth={AXIS_WIDTH}
-              shapeRendering="crispEdges"
-            />
             {bands && (
               <>
                 {bands.up !== "" && (
@@ -605,6 +583,35 @@ function MirrorMarks({
                 )}
               </>
             )}
+            {/* Behind the series and OVER the envelope, half a row down
+                from `mid` -- the order MirrorStackMarks draws in.
+
+                Behind the series, because it is the axis the data is measured
+                from and not an annotation over it: drawn last it ran a grey
+                rule straight through the band, striking it out. rrdtool draws
+                its grid first and fills the AREA on top for the same reason.
+
+                Over the ENVELOPE, because the envelope is a 0.18 fill and
+                under it the zero line was washed out across the envelope's
+                whole span -- so the same host's fleet dialog and Traffic
+                panel drew zero two different ways. It stopped being invisible
+                when ZeroRule stopped redrawing zero over the whole group.
+
+                Half a row down, because a 1px stroke is centred on its
+                coordinate: at an integer y it covers half the row above and
+                half the row below, rendering as a two-row smear that the
+                marks stand off rather than on. Offset, it fills exactly the
+                row the down half begins in. */}
+            <line
+              data-mid
+              x1={0}
+              x2={w}
+              y1={paths.mid + AXIS_WIDTH / 2}
+              y2={paths.mid + AXIS_WIDTH / 2}
+              stroke={ZERO_STROKE}
+              strokeWidth={AXIS_WIDTH}
+              shapeRendering="crispEdges"
+            />
             {paths.up !== "" && (
               <path
                 data-up

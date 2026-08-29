@@ -2542,11 +2542,19 @@ details.sysfold > .body {
   border-radius: 2px;
   flex: none;
 }
-/* The cursor column appears only while the pointer is over the plot, so it
-   is marked as the live reading rather than another statistic. */
+/* The cursor column is always drawn and reads absent until a bucket is
+   hovered, so it is marked as the live reading rather than another statistic.
+
+   The min-width is the other half of drawing it at all times. Without it the
+   header still grows from "At -" to "At Wed 14:35" as the pointer enters the
+   plot, auto table layout re-measures, and every figure in the table slides
+   sideways -- which is the thing the always-drawn column exists to stop.
+   Sized for the widest label timeLabel() produces (ticks.ts: weekday plus
+   clock), so no window makes the column grow. */
 .cd-stats td.cursor,
 .cd-stats th.cursor {
   color: var(--accent);
+  min-width: 8rem;
 }
 .cd-stats td.cursor {
   font-weight: 600;
