@@ -2310,12 +2310,29 @@ details.sysfold > .body {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 8px 10px 0;
+  /* NO padding on the tile, deliberately -- it belongs to the text below.
+     useMeasuredWidth reads contentRect, which is the CONTENT box, while the
+     absolutely-positioned sparkline resolves `left: 0` against the PADDING
+     box: with padding here the chart was drawn 20px narrower than the box it
+     sat in and left a gap down the right of every tile, which is the
+     opposite of the full bleed both this rule and StatTile claim. */
+  padding: 0;
   /* A tile is a link. It must not be underlined, must not take the accent,
      and must not inherit the visited colour -- it is a control, and the
      figure inside it is data. */
   color: inherit;
   text-decoration: none;
+}
+/* The padding the tile gave up. Only the text takes it; the sparkline is
+   full-bleed and must not. */
+.tile .k,
+.tile .v,
+.tile .sub {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.tile .k {
+  padding-top: 8px;
 }
 a.tile:hover {
   border-color: var(--border-strong);

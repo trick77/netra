@@ -16,14 +16,9 @@
 // meters, whose reading is the Memory tile and whose threshold moved with it;
 // the Inventory facts, which are three counts of things that have their own
 // tabs; and the sensor cards, which are hardware facts and are now on System.
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
-import type {
-  Container,
-  HostDetail,
-  MetricsResponse,
-  Unit,
-} from "../../../lib/api";
+import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
 import { counterIncrease, griddedValues } from "../../../lib/metrics";
 import {
   ABSENT,
@@ -389,7 +384,6 @@ export interface OverviewProps {
   agentMetrics: MetricsResponse | null;
   /** family=net for this host, one series per interface. */
   netMetrics?: MetricsResponse | null;
-  containers: Container[] | null;
   units: Unit[] | null;
   /** The range this page is showing. Seeds the picker in every chart
    * enlarged out of this tab. */

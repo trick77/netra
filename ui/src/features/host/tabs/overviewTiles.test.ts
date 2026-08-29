@@ -123,6 +123,19 @@ describe("overviewTiles system group", () => {
     expect(find(system, "Memory")?.severity).toBe("warning");
   });
 
+  // The sub-line used to fall back to the host row while the figure did not,
+  // so a failed metrics("host") -- which HostPage turns into null through
+  // orNull, and which a host dead all window produces too -- printed
+  // "4 of 8 GiB" directly under a dash. The line stated the exact two numbers
+  // the figure above it had just called unknowable.
+  it("writes no memory sub-line when the figure itself is absent", () => {
+    const { system } = tiles({ hostMetrics: null });
+    const tile = find(system, "Memory");
+
+    expect(tile?.value).toBe(ABSENT);
+    expect(tile?.sub).toBeUndefined();
+  });
+
   it("leaves a healthy memory reading neutral rather than green", () => {
     const { system } = tiles({
       hostMetrics: hostMetrics(["mem_used", "mem_total"], [10, 100]),
@@ -243,6 +256,27 @@ describe("overviewTiles busiest filesystem", () => {
     });
 
     expect(find(system, "Busiest filesystem")?.severity).toBeNull();
+  });
+
+  // Picking by percentage alone asks a different question from the one the
+  // attention band asks: diskSeverityFor weighs the bytes left as well as the
+  // ratio. A big array at 96 % with room to spare outranked a small root at
+  // 93 % with 17 GB left, so the tile showed a neutral 96 % directly under a
+  // warning naming the other disk.
+  it("names the disk the attention band warns about, not merely the fullest", () => {
+    const gib = 1024 ** 3;
+    const { system } = tiles({
+      filesystemMetrics: fsMetrics([
+        // 96 % full and 800 GB free: high, and nothing to act on.
+        ["/mnt/ark", 19200 * gib, 800 * gib],
+        // 93 % full with 17 GB left: the one that earns a warning.
+        ["/", 239 * gib, 17 * gib],
+      ]),
+    });
+    const tile = find(system, "Busiest filesystem");
+
+    expect(tile?.sub).toBe("/");
+    expect(tile?.severity).toBe("warning");
   });
 
   it("says absent rather than 0% for a host reporting no filesystems", () => {

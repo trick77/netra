@@ -594,7 +594,6 @@ export function HostPage({
           filesystemMetrics={data.filesystemMetrics}
           agentMetrics={data.agentMetrics}
           netMetrics={data.netMetrics}
-          containers={data.containers}
           units={data.units}
           range={range}
           fetchFamily={fetchFamily}

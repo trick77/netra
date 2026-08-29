@@ -163,6 +163,18 @@ function trendColor(severity: FillSeverity | null, series: string): string {
   return severity === null ? series : STATUS_COLOR[severity];
 }
 
+/** Worse sorts higher. Only the three diskState can answer with, plus the
+ * null it answers with for a healthy disk. */
+const SEVERITY_RANK: Record<string, number> = {
+  critical: 3,
+  serious: 2,
+  warning: 1,
+};
+
+function severityRank(severity: FillSeverity | null): number {
+  return severity === null ? 0 : (SEVERITY_RANK[severity] ?? 0);
+}
+
 /** "ok" is not a status treatment here. See Tile.severity. */
 function offOnly(severity: FillSeverity): FillSeverity | null {
   return severity === "ok" ? null : severity;
@@ -301,7 +313,7 @@ function systemTiles(
     key: "memory",
     label: "Memory",
     value: percent(memNow),
-    sub: host.memory_total === null ? undefined : memorySub(hostMetrics, host),
+    sub: memorySub(hostMetrics),
     values: memPct,
     color: trendColor(memSeverity, "var(--s3)"),
     severity: memSeverity,
@@ -341,12 +353,23 @@ function hasSwap(res: MetricsResponse | null): boolean {
 /** "78 of 128 GiB" -- the denominator the percentage is of. Falls back to the
  * host row's memory_total, which is the same fallback the memory meters used.
  */
-function memorySub(
-  hostMetrics: MetricsResponse | null,
-  host: HostDetail,
-): string | undefined {
-  const used = current(hostMetrics, "mem_used") ?? host.mem_used;
-  const total = latest(hostMetrics, "mem_total") ?? host.memory_total;
+/**
+ * The denominator the percentage is of, or nothing.
+ *
+ * NO fallback to the host row, and that is the whole fix here: it used to
+ * read `current(hostMetrics, ...) ?? host.mem_used`, so a failed
+ * metrics("host") -- which HostPage turns into null through orNull, and which
+ * a host dead all window produces too -- rendered the figure as ABSENT with
+ * "4 of 8 GiB" printed directly underneath it. The line stated the exact two
+ * numbers the figure above it had just called unknowable.
+ *
+ * One source for both halves. Where the percentage cannot be measured there
+ * is no sub-line either, which is the same rule the unit follows beside an
+ * absent value in StatTile.
+ */
+function memorySub(hostMetrics: MetricsResponse | null): string | undefined {
+  const used = current(hostMetrics, "mem_used");
+  const total = latest(hostMetrics, "mem_total");
   if (used === null || total === null) return undefined;
   return `${gib(used)} of ${gib(total)} GiB`;
 }
@@ -369,9 +392,31 @@ function busiestFilesystemTile(res: MetricsResponse | null): Tile {
   let worstIndex = -1;
   let worstPct = -1;
   let severity: FillSeverity | null = null;
+  // SEVERITY first, percentage only to break a tie within it.
+  //
+  // Picking by percentage alone is not the same question the attention band
+  // asks: diskSeverityFor weighs the bytes left as well as the ratio, so a
+  // 20 TB array at 96 % with 800 GB free outranks a 256 GB root at 93 % with
+  // 17 GB left -- and the tile then showed a neutral 96 % directly under a
+  // warning about a disk it did not name. The band and the tile have to
+  // agree about which disk is the problem; they already share diskState, and
+  // this is the other half of sharing it.
   rows.forEach((row, index) => {
     const state = diskState(row.used, row.free);
-    if (state === null || state.pct <= worstPct) return;
+    if (state === null) return;
+    if (
+      worstIndex !== -1 &&
+      severityRank(state.severity) < severityRank(severity)
+    ) {
+      return;
+    }
+    if (
+      worstIndex !== -1 &&
+      severityRank(state.severity) === severityRank(severity) &&
+      state.pct <= worstPct
+    ) {
+      return;
+    }
     worstPct = state.pct;
     worstIndex = index;
     severity = state.severity;

@@ -149,7 +149,6 @@ function renderOverview(over: Partial<Parameters<typeof Overview>[0]> = {}) {
       hostMetrics={hostMetrics(null, null)}
       filesystemMetrics={fsMetrics}
       agentMetrics={agentMetrics(0)}
-      containers={[]}
       units={[]}
       now={new Date("2026-08-10T01:00:30Z")}
       {...over}
