@@ -56,7 +56,17 @@ export interface GraphsProps {
   fetchFamily?: (family: Family, range: Range) => Promise<MetricsResponse>;
 }
 
-function Panel({
+/**
+ * One spec, drawn.
+ *
+ * Exported, and named for what it takes rather than for what it is: the
+ * Overview draws two of these (load averages and traffic) beside its tiles,
+ * and rebuilding either there would give one chart two titles, two `about`
+ * strings and two enlarge behaviours. The name-clash note above still holds
+ * -- tabs/Panel.tsx is a card wrapper and this is a chart -- and SpecPanel
+ * is the half that says which one it is.
+ */
+export function SpecPanel({
   spec,
   sources,
   range,
@@ -247,7 +257,7 @@ function Group({
       <h3 className="grouphead">{group.title}</h3>
       <div className="sm">
         {group.specs.map((spec) => (
-          <Panel
+          <SpecPanel
             // Keyed by slug, not title: the slug is the stable identity, and
             // two panels could in principle share a title.
             key={spec.slug}

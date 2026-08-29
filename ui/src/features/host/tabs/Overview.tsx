@@ -1,29 +1,28 @@
-// The Overview tab: two or three facts from each of the other tabs plus
-// what needs attention. It is deliberately a summary -- every card here
-// answers "is this worth opening the tab for?", and none of them
-// reproduces the tab's own content.
-import { Fragment, useEffect, useState, type ReactNode } from "react";
+// The Overview tab: what this machine is doing right now, as figures, plus
+// what needs attention.
+//
+// It used to be ten charts poured into one, two or three columns -- and four
+// of them were the System tab's panels drawn a second time. Reading it meant
+// reading ten charts, and the numbers an operator actually scans for (what
+// the CPU is at, how full the busiest disk is, how much traffic is moving)
+// were stated nowhere: they had to be read off a silhouette. The tiles are
+// the other half of that. Each one prints the reading and carries the
+// window's trend behind it, and each one links to the panel that draws the
+// same column in full, on the tab that owns it.
+//
+// What is deliberately NOT here any more: the per-core stack, the CPU time
+// breakdown and the memory trend stack, all three of which the System tab
+// already draws (cpu-cores, cpu-time-breakdown, host-memory); the memory
+// meters, whose reading is the Memory tile and whose threshold moved with it;
+// the Inventory facts, which are three counts of things that have their own
+// tabs; and the sensor cards, which are hardware facts and are now on System.
+import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
-import type {
-  Container,
-  HostDetail,
-  MetricsResponse,
-  MetricsSeries,
-  Unit,
-} from "../../../lib/api";
-import {
-  carriesColumn,
-  counterIncrease,
-  fsName,
-  griddedValues,
-  latestValue,
-  optionalValues,
-} from "../../../lib/metrics";
+import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
+import { counterIncrease, griddedValues } from "../../../lib/metrics";
 import {
   ABSENT,
   binaryBytes,
-  binaryBytesPair,
-  byterate,
   bytes,
   duration,
   percent,
@@ -36,125 +35,36 @@ import {
   STALE_THRESHOLD_MS,
 } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
-import { Facts } from "./Facts";
 import { Panel } from "./Panel";
 import { Meter } from "../../../ui/Meter";
 import { OsIcon } from "../../../ui/OsIcon";
-import { memoryBands, perCoreBands } from "../../../lib/bands";
-import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
-import { Enlargeable } from "../../../ui/charts/Enlargeable";
-import { RAIL_RANGES } from "../../../lib/range";
+import { StatTile } from "../../../ui/StatTile";
 import type { Range } from "../../../lib/range";
-import { Sparkline } from "../../../ui/charts/Sparkline";
-import {
-  DOWN_COLOR,
-  UP_COLOR,
-  UpDownSparkline,
-} from "../../../ui/charts/UpDownSparkline";
-import { DETAIL_WIDTH } from "../../../ui/charts/size";
 // The fleet band's thresholds, imported rather than written out again. The
 // comment on them in fleet/conditions.ts spells out why: this page and that
 // one must agree on when a filesystem is worth mentioning, or a host warns
 // in one place and reads clean in the other.
 import { diskState } from "../../fleet/conditions";
-// The one derivation of a host's traffic pair, shared with the fleet row --
-// its own comment carries why the two cannot be allowed to disagree. The
-// Traffic panel on the Network tab draws the same total as the envelope of a
-// per-interface stack; see its spec for why that is the same chart.
-import { trafficDetailSeries, trafficSeries } from "../../fleet/hostTrends";
-
-/**
- * column() in lib/metrics.ts THROWS for a column the answering tier does
- * not have, and that throw happens during render -- one absent column
- * would blank the whole tab. Every lookup on this page is therefore
- * optional by construction: a column that is not there yields no values,
- * and the card renders the absent marker instead of a fabricated number.
- *
- * The same guard exists in Graphs.tsx. It is duplicated rather than
- * extracted because lib/ is owned by another task; the two copies are
- * eight lines and identical on purpose.
- */
-/** The most recent non-null reading, or null when there is none. A null
- * here means "the host reported nothing", which every caller renders as a
- * gap or as a word -- never as 0. */
-function latest(
-  res: MetricsResponse | null,
-  base: string,
-  seriesIndex = 0,
-): number | null {
-  const vals = optionalValues(res, seriesIndex, base);
-  for (let i = vals.length - 1; i >= 0; i--) {
-    const v = vals[i];
-    if (v !== null) return v;
-  }
-  return null;
-}
-
-/**
- * The reading in the LATEST bucket of the window, or null when the series
- * does not reach it.
- *
- * latest() above answers "what did this series last say", which is right for
- * a configured ceiling and wrong for a filesystem: a row whose agent stopped
- * writing it keeps handing back its final measurement, and nothing
- * downstream can tell that from a current one. That is how one disk came to
- * warn twice under two names -- /netra/fs/ark frozen at the moment its agent
- * was upgraded, /mnt/ark live, both at 94 %, both stated as facts about now.
- *
- * griddedValues, not optionalValues, and that is the whole mechanism:
- * internal/hub/read/metrics.go emits only the rows that EXIST, so a series
- * that stopped simply ends early and its last element is its last reading,
- * indistinguishable from a current one. Placing it on the window's grid
- * turns the buckets it never reached into the nulls that say so.
- *
- * lib/metrics.ts:latestValue is the one spelling of the rule itself; see its
- * docstring on why the two questions must never share a name.
- */
-function current(
-  res: MetricsResponse | null,
-  base: string,
-  seriesIndex = 0,
-): number | null {
-  return latestValue(griddedValues(res, seriesIndex, base));
-}
-
-export interface FilesystemRow {
-  label: string;
-  total: number | null;
-  used: number | null;
-  free: number | null;
-}
-
-/**
- * One row per filesystem, in bytes as measured.
- *
- * No percentage is computed here, and that is a schema fact rather than a
- * layout preference: internal/hub/read/family.go records that `used` and
- * `free` do not sum to `total` (the gap is the root reserve, which is
- * neither in use nor allocatable), and that at the 5m/1h tiers a ratio
- * built from used_max and free_min composes two different instants and is
- * not the maximum of the true ratio. Absolute bytes are the only figure
- * that stays true at every tier.
- */
-export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
-  // `== null`, not `=== null`: these props are optional, so a caller that
-  // simply does not have this family yet passes undefined -- and reading
-  // .series off it threw during render, with no error boundary under it.
-  if (res == null) return [];
-  return res.series.map((series, index) => ({
-    // The mount point, same as the fleet row: one disk must not be called
-    // /mnt/ark on one page and ark on the other.
-    label: fsName(series.key, ABSENT),
-    // current(), not latest(): a filesystem that has stopped reporting has no
-    // fullness right now, and saying otherwise is what kept a retired row on
-    // the page beside the one that replaced it. The card renders the absent
-    // marker for the nulls and diskWarnings already skips them, so the disk
-    // stays listed -- it is only its numbers that stop claiming to be current.
-    total: current(res, "total", index),
-    used: current(res, "used", index),
-    free: current(res, "free", index),
-  }));
-}
+// The tiles' own module: what each one reads, what it says when the column is
+// absent, and when it earns a status hue. Also the home of latest(),
+// current() and filesystemRows(), which moved there with it -- both files
+// need them, and a second copy of either is how this page and its tiles would
+// come to answer differently about one column.
+import {
+  current,
+  filesystemRows,
+  latest,
+  overviewTiles,
+} from "./overviewTiles";
+import type { FilesystemRow, Tile } from "./overviewTiles";
+// The two charts this tab keeps, drawn through the same spec machinery the
+// System and Network tabs use. Rendered from their slugs rather than rebuilt
+// here so there is one title, one `about`, one /hosts/{id}/chart/<slug> URL
+// and one enlarge behaviour per chart across every tab -- a second spelling
+// of "Traffic" is exactly how the fleet row and this page came to disagree
+// about one host before.
+import { SpecPanel } from "./Graphs";
+import { specForSlug, type PanelSpec } from "../chartSpecs";
 
 // The latest bucket's value, trailing null included, is lib/metrics.ts's
 // latestValue(). This page used to scan backwards for the last non-null,
@@ -167,153 +77,6 @@ export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
 export interface Attention {
   severity: Severity;
   what: ReactNode;
-}
-
-// Series colours are token references, never literals -- the palette lives
-// in index.css and a hue chosen in a .tsx file cannot follow the theme.
-const CPU_BANDS: { base: string; name: string; color: string }[] = [
-  { base: "cpu_user", name: "user", color: "var(--s1)" },
-  { base: "cpu_system", name: "system", color: "var(--s2)" },
-  { base: "cpu_iowait", name: "iowait", color: "var(--s3)" },
-  { base: "cpu_steal", name: "steal", color: "var(--s4)" },
-];
-
-/**
- * user/system/iowait/steal as bands, on the window grid.
- *
- * An all-null band is not a band, and in a STACK it is actively destructive:
- * stackBands() breaks every band at any index where any series is null,
- * because a running total is undefined there. A bare metal host reports
- * cpu_steal as NULL in every bucket -- correctly, it has no hypervisor to
- * steal from -- and that one empty series erased the whole chart, legend
- * still listing four states above a blank box.
- *
- * Shared with the enlarged view's own fetch, so widening the panel cannot
- * draw a different set of bands from the one that was clicked.
- */
-function cpuStateBands(res: MetricsResponse | null): Band[] {
-  return CPU_BANDS.map((band) => ({
-    name: band.name,
-    color: band.color,
-    // On the window grid, so an outage is a hole in the silhouette rather
-    // than a line drawn straight across it.
-    values: griddedValues(res, 0, band.base),
-  })).filter((band) => band.values.some((v) => v !== null));
-}
-
-/** The one-band silhouette: cpu_total, for a host with no per-core series.
- * One true band beats a not-collected panel where a silhouette is available. */
-function totalCpuBand(values: (number | null)[]): Band[] {
-  return values.length > 0
-    ? [{ name: "busy", color: "var(--s1)", values }]
-    : [];
-}
-
-/**
- * The sensor family's series, narrowed to the kinds one card is about.
- *
- * The original index is carried through because latest(), griddedValues()
- * and seriesTimestamps() all read by POSITION in the unfiltered series
- * list -- filtering the array without keeping the index reads another
- * sensor's readings under this sensor's name.
- *
- * kind defaults to temperature: an agent predating the field sends none,
- * and that is the only kind it could have meant.
- */
-function sensorsOfKind(
-  res: MetricsResponse | null,
-  kinds: readonly string[],
-): { series: MetricsSeries; index: number }[] {
-  return (res?.series ?? [])
-    .map((series, index) => ({ series, index }))
-    .filter(({ series }) => kinds.includes(series.key.kind ?? "temperature"));
-}
-
-/**
- * The history one sensor row draws.
- *
- * For a FAN this is value_min and nothing else. A fan's failure is its
- * minimum: a fan that stalled for two minutes inside a five-minute bucket
- * is invisible in both the average and the maximum, and the average of a
- * stall and a spin-up is a perfectly healthy-looking number. 0001_init.sql
- * rolls value up as min as well as avg/max specifically so this is
- * answerable, and the column has to be named explicitly -- candidates() in
- * lib/metrics.ts prefers _avg, so asking for the bare name here would
- * silently hand back the one aggregate that hides the failure.
- *
- * value_min exists only at the 5m and 1h tiers; the raw table has a single
- * `value` per sample, where the reading IS its own minimum. So the fallback
- * is not a compromise -- at raw resolution there is nothing finer to ask
- * for.
- *
- * Voltages, currents and power use `value` (resolving to value_avg at the
- * rolled tiers), which is right for them: a rail sags and recovers, and the
- * bucket's mean is the honest summary of where it sat.
- */
-function sensorHistory(
-  res: MetricsResponse | null,
-  index: number,
-  kind: string,
-): (number | null)[] {
-  if (kind === "fan" && carriesColumn(res, "value_min")) {
-    return griddedValues(res, index, "value_min");
-  }
-  return griddedValues(res, index, "value");
-}
-
-/** What a reader calls this sensor: chip and label, then the block device
- * where there is one.
- *
- * The instance is what tells four disks apart. The drivetemp driver names
- * every chip it registers "drivetemp" and publishes no tempN_label, so a
- * four-disk host draws four rows that would otherwise all read
- * "drivetemp temp1" -- four identical names for four different disks, and no
- * way to tell which one is the hot one. Empty for every chip that measures no
- * disk, which is every board sensor, so coretemp and the fans read exactly as
- * they always have.
- *
- * Also its identity across two responses -- the enlarged view re-finds its
- * own series by this name after a range change rather than by the index it
- * had, because a sensor that stopped reporting shifts every series after it
- * and the chart would silently become another sensor's. */
-function sensorName(series: MetricsSeries): string {
-  return (
-    [series.key.chip, series.key.label, series.key.instance]
-      .filter(Boolean)
-      .join(" ") || ABSENT
-  );
-}
-
-/** The most recent non-null entry of an already-built series. The sensor
- * rows read their number off the SAME array the sparkline draws, so the
- * digits and the line can never disagree -- a fan reading 1180 RPM beside a
- * line touching zero is the exact confusion these cards exist to remove. */
-function lastReading(values: readonly (number | null)[]): number | null {
-  for (let i = values.length - 1; i >= 0; i--) {
-    const v = values[i];
-    if (v !== null && v !== undefined) return v;
-  }
-  return null;
-}
-
-/** Each kind in its own unit, because the reading is meaningless without
- * it and because these share a card. Precision differs by kind: a rail at
- * 11.9 V and one at 12.0 V are different facts, while a fan at 1183 and one
- * at 1180 RPM are the same fact. */
-function formatSensor(kind: string, value: number | null): string {
-  if (value === null) return ABSENT;
-  switch (kind) {
-    case "fan":
-      return `${Math.round(value)} RPM`;
-    case "voltage":
-      return `${value.toFixed(2)} V`;
-    case "current":
-      return `${value.toFixed(2)} A`;
-    case "power":
-      return `${value.toFixed(1)} W`;
-    default:
-      return `${Math.round(value)} °C`;
-  }
 }
 
 // When a host counts as stale rather than merely late. Imported, never
@@ -517,137 +280,6 @@ function agentBuild(host: HostDetail): string {
 }
 
 /**
- * One card's worth of sensor rows: name, recent history, current reading.
- *
- * A sensor reading is only interesting as a movement. One number says
- * 48 °C, or 1180 RPM, which a reader cannot judge without knowing whether
- * it has been there all day or has been climbing for an hour -- so every
- * sensor gets its history beside its value.
- *
- * Shared by the temperature, fan and power cards so the three read
- * identically; the kind still decides the unit, the precision and (for
- * fans) which aggregate is honest.
- */
-function SensorList({
-  res,
-  rows,
-  color,
-  trend,
-  empty,
-  range,
-  fetchFamily,
-}: {
-  res: MetricsResponse | null;
-  rows: { series: MetricsSeries; index: number }[];
-  color: string;
-  /** The word used in each sparkline's accessible label. */
-  trend: string;
-  empty: string;
-  range?: Range;
-  fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
-}) {
-  if (rows.length === 0) return <p className="note">{empty}</p>;
-  return (
-    <div className="sensor-list">
-      {rows.map(({ series, index }) => {
-        const kind = series.key.kind ?? "temperature";
-        const name = sensorName(series);
-        // Temperatures keep reading `temp`: it is the column they have
-        // always been drawn from, it is the one every historical row was
-        // written into, and an agent predating `value` filled only that.
-        const history =
-          kind === "temperature"
-            ? griddedValues(res, index, "temp")
-            : sensorHistory(res, index, kind);
-        const value = lastReading(history);
-        return (
-          <div className="sensor-row" key={`${name}-${index}`}>
-            <span className="lab">{name}</span>
-            {/* Free-scaled to its own extent, deliberately: these sit in
-                one list but a CPU package and an NVMe drive do not share a
-                sensible axis, and a shared one would flatten every sensor
-                against the largest. The question here is "is this one
-                moving", not "which is biggest" -- and across kinds it is
-                not even arithmetic: 1200 RPM and 12 V on one scale is a
-                flat line at the bottom of the card. */}
-            <Enlargeable
-              title={`${name} · ${trend}`}
-              label={`Enlarge ${trend} for ${name}`}
-              className="inline"
-              series={[{ name, color, values: history }]}
-              // The window these readings were gridded against, so the
-              // enlarged view carries a time axis from the moment it is
-              // opened rather than only once a range has been changed.
-              window={res?.window ?? null}
-              // Free-scaled in the dialog too, and re-scaled after a range
-              // change: the small chart above scales to its own extent, and a
-              // chart that snapped to a zero floor on being enlarged would
-              // draw a 44-47 degree package as a flat line.
-              autoScale
-              // Filled, like the Sparkline below it. The sparkline has always
-              // drawn an area and the dialog drew a bare line, so opening a
-              // 44-47 degree package swapped a shaded band for a hairline --
-              // the enlarged view saying less than the 110px chart it came
-              // from. Honest here because the chart free-scales: the fill's
-              // bottom edge is the quietest reading in the window, not an
-              // axis decision.
-              filled
-              fmt={(n) => formatSensor(kind, n)}
-              range={range}
-              ranges={RAIL_RANGES}
-              fetchSeries={
-                fetchFamily === undefined
-                  ? undefined
-                  : async (next) => {
-                      const answered = await fetchFamily("sensor", next);
-                      // Re-found by its own key, never by the index it had
-                      // in the previous response: a sensor that stopped
-                      // reporting shifts every series after it, and the
-                      // chart would silently become another sensor's.
-                      //
-                      // Kind included in the match, because the name is only
-                      // chip+label: sensorsOfKind() picked these rows by kind
-                      // and this search does not, so a fan and a temperature
-                      // sharing a chip and a label would match each other --
-                      // and a temperature chart reading `temp` off a fan
-                      // series draws nothing at all. Two keyless series are
-                      // both named ABSENT, which makes the kind the only
-                      // thing separating them.
-                      const at = answered.series.findIndex(
-                        (s) =>
-                          sensorName(s) === name &&
-                          (s.key.kind ?? "temperature") === kind,
-                      );
-                      const values =
-                        at === -1
-                          ? []
-                          : kind === "temperature"
-                            ? griddedValues(answered, at, "temp")
-                            : sensorHistory(answered, at, kind);
-                      return {
-                        series: [{ name, color, values }],
-                        window: answered.window,
-                      };
-                    }
-              }
-            >
-              <Sparkline
-                values={history}
-                width={110}
-                height={24}
-                color={color}
-                label={`${name} ${trend} trend`}
-              />
-            </Enlargeable>
-            <span className="val">{formatSensor(kind, value)}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/**
  * Where this host is, as labelled facts for the System strip -- straight from
  * what its own agent reported.
  *
@@ -703,103 +335,46 @@ function FactStrip({ rows }: { rows: [string, ReactNode][] }) {
 }
 
 /**
- * The cards this tab draws, and the column each one sits in.
+ * The two charts this tab keeps, resolved once at module load.
  *
- * The order inside a column is the FLEET TABLE's order -- traffic, CPU,
- * memory, disk -- so a reader who clicked a row finds the same subjects in
- * the same sequence, and the subject a host page is opened for is at the top
- * of the first column rather than wherever a balancer put it.
- *
- * Keyed by column count rather than by breakpoint, because that is the only
- * thing that changes: one list of cards, poured into one, two or three
- * columns. A card this host has nothing to draw -- no sensors, no cgroup
- * limits -- renders nothing and the cards below it in its own column move
- * up; it never crosses into another column, which is exactly what the CSS
- * multi-column flow this replaces used to do.
+ * Resolved here rather than inside the render, and thrown for rather than
+ * defaulted: a slug that names no spec is a rename that missed this page, and
+ * the failure it produces at render time is an empty card that looks like a
+ * host with no data. resolveGroups() in chartSpecs.ts throws at module load
+ * for the same reason and says so at length.
  */
-type CardKey =
-  | "traffic"
-  | "processor"
-  | "cpuTime"
-  | "memory"
-  | "memoryTrend"
-  | "inventory"
-  | "disk"
-  | "temperature"
-  | "fans"
-  | "power";
+function requireSpec(slug: string): PanelSpec {
+  const spec = specForSlug(slug);
+  if (spec === undefined) {
+    throw new Error(`Overview: no chart spec for slug "${slug}"`);
+  }
+  return spec;
+}
 
-// Limits and Collectors were the last two keys here. Neither answered the
-// question this tab asks -- one states how the box is configured, the other
-// how much of the agent's answer to trust -- and both sat at the foot of the
-// last column, which is where a card nobody placed deliberately ends up.
-// Limits opens the System tab (see LimitsCard); the capability list is the
-// Collectors tab (see CollectorsTab).
-const CARD_COLUMNS: Record<1 | 2 | 3, readonly (readonly CardKey[])[]> = {
-  1: [
-    [
-      "traffic",
-      "processor",
-      "memory",
-      "memoryTrend",
-      "disk",
-      "cpuTime",
-      "inventory",
-      "temperature",
-      "fans",
-      "power",
-    ],
-  ],
-  2: [
-    ["traffic", "processor", "memory", "memoryTrend", "disk"],
-    ["cpuTime", "inventory", "temperature", "fans", "power"],
-  ],
-  3: [
-    ["traffic", "processor", "memory", "memoryTrend"],
-    ["disk", "cpuTime", "inventory"],
-    ["temperature", "fans", "power"],
-  ],
-};
-
-/** The two widths index.css lays the card columns out at. Stated here as
- * well because the placement is a JS decision now, and a page that thought
- * it had three columns while the CSS drew two would put a card in a column
- * nobody can see. Keep the numbers in step with `.cardcols` in index.css. */
-const TWO_COLUMNS = "(min-width: 900px)";
-const THREE_COLUMNS = "(min-width: 1500px)";
+const LOAD_SPEC = requireSpec("load-averages");
+const TRAFFIC_SPEC = requireSpec("host-traffic");
 
 /**
- * How many card columns this viewport gets.
+ * Twelve tracks split between two cards, by how many tiles each holds.
  *
- * matchMedia rather than a resize listener, for the reason FleetPage's
- * useIsNarrow states: the browser already knows the answer and the listener
- * fires only when it changes. Guarded the same way too -- jsdom has no
- * matchMedia unless a test installs one, and a missing one must mean the
- * single-column layout rather than a thrown render.
+ * Clamped at 3, so a card with one tile is still wide enough for its heading
+ * and its tile, and the other card never takes more than 9 -- past that its
+ * own tiles start looking stretched rather than generous. Both empty is the
+ * degenerate case and splits evenly; neither card renders then anyway.
  */
-function useColumnCount(): 1 | 2 | 3 {
-  const read = (): 1 | 2 | 3 => {
-    if (window.matchMedia?.(THREE_COLUMNS).matches) return 3;
-    if (window.matchMedia?.(TWO_COLUMNS).matches) return 2;
-    return 1;
-  };
-  const [count, setCount] = useState<1 | 2 | 3>(read);
+function splitRow(left: number, right: number): [number, number] {
+  const total = left + right;
+  if (total === 0) return [6, 6];
+  const raw = Math.round((12 * left) / total);
+  const span = Math.min(9, Math.max(3, raw));
+  return [span, 12 - span];
+}
 
-  useEffect(() => {
-    const queries = [
-      window.matchMedia?.(TWO_COLUMNS),
-      window.matchMedia?.(THREE_COLUMNS),
-    ].filter((q): q is MediaQueryList => q !== undefined);
-    if (queries.length === 0) return;
-    const onChange = () => setCount(read());
-    onChange();
-    for (const q of queries) q.addEventListener("change", onChange);
-    return () => {
-      for (const q of queries) q.removeEventListener("change", onChange);
-    };
-  }, []);
-
-  return count;
+/** Where a tile leads: the panel that draws the same column in full. Built
+ * here rather than in overviewTiles.ts because the host id is a routing fact
+ * and the tiles are a data one -- see lib/router.ts for the shape. */
+function chartHref(hostId: number, slug: string): string {
+  return `/hosts/${hostId}/chart/${slug}`;
 }
 
 export interface OverviewProps {
@@ -807,13 +382,8 @@ export interface OverviewProps {
   hostMetrics: MetricsResponse | null;
   filesystemMetrics: MetricsResponse | null;
   agentMetrics: MetricsResponse | null;
-  sensorMetrics: MetricsResponse | null;
-  /** family=cpu_core for this host, one series per logical CPU. Absent on a
-   * host too large to ask for them -- see MAX_PER_CORE in hostTrends.ts. */
-  coreMetrics?: MetricsResponse | null;
   /** family=net for this host, one series per interface. */
   netMetrics?: MetricsResponse | null;
-  containers: Container[] | null;
   units: Unit[] | null;
   /** The range this page is showing. Seeds the picker in every chart
    * enlarged out of this tab. */
@@ -822,76 +392,75 @@ export interface OverviewProps {
    * fetchFamily. Without it the enlarged charts carry no picker, which is
    * what a caller that cannot refetch one family should get. */
   fetchFamily?: (family: string, range: Range) => Promise<MetricsResponse>;
+  /** Where a tile navigates to. Client-side, matching Tabs and StatFigure;
+   * the href stays real either way. */
+  onOpenChart?: (slug: string) => void;
   /** Injected by tests so "last reported" is deterministic. */
   now?: Date;
+}
+
+/** One card of tiles. The heading is the card's, the tiles are its body, and
+ * the grid inside reflows on its own -- there is no per-tile placement to
+ * keep in step with a breakpoint, which is the whole reason the mosaic
+ * replaced the hand-placed columns. */
+function TileCard({
+  title,
+  tiles,
+  span,
+  hostId,
+  onOpenChart,
+}: {
+  title: string;
+  tiles: Tile[];
+  span: number;
+  hostId: number;
+  onOpenChart?: (slug: string) => void;
+}) {
+  if (tiles.length === 0) return null;
+  return (
+    <div className="mo" style={{ gridColumn: `span ${span}` }}>
+      <Panel label={title} title={title}>
+        <div className="tiles">
+          {tiles.map((tile) => (
+            <StatTile
+              key={tile.key}
+              label={tile.label}
+              value={tile.value}
+              unit={tile.unit}
+              sub={tile.sub}
+              values={tile.values}
+              color={tile.color}
+              severity={tile.severity}
+              href={
+                tile.slug === undefined
+                  ? undefined
+                  : chartHref(hostId, tile.slug)
+              }
+              onSelect={
+                tile.slug === undefined || onOpenChart === undefined
+                  ? undefined
+                  : () => onOpenChart(tile.slug as string)
+              }
+            />
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
 }
 
 export function Overview({
   host,
   hostMetrics,
-  coreMetrics,
   netMetrics,
   filesystemMetrics,
   agentMetrics,
-  sensorMetrics,
-  containers,
   units,
   range,
   fetchFamily,
+  onOpenChart,
   now,
 }: OverviewProps) {
-  const perState = cpuStateBands(hostMetrics);
-
-  // The headline chart is the per-core stack, the same one the fleet row for
-  // this host draws -- the two must not disagree about the same machine.
-  // Falling back to cpu_total when there are no per-core series: one true
-  // band beats a not-collected panel where a silhouette is available.
-  //
-  // The user/system/iowait/steal breakdown is NOT the fallback any more. It
-  // answers a different question -- where the time went, rather than which
-  // core spent it -- so it has its own panel below rather than standing in
-  // for this one.
-  const total = griddedValues(hostMetrics, 0, "cpu_total");
-  // Normalised -- each core divided by the core count -- so the top of the
-  // stack IS cpu_total, the number printed in the panel's header, and the
-  // panel can be drawn against a fixed 0-100 axis. Raw per-core utilisation
-  // is a different chart and it still exists: the System tab's `cpu-cores`
-  // panel draws it, hides its axis, and says why in its spec.
-  //
-  // The cost, stated plainly: a band's value here is that core's SHARE of the
-  // host -- a core at 43 % busy on a 32-core box reads 1.3 -- in the legend,
-  // the hover and the enlarged view's stats table. That is the same trade the
-  // fleet cell already makes, and it buys an axis every reader can use.
-  const perCore = perCoreBands(coreMetrics ?? null, { normalise: true });
-  const cpuBands: Band[] = perCore.length > 0 ? perCore : totalCpuBand(total);
-
-  const memBands = memoryBands(hostMetrics);
-
-  // A host's traffic is the sum over its interfaces, and a null anywhere in
-  // a bucket makes that bucket's total unknowable rather than smaller --
-  // counting it as zero would draw a dip that never happened. Same rule the
-  // fleet row uses, so the two agree about one host.
-  //
-  // Through trafficSeries(), which is where reading the bucket's PEAK and
-  // folding to the pixel column are argued for. Called rather than
-  // re-derived here: this card, the fleet row and the Traffic chart page are
-  // one chart, and a second copy of the sum is exactly how they came to
-  // disagree. No width passed -- this card is wider than the window has
-  // buckets, so there is nothing to fold.
-  const { rx: ingress, tx: egress } = trafficSeries(netMetrics);
-  // The Traffic card's NUMBERS, as opposed to the series beside them: gauges
-  // off host_current, blanked when the host is not reporting. isReporting is
-  // the fleet list's predicate too, so a host cannot read offline there and
-  // busy here.
-  const live = isReporting(host, now);
-  const currentRx = live ? host.net_rx_bytes : null;
-  const currentTx = live ? host.net_tx_bytes : null;
-
-  const memTotal = latest(hostMetrics, "mem_total") ?? host.memory_total;
-  const memUsed = latest(hostMetrics, "mem_used") ?? host.mem_used;
-  const swapTotal = latest(hostMetrics, "swap_total");
-  const swapUsed = latest(hostMetrics, "swap_used");
-
   const filesystems = filesystemRows(filesystemMetrics);
   const attention = needsAttention({
     host,
@@ -902,516 +471,42 @@ export function Overview({
     now,
   });
 
-  // Off the host row, not off `units`. The units endpoint returns only what
-  // needs attention, so counting it would report "0 units" for a healthy host
-  // running several hundred services -- and "1 units · 1 failed" for one with
-  // a single broken service. These are the counts the agent reported.
-  const servicesTotal = host.services_total ?? null;
-  const failedUnits = host.services_failed ?? null;
+  const tiles = overviewTiles({
+    host,
+    hostMetrics,
+    filesystemMetrics,
+    netMetrics,
+    now,
+  });
 
-  // The sensor family carries fans, voltages, currents and power alongside
-  // temperatures, and only temperatures have a `temp` column -- so mapping
-  // the whole family into one panel headed "Temperature" filled it with
-  // rows reading "nct6775 fan1 —", burying the readings it exists to show.
+  // Each row's twelve tracks, split between its two cards in proportion to
+  // how many tiles each holds.
   //
-  // Splitting by kind rather than discarding the rest is the point of the
-  // change: a stopped fan and a sagging rail are the two hardware failures
-  // a temperature cannot show, and each kind gets its own card so a
-  // 1200 RPM fan never shares an axis with a 45 °C package.
-  const temperatureSeries = sensorsOfKind(sensorMetrics, ["temperature"]);
-  const fanSeries = sensorsOfKind(sensorMetrics, ["fan"]);
-  // Voltage, current and power share a card: they are all "the power
-  // delivery is or is not healthy", and on a typical board there are one or
-  // two of each -- three separate cards of one row would be mostly heading.
-  const powerSeries = sensorsOfKind(sensorMetrics, [
-    "voltage",
-    "current",
-    "power",
-  ]);
+  // Fixed spans looked right on a host that reports everything and wrong on
+  // every other: a swapless VM has one Memory pressure tile, and at a fixed
+  // half-width that tile stretched across 640px of card beside a Network
+  // card packed with three. Sized by content the same host reads 3 / 9 and
+  // the tiles either side come out the same width -- which is the actual
+  // goal, since a tile is a fixed thing and only the card around it is
+  // elastic.
+  const [systemSpan, kernelSpan] = splitRow(
+    tiles.system.length,
+    tiles.kernel.length,
+  );
+  const [pressureSpan, networkSpan] = splitRow(
+    tiles.pressure.length,
+    tiles.network.length,
+  );
 
   // Read once and used twice -- the summary line and the strip's Uptime row.
   // Two copies of this expression is how the two come to disagree on a host
   // whose metric and whose host row say different things.
   const uptime = latest(hostMetrics, "uptime_s") ?? host.uptime_s;
 
-  const columns = useColumnCount();
-
-  const cards: Record<CardKey, ReactNode> = {
-    traffic: (
-      <>
-        {/* First card in the flow, so it takes the top of the LEFT column.
-          In above the line, out below -- the same mark the fleet row
-          draws, because a reader moving between them should not have to
-          re-learn the chart. There was no traffic card on this page at all:
-          the only network chart lived in the Graphs tab, so the overview
-          summarised every subsystem except the one most likely to explain a
-          problem. */}
-        <section aria-label="Traffic">
-          <ChartPanel
-            // A ChartPanel like every other chart on this page, rather than a
-            // bare sparkline in a hand-rolled card. It was the one chart here
-            // drawn without an axis, sitting in the same column as three that
-            // have one -- so the card most likely to explain a problem was
-            // also the only one a reader could not put a number to.
-            title="Traffic"
-            unit="B/s"
-            // "in" and "out", not rx and tx: the direction is the point of
-            // this chart, and "rx" is the kernel's word for it rather than
-            // the reader's. The wire and the schema keep rx/tx.
-            series={[
-              { name: "in", color: UP_COLOR, values: ingress },
-              { name: "out", color: DOWN_COLOR, values: egress },
-            ]}
-            mirrored
-            fmt={bytes}
-            unavailable={
-              ingress.length === 0 && egress.length === 0
-                ? "No interface samples in this window."
-                : undefined
-            }
-            unavailableHeadline="No samples"
-            window={netMetrics?.window ?? null}
-            range={range}
-            ranges={RAIL_RANGES}
-            fetchSeries={
-              fetchFamily === undefined
-                ? undefined
-                : async (next) => {
-                    const answered = await fetchFamily("net", next);
-                    return {
-                      series: trafficDetailSeries(
-                        trafficSeries(answered, DETAIL_WIDTH),
-                      ),
-                      window: answered.window,
-                    };
-                  }
-            }
-            // The rates belong INSIDE the card, under the chart they qualify:
-            // rendered after it they read as a footnote to whatever panel came
-            // next in the grid.
-            footer={
-              <div className="traffic-rates">
-                {/* byterate, never bitrate: net_rx/net_tx are BYTES per
-                  second, so bitrate() rendered every host's traffic 8x low
-                  and plausibly. The fleet's traffic cell carried the same
-                  bug, so the two pages agreed with each other and with
-                  nothing else.
-
-                  The numbers are host_current's gauges, not the end of the
-                  series drawn beside them. Off the series they moved with
-                  the RANGE -- the raw instantaneous rate at 1h, a
-                  five-minute average from a quarter of an hour ago at 6h and
-                  wider -- so widening the window changed what "now" meant.
-                  The chart still follows the range; the rates do not.
-
-                  Gated on the host still reporting: the gauge is the one
-                  number here that does not go absent by itself when the
-                  agent dies -- host_current keeps the last pair it was
-                  written -- and "the agent is down" must not render as
-                  "traffic is steady". */}
-                <span className="rate">↑ {byterate(currentRx)} in</span>
-                <span className="rate">↓ {byterate(currentTx)} out</span>
-              </div>
-            }
-          />
-        </section>
-      </>
-    ),
-    processor: (
-      <>
-        {/* Overlay (inside ChartPanel) renders the full legend itself once a
-          panel carries two or more bands, so none is built here. */}
-        <section aria-label="Processor">
-          {/* No unit prop: percent() prints one already, and passing both
-            rendered "12 % %". See ChartPanel's unit prop. */}
-          <ChartPanel
-            title="Processor"
-            series={cpuBands}
-            // 0-100 whichever branch drew the bands, and the axis to say so.
-            //
-            // The per-core stack used to auto-scale to its own peak with the
-            // axis hidden, on the argument that a stack of RAW per-core
-            // utilisation runs to cores x 100 and its height is a shape
-            // rather than a quantity. The cost was that the shape was the
-            // ONLY thing on the card: a host idling at 5 % filled the box
-            // exactly as a host at 95 % did, and nothing on the panel said
-            // where the top of the box was. The bands are normalised now --
-            // see `perCore` above -- so the stack tops out at cpu_total, the
-            // number in the header, against the host's real 100 % ceiling.
-            // The same reading as the fleet row's CPU cell and the System
-            // tab's CPU panel, which is what those two comments already
-            // claimed this panel was.
-            max={100}
-            // Two decimals once the bands are normalised, and for the reason
-            // the System tab's twin panel already formats that way: a band is
-            // that core's SHARE of the host, busy/N, so on a 32-core box a
-            // core at 43 % busy is 1.3 and an idle one is 0.15. Rounded to
-            // whole percent, the enlarged view's stats table -- latest, min,
-            // max, mean, per core -- reads "0%" in every cell on any host
-            // with more than a handful of cores, which is the table saying
-            // nothing at all. round() drops trailing zeros, so the y axis
-            // still reads 0%, 50%, 100%.
-            //
-            // Only the per-core branch: the cpu_total fallback is one band
-            // that already is a percentage of the host, and it keeps the
-            // whole-number reading it has always had.
-            fmt={perCore.length > 0 ? (n) => percent(n, 2) : (n) => percent(n)}
-            // The headline stays whole-percent whichever branch drew the
-            // bands. It is cpu_total -- the machine's own figure, read in
-            // passing beside the title -- and "12.34%" there is false
-            // precision next to the Memory card's "47%".
-            nowFmt={(n) => percent(n)}
-            // The host's CPU, not core 0's.
-            //
-            // A panel with more than one band headlines series[0] and names
-            // it, which is right for a Network panel -- "rx 1.2 MB/s" says
-            // whose number that is. Here series[0] is literally the first
-            // core, so the card read "core 0 6 %" beside a shape that is the
-            // whole machine, and on anything above six cores the legend is
-            // suppressed and nothing on the card said what "core 0" was.
-            //
-            // The stack's top edge is cpu_total once the bands are
-            // normalised, so the two agree -- but series[0] is still core 0,
-            // and the headline must name the machine rather than the first
-            // core that happened to be returned.
-            nowValue={perCore.length > 0 ? latestValue(total) : undefined}
-            window={hostMetrics?.window ?? null}
-            // Each core contributes busy/N, so the stack's top edge is the mean
-            // across cores -- cpu_total -- and 100 stays the right ceiling
-            // however many cores the host has.
-            //
-            // Stacked for the cpu_total fallback too, even though one band is
-            // not much of a stack: the mark must not change depending on
-            // whether a host happened to be small enough to ask for its cores,
-            // or two machines side by side would look like different metrics.
-            stacked={cpuBands.length > 0}
-            // No legend once the bands are cores: thirty-two entries are
-            // longer than the chart, and the enlarged view's table already
-            // names every core beside its colour. This used to suppress the
-            // legend by passing `highlight`, which ALSO dims every other series
-            // to 35% -- the whole stack went pale to hide a list.
-            legend={perCore.length <= 6}
-            // An empty band list is a tier that does not carry the columns, and
-            // an empty chart asserts the host reported nothing. Say which it is.
-            unavailable={
-              cpuBands.length === 0
-                ? "The host reported no processor samples in this window."
-                : undefined
-            }
-            range={range}
-            ranges={RAIL_RANGES}
-            // Whichever family this panel is actually drawing: the per-core
-            // stack widens as cpu_core, the cpu_total fallback as host. Asking
-            // for cpu_core on a host too large to have been given it would
-            // answer with a chart the small panel never showed.
-            fetchSeries={
-              fetchFamily === undefined
-                ? undefined
-                : async (next) => {
-                    if (perCore.length > 0) {
-                      const answered = await fetchFamily("cpu_core", next);
-                      // Normalised, like the panel this dialog was opened
-                      // from. Raw bands would peak at cores x 100 and
-                      // Enlargeable widens a fixed ceiling to fit what it
-                      // refetched -- fitted() takes max(100, peak) -- so the
-                      // widened view would draw a 0-800 axis under a panel
-                      // that says 0-100.
-                      const cores = perCoreBands(answered, { normalise: true });
-                      if (cores.length > 0) {
-                        return { series: cores, window: answered.window };
-                      }
-                      // Falling back needs a SECOND request, not cpu_total
-                      // out of this one: family=cpu_core reads
-                      // cpu_core_samples, which has no cpu_total column, so
-                      // asking this response for it can only ever answer
-                      // with an empty array -- a blank dialog with nothing
-                      // saying why. The window a host with no cores at this
-                      // range still has a silhouette in is the host family's.
-                    }
-                    const answered = await fetchFamily("host", next);
-                    return {
-                      series: totalCpuBand(
-                        griddedValues(answered, 0, "cpu_total"),
-                      ),
-                      window: answered.window,
-                    };
-                  }
-            }
-          />
-        </section>
-      </>
-    ),
-    cpuTime: (
-      <>
-        {/* The breakdown keeps its own panel rather than being displaced by the
-          per-core stack: "which core" and "doing what" are different
-          questions and a reader wants both. It used to vanish above an hour
-          because cpu_user/system/iowait/steal lived only in the raw table;
-          they reach the 5m and 1h rollups now, so this survives the range
-          control. */}
-        <ChartPanel
-          title="CPU time breakdown"
-          series={perState}
-          max={100}
-          fmt={(n) => percent(n)}
-          stacked
-          window={hostMetrics?.window ?? null}
-          unavailable={
-            perState.length === 0
-              ? "cpu_user, cpu_system, cpu_iowait and cpu_steal are not stored at this resolution."
-              : undefined
-          }
-          range={range}
-          ranges={RAIL_RANGES}
-          fetchSeries={
-            fetchFamily === undefined
-              ? undefined
-              : async (next) => {
-                  const answered = await fetchFamily("host", next);
-                  return {
-                    series: cpuStateBands(answered),
-                    window: answered.window,
-                  };
-                }
-          }
-        />
-      </>
-    ),
-    memory: (
-      <>
-        <Panel label="Memory" title="Memory">
-          <Meter
-            label="used"
-            value={memUsed}
-            max={memTotal}
-            formatValue={(value, max) => binaryBytesPair(value, max)}
-          />
-          {/* Three states, not two. swap_total lives only in the raw table
-            (0001_init.sql) -- the 5m and 1h rollups do not carry it -- so at
-            any range above an hour the value is missing because the TIER
-            has no such column, not because the host has no swap. Collapsing
-            those told a host with 8 GB of swap in use that it had none: an
-            absent column rendered as a positive fact about the machine. */}
-          {!carriesColumn(hostMetrics, "swap_total") ? (
-            <div className="mrow">
-              <div>
-                <div className="lab">swap</div>
-              </div>
-              <div className="val">not at this resolution</div>
-            </div>
-          ) : swapTotal === null ? (
-            // Meter's absent state renders the em-dash marker and its
-            // noLimit state says "no limit" -- the container-limit wording.
-            // Neither is the fact here, which is that this host has no swap
-            // configured at all, so the row is written out in Meter's own
-            // markup with the one word that is true.
-            <div className="mrow">
-              <div>
-                <div className="lab">swap</div>
-              </div>
-              <div className="val">none</div>
-            </div>
-          ) : (
-            <Meter
-              label="swap"
-              value={swapUsed}
-              max={swapTotal}
-              formatValue={(value, max) => binaryBytesPair(value, max)}
-            />
-          )}
-        </Panel>
-      </>
-    ),
-    memoryTrend: (
-      <>
-        {/* The stack and the meter answer different questions and both stay:
-          the meter says how full the host is right now, the chart says how it
-          got there. The ceiling is mem_total rather than the stack's own
-          running total, so the gap at the top is free memory -- a stack
-          scaled to itself always touches the top and would report every host
-          as full. */}
-        <ChartPanel
-          title="Memory"
-          series={memBands}
-          // Headroom above total so the rule marking it reads as a rule rather
-          // than as the top border of the plot.
-          max={memTotal === null ? undefined : memTotal * 1.08}
-          reference={memTotal ?? undefined}
-          // Binary here too: the bands are read against the ceiling rule, and a
-          // stack labelled decimally under a rule labelled binarily makes one
-          // quantity look like two.
-          fmt={(n) => binaryBytes(n)}
-          // ...and the axis ticks on the same ladder the formatter prints on.
-          // Ticked decimally, a 16 GiB host reads 1.9 / 3.7 / 5.6 GiB and
-          // every label on the axis is a ragged number. This is the family
-          // tickBase exists for.
-          tickBase={1024}
-          // The ceiling used to be drawn as text inside the plot, over the
-          // rule. It belongs beside the reading it is a ceiling for: the
-          // header already says how much is used, and the pair says of what.
-          nowFmt={(n) => binaryBytesPair(n, memTotal)}
-          stacked
-          window={hostMetrics?.window ?? null}
-          unavailable={
-            memBands.length === 0
-              ? "The host reported no memory samples in this window."
-              : memTotal === null
-                ? "The host's total memory is unknown, so there is no ceiling to draw the bands against."
-                : undefined
-          }
-          range={range}
-          ranges={RAIL_RANGES}
-          fetchSeries={
-            fetchFamily === undefined
-              ? undefined
-              : async (next) => {
-                  const answered = await fetchFamily("host", next);
-                  return {
-                    series: memoryBands(answered),
-                    window: answered.window,
-                  };
-                }
-          }
-        />
-      </>
-    ),
-    inventory: (
-      <>
-        <Panel label="Inventory" title="Inventory">
-          <Facts
-            rows={[
-              [
-                "Containers",
-                containers === null
-                  ? ABSENT
-                  : `${containers.length} containers`,
-              ],
-              [
-                "Units",
-                servicesTotal === null
-                  ? ABSENT
-                  : `${servicesTotal} units · ${failedUnits ?? 0} failed`,
-              ],
-              [
-                "Filesystems",
-                filesystems.length === 0
-                  ? ABSENT
-                  : `${filesystems.length} mounted`,
-              ],
-            ]}
-          />
-        </Panel>
-      </>
-    ),
-    disk: (
-      <>
-        {/* Every card is placed now -- see CARD_COLUMNS -- so this one no
-          longer needs the `colbreak` class that used to force a column break
-          in front of it. */}
-        <Panel label="Disk" title="Disk">
-          {filesystems.length === 0 ? (
-            <p className="note">No filesystem samples in this window.</p>
-          ) : (
-            <div className="fs-list">
-              {filesystems.map((fs) => (
-                <Meter
-                  key={fs.label}
-                  label={fs.label}
-                  // df's Use%: used / (used + free), never used / total. total
-                  // includes the root reserve, which is neither in use nor
-                  // allocatable, so dividing by it reports a full disk as less
-                  // full than df does -- and df's number is the one the
-                  // operator has already seen over SSH. Same definition the
-                  // fleet's disk column uses, so the two cannot disagree about
-                  // one filesystem.
-                  value={fs.used}
-                  max={
-                    fs.used === null || fs.free === null
-                      ? null
-                      : fs.used + fs.free
-                  }
-                  formatValue={() =>
-                    `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`
-                  }
-                />
-              ))}
-            </div>
-          )}
-        </Panel>
-      </>
-    ),
-    temperature: (
-      <>
-        {/* All three sensor cards are rendered only when the host actually
-          reports that kind of reading: a VPS has no hwmon at all, and most
-          VMs and every container host report no fans, so an empty card on
-          every cloud instance in the fleet would teach people to skip the
-          column this page is made of. Why it is emptiness in the WINDOW
-          rather than the agent's `sensors: absent` capability: the three
-          cards then say the same thing the same way, and the capability is
-          still spelled out on the Collectors tab for anyone asking why the
-          readings are gone. The cost is that a host which does have
-          sensors but reported none in the selected range loses the card
-          instead of showing the sentence -- which is also why the `empty`
-          strings below can no longer render, and are kept only so a future
-          caller of SensorList inherits the wording. */}
-        {/* Temperature is --s1, not the --s7 orange it used to be. Orange was
-            chosen because temperature reads as heat, and that is exactly the
-            problem: --s7 sits a few degrees from --accent and --st-serious, so
-            a CPU at a perfectly normal 46 degrees drew itself in the colour
-            this app uses for "look at this". A sensor list states a reading;
-            it does not rank it. --s1 is the single-series default (Sparkline),
-            which is what each row here is. */}
-        {temperatureSeries.length > 0 && (
-          <Panel label="Temperature" title="Temperature">
-            <SensorList
-              res={sensorMetrics}
-              rows={temperatureSeries}
-              range={range}
-              fetchFamily={fetchFamily}
-              color="var(--s1)"
-              trend="temperature"
-              empty="No temperature readings in this window."
-            />
-          </Panel>
-        )}
-      </>
-    ),
-    fans: (
-      <>
-        {fanSeries.length > 0 && (
-          <Panel label="Fans" title="Fans">
-            <SensorList
-              res={sensorMetrics}
-              rows={fanSeries}
-              range={range}
-              fetchFamily={fetchFamily}
-              color="var(--s3)"
-              trend="speed"
-              empty="No fan readings in this window."
-            />
-          </Panel>
-        )}
-      </>
-    ),
-    power: (
-      <>
-        {powerSeries.length > 0 && (
-          <Panel label="Power" title="Power">
-            <SensorList
-              res={sensorMetrics}
-              rows={powerSeries}
-              range={range}
-              fetchFamily={fetchFamily}
-              color="var(--s5)"
-              trend="reading"
-              empty="No power readings in this window."
-            />
-          </Panel>
-        )}
-      </>
-    ),
-  };
+  // Only the two families these two specs name. The Overview does not fetch
+  // the other seven and a spec that quietly read one would draw on a page
+  // that never asked for it -- see the note on `extra` in SpecPanel.
+  const sources = { host: hostMetrics, net: netMetrics ?? null };
 
   return (
     <>
@@ -1472,7 +567,6 @@ export function Overview({
           })}
         </section>
       )}
-
       {/* Out of the flow, like the attention band -- but not because it has to
           be read first. It is the machine's identity card, and it was asked
           for at the top right of the page. The columns cannot give it one:
@@ -1636,27 +730,104 @@ export function Overview({
         </details>
       </section>
 
-      {/* Placed, not poured. The cards used to flow into a CSS multi-column
-        box, which balanced them: which column a card landed in depended on
-        the heights of the cards above it and on which cards this host
-        happened to have, so the same card sat left on one machine and right
-        on the next, and a card appearing -- a host that gained sensors --
-        pushed everything after it across. CARD_COLUMNS states the placement
-        instead, and the reading order is the fleet table's -- traffic, CPU,
-        memory, disk -- so a reader arriving from a row finds the same
-        subjects in the same order.
+      {/* Placed on a grid, not poured into columns.
+        The cards used to flow into hand-assigned columns keyed off
+        matchMedia: which column a card landed in was a JS decision that had
+        to be kept in step with a CSS breakpoint, and the two disagreeing put
+        a card in a column nobody could see. A 12-track grid needs neither --
+        a card states its own span and the browser does the rest, and below
+        1100px every span collapses to the full width in CSS alone. */}
+      <div className="mosaic">
+        <TileCard
+          title="System metrics"
+          tiles={tiles.system}
+          span={systemSpan}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
+        <TileCard
+          title="Kernel"
+          tiles={tiles.kernel}
+          span={kernelSpan}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
+        <TileCard
+          title="Memory pressure"
+          tiles={tiles.pressure}
+          span={pressureSpan}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
+        <TileCard
+          title="Network"
+          tiles={tiles.network}
+          span={networkSpan}
+          hostId={host.id}
+          onOpenChart={onOpenChart}
+        />
 
-        The cost of columns that pack rather than align: they end at
-        different heights, which is the same trade the multi-column box
-        made. */}
-      <div className="cardcols">
-        {CARD_COLUMNS[columns].map((column, i) => (
-          <div className="cardcol" key={i}>
-            {column.map((key) => (
-              <Fragment key={key}>{cards[key]}</Fragment>
-            ))}
-          </div>
-        ))}
+        {/* Traffic on the left, under the Network tiles it belongs to, and
+          the load average on the right under the kernel ones. The reading
+          order of the row above is the reading order of this one.
+
+          "Traffic" and "Load averages", not "Network load" and "System
+          load": those are the titles the Network and System tabs draw these
+          same two specs under, and one chart with two names is how a reader
+          comes to think they are looking at two things. */}
+        <div className="mo" style={{ gridColumn: "span 6" }}>
+          <SpecPanel
+            spec={TRAFFIC_SPEC}
+            sources={sources}
+            range={range}
+            fetchFamily={fetchFamily}
+          />
+        </div>
+        <div className="mo" style={{ gridColumn: "span 6" }}>
+          <SpecPanel
+            spec={LOAD_SPEC}
+            sources={sources}
+            range={range}
+            fetchFamily={fetchFamily}
+          />
+        </div>
+
+        {/* The one meter left on this page, and it stays a meter: a
+          filesystem is a bounded quantity with a fill line, which is the one
+          shape a bar says better than a figure. Every other reading here is
+          a rate or a level and is a tile. */}
+        <div className="mo" style={{ gridColumn: "span 12" }}>
+          <Panel label="Disk" title="Disk">
+            {filesystems.length === 0 ? (
+              <p className="note">No filesystem samples in this window.</p>
+            ) : (
+              <div className="fs-list">
+                {filesystems.map((fs) => (
+                  <Meter
+                    key={fs.label}
+                    label={fs.label}
+                    // df's Use%: used / (used + free), never used / total. total
+                    // includes the root reserve, which is neither in use nor
+                    // allocatable, so dividing by it reports a full disk as less
+                    // full than df does -- and df's number is the one the
+                    // operator has already seen over SSH. Same definition the
+                    // fleet's disk column uses, so the two cannot disagree about
+                    // one filesystem.
+                    value={fs.used}
+                    max={
+                      fs.used === null || fs.free === null
+                        ? null
+                        : fs.used + fs.free
+                    }
+                    formatValue={() =>
+                      `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </Panel>
+        </div>
       </div>
     </>
   );

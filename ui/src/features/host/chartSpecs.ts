@@ -402,7 +402,11 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "CPU",
     slug: "host-cpu",
-    unit: "%",
+    // No unit prop: fmt below already writes the percent sign, and
+    // ChartPanel prints `unit` whenever it is given, formatter or not (see
+    // the note there). The two together rendered "core 0 4.5% %" in the
+    // legend and the stats table -- the exact failure that note describes,
+    // in the one spec that still carried both.
     source: "cpuCore",
     bases: [{ base: "busy", label: "busy" }],
     bands: (res) => perCoreBands(res, { normalise: true }),

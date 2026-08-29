@@ -3,7 +3,8 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
-import { Overview, filesystemRows, needsAttention } from "./Overview";
+import { Overview, needsAttention } from "./Overview";
+import { filesystemRows } from "./overviewTiles";
 import { DISK_WARN_PCT, DISK_CRIT_PCT } from "../../fleet/conditions";
 import { STALE_THRESHOLD_MS } from "../../../lib/host";
 
@@ -141,23 +142,6 @@ function agentMetrics(dropped: number) {
   });
 }
 
-// family=cpu_core: one series per logical CPU, each reporting `busy`. Four
-// nearly idle cores, which is the shape the fixed axis exists for.
-function coreMetrics() {
-  return response({
-    family: "cpu_core",
-    key_columns: ["core"],
-    columns: ["busy"],
-    series: ["0", "1", "2", "3"].map((core) => ({
-      key: { core },
-      points: [
-        ["2026-08-10T00:59:00Z", 5],
-        ["2026-08-10T01:00:00Z", 6],
-      ] as [string, number][],
-    })),
-  });
-}
-
 function renderOverview(over: Partial<Parameters<typeof Overview>[0]> = {}) {
   return render(
     <Overview
@@ -165,8 +149,6 @@ function renderOverview(over: Partial<Parameters<typeof Overview>[0]> = {}) {
       hostMetrics={hostMetrics(null, null)}
       filesystemMetrics={fsMetrics}
       agentMetrics={agentMetrics(0)}
-      sensorMetrics={null}
-      containers={[]}
       units={[]}
       now={new Date("2026-08-10T01:00:30Z")}
       {...over}
@@ -427,19 +409,6 @@ describe("Overview System summary", () => {
 });
 
 describe("Overview", () => {
-  it("renders an absent swap as none, never as 0", () => {
-    renderOverview();
-    const memory = screen.getByRole("region", { name: "Memory" });
-    expect(within(memory).getByText(/none/i)).toBeInTheDocument();
-    expect(within(memory).queryByText(/\b0 B\b/)).toBeNull();
-  });
-
-  it("distinguishes swap that exists and is unused from swap that does not exist", () => {
-    renderOverview({ hostMetrics: hostMetrics(2_000_000_000, 0) });
-    const memory = screen.getByRole("region", { name: "Memory" });
-    expect(within(memory).queryByText(/none/i)).toBeNull();
-  });
-
   it("shows disk as absolute bytes per filesystem, never as a ratio", () => {
     renderOverview();
     const disk = screen.getByRole("region", { name: /disk/i });
@@ -458,13 +427,12 @@ describe("Overview", () => {
   // The band is the first thing on the tab and spans the page, so a healthy
   // host must not spend that position on a box saying nothing. One quiet line
   // confirms the check ran instead -- the same rule the fleet band follows.
-  // A card inside .cardcols only ever reaches the top of ONE column, at a
-  // third or a half of the page's width. The band has to be outside the
-  // columns altogether to span the page and be read first.
-  it("puts the band above the card grid, not inside it", () => {
+  // A card inside the mosaic is at most half the page wide. The band has to
+  // be outside the grid altogether to span the page and be read first.
+  it("puts the band above the mosaic, not inside it", () => {
     const { container } = renderOverview({ agentMetrics: agentMetrics(12) });
     const band = screen.getByRole("region", { name: /needs attention/i });
-    const grid = container.querySelector(".cardcols");
+    const grid = container.querySelector(".mosaic");
     expect(grid).not.toBeNull();
     expect(grid?.contains(band)).toBe(false);
     expect(
@@ -475,10 +443,10 @@ describe("Overview", () => {
   // The System card is lifted out for a different reason: it is a strip of
   // eight facts about the machine rather than a reading, and full width above
   // the columns is where it can be laid out four across.
-  it("puts the System card above the card grid, not inside it", () => {
+  it("puts the System card above the mosaic, not inside it", () => {
     const { container } = renderOverview();
     const system = screen.getByRole("region", { name: "System" });
-    const grid = container.querySelector(".cardcols");
+    const grid = container.querySelector(".mosaic");
     expect(grid).not.toBeNull();
     expect(grid?.contains(system)).toBe(false);
     expect(
@@ -578,286 +546,12 @@ describe("Overview", () => {
     expect(processor.getAttribute("title")).toBe(processor.textContent);
   });
 
-  // Traffic heads the first column, as it heads the fleet table's charts.
-  it("leads the card grid with Traffic", () => {
-    const { container } = renderOverview();
-    const first = container.querySelector(".cardcol")?.firstElementChild;
-    expect(first?.getAttribute("aria-label")).toBe("Traffic");
-  });
-
-  // The whole point of CARD_COLUMNS: a card sits where the table says, not
-  // where a balancer put it. jsdom answers no media query, so the page lays
-  // itself out in the single column, which is also the one arrangement whose
-  // order a test can read straight off the DOM.
-  it("places the cards in fleet order, one column, whatever the host carries", () => {
-    const { container } = renderOverview();
-    const columns = container.querySelectorAll(".cardcol");
-    expect(columns.length).toBe(1);
-
-    const titles = [...columns[0]!.children].map(
-      (card) =>
-        card.getAttribute("aria-label") ??
-        card.querySelector("h3, h4")?.textContent,
-    );
-    // Traffic, CPU, memory, disk -- the fleet row's own order -- and the
-    // cards this fixture's host has nothing to draw simply are not here.
-    expect(titles.slice(0, 5)).toEqual([
-      "Traffic",
-      "Processor",
-      "Memory",
-      // No memory series in this fixture, so the trend card states that --
-      // it is still the card in that slot.
-      "Memory, not collected",
-      "Disk",
-    ]);
-  });
-
-  // The complaint this replaced: an idle host filled the box exactly as a
-  // busy one did, because the per-core stack auto-scaled to its own peak with
-  // its axis hidden. The panel is a percentage of the host now, pinned 0-100
-  // like the fleet cell and the System tab's CPU panel.
-  it("draws the Processor panel against a fixed 0-100 axis", () => {
-    renderOverview({ coreMetrics: coreMetrics() });
-    const panel = screen.getByRole("region", { name: "Processor chart" });
-    const labels = [...panel.querySelectorAll("text.axislab")].map(
-      (t) => t.textContent,
-    );
-
-    expect(labels).toContain("0%");
-    expect(labels).toContain("100%");
-  });
-
   it("says nothing at all when nothing is wrong", () => {
     renderOverview();
     expect(
       screen.queryByRole("region", { name: /needs attention/i }),
     ).toBeNull();
     expect(screen.queryByText(/needs attention/i)).toBeNull();
-  });
-
-  it("summarises the tabs instead of duplicating them", () => {
-    renderOverview({
-      containers: [
-        {
-          id: 1,
-          container_key: "proj/web",
-          name: "web",
-          image: "nginx",
-          is_agent: false,
-          last_seen: "2026-08-10T14:00:00Z",
-        },
-        {
-          id: 2,
-          container_key: "proj/db",
-          name: "db",
-          image: "pg",
-          is_agent: false,
-          last_seen: "2026-08-10T14:00:00Z",
-        },
-      ],
-      units: [
-        {
-          id: 1,
-          unit_name: "ssh.service",
-          state: "active",
-          substate: "running",
-          since: null,
-          restarts_1h: 0,
-        },
-        {
-          id: 2,
-          unit_name: "cron.service",
-          state: "failed",
-          substate: "dead",
-          since: null,
-          restarts_1h: 0,
-        },
-      ],
-    });
-    // A count and a link, not the inventory itself.
-    expect(screen.getByText("2 containers")).toBeInTheDocument();
-    expect(screen.queryByText("nginx")).toBeNull();
-    // The host's OWN service counts, not the length of `units`. The units
-    // endpoint returns only what needs attention -- two rows here -- so
-    // counting it would report "2 units" for a host running 397.
-    expect(screen.getByText("397 units \u00b7 1 failed")).toBeInTheDocument();
-  });
-
-  it("reads the sensor family's temp column", () => {
-    renderOverview({
-      sensorMetrics: response({
-        family: "sensor",
-        // The window has to contain the point. Every sensor row now reads
-        // its number off the SAME gridded array its sparkline draws, so a
-        // fixture whose sample sits outside its own window grids to all
-        // null and the row correctly reads absent -- which is what these
-        // fixtures used to hide by taking the number from the ungridded
-        // series while the sparkline beside it drew nothing.
-        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:05:00Z" },
-        requested_window: {
-          from: "2025-08-10T00:00:00Z",
-          to: "2025-08-10T00:05:00Z",
-        },
-        key_columns: ["chip", "label"],
-        columns: ["temp"],
-        series: [
-          {
-            key: { chip: "coretemp", label: "Package id 0" },
-            points: [[1_754_784_000_000, 47.5]],
-          },
-        ],
-      }),
-    });
-    const temperature = screen.getByRole("region", { name: /temperature/i });
-    expect(
-      within(temperature).getByText("coretemp Package id 0"),
-    ).toBeInTheDocument();
-    expect(within(temperature).getByText("48 °C")).toBeInTheDocument();
-  });
-
-  // The sensor family carries fans, voltages, currents and power now, and
-  // only temperatures have a temp column. Mapping the whole family would fill
-  // a panel headed "Temperature" with rows reading "nct6775 fan1 —", burying
-  // the readings it exists to show under ones it cannot render.
-  it("shows only temperature sensors, not the fans and rails beside them", () => {
-    renderOverview({
-      sensorMetrics: response({
-        family: "sensor",
-        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:05:00Z" },
-        requested_window: {
-          from: "2025-08-10T00:00:00Z",
-          to: "2025-08-10T00:05:00Z",
-        },
-        key_columns: ["chip", "label", "kind"],
-        columns: ["temp", "value"],
-        series: [
-          {
-            key: { chip: "nct6775", label: "CPU", kind: "temperature" },
-            points: [[1_754_784_000_000, 45, 45]],
-          },
-          {
-            // temp is null: a fan has no temperature.
-            key: { chip: "nct6775", label: "CPU Fan", kind: "fan" },
-            points: [[1_754_784_000_000, null, 1200]],
-          },
-          {
-            key: { chip: "nct6775", label: "+12V", kind: "voltage" },
-            points: [[1_754_784_000_000, null, 12.1]],
-          },
-        ],
-      }),
-    });
-
-    const temperature = screen.getByRole("region", { name: /temperature/i });
-    expect(within(temperature).getByText("nct6775 CPU")).toBeInTheDocument();
-    expect(within(temperature).getByText("45 °C")).toBeInTheDocument();
-    // The non-temperature series must not appear in THIS panel -- an empty
-    // row is worse than an absent one, because it reads as a broken sensor.
-    expect(within(temperature).queryByText("nct6775 CPU Fan")).toBeNull();
-    expect(within(temperature).queryByText("nct6775 +12V")).toBeNull();
-
-    // They are not discarded, though: each kind gets its own card, in its
-    // own unit, on its own scale. Putting a 1200 RPM fan on the same axis as
-    // a 45 °C package is the reason they are separated rather than merged.
-    const fans = screen.getByRole("region", { name: "Fans" });
-    expect(within(fans).getByText("nct6775 CPU Fan")).toBeInTheDocument();
-    expect(within(fans).getByText("1200 RPM")).toBeInTheDocument();
-
-    const power = screen.getByRole("region", { name: "Power" });
-    expect(within(power).getByText("nct6775 +12V")).toBeInTheDocument();
-    expect(within(power).getByText("12.10 V")).toBeInTheDocument();
-  });
-
-  // A host with no fans -- every VM, every cloud instance -- must not carry
-  // an empty "Fans" card. A card that is blank on most of the fleet teaches
-  // people to stop reading this column.
-  it("omits the fan and power cards on a host that reports neither", () => {
-    renderOverview({
-      sensorMetrics: response({
-        family: "sensor",
-        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:05:00Z" },
-        requested_window: {
-          from: "2025-08-10T00:00:00Z",
-          to: "2025-08-10T00:05:00Z",
-        },
-        key_columns: ["chip", "label", "kind"],
-        columns: ["temp", "value"],
-        series: [
-          {
-            key: {
-              chip: "coretemp",
-              label: "Package id 0",
-              kind: "temperature",
-            },
-            points: [[1_754_784_000_000, 45, 45]],
-          },
-        ],
-      }),
-    });
-
-    expect(
-      screen.getByRole("region", { name: /temperature/i }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("region", { name: "Fans" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Power" })).toBeNull();
-  });
-
-  // The same rule for the third sensor card. A VPS has no hwmon at all, and
-  // the Temperature card was the one that stayed -- a heading over the words
-  // "No temperature readings in this window" on every cloud instance in the
-  // fleet.
-  it("omits the temperature card on a host that reports no temperatures", () => {
-    renderOverview({
-      sensorMetrics: response({
-        family: "sensor",
-        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:05:00Z" },
-        requested_window: {
-          from: "2025-08-10T00:00:00Z",
-          to: "2025-08-10T00:05:00Z",
-        },
-        key_columns: ["chip", "label", "kind"],
-        columns: ["temp", "value"],
-        series: [],
-      }),
-    });
-
-    expect(screen.queryByRole("region", { name: /temperature/i })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Fans" })).toBeNull();
-    expect(screen.queryByRole("region", { name: "Power" })).toBeNull();
-  });
-
-  // A fan's failure is its minimum. Averaged across a five-minute bucket a
-  // stall is invisible -- the mean of a stopped fan and a spin-up is a
-  // perfectly healthy number -- so the fan row must read value_min at the
-  // rolled tiers, and must not fall back to the _avg that candidates()
-  // prefers.
-  it("reads a fan from value_min, not the average that hides a stall", () => {
-    renderOverview({
-      sensorMetrics: response({
-        family: "sensor",
-        tier: "5m",
-        step_s: 300,
-        window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:10:00Z" },
-        requested_window: {
-          from: "2025-08-10T00:00:00Z",
-          to: "2025-08-10T00:10:00Z",
-        },
-        key_columns: ["chip", "label", "kind"],
-        columns: ["value_avg", "value_max", "value_min"],
-        series: [
-          {
-            key: { chip: "nct6775", label: "fan2", kind: "fan" },
-            // A bucket the fan spent partly stopped: the average and the
-            // maximum both look fine, and only the minimum says so.
-            points: [[1_754_784_300_000, 1180, 1400, 0]],
-          },
-        ],
-      }),
-    });
-
-    const fans = screen.getByRole("region", { name: "Fans" });
-    expect(within(fans).getByText("0 RPM")).toBeInTheDocument();
-    expect(within(fans).queryByText("1180 RPM")).toBeNull();
   });
 });
 
@@ -1015,64 +709,34 @@ describe("filesystemRows", () => {
   });
 });
 
-describe("Overview processor panel", () => {
-  // The rollup tiers carry cpu_total and not the four per-state columns, so
-  // above an hour this -- the headline chart on the page -- had nothing to
-  // draw and rendered as not-collected, while the fleet row for the same
-  // host drew a silhouette from the total. The two must not disagree about
-  // whether a host's CPU can be drawn.
-  it("draws the total as one band when the tier has no per-state breakdown", () => {
-    render(
-      <Overview
-        host={host}
-        filesystemMetrics={null}
-        agentMetrics={null}
-        sensorMetrics={null}
-        containers={null}
-        units={null}
-        hostMetrics={response({
-          family: "host",
-          tier: "5m",
-          columns: ["cpu_total_avg"],
-          series: [
-            {
-              key: {},
-              points: [
-                [1_754_784_000_000, 30],
-                [1_754_784_300_000, 35],
-              ],
-            },
-          ],
-        })}
-      />,
-    );
-
-    // Scoped to the Processor panel: the page carries other panels now, and
-    // at this tier some of them legitimately say "Not collected". The claim
-    // here is about THIS chart falling back to a total band.
-    const panel = screen.getByRole("region", { name: "Processor chart" });
-    expect(panel).toBeInTheDocument();
-    expect(within(panel).queryByText("Not collected")).toBeNull();
-  });
-
-  // net_rx and net_tx are BYTES per second: network.go computes them as
-  // (rxBytes - prev) / elapsed. Rendered through bitrate() the card read 8x
-  // low and entirely plausible -- a 2 MB/s link showed as "2 Mb/s" -- and
-  // the fleet's traffic cell carried the identical bug, so nothing on screen
-  // contradicted it.
-  // The card's chart is the SUMMED in/out pair, and it enlarges into the
-  // dialog like every other chart in the app. It briefly navigated to a page
-  // of its own instead; there are no chart pages any more.
+// The Traffic card became two tiles and a spec panel. The rules these
+// assertions carry did not change with the shape: the figures are
+// host_current's gauges, blanked when the host stops reporting, and they are
+// bytes per second, never bits.
+describe("Overview network tiles", () => {
   it("enlarges the traffic chart into the dialog", async () => {
     renderOverview({ netMetrics });
-    const traffic = screen.getByRole("region", { name: "Traffic" });
+    // The chart, not the tiles: the Traffic panel is the host-traffic spec,
+    // drawn here exactly as the Network tab draws it.
+    const traffic = screen.getByRole("region", { name: "Traffic chart" });
 
     await userEvent.click(
       within(traffic).getByRole("button", { name: /Enlarge/ }),
     );
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(within(traffic).queryByRole("link", { name: /Traffic/ })).toBeNull();
+  });
+
+  // Each tile is a link to the panel that draws the same column in full,
+  // through /hosts/{id}/chart/<slug> -- the URL the router already resolves
+  // to whichever tab owns that panel.
+  it("links a tile to the panel that draws its column", () => {
+    renderOverview({ netMetrics });
+    const network = screen.getByRole("region", { name: "Network" });
+
+    expect(
+      within(network).getByRole("link", { name: /Traffic in/ }),
+    ).toHaveAttribute("href", "/hosts/7/chart/host-traffic");
   });
 
   it("shows traffic in bytes per second, not bits", () => {
@@ -1080,7 +744,7 @@ describe("Overview processor panel", () => {
       netMetrics,
       host: { ...host, net_rx_bytes: 2_000_000, net_tx_bytes: 500_000 },
     });
-    const traffic = screen.getByRole("region", { name: "Traffic" });
+    const traffic = screen.getByRole("region", { name: "Network" });
 
     expect(within(traffic).getByText(/2 MB\/s/)).toBeInTheDocument();
     expect(within(traffic).getByText(/500 kB\/s/)).toBeInTheDocument();
@@ -1115,7 +779,7 @@ describe("Overview processor panel", () => {
       netMetrics: stale,
       host: { ...host, net_rx_bytes: null, net_tx_bytes: null },
     });
-    const traffic = screen.getByRole("region", { name: "Traffic" });
+    const traffic = screen.getByRole("region", { name: "Network" });
 
     expect(traffic.textContent).not.toMatch(/MB\/s/);
     expect(
@@ -1132,7 +796,7 @@ describe("Overview processor panel", () => {
       netMetrics,
       host: { ...host, net_rx_bytes: 9_000_000, net_tx_bytes: 9_000_000 },
     });
-    const traffic = screen.getByRole("region", { name: "Traffic" });
+    const traffic = screen.getByRole("region", { name: "Network" });
 
     expect(within(traffic).getAllByText(/9 MB\/s/).length).toBe(2);
   });
@@ -1151,7 +815,7 @@ describe("Overview processor panel", () => {
         net_tx_bytes: 9_000_000,
       },
     });
-    const traffic = screen.getByRole("region", { name: "Traffic" });
+    const traffic = screen.getByRole("region", { name: "Network" });
 
     expect(traffic.textContent).not.toMatch(/MB\/s/);
     expect(
