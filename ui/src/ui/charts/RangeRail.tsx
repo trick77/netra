@@ -104,7 +104,18 @@ export function RangeRail({
                 />
               ) : (
                 <span className="n">
-                  {entry?.error ? "failed" : entry?.loading ? "…" : "no data"}
+                  {/* "no data" only for a request that actually came back
+                      with none. A tile with no entry AT ALL is one the
+                      opening burst has not reached yet -- entries is {} for
+                      the dialog's first paint, because the effect that fires
+                      the requests runs after it -- and saying "no data"
+                      there claims the host reported nothing over a window
+                      nobody has asked about. */}
+                  {entry?.error
+                    ? "failed"
+                    : entry && !entry.loading
+                      ? "no data"
+                      : "…"}
                 </span>
               )}
             </span>

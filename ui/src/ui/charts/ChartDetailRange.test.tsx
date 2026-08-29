@@ -296,6 +296,32 @@ describe("the enlarged view owns its range", () => {
     await waitFor(() => expect(fetchSeries).toHaveBeenCalledWith("1h"));
   });
 
+  // And DRAWS what it fetched. The figure normally defers to the page's own
+  // series at the page's range, which is right while the page has them; with
+  // the page still empty that deference left the enlarged chart as a bare
+  // axis spine beside a rail tile for the SAME window drawing the series.
+  it("draws the page's own range once it arrives, not an empty chart", async () => {
+    const fetchSeries = vi
+      .fn()
+      .mockResolvedValue({ series: wider, window: null });
+
+    render(
+      <ChartPanel
+        title="CPU"
+        series={[]}
+        range="1h"
+        ranges={["1h", "6h"]}
+        fetchSeries={fetchSeries}
+      />,
+    );
+    await open();
+
+    // The enlarged figure, not the rail: the tile drew all along.
+    const marks = () =>
+      dialog().querySelectorAll(".cd-fig svg [data-series] path").length;
+    await waitFor(() => expect(marks()).toBeGreaterThan(0));
+  });
+
   // Tiles that cannot change anything, and have nothing to draw, are worse
   // than no tiles.
   it("carries no rail at all without a fetcher", async () => {

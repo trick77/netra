@@ -209,14 +209,25 @@ export function useDetailRange(
     [load],
   );
 
+  // Whether the figure should defer to the page's own series rather than to
+  // this hook's. It normally should: at the page's range the data behind the
+  // dialog IS the answer, and it keeps polling while the dialog is open.
+  //
+  // Not when the page has nothing yet. That window is then fetched by the
+  // burst above like any other, and returning null for it would leave the
+  // enlarged figure drawing an empty chart -- the bare axis spine -- beside
+  // a rail tile for the SAME window that has just drawn the series. It flips
+  // back to the page's data as soon as the page's own first fetch lands.
+  const deferToPage = range === pageRange && (pageData?.series.length ?? 0) > 0;
+
   return {
     range,
     // No picker without a fetcher: tiles that cannot change anything, and
     // have nothing to draw, are worse than no tiles.
     setRange: fetchSeries === undefined ? undefined : pick,
     entries,
-    series: range === pageRange ? null : (shown?.data?.series ?? null),
-    window: range === pageRange ? null : (shown?.data?.window ?? null),
+    series: deferToPage ? null : (shown?.data?.series ?? null),
+    window: deferToPage ? null : (shown?.data?.window ?? null),
     loading: shown?.loading ?? false,
     error: shown?.error ?? null,
   };
