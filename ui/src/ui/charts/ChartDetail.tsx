@@ -291,16 +291,22 @@ export function peak(
     );
   }
   if (stacked) {
+    // The BAND where every layer has one, exactly as the unstacked branch
+    // below takes it: the summed envelope is the outer edge MirrorStackMarks
+    // draws, always taller than the stack inside it, so a ceiling read off
+    // the means alone would put it outside the plot.
+    const banded = series.every((s) => s.band && s.band.length > 0);
+    const rowOf = (s: OverlaySeries) => (banded ? s.band! : s.values);
     const n = series.reduce(
-      (longest, s) => Math.max(longest, s.values.length),
+      (longest, s) => Math.max(longest, rowOf(s).length),
       0,
     );
     for (let i = 0; i < n; i++) {
       // Skipping any index where a series is null, exactly as stackBands
       // does: a running total is undefined there rather than smaller.
-      if (series.some((s) => s.values[i] == null)) continue;
+      if (series.some((s) => rowOf(s)[i] == null)) continue;
       let sum = 0;
-      for (const s of series) sum += s.values[i] as number;
+      for (const s of series) sum += rowOf(s)[i] as number;
       if (sum > max) max = sum;
     }
   } else {

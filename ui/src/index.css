@@ -306,12 +306,33 @@
   --out-2: #aeafe6;
   --out-3: #c7c8ee;
   --out-4: #e0e0f6;
-  /* The per-core sweep computes its own hues -- there is no fixed set of
-     steps to name when the ramp has to subdivide to fit the host -- but
-     saturation and lightness stay here so the ramp still follows the theme
-     instead of being frozen in a .ts file. */
-  --chart-saturation: 62%;
-  --chart-lightness: 58%;
+  /* THE PER-CORE CPU STACK, built the way --in-* and --out-* are built: one
+     hue, four lightness steps, walked and wrapped.
+
+     It was a computed full-spectrum hue sweep -- violet through blue, teal,
+     green and yellow to red, subdivided to fit the host -- on the argument
+     that hue is the only channel with the range to separate thirty-two
+     neighbours. It does separate them, and it made the CPU cell the one
+     chart in the fleet table that looks like a different product: every
+     other stack on the row is one family in shades, and a rainbow beside
+     them reads as a category, which core index is not.
+
+     The walk is what the traffic stack already does for a host's interfaces,
+     and it is NOT the monotonic one-hue ramp that was tried and failed here:
+     a ramp across thirty-two bands puts neighbours 0.047 apart in L, where a
+     four-step walk that wraps holds every adjacent pair a full step apart
+     however many cores there are. What it gives up is identity across the
+     whole stack -- with the sweep, colour told core 3 from core 19; with the
+     walk it only tells a band from its neighbour, and the key in the tooltip
+     names the core.
+
+     --cpu-1 IS --s1, the colour a one-core host's cpu_total silhouette is
+     already drawn in (totalCpuBand in tabs/Overview.tsx), so the two draw the
+     same chart. */
+  --cpu-1: #3987e5;
+  --cpu-2: #65a2eb;
+  --cpu-3: #91bcf1;
+  --cpu-4: #bdd7f6;
 
   /* drawer shadow. */
   --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
@@ -2521,11 +2542,19 @@ details.sysfold > .body {
   border-radius: 2px;
   flex: none;
 }
-/* The cursor column appears only while the pointer is over the plot, so it
-   is marked as the live reading rather than another statistic. */
+/* The cursor column is always drawn and reads absent until a bucket is
+   hovered, so it is marked as the live reading rather than another statistic.
+
+   The min-width is the other half of drawing it at all times. Without it the
+   header still grows from "At -" to "At Wed 14:35" as the pointer enters the
+   plot, auto table layout re-measures, and every figure in the table slides
+   sideways -- which is the thing the always-drawn column exists to stop.
+   Sized for the widest label timeLabel() produces (ticks.ts: weekday plus
+   clock), so no window makes the column grow. */
 .cd-stats td.cursor,
 .cd-stats th.cursor {
   color: var(--accent);
+  min-width: 8rem;
 }
 .cd-stats td.cursor {
   font-weight: 600;

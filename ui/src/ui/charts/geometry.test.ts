@@ -332,6 +332,53 @@ describe("geometry", () => {
       expect(down.startsWith("M")).toBe(true);
     });
 
+    it("keeps a lone reading's sliver inside the plot at either end", () => {
+      // A polyline needs two points, so a run of one is drawn as a sliver
+      // over its own column -- and scaleX puts index 0 at `pad` and the last
+      // index at `w - pad`, so a sliver centred on either would hang half
+      // outside the box. The host this branch exists for is exactly the one
+      // that reported in a single bucket, which is usually the newest.
+      const xs = (d: string) =>
+        [...d.matchAll(/[ML](-?\d+\.?\d*),/g)].map((m) => parseFloat(m[1]!));
+
+      const first = mirrorPaths([500, null, null], [], 100, 32, 500, 2);
+      const last = mirrorPaths([null, null, 500], [], 100, 32, 500, 2);
+
+      for (const d of [first.up, last.up]) {
+        const at = xs(d);
+        expect(Math.min(...at)).toBeGreaterThanOrEqual(2);
+        expect(Math.max(...at)).toBeLessThanOrEqual(98);
+        // Full width either way -- slid inside, not clipped down. One
+        // reading's share of the plot is w/n, a third of 100 here.
+        expect(Math.max(...at) - Math.min(...at)).toBeCloseTo(100 / 3, 1);
+      }
+    });
+
+    it("does not let a two-bucket window's lone reading fill the plot", () => {
+      // scaleX's spacing is the whole plot at n = 2, so a sliver measured on
+      // it said a host that reported once had reported all window.
+      const { up } = mirrorPaths([500, null], [], 100, 32, 500, 2);
+      const xs = [...up.matchAll(/[ML](-?\d+\.?\d*),/g)].map((m) =>
+        parseFloat(m[1]!),
+      );
+      expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(50, 1);
+    });
+
+    it("draws one point per reading, not a column per reading", () => {
+      // The mark is a polyline through the readings, not a staircase of
+      // flat-topped columns. A column needs two points at the same height to
+      // draw its top edge, so a staircase over three readings carries six
+      // x positions and a run of them reads as a row of towers; the polyline
+      // carries three and tapers to a point at each one.
+      const { up } = mirrorPaths([1, 5, 1], [], 90, 20, 5, 0);
+      const xs = [...up.matchAll(/[ML](-?\d+\.?\d*),/g)].map((m) =>
+        parseFloat(m[1]!),
+      );
+      // Three readings, plus the two closers back down to the zero line,
+      // which repeat the first and last x.
+      expect(xs).toEqual([0, 0, 45, 90, 90]);
+    });
+
     it("places the midline at half the chart height", () => {
       const { mid } = mirrorPaths([1, 1], [1, 1], 100, 40, 10);
       expect(mid).toBe(20);
@@ -508,6 +555,64 @@ describe("geometry", () => {
   });
 
   describe("mirrorStackBands", () => {
+    // ONE outer edge for the half, summed, and never one per layer: two
+    // interfaces burst in different seconds of a bucket, so a per-layer
+    // envelope states a per-interface throughput no bucket carried. The
+    // summed edge is the same number the fleet cell's own envelope is, which
+    // is what makes the panel and the cell one chart at two sizes.
+    it("draws one summed envelope per half, not one per layer", () => {
+      const out = mirrorStackBands(
+        [
+          [10, 10],
+          [20, 20],
+        ],
+        [[5, 5]],
+        100,
+        40,
+        0,
+        {
+          up: [
+            [40, 40],
+            [60, 60],
+          ],
+          down: [[30, 30]],
+        },
+      );
+
+      expect(out.envelope.up).not.toBe("");
+      expect(out.envelope.down).not.toBe("");
+      // Two layers up, and still exactly one envelope path for that half.
+      expect(out.up).toHaveLength(2);
+    });
+
+    // The envelope contains the stack, so the ceiling has to be its own or
+    // the outer edge is drawn outside the box.
+    it("scales the half by the envelope, not by the stack inside it", () => {
+      const ys = (d: string) =>
+        [...d.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
+          parseFloat(m[1]!),
+        );
+      const out = mirrorStackBands([[10, 10]], [[10, 10]], 100, 40, 0, {
+        up: [[100, 100]],
+        down: [[100, 100]],
+      });
+
+      const top = Math.min(...ys(out.envelope.up));
+      const stackTop = Math.min(...ys(out.up[0]!));
+      // The envelope reaches the edge; the stack inside it sits a tenth of
+      // the way up, which is the ratio of the two readings.
+      expect(top).toBeGreaterThanOrEqual(0);
+      expect(top).toBeLessThan(1);
+      expect(stackTop).toBeGreaterThan(out.mid - out.mid / 5);
+    });
+
+    // A half whose layers do not all carry a peak has no honest total to
+    // draw, so it draws none rather than adding means to maxima.
+    it("draws no envelope for a half with no peaks", () => {
+      const out = mirrorStackBands([[10, 10]], [[5, 5]], 100, 40, 0);
+      expect(out.envelope).toEqual({ up: "", down: "" });
+    });
+
     // Every case below reads y off the path text. A band is
     // "M x,y Lx,y ... Lx,y Z", so the first coordinate pair of the TOP edge
     // is what says how tall the layer's running total is.

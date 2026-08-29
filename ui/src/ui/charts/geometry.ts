@@ -562,65 +562,88 @@ export function mirrorPaths(
     room: direction === -1 ? zero : h - zero,
   });
 
-  // Columns TILED across the full width, edge to edge, rather than centred on
-  // scaleX's positions.
+  // A single column's width, for the one case a polyline cannot draw: a run
+  // of one reading, which has no neighbour to slope towards. That run gets a
+  // sliver over its own column instead of vanishing.
   //
-  // scaleX insets by `pad` at both ends, so 150 readings in a 150px cell get
-  // 146px of span and every bar straddles two pixel columns -- a smear at
-  // partial alpha instead of a mark. Tiled, a fold to the plot's own width
-  // lands each bar on an exact pixel boundary, which is what lets it be
-  // saturated rather than grey.
-  //
-  // The cost is that a bar's centre is up to half a column from where the
-  // crosshair puts its dot. Half a column is half a pixel on a fleet cell,
-  // and on a chart wide enough for that to be visible the bars are wide
-  // enough that the dot still lands inside its own bar.
+  // One reading's SHARE of the plot, w/n. scaleX's own spacing --
+  // (w-2*pad)/(n-1) -- is the other candidate and is n/(n-1) too wide: on a
+  // two-bucket window it spans the entire plot, so a host that reported once
+  // and then went quiet drew a sliver claiming it had reported all window.
+  // The two converge above about twenty-five buckets, which is every window
+  // a chart is actually drawn over.
   const columnWidth = n > 0 ? w / n : w;
 
   const build = (vals: (number | null)[], direction: 1 | -1): string => {
     const { ceiling, usable, room } = scaleOf(direction);
-    // A run of ONE is a run. The polyline this used to draw needed two points
-    // to be a line and a lone reading between two holes was dropped; a bar is
-    // a rectangle over its own column and draws perfectly well alone. A host
-    // that reported in a single column of the window -- one bucket surviving
+    // A run of ONE is a run. A polyline needs two points to be a line, and a
+    // lone reading between two holes used to be dropped: a host that reported
+    // in a single column of the window -- one bucket surviving
     // reduceToColumns' fold, the rest of the day silent -- drew an empty cell
-    // that said it had reported nothing at all.
+    // that said it had reported nothing at all. Such a run is drawn as a
+    // one-column sliver below rather than skipped.
     const runs = splitRuns(vals.length, (i) => vals[i] === null);
+
+    // Where a reading sits: x from scaleX, so the mark lands under the
+    // crosshair's dot and on the same grid every other mark in this file
+    // uses; y measured from the zero line, clamped to the room that half has.
+    const at = (i: number): { x: number; y: number } => {
+      const v = vals[i] as number;
+      const t = ceiling === 0 ? 0 : v / ceiling;
+      return {
+        x: scaleX(i, n, w, pad),
+        y: zero + direction * Math.min(barHeight(t * usable, v), room),
+      };
+    };
 
     return runs
       .map((run) => {
-        // One BAR per reading, midline to value, rather than a polyline
-        // through the readings with the area filled under it.
+        // A POLYLINE through the readings, closed to the zero line -- the
+        // same mark mirrorStackBands draws below, and the same mark the CPU
+        // cell draws through areaPath.
         //
-        // This is the whole difference between our sparkline and the RRDtool
-        // graph it is meant to look like, and it is not a small one. A
-        // polyline joins the top of each column to the top of its neighbours
-        // with a diagonal, so two adjacent buckets merge into one slope and a
-        // run of them reads as a single smooth mass. Per-column bars keep
-        // every bucket separate: the picket fence an operator can count. Same
-        // numbers, same size, same colours -- the readings are simply legible
-        // in one and not the other. rrd_graph.c draws AREA exactly this way.
+        // This was a column-per-reading staircase for one release, on the
+        // argument that separate bars are a picket fence an operator can
+        // count. What the staircase costs is the shape of a spike: a column
+        // is a flat-topped rectangle, so a busy stretch reads as a row of
+        // towers with a sawtooth edge, where a polyline rises across its
+        // neighbours and tapers to a point. The reference draws needles, the
+        // CPU cell beside it draws needles, and the per-interface panel this
+        // cell opens into already drew needles -- one mark, everywhere.
         //
-        // Measured the wrong way first: bars lay down about 7 % LESS ink than
-        // the polyline, and that was taken as evidence against them. Ink is
-        // not detail. Nobody was asking for more colour on the cell, they
-        // were asking to be able to tell one five-minute bucket from the
-        // next.
-        const edges: string[] = [];
-        for (const i of run) {
-          const v = vals[i] as number;
-          const t = ceiling === 0 ? 0 : v / ceiling;
-          const y = zero + direction * Math.min(barHeight(t * usable, v), room);
-          edges.push(
-            point(i * columnWidth, y),
-            point((i + 1) * columnWidth, y),
+        // The ceilings, the placed zero line and the sub-pixel heights all
+        // stay as the staircase left them: those are what fill the cell and
+        // let a spike taper, and none of them are properties of the mark.
+        if (run.length === 1) {
+          const { x, y } = at(run[0]!);
+          // Centred on the reading, then SLID inside the plot rather than
+          // clipped by it. scaleX puts index 0 at `pad` and index n-1 at
+          // `w - pad`, so a sliver centred on either lands half outside the
+          // box -- and the lone reading at the newest bucket is exactly the
+          // case this branch exists for. Slid, it keeps its full width and
+          // still touches the column it names.
+          const width = Math.min(columnWidth, Math.max(w - 2 * pad, 0));
+          const left = Math.min(
+            Math.max(x - width / 2, pad),
+            Math.max(w - pad - width, pad),
+          );
+          const right = left + width;
+          return (
+            `M${point(left, baseline)} ` +
+            `L${point(left, y)} ` +
+            `L${point(right, y)} ` +
+            `L${point(right, baseline)} Z`
           );
         }
-        const first = edges[0]!.split(",")[0];
-        const last = edges[edges.length - 1]!.split(",")[0];
+        const pts = run.map((i) => {
+          const { x, y } = at(i);
+          return point(x, y);
+        });
+        const first = pts[0]!.split(",")[0];
+        const last = pts[pts.length - 1]!.split(",")[0];
         return (
           `M${first},${baseline} ` +
-          edges.map((p) => `L${p}`).join(" ") +
+          pts.map((q) => `L${q}`).join(" ") +
           ` L${last},${baseline} Z`
         );
       })
@@ -656,6 +679,20 @@ export function mirrorPaths(
  *
  * Values above `max` are left to overflow, matching `mirrorPaths` and
  * `linePath`: the overflow is itself informative.
+ *
+ * `peaks` are the bucket MAXIMA of the same rows, and give each half ONE
+ * outer envelope rather than an envelope per layer. Per layer would be the
+ * lie this used to refuse outright: two interfaces burst in different
+ * seconds of a bucket, so stacking their maxima states a per-interface
+ * throughput no bucket carried. Summed into a single outer edge it is the
+ * same reading the fleet cell's envelope already is -- trafficSeries sums
+ * the per-interface peaks for exactly one pair and says so -- and it is the
+ * reading this panel has to draw, because a host's traffic chart and the
+ * cell it was opened from cannot be two different pictures of one day.
+ *
+ * With `peaks` the SCALE comes from them rather than from the stack: the
+ * envelope is always the taller of the two, and a ceiling taken from the
+ * stack alone would draw it outside the box.
  */
 export function mirrorStackBands(
   up: (number | null)[][],
@@ -663,7 +700,13 @@ export function mirrorStackBands(
   w: number,
   h: number,
   pad = 0,
-): { up: string[]; down: string[]; mid: number } {
+  peaks?: { up: (number | null)[][]; down: (number | null)[][] },
+): {
+  up: string[];
+  down: string[];
+  envelope: { up: string; down: string };
+  mid: number;
+} {
   // The stack's own totals, which is what the outer edge of each half is
   // drawn at -- not any one layer's peak.
   const stackMax = (series: (number | null)[][]): number => {
@@ -695,7 +738,13 @@ export function mirrorStackBands(
 
      This is also what makes the panel and the fleet cell the same chart at
      two sizes rather than two charts that happen to share colours. */
-  const raw = { up: stackMax(up), down: stackMax(down) };
+  // The envelope contains the stack, so the ceiling is the envelope's where
+  // there is one. Both halves still divide by the same pair of numbers, so
+  // the layers inside keep their heights relative to the edge above them.
+  const raw = {
+    up: Math.max(stackMax(up), stackMax(peaks?.up ?? [])),
+    down: Math.max(stackMax(down), stackMax(peaks?.down ?? [])),
+  };
   const scale = mirrorCeilings(raw.up, raw.down);
   const upMax = scale.up;
   const downMax = scale.down;
@@ -791,7 +840,39 @@ export function mirrorStackBands(
     return bands;
   };
 
-  return { up: half(up, -1), down: half(down, 1), mid };
+  // ONE outer edge per half, from the summed maxima. Summed the way the
+  // stack itself gaps: an index where any row is null has no total, so the
+  // envelope breaks there exactly as the bands do rather than dipping to a
+  // partial sum.
+  const summed = (rows: (number | null)[][]): (number | null)[] => {
+    const n = rows.reduce((longest, r) => Math.max(longest, r.length), 0);
+    const out: (number | null)[] = new Array(n).fill(null);
+    for (let i = 0; i < n; i++) {
+      let total = 0;
+      let whole = true;
+      for (const r of rows) {
+        const v = r[i];
+        if (v == null) {
+          whole = false;
+          break;
+        }
+        total += v;
+      }
+      if (whole) out[i] = total;
+    }
+    return out;
+  };
+  const edge = (rows: (number | null)[][] | undefined, direction: 1 | -1) =>
+    rows === undefined || rows.length === 0
+      ? ""
+      : (half([summed(rows)], direction)[0] ?? "");
+
+  return {
+    up: half(up, -1),
+    down: half(down, 1),
+    envelope: { up: edge(peaks?.up, -1), down: edge(peaks?.down, 1) },
+    mid,
+  };
 }
 
 /**

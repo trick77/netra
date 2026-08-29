@@ -25,6 +25,7 @@
 // and a component can always go back to hardcoding one.
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
+import { Chart } from "./Chart";
 import { Overlay } from "./Overlay";
 import { UpDownSparkline } from "./UpDownSparkline";
 import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";
@@ -124,5 +125,76 @@ describe("mirrored charts", () => {
         .querySelector("path[data-up]")
         ?.getAttribute("stroke-width"),
     ).toBe("0");
+  });
+});
+
+// The fleet dialog draws a mirrored PAIR and the host Traffic panel draws a
+// mirrored STACK over the same numbers, so anything either one layers has to
+// be layered the same way in both. The envelope is a 0.18 fill: under it, the
+// zero line is washed out across the envelope's whole span, and the same host
+// then reads two ways on two pages.
+describe("both mirror marks layer the envelope under the zero line", () => {
+  const order = (c: HTMLElement) => {
+    const g = c.querySelector("[data-mirror], svg")!;
+    const nodes = [
+      ...g.querySelectorAll("[data-mid], [data-band-up], [data-envelope]"),
+    ];
+    return nodes.map((n) => (n.hasAttribute("data-mid") ? "mid" : "envelope"));
+  };
+
+  it("draws the pair's envelope first", () => {
+    const c = render(
+      <Chart
+        series={[
+          {
+            name: "in",
+            color: "var(--in-1)",
+            values: [10, 20],
+            band: [40, 60],
+          },
+          {
+            name: "out",
+            color: "var(--out-1)",
+            values: [5, 10],
+            band: [20, 30],
+          },
+        ]}
+        width={200}
+        height={80}
+        max={60}
+        mark="mirror"
+      />,
+    ).container;
+    const seen = order(c);
+    expect(seen).toContain("envelope");
+    expect(seen.lastIndexOf("envelope")).toBeLessThan(seen.indexOf("mid"));
+  });
+
+  it("draws the stack's envelope first, the same way", () => {
+    const c = render(
+      <Chart
+        series={[
+          {
+            name: "eth0 in",
+            color: "var(--in-1)",
+            values: [10, 20],
+            band: [40, 60],
+          },
+          {
+            name: "eth0 out",
+            color: "var(--out-1)",
+            values: [5, 10],
+            band: [20, 30],
+          },
+        ]}
+        width={200}
+        height={80}
+        max={60}
+        mark="mirrorStack"
+      />,
+    ).container;
+    const seen = order(c);
+    expect(seen).toContain("envelope");
+    expect(seen.lastIndexOf("envelope")).toBeLessThan(seen.indexOf("mid"));
   });
 });

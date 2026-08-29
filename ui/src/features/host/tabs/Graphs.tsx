@@ -13,7 +13,6 @@
 import type { MetricsResponse } from "../../../lib/api";
 import type { Range } from "../../../lib/range";
 import { windowNotice } from "../../../lib/metrics";
-import { drawsPeakBand } from "../../fleet/hostTrends";
 import { ChartPanel } from "../../../ui/charts/ChartPanel";
 import { RAIL_RANGES } from "../../../lib/range";
 import {
@@ -88,12 +87,12 @@ function Panel({
   // bandsFor only builds an envelope for the specs that can carry one (a
   // mirrored rate chart at a rollup tier), so every other panel is handed
   // exactly what it already had.
-  // The window decides whether an envelope is drawn at all -- below 48 hours
-  // the reference draws none, and a banded pair is scaled to its band, so
-  // drawing one there also lifts the ceiling off the reading. See
-  // drawsPeakBand() in fleet/hostTrends.
+  // Wherever the tier has a max column, at every window: bandsFor asks that
+  // question and nothing else. There was a 48-hour floor here, the
+  // reference's own -- see the note in fleet/hostTrends for what dropping it
+  // costs on the ceiling.
   const detailSeries = bandsFor(spec, res, {
-    withPeakBand: drawsPeakBand(res?.window),
+    withPeakBand: true,
     extra,
   });
 
@@ -125,7 +124,7 @@ function Panel({
         const primary = answers[0];
         return {
           series: bandsFor(spec, primary, {
-            withPeakBand: drawsPeakBand(primary.window),
+            withPeakBand: true,
             extra: widened,
           }),
           window: primary.window ?? null,

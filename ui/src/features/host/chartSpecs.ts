@@ -655,11 +655,13 @@ export const NETWORK: PanelSpec[] = [
     mirrored: true,
     stacked: true,
     hideIdleSeries: true,
-    // No `peak`, and it is the one thing the stack costs. The envelope would
-    // be the running total of each interface's bucket MAXIMUM, and the
-    // interfaces do not peak in the same bucket -- it would state a
-    // throughput no bucket ever carried. The mean stack is a true reading;
-    // an invented peak is not.
+    // The peak, as ONE outer envelope over the whole stack rather than one
+    // per interface. Per interface is the invented number this refused for
+    // good reason -- the interfaces do not peak in the same bucket -- but the
+    // summed edge is the very reading the fleet cell's enlarged view already
+    // draws, and a host's traffic chart that disagrees with the cell it was
+    // opened from is worse than the bias. One chart, two sizes.
+    peak: true,
     fmt: bytes,
   },
   // Half of net_samples, stored since the collector was written and drawn
@@ -1250,15 +1252,18 @@ function bandsFor(
       // peakBase falls back to the bare name at the raw tier, and there the
       // two resolve to the same column -- which is the signal that this tier
       // has no envelope to draw.
-      // Mirrored only, for now, and deliberately: Chart draws the envelope in
-      // its mirror branch alone. Without this guard the first non-mirrored
-      // `peak` spec added would silently switch its LINE to the mean and
-      // then draw no envelope at all -- strictly less than the 260px panel
-      // it was opened from. Widen this when LineMarks learns the band.
+      // Any chart whose mark can draw one, which is now everything except a
+      // plain (non-mirrored) stack -- MirrorMarks and LineMarks draw a band
+      // per series, MirrorStackMarks draws one summed outer edge per half,
+      // and StackMarks draws none.
+      //
+      // It was mirrored-only while Chart drew the envelope in its mirror
+      // branch alone, so a plain rate panel threw away the max its own tier
+      // had materialised.
       const wantsBand =
         opts.withPeakBand === true &&
         spec.peak === true &&
-        spec.mirrored === true &&
+        (spec.stacked !== true || spec.mirrored === true) &&
         peakColumn !== base;
       const column = wantsBand ? base : peakColumn;
       const gridded = bandRead(column);

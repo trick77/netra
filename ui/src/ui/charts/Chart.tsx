@@ -25,7 +25,6 @@ import {
 } from "./geometry";
 import {
   areaFillOpacity,
-  AXIS_STROKE,
   AXIS_WIDTH,
   MIRROR_FILL_OPACITY,
   BAND_STROKE_WIDTH,
@@ -34,6 +33,7 @@ import {
   REFERENCE_DASH,
   REFERENCE_STROKE,
   REFERENCE_WIDTH,
+  ZERO_STROKE,
 } from "./size";
 import {
   contains,
@@ -44,7 +44,7 @@ import {
   yAt,
   type PlotRect,
 } from "./plot";
-import { AxisLabels, Grid, Spine, ZeroRule } from "./Axis";
+import { AxisLabels, Grid, Spine } from "./Axis";
 import type { Tick, TimeTick } from "./ticks";
 
 export interface ChartSeries {
@@ -227,7 +227,6 @@ export function Chart({
         ),
       )
     : { up: 0, down: 0, zero: 0.5 };
-  const mirrorZero = mirrorScale.zero;
 
   // Where the DATA actually lives. geometry.ts insets every mark by `pad`
   // inside the box it is given (scaleX/scaleY map into [pad, w-pad]), so
@@ -372,31 +371,21 @@ export function Chart({
       </MarkGroup>
 
       {spine && <Spine rect={furnitureRect} y={y} x={x} />}
-      {/* Only where there is furniture to outrank. A sparkline already draws
-          its midline inside MirrorMarks at AXIS_STROKE, and size.ts is
-          explicit that a sparkline's midline does not change; drawing this
-          over it in the heavier ZERO_STROKE darkened every fleet traffic
-          cell, the Overview traffic card and every range thumbnail. The
-          sparkline's own test did not catch it because it asserts on
-          [data-mid], which is the line underneath. */}
-      {/* At the height the DATA puts zero, not at 0.5.
-          
-          It was hard-coded to the midline, which was true only while both
-          halves shared one ceiling. They no longer do -- a host that pulls
-          four times what it pushes puts zero four fifths of the way down --
-          and a rule pinned to 0.5 then ran across the middle of the box, over
-          the marks, straight through the spikes. Same fraction the marks
-          measure from, so it lands on the edge of the band rather than
-          through it.
+      {/* No separate zero rule on a mirrored chart. The mark draws its own
+          midline (MirrorMarks and MirrorStackMarks, both in ZERO_STROKE),
+          and a second rule in the same ink is not a stronger line -- it is a
+          smeared one. The two derive their height differently: the mark
+          snaps zero to a whole pixel and offsets by half a stroke so it
+          fills exactly one row, while a rule placed at the raw fraction
+          lands between rows. Measured on a 400x140 mirrored panel they sat
+          at 117.5 and 116.667, which drew the zero line about two pixels
+          thick and antialiased across three rows.
 
-          Through furnitureRect, which on a mirrored chart is the mark's own
-          height -- see its definition. On the inset rect this rule landed
-          `pad * (2 * mirrorZero - 1)` off the midline it names, 1.5 px on a
-          lopsided 112 px panel: a visible second line beside the mark's
-          own. */}
-      {mirrored && (spine || grid || labels) && (
-        <ZeroRule rect={furnitureRect} at={1 - mirrorZero} />
-      )}
+          It read as one line while the mark's own was the quiet --border and
+          this rule was the dark one. Now that both are --axis only one of
+          them can be drawn, and the mark's is the one placed where the data
+          is actually measured from. ZeroRule stays in Axis.tsx: it is the
+          zero line for a chart whose marks do not draw their own. */}
       {labels && (
         <AxisLabels rect={furnitureRect} y={y} x={x} format={format} />
       )}
@@ -572,28 +561,6 @@ function MirrorMarks({
             : null;
         return (
           <g key={up.name} data-series={up.name} data-mirror>
-            {/* BEHIND the series, and half a row down from `mid`.
-
-                Behind, because it is the axis the data is measured from and
-                not an annotation over it: drawn last it ran a grey rule
-                straight through the band, striking it out. rrdtool draws its
-                grid first and fills the AREA on top for the same reason.
-
-                Half a row down, because a 1px stroke is centred on its
-                coordinate: at an integer y it covers half the row above and
-                half the row below, rendering as a two-row smear that the
-                marks stand off rather than on. Offset, it fills exactly the
-                row the down half begins in. */}
-            <line
-              data-mid
-              x1={0}
-              x2={w}
-              y1={paths.mid + AXIS_WIDTH / 2}
-              y2={paths.mid + AXIS_WIDTH / 2}
-              stroke={AXIS_STROKE}
-              strokeWidth={AXIS_WIDTH}
-              shapeRendering="crispEdges"
-            />
             {bands && (
               <>
                 {bands.up !== "" && (
@@ -616,6 +583,35 @@ function MirrorMarks({
                 )}
               </>
             )}
+            {/* Behind the series and OVER the envelope, half a row down
+                from `mid` -- the order MirrorStackMarks draws in.
+
+                Behind the series, because it is the axis the data is measured
+                from and not an annotation over it: drawn last it ran a grey
+                rule straight through the band, striking it out. rrdtool draws
+                its grid first and fills the AREA on top for the same reason.
+
+                Over the ENVELOPE, because the envelope is a 0.18 fill and
+                under it the zero line was washed out across the envelope's
+                whole span -- so the same host's fleet dialog and Traffic
+                panel drew zero two different ways. It stopped being invisible
+                when ZeroRule stopped redrawing zero over the whole group.
+
+                Half a row down, because a 1px stroke is centred on its
+                coordinate: at an integer y it covers half the row above and
+                half the row below, rendering as a two-row smear that the
+                marks stand off rather than on. Offset, it fills exactly the
+                row the down half begins in. */}
+            <line
+              data-mid
+              x1={0}
+              x2={w}
+              y1={paths.mid + AXIS_WIDTH / 2}
+              y2={paths.mid + AXIS_WIDTH / 2}
+              stroke={ZERO_STROKE}
+              strokeWidth={AXIS_WIDTH}
+              shapeRendering="crispEdges"
+            />
             {paths.up !== "" && (
               <path
                 data-up
@@ -653,10 +649,13 @@ function MirrorMarks({
  * arrive as consecutive in/out pairs, one pair per interface, and layer order
  * is pair order so the same interface sits at the same depth on both sides.
  *
- * No peak envelope here, unlike MirrorMarks. A stacked band's height is a
- * running total, and the sum of each interface's peak is not the host's peak:
- * the interfaces do not peak in the same bucket. Drawing one would state a
- * number no bucket ever held.
+ * ONE peak envelope per half where the tier carries maxima, and never one
+ * per layer. A per-layer envelope would state a per-interface throughput no
+ * bucket ever held, because the interfaces do not peak in the same bucket.
+ * The summed outer edge carries the same bias the fleet cell's own envelope
+ * already carries, over the same numbers -- which is what makes the cell and
+ * the panel one chart at two sizes rather than two pictures of one day. See
+ * mirrorStackBands.
  */
 function MirrorStackMarks({
   series,
@@ -680,17 +679,51 @@ function MirrorStackMarks({
   // mirrored STACK folded to one point per pixel drew an outline where the
   // plain mirror had already learned not to.
   const edge = mirrorEdge(w, longest(series), pad);
+  // The bands where the tier has them, and only when EVERY layer of that
+  // half carries one: a half summed from some peaks and some means is a
+  // total of two different measurements.
+  const rows = (of: ChartSeries[]): (number | null)[][] | undefined =>
+    of.length > 0 && of.every((s) => s.band && s.band.length > 0)
+      ? of.map((s) => s.band!)
+      : undefined;
+  const upPeaks = rows(ups);
+  const downPeaks = rows(downs);
   const paths = mirrorStackBands(
     ups.map((s) => s.values),
     downs.map((s) => s.values),
     w,
     h,
     pad,
+    upPeaks || downPeaks
+      ? { up: upPeaks ?? [], down: downPeaks ?? [] }
+      : undefined,
   );
   const dim = (s: ChartSeries): number =>
     highlight !== undefined && highlight !== s.name ? 0.35 : 1;
   return (
     <>
+      {/* The envelope first of all, so the midline and then the stack sit
+          over it. No stroke: it is a region, not a reading. */}
+      {paths.envelope.up !== "" && (
+        <path
+          data-envelope
+          data-up
+          d={paths.envelope.up}
+          fill={ups[0]?.color}
+          fillOpacity={0.18}
+          stroke="none"
+        />
+      )}
+      {paths.envelope.down !== "" && (
+        <path
+          data-envelope
+          data-down
+          d={paths.envelope.down}
+          fill={downs[0]?.color}
+          fillOpacity={0.18}
+          stroke="none"
+        />
+      )}
       {/* Behind the bands, and half a row down -- see MirrorMarks for both
           reasons. Drawn last it struck a grey rule through the band. */}
       <line
@@ -699,7 +732,7 @@ function MirrorStackMarks({
         x2={w}
         y1={paths.mid + AXIS_WIDTH / 2}
         y2={paths.mid + AXIS_WIDTH / 2}
-        stroke={AXIS_STROKE}
+        stroke={ZERO_STROKE}
         strokeWidth={AXIS_WIDTH}
         shapeRendering="crispEdges"
       />
@@ -827,9 +860,32 @@ function LineMarks({
       {series.map((s) => {
         const { paths, points } = linePath(s.values, w, h, floor, max, pad);
         const areas = filled ? areaPath(paths, w, h, pad) : [];
+        // The envelope, where the tier carries a peak column: the bucket's
+        // max as a pale area under the mean that is the line. Drawn first so
+        // the reading sits over it, and with no stroke -- it is a region, not
+        // a value, and an edge on it would compete with the line that is.
+        //
+        // The same layer MirrorMarks draws for a mirrored pair. It was that
+        // branch alone for a while, and the guard in bandsFor said so, which
+        // meant an unstacked rate chart threw away the max its own tier had
+        // materialised. Same pair, same meaning, either mark.
+        const bandAreas =
+          s.band && s.band.length > 0
+            ? areaPath(linePath(s.band, w, h, floor, max, pad).paths, w, h, pad)
+            : [];
         const dimmed = highlight !== undefined && highlight !== s.name;
         return (
           <g key={s.name} data-series={s.name} opacity={dimmed ? 0.35 : 1}>
+            {bandAreas.map((d, i) => (
+              <path
+                key={`band-${i}`}
+                data-band
+                d={d}
+                fill={s.color}
+                fillOpacity={0.18}
+                stroke="none"
+              />
+            ))}
             {areas.map((d, i) => (
               <path
                 key={`area-${i}`}
