@@ -16,32 +16,33 @@ type aggregate struct {
 	bucket time.Duration
 }
 
-// aggregatePairs is every continuous aggregate in the schema, as (5m, 1h)
-// pairs.
+// aggregateChains is every continuous aggregate in the schema, as
+// (5m, 1h, 1d) chains.
 //
-// The ORDER WITHIN A PAIR IS LOAD-BEARING. Each _1h view selects FROM the
-// matching _5m view, never from the raw hypertable -- so refreshing 1h first
-// reads an empty 5m tier and materialises nothing at all, silently. The hub
-// never hits this because its scheduled policies always run against data the
-// 5m tier has long since covered; a backfill is the one case where the order
-// is visible.
-var aggregatePairs = [][2]aggregate{
-	{{"host_samples_5m", tier5m}, {"host_samples_1h", tier1h}},
-	{{"host_snmp_samples_5m", tier5m}, {"host_snmp_samples_1h", tier1h}},
-	{{"host_proto_samples_5m", tier5m}, {"host_proto_samples_1h", tier1h}},
-	{{"agent_samples_5m", tier5m}, {"agent_samples_1h", tier1h}},
-	{{"cpu_core_samples_5m", tier5m}, {"cpu_core_samples_1h", tier1h}},
-	{{"disk_io_samples_5m", tier5m}, {"disk_io_samples_1h", tier1h}},
-	{{"sensor_samples_5m", tier5m}, {"sensor_samples_1h", tier1h}},
-	{{"net_samples_5m", tier5m}, {"net_samples_1h", tier1h}},
-	{{"collector_samples_5m", tier5m}, {"collector_samples_1h", tier1h}},
-	{{"container_samples_5m", tier5m}, {"container_samples_1h", tier1h}},
-	{{"filesystem_samples_5m", tier5m}, {"filesystem_samples_1h", tier1h}},
+// The ORDER WITHIN A CHAIN IS LOAD-BEARING. Each view selects FROM the one
+// before it -- _1h from _5m, _1d from _1h, never from the raw hypertable --
+// so refreshing out of order reads an empty tier and materialises nothing at
+// all, silently. The hub never hits this because its scheduled policies
+// always run against data the finer tier has long since covered; a backfill
+// is the one case where the order is visible.
+var aggregateChains = [][3]aggregate{
+	{{"host_samples_5m", tier5m}, {"host_samples_1h", tier1h}, {"host_samples_1d", tier1d}},
+	{{"host_snmp_samples_5m", tier5m}, {"host_snmp_samples_1h", tier1h}, {"host_snmp_samples_1d", tier1d}},
+	{{"host_proto_samples_5m", tier5m}, {"host_proto_samples_1h", tier1h}, {"host_proto_samples_1d", tier1d}},
+	{{"agent_samples_5m", tier5m}, {"agent_samples_1h", tier1h}, {"agent_samples_1d", tier1d}},
+	{{"cpu_core_samples_5m", tier5m}, {"cpu_core_samples_1h", tier1h}, {"cpu_core_samples_1d", tier1d}},
+	{{"disk_io_samples_5m", tier5m}, {"disk_io_samples_1h", tier1h}, {"disk_io_samples_1d", tier1d}},
+	{{"sensor_samples_5m", tier5m}, {"sensor_samples_1h", tier1h}, {"sensor_samples_1d", tier1d}},
+	{{"net_samples_5m", tier5m}, {"net_samples_1h", tier1h}, {"net_samples_1d", tier1d}},
+	{{"collector_samples_5m", tier5m}, {"collector_samples_1h", tier1h}, {"collector_samples_1d", tier1d}},
+	{{"container_samples_5m", tier5m}, {"container_samples_1h", tier1h}, {"container_samples_1d", tier1d}},
+	{{"filesystem_samples_5m", tier5m}, {"filesystem_samples_1h", tier1h}, {"filesystem_samples_1d", tier1d}},
 }
 
 const (
 	tier5m = 5 * time.Minute
 	tier1h = time.Hour
+	tier1d = 24 * time.Hour
 )
 
 // Refresher materialises the continuous aggregates over a backfilled range.
@@ -104,8 +105,8 @@ func (r *Refresher) Close() {
 // silently -- re-running the simulator is idempotent, so the cheap answer to
 // a losing race is to run it again.
 func (r *Refresher) Refresh(ctx context.Context, from, to time.Time) error {
-	for _, pair := range aggregatePairs {
-		for _, agg := range pair {
+	for _, chain := range aggregateChains {
+		for _, agg := range chain {
 			from, to := bucketWindow(from, to, agg.bucket)
 			view := agg.view
 			// CALL, not SELECT: refresh_continuous_aggregate is a procedure,

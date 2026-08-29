@@ -6,9 +6,10 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
-// aggregatePairs is hand-maintained, and a continuous aggregate missing from
+// aggregateChains is hand-maintained, and a continuous aggregate missing from
 // it fails in the quietest way this simulator can fail: the raw table fills
 // normally, every unit test passes, and the tier the UI actually reads at 24h
 // and beyond is simply empty. The panel then says "not collected" about a
@@ -21,14 +22,14 @@ import (
 // So the list is pinned against the schema itself. Reading the .sql rather
 // than the database keeps this a unit test -- it runs on every `go test ./...`
 // rather than only when a TimescaleDB happens to be pointed at.
-func TestAggregatePairsCoverEveryContinuousAggregate(t *testing.T) {
+func TestAggregateChainsCoverEveryContinuousAggregate(t *testing.T) {
 	// Given: every continuous aggregate the migrations create.
 	declared := aggregatesInMigrations(t)
 
 	// When: compared against the list the refresher walks.
 	listed := make(map[string]bool)
-	for _, pair := range aggregatePairs {
-		for _, agg := range pair {
+	for _, chain := range aggregateChains {
+		for _, agg := range chain {
 			listed[agg.view] = true
 		}
 	}
@@ -36,33 +37,38 @@ func TestAggregatePairsCoverEveryContinuousAggregate(t *testing.T) {
 	// Then: neither side has anything the other does not.
 	for _, view := range declared {
 		if !listed[view] {
-			t.Errorf("%s is a continuous aggregate but aggregatePairs never refreshes it; "+
+			t.Errorf("%s is a continuous aggregate but aggregateChains never refreshes it; "+
 				"a backfill leaves its rolled-up tiers empty and the UI reports the data as not collected",
 				view)
 		}
 	}
 	for view := range listed {
 		if !contains(declared, view) {
-			t.Errorf("aggregatePairs refreshes %s, which the migrations do not create", view)
+			t.Errorf("aggregateChains refreshes %s, which the migrations do not create", view)
 		}
 	}
 }
 
-// The 1h view of a pair reads FROM the 5m view rather than from the raw
-// hypertable, so refreshing them in the wrong order materialises nothing at
-// all -- silently, because refreshing an empty source is not an error. The
-// ordering is asserted here rather than trusted to the comment above the
-// list.
-func TestEachPairRefreshesTheFiveMinuteTierFirst(t *testing.T) {
-	for _, pair := range aggregatePairs {
-		if !strings.HasSuffix(pair[0].view, "_5m") {
-			t.Errorf("%s is first in its pair but is not the 5m tier", pair[0].view)
-		}
-		if !strings.HasSuffix(pair[1].view, "_1h") {
-			t.Errorf("%s is second in its pair but is not the 1h tier", pair[1].view)
-		}
-		if pair[0].bucket != tier5m || pair[1].bucket != tier1h {
-			t.Errorf("%s/%s carry the wrong bucket widths", pair[0].view, pair[1].view)
+// Each view in a chain reads FROM the one before it -- _1h from _5m, _1d from
+// _1h -- rather than from the raw hypertable, so refreshing them in the wrong
+// order materialises nothing at all: silently, because refreshing an empty
+// source is not an error. The ordering is asserted here rather than trusted
+// to the comment above the list.
+func TestEachChainRefreshesFineToCoarse(t *testing.T) {
+	want := []struct {
+		suffix string
+		bucket time.Duration
+	}{{"_5m", tier5m}, {"_1h", tier1h}, {"_1d", tier1d}}
+
+	for _, chain := range aggregateChains {
+		for i, w := range want {
+			if !strings.HasSuffix(chain[i].view, w.suffix) {
+				t.Errorf("%s is at position %d of its chain but is not the %s tier",
+					chain[i].view, i, strings.TrimPrefix(w.suffix, "_"))
+			}
+			if chain[i].bucket != w.bucket {
+				t.Errorf("%s carries the wrong bucket width", chain[i].view)
+			}
 		}
 	}
 }

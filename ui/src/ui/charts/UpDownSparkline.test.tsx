@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { mirrorPaths } from "./geometry";
+import { SPARK_WIDTH } from "./size";
 import { UpDownSparkline } from "./UpDownSparkline";
 
 describe("UpDownSparkline", () => {
@@ -68,7 +69,7 @@ describe("UpDownSparkline", () => {
     // Then the mark is exactly the proportional one, against the window's
     // own peak
     const max = 37_040_000;
-    const proportional = mirrorPaths(up, down, 170, height, max, pad);
+    const proportional = mirrorPaths(up, down, SPARK_WIDTH, height, max, pad);
     const drawn = container.querySelector("path[data-up]")?.getAttribute("d");
     expect(drawn).toBe(proportional.up);
 

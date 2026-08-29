@@ -31,7 +31,7 @@ import {
   percent,
   relativeMs,
 } from "../../lib/format";
-import type { Range } from "../../lib/range";
+import { RAIL_RANGES, type Range } from "../../lib/range";
 
 // The windows this page OFFERS. The type is lib/range's, so a range chosen
 // anywhere else -- Settings' stored default, a link from the host page --
@@ -506,7 +506,7 @@ export function ContainerPage({
           notice={notice}
           window={metrics.window}
           range={range}
-          ranges={CONTAINER_RANGE_VALUES}
+          ranges={RAIL_RANGES}
           fetchSeries={detail((b) => b.cpuBands)}
           stacked={cpuBands.length > 1}
           series={cpuBands}
@@ -522,7 +522,7 @@ export function ContainerPage({
           notice={notice}
           window={metrics.window}
           range={range}
-          ranges={CONTAINER_RANGE_VALUES}
+          ranges={RAIL_RANGES}
           fetchSeries={detail((b) => b.memBands)}
           max={memLimit === null ? undefined : memLimit * 1.08}
           reference={memLimit ?? undefined}
@@ -583,7 +583,7 @@ export function ContainerPage({
           notice={notice}
           window={metrics.window}
           range={range}
-          ranges={CONTAINER_RANGE_VALUES}
+          ranges={RAIL_RANGES}
           fetchSeries={detail((b) => b.netBands)}
           mirrored
           // The agent's own explanation, in place of a chart that would
@@ -610,7 +610,7 @@ export function ContainerPage({
           notice={notice}
           window={metrics.window}
           range={range}
-          ranges={CONTAINER_RANGE_VALUES}
+          ranges={RAIL_RANGES}
           fetchSeries={detail((b) => b.ioBands)}
           series={ioBands}
         />

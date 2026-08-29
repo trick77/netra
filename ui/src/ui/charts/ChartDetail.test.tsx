@@ -3,6 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ChartDetail, summarise } from "./ChartDetail";
 import { ChartPanel } from "./ChartPanel";
+import { RAIL_RANGES } from "../../lib/range";
 
 const series = [
   { name: "user", color: "var(--s1)", values: [10, 20, 30] },
@@ -67,7 +68,7 @@ describe("ChartDetail", () => {
     expect(document.querySelector(".cd-x")).toBeNull();
   });
 
-  it("carries the range control when the page supplies one", async () => {
+  it("carries the rail when the page supplies a setter", async () => {
     const onRangeChange = vi.fn();
     render(
       <ChartDetail
@@ -79,9 +80,61 @@ describe("ChartDetail", () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole("button", { name: "24h" }));
+    // Every window on the ladder is a tile, named after the chart so twenty
+    // rows of them do not all read "24h".
+    expect(
+      within(screen.getByRole("group", { name: /Processor, by window/ }))
+        .getAllByRole("button")
+        .map((b) => b.querySelector(".r")?.textContent),
+    ).toEqual(RAIL_RANGES.map(String));
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Processor over the last 24h" }),
+    );
 
     expect(onRangeChange).toHaveBeenCalledWith("24h");
+  });
+
+  // The tile whose window is on screen is the pressed one, so the rail says
+  // where you are as well as where you could go.
+  it("presses the tile for the window it is showing", () => {
+    render(
+      <ChartDetail
+        title="Processor"
+        series={series}
+        range="6h"
+        onRangeChange={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Processor over the last 6h" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.getByRole("button", { name: "Processor over the last 24h" }),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  // The fleet opens its charts at 12h, which is deliberately not on the
+  // ladder. No tile pressed is the honest answer: none of them is what is on
+  // screen.
+  it("presses nothing when the window it is showing has no tile", () => {
+    render(
+      <ChartDetail
+        title="Processor"
+        series={series}
+        range="12h"
+        onRangeChange={() => {}}
+        onClose={() => {}}
+      />,
+    );
+
+    for (const tile of within(
+      screen.getByRole("group", { name: /Processor, by window/ }),
+    ).getAllByRole("button")) {
+      expect(tile).toHaveAttribute("aria-pressed", "false");
+    }
   });
 });
 

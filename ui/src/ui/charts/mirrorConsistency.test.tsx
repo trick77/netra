@@ -53,11 +53,11 @@ function marks(container: HTMLElement) {
 }
 
 describe("mirrored charts", () => {
-  // 170px against 260px with four points is 42 and 65 pixels per point: both
+  // 150px against 260px with four points is 37 and 65 pixels per point: both
   // have room for an edge, so both must draw the same one.
   it("draws the traffic cell and the throughput panel as the same mark", () => {
     // Given the same rx/tx pair drawn by both mirrored charts, at the sizes
-    // their real call sites use (hostColumns.tsx's 170x32 fleet cell and
+    // their real call sites use (hostColumns.tsx's 150x45 fleet cell and
     // ChartPanel.tsx's 260x64 panel)
     const sparkline = render(
       <UpDownSparkline

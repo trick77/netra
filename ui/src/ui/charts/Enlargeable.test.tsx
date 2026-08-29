@@ -59,9 +59,9 @@ describe("Enlargeable", () => {
     ).toBeInTheDocument();
   });
 
-  // No fetcher means no picker: buttons that cannot change anything are
-  // worse than no buttons.
-  it("carries no range picker without a fetcher", async () => {
+  // No fetcher means no rail: tiles that cannot change anything, and have
+  // nothing to draw, are worse than no tiles.
+  it("carries no range rail without a fetcher", async () => {
     render(
       <Enlargeable title="Package" series={series} range="1h">
         <svg />
@@ -70,7 +70,9 @@ describe("Enlargeable", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
     expect(
-      within(screen.getByRole("dialog")).queryByRole("button", { name: "6h" }),
+      within(screen.getByRole("dialog")).queryByRole("button", {
+        name: /last 6h$/,
+      }),
     ).not.toBeInTheDocument();
   });
 
@@ -93,11 +95,18 @@ describe("Enlargeable", () => {
     );
     await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
     await userEvent.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "6h" }),
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: /last 6h$/,
+      }),
     );
 
     await waitFor(() => expect(fetchSeries).toHaveBeenCalledWith("6h"));
-    expect(fetchSeries).toHaveBeenCalledTimes(1);
+    // Once per rail window that is not the page's own, and no more: clicking
+    // a tile shows what the rail already fetched.
+    expect(fetchSeries.mock.calls.map((c) => c[0]).sort()).toEqual([
+      "24h",
+      "6h",
+    ]);
   });
 
   // The fleet list mounts one of these per chart cell -- twenty hosts is
@@ -156,7 +165,9 @@ describe("Enlargeable", () => {
       expect(axisTop()).toBe("100");
 
       await userEvent.click(
-        within(screen.getByRole("dialog")).getByRole("button", { name: "6h" }),
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: /last 6h$/,
+        }),
       );
       await waitFor(() => expect(axisTop()).toBe("400"));
     });
@@ -183,7 +194,9 @@ describe("Enlargeable", () => {
       );
       await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
       await userEvent.click(
-        within(screen.getByRole("dialog")).getByRole("button", { name: "6h" }),
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: /last 6h$/,
+        }),
       );
 
       await waitFor(() => expect(fetchSeries).toHaveBeenCalled());
@@ -310,7 +323,9 @@ describe("Enlargeable", () => {
       );
       await userEvent.click(screen.getByRole("button", { name: /Enlarge/ }));
       await userEvent.click(
-        within(screen.getByRole("dialog")).getByRole("button", { name: "6h" }),
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: /last 6h$/,
+        }),
       );
 
       await waitFor(() => expect(axis()).toContain("70"));

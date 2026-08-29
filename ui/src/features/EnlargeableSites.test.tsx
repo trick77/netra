@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { RAIL_RANGES } from "../lib/range";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as api from "../lib/api";
@@ -62,9 +63,13 @@ async function open(name: RegExp | string) {
   return screen.getByRole("dialog");
 }
 
+// A rail tile, not a range button: the enlarged view's picker is a column of
+// drawn mini-charts, each named after the chart and the window it covers.
 function pick(range: string) {
   return userEvent.click(
-    within(screen.getByRole("dialog")).getByRole("button", { name: range }),
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: new RegExp(` last ${range}$`),
+    }),
   );
 }
 
@@ -105,25 +110,30 @@ describe("the list sparklines enlarge", () => {
       await open("Enlarge CPU for api");
       await pick("6h");
 
-      await waitFor(() => expect(getMetrics).toHaveBeenCalledTimes(1));
-      expect(getMetrics).toHaveBeenCalledWith(
-        7,
-        expect.objectContaining({ family: "container" }),
+      await waitFor(() =>
+        expect(getMetrics).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({ family: "container" }),
+        ),
       );
     });
 
-    it("offers only the ranges the fleet page itself offers", async () => {
+    // The rail offers the SAME ladder wherever it is opened from, including
+    // windows the page behind it cannot be set to. That used to be a bug --
+    // picking 30d handed the page a range its own picker could not express --
+    // and is not one now: the rail's range never reaches the page, and every
+    // tile is one read of one host rather than a fan-out across the fleet.
+    it("offers the whole ladder, not the page's own set", async () => {
       render(<FleetContainers rows={rows} range="1h" />);
       const dialog = await open("Enlarge Memory for api");
 
-      // 30d is a range lib/range knows and this page does not: a dialog that
-      // offered it would hand the page a range its own picker cannot express.
-      expect(
-        within(dialog).queryByRole("button", { name: "30d" }),
-      ).not.toBeInTheDocument();
-      expect(
-        within(dialog).getByRole("button", { name: "24h" }),
-      ).toBeInTheDocument();
+      for (const range of RAIL_RANGES) {
+        expect(
+          within(dialog).getByRole("button", {
+            name: new RegExp(` last ${range}$`),
+          }),
+        ).toBeInTheDocument();
+      }
     });
   });
 

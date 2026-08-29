@@ -3,7 +3,7 @@
 // all of the furniture switched off.
 //
 // The distinction that matters here is that SIZE and FURNITURE are separate
-// knobs, not one preset. A fleet cell is 170x32 with nothing on it; a panel
+// knobs, not one preset. A fleet cell is 150x45 with nothing on it; a panel
 // is 260x112 with a compact axis; a chart page is full width with everything.
 // Those are three sizes and three furniture sets, but they are not a single
 // enum -- hostColumns draws an Overlay at sparkline size, and a container
@@ -65,6 +65,26 @@ export interface ChartSeries {
 }
 
 export type ChartMark = "line" | "area" | "stack" | "mirror" | "mirrorStack";
+
+/**
+ * The four-way choice every caller drawing "the same chart" has to make the
+ * same way.
+ *
+ * Written out once because three components now make it -- Overlay for the
+ * panel, ChartFigure for the enlarged view, RangeRail for each tile beside
+ * it -- and they are all drawing one metric at three sizes. A mark that
+ * differs between them is a different chart on click, which is the one thing
+ * enlarging must never do.
+ */
+export function markFor(opts: {
+  filled?: boolean;
+  stacked?: boolean;
+  mirrored?: boolean;
+}): ChartMark {
+  if (opts.mirrored) return opts.stacked ? "mirrorStack" : "mirror";
+  if (opts.stacked) return "stack";
+  return opts.filled ? "area" : "line";
+}
 
 export interface ChartProps {
   series: ChartSeries[];
@@ -171,8 +191,8 @@ export function Chart({
    *
    * A stacked band is a filled region with a BAND_STROKE_WIDTH edge, so half
    * a stroke is the only headroom it can use. `pad` is two pixels because
-   * that is what a LINE's stroke needs, and on a 32px fleet cell spending it
-   * at both ends costs an eighth of the chart -- see stackBands' `yPad`.
+   * that is what a LINE's stroke needs, and on a 45px fleet cell spending it
+   * at both ends costs a ninth of the chart -- see stackBands' `yPad`.
    *
    * Everything that has to agree with the bands reads this: the marks, the
    * furniture below, and the reference rule, which on the memory cell is the
@@ -506,7 +526,7 @@ function MirrorMarks({
         const down = series[p * 2 + 1];
         if (up === undefined) return null;
         // Whether this chart has room for an edge at all. Derived from the
-        // plot, not from the call site: the same component draws a 170px
+        // plot, not from the call site: the same component draws a 150px
         // fleet cell at one point per pixel and a 1000px dialog at three and
         // a half, and only one of those can carry a 1.25px outline without
         // the outline becoming the mark. See mirrorEdge().

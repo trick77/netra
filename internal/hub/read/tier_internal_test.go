@@ -43,6 +43,8 @@ func TestTierSelectionAtTheRawRetentionBoundary(t *testing.T) {
 		{"exactly at 5m retention", 30 * day, Tier5m},
 		{"a second past 5m retention", 30*day + time.Second, Tier1h},
 		{"exactly at 1h retention", 90 * day, Tier1h},
+		{"a second past 1h retention", 90*day + time.Second, Tier1d},
+		{"exactly at 1d retention", 400 * day, Tier1d},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := mustPlan(t, "host", testNow.Add(-tc.age), testNow, 0, false)
@@ -57,15 +59,18 @@ func TestTierSelectionAtTheRawRetentionBoundary(t *testing.T) {
 // the part that still exists at the coarsest tier and says what it dropped --
 // erroring would make "show me everything you have" unanswerable.
 func TestTierSelectionOlderThanEveryRetention(t *testing.T) {
-	p := mustPlan(t, "host", testNow.Add(-100*day), testNow, 0, false)
+	p := mustPlan(t, "host", testNow.Add(-500*day), testNow, 0, false)
 
-	if p.Tier != Tier1h {
-		t.Errorf("tier = %q, want %q", p.Tier, Tier1h)
+	if p.Tier != Tier1d {
+		t.Errorf("tier = %q, want %q", p.Tier, Tier1d)
 	}
-	if want := testNow.Add(-90 * day); !p.Window.From.Equal(want) {
+	// The retention horizon, then onto a bucket boundary: a daily aggregate
+	// stores whole days, so the window starts on the day the horizon lands in
+	// rather than at the horizon's own time of day.
+	if want := testNow.Add(-400 * day).Truncate(day); !p.Window.From.Equal(want) {
 		t.Errorf("window.from = %v, want %v", p.Window.From, want)
 	}
-	if want := testNow.Add(-100 * day); !p.Requested.From.Equal(want) {
+	if want := testNow.Add(-500 * day); !p.Requested.From.Equal(want) {
 		t.Errorf("requested.from = %v, want %v", p.Requested.From, want)
 	}
 	if !hasWarning(p, "predates") {
@@ -220,7 +225,9 @@ func TestTierSelectionWithAnExplicitStep(t *testing.T) {
 		{"exactly 5m", "host", 5 * time.Minute, Tier5m, 300},
 		{"between 5m and 1h", "host", 10 * time.Minute, Tier5m, 300},
 		{"exactly 1h", "host", time.Hour, Tier1h, 3600},
-		{"coarser than 1h clamps to 1h", "host", 24 * time.Hour, Tier1h, 3600},
+		{"between 1h and 1d", "host", 6 * time.Hour, Tier1h, 3600},
+		{"exactly 1d", "host", 24 * time.Hour, Tier1d, 86400},
+		{"coarser than 1d clamps to 1d", "host", 7 * 24 * time.Hour, Tier1d, 86400},
 		{"a raw-only family ignores the step", "smart", 5 * time.Minute, TierRaw, 3600},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

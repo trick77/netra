@@ -10,6 +10,7 @@ const (
 	TierRaw = "raw"
 	Tier5m  = "5m"
 	Tier1h  = "1h"
+	Tier1d  = "1d"
 )
 
 // tierSpec is one storage resolution of one family.
@@ -23,7 +24,8 @@ type tierSpec struct {
 	// name is what the response reports as "tier".
 	name string
 	// suffix is appended to the family's raw table to name the view holding
-	// this tier: "" for raw, "_5m" and "_1h" for the continuous aggregates.
+	// this tier: "" for raw, "_5m", "_1h" and "_1d" for the continuous
+	// aggregates.
 	suffix string
 	// tsColumn is the time column of that relation. The aggregates call it
 	// bucket, not ts, because it is the left edge of a bucket rather than the
@@ -60,7 +62,7 @@ type tierSpec struct {
 	retention time.Duration
 }
 
-// The three resolutions every rolled-up family carries, fine to coarse.
+// The four resolutions every rolled-up family carries, fine to coarse.
 //
 // A tier is not a fixed global: the raw-only family below has its own raw spec
 // with a different retention, which is the whole reason tier selection is
@@ -80,11 +82,38 @@ var (
 		step: time.Hour, lag: time.Hour,
 		refreshEvery: 30 * time.Minute, retention: 90 * 24 * time.Hour,
 	}
+	// The tier a question about a YEAR resolves to.
+	//
+	// It exists because the ladder used to stop at 90 days, so the widest
+	// window anything could answer was three months -- and the 1h tier
+	// answers three months with 2160 points, which is a chart nobody can read
+	// and a response nobody wants to send. A day is the bucket that question
+	// wants: twelve months is 365 points, the same order as the 30d chart
+	// draws today.
+	//
+	// 400 days rather than a round 365: the widest window offered is 12
+	// months, and a retention equal to the window puts the far edge of that
+	// window on the chunk being dropped. The overshoot is five weeks of daily
+	// rows -- 1/24 of what an hour costs -- beside the 90 days of hourly the
+	// tier above already keeps.
+	//
+	// lag + refreshEvery is three hours, which materialisedThrough truncates
+	// to the day: every WHOLE day up to today, which is all a daily bucket
+	// can honestly report. Today's partial bucket IS materialised -- the
+	// policy reaches to two hours ago -- and is deliberately left outside the
+	// answered window, because a day that is four hours old is not a
+	// day-shaped reading and the LAST point on a chart is what every headline
+	// value reads.
+	dailyTier = tierSpec{
+		name: Tier1d, suffix: "_1d", tsColumn: "bucket",
+		step: 24 * time.Hour, lag: 2 * time.Hour,
+		refreshEvery: time.Hour, retention: 400 * 24 * time.Hour,
+	}
 )
 
-// rolledUpTiers is the trio shared by every family that has continuous
+// rolledUpTiers is the ladder shared by every family that has continuous
 // aggregates. Ordered fine to coarse; selection depends on that order.
-var rolledUpTiers = []tierSpec{rawTier, fiveMinuteTier, hourlyTier}
+var rolledUpTiers = []tierSpec{rawTier, fiveMinuteTier, hourlyTier, dailyTier}
 
 // smartTiers is the one raw-only family (spec 5.3).
 //

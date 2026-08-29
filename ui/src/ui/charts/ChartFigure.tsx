@@ -14,7 +14,7 @@
 // not the caller's business.
 
 import { useState } from "react";
-import { Chart, type ChartSeries } from "./Chart";
+import { Chart, markFor, type ChartSeries } from "./Chart";
 import { mirrorPeaks } from "./geometry";
 import { mirroredTicks, niceTicks, timeLabel, timeTicks } from "./ticks";
 import { widestLabel } from "./plot";
@@ -140,17 +140,7 @@ export function ChartFigure({
         // The same four-way choice Overlay makes, and it has to stay the
         // same one: this is the ENLARGED view of a panel Overlay drew, and a
         // mark that differs here is a different chart on click.
-        mark={
-          mirrored
-            ? stacked
-              ? "mirrorStack"
-              : "mirror"
-            : stacked
-              ? "stack"
-              : filled
-                ? "area"
-                : "line"
-        }
+        mark={markFor({ filled, stacked, mirrored })}
         label={label}
         y={yTicks}
         x={xTicks}

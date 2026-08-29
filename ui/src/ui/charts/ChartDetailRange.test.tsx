@@ -41,21 +41,31 @@ describe("the enlarged view owns its range", () => {
       />,
     );
     await open();
-    await userEvent.click(within(dialog()).getByRole("button", { name: "6h" }));
+    await userEvent.click(
+      within(dialog()).getByRole("button", { name: /last 6h$/ }),
+    );
 
     // There is no page setter to call: the only thing reachable from the
-    // dialog is this panel's own fetcher, for this panel's own family.
+    // dialog is this panel's own fetcher, for this panel's own family. Once
+    // per rail window that is not the page's own, and NOT again when a tile
+    // is clicked -- the rail already holds that window.
     await waitFor(() => expect(fetchSeries).toHaveBeenCalledWith("6h"));
-    expect(fetchSeries).toHaveBeenCalledTimes(1);
+    expect(fetchSeries.mock.calls.map((c) => c[0]).sort()).toEqual([
+      "24h",
+      "6h",
+    ]);
     expect(
-      within(dialog()).getByRole("button", { name: "6h" }),
+      within(dialog()).getByRole("button", { name: /last 6h$/ }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
-  // Opening and closing a dialog must cost nothing: the series already on
-  // screen are the page's range, which is where the dialog starts.
-  it("fetches nothing while it sits at the page's range", async () => {
-    const fetchSeries = vi.fn();
+  // Opening fetches the rail's OTHER windows -- each tile is a drawn preview
+  // and cannot be drawn unfetched -- but never the page's own. Those series
+  // are already on screen behind the dialog, which is what seeds that tile.
+  it("never asks for the page's own range", async () => {
+    const fetchSeries = vi
+      .fn()
+      .mockResolvedValue({ series: wider, window: null });
 
     render(
       <ChartPanel
@@ -67,9 +77,11 @@ describe("the enlarged view owns its range", () => {
       />,
     );
     await open();
+    await waitFor(() => expect(fetchSeries).toHaveBeenCalledWith("6h"));
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
 
-    expect(fetchSeries).not.toHaveBeenCalled();
+    expect(fetchSeries).not.toHaveBeenCalledWith("1h");
+    expect(fetchSeries).toHaveBeenCalledTimes(1);
   });
 
   // A dialog is a question asked and answered, not a second piece of page
@@ -89,13 +101,15 @@ describe("the enlarged view owns its range", () => {
       />,
     );
     await open();
-    await userEvent.click(within(dialog()).getByRole("button", { name: "6h" }));
+    await userEvent.click(
+      within(dialog()).getByRole("button", { name: /last 6h$/ }),
+    );
     await waitFor(() => expect(fetchSeries).toHaveBeenCalled());
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
 
     await open();
     expect(
-      within(dialog()).getByRole("button", { name: "1h" }),
+      within(dialog()).getByRole("button", { name: /last 1h$/ }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 
@@ -114,7 +128,9 @@ describe("the enlarged view owns its range", () => {
       />,
     );
     await open();
-    await userEvent.click(within(dialog()).getByRole("button", { name: "6h" }));
+    await userEvent.click(
+      within(dialog()).getByRole("button", { name: /last 6h$/ }),
+    );
 
     expect(await screen.findByText(/could not load that range/i)).toBeVisible();
     expect(
@@ -138,10 +154,14 @@ describe("the enlarged view owns its range", () => {
       />,
     );
     await open();
-    await userEvent.click(within(dialog()).getByRole("button", { name: "6h" }));
+    await userEvent.click(
+      within(dialog()).getByRole("button", { name: /last 6h$/ }),
+    );
     expect(await screen.findByText(/could not load that range/i)).toBeVisible();
 
-    await userEvent.click(within(dialog()).getByRole("button", { name: "1h" }));
+    await userEvent.click(
+      within(dialog()).getByRole("button", { name: /last 1h$/ }),
+    );
 
     expect(screen.queryByText(/could not load that range/i)).toBeNull();
   });
@@ -161,10 +181,14 @@ describe("the enlarged view owns its range", () => {
       />,
     );
     await open();
-    await userEvent.click(within(dialog()).getByRole("button", { name: "6h" }));
+    await userEvent.click(
+      within(dialog()).getByRole("button", { name: /last 6h$/ }),
+    );
     expect(within(dialog()).getByText(/loading/i)).toBeVisible();
 
-    await userEvent.click(within(dialog()).getByRole("button", { name: "1h" }));
+    await userEvent.click(
+      within(dialog()).getByRole("button", { name: /last 1h$/ }),
+    );
 
     expect(within(dialog()).queryByText(/loading/i)).toBeNull();
   });
@@ -192,7 +216,9 @@ describe("the enlarged view owns its range", () => {
 
     const { rerender } = render(panel(fetcher()));
     await open();
-    await userEvent.click(within(dialog()).getByRole("button", { name: "6h" }));
+    await userEvent.click(
+      within(dialog()).getByRole("button", { name: /last 6h$/ }),
+    );
     await waitFor(() => expect(asked).toEqual(["6h"]));
 
     // A poll landed behind the dialog: same panel, a new closure.
@@ -204,11 +230,14 @@ describe("the enlarged view owns its range", () => {
     expect(asked).toEqual(["6h"]);
   });
 
-  // Buttons that cannot change anything are worse than no buttons.
-  it("carries no picker at all without a fetcher", async () => {
+  // Tiles that cannot change anything, and have nothing to draw, are worse
+  // than no tiles.
+  it("carries no rail at all without a fetcher", async () => {
     render(<ChartPanel title="CPU" series={series} range="1h" />);
     await open();
 
-    expect(within(dialog()).queryByRole("button", { name: "6h" })).toBeNull();
+    expect(
+      within(dialog()).queryByRole("button", { name: /last 6h$/ }),
+    ).toBeNull();
   });
 });

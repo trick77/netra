@@ -31,10 +31,17 @@ import type { Band } from "../ui/charts/StackedSparkline";
  *
  * CACHED IS THE DIMMEST BAND, NOT THE BRIGHTEST. It was #b6b3ab, 8.23:1 on
  * --surface, so the band meaning "you can have this back" glared harder than
- * the one meaning you cannot. It is now #4f4c48 at 2.02:1: the band the host
- * will hand back first is the one your eye reaches last. Buffers is a dark
- * steel blue one step above it, so the TOP of a memory cell is never the
- * loudest thing on the row.
+ * the one meaning you cannot. It went to #4f4c48 at 2.02:1 and then to
+ * #3d3a37 at 1.53:1: the band the host will hand back first is the one your
+ * eye reaches last. Buffers is a dark steel blue one step above it, so the
+ * TOP of a memory cell is never the loudest thing on the row.
+ *
+ * The second darkening is a pure lightness drop at the same hue, which is why
+ * it costs nothing: cached separates FROM buffers and the dashed total-RAM
+ * rule by more than it did, not less. What bounds it is the card behind the
+ * chart -- a band that reaches --surface has disappeared rather than
+ * quietened -- and at dE2000 10.2 from --surface there is about one more step
+ * of this and no more.
  *
  * AMBER IS BACK, KNOWINGLY. ARC was --s7 (#d95926) and cached was --s8 amber
  * (#c98500); both were taken out because a memory band, "something needs
@@ -51,9 +58,12 @@ import type { Band } from "../ui/charts/StackedSparkline";
  * Adjacent separation, dE2000 under normal vision and Machado
  * protan/deutan/tritan at full severity, worst figure per pair: used/shared
  * 32.7, shared/ARC 13.1, ARC/buffers 10.9, buffers/cached 18.7 -- every pair
- * above the 9.1 the --s7/--s8 set was shipped at. On --surface the bands run
- * 3.76 down to 2.02, all under the 4:1 the series hold and deliberately so;
- * see the tokens' own note in index.css.
+ * above the 9.1 the --s7/--s8 set was shipped at. Those were measured at
+ * cached #4f4c48; the later drop to #3d3a37 only moves that last pair, and
+ * only apart -- under normal vision it goes 19.3 to 20.7, and a lightness
+ * gap is the one kind of separation CVD leaves alone. On --surface the bands
+ * now run 3.76 down to 1.53, all under the 4:1 the series hold and
+ * deliberately so; see the tokens' own note in index.css.
  */
 const USED = "var(--mem-used)";
 const SHARED = "var(--mem-shared)";

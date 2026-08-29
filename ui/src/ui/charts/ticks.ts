@@ -211,6 +211,14 @@ const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+// A NOMINAL month and year, for choosing a step and nothing else. The
+// boundaries themselves are calendar dates -- ceilTo, advance and
+// isTimeBoundary all walk months through Date -- so a 31-day August and a
+// 28-day February both count as one step even though these constants say
+// otherwise. Comparing `step >= MONTH` is a lookup on which rung of the
+// ladder was picked, never arithmetic on a real interval.
+const MONTH = 30 * DAY;
+const YEAR = 365 * DAY;
 const TIME_STEPS = [
   MINUTE,
   5 * MINUTE,
@@ -222,6 +230,13 @@ const TIME_STEPS = [
   12 * HOUR,
   DAY,
   7 * DAY,
+  // The rungs a year-wide window needs. Without them the coarsest step was a
+  // week, so 24 months of data drew 104 labelled gridlines -- an axis so
+  // dense it read as a grey band rather than as times.
+  MONTH,
+  3 * MONTH,
+  6 * MONTH,
+  YEAR,
 ];
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -256,7 +271,12 @@ export function timeLabel(at: Date, span: number): string {
   const clock = `${pad2(at.getHours())}:${pad2(at.getMinutes())}`;
   if (span <= 26 * HOUR) return clock;
   if (span <= 8 * DAY) return `${DAYS[at.getDay()]} ${clock}`;
-  return `${at.getDate()} ${MONTHS[at.getMonth()]}`;
+  if (span <= 100 * DAY) return `${at.getDate()} ${MONTHS[at.getMonth()]}`;
+  // Past a quarter the day is noise -- every mark is the first of a month --
+  // and the YEAR is the thing that has become ambiguous: a 24-month window
+  // holds two Augusts, and "1 Aug" twice on one axis is a chart that lies
+  // about where it starts.
+  return `${MONTHS[at.getMonth()]} ${String(at.getFullYear()).slice(-2)}`;
 }
 
 /**
@@ -306,6 +326,14 @@ export function timeTicks(
  * divides the major a small whole number of times.
  */
 function minorStepFor(step: number): number {
+  // A minor mark has to be able to LAND on a major one, because the loop
+  // walks minors and asks each whether it is also a boundary of the major.
+  // A month does not contain a whole number of weeks, so a weekly minor
+  // under a monthly major would step straight past every first-of-the-month
+  // and the axis would come back with no labels at all. Months divide into
+  // months; that is the only division available up here.
+  if (step >= 3 * MONTH) return MONTH;
+  if (step >= MONTH) return DAY;
   if (step >= 7 * DAY) return DAY;
   if (step >= DAY) return 6 * HOUR;
   if (step >= 12 * HOUR) return 3 * HOUR;
@@ -321,6 +349,13 @@ function minorStepFor(step: number): number {
 /** The first local-time boundary of `step` at or after `at`. */
 function ceilTo(at: number, step: number): number {
   const d = new Date(at);
+  if (step >= MONTH) {
+    // The first of a month, which is where every month-scale boundary sits.
+    d.setDate(1);
+    d.setHours(0, 0, 0, 0);
+    while (d.getTime() < at) d.setMonth(d.getMonth() + 1);
+    return d.getTime();
+  }
   if (step >= DAY) {
     d.setHours(0, 0, 0, 0);
     // setHours already floored to local midnight; step forward until we
@@ -341,6 +376,13 @@ function ceilTo(at: number, step: number): number {
 function advance(at: number, step: number): number {
   if (step < DAY) return at + step;
   const d = new Date(at);
+  if (step >= MONTH) {
+    // Calendar months, not 30-day jumps: adding 30 days to 1 January lands
+    // on the 31st, and every mark after it drifts further off the first of
+    // the month until none of them is a boundary any more.
+    d.setMonth(d.getMonth() + Math.round(step / MONTH));
+    return d.getTime();
+  }
   d.setDate(d.getDate() + Math.round(step / DAY));
   return d.getTime();
 }
@@ -348,6 +390,11 @@ function advance(at: number, step: number): number {
 /** Whether `at` lands on a local boundary of `step`. */
 function isTimeBoundary(at: number, step: number): boolean {
   const d = new Date(at);
+  const firstOfMonth = d.getDate() === 1 && isMidnight(d);
+  if (step >= YEAR) return d.getMonth() === 0 && firstOfMonth;
+  if (step >= 6 * MONTH) return d.getMonth() % 6 === 0 && firstOfMonth;
+  if (step >= 3 * MONTH) return d.getMonth() % 3 === 0 && firstOfMonth;
+  if (step >= MONTH) return firstOfMonth;
   if (step >= 7 * DAY) return d.getDay() === 1 && isMidnight(d);
   if (step >= DAY) return isMidnight(d);
   const midnight = new Date(at);

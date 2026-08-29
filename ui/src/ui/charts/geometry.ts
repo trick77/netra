@@ -565,7 +565,7 @@ export function mirrorPaths(
   // Columns TILED across the full width, edge to edge, rather than centred on
   // scaleX's positions.
   //
-  // scaleX insets by `pad` at both ends, so 170 readings in a 170px cell get
+  // scaleX insets by `pad` at both ends, so 150 readings in a 150px cell get
   // 166px of span and every bar straddles two pixel columns -- a smear at
   // partial alpha instead of a mark. Tiled, a fold to the plot's own width
   // lands each bar on an exact pixel boundary, which is what lets it be

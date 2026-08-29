@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Card } from "../../ui/Card";
 import { Segmented } from "../../ui/Segmented";
-import { isRange, RANGES, type Range } from "../../lib/range";
+import { isRange, PAGE_RANGES, type Range } from "../../lib/range";
 import { RANGE_KEY, readPref, writePref } from "../../lib/prefs";
 
 /** The stored default range. It is lib/range's type and deliberately the
@@ -15,7 +15,9 @@ export type RangeKey = Range;
 // App.tsx import it from here.
 export { RANGE_KEY };
 
-const RANGE_LABELS: Record<RangeKey, string> = {
+// Only the page-scale ranges: PAGE_RANGES is what this control offers, and
+// a label for a window no page can be set to would be dead weight.
+const RANGE_LABELS: Partial<Record<RangeKey, string>> = {
   "1h": "1 h",
   "6h": "6 h",
   "12h": "12 h",
@@ -94,7 +96,10 @@ export function SettingsPage() {
           hint="A link carrying its own range wins over this; the range lives in the URL."
         >
           <Segmented
-            options={RANGES.map((r) => ({ value: r, label: RANGE_LABELS[r] }))}
+            options={PAGE_RANGES.map((r) => ({
+              value: r,
+              label: RANGE_LABELS[r] ?? r,
+            }))}
             value={range}
             onChange={chooseRange}
           />

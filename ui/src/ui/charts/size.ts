@@ -1,14 +1,24 @@
 /**
- * The width every sparkline in a list uses.
+ * The size every sparkline in a list uses.
  *
- * One constant rather than a default repeated in three components: the CPU,
- * memory and traffic cells sit side by side in a fleet row, and a row whose
- * charts are different widths reads as three unrelated pictures rather than
- * one host. Widened from 120 -- a stacked chart with thirty-two bands needs
- * the horizontal room to show a shape at all, and the row had space going
- * spare.
+ * One pair of constants rather than defaults repeated in three components:
+ * the CPU, memory and traffic cells sit side by side in a fleet row, and a
+ * row whose charts are different sizes reads as three unrelated pictures
+ * rather than one host.
+ *
+ * 150 x 45. The width was 170 and the height 32, which is a 5.3:1 letterbox
+ * -- wide enough that a fleet row's chart drew a day of history and flat
+ * enough that most of what happened in it was under a pixel of vertical
+ * travel. The shape is what carries a sparkline, so the height went up and
+ * the width came down to pay for it: at 3.3:1 the same series shows the dip
+ * it used to swallow, and three of them still sit across a fleet row.
+ *
+ * It is also the tile size in the enlarged view's rail, and deliberately the
+ * same number: a rail tile and a fleet cell are the same picture asking the
+ * same question, and a reader moves between them.
  */
-export const SPARK_WIDTH = 170;
+export const SPARK_WIDTH = 150;
+export const SPARK_HEIGHT = 45;
 
 /**
  * The width of the chart inside an enlarged view.

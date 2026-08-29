@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { stackBands } from "../../ui/charts/geometry";
-import { SPARK_WIDTH } from "../../ui/charts/size";
+import { SPARK_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
 import { hostColumns, type HostRow } from "./hostColumns";
 import { ABSENT } from "../../lib/format";
 
@@ -537,10 +537,10 @@ describe("hostColumns", () => {
       ).map((p) => p.getAttribute("d"));
       const expected = stackBands(
         row.mem.map((b) => b.values),
-        // The shared sparkline width, not a literal: every list chart reads
-        // it from one constant so a row's cells stay the same length.
+        // The shared sparkline size, not literals: every list chart reads it
+        // from one pair of constants so a row's cells stay the same shape.
         SPARK_WIDTH,
-        32,
+        SPARK_HEIGHT,
         // Scaled to mem_total plus the headroom the total's own dashed rule
         // needs to sit inside the plot rather than on its border. Free is
         // still the gap between the stack and that rule.

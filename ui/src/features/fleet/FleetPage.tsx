@@ -93,7 +93,7 @@ function useSlashToFocus() {
 // They live in ./ranges now, so the container list and the host columns can
 // read them without importing this page. Re-exported because App.tsx and
 // this page's own tests have always taken them from here.
-export { FLEET_RANGE, FLEET_RANGE_VALUES } from "./ranges";
+export { FLEET_RANGE } from "./ranges";
 
 export interface FleetPageProps {
   /** Injected rows. When omitted the page fetches its own. */
