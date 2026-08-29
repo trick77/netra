@@ -642,10 +642,13 @@ function MirrorMarks({
  * arrive as consecutive in/out pairs, one pair per interface, and layer order
  * is pair order so the same interface sits at the same depth on both sides.
  *
- * No peak envelope here, unlike MirrorMarks. A stacked band's height is a
- * running total, and the sum of each interface's peak is not the host's peak:
- * the interfaces do not peak in the same bucket. Drawing one would state a
- * number no bucket ever held.
+ * ONE peak envelope per half where the tier carries maxima, and never one
+ * per layer. A per-layer envelope would state a per-interface throughput no
+ * bucket ever held, because the interfaces do not peak in the same bucket.
+ * The summed outer edge carries the same bias the fleet cell's own envelope
+ * already carries, over the same numbers -- which is what makes the cell and
+ * the panel one chart at two sizes rather than two pictures of one day. See
+ * mirrorStackBands.
  */
 function MirrorStackMarks({
   series,
@@ -669,17 +672,51 @@ function MirrorStackMarks({
   // mirrored STACK folded to one point per pixel drew an outline where the
   // plain mirror had already learned not to.
   const edge = mirrorEdge(w, longest(series), pad);
+  // The bands where the tier has them, and only when EVERY layer of that
+  // half carries one: a half summed from some peaks and some means is a
+  // total of two different measurements.
+  const rows = (of: ChartSeries[]): (number | null)[][] | undefined =>
+    of.length > 0 && of.every((s) => s.band && s.band.length > 0)
+      ? of.map((s) => s.band!)
+      : undefined;
+  const upPeaks = rows(ups);
+  const downPeaks = rows(downs);
   const paths = mirrorStackBands(
     ups.map((s) => s.values),
     downs.map((s) => s.values),
     w,
     h,
     pad,
+    upPeaks || downPeaks
+      ? { up: upPeaks ?? [], down: downPeaks ?? [] }
+      : undefined,
   );
   const dim = (s: ChartSeries): number =>
     highlight !== undefined && highlight !== s.name ? 0.35 : 1;
   return (
     <>
+      {/* The envelope first of all, so the midline and then the stack sit
+          over it. No stroke: it is a region, not a reading. */}
+      {paths.envelope.up !== "" && (
+        <path
+          data-envelope
+          data-up
+          d={paths.envelope.up}
+          fill={ups[0]?.color}
+          fillOpacity={0.18}
+          stroke="none"
+        />
+      )}
+      {paths.envelope.down !== "" && (
+        <path
+          data-envelope
+          data-down
+          d={paths.envelope.down}
+          fill={downs[0]?.color}
+          fillOpacity={0.18}
+          stroke="none"
+        />
+      )}
       {/* Behind the bands, and half a row down -- see MirrorMarks for both
           reasons. Drawn last it struck a grey rule through the band. */}
       <line

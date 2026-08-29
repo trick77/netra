@@ -544,6 +544,64 @@ describe("geometry", () => {
   });
 
   describe("mirrorStackBands", () => {
+    // ONE outer edge for the half, summed, and never one per layer: two
+    // interfaces burst in different seconds of a bucket, so a per-layer
+    // envelope states a per-interface throughput no bucket carried. The
+    // summed edge is the same number the fleet cell's own envelope is, which
+    // is what makes the panel and the cell one chart at two sizes.
+    it("draws one summed envelope per half, not one per layer", () => {
+      const out = mirrorStackBands(
+        [
+          [10, 10],
+          [20, 20],
+        ],
+        [[5, 5]],
+        100,
+        40,
+        0,
+        {
+          up: [
+            [40, 40],
+            [60, 60],
+          ],
+          down: [[30, 30]],
+        },
+      );
+
+      expect(out.envelope.up).not.toBe("");
+      expect(out.envelope.down).not.toBe("");
+      // Two layers up, and still exactly one envelope path for that half.
+      expect(out.up).toHaveLength(2);
+    });
+
+    // The envelope contains the stack, so the ceiling has to be its own or
+    // the outer edge is drawn outside the box.
+    it("scales the half by the envelope, not by the stack inside it", () => {
+      const ys = (d: string) =>
+        [...d.matchAll(/-?\d+\.?\d*,(-?\d+\.?\d*)/g)].map((m) =>
+          parseFloat(m[1]!),
+        );
+      const out = mirrorStackBands([[10, 10]], [[10, 10]], 100, 40, 0, {
+        up: [[100, 100]],
+        down: [[100, 100]],
+      });
+
+      const top = Math.min(...ys(out.envelope.up));
+      const stackTop = Math.min(...ys(out.up[0]!));
+      // The envelope reaches the edge; the stack inside it sits a tenth of
+      // the way up, which is the ratio of the two readings.
+      expect(top).toBeGreaterThanOrEqual(0);
+      expect(top).toBeLessThan(1);
+      expect(stackTop).toBeGreaterThan(out.mid - out.mid / 5);
+    });
+
+    // A half whose layers do not all carry a peak has no honest total to
+    // draw, so it draws none rather than adding means to maxima.
+    it("draws no envelope for a half with no peaks", () => {
+      const out = mirrorStackBands([[10, 10]], [[5, 5]], 100, 40, 0);
+      expect(out.envelope).toEqual({ up: "", down: "" });
+    });
+
     // Every case below reads y off the path text. A band is
     // "M x,y Lx,y ... Lx,y Z", so the first coordinate pair of the TOP edge
     // is what says how tall the layer's running total is.

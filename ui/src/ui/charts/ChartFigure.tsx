@@ -92,10 +92,11 @@ export function ChartFigure({
   window: answered = null,
   label,
 }: ChartFigureProps) {
-  // null until the pointer is over the plot. The crosshair and the "at
-  // cursor" column are a reading of where the pointer IS; with no pointer
-  // there is no such reading, and a rule frozen at some arbitrary bucket
-  // states one nobody asked for.
+  // null until the pointer is over the plot. The crosshair is a reading of
+  // where the pointer IS; with no pointer there is no such reading, and a
+  // rule frozen at some arbitrary bucket states one nobody asked for. The
+  // "at cursor" COLUMN is drawn either way and reads as absent -- see the
+  // table below for why it does not come and go.
   const [cursor, setCursor] = useState<number | null>(null);
 
   const valueAxis = !hideAxis;
@@ -169,12 +170,13 @@ export function ChartFigure({
         <thead>
           <tr>
             <th scope="col">Series</th>
-            {/* The column exists only while the pointer is over the plot. A
-                permanently empty one is furniture for a measurement nobody
-                is taking, and it pushes every real statistic sideways. */}
-            {at !== null && (
-              <th scope="col" className="cursor">{`At ${at}`}</th>
-            )}
+            {/* Always here, empty until the pointer is over the plot. It was
+                mounted on hover and unmounted on leave, which meant every
+                statistic in the table jumped sideways the moment the pointer
+                crossed the chart and jumped back when it left -- the reading
+                moved under the eye that was going to read it. An absent
+                marker holds the space and says the same thing. */}
+            <th scope="col" className="cursor">{`At ${at ?? ABSENT}`}</th>
             <th scope="col">Latest</th>
             <th scope="col">Min</th>
             <th scope="col">Max</th>
@@ -191,11 +193,9 @@ export function ChartFigure({
                   <i style={{ background: s.color }} />
                   {s.name}
                 </th>
-                {at !== null && (
-                  <td className="cursor">
-                    {here === null ? ABSENT : format(here)}
-                  </td>
-                )}
+                <td className="cursor">
+                  {here === null ? ABSENT : format(here)}
+                </td>
                 <td>{stats.latest === null ? ABSENT : format(stats.latest)}</td>
                 <td>{stats.min === null ? ABSENT : format(stats.min)}</td>
                 <td>{stats.max === null ? ABSENT : format(stats.max)}</td>

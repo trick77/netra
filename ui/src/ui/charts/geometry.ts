@@ -677,6 +677,20 @@ export function mirrorPaths(
  *
  * Values above `max` are left to overflow, matching `mirrorPaths` and
  * `linePath`: the overflow is itself informative.
+ *
+ * `peaks` are the bucket MAXIMA of the same rows, and give each half ONE
+ * outer envelope rather than an envelope per layer. Per layer would be the
+ * lie this used to refuse outright: two interfaces burst in different
+ * seconds of a bucket, so stacking their maxima states a per-interface
+ * throughput no bucket carried. Summed into a single outer edge it is the
+ * same reading the fleet cell's envelope already is -- trafficSeries sums
+ * the per-interface peaks for exactly one pair and says so -- and it is the
+ * reading this panel has to draw, because a host's traffic chart and the
+ * cell it was opened from cannot be two different pictures of one day.
+ *
+ * With `peaks` the SCALE comes from them rather than from the stack: the
+ * envelope is always the taller of the two, and a ceiling taken from the
+ * stack alone would draw it outside the box.
  */
 export function mirrorStackBands(
   up: (number | null)[][],
@@ -684,7 +698,13 @@ export function mirrorStackBands(
   w: number,
   h: number,
   pad = 0,
-): { up: string[]; down: string[]; mid: number } {
+  peaks?: { up: (number | null)[][]; down: (number | null)[][] },
+): {
+  up: string[];
+  down: string[];
+  envelope: { up: string; down: string };
+  mid: number;
+} {
   // The stack's own totals, which is what the outer edge of each half is
   // drawn at -- not any one layer's peak.
   const stackMax = (series: (number | null)[][]): number => {
@@ -716,7 +736,13 @@ export function mirrorStackBands(
 
      This is also what makes the panel and the fleet cell the same chart at
      two sizes rather than two charts that happen to share colours. */
-  const raw = { up: stackMax(up), down: stackMax(down) };
+  // The envelope contains the stack, so the ceiling is the envelope's where
+  // there is one. Both halves still divide by the same pair of numbers, so
+  // the layers inside keep their heights relative to the edge above them.
+  const raw = {
+    up: Math.max(stackMax(up), stackMax(peaks?.up ?? [])),
+    down: Math.max(stackMax(down), stackMax(peaks?.down ?? [])),
+  };
   const scale = mirrorCeilings(raw.up, raw.down);
   const upMax = scale.up;
   const downMax = scale.down;
@@ -812,7 +838,39 @@ export function mirrorStackBands(
     return bands;
   };
 
-  return { up: half(up, -1), down: half(down, 1), mid };
+  // ONE outer edge per half, from the summed maxima. Summed the way the
+  // stack itself gaps: an index where any row is null has no total, so the
+  // envelope breaks there exactly as the bands do rather than dipping to a
+  // partial sum.
+  const summed = (rows: (number | null)[][]): (number | null)[] => {
+    const n = rows.reduce((longest, r) => Math.max(longest, r.length), 0);
+    const out: (number | null)[] = new Array(n).fill(null);
+    for (let i = 0; i < n; i++) {
+      let total = 0;
+      let whole = true;
+      for (const r of rows) {
+        const v = r[i];
+        if (v == null) {
+          whole = false;
+          break;
+        }
+        total += v;
+      }
+      if (whole) out[i] = total;
+    }
+    return out;
+  };
+  const edge = (rows: (number | null)[][] | undefined, direction: 1 | -1) =>
+    rows === undefined || rows.length === 0
+      ? ""
+      : (half([summed(rows)], direction)[0] ?? "");
+
+  return {
+    up: half(up, -1),
+    down: half(down, 1),
+    envelope: { up: edge(peaks?.up, -1), down: edge(peaks?.down, 1) },
+    mid,
+  };
 }
 
 /**
