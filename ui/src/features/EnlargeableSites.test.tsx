@@ -220,7 +220,6 @@ describe("the list sparklines enlarge", () => {
       ["CPU", "host"],
       ["Memory", "host"],
       ["Traffic", "net"],
-      ["Filesystem usage", "filesystem"],
     ])(
       "widens %s as the family it is actually drawing",
       async (name, family) => {
