@@ -14,10 +14,69 @@
  * events log over an hour is usually empty), but every page can now be
  * HANDED any of them, which is what a shared default requires.
  */
-export type Range = "1h" | "6h" | "12h" | "24h" | "7d" | "30d";
+export type Range = "1h" | "6h" | "12h" | "24h" | "7d" | "30d" | "3mo" | "12mo";
 
 /** Every range, in ascending order — the order a picker should show them. */
-export const RANGES: readonly Range[] = ["1h", "6h", "12h", "24h", "7d", "30d"];
+export const RANGES: readonly Range[] = [
+  "1h",
+  "6h",
+  "12h",
+  "24h",
+  "7d",
+  "30d",
+  "3mo",
+  "12mo",
+];
+
+/**
+ * The ranges a PAGE can be set to, in ascending order.
+ *
+ * Everything past 30d belongs to one enlarged chart and not to a page: a
+ * fleet list drawn over a year is twenty rows of the same flat smear, and no
+ * page offers a window that wide in its own picker. Offering one as the
+ * stored default would put two buttons in Settings that every page then
+ * widens back down -- a setting that reads as ignored.
+ */
+export const PAGE_RANGES: readonly Range[] = [
+  "1h",
+  "6h",
+  "12h",
+  "24h",
+  "7d",
+  "30d",
+];
+
+/**
+ * The ladder the enlarged view's rail of mini-charts draws, in ascending
+ * order.
+ *
+ * Fixed, and deliberately not the page's offered set. The rail is a property
+ * of looking at ONE chart closely: every tile is a separate request for one
+ * series, so the reason a page narrows its own picker -- the fleet list
+ * refusing a 30-day fan-out across every host -- does not apply to it. What a
+ * reader wants from an enlarged chart is the whole span of the question, from
+ * "what is happening right now" to "has this disk always been this full".
+ *
+ * It stops at a year. Two years was on it and came off: the second year is
+ * one more nearly identical smear on a tile 45px tall, and it is the rung
+ * that costs the most to keep -- the daily tier's retention is sized by the
+ * widest window on this list.
+ *
+ * 12h is the one narrow range missing from it. It exists for the fleet
+ * list's fixed window and nothing else; on this ladder it would sit between
+ * 6h and 24h saying almost nothing neither of its neighbours says. A dialog
+ * opened from the fleet still opens AT 12h -- the rail simply has no tile
+ * pressed until the reader picks one.
+ */
+export const RAIL_RANGES: readonly Range[] = [
+  "1h",
+  "6h",
+  "24h",
+  "7d",
+  "30d",
+  "3mo",
+  "12mo",
+];
 
 export function isRange(value: unknown): value is Range {
   return (
@@ -82,6 +141,13 @@ const SPEC: Record<Range, { seconds: number; step: string }> = {
   "24h": { seconds: 24 * 3600, step: "5m" },
   "7d": { seconds: 7 * 24 * 3600, step: "1h" },
   "30d": { seconds: 30 * 24 * 3600, step: "1h" },
+  // The daily tier, from here up. Three months of hourly buckets is 2160
+  // points -- past the 60-300 rule by an order of magnitude, and a response
+  // nobody wants to send -- so the step steps too. "24h" rather than "1d"
+  // because the hub parses this with time.ParseDuration, which has no day
+  // unit; selectTier reads it and answers from the _1d aggregate.
+  "3mo": { seconds: 90 * 24 * 3600, step: "24h" },
+  "12mo": { seconds: 365 * 24 * 3600, step: "24h" },
 };
 
 /** Human label for a range, for a picker or a chart's accessible name. */
@@ -140,4 +206,9 @@ export const EVENT_LIMITS: Record<Range, number> = {
   "24h": 500,
   "7d": 2000,
   "30d": 5000,
+  // 5000 is maxEventLimit: everything past a month asks for all of it. The
+  // events page offers none of these, but the record is total by
+  // construction, so a range added to the type has to answer here too.
+  "3mo": 5000,
+  "12mo": 5000,
 };

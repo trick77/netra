@@ -63,15 +63,16 @@ func TestIntegrationRefreshPolicyStartOffsetExceedsBufferWindow(t *testing.T) {
 	}
 	// host_samples, host_snmp_samples, host_proto_samples, agent_samples and
 	// the five Group 1 hypertables (cpu_core_samples, disk_io_samples,
-	// sensor_samples, net_samples, collector_samples), each with a 5m and a 1h
+	// sensor_samples, net_samples, collector_samples), plus container_samples
+	// and filesystem_samples: eleven families, each with a 5m, a 1h and a 1d
 	// aggregate. This literal is deliberately hard-coded rather than derived:
 	// a new hypertable whose refresh policy is forgotten is a permanently
 	// silent failure, so adding one must break this test until it is counted.
-	if seen != 22 {
-		t.Fatalf("refresh policies found = %d, want 22 "+
+	if seen != 33 {
+		t.Fatalf("refresh policies found = %d, want 33 "+
 			"(host_samples, host_snmp_samples, host_proto_samples, "+
 			"agent_samples, the five Group 1 tables, plus container_samples "+
-			"and filesystem_samples, 5m and 1h each)", seen)
+			"and filesystem_samples, 5m, 1h and 1d each)", seen)
 	}
 }
 
@@ -232,8 +233,8 @@ func TestIntegrationEveryContinuousAggregateHasRetention(t *testing.T) {
 		t.Fatalf("count aggregate retention policies: %v", err)
 	}
 
-	if aggregates != 22 {
-		t.Fatalf("continuous aggregates found = %d, want 22", aggregates)
+	if aggregates != 33 {
+		t.Fatalf("continuous aggregates found = %d, want 33", aggregates)
 	}
 	if policies != aggregates {
 		t.Fatalf("aggregate retention policies = %d, want %d (one per aggregate)", policies, aggregates)

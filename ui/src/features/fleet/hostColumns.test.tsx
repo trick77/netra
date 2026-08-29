@@ -537,8 +537,8 @@ describe("hostColumns", () => {
       ).map((p) => p.getAttribute("d"));
       const expected = stackBands(
         row.mem.map((b) => b.values),
-        // The shared sparkline size, not a literal: every list chart reads
-        // it from one constant so a row's cells stay the same shape.
+        // The shared sparkline size, not literals: every list chart reads it
+        // from one pair of constants so a row's cells stay the same shape.
         SPARK_WIDTH,
         SPARK_HEIGHT,
         // Scaled to mem_total plus the headroom the total's own dashed rule

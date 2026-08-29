@@ -7,11 +7,19 @@
 // silently inert. This is that behaviour with the card taken off: whatever
 // is handed as children becomes the button, and pressing it opens the same
 // ChartDetail the panels open.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { OverlaySeries } from "./Overlay";
-import { extent } from "./geometry";
-import { ChartDetail, peak } from "./ChartDetail";
-import type { Range } from "../../lib/range";
+import { ChartDetail } from "./ChartDetail";
+import { scaleFor } from "./scale";
+import type { RailEntry } from "./RangeRail";
+import { RAIL_RANGES, type Range } from "../../lib/range";
 
 /** What fetchSeries answers: the bands to draw and the window they cover,
  * already shaped -- the caller owns the response-to-bands conversion because
@@ -22,7 +30,8 @@ export interface DetailData {
 }
 
 /**
- * The enlarged view's own range, and the data for it.
+ * The enlarged view's own range, the data for it, and the data for every
+ * OTHER range on the rail.
  *
  * The whole point of this hook is that nothing it returns reaches the page.
  * A reader who enlarges one chart and widens it is asking a question about
@@ -30,28 +39,105 @@ export interface DetailData {
  * -- which is what wiring the dialog to the page's setter did -- refetches
  * the entire tab and moves the toolbar under the thing being read.
  *
- * `series` is null until the range is actually changed, so a dialog opened
- * and closed again costs no request at all: the chart's own data already
- * covers the page's range.
+ * It fetches the WHOLE LADDER on open, not just the range being shown,
+ * because the rail is not a set of buttons: each tile is a drawn preview of
+ * its window, and a tile that has not been fetched has nothing to draw. That
+ * is one request per rung, less the page's own range where the page already
+ * has it on screen -- six of the seven from a host page at 24h, all seven
+ * from one at 12h, which is not on the ladder. It stays that however many
+ * charts the page carries, because only one dialog is ever open.
+ *
+ * The `open` gate is what makes that affordable, and it is load-bearing well
+ * beyond tidiness: the fleet list mounts one Enlargeable per chart cell, so
+ * twenty hosts is sixty of them. Fetching for a dialog nobody opened would
+ * turn one page render into four hundred requests.
+ *
+ * `series` is null while the shown range is the page's own, so a dialog
+ * opened and closed again costs the rail's requests and nothing for the
+ * chart itself: the data already on screen covers that window.
  */
 export function useDetailRange(
   pageRange: Range | undefined,
   fetchSeries: ((range: Range) => Promise<DetailData>) | undefined,
   open: boolean,
+  ranges: readonly Range[] = RAIL_RANGES,
+  /** The page's own series, seeding the tile for the page's range so it is
+   * not fetched a second time. */
+  pageData?: DetailData,
 ) {
   const [range, setRange] = useState<Range | undefined>(pageRange);
-  const [data, setData] = useState<DetailData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [entries, setEntries] = useState<Partial<Record<Range, RailEntry>>>({});
+  // What `entries` holds right now, for the click handler below: it has to
+  // know whether the tile it was given failed, and a state value captured in
+  // a callback is the value from the render that built it.
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
 
   // The latest fetcher, without making it a dependency of the effect below.
   // Callers build it inline -- Graphs closes over `spec`, ContainerPage over
   // which bands to pick, a table cell over its own row -- so it is a new
   // function on every render of the page, and depending on it would refire
-  // the dialog's fetch on every poll of the page behind it. Same reason and
-  // same shape as usePoll's fnRef in lib/poll.ts.
+  // every one of the dialog's fetches on every poll of the page behind it.
+  // Same reason and same shape as usePoll's fnRef in lib/poll.ts.
   const fetchRef = useRef(fetchSeries);
   fetchRef.current = fetchSeries;
+
+  // Same treatment, same reason: the page's series are a new array on every
+  // poll, and the seed below must not refire the ladder because of it.
+  const pageDataRef = useRef(pageData);
+  pageDataRef.current = pageData;
+
+  // A stable identity for the ladder, so a caller passing an inline array
+  // literal does not refetch every window on every render of the page.
+  const ladder = useMemo(() => ranges.join(","), [ranges]);
+
+  // Cancels whatever the open dialog has in flight. One flag shared by the
+  // opening burst and by any later retry, so closing the dialog silences
+  // every request it started rather than only the batch.
+  const liveRef = useRef({ cancelled: false });
+
+  /**
+   * Fetches one window into its tile.
+   *
+   * Its own function because a window is asked for from two places now: the
+   * burst on opening, and a reader clicking a tile that failed. Retrying is
+   * not a nicety -- the six requests go out together, so one transient
+   * failure among them used to leave that tile reading "failed" for as long
+   * as the dialog stayed open, with no way back except closing and
+   * reopening the thing you were reading.
+   */
+  const load = useCallback((r: Range) => {
+    const fetchSeries = fetchRef.current;
+    if (fetchSeries === undefined) return;
+    const live = liveRef.current;
+    setEntries((prev) => ({
+      ...prev,
+      [r]: { data: prev[r]?.data ?? null, loading: true, error: null },
+    }));
+    fetchSeries(r).then(
+      (next) => {
+        if (live.cancelled) return;
+        setEntries((prev) => ({
+          ...prev,
+          [r]: { data: next, loading: false, error: null },
+        }));
+      },
+      (e: unknown) => {
+        if (live.cancelled) return;
+        // The tile says so and the chart keeps whatever it had. An empty
+        // chart would claim the host reported nothing over that window,
+        // which is a different and much worse statement.
+        setEntries((prev) => ({
+          ...prev,
+          [r]: {
+            data: null,
+            loading: false,
+            error: e instanceof Error ? e.message : String(e),
+          },
+        }));
+      },
+    );
+  }, []);
 
   // Closing resets, so reopening starts from the page again rather than from
   // wherever the last look happened to end. The dialog is a question asked
@@ -59,124 +145,92 @@ export function useDetailRange(
   useEffect(() => {
     if (open) return;
     setRange(pageRange);
-    setData(null);
-    setError(null);
-    // Closed while a fetch was in flight: its resolver bails on `cancelled`
-    // below, so without this the header would still say "Loading…" the next
-    // time the dialog is opened.
-    setLoading(false);
+    setEntries({});
   }, [open, pageRange]);
 
   useEffect(() => {
-    // Nothing to do at the page's own range: the series already on screen
-    // are that range's, which is what makes opening the dialog free. Coming
-    // BACK to it also ends whatever the last range said: a fetch cancelled
-    // on the way here never settles, and "could not load that range" is
-    // about a range no longer being shown.
-    //
-    // `open` gates the whole hook, and that gate is load-bearing well beyond
-    // tidiness: the fleet list mounts one of these per chart cell, so twenty
-    // hosts is sixty of them. Fetching for a dialog nobody opened would turn
-    // one page render into sixty requests.
-    if (!open || range === undefined || range === pageRange) {
-      setLoading(false);
-      setError(null);
-      return;
-    }
-    const fetchSeries = fetchRef.current;
-    if (fetchSeries === undefined) return;
+    if (!open) return;
+    if (fetchRef.current === undefined) return;
 
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchSeries(range).then(
-      (next) => {
-        if (cancelled) return;
-        setData(next);
-        setLoading(false);
-      },
-      (e: unknown) => {
-        if (cancelled) return;
-        // The previous series stay on screen (see the series prop below), so
-        // this reports the failure without also blanking the chart -- an
-        // empty chart would claim the host reported nothing over the window
-        // just asked for, which is a different and much worse statement.
-        setError(e instanceof Error ? e.message : String(e));
-        setLoading(false);
-      },
-    );
+    const live = { cancelled: false };
+    liveRef.current = live;
+    const wanted = ladder.split(",") as Range[];
+
+    // The page's range is already drawn on the page behind this dialog, so
+    // seeding its tile costs nothing and removes a request from every
+    // opening.
+    //
+    // Only when the page actually HAS that data. A dialog opened while the
+    // page's own first fetch is still in flight would otherwise seed an
+    // empty series and freeze it: that range is excluded from the burst
+    // below, and pageDataRef deliberately does not refire this effect, so
+    // the tile would read "no data" for as long as the dialog stayed open --
+    // beside a big chart showing the very series it claims are missing.
+    const seeded = pageDataRef.current;
+    const seed: Partial<Record<Range, RailEntry>> = {};
+    if (
+      pageRange !== undefined &&
+      seeded !== undefined &&
+      seeded.series.length > 0
+    ) {
+      seed[pageRange] = { data: seeded, loading: false, error: null };
+    }
+    setEntries(seed);
+
+    // All at once rather than in sequence. They are independent reads of one
+    // host, the rail is only useful once several tiles are drawn, and
+    // widening the window does not make the query meaningfully slower -- the
+    // hub answers a year from the daily tier, which is 365 rows.
+    for (const r of wanted) {
+      if (seed[r] !== undefined) continue;
+      load(r);
+    }
     return () => {
-      cancelled = true;
+      live.cancelled = true;
     };
-  }, [open, range, pageRange]);
+  }, [open, ladder, pageRange, load]);
+
+  const shown = range === undefined ? undefined : entries[range];
+
+  /**
+   * Shows a window, and asks for it again if the last ask failed.
+   *
+   * A tile that could not be loaded is still a tile: pressing it is the
+   * obvious way to say "try that again", and it is the only way the dialog
+   * offers.
+   */
+  const pick = useCallback(
+    (r: Range) => {
+      setRange(r);
+      // Read through a ref rather than inside a setEntries updater: an
+      // updater has to be pure, and React may call it twice.
+      if (entriesRef.current[r]?.error != null) load(r);
+    },
+    [load],
+  );
+
+  // Whether the figure should defer to the page's own series rather than to
+  // this hook's. It normally should: at the page's range the data behind the
+  // dialog IS the answer, and it keeps polling while the dialog is open.
+  //
+  // Not when the page has nothing yet. That window is then fetched by the
+  // burst above like any other, and returning null for it would leave the
+  // enlarged figure drawing an empty chart -- the bare axis spine -- beside
+  // a rail tile for the SAME window that has just drawn the series. It flips
+  // back to the page's data as soon as the page's own first fetch lands.
+  const deferToPage = range === pageRange && (pageData?.series.length ?? 0) > 0;
 
   return {
     range,
-    // No picker without a fetcher: buttons that cannot change anything are
-    // worse than no buttons.
-    setRange: fetchSeries === undefined ? undefined : setRange,
-    series: range === pageRange ? null : (data?.series ?? null),
-    window: range === pageRange ? null : (data?.window ?? null),
-    loading,
-    error,
+    // No picker without a fetcher: tiles that cannot change anything, and
+    // have nothing to draw, are worse than no tiles.
+    setRange: fetchSeries === undefined ? undefined : pick,
+    entries,
+    series: deferToPage ? null : (shown?.data?.series ?? null),
+    window: deferToPage ? null : (shown?.data?.window ?? null),
+    loading: shown?.loading ?? false,
+    error: shown?.error ?? null,
   };
-}
-
-/**
- * The extent to draw a free-scaled chart against, or nothing when the series
- * has no readings to scale to.
- *
- * The test is whether anything was REPORTED, not whether the extent has
- * width. A flat series is a real reading -- a fan pinned at one speed, a rail
- * that never moved -- and its degenerate span is what the sparkline above is
- * already drawn from: scaleY() centres a min === max series in the box rather
- * than dividing by zero. Rejecting it here would drop the dialog back to a
- * zero floor and draw the same fan at the top of a 0-1200 box, which is the
- * disagreement autoScale exists to prevent.
- *
- * An EMPTY series is the other case, and it is reachable rather than
- * theoretical: widen a sensor chart to 7d and the 1h tier materialises about
- * ninety minutes behind now, so a window with no rows comes back with
- * nothing. extent() answers {min: 0, max: 0} for it, and passing that 0
- * through would ALSO defeat ChartDetail's own `max || 1` guard, because
- * `0 ?? x` is 0 and the guard is only reached for an absent max.
- */
-function derived(series: readonly OverlaySeries[]): {
-  min?: number;
-  max?: number;
-} {
-  const values = series.flatMap((s) => s.values);
-  return values.some((v) => v !== null) ? extent(values) : {};
-}
-
-/**
- * The given ceiling, raised if the data now on screen would not fit under it.
- *
- * A fixed `max` is a deliberate choice about the SMALL chart: the container
- * lists share one ceiling down the column so the rows can be compared, and
- * the fleet's CPU cell pins 100 so an idle host and a saturated one do not
- * draw the same silhouette. Opening the dialog keeps it, which is the point
- * -- a chart that rescaled itself on opening would redraw the shape the
- * reader just clicked.
- *
- * Widening the range is the other case. The refetched window is this one
- * chart's alone, and it is asked for precisely to find something the page's
- * window did not show. Held to the old ceiling, any bucket above it is drawn
- * OUTSIDE the plot -- linePath() deliberately never clamps (geometry.ts) --
- * so the spike someone widened the window to see is the one thing that
- * disappears off the top.
- *
- * Raised only, never lowered: a quieter wide window keeps the ceiling it was
- * opened with, so the shape stays comparable with the cell behind it.
- */
-function fitted(
-  max: number | undefined,
-  refetched: OverlaySeries[] | null,
-  stacked: boolean | undefined,
-  mirrored: boolean | undefined,
-): number | undefined {
-  if (max === undefined || refetched === null) return max;
-  return Math.max(max, peak(refetched, stacked, mirrored));
 }
 
 export interface EnlargeableProps {
@@ -238,9 +292,10 @@ export interface EnlargeableProps {
    * what that picker returns to when the dialog is closed and reopened. It
    * is never written back. */
   range?: Range;
-  /** The ranges to offer in the dialog. Defaults to every range; pages that
-   * resolve a narrower set pass it so the dialog cannot ask for a window the
-   * page's fetcher will not serve. */
+  /** The ladder the dialog's rail draws. Defaults to RAIL_RANGES, which is
+   * what every caller wants: the rail is one chart's own question, so the
+   * reasons a PAGE narrows its picker do not apply to it. See RAIL_RANGES in
+   * lib/range. */
   ranges?: readonly Range[];
   /** Loads these series at another range, for the dialog alone. Without it
    * the dialog carries no picker. */
@@ -291,7 +346,14 @@ export function Enlargeable({
   // matters as much as it ever did: the fleet list mounts one of these per
   // chart cell, so twenty hosts is sixty of them, and fetching for a view
   // nobody opened would turn one page render into sixty requests.
-  const detail = useDetailRange(range, fetchSeries, enlarged);
+  // What the page's own range already has on screen. Handed to the hook so
+  // the rail's tile for that window is seeded rather than fetched -- it is
+  // the same window, drawn from the same data, one panel away.
+  const pageData = useMemo(
+    () => ({ series: detailSeries ?? series, window: answered }),
+    [detailSeries, series, answered],
+  );
+  const detail = useDetailRange(range, fetchSeries, enlarged, ranges, pageData);
 
   // What the dialog is actually showing: its own data once the range has been
   // changed, the caller's otherwise. Keeping the previous series while a
@@ -299,9 +361,13 @@ export function Enlargeable({
   // moment later is a flicker, and an empty chart in netra asserts "the host
   // reported nothing".
   const shown = detail.series ?? detailSeries ?? series;
-  const span = autoScale
-    ? derived(shown)
-    : { min, max: fitted(max, detail.series, stacked, mirrored) };
+  const span = scaleFor(shown, detail.series, {
+    autoScale,
+    min,
+    max,
+    stacked,
+    mirrored,
+  });
 
   return (
     <>
@@ -340,6 +406,12 @@ export function Enlargeable({
           range={detail.range}
           onRangeChange={detail.setRange}
           ranges={ranges}
+          entries={detail.entries}
+          // The rail draws the same mark and scales by the same policy as
+          // the figure it sits beside; both come from these.
+          autoScale={autoScale}
+          railMin={min}
+          railMax={max}
           loading={detail.loading}
           error={detail.error}
           onClose={() => setEnlarged(false)}

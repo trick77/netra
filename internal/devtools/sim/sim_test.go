@@ -252,7 +252,7 @@ func TestEveryBucketIsCoveredBySomeRefreshWindow(t *testing.T) {
 	to := time.Date(2026, 8, 10, 8, 31, 0, 0, time.UTC)
 	from := to.Add(-90 * 24 * time.Hour)
 
-	for _, bucket := range []time.Duration{tier5m, tier1h} {
+	for _, bucket := range []time.Duration{tier5m, tier1h, tier1d} {
 		covered := map[int64]bool{}
 		for _, seg := range refreshSegments(from, to) {
 			f, e := bucketWindow(seg.from, seg.to, bucket)
@@ -278,7 +278,7 @@ func TestARefreshWindowAlwaysCoversAtLeastOneWholeBucket(t *testing.T) {
 	for _, backfill := range []time.Duration{45 * time.Minute, 20 * time.Minute, 2 * time.Minute} {
 		from := to.Add(-backfill)
 		for _, seg := range refreshSegments(from, to) {
-			for _, bucket := range []time.Duration{tier5m, tier1h} {
+			for _, bucket := range []time.Duration{tier5m, tier1h, tier1d} {
 				f, e := bucketWindow(seg.from, seg.to, bucket)
 				if e.Sub(f) < bucket {
 					t.Errorf("--backfill %s: %s window [%s,%s) is under one bucket", backfill, bucket, f, e)

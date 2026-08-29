@@ -37,7 +37,7 @@ import { Table, type Column, type TableProps } from "../../../ui/Table";
 import { Meter } from "../../../ui/Meter";
 import { When } from "../../../ui/When";
 import { rangeLabel, type Range } from "../../../lib/range";
-import { RANGE_VALUES } from "../ranges";
+import { RAIL_RANGES } from "../../../lib/range";
 import { griddedValues } from "../../../lib/metrics";
 import { Sparkline } from "../../../ui/charts/Sparkline";
 import { Enlargeable, type DetailData } from "../../../ui/charts/Enlargeable";
@@ -333,7 +333,7 @@ export function Containers({
     range,
     // This page's own windows, so a chart enlarged out of a row cannot ask
     // for one the toolbar above it could not express.
-    ranges: RANGE_VALUES,
+    ranges: RAIL_RANGES,
     // The purge action, which the FLEET list deliberately does not get --
     // see ContainerColumnsOptions.onPurge.
     onPurge: (row: ContainerRow) => void onPurge(row),
@@ -793,7 +793,7 @@ function DriveTempCell({
         fmt={(n) => (n === null ? ABSENT : `${Math.round(n)} °C`)}
         window={answered}
         range={range}
-        ranges={RANGE_VALUES}
+        ranges={RAIL_RANGES}
         fetchSeries={fetchFamily === undefined ? undefined : fetchSeries}
       >
         <Sparkline

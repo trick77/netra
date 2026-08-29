@@ -1,10 +1,10 @@
 import { useEffect, useRef } from "react";
 import type { OverlaySeries } from "./Overlay";
 import { ChartFigure } from "./ChartFigure";
-import { Segmented } from "../Segmented";
+import { RangeRail, type RailEntry } from "./RangeRail";
 import { InfoTip } from "../InfoTip";
 import { ABSENT } from "../../lib/format";
-import { RANGES, type Range } from "../../lib/range";
+import { RAIL_RANGES, type Range } from "../../lib/range";
 import { DETAIL_WIDTH } from "./size";
 
 // Where it lives now. Re-exported because this is where it was.
@@ -38,12 +38,23 @@ export interface ChartDetailProps {
    * with none. */
   window?: { from: string; to: string } | null;
   /** THIS DIALOG's range and its setter, owned by the panel that opened it.
-   * Given both, the dialog carries a picker, so a reader can widen the
+   * Given both, the dialog carries the rail, so a reader can widen the
    * window without closing what they opened to look at -- and without
    * re-ranging the page behind them, which is what this control used to do.
    * Closing the dialog returns it to the page's range. */
   range?: Range;
   onRangeChange?: (range: Range) => void;
+  /** Each rail range's series, from useDetailRange. A tile with no entry yet
+   * draws as pending rather than as an empty chart. */
+  entries?: Partial<Record<Range, RailEntry>>;
+  /** The scaling policy, forwarded to the rail so a tile is drawn in the same
+   * box the big chart would draw that data in. `railMin`/`railMax` are the
+   * caller's UNFITTED floor and ceiling -- `min`/`max` above have already
+   * been raised to fit whatever the figure is showing, and a tile fits to its
+   * own window. */
+  autoScale?: boolean;
+  railMin?: number;
+  railMax?: number;
   /** A fetch for another range is in flight. The chart keeps showing the
    * range it already had while this is true. */
   loading?: boolean;
@@ -51,11 +62,7 @@ export interface ChartDetailProps {
    * range it had rather than blanking, so this is a line of text beside a
    * real chart, not an error state replacing one. */
   error?: string | null;
-  /** The ranges the PAGE behind this dialog offers. It used to show all
-   * five regardless, so picking 30d over a fleet chart handed the page a
-   * range its own picker could not express -- every button underneath came
-   * back unpressed, which reads as "no range selected". Absent, all five
-   * are offered, which is right only for a page that offers all five. */
+  /** The ladder the rail draws, ascending. Defaults to RAIL_RANGES. */
   ranges?: readonly Range[];
   onClose: () => void;
   /** Draw the series as a cumulative stack, matching the small panel that
@@ -102,7 +109,11 @@ export function ChartDetail({
   window: answered = null,
   range,
   onRangeChange,
-  ranges = RANGES,
+  ranges = RAIL_RANGES,
+  entries = {},
+  autoScale,
+  railMin,
+  railMax,
   loading = false,
   error = null,
   onClose,
@@ -176,14 +187,7 @@ export function ChartDetail({
         {about !== undefined && <InfoTip text={about} label={title} />}
         {unit && <span className="u">{unit}</span>}
         <div className="spacer" />
-        {range !== undefined && onRangeChange !== undefined && (
-          <Segmented
-            options={ranges.map((r) => ({ value: r, label: r }))}
-            value={range}
-            onChange={onRangeChange}
-          />
-        )}
-        {/* Beside the picker rather than over the chart: the chart is
+        {/* Beside the title rather than over the chart: the chart is
               still showing real data for the range it had, and covering it
               would hide the thing the dialog was opened to read. */}
         {loading && (
@@ -201,22 +205,47 @@ export function ChartDetail({
         </button>
       </header>
 
-      <ChartFigure
-        series={series}
-        min={min}
-        max={ceiling}
-        width={DETAIL_WIDTH}
-        height={CHART_HEIGHT}
-        filled={filled}
-        stacked={stacked}
-        reference={reference}
-        mirrored={mirrored}
-        hideAxis={hideAxis}
-        format={format}
-        tickBase={tickBase}
-        window={answered}
-        label={`${title}, enlarged`}
-      />
+      {/* The figure and the ladder side by side. The rail is the picker: a
+          row of Segmented buttons used to sit in the header, and a button
+          labelled "30d" can say that the window exists and nothing about
+          whether anything happened in it. Drawn, the whole ladder is one
+          glance -- and the tile is then also the control for looking at
+          what it just showed you. */}
+      <div className="cd-body">
+        <div className="cd-fig">
+          <ChartFigure
+            series={series}
+            min={min}
+            max={ceiling}
+            width={DETAIL_WIDTH}
+            height={CHART_HEIGHT}
+            filled={filled}
+            stacked={stacked}
+            reference={reference}
+            mirrored={mirrored}
+            hideAxis={hideAxis}
+            format={format}
+            tickBase={tickBase}
+            window={answered}
+            label={`${title}, enlarged`}
+          />
+        </div>
+        {onRangeChange !== undefined && (
+          <RangeRail
+            ranges={ranges}
+            active={range}
+            onPick={onRangeChange}
+            entries={entries}
+            filled={filled}
+            stacked={stacked}
+            mirrored={mirrored}
+            autoScale={autoScale}
+            min={railMin}
+            max={railMax}
+            title={title}
+          />
+        )}
+      </div>
     </div>
   );
 

@@ -66,6 +66,26 @@ export interface ChartSeries {
 
 export type ChartMark = "line" | "area" | "stack" | "mirror" | "mirrorStack";
 
+/**
+ * The four-way choice every caller drawing "the same chart" has to make the
+ * same way.
+ *
+ * Written out once because three components now make it -- Overlay for the
+ * panel, ChartFigure for the enlarged view, RangeRail for each tile beside
+ * it -- and they are all drawing one metric at three sizes. A mark that
+ * differs between them is a different chart on click, which is the one thing
+ * enlarging must never do.
+ */
+export function markFor(opts: {
+  filled?: boolean;
+  stacked?: boolean;
+  mirrored?: boolean;
+}): ChartMark {
+  if (opts.mirrored) return opts.stacked ? "mirrorStack" : "mirror";
+  if (opts.stacked) return "stack";
+  return opts.filled ? "area" : "line";
+}
+
 export interface ChartProps {
   series: ChartSeries[];
   width: number;
@@ -507,8 +527,9 @@ function MirrorMarks({
         if (up === undefined) return null;
         // Whether this chart has room for an edge at all. Derived from the
         // plot, not from the call site: the same component draws a 150px
-        // fleet cell at more than one point per pixel and a 1000px dialog at
-        // three and a half, and only one of those can carry a 1.25px outline without
+        // fleet cell at more than one point per pixel and a 1000px dialog
+        // at three and a half, and only one of those can carry a 1.25px
+        // outline without
         // the outline becoming the mark. See mirrorEdge().
         const edge = mirrorEdge(w, longest([up, ...(down ? [down] : [])]), pad);
         // Both calls on ONE pair of ceilings, derived from the peak where

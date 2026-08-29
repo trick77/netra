@@ -14,8 +14,7 @@ import {
   fleetContainersBlocked,
   type CapableHost,
 } from "../../lib/containers";
-import { type Range } from "../../lib/range";
-import { FLEET_RANGE_VALUES } from "./ranges";
+import { RAIL_RANGES, type Range } from "../../lib/range";
 
 // The row shape and the column set live in features/container/columns, with
 // the page they link to. This file is the fleet's framing around them: the
@@ -185,7 +184,7 @@ export function FleetContainers({
           range,
           // The fleet's own windows: it stops at 24h, where a host page
           // goes to 7d.
-          ranges: FLEET_RANGE_VALUES,
+          ranges: RAIL_RANGES,
           ...scales,
         })}
         rows={rows}

@@ -43,7 +43,7 @@ import { OsIcon } from "../../../ui/OsIcon";
 import { memoryBands, perCoreBands } from "../../../lib/bands";
 import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
 import { Enlargeable } from "../../../ui/charts/Enlargeable";
-import { RANGE_VALUES } from "../ranges";
+import { RAIL_RANGES } from "../../../lib/range";
 import type { Range } from "../../../lib/range";
 import { Sparkline } from "../../../ui/charts/Sparkline";
 import {
@@ -594,7 +594,7 @@ function SensorList({
               filled
               fmt={(n) => formatSensor(kind, n)}
               range={range}
-              ranges={RANGE_VALUES}
+              ranges={RAIL_RANGES}
               fetchSeries={
                 fetchFamily === undefined
                   ? undefined
@@ -972,7 +972,7 @@ export function Overview({
             unavailableHeadline="No samples"
             window={netMetrics?.window ?? null}
             range={range}
-            ranges={RANGE_VALUES}
+            ranges={RAIL_RANGES}
             fetchSeries={
               fetchFamily === undefined
                 ? undefined
@@ -1100,7 +1100,7 @@ export function Overview({
                 : undefined
             }
             range={range}
-            ranges={RANGE_VALUES}
+            ranges={RAIL_RANGES}
             // Whichever family this panel is actually drawing: the per-core
             // stack widens as cpu_core, the cpu_total fallback as host. Asking
             // for cpu_core on a host too large to have been given it would
@@ -1163,7 +1163,7 @@ export function Overview({
               : undefined
           }
           range={range}
-          ranges={RANGE_VALUES}
+          ranges={RAIL_RANGES}
           fetchSeries={
             fetchFamily === undefined
               ? undefined
@@ -1261,7 +1261,7 @@ export function Overview({
                 : undefined
           }
           range={range}
-          ranges={RANGE_VALUES}
+          ranges={RAIL_RANGES}
           fetchSeries={
             fetchFamily === undefined
               ? undefined

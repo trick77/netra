@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { mirrorPaths } from "./geometry";
-import { UpDownSparkline } from "./UpDownSparkline";
 import { SPARK_WIDTH } from "./size";
+import { UpDownSparkline } from "./UpDownSparkline";
 
 describe("UpDownSparkline", () => {
   // 5 points, gap at index 2: two surviving runs of length >= 2 each

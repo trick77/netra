@@ -238,19 +238,28 @@
      --surface: 3.76, 3.22, 3.60, 2.42, 2.02 -- the whole family sits under
      the series ramp's brightness on purpose.
 
-     None of these clear the 4:1 the series hold, and cached at 2.02:1 is the
+     None of these clear the 4:1 the series hold, and cached at 1.53:1 is the
      furthest under. That floor is for a mark a reader has to resolve -- a
      hairline, a dot, a word. These are filled areas several pixels tall in a
      cell that exists to be scanned, not read; the fleet page is a wall of
      them and the brightness is what made it tiring. Every band still sits
      BELOW --reference (#6e6c66), the dashed total-RAM rule drawn across the
      same chart, so where the rule crosses a full host's cache band it reads
-     1.63:1 lighter and stays legible against it. */
+     2.15:1 lighter and stays legible against it.
+
+     Cached went darker again, #4f4c48 -> #3d3a37, 2.02:1 -> 1.53:1. It is a
+     pure drop in lightness (L* 32.5 -> 24.6) at the same hue, so nothing it
+     has to separate FROM gets closer: dE2000 against buffers goes 19.3 ->
+     20.7, and the dashed rule crossing it gains half a stop. The floor on
+     this direction is the CARD, not the rule -- a band that reaches
+     --surface is a band that has disappeared rather than quietened -- and at
+     dE 10.2 from --surface (was 16.1) there is roughly one more step of this
+     available and no more. */
   --mem-used: #9c6c23;
   --mem-shared: #6a62a8;
   --mem-arc: #2b7e7e;
   --mem-buffers: #2f5c7d;
-  --mem-cached: #4f4c48;
+  --mem-cached: #3d3a37;
   /* Traffic's in/out pair, one step lighter per interface.
 
      The per-interface Traffic panel stacks in above the midline and out
@@ -831,6 +840,11 @@ a:hover {
      the chart beside them, and loosening them would make the pair a block of
      type in its own right. */
   line-height: 1.15;
+  /* Centred against the chart, which follows from the line above: at 32px the
+     pair filled the cell exactly and needed no alignment of its own, and at
+     45px it no longer does -- left at flex-start the rates hang off the top
+     of the mark they annotate. */
+  justify-content: center;
   /* --muted, matching the disk percentage in the same row (.mrow .val).
      These are both the number BESIDE a chart -- a reading the sparkline or
      the meter has already drawn -- and at --ink-2 the traffic rates read a
@@ -2342,11 +2356,13 @@ details.sysfold > .body {
   border-radius: var(--radius-ui);
   box-shadow: var(--shadow-drawer);
   padding: var(--space-5);
-  /* The width the page used to have. The chart inside is drawn at 1000 and
-     scales down with its container, so this is headroom rather than a floor:
-     a narrow window gets the same chart, smaller, with its axis labels still
-     on their gridlines. */
-  max-width: min(1100px, 100%);
+  /* The width the page used to have, plus the rail: 1100 held a 1000px chart
+     with its padding, and the column of window tiles beside it is another
+     ~200 with its gap. The chart inside is drawn at 1000 and scales down with
+     its container, so this is headroom rather than a floor: a narrow window
+     gets the same chart, smaller, with its axis labels still on their
+     gridlines. */
+  max-width: min(1320px, 100%);
   max-height: 100%;
   overflow: auto;
 }
@@ -2365,6 +2381,95 @@ details.sysfold > .body {
 }
 .cd > header .spacer {
   margin-left: auto;
+}
+
+/* The figure and the rail of windows beside it. `min-width: 0` on the figure
+   for the usual grid reason: without it the 1000px chart sets the column's
+   minimum and the rail is pushed off the dialog on a narrow window, rather
+   than the chart shrinking as it is built to. */
+.cd-body {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+.cd-fig {
+  flex: 1;
+  min-width: 0;
+}
+
+/* One tile per window, stacked. Seven of them at 45px plus a label line run
+   to about 480px against the 380px figure, so the rail is the taller column.
+   It is deliberately NOT capped and scrolled: the dialog already scrolls, and
+   a rail with its own scrollbar hides the widest windows -- the ones it
+   exists for -- behind a gesture, while a cap plus the flex default would
+   squeeze them instead. Taller than the figure is the honest answer. */
+.cd-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+/* Same argument as .chartwrap.as-button: the chart is the control, so the
+   control adds nothing but a pointer and a pressed state. The tile keeps a
+   border where the sparkline cell has none, because seven of them in a
+   column need to read as seven separate readings rather than one tall
+   picture. */
+.cd-rail-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  /* Never shrink. A flex item's default is to give way, so any height the
+     rail is ever held to would be paid for by the tiles rather than by a
+     scrollbar -- and the widest windows, at the bottom, would pay first. */
+  flex: 0 0 auto;
+  padding: 2px 4px 1px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-ui);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: zoom-in;
+  text-align: left;
+}
+.cd-rail-tile:hover {
+  background: var(--surface-2);
+}
+/* The window on screen. --raised rather than an accent fill: the tile is
+   still a chart, and a coloured block behind a series would restate the
+   ink the data is drawn in. The border carries the selection. */
+.cd-rail-tile[aria-pressed="true"] {
+  background: var(--raised);
+  border-color: var(--border-strong);
+}
+/* Under the chart and centred on it: the label says which window you are
+   looking at, after you have looked. Beside it, it took 3.2em off a 150px
+   tile to spell at most four characters. */
+.cd-rail-tile .r {
+  text-align: center;
+  font-size: var(--text-micro);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.cd-rail-tile[aria-pressed="true"] .r {
+  color: var(--ink);
+}
+/* The box a tile's chart sits in. Sized by the svg inside it rather than by
+   a pair of literals here: the chart is drawn at SPARK_WIDTH x SPARK_HEIGHT
+   (ui/charts/size.ts), and a copy of those numbers in CSS is a copy that goes
+   stale the next time the sparkline is resized -- which is what just happened
+   to the filesystem cell's hardcoded height. */
+.cd-rail-tile .c {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+/* A window that has not arrived, or could not be fetched. A word rather than
+   a spinner: seven spinners in a column is a page that looks broken, and the
+   tiles fill in within a second of each other anyway. */
+.cd-rail-tile .n {
+  font-size: var(--text-micro);
+  color: var(--muted-2);
 }
 .cd-x {
   display: flex;
@@ -2439,7 +2544,8 @@ svg.spark {
    flex:none, the host name and the disk meter have their own minimums -- so
    the charts are the only thing that can, and they absorb the entire squeeze:
    at a 390px viewport a CPU sparkline rendered 38x7 back when the cell was
-   170x32, which is not a chart. .tablewrap already carries overflow-x:auto for exactly this, so the
+   170x32, which is not a chart. .tablewrap already carries overflow-x:auto
+   for exactly this, so the
    row keeps its width and the BOX scrolls instead. The page still never
    scrolls sideways, which is all the rule above was protecting. */
 .tablewrap svg.spark {

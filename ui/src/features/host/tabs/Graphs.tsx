@@ -15,7 +15,7 @@ import type { Range } from "../../../lib/range";
 import { windowNotice } from "../../../lib/metrics";
 import { drawsPeakBand } from "../../fleet/hostTrends";
 import { ChartPanel } from "../../../ui/charts/ChartPanel";
-import { RANGE_VALUES } from "../ranges";
+import { RAIL_RANGES } from "../../../lib/range";
 import {
   COLLECTOR_GROUPS,
   NETWORK_GROUPS,
@@ -230,7 +230,7 @@ function Panel({
       // Only what the host page's own fetcher will serve. It used to show
       // all five and hand the choice to the PAGE, so 30d here re-ranged a
       // toolbar that had no button for it and left every one unpressed.
-      ranges={RANGE_VALUES}
+      ranges={RAIL_RANGES}
     />
   );
 }

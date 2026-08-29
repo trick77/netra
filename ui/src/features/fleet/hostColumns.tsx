@@ -19,7 +19,7 @@ import {
 import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
 import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
-import { rangeLabel, type Range } from "../../lib/range";
+import { RAIL_RANGES, rangeLabel, type Range } from "../../lib/range";
 import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
 import { filesystemBands, memoryBands } from "../../lib/bands";
 import {
@@ -29,7 +29,6 @@ import {
   trafficDetailSeries,
   trafficSeries,
 } from "./hostTrends";
-import { FLEET_RANGE_VALUES } from "./ranges";
 import { lastReported } from "../container/columns";
 
 // The range is only ever a label here: this file never resolves one into a
@@ -277,7 +276,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
       fmt={(n) => percent(n)}
       window={row.window}
       range={range}
-      ranges={FLEET_RANGE_VALUES}
+      ranges={RAIL_RANGES}
       fetchSeries={fetchSeries}
     >
       <StackedSparkline
@@ -341,7 +340,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
       fmt={(n) => binaryBytes(n)}
       window={row.window}
       range={range}
-      ranges={FLEET_RANGE_VALUES}
+      ranges={RAIL_RANGES}
       fetchSeries={fetchSeries}
     >
       <StackedSparkline
@@ -436,7 +435,7 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         fmt={bytes}
         window={row.window}
         range={range}
-        ranges={FLEET_RANGE_VALUES}
+        ranges={RAIL_RANGES}
         fetchSeries={fetchSeries}
       >
         <UpDownSparkline
@@ -506,7 +505,7 @@ function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
       fmt={(n) => percent(n)}
       window={row.window}
       range={range}
-      ranges={FLEET_RANGE_VALUES}
+      ranges={RAIL_RANGES}
       fetchSeries={fetchSeries}
     >
       <Overlay
