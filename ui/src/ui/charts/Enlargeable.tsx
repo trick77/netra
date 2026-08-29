@@ -7,7 +7,14 @@
 // silently inert. This is that behaviour with the card taken off: whatever
 // is handed as children becomes the button, and pressing it opens the same
 // ChartDetail the panels open.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import type { OverlaySeries } from "./Overlay";
 import { ChartDetail } from "./ChartDetail";
 import { scaleFor } from "./scale";
@@ -35,8 +42,9 @@ export interface DetailData {
  * It fetches the WHOLE LADDER on open, not just the range being shown,
  * because the rail is not a set of buttons: each tile is a drawn preview of
  * its window, and a tile that has not been fetched has nothing to draw. That
- * is seven requests per opening -- the page's own range is already on screen
- * and is seeded rather than asked for -- and it stays seven however many
+ * is one request per rung, less the page's own range where the page already
+ * has it on screen -- six of the seven from a host page at 24h, all seven
+ * from one at 12h, which is not on the ladder. It stays that however many
  * charts the page carries, because only one dialog is ever open.
  *
  * The `open` gate is what makes that affordable, and it is load-bearing well
@@ -59,6 +67,11 @@ export function useDetailRange(
 ) {
   const [range, setRange] = useState<Range | undefined>(pageRange);
   const [entries, setEntries] = useState<Partial<Record<Range, RailEntry>>>({});
+  // What `entries` holds right now, for the click handler below: it has to
+  // know whether the tile it was given failed, and a state value captured in
+  // a callback is the value from the render that built it.
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
 
   // The latest fetcher, without making it a dependency of the effect below.
   // Callers build it inline -- Graphs closes over `spec`, ContainerPage over
@@ -75,8 +88,56 @@ export function useDetailRange(
   pageDataRef.current = pageData;
 
   // A stable identity for the ladder, so a caller passing an inline array
-  // literal does not refetch eight windows on every render of the page.
+  // literal does not refetch every window on every render of the page.
   const ladder = useMemo(() => ranges.join(","), [ranges]);
+
+  // Cancels whatever the open dialog has in flight. One flag shared by the
+  // opening burst and by any later retry, so closing the dialog silences
+  // every request it started rather than only the batch.
+  const liveRef = useRef({ cancelled: false });
+
+  /**
+   * Fetches one window into its tile.
+   *
+   * Its own function because a window is asked for from two places now: the
+   * burst on opening, and a reader clicking a tile that failed. Retrying is
+   * not a nicety -- the six requests go out together, so one transient
+   * failure among them used to leave that tile reading "failed" for as long
+   * as the dialog stayed open, with no way back except closing and
+   * reopening the thing you were reading.
+   */
+  const load = useCallback((r: Range) => {
+    const fetchSeries = fetchRef.current;
+    if (fetchSeries === undefined) return;
+    const live = liveRef.current;
+    setEntries((prev) => ({
+      ...prev,
+      [r]: { data: prev[r]?.data ?? null, loading: true, error: null },
+    }));
+    fetchSeries(r).then(
+      (next) => {
+        if (live.cancelled) return;
+        setEntries((prev) => ({
+          ...prev,
+          [r]: { data: next, loading: false, error: null },
+        }));
+      },
+      (e: unknown) => {
+        if (live.cancelled) return;
+        // The tile says so and the chart keeps whatever it had. An empty
+        // chart would claim the host reported nothing over that window,
+        // which is a different and much worse statement.
+        setEntries((prev) => ({
+          ...prev,
+          [r]: {
+            data: null,
+            loading: false,
+            error: e instanceof Error ? e.message : String(e),
+          },
+        }));
+      },
+    );
+  }, []);
 
   // Closing resets, so reopening starts from the page again rather than from
   // wherever the last look happened to end. The dialog is a question asked
@@ -89,30 +150,32 @@ export function useDetailRange(
 
   useEffect(() => {
     if (!open) return;
-    const fetchSeries = fetchRef.current;
-    if (fetchSeries === undefined) return;
+    if (fetchRef.current === undefined) return;
 
-    let cancelled = false;
+    const live = { cancelled: false };
+    liveRef.current = live;
     const wanted = ladder.split(",") as Range[];
 
-    // The page's range is already drawn on the page behind this dialog.
-    // Seeding it costs nothing and removes one request from every opening.
+    // The page's range is already drawn on the page behind this dialog, so
+    // seeding its tile costs nothing and removes a request from every
+    // opening.
+    //
+    // Only when the page actually HAS that data. A dialog opened while the
+    // page's own first fetch is still in flight would otherwise seed an
+    // empty series and freeze it: that range is excluded from the burst
+    // below, and pageDataRef deliberately does not refire this effect, so
+    // the tile would read "no data" for as long as the dialog stayed open --
+    // beside a big chart showing the very series it claims are missing.
+    const seeded = pageDataRef.current;
     const seed: Partial<Record<Range, RailEntry>> = {};
-    if (pageRange !== undefined && pageDataRef.current !== undefined) {
-      seed[pageRange] = {
-        data: pageDataRef.current,
-        loading: false,
-        error: null,
-      };
+    if (
+      pageRange !== undefined &&
+      seeded !== undefined &&
+      seeded.series.length > 0
+    ) {
+      seed[pageRange] = { data: seeded, loading: false, error: null };
     }
-    setEntries({
-      ...seed,
-      ...Object.fromEntries(
-        wanted
-          .filter((r) => seed[r] === undefined)
-          .map((r) => [r, { data: null, loading: true, error: null }]),
-      ),
-    });
+    setEntries(seed);
 
     // All at once rather than in sequence. They are independent reads of one
     // host, the rail is only useful once several tiles are drawn, and
@@ -120,42 +183,37 @@ export function useDetailRange(
     // hub answers a year from the daily tier, which is 365 rows.
     for (const r of wanted) {
       if (seed[r] !== undefined) continue;
-      fetchSeries(r).then(
-        (next) => {
-          if (cancelled) return;
-          setEntries((prev) => ({
-            ...prev,
-            [r]: { data: next, loading: false, error: null },
-          }));
-        },
-        (e: unknown) => {
-          if (cancelled) return;
-          // The tile says so and the chart keeps whatever it had. An empty
-          // chart would claim the host reported nothing over that window,
-          // which is a different and much worse statement.
-          setEntries((prev) => ({
-            ...prev,
-            [r]: {
-              data: null,
-              loading: false,
-              error: e instanceof Error ? e.message : String(e),
-            },
-          }));
-        },
-      );
+      load(r);
     }
     return () => {
-      cancelled = true;
+      live.cancelled = true;
     };
-  }, [open, ladder, pageRange]);
+  }, [open, ladder, pageRange, load]);
 
   const shown = range === undefined ? undefined : entries[range];
+
+  /**
+   * Shows a window, and asks for it again if the last ask failed.
+   *
+   * A tile that could not be loaded is still a tile: pressing it is the
+   * obvious way to say "try that again", and it is the only way the dialog
+   * offers.
+   */
+  const pick = useCallback(
+    (r: Range) => {
+      setRange(r);
+      // Read through a ref rather than inside a setEntries updater: an
+      // updater has to be pure, and React may call it twice.
+      if (entriesRef.current[r]?.error != null) load(r);
+    },
+    [load],
+  );
 
   return {
     range,
     // No picker without a fetcher: tiles that cannot change anything, and
     // have nothing to draw, are worse than no tiles.
-    setRange: fetchSeries === undefined ? undefined : setRange,
+    setRange: fetchSeries === undefined ? undefined : pick,
     entries,
     series: range === pageRange ? null : (shown?.data?.series ?? null),
     window: range === pageRange ? null : (shown?.data?.window ?? null),

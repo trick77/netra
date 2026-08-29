@@ -31,9 +31,9 @@ export interface RailEntry {
 export interface RangeRailProps {
   /** The ladder, ascending. */
   ranges: readonly Range[];
-  /** The window the big chart is currently showing, or undefined when the
-   * dialog was opened at a range the ladder does not carry -- the fleet's
-   * 12h. No tile is pressed then, which is true: none of them is what is on
+  /** The window the big chart is currently showing. No tile is pressed when
+   * it is a range the ladder does not carry -- 12h, which a host page can be
+   * set to -- and that is true rather than a gap: none of them is what is on
    * screen. */
   active: Range | undefined;
   onPick: (range: Range) => void;
@@ -84,7 +84,14 @@ export function RangeRail({
             aria-label={`${title} over the last ${range}`}
             onClick={() => onPick(range)}
           >
-            <span className="c">
+            {/* Sized from the constants the chart is drawn at, not from a
+                pair of literals in the stylesheet: the box has to hold its
+                shape while a window is still loading or has nothing to draw,
+                and a second copy of the numbers is a copy that goes stale. */}
+            <span
+              className="c"
+              style={{ width: SPARK_WIDTH, height: SPARK_HEIGHT }}
+            >
               {series && series.length > 0 ? (
                 <Tile
                   series={series}

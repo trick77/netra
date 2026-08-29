@@ -10,7 +10,7 @@ import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
 import { Overlay } from "../../ui/charts/Overlay";
-import { DETAIL_WIDTH, SPARK_WIDTH } from "../../ui/charts/size";
+import { DETAIL_WIDTH, SPARK_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
 import {
   DOWN_COLOR,
   UP_COLOR,
@@ -513,10 +513,15 @@ function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
         min={0}
         max={100}
         width={SPARK_WIDTH}
-        height={32}
+        // SPARK_HEIGHT, not a literal. It was 32 while every other cell in
+        // the row took the constant's default, so the one column that spelled
+        // its height out was the one that stopped matching when the constant
+        // moved -- which is the whole thing SPARK_WIDTH/SPARK_HEIGHT exist to
+        // prevent.
+        height={SPARK_HEIGHT}
         // Lines rather than filled areas, and no legend: usage sits between
         // 40% and 95%, so masses anchored at zero would pile into one solid
-        // block, and naming six mounts under a 32px chart is the same
+        // block, and naming six mounts under a chart this size is the same
         // row-height problem the CPU column already solved by not naming
         // thirty-two cores.
         legend={false}

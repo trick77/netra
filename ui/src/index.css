@@ -2454,15 +2454,16 @@ details.sysfold > .body {
 .cd-rail-tile[aria-pressed="true"] .r {
   color: var(--ink);
 }
-/* SPARK_WIDTH x SPARK_HEIGHT, the fleet sparkline's own size -- a rail tile
-   and a fleet cell are the same picture asking the same question. */
+/* The box a tile's chart sits in. Sized by the svg inside it rather than by
+   a pair of literals here: the chart is drawn at SPARK_WIDTH x SPARK_HEIGHT
+   (ui/charts/size.ts), and a copy of those numbers in CSS is a copy that goes
+   stale the next time the sparkline is resized -- which is what just happened
+   to the filesystem cell's hardcoded height. */
 .cd-rail-tile .c {
   display: flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 150px;
-  height: 45px;
 }
 /* A window that has not arrived, or could not be fetched. A word rather than
    a spinner: seven spinners in a column is a page that looks broken, and the

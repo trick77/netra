@@ -230,6 +230,72 @@ describe("the enlarged view owns its range", () => {
     expect(asked).toEqual(["6h"]);
   });
 
+  // The rail's windows are asked for together, so one transient failure among
+  // them is a tile that reads "failed" while its neighbours draw. Pressing it
+  // is the obvious way to say "try that again", and it is the only way the
+  // dialog offers -- without this the tile stayed broken for as long as the
+  // dialog stayed open.
+  it("asks again when a tile that failed is pressed", async () => {
+    const fetchSeries = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValue({ series: wider, window: { from: "a", to: "b" } });
+
+    render(
+      <ChartPanel
+        title="CPU"
+        series={series}
+        range="1h"
+        ranges={["1h", "6h"]}
+        fetchSeries={fetchSeries}
+      />,
+    );
+    await open();
+    const tile = () =>
+      within(dialog()).getByRole("button", { name: /last 6h$/ });
+
+    // The opening burst failed for this window, and the tile says so instead
+    // of drawing an empty chart.
+    await waitFor(() =>
+      expect(within(tile()).getByText("failed")).toBeVisible(),
+    );
+    expect(fetchSeries).toHaveBeenCalledTimes(1);
+
+    // Pressing it asks again, and the second answer draws. The error never
+    // reaches the header: the press IS the retry, so the range becomes the
+    // shown one already loading rather than already broken.
+    await userEvent.click(tile());
+
+    await waitFor(() => expect(fetchSeries).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(within(tile()).queryByText("failed")).toBeNull(),
+    );
+    expect(screen.queryByText(/could not load that range/i)).toBeNull();
+  });
+
+  // A dialog opened before the page's own first fetch lands would otherwise
+  // seed an empty series into the tile for the page's range and freeze it:
+  // that range is excluded from the opening burst, so the tile would read "no
+  // data" beside a big chart showing the very series it claims are missing.
+  it("fetches the page's own range when the page has nothing yet", async () => {
+    const fetchSeries = vi
+      .fn()
+      .mockResolvedValue({ series: wider, window: null });
+
+    render(
+      <ChartPanel
+        title="CPU"
+        series={[]}
+        range="1h"
+        ranges={["1h", "6h"]}
+        fetchSeries={fetchSeries}
+      />,
+    );
+    await open();
+
+    await waitFor(() => expect(fetchSeries).toHaveBeenCalledWith("1h"));
+  });
+
   // Tiles that cannot change anything, and have nothing to draw, are worse
   // than no tiles.
   it("carries no rail at all without a fetcher", async () => {
