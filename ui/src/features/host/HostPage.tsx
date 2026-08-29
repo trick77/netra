@@ -31,6 +31,7 @@ import { Tabs } from "../../ui/Tabs";
 import { ABSENT, duration, relative } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
 import { hostLocation } from "../fleet/hostColumns";
+import { hostTabForSlug } from "../../lib/router";
 import {
   clampRange,
   rangeWindow,
@@ -44,6 +45,7 @@ import { Events } from "./tabs/Events";
 import { NetworkGraphs, StorageGraphs, SystemGraphs } from "./tabs/Graphs";
 import { CollectorsTab } from "./tabs/CollectorsTab";
 import { LimitsCard } from "./tabs/LimitsCard";
+import { Sensors } from "./tabs/Sensors";
 import {
   Containers,
   Drives,
@@ -272,25 +274,23 @@ export function HostPage({
       async function load(): Promise<Partial<TabData>> {
         switch (tab) {
           case "overview": {
+            // Five requests, down from eight. The tab stopped drawing the
+            // per-core stack (cpu_core), the sensor cards (sensor) and the
+            // Inventory counts (containers) when they moved or were dropped,
+            // and a page that keeps fetching what it no longer draws is three
+            // round trips a reader pays for and never sees. units stays: the
+            // attention band counts the failed ones.
             const [
               hostMetrics,
               filesystemMetrics,
               agentMetrics,
-              sensorMetrics,
-              containers,
               units,
-              coreMetrics,
               netMetrics,
             ] = await Promise.all([
               metrics("host"),
               metrics("filesystem"),
               metrics("agent"),
-              metrics("sensor"),
-              orNull(getContainers(hostId)),
               orNull(getUnits(hostId)),
-              // The headline Processor chart is a per-core stack, the same one
-              // the fleet row for this host draws.
-              metrics("cpu_core"),
               // Traffic: the overview summarised every subsystem except the
               // one most likely to explain a problem.
               metrics("net"),
@@ -299,10 +299,7 @@ export function HostPage({
               hostMetrics,
               filesystemMetrics,
               agentMetrics,
-              sensorMetrics,
-              containers,
               units,
-              coreMetrics,
               netMetrics,
             };
           }
@@ -315,13 +312,16 @@ export function HostPage({
             // them are the Collectors tab's now, and this tab would be paying
             // for two requests nothing on it draws. hostMetrics is what the
             // Limits card reads, and it was already being fetched.
-            const [hostMetrics, coreMetrics] = await Promise.all([
-              metrics("host"),
-              metrics("cpu_core"),
-            ]);
+            // sensor joined these two when the Temperature, Fan and Power
+            // cards moved here off the Overview: what a chip is measuring is
+            // a System fact, and this is the tab that draws it now.
+            const [hostMetrics, coreMetrics, sensorMetrics] = await Promise.all(
+              [metrics("host"), metrics("cpu_core"), metrics("sensor")],
+            );
             return {
               hostMetrics,
               coreMetrics,
+              sensorMetrics,
             };
           }
           case "collectors": {
@@ -593,13 +593,17 @@ export function HostPage({
           hostMetrics={data.hostMetrics}
           filesystemMetrics={data.filesystemMetrics}
           agentMetrics={data.agentMetrics}
-          sensorMetrics={data.sensorMetrics}
-          coreMetrics={data.coreMetrics}
           netMetrics={data.netMetrics}
           containers={data.containers}
           units={data.units}
           range={range}
           fetchFamily={fetchFamily}
+          // A tile's href is /hosts/{id}/chart/<slug>, which the router
+          // already resolves to whichever tab draws that panel. This is that
+          // same walk done client-side, so a plain click switches tabs
+          // instead of reloading the app -- and cmd-click still gets the real
+          // URL, which lands in the same place.
+          onOpenChart={(slug) => onTabChange(hostTabForSlug(slug))}
         />
       )}
       {tab === "system" && (
@@ -607,6 +611,15 @@ export function HostPage({
           <SystemGraphs
             host={data.hostMetrics}
             cpuCore={data.coreMetrics}
+            range={range}
+            fetchFamily={fetchFamily}
+          />
+          {/* Below the charts and above the limits: hardware readings after
+              the software ones, and still charts rather than the ceilings the
+              card below states. Renders nothing at all on a host with no
+              sensors, which is most of a cloud fleet. */}
+          <Sensors
+            sensorMetrics={data.sensorMetrics}
             range={range}
             fetchFamily={fetchFamily}
           />

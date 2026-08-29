@@ -84,7 +84,7 @@ const RETIRED_SLUGS: Record<string, string> = {
   "interface-throughput": "host-traffic",
 };
 
-function hostTabForSlug(retiring: string): HostTab {
+export function hostTabForSlug(retiring: string): HostTab {
   const slug = RETIRED_SLUGS[retiring] ?? retiring;
   if (NETWORK_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
     return "network";

@@ -7,7 +7,7 @@ import type { Host, MetricsResponse } from "../lib/api";
 import { FleetContainers } from "./fleet/FleetContainers";
 import { hostColumns } from "./fleet/hostColumns";
 import { Containers } from "./host/tabs/Inventory";
-import { Overview } from "./host/tabs/Overview";
+import { Sensors } from "./host/tabs/Sensors";
 import { Table } from "../ui/Table";
 
 vi.mock("../lib/api", async () => {
@@ -250,7 +250,7 @@ describe("the list sparklines enlarge", () => {
     });
   });
 
-  describe("the host overview's sensors", () => {
+  describe("the system tab's sensors", () => {
     const sensorMetrics = response({
       family: "sensor",
       key_columns: ["chip", "label", "kind"],
@@ -270,24 +270,10 @@ describe("the list sparklines enlarge", () => {
       fetchFamily?: (family: string, range: never) => Promise<MetricsResponse>,
     ) {
       render(
-        <Overview
-          host={
-            {
-              id: 7,
-              hostname: "ark",
-              capabilities: {},
-              last_seen: new Date(t0).toISOString(),
-            } as never
-          }
-          hostMetrics={null}
-          filesystemMetrics={null}
-          agentMetrics={null}
+        <Sensors
           sensorMetrics={sensorMetrics}
-          containers={null}
-          units={null}
           range="1h"
           fetchFamily={fetchFamily as never}
-          now={new Date(t0 + hour)}
         />,
       );
     }

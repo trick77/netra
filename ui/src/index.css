@@ -469,8 +469,6 @@ a:hover {
 }
 .ai-h {
   font-size: var(--text-micro);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--muted);
   margin: var(--space-4) 0 5px;
 }
@@ -737,8 +735,6 @@ a:hover {
   border-bottom: 1px solid var(--border);
   border-top: 1px solid var(--border);
   font-size: var(--text-micro);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   font-weight: 600;
 }
 .attn > div:first-child .attn-sev {
@@ -1119,13 +1115,20 @@ a:hover {
   margin: 0;
   font-size: var(--text-label);
   font-weight: 500;
-  color: var(--ink);
+  /* --muted, matching `.card > header h3`: these are both panel titles, and
+     the Overview draws them side by side. The reading beside it (.now) keeps
+     --ink -- the figure is what the eye should land on, not the label. */
+  color: var(--muted);
 }
 .smp .t .now {
   margin-left: auto;
   font-size: var(--text-label);
   font-weight: 600;
-  color: var(--ink);
+  /* The same grey as the title beside it. It read as the brightest thing in
+     a panel whose point is the chart underneath -- and on the Overview,
+     where these panels sit next to cards whose headers are entirely muted,
+     one white figure per panel was the loudest mark on the tab. */
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .smp .t .u {
@@ -1221,8 +1224,6 @@ a:hover {
 }
 .grouphead {
   font-size: var(--text-micro);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--muted);
   margin: var(--space-5) 0 var(--space-3);
   padding-bottom: 6px;
@@ -1437,8 +1438,6 @@ a:hover {
 }
 .card > header h3 {
   font-size: var(--text-label);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--muted);
   font-weight: 500;
 }
@@ -1778,8 +1777,6 @@ th {
   text-align: left;
   font-size: var(--text-micro);
   line-height: 1.4;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--muted);
   font-weight: 500;
   padding: 5px var(--space-4);
@@ -2059,8 +2056,6 @@ details.sysfold > .body {
 }
 .sysstrip dt {
   font-size: var(--text-micro);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
   color: var(--muted);
 }
 /* One line, always. A processor model is the only value here long enough to
@@ -2233,43 +2228,198 @@ details.sysfold > .body {
   font-variant-numeric: tabular-nums;
 }
 
-/* The host overview's cards, in columns that are PLACED rather than poured.
-   Each column is its own stack, so cards pack top-down inside it and a
-   column ends where its cards end -- the same trade `.grid2` below makes,
-   without the balancing: which card goes in which column is stated in
-   Overview.tsx's CARD_COLUMNS, and the count here is the only thing the
-   viewport decides. Keep these two widths in step with TWO_COLUMNS and
-   THREE_COLUMNS there; a page that thinks it has three columns while this
-   file draws two would place a card nobody can see. */
-.cardcols {
-  display: flex;
-  gap: var(--space-4);
-  align-items: flex-start;
+/* The host overview's blocks, on a 12-track grid.
+   This replaces .cardcols, which was a flex row of hand-assigned columns:
+   which card went in which column was a JS decision keyed off matchMedia,
+   and the two breakpoints had to be written out in Overview.tsx as well --
+   a page that thought it had three columns while this file drew two put a
+   card in a column nobody could see. A block states its own span now and the
+   browser places it, so there is exactly one copy of the layout. */
+.mosaic {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: var(--space-3);
+  /* stretch, not start: two cards in a row hold different numbers of tiles,
+     and letting the shorter one end early leaves a hole half the page wide
+     under it. Stretched, the tiles inside grow into the height instead --
+     which the sparkline is glad of, being anchored to the bottom edge. */
+  align-items: stretch;
 }
-.cardcol {
-  /* 1 1 0, not `1`: `flex: 1` leaves the basis at 0% and a column holding a
-     chart drawn at the width it just measured would otherwise size itself
-     from that content and never give the width back. */
-  flex: 1 1 0;
+/* A grid item defaults to min-width:auto -- its CONTENT's width -- so a block
+   holding a chart drawn at the width it just measured refuses to shrink and
+   the page scrolls sideways. Same rule, same reason, as `.smp`. */
+.mo {
   min-width: 0;
 }
-/* A card in a column owns its own bottom gap, as `.grid2 > *` does -- the
-   column is not a gapped flex container, because an empty card (a host with
-   no sensors renders nothing at all) would still take a gap. */
-.cardcol > * {
-  margin-bottom: var(--space-4);
+/* The stretch has to reach the card: the grid stretches .mo, and .mo's
+   children are a plain section and a card that would otherwise sit at their
+   content height inside it. */
+.mo,
+.mo > section,
+.mo .card {
+  display: flex;
+  flex-direction: column;
 }
-/* A card WRAPPED in a section for its aria-label would otherwise add .card's
-   own margin to the wrapper's. Same rule, same reason, as `.grid2 > * .card`
-   below. */
-.cardcol > * .card {
+.mo > section,
+.mo .card,
+.mo .card .body {
+  flex: 1;
+}
+/* A card wrapped in a section for its aria-label would otherwise add .card's
+   own margin to the grid gap. Same rule as `.grid2 > * .card`. */
+.mo .card {
   margin-bottom: 0;
 }
-@media (max-width: 899px) {
-  .cardcols {
-    display: block;
+/* One column below the width two blocks can hold side by side. Every span
+   collapses together: a 5-track block left alone at 900px is not narrower
+   than the page, it is narrower than its own tiles. */
+@media (max-width: 1099px) {
+  .mosaic > .mo {
+    grid-column: span 12 !important;
   }
 }
+
+/* The tiles inside one mosaic card.
+   auto-fill rather than a fixed count: a card spanning 5 tracks and one
+   spanning 7 hold different numbers of tiles at the same tile size, which is
+   the point of stating a span rather than a column count. 150px is the floor
+   because that is SPARK_WIDTH -- below it the sparkline is being asked to
+   say something in fewer pixels than it has buckets. */
+/* The card's own chrome, tightened. A chart panel's 12/16 padding exists to
+   keep an axis off the border; a grid of tiles has no axis and every pixel of
+   it was surface nobody read. */
+.mosaic .card > header {
+  padding: 6px var(--space-3);
+}
+.mosaic .card .body {
+  padding: var(--space-3);
+}
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  /* Rows share the leftover height rather than leaving it at the foot of the
+     card, so a card beside a taller one gets taller tiles instead of a gap. */
+  grid-auto-rows: minmax(96px, 1fr);
+  gap: var(--space-2);
+  height: 100%;
+}
+.tile {
+  position: relative;
+  overflow: hidden;
+  display: block;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px 0;
+  /* A tile is a link. It must not be underlined, must not take the accent,
+     and must not inherit the visited colour -- it is a control, and the
+     figure inside it is data. */
+  color: inherit;
+  text-decoration: none;
+}
+a.tile:hover {
+  border-color: var(--border-strong);
+}
+a.tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Above the sparkline, always. The strip is sized to clear the text (see
+   SPARK_STRIP), and this is the guarantee for the case where it does not --
+   a sub-line that wraps, or a browser that lays the figure out taller. */
+.tile .k,
+.tile .v,
+.tile .sub {
+  position: relative;
+  z-index: 1;
+}
+.tile .k {
+  display: block;
+  font-size: var(--text-micro);
+  line-height: 1.2;
+  color: var(--muted);
+}
+.tile .v {
+  display: block;
+  margin-top: 2px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.05;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.tile .v .u {
+  font-size: var(--text-micro);
+  font-weight: 400;
+  color: var(--ink-2);
+  margin-left: 3px;
+}
+.tile .sub {
+  display: block;
+  font-size: var(--text-micro);
+  line-height: 1.2;
+  color: var(--muted-2);
+  margin-top: 1px;
+}
+/* Bled to the tile's edges, under the text. The sparkline is drawn at the
+   measured width (see StatTile), so this only has to place it. */
+.tile svg.spark {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+}
+
+/* A tile that is OFF, and only then.
+   Three marks that have to agree: a tinted ground, a rule down the leading
+   edge, and the figure in the status text colour. The trend line is set to
+   the same hue in StatTile's caller, so a warning tile is not amber in three
+   places and blue in the fourth.
+
+   Neutral is the default and stays the default. The fixed status palette
+   means severity on this page -- the attention band above and the fleet list
+   a reader arrived from both use it that way -- so a hue on a tile whose
+   reading crossed nothing would make the colour mean "someone thought about
+   this number" instead. Context switches has no good value; it does not get
+   a colour. */
+.tile[class*="sev-"]::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+}
+.tile.sev-warning {
+  background: color-mix(in srgb, var(--st-warn) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--st-warn) 38%, var(--border));
+}
+.tile.sev-warning::before {
+  background: var(--st-warn);
+}
+.tile.sev-warning .v {
+  color: var(--st-warn-text);
+}
+.tile.sev-serious {
+  background: color-mix(in srgb, var(--st-serious) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--st-serious) 38%, var(--border));
+}
+.tile.sev-serious::before {
+  background: var(--st-serious);
+}
+.tile.sev-serious .v {
+  color: var(--st-serious-text);
+}
+.tile.sev-critical {
+  background: color-mix(in srgb, var(--st-crit) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--st-crit) 38%, var(--border));
+}
+.tile.sev-critical::before {
+  background: var(--st-crit);
+}
+.tile.sev-critical .v {
+  color: var(--st-crit-text);
+}
+/* sev-ok has no rule here on purpose: StatTile's callers map "ok" to null,
+   so it cannot be rendered. A rule for it would be a rule for a state that
+   does not exist, and the next reader would take it as licence to use one. */
 
 /* Two columns that PACK rather than align.
    As a grid, every row was as tall as its taller card and the shorter one
@@ -2989,8 +3139,6 @@ tbody:first-of-type .grouprow th {
 }
 .gstat .lbl {
   font-size: var(--text-micro);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--muted);
   font-weight: 500;
   white-space: nowrap;
