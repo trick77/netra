@@ -27,6 +27,7 @@ import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { Overlay } from "./Overlay";
 import { UpDownSparkline } from "./UpDownSparkline";
+import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";
 
 const rx = [1, 4, 2, 5];
 const tx = [2, 1, 3, 1];
@@ -53,11 +54,11 @@ function marks(container: HTMLElement) {
 }
 
 describe("mirrored charts", () => {
-  // 170px against 260px with four points is 42 and 65 pixels per point: both
+  // 150px against 260px with four points is 37 and 65 pixels per point: both
   // have room for an edge, so both must draw the same one.
   it("draws the traffic cell and the throughput panel as the same mark", () => {
     // Given the same rx/tx pair drawn by both mirrored charts, at the sizes
-    // their real call sites use (hostColumns.tsx's 170x32 fleet cell and
+    // their real call sites use (hostColumns.tsx's 150x45 fleet cell and
     // ChartPanel.tsx's 260x64 panel)
     const sparkline = render(
       <UpDownSparkline
@@ -91,7 +92,9 @@ describe("mirrored charts", () => {
   // actually has and neither draws an edge. A component that hardcoded its
   // own weights would keep drawing one here.
   it("crosses the no-edge threshold in the same place", () => {
-    const dense = Array.from({ length: 170 }, (_, i) => (i === 80 ? 100 : 1));
+    const dense = Array.from({ length: SPARK_WIDTH }, (_, i) =>
+      i === 80 ? 100 : 1,
+    );
     const sparkline = render(
       <UpDownSparkline
         up={dense}
@@ -109,8 +112,8 @@ describe("mirrored charts", () => {
         ]}
         max={100}
         mirrored
-        width={170}
-        height={32}
+        width={SPARK_WIDTH}
+        height={SPARK_HEIGHT}
         legend={false}
       />,
     );

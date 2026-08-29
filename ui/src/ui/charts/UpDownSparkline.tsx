@@ -13,7 +13,7 @@ import { extent } from "./geometry";
 import { Chart } from "./Chart";
 // The mirror weights and the midline stroke are Chart's now; only the shared
 // sparkline width is still read here.
-import { SPARK_WIDTH } from "./size";
+import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";
 
 export interface UpDownSparklineProps {
   up: (number | null)[];
@@ -80,7 +80,7 @@ export function UpDownSparkline({
   down,
   max,
   width = SPARK_WIDTH,
-  height = 32,
+  height = SPARK_HEIGHT,
   pad = 2,
   upColor = UP_COLOR,
   downColor = DOWN_COLOR,

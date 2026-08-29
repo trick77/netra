@@ -448,12 +448,12 @@ export function cpuBands(
  * and 26.6 MB/s through that pair of maxima. Everything under the peak is
  * squashed by 3.7x, and the quiet body of the chart -- which is most of it --
  * drops below one pixel. Observium's DEF asks for AVERAGE and rrdtool reduces
- * with the same function; rendered side by side at 170x32 on identical
+ * with the same function; rendered side by side at 150x45 on identical
  * numbers, that is the difference between a dense band and an empty cell.
  *
  * The fold, through reduceToColumns(): a 24 h window is 285 five-minute
- * buckets and the cell is 170 px, so without it every pixel column carries
- * about 1.7 buckets and the polyline zigzags between neighbours inside a
+ * buckets and the cell is 150 px, so without it every pixel column carries
+ * about 1.9 buckets and the polyline zigzags between neighbours inside a
  * single pixel. Folded, each column is one reading.
  *
  * `columns` is the pixel width of the chart. Omitted, nothing is folded: the
@@ -697,7 +697,7 @@ export function hostTrendsFrom(
   // silhouette when the host was too large to fetch per-core.
   const total = griddedValues(host, 0, "cpu_total");
   // Folded to the cell it will be drawn in, not left at the tier's
-  // resolution: 24 h is 285 buckets and the cell is 170 px.
+  // resolution: 24 h is 285 buckets and the cell is 150 px.
   const traffic = trafficSeries(net, SPARK_WIDTH);
 
   return {

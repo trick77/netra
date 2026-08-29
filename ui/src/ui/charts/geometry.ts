@@ -227,7 +227,7 @@ export function stackBands(
    * two pixels because that is what a line needs. A stacked band is a filled
    * region carrying a BAND_STROKE_WIDTH outline, so half that stroke is all
    * the headroom it can use; the rest is box the data can never reach. Spent
-   * at both ends of a 32px fleet cell it was an eighth of the chart -- on a
+   * at both ends of a 45px fleet cell it was an eighth of the chart -- on a
    * CPU column whose hosts idle in single-digit percent, an eighth of what
    * little signal there is.
    *
@@ -565,8 +565,8 @@ export function mirrorPaths(
   // Columns TILED across the full width, edge to edge, rather than centred on
   // scaleX's positions.
   //
-  // scaleX insets by `pad` at both ends, so 170 readings in a 170px cell get
-  // 166px of span and every bar straddles two pixel columns -- a smear at
+  // scaleX insets by `pad` at both ends, so 150 readings in a 150px cell get
+  // 146px of span and every bar straddles two pixel columns -- a smear at
   // partial alpha instead of a mark. Tiled, a fold to the plot's own width
   // lands each bar on an exact pixel boundary, which is what lets it be
   // saturated rather than grey.
@@ -762,7 +762,7 @@ export function mirrorStackBands(
       // draws needles, and so does this.
       //
       // The cell is the other way round for a reason that does not apply
-      // here: at 170 px it folds many buckets into one pixel column, and
+      // here: at 150 px it folds many buckets into one pixel column, and
       // there a diagonal between two columns merges adjacent buckets into a
       // single smooth mass. It has no room to taper; this chart does.
       for (let k = 0; k < series.length; k++) {

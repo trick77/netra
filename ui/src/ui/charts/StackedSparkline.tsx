@@ -5,7 +5,7 @@
 // into SVG paths.
 import { Chart } from "./Chart";
 // The reference rule's own constants live with the mark now: Chart draws it.
-import { SPARK_WIDTH } from "./size";
+import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";
 
 export interface Band {
   name: string;
@@ -87,7 +87,7 @@ export function StackedSparkline({
   bands,
   max,
   width = SPARK_WIDTH,
-  height = 32,
+  height = SPARK_HEIGHT,
   pad = 2,
   label = "stacked chart",
   reference,
