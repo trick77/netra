@@ -9,8 +9,7 @@ import type { Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
-import { Overlay } from "../../ui/charts/Overlay";
-import { DETAIL_WIDTH, SPARK_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
+import { DETAIL_WIDTH } from "../../ui/charts/size";
 import {
   DOWN_COLOR,
   UP_COLOR,
@@ -21,7 +20,7 @@ import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
 import { RAIL_RANGES, rangeLabel, type Range } from "../../lib/range";
 import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
-import { filesystemBands, memoryBands } from "../../lib/bands";
+import { memoryBands } from "../../lib/bands";
 import {
   MAX_PER_CORE,
   cpuBands,
@@ -112,7 +111,14 @@ export type HostRow = Host & {
     since?: string | null;
     sinceAtLeast?: boolean;
   } | null;
-  /** Every filesystem's Use% over the window, one band each. */
+  /** Every filesystem's Use% over the window, one band each.
+   *
+   * Nothing in the list draws these any more: the fleet answers "how full" with
+   * the Disk meter alone, because usage over a day is near-flat and what a row
+   * is scanned for is how close to full a mount is NOW. The per-mount history
+   * is one click away, on the host page's Filesystem usage panel
+   * (chartSpecs.ts). Still assembled -- it costs no extra fetch, the Disk
+   * meter's own `fullest` reads the same response. */
   disk: Band[];
   /** OOM kills inside the window -- the increase, never the cumulative
    * counter. null is "cannot say", which the attention band stays silent
@@ -478,54 +484,6 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 // the row's assembler already did the picking -- and it picks by severity
 // before percentage, so this is not always the highest number on the host.
 // See outranks() in hostTrends.ts.
-// Free-scaled to 0-100 with a fixed ceiling, like CPU: a disk at 40% and one
-// at 95% must not draw the same silhouette, which is exactly what a
-// self-scaled sparkline would do.
-function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
-  // Empty, not a dash -- see MemoryCell.
-  if (row.disk.length === 0) return null;
-  // One band per filesystem, exactly as the row assembler built the cell's
-  // (hostTrends.ts) -- so widening the range redraws these mounts rather
-  // than a different set of them.
-  const fetchSeries = async (next: Range): Promise<DetailData> => {
-    const fs = await fetchHostFamily(row.id, "filesystem", next);
-    return { series: filesystemBands(fs), window: fs.window };
-  };
-  return (
-    // The one sparkline in this row that was not even clickable: it was a
-    // bare Overlay, so the chart most likely to be the reason a host is on
-    // this list at all had no way in.
-    <Enlargeable
-      title={`Filesystem usage · ${row.hostname}`}
-      label={`Enlarge Filesystem usage for ${row.hostname}`}
-      className="inline"
-      series={row.disk}
-      min={0}
-      max={100}
-      fmt={(n) => percent(n)}
-      window={row.window}
-      range={range}
-      ranges={RAIL_RANGES}
-      fetchSeries={fetchSeries}
-    >
-      <Overlay
-        series={row.disk}
-        min={0}
-        max={100}
-        width={SPARK_WIDTH}
-        height={SPARK_HEIGHT}
-        // Lines rather than filled areas, and no legend: usage sits between
-        // 40% and 95%, so masses anchored at zero would pile into one solid
-        // block, and naming six mounts under a 45px chart is the same
-        // row-height problem the CPU column already solved by not naming
-        // thirty-two cores.
-        legend={false}
-        label={`Filesystem usage trend, ${rangeLabel(range)}`}
-      />
-    </Enlargeable>
-  );
-}
-
 function DiskCell({ row }: { row: HostRow }) {
   if (row.fullest === null) {
     // A host that has reported no filesystems has no fullest one. Drawing a
@@ -576,24 +534,6 @@ function latestStackTotal(bands: readonly Band[]): number | null {
     if (v !== null) total = (total ?? 0) + v;
   }
   return total;
-}
-
-/**
- * The highest reading across a set of independently gridded series.
- *
- * What the Filesystem cell is scanned for: it draws one line per mount and
- * the question a reader brings to it is which host has a mount running out,
- * so the column orders on the topmost line rather than on an average across
- * mounts -- the same argument the Disk column's own comment makes about not
- * summing filesystems.
- */
-function latestPeak(bands: readonly Band[]): number | null {
-  let peak: number | null = null;
-  for (const band of bands) {
-    const v = lastReported(band.values);
-    if (v !== null && (peak === null || v > peak)) peak = v;
-  }
-  return peak;
 }
 
 export function hostColumns(range: Range): Column<HostRow>[] {
@@ -653,17 +593,6 @@ export function hostColumns(range: Range): Column<HostRow>[] {
         const used = latestStackTotal(row.mem);
         return used === null ? null : used / row.mem_total;
       },
-    },
-    {
-      key: "diskTrend",
-      header: "Filesystem",
-      cell: (row) => <DiskTrendCell row={row} range={range} />,
-      // The topmost line's current value -- see latestPeak. Deliberately not
-      // the same reading as the Disk column beside it: that one orders by the
-      // mount its row NAMES, which is picked by severity before percentage,
-      // so the two columns can disagree about which host is worst and each is
-      // answering its own question.
-      sortValue: (row) => latestPeak(row.disk),
     },
     {
       key: "disk",

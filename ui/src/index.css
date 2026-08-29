@@ -832,10 +832,12 @@ a:hover {
    rule.
 
    In the fleet table it never comes to that: `.tablewrap svg.spark` takes the
-   max-width off, so the four cells hold their 150x45 and the BOX scrolls.
-   Measured against the simulated fleet, traffic, CPU, memory and filesystem
-   all render exactly 150x45 at 1440px, and still 150x45 at 1100px, where the
-   wrap is 987 wide inside 823 and scrolls. What this rule protects is
+   max-width off, so the three cells hold their 150x45 and the BOX scrolls.
+   Measured against the simulated fleet, traffic, CPU and memory all render
+   exactly 150x45 at 1440px, and still 150x45 at 1100px, where the wrap is 987
+   wide inside 823 and scrolls (measured while a fourth, filesystem, was still
+   in the row; the three that remain have more width, not less). What this
+   rule protects is
    therefore the OTHER placements of the cell, and the shape of the failure it
    protects them from: .traffic-rates never shrinks, so ~110px of the cell is
    spoken for before the chart gets any, and min-width:0 would hand the whole

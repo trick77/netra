@@ -51,28 +51,29 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
 describe("hostColumns", () => {
   // Uptime is gone: it is a fact about a host rather than a reading to scan
   // a fleet by -- the same number all day, where the row's job is what
-  // changed. It still leads the host page's System card. Filesystem takes
-  // its place beside Disk, because how full a disk is now and how fast it
-  // got there are different questions and the meter only answers one.
-  // Traffic sits second, right of the host it belongs to, rather than fourth
-  // behind two other charts: it is the reading this list is most often
-  // scanned for.
-  it("yields Host, Traffic, CPU, Memory, Filesystem, Disk in that exact order", () => {
+  // changed. It still leads the host page's System card.
+  // Filesystem is gone too, and deliberately: one filesystem column, not two.
+  // Disk answers how close to full a mount is now, which is the question a
+  // fleet row is scanned for; usage over a day is near-flat, so the sparkline
+  // beside it spent 150px redrawing a straight line. The per-mount history is
+  // one click away on the host page. Traffic sits second, right of the host it
+  // belongs to, rather than fourth behind two other charts: it is the reading
+  // this list is most often scanned for.
+  it("yields Host, Traffic, CPU, Memory, Disk in that exact order", () => {
     const cols = hostColumns("1h");
     expect(cols.map((c) => c.header)).toEqual([
       "Host",
       "Traffic",
       "CPU",
       "Memory",
-      "Filesystem",
       "Disk",
     ]);
   });
 
   it("consumes the range parameter (build fails silently otherwise via noUnusedParameters)", () => {
     // Both calls must succeed and be independent column arrays.
-    expect(hostColumns("1h")).toHaveLength(6);
-    expect(hostColumns("24h")).toHaveLength(6);
+    expect(hostColumns("1h")).toHaveLength(5);
+    expect(hostColumns("24h")).toHaveLength(5);
   });
 
   // The accessors are separate from the cell on purpose -- a cell is a
@@ -182,27 +183,6 @@ describe("hostColumns", () => {
 
       expect(traffic.sortValue!(row)).toBeNull();
     });
-
-    // The fullest mount's CURRENT reading, not an average across mounts: a
-    // 503 GB root at 68% beside a 7.8 TB array at 88% averages to a number
-    // that hides whichever one is about to fill.
-    it("sorts Filesystem on the highest mount, not the mean", () => {
-      const fs = hostColumns("1h").find((c) => c.header === "Filesystem")!;
-      const row = makeRow({
-        disk: [
-          { name: "/", color: "var(--s1)", values: [60, 68] },
-          { name: "/tank", color: "var(--s2)", values: [80, 88] },
-        ],
-      });
-
-      expect(fs.sortValue!(row)).toBe(88);
-    });
-
-    it("gives a host with no filesystem series no sort value", () => {
-      const fs = hostColumns("1h").find((c) => c.header === "Filesystem")!;
-
-      expect(fs.sortValue!(makeRow({ disk: [] }))).toBeNull();
-    });
   });
 
   describe("host cell", () => {
@@ -265,33 +245,6 @@ describe("hostColumns", () => {
 
       expect(container.querySelector(".host-cell-site")).toBeNull();
       expect(container.textContent).not.toContain(ABSENT);
-    });
-  });
-
-  describe("filesystem cell", () => {
-    // A host that reported no filesystems has no usage to draw. An empty
-    // chart would claim it reported flat zero -- and a dash claims netra
-    // looked and found something it could not print. Nothing is the honest
-    // mark for nothing.
-    it("renders neither a chart nor a dash when nothing was collected", () => {
-      const col = hostColumns("1h").find((c) => c.header === "Filesystem")!;
-      const { container } = render(<>{col.cell(makeRow({ disk: [] }))}</>);
-
-      expect(container.querySelector("svg")).toBeNull();
-      expect(container.textContent).toBe("");
-    });
-
-    it("draws one line per filesystem", () => {
-      const col = hostColumns("1h").find((c) => c.header === "Filesystem")!;
-      const row = makeRow({
-        disk: [
-          { name: "root", color: "var(--s7)", values: [40, 41] },
-          { name: "data", color: "var(--s1)", values: [88, 89] },
-        ],
-      });
-      const { container } = render(<>{col.cell(row)}</>);
-
-      expect(container.querySelectorAll("g[data-series]")).toHaveLength(2);
     });
   });
 
