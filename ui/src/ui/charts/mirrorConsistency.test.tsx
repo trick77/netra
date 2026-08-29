@@ -27,6 +27,7 @@ import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { Overlay } from "./Overlay";
 import { UpDownSparkline } from "./UpDownSparkline";
+import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";
 
 const rx = [1, 4, 2, 5];
 const tx = [2, 1, 3, 1];
@@ -91,7 +92,9 @@ describe("mirrored charts", () => {
   // actually has and neither draws an edge. A component that hardcoded its
   // own weights would keep drawing one here.
   it("crosses the no-edge threshold in the same place", () => {
-    const dense = Array.from({ length: 170 }, (_, i) => (i === 80 ? 100 : 1));
+    const dense = Array.from({ length: SPARK_WIDTH }, (_, i) =>
+      i === 80 ? 100 : 1,
+    );
     const sparkline = render(
       <UpDownSparkline
         up={dense}
@@ -109,8 +112,8 @@ describe("mirrored charts", () => {
         ]}
         max={100}
         mirrored
-        width={170}
-        height={32}
+        width={SPARK_WIDTH}
+        height={SPARK_HEIGHT}
         legend={false}
       />,
     );

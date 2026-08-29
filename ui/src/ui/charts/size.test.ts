@@ -110,14 +110,18 @@ describe("mirrorEdge", () => {
   // The column has to be measured the way scaleX() actually spaces points:
   // inset by `pad` at both ends, divided by the gaps rather than the points.
   //
-  // 120 points is the count that straddles the threshold at SPARK_WIDTH: the
-  // padded column is 146/119 = 1.227 and the unpadded one 150/119 = 1.261,
-  // either side of the 1.25 edge. It moves with the width -- it was 134 at
-  // 170 -- because the property under test is that `pad` is subtracted at
-  // all, not that any particular series is dense enough to lose its edge.
+  // A literal 170 rather than SPARK_WIDTH, unlike the cases above. This is
+  // the only pair that straddles the threshold -- 170 with 134 points is
+  // 1.248 per column inset and 1.278 flush, either side of the 1.25 edge --
+  // so it is the one case where the two spacings give different answers, and
+  // that is the whole point of it. Read off the shared width it would follow
+  // the fleet cell to whatever size the fleet happens to want and quietly
+  // collapse to 0 on both lines, still green and testing nothing. The
+  // subject here is how mirrorEdge measures a column, not how wide a fleet
+  // row's charts are.
   it("measures a column the way the geometry spaces one", () => {
-    expect(mirrorEdge(SPARK_WIDTH, 120, 2).strokeWidth).toBe(0);
-    expect(mirrorEdge(SPARK_WIDTH, 120, 0).strokeWidth).toBe(BAND_STROKE_WIDTH);
+    expect(mirrorEdge(170, 134, 2).strokeWidth).toBe(0);
+    expect(mirrorEdge(170, 134, 0).strokeWidth).toBe(BAND_STROKE_WIDTH);
   });
 
   it("keeps the edge for a chart of one point", () => {

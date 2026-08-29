@@ -115,7 +115,8 @@ describe("UpDownSparkline", () => {
   describe("mark weights", () => {
     it("dims the fill and strokes the same token on both sides, given room", () => {
       // Given a chart with an explicit colour per side and two points across
-      // 170px -- 85px per point, room for an edge many times over
+      // the cell -- most of its width per point, room for an edge many times
+      // over
       const { container } = render(
         <UpDownSparkline
           up={[1, 2]}
@@ -149,8 +150,10 @@ describe("UpDownSparkline", () => {
     // three-pixel block made of stroke. RRDtool's answer, which Observium
     // inherits, is to draw the area and no line at all.
     it("drops the edge once a point is narrower than the edge", () => {
-      // Given a series with one point per pixel of the 170px cell
-      const dense = Array.from({ length: 170 }, (_, i) => (i === 80 ? 100 : 1));
+      // Given a series with one point per pixel of the cell
+      const dense = Array.from({ length: SPARK_WIDTH }, (_, i) =>
+        i === 80 ? 100 : 1,
+      );
       const { container } = render(
         <UpDownSparkline up={dense} down={dense} max={100} />,
       );

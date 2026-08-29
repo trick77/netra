@@ -310,7 +310,7 @@ describe("the CPU page on a host too large for the fleet cell", () => {
     } as unknown as MetricsResponse;
   }
 
-  // Above MAX_PER_CORE the fleet row will not fetch 128 series for a 170px
+  // Above MAX_PER_CORE the fleet row will not fetch 128 series for a 150px
   // chart and falls back to a single cpu_total band, while the page draws
   // every core. That divergence is deliberate -- but only because the
   // SILHOUETTE survives it: a normalised per-core stack sums to cpu_total.

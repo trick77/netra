@@ -192,7 +192,7 @@ export function Chart({
    * A stacked band is a filled region with a BAND_STROKE_WIDTH edge, so half
    * a stroke is the only headroom it can use. `pad` is two pixels because
    * that is what a LINE's stroke needs, and on a 45px fleet cell spending it
-   * at both ends costs a ninth of the chart -- see stackBands' `yPad`.
+   * at both ends costs an eighth of the chart -- see stackBands' `yPad`.
    *
    * Everything that has to agree with the bands reads this: the marks, the
    * furniture below, and the reference rule, which on the memory cell is the
@@ -527,8 +527,9 @@ function MirrorMarks({
         if (up === undefined) return null;
         // Whether this chart has room for an edge at all. Derived from the
         // plot, not from the call site: the same component draws a 150px
-        // fleet cell at one point per pixel and a 1000px dialog at three and
-        // a half, and only one of those can carry a 1.25px outline without
+        // fleet cell at more than one point per pixel and a 1000px dialog
+        // at three and a half, and only one of those can carry a 1.25px
+        // outline without
         // the outline becoming the mark. See mirrorEdge().
         const edge = mirrorEdge(w, longest([up, ...(down ? [down] : [])]), pad);
         // Both calls on ONE pair of ceilings, derived from the peak where

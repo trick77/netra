@@ -486,7 +486,7 @@ describe("hostColumns", () => {
       const { container } = render(<>{memCol.cell(row)}</>);
 
       // The shape is the message in a dense list; naming five bands under a
-      // 32px chart costs more row height than the names are worth, and the
+      // 45px chart costs more row height than the names are worth, and the
       // host page's Memory panel is where the breakdown gets named. A
       // previous review turned this back on for the memory cell alone.
       expect(container.querySelector(".legend")).toBeNull();

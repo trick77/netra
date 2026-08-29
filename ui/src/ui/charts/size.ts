@@ -1,23 +1,36 @@
 /**
- * The size every sparkline in a list uses.
+ * The width every sparkline in a list uses.
  *
- * One pair of constants rather than defaults repeated in three components:
- * the CPU, memory and traffic cells sit side by side in a fleet row, and a
- * row whose charts are different sizes reads as three unrelated pictures
- * rather than one host.
+ * One constant rather than a default repeated in three components: the CPU,
+ * memory and traffic cells sit side by side in a fleet row, and a row whose
+ * charts are different widths reads as three unrelated pictures rather than
+ * one host.
  *
- * 150 x 45. The width was 170 and the height 32, which is a 5.3:1 letterbox
- * -- wide enough that a fleet row's chart drew a day of history and flat
- * enough that most of what happened in it was under a pixel of vertical
- * travel. The shape is what carries a sparkline, so the height went up and
- * the width came down to pay for it: at 3.3:1 the same series shows the dip
- * it used to swallow, and three of them still sit across a fleet row.
- *
- * It is also the tile size in the enlarged view's rail, and deliberately the
- * same number: a rail tile and a fleet cell are the same picture asking the
- * same question, and a reader moves between them.
+ * It went 120 -> 170 on the argument that a stacked chart with thirty-two
+ * bands needs horizontal room to show a shape at all, and it is now 150. The
+ * twenty pixels are not withdrawn from that argument, they are spent on the
+ * one axis a band actually occupies: SPARK_HEIGHT below went 32 -> 45 in the
+ * same change. A thirty-two-core stack has more shape to show for a third
+ * more height than for the last twenty pixels of width, where each band is a
+ * ribbon a pixel tall whatever the width, and the row still has the length
+ * back for the cells that are not charts.
  */
 export const SPARK_WIDTH = 150;
+
+/**
+ * The height every sparkline in a list uses.
+ *
+ * Here for the reason the width is: it was a `32` written out separately in
+ * Sparkline, StackedSparkline and UpDownSparkline, and a fourth time at the
+ * fleet's filesystem cell. Four copies of one number are four numbers, and a
+ * row whose four cells are different heights reads as four unrelated
+ * pictures of four different hosts rather than one picture of one.
+ *
+ * 45 rather than 32 because at cell density the height IS the signal: a CPU
+ * column whose hosts idle in single-digit percent was drawing its whole
+ * reading inside about three pixels, and a mirrored traffic cell was
+ * splitting what was left between rx and tx.
+ */
 export const SPARK_HEIGHT = 45;
 
 /**
@@ -162,7 +175,7 @@ export const BAND_STROKE_WIDTH = 1.25;
  * Half its own edge, and nothing more. `pad` is two pixels because that is
  * what a LINE's stroke needs to clear the box edge; a filled band with a
  * BAND_STROKE_WIDTH outline needs half of that stroke, and the difference is
- * box the data can never reach. Spent at both ends of a 32px fleet cell it
+ * box the data can never reach. Spent at both ends of a 45px fleet cell it
  * was an eighth of the chart -- on a CPU column whose hosts idle in
  * single-digit percent, an eighth of what little signal there is.
  *
@@ -229,9 +242,12 @@ export function mirrorEdge(
   // Spaced exactly as scaleX() spaces them -- inset by `pad` at both ends and
   // divided by the GAPS rather than the points. Measuring plotWidth/points
   // instead is close enough almost everywhere and wrong at the boundary: a
-  // 170px cell with 134 points reads 1.269 that way and 1.248 the real way,
+  // 170px plot with 134 points reads 1.269 that way and 1.248 the real way,
   // so the rule would keep a 1.25 edge on a column narrower than it -- the
-  // one case it exists to catch.
+  // one case it exists to catch. 170 because that is a width where the two
+  // spacings land either side of the edge, not because anything is drawn at
+  // it any more; the fleet cell is SPARK_WIDTH and the arithmetic is the
+  // same wherever the boundary happens to fall.
   const column = points > 1 ? (plotWidth - 2 * pad) / (points - 1) : Infinity;
   return BAND_STROKE_WIDTH < column
     ? { fillOpacity: MIRROR_FILL_OPACITY, strokeWidth: BAND_STROKE_WIDTH }

@@ -354,7 +354,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
         // argued the five memory bands carry identity a legend should name and
         // turned it back on here; that is not the call. These are sparklines
         // in a dense list -- the shape is the message, and naming five bands
-        // under a 32px chart costs more row height than the names are worth.
+        // under a 45px chart costs more row height than the names are worth.
         // The host page's Memory panel is where the breakdown gets named.
         //
         // The ENLARGED view does name them: it has the room, and "which part
@@ -513,15 +513,10 @@ function DiskTrendCell({ row, range }: { row: HostRow; range: Range }) {
         min={0}
         max={100}
         width={SPARK_WIDTH}
-        // SPARK_HEIGHT, not a literal. It was 32 while every other cell in
-        // the row took the constant's default, so the one column that spelled
-        // its height out was the one that stopped matching when the constant
-        // moved -- which is the whole thing SPARK_WIDTH/SPARK_HEIGHT exist to
-        // prevent.
         height={SPARK_HEIGHT}
         // Lines rather than filled areas, and no legend: usage sits between
         // 40% and 95%, so masses anchored at zero would pile into one solid
-        // block, and naming six mounts under a chart this size is the same
+        // block, and naming six mounts under a 45px chart is the same
         // row-height problem the CPU column already solved by not naming
         // thirty-two cores.
         legend={false}
