@@ -2398,17 +2398,17 @@ details.sysfold > .body {
   min-width: 0;
 }
 
-/* One tile per window, stacked. Seven of them at 45px plus a label line come
-   out close to the 380px figure, so no scroll at the default size; the cap is
-   there for a browser whose font makes the labels taller than expected, and
-   the figure is the thing that must not be squeezed. */
+/* One tile per window, stacked. Seven of them at 45px plus a label line run
+   to about 480px against the 380px figure, so the rail is the taller column.
+   It is deliberately NOT capped and scrolled: the dialog already scrolls, and
+   a rail with its own scrollbar hides the widest windows -- the ones it
+   exists for -- behind a gesture, while a cap plus the flex default would
+   squeeze them instead. Taller than the figure is the honest answer. */
 .cd-rail {
   display: flex;
   flex-direction: column;
   gap: 2px;
   flex: 0 0 auto;
-  max-height: 460px;
-  overflow-y: auto;
 }
 /* Same argument as .chartwrap.as-button: the chart is the control, so the
    control adds nothing but a pointer and a pressed state. The tile keeps a
@@ -2419,6 +2419,10 @@ details.sysfold > .body {
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  /* Never shrink. A flex item's default is to give way, so any height the
+     rail is ever held to would be paid for by the tiles rather than by a
+     scrollbar -- and the widest windows, at the bottom, would pay first. */
+  flex: 0 0 auto;
   padding: 2px 4px 1px;
   border: 1px solid transparent;
   border-radius: var(--radius-ui);
@@ -2456,6 +2460,7 @@ details.sysfold > .body {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   width: 150px;
   height: 45px;
 }
