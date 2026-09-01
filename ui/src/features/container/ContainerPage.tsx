@@ -636,16 +636,18 @@ export function ContainerPage({
           </dl>
         </Card>
 
-        {/* Spec 11: the agent reads health and labels from the Docker
-            socket, but ContainerSample carries only container_key, name,
-            image, is_agent and the six metrics, and the containers table
-            stores the first four. Naming them is the point -- a field that
-            is simply absent from a UI reads as a field that is fine. */}
+        {/* Spec 11: the agent reads labels from the Docker socket, but
+            ContainerSample carries only container_key, name, image, is_agent
+            and the six metrics, and the containers table stores the first
+            four. Naming them is the point -- a field that is simply absent
+            from a UI reads as a field that is fine. */}
         <Card title="Not collected">
           <dl className="kv">
             <dt>Health</dt>
             <dd>
-              read from the Docker socket by the agent, never sent to the hub
+              never read: the agent lists containers and decodes five fields,
+              and the list endpoint carries health only inside its Status
+              string, which is not one of them
             </dd>
             <dt>Restarts</dt>
             <dd>no column on the wire and none in the containers table</dd>
