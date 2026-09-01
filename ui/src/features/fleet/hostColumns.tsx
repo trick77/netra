@@ -576,12 +576,21 @@ function DiskCell({ row }: { row: HostRow }) {
   // the same reading: a red bar under a plain number said one thing twice
   // and only half of it in the second place. severityFromPercent is Meter's
   // own function, so the two cannot drift apart.
-  const severity = severityFromPercent(pct);
+  // The app's own spelling for these classes is st-warn / st-crit (see the
+  // status pair in index.css); severityFromPercent answers with the long
+  // words, so the two are mapped rather than interpolated.
+  const SEVERITY_CLASS = {
+    ok: "",
+    warning: "st-warn",
+    serious: "st-serious",
+    critical: "st-crit",
+  } as const;
+  const severity = SEVERITY_CLASS[severityFromPercent(pct)];
   return (
     <div className="disk-cell">
       <div className="dtop">
         <span className="dmount">{label}</span>
-        <span className={`dpct ${severity === "ok" ? "" : `st-${severity}`}`}>
+        <span className={severity === "" ? "dpct" : `dpct ${severity}`}>
           {Math.round(pct)}
           <small>%</small>
         </span>

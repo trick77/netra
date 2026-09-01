@@ -56,9 +56,8 @@ describe("AttentionCounts", () => {
     expect(container.querySelector(".atile .dot")).toBeInTheDocument();
   });
 
-  // A tile has no dot -- its status ink is spread across the count and the
-  // edge -- so the severity WORD is what keeps meaning off colour alone
-  // (spec §3.3). The kind's own name cannot stand in for it: "Failed units"
+  // The dot beside the kind is a mark, not a word, so the severity WORD is
+  // what keeps meaning off colour alone (spec §3.3). The kind's own name cannot stand in for it: "Failed units"
   // says what is wrong and not how bad it is.
   it("names the severity rather than leaving it to the colour", () => {
     const { container } = render(

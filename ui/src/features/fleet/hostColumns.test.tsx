@@ -227,9 +227,7 @@ describe("hostColumns", () => {
           {disk.cell(makeRow({ fullest: { mount: "/", pct: 96, others: 0 } }))}
         </>,
       );
-      expect(
-        crit.container.querySelector(".dpct.st-critical"),
-      ).toBeInTheDocument();
+      expect(crit.container.querySelector(".dpct.st-crit")).toBeInTheDocument();
       crit.unmount();
 
       const calm = render(
@@ -237,7 +235,7 @@ describe("hostColumns", () => {
           {disk.cell(makeRow({ fullest: { mount: "/", pct: 21, others: 0 } }))}
         </>,
       );
-      expect(calm.container.querySelector(".dpct")?.className).toBe("dpct ");
+      expect(calm.container.querySelector(".dpct")?.className).toBe("dpct");
     });
 
     // free is optional on the row -- the assembler leaves it unset when the

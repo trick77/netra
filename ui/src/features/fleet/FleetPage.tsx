@@ -378,16 +378,15 @@ export function FleetPage({
       {/* What used to be a band of one block per host. Fifty warned hosts
           made fifty blocks, capped at twenty, with an overflow line that was
           not even a link -- so the conditions moved into the list below and
-          this is what is left above it: one line per KIND, which is one line
+          this is what is left above it: one chip per KIND, which is one chip
           per problem however many machines have it.
 
-          It is now the FIRST thing on the page. The summary sentence that
-          used to sit above it ("2 of 4 hosts need attention · 2 problems ·
-          checked 0 s ago") said, in prose, what these tiles and the rail
-          below them already say in figures -- and it said it in the page's
-          best line. The two counts it carried are the tiles themselves and
-          the rail's "of N hosts reporting"; the one fact it alone carried,
-          the age of the check, moved into the rail beside them.
+          It sits directly under the head, which names the page and states
+          its figures on one line: what is wrong reads as the first thing
+          ABOUT the fleet rather than the first thing on the screen. The
+          summary sentence that used to be here ("2 of 4 hosts need
+          attention · 2 problems · checked 0 s ago") said in prose what the
+          chips and the figures above them already say in figures.
 
           Nothing takes its place on a healthy fleet: an empty attention row
           IS the all-clear, and the rail underneath still confirms the check

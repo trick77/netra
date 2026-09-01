@@ -409,7 +409,15 @@ function MemoryCell({
   // dimming cannot reach it from there.
   if (row.mem === undefined || row.mem.length === 0)
     return <span className="absent">{ABSENT}</span>;
-  const limit = row.mem_limit_bytes ?? null;
+  // <= 0, not just null: Docker writes 0 for "no limit", and the rest of
+  // this codebase already reads it that way (containerSeverity below,
+  // ContainerPage's memLimit > 0). Taken as a ceiling it drew a meter with
+  // no fill and a line reading "of 0 B" -- an unlimited container asserting
+  // a limit of nothing.
+  const limit =
+    row.mem_limit_bytes != null && row.mem_limit_bytes > 0
+      ? row.mem_limit_bytes
+      : null;
   return (
     <div className="mem-cell">
       {/* The chart is the button that enlarges it -- only the chart, not the
@@ -433,11 +441,18 @@ function MemoryCell({
       {limit === null ? null : (
         <>
           <Meter value={lastReported(row.mem)} max={limit} />
-          {/* What the meter is measured against, in the same words and the
-              same type the fleet's memory cell uses ("of 14.9 GiB"). The
-              meter said how close to the limit without ever saying what the
-              limit is, so two containers with the same bar and a tenfold
-              difference in headroom read identically. */}
+          {/* What the meter is measured against. The meter said how close
+              to the limit without ever saying what the limit IS, so two
+              containers with the same bar and a tenfold difference in
+              headroom read identically.
+
+              Decimal bytes, unlike the fleet's memory cell one list over:
+              every other memory figure in a container row is decimal --
+              the sparkline's own values, the group totals -- and a ceiling
+              labelled binarily under a stack labelled decimally makes one
+              quantity look like two. The fleet cell is binary for the same
+              reason in reverse: its stack is drawn against a binary
+              ceiling. */}
           <div className="climit">of {bytes(limit)}</div>
         </>
       )}

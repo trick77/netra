@@ -363,13 +363,20 @@ h3 {
   margin: 0;
   font-weight: 500;
 }
-/* Links rest in ink and reach for the accent only under the pointer. Colour
-   here is almost entirely the fleet's hostnames, and orange on identity text
-   competed with the status palette it sits beside: dark --accent (#d97757) and
-   --st-serious (#ec835a) are near neighbours, so a hostname next to a severity
-   dot read as a severity itself. Every deliberate accent use in this file sets
-   its own colour (brand, current tab, ghost button, segmented control), so
-   none of them ride on this rule. 120ms is the app's one hover timing. */
+/* Links rest in ink and reach for the accent only under the pointer. Every
+   deliberate accent use in this file sets its own colour -- brand, current
+   tab, ghost button, segmented control, and now the two lists' identity
+   column (.host-cell-name) -- so none of them ride on this rule.
+
+   That column is the exception this rule used to be written against: dark
+   --accent (#d97757) and --st-serious (#ec835a) are near neighbours, so an
+   orange name beside a severity mark can read as a severity itself. What
+   makes it safe where it is: the mark beside a hostname is a BADGE with a
+   word in it ("offline", "sporadic"), not a bare dot, so the hue is never
+   what a reader resolves it by; and the name is the one link in a row of
+   readings, which is the other thing the colour is doing there. A bare
+   status dot next to accent-coloured text is still the thing to avoid.
+   120ms is the app's one hover timing. */
 a {
   color: var(--ink-2);
   text-decoration: none;
@@ -617,9 +624,10 @@ a:hover {
      figures on .srail need no such rule: a .s is a flex item on one line. */
   background: var(--surface);
   border: 1px solid var(--border);
-  /* The severity's own edge. 3px on the left rather than a tinted ground:
-     these sit above a page of pale cards, and a filled one would be the chip
-     treatment that got taken off every row in the fleet. */
+  /* A pill, not a card: the severity rides the dot inside it (see .atile
+     .dot), so the box itself carries no status of its own -- a tinted
+     ground would be the chip treatment that got taken off every row in the
+     fleet. */
   border-radius: var(--radius-pill);
   padding: 5px var(--space-3) 5px var(--space-3);
   color: inherit;
@@ -662,15 +670,6 @@ a:hover {
      up vertically, and these are single headline values. (.srail b does take
      tabular-nums -- three figures on one line, not a headline.) */
 }
-/* The noun rides the number rather than sitting on a line of its own -- "3"
-   beside "Failed units" reads as three failed units, and it is three HOSTS,
-   one of which may have five. */
-.atile .v .u {
-  font-size: var(--text-micro);
-  font-weight: 500;
-  letter-spacing: 0;
-  color: var(--muted);
-}
 .atile .d {
   font-size: var(--text-micro);
   color: var(--muted);
@@ -678,24 +677,15 @@ a:hover {
 /* Status ink on the count and on the word under it, so the two agree. The
    edge takes the raw hue -- it is a mark, not text, and has no contrast floor
    to clear. */
-/* The severity's mark: a dot, in the fixed status hue (never a text step --
-   this is the mark, not a word). The pill carried it as a 3px left edge,
-   which on a rounded chip read as part of the border. */
+/* The severity's mark: a dot. The pill carried it as a 3px left edge, which
+   on a rounded chip read as part of the border. Only the geometry is here --
+   the hue comes from the global `.st-* .dot` pair further down, which the
+   chip's own severity class already matches. */
 .atile .dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--border-strong);
   flex: none;
-}
-.atile.st-crit .dot {
-  background: var(--st-crit);
-}
-.atile.st-warn .dot {
-  background: var(--st-warn);
-}
-.atile.st-serious .dot {
-  background: var(--st-serious);
 }
 .atile.st-crit .v,
 .atile.st-crit .d {
@@ -711,11 +701,6 @@ a:hover {
 }
 /* The unit keeps its quiet grey inside a coloured value: it is the noun, not
    the reading. */
-.atile.st-crit .v .u,
-.atile.st-warn .v .u,
-.atile.st-serious .v .u {
-  color: var(--muted);
-}
 
 /* What the list is showing and how to stop it showing only that. The band's
    own "+30 more hosts" was the counter-example: a truncation with nothing to
@@ -2371,13 +2356,13 @@ details.sysfold > .body {
 /* The percentage takes the fill's own severity: a red bar under an ink
    number said one thing twice and only half of it the second time. The text
    steps, never the mark's hue -- see the --st-*-text note in the palette. */
-.disk-cell .dpct.st-warning {
+.disk-cell .dpct.st-warn {
   color: var(--st-warn-text);
 }
 .disk-cell .dpct.st-serious {
   color: var(--st-serious-text);
 }
-.disk-cell .dpct.st-critical {
+.disk-cell .dpct.st-crit {
   color: var(--st-crit-text);
 }
 .disk-cell .dfree {
