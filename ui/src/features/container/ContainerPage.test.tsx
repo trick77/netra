@@ -161,6 +161,51 @@ describe("deriveState", () => {
     expect(state.label).not.toMatch(/restart/i);
     expect(state.why).toMatch(/restart/i);
   });
+
+  // The contradiction this branch exists to end: containerIsGone measures
+  // against the host and marks nothing gone on an offline host, so the badge
+  // must not call the same container Silent in the same breath.
+  it("names the host, not the container, when the host stopped reporting", () => {
+    const state = deriveState({
+      lastSampleMs: NOW.getTime() - 3_600_000,
+      memUsed: 1,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      hostState: { severity: "critical", label: "offline" },
+    });
+    expect(state.label).toBe("Host offline");
+    expect(state.label).not.toMatch(/silent/i);
+  });
+
+  // The host carries the severity on its own page and in its fleet row.
+  // Repeating it here counts one outage twice.
+  it("leaves the host's severity to the host", () => {
+    const state = deriveState({
+      lastSampleMs: null,
+      memUsed: null,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      hostState: { severity: "critical", label: "never seen" },
+    });
+    expect(state.severity).toBe("neutral");
+    expect(state.label).toBe("Host never seen");
+  });
+
+  // A host answering badly is still answering: its containers' own readings
+  // are current, so the badge keeps measuring them.
+  it("still judges the container when the host is merely sporadic", () => {
+    const state = deriveState({
+      lastSampleMs: NOW.getTime() - 3_600_000,
+      memUsed: 1,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      hostState: { severity: "warning", label: "sporadic" },
+    });
+    expect(state.label).toMatch(/silent/i);
+  });
 });
 
 describe("ContainerPage", () => {
@@ -369,6 +414,20 @@ describe("ContainerPage", () => {
     for (const field of ["Health", "Restarts", "State", "Labels"]) {
       expect(card).toHaveTextContent(field);
     }
+  });
+
+  // The page renders both the badge and the gone pill from the same host, so
+  // this is where the two used to contradict each other: no pill, because
+  // containerIsGone spares an offline host's containers, beside a badge
+  // calling the container Silent.
+  it("blames the host, not the container, when the host went quiet", () => {
+    renderPage({
+      host: { ...HOST, last_seen: "2026-08-10T12:00:00Z" },
+    });
+
+    expect(screen.getByText("Host offline")).toBeInTheDocument();
+    expect(screen.queryByText("Silent")).toBeNull();
+    expect(screen.queryByText("gone")).toBeNull();
   });
 
   it("hands a range change back to the caller", async () => {

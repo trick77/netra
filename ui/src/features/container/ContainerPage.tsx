@@ -15,6 +15,7 @@ import { Meter } from "../../ui/Meter";
 import { Segmented } from "../../ui/Segmented";
 import { ChartPanel, type Band } from "../../ui/charts/ChartPanel";
 import type { Container, MetricsResponse } from "../../lib/api";
+import { hostStatus, type HostStatus } from "../../lib/host";
 import {
   hasGaps,
   hasReading,
@@ -82,6 +83,23 @@ export interface DerivedStateInput {
   memLimit: number | null;
   gap: boolean;
   now: Date;
+  /**
+   * The HOST's reporting state, from the one hostStatus() the fleet and the
+   * host header already share.
+   *
+   * A container's samples ride in on its host's posts, so a host that went
+   * quiet stops every container on it at once. The lists have always known
+   * this -- containerIsGone measures against the host's last_seen, never the
+   * clock, so an offline host marks nothing gone -- while this badge measured
+   * against the clock and called the same container Silent. One container,
+   * two surfaces, opposite answers, and the one that blamed the container was
+   * the one offering to purge its history.
+   *
+   * Given the host's state, the badge names the host instead. Omitted, the
+   * badge behaves as it did: callers without a host status are no worse off
+   * than before.
+   */
+  hostState?: HostStatus;
   silentAfterS?: number;
 }
 
@@ -106,8 +124,23 @@ export function deriveState({
   memLimit,
   gap,
   now,
+  hostState,
   silentAfterS = SILENT_AFTER_S,
 }: DerivedStateInput): DerivedState {
+  // First, and above even "No samples": every branch below reads the sample
+  // stream, and on a host that is not reporting there is no stream to read.
+  // Neutral, not serious -- the severity belongs to the host, which carries
+  // it on its own page and in its fleet row, and a second critical here would
+  // count one outage twice. The host's own word is reused rather than a fifth
+  // synonym invented for it.
+  if (hostState !== undefined && hostState.severity === "critical") {
+    return {
+      label: `Host ${hostState.label}`,
+      severity: "neutral",
+      why: "the host stopped reporting, so nothing can be said about this container until it comes back",
+    };
+  }
+
   if (lastSampleMs === null) {
     return {
       label: "No samples",
@@ -401,6 +434,7 @@ export function ContainerPage({
     memLimit,
     gap: sampled ? hasGaps(sampled.cpu) : false,
     now,
+    hostState: hostStatus(host, now),
   });
 
   const { cpuBands, memBands, netBands, ioBands } = bandsFor(sampled);
