@@ -31,22 +31,29 @@ describe("AttentionCounts", () => {
     expect(within(list).getAllByRole("listitem")).toHaveLength(1);
     expect(within(list).getByText("Failed units")).toBeInTheDocument();
     expect(within(list).getByText("31")).toBeInTheDocument();
-    // The noun rides the number: "31" beside "Failed units" would read as
-    // thirty-one failed units, and it is thirty-one HOSTS.
-    expect(within(list).getByText(/hosts/)).toBeInTheDocument();
+    // The noun is gone from the chip: on a page of hosts, a count beside a
+    // kind is a count of hosts, and "31 hosts" put the widest word in the
+    // chip on the one thing the reader already knows. The severity word
+    // stays, because hue is never the only channel that carries it.
+    expect(within(list).queryByText(/hosts/)).toBeNull();
+    expect(within(list).getByText("Warning")).toBeInTheDocument();
   });
 
-  it("counts one host without pluralising it", () => {
-    render(
+  // The chip is a count and a kind, with a dot for the severity and the word
+  // after it. One host reads "1", not "1 host": there is no noun left to
+  // pluralise, which is one fewer thing that can be wrong on a fleet of one.
+  it("counts one host as a bare figure", () => {
+    const { container } = render(
       <AttentionCounts
         kinds={[{ ...UNITS, hostIds: ["1"] }]}
         active={null}
         onSelect={() => {}}
       />,
     );
-    // getByText normalises the leading space away; the space is real in the
-    // DOM and is what separates the number from its noun.
-    expect(screen.getByText("host")).toBeInTheDocument();
+
+    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.queryByText(/hosts?$/)).toBeNull();
+    expect(container.querySelector(".atile .dot")).toBeInTheDocument();
   });
 
   // A tile has no dot -- its status ink is spread across the count and the

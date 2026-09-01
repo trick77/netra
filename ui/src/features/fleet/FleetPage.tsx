@@ -358,7 +358,12 @@ export function FleetPage({
   // takes over the moment a reader clicks a header.
 
   return (
-    <>
+    // A named wrapper rather than a fragment: this page's list is flush with
+    // the page instead of framed as a card, and its toolbar closes the
+    // chrome with a rule -- both are scoped to .fleet so the host page and
+    // the container detail keep the card treatment they share with every
+    // other table in the app.
+    <div className="fleet">
       {error !== null ? (
         <p className="note" role="alert">
           The fleet could not be loaded: {error}
@@ -389,14 +394,6 @@ export function FleetPage({
           ran. A line that only ever reads "nothing needs attention" is a line
           people stop reading, which is the same reason the band it replaced
           was not a green card. */}
-      {shown.length > 0 ? (
-        <AttentionCounts
-          kinds={kinds}
-          active={activeKind}
-          href={attentionHref}
-          onSelect={setAttention}
-        />
-      ) : null}
 
       {/* The ambient figures, on a rail rather than in cards.
           They were three cards with 28px numbers sitting directly under
@@ -416,51 +413,56 @@ export function FleetPage({
           destinations, so a heading fixed at "Fleet" would contradict the
           rail on the containers view and mislabel the page for a screen
           reader landing on it. */}
-      <h1 className="fleettitle">
-        {entity === "containers" ? "Containers" : "Fleet"}
-      </h1>
-
-      <StatRail>
-        {/* The first two figures count a set the page can show, and sit
+      {/* The title and the figures are ONE line: the page names itself on
+          the left, and what it currently holds reads off the right end of
+          the same line. Stacked they were two bands of chrome above a list
+          that had not started yet, which is what the chips below them are
+          for. */}
+      <div className="fleethead">
+        <h1 className="fleettitle">
+          {entity === "containers" ? "Containers" : "Fleet"}
+        </h1>
+        <StatRail>
+          {/* The first two figures count a set the page can show, and sit
             directly above the tabs that show it -- so they are the control
             they already looked like. Their hrefs match the tabs' own, which
             is what keeps them bookmarkable and what makes clicking one the
             same act as clicking the tab. */}
-        <StatFigure
-          value={reporting}
-          // Pluralised, like the all-clear sentence directly above it: a
-          // one-host fleet read "of 1 hosts reporting" against a line already
-          // saying "All 1 host reporting".
-          label={`of ${hostRows.length} host${
-            hostRows.length === 1 ? "" : "s"
-          } reporting`}
-          href="/"
-          onSelect={() => setEntity("hosts")}
-        />
-        <StatFigure
-          value={containersKnown ? containerRows.length : ABSENT}
-          label="containers"
-          href="/?entity=containers"
-          onSelect={() => setEntity("containers")}
-        />
-        {/* No href: fleet traffic is a rate, not a set, so there is no list
+          <StatFigure
+            value={reporting}
+            // Pluralised, like the all-clear sentence directly above it: a
+            // one-host fleet read "of 1 hosts reporting" against a line already
+            // saying "All 1 host reporting".
+            label={`of ${hostRows.length} host${
+              hostRows.length === 1 ? "" : "s"
+            } reporting`}
+            href="/"
+            onSelect={() => setEntity("hosts")}
+          />
+          <StatFigure
+            value={containersKnown ? containerRows.length : ABSENT}
+            label="containers"
+            href="/?entity=containers"
+            onSelect={() => setEntity("containers")}
+          />
+          {/* No href: fleet traffic is a rate, not a set, so there is no list
             of it to go to. A figure that looks clickable and does nothing is
             worse than one that plainly is not. */}
-        <StatFigure
-          value={fleetTraffic(hostRows, now)}
-          // "in + out", the words this app already uses for the two
-          // directions: Graphs.tsx names its bands that ("not rx and tx --
-          // the direction is the point of this chart"), and both traffic
-          // sparklines announce themselves as "Traffic in and out over
-          // time".
-          //
-          // The "right now" that used to qualify this is gone with the card
-          // that had room for it. It stays true -- the number is a gauge off
-          // host_current, not the latest bucket of a range -- and the rail
-          // has no line for a qualifier that repeats for all three figures.
-          label="in + out"
-        />
-        {/* The age of the poll, in the place the fleet's other ambient
+          <StatFigure
+            value={fleetTraffic(hostRows, now)}
+            // "in + out", the words this app already uses for the two
+            // directions: Graphs.tsx names its bands that ("not rx and tx --
+            // the direction is the point of this chart"), and both traffic
+            // sparklines announce themselves as "Traffic in and out over
+            // time".
+            //
+            // The "right now" that used to qualify this is gone with the card
+            // that had room for it. It stays true -- the number is a gauge off
+            // host_current, not the latest bucket of a range -- and the rail
+            // has no line for a qualifier that repeats for all three figures.
+            label="in + out"
+          />
+          {/* The age of the poll, in the place the fleet's other ambient
             figures are read. It used to be the tail of a summary sentence
             above the page; the sentence is gone and this is the fact on it
             that was not said twice.
@@ -471,20 +473,43 @@ export function FleetPage({
             timestamp and what repaints the page. It owns a clock, and the
             reasons for `duration` over `relative` and for omitting rather
             than dashing moved there with it. */}
-        <SinceLastCheck checkedAt={checkedAt} now={now} />
-      </StatRail>
+          <SinceLastCheck checkedAt={checkedAt} now={now} />
+        </StatRail>
+      </div>
+
+      {shown.length > 0 ? (
+        <AttentionCounts
+          kinds={kinds}
+          active={activeKind}
+          href={attentionHref}
+          onSelect={setAttention}
+        />
+      ) : null}
 
       <div className="toolbar">
-        <Input
-          ref={filterRef}
-          type="search"
-          value={filter}
-          placeholder={
-            entity === "hosts" ? "Filter hosts" : "Filter containers"
-          }
-          aria-label={entity === "hosts" ? "Filter hosts" : "Filter containers"}
-          onChange={(e) => setFilter(e.target.value)}
-        />
+        {/* The key that focuses this field, said where the field is. "/" has
+            focused the filter since useSlashToFocus was written and nothing
+            on screen mentioned it, which makes a shortcut a thing you either
+            already know or never learn. aria-hidden: it is a hint about the
+            keyboard, and a screen-reader user reaching this field has not
+            typed "/" to get here. */}
+        <div className="filterbox">
+          <Input
+            ref={filterRef}
+            type="search"
+            value={filter}
+            placeholder={
+              entity === "hosts" ? "Filter hosts" : "Filter containers"
+            }
+            aria-label={
+              entity === "hosts" ? "Filter hosts" : "Filter containers"
+            }
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <span className="kbd" aria-hidden="true">
+            /
+          </span>
+        </div>
         {/* Left of the spacer, beside the filter it composes with: both of
             them change WHICH hosts are in the list. Hosts only -- every
             condition netra has is host-level, so on the Containers tab this
@@ -584,7 +609,7 @@ export function FleetPage({
           filtered={needle !== ""}
         />
       )}
-    </>
+    </div>
   );
 }
 

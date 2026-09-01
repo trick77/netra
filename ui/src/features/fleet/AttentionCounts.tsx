@@ -108,14 +108,21 @@ export function AttentionCounts({
               aria-current={chosen ? "true" : undefined}
               onClick={handleClick}
             >
+              {/* The severity's mark. A dot rather than the edge the tile
+                  carried: on a pill the edge reads as part of the border,
+                  and a dot is the shape this app already uses for a state.
+                  It is never the only channel -- see the word after it. */}
+              <span className="dot" aria-hidden="true" />
               <span className="k">{kind.label}</span>
-              {/* The noun rides the number: "3" beside "Failed units"
-                  reads as three failed units, and it is three HOSTS -- one
-                  of which may have five. */}
-              <span className="v">
-                {hosts}
-                <span className="u"> host{hosts === 1 ? "" : "s"}</span>
-              </span>
+              {/* The count, with no noun. "Failed units 3" beside a fleet of
+                  hosts is three hosts; spelling out "3 hosts" put the widest
+                  word in the chip on the one thing a reader already knows
+                  they are counting. The accessible name still says it: the
+                  kind, the number and the severity read in order. */}
+              <span className="v">{hosts}</span>
+              {/* Colour is never the only carrier of severity (spec 3.3/3.5),
+                  so the word stays -- one step quieter than the count, after
+                  it rather than under it. */}
               <span className="d">{SEVERITY_WORD[kind.severity]}</span>
             </a>
           </li>
