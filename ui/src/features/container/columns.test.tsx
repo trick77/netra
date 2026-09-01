@@ -402,4 +402,33 @@ describe("a host that cannot collect containers at all", () => {
     });
     expect(containerIsGone(row)).toBe(true);
   });
+
+  // One shape for "a chart and the figure it ends on", across both lists: the
+  // container CPU cell used to draw its own muted span in a 44px column while
+  // the fleet drew a block with a unit line. A reader switching lists should
+  // not have to re-learn what a reading is.
+  it("draws its CPU reading with the same block the fleet uses", () => {
+    const cpu = containerColumns({ cpuMax: 100 }).find(
+      (c) => c.header === "CPU",
+    )!;
+    const { container } = render(<>{cpu.cell(makeRow({ cpu: [1, 2, 34] }))}</>);
+
+    expect(container.querySelector(".metric-read .v")?.textContent).toBe("34%");
+  });
+
+  // The meter says how close to the limit; it never said what the limit IS,
+  // so two containers with the same bar and a tenfold difference in headroom
+  // read identically.
+  it("names the limit its memory meter is measured against", () => {
+    const memory = containerColumns({ memMax: 1e9 }).find(
+      (c) => c.header === "Memory",
+    )!;
+    const { container } = render(
+      <>
+        {memory.cell(makeRow({ mem: [5e8], mem_limit_bytes: 2_000_000_000 }))}
+      </>,
+    );
+
+    expect(container.querySelector(".climit")?.textContent).toBe("of 2 GB");
+  });
 });

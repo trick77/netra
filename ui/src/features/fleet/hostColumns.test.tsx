@@ -188,6 +188,71 @@ describe("hostColumns", () => {
 
       expect(traffic.sortValue!(row)).toBeNull();
     });
+
+    // The percentage cannot say on its own whether a mount is in trouble:
+    // 90% of a 6.7 TB array is 674 GB free and 90% of a 4 GB root is not.
+    it("prints the mount, how full it is, and what is left", () => {
+      const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const { container } = render(
+        <>
+          {disk.cell(
+            makeRow({
+              fullest: {
+                mount: "/var/log",
+                pct: 91,
+                free: 3_100_000_000,
+                others: 6,
+              },
+            }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector(".dmount")?.textContent).toBe(
+        "/var/log +6",
+      );
+      expect(container.querySelector(".dpct")?.textContent).toBe("91%");
+      expect(container.querySelector(".dfree")?.textContent).toBe(
+        "3.1 GB left",
+      );
+    });
+
+    // The bar's fill and the figure beside it are the same reading, so they
+    // take the same severity -- a red bar over an ink number said one thing
+    // twice and only half of it the second time.
+    it("colours the percentage with the fill's own severity", () => {
+      const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const crit = render(
+        <>
+          {disk.cell(makeRow({ fullest: { mount: "/", pct: 96, others: 0 } }))}
+        </>,
+      );
+      expect(
+        crit.container.querySelector(".dpct.st-critical"),
+      ).toBeInTheDocument();
+      crit.unmount();
+
+      const calm = render(
+        <>
+          {disk.cell(makeRow({ fullest: { mount: "/", pct: 21, others: 0 } }))}
+        </>,
+      );
+      expect(calm.container.querySelector(".dpct")?.className).toBe("dpct ");
+    });
+
+    // free is optional on the row -- the assembler leaves it unset when the
+    // host reported no size -- and an absent fact prints nothing, never a
+    // dash. Same rule the readings and the location line follow.
+    it("says nothing about free space when the host did not report it", () => {
+      const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const { container } = render(
+        <>
+          {disk.cell(makeRow({ fullest: { mount: "/", pct: 40, others: 0 } }))}
+        </>,
+      );
+
+      expect(container.querySelector(".dfree")).toBeNull();
+    });
   });
 
   describe("host cell", () => {
@@ -288,8 +353,12 @@ describe("hostColumns", () => {
       );
 
       expect(container.querySelector(".osicon")).toBeInTheDocument();
+      // The line under the name says where the host is and nothing else: the
+      // mark beside it already says which distribution, and spelling out
+      // "Debian GNU/Linux 12 (bookworm)" made the row's longest string out of
+      // something it had just drawn.
       expect(container.querySelector(".host-cell-site")?.textContent).toBe(
-        "Init7 \u00b7 Winterthur, CH \u00b7 Debian 13",
+        "Init7 \u00b7 Winterthur, CH",
       );
     });
 
