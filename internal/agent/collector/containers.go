@@ -621,24 +621,34 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 			return nil
 		}
 
-		cpuStat := filepath.Join(path, "cpu.stat")
-		memStat := filepath.Join(path, "memory.stat")
+		// ONE pass per file for every key taken from it. Each of these used to
+		// be its own open and its own scan -- five of memory.stat and three of
+		// cpu.stat, for every container, on every scrape. See lookupKeyedUints
+		// for what that was costing.
+		cpu := lookupKeyedUints(filepath.Join(path, "cpu.stat"),
+			"usage_usec", "user_usec", "system_usec")
+		mem := lookupKeyedUints(filepath.Join(path, "memory.stat"),
+			"anon", "shmem", "slab", "file", "inactive_file")
+
 		cc := containerCounters{
-			cpuUsec: readKeyedUint(cpuStat, "usage_usec"),
-			memUsed: containerMemory(path),
+			// Missing -> 0 here, unlike every field below it: usage_usec is
+			// the base of a rate this collector computes itself, and a cgroup
+			// that does not report it contributes no delta either way.
+			cpuUsec: cpu["usage_usec"],
+			memUsed: containerMemory(path, mem),
 		}
-		// lookupKeyedUint throughout, never readKeyedUint: every one of these
-		// is a line a kernel may simply not have, and readKeyedUint's missing
-		// -> 0 would store that absence as a measured zero.
-		cc.memAnon, cc.hasAnon = lookupKeyedUint(memStat, "anon")
-		cc.memShmem, cc.hasShmem = lookupKeyedUint(memStat, "shmem")
+		// Comma-ok throughout, never a bare map index: every one of these is a
+		// line a kernel may simply not have, and a missing key read as 0 would
+		// store that absence as a measured zero.
+		cc.memAnon, cc.hasAnon = mem["anon"]
+		cc.memShmem, cc.hasShmem = mem["shmem"]
 		// slab, not slab_reclaimable + slab_unreclaimable: the kernel
 		// reports the total as its own line, and summing the two parts
 		// would double count on kernels that report all three.
-		cc.memKernel, cc.hasKernel = lookupKeyedUint(memStat, "slab")
+		cc.memKernel, cc.hasKernel = mem["slab"]
 
-		user, hasUser := lookupKeyedUint(cpuStat, "user_usec")
-		system, hasSystem := lookupKeyedUint(cpuStat, "system_usec")
+		user, hasUser := cpu["user_usec"]
+		system, hasSystem := cpu["system_usec"]
 		cc.userUsec, cc.systemUsec = user, system
 		cc.hasSplit = hasUser && hasSystem
 
@@ -654,7 +664,7 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 		// `shmem` is the kernel disagreeing with itself across two lines, not
 		// a container holding zero bytes of page cache, so it reports nothing
 		// rather than falling through to a zero drawn as a measurement.
-		if file, ok := lookupKeyedUint(memStat, "file"); ok {
+		if file, ok := mem["file"]; ok {
 			switch {
 			case !cc.hasShmem:
 				cc.memFile, cc.hasFile = file, true
@@ -717,9 +727,14 @@ func (c *Containers) read(meta map[string]ContainerMeta, socketAnswered bool) (m
 // merely read files looks like it is holding that memory -- and an operator
 // sizing a limit from it would over-provision every service on the host.
 // Subtracting inactive_file leaves what the container actually needs.
-func containerMemory(dir string) uint64 {
+//
+// inactive_file is taken from the caller's already-read memory.stat rather
+// than read again here. This function used to open that file a second time,
+// which made it the fifth scan of it per container -- see lookupKeyedUints.
+// Absent still means zero subtracted, exactly as the missing-key read did.
+func containerMemory(dir string, mem map[string]uint64) uint64 {
 	current := readUint(filepath.Join(dir, "memory.current"))
-	inactiveFile := readKeyedUint(filepath.Join(dir, "memory.stat"), "inactive_file")
+	inactiveFile := mem["inactive_file"]
 	if inactiveFile > current {
 		return 0
 	}
@@ -773,37 +788,68 @@ func readUint(path string) uint64 {
 	return v
 }
 
-// readKeyedUint reads "key value" lines, as cpu.stat and memory.stat use.
-func readKeyedUint(path, key string) uint64 {
-	v, _ := lookupKeyedUint(path, key)
-	return v
-}
-
-// lookupKeyedUint is readKeyedUint plus whether the key was actually there.
+// lookupKeyedUints reads "key value" lines, as cpu.stat and memory.stat use,
+// and returns every requested key the file actually carried -- in ONE open and
+// ONE scan.
 //
-// The distinction matters for cpu.stat's user_usec and system_usec: a kernel
-// that does not report them is not a container that spent no time in user
-// space. The first must reach the database as NULL; the second is a reading
-// of zero, and an operator hunting a busy service needs to tell them apart.
-func lookupKeyedUint(path, key string) (uint64, bool) {
+// This replaced a per-key reader that the cgroup walk called eight times per
+// container: five keys out of memory.stat and three out of cpu.stat, each one
+// its own open and its own scan. And because `slab` and `inactive_file` sit
+// near the bottom of a ~40-line memory.stat, most of those scans ran the file
+// to the end anyway.
+//
+// The reason to care: measured against the fleet, `containers` was 53ms of a
+// ~100ms scrape -- more than every other collector combined. How much of that
+// was these scans specifically is not something the per-collector timing can
+// say; it is the largest structural redundancy in the walk, and it was removed
+// first for that reason.
+//
+// PRESENCE IS MAP MEMBERSHIP, and that is the whole contract. A key the kernel
+// does not report must be ABSENT, not a measured zero: a container missing
+// cpu.stat's user_usec is not one that spent no time in user space. The first
+// must reach the database as NULL; the second is a reading of zero, and an
+// operator hunting a busy service needs to tell them apart. A value that will
+// not parse is left out for the same reason -- it was not measured.
+//
+// A missing file yields an empty map rather than an error. Cgroups appear and
+// vanish constantly, and the walk that calls this must not lose a whole scrape
+// to a scope that exited between the readdir and the open.
+func lookupKeyedUints(path string, keys ...string) map[string]uint64 {
 	f, err := os.Open(path)
 	if err != nil {
-		return 0, false
+		return nil
 	}
 	defer func() { _ = f.Close() }()
 
+	// Counts down as keys are settled, so the scan can stop early on a file
+	// that happens to list them first. Settled, not found: a key whose value
+	// did not parse is done with too, and looking for it further down the
+	// file would take a LATER line's value for it -- which the per-key reader
+	// it replaces never did.
+	want := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		want[k] = struct{}{}
+	}
+
+	out := make(map[string]uint64, len(keys))
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) == 2 && fields[0] == key {
-			v, err := strconv.ParseUint(fields[1], 10, 64)
-			if err != nil {
-				return 0, false
-			}
-			return v, true
+		if len(fields) != 2 {
+			continue
+		}
+		if _, ok := want[fields[0]]; !ok {
+			continue
+		}
+		if v, err := strconv.ParseUint(fields[1], 10, 64); err == nil {
+			out[fields[0]] = v
+		}
+		delete(want, fields[0])
+		if len(want) == 0 {
+			break
 		}
 	}
-	return 0, false
+	return out
 }
 
 // readIOStat sums rbytes and wbytes across every device in io.stat. A

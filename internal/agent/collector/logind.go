@@ -107,27 +107,33 @@ type sessionSource interface {
 // "unavailable" for ever while people are logged in. logind is where the
 // session list lives now.
 //
-// A fresh private connection per scrape, closed on the way out, for the same
-// reason SystemUnits takes one: the call runs once a minute, so the cost is
-// nothing next to smartctl, and a connection that is never reused cannot go
-// stale when dbus or logind is restarted under the agent.
+// ONE connection, held between scrapes and redialled when a call on it fails,
+// for the same reason SystemUnits holds one -- see the comment there, which
+// carries the measurement. A dial is a socket connect plus a SASL EXTERNAL
+// handshake plus Hello, and paying for it every 60 seconds to ask how many
+// people are logged in is the whole of what this removes.
 //
 // The bus socket is the same mount the systemd collector already needs
 // (/run/dbus/system_bus_socket). A host without it, or without logind, returns
 // an error here and the Users collector falls back to utmp.
 func LogindSessions(ctx context.Context) (int, error) {
-	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
-	if err != nil {
-		return 0, fmt.Errorf("connect to the system bus: %w", err)
-	}
-	defer conn.Close()
-
-	return countLogindSessions(ctx, busSessions{
-		object: func(path dbus.ObjectPath) dbus.BusObject {
-			return conn.Object(logindService, path)
+	return callBus(ctx, &logindBus,
+		func(ctx context.Context) (*dbus.Conn, error) {
+			return dbus.ConnectSystemBus(dbus.WithContext(ctx))
 		},
-	})
+		func(c *dbus.Conn) { _ = c.Close() },
+		func(c *dbus.Conn) (int, error) {
+			return countLogindSessions(ctx, busSessions{
+				object: func(path dbus.ObjectPath) dbus.BusObject {
+					return c.Object(logindService, path)
+				},
+			})
+		},
+	)
 }
+
+// logindBus is the connection LogindSessions holds between scrapes.
+var logindBus heldBus[dbus.Conn]
 
 // countLogindSessions asks the source for every session and counts the human
 // ones.
