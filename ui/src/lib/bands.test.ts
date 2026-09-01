@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { CPU_SHADES, memoryBands, perCoreBands } from "./bands";
+import {
+  CONTAINER_MEM_SHADES,
+  CPU_SHADES,
+  containerBands,
+  containerStackTotal,
+  memoryBands,
+  perCoreBands,
+} from "./bands";
+import { containerTrends } from "./containers";
 import type { MetricsResponse } from "./api";
 
 const t0 = Date.parse("2026-08-10T00:00:00Z");
@@ -443,5 +451,139 @@ describe("perCoreBands", () => {
   it("has nothing to draw for a host that reported no cores", () => {
     expect(perCoreBands(response({ series: [] }))).toEqual([]);
     expect(perCoreBands(null)).toEqual([]);
+  });
+});
+
+describe("containerBands", () => {
+  // containerBands takes the response already decoded, so the page can grid
+  // the three container columns once for the list AND the two panels above it.
+  // The tests still start from a response, which is what the hub sends.
+  const bandsOf = (res: MetricsResponse | null, metric: "cpu" | "mem") =>
+    containerBands(containerTrends(res), metric);
+
+  const containers = (
+    points: Record<string, ([number, ...(number | null)[]] | null)[]>,
+  ) =>
+    response({
+      family: "container",
+      key_columns: ["container"],
+      columns: ["cpu_pct", "mem_used", "mem_limit"],
+      series: Object.entries(points).map(([container, rows]) => ({
+        key: { container },
+        points: rows.filter((r) => r !== null),
+      })),
+    } as Partial<MetricsResponse>);
+
+  const three = containers({
+    "web/api": [
+      [t0, 40, 100, null],
+      [t0 + hour, 60, 120, null],
+    ],
+    "web/db": [
+      [t0, 10, 400, null],
+      [t0 + hour, 12, 420, null],
+    ],
+    "web/cache": [
+      [t0, 5, 50, null],
+      [t0 + hour, 6, 55, null],
+    ],
+  });
+
+  it("draws one band per container, named by its key", () => {
+    expect(bandsOf(three, "cpu").map((b) => b.name)).toEqual([
+      "web/api",
+      "web/db",
+      "web/cache",
+    ]);
+    expect(bandsOf(three, "cpu")[0]!.values).toEqual([40, 60]);
+    expect(bandsOf(three, "mem")[1]!.values).toEqual([400, 420]);
+  });
+
+  // The stack total is the whole point of the panel, and stackBands drops
+  // EVERY band at an index where any one of them is null. A container that
+  // started inside the window is the ordinary case, not an edge one.
+  it("counts a container that was not running as zero, not as a gap", () => {
+    const late = containers({
+      "web/api": [
+        [t0, 40, 100, null],
+        [t0 + hour, 60, 120, null],
+      ],
+      // Started an hour in: griddedValues leaves it null at t0.
+      "web/new": [[t0 + hour, 20, 80, null]],
+    });
+
+    const bands = bandsOf(late, "cpu");
+    expect(bands[1]!.values).toEqual([0, 20]);
+    expect(containerStackTotal(bands)).toEqual([40, 80]);
+  });
+
+  // ...and the opposite rule, which is the one absent-is-never-zero exists
+  // for: a bucket NO container reported in is the host saying nothing, and a
+  // stack drawn flat at zero there would claim Docker went idle.
+  it("keeps a bucket no container reported in as a gap", () => {
+    const silent = {
+      ...containers({
+        "web/api": [
+          [t0, 40, 100, null],
+          [t0 + 2 * hour, 60, 120, null],
+        ],
+        "web/db": [
+          [t0, 10, 400, null],
+          [t0 + 2 * hour, 12, 420, null],
+        ],
+      }),
+      // Three buckets, so the middle one can be the silent one.
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T03:00:00Z" },
+      requested_window: {
+        from: "2026-08-10T00:00:00Z",
+        to: "2026-08-10T03:00:00Z",
+      },
+    };
+
+    const bands = bandsOf(silent, "cpu");
+    expect(bands[0]!.values).toEqual([40, null, 60]);
+    expect(bands[1]!.values).toEqual([10, null, 12]);
+    expect(containerStackTotal(bands)).toEqual([50, null, 72]);
+  });
+
+  // A wrapping walk, exactly as the per-core stack: no adjacent pair shares a
+  // shade however many containers the host runs.
+  it("walks its shades so no two neighbours share one", () => {
+    const many = containers(
+      Object.fromEntries(
+        Array.from({ length: 11 }, (_, i) => [
+          `stack/svc-${i}`,
+          [[t0, i, i * 10, null]],
+        ]),
+      ),
+    );
+
+    const cpu = bandsOf(many, "cpu").map((b) => b.color);
+    expect(cpu).toHaveLength(11);
+    expect(cpu[0]).toBe(CPU_SHADES[0]);
+    expect(cpu[4]).toBe(CPU_SHADES[0]);
+    for (let i = 1; i < cpu.length; i++) {
+      expect(cpu[i]).not.toBe(cpu[i - 1]!);
+    }
+
+    // Memory walks its own family, so a row's blue CPU cell and green memory
+    // cell keep their pairing in the panels above the list.
+    expect(bandsOf(many, "mem")[0]!.color).toBe(CONTAINER_MEM_SHADES[0]);
+  });
+
+  // Band ORDER is the response's. The page polls, and a stack re-sorted by
+  // size on every refresh would shuffle under the reader.
+  it("keeps the response's order rather than sorting by size", () => {
+    expect(bandsOf(three, "cpu").map((b) => b.name)).toEqual([
+      "web/api",
+      "web/db",
+      "web/cache",
+    ]);
+  });
+
+  it("has nothing to draw for a host running no containers", () => {
+    expect(bandsOf(response({ series: [] }), "cpu")).toEqual([]);
+    expect(bandsOf(null, "mem")).toEqual([]);
+    expect(containerStackTotal([])).toEqual([]);
   });
 });

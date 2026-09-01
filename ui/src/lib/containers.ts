@@ -1,3 +1,6 @@
+import type { MetricsResponse } from "./api";
+import { griddedValues } from "./metrics";
+
 /**
  * What the agent's `containers` capability means, in the reader's terms.
  *
@@ -78,6 +81,22 @@ function blocking(value: string): boolean {
   return value === "no-cgroup-scopes";
 }
 
+/**
+ * Whether THIS host's containers are missing outright, not merely unnamed.
+ *
+ * The single-host form of fleetContainersBlocked, for the Docker panels above
+ * the Containers list: they take the not-collected state only here. A NAS with
+ * no Docker installed reports `no-docker-socket` and an empty list and is
+ * perfectly well -- two panels over it saying nothing reached the hub would be
+ * an alarm about a machine doing exactly what it is meant to.
+ */
+export function hostContainersBlocked(
+  capabilities: Record<string, string> | undefined,
+): boolean {
+  const value = capabilities?.containers;
+  return value !== undefined && blocking(value);
+}
+
 /** Whether any host's containers are missing outright, not merely unnamed. */
 export function fleetContainersBlocked(hosts: readonly CapableHost[]): boolean {
   return hosts.some((host) => {
@@ -139,4 +158,72 @@ export function fleetContainerNotes(
         ? `This list is incomplete. ${note}`
         : note;
     });
+}
+
+// --- Series -----------------------------------------------------------------
+
+/**
+ * Per-container CPU and memory over the same window, keyed by container_key.
+ *
+ * The container lists were the one place in the app showing a fleet of
+ * things over time with no time in them: names, images and a host, and
+ * nothing about what any of them was doing. family=container carries
+ * cpu_pct, mem_used and mem_limit per container, so the rows can say it.
+ */
+export interface ContainerTrend {
+  cpu: (number | null)[];
+  mem: (number | null)[];
+  /** The container's own ceiling, or null when it runs unlimited. */
+  memLimit: number | null;
+}
+
+/**
+ * Every container's series in a family=container response, keyed by
+ * container_key.
+ *
+ * Shared with the host page's inventory list, with the enlarged view a reader
+ * opens off either list's CPU or Memory cell, and with the two stacked Docker
+ * panels above the host's Containers list -- so all of them read the same
+ * columns out of the same response shape.
+ *
+ * It lived in features/fleet/hostTrends.ts, which is where the fleet list
+ * first needed it. lib/bands.ts builds the stacked Docker panels from it now,
+ * and lib importing from features is the wrong direction: this module already
+ * exists for what more than one container view has to agree on.
+ */
+export function containerTrends(
+  res: MetricsResponse | null,
+): Map<string, ContainerTrend> {
+  const trends = new Map<string, ContainerTrend>();
+  if (res === null) return trends;
+
+  res.series.forEach((series, index) => {
+    // The keySpec's NAME is "container" (internal/hub/read/family.go), not
+    // the SQL expression behind it. Reading series[0] instead would chart a
+    // neighbouring container under this one's name.
+    const key = series.key.container;
+    if (key === undefined) return;
+    trends.set(key, {
+      cpu: griddedValues(res, index, "cpu_pct"),
+      mem: griddedValues(res, index, "mem_used"),
+      memLimit: lastNumber(griddedValues(res, index, "mem_limit")),
+    });
+  });
+  return trends;
+}
+
+/** The latest non-null value, or null when the series never reported.
+ *
+ * NOT lib/metrics.ts's latestValue(), which is the LATEST BUCKET including a
+ * trailing null. The two answer different questions and only this one is
+ * right for mem_limit: a configured ceiling does not stop being the ceiling
+ * because the newest bucket has not materialised yet. Kept private here, as
+ * latestValue's own note asks of every caller needing the other rule.
+ */
+function lastNumber(values: readonly (number | null)[]): number | null {
+  for (let i = values.length - 1; i >= 0; i--) {
+    const v = values[i];
+    if (v !== null && v !== undefined) return v;
+  }
+  return null;
 }

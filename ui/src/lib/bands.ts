@@ -8,6 +8,7 @@
  * particular is a subtraction with several ways to get it subtly wrong.
  */
 import { fsName, griddedValues, carriesColumn, hasReading } from "./metrics";
+import type { ContainerTrend } from "./containers";
 import type { MetricsResponse } from "./api";
 import type { Band } from "../ui/charts/StackedSparkline";
 
@@ -230,6 +231,128 @@ export function perCoreBands(
     })
     .filter((b) => b.values.length > 0);
 }
+
+/**
+ * One band per container on a host, for the two stacked Docker panels above
+ * its Containers list.
+ *
+ * The same construction perCoreBands uses, for the same reason: an unbounded
+ * number of series that no palette can name apart, so the colour is a
+ * wrapping walk through one hue's shades and the band's name -- the
+ * container_key -- is what identifies it.
+ *
+ * The walk separates ARRAY neighbours, which is not quite the same as visual
+ * ones: an idle container is a flat band of zero height, so four bands with
+ * three idle ones between them put the same shade against itself. perCoreBands
+ * has had exactly this property since it shipped -- an idle core draws no
+ * height either -- and the answer is the same one, deliberately: the shade
+ * only ever told a band from its neighbour, never which container it is. That
+ * is what the key on hover is for, and what the enlarged view's stats table,
+ * which names every container beside its swatch, is for. Assigning shades by
+ * whether a container happens to be busy would make them change under a
+ * reader between polls, which is a worse trade than two greens meeting.
+ *
+ * Band ORDER is the response's, never re-sorted by size. The host page polls,
+ * and a stack re-ordered on every poll would shuffle its bands between
+ * refreshes; the enlarged view refetches at its own range and would order
+ * them differently again from the panel it was opened out of.
+ *
+ * THE NULL RULE IS LOAD-BEARING. stackBands (ui/charts/geometry.ts) breaks
+ * EVERY band at an index where ANY series is null -- a running total is
+ * undefined there -- and griddedValues puts each container on the whole
+ * window's grid. So a container started two hours into a 24h window carries
+ * nulls for the other twenty-two, and stacked raw it would blank the entire
+ * chart rather than its own band. perCoreBands never meets this because cores
+ * do not come and go, and the memory stack sums its parts before stacking.
+ *
+ * The two cases have to be told apart, and only the whole response can:
+ *
+ * - some container reported in this bucket -> a null is that container not
+ *   running, and 0 is what it consumed. A fact, not a fabricated reading.
+ * - NO container reported in this bucket -> the host said nothing, and the
+ *   gap stays a gap. Absent is never zero, here as everywhere else.
+ */
+export function containerBands(
+  /** Already decoded, by containerTrends. The caller holds it because the
+   * list's own sparklines read the same three columns out of the same
+   * response, and decoding it per panel as well was three passes where one
+   * does -- on a page that polls. */
+  byKey: ReadonlyMap<string, ContainerTrend>,
+  metric: "cpu" | "mem",
+): Band[] {
+  const trends = [...byKey.entries()]
+    .map(([key, trend]) => ({ key, values: trend[metric] }))
+    .filter((t) => t.values.length > 0);
+  if (trends.length === 0) return [];
+
+  const reported = bucketsWithAnyReading(trends.map((t) => t.values));
+  const shades = metric === "cpu" ? CPU_SHADES : CONTAINER_MEM_SHADES;
+
+  return trends.map((trend, i) => ({
+    name: trend.key,
+    color: shades[i % shades.length]!,
+    values: reported.map((any, j) => trend.values[j] ?? (any ? 0 : null)),
+  }));
+}
+
+/**
+ * Per-bucket: did ANY of these series report a number there?
+ *
+ * Measured over the longest of them, not the first: griddedValues returns the
+ * window's grid, but a family answered for a shorter window -- or a series
+ * truncated by the point limit -- leaves some rows shorter, and measuring off
+ * series[0] would read `undefined` past its end and call every later bucket
+ * silent. stackBands measures its own width the same way and for the same
+ * reason.
+ */
+function bucketsWithAnyReading(
+  series: readonly (number | null)[][],
+): boolean[] {
+  const n = series.reduce((longest, s) => Math.max(longest, s.length), 0);
+  const out = new Array<boolean>(n).fill(false);
+  for (const values of series) {
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (v !== null && v !== undefined) out[i] = true;
+    }
+  }
+  return out;
+}
+
+/**
+ * The total across a container stack at each bucket, under the same rule the
+ * bands are built with: a bucket nobody reported in is null, never 0.
+ *
+ * This is what the panel's headline reads, so the number printed beside the
+ * chart and the silhouette drawn in it cannot come to disagree.
+ */
+export function containerStackTotal(bands: readonly Band[]): (number | null)[] {
+  if (bands.length === 0) return [];
+  const n = bands.reduce((longest, b) => Math.max(longest, b.values.length), 0);
+  return Array.from({ length: n }, (_, i) => {
+    let total: number | null = null;
+    for (const band of bands) {
+      const v = band.values[i];
+      if (v === null || v === undefined) continue;
+      total = (total ?? 0) + v;
+    }
+    return total;
+  });
+}
+
+/**
+ * The shades one container's band is drawn in, walked and wrapped -- the
+ * memory half. CPU walks CPU_SHADES, so a row's blue CPU sparkline and green
+ * memory sparkline keep their pairing in the panels above the list.
+ *
+ * Index 0 IS --s2, exactly as CPU_SHADES' index 0 is --s1.
+ */
+export const CONTAINER_MEM_SHADES = [
+  "var(--cmem-1)",
+  "var(--cmem-2)",
+  "var(--cmem-3)",
+  "var(--cmem-4)",
+];
 
 /**
  * The shades one core's band is drawn in, walked and wrapped.

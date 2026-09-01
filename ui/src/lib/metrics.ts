@@ -577,8 +577,9 @@ export function hasReading(values: readonly (number | null)[]): boolean {
  * configuration value such as mem_limit, which does not stop being the
  * configured ceiling because the newest bucket has not materialised, and
  * wrong for every rate. Its callers keep it privately, spelled
- * lastReported() (host/tabs/Inventory.tsx) and lastNumber()
- * (fleet/hostTrends.ts), so neither can be mistaken for this one.
+ * lastReported() (host/tabs/Inventory.tsx), lastNumber()
+ * (fleet/hostTrends.ts) and lastNumber() again in lib/containers.ts, so none
+ * of them can be mistaken for this one.
  */
 export function latestValue(values: readonly (number | null)[]): number | null {
   return values.length > 0 ? (values[values.length - 1] ?? null) : null;

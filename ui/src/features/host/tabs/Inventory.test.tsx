@@ -351,6 +351,148 @@ describe("Containers", () => {
     expect(screen.queryByText(/Docker socket/)).toBeNull();
     expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
   });
+
+  // --- The Docker overview above the list ---------------------------------
+
+  /** The reading printed beside a panel's title, never a tick on its axis. */
+  const headline = (title: string) =>
+    screen.getByLabelText(`${title} chart`).querySelector(".now")?.textContent;
+
+  const t0 = Date.parse("2026-08-10T00:00:00Z");
+  const containerMetrics = {
+    family: "container",
+    tier: "raw",
+    step_s: 3600,
+    window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T02:00:00Z" },
+    requested_window: {
+      from: "2026-08-10T00:00:00Z",
+      to: "2026-08-10T02:00:00Z",
+    },
+    warnings: [],
+    key_columns: ["container"],
+    columns: ["cpu_pct", "mem_used", "mem_limit"],
+    series: [
+      {
+        key: { container: "netra/hub" },
+        points: [
+          [t0, 20, 100_000_000, null],
+          [t0 + 3_600_000, 30, 120_000_000, null],
+        ],
+      },
+      {
+        key: { container: "shop/web" },
+        points: [
+          [t0, 5, 50_000_000, null],
+          [t0 + 3_600_000, 70, 80_000_000, null],
+        ],
+      },
+    ],
+    truncated: false,
+  } as unknown as MetricsResponse;
+
+  // The list answers "what is running here"; a wall of sparklines does not
+  // add up to "Docker on this box is holding 200 MB and a core".
+  it("puts the host's whole Docker usage above the list", () => {
+    render(
+      <Containers rows={containers} host={host} metrics={containerMetrics} />,
+    );
+
+    expect(screen.getByText("Docker CPU")).toBeInTheDocument();
+    expect(screen.getByText("Docker Memory")).toBeInTheDocument();
+  });
+
+  // The headline is the STACK's, never series[0]'s: 100 % is the two
+  // containers' latest CPU added up, and 30 % would be one of them wearing
+  // the whole host's label.
+  it("headlines the stack total rather than the first container", () => {
+    render(
+      <Containers rows={containers} host={host} metrics={containerMetrics} />,
+    );
+
+    // The headline beside the title, not a value tick on the axis -- which
+    // is where 100 % also appears once the stack reaches it.
+    expect(headline("Docker CPU")).toBe("100%");
+    // ...and the memory panel likewise: 120 MB + 80 MB, not either alone.
+    expect(headline("Docker Memory")).toBe("200 MB");
+  });
+
+  // Filtering narrows what the reader is LOOKING for; it does not change what
+  // the machine is doing, so the totals above must not move.
+  it("keeps the overview whole while the list is filtered", async () => {
+    render(
+      <Containers rows={containers} host={host} metrics={containerMetrics} />,
+    );
+
+    await userEvent.type(
+      screen.getByLabelText("Filter Containers"),
+      "shop-web",
+    );
+
+    expect(screen.queryByRole("row", { name: /netra-hub-1/ })).toBeNull();
+    expect(headline("Docker CPU")).toBe("100%");
+  });
+
+  // A host that simply runs none: the list below already says so, and two
+  // empty boxes above it would read as a fault rather than as an absence.
+  it("draws no panels for a host with no container metrics", () => {
+    render(<Containers rows={containers} host={host} />);
+
+    expect(screen.queryByText("Docker CPU")).toBeNull();
+    expect(screen.queryByText("Docker Memory")).toBeNull();
+  });
+
+  // ...but a host whose agent could not collect them is a different fact, and
+  // the panels take the app's own not-collected state to say it.
+  it("says the panels collected nothing when the agent explained why", () => {
+    render(
+      <Containers
+        rows={[]}
+        host={host}
+        capabilities={{ containers: "no-cgroup-scopes" }}
+      />,
+    );
+
+    expect(screen.getByText("Docker CPU")).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/No container CPU or memory reached the hub/).length,
+    ).toBeGreaterThan(0);
+  });
+
+  // ...and NOT for the milder value on a host that simply has no Docker: a
+  // NAS reporting no-docker-socket with an empty list is perfectly well, and
+  // two not-collected panels over it would be an alarm about a machine doing
+  // exactly what it is meant to.
+  it("draws no panels for a host that has no Docker at all", () => {
+    render(
+      <Containers
+        rows={[]}
+        host={host}
+        capabilities={{ containers: "no-docker-socket" }}
+      />,
+    );
+
+    expect(screen.queryByText("Docker CPU")).toBeNull();
+    expect(screen.queryByText("Docker Memory")).toBeNull();
+  });
+
+  // no-docker-socket still yields cgroup CPU and memory -- only the names are
+  // missing -- so a not-collected state over a chart with data in it would
+  // contradict the page it is drawn on.
+  it("still draws the panels when only the container names are missing", () => {
+    render(
+      <Containers
+        rows={containers}
+        host={host}
+        metrics={containerMetrics}
+        capabilities={{ containers: "no-docker-socket" }}
+      />,
+    );
+
+    expect(headline("Docker CPU")).toBe("100%");
+    expect(
+      screen.queryByText(/No container CPU or memory reached the hub/),
+    ).toBeNull();
+  });
 });
 
 describe("Mounts", () => {

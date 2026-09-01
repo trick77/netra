@@ -334,6 +334,26 @@
   --cpu-3: #91bcf1;
   --cpu-4: #bdd7f6;
 
+  /* The green counterpart, for the host page's stacked Docker MEMORY panel --
+     one band per container, however many the host runs, so it needs the same
+     wrapping walk the per-core CPU stack has and for the same reason.
+
+     --cmem-, not --mem-: --mem-used and its four siblings above are the HOST
+     memory stack's semantic family (anon, shmem, arc, buffers, cached), where
+     the colour names which kind of byte it is. This is a walk, where the
+     colour names nothing but "not the band beside me", and giving the two the
+     same prefix would invite a maintainer to read one as the other.
+
+     Built exactly as --cpu-2..4 are built from --s1: blended 2/9, 4/9 and 6/9
+     of the way to white from --cmem-1, which IS --s2. That is the pairing
+     ContainerChart already draws a row's two sparklines in -- CPU blue,
+     memory green -- so the overview panel is visibly the same quantity as the
+     cells under it. */
+  --cmem-1: #199e70;
+  --cmem-2: #4cb490;
+  --cmem-3: #7fc9b0;
+  --cmem-4: #b2dfcf;
+
   /* drawer shadow. */
   --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);
 }
@@ -1209,6 +1229,26 @@ tbody tr:hover .host-cell-name {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(292px, 1fr));
   gap: var(--space-3);
+}
+/* The two Docker panels above the host's Containers list.
+
+   NOT `.sm`. That grid is auto-fill minmax(292px) because it carries twenty
+   small multiples; two panels in it come out as thumbnails at the top of the
+   page whose subject they are. auto-fit at 420px puts these side by side from
+   about 880px and drops them to one column below it, so each is half the tab
+   at every width a stack of a dozen bands is legible in.
+
+   Not `.grid2` either: that box is multi-column and goes to THREE columns at
+   1500px, which would leave two panels sitting in two thirds of the row. */
+.dockover {
+  display: grid;
+  /* min(420px, 100%), not a bare 420px: a bare track floor cannot shrink below
+     itself, so the single column stayed 420px wide inside a 390px page and the
+     whole tab scrolled sideways -- the regression `.smp { min-width: 0 }`
+     below exists to prevent, reintroduced one level up in the grid. */
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
 }
 .smp {
   background: var(--surface);
