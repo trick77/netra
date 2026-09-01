@@ -3,7 +3,7 @@ import type { Severity } from "../../ui/Badge";
 import type { AttentionFilter, ConditionKind, KindGroup } from "./conditions";
 
 /**
- * One TILE per kind of thing that is wrong, with how many hosts have it.
+ * One CHIP per kind of thing that is wrong, with how many hosts have it.
  *
  * Grouping by kind is what replaced the attention band, and the reason is a
  * hundred-host fleet with fifty warnings on it: the band was a block per
@@ -14,15 +14,15 @@ import type { AttentionFilter, ConditionKind, KindGroup } from "./conditions";
  * Bounded by the seven kinds netra has rather than by the fleet, so this is
  * the same height at four hosts and four hundred.
  *
- * A tile rather than the line of grey text this shipped as. The line was
- * --text-label in --ink-2 with no ground, sitting directly above three cards
- * spending --text-display on "Hosts reporting 98" and "Containers 0" -- so
- * the page set its inventory in 28px and what was actually wrong in 14px, and
- * the reader's own word for the result was "almost invisible". These are the
- * same grid, the same type and the same shape as the stat tiles below them,
- * because that is the page's existing way of saying "this number matters".
+ * A chip rather than the line of grey text this shipped as, and rather than
+ * the 200px card it became: the line was --text-label in --ink-2 with no
+ * ground and the reader's own word for it was "almost invisible", while the
+ * cards gave the page's first band the weight of a dashboard above a list
+ * that had not started. One line each, so the row is the same height at one
+ * kind and at five -- and on a healthy fleet, where there are none, the list
+ * does not jump up the screen by a card's height between polls.
  *
- * Every tile is a real anchor carrying the filter it applies. App delegates
+ * Every chip is a real anchor carrying the filter it applies. App delegates
  * in-origin anchor clicks to the router, so middle-click, cmd-click and
  * copy-link all work without this component knowing anything about
  * navigation, and a reader can send someone "the fleet, filtered to failed
@@ -54,12 +54,13 @@ const SEVERITY_CLASS: Record<Severity, string> = {
 };
 
 /**
- * The severity, as a word, on every tile.
+ * The severity, as a word, on every chip.
  *
- * Not decoration and not a duplicate of the hue: severity never rides on
- * colour alone (spec §3.3), and a tile carries no dot -- its status ink is
- * spread across the count and its edge. The kind's own name does not supply
- * it either, since "Failed units" says what is wrong and not how bad it is.
+ * Not decoration and not a duplicate of the dot beside it: severity never
+ * rides on colour alone (spec §3.3), and a dot is a mark, so without the word
+ * the hue would be the only thing carrying it. The kind's own name does not
+ * supply it either, since "Failed units" says what is wrong and not how bad
+ * it is.
  */
 const SEVERITY_WORD: Record<Severity, string> = {
   critical: "Critical",
@@ -108,14 +109,21 @@ export function AttentionCounts({
               aria-current={chosen ? "true" : undefined}
               onClick={handleClick}
             >
+              {/* The severity's mark. A dot rather than the edge the tile
+                  carried: on a pill the edge reads as part of the border,
+                  and a dot is the shape this app already uses for a state.
+                  It is never the only channel -- see the word after it. */}
+              <span className="dot" aria-hidden="true" />
               <span className="k">{kind.label}</span>
-              {/* The noun rides the number: "3" beside "Failed units"
-                  reads as three failed units, and it is three HOSTS -- one
-                  of which may have five. */}
-              <span className="v">
-                {hosts}
-                <span className="u"> host{hosts === 1 ? "" : "s"}</span>
-              </span>
+              {/* The count, with no noun. "Failed units 3" beside a fleet of
+                  hosts is three hosts; spelling out "3 hosts" put the widest
+                  word in the chip on the one thing a reader already knows
+                  they are counting. The accessible name still says it: the
+                  kind, the number and the severity read in order. */}
+              <span className="v">{hosts}</span>
+              {/* Colour is never the only carrier of severity (spec 3.3/3.5),
+                  so the word stays -- one step quieter than the count, after
+                  it rather than under it. */}
               <span className="d">{SEVERITY_WORD[kind.severity]}</span>
             </a>
           </li>
