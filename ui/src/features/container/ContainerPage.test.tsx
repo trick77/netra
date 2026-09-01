@@ -59,6 +59,13 @@ const LIMITED = metrics([
   point("2026-08-10T13:59:00Z", [14, 5e8, 1e9, 1.1e6, 2.1e5, 0, 4.2e5]),
 ]);
 
+// Samples that stop two hours before NOW -- well past SILENT_AFTER_S, so the
+// clock-based branch of deriveState reaches "Silent" on its own.
+const STALE = metrics([
+  point("2026-08-10T11:58:00Z", [12, 5e8, 1e9, 1e6, 2e5, 0, 4e5]),
+  point("2026-08-10T11:59:00Z", [14, 5e8, 1e9, 1.1e6, 2.1e5, 0, 4.2e5]),
+]);
+
 const CONTAINER: Container = {
   id: 7,
   container_key: "shop/web",
@@ -160,6 +167,51 @@ describe("deriveState", () => {
     expect(state.label).toMatch(/gap/i);
     expect(state.label).not.toMatch(/restart/i);
     expect(state.why).toMatch(/restart/i);
+  });
+
+  // The contradiction this branch exists to end: containerIsGone measures
+  // against the host and marks nothing gone on an offline host, so the badge
+  // must not call the same container Silent in the same breath.
+  it("names the host, not the container, when the host stopped reporting", () => {
+    const state = deriveState({
+      lastSampleMs: NOW.getTime() - 3_600_000,
+      memUsed: 1,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      hostState: { severity: "critical", label: "offline" },
+    });
+    expect(state.label).toBe("Host offline");
+    expect(state.label).not.toMatch(/silent/i);
+  });
+
+  // The host carries the severity on its own page and in its fleet row.
+  // Repeating it here counts one outage twice.
+  it("leaves the host's severity to the host", () => {
+    const state = deriveState({
+      lastSampleMs: null,
+      memUsed: null,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      hostState: { severity: "critical", label: "never seen" },
+    });
+    expect(state.severity).toBe("neutral");
+    expect(state.label).toBe("Host never seen");
+  });
+
+  // A host answering badly is still answering: its containers' own readings
+  // are current, so the badge keeps measuring them.
+  it("still judges the container when the host is merely sporadic", () => {
+    const state = deriveState({
+      lastSampleMs: NOW.getTime() - 3_600_000,
+      memUsed: 1,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      hostState: { severity: "warning", label: "sporadic" },
+    });
+    expect(state.label).toMatch(/silent/i);
   });
 });
 
@@ -369,6 +421,40 @@ describe("ContainerPage", () => {
     for (const field of ["Health", "Restarts", "State", "Labels"]) {
       expect(card).toHaveTextContent(field);
     }
+  });
+
+  // The bug end to end: the host stopped two hours ago, so the container's
+  // samples stopped with it and STALE is old enough that the clock-based
+  // branch would have called the container Silent. containerIsGone spares an
+  // offline host's containers, so no purge was offered -- a badge blaming the
+  // container above no way to act on it.
+  it("blames the host, not the container, when the host went quiet", () => {
+    renderPage({
+      host: { ...HOST, last_seen: "2026-08-10T12:00:00Z" },
+      metrics: STALE,
+      onPurged: vi.fn(),
+    });
+
+    expect(screen.getByText("Host offline")).toBeInTheDocument();
+    expect(screen.queryByText("Silent")).toBeNull();
+    expect(screen.queryByRole("button", { name: /purge/i })).toBeNull();
+  });
+
+  // The other direction: this container stopped an hour before its host did,
+  // so it IS gone by the lists' own measure and the purge button is offered.
+  // The badge must not answer "Host offline" over a button that deletes this
+  // container's history.
+  it("keeps blaming the container when it stopped before its host did", () => {
+    renderPage({
+      container: { ...CONTAINER, last_seen: "2026-08-10T11:00:00Z" },
+      host: { ...HOST, last_seen: "2026-08-10T12:00:00Z" },
+      metrics: STALE,
+      onPurged: vi.fn(),
+    });
+
+    expect(screen.queryByText("Host offline")).toBeNull();
+    expect(screen.getByText("Silent")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /purge/i })).toBeInTheDocument();
   });
 
   it("hands a range change back to the caller", async () => {
