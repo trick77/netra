@@ -7,6 +7,7 @@ import {
   memoryBands,
   perCoreBands,
 } from "./bands";
+import { containerTrends } from "./containers";
 import type { MetricsResponse } from "./api";
 
 const t0 = Date.parse("2026-08-10T00:00:00Z");
@@ -454,6 +455,12 @@ describe("perCoreBands", () => {
 });
 
 describe("containerBands", () => {
+  // containerBands takes the response already decoded, so the page can grid
+  // the three container columns once for the list AND the two panels above it.
+  // The tests still start from a response, which is what the hub sends.
+  const bandsOf = (res: MetricsResponse | null, metric: "cpu" | "mem") =>
+    containerBands(containerTrends(res), metric);
+
   const containers = (
     points: Record<string, ([number, ...(number | null)[]] | null)[]>,
   ) =>
@@ -483,13 +490,13 @@ describe("containerBands", () => {
   });
 
   it("draws one band per container, named by its key", () => {
-    expect(containerBands(three, "cpu").map((b) => b.name)).toEqual([
+    expect(bandsOf(three, "cpu").map((b) => b.name)).toEqual([
       "web/api",
       "web/db",
       "web/cache",
     ]);
-    expect(containerBands(three, "cpu")[0]!.values).toEqual([40, 60]);
-    expect(containerBands(three, "mem")[1]!.values).toEqual([400, 420]);
+    expect(bandsOf(three, "cpu")[0]!.values).toEqual([40, 60]);
+    expect(bandsOf(three, "mem")[1]!.values).toEqual([400, 420]);
   });
 
   // The stack total is the whole point of the panel, and stackBands drops
@@ -505,7 +512,7 @@ describe("containerBands", () => {
       "web/new": [[t0 + hour, 20, 80, null]],
     });
 
-    const bands = containerBands(late, "cpu");
+    const bands = bandsOf(late, "cpu");
     expect(bands[1]!.values).toEqual([0, 20]);
     expect(containerStackTotal(bands)).toEqual([40, 80]);
   });
@@ -533,7 +540,7 @@ describe("containerBands", () => {
       },
     };
 
-    const bands = containerBands(silent, "cpu");
+    const bands = bandsOf(silent, "cpu");
     expect(bands[0]!.values).toEqual([40, null, 60]);
     expect(bands[1]!.values).toEqual([10, null, 12]);
     expect(containerStackTotal(bands)).toEqual([50, null, 72]);
@@ -551,7 +558,7 @@ describe("containerBands", () => {
       ),
     );
 
-    const cpu = containerBands(many, "cpu").map((b) => b.color);
+    const cpu = bandsOf(many, "cpu").map((b) => b.color);
     expect(cpu).toHaveLength(11);
     expect(cpu[0]).toBe(CPU_SHADES[0]);
     expect(cpu[4]).toBe(CPU_SHADES[0]);
@@ -561,13 +568,13 @@ describe("containerBands", () => {
 
     // Memory walks its own family, so a row's blue CPU cell and green memory
     // cell keep their pairing in the panels above the list.
-    expect(containerBands(many, "mem")[0]!.color).toBe(CONTAINER_MEM_SHADES[0]);
+    expect(bandsOf(many, "mem")[0]!.color).toBe(CONTAINER_MEM_SHADES[0]);
   });
 
   // Band ORDER is the response's. The page polls, and a stack re-sorted by
   // size on every refresh would shuffle under the reader.
   it("keeps the response's order rather than sorting by size", () => {
-    expect(containerBands(three, "cpu").map((b) => b.name)).toEqual([
+    expect(bandsOf(three, "cpu").map((b) => b.name)).toEqual([
       "web/api",
       "web/db",
       "web/cache",
@@ -575,8 +582,8 @@ describe("containerBands", () => {
   });
 
   it("has nothing to draw for a host running no containers", () => {
-    expect(containerBands(response({ series: [] }), "cpu")).toEqual([]);
-    expect(containerBands(null, "mem")).toEqual([]);
+    expect(bandsOf(response({ series: [] }), "cpu")).toEqual([]);
+    expect(bandsOf(null, "mem")).toEqual([]);
     expect(containerStackTotal([])).toEqual([]);
   });
 });

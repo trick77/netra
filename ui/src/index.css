@@ -1242,7 +1242,11 @@ tbody tr:hover .host-cell-name {
    1500px, which would leave two panels sitting in two thirds of the row. */
 .dockover {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  /* min(420px, 100%), not a bare 420px: a bare track floor cannot shrink below
+     itself, so the single column stayed 420px wide inside a 390px page and the
+     whole tab scrolled sideways -- the regression `.smp { min-width: 0 }`
+     below exists to prevent, reintroduced one level up in the grid. */
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
   gap: var(--space-3);
   margin-bottom: var(--space-5);
 }

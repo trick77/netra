@@ -28,8 +28,10 @@ import {
   temperatureFromRaw,
 } from "../smart";
 import {
+  containerTrends,
   hostContainerNote,
   hostContainersBlocked,
+  type ContainerTrend,
 } from "../../../lib/containers";
 import { containerBands, containerStackTotal } from "../../../lib/bands";
 import { hostDriveNote } from "../../../lib/drives";
@@ -284,17 +286,23 @@ export function Containers({
   // The same trends the fleet's container list shows, for the same reason: a
   // list of containers with no time in it says what is there and nothing
   // about what any of it is doing.
+  // ONE decode of the response, shared by the list's sparklines and by the two
+  // panels above it. containerTrends grids cpu_pct, mem_used and mem_limit per
+  // series; this used to grid the same three again here and once more per
+  // panel, which is nine passes per container per render where three do -- on
+  // a page that polls.
+  const trends = containerTrends(metrics);
+
   const byKey = new Map(
-    (metrics?.series ?? []).map((series, index) => [
-      series.key.container,
+    [...trends].map(([key, trend]) => [
+      key,
       {
-        cpu: griddedValues(metrics, index, "cpu_pct"),
-        mem: griddedValues(metrics, index, "mem_used"),
+        cpu: trend.cpu,
+        mem: trend.mem,
         // mem_limit_bytes, matching ContainerRow. The two lists used to call
-        // one quantity by two names, which is how they drifted.
-        mem_limit_bytes: lastReported(
-          griddedValues(metrics, index, "mem_limit"),
-        ),
+        // one quantity by two names, which is how they drifted. memLimit is
+        // the same last-reported reading lastReported() gave here.
+        mem_limit_bytes: trend.memLimit,
       },
     ]),
   );
@@ -354,7 +362,9 @@ export function Containers({
     <>
       <DockerOverview
         hostId={host.id}
-        metrics={metrics}
+        trends={trends}
+        window={metrics?.window ?? null}
+        notice={metrics === null ? null : windowNotice(metrics)}
         range={range}
         capabilities={capabilities}
       />
@@ -409,17 +419,24 @@ export function Containers({
  */
 function DockerOverview({
   hostId,
-  metrics,
+  trends,
+  window,
+  notice,
   range,
   capabilities,
 }: {
   hostId: number;
-  metrics: MetricsResponse | null;
+  /** The response already decoded by the list above, so the panels and the
+   * row sparklines share one pass over it rather than gridding the same three
+   * columns twice more each. */
+  trends: ReadonlyMap<string, ContainerTrend>;
+  window: { from: string; to: string } | null;
+  notice: string | null;
   range: Range;
   capabilities?: Record<string, string>;
 }) {
-  const cpu = containerBands(metrics, "cpu");
-  const mem = containerBands(metrics, "mem");
+  const cpu = containerBands(trends, "cpu");
+  const mem = containerBands(trends, "mem");
 
   // Bands beat any capability the agent reported. `no-docker-socket` is the
   // case that makes this the right way round: cgroup v2 still yields CPU and
@@ -451,8 +468,6 @@ function DockerOverview({
   // would only repeat it in a form that looks like a fault.
   if (!collected && unavailable === undefined) return null;
 
-  const notice = metrics === null ? null : windowNotice(metrics);
-  const window = metrics?.window ?? null;
   // The stack TOTAL, never series[0]'s latest: the headline is the whole
   // host's, and a number belonging to one arbitrary container beside a shape
   // that is all of them states something untrue. See ChartPanel's nowValue.
@@ -462,7 +477,10 @@ function DockerOverview({
   // sparkline makes, so widening either costs the host's containers once.
   const detail = (metric: "cpu" | "mem") => async (next: Range) => {
     const res = await fetchHostFamily(hostId, "container", next);
-    return { series: containerBands(res, metric), window: res.window };
+    return {
+      series: containerBands(containerTrends(res), metric),
+      window: res.window,
+    };
   };
 
   return (
@@ -513,7 +531,7 @@ function DockerOverview({
 /**
  * Taller than a small multiple, and NOT drawn in the `.sm` grid.
  *
- * `.sm` is auto-fill minmax(340px) and exists for the twenty panels of a
+ * `.sm` is auto-fill minmax(292px) and exists for the twenty panels of a
  * charts tab; two panels in it come out as thumbnails at the top of a page
  * whose subject they are. Two of these across `.grid2` are half the tab's
  * width each, which is what a stack of fourteen bands needs to be readable.

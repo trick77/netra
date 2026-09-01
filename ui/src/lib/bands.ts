@@ -8,7 +8,7 @@
  * particular is a subtraction with several ways to get it subtly wrong.
  */
 import { fsName, griddedValues, carriesColumn, hasReading } from "./metrics";
-import { containerTrends } from "./containers";
+import type { ContainerTrend } from "./containers";
 import type { MetricsResponse } from "./api";
 import type { Band } from "../ui/charts/StackedSparkline";
 
@@ -241,6 +241,17 @@ export function perCoreBands(
  * wrapping walk through one hue's shades and the band's name -- the
  * container_key -- is what identifies it.
  *
+ * The walk separates ARRAY neighbours, which is not quite the same as visual
+ * ones: an idle container is a flat band of zero height, so four bands with
+ * three idle ones between them put the same shade against itself. perCoreBands
+ * has had exactly this property since it shipped -- an idle core draws no
+ * height either -- and the answer is the same one, deliberately: the shade
+ * only ever told a band from its neighbour, never which container it is. That
+ * is what the key on hover is for, and what the enlarged view's stats table,
+ * which names every container beside its swatch, is for. Assigning shades by
+ * whether a container happens to be busy would make them change under a
+ * reader between polls, which is a worse trade than two greens meeting.
+ *
  * Band ORDER is the response's, never re-sorted by size. The host page polls,
  * and a stack re-ordered on every poll would shuffle its bands between
  * refreshes; the enlarged view refetches at its own range and would order
@@ -262,11 +273,14 @@ export function perCoreBands(
  *   gap stays a gap. Absent is never zero, here as everywhere else.
  */
 export function containerBands(
-  res: MetricsResponse | null,
+  /** Already decoded, by containerTrends. The caller holds it because the
+   * list's own sparklines read the same three columns out of the same
+   * response, and decoding it per panel as well was three passes where one
+   * does -- on a page that polls. */
+  byKey: ReadonlyMap<string, ContainerTrend>,
   metric: "cpu" | "mem",
 ): Band[] {
-  if (res === null) return [];
-  const trends = [...containerTrends(res).entries()]
+  const trends = [...byKey.entries()]
     .map(([key, trend]) => ({ key, values: trend[metric] }))
     .filter((t) => t.values.length > 0);
   if (trends.length === 0) return [];
