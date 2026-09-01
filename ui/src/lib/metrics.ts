@@ -362,6 +362,44 @@ export function griddedValues(
 }
 
 /**
+ * One column over another, per point, on the window's grid.
+ *
+ * For the rolled-up tiers, where the quantity a panel draws was not stored
+ * but the two counts it divides were: collector_samples_5m keeps
+ * sample_count and failure_count precisely because counts can be summed
+ * into the next tier and a ratio cannot (0001_init.sql:1296). The division
+ * has to happen somewhere, and doing it here rather than in SQL keeps the
+ * column names honest -- a view column called `ok` holding 0.97 would be a
+ * different quantity wearing the raw tier's name.
+ *
+ * [] when either column is absent from this tier, matching optionalValues:
+ * that is "not stored here", which a panel renders as its not-collected
+ * state, and it is not the same fact as a bucket the host missed.
+ *
+ * A zero or null denominator is null, not zero: no scrapes in a bucket
+ * makes the ratio unknowable, and drawing 0 would report a total outage
+ * for a bucket nobody measured.
+ */
+export function ratioValues(
+  res: MetricsResponse | null | undefined,
+  seriesIndex: number,
+  part: string,
+  whole: string,
+): (number | null)[] {
+  if (res == null) return [];
+  if (!carriesColumn(res, part) || !carriesColumn(res, whole)) return [];
+  if (res.series[seriesIndex] === undefined) return [];
+  const parts = seriesValues(res, seriesIndex, part);
+  const wholes = seriesValues(res, seriesIndex, whole);
+  const ratio = wholes.map((w, i) => {
+    const p = parts[i];
+    if (w === null || w === 0 || p === null || p === undefined) return null;
+    return p / w;
+  });
+  return seriesOnGrid(res, ratio, seriesTimestamps(res, seriesIndex));
+}
+
+/**
  * Sums a keyed family across its series, index by index.
  *
  * A host's traffic is the sum over its interfaces, and a null anywhere in a

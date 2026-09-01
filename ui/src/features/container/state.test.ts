@@ -117,7 +117,69 @@ describe("deriveState", () => {
       hostState: { severity: "critical", label: "offline" },
       gone: true,
     });
+    expect(state.kind).toBe("gone");
+  });
+
+  // The two used to be one row's two labels: gone measures against the host's
+  // last report and silent against the clock, so a gone container was always
+  // also a silent one. Now gone is tested first and says so instead.
+  it("says gone rather than silent for a container measured gone", () => {
+    const state = deriveState({
+      lastSampleMs: NOW.getTime() - 3_600_000,
+      memUsed: 1,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      gone: true,
+    });
+    expect(state.kind).toBe("gone");
+    expect(state.label).toBe("Gone");
+    expect(state.severity).toBe("serious");
+  });
+
+  // And the window below it is still silent: quiet for four minutes on a host
+  // that is still posting is not yet gone, and carries no purge button.
+  it("still says silent while the container is only newly quiet", () => {
+    const state = deriveState({
+      lastSampleMs: NOW.getTime() - 240_000,
+      memUsed: 1,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      gone: false,
+    });
     expect(state.kind).toBe("silent");
+  });
+
+  // The detail page's empty-window case: no series in the range, and the
+  // reason there is none is that the container is gone. It outranks "No
+  // samples" there, because the purge button below is offered on it.
+  it("says gone over an empty window rather than no samples", () => {
+    const state = deriveState({
+      lastSampleMs: null,
+      memUsed: null,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      gone: true,
+    });
+    expect(state.kind).toBe("gone");
+  });
+
+  // Without it, the same empty window is exactly what it looks like, because
+  // containerIsGone returns false on exactly those rows -- a host whose agent
+  // cannot see containers, or a timestamp that does not parse. Asserted here
+  // so the branch order above stays honest about why it is safe.
+  it("says no samples, not gone, when there is no timestamp to measure", () => {
+    const state = deriveState({
+      lastSampleMs: null,
+      memUsed: null,
+      memLimit: null,
+      gap: false,
+      now: NOW,
+      gone: false,
+    });
+    expect(state.kind).toBe("no-samples");
   });
 });
 

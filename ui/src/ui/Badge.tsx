@@ -27,8 +27,10 @@ const SEVERITY_CLASS: Record<Severity, string | null> = {
 export interface BadgeProps {
   severity?: Severity;
   /**
-   * This badge is a LABEL, not a status: an identity ("agent") or a fact
-   * ("gone"), with no severity for a dot to mark.
+   * This badge is a LABEL, not a status: an identity ("agent"), with no
+   * severity for a dot to mark. "gone" used to be the other example and is
+   * not one any more -- it was a fact rendered beside a Status column that
+   * called the same container Silent, and it is a state in that column now.
    *
    * Opt-in rather than inferred from severity="neutral", because neutral has
    * a second, genuine use: a state that is real and simply not severe -- a

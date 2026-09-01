@@ -8,6 +8,7 @@ import {
   hasGaps,
   optionalValues,
   peakBase,
+  ratioValues,
   reduceToColumns,
   seriesCells,
   seriesTimestamps,
@@ -347,6 +348,60 @@ describe("optionalValues", () => {
 
   it("returns an empty series for a series index that does not exist", () => {
     expect(optionalValues(raw as never, 9, "busy")).toEqual([]);
+  });
+});
+
+describe("ratioValues", () => {
+  // collector_samples_5m: the counts are kept and `ok` is dropped, so this
+  // is the only way the availability panel draws at any range but 1h.
+  const counts = {
+    ...raw,
+    family: "collector",
+    tier: "5m",
+    step_s: 300,
+    window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:15:00Z" },
+    requested_window: {
+      from: "2026-08-10T00:00:00Z",
+      to: "2026-08-10T00:15:00Z",
+    },
+    key_columns: ["collector"],
+    columns: ["sample_count", "failure_count"],
+    series: [
+      {
+        key: { collector: "smart" },
+        points: [
+          [Date.parse("2026-08-10T00:00:00Z"), 5, 1],
+          [Date.parse("2026-08-10T00:05:00Z"), 5, 0],
+          // No scrapes at all in the bucket, which is not a total failure.
+          [Date.parse("2026-08-10T00:10:00Z"), 0, 0],
+        ],
+      },
+    ],
+  } as const;
+
+  it("divides one column by another, on the window's grid", () => {
+    expect(
+      ratioValues(counts as never, 0, "failure_count", "sample_count"),
+    ).toEqual([0.2, 0, null]);
+  });
+
+  // The same [] as optionalValues, and for the same reason: at raw the two
+  // counts do not exist, and "this tier does not carry it" has to stay
+  // tellable apart from "the host reported nothing".
+  it("returns an empty series when either column is absent from this tier", () => {
+    expect(
+      ratioValues(raw as never, 0, "failure_count", "sample_count"),
+    ).toEqual([]);
+    expect(ratioValues(counts as never, 0, "failure_count", "busy")).toEqual(
+      [],
+    );
+  });
+
+  it("treats a null response and an unknown series index as no data", () => {
+    expect(ratioValues(null, 0, "failure_count", "sample_count")).toEqual([]);
+    expect(
+      ratioValues(counts as never, 9, "failure_count", "sample_count"),
+    ).toEqual([]);
   });
 });
 

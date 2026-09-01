@@ -29,9 +29,11 @@
 // only while samples arrive -- and both lists already build the cpu/mem
 // series a ContainerRow carries.
 //
-// last_seen is also what the "gone" pill below is derived from, and the pill
-// stays: "gone" is a FACT measured against the host, and it is what the purge
-// action is offered on.
+// last_seen is also what containerIsGone below is derived from. That is a
+// FACT measured against the host and it is what the purge action is offered
+// on -- but it is no longer a pill of its own beside the Status column. It
+// feeds deriveState, which says "Gone" once, in the words the rest of the
+// column uses.
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { Reading } from "../../ui/Reading";
@@ -108,8 +110,8 @@ export function containerState(
   // A host whose cgroup mount is unreadable keeps posting host samples while
   // no container sample can land, so last_seen ages forever and every
   // container on it would read Silent -- beside a hostContainerNote saying
-  // the opposite, and a gone pill deliberately suppressed for this same
-  // reason. Nothing was reported, which is what the row then says.
+  // the opposite, and with containerIsGone suppressed for this same reason.
+  // Nothing was reported, which is what the row then says.
   const blocked = containerSamplesBlocked(row.host_containers_capability);
   return deriveState({
     lastSampleMs: blocked || Number.isNaN(lastSeen) ? null : lastSeen,
@@ -201,7 +203,7 @@ export function containerIsGone(
   // container sample can land, so every container on it would age past the
   // window together -- and be offered a purge that deletes a still-running
   // container's history. The lists already say what is wrong there
-  // (hostContainerNote); this must not contradict them with a pill.
+  // (hostContainerNote); this must not contradict them with a Gone badge.
   if (
     row.host_containers_capability !== undefined &&
     NO_CONTAINER_SAMPLES.has(row.host_containers_capability)
@@ -444,11 +446,13 @@ function NameCell({
             "agent" is an identity, not a health state, and green would assert
             a state netra does not collect. */}
         {row.is_agent ? <Badge label>agent</Badge> : null}
-        {/* No status dot, and no severity: the dot is what carries severity
-            in this app, and a container that is gone is a FACT, not a state
-            netra is ranking. The agent badge beside it is the same shape for
-            the same reason. */}
-        {containerIsGone(row) ? <Badge label>gone</Badge> : null}
+        {/* No "gone" pill here any more. It stood beside a Status column that
+            said "Silent" about the same container in the same instant, and
+            the two were not two opinions: gone measures last_seen against the
+            host's last report and silent measures it against the clock, so
+            every gone row was also a silent one. Gone is a state now
+            (state.ts) and the Status column says it, once. containerIsGone
+            still gates the purge column -- same predicate, one voice. */}
       </div>
       {identity === null ? null : (
         <div className="host-cell-site mono">{identity}</div>

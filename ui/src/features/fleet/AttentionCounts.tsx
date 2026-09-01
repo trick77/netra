@@ -77,10 +77,18 @@ const SEVERITY_CLASS: Record<Severity, string> = {
  * Not decoration and not a duplicate of the dot beside it: severity never
  * rides on colour alone (spec §3.3), and a dot is a mark, so without the word
  * the hue would be the only thing carrying it. The kind's own name does not
- * supply it either, since "Failed units" says what is wrong and not how bad
- * it is.
+ * supply it either -- "OOM kills" is critical and "Failed units" is a warning,
+ * and nothing in either phrase says which, so a reader who cannot separate the
+ * two hues cannot rank the two chips. It was dropped for one commit on the
+ * argument that a kind fixes its own severity; a kind does, but only for a
+ * reader who already knows the table.
+ *
+ * What was actually wrong with it is the reading order: "Silent 8 Serious" is
+ * three values in a row with nothing between them. The separator in the chip
+ * below is the fix -- the severity is an annotation on a count, not a third
+ * figure competing with it.
  */
-const SEVERITY_WORD: Record<Severity, string> = {
+export const SEVERITY_WORD: Record<Severity, string> = {
   critical: "Critical",
   serious: "Serious",
   warning: "Warning",
@@ -120,6 +128,10 @@ export function AttentionCounts({
             <a
               className={`atile ${severityClass}`}
               href={href(next)}
+              // The whole chip in one string, because the severity word is
+              // not always drawn and the count carries no noun. Read out in
+              // the order the chip is read: what is wrong, how many, how bad.
+              aria-label={`${kind.label}, ${rows}, ${SEVERITY_WORD[kind.severity]}`}
               // Not aria-pressed: this is a link, not a toggle button, and a
               // pressed link is a control a screen reader announces twice.
               // aria-current says "this is the one you are looking at", which
@@ -140,9 +152,16 @@ export function AttentionCounts({
                   kind, the number and the severity read in order. */}
               <span className="v">{rows}</span>
               {/* Colour is never the only carrier of severity (spec 3.3/3.5),
-                  so the word stays -- one step quieter than the count, after
-                  it rather than under it. */}
-              <span className="d">{SEVERITY_WORD[kind.severity]}</span>
+                  so the word stays -- one step quieter than the count, and
+                  behind a separator so the chip reads as a kind and its count
+                  with the severity annotating them, rather than as three
+                  figures set side by side. */}
+              <span className="d">
+                <span className="sep" aria-hidden="true">
+                  ·
+                </span>
+                {SEVERITY_WORD[kind.severity]}
+              </span>
             </a>
           </li>
         );

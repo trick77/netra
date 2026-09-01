@@ -5,6 +5,7 @@ import {
   griddedValues,
   optionalValues,
   peakBase,
+  ratioValues,
   seriesCells,
   seriesOnGrid,
   seriesTimestamps,
@@ -208,6 +209,28 @@ interface PanelSpec {
   fmt?: (n: number | null) => string;
   /** Read this family's columns as booleans (1 = true), not as numbers. */
   boolean?: boolean;
+  /**
+   * What to read when this spec's base is not stored at the answering tier,
+   * but the two columns it can be divided out of are.
+   *
+   * A rolled-up tier does not carry every quantity the raw table does, and
+   * for most panels that is the end of it -- swap_total has no aggregate and
+   * no pair of columns to reconstruct it from, so "not at this resolution"
+   * is the honest answer. collector_samples is the case where it is not:
+   * `ok` is dropped from the aggregates, but sample_count and failure_count
+   * are kept there precisely because counts roll up and a ratio does not
+   * (0001_init.sql:1296). Dividing them back out is the SAME reading at a
+   * coarser grain -- a bucket where every scrape worked is 1, the value the
+   * raw band would draw -- rather than a substitute quantity.
+   *
+   * Without it the panel is blank at eight of the nine ranges and tells the
+   * reader to shorten a range, which only helps at the one that was already
+   * working.
+   *
+   * `invert` draws 1 - part/whole, for a pair counting the FAILURES of the
+   * thing the panel is about.
+   */
+  fraction?: { part: string; whole: string; invert?: boolean };
   /**
    * Resolve each base to its _max peer at the rolled-up tiers rather than
    * letting column() take the _avg it prefers. For a rate read as a shape --
@@ -504,12 +527,37 @@ export const SYSTEM: PanelSpec[] = [
     title: "Device availability",
     slug: "device-availability",
     about:
-      "One line per collector: 1 for a bucket where it ran, 0 where it did not. A collector that was down leaves holes in every panel that reads it.",
+      "One line per collector: 1 for a bucket where it ran, 0 where it did not. A collector that was down leaves holes in every panel that reads it. Over a range wide enough to be rolled up, the line is the share of the scrapes it took in that bucket that it survived, so a partial failure reads as a dip - but a collector that simply ran less often and never failed still reads as up.",
     source: "collector",
     bases: [{ base: "ok", label: "ok" }],
     boolean: true,
+    // The aggregates drop `ok` and keep the counts instead, so at every
+    // range but 1h this is what the line is actually drawn from.
+    fraction: { part: "failure_count", whole: "sample_count", invert: true },
     max: 1,
-    fmt: (n) => (n === null ? ABSENT : n >= 1 ? "up" : "down"),
+    // One formatter for both tiers rather than a tier-dependent pair: the
+    // endpoints ARE up and down at any grain -- a rolled bucket of 1 is
+    // every scrape in it having worked -- and only the values between them
+    // need the rolled tier's reading, which is a percentage of scrapes.
+    //
+    // Rounded to nearest and THEN held off the endpoints, because only the %
+    // suffix separates "100% up" from the literal "up": one failure in a
+    // 1440-scrape daily bucket is 0.99931, and reporting that as 100% would
+    // state a clean day for a day that had a failure in it.
+    //
+    // Not floor-above-half and ceil-below, which was the first shape of this
+    // and is a worse one: n*100 is inexact for most hundredths, so 71
+    // failures in 100 scrapes is 29.000000000000004 and ceil reports 30% for
+    // a bucket that was 29% -- the same off-by-one this exists to prevent,
+    // arriving from the other side.
+    fmt: (n) =>
+      n === null
+        ? ABSENT
+        : n >= 1
+          ? "up"
+          : n <= 0
+            ? "down"
+            : `${Math.min(99, Math.max(1, Math.round(n * 100)))}% up`,
   },
   {
     title: "Uptime",
@@ -1147,10 +1195,31 @@ function bandsFor(
               .filter(Boolean)
               .join(" ")
           : "",
-        read: (column) =>
-          spec.boolean
+        read: (column) => {
+          // The stored column first, and the fraction only where this tier
+          // does not carry it: where both exist the stored value is the
+          // reading, and reconstructing it from counts that round to the
+          // same number would be a second answer to a question already
+          // answered.
+          //
+          // Outside the boolean branch rather than inside it, because
+          // missingReason honours `fraction` for any spec that declares one.
+          // A numeric spec with a fraction and no fallback here would draw
+          // nothing while the panel said the host reported no samples, which
+          // is a false statement about a host that reported plenty.
+          const stored = spec.boolean
             ? booleanValues(res, index, column)
-            : griddedValues(res, index, column),
+            : griddedValues(res, index, column);
+          if (stored.length > 0 || spec.fraction === undefined) return stored;
+          const ratio = ratioValues(
+            res,
+            index,
+            spec.fraction.part,
+            spec.fraction.whole,
+          );
+          if (spec.fraction.invert !== true) return ratio;
+          return ratio.map((v) => (v === null ? null : 1 - v));
+        },
       }));
 
   // Idle series dropped BEFORE the colour walk, so the shade ladder counts
@@ -1339,7 +1408,16 @@ export function missingReason(
         source === undefined || source === spec.source
           ? res
           : (extra[source] ?? null);
-      return from === null || !carriesColumn(from, base);
+      if (from === null) return true;
+      if (carriesColumn(from, base)) return false;
+      // A base this tier can still be divided out of is not missing -- see
+      // PanelSpec.fraction. Naming it here would send the reader to shorten
+      // a range over a panel that has everything it needs.
+      return !(
+        spec.fraction !== undefined &&
+        carriesColumn(from, spec.fraction.part) &&
+        carriesColumn(from, spec.fraction.whole)
+      );
     })
     .map((b) => b.base);
   if (missing.length === 0) {

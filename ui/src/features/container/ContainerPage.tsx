@@ -409,10 +409,15 @@ export function ContainerPage({
   // be the page contradicting itself. The lists have no window and so never
   // reach that state, which is honest -- they are not showing one.
   //
+  // Unless the container is gone, which deriveState tests above "No samples".
+  // Empty charts at the 1h range on a container that stopped two hours ago
+  // are empty BECAUSE it is gone, and "No samples" above a button offering to
+  // purge it says less than the button does.
+  //
   // And nothing at all on a host whose agent cannot see containers: it keeps
   // posting host samples while no container sample can land, so last_seen
-  // ages forever. The lists suppress the gone pill on exactly that host and
-  // this page must not call the container Silent instead.
+  // ages forever. containerIsGone returns false on exactly that host and this
+  // page must not call the container Silent instead.
   const lastSeenMs = Date.parse(container.last_seen);
   const lastSampleMs =
     sampled &&

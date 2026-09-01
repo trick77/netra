@@ -4,6 +4,13 @@
 // one column set: two lists that describe the same container in different
 // vocabularies is how "gone" and "Silent" came to name one fact.
 //
+// "Gone" is one of those words now rather than a pill beside them. It was a
+// boolean carried alongside the state, and the two are not independent: gone
+// measures container.last_seen against its HOST's last report and silent
+// measures it against the clock, and since a host's last report is never in
+// the future, every gone container was also Silent. One row said both, and
+// the fleet's Silent chip counted containers whose own row called them gone.
+//
 // It lived in ContainerPage while only that page had a badge. The lists could
 // not call it then -- the comment in columns.tsx said so -- because it needs
 // sample timestamps and the fleet fan-out was believed not to have them. It
@@ -47,6 +54,7 @@ export const MEM_PRESSURE_PCT = 90;
 export type ContainerStateKind =
   | "host-down"
   | "no-samples"
+  | "gone"
   | "silent"
   | "unhealthy"
   | "restarting"
@@ -74,12 +82,9 @@ export interface DerivedStateInput {
    * host header already share.
    *
    * A container's samples ride in on its host's posts, so a host that went
-   * quiet stops every container on it at once. The lists have always known
-   * this -- containerIsGone measures against the host's last_seen, never the
-   * clock, so an offline host marks nothing gone -- while this badge measured
-   * against the clock and called the same container Silent. One container,
-   * two surfaces, opposite answers, and the one that blamed the container was
-   * the one offering to purge its history.
+   * quiet stops every container on it at once. Measuring silence against the
+   * clock on such a host blames the container for its host's outage -- and it
+   * did, calling a container Silent above a button offering to purge it.
    *
    * Given the host's state, the badge names the host instead. Omitted, the
    * badge behaves as it did: callers without a host status are no worse off
@@ -90,13 +95,16 @@ export interface DerivedStateInput {
    * containerIsGone's answer: this container stopped being reported WHILE
    * its host kept reporting.
    *
-   * It outranks hostState, because it is a fact about the container that was
-   * established before the host went anywhere -- and because the page offers
-   * a purge button on exactly this condition. Without it, a container that
-   * died an hour before its host did would carry a "Host offline" badge
-   * saying nothing can be said about it, above a button offering to delete
-   * its history: the same badge-versus-purge contradiction this input exists
-   * to end, pointing the other way.
+   * The input to the `gone` state, and it outranks hostState, because it is a
+   * fact about the container that was established before the host went
+   * anywhere -- and because the page offers a purge button on exactly this
+   * condition. Without it, a container that died an hour before its host did
+   * would carry a "Host offline" badge saying nothing can be said about it,
+   * above a button offering to delete its history.
+   *
+   * Measured against the host and never against the clock, so an offline host
+   * marks nothing gone; see containerIsGone in columns.tsx for why that
+   * direction is the safe one to fail in.
    */
   gone?: boolean;
   silentAfterS?: number;
@@ -144,17 +152,41 @@ export function deriveState({
   health = null,
   restartsInWindow = null,
 }: DerivedStateInput): DerivedState {
-  // First, and above even "No samples": every branch below reads the sample
+  // First, above every branch that reads the sample stream, because this one
+  // says the stream STOPPED while the host kept posting -- which is the fact
+  // the purge button is offered on, and the strongest thing that can be said
+  // about a container that is not there.
+  //
+  // Above "No samples" too, which only the detail page can reach: a container
+  // gone for two hours, read at the 1h range, has an empty window BECAUSE it
+  // is gone, and "No samples" over a purge button says less than the button
+  // does. A listing row cannot arrive here without a timestamp at all --
+  // containerIsGone returns false when one does not parse and on a host whose
+  // agent cannot see containers, which are the two ways a row loses it.
+  //
+  // Serious rather than neutral. A container that crashed at 03:00 and never
+  // came back is not a settled administrative fact at 03:15; it is the same
+  // problem it was at 03:04, when the row still read Silent.
+  if (gone) {
+    return {
+      kind: "gone",
+      label: "Gone",
+      severity: "serious",
+      why: "it stopped being reported while its host kept reporting; it was probably stopped or removed",
+    };
+  }
+
+  // Then, above even "No samples": every branch below reads the sample
   // stream, and on a host that is not reporting there is no stream to read.
   // Neutral, not serious -- the severity belongs to the host, which carries
   // it on its own page and in its fleet row, and a second critical here would
   // count one outage twice. The host's own word is reused rather than a fifth
   // synonym invented for it.
   //
-  // Not for a container already measured gone: that one stopped while the
-  // host was still posting, which is a fact about the container and the one
-  // the purge button is offered on.
-  if (!gone && hostState !== undefined && hostState.severity === "critical") {
+  // Below `gone` for the reason that branch gives: a container that died
+  // while its host was still posting is measured, and the host going quiet
+  // afterwards does not unmeasure it.
+  if (hostState !== undefined && hostState.severity === "critical") {
     return {
       kind: "host-down",
       label: `Host ${hostState.label}`,
@@ -172,13 +204,19 @@ export function deriveState({
     };
   }
 
+  // Quiet, but not yet long enough for the host to have noticed it missing --
+  // `gone` above owns that, at GONE_AFTER_S. So this is now the narrow window
+  // between three minutes of missed posts and fifteen: something that has
+  // just stopped, rather than something that is not coming back. The `why`
+  // no longer guesses "removed", because the state that means removed is a
+  // different one.
   const ageS = (now.getTime() - lastSampleMs) / 1000;
   if (ageS > silentAfterS) {
     return {
       kind: "silent",
       label: "Silent",
       severity: "serious",
-      why: "the container stopped appearing in samples; it may have been stopped or removed",
+      why: "samples stopped arriving for this container while its host kept reporting",
     };
   }
 
@@ -274,11 +312,19 @@ export function deriveState({
  * list already is. `host-down` stays despite being neutral, because "which of
  * my containers can netra not currently see" is a real question and the
  * answer is otherwise spread across however many hosts went quiet.
+ *
+ * `gone` sits after `silent` and not before it, which is the opposite of the
+ * order deriveState tests them in. Precedence answers "what is this row",
+ * where gone is the more specific fact; this answers "what does a reader
+ * look at first", and there silent is the three-to-fifteen-minute window
+ * where something is still happening, while gone is settled enough to have a
+ * purge button on it.
  */
 export const FILTERABLE_STATE_KINDS: readonly ContainerStateKind[] = [
   "unhealthy",
   "restarting",
   "silent",
+  "gone",
   "mem-pressure",
   "series-gap",
   "paused",
@@ -296,6 +342,7 @@ export const FILTERABLE_STATE_KINDS: readonly ContainerStateKind[] = [
 const KIND_LABEL: Record<ContainerStateKind, string> = {
   "host-down": "Host not reporting",
   "no-samples": "No samples",
+  gone: "Gone",
   silent: "Silent",
   unhealthy: "Unhealthy",
   restarting: "Restarting",
@@ -318,6 +365,7 @@ export function stateKindLabel(kind: ContainerStateKind): string {
 const KIND_SEVERITY: Record<ContainerStateKind, Severity> = {
   "host-down": "neutral",
   "no-samples": "neutral",
+  gone: "serious",
   silent: "serious",
   unhealthy: "serious",
   restarting: "serious",
@@ -344,25 +392,29 @@ export function isContainerStateKind(
  * one state that is not about this container, and a reader sorting a list by
  * status is asking which containers to look at.
  *
- * `unhealthy` and `restarting` outrank `silent` because they are Docker's own
- * statement about a container that is still being sampled, while Silent is an
- * inference from an absence: a failing healthcheck is a container asking for
- * attention now, and a container that stopped reporting may simply have been
- * removed on purpose.
+ * `unhealthy` and `restarting` outrank both, because they are Docker's own
+ * statement about a container that is STILL being sampled, while silent and
+ * gone are inferences from an absence: a failing healthcheck is a container
+ * asking for attention now, and a container that stopped reporting may simply
+ * have been removed on purpose.
  *
- * `paused` sits with `host-down` at the bottom for the same reason that one
+ * `silent` above `gone` for the reason FILTERABLE_STATE_KINDS gives: newly
+ * quiet before long gone, whatever their precedence in the derivation.
+ *
+ * `paused` sits with `host-down` near the bottom for the same reason that one
  * does -- somebody paused it, so it is not a fault to go and look at.
  */
 const KIND_RANK: Record<ContainerStateKind, number> = {
   unhealthy: 0,
   restarting: 1,
   silent: 2,
-  "mem-pressure": 3,
-  "series-gap": 4,
-  paused: 5,
-  "host-down": 6,
-  "no-samples": 7,
-  reporting: 8,
+  gone: 3,
+  "mem-pressure": 4,
+  "series-gap": 5,
+  paused: 6,
+  "host-down": 7,
+  "no-samples": 8,
+  reporting: 9,
 };
 
 export function stateKindRank(kind: ContainerStateKind): number {
