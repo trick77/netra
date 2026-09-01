@@ -2438,30 +2438,113 @@ details.sysfold > .body {
   opacity: 0.7;
 }
 
-/* Temperature rows: name, trend, reading. The sparkline sits between the two
-   because it is the reason the row is worth a line -- a number alone cannot
-   say whether 48 °C is steady or climbing. */
-.sensor-row {
+/* Sensor tiles, grouped by chip.
+
+   These were rows -- name, trend, reading, one per line -- and a desktop CPU
+   publishes seventeen coretemp readings, so the Temperature card was nine
+   hundred pixels of a 292px column. The chip moved to the group heading,
+   which is what lets a tile be 124px wide instead of a whole line.
+
+   One grid for the card, headings spanning it, rather than a grid per group:
+   nested auto-fill grids resolve their tracks independently, and a chip with
+   four readings drew tiles twice the width of the chip with seventeen.
+
+   Every tile keeps its sparkline. It is the reason a reading is worth its own
+   cell -- a number alone cannot say whether 48 °C is steady or climbing. */
+.sensor-tiles {
   display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: var(--space-3);
-  align-items: center;
-  padding: 6px 0;
-  border-bottom: 1px solid var(--border);
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: var(--space-2);
 }
-.sensor-row:last-child {
-  border-bottom: 0;
+.ghead {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  /* Against the tiles above it, not the ones below: a heading belongs to what
+     follows it, and the gap alone read as if it belonged to neither. */
+  margin-top: var(--space-2);
+  font-size: var(--text-micro);
 }
-.sensor-row .lab {
-  font-size: var(--text-label);
+.ghead:first-child {
+  margin-top: 0;
+}
+.ghead .gn {
   color: var(--ink-2);
 }
-.sensor-row .val {
-  font-size: var(--text-label);
+/* The rule takes the slack between the chip name and its summary, so the
+   headings line up down the card however long a chip is called. */
+.ghead .rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.ghead .gsum {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  text-align: right;
-  min-width: 4ch;
+}
+/* Two lines, not three: the name, then the reading and its history side by
+   side the way the rows this replaced had them. Stacking the sparkline under
+   the number instead cost 25px a tile, which on the Fans and Power cards --
+   three and five readings, no tiling to pay for it -- made the card TALLER
+   than the rows it replaced.
+
+   Specificity, not decoration: Enlargeable's own .chartwrap.as-button strips
+   the padding, border and background off whatever it wraps, and a single
+   class cannot put them back. */
+.chartwrap.as-button.sensor-tile {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 1px var(--space-2);
+  min-width: 0;
+  padding: 6px var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.chartwrap.as-button.sensor-tile:hover {
+  border-color: var(--border-strong);
+}
+.sensor-tile .lab {
+  grid-column: 1 / -1;
+  font-size: var(--text-micro);
+  color: var(--muted);
+  /* The tile is as narrow as 124px and a label can be "Composite nvme0n1".
+     One line that trims beats a tile that grows a second one and leaves every
+     other tile in the row short. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sensor-tile .val {
+  font-size: var(--text-ui);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+/* The chart takes the slack beside the reading, so tiles in a row line their
+   numbers up at the left however wide the track resolves to. */
+.sensor-tile svg {
+  justify-self: end;
+}
+/* Wider tracks than the .sm default, for the one section whose cards are
+   grids themselves. At 292px a card fits two 124px tiles a row, so the five
+   Power readings drew five rows and the card was taller than the twenty-three
+   temperatures beside it were wide. Two tracks on a laptop, one on a phone,
+   and the Temperature card spans whatever there are. */
+.sm-sensors {
+  /* auto-fill, not auto-fit: a Raspberry Pi reports two temperatures and no
+     fans, and auto-fit collapses the track its missing cards would have used
+     -- one card of two readings stretched across the whole page. */
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  /* Cards size to their content: a Fans card of three readings stretched to
+     the height of the Power card beside it is an empty box with a border. */
+  align-items: start;
+}
+/* A card that takes the whole grid rather than one track: twenty-three tiles
+   cannot lay out in one. */
+.sm-span {
+  grid-column: 1 / -1;
 }
 
 /* Uptime reads as the traffic cell's rates do -- same size, and --muted
@@ -3622,7 +3705,7 @@ tbody:first-of-type .grouprow th {
 .temp-cell .val {
   /* --text-label, like .uptime-cell, .mem-cell .val and .traffic-cell .rate:
      the same job, a quiet secondary reading inside a table cell. --muted for
-     the same reason those carry it (.sensor-row .val, .mrow .val, which is
+     the same reason those carry it (.sensor-tile .lab, .mrow .val, which is
      where .mem-cell and .usage-cell get theirs): at the table body's own ink
      the temperature reads a step louder than every other number-beside-a-
      chart in the app. */
