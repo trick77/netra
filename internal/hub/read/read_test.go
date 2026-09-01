@@ -612,6 +612,62 @@ func TestIntegrationDimensionListingsProjectTheirTables(t *testing.T) {
 		}
 	})
 
+	// Every Docker column is nullable, and a container inserted without them
+	// must come back as null rather than as a default. A "running" or a zero
+	// restart count invented here is the hub asserting something no agent ever
+	// said -- which is the failure the Not collected card existed to describe.
+	t.Run("containers report Docker's fields as null when nobody sent them", func(t *testing.T) {
+		got, err := svc.Containers(ctx, id)
+		if err != nil {
+			t.Fatalf("Containers: %v", err)
+		}
+		for _, c := range got {
+			if c.DockerState != nil {
+				t.Errorf("%q docker_state = %q, want null", c.Key, *c.DockerState)
+			}
+			if c.Health != nil {
+				t.Errorf("%q health = %q, want null", c.Key, *c.Health)
+			}
+			if c.RestartCount != nil {
+				t.Errorf("%q restart_count = %d, want null", c.Key, *c.RestartCount)
+			}
+			if c.Labels != nil {
+				t.Errorf("%q labels = %v, want null", c.Key, c.Labels)
+			}
+		}
+	})
+
+	t.Run("containers carry Docker's fields when an agent sent them", func(t *testing.T) {
+		exec(t, pool, `
+			UPDATE containers
+			   SET docker_state = 'running', health = 'unhealthy',
+			       restart_count = 12, labels = '{"traefik.enable":"true"}'::jsonb,
+			       state_ts = now()
+			 WHERE host_id = $1 AND container_key = 'proj/web'`, id)
+
+		got, err := svc.Containers(ctx, id)
+		if err != nil {
+			t.Fatalf("Containers: %v", err)
+		}
+		// Ordered by container_key, so proj/web is second.
+		web := got[1]
+		if web.DockerState == nil || *web.DockerState != "running" {
+			t.Errorf("docker_state = %v, want running", web.DockerState)
+		}
+		if web.Health == nil || *web.Health != "unhealthy" {
+			t.Errorf("health = %v, want unhealthy", web.Health)
+		}
+		if web.RestartCount == nil || *web.RestartCount != 12 {
+			t.Errorf("restart_count = %v, want 12", web.RestartCount)
+		}
+		if web.Labels["traefik.enable"] != "true" {
+			t.Errorf("labels = %v, want traefik.enable=true", web.Labels)
+		}
+		if web.StateSince == nil {
+			t.Error("state_since = nil for a container whose state is recorded")
+		}
+	})
+
 	t.Run("addresses carry the scope the hub derived", func(t *testing.T) {
 		got, err := svc.Addresses(ctx, id)
 		if err != nil {

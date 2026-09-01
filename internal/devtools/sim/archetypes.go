@@ -93,6 +93,12 @@ func rpi5() *Profile {
 			{Label: "root", Mountpoint: "/", DeviceID: 64769, Total: 58 * gib, InodesTotal: 3800000, UsedStart: 0.41, UsedEnd: 0.63},
 			{Label: "boot-firmware", Mountpoint: "/boot/firmware", DeviceID: 64768, Total: 512 * mib, InodesTotal: 0, UsedStart: 0.15, UsedEnd: 0.16},
 		},
+		// Deliberately no DockerState, Health, Labels or restart counts on this
+		// archetype. It is the agent that cannot read the socket -- or one
+		// older than the release that started sending them -- and it exists so
+		// the UI's "not reported" rendering has a host to appear on. Without
+		// one, every dev fleet would show the populated case only, and a null
+		// rendered as "healthy" would ship unnoticed.
 		Containers: []ContainerSpec{
 			{Key: "netra/agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest", IsAgent: true, MemLimit: 128 * mib, CPUBase: 1.1, MemBase: 38 * mib},
 			{Key: "home/mosquitto", Name: "home-mosquitto-1", Image: "eclipse-mosquitto:2", MemLimit: 256 * mib, CPUBase: 0.6, MemBase: 21 * mib},
@@ -163,13 +169,41 @@ func nvmeVPS() *Profile {
 		Filesystems: []FSSpec{
 			{Label: "root", Mountpoint: "/", DeviceID: 66305, Total: 160 * gib, InodesTotal: 10485760, UsedStart: 0.52, UsedEnd: 0.79},
 		},
+		// The host whose agent CAN read the socket, and the one to look at when
+		// checking how state, health, labels and restarts render. Between them
+		// these six cover every case the UI has to word differently: healthy,
+		// unhealthy, an image with no healthcheck at all, a container still
+		// starting, a crash-restart loop, and a redeploy -- which shows up as
+		// the restart count going DOWN, because Docker resets it when a
+		// container is recreated.
 		Containers: []ContainerSpec{
-			{Key: "netra/agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest", IsAgent: true, MemLimit: 128 * mib, CPUBase: 0.8, MemBase: 34 * mib},
-			{Key: "netra/hub", Name: "netra-hub-1", Image: "ghcr.io/trick77/netra:latest", MemLimit: 512 * mib, CPUBase: 4.2, MemBase: 210 * mib},
-			{Key: "netra/timescaledb", Name: "netra-timescaledb-1", Image: "timescale/timescaledb:latest-pg17", MemLimit: 4 * gib, CPUBase: 11.5, MemBase: 2100 * mib},
-			{Key: "netra/traefik", Name: "netra-traefik-1", Image: "traefik:v3.1", MemLimit: 256 * mib, CPUBase: 1.3, MemBase: 62 * mib},
-			{Key: "web/caddy", Name: "web-caddy-1", Image: "caddy:2-alpine", MemLimit: 256 * mib, CPUBase: 0.9, MemBase: 44 * mib},
-			{Key: "web/redis", Name: "web-redis-1", Image: "redis:7-alpine", MemLimit: 512 * mib, CPUBase: 2.1, MemBase: 130 * mib},
+			{Key: "netra/agent", Name: "netra-agent", Image: "ghcr.io/trick77/netra-agent:latest", IsAgent: true, MemLimit: 128 * mib, CPUBase: 0.8, MemBase: 34 * mib,
+				DockerState: "running", Health: "none",
+				Labels: map[string]string{"com.docker.compose.project": "netra", "com.docker.compose.service": "agent"}},
+			{Key: "netra/hub", Name: "netra-hub-1", Image: "ghcr.io/trick77/netra:latest", MemLimit: 512 * mib, CPUBase: 4.2, MemBase: 210 * mib,
+				DockerState: "running", Health: "healthy",
+				Labels: map[string]string{
+					"com.docker.compose.project":      "netra",
+					"com.docker.compose.service":      "hub",
+					"org.opencontainers.image.source": "https://github.com/trick77/netra",
+					"traefik.enable":                  "true",
+				}},
+			{Key: "netra/timescaledb", Name: "netra-timescaledb-1", Image: "timescale/timescaledb:latest-pg17", MemLimit: 4 * gib, CPUBase: 11.5, MemBase: 2100 * mib,
+				DockerState: "running", Health: "healthy",
+				Labels: map[string]string{"com.docker.compose.project": "netra", "com.docker.compose.service": "timescaledb"}},
+			{Key: "netra/traefik", Name: "netra-traefik-1", Image: "traefik:v3.1", MemLimit: 256 * mib, CPUBase: 1.3, MemBase: 62 * mib,
+				DockerState: "running", Health: "starting",
+				Labels: map[string]string{"com.docker.compose.project": "netra", "com.docker.compose.service": "traefik"}},
+			// The one worth finding: unhealthy AND restarting in a loop. Its
+			// badge should say Unhealthy, not Reporting, and its restart count
+			// should climb across the window.
+			{Key: "web/caddy", Name: "web-caddy-1", Image: "caddy:2-alpine", MemLimit: 256 * mib, CPUBase: 0.9, MemBase: 44 * mib,
+				DockerState: "running", Health: "unhealthy", RestartsStart: 2, RestartsEnd: 31,
+				Labels: map[string]string{"com.docker.compose.project": "web", "com.docker.compose.service": "caddy"}},
+			// A redeploy mid-window: the counter resets rather than rising.
+			{Key: "web/redis", Name: "web-redis-1", Image: "redis:7-alpine", MemLimit: 512 * mib, CPUBase: 2.1, MemBase: 130 * mib,
+				DockerState: "running", Health: "healthy", RestartsStart: 6, RestartsEnd: 0,
+				Labels: map[string]string{"com.docker.compose.project": "web", "com.docker.compose.service": "redis"}},
 		},
 		Units: []string{
 			"ssh.service", "docker.service", "systemd-resolved.service",

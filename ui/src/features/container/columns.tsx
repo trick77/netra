@@ -129,6 +129,16 @@ export function containerState(
         ? undefined
         : hostStatus({ last_seen: row.host_last_seen }, now),
     gone: containerIsGone(row),
+    // Docker's own answers ride on the listing row, so the lists reach
+    // "Unhealthy" without a per-surface rule -- the same reason this function
+    // exists at all.
+    dockerState: row.docker_state,
+    health: row.health,
+    // No restart series here, and not an oversight: a list has no window, so
+    // there is nothing for a difference to be measured across. Left null, the
+    // gap reason falls back to the wording it had, which is exactly as much as
+    // a list knows.
+    restartsInWindow: null,
   });
 }
 

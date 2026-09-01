@@ -5,7 +5,7 @@
 // container with no memory limit reports mem_limit as null rather than
 // omitting the column.
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Container, MetricsResponse } from "../../lib/api";
 import { ContainerPage, displayTitle } from "./ContainerPage";
@@ -72,6 +72,11 @@ const CONTAINER: Container = {
   name: "shop-web-1",
   image: "nginx:1.27",
   is_agent: false,
+  docker_state: null,
+  health: null,
+  state_since: null,
+  restart_count: null,
+  labels: null,
   last_seen: "2026-08-10T14:00:00Z",
 };
 
@@ -315,15 +320,89 @@ describe("ContainerPage", () => {
     expect(screen.getAllByText(ABSENT).length).toBeGreaterThanOrEqual(2);
   });
 
-  // The four fields that reach neither the wire (ingest.proto's
-  // ContainerSample) nor the schema (the containers table).
-  it("names the four fields that are not collected", () => {
+  // The card used to name Health, Restarts, State and Labels. All four are
+  // collected now, so it must name the residue instead -- and it must not name
+  // a field the Identity card above it is printing a value for, which would be
+  // the page contradicting itself.
+  it("names what is left uncollected, not the fields it now shows", () => {
     renderPage();
 
     const card = screen.getByText("Not collected").closest(".card")!;
-    for (const field of ["Health", "Restarts", "State", "Labels"]) {
-      expect(card).toHaveTextContent(field);
+    for (const residue of [
+      "Stopped containers",
+      "Health history",
+      "Restarts beyond",
+    ]) {
+      expect(card).toHaveTextContent(residue);
     }
+    expect(card).not.toHaveTextContent("Labels");
+  });
+
+  it("states what Docker says about the container", () => {
+    renderPage({
+      container: {
+        ...CONTAINER,
+        docker_state: "running",
+        health: "healthy",
+        restart_count: 4,
+      },
+    });
+
+    const card = screen.getByText("Identity").closest(".card")!;
+    expect(card).toHaveTextContent("running");
+    expect(card).toHaveTextContent("healthy");
+    expect(card).toHaveTextContent("4");
+  });
+
+  // The whole point of the change: an agent that cannot read the socket must
+  // read as unknown. A dash beside "Health" is read as "no health problem".
+  it("says a field was not reported rather than leaving it blank", () => {
+    renderPage();
+
+    const card = screen.getByText("Identity").closest(".card")!;
+    expect(card.textContent?.match(/not reported/g)?.length).toBe(3);
+  });
+
+  // "none" is a reading -- the image defines no HEALTHCHECK -- and printing
+  // Docker's own word raw would read as a verdict on the container's health.
+  it("renders health 'none' as no healthcheck, not as a verdict", () => {
+    renderPage({ container: { ...CONTAINER, health: "none" } });
+
+    const card = screen.getByText("Identity").closest(".card")!;
+    expect(card).toHaveTextContent("no healthcheck");
+  });
+
+  it("lists the container's labels", () => {
+    renderPage({
+      container: {
+        ...CONTAINER,
+        labels: {
+          "com.docker.compose.project": "shop",
+          "traefik.enable": "true",
+        },
+      },
+    });
+
+    const card = screen.getByText("Labels").closest(".card")!;
+    expect(card).toHaveTextContent("com.docker.compose.project");
+    expect(card).toHaveTextContent("shop");
+    expect(card).toHaveTextContent("traefik.enable");
+  });
+
+  // The distinction ContainerSample.labels is a wrapper message to preserve:
+  // a container with no labels is not a container nobody could ask about.
+  it("separates a container with no labels from one that was never asked", () => {
+    renderPage({ container: { ...CONTAINER, labels: {} } });
+    expect(screen.getByText("Labels").closest(".card")!).toHaveTextContent(
+      "none",
+    );
+
+    cleanup();
+
+    renderPage({ container: { ...CONTAINER, labels: null } });
+    expect(screen.getByText("Labels").closest(".card")!).toHaveTextContent(
+      "not reported",
+    );
   });
 
   // The bug end to end: the host stopped two hours ago, so the container's

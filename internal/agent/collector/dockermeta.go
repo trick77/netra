@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -28,6 +29,28 @@ type dockerContainer struct {
 	Image  string            `json:"Image"`
 	Labels map[string]string `json:"Labels"`
 
+	// State is the daemon's own word: "running", "paused", "restarting". It
+	// arrives at the top level of the SAME response as the fields above, and
+	// was being decoded away for as long as this struct has existed -- the
+	// container detail page said state was "never read from Docker" while the
+	// answer sat in a body the agent had already parsed.
+	//
+	// The list defaults to all=false, so "exited" is not reachable here. That
+	// is a property of the request, not of this field.
+	State string `json:"State"`
+
+	// Status is the human-readable summary -- "Up 4 days", "Up 2 hours
+	// (healthy)" -- and its parenthesised suffix is the ONLY place the list
+	// endpoint carries health. parseHealth reads it.
+	//
+	// The alternative is /containers/{id}/json, which reports health as a
+	// structured State.Health.Status. That costs one unix-socket round trip
+	// per container per scrape to learn a word already present in a string in
+	// hand -- the same objection this file makes to /containers/{id}/stats
+	// below. Parsing a display string is the price, and parseHealth pays it
+	// narrowly: three exact tokens, everything else "none".
+	Status string `json:"Status"`
+
 	// HostConfig.NetworkMode answers "is this container on the host's network
 	// namespace" directly, which is the only question containerNet needed the
 	// namespace links for. It arrives in the SAME response as the fields
@@ -47,8 +70,8 @@ type dockerContainer struct {
 
 // SystemDockerContainers is the production ContainerLister.
 //
-// It reads names, images and compose labels. It deliberately does NOT read
-// stats: the /containers/{id}/stats endpoint streams, costs the daemon real
+// It reads names, images, labels, state and health. It deliberately does NOT
+// read stats: the /containers/{id}/stats endpoint streams, costs the daemon real
 // work per container, and reports the same numbers cgroup v2 already has --
 // which is why the socket stays an enrichment rather than a dependency.
 // dockerClient is built ONCE and reused for the life of the process.
@@ -71,6 +94,81 @@ var dockerClient = &http.Client{
 			return d.DialContext(ctx, "unix", dockerSocket)
 		},
 	},
+}
+
+// Health values, as Docker itself words them. "none" is the one worth naming:
+// it is `docker ps --filter health=none`, an image that defines no HEALTHCHECK,
+// and it is a MEASUREMENT -- the agent looked and there is nothing to report.
+// The absence of any value is the different fact that the agent could not look,
+// and it travels as an unset proto field rather than as a fifth constant.
+const (
+	HealthHealthy   = "healthy"
+	HealthUnhealthy = "unhealthy"
+	HealthStarting  = "starting"
+	HealthNone      = "none"
+)
+
+// parseHealth reads the health suffix out of a /containers/json Status string.
+//
+// Docker builds Status for people, not for parsers: "Up 4 days", "Up 2 hours
+// (healthy)", "Up 3 seconds (health: starting)", "Up 2 hours (Paused)". The
+// suffix is present only when the image defines a HEALTHCHECK, and it is the
+// only health the list endpoint carries.
+//
+// So the match is exact and closed: three known spellings, and anything else --
+// including "(Paused)", which is a state and not a health -- is HealthNone.
+// Guessing from an unrecognised suffix would put a word on a status badge that
+// Docker never said, which is the failure the whole card exists to avoid.
+func parseHealth(status string) string {
+	switch {
+	case strings.Contains(status, "(healthy)"):
+		return HealthHealthy
+	case strings.Contains(status, "(unhealthy)"):
+		return HealthUnhealthy
+	case strings.Contains(status, "(health: starting)"):
+		return HealthStarting
+	default:
+		return HealthNone
+	}
+}
+
+// dockerInspect is the subset of /containers/{id}/json netra reads.
+//
+// One field. RestartCount is the only thing in this entire change that the list
+// endpoint does not already carry, which is why the inspect call is rationed --
+// see the restart cache in containers.go, not this function.
+type dockerInspect struct {
+	RestartCount uint64 `json:"RestartCount"`
+}
+
+// SystemDockerInspect is the production ContainerInspector.
+//
+// It reuses the package's one dockerClient rather than building a transport per
+// call, for the reason spelled out above it: a hand-built http.Transport has
+// IdleConnTimeout zero, and this function runs on far more scrapes than
+// SystemDockerContainers has containers.
+func SystemDockerInspect(ctx context.Context, id string) (uint64, error) {
+	endpoint := "http://docker/" + dockerAPIVersion + "/containers/" + url.PathEscape(id) + "/json"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return 0, fmt.Errorf("build docker inspect request: %w", err)
+	}
+
+	resp, err := dockerClient.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("inspect container: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("docker returned %s", resp.Status)
+	}
+
+	var out dockerInspect
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return 0, fmt.Errorf("decode docker inspect response: %w", err)
+	}
+	return out.RestartCount, nil
 }
 
 func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
@@ -114,6 +212,17 @@ func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
 			Image:   c.Image,
 			Project: c.Labels["com.docker.compose.project"],
 			Service: c.Labels["com.docker.compose.service"],
+			State:   c.State,
+			Health:  parseHealth(c.Status),
+			// The whole map, not just the two compose keys above. Those two
+			// survived only folded into container_key, and only when BOTH were
+			// set -- so a container started outside compose carried no label
+			// anywhere, while the UI said labels "survive".
+			//
+			// Nil, not an empty map, when the daemon reports no Labels key, so
+			// "looked and found none" stays distinguishable from "never
+			// looked" all the way to the wire.
+			Labels: c.Labels,
 			// So the hub can exclude the agent from "what is running here"
 			// without every UI hard-coding an image name.
 			IsAgent:     strings.Contains(c.Image, "netra-agent"),
