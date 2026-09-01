@@ -7,8 +7,9 @@
 // set below: this file has no opinion on layout, only on content.
 import type { Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
-import { Meter } from "../../ui/Meter";
+import { Meter, severityFromPercent } from "../../ui/Meter";
 import { OsIcon } from "../../ui/OsIcon";
+import { Reading } from "../../ui/Reading";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
 import { DETAIL_WIDTH } from "../../ui/charts/size";
 import {
@@ -176,22 +177,24 @@ function HostCell({ row }: { row: HostRow }) {
   // dropping scrapes reads as sporadic rather than healthy; the gaps are
   // already visible in its sparkline, and this says the same thing in a word.
   const status = hostStatus(row, undefined, row.reporting);
-  // The OS joins the line the location sits on rather than taking one of its
-  // own: the cell keeps two lines (see the note below), and what the mark
-  // beside it can only suggest -- Debian, not which Debian -- the words say.
-  // A host that reported neither still draws no line at all.
-  const under = [hostLocation(row), row.os_name]
-    .filter((part): part is string => typeof part === "string" && part !== "")
-    .join(" \u00b7 ");
+  // The location, and NOT the OS name beside it. The mark says which
+  // distribution at a glance; spelling out "Debian GNU/Linux 12 (bookworm)"
+  // under every hostname said it a second time in the row's longest string,
+  // and os-release runs long enough that it had to be truncated to stay on
+  // one line. The host page names the release in full.
+  const location = hostLocation(row);
   return (
-    <div className="host-cell">
+    // Its own wrapper rather than .host-cell itself: the container list's
+    // name cell is built from .host-cell too, and it has no mark to seat, so
+    // the row layout the mark needs cannot live on the shared class.
+    <div className="fleet-host">
       {/* The distribution mark labels the whole host, so it sits beside both
           lines and is centred against them rather than riding the name -- the
           arrangement Observium uses. OsIcon renders nothing for an OS it has
           no mark for, so an unknown distro leaves the space empty instead of
           taking a placeholder. */}
       <OsIcon name={row.os_name ?? null} />
-      <div className="host-cell-lines">
+      <div className="host-cell">
         <div className="host-cell-top">
           {/* The hostname is the way into the host page, and it is an anchor
             rather than a row click handler: middle-click, copy-link and
@@ -235,7 +238,7 @@ function HostCell({ row }: { row: HostRow }) {
           Still one line, deliberately. This column had two and keeps two --
           a third would put height back on every row of the table, which is
           the opposite of what the header change just spent itself on. */}
-        {under !== "" && <div className="host-cell-site">{under}</div>}
+        {location !== null && <div className="host-cell-site">{location}</div>}
       </div>
     </div>
   );
@@ -248,31 +251,6 @@ function HostCell({ row }: { row: HostRow }) {
 // what a fleet list is for. It is the same always-full reading MemoryCell
 // below carries its own ceiling to avoid; the spec's silhouette is
 // cpu_total, not cpu_total normalised to itself.
-/**
- * The figure a metric cell prints beside its sparkline, and the line under it.
- *
- * Traffic has printed its rates since the column was built; CPU and Memory
- * drew a shape and no number, so "how loaded is that host" was answerable
- * only by eye, and only relative to the row above.
- *
- * NOTHING on a host that stopped reporting, not a dash -- the rule the
- * traffic rates two cells over already follow. A stale scalar drawn
- * confidently beside a sparkline that has gone to a gap is the one reading
- * here that can actively mislead.
- *
- * Plain ink, never a status colour. Severity on this page is decided in
- * conditions.ts and carried by the row's rail and the host cell's badge; a
- * cell that reddened itself at a threshold of its own would be a second,
- * disagreeing opinion about what is wrong.
- */
-function Reading({ value, under }: { value: string; under?: string }) {
-  return (
-    <div className="metric-read">
-      <span className="v">{value}</span>
-      {under !== undefined && <span className="u">{under}</span>}
-    </div>
-  );
-}
 
 const CPU_PERCENT_MAX = 100;
 
@@ -344,7 +322,8 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
       {chart}
       {busy !== null && (
         <Reading
-          value={percent(busy)}
+          value={String(Math.round(busy))}
+          unit="%"
           under={
             row.threads === null
               ? undefined
@@ -445,7 +424,8 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
       {chart}
       {used !== null && (
         <Reading
-          value={percent((used / total) * 100)}
+          value={String(Math.round((used / total) * 100))}
+          unit="%"
           // binaryBytes, like the enlarged chart's own axis: a stack read
           // against a binary ceiling and labelled decimally underneath makes
           // one quantity look like two.
@@ -546,15 +526,21 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
           column of dashes that looked like data. The gap in the sparkline
           beside it already says the host stopped talking, and the badge on the
           host cell says why. */}
+      {/* The words, not arrows. This app says "in" and "out" everywhere else
+          it names the two directions -- the fleet's own traffic figure reads
+          "in + out", and Graphs.tsx names its bands the same -- so a pair of
+          arrows was the one place a reader had to translate. The aria-labels
+          keep saying inbound and outbound, which is what a screen reader
+          needs and what an arrow never said to one anyway. */}
       <div className="traffic-rates">
         {rx === null ? null : (
           <span className="rate" aria-label={`inbound ${byterate(rx)}`}>
-            <span aria-hidden="true">↑</span> {byterate(rx)}
+            <i aria-hidden="true">in</i> {byterate(rx)}
           </span>
         )}
         {tx === null ? null : (
           <span className="rate" aria-label={`outbound ${byterate(tx)}`}>
-            <span aria-hidden="true">↓</span> {byterate(tx)}
+            <i aria-hidden="true">out</i> {byterate(tx)}
           </span>
         )}
       </div>
@@ -577,15 +563,44 @@ function DiskCell({ row }: { row: HostRow }) {
     // is the same mistake one step quieter. See MemoryCell.
     return null;
   }
-  const { mount, pct, others } = row.fullest;
+  const { mount, pct, others, free } = row.fullest;
   const label = others > 0 ? `${mount} +${others}` : mount;
-  // Meter's own row reserves a fixed 92px for its value, which is sized for
-  // the host page's "108.9 GB of 137.4 GB" and leaves a percentage floating
-  // half a column away from the bar it belongs to. Scoped here rather than
-  // changed in .mrow, which that panel still needs.
+  // The three facts stacked over one 132px column, rather than Meter's own
+  // row: the mount and its percentage on one line above the bar, the bar,
+  // and what is left under it. Meter's arrangement puts the reading in a
+  // fixed 92px column to the RIGHT of the bar -- sized for the host page's
+  // "108.9 GB of 137.4 GB" -- which leaves the percentage floating half a
+  // column from the bar it belongs to and no room for the free figure.
+  //
+  // The percentage takes the severity the meter fills with, because it is
+  // the same reading: a red bar under a plain number said one thing twice
+  // and only half of it in the second place. severityFromPercent is Meter's
+  // own function, so the two cannot drift apart.
+  // The app's own spelling for these classes is st-warn / st-crit (see the
+  // status pair in index.css); severityFromPercent answers with the long
+  // words, so the two are mapped rather than interpolated.
+  const SEVERITY_CLASS = {
+    ok: "",
+    warning: "st-warn",
+    serious: "st-serious",
+    critical: "st-crit",
+  } as const;
+  const severity = SEVERITY_CLASS[severityFromPercent(pct)];
   return (
     <div className="disk-cell">
-      <Meter value={pct} max={100} label={label} />
+      <div className="dtop">
+        <span className="dmount">{label}</span>
+        <span className={severity === "" ? "dpct" : `dpct ${severity}`}>
+          {Math.round(pct)}
+          <small>%</small>
+        </span>
+      </div>
+      <Meter value={pct} max={100} />
+      {/* Bytes left, which the percentage cannot say on its own: 90% of a
+          6.7 TB array is 674 GB free and 90% of a 4 GB root is not. Null is
+          "not known" -- the assembler leaves it unset when the host reported
+          no size -- and prints nothing rather than a dash. */}
+      {free == null ? null : <div className="dfree">{bytes(free)} left</div>}
     </div>
   );
 }

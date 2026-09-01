@@ -363,13 +363,20 @@ h3 {
   margin: 0;
   font-weight: 500;
 }
-/* Links rest in ink and reach for the accent only under the pointer. Colour
-   here is almost entirely the fleet's hostnames, and orange on identity text
-   competed with the status palette it sits beside: dark --accent (#d97757) and
-   --st-serious (#ec835a) are near neighbours, so a hostname next to a severity
-   dot read as a severity itself. Every deliberate accent use in this file sets
-   its own colour (brand, current tab, ghost button, segmented control), so
-   none of them ride on this rule. 120ms is the app's one hover timing. */
+/* Links rest in ink and reach for the accent only under the pointer. Every
+   deliberate accent use in this file sets its own colour -- brand, current
+   tab, ghost button, segmented control, and now the two lists' identity
+   column (.host-cell-name) -- so none of them ride on this rule.
+
+   That column is the exception this rule used to be written against: dark
+   --accent (#d97757) and --st-serious (#ec835a) are near neighbours, so an
+   orange name beside a severity mark can read as a severity itself. What
+   makes it safe where it is: the mark beside a hostname is a BADGE with a
+   word in it ("offline", "sporadic"), not a bare dot, so the hue is never
+   what a reader resolves it by; and the name is the one link in a row of
+   readings, which is the other thing the colour is doing there. A bare
+   status dot next to accent-coloured text is still the thing to avoid.
+   120ms is the app's one hover timing. */
 a {
   color: var(--ink-2);
   text-decoration: none;
@@ -617,10 +624,10 @@ a:hover {
      figures on .srail need no such rule: a .s is a flex item on one line. */
   background: var(--surface);
   border: 1px solid var(--border);
-  /* The severity's own edge. 3px on the left rather than a tinted ground:
-     these sit above a page of pale cards, and a filled one would be the chip
-     treatment that got taken off every row in the fleet. */
-  border-left: 3px solid var(--border-strong);
+  /* A pill, not a card: the severity rides the dot inside it (see .atile
+     .dot), so the box itself carries no status of its own -- a tinted
+     ground would be the chip treatment that got taken off every row in the
+     fleet. */
   border-radius: var(--radius-pill);
   padding: 5px var(--space-3) 5px var(--space-3);
   color: inherit;
@@ -663,15 +670,6 @@ a:hover {
      up vertically, and these are single headline values. (.srail b does take
      tabular-nums -- three figures on one line, not a headline.) */
 }
-/* The noun rides the number rather than sitting on a line of its own -- "3"
-   beside "Failed units" reads as three failed units, and it is three HOSTS,
-   one of which may have five. */
-.atile .v .u {
-  font-size: var(--text-micro);
-  font-weight: 500;
-  letter-spacing: 0;
-  color: var(--muted);
-}
 .atile .d {
   font-size: var(--text-micro);
   color: var(--muted);
@@ -679,14 +677,15 @@ a:hover {
 /* Status ink on the count and on the word under it, so the two agree. The
    edge takes the raw hue -- it is a mark, not text, and has no contrast floor
    to clear. */
-.atile.st-crit {
-  border-left-color: var(--st-crit);
-}
-.atile.st-warn {
-  border-left-color: var(--st-warn);
-}
-.atile.st-serious {
-  border-left-color: var(--st-serious);
+/* The severity's mark: a dot. The pill carried it as a 3px left edge, which
+   on a rounded chip read as part of the border. Only the geometry is here --
+   the hue comes from the global `.st-* .dot` pair further down, which the
+   chip's own severity class already matches. */
+.atile .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
 }
 .atile.st-crit .v,
 .atile.st-crit .d {
@@ -702,11 +701,6 @@ a:hover {
 }
 /* The unit keeps its quiet grey inside a coloured value: it is the noun, not
    the reading. */
-.atile.st-crit .v .u,
-.atile.st-warn .v .u,
-.atile.st-serious .v .u {
-  color: var(--muted);
-}
 
 /* What the list is showing and how to stop it showing only that. The band's
    own "+30 more hosts" was the counter-example: a truncation with nothing to
@@ -786,27 +780,31 @@ a:hover {
    uses the same classes — it had been left behind on the older .host/.name/
    .site set below, which is how two lists of the same kind of thing ended up
    looking like two different designs. */
-/* The mark, then the two lines it labels. The distribution mark belongs to
-   the whole host rather than to its name, so it sits outside the pair and is
-   centred against both -- the arrangement Observium's device list uses, and
-   the reason the cell is a row with a column inside it rather than the plain
-   column it was. A host whose OS has no mark renders nothing at all, so the
-   lines simply start where they always did. */
+/* The identity cell, in both lists: a name and the line under it. It is
+   SHARED -- the container list builds its name cell from these same classes
+   (features/container/columns.tsx) -- so nothing that belongs to one list
+   goes here. The fleet's distribution mark needs a row around this pair, and
+   that row is .fleet-host below rather than this rule, which briefly held it
+   and re-laid-out every container row for a mark they do not have. */
 .host-cell {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-3);
-}
-.host-cell-lines {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
-  /* min-width:0 so a long hostname truncates inside the cell instead of
-     setting the column's minimum width and pushing the charts out of the
-     row. */
+  /* min-width:0 so a long name truncates inside the cell instead of setting
+     the column's minimum width and pushing the charts out of the row. */
   min-width: 0;
+}
+/* The fleet's own wrapper: the mark, then the pair of lines it labels. The
+   mark belongs to the whole host rather than to its name, so it sits outside
+   the pair and is centred against both -- Observium's arrangement. A host
+   whose OS has no mark renders nothing at all, and the lines simply start
+   where they always did. */
+.fleet-host {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
 }
 /* 22px, against the 14 the same component draws at on the host page. There
    it sits inline before the OS NAME, at the size of the words beside it;
@@ -814,7 +812,7 @@ a:hover {
    the size a reader identifies a distro from without reading. --muted, not
    the mark's brand colour: it is decoration beside an identifier, and the
    release it stands for is spelled out on the line underneath. */
-.host-cell .osicon {
+.fleet-host .osicon {
   width: 22px;
   height: 22px;
   flex: none;
@@ -828,18 +826,30 @@ a:hover {
   gap: var(--space-2);
   flex-wrap: wrap;
 }
+/* The name, in the accent. Everything else in a row is a reading; this is
+   the thing a reader came to find, and it is also the only link in the row,
+   so the colour does two jobs at once. Both lists get it: the container name
+   one column over is the same kind of thing. */
 .host-cell-name {
   font-weight: 500;
   font-size: var(--text-ui);
+  color: var(--accent);
+}
+/* Underlined on row hover rather than on the link itself: the whole row is
+   the target a pointer is over, and underlining only under the cursor made
+   the name look like the one live thing in a row that is entirely live. */
+tbody tr:hover .host-cell-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .host-cell-site {
-  font-size: var(--text-label);
-  /* One line, whatever the agent reported. os-release PRETTY_NAME runs long
-     -- "Debian GNU/Linux 12 (bookworm)" -- and wrapped it took the row from
-     two lines to three, which is height on EVERY row of the fleet to finish
-     one string on five of them. Truncated, the release is still the first
-     thing on the line after the place, and the host page spells it out in
-     full. */
+  /* Micro, a step under the name it sits below. It was --text-label, which
+     is the size of the readings across the row -- so the quietest line in
+     the cell was set at the same size as every figure competing with it. */
+  font-size: var(--text-micro);
+  /* One line, whatever it holds: a long container key or a long place name
+     otherwise takes the row from two lines to three, which is height on
+     every row to finish one string on a few of them. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -878,15 +888,31 @@ a:hover {
 .metric-read {
   display: flex;
   flex-direction: column;
+  /* Fixed and right-aligned, so the figures form a column: with the block
+     sized to its text, "8 %" and "100 %" started at different x and the eye
+     had to find each number instead of reading down them. 78px holds
+     "100 %" and "216.3 kB/s" without wrapping. */
+  width: 78px;
+  text-align: right;
+  align-items: flex-end;
   /* flex:none for the same reason .traffic-rates has it: a reading that gave
      way would wrap a percentage mid-number. */
   flex: none;
   line-height: 1.35;
 }
 .metric-read .v {
-  font-size: var(--text-label);
+  font-size: var(--text-ui);
   color: var(--ink);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+/* The unit rides the figure a step smaller and a step quieter -- "34 %", not
+   "34%". At the same size the percent sign reads as a digit, which is
+   exactly what a column of tabular figures does not need. */
+.metric-read .v small {
+  font-size: var(--text-micro);
+  color: var(--muted);
+  margin-left: 2px;
 }
 /* The unit line -- "of 8 cores", "of 62.8 GiB". --muted-2, the same step the
    location under a hostname takes: it says what the figure above it is
@@ -939,6 +965,12 @@ a:hover {
      45px it no longer does -- left at flex-start the rates hang off the top
      of the mark they annotate. */
   justify-content: center;
+  /* Same fixed block as .metric-read one column over, so the three cells in
+     a row start their readings at the same x. Left-aligned, not right: each
+     line opens with its direction, and those two words are what a reader
+     scans down, not the digits. */
+  width: 98px;
+  line-height: 1.45;
   /* --muted, matching the disk percentage in the same row (.mrow .val).
      These are both the number BESIDE a chart -- a reading the sparkline or
      the meter has already drawn -- and at --ink-2 the traffic rates read a
@@ -963,6 +995,13 @@ a:hover {
 }
 .rate {
   font-variant-numeric: tabular-nums;
+}
+/* The direction, before the rate it belongs to. Quieter than the number: it
+   is the same word on every row and the figure is what changes. */
+.rate i {
+  font-style: normal;
+  color: var(--muted-2);
+  margin-right: 3px;
 }
 
 /* Identifier face — container keys, images, paths. --font-mono because these
@@ -1025,15 +1064,6 @@ a:hover {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-.cval {
-  font-size: var(--text-label);
-  color: var(--muted);
-  /* Never shrink, and never wrap a percentage mid-number: the chart is the
-     item that gives way when the column is squeezed. */
-  flex: none;
-  min-width: 44px;
-  text-align: right;
 }
 
 /* A shell command the reader is meant to copy. .ai-cmd above is the inline
@@ -1558,6 +1588,24 @@ a:hover {
    .atiles row above is gone entirely and this is the only thing left, and a
    page that collapses to a single sentence reads as broken rather than as
    calm. */
+/* Title left, figures right, one line. The two were stacked, which made
+   the figures a second band rather than the tail of the first: they are what
+   the page currently holds, and they read off the end of the line that names
+   it. Baseline-aligned so the 28px title and the 14px figures sit on one
+   line of type; wrapping is allowed, and on a narrow window the figures drop
+   under the title rather than squeezing it. */
+.fleethead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-5);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+.fleethead .srail {
+  margin-left: auto;
+  margin-bottom: 0;
+}
+
 /* The page's name, in the serif the brand mark uses. Display size and a
    normal weight rather than a heavier one: it is the quietest possible way
    to say what page this is, and everything under it -- the chips, the
@@ -1567,7 +1615,7 @@ a:hover {
   font-size: var(--text-display);
   font-weight: 500;
   letter-spacing: -0.01em;
-  margin: 0 0 var(--space-3);
+  margin: 0;
 }
 
 /* A LINE, not a rail of boxes. Four bordered segments under a row of chips
@@ -1609,8 +1657,17 @@ a:hover {
    fell into, for the same reason -- CSS cannot say "the one that starts this
    visual row".
    What separates them is space, which cannot be wrong in either axis. */
+/* The middot between figures. It hangs off the figure that FOLLOWS one,
+   which is what makes a wrapped line read like a wrapped sentence: the mark
+   travels with the phrase it introduces. Under 640px each figure owns a row
+   and the mark is dropped there (see the breakpoint block). */
+.srail .s + .s::before {
+  content: "\00b7";
+  color: var(--muted-2);
+  margin-right: var(--space-3);
+}
 .srail b {
-  font-size: var(--text-ui);
+  font-size: var(--text-label);
   font-weight: 600;
   color: var(--ink);
   /* Tabular here, unlike the old .tile .v: these are three figures on one
@@ -1702,6 +1759,41 @@ a:hover {
   gap: var(--space-2);
   align-items: center;
   margin-bottom: var(--space-3);
+}
+/* The fleet's toolbar closes the page's chrome: a rule under it, so the head,
+   the chips and the controls read as one block and the list starts below a
+   line rather than in mid-air. */
+.fleet .toolbar {
+  padding-bottom: var(--space-3);
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--border);
+}
+/* The filter and the key that focuses it, in one box. Relative so the hint
+   can sit inside the field's right edge instead of beside it, which would
+   make the control read as two things. */
+.filterbox {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.filterbox .ctl {
+  padding-right: 30px;
+}
+.filterbox .kbd {
+  position: absolute;
+  right: 7px;
+  pointer-events: none;
+}
+/* The key cap itself. Micro on the quietest ink this palette has above the
+   floor, with the border doing the work of saying "a key": it is a hint
+   about the keyboard, not a reading. */
+.kbd {
+  font-size: var(--text-micro);
+  color: var(--muted-2);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 1.5;
 }
 .toolbar .spacer {
   margin-left: auto;
@@ -2225,9 +2317,71 @@ details.sysfold > .body {
 /* The fleet's disk cell: a percentage needs nowhere near the 92px the host
    page's byte counts do, and the fixed column left it stranded away from its
    own bar. `auto` sizes it to the number it holds. */
-.disk-cell .mrow {
-  grid-template-columns: 1fr auto;
+/* Three facts over one 132px column: the mount and how full it is, the bar,
+   and what is left. Meter's own row puts its reading in a fixed 92px column
+   to the RIGHT of the bar -- sized for the host page's "108.9 GB of
+   137.4 GB" -- which left the percentage floating half a column from the bar
+   and had nowhere to put the free figure. */
+.disk-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+.disk-cell .dtop {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: var(--space-2);
+  width: 132px;
+}
+.disk-cell .dmount {
+  font-size: var(--text-micro);
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.disk-cell .dpct {
+  font-size: var(--text-ui);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.disk-cell .dpct small {
+  font-size: var(--text-micro);
+  color: var(--muted);
+  margin-left: 2px;
+}
+/* The percentage takes the fill's own severity: a red bar under an ink
+   number said one thing twice and only half of it the second time. The text
+   steps, never the mark's hue -- see the --st-*-text note in the palette. */
+.disk-cell .dpct.st-warn {
+  color: var(--st-warn-text);
+}
+.disk-cell .dpct.st-serious {
+  color: var(--st-serious-text);
+}
+.disk-cell .dpct.st-crit {
+  color: var(--st-crit-text);
+}
+.disk-cell .dfree {
+  font-size: var(--text-micro);
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
+}
+/* Meter draws its own row; here it is only the bar, so the label column and
+   the value column both collapse. */
+.disk-cell .mrow {
+  display: block;
+  padding: 0;
+  border-bottom: 0;
+}
+.disk-cell .mrow .val {
+  display: none;
+}
+.disk-cell .meter {
+  width: 132px;
 }
 /* The host page's filesystem list. Every mount carries a bar, not just the
    fullest one: a card that lists six filesystems as text makes a reader
@@ -3020,11 +3174,14 @@ svg.spark {
   .app > main {
     padding: var(--space-3) var(--space-3) 64px;
   }
-  /* One figure per row at this width, rather than two-and-one. Purely about
-     the break: the figures are separated by space, which works down a column
-     as well as it works along a line. */
+  /* One figure per row at this width, rather than two-and-one -- and with
+     each on its own row the middot has nothing to separate: it would open
+     every line but the first with a stray dot. */
   .srail .s {
     flex: 1 0 100%;
+  }
+  .srail .s + .s::before {
+    content: none;
   }
   .toolbar {
     flex-wrap: wrap;
@@ -3316,6 +3473,15 @@ tbody:first-of-type .grouprow th {
   padding: 2px 0 0;
   border-bottom: 0;
 }
+/* What the meter is measured against, one step under it -- the same role
+   and the same tokens as .metric-read .u across the two lists. */
+.climit {
+  font-size: var(--text-micro);
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  margin-top: 2px;
+}
 .mem-cell .val {
   /* --text-label, like .uptime-cell and .traffic-cell .rate: the same job
      -- a quiet secondary reading inside a table cell -- and --text-micro
@@ -3524,4 +3690,34 @@ summary:focus-visible,
 .skip:focus {
   left: var(--space-3);
   top: var(--space-3);
+}
+
+/* ── The fleet's two lists sit ON the page ──────────────────────────────
+   Everywhere else a table is a card: a bordered box on --surface, which is
+   right for a panel among other panels on the host page. The fleet page is
+   nothing BUT its list, and a card around the only thing on a page draws a
+   line around the page. Flush, the rows start under the toolbar's rule and
+   the eye goes to the first hostname instead of to a corner radius.
+
+   Scoped to .fleet -- both entities, because the two lists are one page and
+   a frame that appeared with the query string would read as a bug -- and NOT
+   to .tablewrap, which the host page and the container detail still need.
+
+   The stripe drops a rung with the ground it now sits on: --surface over
+   --bg is the same 1.08:1 step --surface-2 over --surface was. */
+.fleet .tablewrap {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  overflow-x: auto;
+}
+.fleet .tablewrap tbody tr:nth-child(even):not(.grouprow) {
+  background: var(--surface);
+}
+.fleet .tablewrap tbody tr:hover:not(.grouprow) {
+  background: var(--surface-2);
+}
+/* The header rail keeps its rule, which is the only line the list needs. */
+.fleet .tablewrap thead th {
+  background: var(--bg);
 }

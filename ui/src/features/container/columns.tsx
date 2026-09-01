@@ -27,6 +27,7 @@
 // what the "gone" pill below is derived from.
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
+import { Reading } from "../../ui/Reading";
 import { When } from "../../ui/When";
 import { Meter, severityFromPercent } from "../../ui/Meter";
 import type { Column } from "../../ui/Table";
@@ -408,7 +409,15 @@ function MemoryCell({
   // dimming cannot reach it from there.
   if (row.mem === undefined || row.mem.length === 0)
     return <span className="absent">{ABSENT}</span>;
-  const limit = row.mem_limit_bytes ?? null;
+  // <= 0, not just null: Docker writes 0 for "no limit", and the rest of
+  // this codebase already reads it that way (containerSeverity below,
+  // ContainerPage's memLimit > 0). Taken as a ceiling it drew a meter with
+  // no fill and a line reading "of 0 B" -- an unlimited container asserting
+  // a limit of nothing.
+  const limit =
+    row.mem_limit_bytes != null && row.mem_limit_bytes > 0
+      ? row.mem_limit_bytes
+      : null;
   return (
     <div className="mem-cell">
       {/* The chart is the button that enlarges it -- only the chart, not the
@@ -430,7 +439,22 @@ function MemoryCell({
           sparkline's subject, and a table cell has no room for
           "1.8 GB of 2.0 GB". */}
       {limit === null ? null : (
-        <Meter value={lastReported(row.mem)} max={limit} />
+        <>
+          <Meter value={lastReported(row.mem)} max={limit} />
+          {/* What the meter is measured against. The meter said how close
+              to the limit without ever saying what the limit IS, so two
+              containers with the same bar and a tenfold difference in
+              headroom read identically.
+
+              Decimal bytes, unlike the fleet's memory cell one list over:
+              every other memory figure in a container row is decimal --
+              the sparkline's own values, the group totals -- and a ceiling
+              labelled binarily under a stack labelled decimally makes one
+              quantity look like two. The fleet cell is binary for the same
+              reason in reverse: its stack is drawn against a binary
+              ceiling. */}
+          <div className="climit">of {bytes(limit)}</div>
+        </>
       )}
     </div>
   );
@@ -561,9 +585,9 @@ export function containerColumns({
       // The chart, and the reading it ends on beside it. Memory has carried
       // its number since it got a meter; CPU was a shape with no value at
       // all, so "which container is busiest" could be sorted but not read.
-      // The number is --muted (.cval): the sparkline is the subject and this
-      // annotates it, the same relationship .traffic-rates has on the fleet
-      // row.
+      // Drawn by the shared Reading, which is what the fleet's own CPU and
+      // Memory cells use: one shape for "a chart and its figure" across both
+      // lists.
       cell: (row) =>
         row.cpu === undefined || row.cpu.length === 0 ? (
           ABSENT
@@ -584,9 +608,13 @@ export function containerColumns({
                 print, and the gap in the sparkline beside it already says
                 the container reported nothing. */}
             {lastReported(row.cpu) === null ? null : (
-              <span className="cval tnum">
-                {percent(lastReported(row.cpu))}
-              </span>
+              // The same block the fleet's CPU cell draws, so "a chart and
+              // the figure it ends on" is one shape in both lists rather
+              // than two that happen to sit one nav entry apart.
+              <Reading
+                value={String(Math.round(lastReported(row.cpu) as number))}
+                unit="%"
+              />
             )}
           </div>
         ),
