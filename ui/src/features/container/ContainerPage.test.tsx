@@ -59,6 +59,13 @@ const LIMITED = metrics([
   point("2026-08-10T13:59:00Z", [14, 5e8, 1e9, 1.1e6, 2.1e5, 0, 4.2e5]),
 ]);
 
+// Samples that stop two hours before NOW -- well past SILENT_AFTER_S, so the
+// clock-based branch of deriveState reaches "Silent" on its own.
+const STALE = metrics([
+  point("2026-08-10T11:58:00Z", [12, 5e8, 1e9, 1e6, 2e5, 0, 4e5]),
+  point("2026-08-10T11:59:00Z", [14, 5e8, 1e9, 1.1e6, 2.1e5, 0, 4.2e5]),
+]);
+
 const CONTAINER: Container = {
   id: 7,
   container_key: "shop/web",
@@ -416,18 +423,38 @@ describe("ContainerPage", () => {
     }
   });
 
-  // The page renders both the badge and the gone pill from the same host, so
-  // this is where the two used to contradict each other: no pill, because
-  // containerIsGone spares an offline host's containers, beside a badge
-  // calling the container Silent.
+  // The bug end to end: the host stopped two hours ago, so the container's
+  // samples stopped with it and STALE is old enough that the clock-based
+  // branch would have called the container Silent. containerIsGone spares an
+  // offline host's containers, so no purge was offered -- a badge blaming the
+  // container above no way to act on it.
   it("blames the host, not the container, when the host went quiet", () => {
     renderPage({
       host: { ...HOST, last_seen: "2026-08-10T12:00:00Z" },
+      metrics: STALE,
+      onPurged: vi.fn(),
     });
 
     expect(screen.getByText("Host offline")).toBeInTheDocument();
     expect(screen.queryByText("Silent")).toBeNull();
-    expect(screen.queryByText("gone")).toBeNull();
+    expect(screen.queryByRole("button", { name: /purge/i })).toBeNull();
+  });
+
+  // The other direction: this container stopped an hour before its host did,
+  // so it IS gone by the lists' own measure and the purge button is offered.
+  // The badge must not answer "Host offline" over a button that deletes this
+  // container's history.
+  it("keeps blaming the container when it stopped before its host did", () => {
+    renderPage({
+      container: { ...CONTAINER, last_seen: "2026-08-10T11:00:00Z" },
+      host: { ...HOST, last_seen: "2026-08-10T12:00:00Z" },
+      metrics: STALE,
+      onPurged: vi.fn(),
+    });
+
+    expect(screen.queryByText("Host offline")).toBeNull();
+    expect(screen.getByText("Silent")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /purge/i })).toBeInTheDocument();
   });
 
   it("hands a range change back to the caller", async () => {
