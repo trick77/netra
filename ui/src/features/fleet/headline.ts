@@ -73,11 +73,19 @@ export function hostHeadline(total: number, troubled: number): Headline {
  * `known` is the difference between a fleet that runs no containers and a
  * fan-out that has not answered yet -- the same distinction the figure beside
  * it makes, and the reason this does not simply read `total === 0`.
+ *
+ * `complete` is the weaker version of the same doubt: the fan-out answered,
+ * but not for every host. A partial list can still say how many of the rows
+ * it HAS are unwell, and that is the clause -- what it must not do is call
+ * the fleet's containers all healthy over a note reading "1 host could not
+ * be asked for containers". So the all-clear tail is withheld and the
+ * heading states the count alone.
  */
 export function containerHeadline(
   total: number,
   troubled: number,
   known: boolean,
+  complete = true,
 ): Headline {
   if (!known || total === 0) {
     return { stem: "Containers", clause: null, steady: null };
@@ -87,7 +95,7 @@ export function containerHeadline(
     return {
       stem,
       clause: null,
-      steady: total === 1 ? "reporting" : "all reporting",
+      steady: complete ? (total === 1 ? "reporting" : "all reporting") : null,
     };
   }
   const clause =

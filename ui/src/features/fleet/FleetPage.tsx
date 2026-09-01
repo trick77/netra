@@ -21,6 +21,7 @@ import {
   isConditionKind,
   kindLabel,
   kindSeverity,
+  worstSeverity,
   type AttentionFilter,
   type Condition,
   type HostGroup,
@@ -130,23 +131,6 @@ const SEVERITY_CLASS: Record<Severity, string | undefined> = {
   serious: "st-serious",
   critical: "st-crit",
 };
-
-const SEVERITY_RANK: Record<Severity, number> = {
-  critical: 3,
-  serious: 2,
-  warning: 1,
-  ok: 0,
-  neutral: 0,
-};
-
-/** The worst of them, or `neutral` over nothing at all. */
-function worstSeverity(list: readonly Severity[]): Severity {
-  return list.reduce<Severity>(
-    (worst, next) =>
-      SEVERITY_RANK[next] > SEVERITY_RANK[worst] ? next : worst,
-    "neutral",
-  );
-}
 
 export interface FleetPageProps {
   /** Injected rows. When omitted the page fetches its own. */
@@ -462,22 +446,34 @@ export function FleetPage({
 
   // What the page calls itself, on whichever tab is up.
   //
-  // The troubled containers are counted off the tiles rather than derived a
-  // second time: the tiles ARE the chips under the heading, so the sentence
-  // and the chips cannot end up disagreeing about how many there are. Every
-  // container has exactly one state, so the tiles do not overlap and the
-  // lengths add up -- unlike the host severities above, which deliberately
-  // do.
-  const troubledContainers = containerTiles.reduce(
-    (n, tile) => n + tile.ids.length,
-    0,
-  );
+  // Counted off the derived STATES rather than off the tiles the chips are
+  // drawn from, because the two sets differ at both ends and the heading
+  // wants neither edge of the tiles:
+  //
+  //   `no-samples` has no tile on purpose -- a host whose cgroup mount is
+  //   unreadable reports nothing for any container on it, and a chip per kind
+  //   is not what says so. It is emphatically not "reporting normally"
+  //   though, and counted off the tiles a fleet like that read "12
+  //   containers, all reporting" over twelve rows saying No samples.
+  //
+  //   `paused` has a tile and is not a fault: the silence check has already
+  //   passed, so a paused container IS still being sampled. Somebody stopped
+  //   it on purpose, and three of them must not make the heading claim three
+  //   containers stopped reporting.
+  const troubledContainers = [...containerStates.values()].filter(
+    (state) => state.kind !== "reporting" && state.kind !== "paused",
+  ).length;
   const head: Headline =
     entity === "containers"
       ? containerHeadline(
           containerRows.length,
           troubledContainers,
           containersKnown,
+          // A fan-out that lost a host to a 500 knows what it has and not
+          // what it is missing, so it may count the unwell and may not call
+          // the rest well. The note stating which hosts went unasked is
+          // directly above this line.
+          containerError === null,
         )
       : hostHeadline(hostRows.length, troubled);
   // Coloured by the worst kind on screen, off the same tiles: a kind enters
@@ -602,10 +598,14 @@ export function FleetPage({
             href="/"
             onSelect={() => setEntity("hosts")}
           />
-          {/* Hosts only. On the containers tab the heading has just counted
-              the containers, and a figure restating the same number directly
-              under its own sentence is the page saying one thing twice. */}
-          {entity === "hosts" ? (
+          {/* Dropped only where the heading has just counted the containers,
+              which is the one case the figure would say the same number
+              twice. When the heading falls back to the bare word (a fleet
+              running none, or a fan-out that has not answered) it counts
+              nothing, and the figure is the only thing on the page that
+              would -- including the absent marker for the unanswered
+              case. */}
+          {entity === "hosts" || head.stem === "Containers" ? (
             <StatFigure
               value={containersKnown ? containerRows.length : ABSENT}
               label="containers"

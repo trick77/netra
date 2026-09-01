@@ -229,6 +229,22 @@ export function worstOf(conditions: readonly Condition[]): Condition {
   );
 }
 
+/**
+ * The worst of a bare list of severities, `neutral` over an empty one.
+ *
+ * The same ranking as worstOf, for callers holding severities rather than
+ * conditions -- the fleet head colours its clause by the worst kind on
+ * screen, and the tiles it reads carry severities, not conditions. Exported
+ * so that ranking table stays in one file.
+ */
+export function worstSeverity(list: readonly Severity[]): Severity {
+  return list.reduce<Severity>(
+    (worst, next) =>
+      SEVERITY_RANK[next] > SEVERITY_RANK[worst] ? next : worst,
+    "neutral",
+  );
+}
+
 export interface HostGroup {
   hostId: string;
   hostname: string;

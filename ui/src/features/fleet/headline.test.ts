@@ -73,4 +73,20 @@ describe("containerHeadline", () => {
     expect(read(containerHeadline(0, 0, false))).toBe("Containers");
     expect(read(containerHeadline(0, 0, true))).toBe("Containers");
   });
+
+  // One host answered 500, so the list is short by however many containers
+  // that host runs. It can still say how many of the rows it HAS are unwell;
+  // what it cannot do is call the fleet's containers all healthy above a note
+  // saying a host went unasked.
+  describe("a fan-out that lost a host", () => {
+    it("withholds the all-clear it has no basis for", () => {
+      expect(read(containerHeadline(18, 0, true, false))).toBe("18 containers");
+    });
+
+    it("still counts the ones it can see", () => {
+      expect(read(containerHeadline(18, 2, true, false))).toBe(
+        "18 containers, 2 not reporting normally",
+      );
+    });
+  });
 });
