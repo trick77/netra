@@ -150,15 +150,40 @@ describe("hostColumns", () => {
 
     // A fraction of the ceiling the cell draws against, never the bytes: on
     // bytes the fleet would order by how much RAM each machine HAS.
+    // The gauge the cell prints, not the height of the stack beside it: the
+    // bands here sum to 15 of 16 GB because the kernel is caching, and
+    // ordering on that ranks the fleet by how little memory is FREE. This row
+    // is using 4 GB and sorts as a quarter full, which is what its cell says.
     it("sorts Memory on the fraction of mem_total in use", () => {
       const memory = hostColumns("1h").find((c) => c.header === "Memory")!;
       const row = makeRow({
         mem_total: 16_000_000_000,
+        mem_used: 4_000_000_000,
         last_seen: new Date().toISOString(),
-        mem: [{ name: "used", color: "var(--s1)", values: [null, 4e9] }],
+        mem: [
+          { name: "used", color: "var(--s1)", values: [null, 4e9] },
+          { name: "cached", color: "var(--s3)", values: [null, 11e9] },
+        ],
       });
 
       expect(memory.sortValue!(row)).toBeCloseTo(0.25);
+    });
+
+    // A host that has posted metrics but no memory gauge yet sorts as
+    // unknown rather than as empty -- the same rule the cell follows when it
+    // prints nothing at all.
+    it("gives a host with no memory reading no sort value", () => {
+      const memory = hostColumns("1h").find((c) => c.header === "Memory")!;
+
+      expect(
+        memory.sortValue!(
+          makeRow({
+            mem_used: null,
+            mem_total: 16_000_000_000,
+            last_seen: new Date().toISOString(),
+          }),
+        ),
+      ).toBeNull();
     });
 
     it("gives a host with no memory ceiling no sort value", () => {
@@ -718,8 +743,10 @@ describe("hostColumns", () => {
       expect(container.textContent).toBe("");
     });
 
-    // The height of the stack says how full the host is; this says it in
-    // figures, against the ceiling the stack is drawn to.
+    // mem_used over mem_total, which is what `free` calls used and what the
+    // host page prints for the same machine. NOT the height of the stack
+    // beside it: that is everything which is not free, so the bands here sum
+    // to 12 GB while the host is actually using 4.
     it("prints how full the host is, and what it is full of", () => {
       const memCol = hostColumns("1h").find((c) => c.header === "Memory")!;
       const { container } = render(
@@ -727,18 +754,49 @@ describe("hostColumns", () => {
           {memCol.cell(
             makeRow({
               mem_total: 16_000_000_000,
+              mem_used: 4_000_000_000,
               last_seen: new Date().toISOString(),
               mem: [
-                { name: "used", color: "var(--s1)", values: [8e9, 8e9, 8e9] },
+                { name: "used", color: "var(--s1)", values: [4e9, 4e9, 4e9] },
+                { name: "cached", color: "var(--s3)", values: [8e9, 8e9, 8e9] },
               ],
             }),
           )}
         </>,
       );
 
-      expect(container.textContent).toContain("50");
+      expect(container.querySelector(".metric-read .v")?.textContent).toBe(
+        "25%",
+      );
       // binaryBytes, like the enlarged chart's axis: 16 GB is 14.9 GiB.
       expect(container.textContent).toContain("of 14.9 GiB");
+    });
+
+    // The page cache is not memory a host has spent -- the kernel gives it
+    // back on demand -- so a file server sitting at 97% "not free" is not a
+    // host in trouble. This is the reading that made the fleet row disagree
+    // with the host page about the same machine.
+    it("does not count reclaimable cache as memory in use", () => {
+      const memCol = hostColumns("1h").find((c) => c.header === "Memory")!;
+      const { container } = render(
+        <>
+          {memCol.cell(
+            makeRow({
+              mem_total: 100,
+              mem_used: 30,
+              last_seen: new Date().toISOString(),
+              mem: [
+                { name: "used", color: "var(--s1)", values: [30] },
+                { name: "cached", color: "var(--s3)", values: [67] },
+              ],
+            }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector(".metric-read .v")?.textContent).toBe(
+        "30%",
+      );
     });
 
     it("prints no reading for a host that stopped reporting", () => {
