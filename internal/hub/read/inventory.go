@@ -44,6 +44,29 @@ type Container struct {
 	// prune's floor, and shipping it beside an agent-clocked last_seen would
 	// put a pair on the wire that can read first_seen > last_seen.
 	LastSeen time.Time `json:"last_seen"`
+
+	// What Docker itself says, as opposed to what the cgroup measures. Every
+	// one is a pointer, and null means "not reported" rather than a default --
+	// the same rule Unit.State follows below, and the reason the container page
+	// carried a card naming these as uncollected for as long as they were.
+	//
+	// DockerState is running, paused or restarting. It can never be "exited":
+	// sample rows are driven by the agent's cgroup walk, so a stopped container
+	// emits nothing at all and its absence is what LastSeen reports.
+	DockerState *string `json:"docker_state"`
+	// Health is healthy, unhealthy, starting or none. "none" is a reading --
+	// the image defines no HEALTHCHECK -- and is not the same as null.
+	Health *string `json:"health"`
+	// StateSince is when DockerState was entered, advanced only when the state
+	// actually changes. Same rule as Unit.Since.
+	StateSince *time.Time `json:"state_since"`
+	// RestartCount is Docker's own counter for this container. It resets when a
+	// container is recreated, so against a compose-keyed history a DECREASE is
+	// a redeploy and an increase is a crash-restart.
+	RestartCount *int64 `json:"restart_count"`
+	// Labels is every label the daemon reported. An empty object is a container
+	// with no labels; null is a container nobody could ask about.
+	Labels map[string]string `json:"labels"`
 }
 
 // Filesystem is one row of /hosts/{id}/filesystems.
@@ -210,7 +233,8 @@ func (s *Service) Containers(ctx context.Context, hostID int32) ([]Container, er
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, container_key, name, image, is_agent, last_seen
+		SELECT id, container_key, name, image, is_agent, last_seen,
+		       docker_state, health, state_ts, restart_count, labels
 		  FROM containers
 		 WHERE host_id = $1
 		 ORDER BY container_key`, hostID)
@@ -222,7 +246,8 @@ func (s *Service) Containers(ctx context.Context, hostID int32) ([]Container, er
 	out := []Container{}
 	for rows.Next() {
 		var c Container
-		if err := rows.Scan(&c.ID, &c.Key, &c.Name, &c.Image, &c.IsAgent, &c.LastSeen); err != nil {
+		if err := rows.Scan(&c.ID, &c.Key, &c.Name, &c.Image, &c.IsAgent, &c.LastSeen,
+			&c.DockerState, &c.Health, &c.StateSince, &c.RestartCount, &c.Labels); err != nil {
 			return nil, fmt.Errorf("scan container: %w", err)
 		}
 		out = append(out, c)

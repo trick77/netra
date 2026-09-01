@@ -19,10 +19,17 @@
 // page-specific, so it moved here rather than being copied.
 //
 // Every label names a MEASUREMENT: samples arrived, samples stopped, memory
-// approached its limit, the series has a hole. The likely cause goes in `why`,
-// never in the label, because "restarted" is a guess -- restarts reach neither
-// the wire nor the schema (spec 11) -- and a badge is not the place to make
-// one.
+// approached its limit, the series has a hole, Docker called the container
+// unhealthy. The likely cause goes in `why`, never in the label.
+//
+// That last one is new, and it is the first thing here that is not derived. It
+// used to say restarts reach neither the wire nor the schema, so "Series gap"
+// refused to name a restart it could not measure; the agent now reads state,
+// health and restart counts off the Docker socket and they arrive on the
+// container row. Where Docker has SAID something, this stops inferring and
+// quotes it -- but only where it can, and only while it is fresh: these
+// attributes ride in on a sample, so a container that has gone silent has
+// nothing current to quote and the derived branches still own it.
 import type { Severity } from "../../ui/Badge";
 import type { HostStatus } from "../../lib/host";
 
@@ -49,6 +56,9 @@ export type ContainerStateKind =
   | "no-samples"
   | "gone"
   | "silent"
+  | "unhealthy"
+  | "restarting"
+  | "paused"
   | "mem-pressure"
   | "series-gap"
   | "reporting";
@@ -98,6 +108,35 @@ export interface DerivedStateInput {
    */
   gone?: boolean;
   silentAfterS?: number;
+  /**
+   * Docker's own word for what the container is doing, from
+   * containers.docker_state.
+   *
+   * null is "not reported" -- no socket, or an agent older than the release
+   * that sends it -- and every branch below treats it as saying nothing rather
+   * than as saying "running". An agent that cannot see Docker leaves this page
+   * exactly as it was before Docker was read at all.
+   */
+  dockerState?: string | null;
+  /**
+   * Docker's health, from containers.health.
+   *
+   * "none" is the commonest value on a real host and means the image defines
+   * no HEALTHCHECK. It is a measurement and NOT a problem, so it changes
+   * nothing here -- only "unhealthy" does.
+   */
+  health?: string | null;
+  /**
+   * How much Docker's restart counter rose across the window on screen, or
+   * null where it cannot be known.
+   *
+   * It is the difference, not the total: this exists to explain a hole in the
+   * series, and "this container has restarted 31 times since it was created"
+   * does not say whether it restarted during the gap being looked at. Null
+   * where the series has no restart_count at all, which is every range served
+   * from a rolled-up tier -- the column lives only in the raw table.
+   */
+  restartsInWindow?: number | null;
 }
 
 export function deriveState({
@@ -109,6 +148,9 @@ export function deriveState({
   hostState,
   gone = false,
   silentAfterS = SILENT_AFTER_S,
+  dockerState = null,
+  health = null,
+  restartsInWindow = null,
 }: DerivedStateInput): DerivedState {
   // First, above every branch that reads the sample stream, because this one
   // says the stream STOPPED while the host kept posting -- which is the fact
@@ -178,6 +220,46 @@ export function deriveState({
     };
   }
 
+  // Docker's own answers, and they sit HERE rather than at the top on purpose.
+  //
+  // Every one of them arrived on a sample, so they are exactly as fresh as the
+  // sample stream is. Above this line the stream is broken -- the host is
+  // gone, nothing was ever reported, the container stopped reporting -- and a
+  // "healthy" from twenty minutes ago is not a fact about the container now.
+  // The three branches above own those cases; this one only speaks while the
+  // samples are current.
+  //
+  // Below this line the derivation continues as it always did, so a fleet whose
+  // agents cannot read the socket is exactly as informative as it was before.
+  if (dockerState === "restarting") {
+    return {
+      kind: "restarting",
+      label: "Restarting",
+      severity: "serious",
+      why: "Docker reports the container as restarting, which on a container that stays in this state is a crash loop",
+    };
+  }
+
+  if (health === "unhealthy") {
+    return {
+      kind: "unhealthy",
+      label: "Unhealthy",
+      severity: "serious",
+      why: "the container's own HEALTHCHECK is failing; the samples below are what it is doing while it fails",
+    };
+  }
+
+  if (dockerState === "paused") {
+    // Neutral, not a warning. A paused container is one somebody paused, and
+    // its flat charts are the consequence rather than a second problem.
+    return {
+      kind: "paused",
+      label: "Paused",
+      severity: "neutral",
+      why: "the container is paused, so its processes are frozen and its counters do not move",
+    };
+  }
+
   if (
     memUsed !== null &&
     memLimit !== null &&
@@ -193,11 +275,24 @@ export function deriveState({
   }
 
   if (gap) {
+    // The one place the restart counter earns its keep. A hole in the series
+    // has always LOOKED like a restart and this could never say so; now it can
+    // check, and it says which of the three cases it is rather than picking
+    // the likeliest.
     return {
       kind: "series-gap",
       label: "Series gap",
       severity: "warning",
-      why: "a hole in the series usually means a restart, but restarts are not collected, so this says only that samples are missing",
+      why:
+        restartsInWindow === null
+          ? // No restart counter for this window: it lives only in the raw
+            // tier, so any range answered from a rollup lands here. Same
+            // wording as before the counter existed, because the same amount
+            // is known.
+            "a hole in the series usually means a restart, but no restart count is available for this range, so this says only that samples are missing"
+          : restartsInWindow > 0
+            ? `samples are missing, and Docker restarted the container ${restartsInWindow === 1 ? "once" : `${restartsInWindow} times`} in this window`
+            : "samples are missing, and the container did not restart -- so the agent, the host or the hub lost them rather than the container going away",
     };
   }
 
@@ -226,10 +321,13 @@ export function deriveState({
  * purge button on it.
  */
 export const FILTERABLE_STATE_KINDS: readonly ContainerStateKind[] = [
+  "unhealthy",
+  "restarting",
   "silent",
   "gone",
   "mem-pressure",
   "series-gap",
+  "paused",
   "host-down",
 ];
 
@@ -246,6 +344,9 @@ const KIND_LABEL: Record<ContainerStateKind, string> = {
   "no-samples": "No samples",
   gone: "Gone",
   silent: "Silent",
+  unhealthy: "Unhealthy",
+  restarting: "Restarting",
+  paused: "Paused",
   "mem-pressure": "Near mem_limit",
   "series-gap": "Series gap",
   reporting: "Reporting",
@@ -266,6 +367,9 @@ const KIND_SEVERITY: Record<ContainerStateKind, Severity> = {
   "no-samples": "neutral",
   gone: "serious",
   silent: "serious",
+  unhealthy: "serious",
+  restarting: "serious",
+  paused: "neutral",
   "mem-pressure": "warning",
   "series-gap": "warning",
   reporting: "ok",
@@ -288,19 +392,45 @@ export function isContainerStateKind(
  * one state that is not about this container, and a reader sorting a list by
  * status is asking which containers to look at.
  *
+ * `unhealthy` and `restarting` outrank both, because they are Docker's own
+ * statement about a container that is STILL being sampled, while silent and
+ * gone are inferences from an absence: a failing healthcheck is a container
+ * asking for attention now, and a container that stopped reporting may simply
+ * have been removed on purpose.
+ *
  * `silent` above `gone` for the reason FILTERABLE_STATE_KINDS gives: newly
  * quiet before long gone, whatever their precedence in the derivation.
+ *
+ * `paused` sits with `host-down` near the bottom for the same reason that one
+ * does -- somebody paused it, so it is not a fault to go and look at.
  */
 const KIND_RANK: Record<ContainerStateKind, number> = {
-  silent: 0,
-  gone: 1,
-  "mem-pressure": 2,
-  "series-gap": 3,
-  "host-down": 4,
-  "no-samples": 5,
-  reporting: 6,
+  unhealthy: 0,
+  restarting: 1,
+  silent: 2,
+  gone: 3,
+  "mem-pressure": 4,
+  "series-gap": 5,
+  paused: 6,
+  "host-down": 7,
+  "no-samples": 8,
+  reporting: 9,
 };
 
 export function stateKindRank(kind: ContainerStateKind): number {
   return KIND_RANK[kind];
 }
+
+/**
+ * The kinds that quote Docker rather than infer from the sample stream.
+ *
+ * The detail page captions its badge with which of the two it is, because how
+ * much a reader should trust "Unhealthy" and how much they should trust
+ * "Series gap" are different questions -- one is the daemon's own answer, the
+ * other is netra reading a shape.
+ */
+export const DOCKER_STATED_KINDS: ReadonlySet<ContainerStateKind> = new Set([
+  "unhealthy",
+  "restarting",
+  "paused",
+]);

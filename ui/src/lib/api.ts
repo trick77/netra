@@ -153,6 +153,28 @@ export type Container = {
    * or stopped -- simply stops appearing, and this is the only thing that
    * says so. Never null: the hub stamps it on the first upsert. */
   last_seen: string;
+  /** Docker's own word: running, paused or restarting -- never "exited". The
+   * agent's rows come from the cgroup walk, so a stopped container emits
+   * nothing at all and its absence is what last_seen reports.
+   *
+   * null is "not reported": an agent with no Docker socket, or one older than
+   * the release that started sending this. It must never render as a state. */
+  docker_state: string | null;
+  /** healthy, unhealthy, starting, or "none".
+   *
+   * "none" is a READING -- the image defines no HEALTHCHECK, which is true of
+   * most images -- and is not the same fact as null, which is that nobody
+   * could look. The two are worded differently on the page. */
+  health: string | null;
+  /** When docker_state was entered, not when the hub last heard about it. */
+  state_since: string | null;
+  /** Docker's restart counter. It resets when a container is RECREATED, and
+   * container_key is the compose service rather than the id, so a decrease
+   * across the history is a redeploy and an increase is a crash-restart. */
+  restart_count: number | null;
+  /** Every label the daemon reported. `{}` is a container with no labels;
+   * null is a container nobody could ask about. */
+  labels: Record<string, string> | null;
 };
 
 // internal/hub/read/inventory.go: Filesystem

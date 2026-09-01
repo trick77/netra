@@ -5,7 +5,7 @@
 // The page takes its data and its range as props rather than fetching:
 // Wave 5 owns the router and the polling loop, and a page that fetches for
 // itself cannot be driven from a URL.
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Badge, type Severity } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { containerIsGone, containerSamplesBlocked } from "./columns";
@@ -16,13 +16,14 @@ import { Segmented } from "../../ui/Segmented";
 import { ChartPanel, type Band } from "../../ui/charts/ChartPanel";
 import type { Container, MetricsResponse } from "../../lib/api";
 import { hostStatus } from "../../lib/host";
-import { deriveState } from "./state";
+import { deriveState, DOCKER_STATED_KINDS } from "./state";
 import {
   hasInteriorGaps,
   hasReading,
   latestValue,
   seriesTimestamps,
   griddedValues,
+  carriesColumn,
   windowNotice,
 } from "../../lib/metrics";
 import {
@@ -69,6 +70,51 @@ export function displayTitle(container: Container): string {
   return container.container_key;
 }
 
+/**
+ * What a field reads as when Docker was never asked.
+ *
+ * Deliberately not ABSENT's bare dash. A dash beside "Health" is read as "no
+ * health problem", which is the exact misreading the Not collected card was
+ * written to prevent; this says which of the two it is. It appears whenever
+ * the agent has no Docker socket, is older than the release that sends these,
+ * or -- for Restarts alone -- has a socket the daemon will not let it inspect.
+ */
+const notReported = "not reported";
+
+/** A label the daemon reports with an empty value. Printing nothing would make
+ * the row look like a rendering bug rather than the label it is. */
+const EMPTY_LABEL = "(empty)";
+
+/**
+ * The only range on this page that carries a restart series, named the way the
+ * range picker names it so the card and the buttons above it agree.
+ *
+ * It is the RAW tier, and which tier answers is decided by the requested STEP
+ * rather than by how far back the range reaches: lib/range.ts asks for 60s at
+ * 1h and 5m at both 6h and 24h, and selectTier takes the coarsest tier at or
+ * below the step. So 6h already resolves to container_samples_5m, where
+ * restart_count does not exist (migration 0012). Naming 6h here would promise
+ * a series on a range that has none.
+ */
+const RESTART_SERIES_RANGE: Range = "1h";
+
+/**
+ * Docker's health, in words rather than in Docker's vocabulary.
+ *
+ * Only "none" is translated. It is the commonest value on a real host -- most
+ * images define no HEALTHCHECK -- and printed raw it reads as a verdict
+ * ("health: none") rather than as the absence of a test. The other three are
+ * already English and are Docker's own terms, which is what an operator will
+ * grep their `docker ps` output for.
+ *
+ * null passes through as null, for the caller to render as notReported: that
+ * is the different fact that nobody could look.
+ */
+export function healthText(health: string | null): string | null {
+  if (health === null) return null;
+  return health === "none" ? "no healthcheck" : health;
+}
+
 type Sampled = {
   cpu: (number | null)[];
   memUsed: (number | null)[];
@@ -83,6 +129,12 @@ type Sampled = {
   memFile: (number | null)[];
   memShmem: (number | null)[];
   memKernel: (number | null)[];
+  /** Docker's restart counter, or null throughout when this tier does not
+   * carry it -- it lives in the raw table only, deliberately (migration 0012).
+   * A rolled-up range therefore knows nothing about restarts, which is a
+   * different fact from a container that did not restart, and the two must
+   * not be collapsed. */
+  restartCount: (number | null)[] | null;
   timestamps: number[];
 };
 
@@ -120,8 +172,39 @@ function read(res: MetricsResponse, containerKey: string): Sampled | null {
     memFile: griddedValues(res, i, "mem_file"),
     memShmem: griddedValues(res, i, "mem_shmem"),
     memKernel: griddedValues(res, i, "mem_kernel"),
+    // Guarded, unlike every column above it. Those exist at every tier, so
+    // asking for one that is missing is a programmer error and
+    // UnknownColumnError is the right answer. restart_count is missing at 5m,
+    // 1h and 1d BY DESIGN, so asking blind would throw on every range but the
+    // 1h one -- a blank page for a working feature. See
+    // RESTART_SERIES_RANGE for why 6h is already a rollup.
+    restartCount: carriesColumn(res, "restart_count")
+      ? griddedValues(res, i, "restart_count")
+      : null,
     timestamps: seriesTimestamps(res, i),
   };
+}
+
+/**
+ * How far Docker's restart counter moved across the window on screen.
+ *
+ * The DIFFERENCE, not the total, because the only question it answers here is
+ * whether a hole in the series is a restart. A container's lifetime total says
+ * nothing about the window being looked at.
+ *
+ * A decrease returns 0 rather than a negative: Docker resets RestartCount when
+ * a container is recreated, and container_key is the compose service, so a
+ * redeploy walks the counter backwards. "Restarted -6 times" is not a
+ * sentence, and a redeploy is not the restart this is trying to explain.
+ *
+ * Null when the tier carries no counter at all, which the caller renders as
+ * "not available for this range" rather than as "did not restart".
+ */
+export function restartsInWindow(sampled: Sampled | null): number | null {
+  if (!sampled?.restartCount) return null;
+  const seen = sampled.restartCount.filter((v): v is number => v !== null);
+  if (seen.length < 2) return null;
+  return Math.max(0, seen[seen.length - 1] - seen[0]);
 }
 
 export interface ContainerBands {
@@ -366,6 +449,9 @@ export function ContainerPage({
     now,
     hostState: hostStatus(host, now),
     gone,
+    dockerState: container.docker_state,
+    health: container.health,
+    restartsInWindow: restartsInWindow(sampled),
   });
 
   const { cpuBands, memBands, netBands, ioBands } = bandsFor(sampled);
@@ -413,10 +499,15 @@ export function ContainerPage({
           {container.image ?? ABSENT}
         </div>
         <Badge severity={state.severity}>{state.label}</Badge>
-        {/* The badge reports a measurement; this word says the state behind
-            it was inferred from samples rather than read from Docker. */}
+        {/* Which of the two the badge is. It used to always say "derived from
+            samples", which was true of every state there was; three of them
+            are now Docker's own word, and a badge quoting the daemon must not
+            claim to have inferred it -- the caption exists to tell a reader how
+            much to trust the badge, so a wrong one is worse than none. */}
         <span className="meta" title={state.why}>
-          derived from samples
+          {DOCKER_STATED_KINDS.has(state.kind)
+            ? "read from Docker"
+            : "derived from samples"}
         </span>
         <Segmented
           options={CONTAINER_RANGES}
@@ -585,35 +676,70 @@ export function ContainerPage({
             </dd>
             <dt>is_agent</dt>
             <dd>{container.is_agent ? "yes" : "no"}</dd>
+            <dt>State</dt>
+            <dd>{container.docker_state ?? notReported}</dd>
+            <dt>Health</dt>
+            <dd>{healthText(container.health) ?? notReported}</dd>
+            <dt>Restarts</dt>
+            <dd>{container.restart_count ?? notReported}</dd>
             <dt>Last sample</dt>
             <dd>{relativeMs(lastSampleMs, now)}</dd>
           </dl>
         </Card>
 
-        {/* Spec 11: the agent reads labels from the Docker socket, but
-            ContainerSample carries only container_key, name, image, is_agent
-            and the six metrics, and the containers table stores the first
-            four. Naming them is the point -- a field that is simply absent
-            from a UI reads as a field that is fine. */}
+        {/* Labels get a card of their own rather than three more rows above.
+            A container can carry twenty of them -- compose writes two,
+            Kubernetes writes annotations through, build pipelines stamp in
+            image provenance -- and twenty pairs inside the Identity list would
+            bury container_key and the host link under them. */}
+        <Card title="Labels">
+          {container.labels === null ? (
+            <p className="muted">{notReported}</p>
+          ) : Object.keys(container.labels).length === 0 ? (
+            /* A measurement, not an absence: the agent read this container's
+               labels and it has none. Rendering it the same as "not reported"
+               would throw away the distinction the wire goes out of its way to
+               carry (ContainerSample.labels is a wrapper message precisely so
+               an empty map and a missing one differ). */
+            <p className="muted">none</p>
+          ) : (
+            <dl className="kv">
+              {Object.entries(container.labels)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([key, value]) => (
+                  <Fragment key={key}>
+                    <dt>{key}</dt>
+                    <dd>{value === "" ? EMPTY_LABEL : value}</dd>
+                  </Fragment>
+                ))}
+            </dl>
+          )}
+        </Card>
+
+        {/* The card that named health, restarts, state and labels as absent.
+            All four are collected now -- they are on the Identity card and in
+            the Labels card above -- so what is left is the residue: three
+            things the collection genuinely still cannot say. The card stays,
+            because that was always its point: a field simply absent from a UI
+            reads as a field that is fine. */}
         <Card title="Not collected">
           <dl className="kv">
-            <dt>Health</dt>
+            <dt>Stopped containers</dt>
             <dd>
-              never read: the agent lists containers and decodes five fields,
-              and the list endpoint carries health only inside its Status
-              string, which is not one of them
+              a container's rows come from its cgroup, and a stopped one has
+              none, so it does not appear here at all -- Docker's own "exited"
+              is never seen and the header badge measures its absence instead
             </dd>
-            <dt>Restarts</dt>
-            <dd>no column on the wire and none in the containers table</dd>
-            <dt>State</dt>
+            <dt>Health history</dt>
             <dd>
-              also absent; the badge in the header is inferred from the sample
-              series, never read from Docker
+              only the latest health and state are kept, so "when did it go
+              unhealthy" has no answer; a transition would need its own table
             </dd>
-            <dt>Labels</dt>
+            <dt>Restarts beyond {RESTART_SERIES_RANGE}</dt>
             <dd>
-              only compose project and service survive, folded into
-              container_key
+              the restart counter lives in the raw samples only, and every range
+              but {RESTART_SERIES_RANGE} is answered from a rollup, so a wider
+              window shows the total above but no series to place it in
             </dd>
           </dl>
         </Card>

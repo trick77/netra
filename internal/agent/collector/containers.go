@@ -29,6 +29,34 @@ type ContainerMeta struct {
 	Service string // compose service label
 	IsAgent bool
 
+	// State and Health are the daemon's own words, both off the SAME list
+	// response as the fields above: State is its top-level State key, Health is
+	// parsed out of its Status string by parseHealth.
+	//
+	// Empty is the same THIRD state NetworkMode describes below -- the socket
+	// said nothing -- and it must stay distinguishable from HealthNone, which
+	// is the agent having looked and found no healthcheck. The row build leaves
+	// the proto field unset for empty and sets it for "none".
+	State  string
+	Health string
+
+	// Labels is every label the daemon reports, not the two compose keys
+	// Project and Service pick out. Those two reach the hub only folded into
+	// container_key, and only when both are set, so a container started outside
+	// compose used to contribute no label at all.
+	//
+	// Nil when the socket said nothing; empty and non-nil when the container
+	// genuinely has none. The wire keeps that distinction (see
+	// ContainerSample.labels), so a UI can tell "no labels" from "not read".
+	Labels map[string]string
+
+	// Restart counts are deliberately NOT here. Every other field on this
+	// struct arrives in the one list response, so the lister fills them in for
+	// free; RestartCount exists only on /containers/{id}/json and is read by a
+	// separate, rationed path -- see ContainerInspector and the restart cache.
+	// Putting it here would invite a lister that inspects every container on
+	// every scrape, which is exactly what that path exists to avoid.
+
 	// NetworkMode is HostConfig.NetworkMode as the daemon reports it: "host",
 	// "bridge", "none", a user-defined network's name, or "container:<id>".
 	//
@@ -97,6 +125,23 @@ type Containers struct {
 	procRoot   string
 	lister     ContainerLister
 
+	// inspector reads Docker's RestartCount, and restarts caches what it
+	// returned so it does not have to be asked again. Both are touched only on
+	// the scrape goroutine -- refreshRestarts and the row build that follows it
+	// -- so unlike netNSDenied they need no mutex; restartCapability is the one
+	// piece Capabilities reads from another goroutine and it is guarded below.
+	inspector ContainerInspector
+	restarts  map[string]restartEntry
+	scrapeN   uint64
+	// inspectFailStreak counts CONSECUTIVE scrapes on which every inspect
+	// attempted was refused. It is what separates a daemon that will not answer
+	// from a container that vanished between the list and the inspect.
+	inspectFailStreak int
+	// labelsCapped latches the per-container budget warning, so a host whose
+	// labels genuinely exceed it says so once rather than once a minute -- the
+	// rule the Docker-socket logging in Collect already follows.
+	labelsCapped map[string]bool
+
 	now func() time.Time
 
 	prev   map[string]containerCounters
@@ -141,6 +186,13 @@ type Containers struct {
 	// netCapability explains why per-container networking is absent, or is
 	// empty when it is working.
 	netCapability string
+
+	// restartCapability explains why restart counts are absent, or is empty
+	// when they are being read. Separate from netCapability for the same
+	// reason that one is separate from "containers": each names a different
+	// part of the collection that is missing, and folding them together would
+	// report a host with no inspect permission as a host with no containers.
+	restartCapability string
 
 	// netNSDenied latches the namespace comparison OFF, PER CONTAINER, after
 	// that container's link is first refused. The comparison is a ptrace-gated
@@ -247,6 +299,16 @@ func (c *Containers) Capabilities() map[string]string {
 		// Separate key from "containers": CPU, memory and I/O are fine in
 		// every case this reports, and only networking is missing.
 		out["container_network"] = c.netCapability
+	}
+	if c.restartCapability != "" && !c.socketAbsent {
+		// Not raised when the socket is absent: "containers: no-docker-socket"
+		// already says nothing Docker knows is reachable, and a second key
+		// repeating it as a restart-specific failure would have the UI print
+		// two explanations for one cause.
+		if out == nil {
+			out = make(map[string]string, 1)
+		}
+		out["container_restarts"] = c.restartCapability
 	}
 	return out
 }
@@ -390,6 +452,20 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 		return &Result{}, nil
 	}
 
+	// Which cgroups were recreated under the same id since the last scrape.
+	// The row loop below reaches the same conclusion for its own purpose --
+	// it refuses to rate a counter that went backwards -- but it reaches it
+	// too late and with a `continue`, so the restart it just detected would
+	// go unreported. Computed here, it is what tells refreshRestarts which
+	// ids are worth a request.
+	recreated := make(map[string]bool)
+	for id, n := range cur {
+		if p, ok := prev[id]; ok && n.cpuUsec < p.cpuUsec {
+			recreated[id] = true
+		}
+	}
+	c.refreshRestarts(ctx, meta, recreated)
+
 	ids := make([]string, 0, len(cur))
 	for id := range cur {
 		ids = append(ids, id)
@@ -423,6 +499,23 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 			// fully-busy core is 1e6 usec per second.
 			CpuPct:  ptrTo(float64(n.cpuUsec-p.cpuUsec) / (elapsed * 1e6) * 100),
 			MemUsed: ptrTo(n.memUsed),
+		}
+		// What Docker says, as opposed to what the cgroup measures. Each is
+		// set only when the socket actually answered: an empty string here is
+		// "no socket", and sending it as a value would put the empty word on a
+		// status badge. HealthNone is the opposite case and IS sent -- the
+		// agent looked and the image defines no healthcheck.
+		if m.State != "" {
+			row.DockerState = ptrTo(m.State)
+		}
+		if m.Health != "" {
+			row.Health = ptrTo(m.Health)
+		}
+		if m.Labels != nil {
+			row.Labels = &netrav1.ContainerLabels{Values: c.cappedLabels(id, m.Labels)}
+		}
+		if restarts, ok := c.readRestart(id); ok {
+			row.RestartCount = ptrTo(restarts)
 		}
 		// Gauges: reported on every scrape a container survives, unlike the
 		// rates above which need a previous reading -- but only where the
@@ -1045,6 +1138,85 @@ func sumNetDev(path string) (rx, tx uint64, ok bool) {
 // flicker between them -- and the log line says what was left out, which
 // silently returning 500 rows would not.
 const maxContainerRows = 500
+
+// maxLabelBytes caps how much label text one container may contribute.
+//
+// maxContainerRows above bounds the ROW count, and until labels there was
+// nothing on a container row whose size an operator controlled -- names, images
+// and twelve numbers. Labels are unbounded by construction: Kubernetes writes
+// annotations through to the container, build pipelines stamp in commit
+// messages and SBOM fragments, and one such container would make the row cap
+// stop implying a byte cap, which is what keeps a scrape under the hub's 4 MiB.
+//
+// 4 KiB is generous for labels a person wrote and small enough that even 500
+// containers at the cap stay well inside the batch. Keys are taken in sorted
+// order so the survivors are the same ones scrape after scrape, for the reason
+// capContainerRows sorts: a set that changes every minute is worse than a set
+// that is short.
+const maxLabelBytes = 4096
+
+// capLabels bounds one container's label map, keeping whole pairs, and reports
+// how many it dropped.
+//
+// A truncated VALUE would be worse than an absent one -- "com.example.commit:
+// 3f2a1..." reads as a commit hash and is a prefix of one -- so the budget is
+// spent pair by pair and the tail is dropped entirely.
+func capLabels(labels map[string]string) (map[string]string, int) {
+	if len(labels) == 0 {
+		// Non-nil, because the caller has already established that the socket
+		// answered. Nil here would reach the hub as "never looked".
+		return map[string]string{}, 0
+	}
+
+	keys := make([]string, 0, len(labels))
+	total := 0
+	for k, v := range labels {
+		keys = append(keys, k)
+		total += len(k) + len(v)
+	}
+	if total <= maxLabelBytes {
+		return labels, 0
+	}
+	slices.Sort(keys)
+
+	out := make(map[string]string, len(keys))
+	spent, dropped := 0, 0
+	for _, k := range keys {
+		if spent+len(k)+len(labels[k]) > maxLabelBytes {
+			dropped++
+			continue
+		}
+		spent += len(k) + len(labels[k])
+		out[k] = labels[k]
+	}
+	return out, dropped
+}
+
+// cappedLabels applies the budget and logs it on the TRANSITION only.
+//
+// A container whose labels are over budget is over budget on every scrape, so
+// logging from capLabels itself put one line a minute in the operator's log
+// forever -- 1440 a day for a Kubernetes host writing annotations through,
+// which is the same vandalism the netNSDenied comment describes and the same
+// mistake the Docker-socket logging in Collect already avoids. One line per
+// container is a diagnosis.
+func (c *Containers) cappedLabels(id string, labels map[string]string) map[string]string {
+	out, dropped := capLabels(labels)
+	if dropped == 0 {
+		delete(c.labelsCapped, id)
+		return out
+	}
+	if c.labelsCapped[id] {
+		return out
+	}
+	if c.labelsCapped == nil {
+		c.labelsCapped = map[string]bool{}
+	}
+	c.labelsCapped[id] = true
+	slog.Warn("container labels exceed the per-container budget; reporting a subset",
+		"container", id, "kept", len(out), "dropped", dropped)
+	return out
+}
 
 // capContainerRows truncates an implausibly large container set, loudly.
 func capContainerRows(rows []*netrav1.ContainerSample) []*netrav1.ContainerSample {

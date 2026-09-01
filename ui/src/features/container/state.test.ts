@@ -209,4 +209,115 @@ describe("state kinds", () => {
     );
     expect(stateKindRank("host-down")).toBeLessThan(stateKindRank("reporting"));
   });
+
+  // Docker's own statement about a container still being sampled outranks an
+  // inference from an absence: a failing healthcheck wants attention now,
+  // while a container that stopped reporting may have been removed on purpose.
+  it("ranks what Docker said above what was inferred from silence", () => {
+    expect(stateKindRank("unhealthy")).toBeLessThan(stateKindRank("silent"));
+    expect(stateKindRank("restarting")).toBeLessThan(stateKindRank("silent"));
+    // Paused is not a fault, so it sits with host-down at the bottom.
+    expect(stateKindRank("paused")).toBeGreaterThan(
+      stateKindRank("mem-pressure"),
+    );
+  });
+});
+
+describe("deriveState with Docker's own answers", () => {
+  const FRESH = {
+    lastSampleMs: NOW.getTime() - 30_000,
+    memUsed: 1,
+    memLimit: null,
+    gap: false,
+    now: NOW,
+  };
+
+  it("quotes Docker's unhealthy rather than calling the container fine", () => {
+    const state = deriveState({ ...FRESH, health: "unhealthy" });
+    expect(state.kind).toBe("unhealthy");
+    expect(state.severity).toBe("serious");
+  });
+
+  it("names a restarting container, which is a crash loop when it persists", () => {
+    const state = deriveState({ ...FRESH, dockerState: "restarting" });
+    expect(state.kind).toBe("restarting");
+    expect(state.severity).toBe("serious");
+  });
+
+  // Somebody paused it. Its flat charts are the consequence, not a fault.
+  it("calls a paused container paused, and not a problem", () => {
+    const state = deriveState({ ...FRESH, dockerState: "paused" });
+    expect(state.kind).toBe("paused");
+    expect(state.severity).toBe("neutral");
+  });
+
+  // The commonest value on a real host: most images define no HEALTHCHECK.
+  // It is a reading, and it must change nothing.
+  it("treats health 'none' as no problem at all", () => {
+    expect(deriveState({ ...FRESH, health: "none" }).kind).toBe("reporting");
+  });
+
+  // An agent with no Docker socket, or one older than the release that sends
+  // these, leaves the derivation exactly as it was.
+  it("is unchanged when Docker said nothing", () => {
+    expect(
+      deriveState({ ...FRESH, health: null, dockerState: null }).kind,
+    ).toBe("reporting");
+  });
+
+  // These attributes rode in on the last sample, so a container that has gone
+  // silent has nothing current to quote -- a "healthy" from an hour ago is not
+  // a fact about it now.
+  it("does not quote a stale health over a broken sample stream", () => {
+    const silent = deriveState({
+      ...FRESH,
+      lastSampleMs: NOW.getTime() - 3_600_000,
+      health: "unhealthy",
+    });
+    expect(silent.kind).toBe("silent");
+
+    const hostDown = deriveState({
+      ...FRESH,
+      health: "unhealthy",
+      hostState: { label: "offline", severity: "critical" },
+    });
+    expect(hostDown.kind).toBe("host-down");
+  });
+});
+
+describe("a series gap and the restart counter", () => {
+  const GAPPED = {
+    lastSampleMs: NOW.getTime() - 30_000,
+    memUsed: 1,
+    memLimit: null,
+    gap: true,
+    now: NOW,
+  };
+
+  it("names the restarts when the counter rose across the window", () => {
+    expect(deriveState({ ...GAPPED, restartsInWindow: 3 }).why).toMatch(
+      /restarted the container 3 times/i,
+    );
+    expect(deriveState({ ...GAPPED, restartsInWindow: 1 }).why).toMatch(
+      /restarted the container once/i,
+    );
+  });
+
+  // The reading that used to be unavailable, and the one that matters: the
+  // samples went missing and the container did NOT restart, so something
+  // between the container and the hub lost them.
+  it("says the container did not restart when the counter held still", () => {
+    expect(deriveState({ ...GAPPED, restartsInWindow: 0 }).why).toMatch(
+      /did not restart/i,
+    );
+  });
+
+  // Every range answered from a rollup: restart_count lives in the raw table
+  // only, so this knows exactly as much as it did before the counter existed
+  // and must not claim otherwise.
+  it("claims nothing about restarts when the range carries no counter", () => {
+    const why = deriveState({ ...GAPPED, restartsInWindow: null }).why;
+    expect(why).toMatch(/no restart count is available/i);
+    expect(why).not.toMatch(/did not restart/i);
+  });
 });

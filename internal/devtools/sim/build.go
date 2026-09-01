@@ -811,6 +811,28 @@ func (g *Generator) containers(ts time.Time, cpu float64) []*netrav1.ContainerSa
 			IoWrite:      proto.Float64(round2(g.sig.daily(key+"/iow", ts, 70*1024, 1.1, 0.6) * busy)),
 		}
 
+		// What Docker says, and only where the profile says Docker was asked.
+		// A spec that leaves these blank sends nothing, so the UI's
+		// "not reported" rendering has a host to appear on -- which is the
+		// case an operator with a socket-less agent actually sees.
+		if c.DockerState != "" {
+			sample.DockerState = proto.String(c.DockerState)
+		}
+		if c.Health != "" {
+			sample.Health = proto.String(c.Health)
+		}
+		if c.Labels != nil {
+			sample.Labels = &netrav1.ContainerLabels{Values: c.Labels}
+		}
+		if c.RestartsStart > 0 || c.RestartsEnd > 0 {
+			// A step rather than a smooth ramp: a restart count moves in whole
+			// numbers, and rounding a ramp is what produces one. Truncation
+			// also means the value only ever sits on integers a daemon could
+			// actually have reported.
+			n := ramp(g.from, g.to, ts, float64(c.RestartsStart), float64(c.RestartsEnd))
+			sample.RestartCount = proto.Uint64(uint64(n))
+		}
+
 		// Traffic only where the agent could measure it. A host reporting
 		// container_network is a host whose agent could not enter the
 		// namespaces (containers.go leaves NetRx/NetTx unset in exactly that

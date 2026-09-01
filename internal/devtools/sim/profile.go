@@ -243,6 +243,29 @@ type ContainerSpec struct {
 	MemLimit uint64
 	CPUBase  float64
 	MemBase  uint64
+
+	// What the Docker socket contributes, as opposed to what the cgroup
+	// measures. Left blank a container reports none of it, which is the case a
+	// profile should keep at least one of: an agent with no socket, or one too
+	// old to send these, must render as "not reported" rather than as healthy.
+	//
+	// DockerState is running, paused or restarting -- never exited, because a
+	// stopped container has no cgroup and so emits no sample at all.
+	DockerState string
+	// Health is healthy, unhealthy, starting or none. "none" is an image with
+	// no HEALTHCHECK, which is most of them, and is a reading rather than an
+	// absence.
+	Health string
+	// Labels as the daemon reports them, including the compose keys that also
+	// make up Key.
+	Labels map[string]string
+	// RestartsStart is the container's restart count at the start of the
+	// window, and RestartsEnd at the end -- a step function between them, so a
+	// crash-looping container is visible. End BELOW start is a redeploy: Docker
+	// resets the counter when a container is recreated, and the UI reads that
+	// decrease as a redeploy rather than as a broken counter.
+	RestartsStart int64
+	RestartsEnd   int64
 }
 
 // PackageSpec is one installed package.

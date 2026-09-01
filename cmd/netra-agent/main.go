@@ -76,7 +76,7 @@ func run() error {
 		collector.NewAddresses(collector.SystemIfaces),
 
 		// Group 3: needs a mount.
-		collector.NewContainers(cfg.CgroupRoot, cfg.ProcRoot, collector.SystemDockerContainers, cfg.PidHost),
+		withDockerInspect(collector.NewContainers(cfg.CgroupRoot, cfg.ProcRoot, collector.SystemDockerContainers, cfg.PidHost)),
 		collector.NewFilesystems(cfg.ProcRoot, cfg.FsMounts, collector.SystemStatfs),
 		collector.NewSystemd(collector.SystemUnits),
 		collector.NewPackages(cfg.DpkgStatus, cfg.ApkInstalled),
@@ -101,4 +101,17 @@ func run() error {
 	c.CheckHub(ctx)
 
 	return c.Run(ctx)
+}
+
+// withDockerInspect gives the container collector its restart-count reader.
+//
+// Separate from NewContainers because the two socket reads have different
+// costs: the list is one request per scrape and the collector is built around
+// it, while inspect is one request per container and is rationed by the
+// collector's own cache. A deployment that mounts the socket through a proxy
+// allowing only /containers/json still gets everything else -- state, health,
+// labels -- and reports container_restarts: no-inspect for the rest.
+func withDockerInspect(c *collector.Containers) *collector.Containers {
+	c.SetInspector(collector.SystemDockerInspect)
+	return c
 }

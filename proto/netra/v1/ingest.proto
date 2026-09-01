@@ -700,6 +700,76 @@ message ContainerSample {
   // Invisible in mem_used and the usual reason a limit is hit by a container
   // whose heap looks small.
   optional uint64 mem_kernel = 18;
+
+  // --- what the Docker socket says, as opposed to what the cgroup measures ---
+  //
+  // These four ride on every sample row rather than being announced once,
+  // because ingest is stateless per batch and the purge endpoint deletes the
+  // containers row: a hub that missed the one batch carrying them would never
+  // learn them again.
+  //
+  // Every one of them is OPTIONAL rather than defaulted, and the reason is the
+  // same one NetworkMode gives in dockermeta.go: absent is a THIRD state. An
+  // agent without a Docker socket, or one older than this field, says nothing
+  // -- and "nothing" must not reach a UI as "running" or "healthy".
+
+  // running, paused or restarting -- the list endpoint's own top-level State.
+  //
+  // It can never say "exited". Sample rows are driven by the cgroup walk, and
+  // a stopped container has no cgroup, so it emits no row at all. What this
+  // field adds is the container that is still there and still wrong: paused,
+  // or looping through restarting.
+  optional string docker_state = 19;
+
+  // healthy, unhealthy, starting, or none.
+  //
+  // Parsed from the list endpoint's Status suffix -- "Up 2 hours (healthy)" --
+  // rather than read from /containers/{id}/json, which would cost one request
+  // per container per scrape to learn a word already in a string the agent
+  // has in hand.
+  //
+  // "none" is Docker's own word for an image that defines no HEALTHCHECK, as
+  // in `docker ps --filter health=none`, and it is a MEASUREMENT: the agent
+  // looked and there is no healthcheck. Unset is the different fact that the
+  // agent could not look.
+  optional string health = 20;
+
+  // Docker's RestartCount for this container id.
+  //
+  // The only one of the four that is not free: it exists on
+  // /containers/{id}/json alone, so the agent inspects lazily and caches --
+  // see the restart cache in containerinspect.go.
+  //
+  // The cached value rides on EVERY scrape, not only on the ones that called
+  // inspect, because a series carrying a point one time in ten is not a series
+  // and this column exists so a hole in a container's charts can be
+  // attributed. The cost is that it can be up to ten scrapes stale.
+  //
+  // Unset therefore means the agent cannot answer at all -- it has never
+  // successfully inspected this container, or the daemon has since refused --
+  // and never merely that this scrape did not ask. That is what lets the hub
+  // overwrite with it, the same as the three fields above.
+  //
+  // It counts restarts of one container ID and resets to 0 when the container
+  // is recreated. Since container_key is compose project/service, a DECREASE
+  // in this series is a redeploy and an increase is a crash-restart. Both are
+  // readings; neither is a bug.
+  optional uint64 restart_count = 21;
+
+  // Every label the daemon reports, not just the two compose keys that used
+  // to survive folded into container_key -- and which, for a container
+  // started outside compose, did not survive at all.
+  //
+  // Wrapped in a message on purpose: a proto3 map has no presence, so an agent
+  // that never looked and a container that genuinely carries no labels would
+  // serialize identically. Message presence is what separates them.
+  optional ContainerLabels labels = 22;
+}
+
+// ContainerLabels exists to give ContainerSample.labels presence. See the
+// comment there.
+message ContainerLabels {
+  map<string, string> values = 1;
 }
 
 // FilesystemSample is one mounted filesystem, deduplicated by st_dev so a bind

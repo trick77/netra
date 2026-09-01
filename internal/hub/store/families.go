@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -416,14 +417,46 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 		// GREATEST, so an out-of-order replay cannot walk last_seen backwards
 		// and mark a container gone in the UI while its newest sample is
 		// current.
+		// What Docker said about this container, from the same newest row the
+		// name and image come from.
+		//
+		// All four OVERWRITE, including with NULL. An agent whose socket went
+		// away is no longer in a position to assert that a container is
+		// healthy, and keeping the last "healthy" the hub happened to hear is
+		// the worst failure available here -- a green badge on a container
+		// nobody can see. This is the same bargain name and image already make.
+		//
+		// restart_count is included on purpose, and it is only safe to include
+		// because the AGENT holds the cache: it reports its last known count on
+		// every scrape rather than only on the ones that called inspect, and it
+		// drops that cached count the moment an inspect is refused. So an unset
+		// restart_count here means the agent cannot answer, not that this
+		// particular scrape did not ask. Coalescing instead would pin a number
+		// nobody is asserting any more -- "Restarts: 12" above a State and a
+		// Health that both correctly read "not reported".
+		//
+		// state_ts is when the state was ENTERED, advanced only on an actual
+		// change -- the rule read.Unit.Since documents for systemd. IS DISTINCT
+		// FROM rather than <>, so the first transition out of NULL counts.
 		id, ok, err := s.resolveOne(ctx, "container", key, `
-			INSERT INTO containers (host_id, container_key, name, image, is_agent, last_seen)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			INSERT INTO containers (host_id, container_key, name, image, is_agent, last_seen,
+			                        docker_state, health, labels, restart_count, state_ts)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $6)
 			ON CONFLICT (host_id, container_key) DO UPDATE
 			   SET name = EXCLUDED.name, image = EXCLUDED.image, is_agent = EXCLUDED.is_agent,
-			       last_seen = GREATEST(containers.last_seen, EXCLUDED.last_seen)
+			       last_seen = GREATEST(containers.last_seen, EXCLUDED.last_seen),
+			       docker_state = EXCLUDED.docker_state,
+			       health = EXCLUDED.health,
+			       labels = EXCLUDED.labels,
+			       restart_count = EXCLUDED.restart_count,
+			       state_ts = CASE
+			           WHEN containers.docker_state IS DISTINCT FROM EXCLUDED.docker_state
+			           THEN EXCLUDED.last_seen
+			           ELSE containers.state_ts
+			       END
 			RETURNING id`,
-			hostID, key, r.GetName(), r.GetImage(), r.GetIsAgent(), tsOf(r.GetTsMs()))
+			hostID, key, r.GetName(), r.GetImage(), r.GetIsAgent(), tsOf(r.GetTsMs()),
+			r.DockerState, r.Health, labelsJSON(r.GetLabels()), int64OrNil(r.RestartCount))
 		if err != nil {
 			return nil, err
 		}
@@ -450,9 +483,10 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 		INSERT INTO container_samples (
 			host_id, ts, container_id, cpu_pct, mem_used, mem_limit,
 			net_rx, net_tx, io_read, io_write,
-			cpu_user, cpu_system, mem_anon, mem_file, mem_shmem, mem_kernel
+			cpu_user, cpu_system, mem_anon, mem_file, mem_shmem, mem_kernel,
+			restart_count
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-		          $11, $12, $13, $14, $15, $16)
+		          $11, $12, $13, $14, $15, $16, $17)
 		ON CONFLICT (host_id, ts, container_id) DO NOTHING`
 
 	batch := &pgx.Batch{}
@@ -466,7 +500,13 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 			r.NetRx, r.NetTx, r.IoRead, r.IoWrite,
 			r.CpuUser, r.CpuSystem,
 			int64OrNil(r.MemAnon), int64OrNil(r.MemFile),
-			int64OrNil(r.MemShmem), int64OrNil(r.MemKernel))
+			int64OrNil(r.MemShmem), int64OrNil(r.MemKernel),
+			// Present on every scrape from an agent that can inspect at all --
+			// it reports its cached count rather than only the freshly read
+			// one, so this is a dense series rather than one point in ten.
+			// NULL means the agent has no count for this container, never
+			// "restarted zero times".
+			int64OrNil(r.RestartCount))
 	}
 	return execBatch(ctx, s.pool, batch, "container sample")
 }
@@ -1114,6 +1154,35 @@ func int64OrNil(v *uint64) *int64 {
 	}
 	n := int64(*v)
 	return &n
+}
+
+// labelsJSON renders a container's labels for the JSONB column, keeping the
+// difference between "the agent looked and found none" and "the agent never
+// looked".
+//
+// That difference is why ContainerSample.labels is a wrapper message rather
+// than a bare proto3 map: a map has no presence, so an agent too old to send
+// labels and a container that genuinely carries none would arrive identically.
+// A present-but-empty wrapper stores as `{}` and a missing one stores as NULL,
+// and the UI words the two differently -- "none" against "not reported".
+//
+// A map that will not marshal is stored as NULL rather than failing the whole
+// batch: labels are enrichment, and losing a host's CPU history over one
+// unencodable label would be the wrong trade.
+func labelsJSON(labels *netrav1.ContainerLabels) any {
+	if labels == nil {
+		return nil
+	}
+	values := labels.GetValues()
+	if values == nil {
+		values = map[string]string{}
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		slog.Warn("container labels could not be encoded; storing none", "err", err)
+		return nil
+	}
+	return encoded
 }
 
 // emptyToNil maps proto3's zero-value empty string to SQL NULL, so "no

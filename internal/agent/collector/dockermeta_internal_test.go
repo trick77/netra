@@ -104,3 +104,85 @@ func TestSharesForeignNetNS(t *testing.T) {
 		}
 	}
 }
+
+// The health suffix is the only health /containers/json carries, and Docker
+// writes Status for people rather than for parsers. Every case here is a real
+// Status string, and the point of the table is the ones that must NOT be read
+// as health: "(Paused)" is a state wearing the same parentheses, and a plain
+// "Up 4 days" is an image with no HEALTHCHECK at all.
+//
+// HealthNone rather than the empty string for those, deliberately. Empty means
+// "the socket did not answer" everywhere else in this package; here the agent
+// looked and there was nothing to find, and the UI words the two differently.
+func TestParseHealth(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		want   string
+	}{
+		{"Up 2 hours (healthy)", HealthHealthy},
+		{"Up 5 minutes (unhealthy)", HealthUnhealthy},
+		{"Up 3 seconds (health: starting)", HealthStarting},
+		{"Up 4 days", HealthNone},
+		{"Up 2 hours (Paused)", HealthNone},
+		{"Exited (0) 3 minutes ago", HealthNone},
+		{"Restarting (1) 12 seconds ago", HealthNone},
+		{"", HealthNone},
+	} {
+		if got := parseHealth(tc.status); got != tc.want {
+			t.Errorf("parseHealth(%q) = %q, want %q", tc.status, got, tc.want)
+		}
+	}
+}
+
+// State and Status were in this response all along and were being decoded
+// away, which is how the container page came to say state was "never read from
+// Docker". A missing or misspelled tag yields the zero value rather than an
+// error, so nothing but this test can catch it coming back.
+func TestDockerContainerDecodesStateAndStatus(t *testing.T) {
+	// Given the same real /containers/json body.
+	var got []dockerContainer
+
+	// When it is decoded.
+	if err := json.Unmarshal([]byte(containersJSONFixture), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Then the daemon's own state and status arrive.
+	if got[0].State != "running" {
+		t.Errorf("State = %q, want running", got[0].State)
+	}
+	if got[0].Status != "Up 4 days" {
+		t.Errorf("Status = %q, want %q", got[0].Status, "Up 4 days")
+	}
+
+	// And a container the fixture describes with neither reports neither,
+	// rather than having "running" invented for it.
+	if got[1].State != "" {
+		t.Errorf("State = %q, want empty for a container the body did not describe", got[1].State)
+	}
+}
+
+// The inspect body, pinned for the same reason the list body is: one wrong tag
+// and every container reports zero restarts, which reads as a healthy fleet.
+func TestDockerInspectDecodesRestartCount(t *testing.T) {
+	// Given a trimmed real /containers/{id}/json body, with sibling keys netra
+	// does not read left in so the fixture stays a subset of the real shape.
+	const body = `{
+	  "Id": "8dfafdbc3a40",
+	  "Created": "2026-08-01T09:12:44.1Z",
+	  "RestartCount": 7,
+	  "State": { "Status": "running", "Restarting": false },
+	  "HostConfig": { "RestartPolicy": { "Name": "unless-stopped" } }
+	}`
+	var got dockerInspect
+
+	// When it is decoded the way SystemDockerInspect decodes it.
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Then the restart count arrives.
+	if got.RestartCount != 7 {
+		t.Errorf("RestartCount = %d, want 7", got.RestartCount)
+	}
+}

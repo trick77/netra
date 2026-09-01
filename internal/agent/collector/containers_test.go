@@ -1038,3 +1038,93 @@ func TestContainersForgetsTheLatchWhenTheContainerGoes(t *testing.T) {
 		t.Errorf("readlink attempts = %d, want 2 -- the latch must not survive the container it was set for", denied)
 	}
 }
+
+// The four fields the container page named as uncollected, end to end: the
+// lister and the inspector answer, and the row carries what they said.
+func TestContainersCarriesWhatDockerSaid(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
+		fakeLister(collector.ContainerMeta{
+			ID: "abc123", Name: "proj-web-1", Image: "nginx:1",
+			Project: "proj", Service: "web",
+			State:  "running",
+			Health: "unhealthy",
+			Labels: map[string]string{"traefik.enable": "true"},
+		}), true)
+	testee.SetInspector(func(context.Context, string) (uint64, error) { return 9, nil })
+
+	containersAt(t, testee, base)
+	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "proj/web")
+	if got := row.GetDockerState(); got != "running" {
+		t.Errorf("docker_state = %q, want running", got)
+	}
+	if got := row.GetHealth(); got != "unhealthy" {
+		t.Errorf("health = %q, want unhealthy", got)
+	}
+	if got := row.GetRestartCount(); got != 9 {
+		t.Errorf("restart_count = %d, want 9", got)
+	}
+	// Every label, not just the two compose keys folded into container_key --
+	// that folding is why a container started outside compose contributed none.
+	if got := row.GetLabels().GetValues()["traefik.enable"]; got != "true" {
+		t.Errorf("labels[traefik.enable] = %q, want true", got)
+	}
+}
+
+// A host with no Docker socket. Every field must be UNSET rather than
+// zero-valued: an empty docker_state stored as a value would render as a
+// state, and a zero restart count reads as "this container has never
+// restarted", which is a claim nobody made.
+func TestContainersLeavesDockerFieldsUnsetWithoutASocket(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, nil, true)
+
+	containersAt(t, testee, base)
+	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	if len(res.Containers) == 0 {
+		t.Fatal("no rows; cgroup metrics must survive a missing socket")
+	}
+	row := res.Containers[0]
+	if row.DockerState != nil {
+		t.Errorf("docker_state = %q, want unset", row.GetDockerState())
+	}
+	if row.Health != nil {
+		t.Errorf("health = %q, want unset", row.GetHealth())
+	}
+	if row.RestartCount != nil {
+		t.Errorf("restart_count = %d, want unset", row.GetRestartCount())
+	}
+	if row.Labels != nil {
+		t.Error("labels present; a container nobody could ask about must carry none")
+	}
+}
+
+// "The agent looked and this container has no labels" is not "the agent never
+// looked". ContainerSample.labels is a wrapper message rather than a bare map
+// precisely so the two differ on the wire, and this is the case that proves
+// the wrapper is being set.
+func TestContainersDistinguishesNoLabelsFromNoSocket(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
+		fakeLister(collector.ContainerMeta{
+			ID: "abc123", Project: "proj", Service: "web",
+			Labels: map[string]string{},
+		}), true)
+
+	containersAt(t, testee, base)
+	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "proj/web")
+	if row.Labels == nil {
+		t.Fatal("labels unset for a container that was asked and has none")
+	}
+	if len(row.GetLabels().GetValues()) != 0 {
+		t.Errorf("labels = %v, want empty", row.GetLabels().GetValues())
+	}
+}
