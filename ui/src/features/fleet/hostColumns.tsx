@@ -8,6 +8,7 @@
 import type { Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
 import { Meter } from "../../ui/Meter";
+import { OsIcon } from "../../ui/OsIcon";
 import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
 import { DETAIL_WIDTH } from "../../ui/charts/size";
 import {
@@ -175,28 +176,41 @@ function HostCell({ row }: { row: HostRow }) {
   // dropping scrapes reads as sporadic rather than healthy; the gaps are
   // already visible in its sparkline, and this says the same thing in a word.
   const status = hostStatus(row, undefined, row.reporting);
-  const location = hostLocation(row);
+  // The OS joins the line the location sits on rather than taking one of its
+  // own: the cell keeps two lines (see the note below), and what the mark
+  // beside it can only suggest -- Debian, not which Debian -- the words say.
+  // A host that reported neither still draws no line at all.
+  const under = [hostLocation(row), row.os_name]
+    .filter((part): part is string => typeof part === "string" && part !== "")
+    .join(" \u00b7 ");
   return (
     <div className="host-cell">
-      <div className="host-cell-top">
-        {/* The hostname is the way into the host page, and it is an anchor
+      {/* The distribution mark labels the whole host, so it sits beside both
+          lines and is centred against them rather than riding the name -- the
+          arrangement Observium uses. OsIcon renders nothing for an OS it has
+          no mark for, so an unknown distro leaves the space empty instead of
+          taking a placeholder. */}
+      <OsIcon name={row.os_name ?? null} />
+      <div className="host-cell-lines">
+        <div className="host-cell-top">
+          {/* The hostname is the way into the host page, and it is an anchor
             rather than a row click handler: middle-click, copy-link and
             bookmark all have to work, and a row-wide handler would swallow
             the text selection someone needs to read an id off the screen.
             The fleet list had no link into detail at all. */}
-        <a className="host-cell-name" href={`/hosts/${row.id}/overview`}>
-          {row.hostname}
-        </a>
-        {/* After the name, and only when there is something to say. Healthy is
+          <a className="host-cell-name" href={`/hosts/${row.id}/overview`}>
+            {row.hostname}
+          </a>
+          {/* After the name, and only when there is something to say. Healthy is
           the overwhelming majority state, so a badge on every row spent the
           eye's first stop -- and the leftmost column -- on the word "online"
           repeated down the page. What a reader scans for is the exception,
           which is now the only thing marked. */}
-        {status.severity !== "ok" && (
-          <Badge severity={status.severity}>{status.label}</Badge>
-        )}
-      </div>
-      {/* The location goes under the name rather than beside it: the two are
+          {status.severity !== "ok" && (
+            <Badge severity={status.severity}>{status.label}</Badge>
+          )}
+        </div>
+        {/* The location goes under the name rather than beside it: the two are
           a heading and its subtitle, not two peers, and the row has the
           vertical space. Inline, a long place name pushed the hostname off
           the eye's scan line down the column.
@@ -221,7 +235,8 @@ function HostCell({ row }: { row: HostRow }) {
           Still one line, deliberately. This column had two and keeps two --
           a third would put height back on every row of the table, which is
           the opposite of what the header change just spent itself on. */}
-      {location !== null && <div className="host-cell-site">{location}</div>}
+        {under !== "" && <div className="host-cell-site">{under}</div>}
+      </div>
     </div>
   );
 }
@@ -233,9 +248,40 @@ function HostCell({ row }: { row: HostRow }) {
 // what a fleet list is for. It is the same always-full reading MemoryCell
 // below carries its own ceiling to avoid; the spec's silhouette is
 // cpu_total, not cpu_total normalised to itself.
+/**
+ * The figure a metric cell prints beside its sparkline, and the line under it.
+ *
+ * Traffic has printed its rates since the column was built; CPU and Memory
+ * drew a shape and no number, so "how loaded is that host" was answerable
+ * only by eye, and only relative to the row above.
+ *
+ * NOTHING on a host that stopped reporting, not a dash -- the rule the
+ * traffic rates two cells over already follow. A stale scalar drawn
+ * confidently beside a sparkline that has gone to a gap is the one reading
+ * here that can actively mislead.
+ *
+ * Plain ink, never a status colour. Severity on this page is decided in
+ * conditions.ts and carried by the row's rail and the host cell's badge; a
+ * cell that reddened itself at a threshold of its own would be a second,
+ * disagreeing opinion about what is wrong.
+ */
+function Reading({ value, under }: { value: string; under?: string }) {
+  return (
+    <div className="metric-read">
+      <span className="v">{value}</span>
+      {under !== undefined && <span className="u">{under}</span>}
+    </div>
+  );
+}
+
 const CPU_PERCENT_MAX = 100;
 
 function CpuCell({ row, range }: { row: HostRow; range: Range }) {
+  // latestStackTotal, the same helper this column sorts on: the number the
+  // cell prints and the order the column puts its rows in cannot disagree.
+  // Normalised against cpu_total by the assembler, so it is percent of THIS
+  // host and a 32-core box does not outrank a busy 4-core one.
+  const busy = isReporting(row) ? latestStackTotal(row.cpu) : null;
   // The page keeps the cell's normalisation and its 0-100 ceiling, which is
   // why the link goes to host-cpu and not to the Graphs tab's "CPU cores":
   // normalised, the per-core stack tops out at cpu_total, so 100 is a real
@@ -270,7 +316,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
     return { series: cpu.bands, window: (cpu.from ?? host).window };
   };
 
-  return (
+  const chart = (
     <Enlargeable
       title={`CPU · ${row.hostname}`}
       label={`Enlarge CPU for ${row.hostname}`}
@@ -291,6 +337,22 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
         label={`CPU trend, ${rangeLabel(range)}`}
       />
     </Enlargeable>
+  );
+
+  return (
+    <div className="metric-cell">
+      {chart}
+      {busy !== null && (
+        <Reading
+          value={percent(busy)}
+          under={
+            row.threads === null
+              ? undefined
+              : `of ${row.threads} core${row.threads === 1 ? "" : "s"}`
+          }
+        />
+      )}
+    </div>
   );
 }
 
@@ -331,12 +393,17 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
     return null;
   }
   const total = row.mem_total;
+  // The fraction of mem_total the stack currently reaches -- what the height
+  // of the stack already says, in figures. Same helper the column sorts on,
+  // and the same isReporting guard the traffic rates use: a host that stopped
+  // talking prints nothing rather than its last percentage.
+  const used = isReporting(row) ? latestStackTotal(row.mem) : null;
   const fetchSeries = async (next: Range): Promise<DetailData> => {
     const host = await fetchHostFamily(row.id, "host", next);
     return { series: memoryBands(host), window: host.window };
   };
 
-  return (
+  const chart = (
     <Enlargeable
       title={`Memory · ${row.hostname}`}
       label={`Enlarge Memory for ${row.hostname}`}
@@ -371,6 +438,21 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
         label={`Memory trend, ${rangeLabel(range)}`}
       />
     </Enlargeable>
+  );
+
+  return (
+    <div className="metric-cell">
+      {chart}
+      {used !== null && (
+        <Reading
+          value={percent((used / total) * 100)}
+          // binaryBytes, like the enlarged chart's own axis: a stack read
+          // against a binary ceiling and labelled decimally underneath makes
+          // one quantity look like two.
+          under={`of ${binaryBytes(total)}`}
+        />
+      )}
+    </div>
   );
 }
 

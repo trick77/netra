@@ -78,6 +78,11 @@ export type Host = {
   // is a per-core stack: the page has to know how many logical CPUs a host
   // has before deciding to ask for one series per core.
   threads: number | null;
+  // The distribution, for the mark and the words the fleet row labels a host
+  // with. Optional here and NOT on the Go struct, the same convention
+  // capabilities below follows: the hand-built host literals across the tests
+  // predate the field, and a row that does not carry it simply draws no mark.
+  os_name?: string | null;
   // What each collector reported about its own availability, verbatim. On the
   // LIST because the absences it explains are fleet-wide: a host reporting
   // `containers: no-cgroup-scopes` contributes no containers at all, so the
