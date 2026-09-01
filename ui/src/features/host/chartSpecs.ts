@@ -277,6 +277,24 @@ interface PanelSpec {
    */
   hideIdleSeries?: boolean;
   /**
+   * Draw the series in order of their worst reading rather than in the order
+   * the response listed them.
+   *
+   * For a keyed panel whose series nearly all sit at the same healthy value:
+   * a host runs twenty-odd collectors, they are all between 99.7% and 100%
+   * available over a day, and the one that dipped is a notch in a hedge of
+   * identical lines. Ordering does not hide anything -- which matters,
+   * because a hidden series and an uncollected one look the same to a reader
+   * -- it just puts the series worth reading in the first legend row and on
+   * the first colour.
+   *
+   * Filtering was tried first and measured: over a 24h window one flaked
+   * scrape anywhere keeps a series, so "never dipped" dropped 4 collectors
+   * of 20 at 24h and none at all at 7d. The wider the range the less it did,
+   * which is backwards -- a wide range is where the hedge is thickest.
+   */
+  orderByWorst?: boolean;
+  /**
    * Fold a keyed family across its series: ONE band per base, summed, rather
    * than one band per base per series.
    *
@@ -534,6 +552,10 @@ export const SYSTEM: PanelSpec[] = [
     // The aggregates drop `ok` and keep the counts instead, so at every
     // range but 1h this is what the line is actually drawn from.
     fraction: { part: "failure_count", whole: "sample_count", invert: true },
+    // Twenty collectors nearly all pinned at the top of the scale: the one
+    // that dipped goes first, rather than wherever the response happened to
+    // list it.
+    orderByWorst: true,
     max: 1,
     // One formatter for both tiers rather than a tier-dependent pair: the
     // endpoints ARE up and down at any grain -- a rolled bucket of 1 is
@@ -1244,6 +1266,24 @@ function bandsFor(
         )
       : passes;
 
+  // Ordered AFTER the idle filter and before the colour walk, so the worst
+  // series takes the first hue and the first legend row. Sorted by the
+  // lowest reading each pass carries across the spec's own bases; a pass
+  // with no reading at all sorts last, because absence is not a dip and the
+  // panel's not-collected states already speak for it.
+  //
+  // A copy, not a sort in place: `passes` is derived from res.series and the
+  // response is the caller's.
+  const ordered =
+    spec.orderByWorst !== true
+      ? drawn
+      : [...drawn]
+          .map((pass, index) => ({ pass, index, worst: worstOf(spec, pass) }))
+          .sort((a, b) =>
+            a.worst === b.worst ? a.index - b.index : a.worst - b.worst,
+          )
+          .map(({ pass }) => pass);
+
   /**
    * The response a base reads from, and how to read it.
    *
@@ -1294,7 +1334,7 @@ function bandsFor(
     };
   };
 
-  drawn.forEach(({ prefix, read }, passIndex) => {
+  ordered.forEach(({ prefix, read }, passIndex) => {
     // This pass's own bands, appended to `bands` only once the pass is
     // complete. A mirrored stack reads its halves off band POSITION -- even
     // is up, odd is down -- so a pass that contributed one band of its pair
@@ -1376,6 +1416,30 @@ function bandsFor(
   });
 
   return bands;
+}
+
+/**
+ * The lowest reading one pass carries, across the spec's own bases.
+ *
+ * Infinity for a pass with no reading at all, which sorts it last: a series
+ * that is entirely absent has not dipped, and putting it at the head of a
+ * panel ordered by worst would say it had. Bases pointing at another family
+ * are skipped for the reason the idle filter skips them -- this pass reads
+ * the primary response, and a foreign base resolves to the wrong column or
+ * to none.
+ */
+function worstOf(
+  spec: PanelSpec,
+  pass: { read: (column: string) => (number | null)[] },
+): number {
+  let worst = Infinity;
+  for (const { base, source } of spec.bases) {
+    if (source !== undefined && source !== spec.source) continue;
+    for (const v of pass.read(base)) {
+      if (v !== null && v < worst) worst = v;
+    }
+  }
+  return worst;
 }
 
 /** The base's hue at this series' step, or undefined for a spec with none. */
