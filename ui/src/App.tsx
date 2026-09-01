@@ -25,11 +25,10 @@ import {
   FleetPage,
   FLEET_RANGE,
   type Entity,
+  type FleetFilter,
 } from "./features/fleet/FleetPage";
-import {
-  isConditionKind,
-  type AttentionFilter,
-} from "./features/fleet/conditions";
+import { isConditionKind } from "./features/fleet/conditions";
+import { isContainerStateKind } from "./features/container/state";
 import {
   buildRows,
   fetchFleetContainerTrends,
@@ -381,13 +380,23 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   // "the fleet, filtered to failed units" is a URL someone can paste into a
   // chat. An unrecognised value is "all" rather than a filter that silently
   // matches nothing -- see isConditionKind.
+  //
+  // Read against the entity, because both vocabularies have a "silent" and
+  // the entity is already in the URL beside it. `?entity=containers&
+  // attn=silent` is a silent container; the same word without the entity is a
+  // silent host. The severity segments are hosts-only: every condition netra
+  // ranks that way is host-level.
   const attnParam = params.get("attn") ?? "";
-  const attention: AttentionFilter =
-    attnParam === "critical" || attnParam === "warning"
-      ? attnParam
-      : isConditionKind(attnParam)
+  const attention: FleetFilter =
+    entity === "containers"
+      ? isContainerStateKind(attnParam)
         ? attnParam
-        : "all";
+        : "all"
+      : attnParam === "critical" || attnParam === "warning"
+        ? attnParam
+        : isConditionKind(attnParam)
+          ? attnParam
+          : "all";
   const setParam = paramSetter("/", search, go);
   const range = FLEET_RANGE;
 

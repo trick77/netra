@@ -116,15 +116,75 @@ describe("containerColumns", () => {
     expect(badge.className).not.toContain("st-ok");
   });
 
-  // Last seen is NOT a trend column: it comes off the listing itself, so it
-  // is there whether or not anyone asked for metrics -- and it is the only
-  // column that still says something about a container that has stopped
-  // reporting entirely.
+  // The whole point of the column: the words are deriveState's, so a
+  // container reads the same here as on the page this row links to.
+  describe("the Status column", () => {
+    const NOW = new Date("2026-08-10T14:00:00Z");
+
+    it("says Reporting for a container whose samples are current", () => {
+      renderRows([makeRow({ host_last_seen: "2026-08-10T14:00:00Z" })], {
+        now: NOW,
+      });
+      expect(screen.getByText("Reporting")).toBeInTheDocument();
+    });
+
+    it("says Silent once the samples stop", () => {
+      renderRows(
+        [
+          makeRow({
+            last_seen: "2026-08-10T12:00:00Z",
+            host_last_seen: "2026-08-10T14:00:00Z",
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("Silent")).toBeInTheDocument();
+    });
+
+    // The same rule the detail badge follows: a host that went quiet stopped
+    // every container on it, and blaming the container for that is the
+    // contradiction the gone pill has always avoided.
+    it("names the host when the host is the thing that stopped", () => {
+      renderRows(
+        [
+          makeRow({
+            last_seen: "2026-08-10T12:00:00Z",
+            host_last_seen: "2026-08-10T12:00:00Z",
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("Host offline")).toBeInTheDocument();
+      expect(screen.queryByText("Silent")).toBeNull();
+    });
+
+    // Warnings that need a series are simply out of reach on a listing that
+    // fetched none -- the row says what it knows rather than nothing.
+    it("warns on memory near the limit once trends are fetched", () => {
+      renderRows(
+        [
+          makeRow({
+            host_last_seen: "2026-08-10T14:00:00Z",
+            cpu: [1, 2],
+            mem: [9.6e8, 9.7e8],
+            mem_limit_bytes: 1e9,
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("Near mem_limit")).toBeInTheDocument();
+    });
+  });
+
+  // Last seen and Status are NOT trend columns: both come off the listing
+  // itself, so they are there whether or not anyone asked for metrics. Status
+  // simply cannot reach the two states that need a series -- it still says
+  // Reporting, Silent or Host offline, which is what the listing knows.
   it("has no trend columns when nobody fetched metrics", () => {
     renderRows([makeRow()]);
     expect(
       screen.getAllByRole("columnheader").map((h) => h.textContent),
-    ).toEqual(["Container", "Image", "Last seen"]);
+    ).toEqual(["Container", "Status", "Image", "Last seen"]);
   });
 
   // The one filled colour a container row can honestly carry, and the one

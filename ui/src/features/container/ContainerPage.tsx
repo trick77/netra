@@ -15,7 +15,8 @@ import { Meter } from "../../ui/Meter";
 import { Segmented } from "../../ui/Segmented";
 import { ChartPanel, type Band } from "../../ui/charts/ChartPanel";
 import type { Container, MetricsResponse } from "../../lib/api";
-import { hostStatus, type HostStatus } from "../../lib/host";
+import { hostStatus } from "../../lib/host";
+import { deriveState } from "./state";
 import {
   hasGaps,
   hasReading,
@@ -49,15 +50,6 @@ export const CONTAINER_RANGE_VALUES: readonly Range[] = CONTAINER_RANGES.map(
   (o) => o.value,
 );
 
-/** A container is silent once it has missed this many seconds of samples.
- * Three scrape intervals at the 60s default: one missed post is a hiccup,
- * three in a row is the container no longer being there. */
-const SILENT_AFTER_S = 180;
-
-/** Memory this close to mem_limit is the warning spec 11 asks for -- the
- * OOM killer arrives before the bar reaches the end of its track. */
-const MEM_PRESSURE_PCT = 90;
-
 // A Docker id, which containerKey() falls back to only after compose labels
 // AND the container name are both missing (agent/collector/containers.go).
 // A 64-hex string is not a name and must never be a Display heading.
@@ -75,133 +67,6 @@ export function displayTitle(container: Container): string {
     return container.name ?? ABSENT;
   }
   return container.container_key;
-}
-
-export interface DerivedStateInput {
-  lastSampleMs: number | null;
-  memUsed: number | null;
-  memLimit: number | null;
-  gap: boolean;
-  now: Date;
-  /**
-   * The HOST's reporting state, from the one hostStatus() the fleet and the
-   * host header already share.
-   *
-   * A container's samples ride in on its host's posts, so a host that went
-   * quiet stops every container on it at once. The lists have always known
-   * this -- containerIsGone measures against the host's last_seen, never the
-   * clock, so an offline host marks nothing gone -- while this badge measured
-   * against the clock and called the same container Silent. One container,
-   * two surfaces, opposite answers, and the one that blamed the container was
-   * the one offering to purge its history.
-   *
-   * Given the host's state, the badge names the host instead. Omitted, the
-   * badge behaves as it did: callers without a host status are no worse off
-   * than before.
-   */
-  hostState?: HostStatus;
-  /**
-   * containerIsGone's answer: this container stopped being reported WHILE
-   * its host kept reporting.
-   *
-   * It outranks hostState, because it is a fact about the container that was
-   * established before the host went anywhere -- and because the page offers
-   * a purge button on exactly this condition. Without it, a container that
-   * died an hour before its host did would carry a "Host offline" badge
-   * saying nothing can be said about it, above a button offering to delete
-   * its history: the same badge-versus-purge contradiction this input exists
-   * to end, pointing the other way.
-   */
-  gone?: boolean;
-  silentAfterS?: number;
-}
-
-export interface DerivedState {
-  label: string;
-  severity: Severity;
-  /** The inference the label deliberately does not make. */
-  why: string;
-}
-
-/**
- * Container state, derived from what is collected (spec 11) -- health,
- * restarts and state itself reach neither the wire nor the schema. Every
- * label here names a MEASUREMENT: samples arrived, samples stopped, memory
- * approached its limit, the series has a hole. The likely cause goes in
- * `why`, never in the badge, because "restarted" is a guess and the badge
- * is not the place to make one.
- */
-export function deriveState({
-  lastSampleMs,
-  memUsed,
-  memLimit,
-  gap,
-  now,
-  hostState,
-  gone = false,
-  silentAfterS = SILENT_AFTER_S,
-}: DerivedStateInput): DerivedState {
-  // First, and above even "No samples": every branch below reads the sample
-  // stream, and on a host that is not reporting there is no stream to read.
-  // Neutral, not serious -- the severity belongs to the host, which carries
-  // it on its own page and in its fleet row, and a second critical here would
-  // count one outage twice. The host's own word is reused rather than a fifth
-  // synonym invented for it.
-  //
-  // Not for a container already measured gone: that one stopped while the
-  // host was still posting, which is a fact about the container and the one
-  // the purge button is offered on.
-  if (!gone && hostState !== undefined && hostState.severity === "critical") {
-    return {
-      label: `Host ${hostState.label}`,
-      severity: "neutral",
-      why: "the host stopped reporting, so nothing can be said about this container until it comes back",
-    };
-  }
-
-  if (lastSampleMs === null) {
-    return {
-      label: "No samples",
-      severity: "neutral",
-      why: "nothing has been reported for this container in the selected range",
-    };
-  }
-
-  const ageS = (now.getTime() - lastSampleMs) / 1000;
-  if (ageS > silentAfterS) {
-    return {
-      label: "Silent",
-      severity: "serious",
-      why: "the container stopped appearing in samples; it may have been stopped or removed",
-    };
-  }
-
-  if (
-    memUsed !== null &&
-    memLimit !== null &&
-    memLimit > 0 &&
-    (memUsed / memLimit) * 100 >= MEM_PRESSURE_PCT
-  ) {
-    return {
-      label: "Near mem_limit",
-      severity: "warning",
-      why: "memory is approaching the configured limit; the OOM killer acts before the limit is reached",
-    };
-  }
-
-  if (gap) {
-    return {
-      label: "Series gap",
-      severity: "warning",
-      why: "a hole in the series usually means a restart, but restarts are not collected, so this says only that samples are missing",
-    };
-  }
-
-  return {
-    label: "Reporting",
-    severity: "ok",
-    why: "samples are arriving on schedule",
-  };
 }
 
 type Sampled = {
@@ -444,7 +309,24 @@ export function ContainerPage({
   // calls it -- a programmer error, not a product state.
   const memLimit = sampled ? last(sampled.memLimit) : null;
   const memUsed = sampled ? last(sampled.memUsed) : null;
-  const lastSampleMs = sampled ? (sampled.timestamps.at(-1) ?? null) : null;
+  // containers.last_seen, NOT the tail of the fetched series.
+  //
+  // They are two different clocks and they disagree. last_seen is the hub's
+  // record of when a sample for this container last landed; the series is one
+  // read of one window through whatever tier that window resolves to, and it
+  // can trail the listing by hours. Driven by the series, this page called a
+  // container Silent while the fleet list -- which reads last_seen -- showed
+  // it reporting, one click apart. The lists cannot use the series (a fan-out
+  // has no window per container), so the page uses what both surfaces have.
+  //
+  // The series still decides the two states that are ABOUT a series: a hole
+  // in it, and memory against the limit.
+  // A window with no series at all still reads "No samples": that is a fact
+  // about the range on screen, and "Reporting" over four empty charts would
+  // be the page contradicting itself. The lists have no window and so never
+  // reach that state, which is honest -- they are not showing one.
+  const lastSeenMs = Date.parse(container.last_seen);
+  const lastSampleMs = sampled && !Number.isNaN(lastSeenMs) ? lastSeenMs : null;
 
   // Gone, by the same rule the lists use: this container stopped being
   // reported while its host kept reporting. Measured against the host, never

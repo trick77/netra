@@ -5,20 +5,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AttentionCounts } from "./AttentionCounts";
-import type { KindGroup } from "./conditions";
+import { AttentionCounts, type CountTile } from "./AttentionCounts";
 
-const UNITS: KindGroup = {
+const UNITS: CountTile = {
   kind: "failed-units",
   severity: "warning",
   label: "Failed units",
-  hostIds: Array.from({ length: 31 }, (_, i) => String(i + 1)),
+  ids: Array.from({ length: 31 }, (_, i) => String(i + 1)),
 };
-const DISK: KindGroup = {
+const DISK: CountTile = {
   kind: "disk",
   severity: "critical",
   label: "Filesystem nearly full",
-  hostIds: ["40", "41"],
+  ids: ["40", "41"],
 };
 
 describe("AttentionCounts", () => {
@@ -45,7 +44,7 @@ describe("AttentionCounts", () => {
   it("counts one host as a bare figure", () => {
     const { container } = render(
       <AttentionCounts
-        kinds={[{ ...UNITS, hostIds: ["1"] }]}
+        kinds={[{ ...UNITS, ids: ["1"] }]}
         active={null}
         onSelect={() => {}}
       />,

@@ -1,6 +1,24 @@
 import type { MouseEvent } from "react";
 import type { Severity } from "../../ui/Badge";
-import type { AttentionFilter, ConditionKind, KindGroup } from "./conditions";
+/**
+ * One entry in the counts line.
+ *
+ * Structural, not `KindGroup`: hosts and containers both have kinds of thing
+ * that are wrong, and a second component drawing the same chips in the same
+ * CSS would be the drift this app keeps removing. The caller adapts its own
+ * groups into these -- see FleetPage, which does it in one map for each
+ * entity.
+ */
+export interface CountTile {
+  /** What `?attn=` carries for this entry. */
+  kind: string;
+  label: string;
+  severity: Severity;
+  /** The rows carrying it, by id, in the order they were read. Ids rather
+   * than a number so a caller cannot count one row twice for a kind it
+   * carries twice. */
+  ids: readonly string[];
+}
 
 /**
  * One CHIP per kind of thing that is wrong, with how many hosts have it.
@@ -29,20 +47,20 @@ import type { AttentionFilter, ConditionKind, KindGroup } from "./conditions";
  * units".
  */
 export interface AttentionCountsProps {
-  kinds: readonly KindGroup[];
+  kinds: readonly CountTile[];
   /** The kind currently filtered to, when one is. */
-  active: ConditionKind | null;
+  active: string | null;
   /** Uncontrolled fallback for a page that owns its own filter state (tests,
    * and FleetPage rendered on its own). The href is what does the work when
    * the URL is in charge. */
-  onSelect: (next: AttentionFilter) => void;
+  onSelect: (next: string) => void;
   /**
    * Where each entry points. Supplied by the page, because the URL this link
    * belongs in carries the reader's entity as well -- and a cmd-click goes to
    * the href without ever reaching onSelect, so an href that names only the
    * filter silently resets it.
    */
-  href?: (next: AttentionFilter) => string;
+  href?: (next: string) => string;
 }
 
 const SEVERITY_CLASS: Record<Severity, string> = {
@@ -84,8 +102,8 @@ export function AttentionCounts({
     <ul className="atiles" aria-label="What is wrong, by kind">
       {kinds.map((kind) => {
         const chosen = kind.kind === active;
-        const next: AttentionFilter = chosen ? "all" : kind.kind;
-        const hosts = kind.hostIds.length;
+        const next: string = chosen ? "all" : kind.kind;
+        const rows = kind.ids.length;
         const severityClass = SEVERITY_CLASS[kind.severity];
         const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
           // Modified and non-primary clicks belong to the browser -- the same
@@ -120,7 +138,7 @@ export function AttentionCounts({
                   word in the chip on the one thing a reader already knows
                   they are counting. The accessible name still says it: the
                   kind, the number and the severity read in order. */}
-              <span className="v">{hosts}</span>
+              <span className="v">{rows}</span>
               {/* Colour is never the only carrier of severity (spec 3.3/3.5),
                   so the word stays -- one step quieter than the count, after
                   it rather than under it. */}

@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Container, MetricsResponse } from "../../lib/api";
-import { ContainerPage, deriveState, displayTitle } from "./ContainerPage";
+import { ContainerPage, displayTitle } from "./ContainerPage";
 import { ABSENT } from "../../lib/format";
 
 const COLUMNS = [
@@ -115,103 +115,6 @@ describe("displayTitle", () => {
         container_key: "3f2b1c8d9e0a4b5c6d7e8f90a1b2c3d4",
       }),
     ).toBe("shop-web-1");
-  });
-});
-
-describe("deriveState", () => {
-  it("says no samples rather than reporting zero", () => {
-    const state = deriveState({
-      lastSampleMs: null,
-      memUsed: null,
-      memLimit: null,
-      gap: false,
-      now: NOW,
-    });
-    expect(state.label).toMatch(/no samples/i);
-  });
-
-  it("calls a container that stopped appearing silent", () => {
-    const state = deriveState({
-      lastSampleMs: NOW.getTime() - 3_600_000,
-      memUsed: 1,
-      memLimit: null,
-      gap: false,
-      now: NOW,
-    });
-    expect(state.label).toMatch(/silent/i);
-    expect(state.severity).toBe("serious");
-  });
-
-  // Memory approaching mem_limit is a warning (spec 11); a gap is reported
-  // as a gap, never as the restart it probably was.
-  it("warns on memory approaching mem_limit", () => {
-    const state = deriveState({
-      lastSampleMs: NOW.getTime() - 60_000,
-      memUsed: 9.6e8,
-      memLimit: 1e9,
-      gap: false,
-      now: NOW,
-    });
-    expect(state.label).toMatch(/mem_limit/);
-    expect(state.severity).toBe("warning");
-  });
-
-  it("reports a gap as a gap, not as a restart", () => {
-    const state = deriveState({
-      lastSampleMs: NOW.getTime() - 60_000,
-      memUsed: 1e8,
-      memLimit: 1e9,
-      gap: true,
-      now: NOW,
-    });
-    expect(state.label).toMatch(/gap/i);
-    expect(state.label).not.toMatch(/restart/i);
-    expect(state.why).toMatch(/restart/i);
-  });
-
-  // The contradiction this branch exists to end: containerIsGone measures
-  // against the host and marks nothing gone on an offline host, so the badge
-  // must not call the same container Silent in the same breath.
-  it("names the host, not the container, when the host stopped reporting", () => {
-    const state = deriveState({
-      lastSampleMs: NOW.getTime() - 3_600_000,
-      memUsed: 1,
-      memLimit: null,
-      gap: false,
-      now: NOW,
-      hostState: { severity: "critical", label: "offline" },
-    });
-    expect(state.label).toBe("Host offline");
-    expect(state.label).not.toMatch(/silent/i);
-  });
-
-  // The host carries the severity on its own page and in its fleet row.
-  // Repeating it here counts one outage twice.
-  it("leaves the host's severity to the host", () => {
-    const state = deriveState({
-      lastSampleMs: null,
-      memUsed: null,
-      memLimit: null,
-      gap: false,
-      now: NOW,
-      hostState: { severity: "critical", label: "never seen" },
-    });
-    expect(state.severity).toBe("neutral");
-    expect(state.label).toBe("Host never seen");
-  });
-
-  // A host answering badly is still answering: its containers' own readings
-  // are current, so the badge keeps measuring them.
-  it("still judges the container when the host is merely sporadic", () => {
-    const state = deriveState({
-      lastSampleMs: NOW.getTime() - 3_600_000,
-      memUsed: 1,
-      memLimit: null,
-      gap: false,
-      now: NOW,
-      hostState: { severity: "warning", label: "sporadic" },
-    });
-    expect(state.label).toMatch(/silent/i);
   });
 });
 
