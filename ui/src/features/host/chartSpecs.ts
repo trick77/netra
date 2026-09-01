@@ -527,7 +527,7 @@ export const SYSTEM: PanelSpec[] = [
     title: "Device availability",
     slug: "device-availability",
     about:
-      "One line per collector: 1 for a bucket where it ran, 0 where it did not. A collector that was down leaves holes in every panel that reads it. Over a range wide enough to be rolled up, the line is the share of that bucket's scrapes the collector survived, so a partial failure reads as a dip rather than as an outage.",
+      "One line per collector: 1 for a bucket where it ran, 0 where it did not. A collector that was down leaves holes in every panel that reads it. Over a range wide enough to be rolled up, the line is the share of the scrapes it took in that bucket that it survived, so a partial failure reads as a dip - but a collector that simply ran less often and never failed still reads as up.",
     source: "collector",
     bases: [{ base: "ok", label: "ok" }],
     boolean: true,
@@ -539,6 +539,12 @@ export const SYSTEM: PanelSpec[] = [
     // endpoints ARE up and down at any grain -- a rolled bucket of 1 is
     // every scrape in it having worked -- and only the values between them
     // need the rolled tier's reading, which is a percentage of scrapes.
+    //
+    // Rounded AWAY from the endpoints rather than to nearest, because only
+    // the % suffix separates "100% up" from the literal "up": one failure in
+    // a 1440-scrape daily bucket is 0.99931, and reporting that as 100%
+    // would state a clean day for a day that had a failure in it. Anything
+    // strictly between the endpoints therefore prints between 1 and 99.
     fmt: (n) =>
       n === null
         ? ABSENT
@@ -546,7 +552,7 @@ export const SYSTEM: PanelSpec[] = [
           ? "up"
           : n <= 0
             ? "down"
-            : `${Math.round(n * 100)}% up`,
+            : `${n > 0.5 ? Math.floor(n * 100) : Math.ceil(n * 100)}% up`,
   },
   {
     title: "Uptime",
@@ -1185,13 +1191,20 @@ function bandsFor(
               .join(" ")
           : "",
         read: (column) => {
-          if (!spec.boolean) return griddedValues(res, index, column);
-          // The boolean column first, and the fraction only where this tier
-          // does not carry it: where both exist the stored state is the
+          // The stored column first, and the fraction only where this tier
+          // does not carry it: where both exist the stored value is the
           // reading, and reconstructing it from counts that round to the
           // same number would be a second answer to a question already
           // answered.
-          const stored = booleanValues(res, index, column);
+          //
+          // Outside the boolean branch rather than inside it, because
+          // missingReason honours `fraction` for any spec that declares one.
+          // A numeric spec with a fraction and no fallback here would draw
+          // nothing while the panel said the host reported no samples, which
+          // is a false statement about a host that reported plenty.
+          const stored = spec.boolean
+            ? booleanValues(res, index, column)
+            : griddedValues(res, index, column);
           if (stored.length > 0 || spec.fraction === undefined) return stored;
           const ratio = ratioValues(
             res,
