@@ -18,6 +18,23 @@ export interface CountTile {
    * than a number so a caller cannot count one row twice for a kind it
    * carries twice. */
   ids: readonly string[];
+  /**
+   * The severity, as a word, when the word says something the label does not.
+   *
+   * The caller decides, because only the caller knows whether the severity is
+   * a property of the kind or a reading off the rows. A container kind's
+   * severity is a constant of the kind (state.ts KIND_SEVERITY) -- "Silent"
+   * is always serious -- so the word was a fourth span that changed for no
+   * container that ever existed. A host kind's is not: groupByKind takes the
+   * worst condition in the group, so a filesystem chip enters at Warning and
+   * escalates to Critical when one host crosses, and there the word is the
+   * only thing separating the two without colour (spec 3.3).
+   *
+   * Absent, the chip is dot, label and count. The accessible name below
+   * carries the severity either way, so this trims what is DRAWN and never
+   * what is announced.
+   */
+  severityWord?: string;
 }
 
 /**
@@ -72,15 +89,17 @@ const SEVERITY_CLASS: Record<Severity, string> = {
 };
 
 /**
- * The severity, as a word, on every chip.
+ * The severity, as a word.
  *
- * Not decoration and not a duplicate of the dot beside it: severity never
- * rides on colour alone (spec §3.3), and a dot is a mark, so without the word
- * the hue would be the only thing carrying it. The kind's own name does not
- * supply it either, since "Failed units" says what is wrong and not how bad
- * it is.
+ * Exported because the caller decides whether to DRAW it (see CountTile
+ * .severityWord) while this component always ANNOUNCES it: severity never
+ * rides on colour alone (spec §3.3), and a dot is a mark, so the word has to
+ * exist somewhere on every chip. On chips where the label already fixes the
+ * severity -- "Silent" is serious and nothing else -- somewhere is the
+ * accessible name, and the visible chip reads "Silent 8" rather than
+ * "Silent 8 Serious", which is three spans and one fact.
  */
-const SEVERITY_WORD: Record<Severity, string> = {
+export const SEVERITY_WORD: Record<Severity, string> = {
   critical: "Critical",
   serious: "Serious",
   warning: "Warning",
@@ -120,6 +139,10 @@ export function AttentionCounts({
             <a
               className={`atile ${severityClass}`}
               href={href(next)}
+              // The whole chip in one string, because the severity word is
+              // not always drawn and the count carries no noun. Read out in
+              // the order the chip is read: what is wrong, how many, how bad.
+              aria-label={`${kind.label}, ${rows}, ${SEVERITY_WORD[kind.severity]}`}
               // Not aria-pressed: this is a link, not a toggle button, and a
               // pressed link is a control a screen reader announces twice.
               // aria-current says "this is the one you are looking at", which
@@ -139,10 +162,14 @@ export function AttentionCounts({
                   they are counting. The accessible name still says it: the
                   kind, the number and the severity read in order. */}
               <span className="v">{rows}</span>
-              {/* Colour is never the only carrier of severity (spec 3.3/3.5),
-                  so the word stays -- one step quieter than the count, after
-                  it rather than under it. */}
-              <span className="d">{SEVERITY_WORD[kind.severity]}</span>
+              {/* Only where it adds something -- see CountTile.severityWord.
+                  Colour is never the only carrier of severity (spec 3.3/3.5)
+                  and it is not here either: on a chip without this span the
+                  label names the severity by naming the state, and the
+                  aria-label above says the word outright. */}
+              {kind.severityWord === undefined ? null : (
+                <span className="d">{kind.severityWord}</span>
+              )}
             </a>
           </li>
         );

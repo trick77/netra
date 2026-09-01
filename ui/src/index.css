@@ -670,13 +670,20 @@ a:hover {
      up vertically, and these are single headline values. (.srail b does take
      tabular-nums -- three figures on one line, not a headline.) */
 }
+/* The severity, as a word -- drawn only on the chips where it says something
+   the label does not (see CountTile.severityWord). A container kind's
+   severity is a constant of the kind, so "Silent 8 Serious" was three spans
+   and one fact; a host's filesystem chip escalates from warning to critical
+   with its label unchanged, and there the word is the only thing separating
+   the two off colour. Every chip still announces it -- the anchor's
+   aria-label -- so this is a trim of what is drawn, not of what is said. */
 .atile .d {
   font-size: var(--text-micro);
   color: var(--muted);
 }
-/* Status ink on the count and on the word under it, so the two agree. The
-   edge takes the raw hue -- it is a mark, not text, and has no contrast floor
-   to clear. */
+/* Status ink on the count and on the severity word when a chip draws one, so
+   the two agree. The dot takes the raw hue -- it is a mark, not text, and has
+   no contrast floor to clear. */
 /* The severity's mark: a dot. The pill carried it as a 3px left edge, which
    on a rounded chip read as part of the border. Only the geometry is here --
    the hue comes from the global `.st-* .dot` pair further down, which the

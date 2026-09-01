@@ -18,6 +18,9 @@ const DISK: CountTile = {
   severity: "critical",
   label: "Filesystem nearly full",
   ids: ["40", "41"],
+  // A disk kind enters at Warning, so a Critical one is an escalation and the
+  // caller asks for the word. See CountTile.severityWord.
+  severityWord: "Critical",
 };
 
 describe("AttentionCounts", () => {
@@ -32,14 +35,20 @@ describe("AttentionCounts", () => {
     expect(within(list).getByText("31")).toBeInTheDocument();
     // The noun is gone from the chip: on a page of hosts, a count beside a
     // kind is a count of hosts, and "31 hosts" put the widest word in the
-    // chip on the one thing the reader already knows. The severity word
-    // stays, because hue is never the only channel that carries it.
+    // chip on the one thing the reader already knows. So is the severity
+    // word, which the caller did not ask for here -- it repeats what the kind
+    // already fixes.
     expect(within(list).queryByText(/hosts/)).toBeNull();
-    expect(within(list).getByText("Warning")).toBeInTheDocument();
+    expect(within(list).queryByText("Warning")).toBeNull();
+    // Not lost, moved: the chip announces the severity whether or not it
+    // draws it, so nothing rides on hue alone.
+    expect(
+      within(list).getByRole("link", { name: "Failed units, 31, Warning" }),
+    ).toBeInTheDocument();
   });
 
-  // The chip is a count and a kind, with a dot for the severity and the word
-  // after it. One host reads "1", not "1 host": there is no noun left to
+  // The chip is a count and a kind, with a dot for the severity. One host
+  // reads "1", not "1 host": there is no noun left to
   // pluralise, which is one fewer thing that can be wrong on a fleet of one.
   it("counts one host as a bare figure", () => {
     const { container } = render(
@@ -56,9 +65,12 @@ describe("AttentionCounts", () => {
   });
 
   // The dot beside the kind is a mark, not a word, so the severity WORD is
-  // what keeps meaning off colour alone (spec §3.3). The kind's own name cannot stand in for it: "Failed units"
-  // says what is wrong and not how bad it is.
-  it("names the severity rather than leaving it to the colour", () => {
+  // what keeps meaning off colour alone (spec §3.3) -- but only where the
+  // label does not already fix it. A disk chip escalates from Warning to
+  // Critical without its label changing, so there the word is drawn; a
+  // "Failed units" chip is a warning and nothing else, so there it is
+  // announced and not drawn.
+  it("names the severity that the label cannot", () => {
     const { container } = render(
       <AttentionCounts
         kinds={[DISK, UNITS]}
@@ -68,7 +80,10 @@ describe("AttentionCounts", () => {
     );
 
     expect(screen.getByText("Critical")).toBeInTheDocument();
-    expect(screen.getByText("Warning")).toBeInTheDocument();
+    expect(screen.queryByText("Warning")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Failed units, 31, Warning" }),
+    ).toBeInTheDocument();
     expect(container.querySelector(".atile.st-crit")).toBeInTheDocument();
     expect(container.querySelector(".atile.st-warn")).toBeInTheDocument();
     expect(screen.getByText("Filesystem nearly full")).toBeInTheDocument();

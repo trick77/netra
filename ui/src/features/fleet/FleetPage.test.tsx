@@ -137,10 +137,22 @@ describe("FleetPage entity tabs", () => {
   // container states are different vocabularies over different rows, and one
   // line showing both would be counting two things in one row of chips.
   describe("the container counts line", () => {
+    // Five minutes behind a host that is still posting: silent, and inside
+    // the window where gone would offer to purge it.
     const SILENT = makeContainer({
       id: 2,
       container_key: "shop/web",
       name: "web",
+      last_seen: "2026-08-10T13:55:00Z",
+      host_last_seen: "2026-08-10T14:00:00Z",
+    });
+    // Two hours behind the same host: gone, and counted there rather than
+    // twice. It used to be both -- the Silent chip counted every row whose
+    // own name cell carried a "gone" pill.
+    const GONE = makeContainer({
+      id: 3,
+      container_key: "shop/api",
+      name: "api",
       last_seen: "2026-08-10T12:00:00Z",
       host_last_seen: "2026-08-10T14:00:00Z",
     });
@@ -151,11 +163,20 @@ describe("FleetPage entity tabs", () => {
         containers: [
           makeContainer({ host_last_seen: "2026-08-10T14:00:00Z" }),
           SILENT,
+          GONE,
         ],
       });
 
       const list = screen.getByRole("list", { name: /by kind/i });
-      expect(within(list).getByText("Silent")).toBeInTheDocument();
+      expect(
+        within(list).getByRole("link", { name: "Silent, 1, Serious" }),
+      ).toBeInTheDocument();
+      expect(
+        within(list).getByRole("link", { name: "Gone, 1, Serious" }),
+      ).toBeInTheDocument();
+      // A container kind's severity is a constant of the kind, so the word is
+      // announced above and never drawn.
+      expect(within(list).queryByText("Serious")).toBeNull();
       // The one that is fine is not a chip: a filter names what is wrong.
       expect(within(list).queryByText("Reporting")).toBeNull();
     });
@@ -173,6 +194,18 @@ describe("FleetPage entity tabs", () => {
 
       expect(screen.getByRole("link", { name: "web" })).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: "postgres" })).toBeNull();
+    });
+
+    it("narrows to the gone containers on their own", () => {
+      renderPage({
+        entity: "containers",
+        attention: "gone",
+        onAttentionChange: vi.fn(),
+        containers: [SILENT, GONE],
+      });
+
+      expect(screen.getByRole("link", { name: "api" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "web" })).toBeNull();
     });
 
     // The counts line drops a kind once nothing carries it, so a link to a
