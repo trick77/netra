@@ -448,6 +448,67 @@ describe("Graphs", () => {
     expect(labels[0]).toBe("smart ok");
   });
 
+  // A collector that STOPPED reports nothing for the buckets it missed, so
+  // scoring only the buckets it did report scores it on its good hours and
+  // files it with the healthy. Three hours of silence is the single thing
+  // this panel exists to show -- the same failure that forced the boolean
+  // path onto the window grid -- so a hole outranks a dip.
+  it("puts a collector that went silent ahead of one that merely dipped", () => {
+    const bucket = (ts: number, samples: number, failures: number) => [
+      ts,
+      4,
+      9,
+      samples,
+      failures,
+      null,
+    ];
+    const collector = response({
+      family: "collector",
+      tier: "5m",
+      step_s: 300,
+      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:15:00Z" },
+      requested_window: {
+        from: "2025-08-10T00:00:00Z",
+        to: "2025-08-10T00:15:00Z",
+      },
+      key_columns: ["collector"],
+      columns: [
+        "duration_ms_avg",
+        "duration_ms_max",
+        "sample_count",
+        "failure_count",
+        "error_code",
+      ],
+      series: [
+        {
+          // Failed two of five scrapes in one bucket, and never went away.
+          key: { collector: "addresses" },
+          points: [
+            bucket(1_754_784_000_000, 5, 0),
+            bucket(1_754_784_300_000, 5, 2),
+            bucket(1_754_784_600_000, 5, 0),
+          ],
+        },
+        {
+          // Perfect where it reported, and absent for the middle bucket.
+          key: { collector: "smart" },
+          points: [
+            bucket(1_754_784_000_000, 5, 0),
+            bucket(1_754_784_600_000, 5, 0),
+          ],
+        },
+      ],
+    });
+    render(<Graphs host={fullHost} collector={collector} />);
+    const panel = screen.getByRole("region", {
+      name: /Device availability chart/,
+    });
+    const labels = within(panel)
+      .getAllByText(/^(addresses|smart) ok$/)
+      .map((el) => el.textContent);
+    expect(labels[0]).toBe("smart ok");
+  });
+
   // Hub latency is NULL by design while the hub is unreachable -- both gauges
   // time a handshake that completed -- so the panel correctly goes blank
   // during the exact event worth seeing. This counter is what carries it.

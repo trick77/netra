@@ -292,6 +292,10 @@ interface PanelSpec {
    * scrape anywhere keeps a series, so "never dipped" dropped 4 collectors
    * of 20 at 24h and none at all at 7d. The wider the range the less it did,
    * which is backwards -- a wide range is where the hedge is thickest.
+   *
+   * Not for a `counter` spec without more work: worstOf reads the base as
+   * stored, so a counter would order on its running total rather than on the
+   * per-bucket increases the panel actually draws.
    */
   orderByWorst?: boolean;
   /**
@@ -1267,10 +1271,9 @@ function bandsFor(
       : passes;
 
   // Ordered AFTER the idle filter and before the colour walk, so the worst
-  // series takes the first hue and the first legend row. Sorted by the
-  // lowest reading each pass carries across the spec's own bases; a pass
-  // with no reading at all sorts last, because absence is not a dip and the
-  // panel's not-collected states already speak for it.
+  // series takes the first hue and the first legend row. See worstOf for
+  // what "worst" counts: a gap beats any reading, and a series with no
+  // reading at all sorts last rather than first.
   //
   // A copy, not a sort in place: `passes` is derived from res.series and the
   // response is the caller's.
@@ -1419,27 +1422,50 @@ function bandsFor(
 }
 
 /**
- * The lowest reading one pass carries, across the spec's own bases.
+ * How bad one pass got, across the spec's own bases, lower being worse.
  *
- * Infinity for a pass with no reading at all, which sorts it last: a series
- * that is entirely absent has not dipped, and putting it at the head of a
- * panel ordered by worst would say it had. Bases pointing at another family
- * are skipped for the reason the idle filter skips them -- this pass reads
- * the primary response, and a foreign base resolves to the wrong column or
- * to none.
+ * A GAP counts as worse than any reading, not as no reading. A collector that
+ * stopped for three hours reports nothing for those buckets, so scoring only
+ * the buckets it did report scores it on its good hours alone and files it
+ * with the healthy -- and "this collector was down for three hours" is the
+ * observed failure that forced the boolean path onto the window grid in the
+ * first place (see booleanValues above). It is the single thing this panel
+ * exists to show, so it sorts first.
+ *
+ * Infinity, sorting LAST, for a pass with no reading anywhere. That is not a
+ * collector that stopped, it is a column this window never carried, and the
+ * panel's not-collected states already say so. The two are told apart by
+ * whether anything was read at all.
+ *
+ * Reads the base column as stored, which is what the ordered panel draws.
+ * A `counter` spec draws per-bucket increases instead, so ordering one by
+ * this would sort on the running total's first bucket rather than on the
+ * deltas on screen; nothing sets both today, and the flag's doc says so.
+ *
+ * Bases pointing at another family are skipped for the reason the idle
+ * filter skips them: this pass reads the primary response, and a foreign
+ * base resolves to the wrong column or to none.
  */
 function worstOf(
   spec: PanelSpec,
   pass: { read: (column: string) => (number | null)[] },
 ): number {
   let worst = Infinity;
+  let read = false;
+  let gapped = false;
   for (const { base, source } of spec.bases) {
     if (source !== undefined && source !== spec.source) continue;
     for (const v of pass.read(base)) {
-      if (v !== null && v < worst) worst = v;
+      if (v === null) {
+        gapped = true;
+        continue;
+      }
+      read = true;
+      if (v < worst) worst = v;
     }
   }
-  return worst;
+  if (!read) return Infinity;
+  return gapped ? -Infinity : worst;
 }
 
 /** The base's hue at this series' step, or undefined for a spec with none. */
