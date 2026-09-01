@@ -372,11 +372,21 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
     return null;
   }
   const total = row.mem_total;
-  // The fraction of mem_total the stack currently reaches -- what the height
-  // of the stack already says, in figures. Same helper the column sorts on,
-  // and the same isReporting guard the traffic rates use: a host that stopped
-  // talking prints nothing rather than its last percentage.
-  const used = isReporting(row) ? latestStackTotal(row.mem) : null;
+  // mem_used, NOT the height of the stack beside it. The stack partitions
+  // mem_total into everything that is not free -- used, shmem, ARC, buffers,
+  // cached -- so its top edge is "not free", and a host doing nothing but
+  // serving files reads 97% while most of its memory is available. mem_used
+  // is MemTotal - MemAvailable (internal/agent/collector/memory.go), which is
+  // what `free` calls used and what the host page's own Memory tile prints
+  // (overviewTiles.ts): a fleet row and a host page must not disagree about
+  // the same machine.
+  //
+  // A gauge off host_current rather than the end of the series, for the same
+  // reason the traffic rates are: the series' last bucket depends on the
+  // range, because the range picks the step and the step picks the storage
+  // tier. Same isReporting guard, so a host that stopped talking prints
+  // nothing rather than its last percentage.
+  const used = isReporting(row) ? row.mem_used : null;
   const fetchSeries = async (next: Range): Promise<DetailData> => {
     const host = await fetchHostFamily(row.id, "host", next);
     return { series: memoryBands(host), window: host.window };
@@ -685,17 +695,18 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       key: "memory",
       header: "Memory",
       cell: (row) => <MemoryCell row={row} range={range} />,
-      // A FRACTION of mem_total, not the bytes: the cell draws its stack
-      // against that ceiling, so the height of the stack is how full the host
-      // is -- the rule that used to mark the ceiling is drawn in the enlarged
-      // chart now, not in the row. Sorting on bytes would
-      // order the fleet by how much RAM each machine has, which is the one
-      // question this column is not asking. No ceiling means the cell draws
-      // nothing at all (see MemoryCell), so there is nothing to order on.
+      // The FRACTION the cell prints, off the same gauge: mem_used over
+      // mem_total. Ordering on the stack's own height ranked the fleet by how
+      // little memory was FREE rather than by how much was in use, so a file
+      // server with a big page cache outranked a host actually short of
+      // memory -- and the column disagreed with the figure printed in it.
+      // Sorting on bytes would order the fleet by how much RAM each machine
+      // has, which is the one question this column is not asking. No ceiling
+      // means the cell draws nothing at all (see MemoryCell), so there is
+      // nothing to order on.
       sortValue: (row) => {
         if (row.mem_total === null || !isReporting(row)) return null;
-        const used = latestStackTotal(row.mem);
-        return used === null ? null : used / row.mem_total;
+        return row.mem_used === null ? null : row.mem_used / row.mem_total;
       },
     },
     {
