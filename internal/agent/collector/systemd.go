@@ -89,8 +89,38 @@ func SystemUnits(ctx context.Context) ([]Unit, error) {
 	return units, nil
 }
 
+// unitConn is the part of a systemd bus connection SystemUnits uses.
+//
+// An interface rather than *dbus.Conn so the held-connection handling can be
+// exercised without a system bus. That handling IS the change this belongs to,
+// and pinning it to a concrete connection would have left it tested only in
+// production.
+type unitConn interface {
+	ListUnitsContext(ctx context.Context) ([]dbus.UnitStatus, error)
+	Close()
+}
+
 // systemBus is the connection SystemUnits holds between scrapes.
-var systemBus heldBus[dbus.Conn]
+var systemBus heldBus[unitConn]
+
+// dialSystemBus opens a connection whose lifetime is the PROCESS's, not the
+// scrape's. A var so a test can substitute a connection.
+//
+// context.WithoutCancel is not decoration here, and getting it wrong is
+// silent. go-systemd hands the context straight to godbus as WithContext, and
+// godbus spawns a goroutine that CLOSES the connection as soon as that context
+// is done (newConn, conn.go). The scrape context is cancelled by collect's own
+// `defer cancel()` at the end of every scrape -- so a connection dialled with
+// it dies the instant the scrape that dialled it finishes, and callBus's
+// redial would hide that completely: every minute would quietly pay a dial, a
+// failed call and a second dial, which is worse than the fresh-connection
+// version this replaces rather than better.
+//
+// The scrape's deadline still bounds the CALL below, which is where the time
+// actually goes.
+var dialSystemBus = func(ctx context.Context) (unitConn, error) {
+	return dbus.NewSystemConnectionContext(context.WithoutCancel(ctx))
+}
 
 // listUnits calls ListUnits on the held connection, redialling once if the
 // call fails on a connection that has gone stale. See callBus.
@@ -100,9 +130,9 @@ func listUnits(ctx context.Context) ([]dbus.UnitStatus, error) {
 	// into "list units: connect to the system bus: ...", blaming the method
 	// for a connection that was never made.
 	return callBus(ctx, &systemBus,
-		dbus.NewSystemConnectionContext,
-		func(c *dbus.Conn) { c.Close() },
-		func(c *dbus.Conn) ([]dbus.UnitStatus, error) {
+		dialSystemBus,
+		func(c unitConn) { c.Close() },
+		func(c unitConn) ([]dbus.UnitStatus, error) {
 			statuses, err := c.ListUnitsContext(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("list units: %w", err)

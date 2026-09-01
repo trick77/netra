@@ -123,3 +123,37 @@ func (b busAdapter) Info(ctx context.Context, p dbus.ObjectPath) (SessionForTest
 	}
 	return SessionForTest{Class: s.class, State: s.state}, nil
 }
+
+// UnitConnForTest and SessionConnForTest are the connection seams the two
+// bus-backed collectors dial through, so a test can drive SystemUnits and
+// LogindSessions end to end -- including the held-connection reuse and the
+// redial -- without a system bus.
+type (
+	UnitConnForTest    = unitConn
+	SessionConnForTest = sessionConn
+)
+
+// SetSystemBusDialForTest replaces the systemd dial and drops any held
+// connection, returning a func that restores both. The drop matters: these
+// connections outlive a scrape by design, so one left over from an earlier
+// test would be reused by the next and hide the dial entirely.
+func SetSystemBusDialForTest(dial func(context.Context) (unitConn, error)) func() {
+	prev := dialSystemBus
+	dialSystemBus = dial
+	systemBus = heldBus[unitConn]{}
+	return func() {
+		dialSystemBus = prev
+		systemBus = heldBus[unitConn]{}
+	}
+}
+
+// SetLogindBusDialForTest is SetSystemBusDialForTest for logind.
+func SetLogindBusDialForTest(dial func(context.Context) (sessionConn, error)) func() {
+	prev := dialLogindBus
+	dialLogindBus = dial
+	logindBus = heldBus[sessionConn]{}
+	return func() {
+		dialLogindBus = prev
+		logindBus = heldBus[sessionConn]{}
+	}
+}

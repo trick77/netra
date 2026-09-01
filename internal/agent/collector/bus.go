@@ -21,28 +21,35 @@ import (
 // The second half is answered by callBus rather than by paying for it in
 // advance. See the comment there.
 //
-// Package level at both use sites, because UnitLister and SessionLister are
-// plain function types and their production implementations have nowhere else
-// to keep a connection -- the same place dockerClient lives, for the same
-// reason.
+// A `held` flag rather than a nil check, because C is an interface at both use
+// sites (see unitConn and sessionConn) and its zero value is only incidentally
+// comparable to nil.
 type heldBus[C any] struct {
 	mu   sync.Mutex
-	conn *C
+	conn C
+	held bool
 }
 
 // callBus runs fn on the held connection, dialling one if none is held and
-// redialling ONCE if fn fails on a connection that was already open.
+// redialling ONCE if fn fails on a connection that was ALREADY OPEN when the
+// call started.
 //
-// This is where staleness is handled: dbus or logind or systemd restarting
-// under the agent breaks the held connection, the next call on it fails, and
-// this drops it and retries on a fresh one WITHIN THE SAME SCRAPE. So a
-// restart costs nothing -- which is strictly better than the fresh-connection
-// version it replaces, not merely as good as it.
+// That last qualifier is the whole shape of the retry. A connection this call
+// dialled a moment ago cannot have gone stale, so a failure on it is the
+// call's own -- dbus present but logind absent, a GetAll denied by policy, the
+// exact hosts the utmp fallback exists for -- and retrying would buy a second
+// dial and a second failure. Only a connection carried over from an earlier
+// scrape is worth suspecting.
 //
-// At most two passes. A second failure is the bus being genuinely unreachable,
-// which is the caller's "unavailable" capability or its utmp fallback, and not
-// something another retry would fix. The connection is left dropped either
-// way, so a host whose bus is gone is not holding a dead socket open.
+// This is where staleness is handled, instead of being paid for in advance by
+// dialling every scrape: dbus or logind or systemd restarting under the agent
+// breaks the held connection, the next call on it fails, and this drops it and
+// retries on a fresh one WITHIN THE SAME SCRAPE. So a restart costs nothing --
+// which is strictly better than the fresh-connection version it replaces, not
+// merely as good as it.
+//
+// The connection is dropped on any failure, so a host whose bus has gone is
+// not holding a dead socket open for the next scrape to find.
 //
 // Serialised on the mutex rather than trusted to the scrape loop being single
 // threaded. The loop is that today; a package-level connection that silently
@@ -50,25 +57,30 @@ type heldBus[C any] struct {
 func callBus[C, T any](
 	ctx context.Context,
 	b *heldBus[C],
-	dial func(context.Context) (*C, error),
-	closeConn func(*C),
-	fn func(*C) (T, error),
+	dial func(context.Context) (C, error),
+	closeConn func(C),
+	fn func(C) (T, error),
 ) (T, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	var zero T
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		if b.conn == nil {
+	for {
+		// Read BEFORE the dial below can set it: this is "was there a
+		// connection when we got here", which is what decides whether a
+		// failure is worth retrying.
+		carriedOver := b.held
+
+		if !b.held {
 			conn, err := dial(ctx)
 			if err != nil {
-				// A dial that fails is reported as itself rather than retried:
-				// there is no stale connection to blame, so the second pass
-				// would dial the same absent socket again.
+				// Reported as itself rather than retried: there is no stale
+				// connection to blame, so a second pass would dial the same
+				// absent socket again.
 				return zero, fmt.Errorf("connect to the system bus: %w", err)
 			}
-			b.conn = conn
+			b.conn, b.held = conn, true
 		}
 
 		v, err := fn(b.conn)
@@ -85,7 +97,12 @@ func callBus[C, T any](
 		}
 
 		closeConn(b.conn)
-		b.conn = nil
+		var zeroC C
+		b.conn, b.held = zeroC, false
+
+		if !carriedOver {
+			break
+		}
 	}
 	return zero, lastErr
 }

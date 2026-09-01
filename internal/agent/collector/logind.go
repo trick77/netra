@@ -118,11 +118,9 @@ type sessionSource interface {
 // an error here and the Users collector falls back to utmp.
 func LogindSessions(ctx context.Context) (int, error) {
 	return callBus(ctx, &logindBus,
-		func(ctx context.Context) (*dbus.Conn, error) {
-			return dbus.ConnectSystemBus(dbus.WithContext(ctx))
-		},
-		func(c *dbus.Conn) { _ = c.Close() },
-		func(c *dbus.Conn) (int, error) {
+		dialLogindBus,
+		func(c sessionConn) { _ = c.Close() },
+		func(c sessionConn) (int, error) {
 			return countLogindSessions(ctx, busSessions{
 				object: func(path dbus.ObjectPath) dbus.BusObject {
 					return c.Object(logindService, path)
@@ -132,8 +130,24 @@ func LogindSessions(ctx context.Context) (int, error) {
 	)
 }
 
+// sessionConn is the part of a system bus connection LogindSessions uses. An
+// interface for the same reason unitConn is one: so the held connection can be
+// exercised without a bus.
+type sessionConn interface {
+	Object(dest string, path dbus.ObjectPath) dbus.BusObject
+	Close() error
+}
+
 // logindBus is the connection LogindSessions holds between scrapes.
-var logindBus heldBus[dbus.Conn]
+var logindBus heldBus[sessionConn]
+
+// dialLogindBus opens a connection whose lifetime is the PROCESS's, not the
+// scrape's. See dialSystemBus for why context.WithoutCancel is load-bearing:
+// godbus closes a connection as soon as the context it was given is done, and
+// the scrape context is cancelled at the end of every scrape.
+var dialLogindBus = func(ctx context.Context) (sessionConn, error) {
+	return dbus.ConnectSystemBus(dbus.WithContext(context.WithoutCancel(ctx)))
+}
 
 // countLogindSessions asks the source for every session and counts the human
 // ones.

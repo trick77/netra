@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// fakeConn stands in for a D-Bus connection. The real ones are concrete types
-// from two different libraries with no interface between them, which is why
-// callBus is generic over the connection rather than over a seam of its own.
+// fakeConn stands in for a D-Bus connection. The two real ones come from
+// different libraries and share no type, which is why callBus is generic over
+// the connection rather than over a seam of its own.
 type fakeConn struct {
 	id     int
 	closed bool
@@ -50,7 +50,7 @@ func (h *busHarness) call(c *fakeConn) (int, error) {
 	return c.id, nil
 }
 
-func run(t *testing.T, ctx context.Context, b *heldBus[fakeConn], h *busHarness) (int, error) {
+func run(t *testing.T, ctx context.Context, b *heldBus[*fakeConn], h *busHarness) (int, error) {
 	t.Helper()
 	return callBus(ctx, b, h.dial, h.close, h.call)
 }
@@ -58,7 +58,7 @@ func run(t *testing.T, ctx context.Context, b *heldBus[fakeConn], h *busHarness)
 // The point of holding the connection at all: a second scrape must not dial.
 func TestCallBusReusesTheHeldConnection(t *testing.T) {
 	// Given a bus whose calls all succeed.
-	var b heldBus[fakeConn]
+	var b heldBus[*fakeConn]
 	h := &busHarness{}
 
 	// When it is called twice, as two scrapes would.
@@ -84,7 +84,7 @@ func TestCallBusReusesTheHeldConnection(t *testing.T) {
 // than a trade.
 func TestCallBusRedialsOnceWhenTheHeldConnectionWentStale(t *testing.T) {
 	// Given a held connection whose next call fails.
-	var b heldBus[fakeConn]
+	var b heldBus[*fakeConn]
 	h := &busHarness{}
 	if _, err := run(t, t.Context(), &b, h); err != nil {
 		t.Fatalf("priming call: %v", err)
@@ -109,13 +109,43 @@ func TestCallBusRedialsOnceWhenTheHeldConnectionWentStale(t *testing.T) {
 	}
 }
 
-// Two passes, not a retry loop. A bus that is genuinely gone is the caller's
-// "unavailable" capability or its utmp fallback, and it must not be reached by
-// way of an unbounded redial.
-func TestCallBusGivesUpAfterTwoFailuresAndHoldsNothing(t *testing.T) {
-	// Given every call failing.
-	var b heldBus[fakeConn]
-	h := &busHarness{results: []error{errors.New("first"), errors.New("second")}}
+// A connection dialled a moment ago cannot be stale, so a call that fails on
+// it is the CALL's own failure -- dbus present but logind absent, a GetAll
+// denied by policy: exactly the hosts the utmp fallback exists for. Retrying
+// there would buy a second dial and a second identical failure on every scrape,
+// for ever, on hosts that already had the answer.
+func TestCallBusDoesNotRetryOnAConnectionItJustDialled(t *testing.T) {
+	// Given a reachable bus whose call fails.
+	var b heldBus[*fakeConn]
+	h := &busHarness{results: []error{errors.New("logind is not running")}}
+
+	// When called with nothing held.
+	_, err := run(t, t.Context(), &b, h)
+
+	// Then it dialled once, called once, and reported that failure.
+	if err == nil || err.Error() != "logind is not running" {
+		t.Errorf("err = %v, want the call's own failure", err)
+	}
+	if h.dials != 1 {
+		t.Errorf("dials = %d, want 1: a fresh connection cannot have gone stale", h.dials)
+	}
+	if len(h.attempts) != 1 {
+		t.Errorf("attempts = %v, want exactly 1", h.attempts)
+	}
+}
+
+// Two passes at most. A held connection whose replacement fails too is a bus
+// that is genuinely gone -- the caller's "unavailable" capability or its utmp
+// fallback -- and it must not be reached by way of an unbounded redial.
+func TestCallBusGivesUpAfterTheRedialAndHoldsNothing(t *testing.T) {
+	// Given a held connection, and a bus that then fails every call.
+	var b heldBus[*fakeConn]
+	h := &busHarness{}
+	if _, err := run(t, t.Context(), &b, h); err != nil {
+		t.Fatalf("priming call: %v", err)
+	}
+	h.results = []error{errors.New("first"), errors.New("second")}
+	h.attempts = nil // the priming call is setup, not part of what is measured
 
 	// When called.
 	_, err := run(t, t.Context(), &b, h)
@@ -128,7 +158,7 @@ func TestCallBusGivesUpAfterTwoFailuresAndHoldsNothing(t *testing.T) {
 		t.Errorf("attempts = %v, want exactly 2", h.attempts)
 	}
 	// And it is holding no dead socket open for the next scrape to find.
-	if b.conn != nil {
+	if b.held {
 		t.Error("a connection is still held after both passes failed")
 	}
 	if len(h.closed) != 2 {
@@ -141,7 +171,7 @@ func TestCallBusGivesUpAfterTwoFailuresAndHoldsNothing(t *testing.T) {
 // exactly the host already too slow to afford it.
 func TestCallBusKeepsTheConnectionWhenTheContextExpired(t *testing.T) {
 	// Given a held connection and a cancelled scrape.
-	var b heldBus[fakeConn]
+	var b heldBus[*fakeConn]
 	h := &busHarness{}
 	if _, err := run(t, t.Context(), &b, h); err != nil {
 		t.Fatalf("priming call: %v", err)
@@ -168,7 +198,7 @@ func TestCallBusKeepsTheConnectionWhenTheContextExpired(t *testing.T) {
 // only dial the same absent socket twice.
 func TestCallBusDoesNotRetryAFailedDial(t *testing.T) {
 	// Given a bus socket that is not there.
-	var b heldBus[fakeConn]
+	var b heldBus[*fakeConn]
 	h := &busHarness{dialErr: errors.New("no such file or directory")}
 
 	// When called.
