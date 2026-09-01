@@ -540,11 +540,16 @@ export const SYSTEM: PanelSpec[] = [
     // every scrape in it having worked -- and only the values between them
     // need the rolled tier's reading, which is a percentage of scrapes.
     //
-    // Rounded AWAY from the endpoints rather than to nearest, because only
-    // the % suffix separates "100% up" from the literal "up": one failure in
-    // a 1440-scrape daily bucket is 0.99931, and reporting that as 100%
-    // would state a clean day for a day that had a failure in it. Anything
-    // strictly between the endpoints therefore prints between 1 and 99.
+    // Rounded to nearest and THEN held off the endpoints, because only the %
+    // suffix separates "100% up" from the literal "up": one failure in a
+    // 1440-scrape daily bucket is 0.99931, and reporting that as 100% would
+    // state a clean day for a day that had a failure in it.
+    //
+    // Not floor-above-half and ceil-below, which was the first shape of this
+    // and is a worse one: n*100 is inexact for most hundredths, so 71
+    // failures in 100 scrapes is 29.000000000000004 and ceil reports 30% for
+    // a bucket that was 29% -- the same off-by-one this exists to prevent,
+    // arriving from the other side.
     fmt: (n) =>
       n === null
         ? ABSENT
@@ -552,7 +557,7 @@ export const SYSTEM: PanelSpec[] = [
           ? "up"
           : n <= 0
             ? "down"
-            : `${n > 0.5 ? Math.floor(n * 100) : Math.ceil(n * 100)}% up`,
+            : `${Math.min(99, Math.max(1, Math.round(n * 100)))}% up`,
   },
   {
     title: "Uptime",

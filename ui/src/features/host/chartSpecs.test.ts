@@ -67,4 +67,13 @@ describe("device availability at a rolled-up tier", () => {
     expect(fmt?.(0)).toBe("down");
     expect(fmt?.(0.8)).toBe("80% up");
   });
+
+  // 1 - 71/100 is 0.29000000000000004, so n * 100 lands just above 29 and a
+  // ceil reports a percent the bucket never had. Rounding first is what
+  // keeps the arithmetic honest at the ordinary values too, not only at the
+  // endpoints the clamp guards.
+  it("reports the percent the bucket had, not the float beside it", () => {
+    expect(fmt?.(1 - 71 / 100)).toBe("29% up");
+    expect(fmt?.(1 - 7 / 9)).toBe("22% up");
+  });
 });
