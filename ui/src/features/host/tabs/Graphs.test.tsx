@@ -345,6 +345,48 @@ describe("Graphs", () => {
     expect(panel).not.toHaveTextContent("up");
   });
 
+  // The failure this replaces: `ok` exists only in collector_samples, and the
+  // 5m, 1h and 1d aggregates keep sample_count and failure_count instead
+  // (0001_init.sql:1296). Only the 1h range asks for a 60s step, so at eight
+  // of the nine ranges the panel said "Not collected -- choose a shorter
+  // range", pointing at the one range that was already the shortest.
+  it("draws availability from the counts at a tier that has no ok column", () => {
+    const collector = response({
+      family: "collector",
+      tier: "5m",
+      step_s: 300,
+      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:10:00Z" },
+      requested_window: {
+        from: "2025-08-10T00:00:00Z",
+        to: "2025-08-10T00:10:00Z",
+      },
+      key_columns: ["collector"],
+      columns: [
+        "duration_ms_avg",
+        "duration_ms_max",
+        "sample_count",
+        "failure_count",
+        "error_code",
+      ],
+      series: [
+        {
+          key: { collector: "smart" },
+          points: [
+            [1_754_784_000_000, 4, 9, 5, 0, null],
+            // Four of five scrapes survived: a dip, not an outage.
+            [1_754_784_300_000, 4, 9, 5, 1, "eacces"],
+          ],
+        },
+      ],
+    });
+    render(<Graphs host={fullHost} collector={collector} />);
+    const panel = screen.getByRole("region", {
+      name: /Device availability chart/,
+    });
+    expect(panel).toHaveTextContent("80% up");
+    expect(panel).not.toHaveTextContent("Not collected");
+  });
+
   // Hub latency is NULL by design while the hub is unreachable -- both gauges
   // time a handshake that completed -- so the panel correctly goes blank
   // during the exact event worth seeing. This counter is what carries it.
