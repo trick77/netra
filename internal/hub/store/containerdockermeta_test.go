@@ -130,11 +130,17 @@ func TestIntegrationContainerStateIsForgottenWhenTheAgentStopsSendingIt(t *testi
 	}
 }
 
-// The one exception, and it exists because unset does NOT mean "could not
-// look" for this field: the agent rations inspect calls, so a perfectly
-// healthy agent sends no restart count on most scrapes. Overwriting would
-// blank the number nine times out of ten.
-func TestIntegrationRestartCountSurvivesAScrapeThatDidNotInspect(t *testing.T) {
+// restart_count follows the same overwrite rule as the other three, and it can
+// only do so because the AGENT holds the cache: it reports its last known count
+// on every scrape rather than only on the ones that called inspect, and it
+// drops that count the moment an inspect is refused.
+//
+// So an unset restart_count here means the agent cannot answer, and the row
+// must forget too. Coalescing instead pinned "Restarts: 12" above a State and a
+// Health that both correctly read "not reported" -- the same stale assertion
+// the overwrite rule exists to prevent, surviving in the one field that opted
+// out of it.
+func TestIntegrationRestartCountIsForgottenWhenTheAgentCanNoLongerRead(t *testing.T) {
 	ctx := context.Background()
 	s := openMigrated(t)
 	id := seedInterfaceHost(t, s, "docker-meta-restarts")
@@ -146,6 +152,9 @@ func TestIntegrationRestartCountSurvivesAScrapeThatDidNotInspect(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
+
+	// The socket is proxied down to /containers/json: state and health still
+	// arrive, the restart count no longer does.
 	if _, err := s.InsertContainerSamples(ctx, id, []*netrav1.ContainerSample{
 		dockerSample("shop/web", at.Add(time.Minute), "running", "healthy", nil, nil),
 	}); err != nil {
@@ -157,8 +166,8 @@ func TestIntegrationRestartCountSurvivesAScrapeThatDidNotInspect(t *testing.T) {
 		`SELECT restart_count FROM containers WHERE host_id = $1`, id).Scan(&count); err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	if count == nil || *count != 7 {
-		t.Errorf("restart_count = %v, want 7 kept across a scrape that did not inspect", count)
+	if count != nil {
+		t.Errorf("restart_count = %d, want NULL once the agent stopped asserting it", *count)
 	}
 }
 

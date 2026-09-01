@@ -133,6 +133,14 @@ type Containers struct {
 	inspector ContainerInspector
 	restarts  map[string]restartEntry
 	scrapeN   uint64
+	// inspectFailStreak counts CONSECUTIVE scrapes on which every inspect
+	// attempted was refused. It is what separates a daemon that will not answer
+	// from a container that vanished between the list and the inspect.
+	inspectFailStreak int
+	// labelsCapped latches the per-container budget warning, so a host whose
+	// labels genuinely exceed it says so once rather than once a minute -- the
+	// rule the Docker-socket logging in Collect already follows.
+	labelsCapped map[string]bool
 
 	now func() time.Time
 
@@ -504,7 +512,7 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 			row.Health = ptrTo(m.Health)
 		}
 		if m.Labels != nil {
-			row.Labels = &netrav1.ContainerLabels{Values: capLabels(m.Labels)}
+			row.Labels = &netrav1.ContainerLabels{Values: c.cappedLabels(id, m.Labels)}
 		}
 		if restarts, ok := c.readRestart(id); ok {
 			row.RestartCount = ptrTo(restarts)
@@ -1147,16 +1155,17 @@ const maxContainerRows = 500
 // that is short.
 const maxLabelBytes = 4096
 
-// capLabels bounds one container's label map, keeping whole pairs.
+// capLabels bounds one container's label map, keeping whole pairs, and reports
+// how many it dropped.
 //
 // A truncated VALUE would be worse than an absent one -- "com.example.commit:
 // 3f2a1..." reads as a commit hash and is a prefix of one -- so the budget is
 // spent pair by pair and the tail is dropped entirely.
-func capLabels(labels map[string]string) map[string]string {
+func capLabels(labels map[string]string) (map[string]string, int) {
 	if len(labels) == 0 {
 		// Non-nil, because the caller has already established that the socket
 		// answered. Nil here would reach the hub as "never looked".
-		return map[string]string{}
+		return map[string]string{}, 0
 	}
 
 	keys := make([]string, 0, len(labels))
@@ -1166,7 +1175,7 @@ func capLabels(labels map[string]string) map[string]string {
 		total += len(k) + len(v)
 	}
 	if total <= maxLabelBytes {
-		return labels
+		return labels, 0
 	}
 	slices.Sort(keys)
 
@@ -1180,8 +1189,32 @@ func capLabels(labels map[string]string) map[string]string {
 		spent += len(k) + len(labels[k])
 		out[k] = labels[k]
 	}
+	return out, dropped
+}
+
+// cappedLabels applies the budget and logs it on the TRANSITION only.
+//
+// A container whose labels are over budget is over budget on every scrape, so
+// logging from capLabels itself put one line a minute in the operator's log
+// forever -- 1440 a day for a Kubernetes host writing annotations through,
+// which is the same vandalism the netNSDenied comment describes and the same
+// mistake the Docker-socket logging in Collect already avoids. One line per
+// container is a diagnosis.
+func (c *Containers) cappedLabels(id string, labels map[string]string) map[string]string {
+	out, dropped := capLabels(labels)
+	if dropped == 0 {
+		delete(c.labelsCapped, id)
+		return out
+	}
+	if c.labelsCapped[id] {
+		return out
+	}
+	if c.labelsCapped == nil {
+		c.labelsCapped = map[string]bool{}
+	}
+	c.labelsCapped[id] = true
 	slog.Warn("container labels exceed the per-container budget; reporting a subset",
-		"kept", len(out), "dropped", dropped)
+		"container", id, "kept", len(out), "dropped", dropped)
 	return out
 }
 

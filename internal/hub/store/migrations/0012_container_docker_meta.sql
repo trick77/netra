@@ -46,6 +46,10 @@ ALTER TABLE containers ADD COLUMN IF NOT EXISTS restart_count BIGINT;
 -- a hole in a container's series be attributed: a gap with a rising restart
 -- count is a restart, and a gap without one is missing samples. The UI has been
 -- refusing to name the difference precisely because this did not exist.
+--
+-- Dense, not one point in ten: the agent reports its cached count on every
+-- scrape rather than only on the scrapes that called the inspect endpoint. NULL
+-- here is an agent that cannot answer, never a container that did not restart.
 ALTER TABLE container_samples ADD COLUMN IF NOT EXISTS restart_count BIGINT;
 
 -- Deliberately NOT added to container_samples_5m, _1h or _1d.

@@ -2496,8 +2496,17 @@ type ContainerSample struct {
 	//
 	// The only one of the four that is not free: it exists on
 	// /containers/{id}/json alone, so the agent inspects lazily and caches --
-	// see the restart cache in containers.go. Unset means this scrape did not
-	// inspect, which is why the hub coalesces it rather than overwriting.
+	// see the restart cache in containerinspect.go.
+	//
+	// The cached value rides on EVERY scrape, not only on the ones that called
+	// inspect, because a series carrying a point one time in ten is not a series
+	// and this column exists so a hole in a container's charts can be
+	// attributed. The cost is that it can be up to ten scrapes stale.
+	//
+	// Unset therefore means the agent cannot answer at all -- it has never
+	// successfully inspected this container, or the daemon has since refused --
+	// and never merely that this scrape did not ask. That is what lets the hub
+	// overwrite with it, the same as the three fields above.
 	//
 	// It counts restarts of one container ID and resets to 0 when the container
 	// is recreated. Since container_key is compose project/service, a DECREASE

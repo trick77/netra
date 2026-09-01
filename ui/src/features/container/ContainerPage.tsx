@@ -85,9 +85,18 @@ const notReported = "not reported";
  * the row look like a rendering bug rather than the label it is. */
 const EMPTY_LABEL = "(empty)";
 
-/** The tier restart_count exists at, named the way the range picker names it,
- * so the Not collected card and the buttons above it agree. */
-const RAW_TIER_LABEL = "6h";
+/**
+ * The only range on this page that carries a restart series, named the way the
+ * range picker names it so the card and the buttons above it agree.
+ *
+ * It is the RAW tier, and which tier answers is decided by the requested STEP
+ * rather than by how far back the range reaches: lib/range.ts asks for 60s at
+ * 1h and 5m at both 6h and 24h, and selectTier takes the coarsest tier at or
+ * below the step. So 6h already resolves to container_samples_5m, where
+ * restart_count does not exist (migration 0012). Naming 6h here would promise
+ * a series on a range that has none.
+ */
+const RESTART_SERIES_RANGE: Range = "1h";
 
 /**
  * Docker's health, in words rather than in Docker's vocabulary.
@@ -165,9 +174,10 @@ function read(res: MetricsResponse, containerKey: string): Sampled | null {
     memKernel: griddedValues(res, i, "mem_kernel"),
     // Guarded, unlike every column above it. Those exist at every tier, so
     // asking for one that is missing is a programmer error and
-    // UnknownColumnError is the right answer. restart_count is missing at
-    // 5m, 1h and 1d BY DESIGN, so asking blind would throw on any range past
-    // six hours -- a blank page for a working feature.
+    // UnknownColumnError is the right answer. restart_count is missing at 5m,
+    // 1h and 1d BY DESIGN, so asking blind would throw on every range but the
+    // 1h one -- a blank page for a working feature. See
+    // RESTART_SERIES_RANGE for why 6h is already a rollup.
     restartCount: carriesColumn(res, "restart_count")
       ? griddedValues(res, i, "restart_count")
       : null,
@@ -720,10 +730,11 @@ export function ContainerPage({
               only the latest health and state are kept, so "when did it go
               unhealthy" has no answer; a transition would need its own table
             </dd>
-            <dt>Restarts beyond {RAW_TIER_LABEL}</dt>
+            <dt>Restarts beyond {RESTART_SERIES_RANGE}</dt>
             <dd>
-              the restart counter lives in the raw samples only, so a longer
-              range shows the total above but no series to place it in
+              the restart counter lives in the raw samples only, and every range
+              but {RESTART_SERIES_RANGE} is answered from a rollup, so a wider
+              window shows the total above but no series to place it in
             </dd>
           </dl>
         </Card>

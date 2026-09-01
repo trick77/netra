@@ -331,7 +331,10 @@ describe("ContainerPage", () => {
     for (const residue of [
       "Stopped containers",
       "Health history",
-      "Restarts beyond",
+      // 1h, not 6h. Which tier answers is decided by the requested STEP, and
+      // range.ts asks for 5m at 6h, so 6h is already a rollup and carries no
+      // restart_count -- naming it here promised a series that range lacks.
+      "Restarts beyond 1h",
     ]) {
       expect(card).toHaveTextContent(residue);
     }

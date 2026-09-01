@@ -40,6 +40,29 @@ const restartRefreshEvery = 10
 // wedged daemon is already a hundred seconds, and the scrape interval is sixty.
 const maxInspectsPerScrape = 20
 
+// noInspectAfterScrapes is how many CONSECUTIVE scrapes must fail every attempt
+// before the agent says the daemon refuses inspect.
+//
+// Not one, which is what it used to be. In steady state a scrape attempts zero
+// to two inspects, so a single 404 -- a container removed between the list and
+// the inspect, which is ordinary -- would have been "every attempt failed" and
+// flipped the capability on for one scrape and off the next. An operator would
+// see the badge flap. Three consecutive scrapes is three minutes at the 60s
+// default, which no transient refusal survives and no permanent one escapes.
+const noInspectAfterScrapes = 3
+
+// backoffScrapes is how often the agent probes a daemon it has concluded will
+// not answer.
+//
+// Without it a socket proxied to /containers/json alone costs 20 rejected
+// requests every scrape, forever: a failed inspect writes no cache entry, so
+// every container stays uncached and is retried on every pass. netNSDenied in
+// this collector latches per container for exactly this reason. The refusal
+// here is host-wide rather than per-container, so it backs OFF rather than
+// latching -- an operator who fixes the proxy gets restart counts back within
+// ten minutes without restarting the agent.
+const backoffScrapes = 10
+
 // restartEntry is one container's last known restart count and the scrape it
 // was read on.
 type restartEntry struct {
@@ -77,6 +100,14 @@ func (c *Containers) SetInspector(fn ContainerInspector) { c.inspector = fn }
 //
 // In steady state -- no restarts, no new containers -- this is zero requests on
 // nine scrapes out of ten and a handful on the tenth.
+//
+// What the CACHE holds is then reported on every scrape, not only on the ones
+// that inspected, and that is deliberate: a series carrying a point one time in
+// ten is not a series, and the whole reason restart_count is per-sample is so a
+// hole in the container's charts can be attributed. The cost is that the number
+// can be up to restartRefreshEvery scrapes behind, so a restart shows up on the
+// chart within ten minutes rather than within one. A counter read at that
+// resolution is the trade the rationing buys.
 func (c *Containers) refreshRestarts(ctx context.Context, meta map[string]ContainerMeta, recreated map[string]bool) {
 	if c.inspector == nil {
 		c.setRestartCapability(capRestartsNoInspect)
@@ -88,6 +119,16 @@ func (c *Containers) refreshRestarts(ctx context.Context, meta map[string]Contai
 
 	if c.restarts == nil {
 		c.restarts = make(map[string]restartEntry, len(meta))
+	}
+
+	// A daemon that has refused everything for noInspectAfterScrapes in a row
+	// is probed once every backoffScrapes rather than up to twenty times a
+	// minute. Still probed, because the refusal is a proxy configuration and
+	// not a property of the container: fix the proxy and the counts come back.
+	backedOff := c.inspectFailStreak >= noInspectAfterScrapes
+	if backedOff && scrape%backoffScrapes != 0 {
+		c.evictUnlisted(meta)
+		return
 	}
 
 	// Sorted, so a capped scrape works through the same order every time
@@ -117,38 +158,67 @@ func (c *Containers) refreshRestarts(ctx context.Context, meta map[string]Contai
 
 		count, err := c.inspector(ctx, id)
 		if err != nil {
-			// No entry written, so the container reports no restart count at
-			// all this scrape rather than a stale or zero one. The hub
-			// coalesces an unset restart_count precisely so this does not blank
-			// a number it already has.
+			// The cached entry is DROPPED, not left standing. An agent that has
+			// just been refused is no longer in a position to assert a restart
+			// count, and holding the last number it happened to read would put
+			// "Restarts: 12" on a page whose State and Health both correctly
+			// read "not reported" -- the same stale-assertion failure the
+			// overwrite rule for those two exists to prevent.
+			//
+			// The delay is bounded by the refresh policy above: a cached
+			// container is not re-attempted until the slow refresh comes round,
+			// so a revoked socket takes up to restartRefreshEvery scrapes to
+			// show as unknown rather than showing wrong immediately.
+			delete(c.restarts, id)
 			failed++
 			continue
 		}
 		c.restarts[id] = restartEntry{count: count, scrape: scrape}
 	}
 
-	// Evict what this scrape did not see. A container that is gone will not be
-	// asked about again, and one that comes back arrives with a new id and so a
-	// fresh read -- which is right, because Docker resets RestartCount when a
-	// container is recreated.
-	for id := range c.restarts {
-		if _, ok := meta[id]; !ok {
-			delete(c.restarts, id)
-		}
+	c.evictUnlisted(meta)
+
+	// Every attempt failing, on several scrapes running, is the daemon refusing
+	// inspect -- a socket mounted through a proxy that allows the list endpoint
+	// and nothing else. A single failure is not: a container removed between
+	// the list and the inspect answers 404, and that is an ordinary Tuesday.
+	switch {
+	case attempted == 0:
+		// Nothing was asked, so nothing was learned. The streak holds rather
+		// than resetting, or a backed-off host would clear its own capability
+		// on the first quiet scrape and start hammering again.
+	case failed == attempted:
+		c.inspectFailStreak++
+	default:
+		c.inspectFailStreak = 0
 	}
 
-	// Every attempt failing is the daemon refusing inspect -- an agent whose
-	// socket is mounted read-only through a proxy that allows the list endpoint
-	// and nothing else. One that merely timed out on some ids is not that, and
-	// says nothing.
-	if attempted > 0 && failed == attempted {
+	if c.inspectFailStreak >= noInspectAfterScrapes {
 		c.setRestartCapability(capRestartsNoInspect)
 		return
 	}
 	c.setRestartCapability("")
 }
 
-// readRestart returns the cached restart count for one container.
+// evictUnlisted drops cached counts for containers this scrape did not see.
+//
+// A container that is gone will not be asked about again, and one that comes
+// back arrives with a new id and so a fresh read -- which is right, because
+// Docker resets RestartCount when a container is recreated.
+func (c *Containers) evictUnlisted(meta map[string]ContainerMeta) {
+	for id := range c.restarts {
+		if _, ok := meta[id]; !ok {
+			delete(c.restarts, id)
+		}
+	}
+}
+
+// readRestart returns the last restart count read for one container.
+//
+// The CACHED value, reported on every scrape rather than only on the ones that
+// inspected -- see refreshRestarts for why a one-in-ten series is not a series.
+// It is absent only for a container never successfully inspected, or one whose
+// inspect has since been refused.
 func (c *Containers) readRestart(id string) (uint64, bool) {
 	entry, ok := c.restarts[id]
 	return entry.count, ok

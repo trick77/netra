@@ -420,17 +420,20 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 		// What Docker said about this container, from the same newest row the
 		// name and image come from.
 		//
-		// docker_state, health and labels OVERWRITE, including with NULL. An
-		// agent whose socket went away is no longer in a position to assert
-		// that a container is healthy, and keeping the last "healthy" the hub
-		// happened to hear is the worst failure available here -- it is a green
-		// badge on a container nobody can see. This is the same bargain name
-		// and image already make.
+		// All four OVERWRITE, including with NULL. An agent whose socket went
+		// away is no longer in a position to assert that a container is
+		// healthy, and keeping the last "healthy" the hub happened to hear is
+		// the worst failure available here -- a green badge on a container
+		// nobody can see. This is the same bargain name and image already make.
 		//
-		// restart_count is the exception and COALESCEs, because unset does not
-		// mean the agent could not look: the agent rations inspect calls, so a
-		// perfectly healthy agent sends no restart count on most scrapes.
-		// Overwriting would blank the number nine times out of ten.
+		// restart_count is included on purpose, and it is only safe to include
+		// because the AGENT holds the cache: it reports its last known count on
+		// every scrape rather than only on the ones that called inspect, and it
+		// drops that cached count the moment an inspect is refused. So an unset
+		// restart_count here means the agent cannot answer, not that this
+		// particular scrape did not ask. Coalescing instead would pin a number
+		// nobody is asserting any more -- "Restarts: 12" above a State and a
+		// Health that both correctly read "not reported".
 		//
 		// state_ts is when the state was ENTERED, advanced only on an actual
 		// change -- the rule read.Unit.Since documents for systemd. IS DISTINCT
@@ -445,7 +448,7 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 			       docker_state = EXCLUDED.docker_state,
 			       health = EXCLUDED.health,
 			       labels = EXCLUDED.labels,
-			       restart_count = COALESCE(EXCLUDED.restart_count, containers.restart_count),
+			       restart_count = EXCLUDED.restart_count,
 			       state_ts = CASE
 			           WHEN containers.docker_state IS DISTINCT FROM EXCLUDED.docker_state
 			           THEN EXCLUDED.last_seen
@@ -498,10 +501,11 @@ func (s *Store) InsertContainerSamples(ctx context.Context, hostID int32, rows [
 			r.CpuUser, r.CpuSystem,
 			int64OrNil(r.MemAnon), int64OrNil(r.MemFile),
 			int64OrNil(r.MemShmem), int64OrNil(r.MemKernel),
-			// NULL on any scrape that did not inspect, which is most of them --
-			// the agent rations inspect calls. A gap in this series is
-			// therefore "not asked", never "restarted zero times", and the
-			// containers row keeps the last number that WAS read.
+			// Present on every scrape from an agent that can inspect at all --
+			// it reports its cached count rather than only the freshly read
+			// one, so this is a dense series rather than one point in ten.
+			// NULL means the agent has no count for this container, never
+			// "restarted zero times".
 			int64OrNil(r.RestartCount))
 	}
 	return execBatch(ctx, s.pool, batch, "container sample")

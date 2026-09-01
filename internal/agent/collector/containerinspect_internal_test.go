@@ -151,6 +151,49 @@ func TestRefreshRestarts(t *testing.T) {
 		}
 	})
 
+	// An agent that has just been refused is no longer in a position to assert
+	// a restart count. Holding the last one it read would put "Restarts: 12" on
+	// a page whose State and Health both correctly say "not reported" -- the
+	// stale-assertion failure the overwrite rule for those two exists to stop.
+	t.Run("forgets a count it can no longer read", func(t *testing.T) {
+		// Given a container whose count was read once.
+		spy := &spyInspector{counts: map[string]uint64{"a": 12}}
+		testee := &Containers{inspector: spy.inspect}
+		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		if _, ok := testee.readRestart("a"); !ok {
+			t.Fatal("no count cached after a successful inspect")
+		}
+
+		// When the daemon starts refusing and the container is asked again.
+		spy.err = errors.New("403 Forbidden")
+		testee.refreshRestarts(ctx, metaOf("a"), map[string]bool{"a": true})
+
+		// Then the stale number is gone rather than kept.
+		if got, ok := testee.readRestart("a"); ok {
+			t.Errorf("readRestart = %d after the daemon refused; the agent must stop asserting it", got)
+		}
+	})
+
+	// Between inspects the CACHED value is what every scrape reports. A series
+	// carrying a point one time in ten is not a series, and the whole reason
+	// restart_count is per-sample is so a hole in the charts can be attributed.
+	t.Run("keeps answering between inspects", func(t *testing.T) {
+		// Given a container inspected once.
+		spy := &spyInspector{counts: map[string]uint64{"a": 5}}
+		testee := &Containers{inspector: spy.inspect}
+		testee.refreshRestarts(ctx, metaOf("a"), nil)
+
+		// When later scrapes do not inspect it.
+		for range 3 {
+			testee.refreshRestarts(ctx, metaOf("a"), nil)
+		}
+
+		// Then the count is still available to the row build.
+		if got, ok := testee.readRestart("a"); !ok || got != 5 {
+			t.Errorf("readRestart = (%d, %v), want (5, true) between inspects", got, ok)
+		}
+	})
+
 	// Every attempt failing is a socket proxied read-only past /containers/json
 	// -- a real deployment. Saying so is what stops the page rendering an empty
 	// Restarts field with no explanation.
@@ -159,12 +202,85 @@ func TestRefreshRestarts(t *testing.T) {
 		spy := &spyInspector{err: errors.New("403 Forbidden")}
 		testee := &Containers{inspector: spy.inspect}
 
-		// When the scrape refreshes.
-		testee.refreshRestarts(ctx, metaOf("a", "b"), nil)
+		// When enough consecutive scrapes fail to rule out a transient.
+		for range noInspectAfterScrapes {
+			testee.refreshRestarts(ctx, metaOf("a", "b"), nil)
+		}
 
 		// Then the capability names the reason.
 		if got := testee.Capabilities()["container_restarts"]; got != capRestartsNoInspect {
 			t.Errorf("container_restarts = %q, want %q", got, capRestartsNoInspect)
+		}
+	})
+
+	// A container removed between the list and the inspect answers 404, and in
+	// steady state a scrape attempts one or two inspects -- so "every attempt
+	// failed" is reached by an ordinary Tuesday. Reporting on the first one
+	// made the capability badge flap on and off.
+	t.Run("does not blame the daemon for one failed inspect", func(t *testing.T) {
+		// Given an inspector that fails once and then works.
+		spy := &spyInspector{err: errors.New("404 No such container")}
+		testee := &Containers{inspector: spy.inspect}
+
+		// When a single scrape hits it.
+		testee.refreshRestarts(ctx, metaOf("a"), nil)
+
+		// Then nothing is claimed about the daemon.
+		if got, ok := testee.Capabilities()["container_restarts"]; ok {
+			t.Errorf("container_restarts = %q after ONE failure; a removed container is not a broken daemon", got)
+		}
+	})
+
+	// A failed inspect writes no cache entry, so without a back-off every
+	// container stays uncached and is retried every scrape: 20 rejected
+	// requests a minute, forever, against a socket that will never answer.
+	t.Run("backs off a daemon that will not answer", func(t *testing.T) {
+		// Given a daemon refusing everything.
+		spy := &spyInspector{err: errors.New("403 Forbidden")}
+		testee := &Containers{inspector: spy.inspect}
+		meta := metaOf("a", "b", "c")
+		for range noInspectAfterScrapes {
+			testee.refreshRestarts(ctx, meta, nil)
+		}
+		spy.reset()
+
+		// When many more scrapes pass.
+		for range backoffScrapes * 2 {
+			testee.refreshRestarts(ctx, meta, nil)
+		}
+
+		// Then it is probed occasionally rather than on every scrape.
+		if len(spy.calls) == 0 {
+			t.Error("never probed again; an operator who fixes the proxy would need to restart the agent")
+		}
+		if len(spy.calls) >= len(meta)*backoffScrapes {
+			t.Errorf("made %d requests over %d scrapes; the back-off is not holding",
+				len(spy.calls), backoffScrapes*2)
+		}
+	})
+
+	// The refusal is a proxy configuration, not a property of the container, so
+	// it must not latch: fixing the proxy brings the counts back on its own.
+	t.Run("recovers when the daemon starts answering again", func(t *testing.T) {
+		// Given a backed-off collector.
+		spy := &spyInspector{counts: map[string]uint64{"a": 2}, err: errors.New("403 Forbidden")}
+		testee := &Containers{inspector: spy.inspect}
+		for range noInspectAfterScrapes {
+			testee.refreshRestarts(ctx, metaOf("a"), nil)
+		}
+
+		// When the daemon starts answering and the back-off next probes.
+		spy.err = nil
+		for range backoffScrapes + 1 {
+			testee.refreshRestarts(ctx, metaOf("a"), nil)
+		}
+
+		// Then the count is back and the capability is cleared.
+		if got, ok := testee.readRestart("a"); !ok || got != 2 {
+			t.Errorf("readRestart = (%d, %v), want (2, true) once the daemon answered again", got, ok)
+		}
+		if got, ok := testee.Capabilities()["container_restarts"]; ok {
+			t.Errorf("container_restarts = %q, want cleared once inspect worked again", got)
 		}
 	})
 
@@ -260,7 +376,7 @@ func TestCapLabels(t *testing.T) {
 		}
 
 		// When it is capped.
-		got := capLabels(labels)
+		got, _ := capLabels(labels)
 
 		// Then nothing was dropped.
 		if len(got) != 2 {
@@ -272,7 +388,7 @@ func TestCapLabels(t *testing.T) {
 	// answered: a nil map reaches the hub as "never looked", which is the one
 	// distinction the wrapper message on the wire exists to preserve.
 	t.Run("returns an empty map, not nil, for a container with no labels", func(t *testing.T) {
-		if got := capLabels(map[string]string{}); got == nil {
+		if got, _ := capLabels(map[string]string{}); got == nil {
 			t.Error("capLabels returned nil for a container that has no labels")
 		}
 	})
@@ -289,7 +405,7 @@ func TestCapLabels(t *testing.T) {
 		}
 
 		// When it is capped.
-		got := capLabels(labels)
+		got, _ := capLabels(labels)
 
 		// Then it fits the budget.
 		total := 0
@@ -321,9 +437,9 @@ func TestCapLabels(t *testing.T) {
 			labels[fmt.Sprintf("com.example.k%02d", i)] = string(value)
 		}
 
-		first := capLabels(labels)
+		first, _ := capLabels(labels)
 		for range 5 {
-			next := capLabels(labels)
+			next, _ := capLabels(labels)
 			if len(next) != len(first) {
 				t.Fatalf("kept %d labels, then %d", len(first), len(next))
 			}
