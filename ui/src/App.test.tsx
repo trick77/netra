@@ -322,6 +322,7 @@ describe("the range sticks", () => {
 describe("the nav rail", () => {
   const DESTINATIONS = [
     ["Fleet", "/"],
+    ["Containers", "/?entity=containers"],
     ["Events", "/events"],
     ["Hosts", "/admin/hosts"],
     ["Settings", "/settings"],
@@ -360,6 +361,26 @@ describe("the nav rail", () => {
         .getAllByRole("link")
         .filter((a) => a.getAttribute("aria-current") === "page"),
     ).toHaveLength(1);
+  });
+
+  // Fleet and Containers are the same route with a different query string, so
+  // the rail cannot decide between them on route.name alone -- and if it
+  // tries, both light up and "you are here" stops meaning anything.
+  it("marks Containers, not Fleet, on the container list", async () => {
+    goTo("/?entity=containers");
+
+    render(<App />);
+    const rail = within(
+      await screen.findByRole("navigation", { name: "Primary" }),
+    );
+
+    expect(rail.getByRole("link", { name: "Containers" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(rail.getByRole("link", { name: "Fleet" })).not.toHaveAttribute(
+      "aria-current",
+    );
   });
 
   // Sign-out is the one rail item that is not a link, and the distinction is

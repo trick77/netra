@@ -55,13 +55,6 @@ function makeContainer(overrides: Partial<ContainerRow> = {}): ContainerRow {
   };
 }
 
-/** The Containers TAB. The Containers figure on the rail above it is a link
- * of the same name, so every query for one has to exclude the other. */
-function containersTab(): HTMLElement {
-  const nav = document.querySelector<HTMLElement>("nav.tabs")!;
-  return within(nav).getByRole("link", { name: /containers/i });
-}
-
 /** A rail figure by the href it leads to -- its accessible name is the whole
  * figure ("22 containers"), which is not worth matching on. */
 function tile(href: string): HTMLElement {
@@ -94,16 +87,16 @@ afterEach(() => {
 });
 
 describe("FleetPage entity tabs", () => {
-  it("swaps the list and the filter's placeholder when the entity changes", async () => {
-    const user = userEvent.setup();
-    renderPage();
+  it("swaps the list and the filter's placeholder when the entity changes", () => {
+    const hosts = renderPage();
 
     expect(
       screen.getByRole("columnheader", { name: "Host" }),
     ).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/filter hosts/i)).toBeInTheDocument();
 
-    await user.click(containersTab());
+    hosts.unmount();
+    renderPage({ entity: "containers" });
 
     expect(
       screen.getByPlaceholderText(/filter containers/i),
@@ -116,11 +109,8 @@ describe("FleetPage entity tabs", () => {
   // The host is named ONCE, by the group it heads. A Host column beside it
   // restated that heading on every row -- eighty-four rows saying what four
   // headings say, in the widest table on the page.
-  it("names the host in the group header and not again on every row", async () => {
-    const user = userEvent.setup();
-    renderPage();
-
-    await user.click(containersTab());
+  it("names the host in the group header and not again on every row", () => {
+    renderPage({ entity: "containers" });
 
     expect(screen.queryByRole("columnheader", { name: "Host" })).toBeNull();
     // Once for the one container: the group heading, and nothing else.
@@ -809,8 +799,11 @@ describe("FleetPage, the container filter and the capability note", () => {
 
   it("explains a genuinely empty container list", async () => {
     const user = userEvent.setup();
-    renderPage({ rows: [makeRow(), broken], containers: [] });
-    await user.click(containersTab());
+    renderPage({
+      entity: "containers",
+      rows: [makeRow(), broken],
+      containers: [],
+    });
 
     expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
   });
@@ -819,8 +812,7 @@ describe("FleetPage, the container filter and the capability note", () => {
   // what is shown rather than standing in for it.
   it("keeps the note on a filtered list that still has rows", async () => {
     const user = userEvent.setup();
-    renderPage({ rows: [makeRow(), broken] });
-    await user.click(containersTab());
+    renderPage({ entity: "containers", rows: [makeRow(), broken] });
     await user.type(screen.getByPlaceholderText(/filter containers/i), "post");
 
     expect(screen.getByRole("table")).toBeInTheDocument();
@@ -829,8 +821,7 @@ describe("FleetPage, the container filter and the capability note", () => {
 
   it("does not blame a host for a search that matched nothing", async () => {
     const user = userEvent.setup();
-    renderPage({ rows: [makeRow(), broken] });
-    await user.click(containersTab());
+    renderPage({ entity: "containers", rows: [makeRow(), broken] });
     await user.type(screen.getByPlaceholderText(/filter containers/i), "zzz");
 
     expect(screen.queryByRole("table")).toBeNull();

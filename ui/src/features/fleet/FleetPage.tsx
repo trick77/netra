@@ -10,7 +10,6 @@ import { ABSENT, byterate } from "../../lib/format";
 import { Input } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import { StatFigure, StatRail } from "../../ui/StatRail";
-import { Tabs } from "../../ui/Tabs";
 import { AttentionCounts } from "./AttentionCounts";
 import { SinceLastCheck } from "./SinceLastCheck";
 import {
@@ -406,6 +405,13 @@ export function FleetPage({
           and nothing said which to read first. The attention row is what
           this page is for; these are context for it, and are set as
           context. See StatRail. */}
+      {/* The page says what it is. The fleet list had no heading at all: the
+          first thing on it was a row of problem tiles, which reads as a
+          dashboard fragment rather than as the page a bookmark lands on --
+          and left the ambient figures under it with nothing to be subordinate
+          TO. */}
+      <h1 className="fleettitle">Fleet</h1>
+
       <StatRail>
         {/* The first two figures count a set the page can show, and sit
             directly above the tabs that show it -- so they are the control
@@ -459,21 +465,6 @@ export function FleetPage({
             than dashing moved there with it. */}
         <SinceLastCheck checkedAt={checkedAt} now={now} />
       </StatRail>
-
-      <Tabs
-        items={[
-          { id: "hosts", label: "Hosts", href: "/" },
-          {
-            id: "containers",
-            label: "Containers",
-            href: "/?entity=containers",
-          },
-        ]}
-        active={entity}
-        // Hand-rolled routing arrives in Wave 5; until then the tab is local
-        // state and the href is what makes it bookmarkable once it does.
-        onChange={(id) => setEntity(id as Entity)}
-      />
 
       <div className="toolbar">
         <Input

@@ -579,17 +579,25 @@ a:hover {
    what is left, so a fleet with one kind of problem drew a single 1180px-wide
    box across the whole page. The count of things wrong must not change the
    size of the thing it is written in. */
+/* CHIPS, not cards. Three or four boxes 200px wide and three lines deep gave
+   the page's first band the weight of a dashboard, above a list that is what
+   the page is actually for -- and on a healthy fleet the band vanishes, so
+   the list jumped up the screen by a card's height between polls. A chip says
+   the same three things (what is wrong, how many hosts, how bad) in one line,
+   and the row it forms is the same height whether it holds one kind or five.
+
+   The wrapping row keeps the <ul> and its "by kind" label: a filter someone
+   arrives at by keyboard is still a list of links, whatever shape it takes. */
 .atiles {
   list-style: none;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   /* Uncapped, five kinds ran the full 1180px above a summary that stopped
      short of it, and the two rows meant to read as one system visibly
      disagreed. The rail below is narrower still (840px) -- deliberately, it
      is subordinate -- but both start at the same left edge and neither runs
      the window. */
-  max-width: 960px;
-  gap: var(--space-3);
+  gap: var(--space-2);
   margin: 0 0 var(--space-4);
   padding: 0;
 }
@@ -599,21 +607,22 @@ a:hover {
    summarising. Below 640px the content is narrow enough that auto-fill lands
    on one column on its own. */
 .atile {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
   /* The <li> is the grid item and stretches to the row's height; the tile is
      the anchor INSIDE it, so without this a tile beside a taller neighbour --
      a label that wraps to two lines at large text sizes -- stops short of the
      row and takes its status edge and its selected ground with it. The
      figures on .srail need no such rule: a .s is a flex item on one line. */
-  height: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
   /* The severity's own edge. 3px on the left rather than a tinted ground:
      these sit above a page of pale cards, and a filled one would be the chip
      treatment that got taken off every row in the fleet. */
   border-left: 3px solid var(--border-strong);
-  border-radius: var(--radius-ui);
-  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-pill);
+  padding: 5px var(--space-3) 5px var(--space-3);
   color: inherit;
   text-decoration: none;
   transition:
@@ -642,13 +651,11 @@ a:hover {
   background: var(--accent-soft);
 }
 .atile .k {
-  display: block;
   font-size: var(--text-label);
-  color: var(--muted);
+  color: var(--ink-2);
 }
 .atile .v {
-  display: block;
-  font-size: var(--text-display);
+  font-size: var(--text-label);
   font-weight: 600;
   letter-spacing: -0.02em;
   margin-top: 2px;
@@ -660,14 +667,13 @@ a:hover {
    beside "Failed units" reads as three failed units, and it is three HOSTS,
    one of which may have five. */
 .atile .v .u {
-  font-size: var(--text-label);
+  font-size: var(--text-micro);
   font-weight: 500;
   letter-spacing: 0;
   color: var(--muted);
 }
 .atile .d {
-  display: block;
-  font-size: var(--text-label);
+  font-size: var(--text-micro);
   color: var(--muted);
 }
 /* Status ink on the count and on the word under it, so the two agree. The
@@ -780,11 +786,39 @@ a:hover {
    uses the same classes — it had been left behind on the older .host/.name/
    .site set below, which is how two lists of the same kind of thing ended up
    looking like two different designs. */
+/* The mark, then the two lines it labels. The distribution mark belongs to
+   the whole host rather than to its name, so it sits outside the pair and is
+   centred against both -- the arrangement Observium's device list uses, and
+   the reason the cell is a row with a column inside it rather than the plain
+   column it was. A host whose OS has no mark renders nothing at all, so the
+   lines simply start where they always did. */
 .host-cell {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+.host-cell-lines {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: 2px;
+  /* min-width:0 so a long hostname truncates inside the cell instead of
+     setting the column's minimum width and pushing the charts out of the
+     row. */
+  min-width: 0;
+}
+/* 22px, against the 14 the same component draws at on the host page. There
+   it sits inline before the OS NAME, at the size of the words beside it;
+   here it labels two lines and stands in for the words at a glance, which is
+   the size a reader identifies a distro from without reading. --muted, not
+   the mark's brand colour: it is decoration beside an identifier, and the
+   release it stands for is spelled out on the line underneath. */
+.host-cell .osicon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  color: var(--muted);
 }
 /* Name and, when there is something wrong, its badge -- one line. The
    location sits under them. */
@@ -800,6 +834,16 @@ a:hover {
 }
 .host-cell-site {
   font-size: var(--text-label);
+  /* One line, whatever the agent reported. os-release PRETTY_NAME runs long
+     -- "Debian GNU/Linux 12 (bookworm)" -- and wrapped it took the row from
+     two lines to three, which is height on EVERY row of the fleet to finish
+     one string on five of them. Truncated, the release is still the first
+     thing on the line after the place, and the host page spells it out in
+     full. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
   /* Quieter than --muted, matching the search box's placeholder -- see
      --muted-2. This line is a subtitle under the hostname and the one thing
      in the row a reader never scans FOR: they scan for a busy chart or a full
@@ -820,6 +864,37 @@ a:hover {
   flex-direction: row;
   align-items: center;
   gap: var(--space-3);
+}
+/* CPU and Memory, laid out like the traffic cell above: the chart, and the
+   reading it ends on beside it. Same direction and same gap, because three
+   cells in one row that arrange a chart and its figures three different ways
+   read as three different products. */
+.metric-cell {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+.metric-read {
+  display: flex;
+  flex-direction: column;
+  /* flex:none for the same reason .traffic-rates has it: a reading that gave
+     way would wrap a percentage mid-number. */
+  flex: none;
+  line-height: 1.35;
+}
+.metric-read .v {
+  font-size: var(--text-label);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+/* The unit line -- "of 8 cores", "of 62.8 GiB". --muted-2, the same step the
+   location under a hostname takes: it says what the figure above it is
+   measured against and is never itself the reading. */
+.metric-read .u {
+  font-size: var(--text-micro);
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
 }
 /* No min-width:0 on the chart, deliberately. svg.spark carries
    `max-width:100%; height:auto`, so a horizontal squeeze costs HEIGHT as well
@@ -1483,35 +1558,36 @@ a:hover {
    .atiles row above is gone entirely and this is the only thing left, and a
    page that collapses to a single sentence reads as broken rather than as
    calm. */
+/* The page's name, in the serif the brand mark uses. Display size and a
+   normal weight rather than a heavier one: it is the quietest possible way
+   to say what page this is, and everything under it -- the chips, the
+   figures, the list -- is louder on purpose. */
+.fleettitle {
+  font-family: var(--font-serif);
+  font-size: var(--text-display);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--space-3);
+}
+
+/* A LINE, not a rail of boxes. Four bordered segments under a row of chips
+   was a second banded block of chrome above a list that had not started yet;
+   these figures are context for the page, and context is read in passing.
+
+   What separated the segments was 1px of the container's own ground showing
+   through a gap -- a divider that had to be a gap rather than a border-left
+   precisely because a wrapped row makes "which segment starts a line"
+   unanswerable in CSS. The same problem is why the middot below hangs off
+   .s + .s rather than off a separator element: it appears between figures and
+   nowhere else, in both axes, however the row breaks. */
 .srail {
   display: flex;
-  /* Wraps rather than scrolls or squeezes. It has to: this box is capped at
-     840px at every width, and a 412-host fleet spends that on its figures
-     alone ("398 of 412 hosts reporting · 1042 containers · 1.2 GB/s ·
-     0 s since last check"). */
+  /* Wraps rather than scrolls or squeezes: a 412-host fleet spends a lot of
+     line on its figures alone ("398 of 412 hosts reporting · 1042 containers
+     · 1.2 GB/s · 0 s since last check"). */
   flex-wrap: wrap;
-  /* The dividers are 1px of the container's own ground showing between the
-     segments -- NOT a border-left on each one. A border-left has to be
-     cancelled on whichever segment starts a row, and which segment that is
-     depends on the width AND on how long the numbers happen to be, so
-     :first-child gets it right on one row and draws a rule against the box
-     edge on every row after it. A gap cannot be wrong: it appears between
-     segments and nowhere else, in both axes, however the row breaks. */
-  gap: 1px;
-  background: var(--border);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ui);
-  /* The segments are square and the box is not, so without this their
-     corners sit outside the radius at all four corners of the rail. */
-  overflow: hidden;
-  /* Narrower than the .atiles cap above it. The rail is subordinate, and a
-     box the full width of the row it sits under does not read that way.
-
-     840, not the 640 it carried while there were three figures: the fourth
-     ("0 s since last check") wrapped at every window width, so a rail that
-     wraps only on a big fleet or a long rate instead spent a whole second
-     row on one segment on every fleet. Still short of .atiles' 960. */
-  max-width: 840px;
+  align-items: baseline;
+  gap: var(--space-1) 0;
   /* The same gap the tiles left between themselves and the entity tabs
      below: the fleet's summary and the control for what you are looking at
      must not read as one crowded block. */
@@ -1520,16 +1596,14 @@ a:hover {
 .srail .s {
   display: flex;
   align-items: baseline;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  /* Its own ground, over the container's. The two differ by exactly the
-     divider, so a segment that failed to paint would read as a 1px rule
-     rather than as nothing. */
-  background: var(--surface);
-  /* Grow into the slack. Left at their natural widths the segments would
-     leave the rest of the row showing the container's ground -- which is
-     the divider colour, so the leftover would read as one wide border. */
-  flex: 1 1 auto;
+  gap: 6px;
+}
+/* The separator, on the figure rather than between them, and never on the
+   one that starts the line. */
+.srail .s + .s::before {
+  content: "\00b7";
+  color: var(--muted-2);
+  margin: 0 var(--space-3);
 }
 .srail b {
   font-size: var(--text-ui);
