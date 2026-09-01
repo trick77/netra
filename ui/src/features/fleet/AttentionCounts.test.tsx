@@ -18,9 +18,12 @@ const DISK: CountTile = {
   severity: "critical",
   label: "Filesystem nearly full",
   ids: ["40", "41"],
-  // A disk kind enters at Warning, so a Critical one is an escalation and the
-  // caller asks for the word. See CountTile.severityWord.
-  severityWord: "Critical",
+};
+const OOM: CountTile = {
+  kind: "oom",
+  severity: "critical",
+  label: "OOM kills",
+  ids: ["50", "51"],
 };
 
 describe("AttentionCounts", () => {
@@ -35,20 +38,37 @@ describe("AttentionCounts", () => {
     expect(within(list).getByText("31")).toBeInTheDocument();
     // The noun is gone from the chip: on a page of hosts, a count beside a
     // kind is a count of hosts, and "31 hosts" put the widest word in the
-    // chip on the one thing the reader already knows. So is the severity
-    // word, which the caller did not ask for here -- it repeats what the kind
-    // already fixes.
+    // chip on the one thing the reader already knows. The severity word
+    // stays, because hue is never the only channel that carries it -- but it
+    // reads as an annotation now, behind a separator, rather than as a third
+    // figure set beside the other two.
     expect(within(list).queryByText(/hosts/)).toBeNull();
-    expect(within(list).queryByText("Warning")).toBeNull();
-    // Not lost, moved: the chip announces the severity whether or not it
-    // draws it, so nothing rides on hue alone.
+    expect(within(list).getByText("Warning")).toBeInTheDocument();
+    // The accessible name is the phrase the chip is not: the count gets its
+    // noun and the severity is read in order after it.
     expect(
       within(list).getByRole("link", { name: "Failed units, 31, Warning" }),
     ).toBeInTheDocument();
   });
 
-  // The chip is a count and a kind, with a dot for the severity. One host
-  // reads "1", not "1 host": there is no noun left to
+  // The reason the word survived a commit that took it off. Two kinds at two
+  // severities, and neither label ranks itself: an operator who cannot
+  // separate the two hues has nothing else to go on.
+  it("ranks two chips whose labels do not rank themselves", () => {
+    render(
+      <AttentionCounts
+        kinds={[OOM, UNITS]}
+        active={null}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Critical")).toBeInTheDocument();
+    expect(screen.getByText("Warning")).toBeInTheDocument();
+  });
+
+  // The chip is a count and a kind, with a dot for the severity and the word
+  // after it. One host reads "1", not "1 host": there is no noun left to
   // pluralise, which is one fewer thing that can be wrong on a fleet of one.
   it("counts one host as a bare figure", () => {
     const { container } = render(
@@ -65,12 +85,10 @@ describe("AttentionCounts", () => {
   });
 
   // The dot beside the kind is a mark, not a word, so the severity WORD is
-  // what keeps meaning off colour alone (spec §3.3) -- but only where the
-  // label does not already fix it. A disk chip escalates from Warning to
-  // Critical without its label changing, so there the word is drawn; a
-  // "Failed units" chip is a warning and nothing else, so there it is
-  // announced and not drawn.
-  it("names the severity that the label cannot", () => {
+  // what keeps meaning off colour alone (spec §3.3). The kind's own name
+  // cannot stand in for it: "Failed units" says what is wrong and not how bad
+  // it is, and neither does "OOM kills" or "Filesystem nearly full".
+  it("names the severity rather than leaving it to the colour", () => {
     const { container } = render(
       <AttentionCounts
         kinds={[DISK, UNITS]}
@@ -80,10 +98,7 @@ describe("AttentionCounts", () => {
     );
 
     expect(screen.getByText("Critical")).toBeInTheDocument();
-    expect(screen.queryByText("Warning")).toBeNull();
-    expect(
-      screen.getByRole("link", { name: "Failed units, 31, Warning" }),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Warning")).toBeInTheDocument();
     expect(container.querySelector(".atile.st-crit")).toBeInTheDocument();
     expect(container.querySelector(".atile.st-warn")).toBeInTheDocument();
     expect(screen.getByText("Filesystem nearly full")).toBeInTheDocument();

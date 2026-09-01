@@ -670,16 +670,19 @@ a:hover {
      up vertically, and these are single headline values. (.srail b does take
      tabular-nums -- three figures on one line, not a headline.) */
 }
-/* The severity, as a word -- drawn only on the chips where it says something
-   the label does not (see CountTile.severityWord). A container kind's
-   severity is a constant of the kind, so "Silent 8 Serious" was three spans
-   and one fact; a host's filesystem chip escalates from warning to critical
-   with its label unchanged, and there the word is the only thing separating
-   the two off colour. Every chip still announces it -- the anchor's
-   aria-label -- so this is a trim of what is drawn, not of what is said. */
 .atile .d {
   font-size: var(--text-micro);
   color: var(--muted);
+}
+/* The separator before the severity word. "Silent 8 Serious" set three values
+   side by side with nothing between them, and the reader's own word for it
+   was weird; the middot is what makes the last one read as an annotation on
+   the count rather than as a second figure. Its own span so it stays --muted
+   inside a .d that takes the status ink below, and aria-hidden in the markup
+   because the accessible name is a written phrase already. */
+.atile .d .sep {
+  color: var(--muted);
+  margin-right: 5px;
 }
 /* Status ink on the count and on the severity word when a chip draws one, so
    the two agree. The dot takes the raw hue -- it is a mark, not text, and has

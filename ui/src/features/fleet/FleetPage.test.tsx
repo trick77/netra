@@ -174,9 +174,6 @@ describe("FleetPage entity tabs", () => {
       expect(
         within(list).getByRole("link", { name: "Gone, 1, Serious" }),
       ).toBeInTheDocument();
-      // A container kind's severity is a constant of the kind, so the word is
-      // announced above and never drawn.
-      expect(within(list).queryByText("Serious")).toBeNull();
       // The one that is fine is not a chip: a filter names what is wrong.
       expect(within(list).queryByText("Reporting")).toBeNull();
     });

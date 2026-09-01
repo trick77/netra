@@ -10,7 +10,7 @@ import { ABSENT, byterate } from "../../lib/format";
 import { Input } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import { StatFigure, StatRail } from "../../ui/StatRail";
-import { AttentionCounts, SEVERITY_WORD } from "./AttentionCounts";
+import { AttentionCounts } from "./AttentionCounts";
 import { SinceLastCheck } from "./SinceLastCheck";
 import {
   filterKind,
@@ -320,20 +320,14 @@ export function FleetPage({
   // KindGroup counts hosts; a tile counts rows. One map rather than a
   // second component drawing the same chips.
   //
-  // The severity word is drawn only where it is news: a host kind enters at
-  // one severity (CONDITION_KIND_INFO) and groupByKind hands back the worst
-  // one actually on the fleet, so "Filesystem nearly full" is a warning until
-  // some host crosses and it is not. At the entry severity the label already
-  // says how bad it is, and the word was a span repeating it on every chip.
+  // group.severity, not kindSeverity(group.kind): a kind enters at one
+  // severity and groupByKind hands back the worst one actually on the fleet,
+  // so a filesystem chip is a warning until some host crosses and it is not.
   const hostTiles = kinds.map((group) => ({
     kind: group.kind,
     label: group.label,
     severity: group.severity,
     ids: group.hostIds,
-    severityWord:
-      group.severity === kindSeverity(group.kind)
-        ? undefined
-        : SEVERITY_WORD[group.severity],
   }));
   // "Has something critical", not "is worst-critical", and the two buckets
   // therefore OVERLAP -- a host that is both silent and short of disk is in

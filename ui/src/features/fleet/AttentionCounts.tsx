@@ -18,23 +18,6 @@ export interface CountTile {
    * than a number so a caller cannot count one row twice for a kind it
    * carries twice. */
   ids: readonly string[];
-  /**
-   * The severity, as a word, when the word says something the label does not.
-   *
-   * The caller decides, because only the caller knows whether the severity is
-   * a property of the kind or a reading off the rows. A container kind's
-   * severity is a constant of the kind (state.ts KIND_SEVERITY) -- "Silent"
-   * is always serious -- so the word was a fourth span that changed for no
-   * container that ever existed. A host kind's is not: groupByKind takes the
-   * worst condition in the group, so a filesystem chip enters at Warning and
-   * escalates to Critical when one host crosses, and there the word is the
-   * only thing separating the two without colour (spec 3.3).
-   *
-   * Absent, the chip is dot, label and count. The accessible name below
-   * carries the severity either way, so this trims what is DRAWN and never
-   * what is announced.
-   */
-  severityWord?: string;
 }
 
 /**
@@ -89,15 +72,21 @@ const SEVERITY_CLASS: Record<Severity, string> = {
 };
 
 /**
- * The severity, as a word.
+ * The severity, as a word, on every chip.
  *
- * Exported because the caller decides whether to DRAW it (see CountTile
- * .severityWord) while this component always ANNOUNCES it: severity never
- * rides on colour alone (spec §3.3), and a dot is a mark, so the word has to
- * exist somewhere on every chip. On chips where the label already fixes the
- * severity -- "Silent" is serious and nothing else -- somewhere is the
- * accessible name, and the visible chip reads "Silent 8" rather than
- * "Silent 8 Serious", which is three spans and one fact.
+ * Not decoration and not a duplicate of the dot beside it: severity never
+ * rides on colour alone (spec §3.3), and a dot is a mark, so without the word
+ * the hue would be the only thing carrying it. The kind's own name does not
+ * supply it either -- "OOM kills" is critical and "Failed units" is a warning,
+ * and nothing in either phrase says which, so a reader who cannot separate the
+ * two hues cannot rank the two chips. It was dropped for one commit on the
+ * argument that a kind fixes its own severity; a kind does, but only for a
+ * reader who already knows the table.
+ *
+ * What was actually wrong with it is the reading order: "Silent 8 Serious" is
+ * three values in a row with nothing between them. The separator in the chip
+ * below is the fix -- the severity is an annotation on a count, not a third
+ * figure competing with it.
  */
 export const SEVERITY_WORD: Record<Severity, string> = {
   critical: "Critical",
@@ -162,14 +151,17 @@ export function AttentionCounts({
                   they are counting. The accessible name still says it: the
                   kind, the number and the severity read in order. */}
               <span className="v">{rows}</span>
-              {/* Only where it adds something -- see CountTile.severityWord.
-                  Colour is never the only carrier of severity (spec 3.3/3.5)
-                  and it is not here either: on a chip without this span the
-                  label names the severity by naming the state, and the
-                  aria-label above says the word outright. */}
-              {kind.severityWord === undefined ? null : (
-                <span className="d">{kind.severityWord}</span>
-              )}
+              {/* Colour is never the only carrier of severity (spec 3.3/3.5),
+                  so the word stays -- one step quieter than the count, and
+                  behind a separator so the chip reads as a kind and its count
+                  with the severity annotating them, rather than as three
+                  figures set side by side. */}
+              <span className="d">
+                <span className="sep" aria-hidden="true">
+                  ·
+                </span>
+                {SEVERITY_WORD[kind.severity]}
+              </span>
             </a>
           </li>
         );
