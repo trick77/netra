@@ -304,10 +304,15 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
 // "scales the stack against mem_total" test, which proves this by
 // recomputing stackBands() with the same max and diffing the rendered
 // path data against it.
-// Scaled to mem_total the stack says how the parts move but not whether the
-// host is nearly full, because nothing on screen says what the top of the box
-// means. The dashed rule says it -- and it needs room above the stack to be
-// visible as a rule.
+// Scaled to mem_total, the height of the stack IS how full the host is: the
+// cell prints no figure, like the CPU cell beside it, so the shape carries
+// the whole reading. The dashed total rule this headroom was originally for
+// is gone from the row -- five bands, a rule and a severity mark inside 45px
+// was more marks than a cell that exists to be scanned can carry. The
+// headroom stays: without it a nearly-full host draws flush against the
+// border and reads as clipped rather than as full. The ENLARGED chart and
+// the host page's Memory panel still draw the rule, where there is room for
+// it to read as a ceiling.
 const MEM_HEADROOM = 1.08;
 
 function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
@@ -351,11 +356,9 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
     >
       <StackedSparkline
         bands={row.mem}
-        // A little headroom above total, so the dashed rule marking it lands
-        // inside the plot instead of on the border, where it would read as the
-        // edge of the box rather than as the host's ceiling.
+        // Scaled to mem_total, with a little headroom so a nearly-full host
+        // does not draw its stack flush against the border and read as clipped.
         max={total * MEM_HEADROOM}
-        reference={total}
         // No legend, like every other cell in this row. A previous review
         // argued the five memory bands carry identity a legend should name and
         // turned it back on here; that is not the call. These are sparklines
@@ -583,8 +586,9 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       header: "Memory",
       cell: (row) => <MemoryCell row={row} range={range} />,
       // A FRACTION of mem_total, not the bytes: the cell draws its stack
-      // against that ceiling and the dashed rule says where the ceiling is,
-      // so what it shows is how full the host is. Sorting on bytes would
+      // against that ceiling, so the height of the stack is how full the host
+      // is -- the rule that used to mark the ceiling is drawn in the enlarged
+      // chart now, not in the row. Sorting on bytes would
       // order the fleet by how much RAM each machine has, which is the one
       // question this column is not asking. No ceiling means the cell draws
       // nothing at all (see MemoryCell), so there is nothing to order on.
