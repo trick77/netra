@@ -116,17 +116,58 @@ describe("FleetPage entity tabs", () => {
   // headings say, in the widest table on the page.
   // The rail marks Containers as its own destination; a heading fixed at
   // "Fleet" would contradict it, and mislabel the page for anyone landing
-  // there by link.
-  it("names the list it is showing", () => {
+  // there by link. It no longer names the list at all on a fleet it can
+  // state: it says what that list currently IS, in the vocabulary of the
+  // entity on screen.
+  it("states the list it is showing", () => {
     const hosts = renderPage();
     expect(
-      screen.getByRole("heading", { level: 1, name: "Fleet" }),
+      screen.getByRole("heading", { level: 1, name: "1 host, steady" }),
     ).toBeInTheDocument();
     hosts.unmount();
 
     renderPage({ entity: "containers" });
     expect(
-      screen.getByRole("heading", { level: 1, name: "Containers" }),
+      screen.getByRole("heading", { level: 1, name: "1 container, reporting" }),
+    ).toBeInTheDocument();
+  });
+
+  // The heading counts what is wrong off the same tiles the chips are drawn
+  // from, so the sentence and the chips under it cannot disagree.
+  it("says how much of the list needs looking at", () => {
+    const hosts = renderPage({
+      rows: [
+        makeRow({ id: 1 }),
+        makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+      ],
+    });
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "2 hosts, 1 needs attention",
+      }),
+    ).toBeInTheDocument();
+    hosts.unmount();
+
+    // A container that stopped posting five minutes ago, on a host that
+    // kept posting: silent, and counted by the sentence.
+    renderPage({
+      entity: "containers",
+      containers: [
+        makeContainer(),
+        makeContainer({
+          id: 2,
+          container_key: "aa11",
+          name: "redis",
+          last_seen: "2026-08-10T13:55:00Z",
+        }),
+      ],
+    });
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "2 containers, 1 not reporting normally",
+      }),
     ).toBeInTheDocument();
   });
 
@@ -903,6 +944,15 @@ describe("FleetPage stat figures as controls", () => {
 
     expect(tile("/")).not.toBeNull();
     expect(tile("/?entity=containers")).not.toBeNull();
+  });
+
+  // The heading on the containers tab has just counted the containers; the
+  // figure would restate that number directly under its own sentence.
+  it("drops the containers figure on the containers tab", () => {
+    renderPage({ entity: "containers" });
+
+    expect(tile("/?entity=containers")).toBeNull();
+    expect(tile("/")).not.toBeNull();
   });
 
   // Fleet traffic is a rate, not a set: there is no list of it to go to, and

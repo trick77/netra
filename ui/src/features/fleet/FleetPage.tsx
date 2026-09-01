@@ -26,6 +26,8 @@ import {
   type HostGroup,
 } from "./conditions";
 import { FleetContainers, type ContainerRow } from "./FleetContainers";
+import { containerHeadline, hostHeadline, type Headline } from "./headline";
+import type { Severity } from "../../ui/Badge";
 import { containerState } from "../container/columns";
 import {
   FILTERABLE_STATE_KINDS,
@@ -112,6 +114,39 @@ function useSlashToFocus() {
 // read them without importing this page. Re-exported because App.tsx and
 // this page's own tests have always taken them from here.
 export { FLEET_RANGE } from "./ranges";
+
+/**
+ * The clause's colour, by the worst thing on screen.
+ *
+ * The same class names Badge maps its severities to, so a critical clause in
+ * the heading and a critical badge in the list below it are the one hue --
+ * and `neutral` and `ok` get none, because a heading that colours itself when
+ * nothing is wrong makes the colour mean "the page rendered".
+ */
+const SEVERITY_CLASS: Record<Severity, string | undefined> = {
+  ok: undefined,
+  neutral: undefined,
+  warning: "st-warn",
+  serious: "st-serious",
+  critical: "st-crit",
+};
+
+const SEVERITY_RANK: Record<Severity, number> = {
+  critical: 3,
+  serious: 2,
+  warning: 1,
+  ok: 0,
+  neutral: 0,
+};
+
+/** The worst of them, or `neutral` over nothing at all. */
+function worstSeverity(list: readonly Severity[]): Severity {
+  return list.reduce<Severity>(
+    (worst, next) =>
+      SEVERITY_RANK[next] > SEVERITY_RANK[worst] ? next : worst,
+    "neutral",
+  );
+}
 
 export interface FleetPageProps {
   /** Injected rows. When omitted the page fetches its own. */
@@ -425,6 +460,35 @@ export function FleetPage({
             containerKind,
         );
 
+  // What the page calls itself, on whichever tab is up.
+  //
+  // The troubled containers are counted off the tiles rather than derived a
+  // second time: the tiles ARE the chips under the heading, so the sentence
+  // and the chips cannot end up disagreeing about how many there are. Every
+  // container has exactly one state, so the tiles do not overlap and the
+  // lengths add up -- unlike the host severities above, which deliberately
+  // do.
+  const troubledContainers = containerTiles.reduce(
+    (n, tile) => n + tile.ids.length,
+    0,
+  );
+  const head: Headline =
+    entity === "containers"
+      ? containerHeadline(
+          containerRows.length,
+          troubledContainers,
+          containersKnown,
+        )
+      : hostHeadline(hostRows.length, troubled);
+  // Coloured by the worst kind on screen, off the same tiles: a kind enters
+  // at one severity and the grouping hands back the worst one actually on
+  // this fleet, so the clause follows the chips rather than a fixed table.
+  const headSeverity = worstSeverity(
+    (entity === "containers" ? containerTiles : hostTiles).map(
+      (tile) => tile.severity,
+    ),
+  );
+
   // The mark on the row itself, in place of the ordering that used to lift a
   // troubled host to the top: a rail down the leading edge says which hosts
   // to look at without moving any of them. Only the severities that mean
@@ -500,14 +564,26 @@ export function FleetPage({
           destinations, so a heading fixed at "Fleet" would contradict the
           rail on the containers view and mislabel the page for a screen
           reader landing on it. */}
-      {/* The title and the figures are ONE line: the page names itself on
-          the left, and what it currently holds reads off the right end of
-          the same line. Stacked they were two bands of chrome above a list
-          that had not started yet, which is what the chips below them are
-          for. */}
+      {/* The sentence, and the figures under it. They used to be one line --
+          the page's name on the left, what it holds off the right end -- and
+          that name was the word the nav rail had already said. The heading
+          states the SET and what is wrong with it instead, so the figures
+          became what the sentence is measured against and read below it
+          rather than beside it. headline.ts has the wording and why the set
+          leads rather than the count. */}
       <div className="fleethead">
         <h1 className="fleettitle">
-          {entity === "containers" ? "Containers" : "Fleet"}
+          {head.stem}
+          {head.clause !== null ? (
+            <>
+              {", "}
+              {/* The colour lands on the CLAUSE, which is the part that says
+                  something is wrong -- painting the whole line would put the
+                  fleet's size in red as well. */}
+              <em className={SEVERITY_CLASS[headSeverity]}>{head.clause}</em>
+            </>
+          ) : null}
+          {head.steady !== null ? `, ${head.steady}` : null}
         </h1>
         <StatRail>
           {/* The first two figures count a set the page can show, and sit
@@ -526,12 +602,17 @@ export function FleetPage({
             href="/"
             onSelect={() => setEntity("hosts")}
           />
-          <StatFigure
-            value={containersKnown ? containerRows.length : ABSENT}
-            label="containers"
-            href="/?entity=containers"
-            onSelect={() => setEntity("containers")}
-          />
+          {/* Hosts only. On the containers tab the heading has just counted
+              the containers, and a figure restating the same number directly
+              under its own sentence is the page saying one thing twice. */}
+          {entity === "hosts" ? (
+            <StatFigure
+              value={containersKnown ? containerRows.length : ABSENT}
+              label="containers"
+              href="/?entity=containers"
+              onSelect={() => setEntity("containers")}
+            />
+          ) : null}
           {/* No href: fleet traffic is a rate, not a set, so there is no list
             of it to go to. A figure that looks clickable and does nothing is
             worse than one that plainly is not. */}
