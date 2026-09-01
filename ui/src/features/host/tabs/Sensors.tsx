@@ -214,12 +214,6 @@ const SPAN_CARD_MIN = 7;
  * See groupSummary. */
 const SPREAD_KINDS = new Set(["temperature", "fan"]);
 
-/** The most .sensor-groups tracks one chip may claim -- eight 132px tracks is
- * about a full-width card on a laptop. A span wider than the grid is clamped
- * to it, so this is a ceiling on a wide page and nothing at all on a narrow
- * one. */
-const GROUP_SPAN_MAX = 8;
-
 /**
  * One reading's tile: what it is, what it says now, and where it has been.
  *
