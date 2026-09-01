@@ -119,8 +119,11 @@ describe("hostColumns", () => {
     it("sorts CPU on the stack's latest total", () => {
       const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
 
+      // Live, because a stale host sorts as unknown whatever its stack says.
       // The last bucket of each band: 11 + 6 + 2 + 0.
-      expect(cpu.sortValue!(makeRow())).toBe(19);
+      expect(
+        cpu.sortValue!(makeRow({ last_seen: new Date().toISOString() })),
+      ).toBe(19);
     });
 
     // Per band, not one shared index: the bands are gridded independently, so
@@ -129,6 +132,7 @@ describe("hostColumns", () => {
     it("reads each CPU band's own last reported value", () => {
       const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
       const row = makeRow({
+        last_seen: new Date().toISOString(),
         cpu: [
           { name: "user", color: "var(--s1)", values: [10, 12, null] },
           { name: "system", color: "var(--s2)", values: [5, 4, 6] },
@@ -150,6 +154,7 @@ describe("hostColumns", () => {
       const memory = hostColumns("1h").find((c) => c.header === "Memory")!;
       const row = makeRow({
         mem_total: 16_000_000_000,
+        last_seen: new Date().toISOString(),
         mem: [{ name: "used", color: "var(--s1)", values: [null, 4e9] }],
       });
 
@@ -265,6 +270,57 @@ describe("hostColumns", () => {
       expect(screen.getByText("/")).toBeInTheDocument();
       expect(screen.queryByText(/\+0/)).not.toBeInTheDocument();
     });
+
+    // The mark labels the host the way a device list does elsewhere: a reader
+    // picks a Debian box out of a page of Ubuntu ones without reading a word.
+    it("draws the distribution mark, and says which release under the name", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const { container } = render(
+        <>
+          {col.cell(
+            makeRow({
+              os_name: "Debian 13",
+              provider: "Init7",
+              location: "Winterthur, CH",
+            }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector(".osicon")).toBeInTheDocument();
+      expect(container.querySelector(".host-cell-site")?.textContent).toBe(
+        "Init7 \u00b7 Winterthur, CH \u00b7 Debian 13",
+      );
+    });
+
+    // An OS with no mark of its own leaves the space empty rather than taking
+    // a placeholder -- the same rule the missing location line follows.
+    it("draws no mark for an OS it has none for", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const { container } = render(
+        <>{col.cell(makeRow({ os_name: "SomeVendorOS 4" }))}</>,
+      );
+
+      expect(container.querySelector(".osicon")).toBeNull();
+    });
+
+    // A host that has posted metrics but no metadata yet: no mark, and the
+    // line under the name is whatever the location was, or nothing at all.
+    it("says only the location when the OS is unknown", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const { container } = render(
+        <>
+          {col.cell(
+            makeRow({ os_name: null, provider: null, location: "Zurich, CH" }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector(".osicon")).toBeNull();
+      expect(container.querySelector(".host-cell-site")?.textContent).toBe(
+        "Zurich, CH",
+      );
+    });
   });
 
   describe("cpu cell", () => {
@@ -298,6 +354,88 @@ describe("hostColumns", () => {
       );
 
       expect(busy.container.innerHTML).not.toBe(idlePaths);
+    });
+
+    // The cell drew a shape and no number: "how loaded is that host" was
+    // answerable only by eye, and only against the row above it.
+    it("prints the stack's current total and what it is a fraction of", () => {
+      const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
+      const { container } = render(
+        <>
+          {cpuCol.cell(
+            makeRow({
+              threads: 8,
+              // Recent, like the traffic-rate tests above: the fixture's own
+              // last_seen is fixed in the past, and a stale host prints no
+              // reading at all.
+              last_seen: new Date().toISOString(),
+              cpu: [
+                { name: "user", color: "var(--s1)", values: [10, 20, 30] },
+                { name: "system", color: "var(--s2)", values: [1, 2, 4] },
+              ],
+            }),
+          )}
+        </>,
+      );
+
+      // 30 + 4 at the last bucket, the same total the column sorts on.
+      expect(container.textContent).toContain("34");
+      expect(container.textContent).toContain("of 8 cores");
+    });
+
+    // The same guard the traffic rates two cells over apply. A confident
+    // percentage beside a sparkline that has gone to a gap is the one reading
+    // in this row that can actively mislead.
+    it("prints no reading for a host that stopped reporting", () => {
+      const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
+      const { container } = render(
+        <>
+          {cpuCol.cell(
+            makeRow({
+              threads: 8,
+              last_seen: "2020-01-01T00:00:00Z",
+              cpu: [{ name: "user", color: "var(--s1)", values: [10, 20, 30] }],
+            }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector(".metric-read")).toBeNull();
+      // And not a dash standing in for it either.
+      expect(container.textContent).not.toContain("\u2014");
+    });
+
+    // A single-thread host is a real fleet member, and "of 1 cores" is the
+    // kind of line that makes a reader distrust every other figure on it.
+    it("pluralises the core count", () => {
+      const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
+      const { container } = render(
+        <>
+          {cpuCol.cell(
+            makeRow({ threads: 1, last_seen: new Date().toISOString() }),
+          )}
+        </>,
+      );
+
+      expect(container.textContent).toContain("of 1 core");
+      expect(container.textContent).not.toContain("of 1 cores");
+    });
+
+    // threads is nullable -- a host that has posted metrics but no metadata
+    // yet has none -- and a reading with nothing under it is better than one
+    // under "of null cores".
+    it("omits the unit line when the host has not reported its core count", () => {
+      const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
+      const { container } = render(
+        <>
+          {cpuCol.cell(
+            makeRow({ threads: null, last_seen: new Date().toISOString() }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector(".metric-read .v")).toBeInTheDocument();
+      expect(container.querySelector(".metric-read .u")).toBeNull();
     });
   });
 
@@ -512,6 +650,45 @@ describe("hostColumns", () => {
       // a reading, and the host cell's badge already explains the empty row.
       expect(container.textContent).toBe("");
     });
+
+    // The height of the stack says how full the host is; this says it in
+    // figures, against the ceiling the stack is drawn to.
+    it("prints how full the host is, and what it is full of", () => {
+      const memCol = hostColumns("1h").find((c) => c.header === "Memory")!;
+      const { container } = render(
+        <>
+          {memCol.cell(
+            makeRow({
+              mem_total: 16_000_000_000,
+              last_seen: new Date().toISOString(),
+              mem: [
+                { name: "used", color: "var(--s1)", values: [8e9, 8e9, 8e9] },
+              ],
+            }),
+          )}
+        </>,
+      );
+
+      expect(container.textContent).toContain("50");
+      // binaryBytes, like the enlarged chart's axis: 16 GB is 14.9 GiB.
+      expect(container.textContent).toContain("of 14.9 GiB");
+    });
+
+    it("prints no reading for a host that stopped reporting", () => {
+      const memCol = hostColumns("1h").find((c) => c.header === "Memory")!;
+      const { container } = render(
+        <>
+          {memCol.cell(
+            makeRow({
+              last_seen: "2020-01-01T00:00:00Z",
+              mem_total: 16_000_000_000,
+            }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector(".metric-read")).toBeNull();
+    });
   });
 
   describe("host cell", () => {
@@ -647,6 +824,23 @@ describe("hostColumns", () => {
       const { container } = render(<>{hostCol.cell(row)}</>);
       expect(container.querySelector(".badge.st-crit")).toBeInTheDocument();
       expect(screen.getByText("offline")).toBeInTheDocument();
+    });
+  });
+  // The cell refuses to print a figure for a host that stopped reporting, so
+  // the column must refuse to order on one: a machine that died at 90% sorted
+  // above every live host in the fleet while showing nothing at all.
+  describe("sorting a stale host", () => {
+    it("orders CPU and Memory as unknown once a host stops reporting", () => {
+      const cols = hostColumns("1h");
+      const cpu = cols.find((c) => c.header === "CPU")!;
+      const memory = cols.find((c) => c.header === "Memory")!;
+      const stale = makeRow({ last_seen: "2020-01-01T00:00:00Z" });
+      const live = makeRow({ last_seen: new Date().toISOString() });
+
+      expect(cpu.sortValue!(stale)).toBeNull();
+      expect(cpu.sortValue!(live)).not.toBeNull();
+      expect(memory.sortValue!(stale)).toBeNull();
+      expect(memory.sortValue!(live)).not.toBeNull();
     });
   });
 });

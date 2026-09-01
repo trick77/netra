@@ -119,6 +119,15 @@ type HostSummary struct {
 	Provider *string `json:"provider"`
 	Facility *string `json:"facility"`
 
+	// The distribution, as the agent's os-release reported it -- "Debian 13",
+	// "Ubuntu 24.04". On the SUMMARY as well as the detail because the fleet
+	// list draws a distribution mark beside every hostname and prints the
+	// release on the line under it; without it the list would have to fan out
+	// one detail request per host to label a row. NULL is a host that has not
+	// posted metadata yet, which draws no mark and no words rather than a
+	// placeholder.
+	OSName *string `json:"os_name"`
+
 	// Capabilities is what each collector reported about its own
 	// availability, verbatim from hosts.capabilities.
 	//
@@ -204,7 +213,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		       c.last_seen, c.cpu_total, c.mem_used, c.mem_total, c.uptime_s,
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.threads, coalesce(h.capabilities, '{}'::jsonb),
-		       h.location, h.provider, h.facility,
+		       h.location, h.provider, h.facility, h.os_name,
 		       coalesce(fu.names, '{}'::text[]), fu.since
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
@@ -232,7 +241,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 			&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
 			&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 			&h.Threads, &h.Capabilities,
-			&h.Location, &h.Provider, &h.Facility,
+			&h.Location, &h.Provider, &h.Facility, &h.OSName,
 			&h.FailedUnits, &h.FailedSince); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}

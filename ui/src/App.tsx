@@ -56,6 +56,7 @@ import { LoginPage } from "./features/auth/LoginPage";
 import { HostAdminPage } from "./features/admin/HostAdminPage";
 import {
   Bell,
+  Boxes,
   CircleSlash,
   Gauge,
   LogOut,
@@ -83,6 +84,11 @@ export default function App() {
 
   const onClick = useDelegatedNavigation(go);
 
+  // Which of the fleet's two lists the rail should mark. The page owns the
+  // parameter; the rail only reads it.
+  const onContainers =
+    new URLSearchParams(search).get("entity") === "containers";
+
   return (
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <div className="app" onClick={onClick}>
@@ -108,8 +114,24 @@ export default function App() {
                 happened: the two marks that have to say "monitoring tool"
                 rather than "admin panel". The other two are a server and a
                 cog in every set worth considering. */}
-            <NavLink href="/" icon={Gauge} active={route.name === "fleet"}>
+            <NavLink
+              href="/"
+              icon={Gauge}
+              active={route.name === "fleet" && !onContainers}
+            >
               Fleet
+            </NavLink>
+            {/* The entity still lives in the query string -- see FleetScreen
+                -- so this is the same page with a different reading, and the
+                rail has to split on the parameter rather than on the route
+                name. Without that both entries light at once on the
+                containers view, which tells a reader the rail is broken. */}
+            <NavLink
+              href="/?entity=containers"
+              icon={Boxes}
+              active={route.name === "fleet" && onContainers}
+            >
+              Containers
             </NavLink>
             <NavLink
               href="/events"
