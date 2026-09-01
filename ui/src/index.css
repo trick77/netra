@@ -1809,8 +1809,13 @@ tbody tr:nth-child(even):not(.grouprow) {
   background: var(--surface-2);
 }
 /* Hover moves up a rung with it -- at --surface-2 it would have been
-   invisible on every striped row. */
-tbody tr:hover {
+   invisible on every striped row.
+   :not(.grouprow) is not about group heads, which paint their own --bg over
+   the row anyway: it is there to MATCH the stripe's specificity. The stripe
+   above scores (0,2,2) -- :nth-child plus the class inside :not() -- and a
+   bare `tbody tr:hover` scores (0,1,2), so the stripe won and half the rows
+   of every table hovered to no change at all. Same weight, later in source. */
+tbody tr:hover:not(.grouprow) {
   background: var(--raised);
 }
 /* The host detail page's own wrapper. It exists so the page never reaches
