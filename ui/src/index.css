@@ -2536,7 +2536,10 @@ details.sysfold > .body {
   /* auto-fill, not auto-fit: a Raspberry Pi reports two temperatures and no
      fans, and auto-fit collapses the track its missing cards would have used
      -- one card of two readings stretched across the whole page. */
-  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  /* min(420px, 100%), never a bare 420px: below that width the track is
+     wider than the container and the whole page scrolls sideways -- the same
+     failure .smp's min-width:0 was added for. */
+  grid-template-columns: repeat(auto-fill, minmax(min(420px, 100%), 1fr));
   /* Cards size to their content: a Fans card of three readings stretched to
      the height of the Power card beside it is an empty box with a border. */
   align-items: start;

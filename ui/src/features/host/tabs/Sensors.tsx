@@ -203,11 +203,16 @@ function formatSensor(kind: string, value: number | null): string {
   return `${sensorDigits(kind, value)} ${sensorUnit(kind)}`;
 }
 
-/** Above this many readings, a card takes the full width of the .sm grid
- * rather than one of its columns. A Raspberry Pi reports two temperatures
- * and would look abandoned spanning a 1400px page; a bare-metal box reports
- * twenty-three and cannot tile them inside 292px. */
+/** Above this many readings, a card takes the whole .sm-sensors grid rather
+ * than one of its tracks. A Raspberry Pi reports two temperatures and would
+ * look abandoned spanning a 1400px page; a bare-metal box reports twenty-three
+ * and cannot tile them inside one 420px track. */
 const SPAN_CARD_MIN = 7;
+
+/** The kinds whose readings sit on one number line, so a group's min and max
+ * are a fact about the group rather than two unrelated nominals subtracted.
+ * See groupSummary. */
+const SPREAD_KINDS = new Set(["temperature", "fan"]);
 
 /** The most .sensor-groups tracks one chip may claim -- eight 132px tracks is
  * about a full-width card on a laptop. A span wider than the grid is clamped
@@ -365,8 +370,14 @@ function drawnSensor(
  * The spread, because that is the question a wall of tiles raises and cannot
  * answer at a glance: sixteen cores between 42 and 49 degrees is one fact,
  * and the reader who wanted it does not have to scan sixteen numbers for the
- * ends. Only when every member shares a kind -- power_meter publishes a watt
- * and an amp, and their min and max are not on one number line.
+ * ends. On fans it is the one that catches a stall: 0-1574 RPM says a fan
+ * stopped without the reader finding which tile reads zero.
+ *
+ * Temperatures and fans only. Every member sharing a kind is not enough --
+ * a board's rails are all voltages and "1.16-11.97 V" is Vcore against +12V,
+ * two nominals that were never on one number line, so the spread of a healthy
+ * board reads like a fault. Watts against amps, on power_meter, are not even
+ * the same quantity.
  *
  * The count only once a group is big enough that its tiles wrap, since below
  * that the reader can see how many there are.
@@ -379,7 +390,8 @@ function groupSummary(members: DrawnSensor[]): string {
   const values = members
     .map((m) => m.value)
     .filter((v): v is number => v !== null);
-  if (kinds.size === 1 && values.length > 0) {
+  const spreadable = kinds.size === 1 && SPREAD_KINDS.has(members[0].kind);
+  if (spreadable && values.length > 0) {
     const kind = members[0].kind;
     const low = Math.min(...values);
     const high = Math.max(...values);
