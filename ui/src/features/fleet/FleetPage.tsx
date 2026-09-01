@@ -409,8 +409,16 @@ export function FleetPage({
           first thing on it was a row of problem tiles, which reads as a
           dashboard fragment rather than as the page a bookmark lands on --
           and left the ambient figures under it with nothing to be subordinate
-          TO. */}
-      <h1 className="fleettitle">Fleet</h1>
+          TO.
+
+          It names the LIST, not the route: the two entities are one route
+          with a different query string and the rail marks them as two
+          destinations, so a heading fixed at "Fleet" would contradict the
+          rail on the containers view and mislabel the page for a screen
+          reader landing on it. */}
+      <h1 className="fleettitle">
+        {entity === "containers" ? "Containers" : "Fleet"}
+      </h1>
 
       <StatRail>
         {/* The first two figures count a set the page can show, and sit

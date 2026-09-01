@@ -119,8 +119,11 @@ describe("hostColumns", () => {
     it("sorts CPU on the stack's latest total", () => {
       const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
 
+      // Live, because a stale host sorts as unknown whatever its stack says.
       // The last bucket of each band: 11 + 6 + 2 + 0.
-      expect(cpu.sortValue!(makeRow())).toBe(19);
+      expect(
+        cpu.sortValue!(makeRow({ last_seen: new Date().toISOString() })),
+      ).toBe(19);
     });
 
     // Per band, not one shared index: the bands are gridded independently, so
@@ -129,6 +132,7 @@ describe("hostColumns", () => {
     it("reads each CPU band's own last reported value", () => {
       const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
       const row = makeRow({
+        last_seen: new Date().toISOString(),
         cpu: [
           { name: "user", color: "var(--s1)", values: [10, 12, null] },
           { name: "system", color: "var(--s2)", values: [5, 4, 6] },
@@ -150,6 +154,7 @@ describe("hostColumns", () => {
       const memory = hostColumns("1h").find((c) => c.header === "Memory")!;
       const row = makeRow({
         mem_total: 16_000_000_000,
+        last_seen: new Date().toISOString(),
         mem: [{ name: "used", color: "var(--s1)", values: [null, 4e9] }],
       });
 
@@ -819,6 +824,23 @@ describe("hostColumns", () => {
       const { container } = render(<>{hostCol.cell(row)}</>);
       expect(container.querySelector(".badge.st-crit")).toBeInTheDocument();
       expect(screen.getByText("offline")).toBeInTheDocument();
+    });
+  });
+  // The cell refuses to print a figure for a host that stopped reporting, so
+  // the column must refuse to order on one: a machine that died at 90% sorted
+  // above every live host in the fleet while showing nothing at all.
+  describe("sorting a stale host", () => {
+    it("orders CPU and Memory as unknown once a host stops reporting", () => {
+      const cols = hostColumns("1h");
+      const cpu = cols.find((c) => c.header === "CPU")!;
+      const memory = cols.find((c) => c.header === "Memory")!;
+      const stale = makeRow({ last_seen: "2020-01-01T00:00:00Z" });
+      const live = makeRow({ last_seen: new Date().toISOString() });
+
+      expect(cpu.sortValue!(stale)).toBeNull();
+      expect(cpu.sortValue!(live)).not.toBeNull();
+      expect(memory.sortValue!(stale)).toBeNull();
+      expect(memory.sortValue!(live)).not.toBeNull();
     });
   });
 });

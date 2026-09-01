@@ -1587,7 +1587,10 @@ a:hover {
      · 1.2 GB/s · 0 s since last check"). */
   flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-1) 0;
+  /* Wide enough that the figures read as separate facts with nothing drawn
+     between them; the row gap is small because a wrapped rail is one block,
+     not a list. */
+  gap: var(--space-2) var(--space-5);
   /* The same gap the tiles left between themselves and the entity tabs
      below: the fleet's summary and the control for what you are looking at
      must not read as one crowded block. */
@@ -1598,13 +1601,14 @@ a:hover {
   align-items: baseline;
   gap: 6px;
 }
-/* The separator, on the figure rather than between them, and never on the
-   one that starts the line. */
-.srail .s + .s::before {
-  content: "\00b7";
-  color: var(--muted-2);
-  margin: 0 var(--space-3);
-}
+/* NO separator mark between the figures, and that is the second time this
+   rail has learned it. A middot on .s + .s draws on every figure except the
+   first IN DOM ORDER, which is not the first on each LINE: this box wraps,
+   and under 640px every figure is given a row of its own, so each of them
+   opened with a stray "· ". It is the same trap the old border-left divider
+   fell into, for the same reason -- CSS cannot say "the one that starts this
+   visual row".
+   What separates them is space, which cannot be wrong in either axis. */
 .srail b {
   font-size: var(--text-ui);
   font-weight: 600;
@@ -2967,13 +2971,9 @@ svg.spark {
 @media (max-width: 1120px) {
   /* The rail wraps on its own -- it is a flex row, not the grid the stat
      tiles were, so there is no column count to reset here. It gets the width
-     back instead, so the three figures stay on one line in the band where
-     the content column is narrowing.
-     Note :first-child only clears the border on the first figure OVERALL:
-     wherever the figures do wrap, the one starting the second row still
-     draws a leading rule against the box edge. Only the <=640px rule below
-     fixes that, by turning the dividers into top borders once every figure
-     is on a row of its own. */
+     back instead, so the figures stay on one line in the band where the
+     content column is narrowing. Nothing is drawn between them any more, so
+     a wrap costs nothing but the break itself. */
   .srail {
     max-width: 100%;
   }
@@ -3020,9 +3020,9 @@ svg.spark {
   .app > main {
     padding: var(--space-3) var(--space-3) 64px;
   }
-  /* One figure per row at this width, rather than two-and-one. The gap
-     dividers need no help here -- they run horizontally between the rows on
-     their own -- so this is only about the break. */
+  /* One figure per row at this width, rather than two-and-one. Purely about
+     the break: the figures are separated by space, which works down a column
+     as well as it works along a line. */
   .srail .s {
     flex: 1 0 100%;
   }

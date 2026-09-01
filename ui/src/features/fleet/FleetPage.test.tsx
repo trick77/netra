@@ -109,6 +109,22 @@ describe("FleetPage entity tabs", () => {
   // The host is named ONCE, by the group it heads. A Host column beside it
   // restated that heading on every row -- eighty-four rows saying what four
   // headings say, in the widest table on the page.
+  // The rail marks Containers as its own destination; a heading fixed at
+  // "Fleet" would contradict it, and mislabel the page for anyone landing
+  // there by link.
+  it("names the list it is showing", () => {
+    const hosts = renderPage();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Fleet" }),
+    ).toBeInTheDocument();
+    hosts.unmount();
+
+    renderPage({ entity: "containers" });
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Containers" }),
+    ).toBeInTheDocument();
+  });
+
   it("names the host in the group header and not again on every row", () => {
     renderPage({ entity: "containers" });
 

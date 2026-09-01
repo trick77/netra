@@ -656,12 +656,15 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       key: "cpu",
       header: "CPU",
       cell: (row) => <CpuCell row={row} range={range} />,
-      // Where the stack stands now. The cell prints no figure -- it is a
-      // sparkline and nothing else -- so "sort on what the row shows" means
-      // its right-hand edge, which is the reading a reader takes off it.
+      // Where the stack stands now -- the figure the cell prints, read
+      // through the same guard the cell reads it through, so a host whose
+      // last sample is hours old sorts as unknown rather than as busy.
+      // Without that a machine that died at 90% sits above every live host
+      // in the fleet while printing no figure at all, which is exactly what
+      // the traffic column's own guard is there to prevent.
       // Normalised against cpu_total by the assembler, so this is percent of
       // THIS host and a 32-core box does not outrank a busy 4-core one.
-      sortValue: (row) => latestStackTotal(row.cpu),
+      sortValue: (row) => (isReporting(row) ? latestStackTotal(row.cpu) : null),
     },
     {
       key: "memory",
@@ -675,7 +678,7 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       // question this column is not asking. No ceiling means the cell draws
       // nothing at all (see MemoryCell), so there is nothing to order on.
       sortValue: (row) => {
-        if (row.mem_total === null) return null;
+        if (row.mem_total === null || !isReporting(row)) return null;
         const used = latestStackTotal(row.mem);
         return used === null ? null : used / row.mem_total;
       },
