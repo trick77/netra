@@ -116,17 +116,114 @@ describe("FleetPage entity tabs", () => {
   // headings say, in the widest table on the page.
   // The rail marks Containers as its own destination; a heading fixed at
   // "Fleet" would contradict it, and mislabel the page for anyone landing
-  // there by link.
-  it("names the list it is showing", () => {
+  // there by link. It no longer names the list at all on a fleet it can
+  // state: it says what that list currently IS, in the vocabulary of the
+  // entity on screen.
+  it("states the list it is showing", () => {
     const hosts = renderPage();
     expect(
-      screen.getByRole("heading", { level: 1, name: "Fleet" }),
+      screen.getByRole("heading", { level: 1, name: "1 host, steady" }),
     ).toBeInTheDocument();
     hosts.unmount();
 
     renderPage({ entity: "containers" });
     expect(
-      screen.getByRole("heading", { level: 1, name: "Containers" }),
+      screen.getByRole("heading", { level: 1, name: "1 container, reporting" }),
+    ).toBeInTheDocument();
+  });
+
+  // The heading counts what is wrong off the same tiles the chips are drawn
+  // from, so the sentence and the chips under it cannot disagree.
+  it("says how much of the list needs looking at", () => {
+    const hosts = renderPage({
+      rows: [
+        makeRow({ id: 1 }),
+        makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+      ],
+    });
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "2 hosts, 1 needs attention",
+      }),
+    ).toBeInTheDocument();
+    hosts.unmount();
+
+    // A container that stopped posting five minutes ago, on a host that
+    // kept posting: silent, and counted by the sentence.
+    renderPage({
+      entity: "containers",
+      containers: [
+        makeContainer(),
+        makeContainer({
+          id: 2,
+          container_key: "aa11",
+          name: "redis",
+          last_seen: "2026-08-10T13:55:00Z",
+        }),
+      ],
+    });
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "2 containers, 1 not reporting normally",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  // A host whose cgroup mount is unreadable reports nothing for any container
+  // on it. That kind has no chip -- one chip per host-wide outage is not what
+  // says so -- but it is emphatically not reporting normally, and counted off
+  // the chips alone the heading read "2 containers, all reporting" above two
+  // rows both saying No samples.
+  it("counts containers that cannot be sampled at all", () => {
+    renderPage({
+      entity: "containers",
+      containers: [
+        makeContainer({ host_containers_capability: "no-cgroup-scopes" }),
+        makeContainer({
+          id: 2,
+          container_key: "aa11",
+          name: "redis",
+          host_containers_capability: "no-cgroup-scopes",
+        }),
+      ],
+    });
+
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "2 containers, 2 not reporting normally",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  // Somebody paused it, and the silence check has already passed -- it is
+  // still being sampled. It has a chip, because the list may be filtered to
+  // it, and it must not make the heading claim a container stopped
+  // reporting.
+  it("does not count a paused container as one that stopped reporting", () => {
+    renderPage({
+      entity: "containers",
+      containers: [makeContainer({ docker_state: "paused" })],
+    });
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "1 container, reporting" }),
+    ).toBeInTheDocument();
+  });
+
+  // The list is short by whatever the host that answered 500 runs. The note
+  // above says so; the heading must not contradict it by calling the rest
+  // healthy.
+  it("withholds the all-clear when a host could not be asked", () => {
+    renderPage({
+      entity: "containers",
+      containerError: "1 host could not be asked for containers",
+    });
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "1 container" }),
     ).toBeInTheDocument();
   });
 
@@ -903,6 +1000,28 @@ describe("FleetPage stat figures as controls", () => {
 
     expect(tile("/")).not.toBeNull();
     expect(tile("/?entity=containers")).not.toBeNull();
+  });
+
+  // The heading on the containers tab has just counted the containers; the
+  // figure would restate that number directly under its own sentence.
+  it("drops the containers figure on the containers tab", () => {
+    renderPage({ entity: "containers" });
+
+    expect(tile("/?entity=containers")).toBeNull();
+    expect(tile("/")).not.toBeNull();
+  });
+
+  // Unless the heading counted nothing. A fan-out that has not answered
+  // leaves the heading at the bare word "Containers", and the figure is then
+  // the only thing on the tab that can say the count is not known.
+  it("keeps the containers figure when the heading counts nothing", () => {
+    render(<FleetPage now={NOW} rows={[makeRow()]} entity="containers" />);
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Containers" }),
+    ).toBeInTheDocument();
+    expect(tile("/?entity=containers")).not.toBeNull();
+    expect(screen.getByText(ABSENT)).toBeInTheDocument();
   });
 
   // Fleet traffic is a rate, not a set: there is no list of it to go to, and

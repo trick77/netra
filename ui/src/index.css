@@ -1605,14 +1605,15 @@ tbody tr:hover .host-cell-name {
    line of type; wrapping is allowed, and on a narrow window the figures drop
    under the title rather than squeezing it. */
 .fleethead {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-5);
-  flex-wrap: wrap;
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-5);
 }
+/* Under the sentence, not off the end of it. The head states the fleet now
+   ("4 hosts, 2 need attention"), and these figures are what that sentence is
+   measured against -- a subtitle to it rather than a second thing on its
+   line. Tight to the heading and loose from the chips below, so the two read
+   as one block. */
 .fleethead .srail {
-  margin-left: auto;
+  margin-top: var(--space-2);
   margin-bottom: 0;
 }
 
@@ -1626,6 +1627,25 @@ tbody tr:hover .host-cell-name {
   font-weight: 500;
   letter-spacing: -0.01em;
   margin: 0;
+  /* It is a sentence now, and a long one wraps on a narrow window. Display
+     type at its default line-height sets wrapped lines too far apart to read
+     as one heading. */
+  line-height: 1.2;
+}
+/* The clause that says something is wrong, in the fixed status hue. Not
+   italic -- <em> is here because the clause IS the emphasis of the sentence,
+   and a serif italic at display size reads as a quotation. */
+.fleettitle em {
+  font-style: normal;
+}
+.fleettitle em.st-crit {
+  color: var(--st-crit-text);
+}
+.fleettitle em.st-serious {
+  color: var(--st-serious-text);
+}
+.fleettitle em.st-warn {
+  color: var(--st-warn-text);
 }
 
 /* A LINE, not a rail of boxes. Four bordered segments under a row of chips
