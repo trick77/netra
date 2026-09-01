@@ -1790,8 +1790,28 @@ td {
 tbody tr:last-child td {
   border-bottom: 0;
 }
-tbody tr:hover {
+/* Zebra. A row here is five or six cells wide, three of them charts, and the
+   hairline between rows is the only thing tying a hostname to the disk figure
+   at the far edge of the table -- a wide row is exactly where an eye drifts a
+   line. The stripe binds it.
+
+   --surface-2 rather than --surface, because a table sits ON --surface
+   (.tablewrap): the stripe has to be the rung ABOVE its ground, not the same
+   one. Measured against that ground it is 1.08:1 -- a shelf, not a highlight,
+   and the same step the elevation ladder uses everywhere else.
+
+   :nth-child, so the count restarts inside each <tbody>: a grouped table is
+   one tbody per group, and a stripe that ran across the group heads would
+   pair the last row of one group with the first of the next. The head is a
+   .grouprow th with its own --bg fill and is excluded outright, so it never
+   takes a stripe of its own. */
+tbody tr:nth-child(even):not(.grouprow) {
   background: var(--surface-2);
+}
+/* Hover moves up a rung with it -- at --surface-2 it would have been
+   invisible on every striped row. */
+tbody tr:hover {
+  background: var(--raised);
 }
 /* The host detail page's own wrapper. It exists so the page never reaches
    for .host, which is the host CELL below: a flex row, which laid this
