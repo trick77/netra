@@ -43,3 +43,37 @@ describe("panel explanations", () => {
     }
   });
 });
+
+/**
+ * The one formatter that has to answer at two grains.
+ *
+ * At raw the reading is a stored boolean; at 5m, 1h and 1d it is a share of
+ * the bucket's scrapes, and only the "%" tells the two apart on screen. A
+ * near-miss that rounded onto an endpoint would state the endpoint's fact --
+ * a clean bucket -- about a bucket that had a failure in it.
+ */
+describe("device availability at a rolled-up tier", () => {
+  const fmt = ALL_SPECS.find((s) => s.slug === "device-availability")?.fmt;
+
+  it("keeps a bucket that had a failure off 100%", () => {
+    // One failure in a day of 1440 scrapes is 0.99931, which rounds to 100.
+    expect(fmt?.(1439 / 1440)).toBe("99% up");
+    // And the mirror: one success in that day is not a total outage.
+    expect(fmt?.(1 / 1440)).toBe("1% up");
+  });
+
+  it("still reads the endpoints as the states they are", () => {
+    expect(fmt?.(1)).toBe("up");
+    expect(fmt?.(0)).toBe("down");
+    expect(fmt?.(0.8)).toBe("80% up");
+  });
+
+  // 1 - 71/100 is 0.29000000000000004, so n * 100 lands just above 29 and a
+  // ceil reports a percent the bucket never had. Rounding first is what
+  // keeps the arithmetic honest at the ordinary values too, not only at the
+  // endpoints the clamp guards.
+  it("reports the percent the bucket had, not the float beside it", () => {
+    expect(fmt?.(1 - 71 / 100)).toBe("29% up");
+    expect(fmt?.(1 - 7 / 9)).toBe("22% up");
+  });
+});
