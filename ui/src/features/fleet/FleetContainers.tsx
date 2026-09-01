@@ -67,10 +67,13 @@ export interface FleetContainersProps {
    * specific instruction to go and reconfigure a host.
    */
   filtered?: boolean;
+  /** The clock the Status column reads, so a test can pin it. */
+  now?: Date;
 }
 
 export function FleetContainers({
   rows,
+  now = new Date(),
   showHost = false,
   loaded = true,
   range = "24h",
@@ -185,6 +188,7 @@ export function FleetContainers({
           // The fleet's own windows: it stops at 24h, where a host page
           // goes to 7d.
           ranges: RAIL_RANGES,
+          now,
           ...scales,
         })}
         rows={rows}

@@ -488,6 +488,28 @@ export function hasGaps(vals: readonly (number | null)[]): boolean {
 }
 
 /**
+ * True when the series has a hole BETWEEN two readings.
+ *
+ * hasGaps counts the nulls at the ends too, and on a gridded series those are
+ * routine: griddedValues fills the whole window, so a container created an
+ * hour into a 24-hour grid has twenty-three hours of leading nulls and one
+ * that stopped has trailing ones. "Series gap" is a claim about a hole in
+ * what was reported -- a container that has not existed for the whole window
+ * did not miss anything -- so it is measured between the first reading and
+ * the last.
+ */
+export function hasInteriorGaps(vals: readonly (number | null)[]): boolean {
+  const first = vals.findIndex((v) => v !== null);
+  if (first === -1) return false;
+  let last = vals.length - 1;
+  while (last > first && vals[last] === null) last--;
+  for (let i = first; i <= last; i++) {
+    if (vals[i] === null) return true;
+  }
+  return false;
+}
+
+/**
  * Whether a series carries a reading at all -- any non-null value.
  *
  * The distinction every chart-building caller turns on: a column the

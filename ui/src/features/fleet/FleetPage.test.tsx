@@ -132,6 +132,85 @@ describe("FleetPage entity tabs", () => {
     // Once for the one container: the group heading, and nothing else.
     expect(screen.getAllByRole("link", { name: "web-01" })).toHaveLength(1);
   });
+
+  // The counts line reads whichever entity is on screen. Host conditions and
+  // container states are different vocabularies over different rows, and one
+  // line showing both would be counting two things in one row of chips.
+  describe("the container counts line", () => {
+    const SILENT = makeContainer({
+      id: 2,
+      container_key: "shop/web",
+      name: "web",
+      last_seen: "2026-08-10T12:00:00Z",
+      host_last_seen: "2026-08-10T14:00:00Z",
+    });
+
+    it("counts container states, not host conditions", () => {
+      renderPage({
+        entity: "containers",
+        containers: [
+          makeContainer({ host_last_seen: "2026-08-10T14:00:00Z" }),
+          SILENT,
+        ],
+      });
+
+      const list = screen.getByRole("list", { name: /by kind/i });
+      expect(within(list).getByText("Silent")).toBeInTheDocument();
+      // The one that is fine is not a chip: a filter names what is wrong.
+      expect(within(list).queryByText("Reporting")).toBeNull();
+    });
+
+    it("narrows the list to the state that was picked", () => {
+      renderPage({
+        entity: "containers",
+        attention: "silent",
+        onAttentionChange: vi.fn(),
+        containers: [
+          makeContainer({ host_last_seen: "2026-08-10T14:00:00Z" }),
+          SILENT,
+        ],
+      });
+
+      expect(screen.getByRole("link", { name: "web" })).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "postgres" })).toBeNull();
+    });
+
+    // The counts line drops a kind once nothing carries it, so a link to a
+    // filter whose last container recovered would leave an empty list, no
+    // chip, and no way out short of editing the URL.
+    it("offers a way out of a filter nothing matches any more", () => {
+      renderPage({
+        entity: "containers",
+        attention: "silent",
+        onAttentionChange: vi.fn(),
+        containers: [makeContainer({ host_last_seen: "2026-08-10T14:00:00Z" })],
+      });
+
+      expect(screen.queryByRole("list", { name: /by kind/i })).toBeNull();
+      expect(
+        screen.getByRole("link", { name: /show all/i }),
+      ).toBeInTheDocument();
+    });
+
+    // A host kind in the URL while the container list is up would otherwise
+    // narrow it to nothing and read as a broken page.
+    it("ignores a host kind on the container tab", () => {
+      renderPage({
+        entity: "containers",
+        attention: "failed-units",
+        onAttentionChange: vi.fn(),
+        containers: [
+          makeContainer({ host_last_seen: "2026-08-10T14:00:00Z" }),
+          SILENT,
+        ],
+      });
+
+      expect(
+        screen.getByRole("link", { name: "postgres" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "web" })).toBeInTheDocument();
+    });
+  });
 });
 
 describe("FleetPage toolbar", () => {

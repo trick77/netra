@@ -13,18 +13,25 @@
 // had drifted into a different column list, a different agent badge, no
 // sorting and -- worst -- no link to the container detail page at all.
 //
-// There is deliberately no state, health, restart-count or uptime column:
+// There is still deliberately no health, restart-count or uptime column:
 // none of those reach the wire or the schema (container_samples carries CPU
-// and memory only). A column showing "running" for every row would be an
-// assertion netra cannot make. ContainerPage's deriveState() badge does not
-// come here either: it needs sample timestamps, which the host page has and
-// the fleet fan-out does not, so it would appear on one list and not the
-// other -- the exact asymmetry this module exists to remove.
+// and memory only), and a column showing "running" for every row would be an
+// assertion netra cannot make.
 //
-// ONE thing about time does reach both lists now: containers.last_seen, which
-// the listing endpoint carries on every row. That is not a state -- it says
-// when a container was last SEEN, nothing about what it is doing -- and it is
-// what the "gone" pill below is derived from.
+// The Status column is not that column. It says nothing Docker told us -- it
+// reports what netra MEASURED: samples arriving, samples stopped, memory near
+// its limit, a hole in the series. It calls deriveState (features/container/
+// state.ts), the same function the detail page's header badge calls, so a
+// container reads the same on the list it sits in and on the page that list
+// links to. The old note here said the badge could not come to the lists
+// because it needs sample timestamps the fleet fan-out lacks; it does not
+// lack them. containers.last_seen rides on every listing row -- it advances
+// only while samples arrive -- and both lists already build the cpu/mem
+// series a ContainerRow carries.
+//
+// last_seen is also what the "gone" pill below is derived from, and the pill
+// stays: "gone" is a FACT measured against the host, and it is what the purge
+// action is offered on.
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { Reading } from "../../ui/Reading";
@@ -35,6 +42,9 @@ import { ABSENT, bytes, percent } from "../../lib/format";
 import type { Container } from "../../lib/api";
 import { type Range } from "../../lib/range";
 import { ContainerChart } from "./ContainerChart";
+import { hasInteriorGaps } from "../../lib/metrics";
+import { hostStatus } from "../../lib/host";
+import { deriveState, stateKindRank, type DerivedState } from "./state";
 
 /**
  * A container as a list sees it: what `GET /api/v1/hosts/{id}/containers`
@@ -82,6 +92,47 @@ export type ContainerRow = Container & {
 };
 
 /**
+ * A list row's state, in the detail page's own words.
+ *
+ * Every input deriveState wants is already on the row: `last_seen` advances
+ * only while samples arrive, `host_last_seen` is what containerIsGone
+ * measures against, and both lists build the cpu/mem series a ContainerRow
+ * carries. A row without trends simply cannot reach the two states that need
+ * them -- it says Reporting, Silent or Host offline, which is what it knows.
+ */
+export function containerState(
+  row: ContainerRow,
+  now: Date = new Date(),
+): DerivedState {
+  const lastSeen = Date.parse(row.last_seen);
+  // A host whose cgroup mount is unreadable keeps posting host samples while
+  // no container sample can land, so last_seen ages forever and every
+  // container on it would read Silent -- beside a hostContainerNote saying
+  // the opposite, and a gone pill deliberately suppressed for this same
+  // reason. Nothing was reported, which is what the row then says.
+  const blocked = containerSamplesBlocked(row.host_containers_capability);
+  return deriveState({
+    lastSampleMs: blocked || Number.isNaN(lastSeen) ? null : lastSeen,
+    // lastReported, not the latest bucket: the last READING, the way the
+    // detail page reads it and the way mem_limit_bytes is already built. Off
+    // the latest bucket, one empty trailing bucket hid memory pressure here
+    // while the page one click away still reported it.
+    memUsed: lastReported(row.mem),
+    memLimit: row.mem_limit_bytes ?? null,
+    // Interior gaps only. Every container younger than the fleet's 24h grid
+    // carries leading nulls, and calling those a gap warns on a large share
+    // of a healthy fleet for having been created yesterday.
+    gap: row.cpu ? hasInteriorGaps(row.cpu) : false,
+    now,
+    hostState:
+      row.host_last_seen === undefined
+        ? undefined
+        : hostStatus({ last_seen: row.host_last_seen }, now),
+    gone: containerIsGone(row),
+  });
+}
+
+/**
  * Capability values that stop container samples reaching the hub entirely.
  *
  * `no-cgroup-scopes` is the one: the Docker socket names containers the
@@ -91,6 +142,19 @@ export type ContainerRow = Container & {
  * advancing; only the names are missing.
  */
 const NO_CONTAINER_SAMPLES = new Set(["no-cgroup-scopes"]);
+
+/**
+ * Can a container sample land on this host at all?
+ *
+ * Read by containerIsGone and by containerState, because both would
+ * otherwise blame a container for a silence that belongs to its host's
+ * agent -- one by offering to purge it, the other by calling it Silent.
+ */
+export function containerSamplesBlocked(
+  capability: string | undefined,
+): boolean {
+  return capability !== undefined && NO_CONTAINER_SAMPLES.has(capability);
+}
 
 /**
  * How far a container's last sample may lag its HOST's before the row reads
@@ -522,6 +586,9 @@ export interface ContainerColumnsOptions {
   purgeConfirming?: number | null;
   /** Set while a purge request for that row is in flight. */
   purgeBusy?: number | null;
+  /** Injectable so the Status column is deterministic in tests -- it is the
+   * one column whose value moves on its own. */
+  now?: Date;
 }
 
 export function containerColumns({
@@ -534,6 +601,7 @@ export function containerColumns({
   onPurge,
   purgeConfirming = null,
   purgeBusy = null,
+  now = new Date(),
 }: ContainerColumnsOptions = {}): Column<ContainerRow>[] {
   const columns: Column<ContainerRow>[] = [
     {
@@ -555,6 +623,27 @@ export function containerColumns({
       sortValue: (row) => row.hostname,
     });
   }
+  columns.push({
+    key: "status",
+    header: "Status",
+    // deriveState's own words, not a second set: this is the same function
+    // the detail page's header badge calls, so a container reads the same on
+    // the list it is in and on the page it links to.
+    // The `why` rides on a wrapper rather than on Badge: Badge takes no
+    // title, and giving every badge in the app one to serve this cell is a
+    // wider change than the cell is worth.
+    cell: (row) => {
+      const state = containerState(row, now);
+      return (
+        <span title={state.why}>
+          <Badge severity={state.severity}>{state.label}</Badge>
+        </span>
+      );
+    },
+    // Worst first, by kind rather than by the label's alphabet: sorting a
+    // status column is a reader asking which rows to look at.
+    sortValue: (row) => stateKindRank(containerState(row, now).kind),
+  });
   columns.push({
     key: "image",
     header: "Image",

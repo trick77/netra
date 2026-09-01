@@ -26,6 +26,14 @@ import {
   type HostGroup,
 } from "./conditions";
 import { FleetContainers, type ContainerRow } from "./FleetContainers";
+import { containerState } from "../container/columns";
+import {
+  FILTERABLE_STATE_KINDS,
+  isContainerStateKind,
+  stateKindLabel,
+  stateKindSeverity,
+  type ContainerStateKind,
+} from "../container/state";
 import { HostTable } from "./HostTable";
 import { hostLocation, type HostRow } from "./hostColumns";
 import { isReporting } from "../../lib/host";
@@ -34,6 +42,17 @@ import { FLEET_RANGE } from "./ranges";
 
 /** What you are looking at (spec 4.5's first axis). */
 export type Entity = "hosts" | "containers";
+
+/**
+ * What `?attn=` can carry, over both entities.
+ *
+ * One param, read against whichever set the entity names. The URL already
+ * says which entity is on screen, so `?entity=containers&attn=silent` is a
+ * silent CONTAINER and `?attn=silent` on the hosts tab is a silent host --
+ * unambiguous without a prefix, and the one word the two vocabularies share
+ * keeps its meaning across a tab switch rather than resetting the filter.
+ */
+export type FleetFilter = AttentionFilter | ContainerStateKind;
 
 /**
  * Produces the rows the table renders from.
@@ -122,8 +141,8 @@ export interface FleetPageProps {
    * it must always have exactly one option pressed. Picking a kind presses
    * the severity that kind is at; picking a severity clears the kind.
    */
-  attention?: AttentionFilter;
-  onAttentionChange?: (next: AttentionFilter) => void;
+  attention?: FleetFilter;
+  onAttentionChange?: (next: FleetFilter) => void;
   /**
    * Where a filter link points.
    *
@@ -134,7 +153,7 @@ export interface FleetPageProps {
    * recipient on a fleet with the entity reset -- exactly what App's own
    * comment says a shared fleet view must not do.
    */
-  attentionHref?: (next: AttentionFilter) => string;
+  attentionHref?: (next: FleetFilter) => string;
   /**
    * When the fleet was last read, for the rail's "since last check" figure.
    * Spec 4.3: the page has to confirm the check RAN, so a page handed its
@@ -171,7 +190,7 @@ export function FleetPage({
   onEntityChange,
 }: FleetPageProps) {
   const [localEntity, setLocalEntity] = useState<Entity>(controlledEntity);
-  const [localAttention, setLocalAttention] = useState<AttentionFilter>(
+  const [localAttention, setLocalAttention] = useState<FleetFilter>(
     controlledAttention ?? "all",
   );
 
@@ -298,6 +317,14 @@ export function FleetPage({
   const groups = groupByHost(shown);
   const byHost = new Map<string, HostGroup>(groups.map((g) => [g.hostId, g]));
   const kinds = groupByKind(shown);
+  // KindGroup counts hosts; a tile counts rows. One map rather than a
+  // second component drawing the same chips.
+  const hostTiles = kinds.map((group) => ({
+    kind: group.kind,
+    label: group.label,
+    severity: group.severity,
+    ids: group.hostIds,
+  }));
   // "Has something critical", not "is worst-critical", and the two buckets
   // therefore OVERLAP -- a host that is both silent and short of disk is in
   // both. They stop adding up to `troubled` and that is the trade, taken on
@@ -318,24 +345,81 @@ export function FleetPage({
   // `troubled` and be unreachable by either segment.
   const warningHosts = groups.filter((g) => hasSeverity(g, false)).length;
 
+  // One `attn` param, read against the entity on screen. A container kind
+  // reaching the host paths would be filterKind()'s problem and a host kind
+  // reaching the container paths would match nothing, so each side narrows
+  // the raw value to its own vocabulary and falls back to "all".
+  const hostAttention: AttentionFilter =
+    entity === "hosts" &&
+    (attention === "critical" ||
+      attention === "warning" ||
+      isConditionKind(attention))
+      ? attention
+      : "all";
+  const containerKind: ContainerStateKind | null =
+    entity === "containers" &&
+    isContainerStateKind(attention) &&
+    FILTERABLE_STATE_KINDS.includes(attention)
+      ? attention
+      : null;
+
   const matchesAttention = (row: HostRow): boolean => {
     const group = byHost.get(String(row.id));
     if (group === undefined) return false;
     if (activeKind !== null) {
       return group.conditions.some((c) => c.kind === activeKind);
     }
-    return hasSeverity(group, attention === "critical");
+    return hasSeverity(group, hostAttention === "critical");
   };
 
   // From the filter itself, never from the conditions on screen: the last
   // host carrying a kind can recover between the link being sent and being
   // opened, and a page that cannot name the filter it is applying reads as
   // broken ("Showing 0 of 100 hosts with").
-  const activeKind = filterKind(attention);
-  const filtered = attention === "all";
+  const activeKind = filterKind(hostAttention);
+  const filtered = hostAttention === "all";
   const attentionHosts = filtered
     ? visibleHosts
     : visibleHosts.filter(matchesAttention);
+
+  // The container list's own counts line. Computed over containerRows rather
+  // than the filtered ones, for the reason the host conditions are: a search
+  // is someone looking for one container, and hiding a silent one because its
+  // name does not match what was typed is how a counts line lies.
+  //
+  // The state is derived once per row here and reused for the filter below --
+  // deriveState is cheap, but a fleet fan-out is several hundred rows and
+  // calling it twice per row per render for the same answer is waste.
+  const containerStates = new Map(
+    containerRows.map((row) => [
+      `${row.host_id}:${row.container_key}`,
+      containerState(row, now),
+    ]),
+  );
+  const containerTiles = FILTERABLE_STATE_KINDS.map((kind) => {
+    const ids = containerRows
+      .filter(
+        (row) =>
+          containerStates.get(`${row.host_id}:${row.container_key}`)?.kind ===
+          kind,
+      )
+      .map((row) => `${row.host_id}:${row.container_key}`);
+    return {
+      kind,
+      label: stateKindLabel(kind),
+      severity: stateKindSeverity(kind),
+      ids,
+    };
+  }).filter((tile) => tile.ids.length > 0);
+
+  const attentionContainers =
+    containerKind === null
+      ? visibleContainers
+      : visibleContainers.filter(
+          (row) =>
+            containerStates.get(`${row.host_id}:${row.container_key}`)?.kind ===
+            containerKind,
+        );
 
   // The mark on the row itself, in place of the ordering that used to lift a
   // troubled host to the top: a rail down the leading edge says which hosts
@@ -476,12 +560,26 @@ export function FleetPage({
         </StatRail>
       </div>
 
-      {shown.length > 0 ? (
+      {/* One counts line, reading whichever entity is on screen. The host
+          conditions and the container states are different vocabularies over
+          different rows, and a line showing both at once would be counting
+          two things in one row of chips. `as` on the way out: AttentionCounts
+          is structural over any kind, and what comes back is one of the
+          kinds this page just handed it. */}
+      {entity === "hosts" && shown.length > 0 ? (
         <AttentionCounts
-          kinds={kinds}
+          kinds={hostTiles}
           active={activeKind}
-          href={attentionHref}
-          onSelect={setAttention}
+          href={(next) => attentionHref(next as FleetFilter)}
+          onSelect={(next) => setAttention(next as FleetFilter)}
+        />
+      ) : null}
+      {entity === "containers" && containerTiles.length > 0 ? (
+        <AttentionCounts
+          kinds={containerTiles}
+          active={containerKind}
+          href={(next) => attentionHref(next as FleetFilter)}
+          onSelect={(next) => setAttention(next as FleetFilter)}
         />
       ) : null}
 
@@ -578,6 +676,39 @@ export function FleetPage({
         </p>
       ) : null}
 
+      {entity === "containers" && containerKind !== null ? (
+        // The same escape, for the same reason, and it must not be gated on
+        // the chip being there: the counts line drops a kind once nothing
+        // carries it, so opening a link to `?attn=silent` after the last
+        // silent container recovered would otherwise leave an empty list, no
+        // chip, and no control anywhere to clear the filter.
+        <p className="countline">
+          Showing <strong>{attentionContainers.length}</strong> of{" "}
+          {containerRows.length} container
+          {containerRows.length === 1 ? "" : "s"} with{" "}
+          {stateKindLabel(containerKind).toLowerCase()} ·{" "}
+          <a
+            href={attentionHref("all")}
+            onClick={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                return;
+              }
+              event.preventDefault();
+              setAttention("all");
+            }}
+          >
+            show all
+          </a>
+        </p>
+      ) : null}
+
       {entity === "hosts" ? (
         <HostTable
           rows={attentionHosts}
@@ -587,7 +718,7 @@ export function FleetPage({
         />
       ) : (
         <FleetContainers
-          rows={visibleContainers}
+          rows={attentionContainers}
           // No showHost. The column repeated the group heading on every row --
           // eighty-four rows saying what four headings already said, in the
           // widest table on the page. It was added because an opened group's
@@ -605,7 +736,11 @@ export function FleetPage({
           // `rows` above is already filtered, so FleetContainers cannot tell
           // "the fleet has none" from "your search matched none" -- and the
           // capability note must not answer the second.
-          filtered={needle !== ""}
+          // The status chips narrow the list exactly as the search box does,
+          // so an empty result after picking one is "your filter matched
+          // nothing", never "this fleet runs no containers".
+          filtered={needle !== "" || containerKind !== null}
+          now={now}
         />
       )}
     </div>
