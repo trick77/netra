@@ -319,6 +319,10 @@ export function FleetPage({
   const kinds = groupByKind(shown);
   // KindGroup counts hosts; a tile counts rows. One map rather than a
   // second component drawing the same chips.
+  //
+  // group.severity, not kindSeverity(group.kind): a kind enters at one
+  // severity and groupByKind hands back the worst one actually on the fleet,
+  // so a filesystem chip is a warning until some host crosses and it is not.
   const hostTiles = kinds.map((group) => ({
     kind: group.kind,
     label: group.label,

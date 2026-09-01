@@ -674,9 +674,19 @@ a:hover {
   font-size: var(--text-micro);
   color: var(--muted);
 }
-/* Status ink on the count and on the word under it, so the two agree. The
-   edge takes the raw hue -- it is a mark, not text, and has no contrast floor
-   to clear. */
+/* The separator before the severity word. "Silent 8 Serious" set three values
+   side by side with nothing between them, and the reader's own word for it
+   was weird; the middot is what makes the last one read as an annotation on
+   the count rather than as a second figure. Its own span so it stays --muted
+   inside a .d that takes the status ink below, and aria-hidden in the markup
+   because the accessible name is a written phrase already. */
+.atile .d .sep {
+  color: var(--muted);
+  margin-right: 5px;
+}
+/* Status ink on the count and on the severity word when a chip draws one, so
+   the two agree. The dot takes the raw hue -- it is a mark, not text, and has
+   no contrast floor to clear. */
 /* The severity's mark: a dot. The pill carried it as a 3px left edge, which
    on a rounded chip read as part of the border. Only the geometry is here --
    the hue comes from the global `.st-* .dot` pair further down, which the

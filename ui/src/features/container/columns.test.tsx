@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { ABSENT } from "../../lib/format";
 import { Table } from "../../ui/Table";
 import { userEvent } from "@testing-library/user-event";
@@ -128,7 +128,24 @@ describe("containerColumns", () => {
       expect(screen.getByText("Reporting")).toBeInTheDocument();
     });
 
+    // Five minutes of missed posts on a host that is still reporting: past
+    // SILENT_AFTER_S and well inside GONE_AFTER_S, which is the window this
+    // word now names on its own.
     it("says Silent once the samples stop", () => {
+      renderRows(
+        [
+          makeRow({
+            last_seen: "2026-08-10T13:55:00Z",
+            host_last_seen: "2026-08-10T14:00:00Z",
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("Silent")).toBeInTheDocument();
+    });
+
+    // And past the gone window it is the stronger word, not both words.
+    it("says Gone once its host has outlived it by the gone window", () => {
       renderRows(
         [
           makeRow({
@@ -138,12 +155,13 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.getByText("Silent")).toBeInTheDocument();
+      expect(screen.getByText("Gone")).toBeInTheDocument();
+      expect(screen.queryByText("Silent")).toBeNull();
     });
 
     // The same rule the detail badge follows: a host that went quiet stopped
     // every container on it, and blaming the container for that is the
-    // contradiction the gone pill has always avoided.
+    // contradiction containerIsGone has always avoided.
     it("names the host when the host is the thing that stopped", () => {
       renderRows(
         [
@@ -159,7 +177,7 @@ describe("containerColumns", () => {
     });
 
     // The host keeps posting while no container sample can land, so last_seen
-    // ages forever. The gone pill is already suppressed on this host; a
+    // ages forever. containerIsGone already returns false on this host; a
     // Silent badge would blame the container for the agent's blind spot.
     it("does not call a container silent when its host cannot sample any", () => {
       renderRows(
@@ -440,7 +458,7 @@ describe("containerIsGone", () => {
   });
 });
 
-describe("the gone pill and the purge action", () => {
+describe("the gone state and the purge action", () => {
   const HOST_SEEN = "2026-08-10T14:00:00Z";
   const goneRow = (overrides: Partial<ContainerRow> = {}) =>
     makeRow({
@@ -451,22 +469,29 @@ describe("the gone pill and the purge action", () => {
       ...overrides,
     });
 
-  it("pills a gone row and leaves a reporting one alone", () => {
+  // The Status column says it, and it is the only thing that does. The
+  // lowercase pill beside the name is gone with the contradiction it caused:
+  // it stood next to a Status column reading "Silent" about the same
+  // container in the same instant.
+  it("states a gone row in the Status column and leaves a reporting one alone", () => {
     renderRows([goneRow()]);
-    expect(screen.getByText("gone")).toBeInTheDocument();
-
-    screen.getByText("gone").remove();
-    renderRows([makeRow({ host_last_seen: HOST_SEEN })]);
+    expect(screen.getByText("Gone")).toBeInTheDocument();
     expect(screen.queryByText("gone")).toBeNull();
+    expect(screen.queryByText("Silent")).toBeNull();
+
+    cleanup();
+    renderRows([makeRow({ host_last_seen: HOST_SEEN })]);
+    expect(screen.queryByText("Gone")).toBeNull();
   });
 
-  // The pill is a fact, not a severity: no status dot, the same shape the
-  // agent badge has.
-  it("draws the pill with no status dot", () => {
-    const { container } = renderRows([goneRow()]);
-    const badge = screen.getByText("gone").closest(".badge")!;
-    expect(badge.querySelector(".dot")).toBeNull();
-    expect(container.querySelector(".badge.st-crit")).toBeNull();
+  // A state, so it carries the dot every state in that column carries -- and
+  // the severity the row had when it read Silent, since nothing about the
+  // container improved when the word changed.
+  it("draws Gone as a serious state with a dot", () => {
+    renderRows([goneRow()]);
+    const badge = screen.getByText("Gone").closest(".badge")!;
+    expect(badge.querySelector(".dot")).not.toBeNull();
+    expect(badge.classList.contains("st-serious")).toBe(true);
   });
 
   // The fleet list passes no onPurge, and this is what that buys: no column,

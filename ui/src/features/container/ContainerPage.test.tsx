@@ -346,7 +346,7 @@ describe("ContainerPage", () => {
   // The other direction: this container stopped an hour before its host did,
   // so it IS gone by the lists' own measure and the purge button is offered.
   // The badge must not answer "Host offline" over a button that deletes this
-  // container's history.
+  // container's history -- and it says the word the button is about.
   it("keeps blaming the container when it stopped before its host did", () => {
     renderPage({
       container: { ...CONTAINER, last_seen: "2026-08-10T11:00:00Z" },
@@ -356,7 +356,8 @@ describe("ContainerPage", () => {
     });
 
     expect(screen.queryByText("Host offline")).toBeNull();
-    expect(screen.getByText("Silent")).toBeInTheDocument();
+    expect(screen.getByText("Gone")).toBeInTheDocument();
+    expect(screen.queryByText("Silent")).toBeNull();
     expect(screen.getByRole("button", { name: /purge/i })).toBeInTheDocument();
   });
 
