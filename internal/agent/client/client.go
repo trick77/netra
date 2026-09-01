@@ -1209,6 +1209,21 @@ func (c *Client) Run(ctx context.Context) error {
 			c.flushOnShutdown()
 			return ctx.Err()
 		case <-ticker.C:
+			// The WHOLE tick, which is a different figure from the
+			// scrape_duration_ms the agent reports about itself.
+			//
+			// That gauge is stamped inside collect, around the collector loop
+			// only (see the elapsed there), and it deliberately stays that way:
+			// it is what collector_samples sums to, and widening it would make
+			// every stored reading incomparable with the ones taken after. But
+			// it means the parts of a tick AFTER the collectors -- capability
+			// refresh, ReadMemStats, and above all probeHub, which is a DNS
+			// lookup plus three sequential TCP handshakes on this same
+			// goroutine -- are invisible to the only duration netra records.
+			// A tick can therefore cost many times what the agent says a
+			// scrape cost, and nothing anywhere would say so.
+			tickStart := time.Now()
+
 			c.ScrapeOnce(ctx)
 
 			if time.Now().Before(flushNotBefore) {
@@ -1273,7 +1288,9 @@ func (c *Client) Run(ctx context.Context) error {
 			// the scrape added nothing to an already-empty ring; "reported 0
 			// samples" would be a claim no request was made to support.
 			if sent := depth - c.ring.Depth(); sent > 0 {
-				args := []any{"samples", sent, "buffer_depth", c.ring.Depth()}
+				args := []any{"samples", sent, "buffer_depth", c.ring.Depth(),
+					// See tickStart: scrape, probe and POSTs together.
+					"tick_ms", time.Since(tickStart).Milliseconds()}
 				// The most recent POST's round trip, not the cycle's total: a
 				// drain that took several batches reports the last one. nil
 				// until the first success and cleared by every attempt, so the

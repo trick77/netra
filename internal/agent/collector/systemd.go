@@ -43,20 +43,32 @@ type UnitLister func(ctx context.Context) ([]Unit, error)
 // bullet systemd puts on a failed unit -- the units that matter most were the
 // ones most likely to be misparsed.
 //
-// A fresh connection per scrape, closed on the way out, rather than one held
-// open: the call runs once a minute, so the cost is immaterial next to running
-// smartctl, and a connection that is never reused cannot go stale when dbus or
-// systemd is restarted under the agent.
+// ONE connection, held for the life of the process and redialled only when a
+// call on it fails.
+//
+// This took a fresh connection per scrape for a while, on the reasoning that
+// the cost was immaterial next to running smartctl and that a connection never
+// reused could not go stale. Both halves turned out to be wrong. smartctl
+// self-gates to once an hour, so it is not what a scrape is spent on: measured
+// across the fleet, `systemd` was 15ms of a ~100ms scrape, second only to
+// `containers`. And the dial is not one connection --
+// dbus.NewSystemConnectionContext calls NewConnection, which dials the bus
+// TWICE (a call connection and a signal connection, each with its own SASL
+// EXTERNAL handshake and Hello), adds a JobRemoved match rule, and starts a
+// dispatch goroutine. netra subscribes to no signals and calls exactly one
+// method, so all of that was set up and torn down every 60 seconds to ask one
+// question.
+//
+// Staleness is handled where it actually occurs instead of being paid for in
+// advance: a dbus or systemd restart under the agent breaks the held
+// connection, listUnits sees the call fail, drops it, and redials ONCE within
+// the same scrape. So the restart costs nothing rather than a scrape's worth
+// of unit state -- which is better than the fresh-connection version managed,
+// not merely as good.
 func SystemUnits(ctx context.Context) ([]Unit, error) {
-	conn, err := dbus.NewSystemConnectionContext(ctx)
+	statuses, err := listUnits(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("connect to the system bus: %w", err)
-	}
-	defer conn.Close()
-
-	statuses, err := conn.ListUnitsContext(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list units: %w", err)
+		return nil, err
 	}
 
 	units := make([]Unit, 0, len(statuses))
@@ -75,6 +87,59 @@ func SystemUnits(ctx context.Context) ([]Unit, error) {
 		})
 	}
 	return units, nil
+}
+
+// unitConn is the part of a systemd bus connection SystemUnits uses.
+//
+// An interface rather than *dbus.Conn so the held-connection handling can be
+// exercised without a system bus. That handling IS the change this belongs to,
+// and pinning it to a concrete connection would have left it tested only in
+// production.
+type unitConn interface {
+	ListUnitsContext(ctx context.Context) ([]dbus.UnitStatus, error)
+	Close()
+}
+
+// systemBus is the connection SystemUnits holds between scrapes.
+var systemBus heldBus[unitConn]
+
+// dialSystemBus opens a connection whose lifetime is the PROCESS's, not the
+// scrape's. A var so a test can substitute a connection.
+//
+// context.WithoutCancel is not decoration here, and getting it wrong is
+// silent. go-systemd hands the context straight to godbus as WithContext, and
+// godbus spawns a goroutine that CLOSES the connection as soon as that context
+// is done (newConn, conn.go). The scrape context is cancelled by collect's own
+// `defer cancel()` at the end of every scrape -- so a connection dialled with
+// it dies the instant the scrape that dialled it finishes, and callBus's
+// redial would hide that completely: every minute would quietly pay a dial, a
+// failed call and a second dial, which is worse than the fresh-connection
+// version this replaces rather than better.
+//
+// The scrape's deadline still bounds the CALL below, which is where the time
+// actually goes.
+var dialSystemBus = func(ctx context.Context) (unitConn, error) {
+	return dbus.NewSystemConnectionContext(context.WithoutCancel(ctx))
+}
+
+// listUnits calls ListUnits on the held connection, redialling once if the
+// call fails on a connection that has gone stale. See callBus.
+func listUnits(ctx context.Context) ([]dbus.UnitStatus, error) {
+	// Wrapped inside the call rather than around callBus, which already names
+	// a dial failure as one: wrapping outside turned "could not reach the bus"
+	// into "list units: connect to the system bus: ...", blaming the method
+	// for a connection that was never made.
+	return callBus(ctx, &systemBus,
+		dialSystemBus,
+		func(c unitConn) { c.Close() },
+		func(c unitConn) ([]dbus.UnitStatus, error) {
+			statuses, err := c.ListUnitsContext(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("list units: %w", err)
+			}
+			return statuses, nil
+		},
+	)
 }
 
 // Systemd reports unit state changes as EVENTS, plus a numeric summary on the

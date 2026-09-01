@@ -214,3 +214,25 @@ func TestContainersLeavesFileUnsetWhenItIsSmallerThanShmem(t *testing.T) {
 		t.Errorf("mem_shmem = %d, want %d", got, want)
 	}
 }
+
+// A value that will not parse is not a reading, and the batched read must not
+// keep hunting for the key after it has already seen it.
+//
+// The per-key reader this replaced returned on the FIRST line matching the
+// key, and gave up if that line's value was malformed. Reading several keys
+// out of one file in one pass opens a way to differ: a scan that only
+// remembered "still looking for slab" would walk past the bad line and take a
+// LATER slab's value for it, turning a kernel that contradicts itself into a
+// measurement. Absent is the honest answer, and it is the one the single-key
+// read gave.
+func TestContainersLeavesUnparsableMemoryStatValueUnset(t *testing.T) {
+	row := breakdownOf(t, "anon 104857600\nslab notanumber\nslab 4096\ninactive_file 0\n")
+
+	if row.MemKernel != nil {
+		t.Errorf("mem_kernel = %d, want absent when the slab value does not parse", *row.MemKernel)
+	}
+	// The keys around it are unaffected: one bad line costs one field.
+	if got := row.GetMemAnon(); got != 104857600 {
+		t.Errorf("mem_anon = %d, want 104857600", got)
+	}
+}

@@ -107,26 +107,46 @@ type sessionSource interface {
 // "unavailable" for ever while people are logged in. logind is where the
 // session list lives now.
 //
-// A fresh private connection per scrape, closed on the way out, for the same
-// reason SystemUnits takes one: the call runs once a minute, so the cost is
-// nothing next to smartctl, and a connection that is never reused cannot go
-// stale when dbus or logind is restarted under the agent.
+// ONE connection, held between scrapes and redialled when a call on it fails,
+// for the same reason SystemUnits holds one -- see the comment there, which
+// carries the measurement. A dial is a socket connect plus a SASL EXTERNAL
+// handshake plus Hello, and paying for it every 60 seconds to ask how many
+// people are logged in is the whole of what this removes.
 //
 // The bus socket is the same mount the systemd collector already needs
 // (/run/dbus/system_bus_socket). A host without it, or without logind, returns
 // an error here and the Users collector falls back to utmp.
 func LogindSessions(ctx context.Context) (int, error) {
-	conn, err := dbus.ConnectSystemBus(dbus.WithContext(ctx))
-	if err != nil {
-		return 0, fmt.Errorf("connect to the system bus: %w", err)
-	}
-	defer conn.Close()
-
-	return countLogindSessions(ctx, busSessions{
-		object: func(path dbus.ObjectPath) dbus.BusObject {
-			return conn.Object(logindService, path)
+	return callBus(ctx, &logindBus,
+		dialLogindBus,
+		func(c sessionConn) { _ = c.Close() },
+		func(c sessionConn) (int, error) {
+			return countLogindSessions(ctx, busSessions{
+				object: func(path dbus.ObjectPath) dbus.BusObject {
+					return c.Object(logindService, path)
+				},
+			})
 		},
-	})
+	)
+}
+
+// sessionConn is the part of a system bus connection LogindSessions uses. An
+// interface for the same reason unitConn is one: so the held connection can be
+// exercised without a bus.
+type sessionConn interface {
+	Object(dest string, path dbus.ObjectPath) dbus.BusObject
+	Close() error
+}
+
+// logindBus is the connection LogindSessions holds between scrapes.
+var logindBus heldBus[sessionConn]
+
+// dialLogindBus opens a connection whose lifetime is the PROCESS's, not the
+// scrape's. See dialSystemBus for why context.WithoutCancel is load-bearing:
+// godbus closes a connection as soon as the context it was given is done, and
+// the scrape context is cancelled at the end of every scrape.
+var dialLogindBus = func(ctx context.Context) (sessionConn, error) {
+	return dbus.ConnectSystemBus(dbus.WithContext(context.WithoutCancel(ctx)))
 }
 
 // countLogindSessions asks the source for every session and counts the human
