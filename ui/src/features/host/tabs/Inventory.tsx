@@ -739,7 +739,7 @@ function DriveTempCell({
   if (now === null) return ABSENT;
 
   // .val, the name every other cell in the app gives the number beside its
-  // chart or meter -- .mem-cell .val, .usage-cell .val, .sensor-row .val.
+  // chart or meter -- .mem-cell .val, .usage-cell .val, .mrow .val.
   const reading = <span className="val">{now} °C</span>;
   // No history is not an error: SMART is hourly, so a drive first seen this
   // hour has a reading and no line yet, and the number is still the answer.
