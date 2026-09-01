@@ -158,6 +158,74 @@ describe("containerColumns", () => {
       expect(screen.queryByText("Silent")).toBeNull();
     });
 
+    // The host keeps posting while no container sample can land, so last_seen
+    // ages forever. The gone pill is already suppressed on this host; a
+    // Silent badge would blame the container for the agent's blind spot.
+    it("does not call a container silent when its host cannot sample any", () => {
+      renderRows(
+        [
+          makeRow({
+            last_seen: "2026-08-10T09:00:00Z",
+            host_last_seen: "2026-08-10T14:00:00Z",
+            host_containers_capability: "no-cgroup-scopes",
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.queryByText("Silent")).toBeNull();
+      expect(screen.getByText("No samples")).toBeInTheDocument();
+    });
+
+    // The fleet grid spans 24h, so a container created an hour ago is mostly
+    // leading nulls. Warning on that would light up a healthy fleet.
+    it("does not call a young container's leading nulls a gap", () => {
+      renderRows(
+        [
+          makeRow({
+            host_last_seen: "2026-08-10T14:00:00Z",
+            cpu: [null, null, 1, 2],
+            mem: [null, null, 1e8, 1e8],
+            mem_limit_bytes: 1e9,
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.queryByText("Series gap")).toBeNull();
+      expect(screen.getByText("Reporting")).toBeInTheDocument();
+    });
+
+    it("still calls a hole between readings a gap", () => {
+      renderRows(
+        [
+          makeRow({
+            host_last_seen: "2026-08-10T14:00:00Z",
+            cpu: [1, null, 2],
+            mem: [1e8, null, 1e8],
+            mem_limit_bytes: 1e9,
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("Series gap")).toBeInTheDocument();
+    });
+
+    // The detail page reads the last READING; off the latest bucket instead,
+    // one empty trailing bucket hid pressure here that the page still showed.
+    it("reads memory past an empty trailing bucket", () => {
+      renderRows(
+        [
+          makeRow({
+            host_last_seen: "2026-08-10T14:00:00Z",
+            cpu: [1, 2, 3],
+            mem: [9.6e8, 9.7e8, null],
+            mem_limit_bytes: 1e9,
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("Near mem_limit")).toBeInTheDocument();
+    });
+
     // Warnings that need a series are simply out of reach on a listing that
     // fetched none -- the row says what it knows rather than nothing.
     it("warns on memory near the limit once trends are fetched", () => {

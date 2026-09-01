@@ -676,6 +676,39 @@ export function FleetPage({
         </p>
       ) : null}
 
+      {entity === "containers" && containerKind !== null ? (
+        // The same escape, for the same reason, and it must not be gated on
+        // the chip being there: the counts line drops a kind once nothing
+        // carries it, so opening a link to `?attn=silent` after the last
+        // silent container recovered would otherwise leave an empty list, no
+        // chip, and no control anywhere to clear the filter.
+        <p className="countline">
+          Showing <strong>{attentionContainers.length}</strong> of{" "}
+          {containerRows.length} container
+          {containerRows.length === 1 ? "" : "s"} with{" "}
+          {stateKindLabel(containerKind).toLowerCase()} ·{" "}
+          <a
+            href={attentionHref("all")}
+            onClick={(event) => {
+              if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              ) {
+                return;
+              }
+              event.preventDefault();
+              setAttention("all");
+            }}
+          >
+            show all
+          </a>
+        </p>
+      ) : null}
+
       {entity === "hosts" ? (
         <HostTable
           rows={attentionHosts}
@@ -707,6 +740,7 @@ export function FleetPage({
           // so an empty result after picking one is "your filter matched
           // nothing", never "this fleet runs no containers".
           filtered={needle !== "" || containerKind !== null}
+          now={now}
         />
       )}
     </div>

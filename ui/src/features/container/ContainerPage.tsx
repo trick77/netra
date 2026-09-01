@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { Badge, type Severity } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
-import { containerIsGone } from "./columns";
+import { containerIsGone, containerSamplesBlocked } from "./columns";
 import { purgeContainer } from "../../lib/api";
 import { Card } from "../../ui/Card";
 import { Meter } from "../../ui/Meter";
@@ -18,7 +18,7 @@ import type { Container, MetricsResponse } from "../../lib/api";
 import { hostStatus } from "../../lib/host";
 import { deriveState } from "./state";
 import {
-  hasGaps,
+  hasInteriorGaps,
   hasReading,
   latestValue,
   seriesTimestamps,
@@ -325,8 +325,18 @@ export function ContainerPage({
   // about the range on screen, and "Reporting" over four empty charts would
   // be the page contradicting itself. The lists have no window and so never
   // reach that state, which is honest -- they are not showing one.
+  //
+  // And nothing at all on a host whose agent cannot see containers: it keeps
+  // posting host samples while no container sample can land, so last_seen
+  // ages forever. The lists suppress the gone pill on exactly that host and
+  // this page must not call the container Silent instead.
   const lastSeenMs = Date.parse(container.last_seen);
-  const lastSampleMs = sampled && !Number.isNaN(lastSeenMs) ? lastSeenMs : null;
+  const lastSampleMs =
+    sampled &&
+    !Number.isNaN(lastSeenMs) &&
+    !containerSamplesBlocked(host.capabilities?.containers)
+      ? lastSeenMs
+      : null;
 
   // Gone, by the same rule the lists use: this container stopped being
   // reported while its host kept reporting. Measured against the host, never
@@ -347,7 +357,7 @@ export function ContainerPage({
     lastSampleMs,
     memUsed,
     memLimit,
-    gap: sampled ? hasGaps(sampled.cpu) : false,
+    gap: sampled ? hasInteriorGaps(sampled.cpu) : false,
     now,
     hostState: hostStatus(host, now),
     gone,

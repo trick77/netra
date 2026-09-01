@@ -42,7 +42,7 @@ import { ABSENT, bytes, percent } from "../../lib/format";
 import type { Container } from "../../lib/api";
 import { type Range } from "../../lib/range";
 import { ContainerChart } from "./ContainerChart";
-import { hasGaps, latestValue } from "../../lib/metrics";
+import { hasInteriorGaps } from "../../lib/metrics";
 import { hostStatus } from "../../lib/host";
 import { deriveState, stateKindRank, type DerivedState } from "./state";
 
@@ -105,11 +105,24 @@ export function containerState(
   now: Date = new Date(),
 ): DerivedState {
   const lastSeen = Date.parse(row.last_seen);
+  // A host whose cgroup mount is unreadable keeps posting host samples while
+  // no container sample can land, so last_seen ages forever and every
+  // container on it would read Silent -- beside a hostContainerNote saying
+  // the opposite, and a gone pill deliberately suppressed for this same
+  // reason. Nothing was reported, which is what the row then says.
+  const blocked = containerSamplesBlocked(row.host_containers_capability);
   return deriveState({
-    lastSampleMs: Number.isNaN(lastSeen) ? null : lastSeen,
-    memUsed: row.mem ? latestValue(row.mem) : null,
+    lastSampleMs: blocked || Number.isNaN(lastSeen) ? null : lastSeen,
+    // lastReported, not the latest bucket: the last READING, the way the
+    // detail page reads it and the way mem_limit_bytes is already built. Off
+    // the latest bucket, one empty trailing bucket hid memory pressure here
+    // while the page one click away still reported it.
+    memUsed: lastReported(row.mem),
     memLimit: row.mem_limit_bytes ?? null,
-    gap: row.cpu ? hasGaps(row.cpu) : false,
+    // Interior gaps only. Every container younger than the fleet's 24h grid
+    // carries leading nulls, and calling those a gap warns on a large share
+    // of a healthy fleet for having been created yesterday.
+    gap: row.cpu ? hasInteriorGaps(row.cpu) : false,
     now,
     hostState:
       row.host_last_seen === undefined
@@ -129,6 +142,19 @@ export function containerState(
  * advancing; only the names are missing.
  */
 const NO_CONTAINER_SAMPLES = new Set(["no-cgroup-scopes"]);
+
+/**
+ * Can a container sample land on this host at all?
+ *
+ * Read by containerIsGone and by containerState, because both would
+ * otherwise blame a container for a silence that belongs to its host's
+ * agent -- one by offering to purge it, the other by calling it Silent.
+ */
+export function containerSamplesBlocked(
+  capability: string | undefined,
+): boolean {
+  return capability !== undefined && NO_CONTAINER_SAMPLES.has(capability);
+}
 
 /**
  * How far a container's last sample may lag its HOST's before the row reads

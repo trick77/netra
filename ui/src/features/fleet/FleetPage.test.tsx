@@ -175,6 +175,23 @@ describe("FleetPage entity tabs", () => {
       expect(screen.queryByRole("link", { name: "postgres" })).toBeNull();
     });
 
+    // The counts line drops a kind once nothing carries it, so a link to a
+    // filter whose last container recovered would leave an empty list, no
+    // chip, and no way out short of editing the URL.
+    it("offers a way out of a filter nothing matches any more", () => {
+      renderPage({
+        entity: "containers",
+        attention: "silent",
+        onAttentionChange: vi.fn(),
+        containers: [makeContainer({ host_last_seen: "2026-08-10T14:00:00Z" })],
+      });
+
+      expect(screen.queryByRole("list", { name: /by kind/i })).toBeNull();
+      expect(
+        screen.getByRole("link", { name: /show all/i }),
+      ).toBeInTheDocument();
+    });
+
     // A host kind in the URL while the container list is up would otherwise
     // narrow it to nothing and read as a broken page.
     it("ignores a host kind on the container tab", () => {
