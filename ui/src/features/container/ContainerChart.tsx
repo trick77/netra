@@ -9,7 +9,8 @@ import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
 import { Sparkline } from "../../ui/charts/Sparkline";
 import { bytes, percent } from "../../lib/format";
 import { rangeLabel, type Range } from "../../lib/range";
-import { containerTrends, fetchHostFamily } from "../fleet/hostTrends";
+import { fetchHostFamily } from "../fleet/hostTrends";
+import { containerTrends } from "../../lib/containers";
 import type { ContainerRow } from "./columns";
 
 export type ContainerMetric = "cpu" | "mem";

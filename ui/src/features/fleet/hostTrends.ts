@@ -15,6 +15,11 @@ import {
   sumSeries,
 } from "../../lib/metrics";
 import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
+// containerTrends lives in lib/containers.ts, beside the capability wording
+// the same lists share. It was here, because the fleet list needed it first;
+// lib/bands.ts builds the host page's stacked Docker panels from it now, and
+// lib importing from features would be the wrong direction.
+import { containerTrends, type ContainerTrend } from "../../lib/containers";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { SPARK_WIDTH } from "../../ui/charts/size";
@@ -864,48 +869,4 @@ export function buildRows(
       postFailures: trend?.postFailures ?? null,
     };
   });
-}
-
-/**
- * Per-container CPU and memory over the same window, keyed by container_key.
- *
- * The container lists were the one place in the app showing a fleet of
- * things over time with no time in them: names, images and a host, and
- * nothing about what any of them was doing. family=container carries
- * cpu_pct, mem_used and mem_limit per container, so the rows can say it.
- */
-export interface ContainerTrend {
-  cpu: (number | null)[];
-  mem: (number | null)[];
-  /** The container's own ceiling, or null when it runs unlimited. */
-  memLimit: number | null;
-}
-
-/**
- * Every container's series in a family=container response, keyed by
- * container_key.
- *
- * Shared with the host page's inventory list and with the enlarged view a
- * reader opens off either list's CPU or Memory cell, so all three read the
- * same columns out of the same response shape.
- */
-export function containerTrends(
-  res: MetricsResponse | null,
-): Map<string, ContainerTrend> {
-  const trends = new Map<string, ContainerTrend>();
-  if (res === null) return trends;
-
-  res.series.forEach((series, index) => {
-    // The keySpec's NAME is "container" (internal/hub/read/family.go), not
-    // the SQL expression behind it. Reading series[0] instead would chart a
-    // neighbouring container under this one's name.
-    const key = series.key.container;
-    if (key === undefined) return;
-    trends.set(key, {
-      cpu: griddedValues(res, index, "cpu_pct"),
-      mem: griddedValues(res, index, "mem_used"),
-      memLimit: lastNumber(griddedValues(res, index, "mem_limit")),
-    });
-  });
-  return trends;
 }

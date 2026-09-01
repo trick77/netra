@@ -15,7 +15,7 @@ import type {
   MetricsResponse,
 } from "../../../lib/api";
 import { purgeContainer } from "../../../lib/api";
-import { ABSENT, bytes, duration } from "../../../lib/format";
+import { ABSENT, bytes, duration, percent } from "../../../lib/format";
 import {
   driveFindings,
   driveKind,
@@ -27,7 +27,11 @@ import {
   driveWearPct,
   temperatureFromRaw,
 } from "../smart";
-import { hostContainerNote } from "../../../lib/containers";
+import {
+  hostContainerNote,
+  hostContainersBlocked,
+} from "../../../lib/containers";
+import { containerBands, containerStackTotal } from "../../../lib/bands";
 import { hostDriveNote } from "../../../lib/drives";
 import { FLAP_THRESHOLD } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
@@ -38,9 +42,11 @@ import { Meter } from "../../../ui/Meter";
 import { When } from "../../../ui/When";
 import { rangeLabel, type Range } from "../../../lib/range";
 import { RAIL_RANGES } from "../../../lib/range";
-import { griddedValues } from "../../../lib/metrics";
+import { griddedValues, latestValue, windowNotice } from "../../../lib/metrics";
 import { Sparkline } from "../../../ui/charts/Sparkline";
+import { ChartPanel, type Band } from "../../../ui/charts/ChartPanel";
 import { Enlargeable, type DetailData } from "../../../ui/charts/Enlargeable";
+import { fetchHostFamily } from "../../fleet/hostTrends";
 import {
   composeIdentity,
   containerColumns,
@@ -345,36 +351,174 @@ export function Containers({
   const note = hostContainerNote(capabilities);
 
   return (
-    <Inventory
-      label="Containers"
-      columns={columns}
-      rows={charted}
-      // The same pair the fleet list keys on, so "what a container row is"
-      // has one answer.
-      rowKey={(row) => `${row.host_id}:${row.container_key}`}
-      // The same rail the fleet's container list draws, from the same
-      // function: one container row, one definition of "needs attention".
-      rowSeverity={containerSeverity}
-      searchText={(row) =>
-        [row.container_key, row.name, row.image].filter(Boolean).join(" ")
-      }
-      notice={
-        note === null && purgeError === null ? undefined : (
-          <>
-            {note === null ? null : <p className="note">{note}</p>}
-            {/* A failed purge is reported where the button is, not swallowed:
+    <>
+      <DockerOverview
+        hostId={host.id}
+        metrics={metrics}
+        range={range}
+        capabilities={capabilities}
+      />
+      <Inventory
+        label="Containers"
+        columns={columns}
+        rows={charted}
+        // The same pair the fleet list keys on, so "what a container row is"
+        // has one answer.
+        rowKey={(row) => `${row.host_id}:${row.container_key}`}
+        // The same rail the fleet's container list draws, from the same
+        // function: one container row, one definition of "needs attention".
+        rowSeverity={containerSeverity}
+        searchText={(row) =>
+          [row.container_key, row.name, row.image].filter(Boolean).join(" ")
+        }
+        notice={
+          note === null && purgeError === null ? undefined : (
+            <>
+              {note === null ? null : <p className="note">{note}</p>}
+              {/* A failed purge is reported where the button is, not swallowed:
                 the row is still there afterwards and without this the click
                 simply appeared to do nothing. */}
-            {purgeError === null ? null : (
-              <p className="note">Purge failed: {purgeError}</p>
-            )}
-          </>
-        )
-      }
-      groupBy={BY_PROJECT}
-    />
+              {purgeError === null ? null : (
+                <p className="note">Purge failed: {purgeError}</p>
+              )}
+            </>
+          )
+        }
+        groupBy={BY_PROJECT}
+      />
+    </>
   );
 }
+
+/**
+ * What Docker as a whole is costing this host, above the list of what is in
+ * it.
+ *
+ * The list answers "what is running here"; twenty rows of sparkline do not
+ * add up to "the containers on this box are holding 11 GB and four cores'
+ * worth of CPU, and have been all day". Two stacked panels do, and they are
+ * the same two quantities each row already draws -- CPU in blue, memory in
+ * green -- so the overview and the cells under it read as one picture.
+ *
+ * IT IS DELIBERATELY NOT FILTERED. The caller hands it the whole
+ * family=container response rather than the rows that survived the search box
+ * and the state filter: this is the host's Docker usage, and a total that
+ * shrank when a reader typed in a filter would be a different claim about the
+ * host every time. Filtering the list narrows what you are LOOKING for; it
+ * does not change what the machine is doing.
+ */
+function DockerOverview({
+  hostId,
+  metrics,
+  range,
+  capabilities,
+}: {
+  hostId: number;
+  metrics: MetricsResponse | null;
+  range: Range;
+  capabilities?: Record<string, string>;
+}) {
+  const cpu = containerBands(metrics, "cpu");
+  const mem = containerBands(metrics, "mem");
+
+  // Bands beat any capability the agent reported. `no-docker-socket` is the
+  // case that makes this the right way round: cgroup v2 still yields CPU and
+  // memory under it, and only the NAMES are missing -- so the panels have
+  // something true to draw and a not-collected state over them would be a
+  // claim about the host that the data on the page contradicts.
+  const collected = cpu.length > 0 || mem.length > 0;
+
+  // Nothing collected, and the agent said containers are missing OUTRIGHT.
+  // The panels then take the app's own not-collected state rather than
+  // drawing two empty boxes.
+  //
+  // hostContainersBlocked, not merely "the agent reported something": a NAS
+  // with no Docker installed reports no-docker-socket and an empty list and is
+  // perfectly well, and two panels over it saying nothing reached the hub
+  // would be an alarm about a machine doing exactly what it is meant to.
+  //
+  // A SHORT reason, not hostContainerNote's: that sentence carries the
+  // remedy, the list below already prints it, and saying it three times on
+  // one screen is how a page starts shouting. This one says what the panels
+  // are missing; the note under them says what to do about it.
+  const unavailable =
+    collected || !hostContainersBlocked(capabilities)
+      ? undefined
+      : "No container CPU or memory reached the hub for this host.";
+
+  // Nothing collected and nothing to explain: a host that simply runs no
+  // containers. The list below already says so, and two empty panels above it
+  // would only repeat it in a form that looks like a fault.
+  if (!collected && unavailable === undefined) return null;
+
+  const notice = metrics === null ? null : windowNotice(metrics);
+  const window = metrics?.window ?? null;
+  // The stack TOTAL, never series[0]'s latest: the headline is the whole
+  // host's, and a number belonging to one arbitrary container beside a shape
+  // that is all of them states something untrue. See ChartPanel's nowValue.
+  const now = (bands: Band[]) => latestValue(containerStackTotal(bands));
+
+  // One family, at the dialog's own range -- the same fetch a row's enlarged
+  // sparkline makes, so widening either costs the host's containers once.
+  const detail = (metric: "cpu" | "mem") => async (next: Range) => {
+    const res = await fetchHostFamily(hostId, "container", next);
+    return { series: containerBands(res, metric), window: res.window };
+  };
+
+  return (
+    <div className="dockover">
+      <ChartPanel
+        title="Docker CPU"
+        about="Every container on this host, stacked. Percent of ONE core, as docker stats reports it, so 200 % is two cores' worth."
+        fmt={percent}
+        // Percent of one core, summed: the stack runs past 100 on any host
+        // whose containers are busy, and that is the same unit the group
+        // totals in the list below already print. Unlike the raw per-core
+        // stack the axis stays -- N x 100 is a shape there, and here it is a
+        // quantity a reader can act on.
+        nowValue={now(cpu)}
+        series={cpu}
+        stacked
+        // The list is longer than the chart, exactly as it is for the
+        // per-core stack: a hovered band names itself from its key.
+        legend={false}
+        height={PANEL_HEIGHT}
+        notice={notice}
+        window={window}
+        range={range}
+        ranges={RAIL_RANGES}
+        fetchSeries={detail("cpu")}
+        unavailable={unavailable}
+      />
+      <ChartPanel
+        title="Docker Memory"
+        about="Every container's resident memory, stacked. The page cache is already subtracted, so this is what the containers are actually holding."
+        fmt={bytes}
+        nowValue={now(mem)}
+        series={mem}
+        stacked
+        legend={false}
+        height={PANEL_HEIGHT}
+        notice={notice}
+        window={window}
+        range={range}
+        ranges={RAIL_RANGES}
+        fetchSeries={detail("mem")}
+        unavailable={unavailable}
+      />
+    </div>
+  );
+}
+
+/**
+ * Taller than a small multiple, and NOT drawn in the `.sm` grid.
+ *
+ * `.sm` is auto-fill minmax(340px) and exists for the twenty panels of a
+ * charts tab; two panels in it come out as thumbnails at the top of a page
+ * whose subject they are. Two of these across `.grid2` are half the tab's
+ * width each, which is what a stack of fourteen bands needs to be readable.
+ */
+const PANEL_HEIGHT = 200;
 
 // --- Filesystems ----------------------------------------------------------
 
