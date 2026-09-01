@@ -277,6 +277,28 @@ interface PanelSpec {
    */
   hideIdleSeries?: boolean;
   /**
+   * Draw the series in order of their worst reading rather than in the order
+   * the response listed them.
+   *
+   * For a keyed panel whose series nearly all sit at the same healthy value:
+   * a host runs twenty-odd collectors, they are all between 99.7% and 100%
+   * available over a day, and the one that dipped is a notch in a hedge of
+   * identical lines. Ordering does not hide anything -- which matters,
+   * because a hidden series and an uncollected one look the same to a reader
+   * -- it just puts the series worth reading in the first legend row and on
+   * the first colour.
+   *
+   * Filtering was tried first and measured: over a 24h window one flaked
+   * scrape anywhere keeps a series, so "never dipped" dropped 4 collectors
+   * of 20 at 24h and none at all at 7d. The wider the range the less it did,
+   * which is backwards -- a wide range is where the hedge is thickest.
+   *
+   * Not for a `counter` spec without more work: worstOf reads the base as
+   * stored, so a counter would order on its running total rather than on the
+   * per-bucket increases the panel actually draws.
+   */
+  orderByWorst?: boolean;
+  /**
    * Fold a keyed family across its series: ONE band per base, summed, rather
    * than one band per base per series.
    *
@@ -534,6 +556,10 @@ export const SYSTEM: PanelSpec[] = [
     // The aggregates drop `ok` and keep the counts instead, so at every
     // range but 1h this is what the line is actually drawn from.
     fraction: { part: "failure_count", whole: "sample_count", invert: true },
+    // Twenty collectors nearly all pinned at the top of the scale: the one
+    // that dipped goes first, rather than wherever the response happened to
+    // list it.
+    orderByWorst: true,
     max: 1,
     // One formatter for both tiers rather than a tier-dependent pair: the
     // endpoints ARE up and down at any grain -- a rolled bucket of 1 is
@@ -1244,6 +1270,23 @@ function bandsFor(
         )
       : passes;
 
+  // Ordered AFTER the idle filter and before the colour walk, so the worst
+  // series takes the first hue and the first legend row. See worstOf for
+  // what "worst" counts: a gap beats any reading, and a series with no
+  // reading at all sorts last rather than first.
+  //
+  // A copy, not a sort in place: `passes` is derived from res.series and the
+  // response is the caller's.
+  const ordered =
+    spec.orderByWorst !== true
+      ? drawn
+      : [...drawn]
+          .map((pass, index) => ({ pass, index, worst: worstOf(spec, pass) }))
+          .sort((a, b) =>
+            a.worst === b.worst ? a.index - b.index : a.worst - b.worst,
+          )
+          .map(({ pass }) => pass);
+
   /**
    * The response a base reads from, and how to read it.
    *
@@ -1294,7 +1337,7 @@ function bandsFor(
     };
   };
 
-  drawn.forEach(({ prefix, read }, passIndex) => {
+  ordered.forEach(({ prefix, read }, passIndex) => {
     // This pass's own bands, appended to `bands` only once the pass is
     // complete. A mirrored stack reads its halves off band POSITION -- even
     // is up, odd is down -- so a pass that contributed one band of its pair
@@ -1376,6 +1419,53 @@ function bandsFor(
   });
 
   return bands;
+}
+
+/**
+ * How bad one pass got, across the spec's own bases, lower being worse.
+ *
+ * A GAP counts as worse than any reading, not as no reading. A collector that
+ * stopped for three hours reports nothing for those buckets, so scoring only
+ * the buckets it did report scores it on its good hours alone and files it
+ * with the healthy -- and "this collector was down for three hours" is the
+ * observed failure that forced the boolean path onto the window grid in the
+ * first place (see booleanValues above). It is the single thing this panel
+ * exists to show, so it sorts first.
+ *
+ * Infinity, sorting LAST, for a pass with no reading anywhere. That is not a
+ * collector that stopped, it is a column this window never carried, and the
+ * panel's not-collected states already say so. The two are told apart by
+ * whether anything was read at all.
+ *
+ * Reads the base column as stored, which is what the ordered panel draws.
+ * A `counter` spec draws per-bucket increases instead, so ordering one by
+ * this would sort on the running total's first bucket rather than on the
+ * deltas on screen; nothing sets both today, and the flag's doc says so.
+ *
+ * Bases pointing at another family are skipped for the reason the idle
+ * filter skips them: this pass reads the primary response, and a foreign
+ * base resolves to the wrong column or to none.
+ */
+function worstOf(
+  spec: PanelSpec,
+  pass: { read: (column: string) => (number | null)[] },
+): number {
+  let worst = Infinity;
+  let read = false;
+  let gapped = false;
+  for (const { base, source } of spec.bases) {
+    if (source !== undefined && source !== spec.source) continue;
+    for (const v of pass.read(base)) {
+      if (v === null) {
+        gapped = true;
+        continue;
+      }
+      read = true;
+      if (v < worst) worst = v;
+    }
+  }
+  if (!read) return Infinity;
+  return gapped ? -Infinity : worst;
 }
 
 /** The base's hue at this series' step, or undefined for a spec with none. */
