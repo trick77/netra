@@ -117,7 +117,7 @@ export function FleetContainers({
         <EmptyState
           icon={Boxes}
           title="Containers not read yet"
-          body="The fleet's containers are still being fetched, one host at a time."
+          body="The containers are still being fetched, one host at a time."
         />
       );
     }
@@ -129,7 +129,7 @@ export function FleetContainers({
         <EmptyState
           icon={Boxes}
           title="No containers match"
-          body="No container in this fleet matches the filter."
+          body="No container on any host matches the filter."
         />
       );
     }
@@ -159,7 +159,7 @@ export function FleetContainers({
         <EmptyState
           icon={Boxes}
           title="No containers"
-          body="No host in this fleet has reported a container."
+          body="No host has reported a container."
         />
       </>
     );

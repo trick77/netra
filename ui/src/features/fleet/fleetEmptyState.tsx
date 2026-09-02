@@ -21,7 +21,7 @@ export function FleetEmptyState({ filtered = false }: { filtered?: boolean }) {
       <EmptyState
         icon={Server}
         title="No hosts match"
-        body="Every host is filtered out. Clear the filter to see the fleet."
+        body="Every host is filtered out. Clear the filter to see them all."
       />
     );
   }

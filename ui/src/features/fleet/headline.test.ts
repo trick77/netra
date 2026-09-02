@@ -31,9 +31,9 @@ describe("hostHeadline", () => {
 
   // Before the first fetch lands there is no set to state, and an empty
   // fleet's own empty state says "No hosts yet" directly below this line.
-  it("falls back to naming the page when there is no fleet yet", () => {
+  it("falls back to naming the page when there is no host yet", () => {
     const head = hostHeadline(0, 0);
-    expect(head.stem).toBe("Fleet");
+    expect(head.stem).toBe("Hosts");
     expect(head.clause).toBeNull();
     expect(head.steady).toBeNull();
   });

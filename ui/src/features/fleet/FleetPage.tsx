@@ -514,7 +514,7 @@ export function FleetPage({
     <div className="fleet">
       {error !== null ? (
         <p className="note" role="alert">
-          The fleet could not be loaded: {error}
+          The hosts could not be loaded: {error}
         </p>
       ) : null}
       {containerError !== null ? (

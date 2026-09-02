@@ -2,7 +2,7 @@
 // then the active tab. This is the only file in the feature that talks to
 // the read API -- the tabs take plain props, so a tab renders identically
 // whether its data came from a fetch, a poll or a fixture.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getAddresses,
   getContainers,
@@ -35,10 +35,11 @@ import { hostTabForSlug } from "../../lib/router";
 import {
   clampRange,
   rangeWindow,
+  rangeStepMs,
   EVENT_LIMITS,
   type Range,
 } from "../../lib/range";
-import { POLL_MS, usePoll } from "../../lib/poll";
+import { POLL_MS, pollMsFor, usePoll } from "../../lib/poll";
 import { loadRange } from "../settings/SettingsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
 import { Events } from "./tabs/Events";
@@ -253,6 +254,11 @@ export function HostPage({
     [hostId],
   );
 
+  // When the series last came down, and for which tab and range. A ref, not
+  // state: nothing renders from it, and writing it must not cost a render on
+  // every poll.
+  const seriesFetch = useRef({ key: "", at: 0 });
+
   // The active tab's own families, on that same tick. usePoll owns the
   // cancellation this effect used to hand-roll, and the window is resolved
   // INSIDE the call rather than once per range change, so each poll slides
@@ -261,15 +267,45 @@ export function HostPage({
   const tabPoll = usePoll(
     async (): Promise<Partial<TabData>> => {
       const window = rangeWindow(range);
+      // The SERIES, and only the series, slow down with the range.
+      //
+      // A chart cannot change faster than its own buckets -- the hub returns
+      // whole materialised buckets, so at 24h the newest point moves every
+      // five minutes and at 7d every hour -- and a tab asks for up to twelve
+      // families at once. Asking again every minute redraws the same picture.
+      //
+      // What rides along in this same poll does NOT follow that argument:
+      // units, containers, filesystems, drives, addresses, interfaces,
+      // packages and events are inventories with no buckets at all. A unit
+      // that fails, a container that exits, an event that lands -- those are
+      // as fresh as the poll that fetched them, and the header directly above
+      // says "last seen 20 s ago" while it does it. So the poll keeps running
+      // at POLL_MS and only the metric families skip a turn.
+      //
+      // Keyed on the tab as well as the range: a family the tab in front of
+      // you has never fetched must not wait out a five-minute timer to appear
+      // for the first time.
+      const key = `${hostId}:${tab}:${range}`;
+      const at = Date.now();
+      const due =
+        key !== seriesFetch.current.key ||
+        at - seriesFetch.current.at >= pollMsFor(rangeStepMs(range));
+      if (due) seriesFetch.current = { key, at };
+      // `undefined` rather than the previous response: what is already on
+      // screen lives in `data`, and the merge below leaves a family it is not
+      // told about alone. Returning null would blank the very charts this is
+      // saving a request for.
       const metrics = (family: string) =>
-        orNull(
-          getMetrics(hostId, {
-            family,
-            from: window.from,
-            to: window.to,
-            step: window.step,
-          }),
-        );
+        due
+          ? orNull(
+              getMetrics(hostId, {
+                family,
+                from: window.from,
+                to: window.to,
+                step: window.step,
+              }),
+            )
+          : Promise.resolve(undefined);
 
       async function load(): Promise<Partial<TabData>> {
         switch (tab) {
@@ -443,10 +479,23 @@ export function HostPage({
   // survive the switch. usePoll has already dropped the late answer of a
   // superseded run -- a response about a tab or a range nobody is on any
   // more -- which is what the cancelled flag here used to do.
+  //
+  // A family whose value is `undefined` is one this poll deliberately did not
+  // ask for -- a series whose buckets cannot have moved yet -- so it is
+  // skipped rather than merged: spreading it would write undefined over the
+  // chart already on screen.
   useEffect(() => {
     const loaded = tabPoll.data;
     if (loaded === null) return;
-    setData((prev) => ({ ...prev, ...loaded }));
+    setData((prev) => {
+      const next = { ...prev };
+      for (const [family, value] of Object.entries(loaded)) {
+        if (value !== undefined) {
+          (next as Record<string, unknown>)[family] = value;
+        }
+      }
+      return next;
+    });
   }, [tabPoll.data]);
 
   useEffect(() => {
@@ -454,9 +503,9 @@ export function HostPage({
   }, [hostPoll.error, onPollError]);
 
   // Both halves: the header's record and the tab's families are two polls,
-  // and a reader pressing Refresh is asking for the page, not for half of it.
+  // and anything asking for the page again is asking for all of it, not half.
   // usePoll's refresh is stable, so this identity is too -- it is handed to
-  // the Containers tab as onPurged.
+  // the Containers tab as onPurged and to the load-failure retry.
   const refresh = useCallback(() => {
     hostPoll.refresh();
     tabPoll.refresh();
@@ -510,9 +559,9 @@ export function HostPage({
     <div className="hostpage">
       {/* A failed poll leaves the last good record on screen, which is right
           -- but silently, everything below would be a frozen page that looks
-          live, and pressing Refresh would change nothing visible. The numbers
-          stay and the page says they have stopped moving; how stale they are
-          is the header's own "last seen". */}
+          live, and the poll that would have unfrozen it is the one that just
+          failed. The numbers stay and the page says they have stopped moving;
+          how stale they are is the header's own "last seen". */}
       {hostPoll.error !== null && (
         <p className="note" role="alert">
           These readings have stopped refreshing: {hostPoll.error.message}
@@ -521,8 +570,16 @@ export function HostPage({
       {/* The header is identical on every tab -- it is what you are
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">
-        <h1 className="serif">{host.hostname}</h1>
-        {/* Where the host is, the same line the fleet row prints and from the
+        {/* The name and where the machine is, as one block. The location sat
+            to the RIGHT of the title, on the same wrapping row as the status
+            badge, the last-seen time and the range control -- a fact about
+            the machine filed among the page's controls, and the first thing
+            to be pushed onto a line of its own at a narrow width. Under the
+            hostname it reads as what it is: the subtitle of the name it
+            qualifies. */}
+        <div className="hostident">
+          <h1 className="serif">{host.hostname}</h1>
+          {/* Where the host is, the same line the fleet row prints and from the
             same function -- one definition, so the two pages cannot come to
             disagree about how a place is written. It replaces the site name,
             which was an internal label out of a table somebody fills in by
@@ -537,9 +594,11 @@ export function HostPage({
             Rendered conditionally rather than as `?? ABSENT`: on a host whose
             agent reports no location that put a lone em dash under the
             hostname with nothing beside it to say what was missing, which
-            reads as a rendering fault. .hosthead is a wrapping flex row, so
-            the badge simply takes the space back. */}
-        {location !== null && <span className="meta">{location}</span>}
+            reads as a rendering fault. The block simply collapses to the
+            hostname, which is what a header with nothing else to say should
+            be. */}
+          {location !== null && <span className="meta">{location}</span>}
+        </div>
         <Badge severity={status.severity}>{status.label}</Badge>
         {/* Beside the reporting status, not instead of it: the two answer
             different questions, and a host can be online AND four minutes
@@ -572,9 +631,17 @@ export function HostPage({
           value={range}
           onChange={(value) => setRange(value)}
         />
-        <Button variant="ghost" onClick={refresh}>
-          Refresh
-        </Button>
+        {/* No Refresh button beside it. Both halves of the page poll every
+            POLL_MS, which is the agent's own reporting interval, so the button
+            asked the hub for numbers that could not have changed yet and its
+            reward was a header that looked identical. (The metric series skip
+            a turn while their buckets cannot have moved -- see the tab poll --
+            but a press would not have moved them either.) What it was
+            really for is stated instead: "last seen" says how fresh the
+            record is, and the note above says so out loud when a poll has
+            failed. `refresh` stays -- the load-failure "Try again" is a
+            retry a reader genuinely has to ask for, and the Containers tab
+            calls it after a purge. */}
       </header>
 
       <Tabs

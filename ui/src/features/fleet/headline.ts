@@ -41,7 +41,7 @@ export interface Headline {
  * time that word says something the rest of the screen does not.
  */
 export function hostHeadline(total: number, troubled: number): Headline {
-  if (total === 0) return { stem: "Fleet", clause: null, steady: null };
+  if (total === 0) return { stem: "Hosts", clause: null, steady: null };
   const stem = `${total} host${total === 1 ? "" : "s"}`;
   if (troubled === 0) {
     // "steady", not "all steady", for a fleet of one: there is no "all" of a

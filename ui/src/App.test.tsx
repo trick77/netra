@@ -321,10 +321,10 @@ describe("the range sticks", () => {
 // place a broken href strands a keyboard user with no way out.
 describe("the nav rail", () => {
   const DESTINATIONS = [
-    ["Fleet", "/"],
+    ["Hosts", "/"],
     ["Containers", "/?entity=containers"],
     ["Events", "/events"],
-    ["Hosts", "/admin/hosts"],
+    ["Agents", "/admin/hosts"],
     ["Settings", "/settings"],
   ] as const;
 
@@ -363,10 +363,10 @@ describe("the nav rail", () => {
     ).toHaveLength(1);
   });
 
-  // Fleet and Containers are the same route with a different query string, so
+  // Hosts and Containers are the same route with a different query string, so
   // the rail cannot decide between them on route.name alone -- and if it
   // tries, both light up and "you are here" stops meaning anything.
-  it("marks Containers, not Fleet, on the container list", async () => {
+  it("marks Containers, not Hosts, on the container list", async () => {
     goTo("/?entity=containers");
 
     render(<App />);
@@ -378,7 +378,7 @@ describe("the nav rail", () => {
       "aria-current",
       "page",
     );
-    expect(rail.getByRole("link", { name: "Fleet" })).not.toHaveAttribute(
+    expect(rail.getByRole("link", { name: "Hosts" })).not.toHaveAttribute(
       "aria-current",
     );
   });

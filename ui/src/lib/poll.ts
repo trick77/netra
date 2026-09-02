@@ -117,3 +117,28 @@ export function usePoll<T>(
 /** The overview's cadence. The agent reports every 60s, so anything faster
  * asks the hub for numbers that cannot have changed. */
 export const POLL_MS = 60_000;
+
+/**
+ * The slowest a poll of RANGED data may run: five minutes.
+ *
+ * The floor is POLL_MS for the reason POLL_MS exists, and this is the
+ * ceiling, because the argument for slowing down is about waste and not
+ * about freshness -- a 7d chart whose newest bucket is an hour wide still
+ * has to catch up with the world sooner than an hour. Five minutes is the
+ * next bucket width the tiers use, so a 24h view lands exactly on its own
+ * step and everything coarser is capped here.
+ */
+export const POLL_MAX_MS = 5 * 60_000;
+
+/**
+ * How often to refetch a chart drawn over `stepMs`-wide buckets.
+ *
+ * The picture cannot change faster than its own buckets, so the bucket width
+ * is the cadence -- clamped into [POLL_MS, POLL_MAX_MS]. It is for SERIES
+ * only: a host's record carries "last seen" and its reporting badge, which
+ * are claims about right now and stay on the 60-second tick whatever window
+ * the charts are drawn over.
+ */
+export function pollMsFor(stepMs: number): number {
+  return Math.min(POLL_MAX_MS, Math.max(POLL_MS, stepMs));
+}
