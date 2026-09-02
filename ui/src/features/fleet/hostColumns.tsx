@@ -167,6 +167,65 @@ export function hostLocation(row: {
   return parts.length === 0 ? null : parts.join(" · ");
 }
 
+/**
+ * The same line, broken for the fleet table: the place on one line and
+ * whatever followed its last comma on the next.
+ *
+ * Only the fleet list wraps it. The host page has one host to describe and
+ * the room to say it in a sentence, whereas the table repeats this under
+ * every hostname in the widest text column of the row -- so
+ * "OVH · Roubaix, France" was the string deciding how wide the Host column
+ * had to be, and it ellipsised away on the fleets where it lost that
+ * argument.
+ *
+ * The LAST comma, not the first: "Roubaix, Hauts-de-France, France" has to
+ * put France under the rest, and splitting at the first comma would have put
+ * the region on the country's line. The comma itself goes -- the break has
+ * already done the separating, and a comma at the end of a line is
+ * punctuation with nothing after it.
+ *
+ * Everything else is still printed verbatim. A location with no comma
+ * ("basement", "AWS eu-west-1a") stays one line, and so does one whose comma
+ * has nothing after it: the split has to be an improvement on the string the
+ * operator typed, or not happen at all.
+ */
+export function hostLocationLines(row: {
+  provider?: string | null;
+  location?: string | null;
+}): { head: string; tail: string | null } | null {
+  const provider = reported(row.provider);
+  const location = reported(row.location);
+  if (provider === null && location === null) return null;
+
+  let place = location;
+  let tail: string | null = null;
+  if (location !== null) {
+    const comma = location.lastIndexOf(",");
+    const before = comma === -1 ? "" : location.slice(0, comma).trim();
+    const after = comma === -1 ? "" : location.slice(comma + 1).trim();
+    // Both halves have to survive the trim, not just be there: a location of
+    // " , France" has a comma with an index above zero and something after
+    // it, and splitting it would open the cell with a blank line -- or, with
+    // a provider set, with "OVH · " and a separator pointing at nothing.
+    if (before !== "" && after !== "") {
+      place = before;
+      tail = after;
+    }
+  }
+
+  return {
+    head: [provider, place].filter((part) => part !== null).join(" · "),
+    tail,
+  };
+}
+
+// Same truthy-string test hostLocation makes, and for the same reason: both
+// fields are optional on Host, so a row built before they existed has to draw
+// a hostname with no location rather than throw.
+function reported(value: string | null | undefined): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
 function HostCell({ row }: { row: HostRow }) {
   // Judged from row.reporting -- cpu_total, from the `host` family -- and
   // never from row.cpu[0], which is a per-core band under 32 threads and the
@@ -182,7 +241,7 @@ function HostCell({ row }: { row: HostRow }) {
   // under every hostname said it a second time in the row's longest string,
   // and os-release runs long enough that it had to be truncated to stay on
   // one line. The host page names the release in full.
-  const location = hostLocation(row);
+  const location = hostLocationLines(row);
   return (
     // Its own wrapper rather than .host-cell itself: the container list's
     // name cell is built from .host-cell too, and it has no mark to seat, so
@@ -235,10 +294,19 @@ function HostCell({ row }: { row: HostRow }) {
           agent, so a fleet says where it is with nobody maintaining a table
           of places.
 
-          Still one line, deliberately. This column had two and keeps two --
-          a third would put height back on every row of the table, which is
-          the opposite of what the header change just spent itself on. */}
-        {location !== null && <div className="host-cell-site">{location}</div>}
+          The country goes on its own line, and the two lines are set tight
+          against the name to pay for the height -- see the .fleet-host rules
+          in index.css. On one line "OVH · Roubaix, France" ellipsised away on
+          any fleet whose Host column was not the widest thing on the page,
+          which lost the country on exactly the rows that reported one. */}
+        {location !== null && (
+          <>
+            <div className="host-cell-site">{location.head}</div>
+            {location.tail !== null && (
+              <div className="host-cell-site">{location.tail}</div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

@@ -891,6 +891,24 @@ tbody tr:hover .host-cell-name {
      with the figures across the row for the same attention. */
   color: var(--muted-2);
 }
+/* The fleet's location, and only the fleet's: the country sits on a second
+   line here, so the pair is set tight and pulled up under the hostname. Both
+   halves of that are scoped to .fleet-host because .host-cell and
+   .host-cell-site are shared with the container list, whose identity line is
+   one ellipsised line and wants the 2px it has.
+
+   gap:0 rather than 1px -- the location is a subtitle to the name, and the
+   name's own leading already separates them; the 2px on top of it read as a
+   space between two peers. line-height on the location pair for the same
+   reason: at the body's leading the country floated a line away from the
+   place it belongs to, and the third line cost visible height on every row
+   of the table. */
+.fleet-host .host-cell {
+  gap: 0;
+}
+.fleet-host .host-cell-site {
+  line-height: 1.25;
+}
 
 /* Traffic cell — the up/down sparkline with both rates BESIDE it, not under
    it. Stacked, the two lines of type made this the tallest cell in the fleet

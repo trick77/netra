@@ -633,7 +633,10 @@ describe("FleetPage data fetching", () => {
     render(<FleetPage now={NOW} />);
 
     await waitFor(() => expect(screen.getByText("web-01")).toBeInTheDocument());
-    expect(screen.getByText("OVH \u00b7 Roubaix, France")).toBeInTheDocument();
+    // Two lines: the country breaks off the end of the location -- see
+    // hostLocationLines.
+    expect(screen.getByText("OVH \u00b7 Roubaix")).toBeInTheDocument();
+    expect(screen.getByText("France")).toBeInTheDocument();
 
     const urls = fetchMock.mock.calls.map(([u]) => String(u));
     expect(urls.filter((u) => u.endsWith("/api/v1/sites"))).toHaveLength(0);
