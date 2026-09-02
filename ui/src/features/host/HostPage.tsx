@@ -454,9 +454,9 @@ export function HostPage({
   }, [hostPoll.error, onPollError]);
 
   // Both halves: the header's record and the tab's families are two polls,
-  // and a reader pressing Refresh is asking for the page, not for half of it.
+  // and anything asking for the page again is asking for all of it, not half.
   // usePoll's refresh is stable, so this identity is too -- it is handed to
-  // the Containers tab as onPurged.
+  // the Containers tab as onPurged and to the load-failure retry.
   const refresh = useCallback(() => {
     hostPoll.refresh();
     tabPoll.refresh();
@@ -510,9 +510,9 @@ export function HostPage({
     <div className="hostpage">
       {/* A failed poll leaves the last good record on screen, which is right
           -- but silently, everything below would be a frozen page that looks
-          live, and pressing Refresh would change nothing visible. The numbers
-          stay and the page says they have stopped moving; how stale they are
-          is the header's own "last seen". */}
+          live, and the poll that would have unfrozen it is the one that just
+          failed. The numbers stay and the page says they have stopped moving;
+          how stale they are is the header's own "last seen". */}
       {hostPoll.error !== null && (
         <p className="note" role="alert">
           These readings have stopped refreshing: {hostPoll.error.message}
@@ -582,9 +582,15 @@ export function HostPage({
           value={range}
           onChange={(value) => setRange(value)}
         />
-        <Button variant="ghost" onClick={refresh}>
-          Refresh
-        </Button>
+        {/* No Refresh button beside it. The page already polls both halves
+            every POLL_MS, which is the agent's own reporting interval, so the
+            button asked the hub for numbers that could not have changed yet
+            and its reward was a header that looked identical. What it was
+            really for is stated instead: "last seen" says how fresh the
+            record is, and the note above says so out loud when a poll has
+            failed. `refresh` stays -- the load-failure "Try again" is a
+            retry a reader genuinely has to ask for, and the Containers tab
+            calls it after a purge. */}
       </header>
 
       <Tabs
