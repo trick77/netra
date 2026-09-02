@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { clampRange, isRange, RANGES, rangeMs, rangeWindow } from "./range";
+import {
+  clampRange,
+  isRange,
+  RANGES,
+  rangeMs,
+  rangeStepMs,
+  rangeWindow,
+} from "./range";
 
 // The real sets, so these tests break if a page changes what it offers.
 const FLEET = ["1h", "6h", "24h"] as const;
@@ -41,6 +48,28 @@ describe("range", () => {
   it("spans what it says it spans", () => {
     expect(rangeMs("1h")).toBe(3_600_000);
     expect(rangeMs("30d")).toBe(30 * 24 * 3_600_000);
+  });
+
+  // What a poller reads to stop refetching a picture that cannot have moved.
+  // Parsed off the same step the request carries, so the two cannot drift.
+  describe("rangeStepMs", () => {
+    it("is the width of the range's own bucket", () => {
+      expect(rangeStepMs("1h")).toBe(60_000);
+      expect(rangeStepMs("24h")).toBe(5 * 60_000);
+      expect(rangeStepMs("7d")).toBe(3_600_000);
+    });
+
+    // "24h" rather than "1d" because the hub parses the step with Go's
+    // time.ParseDuration, which has no day unit -- so the longest ranges are
+    // hours too, and nothing here has to know about days.
+    it("reads the daily tier's step as the hours it is written in", () => {
+      expect(rangeStepMs("3mo")).toBe(24 * 3_600_000);
+      expect(rangeStepMs("12mo")).toBe(24 * 3_600_000);
+    });
+
+    it("answers for every range the app offers", () => {
+      for (const range of RANGES) expect(rangeStepMs(range)).toBeGreaterThan(0);
+    });
   });
 
   describe("clampRange", () => {

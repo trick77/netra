@@ -35,10 +35,11 @@ import { hostTabForSlug } from "../../lib/router";
 import {
   clampRange,
   rangeWindow,
+  rangeStepMs,
   EVENT_LIMITS,
   type Range,
 } from "../../lib/range";
-import { POLL_MS, usePoll } from "../../lib/poll";
+import { POLL_MS, pollMsFor, usePoll } from "../../lib/poll";
 import { loadRange } from "../settings/SettingsPage";
 import { RANGE_OPTIONS, RANGE_VALUES } from "./ranges";
 import { Events } from "./tabs/Events";
@@ -434,7 +435,13 @@ export function HostPage({
 
       return load();
     },
-    POLL_MS,
+    // The tab's families, at the cadence the RANGE justifies rather than the
+    // agent's. These are the page's heavy fetches -- a tab asks for up to
+    // twelve of them at once -- and a chart cannot change faster than its own
+    // buckets: at 7d that is an hour, so a 60-second poll redrew the same 168
+    // points sixty times an hour. The host record above keeps POLL_MS, since
+    // "last seen" and the reporting badge are claims about right now.
+    pollMsFor(rangeStepMs(range)),
     [hostId, tab, range],
   );
 

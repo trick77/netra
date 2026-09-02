@@ -322,7 +322,13 @@ export function HostAdminPage() {
           of it, not a child: as a child it was laid out as another column of
           that row, which put the whole page beside its own heading. */}
       <div className="section">
-        <h2>Hosts</h2>
+        {/* "Agents", the word the rail uses to reach this page. It headed
+            itself "Hosts" while the rail entry above it said Agents and the
+            monitoring list beside it also said Hosts -- one word claiming two
+            pages, which is the confusion the rename set out to end rather
+            than to move one level down. The hint is what ties the two words
+            together: this page is where a host's AGENT gets its token. */}
+        <h2>Agents</h2>
         <span className="hint">
           One agent token per host, minted when the host is created.
         </span>

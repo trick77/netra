@@ -1,7 +1,8 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { HostDetail, MetricsResponse } from "../../lib/api";
+import type { Range } from "../../lib/range";
 import { ABSENT } from "../../lib/format";
 
 // The only file in this feature that talks to the network, so the only one
@@ -308,25 +309,52 @@ describe("HostPage", () => {
     }
   });
 
-  // The charts under the header are on the same tick, for the same reason:
-  // a page that looks live and is frozen is the bug, not just the badge.
-  it("refetches the active tab's families on the tick", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      render(<HostPage hostId={7} tab="system" onTabChange={() => {}} />);
+  // The charts under the header refresh too -- a page that looks live and is
+  // frozen is the bug, not just the badge -- but on the cadence their own
+  // RANGE justifies. A chart cannot change faster than its own buckets, and a
+  // tab asks for up to twelve families at once.
+  describe("the tab's families on the tick", () => {
+    async function refetches(range: Range, ms: number): Promise<number> {
+      render(
+        <HostPage
+          hostId={7}
+          tab="system"
+          onTabChange={() => {}}
+          range={range}
+          onRangeChange={() => {}}
+        />,
+      );
       await waitFor(() => expect(api.getMetrics).toHaveBeenCalled());
       const before = vi.mocked(api.getMetrics).mock.calls.length;
-
       await act(async () => {
-        vi.advanceTimersByTime(60_000);
+        vi.advanceTimersByTime(ms);
       });
-
-      expect(vi.mocked(api.getMetrics).mock.calls.length).toBeGreaterThan(
-        before,
-      );
-    } finally {
-      vi.useRealTimers();
+      return vi.mocked(api.getMetrics).mock.calls.length - before;
     }
+
+    beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }));
+    afterEach(() => vi.useRealTimers());
+
+    // 60-second buckets: the agent's own reporting interval, so every tick
+    // has something new in it.
+    it("refetches on the minute at 1h", async () => {
+      expect(await refetches("1h", 60_000)).toBeGreaterThan(0);
+    });
+
+    // Five-minute buckets. A minute later the same picture comes back.
+    it("leaves a five-minute bucket alone for a minute at 24h", async () => {
+      expect(await refetches("24h", 60_000)).toBe(0);
+    });
+
+    it("refetches at 24h once its own bucket can have moved", async () => {
+      expect(await refetches("24h", 5 * 60_000)).toBeGreaterThan(0);
+    });
+
+    // Hourly buckets, capped at five minutes: the argument for slowing down
+    // is waste, not a licence to be an hour stale.
+    it("still catches up within five minutes at 7d", async () => {
+      expect(await refetches("7d", 5 * 60_000)).toBeGreaterThan(0);
+    });
   });
 
   // usePoll keeps the last good record when a poll fails, which is right --

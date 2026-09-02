@@ -181,6 +181,33 @@ export function rangeMs(range: Range): number {
 }
 
 /**
+ * How long a chart drawn over this range stays true: the width of its
+ * newest bucket, in milliseconds.
+ *
+ * A poller reads it to stop asking for a picture that cannot have changed. A
+ * 7d view is drawn from hourly buckets, so refetching twelve metric families
+ * every minute redraws the same 168 points sixty times an hour -- the hub
+ * does the work, the browser does the parsing, and the line moves once.
+ *
+ * Read off the same SPEC the request's own `step` comes from, so a range
+ * whose step is retuned cannot end up polled at a cadence chosen for the old
+ * one.
+ */
+export function rangeStepMs(range: Range): number {
+  const step = SPEC[range].step;
+  const value = Number.parseInt(step, 10);
+  // The suffixes SPEC actually uses. Go's time.ParseDuration has no day unit,
+  // which is why the longest ranges say "24h" rather than "1d" -- so hours
+  // are the coarsest thing that can appear here.
+  const unit = step.endsWith("s")
+    ? 1000
+    : step.endsWith("m")
+      ? 60_000
+      : 3_600_000;
+  return value * unit;
+}
+
+/**
  * How many rows an events request should ask for, per window.
  *
  * A flat limit makes the wide buttons a lie: events accumulate with the
