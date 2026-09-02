@@ -48,6 +48,15 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
   };
 }
 
+// The location under the hostname, one string per line it renders on -- the
+// country sits on a second .host-cell-site of its own, so asserting the first
+// one alone would pass on a cell that had silently dropped it.
+function siteLines(container: HTMLElement): string[] {
+  return [...container.querySelectorAll(".host-cell-site")].map(
+    (el) => el.textContent ?? "",
+  );
+}
+
 describe("hostColumns", () => {
   // Uptime is gone: it is a fact about a host rather than a reading to scan
   // a fleet by -- the same number all day, where the row's job is what
@@ -291,25 +300,49 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".host-cell-site")!.textContent).toBe(
-        "OVH · Roubaix, France",
-      );
+      expect(siteLines(container)).toEqual(["OVH · Roubaix", "France"]);
     });
 
-    // The place exactly as the agent sent it. AGENT_LOCATION is free text an
-    // operator wrote, so anything this did to that string -- splitting a
-    // country off the end, resolving a code, changing the case -- would be
-    // this UI overruling the person who typed it.
+    // The country under the place rather than beside it: on one line the
+    // location was the widest text in the row and ellipsised away on exactly
+    // the fleets that had bothered to report a country. The comma goes with
+    // the break -- it separated two things that are no longer on one line.
+    it("breaks the country onto its own line, at the last comma", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const lines = (location: string) =>
+        siteLines(
+          render(<>{col.cell(makeRow({ provider: null, location }))}</>)
+            .container,
+        );
+
+      expect(lines("Roubaix, France")).toEqual(["Roubaix", "France"]);
+      expect(lines("Roubaix, Hauts-de-France, France")).toEqual([
+        "Roubaix, Hauts-de-France",
+        "France",
+      ]);
+    });
+
+    // The place exactly as the agent sent it otherwise. AGENT_LOCATION is
+    // free text an operator wrote, so anything this did to that string beyond
+    // the break -- resolving a code, changing the case -- would be this UI
+    // overruling the person who typed it. A string with no comma to break at,
+    // or one whose comma has nothing after it, stays as it came.
     it("prints the reported location verbatim", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
-      const line = (location: string) =>
-        render(
-          <>{col.cell(makeRow({ provider: null, location }))}</>,
-        ).container.querySelector(".host-cell-site")?.textContent;
+      const lines = (location: string) =>
+        siteLines(
+          render(<>{col.cell(makeRow({ provider: null, location }))}</>)
+            .container,
+        );
 
-      expect(line("Roubaix, France")).toBe("Roubaix, France");
-      expect(line("basement")).toBe("basement");
-      expect(line("AWS eu-west-1a")).toBe("AWS eu-west-1a");
+      expect(lines("basement")).toEqual(["basement"]);
+      expect(lines("AWS eu-west-1a")).toEqual(["AWS eu-west-1a"]);
+      expect(lines("Roubaix,")).toEqual(["Roubaix,"]);
+      expect(lines(", France")).toEqual([", France"]);
+      // Whitespace is not a first line: this one has a comma past index 0 and
+      // a country after it, and splitting it would leave the cell opening on
+      // a blank row.
+      expect(lines(" , France")).toEqual([" , France"]);
     });
 
     // Each half stands on its own: an operator who set only one of the two
@@ -317,14 +350,13 @@ describe("hostColumns", () => {
     it("leaves out the half the agent did not report", () => {
       const col = hostColumns("1h").find((c) => c.header === "Host")!;
       const cell = (over: Partial<HostRow>) =>
-        render(<>{col.cell(makeRow(over))}</>).container.querySelector(
-          ".host-cell-site",
-        )?.textContent;
+        siteLines(render(<>{col.cell(makeRow(over))}</>).container);
 
-      expect(cell({ provider: null, location: "Roubaix, France" })).toBe(
-        "Roubaix, France",
-      );
-      expect(cell({ provider: "OVH", location: null })).toBe("OVH");
+      expect(cell({ provider: null, location: "Roubaix, France" })).toEqual([
+        "Roubaix",
+        "France",
+      ]);
+      expect(cell({ provider: "OVH", location: null })).toEqual(["OVH"]);
     });
 
     // Setting neither variable is the common case, and it must write no line
@@ -380,9 +412,7 @@ describe("hostColumns", () => {
       // mark beside it already says which distribution, and spelling out
       // "Debian GNU/Linux 12 (bookworm)" made the row's longest string out of
       // something it had just drawn.
-      expect(container.querySelector(".host-cell-site")?.textContent).toBe(
-        "Init7 \u00b7 Winterthur, CH",
-      );
+      expect(siteLines(container)).toEqual(["Init7 \u00b7 Winterthur", "CH"]);
     });
 
     // An OS with no mark of its own leaves the space empty rather than taking
@@ -409,9 +439,7 @@ describe("hostColumns", () => {
       );
 
       expect(container.querySelector(".osicon")).toBeNull();
-      expect(container.querySelector(".host-cell-site")?.textContent).toBe(
-        "Zurich, CH",
-      );
+      expect(siteLines(container)).toEqual(["Zurich", "CH"]);
     });
   });
 
