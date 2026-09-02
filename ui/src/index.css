@@ -1429,7 +1429,14 @@ tbody tr:hover .host-cell-name {
 .app {
   display: grid;
   grid-template-columns: var(--rail-w) 1fr;
+  /* dvh, not vh, and the vh line above it is the fallback for browsers that
+     do not know the unit. On iOS Safari 100vh is the LARGE viewport -- the
+     height the page would have if the toolbars were retracted -- so with them
+     on screen, which is how a page opens, a 100vh box is taller than what the
+     reader can see and the page scrolls a little with nothing in it to
+     scroll. dvh is the height actually visible right now. */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .siderail {
@@ -1443,7 +1450,10 @@ tbody tr:hover .host-cell-name {
      leave the content track sized against a column nothing occupies. */
   position: sticky;
   top: 0;
+  /* Same reason as .app above: on iOS a 100vh rail hangs below the visible
+     area and takes the page with it. */
   height: 100vh;
+  height: 100dvh;
   /* Stated because sticky makes this a stacking context whatever we do, and
      an unstated one sits at level 0 -- under every positioned thing in main
      that comes after it, which is most of a page. The tooltip is the rail's
@@ -1460,21 +1470,21 @@ tbody tr:hover .host-cell-name {
   align-items: center;
   flex: 1;
   gap: var(--space-1);
-  /* Full width so .navgroup-end's rule spans the rail rather than the 36px a
-     shrink-to-fit column would give it. */
   align-self: stretch;
 }
+/* One run, top to bottom. Settings and sign out used to sit in a second group
+   pushed to the FOOT of the rail with a rule above them, because Settings is
+   the only destination here that is not about the fleet. That distinction
+   survived while the rail had words; six glyphs and no words could not carry
+   it, and what was left was two icons marooned at the bottom of an empty
+   column, far enough from the other four to read as a different control
+   rather than as the rest of the same list. */
 .navgroup {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-1);
   align-self: stretch;
-}
-.navgroup-end {
-  margin-top: auto;
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
 }
 /* A square, not a row: with the label gone there is nothing for a text
    baseline to align to, so the glyph is centred in a fixed box. 36px inside a
@@ -1904,6 +1914,13 @@ tbody tr:hover .host-cell-name {
   gap: var(--space-2);
   align-items: center;
   margin-bottom: var(--space-3);
+  /* Wraps rather than pushing the page sideways -- the same rule .hosthead
+     states for the same reason. The events toolbar carries four labelled
+     controls and a range control, about 780px of them, which is more than an
+     iPad has once the rail and the page padding are taken: they ran off the
+     right edge and took the document's width with them, so the whole page
+     scrolled sideways a little and .seg was crushed to 2px trying to fit. */
+  flex-wrap: wrap;
 }
 /* The fleet's toolbar closes the page's chrome: a rule under it, so the head,
    the chips and the controls read as one block and the list starts below a
@@ -3347,11 +3364,15 @@ svg.spark {
   white-space: nowrap;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 700px) {
   /* The rail goes off-canvas -- back across the top -- rather than eating a
-     fifth of a small window. It is also what makes the viewport an honest
-     stand-in for the content width again, which FleetPage's own 640px
-     matchMedia depends on: below here there is no rail to subtract. The rules
+     fifth of a small window. That was written when the rail was 212px, which
+     on a 900px window was a fifth of it; at 56px it is a sixteenth, and the
+     flip was costing every tablet the layout it has the room for. A 744px iPad
+     in portrait is the narrowest one made and it now keeps the rail. It is
+     also what makes the viewport an honest stand-in for the content width
+     again, which FleetPage's own 640px matchMedia depends on: below here
+     there is no rail to subtract, and 700 still sits above that. The rules
      that care about content width rather than window width live in their own
      block above, and start earlier than this one for that reason. */
   .app {
@@ -3402,21 +3423,11 @@ svg.spark {
      pseudo-element still counts toward scrollable overflow, so that is a
      permanent sliver of horizontal scroll on every narrow window, not just
      while someone is pointing at it. Anchored by its right edge instead. */
-  .navgroup-end > :last-child::after,
-  .navgroup-end > .navform > button::after {
+  .navgroup > :last-child::after,
+  .navgroup > .navform > button::after {
     left: auto;
     right: 0;
     transform: none;
-  }
-  /* The same separation turned on its side: a rule to the left of Settings
-     instead of above it, since "the foot of the rail" has no meaning in a row. */
-  .navgroup-end {
-    margin-top: 0;
-    margin-left: var(--space-3);
-    padding-top: 0;
-    padding-left: var(--space-3);
-    border-top: 0;
-    border-left: 1px solid var(--border);
   }
   .app > main {
     padding: var(--space-4) var(--space-5) 64px;
@@ -3431,7 +3442,7 @@ svg.spark {
    rescue at a 964px window. This moved down from 1120px when the rail
    collapsed from 212px to 56px: the gap between window and content narrowed
    by the 156px the rail gave back, and holding the old number would have
-   fired every rule below on a window that no longer needs them. Below 900 the
+   fired every rule below on a window that no longer needs them. Below 700 the
    rail is a top bar and content is viewport - 48, comfortably inside this. */
 @media (max-width: 964px) {
   /* The rail wraps on its own -- it is a flex row, not the grid the stat

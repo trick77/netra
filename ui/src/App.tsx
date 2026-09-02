@@ -152,11 +152,13 @@ export default function App() {
             >
               Agents
             </NavLink>
-          </div>
-          {/* Settings is the only destination here that is not about the
-              fleet, so it sits apart -- pushed to the foot of the rail with a
-              rule above it rather than filed as a fourth peer. */}
-          <div className="navgroup navgroup-end">
+            {/* Settings and sign out sat in a second group at the FOOT of the
+                rail, with a rule above them, because Settings is the one
+                destination here that is not about the fleet. Six glyphs and no
+                words could not carry that distinction: what a reader saw was
+                two icons marooned at the bottom of an empty column, far enough
+                from the other four to read as a different control rather than
+                as the rest of the same list. One run, in reading order. */}
             <NavLink
               href="/settings"
               icon={Settings2}
