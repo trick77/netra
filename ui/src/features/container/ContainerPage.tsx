@@ -35,6 +35,7 @@ import {
   relativeMs,
 } from "../../lib/format";
 import { RAIL_RANGES, type Range } from "../../lib/range";
+import { Box } from "lucide-react";
 
 // The windows this page OFFERS. The type is lib/range's, so a range chosen
 // anywhere else -- Settings' stored default, a link from the host page --
@@ -492,6 +493,11 @@ export function ContainerPage({
   return (
     <>
       <div className="hosthead">
+        {/* Box, not the rail's LayoutGrid: the four tiles say "the set of
+            containers", and this page is one of them. */}
+        <span className="pageicon">
+          <Box aria-hidden="true" />
+        </span>
         <h1>{displayTitle(container)}</h1>
         <div className="meta">
           <a href={`/hosts/${host.id}/overview`}>{host.hostname}</a>

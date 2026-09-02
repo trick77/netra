@@ -42,6 +42,7 @@ import { hostLocation, type HostRow } from "./hostColumns";
 import { isReporting } from "../../lib/host";
 import { buildRows } from "./hostTrends";
 import { FLEET_RANGE } from "./ranges";
+import { LayoutGrid, Server } from "lucide-react";
 
 /** What you are looking at (spec 4.5's first axis). */
 export type Entity = "hosts" | "containers";
@@ -568,19 +569,33 @@ export function FleetPage({
           rather than beside it. headline.ts has the wording and why the set
           leads rather than the count. */}
       <div className="fleethead">
-        <h1 className="fleettitle">
-          {head.stem}
-          {head.clause !== null ? (
-            <>
-              {", "}
-              {/* The colour lands on the CLAUSE, which is the part that says
-                  something is wrong -- painting the whole line would put the
-                  fleet's size in red as well. */}
-              <em className={SEVERITY_CLASS[headSeverity]}>{head.clause}</em>
-            </>
-          ) : null}
-          {head.steady !== null ? `, ${head.steady}` : null}
-        </h1>
+        {/* The glyph tracks the ENTITY, not the route: one route serves both
+            lists and the rail marks them as two destinations, so a fixed mark
+            here would contradict the rail on the containers view -- the same
+            reason the heading below states the set rather than saying
+            "Fleet". */}
+        <div className="pagetitle">
+          <span className="pageicon">
+            {entity === "containers" ? (
+              <LayoutGrid aria-hidden="true" />
+            ) : (
+              <Server aria-hidden="true" />
+            )}
+          </span>
+          <h1 className="fleettitle">
+            {head.stem}
+            {head.clause !== null ? (
+              <>
+                {", "}
+                {/* The colour lands on the CLAUSE, which is the part that says
+                    something is wrong -- painting the whole line would put the
+                    fleet's size in red as well. */}
+                <em className={SEVERITY_CLASS[headSeverity]}>{head.clause}</em>
+              </>
+            ) : null}
+            {head.steady !== null ? `, ${head.steady}` : null}
+          </h1>
+        </div>
         <StatRail>
           {/* The first two figures count a set the page can show, and sit
             directly above the tabs that show it -- so they are the control

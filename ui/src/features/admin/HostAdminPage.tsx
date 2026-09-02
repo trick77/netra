@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { MapPin, ServerCog } from "lucide-react";
+import { KeyRound, MapPin, ServerCog } from "lucide-react";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import { Input, Select } from "../../ui/Control";
@@ -322,6 +322,9 @@ export function HostAdminPage() {
           of it, not a child: as a child it was laid out as another column of
           that row, which put the whole page beside its own heading. */}
       <div className="section">
+        <span className="pageicon">
+          <KeyRound aria-hidden="true" />
+        </span>
         {/* "Agents", the word the rail uses to reach this page. It headed
             itself "Hosts" while the rail entry above it said Agents and the
             monitoring list beside it also said Hosts -- one word claiming two

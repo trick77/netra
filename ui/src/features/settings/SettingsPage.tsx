@@ -3,6 +3,7 @@ import { Card } from "../../ui/Card";
 import { Segmented } from "../../ui/Segmented";
 import { isRange, PAGE_RANGES, type Range } from "../../lib/range";
 import { RANGE_KEY, readPref, writePref } from "../../lib/prefs";
+import { Settings2 } from "lucide-react";
 
 /** The stored default range. It is lib/range's type and deliberately the
  * whole union: this value is handed to whichever page the user opens next,
@@ -84,6 +85,9 @@ export function SettingsPage() {
           in HostAdminPage: `.section` is a baseline flex line, so a card
           nested inside it is laid out beside the title, not under it. */}
       <div className="section">
+        <span className="pageicon">
+          <Settings2 aria-hidden="true" />
+        </span>
         <h2>Settings</h2>
       </div>
 

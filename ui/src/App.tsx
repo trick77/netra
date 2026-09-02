@@ -55,9 +55,9 @@ import { LoginPage } from "./features/auth/LoginPage";
 import { HostAdminPage } from "./features/admin/HostAdminPage";
 import {
   Bell,
-  Boxes,
   CircleSlash,
-  Gauge,
+  KeyRound,
+  LayoutGrid,
   LogOut,
   Server,
   Settings2,
@@ -101,21 +101,21 @@ export default function App() {
           moved. HostPage's own header is disambiguated from this one by
           accessible name, not by there being exactly one. */}
       <header className="siderail">
-        <a className="brand" href="/">
-          netra
-        </a>
+        {/* No wordmark: 56px does not hold one, and the first nav item
+            already points at "/", so home is not lost with it. */}
         {/* Named because it is not the only nav landmark on a page -- Tabs
             renders one too -- and "navigation" twice over tells a screen
             reader user nothing about which is which. */}
         <nav className="nav" aria-label="Primary">
           <div className="navgroup">
-            {/* A dial for the fleet reading and a bell for things that
-                happened: the two marks that have to say "monitoring tool"
-                rather than "admin panel". The other two are a server and a
-                cog in every set worth considering. */}
+            {/* The rail carries no labels, so each glyph has to name its
+                destination on its own. A dial said "utilisation", which is a
+                reading the fleet page takes rather than the thing it lists;
+                a server says hosts. Containers get the four tiles the page
+                actually renders. */}
             <NavLink
               href="/"
-              icon={Gauge}
+              icon={Server}
               active={route.name === "fleet" && !onContainers}
             >
               Hosts
@@ -127,7 +127,7 @@ export default function App() {
                 containers view, which tells a reader the rail is broken. */}
             <NavLink
               href="/?entity=containers"
-              icon={Boxes}
+              icon={LayoutGrid}
               active={route.name === "fleet" && onContainers}
             >
               Containers
@@ -147,7 +147,7 @@ export default function App() {
                 contradicting itself. */}
             <NavLink
               href="/admin/hosts"
-              icon={Server}
+              icon={KeyRound}
               active={route.name === "admin"}
             >
               Agents
@@ -170,9 +170,9 @@ export default function App() {
                 bundle does not -- the same reason the login page it lands on
                 is server-rendered. */}
             <form method="post" action="/logout" className="navform">
-              <button type="submit">
+              <button type="submit" data-tip="Sign out">
                 <LogOut aria-hidden="true" />
-                Sign out
+                <span className="sr-only">Sign out</span>
               </button>
             </form>
           </div>
@@ -252,14 +252,22 @@ function NavLink({
   href: string;
   active: boolean;
   icon: LucideIcon;
-  children: React.ReactNode;
+  // A string, not a node: it has to survive into data-tip as well as into
+  // the hidden label, and only one of those can hold markup.
+  children: string;
 }) {
   return (
-    <a href={href} aria-current={active ? "page" : undefined}>
-      {/* Decorative: the word beside it is the accessible name, and an icon
-          that repeats the label would read it twice. */}
+    // data-tip is the visible label. It is duplicated in .sr-only rather
+    // than read off the attribute because a tooltip drawn in CSS is invisible
+    // to assistive tech, and the link would otherwise have no accessible name
+    // at all.
+    <a
+      href={href}
+      aria-current={active ? "page" : undefined}
+      data-tip={children}
+    >
       <Icon aria-hidden="true" />
-      {children}
+      <span className="sr-only">{children}</span>
     </a>
   );
 }
