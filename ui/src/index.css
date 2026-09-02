@@ -1444,6 +1444,15 @@ tbody tr:hover .host-cell-name {
   position: sticky;
   top: 0;
   height: 100vh;
+  /* Stated because sticky makes this a stacking context whatever we do, and
+     an unstated one sits at level 0 -- under every positioned thing in main
+     that comes after it, which is most of a page. The tooltip is the rail's
+     only label now, and at level 0 it drew behind stat tiles and chart
+     panels: the one word the rail still has, hidden. 5 clears main's own
+     z-index:1 layers while staying under the skip link (10), which lands on
+     top of the rail when focused, and under .cd-back (20), which has to dim
+     the rail along with everything else. */
+  z-index: 5;
 }
 .nav {
   display: flex;
@@ -3344,13 +3353,24 @@ svg.spark {
     width: auto;
     height: 2px;
   }
-  /* Below the tooltip's own rail: in a top bar there is no room to the right
-     of an item, so it drops under the one being pointed at. */
+  /* Below the item rather than beside it: in a top bar there is no room to
+     the right of one. */
   .nav a::after,
   .nav button::after {
     left: 50%;
     top: calc(100% + var(--space-1));
     transform: translateX(-50%);
+  }
+  /* Except the last one, which is a few px from the window edge: centred on
+     it, half the bubble hangs off the right of the viewport. An invisible
+     pseudo-element still counts toward scrollable overflow, so that is a
+     permanent sliver of horizontal scroll on every narrow window, not just
+     while someone is pointing at it. Anchored by its right edge instead. */
+  .navgroup-end > :last-child::after,
+  .navgroup-end > .navform > button::after {
+    left: auto;
+    right: 0;
+    transform: none;
   }
   /* The same separation turned on its side: a rule to the left of Settings
      instead of above it, since "the foot of the rail" has no meaning in a row. */
