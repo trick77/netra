@@ -61,7 +61,7 @@
      the content is measured AGAINST now that the page itself has none: the
      grid track on .app is what every breakpoint below is really about. The
      off-canvas override drops the track entirely rather than restating it. */
-  --rail-w: 212px;
+  --rail-w: 56px;
   /* The measure for running text. The page is full-bleed, so prose that used
      to be bounded by the old 1180px page width is now bounded by nothing.
      .note is the one prose class the app has and caps itself here; a block of
@@ -1435,8 +1435,8 @@ tbody tr:hover .host-cell-name {
 .siderail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: 14px var(--space-3);
+  align-items: center;
+  padding: var(--space-2);
   border-right: 1px solid var(--border);
   background: var(--surface);
   /* Sticky rather than fixed: fixed would take the rail out of the grid and
@@ -1445,47 +1445,40 @@ tbody tr:hover .host-cell-name {
   top: 0;
   height: 100vh;
 }
-/* The wordmark keeps the accent explicitly. It used to inherit it from the
-   global `a` rule, with a `.brand span` rule that matched nothing -- the mark
-   has been a bare <a> since, so the span selector was dead and the colour was
-   the link default. Now that links rest in ink, stating it here is what keeps
-   the mark orange. */
-.brand {
-  font-family: var(--font-serif);
-  font-size: var(--text-title);
-  letter-spacing: -0.01em;
-  padding: 0 var(--space-2);
-  color: var(--accent);
-}
-.brand:hover {
-  color: var(--accent);
-}
-/* Fills the rail so .navgroup-end has something to push against. */
 .nav {
   display: flex;
   flex-direction: column;
+  align-items: center;
   flex: 1;
-  gap: 1px;
+  gap: var(--space-1);
+  /* Full width so .navgroup-end's rule spans the rail rather than the 36px a
+     shrink-to-fit column would give it. */
+  align-self: stretch;
 }
 .navgroup {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: var(--space-1);
+  align-self: stretch;
 }
 .navgroup-end {
   margin-top: auto;
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);
 }
+/* A square, not a row: with the label gone there is nothing for a text
+   baseline to align to, so the glyph is centred in a fixed box. 36px inside a
+   56px rail leaves the same 10px either side that the padded row used to. */
 .nav a,
 .nav button {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 10px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   border-radius: var(--radius-sm);
   color: var(--ink-2);
-  font-size: var(--text-label);
   position: relative;
   /* Same 120ms ease .atile uses -- this app has one hover timing. */
   transition:
@@ -1497,43 +1490,83 @@ tbody tr:hover .host-cell-name {
   background: var(--surface-2);
   color: var(--ink);
 }
-/* Sized here rather than per icon: lucide renders at 24px by default, which
-   is half again the height of the label beside it. The stroke is here for the
-   same reason and matters more -- lucide draws at 2, which is drawn for 24px.
-   Scaled down to 16px next to a 14px label in a light text face it reads as
-   heavy and cluttered; 1.75 sits with the label instead of shouting over it.
-   A CSS property beats the presentation attribute lucide sets, so this wins
-   without threading a prop through every call site. */
+/* 20px, not the 16px this was while a label carried the meaning. A glyph
+   standing alone is the whole target and the whole name, and at 16px in a
+   36px box it read as an afterthought in the middle of empty space. The
+   stroke stays at 1.75: lucide draws at 2 for 24px, which is heavy scaled
+   down. A CSS property beats the presentation attribute lucide sets, so this
+   wins without threading a prop through every call site. */
 .nav a svg,
 .nav button svg {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   stroke-width: 1.75;
   flex: none;
 }
-/* Where you are, said once: a neutral fill and a heavier label. The accent
-   fill, the accent text and the edge bar that used to say it three times were
-   the loudest thing in a rail that is chrome, not content. No outline either --
-   a frame around one of five rows read as a control you could press. The bar
-   is gone rather than neutralised: a grey 3px rule against the window edge
-   read as a rendering seam. Weight is what separates this from :hover above,
-   which shares the same ground. */
+/* Where you are. The fill is the same neutral one as before, but the weight
+   that used to separate it from :hover went with the labels -- there is no
+   text left to embolden, so active and hover became the same pixels. The bar
+   is what replaces it, and it is back on different terms than the 3px grey
+   rule that was removed for reading as a rendering seam: 2px, in accent, and
+   inset from the rail's ends so it reads as a mark against one item rather
+   than as an edge. It is the only accent in the rail, which is what makes one
+   of six items findable without reading anything. */
 .nav a[aria-current] {
   background: var(--surface-2);
   color: var(--ink);
-  font-weight: 600;
+}
+.nav a[aria-current]::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--space-2));
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 /* Sign out is the one rail item that is a control rather than a destination,
    because clearing the session is a POST. It is stripped back to the shape of
-   the links above it -- same padding, same icon size, same hover -- so the
-   rail reads as one list and not as four links and a button. */
+   the links above it -- same box, same icon size, same hover -- so the rail
+   reads as one list and not as five links and a button. */
 .nav button {
-  width: 100%;
   border: 0;
   background: none;
   font-family: inherit;
-  text-align: left;
   cursor: pointer;
+}
+
+/* The label, now that the rail does not show one. Drawn in CSS rather than
+   with the title attribute: the native tooltip waits about a second, which is
+   too slow to answer "which of these is Events". It is decorative by
+   necessity -- generated content is not reliably announced -- so every item
+   also carries the same word in .sr-only, which is what names the link.
+   :focus-visible is not a nicety here: a keyboard user tabbing the rail has
+   no hover to fall back on. */
+.nav a::after,
+.nav button::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + var(--space-2));
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  background: var(--raised);
+  color: var(--ink);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 5px var(--space-2);
+  font-size: var(--text-micro);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms ease;
+  z-index: 10;
+}
+.nav a:hover::after,
+.nav a:focus-visible::after,
+.nav button:hover::after,
+.nav button:focus-visible::after {
+  opacity: 1;
 }
 /* The form exists only to carry the method and action. display:contents keeps
    it out of the layout so the button sits in .navgroup's flex column exactly
@@ -1543,7 +1576,9 @@ tbody tr:hover .host-cell-name {
 }
 @media (prefers-reduced-motion: reduce) {
   .nav a,
-  .nav button {
+  .nav button,
+  .nav a::after,
+  .nav button::after {
     transition: none;
   }
 }
@@ -1570,6 +1605,37 @@ tbody tr:hover .host-cell-name {
 .section .hint {
   font-size: var(--text-label);
   color: var(--muted);
+}
+
+/* ── The page's own glyph ─────────────────────────────────────────────
+   The same mark the rail carries for this destination, repeated beside the
+   page's name. The rail shows no labels any more, so a heading is the only
+   place a glyph and the word for it are ever seen together: this line is what
+   teaches the rail, and it does it on the page the reader just arrived at
+   rather than in a tooltip they have to go looking for.
+
+   Muted, not accent: it names the page, and on the fleet page the one colour
+   that carries meaning is the one on the clause saying what is wrong. */
+.pageicon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  /* The heading rows are baseline-aligned boxes and an svg has no baseline of
+     its own, so it would otherwise hang below the type it sits beside. */
+  align-self: center;
+  color: var(--muted);
+}
+.pageicon svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.75;
+}
+/* Glyph and name on one line, with whatever the page hangs beneath them --
+   the fleet's ambient figures -- under both rather than under the name. */
+.pagetitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .card {
@@ -3261,10 +3327,30 @@ svg.spark {
     flex: 0 1 auto;
     gap: 2px;
     margin-left: auto;
+    align-self: auto;
   }
   .navgroup {
     flex-direction: row;
     gap: 2px;
+    align-self: auto;
+  }
+  /* The bar turned with the rail: under the item, not beside it. Left of a
+     glyph in a horizontal row it read as a separator between two items. */
+  .nav a[aria-current]::before {
+    left: 7px;
+    right: 7px;
+    top: auto;
+    bottom: calc(-1 * var(--space-1));
+    width: auto;
+    height: 2px;
+  }
+  /* Below the tooltip's own rail: in a top bar there is no room to the right
+     of an item, so it drops under the one being pointed at. */
+  .nav a::after,
+  .nav button::after {
+    left: 50%;
+    top: calc(100% + var(--space-1));
+    transform: translateX(-50%);
   }
   /* The same separation turned on its side: a rule to the left of Settings
      instead of above it, since "the foot of the rail" has no meaning in a row. */
@@ -3284,12 +3370,14 @@ svg.spark {
 /* ── Content-width overrides ───────────────────────────────────────────
    These fire on the VIEWPORT, but every one of them is really about the width
    the CONTENT gets -- and those stopped being the same number when the rail
-   arrived. While the rail is up, content is viewport - 212px of rail - 48px of
-   main's padding, so a 901px window leaves a 641px flow: narrower than the
-   852px these rules were written to rescue, with none of them in force.
-   They fire at 1120px instead, where content crosses ~860px. Below 900 the
+   arrived. While the rail is up, content is viewport - 56px of rail - 48px of
+   main's padding, so content crosses the ~860px these rules were written to
+   rescue at a 964px window. This moved down from 1120px when the rail
+   collapsed from 212px to 56px: the gap between window and content narrowed
+   by the 156px the rail gave back, and holding the old number would have
+   fired every rule below on a window that no longer needs them. Below 900 the
    rail is a top bar and content is viewport - 48, comfortably inside this. */
-@media (max-width: 1120px) {
+@media (max-width: 964px) {
   /* The rail wraps on its own -- it is a flex row, not the grid the stat
      tiles were, so there is no column count to reset here. It gets the width
      back instead, so the figures stay on one line in the band where the

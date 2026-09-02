@@ -57,6 +57,7 @@ import {
   Units,
 } from "./tabs/Inventory";
 import { Overview } from "./tabs/Overview";
+import { Server } from "lucide-react";
 
 export type HostTab =
   | "overview"
@@ -570,6 +571,13 @@ export function HostPage({
       {/* The header is identical on every tab -- it is what you are
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">
+        {/* The rail's own mark for hosts. A detail page has no rail
+            destination of its own, so it wears its parent's. It sits outside
+            .hostident, beside the name AND the location under it, because it
+            marks the block rather than the line. */}
+        <span className="pageicon">
+          <Server aria-hidden="true" />
+        </span>
         {/* The name and where the machine is, as one block. The location sat
             to the RIGHT of the title, on the same wrapping row as the status
             badge, the last-seen time and the range control -- a fact about
