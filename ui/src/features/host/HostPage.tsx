@@ -572,9 +572,10 @@ export function HostPage({
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">
         {/* The rail's own mark for hosts. A detail page has no rail
-            destination of its own, so it wears its parent's. It sits outside
-            .hostident, beside the name AND the location under it, because it
-            marks the block rather than the line. */}
+            destination of its own, so it wears its parent's. It stays outside
+            .hostident so the location lines up under the NAME rather than
+            under the glyph, and is centred on the title's line by .hosthead
+            rather than on the two-line block, which sat it visibly low. */}
         <span className="pageicon">
           <Server aria-hidden="true" />
         </span>
@@ -586,7 +587,59 @@ export function HostPage({
             hostname it reads as what it is: the subtitle of the name it
             qualifies. */}
         <div className="hostident">
-          <h1 className="serif">{host.hostname}</h1>
+          {/* The title's own line, and everything that qualifies it. These were
+              siblings of .hostident, so the row centred them against the name
+              PLUS the location under it -- which left the badge, the last-seen
+              time and the range control 11.8px low, exactly half the location
+              line, and the page's own mark with them. In a row whose tallest
+              item is the h1 they centre on the title itself, with no offset to
+              keep in step with a subtitle that may not even be there. */}
+          <div className="hostbar">
+            <h1 className="serif">{host.hostname}</h1>
+            <Badge severity={status.severity}>{status.label}</Badge>
+            {/* Beside the reporting status, not instead of it: the two answer
+              different questions, and a host can be online AND four minutes
+              into a boot it did not announce. This warning used to live in the
+              fleet list's Uptime cell; when that column was removed the comment
+              left behind claimed it had moved to "the header's own status",
+              which was not true of any code -- hostStatus() has no reboot
+              branch. This is that warning, restored where the comment said it
+              was.
+
+              "rebooted", not the duration alone. A chip's tint says nothing to
+              a screen reader, so one hearing "1 m 40 s" cannot tell this host
+              from one up for "266 d 6 h", and a deuteranope sees only a hue
+              change -- the state would ride on colour alone, which is precisely
+              what putting a WORD in the chip prevents. A duration is not a
+              severity. */}
+            {recentlyBooted && (
+              <Badge severity="warning">
+                rebooted {duration(host.uptime_s)} ago
+              </Badge>
+            )}
+            <span className="meta">
+              last seen{" "}
+              {host.last_seen === null ? ABSENT : relative(host.last_seen)}
+            </span>
+            {/* One range control for the whole page: every chart on every tab
+              is drawn from it, so no tab may grow one of its own. */}
+            <Segmented
+              options={RANGE_OPTIONS}
+              value={range}
+              onChange={(value) => setRange(value)}
+            />
+            {/* No Refresh button beside it. Both halves of the page poll every
+              POLL_MS, which is the agent's own reporting interval, so the button
+              asked the hub for numbers that could not have changed yet and its
+              reward was a header that looked identical. (The metric series skip
+              a turn while their buckets cannot have moved -- see the tab poll --
+              but a press would not have moved them either.) What it was
+              really for is stated instead: "last seen" says how fresh the
+              record is, and the note above says so out loud when a poll has
+              failed. `refresh` stays -- the load-failure "Try again" is a
+              retry a reader genuinely has to ask for, and the Containers tab
+              calls it after a purge. */}
+          </div>
           {/* Where the host is, the same line the fleet row prints and from the
             same function -- one definition, so the two pages cannot come to
             disagree about how a place is written. It replaces the site name,
@@ -607,49 +660,6 @@ export function HostPage({
             be. */}
           {location !== null && <span className="meta">{location}</span>}
         </div>
-        <Badge severity={status.severity}>{status.label}</Badge>
-        {/* Beside the reporting status, not instead of it: the two answer
-            different questions, and a host can be online AND four minutes
-            into a boot it did not announce. This warning used to live in the
-            fleet list's Uptime cell; when that column was removed the comment
-            left behind claimed it had moved to "the header's own status",
-            which was not true of any code -- hostStatus() has no reboot
-            branch. This is that warning, restored where the comment said it
-            was.
-
-            "rebooted", not the duration alone. A chip's tint says nothing to
-            a screen reader, so one hearing "1 m 40 s" cannot tell this host
-            from one up for "266 d 6 h", and a deuteranope sees only a hue
-            change -- the state would ride on colour alone, which is precisely
-            what putting a WORD in the chip prevents. A duration is not a
-            severity. */}
-        {recentlyBooted && (
-          <Badge severity="warning">
-            rebooted {duration(host.uptime_s)} ago
-          </Badge>
-        )}
-        <span className="meta">
-          last seen{" "}
-          {host.last_seen === null ? ABSENT : relative(host.last_seen)}
-        </span>
-        {/* One range control for the whole page: every chart on every tab
-            is drawn from it, so no tab may grow one of its own. */}
-        <Segmented
-          options={RANGE_OPTIONS}
-          value={range}
-          onChange={(value) => setRange(value)}
-        />
-        {/* No Refresh button beside it. Both halves of the page poll every
-            POLL_MS, which is the agent's own reporting interval, so the button
-            asked the hub for numbers that could not have changed yet and its
-            reward was a header that looked identical. (The metric series skip
-            a turn while their buckets cannot have moved -- see the tab poll --
-            but a press would not have moved them either.) What it was
-            really for is stated instead: "last seen" says how fresh the
-            record is, and the note above says so out loud when a poll has
-            failed. `refresh` stays -- the load-failure "Try again" is a
-            retry a reader genuinely has to ask for, and the Containers tab
-            calls it after a purge. */}
       </header>
 
       <Tabs
