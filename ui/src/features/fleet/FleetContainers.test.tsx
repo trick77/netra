@@ -159,14 +159,16 @@ describe("FleetContainers", () => {
   it("does not claim the fleet runs no containers before they are read", () => {
     render(<FleetContainers rows={[]} showHost loaded={false} />);
 
-    expect(screen.queryByText(/no host in this fleet/i)).toBeNull();
+    expect(screen.queryByText(/no host has reported a container/i)).toBeNull();
     expect(screen.getByText(/not read yet/i)).toBeInTheDocument();
   });
 
-  it("says the fleet runs none once they have been read", () => {
+  it("says no host runs one once they have been read", () => {
     render(<FleetContainers rows={[]} showHost loaded />);
 
-    expect(screen.getByText(/no host in this fleet/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/no host has reported a container/i),
+    ).toBeInTheDocument();
   });
 
   // A column of independently scaled sparklines compares nothing: each row
@@ -220,9 +222,7 @@ describe("FleetContainers and the containers capability", () => {
 
     expect(screen.getByText("No containers collected")).toBeInTheDocument();
     expect(screen.getByText(/setup-agent\.sh/)).toBeInTheDocument();
-    expect(
-      screen.queryByText("No host in this fleet has reported a container."),
-    ).toBeNull();
+    expect(screen.queryByText("No host has reported a container.")).toBeNull();
   });
 
   // The generic wording is still right for a fleet that genuinely runs none.
@@ -237,7 +237,7 @@ describe("FleetContainers and the containers capability", () => {
     );
 
     expect(
-      screen.getByText("No host in this fleet has reported a container."),
+      screen.getByText("No host has reported a container."),
     ).toBeInTheDocument();
   });
 
@@ -283,7 +283,7 @@ describe("FleetContainers and the containers capability", () => {
     );
 
     expect(
-      screen.getByText("No host in this fleet has reported a container."),
+      screen.getByText("No host has reported a container."),
     ).toBeInTheDocument();
     expect(screen.queryByText("No containers collected")).toBeNull();
     // Beside the empty state, not instead of it: both facts hold.
@@ -298,9 +298,7 @@ describe("FleetContainers and the containers capability", () => {
     );
 
     expect(screen.getByText("No containers match")).toBeInTheDocument();
-    expect(
-      screen.queryByText("No host in this fleet has reported a container."),
-    ).toBeNull();
+    expect(screen.queryByText("No host has reported a container.")).toBeNull();
     expect(screen.queryByText(/setup-agent\.sh/)).toBeNull();
   });
 

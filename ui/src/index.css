@@ -2900,6 +2900,17 @@ a.tile:focus-visible {
      on it, including the nav. */
   flex-wrap: wrap;
 }
+/* The name and the place it names, stacked. The location used to be a flex
+   item of its own on this row, which put "Hetzner · Falkenstein, DE" between
+   the hostname and the status badge and let a wrap drop it anywhere along the
+   line. Under the title it stays attached to the thing it qualifies, and the
+   badges and controls close up beside the pair. */
+.hosthead .hostident {
+  display: flex;
+  flex-direction: column;
+  /* Tight: a subtitle, not a second row of chrome. */
+  gap: 2px;
+}
 .hosthead h1 {
   font-family: var(--font-serif);
   font-size: var(--text-display);
@@ -3350,7 +3361,10 @@ svg.spark {
   .tabs {
     flex-wrap: wrap;
   }
-  .hosthead h1 {
+  /* The name block takes the whole line at this width, so the badges and the
+     range control start a row of their own rather than trailing a title that
+     has already used most of one. It is the pair now, not the h1 alone. */
+  .hosthead .hostident {
     flex: 1 1 100%;
   }
   .siderail {

@@ -521,8 +521,16 @@ export function HostPage({
       {/* The header is identical on every tab -- it is what you are
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">
-        <h1 className="serif">{host.hostname}</h1>
-        {/* Where the host is, the same line the fleet row prints and from the
+        {/* The name and where the machine is, as one block. The location sat
+            to the RIGHT of the title, on the same wrapping row as the status
+            badge, the last-seen time and the range control -- a fact about
+            the machine filed among the page's controls, and the first thing
+            to be pushed onto a line of its own at a narrow width. Under the
+            hostname it reads as what it is: the subtitle of the name it
+            qualifies. */}
+        <div className="hostident">
+          <h1 className="serif">{host.hostname}</h1>
+          {/* Where the host is, the same line the fleet row prints and from the
             same function -- one definition, so the two pages cannot come to
             disagree about how a place is written. It replaces the site name,
             which was an internal label out of a table somebody fills in by
@@ -537,9 +545,11 @@ export function HostPage({
             Rendered conditionally rather than as `?? ABSENT`: on a host whose
             agent reports no location that put a lone em dash under the
             hostname with nothing beside it to say what was missing, which
-            reads as a rendering fault. .hosthead is a wrapping flex row, so
-            the badge simply takes the space back. */}
-        {location !== null && <span className="meta">{location}</span>}
+            reads as a rendering fault. The block simply collapses to the
+            hostname, which is what a header with nothing else to say should
+            be. */}
+          {location !== null && <span className="meta">{location}</span>}
+        </div>
         <Badge severity={status.severity}>{status.label}</Badge>
         {/* Beside the reporting status, not instead of it: the two answer
             different questions, and a host can be online AND four minutes

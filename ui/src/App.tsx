@@ -118,7 +118,7 @@ export default function App() {
               icon={Gauge}
               active={route.name === "fleet" && !onContainers}
             >
-              Fleet
+              Hosts
             </NavLink>
             {/* The entity still lives in the query string -- see FleetScreen
                 -- so this is the same page with a different reading, and the
@@ -139,12 +139,18 @@ export default function App() {
             >
               Events
             </NavLink>
+            {/* "Agents", not "Hosts", now that the list of machines is called
+                Hosts: this is where an agent's token is minted and the
+                command that installs it is shown, which is the fleet's other
+                half rather than a second list of the same machines. Two
+                entries both reading "Hosts" would have been the rail
+                contradicting itself. */}
             <NavLink
               href="/admin/hosts"
               icon={Server}
               active={route.name === "admin"}
             >
-              Hosts
+              Agents
             </NavLink>
           </div>
           {/* Settings is the only destination here that is not about the
