@@ -355,6 +355,31 @@ describe("HostPage", () => {
     it("still catches up within five minutes at 7d", async () => {
       expect(await refetches("7d", 5 * 60_000)).toBeGreaterThan(0);
     });
+
+    // The bucket argument is about SERIES. What rides along in the same poll
+    // -- units, containers, filesystems, events -- has no buckets: a unit that
+    // fails is as fresh as the poll that fetched it, and the header above says
+    // "last seen 20 s ago" while it does. Slowing those with the range would
+    // show a host clean for five minutes after it stopped being clean.
+    it("keeps fetching the tab's inventory every minute at 24h", async () => {
+      render(
+        <HostPage
+          hostId={7}
+          tab="overview"
+          onTabChange={() => {}}
+          range="24h"
+          onRangeChange={() => {}}
+        />,
+      );
+      await waitFor(() => expect(api.getUnits).toHaveBeenCalled());
+      const before = vi.mocked(api.getUnits).mock.calls.length;
+
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+
+      expect(vi.mocked(api.getUnits).mock.calls.length).toBeGreaterThan(before);
+    });
   });
 
   // usePoll keeps the last good record when a poll fails, which is right --

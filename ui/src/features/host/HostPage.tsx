@@ -2,7 +2,7 @@
 // then the active tab. This is the only file in the feature that talks to
 // the read API -- the tabs take plain props, so a tab renders identically
 // whether its data came from a fetch, a poll or a fixture.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getAddresses,
   getContainers,
@@ -254,6 +254,11 @@ export function HostPage({
     [hostId],
   );
 
+  // When the series last came down, and for which tab and range. A ref, not
+  // state: nothing renders from it, and writing it must not cost a render on
+  // every poll.
+  const seriesFetch = useRef({ key: "", at: 0 });
+
   // The active tab's own families, on that same tick. usePoll owns the
   // cancellation this effect used to hand-roll, and the window is resolved
   // INSIDE the call rather than once per range change, so each poll slides
@@ -262,15 +267,45 @@ export function HostPage({
   const tabPoll = usePoll(
     async (): Promise<Partial<TabData>> => {
       const window = rangeWindow(range);
+      // The SERIES, and only the series, slow down with the range.
+      //
+      // A chart cannot change faster than its own buckets -- the hub returns
+      // whole materialised buckets, so at 24h the newest point moves every
+      // five minutes and at 7d every hour -- and a tab asks for up to twelve
+      // families at once. Asking again every minute redraws the same picture.
+      //
+      // What rides along in this same poll does NOT follow that argument:
+      // units, containers, filesystems, drives, addresses, interfaces,
+      // packages and events are inventories with no buckets at all. A unit
+      // that fails, a container that exits, an event that lands -- those are
+      // as fresh as the poll that fetched them, and the header directly above
+      // says "last seen 20 s ago" while it does it. So the poll keeps running
+      // at POLL_MS and only the metric families skip a turn.
+      //
+      // Keyed on the tab as well as the range: a family the tab in front of
+      // you has never fetched must not wait out a five-minute timer to appear
+      // for the first time.
+      const key = `${hostId}:${tab}:${range}`;
+      const at = Date.now();
+      const due =
+        key !== seriesFetch.current.key ||
+        at - seriesFetch.current.at >= pollMsFor(rangeStepMs(range));
+      if (due) seriesFetch.current = { key, at };
+      // `undefined` rather than the previous response: what is already on
+      // screen lives in `data`, and the merge below leaves a family it is not
+      // told about alone. Returning null would blank the very charts this is
+      // saving a request for.
       const metrics = (family: string) =>
-        orNull(
-          getMetrics(hostId, {
-            family,
-            from: window.from,
-            to: window.to,
-            step: window.step,
-          }),
-        );
+        due
+          ? orNull(
+              getMetrics(hostId, {
+                family,
+                from: window.from,
+                to: window.to,
+                step: window.step,
+              }),
+            )
+          : Promise.resolve(undefined);
 
       async function load(): Promise<Partial<TabData>> {
         switch (tab) {
@@ -435,13 +470,7 @@ export function HostPage({
 
       return load();
     },
-    // The tab's families, at the cadence the RANGE justifies rather than the
-    // agent's. These are the page's heavy fetches -- a tab asks for up to
-    // twelve of them at once -- and a chart cannot change faster than its own
-    // buckets: at 7d that is an hour, so a 60-second poll redrew the same 168
-    // points sixty times an hour. The host record above keeps POLL_MS, since
-    // "last seen" and the reporting badge are claims about right now.
-    pollMsFor(rangeStepMs(range)),
+    POLL_MS,
     [hostId, tab, range],
   );
 
@@ -450,10 +479,23 @@ export function HostPage({
   // survive the switch. usePoll has already dropped the late answer of a
   // superseded run -- a response about a tab or a range nobody is on any
   // more -- which is what the cancelled flag here used to do.
+  //
+  // A family whose value is `undefined` is one this poll deliberately did not
+  // ask for -- a series whose buckets cannot have moved yet -- so it is
+  // skipped rather than merged: spreading it would write undefined over the
+  // chart already on screen.
   useEffect(() => {
     const loaded = tabPoll.data;
     if (loaded === null) return;
-    setData((prev) => ({ ...prev, ...loaded }));
+    setData((prev) => {
+      const next = { ...prev };
+      for (const [family, value] of Object.entries(loaded)) {
+        if (value !== undefined) {
+          (next as Record<string, unknown>)[family] = value;
+        }
+      }
+      return next;
+    });
   }, [tabPoll.data]);
 
   useEffect(() => {
@@ -589,10 +631,12 @@ export function HostPage({
           value={range}
           onChange={(value) => setRange(value)}
         />
-        {/* No Refresh button beside it. The page already polls both halves
-            every POLL_MS, which is the agent's own reporting interval, so the
-            button asked the hub for numbers that could not have changed yet
-            and its reward was a header that looked identical. What it was
+        {/* No Refresh button beside it. Both halves of the page poll every
+            POLL_MS, which is the agent's own reporting interval, so the button
+            asked the hub for numbers that could not have changed yet and its
+            reward was a header that looked identical. (The metric series skip
+            a turn while their buckets cannot have moved -- see the tab poll --
+            but a press would not have moved them either.) What it was
             really for is stated instead: "last seen" says how fresh the
             record is, and the note above says so out loud when a poll has
             failed. `refresh` stays -- the load-failure "Try again" is a
