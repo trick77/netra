@@ -232,6 +232,32 @@ describe("fetchHostTrends", () => {
   // every band base here has to be a column name the schema really has, and
   // one that does not resolve is indistinguishable on screen from a host
   // that reported nothing.
+  // The Memory cell's silhouette is mem_used -- MemTotal minus MemAvailable,
+  // the quantity its printed percentage is a gauge of -- and never the top
+  // of the partition below, which is "not free" and on a caching host stands
+  // near the ceiling while the figure says 30%.
+  it("carries mem_used as its own series for the memory silhouette", async () => {
+    serve({
+      host: response({
+        columns: ["mem_total", "mem_free", "mem_used"],
+        series: [
+          {
+            key: {},
+            points: [
+              [t0, 1000, 200, 300],
+              [t0 + hour, 1000, 100, 350],
+            ],
+          },
+        ],
+      }),
+    });
+
+    const trends = await fetchHostTrends(1, "1h");
+
+    // The third bucket is the window's last hour, which no sample landed in.
+    expect(trends.memUsed).toEqual([300, 350, null]);
+  });
+
   it("builds the memory partition rather than a single used band", async () => {
     serve({
       host: response({
@@ -766,6 +792,7 @@ describe("buildRows", () => {
       cpu: [{ name: "busy", color: "var(--s1)", values: [1, 2] }],
       mem: [],
       reporting: [1, 2],
+      memUsed: [3e9, 4e9],
       rx: [10],
       tx: [20],
       rxPeak: [],
@@ -780,6 +807,7 @@ describe("buildRows", () => {
     const rows = buildRows([host], new Map([[1, trends]]));
 
     expect(rows[0]!.cpu).toEqual(trends.cpu);
+    expect(rows[0]!.memUsed).toEqual(trends.memUsed);
     expect(rows[0]!.fullest).toEqual(trends.fullest);
   });
 });
