@@ -88,6 +88,21 @@ export interface HostTrends {
    * extra request.
    */
   reporting: (number | null)[];
+  /**
+   * mem_used over the window: MemTotal - MemAvailable, what `free` calls
+   * used. The Memory cell's silhouette, and the same quantity its printed
+   * percentage is a gauge of, so the shape and the figure beside it cannot
+   * disagree.
+   *
+   * NOT the top edge of `mem` above. That stack partitions mem_total into
+   * everything that is not free -- used, shared, ARC, buffers, cached -- so
+   * on a host doing nothing but serving files it stands at 97% while the
+   * figure beside it says 30%. The stack is still assembled: the enlarged
+   * view draws it, where "which part of memory is growing" is the question.
+   *
+   * From the `host` family, so it costs no extra request.
+   */
+  memUsed: (number | null)[];
   rx: (number | null)[];
   tx: (number | null)[];
   /**
@@ -585,10 +600,11 @@ export function trafficDetailSeries(t: {
  * together.
  */
 const FLEET_COLUMNS: Record<string, string[]> = {
-  // cpu_total for the silhouette and the reporting series; oom_kill_total for
-  // the attention band. The rest are memoryBands' five-band partition: it
-  // needs mem_free AND mem_total or it falls back to a lone mem_used band,
-  // and the others are the subsystems it subtracts.
+  // cpu_total for the silhouette and the reporting series; mem_used for the
+  // Memory cell's silhouette; oom_kill_total for the attention band. The
+  // rest are memoryBands' five-band partition, drawn by the enlarged view:
+  // it needs mem_free AND mem_total or it falls back to a lone mem_used
+  // band, and the others are the subsystems it subtracts.
   host: [
     "cpu_total",
     "mem_total",
@@ -692,6 +708,7 @@ export function hostTrendsFrom(
     cpu: cpuBands(host, cores).bands,
     mem: memoryBands(host),
     reporting: total,
+    memUsed: griddedValues(host, 0, "mem_used"),
     // The MEAN of each pixel column, summed across interfaces --
     // trafficSeries() carries why both halves of that are what RRDtool does.
     // The interface that actually burst is one click away on the host page,
@@ -851,6 +868,7 @@ export function buildRows(
       cpu: trend?.cpu ?? [],
       mem: trend?.mem ?? [],
       reporting: trend?.reporting ?? [],
+      memUsed: trend?.memUsed ?? [],
       rx: trend?.rx ?? [],
       tx: trend?.tx ?? [],
       rxPeak: trend?.rxPeak ?? [],

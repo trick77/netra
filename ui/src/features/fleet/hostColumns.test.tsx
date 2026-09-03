@@ -6,7 +6,7 @@
 // sub-300s uptime severity -- see task-11-brief.md.
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { stackBands } from "../../ui/charts/geometry";
+import { areaPath, linePath } from "../../ui/charts/geometry";
 import { SPARK_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
 import { hostColumns, type HostRow } from "./hostColumns";
 import { ABSENT } from "../../lib/format";
@@ -35,6 +35,7 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
       { name: "arc", color: "var(--s4)", values: [2e8, 2e8, 2e8] },
     ],
     reporting: [10, 12, 11],
+    memUsed: [3e9, 3.5e9, 4e9],
     rx: [1e6, 2e6, 1.5e6],
     tx: [5e5, 6e5, 4e5],
     net_rx_bytes: 1.5e6,
@@ -125,27 +126,32 @@ describe("hostColumns", () => {
       }
     });
 
-    it("sorts CPU on the stack's latest total", () => {
+    // cpu_total's last bucket -- where the silhouette the cell draws ends --
+    // and never the per-core bands, which are the enlarged view's and sum to
+    // something else here on purpose.
+    it("sorts CPU on where the cpu_total silhouette ends", () => {
       const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
 
-      // Live, because a stale host sorts as unknown whatever its stack says.
-      // The last bucket of each band: 11 + 6 + 2 + 0.
+      // Live, because a stale host sorts as unknown whatever its series says.
       expect(
-        cpu.sortValue!(makeRow({ last_seen: new Date().toISOString() })),
-      ).toBe(19);
+        cpu.sortValue!(
+          makeRow({
+            last_seen: new Date().toISOString(),
+            reporting: [10, 12, 11],
+            cpu: [{ name: "core 0", color: "var(--cpu-1)", values: [90, 90] }],
+          }),
+        ),
+      ).toBe(11);
     });
 
-    // Per band, not one shared index: the bands are gridded independently, so
-    // a band whose newest bucket has not landed must contribute its last
-    // REPORTED value rather than drop out of the total.
-    it("reads each CPU band's own last reported value", () => {
+    // The last REPORTED value, not the last bucket: the newest bucket is null
+    // whenever the rollup has not landed yet, and a host must not drop to the
+    // bottom of the list every time that happens.
+    it("reads cpu_total's last reported value past a trailing gap", () => {
       const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
       const row = makeRow({
         last_seen: new Date().toISOString(),
-        cpu: [
-          { name: "user", color: "var(--s1)", values: [10, 12, null] },
-          { name: "system", color: "var(--s2)", values: [5, 4, 6] },
-        ],
+        reporting: [10, 18, null],
       });
 
       expect(cpu.sortValue!(row)).toBe(18);
@@ -154,7 +160,7 @@ describe("hostColumns", () => {
     it("gives a host that has never reported CPU no sort value", () => {
       const cpu = hostColumns("1h").find((c) => c.header === "CPU")!;
 
-      expect(cpu.sortValue!(makeRow({ cpu: [] }))).toBeNull();
+      expect(cpu.sortValue!(makeRow({ reporting: [] }))).toBeNull();
     });
 
     // A fraction of the ceiling the cell draws against, never the bytes: on
@@ -444,41 +450,67 @@ describe("hostColumns", () => {
   });
 
   describe("cpu cell", () => {
-    // Without a ceiling StackedSparkline auto-scales each host to its own
-    // running total, so an idle host and a saturated one draw the identical
-    // silhouette and the rows stop being comparable -- the one thing a fleet
-    // list is for. Two rows an order of magnitude apart must not render the
-    // same path data.
-    it("scales every host's stack to 100, not to its own peak", () => {
+    // Without a ceiling Sparkline auto-scales each host to its own extent,
+    // so an idle host and a saturated one draw the identical silhouette and
+    // the rows stop being comparable -- the one thing a fleet list is for.
+    // Two rows an order of magnitude apart must not render the same path
+    // data.
+    it("scales every host's silhouette to 100, not to its own peak", () => {
       const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
       const idle = render(
-        <>
-          {cpuCol.cell(
-            makeRow({
-              cpu: [{ name: "user", color: "var(--s1)", values: [1, 2, 3] }],
-            }),
-          )}
-        </>,
+        <>{cpuCol.cell(makeRow({ reporting: [1, 2, 3] }))}</>,
       );
       const idlePaths = idle.container.innerHTML;
       idle.unmount();
 
       const busy = render(
-        <>
-          {cpuCol.cell(
-            makeRow({
-              cpu: [{ name: "user", color: "var(--s1)", values: [30, 60, 90] }],
-            }),
-          )}
-        </>,
+        <>{cpuCol.cell(makeRow({ reporting: [30, 60, 90] }))}</>,
       );
 
       expect(busy.container.innerHTML).not.toBe(idlePaths);
     });
 
+    // The cell draws cpu_total as one silhouette, and never the per-core
+    // stack: up to 32 bands in four cycling blues inside 45px was a texture
+    // whose hues meant "core index", and it buried the one thing a fleet
+    // glance reads off this cell -- whether the top edge moved. The stack is
+    // what the enlarged view opens on, not what the row draws.
+    it("draws one silhouette from cpu_total, not the per-core stack", () => {
+      const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
+      const row = makeRow({
+        reporting: [10, 50, 90],
+        cpu: Array.from({ length: 32 }, (_, i) => ({
+          name: `core ${i}`,
+          color: `var(--cpu-${(i % 4) + 1})`,
+          values: [1, 2, 3],
+        })),
+      });
+      const { container } = render(<>{cpuCol.cell(row)}</>);
+
+      const series = container.querySelectorAll("[data-series]");
+      expect(series).toHaveLength(1);
+      expect(container.querySelector("path[data-band]")).toBeNull();
+      // Both ends pinned, so the silhouette is a fraction of the box: a line
+      // from the series' own minimum would put a host steady at 40% along
+      // the bottom edge.
+      const line = container.querySelector("path[data-line]")!;
+      const expected = linePath(
+        row.reporting,
+        SPARK_WIDTH,
+        SPARK_HEIGHT,
+        0,
+        100,
+        2,
+      ).paths;
+      expect(line.getAttribute("d")).toBe(expected[0]);
+      // Filled to the baseline, in the one hue cpu_total draws in everywhere.
+      const area = container.querySelector("path[data-area]")!;
+      expect(area.getAttribute("fill")).toBe("var(--cpu-1)");
+    });
+
     // The cell drew a shape and no number: "how loaded is that host" was
     // answerable only by eye, and only against the row above it.
-    it("prints the stack's current total and what it is a fraction of", () => {
+    it("prints where the silhouette ends and what it is a fraction of", () => {
       const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
       const { container } = render(
         <>
@@ -489,6 +521,9 @@ describe("hostColumns", () => {
               // last_seen is fixed in the past, and a stale host prints no
               // reading at all.
               last_seen: new Date().toISOString(),
+              // cpu_total, the series the cell draws -- never the per-core
+              // bands, which sum to something else here on purpose.
+              reporting: [10, 20, 34],
               cpu: [
                 { name: "user", color: "var(--s1)", values: [10, 20, 30] },
                 { name: "system", color: "var(--s2)", values: [1, 2, 4] },
@@ -498,7 +533,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      // 30 + 4 at the last bucket, the same total the column sorts on.
+      // The last bucket of cpu_total, the same figure the column sorts on.
       expect(container.textContent).toContain("34");
       expect(container.textContent).toContain("of 8 cores");
     });
@@ -725,38 +760,51 @@ describe("hostColumns", () => {
       expect(container.querySelector(".legend")).toBeNull();
     });
 
-    it("scales the stack against mem_total, not the sum of its bands, so free is the gap to the top", () => {
+    // mem_used as one silhouette, scaled against mem_total -- never the
+    // five-band stack. The stack's top edge is "not free", which on a Linux
+    // host that caches everything is nearly the whole box, so every row was
+    // a near-full brick beside a figure saying 30%. The silhouette is the
+    // quantity the figure is a gauge of, so the two are one reading.
+    it("draws mem_used against mem_total, not the not-free stack, so the shape agrees with the figure", () => {
       const cols = hostColumns("1h");
       const memCol = cols.find((c) => c.header === "Memory")!;
       const row = makeRow({
         mem_total: 16_000_000_000,
+        memUsed: [3e9, 4e9],
+        // A stack that would fill the box if the cell drew it.
         mem: [
           { name: "used", color: "var(--s1)", values: [3e9, 3e9] },
-          { name: "buffers", color: "var(--s2)", values: [1e8, 1e8] },
-          { name: "cached", color: "var(--s3)", values: [5e8, 5e8] },
-          { name: "arc", color: "var(--s4)", values: [2e8, 2e8] },
+          { name: "buffers", color: "var(--s2)", values: [1e9, 1e9] },
+          { name: "cached", color: "var(--s3)", values: [9e9, 9e9] },
+          { name: "arc", color: "var(--s4)", values: [2e9, 2e9] },
         ],
       });
       const { container } = render(<>{memCol.cell(row)}</>);
-      // No dashed total rule in the row: the stack is scaled to mem_total, so
-      // its height already says how full the host is, and the enlarged chart
-      // is where the ceiling gets drawn as a rule.
+      // No dashed total rule in the row: the silhouette is scaled to
+      // mem_total, so its height already says how full the host is, and the
+      // enlarged chart is where the ceiling gets drawn as a rule.
       expect(container.querySelector("line[data-reference]")).toBeNull();
-      const paths = Array.from(
-        container.querySelectorAll("path[data-band]"),
-      ).map((p) => p.getAttribute("d"));
-      const expected = stackBands(
-        row.mem.map((b) => b.values),
+      expect(container.querySelector("path[data-band]")).toBeNull();
+      expect(container.querySelectorAll("[data-series]")).toHaveLength(1);
+      const line = container.querySelector("path[data-line]")!;
+      const expected = linePath(
+        row.memUsed!,
         // The shared sparkline size, not literals: every list chart reads it
         // from one pair of constants so a row's cells stay the same shape.
         SPARK_WIDTH,
         SPARK_HEIGHT,
-        // Scaled to mem_total plus the headroom that keeps a full stack off
-        // the border. Free is still the gap between the stack and the top.
+        // From zero to mem_total plus the headroom that keeps a full host off
+        // the border. Free is the gap between the line and the top.
+        0,
         (row.mem_total as number) * 1.08,
         2,
+      ).paths;
+      expect(line.getAttribute("d")).toBe(expected[0]);
+      const area = container.querySelector("path[data-area]")!;
+      expect(area.getAttribute("d")).toBe(
+        areaPath(expected, SPARK_WIDTH, SPARK_HEIGHT, 2)[0],
       );
-      expect(paths).toEqual(expected);
+      expect(area.getAttribute("fill")).toBe("var(--mem-used)");
     });
 
     it("renders nothing at all, not a chart with an invented ceiling, when mem_total is unknown", () => {

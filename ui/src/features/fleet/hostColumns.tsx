@@ -10,7 +10,8 @@ import { Badge } from "../../ui/Badge";
 import { Meter, severityFromPercent } from "../../ui/Meter";
 import { OsIcon } from "../../ui/OsIcon";
 import { Reading } from "../../ui/Reading";
-import { StackedSparkline, type Band } from "../../ui/charts/StackedSparkline";
+import type { Band } from "../../ui/charts/StackedSparkline";
+import { Sparkline } from "../../ui/charts/Sparkline";
 import { DETAIL_WIDTH } from "../../ui/charts/size";
 import {
   DOWN_COLOR,
@@ -56,9 +57,12 @@ export type { Range };
  *
  * `cpu`/`mem`: bytes/percent-per-second bands, already named and coloured
  * (`var(--sN)`) by whatever builds this row -- this file never invents a
- * hue (spec: no hardcoded colour in a .tsx file). `mem_total` (bytes, see
- * lib/api.ts's Host type) is the chart's scale ceiling for Memory, not an
- * extra band -- see the Memory column below for why.
+ * hue (spec: no hardcoded colour in a .tsx file). Neither stack is drawn in
+ * the ROW any more: the cells draw one silhouette each, `reporting` for CPU
+ * and `memUsed` for Memory, and the bands are what the ENLARGED view opens
+ * on. `mem_total` (bytes, see lib/api.ts's Host type) is the chart's scale
+ * ceiling for Memory, not an extra band -- see the Memory column below for
+ * why.
  */
 export type HostRow = Host & {
   // location/provider/facility are NOT declared here: they ride `Host`,
@@ -76,6 +80,12 @@ export type HostRow = Host & {
    * status badge is judged from. See HostTrends.reporting for why it is not
    * `cpu[0]`. */
   reporting: (number | null)[];
+  /** mem_used over the window -- the Memory cell's silhouette, and the same
+   * quantity the percentage beside it is a gauge of. See HostTrends.memUsed
+   * for why it is not the top of the `mem` stack. Optional for the same
+   * reason `rxPeak` is: a row assembled without it draws an empty chart
+   * rather than failing to compile. */
+  memUsed?: (number | null)[];
   // (number | null)[], matching Band.values, because an agent outage inside
   // the window is a hole in these series too. Typed number[] the row could
   // not express one, and UpDownSparkline -- which already breaks each side
@@ -312,22 +322,33 @@ function HostCell({ row }: { row: HostRow }) {
   );
 }
 
-// The stack is scaled to 100, never to its own running total. Without a
-// ceiling StackedSparkline auto-scales each host to its own peak, so a host
-// idling at 3% and one saturated at 90% draw the identical silhouette
-// touching the top of the box -- the rows stop being comparable, which is
-// what a fleet list is for. It is the same always-full reading MemoryCell
-// below carries its own ceiling to avoid; the spec's silhouette is
-// cpu_total, not cpu_total normalised to itself.
+// The silhouette is scaled to 100, never to its own peak. Without a ceiling
+// Sparkline auto-scales each host to its own extent, so a host idling at 3%
+// and one saturated at 90% draw the identical silhouette touching the top of
+// the box -- the rows stop being comparable, which is what a fleet list is
+// for. It is the same always-full reading MemoryCell below carries its own
+// ceiling to avoid; the spec's silhouette is cpu_total, not cpu_total
+// normalised to itself.
 
 const CPU_PERCENT_MAX = 100;
 
+// One line and a light fill, in --cpu-1: the colour a one-core host's
+// cpu_total already drew in, and the colour every host's cpu_total is drawn
+// in on the host page. The row used to draw the per-core stack here -- up to
+// 32 bands in four cycling blues, a hairline between each, inside 45px. What
+// a fleet glance reads off this cell is whether the top edge moved, and the
+// stripes buried exactly that under a texture whose hues meant "core index".
+// The per-core stack is still what the ENLARGED view opens on: it has the
+// room, and "which core is pinned" is the question someone opens it to ask.
+const CPU_COLOR = "var(--cpu-1)";
+
 function CpuCell({ row, range }: { row: HostRow; range: Range }) {
-  // latestStackTotal, the same helper this column sorts on: the number the
-  // cell prints and the order the column puts its rows in cannot disagree.
-  // Normalised against cpu_total by the assembler, so it is percent of THIS
-  // host and a 32-core box does not outrank a busy 4-core one.
-  const busy = isReporting(row) ? latestStackTotal(row.cpu) : null;
+  // The right-hand edge of the silhouette the cell draws, which is also what
+  // this column sorts on: the number the cell prints, the shape beside it and
+  // the order the column puts its rows in cannot disagree. cpu_total is
+  // already percent of THIS host, so a 32-core box does not outrank a busy
+  // 4-core one.
+  const busy = isReporting(row) ? lastReported(row.reporting) : null;
   // The page keeps the cell's normalisation and its 0-100 ceiling, which is
   // why the link goes to host-cpu and not to the Graphs tab's "CPU cores":
   // normalised, the per-core stack tops out at cpu_total, so 100 is a real
@@ -377,9 +398,14 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
       ranges={RAIL_RANGES}
       fetchSeries={fetchSeries}
     >
-      <StackedSparkline
-        bands={row.cpu}
+      <Sparkline
+        values={row.reporting}
+        // min={0} as well as the ceiling: Sparkline auto-scales BOTH ends to
+        // the data, and a floor at the series' own minimum would draw a host
+        // steady at 40% as a flat line along the bottom of the box.
+        min={0}
         max={CPU_PERCENT_MAX}
+        color={CPU_COLOR}
         label={`CPU trend, ${rangeLabel(range)}`}
       />
     </Enlargeable>
@@ -413,16 +439,27 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
 // "scales the stack against mem_total" test, which proves this by
 // recomputing stackBands() with the same max and diffing the rendered
 // path data against it.
-// Scaled to mem_total, the height of the stack IS how full the host is: the
-// cell prints no figure, like the CPU cell beside it, so the shape carries
-// the whole reading. The dashed total rule this headroom was originally for
-// is gone from the row -- five bands, a rule and a severity mark inside 45px
-// was more marks than a cell that exists to be scanned can carry. The
-// headroom stays: without it a nearly-full host draws flush against the
-// border and reads as clipped rather than as full. The ENLARGED chart and
-// the host page's Memory panel still draw the rule, where there is room for
-// it to read as a ceiling.
+// Scaled to mem_total, the height of the silhouette IS how full the host is.
+// The dashed total rule this headroom was originally for is gone from the
+// row -- five bands, a rule and a severity mark inside 45px was more marks
+// than a cell that exists to be scanned can carry. The headroom stays:
+// without it a nearly-full host draws flush against the border and reads as
+// clipped rather than as full. The ENLARGED chart and the host page's Memory
+// panel still draw the rule, where there is room for it to read as a
+// ceiling.
 const MEM_HEADROOM = 1.08;
+
+// The row draws mem_used as one silhouette, in --mem-used, and NOT the
+// five-band stack any more. The stack's top edge is "not free" -- used,
+// shared, ARC, buffers, cached -- which on a Linux host that caches
+// everything is nearly the whole box, so every row was a near-full brick
+// beside a figure saying 30%: the shape and the number disagreed about the
+// same machine, and a reader could not say which to believe. The silhouette
+// is the quantity the figure is a gauge of, so its height and the percentage
+// beside it are one reading. The stack is still what the ENLARGED view opens
+// on, with the bands named -- "which part of memory is growing" is the
+// question someone opens it to ask.
+const MEM_COLOR = "var(--mem-used)";
 
 function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   if (row.mem_total === null) {
@@ -478,20 +515,21 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
       ranges={RAIL_RANGES}
       fetchSeries={fetchSeries}
     >
-      <StackedSparkline
-        bands={row.mem}
-        // Scaled to mem_total, with a little headroom so a nearly-full host
-        // does not draw its stack flush against the border and read as clipped.
+      <Sparkline
+        values={row.memUsed ?? []}
+        // Scaled from zero to mem_total, with a little headroom so a
+        // nearly-full host does not draw flush against the border and read
+        // as clipped. Both ends pinned: Sparkline auto-scales to the data
+        // otherwise, which is the always-full reading this cell exists to
+        // avoid.
+        min={0}
         max={total * MEM_HEADROOM}
+        color={MEM_COLOR}
         // No legend, like every other cell in this row. A previous review
         // argued the five memory bands carry identity a legend should name and
         // turned it back on here; that is not the call. These are sparklines
-        // in a dense list -- the shape is the message, and naming five bands
-        // under a 45px chart costs more row height than the names are worth.
-        // The host page's Memory panel is where the breakdown gets named.
-        //
-        // The ENLARGED view does name them: it has the room, and "which part
-        // of memory is growing" is the question someone opens it to ask.
+        // in a dense list -- the shape is the message. The ENLARGED view
+        // names the bands: it has the room.
         label={`Memory trend, ${rangeLabel(range)}`}
       />
     </Enlargeable>
@@ -695,25 +733,6 @@ function DiskCell({ row }: { row: HostRow }) {
 // (HostPage.tsx, RECENT_BOOT_S), which is where a reader who has asked
 // about one machine can act on it.
 
-/**
- * The stack's latest total: what a stacked sparkline's right-hand edge is
- * standing at, summed across every band.
- *
- * Per-band lastReported rather than one shared index, because the bands are
- * gridded independently and a host whose newest cpu_core bucket has landed
- * for six cores and not the seventh must not read as having lost that core's
- * load. Null only when NO band ever reported -- which is the "unknown" the
- * table sorts last, and is not the same as a host genuinely sitting at 0.
- */
-function latestStackTotal(bands: readonly Band[]): number | null {
-  let total: number | null = null;
-  for (const band of bands) {
-    const v = lastReported(band.values);
-    if (v !== null) total = (total ?? 0) + v;
-  }
-  return total;
-}
-
 export function hostColumns(range: Range): Column<HostRow>[] {
   return [
     {
@@ -749,15 +768,16 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       key: "cpu",
       header: "CPU",
       cell: (row) => <CpuCell row={row} range={range} />,
-      // Where the stack stands now -- the figure the cell prints, read
+      // Where the silhouette ends -- the figure the cell prints, read
       // through the same guard the cell reads it through, so a host whose
       // last sample is hours old sorts as unknown rather than as busy.
       // Without that a machine that died at 90% sits above every live host
       // in the fleet while printing no figure at all, which is exactly what
       // the traffic column's own guard is there to prevent.
-      // Normalised against cpu_total by the assembler, so this is percent of
-      // THIS host and a 32-core box does not outrank a busy 4-core one.
-      sortValue: (row) => (isReporting(row) ? latestStackTotal(row.cpu) : null),
+      // cpu_total is percent of THIS host, so a 32-core box does not outrank
+      // a busy 4-core one.
+      sortValue: (row) =>
+        isReporting(row) ? lastReported(row.reporting) : null,
     },
     {
       key: "memory",
