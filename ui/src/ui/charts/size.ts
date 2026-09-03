@@ -33,9 +33,11 @@ export const SPARK_WIDTH = 150;
  */
 export const SPARK_HEIGHT = 45;
 /** The height of a sparkline that sits OVER a now-bar (ui/NowReading) in a
- * fleet cell rather than beside a reading: the bar and its unit line take
- * the rest of the row's height, and 26 keeps a CPU or Memory cell the same
- * height as the 45px traffic chart beside it. */
+ * fleet cell rather than beside a reading. The bar, its figure and its unit
+ * line take about 37px under it, so the cell measures ~63px and the fleet
+ * row is taller than the 45px traffic chart beside it; that is the row's
+ * height now, and the traffic cell centres in it. 26 is the least a
+ * silhouette stays readable at over 150px. */
 export const SPARK_STRIP_HEIGHT = 26;
 
 /**

@@ -251,7 +251,9 @@ describe("hostColumns", () => {
       expect(container.querySelector(".dmount")?.textContent).toBe(
         "/var/log +6",
       );
-      expect(container.querySelector(".dpct")?.textContent).toBe("91%");
+      expect(
+        container.querySelector(".disk-cell .metric-now .v")?.textContent,
+      ).toBe("91%");
       expect(container.querySelector(".dfree")?.textContent).toBe(
         "3.1 GB left",
       );
@@ -267,7 +269,9 @@ describe("hostColumns", () => {
           {disk.cell(makeRow({ fullest: { mount: "/", pct: 96, others: 0 } }))}
         </>,
       );
-      expect(crit.container.querySelector(".dpct.st-crit")).toBeInTheDocument();
+      expect(
+        crit.container.querySelector(".disk-cell .metric-now .v.st-crit"),
+      ).toBeInTheDocument();
       crit.unmount();
 
       const calm = render(
@@ -277,7 +281,9 @@ describe("hostColumns", () => {
       );
       // No severity class at all when there is nothing to say: a calm row is
       // plain ink, not green.
-      expect(calm.container.querySelector(".dpct")?.className).toBe("v dpct");
+      expect(
+        calm.container.querySelector(".disk-cell .metric-now .v")?.className,
+      ).toBe("v");
     });
 
     // free is optional on the row -- the assembler leaves it unset when the

@@ -11,7 +11,11 @@ import { NowReading } from "../../ui/NowReading";
 import { OsIcon } from "../../ui/OsIcon";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { Sparkline } from "../../ui/charts/Sparkline";
-import { DETAIL_WIDTH, SPARK_STRIP_HEIGHT } from "../../ui/charts/size";
+import {
+  DETAIL_WIDTH,
+  SPARK_STRIP_HEIGHT,
+  SPARK_WIDTH,
+} from "../../ui/charts/size";
 import {
   DOWN_COLOR,
   UP_COLOR,
@@ -331,6 +335,24 @@ function HostCell({ row }: { row: HostRow }) {
 
 const CPU_PERCENT_MAX = 100;
 
+// The three saturation cells are as wide as the sparkline, from the same
+// constant the chart is drawn with, so the now-bar under a chart is exactly
+// the chart's width and the disk cell -- which has no chart to size it --
+// lines up with the two beside it. Inline rather than a CSS literal: the
+// stylesheet has copied SPARK_WIDTH before and been left behind when it moved
+// (see the note above .tablewrap svg.spark in index.css).
+const METRIC_CELL_STYLE = { width: SPARK_WIDTH };
+// The gap .metric-cell puts between its chart and its now-line, in
+// index.css. Named here because the disk cell has to reserve the chart's
+// height plus that gap above its own bar, so the three bars in a row form one
+// line: without it the chartless cell sits centred in the row and its bar
+// lands 16px above the other two.
+const METRIC_CELL_GAP = 3;
+const DISK_CELL_STYLE = {
+  width: SPARK_WIDTH,
+  paddingTop: SPARK_STRIP_HEIGHT + METRIC_CELL_GAP,
+};
+
 // One line and a light fill, in --cpu-1: the colour a one-core host's
 // cpu_total already drew in, and the colour every host's cpu_total is drawn
 // in on the host page. The row used to draw the per-core stack here -- up to
@@ -414,7 +436,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
   );
 
   return (
-    <div className="metric-cell">
+    <div className="metric-cell" style={METRIC_CELL_STYLE}>
       {chart}
       {busy !== null && (
         <NowReading
@@ -539,7 +561,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   );
 
   return (
-    <div className="metric-cell">
+    <div className="metric-cell" style={METRIC_CELL_STYLE}>
       {chart}
       {used !== null && (
         <NowReading
@@ -696,17 +718,19 @@ function DiskCell({ row }: { row: HostRow }) {
   // is "not known" -- the assembler leaves it unset when the host reported
   // no size -- and prints nothing rather than a dash.
   return (
-    <div className="metric-cell disk-cell">
-      <NowReading pct={pct} label={`Disk ${label}`} className="dpct" />
-      <span className="u">
-        <span className="dmount">{label}</span>
-        {free == null ? null : (
+    <div className="metric-cell disk-cell" style={DISK_CELL_STYLE}>
+      <NowReading
+        pct={pct}
+        label={`Disk ${label}`}
+        under={
           <>
-            {" · "}
-            <span className="dfree">{bytes(free)} left</span>
+            <span className="dmount">{label}</span>
+            {free == null ? null : (
+              <span className="dfree">{bytes(free)} left</span>
+            )}
           </>
-        )}
-      </span>
+        }
+      />
     </div>
   );
 }

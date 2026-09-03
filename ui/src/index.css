@@ -933,11 +933,11 @@ tbody tr:hover .host-cell-name {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  /* 3px, which hostColumns.tsx's METRIC_CELL_GAP has to match: the disk
+     cell reserves the chart's height plus this gap above its bar so the
+     three bars in a row form one line. The width is set inline from
+     SPARK_WIDTH, never here. */
   gap: 3px;
-  /* SPARK_WIDTH (ui/charts/size.ts): the bar under the chart is as wide as
-     the chart, and the disk cell, which has no chart, is as wide as the two
-     cells beside it. */
-  width: 150px;
 }
 .metric-now-wrap {
   display: flex;
@@ -951,25 +951,16 @@ tbody tr:hover .host-cell-name {
   gap: var(--space-2);
   width: 100%;
 }
-/* The figure, in the row's own size with the unit a step smaller and
-   quieter -- "34 %", not "34%" -- the way Reading prints it, so a fleet row
-   and a container row print the same kind of number. Fixed width and right-
-   aligned so the figures form a column down the page. */
+/* The figure's type is .metric-read's, shared by selector below rather than
+   copied, so a fleet row and a container row print the same kind of number.
+   What is this cell's own: a fixed width, right-aligned, so the figures form
+   a column down the page beside bars of one width. */
 .metric-now .v {
-  font-size: var(--text-ui);
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
   width: 44px;
   flex: none;
   text-align: right;
   white-space: nowrap;
   line-height: 1.2;
-}
-.metric-now .v small {
-  font-size: var(--text-micro);
-  color: var(--muted);
-  margin-left: 2px;
 }
 /* The figure takes the bar's severity, because they are one reading. Text
    steps, never the mark's hue -- see the --st-*-text note in the palette. */
@@ -982,19 +973,30 @@ tbody tr:hover .host-cell-name {
 .metric-now .v.st-crit {
   color: var(--st-crit-text);
 }
-/* The unit line -- "of 8 cores", "of 62.8 GiB", "/var/log +6 · 3.2 GB left".
-   --muted-2, the same step the location under a hostname takes: it says
-   what the figure above it is measured against and is never itself the
-   reading. */
-.metric-cell .u {
-  font-size: var(--text-micro);
-  color: var(--muted-2);
-  font-variant-numeric: tabular-nums;
+/* The unit line under the bar. Scoped to .metric-now-wrap and NOT to the
+   cell: the enlarged chart (Enlargeable renders ChartDetail as a sibling
+   inside the cell, not in a portal) carries a .u of its own in its header,
+   and a cell-wide rule restyled the CPU dialog's unit to micro grey.
+
+   A flex row so the disk cell's two halves can share it: the mount gives way
+   and ellipsises, the bytes-left figure never does -- it is the fact the
+   percentage cannot say on its own, so a long mount must not truncate it
+   away. Plain text ("of 8 cores") is one flex item and lays out as before. */
+.metric-now-wrap .u {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
   white-space: nowrap;
+  line-height: 1.25;
+}
+.metric-now-wrap .dmount {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 100%;
-  line-height: 1.25;
+}
+.metric-now-wrap .dfree {
+  flex: none;
 }
 /* The ten-cell bar. Unlit cells are the track colour the Meter uses, lit
    ones take the severity token the Meter fills with, so the disk meter on
@@ -1041,7 +1043,11 @@ tbody tr:hover .host-cell-name {
   flex: none;
   line-height: 1.35;
 }
-.metric-read .v {
+/* Shared with the fleet's now-line (.metric-now, above): one ruleset for
+   the figure, its unit and the line under it, so the two lists cannot drift
+   apart in type. */
+.metric-read .v,
+.metric-now .v {
   font-size: var(--text-ui);
   color: var(--ink);
   font-variant-numeric: tabular-nums;
@@ -1050,7 +1056,8 @@ tbody tr:hover .host-cell-name {
 /* The unit rides the figure a step smaller and a step quieter -- "34 %", not
    "34%". At the same size the percent sign reads as a digit, which is
    exactly what a column of tabular figures does not need. */
-.metric-read .v small {
+.metric-read .v small,
+.metric-now .v small {
   font-size: var(--text-micro);
   color: var(--muted);
   margin-left: 2px;
@@ -1058,7 +1065,8 @@ tbody tr:hover .host-cell-name {
 /* The unit line -- "of 8 cores", "of 62.8 GiB". --muted-2, the same step the
    location under a hostname takes: it says what the figure above it is
    measured against and is never itself the reading. */
-.metric-read .u {
+.metric-read .u,
+.metric-now-wrap .u {
   font-size: var(--text-micro);
   color: var(--muted-2);
   font-variant-numeric: tabular-nums;
@@ -1070,12 +1078,13 @@ tbody tr:hover .host-cell-name {
    rule.
 
    In the fleet table it never comes to that: `.tablewrap svg.spark` takes the
-   max-width off, so the three cells hold their 150x45 and the BOX scrolls.
-   Measured against the simulated fleet, traffic, CPU and memory all render
-   exactly 150x45 at 1440px, and still 150x45 at 1100px, where the wrap is 987
+   max-width off, so the cells hold their width and the BOX scrolls.
+   Measured against the simulated fleet, traffic, CPU and memory all rendered
+   at their full 150px at 1440px, and still at 1100px, where the wrap is 987
    wide inside 823 and scrolls (measured while a fourth, filesystem, was still
-   in the row; the three that remain have more width, not less). What this
-   rule protects is
+   in the row and all three charts were 150x45; CPU and memory are now a
+   150x26 strip over a now-line, which changes the heights and not the
+   argument). What this rule protects is
    therefore the OTHER placements of the cell, and the shape of the failure it
    protects them from: .traffic-rates never shrinks, so ~110px of the cell is
    spoken for before the chart gets any, and min-width:0 would hand the whole
@@ -1106,8 +1115,8 @@ tbody tr:hover .host-cell-name {
      45px it no longer does -- left at flex-start the rates hang off the top
      of the mark they annotate. */
   justify-content: center;
-  /* Same fixed block as .metric-read one column over, so the three cells in
-     a row start their readings at the same x. Left-aligned, not right: each
+  /* A fixed block, like .metric-read in the container list, so a column of
+     rates starts at one x. Left-aligned, not right: each
      line opens with its direction, and those two words are what a reader
      scans down, not the digits. */
   width: 98px;

@@ -1,4 +1,8 @@
-import { severityFromPercent, type FillSeverity } from "./Meter";
+import {
+  SEVERITY_CLASS,
+  severityFromPercent,
+  type FillSeverity,
+} from "./Meter";
 
 /**
  * The current value of a percentage as a row of ten cells, lit from the left.
@@ -19,25 +23,28 @@ import { severityFromPercent, type FillSeverity } from "./Meter";
  */
 export const SEGMENT_CELLS = 10;
 
-const SEVERITY_CLASS: Record<FillSeverity, string> = {
-  ok: "st-ok",
-  warning: "st-warn",
-  serious: "st-serious",
-  critical: "st-crit",
-};
-
 /** Cells lit for a percentage: the nearest tenth, clamped to the row. */
 export function litCells(pct: number): number {
   if (!Number.isFinite(pct)) return 0;
   return Math.max(0, Math.min(SEGMENT_CELLS, Math.round(pct / 10)));
 }
 
-export function SegmentBar({ pct, label }: { pct: number; label?: string }) {
+export function SegmentBar({
+  pct,
+  severity,
+  label,
+}: {
+  pct: number;
+  /** Already decided by the caller, when it prints a figure in the same
+   * colour and must not judge the value twice. Judged here otherwise. */
+  severity?: FillSeverity;
+  label?: string;
+}) {
   const lit = litCells(pct);
-  const severity = SEVERITY_CLASS[severityFromPercent(pct)];
+  const cls = SEVERITY_CLASS[severity ?? severityFromPercent(pct)];
   return (
     <div
-      className={`segbar ${severity}`}
+      className={`segbar ${cls}`}
       role="meter"
       aria-valuemin={0}
       aria-valuemax={100}

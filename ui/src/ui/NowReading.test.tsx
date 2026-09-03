@@ -30,10 +30,35 @@ describe("NowReading", () => {
     expect(container.querySelector(".u")).toBeNull();
   });
 
-  // A caller that has to find its own figure -- the disk cell's tests look
-  // for .dpct -- can hang a class on it without losing the severity.
-  it("keeps a caller's class on the figure alongside the severity", () => {
-    const { container } = render(<NowReading pct={76} className="dpct" />);
-    expect(container.querySelector(".dpct.st-warn")).toBeInTheDocument();
+  // Judged once: the bar is handed the severity the figure was coloured
+  // with, so the two cannot disagree at a threshold.
+  it("gives the bar the same severity as the figure", () => {
+    const { container } = render(<NowReading pct={86} />);
+    expect(container.querySelector(".segbar")?.className).toBe(
+      "segbar st-serious",
+    );
+    expect(container.querySelector(".metric-now .v")?.className).toBe(
+      "v st-serious",
+    );
+  });
+
+  // The disk cell hands over markup rather than a string: the mount and the
+  // bytes left are two spans the stylesheet lays out as one line.
+  it("accepts markup under the bar", () => {
+    const { container } = render(
+      <NowReading
+        pct={40}
+        under={
+          <>
+            <span className="dmount">/</span>
+            <span className="dfree">14 GB left</span>
+          </>
+        }
+      />,
+    );
+    expect(container.querySelector(".u .dmount")?.textContent).toBe("/");
+    expect(container.querySelector(".u .dfree")?.textContent).toBe(
+      "14 GB left",
+    );
   });
 });
