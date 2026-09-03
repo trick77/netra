@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { areaPath, linePath } from "../../ui/charts/geometry";
-import { SPARK_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
+import { SPARK_STRIP_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
 import { hostColumns, type HostRow } from "./hostColumns";
 import { ABSENT } from "../../lib/format";
 
@@ -275,7 +275,9 @@ describe("hostColumns", () => {
           {disk.cell(makeRow({ fullest: { mount: "/", pct: 21, others: 0 } }))}
         </>,
       );
-      expect(calm.container.querySelector(".dpct")?.className).toBe("dpct");
+      // No severity class at all when there is nothing to say: a calm row is
+      // plain ink, not green.
+      expect(calm.container.querySelector(".dpct")?.className).toBe("v dpct");
     });
 
     // free is optional on the row -- the assembler leaves it unset when the
@@ -497,7 +499,7 @@ describe("hostColumns", () => {
       const expected = linePath(
         row.reporting,
         SPARK_WIDTH,
-        SPARK_HEIGHT,
+        SPARK_STRIP_HEIGHT,
         0,
         100,
         2,
@@ -555,7 +557,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-read")).toBeNull();
+      expect(container.querySelector(".metric-now")).toBeNull();
       // And not a dash standing in for it either.
       expect(container.textContent).not.toContain("\u2014");
     });
@@ -589,8 +591,8 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-read .v")).toBeInTheDocument();
-      expect(container.querySelector(".metric-read .u")).toBeNull();
+      expect(container.querySelector(".metric-now .v")).toBeInTheDocument();
+      expect(container.querySelector(".metric-cell .u")).toBeNull();
     });
   });
 
@@ -605,7 +607,7 @@ describe("hostColumns", () => {
         <>{diskCol.cell(makeRow({ fullest: null }))}</>,
       );
 
-      expect(container.querySelector(".meter")).not.toBeInTheDocument();
+      expect(container.querySelector(".segbar")).not.toBeInTheDocument();
       expect(container.textContent).toBe("");
     });
   });
@@ -792,7 +794,7 @@ describe("hostColumns", () => {
         // The shared sparkline size, not literals: every list chart reads it
         // from one pair of constants so a row's cells stay the same shape.
         SPARK_WIDTH,
-        SPARK_HEIGHT,
+        SPARK_STRIP_HEIGHT,
         // From zero to mem_total plus the headroom that keeps a full host off
         // the border. Free is the gap between the line and the top.
         0,
@@ -802,7 +804,7 @@ describe("hostColumns", () => {
       expect(line.getAttribute("d")).toBe(expected[0]);
       const area = container.querySelector("path[data-area]")!;
       expect(area.getAttribute("d")).toBe(
-        areaPath(expected, SPARK_WIDTH, SPARK_HEIGHT, 2)[0],
+        areaPath(expected, SPARK_WIDTH, SPARK_STRIP_HEIGHT, 2)[0],
       );
       expect(area.getAttribute("fill")).toBe("var(--mem-used)");
     });
@@ -841,7 +843,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-read .v")?.textContent).toBe(
+      expect(container.querySelector(".metric-now .v")?.textContent).toBe(
         "25%",
       );
       // binaryBytes, like the enlarged chart's axis: 16 GB is 14.9 GiB.
@@ -870,7 +872,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-read .v")?.textContent).toBe(
+      expect(container.querySelector(".metric-now .v")?.textContent).toBe(
         "30%",
       );
     });
@@ -888,7 +890,7 @@ describe("hostColumns", () => {
         </>,
       );
 
-      expect(container.querySelector(".metric-read")).toBeNull();
+      expect(container.querySelector(".metric-now")).toBeNull();
     });
   });
 
