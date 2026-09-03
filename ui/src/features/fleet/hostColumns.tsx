@@ -7,12 +7,15 @@
 // set below: this file has no opinion on layout, only on content.
 import type { Column } from "../../ui/Table";
 import { Badge } from "../../ui/Badge";
-import { Meter, severityFromPercent } from "../../ui/Meter";
+import { NowReading } from "../../ui/NowReading";
 import { OsIcon } from "../../ui/OsIcon";
-import { Reading } from "../../ui/Reading";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { Sparkline } from "../../ui/charts/Sparkline";
-import { DETAIL_WIDTH } from "../../ui/charts/size";
+import {
+  DETAIL_WIDTH,
+  SPARK_STRIP_HEIGHT,
+  SPARK_WIDTH,
+} from "../../ui/charts/size";
 import {
   DOWN_COLOR,
   UP_COLOR,
@@ -332,6 +335,24 @@ function HostCell({ row }: { row: HostRow }) {
 
 const CPU_PERCENT_MAX = 100;
 
+// The three saturation cells are as wide as the sparkline, from the same
+// constant the chart is drawn with, so the now-bar under a chart is exactly
+// the chart's width and the disk cell -- which has no chart to size it --
+// lines up with the two beside it. Inline rather than a CSS literal: the
+// stylesheet has copied SPARK_WIDTH before and been left behind when it moved
+// (see the note above .tablewrap svg.spark in index.css).
+const METRIC_CELL_STYLE = { width: SPARK_WIDTH };
+// The gap .metric-cell puts between its chart and its now-line, in
+// index.css. Named here because the disk cell has to reserve the chart's
+// height plus that gap above its own bar, so the three bars in a row form one
+// line: without it the chartless cell sits centred in the row and its bar
+// lands 16px above the other two.
+const METRIC_CELL_GAP = 3;
+const DISK_CELL_STYLE = {
+  width: SPARK_WIDTH,
+  paddingTop: SPARK_STRIP_HEIGHT + METRIC_CELL_GAP,
+};
+
 // One line and a light fill, in --cpu-1: the colour a one-core host's
 // cpu_total already drew in, and the colour every host's cpu_total is drawn
 // in on the host page. The row used to draw the per-core stack here -- up to
@@ -406,18 +427,21 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
         min={0}
         max={CPU_PERCENT_MAX}
         color={CPU_COLOR}
+        // Shorter than the traffic chart beside it: the now-bar and its unit
+        // line sit underneath and take the rest of the row's height.
+        height={SPARK_STRIP_HEIGHT}
         label={`CPU trend, ${rangeLabel(range)}`}
       />
     </Enlargeable>
   );
 
   return (
-    <div className="metric-cell">
+    <div className="metric-cell" style={METRIC_CELL_STYLE}>
       {chart}
       {busy !== null && (
-        <Reading
-          value={String(Math.round(busy))}
-          unit="%"
+        <NowReading
+          pct={busy}
+          label="CPU now"
           under={
             row.threads === null
               ? undefined
@@ -525,6 +549,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
         min={0}
         max={total * MEM_HEADROOM}
         color={MEM_COLOR}
+        height={SPARK_STRIP_HEIGHT}
         // No legend, like every other cell in this row. A previous review
         // argued the five memory bands carry identity a legend should name and
         // turned it back on here; that is not the call. These are sparklines
@@ -536,12 +561,12 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   );
 
   return (
-    <div className="metric-cell">
+    <div className="metric-cell" style={METRIC_CELL_STYLE}>
       {chart}
       {used !== null && (
-        <Reading
-          value={String(Math.round((used / total) * 100))}
-          unit="%"
+        <NowReading
+          pct={(used / total) * 100}
+          label="Memory now"
           // binaryBytes, like the enlarged chart's own axis: a stack read
           // against a binary ceiling and labelled decimally underneath makes
           // one quantity look like two.
@@ -681,42 +706,31 @@ function DiskCell({ row }: { row: HostRow }) {
   }
   const { mount, pct, others, free } = row.fullest;
   const label = others > 0 ? `${mount} +${others}` : mount;
-  // The three facts stacked over one 132px column, rather than Meter's own
-  // row: the mount and its percentage on one line above the bar, the bar,
-  // and what is left under it. Meter's arrangement puts the reading in a
-  // fixed 92px column to the RIGHT of the bar -- sized for the host page's
-  // "108.9 GB of 137.4 GB" -- which leaves the percentage floating half a
-  // column from the bar it belongs to and no room for the free figure.
-  //
-  // The percentage takes the severity the meter fills with, because it is
-  // the same reading: a red bar under a plain number said one thing twice
-  // and only half of it in the second place. severityFromPercent is Meter's
-  // own function, so the two cannot drift apart.
-  // The app's own spelling for these classes is st-warn / st-crit (see the
-  // status pair in index.css); severityFromPercent answers with the long
-  // words, so the two are mapped rather than interpolated.
-  const SEVERITY_CLASS = {
-    ok: "",
-    warning: "st-warn",
-    serious: "st-serious",
-    critical: "st-crit",
-  } as const;
-  const severity = SEVERITY_CLASS[severityFromPercent(pct)];
+  // The same now-bar the CPU and Memory cells draw under their sparklines,
+  // with no sparkline over it: disk usage over a day is near-flat and "how
+  // close to full" is the question, so the bar IS the cell. Drawing it with
+  // the shared NowReading rather than Meter is what makes the three
+  // saturation columns read alike -- the same ten cells, the same figure in
+  // the same severity colour, the same quiet line underneath. The mount and
+  // what is left go on that line: the mount is which disk the reading is
+  // about, and bytes left is what the percentage cannot say on its own (90%
+  // of a 6.7 TB array is 674 GB free, 90% of a 4 GB root is not). Null free
+  // is "not known" -- the assembler leaves it unset when the host reported
+  // no size -- and prints nothing rather than a dash.
   return (
-    <div className="disk-cell">
-      <div className="dtop">
-        <span className="dmount">{label}</span>
-        <span className={severity === "" ? "dpct" : `dpct ${severity}`}>
-          {Math.round(pct)}
-          <small>%</small>
-        </span>
-      </div>
-      <Meter value={pct} max={100} />
-      {/* Bytes left, which the percentage cannot say on its own: 90% of a
-          6.7 TB array is 674 GB free and 90% of a 4 GB root is not. Null is
-          "not known" -- the assembler leaves it unset when the host reported
-          no size -- and prints nothing rather than a dash. */}
-      {free == null ? null : <div className="dfree">{bytes(free)} left</div>}
+    <div className="metric-cell disk-cell" style={DISK_CELL_STYLE}>
+      <NowReading
+        pct={pct}
+        label={`Disk ${label}`}
+        under={
+          <>
+            <span className="dmount">{label}</span>
+            {free == null ? null : (
+              <span className="dfree">{bytes(free)} left</span>
+            )}
+          </>
+        }
+      />
     </div>
   );
 }

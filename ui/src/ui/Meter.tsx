@@ -59,6 +59,19 @@ export function severityFromPercent(
   return "ok";
 }
 
+/**
+ * The app's own spelling of a severity as a class: st-ok, st-warn,
+ * st-serious, st-crit (see the status pair in index.css). One map, beside
+ * the function that decides the severity, so a bar and the figure printed
+ * next to it -- SegmentBar and NowReading -- cannot spell it differently.
+ */
+export const SEVERITY_CLASS: Record<FillSeverity, string> = {
+  ok: "st-ok",
+  warning: "st-warn",
+  serious: "st-serious",
+  critical: "st-crit",
+};
+
 export interface MeterProps {
   /** Current reading. `null` means "not collected" -- distinct from 0. */
   value?: number | null;

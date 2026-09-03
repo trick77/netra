@@ -923,15 +923,110 @@ tbody tr:hover .host-cell-name {
   align-items: center;
   gap: var(--space-3);
 }
-/* CPU and Memory, laid out like the traffic cell above: the chart, and the
-   reading it ends on beside it. Same direction and same gap, because three
-   cells in one row that arrange a chart and its figures three different ways
-   read as three different products. */
+/* CPU, Memory and Disk: the sparkline on top where there is one, and under
+   it the now-line -- a ten-cell bar for the current value with the figure
+   beside it, and what it is measured against on a quiet line below (see
+   ui/NowReading.tsx). The three saturation columns are built from this one
+   cell so they read alike; the traffic cell keeps its chart-beside-rates
+   row because a rate has no ceiling to fill a bar against. */
 .metric-cell {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
+  align-items: flex-start;
+  /* 3px, which hostColumns.tsx's METRIC_CELL_GAP has to match: the disk
+     cell reserves the chart's height plus this gap above its bar so the
+     three bars in a row form one line. The width is set inline from
+     SPARK_WIDTH, never here. */
+  gap: 3px;
+}
+.metric-now-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+}
+.metric-now {
+  display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+  width: 100%;
+}
+/* The figure's type is .metric-read's, shared by selector below rather than
+   copied, so a fleet row and a container row print the same kind of number.
+   What is this cell's own: a fixed width, right-aligned, so the figures form
+   a column down the page beside bars of one width. */
+.metric-now .v {
+  width: 44px;
+  flex: none;
+  text-align: right;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+/* The figure takes the bar's severity, because they are one reading. Text
+   steps, never the mark's hue -- see the --st-*-text note in the palette. */
+.metric-now .v.st-warn {
+  color: var(--st-warn-text);
+}
+.metric-now .v.st-serious {
+  color: var(--st-serious-text);
+}
+.metric-now .v.st-crit {
+  color: var(--st-crit-text);
+}
+/* The unit line under the bar. Scoped to .metric-now-wrap and NOT to the
+   cell: the enlarged chart (Enlargeable renders ChartDetail as a sibling
+   inside the cell, not in a portal) carries a .u of its own in its header,
+   and a cell-wide rule restyled the CPU dialog's unit to micro grey.
+
+   A flex row so the disk cell's two halves can share it: the mount gives way
+   and ellipsises, the bytes-left figure never does -- it is the fact the
+   percentage cannot say on its own, so a long mount must not truncate it
+   away. Plain text ("of 8 cores") is one flex item and lays out as before. */
+.metric-now-wrap .u {
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+.metric-now-wrap .dmount {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.metric-now-wrap .dfree {
+  flex: none;
+}
+/* The ten-cell bar. Unlit cells are the track colour the Meter uses, lit
+   ones take the severity token the Meter fills with, so the disk meter on
+   the host page and this bar in the fleet row say the same thing in the same
+   colour at the same value. The bar grows to the cell's width and the
+   figure keeps its fixed column beside it. */
+.segbar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.segbar i {
+  display: block;
+  flex: 1 1 0;
+  border-radius: 1px;
+  background: var(--track);
+}
+.segbar.st-ok i.on {
+  background: var(--st-ok);
+}
+.segbar.st-warn i.on {
+  background: var(--st-warn);
+}
+.segbar.st-serious i.on {
+  background: var(--st-serious);
+}
+.segbar.st-crit i.on {
+  background: var(--st-crit);
 }
 .metric-read {
   display: flex;
@@ -948,7 +1043,11 @@ tbody tr:hover .host-cell-name {
   flex: none;
   line-height: 1.35;
 }
-.metric-read .v {
+/* Shared with the fleet's now-line (.metric-now, above): one ruleset for
+   the figure, its unit and the line under it, so the two lists cannot drift
+   apart in type. */
+.metric-read .v,
+.metric-now .v {
   font-size: var(--text-ui);
   color: var(--ink);
   font-variant-numeric: tabular-nums;
@@ -957,7 +1056,8 @@ tbody tr:hover .host-cell-name {
 /* The unit rides the figure a step smaller and a step quieter -- "34 %", not
    "34%". At the same size the percent sign reads as a digit, which is
    exactly what a column of tabular figures does not need. */
-.metric-read .v small {
+.metric-read .v small,
+.metric-now .v small {
   font-size: var(--text-micro);
   color: var(--muted);
   margin-left: 2px;
@@ -965,7 +1065,8 @@ tbody tr:hover .host-cell-name {
 /* The unit line -- "of 8 cores", "of 62.8 GiB". --muted-2, the same step the
    location under a hostname takes: it says what the figure above it is
    measured against and is never itself the reading. */
-.metric-read .u {
+.metric-read .u,
+.metric-now-wrap .u {
   font-size: var(--text-micro);
   color: var(--muted-2);
   font-variant-numeric: tabular-nums;
@@ -977,12 +1078,13 @@ tbody tr:hover .host-cell-name {
    rule.
 
    In the fleet table it never comes to that: `.tablewrap svg.spark` takes the
-   max-width off, so the three cells hold their 150x45 and the BOX scrolls.
-   Measured against the simulated fleet, traffic, CPU and memory all render
-   exactly 150x45 at 1440px, and still 150x45 at 1100px, where the wrap is 987
+   max-width off, so the cells hold their width and the BOX scrolls.
+   Measured against the simulated fleet, traffic, CPU and memory all rendered
+   at their full 150px at 1440px, and still at 1100px, where the wrap is 987
    wide inside 823 and scrolls (measured while a fourth, filesystem, was still
-   in the row; the three that remain have more width, not less). What this
-   rule protects is
+   in the row and all three charts were 150x45; CPU and memory are now a
+   150x26 strip over a now-line, which changes the heights and not the
+   argument). What this rule protects is
    therefore the OTHER placements of the cell, and the shape of the failure it
    protects them from: .traffic-rates never shrinks, so ~110px of the cell is
    spoken for before the chart gets any, and min-width:0 would hand the whole
@@ -1013,8 +1115,8 @@ tbody tr:hover .host-cell-name {
      45px it no longer does -- left at flex-start the rates hang off the top
      of the mark they annotate. */
   justify-content: center;
-  /* Same fixed block as .metric-read one column over, so the three cells in
-     a row start their readings at the same x. Left-aligned, not right: each
+  /* A fixed block, like .metric-read in the container list, so a column of
+     rates starts at one x. Left-aligned, not right: each
      line opens with its direction, and those two words are what a reader
      scans down, not the digits. */
   width: 98px;
@@ -2494,74 +2596,14 @@ details.sysfold > .body {
 .smp .foot .lab {
   display: none;
 }
-/* The fleet's disk cell: a percentage needs nowhere near the 92px the host
-   page's byte counts do, and the fixed column left it stranded away from its
-   own bar. `auto` sizes it to the number it holds. */
-/* Three facts over one 132px column: the mount and how full it is, the bar,
-   and what is left. Meter's own row puts its reading in a fixed 92px column
-   to the RIGHT of the bar -- sized for the host page's "108.9 GB of
-   137.4 GB" -- which left the percentage floating half a column from the bar
-   and had nowhere to put the free figure. */
-.disk-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 5px;
-}
-.disk-cell .dtop {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
-  width: 132px;
-}
+/* The fleet's disk cell is a .metric-cell with no chart -- the now-bar, the
+   figure and the unit line, see the .metric-cell rules -- so nearly all of
+   what used to be here (its own column, Meter's row collapsed to a bare bar,
+   a 132px top line) is gone with the Meter. What stays is the one thing
+   about it that differs: the mount on the unit line is a name a reader
+   scans for, so it sits a step above the "3.2 GB left" beside it. */
 .disk-cell .dmount {
-  font-size: var(--text-micro);
   color: var(--ink-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.disk-cell .dpct {
-  font-size: var(--text-ui);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
-.disk-cell .dpct small {
-  font-size: var(--text-micro);
-  color: var(--muted);
-  margin-left: 2px;
-}
-/* The percentage takes the fill's own severity: a red bar under an ink
-   number said one thing twice and only half of it the second time. The text
-   steps, never the mark's hue -- see the --st-*-text note in the palette. */
-.disk-cell .dpct.st-warn {
-  color: var(--st-warn-text);
-}
-.disk-cell .dpct.st-serious {
-  color: var(--st-serious-text);
-}
-.disk-cell .dpct.st-crit {
-  color: var(--st-crit-text);
-}
-.disk-cell .dfree {
-  font-size: var(--text-micro);
-  color: var(--muted-2);
-  font-variant-numeric: tabular-nums;
-}
-/* Meter draws its own row; here it is only the bar, so the label column and
-   the value column both collapse. */
-.disk-cell .mrow {
-  display: block;
-  padding: 0;
-  border-bottom: 0;
-}
-.disk-cell .mrow .val {
-  display: none;
-}
-.disk-cell .meter {
-  width: 132px;
 }
 /* The host page's filesystem list. Every mount carries a bar, not just the
    fullest one: a card that lists six filesystems as text makes a reader

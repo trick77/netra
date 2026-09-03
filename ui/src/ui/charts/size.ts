@@ -32,6 +32,13 @@ export const SPARK_WIDTH = 150;
  * splitting what was left between rx and tx.
  */
 export const SPARK_HEIGHT = 45;
+/** The height of a sparkline that sits OVER a now-bar (ui/NowReading) in a
+ * fleet cell rather than beside a reading. The bar, its figure and its unit
+ * line take about 37px under it, so the cell measures ~63px and the fleet
+ * row is taller than the 45px traffic chart beside it; that is the row's
+ * height now, and the traffic cell centres in it. 26 is the least a
+ * silhouette stays readable at over 150px. */
+export const SPARK_STRIP_HEIGHT = 26;
 
 /**
  * The width of the chart inside an enlarged view.
