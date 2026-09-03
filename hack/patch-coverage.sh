@@ -10,8 +10,10 @@
 #
 # netra is a single Go module with two components sharing one go.mod — hub
 # (internal/hub, internal/shared) and agent (internal/agent,
-# cmd/). Both therefore go through the same Cobertura/diff-cover path; there
-# is no separate JS/UI stack in this repo.
+# cmd/). Both therefore go through the same Cobertura/diff-cover path. The
+# UI (ui/, Vitest) is the third stack: its lcov report goes through diff-cover
+# too, in its own section below, and its absolute floor is the thresholds in
+# ui/vite.config.ts rather than hack/coverage-gate.sh.
 #
 # cmd/ and internal/shared/gen are excluded from both sides, matching the exclusions
 # hack/coverage-gate.sh already applies to the absolute floor. See the
@@ -248,7 +250,33 @@ if [[ -f coverage/agent.xml ]]; then
     "internal/agent/*.go"
 fi
 
-# A gate that checked nothing must not report success: if neither report was
+# --- ui ---------------------------------------------------------------------
+if [[ -f coverage/ui/lcov.info ]]; then
+  checked=1
+  echo "== ui patch coverage (>= ${PATCH_MIN}%) =="
+
+  # vitest writes SF: paths relative to ui/, where it runs. --src-roots does
+  # NOT rewrite these for lcov (it only does so for Cobertura's <sources>),
+  # and a mismatch makes diff-cover report "no lines with coverage
+  # information" and pass vacuously. Rewrite them to repo-root-relative so
+  # they match git's paths.
+  sed 's|^SF:|SF:ui/|' coverage/ui/lcov.info > coverage/ui-lcov-rooted.info
+
+  # No comment stripping here, unlike the Go sections: lcov's DA: lines name
+  # the statements v8 instrumented, so a comment line is never counted as
+  # uncovered the way a Cobertura block's comment lines are.
+  diff-cover coverage/ui-lcov-rooted.info \
+    --compare-branch "$BASE_REF" \
+    --fail-under "$PATCH_MIN" \
+    --format "markdown:coverage/ui-patch.md" || fail=1
+  cat coverage/ui-patch.md >> "$summary" 2>/dev/null || true
+  # The same files vite.config.ts includes; its excludes (main.tsx, the test
+  # setup, tests themselves) are dropped again by assert_matched's own filter.
+  assert_matched coverage/ui-patch.md ui coverage/ui-lcov-rooted.info "" \
+    "ui/src/*.ts" "ui/src/*.tsx"
+fi
+
+# A gate that checked nothing must not report success: if no report was
 # produced (reporter moved, output dir changed), fail loudly instead of green.
 if [[ "$checked" -eq 0 ]]; then
   echo "patch-coverage: no coverage reports found under coverage/." >&2

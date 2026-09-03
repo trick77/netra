@@ -32,6 +32,13 @@ export default defineConfig({
       // margin for an honest refactor rather than slack. Raise them the same
       // way the Go ones are raised -- measure first, then set.
       provider: "v8",
+      // text is for humans reading the CI log; lcov is what diff-cover reads
+      // in hack/patch-coverage.sh, the "is the code I just wrote tested?"
+      // half of the gate. The thresholds below answer the other half. Written
+      // under the repo's coverage/ beside the Go reports, which is where that
+      // script looks and what .gitignore already covers.
+      reporter: ["text", "lcovonly"],
+      reportsDirectory: "../coverage/ui",
       include: ["src/**/*.{ts,tsx}"],
       // main.tsx is three lines of bootstrap that mount the app into a real
       // DOM, and test-setup.ts is the harness itself.
