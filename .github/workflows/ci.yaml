@@ -176,8 +176,9 @@ jobs:
   # No fetch-depth: 0, no Python, no coverage steps. Shell files never enter
   # the Cobertura reports, so both coverage gates ignore them by construction —
   # coverage-gate.sh keys on hub|agent from hack/coverage-floors, and
-  # patch-coverage.sh's assert_matched guard is invoked with *.go pathspecs, so
-  # a shell-only PR returns an empty changed-set and exits early. No exclusion
+  # patch-coverage.sh's assert_matched guard is invoked with *.go and ui/src
+  # *.ts(x) pathspecs, so a shell-only PR returns an empty changed-set and
+  # exits early. No exclusion
   # list is added for them; a redundant exclude only invites deletion later.
   shell:
     name: Shell (setup script)
