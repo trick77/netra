@@ -125,7 +125,11 @@ jobs:
     name: Test (ui)
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 -- same reason as the Go job: hack/patch-coverage.sh
+      # diffs the branch against the PR base.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           # The version lives in ui/.nvmrc so the runner, the hub image's
@@ -133,6 +137,10 @@ jobs:
           node-version-file: ui/.nvmrc
           cache: npm
           cache-dependency-path: ui/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install diff-cover==10.3.0
       - run: npm ci
         working-directory: ui
       # Runs tsc --noEmit and vite build; a type error fails here, not at
@@ -141,9 +149,16 @@ jobs:
         working-directory: ui
       # --coverage, because the thresholds in vite.config.ts are this half's
       # equivalent of hack/coverage-floors: a hard floor that fails the job,
-      # not a number printed for someone to read.
+      # not a number printed for someone to read. It also writes the lcov
+      # report the patch gate below reads.
       - run: npm run test:coverage
         working-directory: ui
+      # The other half of the gate, the same script the Go jobs run: the
+      # TypeScript lines this branch adds or changes must be covered, whatever
+      # the suite as a whole measures. Until this step existed a PR could add
+      # untested UI code and pass on the strength of everyone else's tests.
+      - name: UI patch coverage
+        run: ./hack/patch-coverage.sh "origin/${{ github.base_ref || 'master' }}"
       - name: Prettier
         run: npm run format:check
         working-directory: ui
@@ -161,8 +176,9 @@ jobs:
   # No fetch-depth: 0, no Python, no coverage steps. Shell files never enter
   # the Cobertura reports, so both coverage gates ignore them by construction —
   # coverage-gate.sh keys on hub|agent from hack/coverage-floors, and
-  # patch-coverage.sh's assert_matched guard is invoked with *.go pathspecs, so
-  # a shell-only PR returns an empty changed-set and exits early. No exclusion
+  # patch-coverage.sh's assert_matched guard is invoked with *.go and ui/src
+  # *.ts(x) pathspecs, so a shell-only PR returns an empty changed-set and
+  # exits early. No exclusion
   # list is added for them; a redundant exclude only invites deletion later.
   shell:
     name: Shell (setup script)

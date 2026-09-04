@@ -10,8 +10,10 @@
 #
 # netra is a single Go module with two components sharing one go.mod — hub
 # (internal/hub, internal/shared) and agent (internal/agent,
-# cmd/). Both therefore go through the same Cobertura/diff-cover path; there
-# is no separate JS/UI stack in this repo.
+# cmd/). Both therefore go through the same Cobertura/diff-cover path. The
+# UI (ui/, Vitest) is the third stack: its lcov report goes through diff-cover
+# too, in its own section below, and its absolute floor is the thresholds in
+# ui/vite.config.ts rather than hack/coverage-gate.sh.
 #
 # cmd/ and internal/shared/gen are excluded from both sides, matching the exclusions
 # hack/coverage-gate.sh already applies to the absolute floor. See the
@@ -60,15 +62,17 @@ fi
 #
 # Opt out with [skip patch-coverage] in a commit message on the branch.
 #
-# This skips ONLY patch coverage. hack/coverage-gate.sh still enforces the
-# absolute floor in the same CI job, so overall coverage can never silently
-# fall — the worst this can do is let already-untested lines stay untested.
+# This skips ONLY patch coverage. The absolute floor still holds in the same
+# CI job -- hack/coverage-gate.sh for hub and agent, vitest's thresholds in
+# ui/vite.config.ts for the UI -- so overall coverage can never silently
+# fall; the worst this can do is let already-untested lines stay untested.
 if git log --format='%B' "$(git merge-base "$BASE_REF" HEAD)"..HEAD 2>/dev/null |
   grep -qF '[skip patch-coverage]'; then
   echo "::warning::patch-coverage SKIPPED — a commit on this branch carries [skip patch-coverage]."
   echo "patch-coverage: SKIPPED by [skip patch-coverage] in a commit message." >&2
-  echo "  The absolute floor (hack/coverage-gate.sh) still applies and is" >&2
-  echo "  enforced separately, so total coverage cannot fall unnoticed." >&2
+  echo "  The absolute floor still applies (hack/coverage-gate.sh for hub and" >&2
+  echo "  agent, vitest's thresholds for the UI) and is enforced separately," >&2
+  echo "  so total coverage cannot fall unnoticed." >&2
   exit 0
 fi
 
@@ -96,11 +100,20 @@ assert_matched() {
   # common macOS `grep`) the -q/-v combination returns 1 even when non-matching
   # lines exist, which would silently disable this guard locally while it still
   # works under GNU grep. The names are needed below anyway.
+  #
+  # main.tsx is the UI's bootstrap, excluded from coverage by vite.config.ts
+  # for the same reason cmd/ is excluded on the Go side, so it is never in
+  # the report either.
   changed="$(git diff --name-only "$base"...HEAD -- "$@" |
-    grep -vE '(_test\.go|\.test\.tsx?|\.d\.ts|(^|/)(test-setup|vitest\.setup|setup)\.ts)$' || true)"
+    grep -vE '(_test\.go|\.test\.tsx?|\.d\.ts|(^|/)main\.tsx|(^|/)(test-setup|vitest\.setup|setup)\.ts)$' || true)"
 
   [[ -n "$changed" ]] || return 0
   grep -q 'No lines with coverage information' "$report" || return 0
+
+  # The report's own path list, once, for both checks below: every SF: line
+  # of an lcov file, every filename= attribute of a Cobertura one.
+  local reported
+  reported="$(sed -nE 's/^SF:(.*)$/\1/p; s/.*filename="([^"]*)".*/\1/p' "$coverage")"
 
   # Changed source lines can legitimately carry no coverage data of their own:
   # a Go string in a package-level data table, a type-only TS change, a struct
@@ -109,10 +122,16 @@ assert_matched() {
   # whether the changed files appear in the coverage report at all. Present
   # means the mapping works and the diff simply touched no executable line;
   # absent is the real bug.
+  #
+  # An EXACT match against the report's path list (-x), not a substring search
+  # over the whole file: a report whose paths carry the wrong root --
+  # "ui//home/runner/work/netra/ui/src/lib/x.ts" -- still contains
+  # "ui/src/lib/x.ts" as a substring, so a substring test called the mapping
+  # sound in exactly the case this guard exists to catch.
   local file
   while IFS= read -r file; do
     [[ -n "$file" ]] || continue
-    if grep -qF "${file#"$strip"}" "$coverage"; then
+    if grep -qxF "${file#"$strip"}" <<<"$reported"; then
       echo "patch-coverage: $label diff touched no executable lines; n/a."
       return 0
     fi
@@ -129,8 +148,6 @@ assert_matched() {
   # resolve to files that exist here, the mapping is fine and this diff simply
   # touched nothing instrumented. A genuinely broken mapping still fails,
   # because then none of its paths would resolve.
-  local reported
-  reported="$(sed -nE 's/^SF:(.*)$/\1/p; s/.*filename="([^"]*)".*/\1/p' "$coverage" | head -100)"
   while IFS= read -r file; do
     [[ -n "$file" ]] || continue
     if [[ -e "${strip}${file}" ]]; then
@@ -248,7 +265,36 @@ if [[ -f coverage/agent.xml ]]; then
     "internal/agent/*.go"
 fi
 
-# A gate that checked nothing must not report success: if neither report was
+# --- ui ---------------------------------------------------------------------
+if [[ -f coverage/ui/lcov.info ]]; then
+  checked=1
+  echo "== ui patch coverage (>= ${PATCH_MIN}%) =="
+
+  # The report's SF: paths are already repo-root-relative ("ui/src/..."):
+  # vite.config.ts gives the lcov reporter the repo root as its projectRoot,
+  # because diff-cover matches those paths against git's and has no flag that
+  # re-roots an lcov file (--src-roots is for JaCoCo reports only). A mismatch
+  # does not fail; it makes diff-cover report "no lines with coverage
+  # information" and pass vacuously, which is what assert_matched below is
+  # for.
+
+  # No comment stripping here, unlike the Go sections: lcov's DA: lines name
+  # the statements v8 instrumented, so a comment line is never counted as
+  # uncovered the way a Cobertura block's comment lines are.
+  diff-cover coverage/ui/lcov.info \
+    --compare-branch "$BASE_REF" \
+    --fail-under "$PATCH_MIN" \
+    --format "markdown:coverage/ui-patch.md" || fail=1
+  cat coverage/ui-patch.md >> "$summary" 2>/dev/null || true
+  # The same files vite.config.ts includes. Its excludes -- main.tsx, the
+  # test setup, the tests themselves -- are the files assert_matched's own
+  # filter drops, so a diff touching only those is n/a rather than "absent
+  # from the report".
+  assert_matched coverage/ui-patch.md ui coverage/ui/lcov.info "" \
+    "ui/src/*.ts" "ui/src/*.tsx"
+fi
+
+# A gate that checked nothing must not report success: if no report was
 # produced (reporter moved, output dir changed), fail loudly instead of green.
 if [[ "$checked" -eq 0 ]]; then
   echo "patch-coverage: no coverage reports found under coverage/." >&2
