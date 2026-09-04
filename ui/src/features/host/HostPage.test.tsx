@@ -119,12 +119,11 @@ describe("HostPage", () => {
       <HostPage hostId={7} tab="overview" onTabChange={() => {}} />,
     );
     await screen.findByRole("heading", { name: "kessel" });
-    // The location is all the header states about the machine. OS, kernel and
-    // arch were here too until the System card was found to be printing the
-    // same three a few centimetres below; this one stays because the card
-    // keeps it folded away behind a disclosure.
+    // The header states nothing about the machine itself. Location, OS, kernel
+    // and arch were all here until the System card was found to be printing
+    // the same facts a few centimetres below.
     const header = within(screen.getByRole("banner", { name: "Host summary" }));
-    expect(header.getByText(/Zurich/)).toBeInTheDocument();
+    expect(header.queryByText(/Zurich/)).toBeNull();
     expect(header.queryByText(/Ubuntu 24\.04/)).toBeNull();
     expect(header.queryByText(/6\.8\.0-31-generic/)).toBeNull();
     expect(header.queryByText(/amd64/)).toBeNull();
@@ -189,27 +188,26 @@ describe("HostPage", () => {
     expect(badge.className).toContain("badge");
   });
 
-  // An agent with neither AGENT_LOCATION nor AGENT_PROVIDER set is the common
-  // case, and the header used to answer it with a bare em dash: a placeholder
-  // with no label beside it to say which fact was missing, which reads as a
-  // rendering fault. The line is simply not there instead.
-  it("says nothing at all about the location of a host that reports none", async () => {
+  // The header names the host and says how it is doing; where the machine
+  // stands is the Overview tab's System card's to state, and it does. A host
+  // that reports a location gets no subtitle for it either.
+  it("says nothing about the location of a host, reported or not", async () => {
     vi.mocked(api.getHost).mockResolvedValue({
       ...host,
-      location: null,
-      provider: null,
+      location: "Zurich, Switzerland",
+      provider: "Hetzner",
     });
 
     render(<HostPage hostId={7} tab="overview" onTabChange={() => {}} />);
 
     const header = await screen.findByRole("banner", { name: "Host summary" });
-    // The one .meta left is "last seen", which carries its own label -- an
-    // em dash under a word that says what is missing is not the same thing.
+    expect(within(header).queryByText(/Zurich|Hetzner/)).toBeNull();
+    // The one .meta is "last seen", which carries its own label.
     const meta = [...header.querySelectorAll(".meta")];
     expect(meta).toHaveLength(1);
     expect(meta[0].textContent).toMatch(/^last seen/);
     expect(meta[0].textContent).not.toContain(ABSENT);
-    // The rest of the header is untouched by the site being absent.
+    // The rest of the header is untouched.
     expect(within(header).getByText("online")).toBeInTheDocument();
   });
 

@@ -354,26 +354,17 @@ describe("Overview System summary", () => {
     );
   });
 
-  // The mark labels the OS name and travels with it, so it lives INSIDE the
-  // OS span -- outside, a wrap could put the Ubuntu logo at the end of one
-  // line and "Ubuntu 24.04" at the start of the next. aria-hidden because the
-  // name is written right beside it; announcing it would say "Ubuntu" twice.
-  it("puts the distribution mark in front of the OS name", () => {
+  // The summary line writes the OS name and nothing else in front of it. The
+  // distribution mark was here until the line was found to be carrying two
+  // marks: the chevron, which is the control, and a logo that only repeated
+  // the name spelled out beside it. The fleet list keeps its own, where the
+  // mark is the fastest way to tell forty rows apart.
+  it("writes the OS name with no distribution mark", () => {
     renderOverview();
     const os = systemSummary().querySelector(".strong")!;
-    const icon = os.querySelector("svg.osicon")!;
 
-    expect(icon).not.toBeNull();
-    expect(icon.getAttribute("aria-hidden")).toBe("true");
-    expect(icon.getAttribute("fill")).toBe("currentColor");
+    expect(os.querySelector("svg.osicon")).toBeNull();
     expect(os.textContent).toBe("Ubuntu 24.04");
-  });
-
-  // A name the table does not know renders no icon at all, and no gap where
-  // one would have been.
-  it("draws no mark for an OS it does not recognise", () => {
-    renderOverview({ host: { ...host, os_name: "Windows Server 2022" } });
-    expect(systemSummary().querySelector("svg.osicon")).toBeNull();
   });
 
   // An absent fact is not written at all, rather than written as an em dash.

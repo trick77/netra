@@ -2442,20 +2442,6 @@ details.sysfold > summary .strong {
   color: var(--ink);
   font-weight: 500;
 }
-/* The distribution mark. --muted rather than the surrounding --ink, because
-   at 14px a solid glyph reads heavier than the word beside it and would make
-   the logo the loudest thing on a line whose job is to be quiet. Its own
-   colour is never used — see lib/osIcon.ts on why the brand palette stays
-   out of this. */
-/* display: inline-block is not cosmetic — Tailwind's preflight sets
-   `svg { display: block }`, which put the mark on its own line ABOVE the OS
-   name and made every row in the fleet two lines tall. */
-details.sysfold > summary .osicon {
-  display: inline-block;
-  color: var(--muted);
-  vertical-align: -2px;
-  margin-right: var(--space-2);
-}
 details.sysfold > summary .dim {
   color: var(--muted);
 }
@@ -3043,11 +3029,11 @@ a.tile:focus-visible {
 }
 .hosthead {
   display: flex;
-  /* Top, not centre. The name block is two lines tall and everything else on
-     this row is one, so centring measured them all against the name PLUS the
-     location under it and dropped them half a location line -- 11.8px -- below
-     the title they belong to. The row is anchored at the top now and each part
-     says where it sits relative to the title itself. */
+  /* Top, not centre. Centring measured every part of the row against the
+     whole name block rather than against the title, and dropped the badge,
+     the last-seen time and the range control below the title they belong to.
+     The row is anchored at the top and each part says where it sits relative
+     to the title itself. */
   align-items: flex-start;
   gap: var(--space-4);
   padding: var(--space-4) 0;
@@ -3064,16 +3050,12 @@ a.tile:focus-visible {
    computes to, so it follows --text-display if that ever moves. */
 .hosthead > .pageicon {
   /* Overrides the shared rule's align-self:center, which would centre the
-     glyph on the two-line block again whatever the row does. */
+     glyph on the whole name block again whatever the row does. */
   align-self: flex-start;
   font-size: var(--text-display);
   height: 1lh;
 }
-/* The name and the place it names, stacked. The location used to be a flex
-   item of its own on this row, which put "Hetzner · Falkenstein, DE" between
-   the hostname and the status badge and let a wrap drop it anywhere along the
-   line. Under the title it stays attached to the thing it qualifies, and the
-   badges and controls close up beside the pair. */
+/* The name block: the title's line and anything stacked under it. */
 .hosthead .hostident {
   display: flex;
   flex-direction: column;
@@ -3090,7 +3072,7 @@ a.tile:focus-visible {
 }
 /* The title's line: the h1 and everything that qualifies it -- status, the
    reboot warning, last seen, the range control. They were siblings of
-   .hostident and so were centred against the two-line block; in here the h1
+   .hostident and so were centred against the whole block; in here the h1
    is the tallest thing on the row, so centring lands on the title. Keeps its
    own wrap, since these are the parts that ran out of room first. */
 .hosthead .hostbar {

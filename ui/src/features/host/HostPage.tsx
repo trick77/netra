@@ -30,7 +30,6 @@ import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { ABSENT, duration, relative } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
-import { hostLocation } from "../fleet/hostColumns";
 import { hostTabForSlug } from "../../lib/router";
 import {
   clampRange,
@@ -538,9 +537,6 @@ export function HostPage({
   }
 
   const status = hostStatus(host);
-  // The same line the fleet row draws, from the same function -- see the
-  // header below.
-  const location = hostLocation(host);
   // Only while the host is still answering. uptime_s is host_current's LAST
   // REPORTED value, not a live clock: a machine that booted and then died
   // stays at "40 s" in the database forever, and rendering that as "rebooted
@@ -573,27 +569,17 @@ export function HostPage({
       <header className="hosthead" aria-label="Host summary">
         {/* The rail's own mark for hosts. A detail page has no rail
             destination of its own, so it wears its parent's. It stays outside
-            .hostident so the location lines up under the NAME rather than
-            under the glyph, and is centred on the title's line by .hosthead
-            rather than on the two-line block, which sat it visibly low. */}
+            .hostident, and is centred on the title's line by .hosthead. */}
         <span className="pageicon">
           <Server aria-hidden="true" />
         </span>
-        {/* The name and where the machine is, as one block. The location sat
-            to the RIGHT of the title, on the same wrapping row as the status
-            badge, the last-seen time and the range control -- a fact about
-            the machine filed among the page's controls, and the first thing
-            to be pushed onto a line of its own at a narrow width. Under the
-            hostname it reads as what it is: the subtitle of the name it
-            qualifies. */}
+        {/* The name and everything that qualifies it, as one block. */}
         <div className="hostident">
           {/* The title's own line, and everything that qualifies it. These were
-              siblings of .hostident, so the row centred them against the name
-              PLUS the location under it -- which left the badge, the last-seen
-              time and the range control 11.8px low, exactly half the location
-              line, and the page's own mark with them. In a row whose tallest
-              item is the h1 they centre on the title itself, with no offset to
-              keep in step with a subtitle that may not even be there. */}
+              siblings of .hostident, so the row centred them against the whole
+              block -- which left the badge, the last-seen time and the range
+              control 11.8px low, and the page's own mark with them. In a row
+              whose tallest item is the h1 they centre on the title itself. */}
           <div className="hostbar">
             <h1 className="serif">{host.hostname}</h1>
             <Badge severity={status.severity}>{status.label}</Badge>
@@ -640,25 +626,10 @@ export function HostPage({
               retry a reader genuinely has to ask for, and the Containers tab
               calls it after a purge. */}
           </div>
-          {/* Where the host is, the same line the fleet row prints and from the
-            same function -- one definition, so the two pages cannot come to
-            disagree about how a place is written. It replaces the site name,
-            which was an internal label out of a table somebody fills in by
-            hand; this is what the host's own agent says about itself.
-
-            OS, kernel and arch used to sit here too, and all three are printed
-            a few centimetres below in the Overview tab's System card, which
-            owns them -- the header was spending its most prominent line
-            restating the card. Location appears in that card as well, but
-            folded away behind a disclosure, so the header still earns it.
-
-            Rendered conditionally rather than as `?? ABSENT`: on a host whose
-            agent reports no location that put a lone em dash under the
-            hostname with nothing beside it to say what was missing, which
-            reads as a rendering fault. The block simply collapses to the
-            hostname, which is what a header with nothing else to say should
-            be. */}
-          {location !== null && <span className="meta">{location}</span>}
+          {/* Nothing under the title. Where the host is, its OS, kernel and
+            arch are all printed a few centimetres below in the Overview tab's
+            System card, which owns them -- the header was spending a line
+            restating the card. */}
         </div>
       </header>
 
