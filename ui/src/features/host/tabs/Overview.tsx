@@ -37,7 +37,6 @@ import {
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Panel } from "./Panel";
 import { Meter } from "../../../ui/Meter";
-import { OsIcon } from "../../../ui/OsIcon";
 import { StatTile } from "../../../ui/StatTile";
 import type { Range } from "../../../lib/range";
 // The fleet band's thresholds, imported rather than written out again. The
@@ -636,12 +635,6 @@ export function Overview({
                 the open state itself -- a screen reader that also read the
                 icon would hear the control twice. */}
             <ChevronRight className="chev" aria-hidden="true" />
-            {/* The distribution mark, in currentColor rather than in Ubuntu
-                orange or Fedora blue -- see lib/osIcon.ts. It is inside the
-                OS span so it cannot be separated from the name it labels by
-                a wrap, and it is aria-hidden: the name is written next to
-                it. A host whose os_name the table does not recognise gets no
-                icon and no gap. */}
             {/* Guarded like the other four. os_name is nullable in the store
                 -- ingest.go NULLIFs it, for an agent in a container that
                 cannot read the host's /etc/os-release -- and osLabel(null) is
@@ -650,10 +643,7 @@ export function Overview({
                 drawn from the SECOND span onward, so whichever fact ends up
                 first simply takes no leading dot. */}
             {host.os_name !== null && (
-              <span className="strong">
-                <OsIcon name={host.os_name} />
-                {osLabel(host.os_name)}
-              </span>
+              <span className="strong">{osLabel(host.os_name)}</span>
             )}
             {host.kernel !== null && <span>{host.kernel}</span>}
             {/* The one value long enough to push this line onto a second row
