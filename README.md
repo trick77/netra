@@ -308,7 +308,10 @@ Containers are the one collector whose two mounts do different jobs. The host's
 cgroup v2 hierarchy — bound to `/host/sys/fs/cgroup`, granted automatically by
 both deploy paths — supplies the container **list** and every metric. The Docker
 socket only names them: without it containers still report in full, keyed by raw
-64-hex id instead of compose `project/service`. Do not point
+64-hex id instead of compose `project/service`. Not mounting it is a supported
+configuration; a socket that **is** mounted and stops answering is a different
+state, and there the agent reports nothing for the containers it could not name
+rather than inventing an id-keyed one per outage. Do not point
 `AGENT_CGROUP_ROOT` at the agent's own `/sys/fs/cgroup`; Docker's default cgroup
 namespace is private, so that tree holds no other container's scope.
 

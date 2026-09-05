@@ -305,7 +305,7 @@ func TestRefreshRestarts(t *testing.T) {
 	t.Run("stays quiet about restarts when the socket itself is gone", func(t *testing.T) {
 		// Given a collector with no inspector on a host with no socket.
 		testee := &Containers{}
-		testee.observe(true, 0, 0)
+		testee.observe(true, false, 0, 0)
 
 		// When the scrape refreshes.
 		testee.refreshRestarts(ctx, metaOf("a"), nil)

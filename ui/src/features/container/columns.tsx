@@ -46,6 +46,7 @@ import { type Range } from "../../lib/range";
 import { ContainerChart } from "./ContainerChart";
 import { hasInteriorGaps } from "../../lib/metrics";
 import { hostStatus } from "../../lib/host";
+import { containerSamplesBlocked } from "../../lib/containers";
 import { deriveState, stateKindRank, type DerivedState } from "./state";
 
 /**
@@ -145,28 +146,21 @@ export function containerState(
 }
 
 /**
- * Capability values that stop container samples reaching the hub entirely.
- *
- * `no-cgroup-scopes` is the one: the Docker socket names containers the
- * cgroup walk cannot find, so NOTHING is collected for that host
- * (lib/containers.ts). `no-docker-socket` is not here -- cgroup v2 still
- * yields CPU, memory and I/O, so samples keep landing and last_seen keeps
- * advancing; only the names are missing.
- */
-const NO_CONTAINER_SAMPLES = new Set(["no-cgroup-scopes"]);
-
-/**
  * Can a container sample land on this host at all?
  *
  * Read by containerIsGone and by containerState, because both would
  * otherwise blame a container for a silence that belongs to its host's
  * agent -- one by offering to purge it, the other by calling it Silent.
+ *
+ * Re-exported from lib/containers rather than answered from a set kept here.
+ * This module used to hold its own `NO_CONTAINER_SAMPLES = {"no-cgroup-scopes"}`
+ * beside lib's own list of blocking values, and the two drifted the moment a
+ * third value was added: `docker-socket-silent` reached the panels, which went
+ * quiet, and missed these lists, which kept ageing every row past
+ * GONE_AFTER_S and offering a Purge for a container that was still running.
+ * One definition, or the next value does it again.
  */
-export function containerSamplesBlocked(
-  capability: string | undefined,
-): boolean {
-  return capability !== undefined && NO_CONTAINER_SAMPLES.has(capability);
-}
+export { containerSamplesBlocked };
 
 /**
  * How far a container's last sample may lag its HOST's before the row reads
@@ -199,15 +193,13 @@ export function containerIsGone(
   row: ContainerRow,
   goneAfterS: number = GONE_AFTER_S,
 ): boolean {
-  // A host whose cgroup mount is gone keeps reporting host samples while no
-  // container sample can land, so every container on it would age past the
-  // window together -- and be offered a purge that deletes a still-running
-  // container's history. The lists already say what is wrong there
-  // (hostContainerNote); this must not contradict them with a Gone badge.
-  if (
-    row.host_containers_capability !== undefined &&
-    NO_CONTAINER_SAMPLES.has(row.host_containers_capability)
-  ) {
+  // A host whose cgroup mount is gone -- or whose Docker socket has stopped
+  // naming anything -- keeps reporting host samples while no container sample
+  // can land, so every container on it would age past the window together, and
+  // be offered a purge that deletes a still-running container's history. The
+  // lists already say what is wrong there (hostContainerNote); this must not
+  // contradict them with a Gone badge.
+  if (containerSamplesBlocked(row.host_containers_capability)) {
     return false;
   }
   if (row.host_last_seen === undefined || row.host_last_seen === null) {
