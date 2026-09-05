@@ -20,7 +20,11 @@ const SPEC: Record<
   { title: string; color: string; fmt: (n: number | null) => string }
 > = {
   cpu: { title: "CPU", color: "var(--s1)", fmt: (n) => percent(n) },
-  mem: { title: "Memory", color: "var(--s2)", fmt: bytes },
+  // --cmem-1, not --s2: the panel above this list stacks these same
+  // containers, and memory in netra is amber everywhere it is drawn -- the
+  // host memory stack, and a fleet row's memory silhouette. --s2 is series 2,
+  // not a memory colour. See the --cmem-* block in index.css.
+  mem: { title: "Memory", color: "var(--cmem-1)", fmt: bytes },
 };
 
 export interface ContainerChartProps {

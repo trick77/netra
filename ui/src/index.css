@@ -328,13 +328,35 @@
 
      --cpu-1 IS --s1, the colour a one-core host's cpu_total silhouette is
      already drawn in (totalCpuBand in tabs/Overview.tsx), so the two draw the
-     same chart. */
-  --cpu-1: #3987e5;
-  --cpu-2: #65a2eb;
-  --cpu-3: #91bcf1;
-  --cpu-4: #bdd7f6;
+     same chart.
 
-  /* The green counterpart, for the host page's stacked Docker MEMORY panel --
+     THE WALK RUNS TOWARD --bg, NOT TOWARD WHITE. It used to be --s1 blended
+     2/9, 4/9 and 6/9 into white, which put the fourth step at #bdd7f6 --
+     11.67:1 against the card, brighter than body text, on a band that is not
+     text and carries no reading of its own. On a host with eighteen
+     containers the four steps repeat four and a half times, so that
+     near-white stripe landed every fourth band and the stack read as candy
+     rather than as one quantity. Blending into the background instead keeps
+     --s1 itself as the brightest step and sinks the rest, which is also what
+     the neighbouring --mem-* family does and why that one never looked
+     loud.
+
+     Adjacent separation, dE2000, worst of normal vision and Machado 2009
+     protan/deutan/tritan at severity 1.0: 10.8 / 9.9 / 8.0, against 8.0 /
+     7.8 / 6.6 for the walk toward white -- darker AND further apart, because
+     lightness steps near the floor are worth more perceptually than steps
+     near white. Wrapping pair (step 4 back to step 1) 28.4.
+
+     Against --surface: 4.74, 3.22, 2.13, 1.52. The last number is the floor
+     --mem-cached sits at (1.53) and was argued down to; below it a band has
+     disappeared rather than quietened, which is why step 4 is #1a3c5d and
+     not the #183756 the arithmetic wanted. */
+  --cpu-1: #3987e5;
+  --cpu-2: #2e6cb5;
+  --cpu-3: #235186;
+  --cpu-4: #1a3c5d;
+
+  /* The MEMORY counterpart, for the host page's stacked Docker MEMORY panel --
      one band per container, however many the host runs, so it needs the same
      wrapping walk the per-core CPU stack has and for the same reason.
 
@@ -344,15 +366,41 @@
      colour names nothing but "not the band beside me", and giving the two the
      same prefix would invite a maintainer to read one as the other.
 
-     Built exactly as --cpu-2..4 are built from --s1: blended 2/9, 4/9 and 6/9
-     of the way to white from --cmem-1, which IS --s2. That is the pairing
-     ContainerChart already draws a row's two sparklines in -- CPU blue,
-     memory green -- so the overview panel is visibly the same quantity as the
-     cells under it. */
-  --cmem-1: #199e70;
-  --cmem-2: #4cb490;
-  --cmem-3: #7fc9b0;
-  --cmem-4: #b2dfcf;
+     AMBER, NOT GREEN. It was --s2 and its blends toward white, on the
+     argument that ContainerChart draws a row's two sparkline cells in --s1
+     and --s2 so the panel above them should match. It did match the cells,
+     and it disagreed with the rest of the app: memory here is amber
+     everywhere else it is drawn -- the host memory stack is led by
+     --mem-used, and a fleet row's memory silhouette IS --mem-used
+     (hostColumns.tsx). --s2 was never a memory token; it is series 2, and it
+     also draws running processes, traffic out and a container's CPU-system
+     band. So the panel now leads on amber and the cells follow it, rather
+     than the other way round.
+
+     This is the same knowing exception to the 0-41 degree reservation that
+     --mem-used takes, and it is a bigger one: a 200px panel filled amber is
+     not a 45px cell. What keeps it honest is that the band is a QUANTITY,
+     never a state -- always present, never appearing to mean something --
+     and that severity on this page is carried by the status palette, the
+     badge and the word, none of which this chart draws. Nearest status
+     colour is --st-warn at dE 13.2 from step 1; --accent is 18.6 away.
+
+     It also fixes the pair this page actually asks a reader to compare.
+     Docker CPU beside Docker Memory was blue against green, which is dE 10.0
+     under Machado tritan at full severity -- the weakest hue pair in the app.
+     Blue against amber is 51.4 in normal vision and never below 55 under any
+     of protan, deutan or tritan.
+
+     Walked toward --bg like --cpu-2..4, from a step one brighter than
+     --mem-used itself: the fleet cell's dimness is tuned for a chart you look
+     PAST, and this is one you look AT. Adjacent separation, dE2000, worst of
+     normal vision and Machado protan/deutan/tritan: 11.4 / 11.2 / 10.7,
+     wrapping pair 33.7. Against --surface: 5.88, 3.90, 2.47, 1.53 -- the last
+     landing exactly on --mem-cached's floor. */
+  --cmem-1: #c98a2e;
+  --cmem-2: #a06e25;
+  --cmem-3: #77521c;
+  --cmem-4: #4e3613;
 
   /* drawer shadow. */
   --shadow-drawer: 0 18px 48px rgba(0, 0, 0, 0.28);

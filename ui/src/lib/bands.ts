@@ -250,7 +250,7 @@ export function perCoreBands(
  * is what the key on hover is for, and what the enlarged view's stats table,
  * which names every container beside its swatch, is for. Assigning shades by
  * whether a container happens to be busy would make them change under a
- * reader between polls, which is a worse trade than two greens meeting.
+ * reader between polls, which is a worse trade than two ambers meeting.
  *
  * Band ORDER is the response's, never re-sorted by size. The host page polls,
  * and a stack re-ordered on every poll would shuffle its bands between
@@ -342,10 +342,13 @@ export function containerStackTotal(bands: readonly Band[]): (number | null)[] {
 
 /**
  * The shades one container's band is drawn in, walked and wrapped -- the
- * memory half. CPU walks CPU_SHADES, so a row's blue CPU sparkline and green
+ * memory half. CPU walks CPU_SHADES, so a row's blue CPU sparkline and amber
  * memory sparkline keep their pairing in the panels above the list.
  *
- * Index 0 IS --s2, exactly as CPU_SHADES' index 0 is --s1.
+ * Index 0 is --cmem-1, an amber in the register --mem-used occupies rather
+ * than the --s2 green it used to be: memory is amber everywhere else netra
+ * draws it, and ContainerChart follows this token now instead of leading it.
+ * The argument and the measurements are in index.css.
  */
 export const CONTAINER_MEM_SHADES = [
   "var(--cmem-1)",
