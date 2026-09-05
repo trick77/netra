@@ -51,8 +51,8 @@ function response(
  * pair and a gridded series has a latest bucket. */
 function hostMetrics(
   columns: string[],
-  first: number[],
-  second: number[] = first,
+  first: (number | null)[],
+  second: (number | null)[] = first,
 ): MetricsResponse {
   return response({
     family: "host",
@@ -351,6 +351,22 @@ describe("overviewTiles kernel and pressure groups", () => {
     });
 
     expect(find(kernel, "Processes")?.sub).toBe("2 blocked");
+  });
+
+  // A gap in the closing bucket is not "this host has no process total". The
+  // two readings come from different collectors, so one missed scrape would
+  // otherwise rename the tile and swap its series out from under a reader.
+  it("keeps the total tile across a gap in the latest bucket", () => {
+    const { kernel } = tiles({
+      hostMetrics: hostMetrics(
+        ["processes_total", "procs_running"],
+        [312, 3],
+        [null, 3],
+      ),
+    });
+
+    expect(find(kernel, "Processes")?.slug).toBe("total-processes");
+    expect(find(kernel, "Runnable now")).toBeUndefined();
   });
 
   // A PID-namespaced agent sees its own namespace rather than the host's, so

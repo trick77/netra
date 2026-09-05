@@ -526,8 +526,15 @@ function kernelTiles(res: MetricsResponse | null): Tile[] {
  * under a label that says what it is.
  */
 function processesTile(res: MetricsResponse | null): Tile {
-  const total = current(res, "processes_total");
-  if (total === null) {
+  // "Did this host report the column ANYWHERE in the window", the same
+  // question hasSwap() asks, and not current() !== null. The two readings
+  // come from different collectors -- the total from procs.go's own /proc
+  // scan, the runnable count from kernelstat.go -- so one missed scrape, or
+  // one bucket of a host being offline, would leave the total null while
+  // procs_running still landed. On current() that silently swaps the tile's
+  // identity mid-day: headline, label, sparkline and panel link all change,
+  // for a host whose agent reports the total perfectly well.
+  if (!hasReading(griddedValues(res, 0, "processes_total"))) {
     return levelTile(
       res,
       "procs-running",
