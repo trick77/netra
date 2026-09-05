@@ -48,7 +48,10 @@ type Result struct {
 	StepS  int    `json:"step_s"`
 
 	// Window is what this response actually covers; Requested is what was
-	// asked. They differ whenever a clamp fired, and Warnings says which.
+	// asked. They differ whenever a clamp fired, and comparing them is the
+	// only way to see that: no clamp states itself in Warnings any more.
+	// A window that comes back equal at both ends is one the clamps closed
+	// entirely -- a real answer with no points, not a host with no samples.
 	Window    Window   `json:"window"`
 	Requested Window   `json:"requested_window"`
 	Warnings  []string `json:"warnings"`
@@ -138,7 +141,15 @@ func (s *Service) Metrics(ctx context.Context, q MetricsQuery, now time.Time) (R
 		res.Warnings = []string{}
 	}
 	// Every clamp fired and no window survived. A valid answer with no
-	// points, and the warning that explains it is already attached.
+	// points.
+	//
+	// Unexplained on the wire, which is the honest note to leave here: the
+	// warning that used to say why is gone, plan.Empty is in-process only,
+	// and what a client sees is a 200 whose window.from equals its
+	// window.to. That is a real signal but a caller has to look for it --
+	// unchecked, this is indistinguishable from a host with no samples.
+	// Reachable only from a hand-built query, not from this app: the
+	// shortest range it offers resolves to raw, which has no lag to clamp.
 	if plan.Empty {
 		return res, nil
 	}

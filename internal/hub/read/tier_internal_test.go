@@ -252,9 +252,13 @@ func TestTierSelectionExplicitStepStillObeysRetention(t *testing.T) {
 }
 
 // Both clamps firing can leave nothing at all: the last five minutes at a tier
-// that materialises an hour behind. That is a real answer -- an empty 200, and
-// Empty says so in a field rather than in prose -- not an error, because
-// nothing about the request was wrong.
+// that materialises an hour behind. That is a real answer -- an empty 200 --
+// not an error, because nothing about the request was wrong.
+//
+// Empty is a Plan field and stops the query; it is NOT on Result and never
+// reaches the wire. All a client gets is a window whose ends are equal, so
+// one that does not compare them cannot tell this from a host that has never
+// reported. See the note at the plan.Empty branch in metrics.go.
 //
 // Unreachable from this app's own picker, which never asks for a window
 // shorter than the tier it resolves to: 1h answers from raw, which has no lag

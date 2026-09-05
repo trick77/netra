@@ -247,13 +247,13 @@ describe("metrics", () => {
           to: "2026-08-10T14:00:00Z",
         },
         warnings: [
-          "from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists",
+          "column 'cpu_steal' is not available at this resolution and was dropped",
           "the result reached the 200000-point limit and is truncated; narrow the window or ask for fewer columns",
         ],
         truncated: true,
       };
       const notice = windowNotice(both as never);
-      expect(notice).toMatch(/retention/i);
+      expect(notice).toMatch(/cpu_steal/);
       expect(notice).toMatch(/truncat/i);
       expect(notice?.match(/truncat/gi)?.length).toBe(1);
     });

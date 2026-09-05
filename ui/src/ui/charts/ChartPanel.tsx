@@ -62,9 +62,13 @@ export interface ChartPanelProps {
    */
   min?: number;
   fmt?: (n: number | null) => string;
-  /** The sentence from windowNotice() (lib/metrics.ts) explaining a served
-   * window clamped by retention or materialisation lag. Rendered verbatim
-   * so a clamped range never reads as missing data. */
+  /** The sentence from windowNotice() (lib/metrics.ts): a truncated result,
+   * or a column this tier does not carry. Rendered verbatim, so a series
+   * that is incomplete rather than merely quiet never reads as data.
+   *
+   * No longer a clamped WINDOW -- that says itself in the chart's own extent
+   * and the axis under it, and the sentence it used to get named a storage
+   * tier the reader had never picked. */
   notice?: string | null;
   /** The reason this metric family has no data at all, e.g. "no ICMP
    * columns in the schema". Presence of this prop switches the whole panel

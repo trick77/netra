@@ -656,8 +656,13 @@ export function counterIncrease(
 }
 
 /**
- * Turns a truncated result into a sentence a human can act on. Returns null
- * for any response that is complete.
+ * Whatever the hub said about this response that the chart cannot show,
+ * as one sentence. Null when it said nothing.
+ *
+ * In practice two things: a truncated result, and a column asked for that
+ * this tier does not carry. Both are passed through verbatim -- only the hub
+ * knows which fired -- and both describe a series that is incomplete while
+ * looking whole.
  *
  * It used to caption a clamped WINDOW too, surfacing the hub's own sentences
  * about retention and materialisation lag and deriving its own when the hub
