@@ -830,6 +830,14 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
         // between 41.9 and 42.1 draws its wobble large and says 41.9 and 42.1
         // beside it, which is the truth at a zoom the reader asked for.
         autoScale
+        // Filled, because the cell it opens from is: markFor() reads an
+        // absent `filled` as "line", so without this the dialog and its rail
+        // tiles draw a bare stroke where the reader clicked a shaded
+        // silhouette -- the one thing enlarging must never do. Honest for
+        // the same reason Inventory's drive-temperature dialog passes it: the
+        // chart free-scales, so the fill's bottom edge is the window's own
+        // floor rather than an axis decision.
+        filled
         fmt={(n) => percent(n)}
         window={row.window}
         range={range}

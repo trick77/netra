@@ -271,6 +271,13 @@ describe("the list sparklines enlarge", () => {
       });
 
       await open("Enlarge disk usage for / on ark");
+
+      // The dialog draws the same MARK as the cell. markFor() reads an absent
+      // `filled` as "line", so a shaded silhouette in the row opened into a
+      // bare stroke -- a different chart on click, which is the one thing
+      // enlarging must never do.
+      expect(document.querySelector(".cd path[data-area]")).toBeInTheDocument();
+
       await pick("6h");
 
       await waitFor(() =>
