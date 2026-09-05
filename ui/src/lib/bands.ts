@@ -487,25 +487,43 @@ const FS_COLORS = ["var(--s1)", "var(--s8)", "var(--s4)", "var(--s6)"];
  * total includes the root reserve. The same definition the meter beside it
  * and fullestFilesystem() use, so nothing on the row can disagree.
  */
+/**
+ * One filesystem's Use% over the window, by its index into res.series.
+ *
+ * Split out of filesystemBands below so a caller that has already picked a
+ * mount -- the fleet row's Disk cell, through fullestFilesystem() -- can draw
+ * that one on the same definition, without re-deriving the ratio itself. By
+ * INDEX and not by name, because filesystemBands drops the mounts that
+ * reported nothing, so a band's position in its list is not the series'
+ * position in the response.
+ */
+export function fsUsePercent(
+  res: MetricsResponse,
+  index: number,
+): (number | null)[] {
+  const used = griddedValues(res, index, "used");
+  const free = griddedValues(res, index, "free");
+  const width = Math.max(used.length, free.length);
+  const values: (number | null)[] = [];
+  for (let j = 0; j < width; j++) {
+    const u = used[j] ?? null;
+    const f = free[j] ?? null;
+    // A gap is a gap: the host reported nothing for that bucket, which is
+    // not the same as the disk being empty.
+    values.push(
+      u === null || f === null || u + f === 0 ? null : (u / (u + f)) * 100,
+    );
+  }
+  return values;
+}
+
 export function filesystemBands(res: MetricsResponse | null): Band[] {
   if (res === null || res.series.length === 0) return [];
   if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return [];
 
   const bands: Band[] = [];
   for (let i = 0; i < res.series.length; i++) {
-    const used = griddedValues(res, i, "used");
-    const free = griddedValues(res, i, "free");
-    const width = Math.max(used.length, free.length);
-    const values: (number | null)[] = [];
-    for (let j = 0; j < width; j++) {
-      const u = used[j] ?? null;
-      const f = free[j] ?? null;
-      // A gap is a gap: the host reported nothing for that bucket, which is
-      // not the same as the disk being empty.
-      values.push(
-        u === null || f === null || u + f === 0 ? null : (u / (u + f)) * 100,
-      );
-    }
+    const values = fsUsePercent(res, i);
     // A filesystem that reported nothing all window is not a flat line at
     // zero; it is a mount with no readings, and drawing it would claim one.
     if (!hasReading(values)) continue;

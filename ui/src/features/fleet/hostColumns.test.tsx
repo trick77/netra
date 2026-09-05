@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { areaPath, linePath } from "../../ui/charts/geometry";
 import { SPARK_STRIP_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
-import { hostColumns, type HostRow } from "./hostColumns";
+import { diskAxis, hostColumns, type HostRow } from "./hostColumns";
 import { ABSENT } from "../../lib/format";
 
 function makeRow(overrides: Partial<HostRow> = {}): HostRow {
@@ -58,17 +58,52 @@ function siteLines(container: HTMLElement): string[] {
   );
 }
 
+// The Disk line is the one sparkline in this row scaled to its own window
+// rather than to a fixed 0-100: five points of growth over a day is 1.3px
+// inside a 26px strip, and growth is the whole reason the line is there. The
+// bar under it keeps saying how full the mount actually is.
+describe("diskAxis", () => {
+  it("fits the axis to the window's own extent", () => {
+    expect(diskAxis([66, 68, 71])).toEqual({ min: 66, max: 71 });
+  });
+
+  // Without a floor on the span, a mount that did not move all day draws its
+  // own rounding as a mountain range.
+  it("widens a near-flat mount to the minimum span", () => {
+    expect(diskAxis([41.9, 42, 42.1])).toEqual({ min: 41, max: 43 });
+  });
+
+  it("widens a mount that did not move at all", () => {
+    expect(diskAxis([50, 50, 50])).toEqual({ min: 49, max: 51 });
+  });
+
+  // Slid back inside the axis rather than clipped, so the same growth draws
+  // the same steepness on a near-empty disk as on a near-full one.
+  it("slides the widened span back inside 0-100 at either end", () => {
+    expect(diskAxis([0.2, 0.4])).toEqual({ min: 0, max: 2 });
+    expect(diskAxis([99.6, 99.8])).toEqual({ min: 98, max: 100 });
+  });
+
+  // Gaps are not readings, and a mount that reported nothing has no line.
+  it("ignores gaps, and answers null when there is no reading at all", () => {
+    expect(diskAxis([null, 60, null, 70])).toEqual({ min: 60, max: 70 });
+    expect(diskAxis([null, null])).toBeNull();
+    expect(diskAxis([])).toBeNull();
+  });
+});
+
 describe("hostColumns", () => {
   // Uptime is gone: it is a fact about a host rather than a reading to scan
   // a fleet by -- the same number all day, where the row's job is what
   // changed. It still leads the host page's System card.
   // Filesystem is gone too, and deliberately: one filesystem column, not two.
-  // Disk answers how close to full a mount is now, which is the question a
-  // fleet row is scanned for; usage over a day is near-flat, so the sparkline
-  // beside it spent 150px redrawing a straight line. The per-mount history is
-  // one click away on the host page. Traffic sits second, right of the host it
-  // belongs to, rather than fourth behind two other charts: it is the reading
-  // this list is most often scanned for.
+  // Disk answers both halves in one cell -- how close to full the mount is
+  // now, on its bar, and whether it is filling up, on the line above it. The
+  // second column drew every mount on a fixed axis, which is a texture rather
+  // than a reading; all of them together are one click away on the host page.
+  // Traffic sits second, right of the host it belongs to, rather than fourth
+  // behind two other charts: it is the reading this list is most often
+  // scanned for.
   it("yields Host, Traffic, CPU, Memory, Disk in that exact order", () => {
     const cols = hostColumns("1h");
     expect(cols.map((c) => c.header)).toEqual([
@@ -403,6 +438,60 @@ describe("hostColumns", () => {
       render(<>{diskCol.cell(row)}</>);
       expect(screen.getByText("/")).toBeInTheDocument();
       expect(screen.queryByText(/\+0/)).not.toBeInTheDocument();
+    });
+
+    // The line is about the mount the figure beside it names, so it is named
+    // after that mount and not after the column: twenty rows of "Disk trend"
+    // name twenty different charts identically.
+    it("draws a trend line for the mount it names, and can be enlarged", () => {
+      const diskCol = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const { container } = render(
+        <>
+          {diskCol.cell(
+            makeRow({
+              hostname: "db-02",
+              fullest: {
+                mount: "/var/lib/postgresql",
+                pct: 71,
+                others: 3,
+                series: [66, 68, 71],
+              },
+            }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector("svg.spark")).toBeInTheDocument();
+      expect(
+        screen.getByLabelText("Disk trend for /var/lib/postgresql, last 1h"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", {
+          name: "Enlarge disk usage for /var/lib/postgresql on db-02",
+        }),
+      ).toBeInTheDocument();
+    });
+
+    // A mount with no bucket carrying both used and free has no line to
+    // draw. Drawing an empty box would put a chart where "not measured"
+    // belongs -- the same argument the cell makes about an empty green bar --
+    // so the bar stands alone and keeps its reserved strip, which is what
+    // holds the three bars in a row on one line.
+    it("draws the bar alone, still aligned, when there is no series", () => {
+      const diskCol = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const { container } = render(
+        <>
+          {diskCol.cell(
+            makeRow({ fullest: { mount: "/", pct: 40, others: 0 } }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector("svg.spark")).toBeNull();
+      expect(
+        (container.querySelector(".disk-cell") as HTMLElement).style.paddingTop,
+      ).not.toBe("");
+      expect(screen.getByText("/")).toBeInTheDocument();
     });
 
     // The mark labels the host the way a device list does elsewhere: a reader

@@ -14,7 +14,12 @@ import {
   reduceToColumns,
   sumSeries,
 } from "../../lib/metrics";
-import { filesystemBands, memoryBands, perCoreBands } from "../../lib/bands";
+import {
+  filesystemBands,
+  fsUsePercent,
+  memoryBands,
+  perCoreBands,
+} from "../../lib/bands";
 // containerTrends lives in lib/containers.ts, beside the capability wording
 // the same lists share. It was here, because the fleet list needed it first;
 // lib/bands.ts builds the host page's stacked Docker panels from it now, and
@@ -334,6 +339,12 @@ function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
     pct: best.pct,
     free: best.free,
     others: Math.max(0, measured - 1),
+    // The winner's OWN Use% over the window, taken by the index that won --
+    // not matched back out of filesystemBands by name, which drops the mounts
+    // that reported nothing and so does not index alike. This is the series
+    // the Disk cell draws, and it has to be the same mount the percentage
+    // beside it names or the cell says two things about two disks.
+    series: fsUsePercent(res, best.index),
     since: crossed.since,
     sinceAtLeast: crossed.atLeast,
   };

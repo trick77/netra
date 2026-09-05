@@ -2582,12 +2582,13 @@ details.sysfold > .body {
 .smp .foot .lab {
   display: none;
 }
-/* The fleet's disk cell is a .metric-cell with no chart -- the now-bar, the
-   figure and the unit line, see the .metric-cell rules -- so nearly all of
-   what used to be here (its own column, Meter's row collapsed to a bare bar,
-   a 132px top line) is gone with the Meter. What stays is the one thing
-   about it that differs: the mount on the unit line is a name a reader
-   scans for, so it sits a step above the "3.2 GB left" beside it. */
+/* The fleet's disk cell is a plain .metric-cell -- one line for the mount it
+   names over the now-bar, the figure and the unit line, see the .metric-cell
+   rules -- so nearly all of what used to be here (its own column, Meter's row
+   collapsed to a bare bar, a 132px top line) is gone with the Meter. What
+   stays is the one thing about it that differs: the mount on the unit line is
+   a name a reader scans for, so it sits a step above the "3.2 GB left" beside
+   it. */
 .disk-cell .dmount {
   color: var(--ink-2);
 }
