@@ -4,6 +4,7 @@ import {
   COLLECTOR_GROUPS,
   NETWORK_GROUPS,
   STORAGE_GROUPS,
+  UNGROUPED_SLUGS,
 } from "../features/host/chartSpecs";
 import type { HostTab } from "../features/host/HostPage";
 
@@ -82,10 +83,19 @@ const RETIRED_SLUGS: Record<string, string> = {
   // Traffic draws one stacked in/out pair per interface now, which is what
   // this panel was for.
   "interface-throughput": "host-traffic",
+  // Device availability is gone from the UI. The Collectors tab still answers
+  // the question it was opened for -- which collector is failing, and for how
+  // long -- so its links land there rather than on System, and any panel on
+  // that tab names it.
+  "device-availability": "scrape-duration",
 };
 
 export function hostTabForSlug(retiring: string): HostTab {
   const slug = RETIRED_SLUGS[retiring] ?? retiring;
+  // Panels the Overview draws itself, which are in no group for the walk
+  // below to find. Without this the summed traffic panel resolves to System,
+  // a tab that does not draw it.
+  if (UNGROUPED_SLUGS.includes(slug)) return "overview";
   if (NETWORK_GROUPS.some((g) => g.specs.some((s) => s.slug === slug))) {
     return "network";
   }

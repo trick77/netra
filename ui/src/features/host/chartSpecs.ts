@@ -542,49 +542,6 @@ export const SYSTEM: PanelSpec[] = [
     ],
     fmt: count,
   },
-  // "Device availability" in the spec's list; collector_samples.ok is the
-  // only availability signal the schema actually holds, so that is what
-  // this draws -- one band per collector, 1 when it ran, 0 when it did not.
-  {
-    title: "Device availability",
-    slug: "device-availability",
-    about:
-      "One line per collector: 1 for a bucket where it ran, 0 where it did not. A collector that was down leaves holes in every panel that reads it. Over a range wide enough to be rolled up, the line is the share of the scrapes it took in that bucket that it survived, so a partial failure reads as a dip - but a collector that simply ran less often and never failed still reads as up.",
-    source: "collector",
-    bases: [{ base: "ok", label: "ok" }],
-    boolean: true,
-    // The aggregates drop `ok` and keep the counts instead, so at every
-    // range but 1h this is what the line is actually drawn from.
-    fraction: { part: "failure_count", whole: "sample_count", invert: true },
-    // Twenty collectors nearly all pinned at the top of the scale: the one
-    // that dipped goes first, rather than wherever the response happened to
-    // list it.
-    orderByWorst: true,
-    max: 1,
-    // One formatter for both tiers rather than a tier-dependent pair: the
-    // endpoints ARE up and down at any grain -- a rolled bucket of 1 is
-    // every scrape in it having worked -- and only the values between them
-    // need the rolled tier's reading, which is a percentage of scrapes.
-    //
-    // Rounded to nearest and THEN held off the endpoints, because only the %
-    // suffix separates "100% up" from the literal "up": one failure in a
-    // 1440-scrape daily bucket is 0.99931, and reporting that as 100% would
-    // state a clean day for a day that had a failure in it.
-    //
-    // Not floor-above-half and ceil-below, which was the first shape of this
-    // and is a worse one: n*100 is inexact for most hundredths, so 71
-    // failures in 100 scrapes is 29.000000000000004 and ceil reports 30% for
-    // a bucket that was 29% -- the same off-by-one this exists to prevent,
-    // arriving from the other side.
-    fmt: (n) =>
-      n === null
-        ? ABSENT
-        : n >= 1
-          ? "up"
-          : n <= 0
-            ? "down"
-            : `${Math.min(99, Math.max(1, Math.round(n * 100)))}% up`,
-  },
   {
     title: "Uptime",
     slug: "uptime",
@@ -739,6 +696,56 @@ export const NETWORK: PanelSpec[] = [
     // summed edge is the very reading the fleet cell's enlarged view already
     // draws, and a host's traffic chart that disagrees with the cell it was
     // opened from is worse than the bias. One chart, two sizes.
+    peak: true,
+    fmt: bytes,
+  },
+  /**
+   * The same two columns as the panel above, summed: one in and one out band
+   * for the whole host.
+   *
+   * The Overview's copy, and the reason it is a second spec rather than a
+   * prop on the first: the Overview asks "how much is this box moving", which
+   * is not a question about eth0, and it asks it in a half-width panel beside
+   * three other cards. Drawn per interface there, a host with three NICs
+   * spent the panel on six stacked bands and a six-entry legend -- naming
+   * links the reader has not asked about yet, in the space the reading itself
+   * needed.
+   *
+   * Which interface carried it is the Network tab's question, and the
+   * per-interface panel above is still what that tab draws. Same family, same
+   * columns, same window: the outer envelope there IS this line, so following
+   * one to the other cannot produce two different totals.
+   *
+   * It is also the reading the FLEET row already draws for this host -- see
+   * trafficSeries in fleet/hostTrends.ts, whose comment notes that the
+   * interface that actually burst is one click away on the host page. This is
+   * that promise kept in the other direction: the row and the page a reader
+   * clicks into now open on the same shape.
+   */
+  {
+    title: "Traffic",
+    slug: "host-traffic-total",
+    about:
+      "In and out for the whole host, every interface summed. Which link carried it is on the Network tab, where the same window is drawn one pair per interface.",
+    unit: "B/s",
+    source: "net",
+    bases: [
+      { base: "rx_bytes", label: "in" },
+      { base: "tx_bytes", label: "out" },
+    ],
+    // One band per direction, so the first shade of each ladder rather than
+    // the whole ladder: the pair must be the hue the fleet cell and the
+    // per-interface panel already use for in and out.
+    shades: [[UP_SHADES[0]], [DOWN_SHADES[0]]],
+    mirrored: true,
+    // NOT stacked. There is one band per direction to stack.
+    summed: true,
+    // The envelope behind the mean, exactly as the fleet cell's enlarged view
+    // draws it. Summing peaks across interfaces overstates a bucket no single
+    // second carried -- the panel above declines that bias because it is
+    // drawn per interface and would be read as a per-interface fact. Here the
+    // reading is already the host's total, which is the case the fleet cell
+    // accepts it for.
     peak: true,
     fmt: bytes,
   },
@@ -1597,12 +1604,7 @@ const GROUP_SLUGS: Record<string, { title: string; slugs: string[] }[]> = {
   collectors: [
     {
       title: "Agent",
-      slugs: [
-        "hub-latency",
-        "hub-connect-failures",
-        "scrape-duration",
-        "device-availability",
-      ],
+      slugs: ["hub-latency", "hub-connect-failures", "scrape-duration"],
     },
   ],
   network: [
@@ -1665,6 +1667,23 @@ export const SYSTEM_GROUPS: PanelGroup[] = resolveGroups("system");
 export const COLLECTOR_GROUPS: PanelGroup[] = resolveGroups("collectors");
 export const NETWORK_GROUPS: PanelGroup[] = resolveGroups("network");
 export const STORAGE_GROUPS: PanelGroup[] = resolveGroups("storage");
+
+/**
+ * Specs the Overview draws directly, which therefore belong to no tab group.
+ *
+ * A named list rather than a hole in the invariant. Every other spec is
+ * reached through a tab, and the test that pairs ALL_SPECS with groupedSlugs
+ * is what stops one being written and then drawn nowhere -- so a spec that is
+ * deliberately outside the groups has to say so here, in one place a reader
+ * can check, instead of the check being loosened to let any orphan through.
+ *
+ * host-traffic-total is the Overview's summed in/out pair. It cannot join the
+ * Network group: that tab draws host-traffic over the same two columns per
+ * interface, and two panels titled "Traffic" on one tab, differing only in
+ * whether they added the interfaces up, is exactly the confusion that panel's
+ * own comment records being removed once already.
+ */
+export const UNGROUPED_SLUGS: readonly string[] = ["host-traffic-total"];
 
 /**
  * Every slug that appears in some group, for the test that pairs with

@@ -35,6 +35,7 @@ import {
   trafficSeries,
 } from "./hostTrends";
 import { lastReported } from "../container/columns";
+import { diskSeverityFor } from "./conditions";
 
 // The range is only ever a label here: this file never resolves one into a
 // getMetrics() call, it labels a chart that has already been handed
@@ -874,6 +875,13 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
       <NowReading
         pct={pct}
         label={`Disk ${label}`}
+        // The disk's own rule, not the generic 70/85/95: this cell prints the
+        // bytes left directly underneath, and reddening a 96% array with
+        // 674 GB free while the row's own conditions call it fine is the
+        // disagreement diskSeverityFor exists to end. `free` is null when the
+        // host reported no size, and diskSeverityFor falls back to the
+        // percentage alone there rather than going quiet.
+        severity={diskSeverityFor(pct, free) ?? "ok"}
         under={
           <>
             <span className="dmount">{label}</span>

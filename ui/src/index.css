@@ -913,6 +913,30 @@ a:hover {
   font-size: var(--text-ui);
   color: var(--accent);
 }
+/* The same accent, everywhere else a hostname is written.
+   The fleet row had it and nothing else did: the host page's own <h1>, the
+   Host column of the containers list, the container detail header and the
+   fleet's container list all rendered the machine's name as ordinary link
+   ink, so the one word the whole page is about was the quietest thing on it.
+   Its own class rather than reusing .host-cell-name, which also carries that
+   row's weight and size -- a 23px serif <h1> must not be reset to
+   --text-ui. */
+.hostname {
+  color: var(--accent);
+}
+/* A hostname LINK still has to answer the pointer.
+   `a:hover` paints --accent, which is what .hostname already is, so giving
+   these the accent silently cost them their only hover feedback: the Host
+   column of the containers list, the container detail header and the fleet's
+   container group went from ink-to-accent on hover to no change at all.
+   Underline rather than a second hue, matching .host-cell-name in the row
+   above -- and on the link itself here, because these sit in prose and in
+   table cells that are not themselves the target the row lists. Excluded
+   where the row already owns it, so a fleet row keeps underlining once. */
+a.hostname:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 /* Underlined on row hover rather than on the link itself: the whole row is
    the target a pointer is over, and underlining only under the cursor made
    the name look like the one live thing in a row that is entirely live. */
@@ -2827,6 +2851,21 @@ details.sysfold > .body {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+/* The figure beside a meter takes the bar's own severity.
+   Written as `.mrow .val.st-*` rather than leaning on the generic .st-* text
+   rules further up: those are a single class and lose to `.mrow .val`, which
+   is two -- which is exactly how a red bar came to sit beside a --muted
+   number at every percentage. `ok` gets no rule, deliberately: a calm figure
+   is plain ink, not green (see NowReading and StatTile, which both say so). */
+.mrow .val.st-warn {
+  color: var(--st-warn-text);
+}
+.mrow .val.st-serious {
+  color: var(--st-serious-text);
+}
+.mrow .val.st-crit {
+  color: var(--st-crit-text);
+}
 
 /* The host overview's blocks, on a 12-track grid.
    This replaces .cardcols, which was a flex row of hand-assigned columns:
@@ -2970,6 +3009,13 @@ a.tile:focus-visible {
   font-weight: 400;
   color: var(--ink-2);
   margin-left: 3px;
+}
+/* The unit rides with its figure. `.u` sets its own colour, and a colour set
+   directly on an element beats one inherited from the parent however specific
+   that parent's rule is -- so a tile at 96% drew a red "96" beside a grey "%",
+   which reads as two different things rather than one reading. */
+.tile[class*="sev-"] .v .u {
+  color: inherit;
 }
 .tile .sub {
   display: block;

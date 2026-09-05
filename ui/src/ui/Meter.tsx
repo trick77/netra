@@ -105,18 +105,33 @@ function Row({
   label,
   bar,
   valueText,
+  severity = null,
 }: {
   label?: string;
   bar: ReactNode;
   valueText: string;
+  /**
+   * The reading's severity, or null for a row with nothing to say.
+   *
+   * `ok` is deliberately not a treatment here, the same rule StatTile states
+   * at length: painting a healthy reading green would make a hue mean
+   * "someone thought about it" rather than "look at this". The BAR still
+   * takes its ok colour -- a bar's fill needs some colour to be a fill --
+   * but the figure beside it stays plain ink until there is a reason.
+   */
+  severity?: FillSeverity | null;
 }) {
+  const valueClass =
+    severity === null || severity === "ok"
+      ? "val"
+      : `val ${SEVERITY_CLASS[severity]}`;
   return (
     <div className="mrow">
       <div>
         {label !== undefined && <div className="lab">{label}</div>}
         {bar}
       </div>
-      <div className="val">{valueText}</div>
+      <div className={valueClass}>{valueText}</div>
     </div>
   );
 }
@@ -169,6 +184,11 @@ export function Meter({
         </div>
       }
       valueText={valueText}
+      // The figure and the bar read the SAME severity. They did not before:
+      // the bar was painted from resolvedSeverity while .val was pinned to
+      // --muted in index.css, so a filesystem drew a red bar beside a grey
+      // number at every percentage.
+      severity={series !== undefined ? null : resolvedSeverity}
     />
   );
 }

@@ -250,7 +250,9 @@ function HostGroup({ rows }: { rows: readonly ContainerRow[] }) {
   const { host_id, hostname } = rows[0];
   return (
     <>
-      <a href={`/hosts/${host_id}/overview`}>{hostname}</a>
+      <a className="hostname" href={`/hosts/${host_id}/overview`}>
+        {hostname}
+      </a>
       {/* A real text node, not a CSS ::before: the separator is the only
           thing between two facts, and read aloud "db-011 container" is not
           the sentence. */}

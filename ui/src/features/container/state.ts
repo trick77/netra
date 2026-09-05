@@ -2,14 +2,14 @@
 // page's header badge, the fleet Containers tab and a host's own Containers
 // tab -- and they render the same words for the same reason columns.tsx is
 // one column set: two lists that describe the same container in different
-// vocabularies is how "gone" and "Silent" came to name one fact.
+// vocabularies is how "gone" and "silent" came to name one fact.
 //
-// "Gone" is one of those words now rather than a pill beside them. It was a
+// "gone" is one of those words now rather than a pill beside them. It was a
 // boolean carried alongside the state, and the two are not independent: gone
 // measures container.last_seen against its HOST's last report and silent
 // measures it against the clock, and since a host's last report is never in
-// the future, every gone container was also Silent. One row said both, and
-// the fleet's Silent chip counted containers whose own row called them gone.
+// the future, every gone container was also silent. One row said both, and
+// the fleet's silent chip counted containers whose own row called them gone.
 //
 // It lived in ContainerPage while only that page had a badge. The lists could
 // not call it then -- the comment in columns.tsx said so -- because it needs
@@ -84,7 +84,7 @@ export interface DerivedStateInput {
    * A container's samples ride in on its host's posts, so a host that went
    * quiet stops every container on it at once. Measuring silence against the
    * clock on such a host blames the container for its host's outage -- and it
-   * did, calling a container Silent above a button offering to purge it.
+   * did, calling a container silent above a button offering to purge it.
    *
    * Given the host's state, the badge names the host instead. Omitted, the
    * badge behaves as it did: callers without a host status are no worse off
@@ -99,7 +99,7 @@ export interface DerivedStateInput {
    * fact about the container that was established before the host went
    * anywhere -- and because the page offers a purge button on exactly this
    * condition. Without it, a container that died an hour before its host did
-   * would carry a "Host offline" badge saying nothing can be said about it,
+   * would carry a "host offline" badge saying nothing can be said about it,
    * above a button offering to delete its history.
    *
    * Measured against the host and never against the clock, so an offline host
@@ -166,11 +166,11 @@ export function deriveState({
   //
   // Serious rather than neutral. A container that crashed at 03:00 and never
   // came back is not a settled administrative fact at 03:15; it is the same
-  // problem it was at 03:04, when the row still read Silent.
+  // problem it was at 03:04, when the row still read silent.
   if (gone) {
     return {
       kind: "gone",
-      label: "Gone",
+      label: "gone",
       severity: "serious",
       why: "it stopped being reported while its host kept reporting; it was probably stopped or removed",
     };
@@ -189,7 +189,7 @@ export function deriveState({
   if (hostState !== undefined && hostState.severity === "critical") {
     return {
       kind: "host-down",
-      label: `Host ${hostState.label}`,
+      label: `host ${hostState.label}`,
       severity: "neutral",
       why: "the host stopped reporting, so nothing can be said about this container until it comes back",
     };
@@ -198,7 +198,7 @@ export function deriveState({
   if (lastSampleMs === null) {
     return {
       kind: "no-samples",
-      label: "No samples",
+      label: "no samples",
       severity: "neutral",
       why: "nothing has been reported for this container in the selected range",
     };
@@ -214,7 +214,7 @@ export function deriveState({
   if (ageS > silentAfterS) {
     return {
       kind: "silent",
-      label: "Silent",
+      label: "silent",
       severity: "serious",
       why: "samples stopped arriving for this container while its host kept reporting",
     };
@@ -234,7 +234,7 @@ export function deriveState({
   if (dockerState === "restarting") {
     return {
       kind: "restarting",
-      label: "Restarting",
+      label: "restarting",
       severity: "serious",
       why: "Docker reports the container as restarting, which on a container that stays in this state is a crash loop",
     };
@@ -243,7 +243,7 @@ export function deriveState({
   if (health === "unhealthy") {
     return {
       kind: "unhealthy",
-      label: "Unhealthy",
+      label: "unhealthy",
       severity: "serious",
       why: "the container's own HEALTHCHECK is failing; the samples below are what it is doing while it fails",
     };
@@ -254,7 +254,7 @@ export function deriveState({
     // its flat charts are the consequence rather than a second problem.
     return {
       kind: "paused",
-      label: "Paused",
+      label: "paused",
       severity: "neutral",
       why: "the container is paused, so its processes are frozen and its counters do not move",
     };
@@ -268,7 +268,7 @@ export function deriveState({
   ) {
     return {
       kind: "mem-pressure",
-      label: "Near mem_limit",
+      label: "near mem_limit",
       severity: "warning",
       why: "memory is approaching the configured limit; the OOM killer acts before the limit is reached",
     };
@@ -281,7 +281,7 @@ export function deriveState({
     // the likeliest.
     return {
       kind: "series-gap",
-      label: "Series gap",
+      label: "series gap",
       severity: "warning",
       why:
         restartsInWindow === null
@@ -298,7 +298,7 @@ export function deriveState({
 
   return {
     kind: "reporting",
-    label: "Reporting",
+    label: "reporting",
     severity: "ok",
     why: "samples are arriving on schedule",
   };
@@ -335,21 +335,21 @@ export const FILTERABLE_STATE_KINDS: readonly ContainerStateKind[] = [
  * The tile label for a kind.
  *
  * Not deriveState's own label, for one kind only: `host-down` renders as
- * "Host offline" or "Host never seen" depending on which host a row sits on,
+ * "host offline" or "host never seen" depending on which host a row sits on,
  * and a counts tile spans hosts that may disagree. It says the condition
  * rather than any one row's wording.
  */
 const KIND_LABEL: Record<ContainerStateKind, string> = {
-  "host-down": "Host not reporting",
-  "no-samples": "No samples",
-  gone: "Gone",
-  silent: "Silent",
-  unhealthy: "Unhealthy",
-  restarting: "Restarting",
-  paused: "Paused",
-  "mem-pressure": "Near mem_limit",
-  "series-gap": "Series gap",
-  reporting: "Reporting",
+  "host-down": "host not reporting",
+  "no-samples": "no samples",
+  gone: "gone",
+  silent: "silent",
+  unhealthy: "unhealthy",
+  restarting: "restarting",
+  paused: "paused",
+  "mem-pressure": "near mem_limit",
+  "series-gap": "series gap",
+  reporting: "reporting",
 };
 
 export function stateKindLabel(kind: ContainerStateKind): string {
@@ -425,7 +425,7 @@ export function stateKindRank(kind: ContainerStateKind): number {
  * The kinds that quote Docker rather than infer from the sample stream.
  *
  * The detail page captions its badge with which of the two it is, because how
- * much a reader should trust "Unhealthy" and how much they should trust
+ * much a reader should trust "unhealthy" and how much they should trust
  * "Series gap" are different questions -- one is the daemon's own answer, the
  * other is netra reading a shape.
  */

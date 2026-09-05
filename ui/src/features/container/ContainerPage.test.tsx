@@ -420,8 +420,8 @@ describe("ContainerPage", () => {
       onPurged: vi.fn(),
     });
 
-    expect(screen.getByText("Host offline")).toBeInTheDocument();
-    expect(screen.queryByText("Silent")).toBeNull();
+    expect(screen.getByText("host offline")).toBeInTheDocument();
+    expect(screen.queryByText("silent")).toBeNull();
     expect(screen.queryByRole("button", { name: /purge/i })).toBeNull();
   });
 
@@ -437,9 +437,9 @@ describe("ContainerPage", () => {
       onPurged: vi.fn(),
     });
 
-    expect(screen.queryByText("Host offline")).toBeNull();
-    expect(screen.getByText("Gone")).toBeInTheDocument();
-    expect(screen.queryByText("Silent")).toBeNull();
+    expect(screen.queryByText("host offline")).toBeNull();
+    expect(screen.getByText("gone")).toBeInTheDocument();
+    expect(screen.queryByText("silent")).toBeNull();
     expect(screen.getByRole("button", { name: /purge/i })).toBeInTheDocument();
   });
 
