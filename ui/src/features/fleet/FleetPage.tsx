@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
-  getContainers,
+  getFleetContainers,
   getHosts,
   type Container,
   type Host,
@@ -256,38 +256,32 @@ export function FleetPage({
         setError(describe(err));
         return;
       }
-      // There is no fleet-wide container endpoint, only the per-host one, so
-      // the fleet list is a fan-out -- and it is caught separately: a failing
-      // container call must not claim the host list that already rendered
-      // could not be loaded. Containers simply stay unknown.
-      // allSettled, not all: one host answering 500 must not take every
-      // other host's containers off the page. A rejected batch left the
-      // whole list empty and the tile reading "-", which says the fleet runs
-      // no containers rather than that one host could not be asked.
-      const settled = await Promise.allSettled(
-        hosts.map(async (host) => {
-          const list = await getContainers(host.id);
-          return list.map((container: Container) => ({
-            ...container,
-            host_id: host.id,
-            hostname: host.hostname,
-          }));
-        }),
-      );
+      // One request for the whole fleet, not one per host -- see
+      // getFleetContainers. It is still caught separately from the host list:
+      // a failing container call must not claim the host list that already
+      // rendered could not be loaded. Containers simply stay unknown.
+      let listings: Map<number, Container[]> | null;
+      try {
+        listings = await getFleetContainers(hosts.map((host) => host.id));
+      } catch {
+        listings = null;
+      }
       if (!live) return;
-      const rows = settled
-        .filter(
-          (r): r is PromiseFulfilledResult<ContainerRow[]> =>
-            r.status === "fulfilled",
-        )
-        .flatMap((r) => r.value);
-      const failed = settled.filter((r) => r.status === "rejected").length;
+      const rows = hosts.flatMap((host) =>
+        (listings?.get(host.id) ?? []).map((container: Container) => ({
+          ...container,
+          host_id: host.id,
+          hostname: host.hostname,
+        })),
+      );
       setFetchedContainers(rows);
-      // Partial data must say it is partial: a list quietly missing three
-      // hosts' containers looks exactly like three hosts running none.
+      // Missing data must say it is missing: an empty list looks exactly like
+      // a fleet running no containers. The count is of hosts because that is
+      // what the message states -- one request now answers for all of them, so
+      // it is every host or none rather than the three it could once be.
       setFetchedContainerError(
-        settled.some((r) => r.status === "rejected")
-          ? `${failed} host${failed === 1 ? "" : "s"} could not be asked for containers`
+        listings === null
+          ? `${hosts.length} host${hosts.length === 1 ? "" : "s"} could not be asked for containers`
           : null,
       );
     })();

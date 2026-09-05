@@ -255,6 +255,78 @@ func (s *Service) Containers(ctx context.Context, hostID int32) ([]Container, er
 	return out, rowsErr(rows.Err(), "containers")
 }
 
+// HostContainers is one host's containers inside a fleet answer.
+type HostContainers struct {
+	HostID int32 `json:"host_id"`
+	// Containers is empty rather than absent for a host running none, so a
+	// caller can tell a host with nothing from one it never asked about --
+	// the distinction HostSeries draws for the fleet metrics answer.
+	Containers []Container `json:"containers"`
+}
+
+// FleetContainersResult is a /containers answer covering several hosts.
+type FleetContainersResult struct {
+	Hosts []HostContainers `json:"hosts"`
+}
+
+// FleetContainers lists the containers on several hosts in one query.
+//
+// The fleet page used to ask each host separately: one request per host per
+// sixty-second poll tick, forever, for a list that one WHERE clause answers.
+// /api/v1/metrics collapsed the same fan-out for the series, and this was the
+// last N-shaped call the overview still made.
+//
+// The hosts are NOT checked for existence, exactly as FleetMetrics does not
+// check them: an id nobody registered contributes no rows and comes back with
+// an empty list, which is also what a registered host running nothing looks
+// like -- and the fleet page only ever asks about hosts /api/v1/hosts just
+// handed it.
+//
+// Every requested host gets an entry whether or not it has containers, and in
+// the order asked for. A caller pairing this against its own host list would
+// otherwise have to tell "runs none" apart from "not in the answer", which is
+// the distinction the per-host endpoint gave it for free.
+func (s *Service) FleetContainers(ctx context.Context, hostIDs []int32) (FleetContainersResult, error) {
+	if len(hostIDs) == 0 {
+		return FleetContainersResult{}, fmt.Errorf("%w: hosts must name at least one host", ErrInvalid)
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT host_id, id, container_key, name, image, is_agent, last_seen,
+		       docker_state, health, state_ts, restart_count, labels
+		  FROM containers
+		 WHERE host_id = ANY($1)
+		 ORDER BY host_id, container_key`, hostIDs)
+	if err != nil {
+		return FleetContainersResult{}, fmt.Errorf("query fleet containers: %w", err)
+	}
+	defer rows.Close()
+
+	byHost := make(map[int32][]Container, len(hostIDs))
+	for rows.Next() {
+		var hostID int32
+		var c Container
+		if err := rows.Scan(&hostID, &c.ID, &c.Key, &c.Name, &c.Image, &c.IsAgent, &c.LastSeen,
+			&c.DockerState, &c.Health, &c.StateSince, &c.RestartCount, &c.Labels); err != nil {
+			return FleetContainersResult{}, fmt.Errorf("scan fleet container: %w", err)
+		}
+		byHost[hostID] = append(byHost[hostID], c)
+	}
+	if err := rowsErr(rows.Err(), "fleet containers"); err != nil {
+		return FleetContainersResult{}, err
+	}
+
+	out := FleetContainersResult{Hosts: make([]HostContainers, 0, len(hostIDs))}
+	for _, id := range hostIDs {
+		list := byHost[id]
+		if list == nil {
+			list = []Container{}
+		}
+		out.Hosts = append(out.Hosts, HostContainers{HostID: id, Containers: list})
+	}
+	return out, nil
+}
+
 // Filesystems lists the filesystems seen on a host.
 func (s *Service) Filesystems(ctx context.Context, hostID int32) ([]Filesystem, error) {
 	if err := s.hostExists(ctx, hostID); err != nil {

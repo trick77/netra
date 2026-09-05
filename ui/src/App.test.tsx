@@ -13,6 +13,7 @@ vi.mock("./lib/api", async () => {
     getEvents: vi.fn(),
     getHost: vi.fn(),
     getContainers: vi.fn(),
+    getFleetContainers: vi.fn(),
     getMetrics: vi.fn(),
     getFilesystems: vi.fn(),
     getAddresses: vi.fn(),
@@ -47,6 +48,12 @@ beforeEach(() => {
   // returns undefined, and the page's orNull() then reads .then on it --
   // which surfaces as an unhandled rejection rather than a failed test.
   vi.mocked(api.getContainers).mockResolvedValue([]);
+  // The fleet's own container listing, which is ONE call for every host
+  // rather than one per host. Unmocked it falls through to the real fetch for
+  // the reason getConfig below is mocked, and the page's catch would swallow
+  // the failure -- so the overview would render containerless and no test
+  // would say why.
+  vi.mocked(api.getFleetContainers).mockResolvedValue(new Map());
   vi.mocked(api.getFilesystems).mockResolvedValue([]);
   vi.mocked(api.getAddresses).mockResolvedValue([]);
   vi.mocked(api.getPackages).mockResolvedValue([]);
@@ -314,6 +321,51 @@ describe("the range sticks", () => {
 
     await screen.findByRole("button", { name: "24h" });
     expect(pressed("24h")).toBe("true");
+  });
+});
+
+// The overview polls every sixty seconds for as long as a tab is open, so
+// anything it does PER HOST it does per host per minute, forever. The metric
+// series stopped fanning out when /api/v1/metrics landed; the container
+// listing was the last call on the page that still grew with the fleet.
+describe("the fleet's container listing", () => {
+  const second: api.Host = { ...host, id: 4, hostname: "web-02" };
+
+  it("asks once for every host rather than once per host", async () => {
+    vi.mocked(api.getHosts).mockResolvedValue([host, second]);
+
+    render(<App />);
+    await screen.findByText("web-01");
+
+    await waitFor(() =>
+      expect(api.getFleetContainers).toHaveBeenCalledTimes(1),
+    );
+    expect(api.getFleetContainers).toHaveBeenCalledWith([3, 4]);
+    // The per-host route still exists and the host page still uses it. What
+    // must not happen is the FLEET reaching for it: that is the fan-out.
+    expect(api.getContainers).not.toHaveBeenCalled();
+  });
+
+  // One request answers for the whole fleet, so a failure is all or nothing.
+  // Saying nothing would be worse than it looks: an empty container list is
+  // indistinguishable from a fleet running no containers.
+  it("names every host as unasked when the one request fails", async () => {
+    vi.mocked(api.getHosts).mockResolvedValue([host, second]);
+    vi.mocked(api.getFleetContainers).mockRejectedValue(
+      new ApiError(500, "boom"),
+    );
+    goTo("/?entity=containers");
+
+    render(<App />);
+
+    expect(
+      await screen.findByText(/2 hosts could not be asked for containers/),
+    ).toBeInTheDocument();
+    // And the fleet itself is not blamed for it: a failing container call
+    // must not claim the host list could not be loaded.
+    expect(
+      screen.queryByText(/The hosts could not be loaded/),
+    ).not.toBeInTheDocument();
   });
 });
 
