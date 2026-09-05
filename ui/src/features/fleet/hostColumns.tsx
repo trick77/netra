@@ -786,7 +786,15 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
     // reporting in the wider window is simply absent, and the dialog then
     // draws nothing rather than another disk's line under this one's title.
     const one = bands.find((band) => band.name === mount);
-    return { series: one === undefined ? [] : [one], window: fs.window };
+    // Recoloured, because filesystemBands colours by POSITION -- FS_COLORS
+    // cycling over the mounts that reported -- and this cell draws one mount
+    // in DISK_COLOR. Taken as it comes, the dialog and its rail would open in
+    // whatever hue this mount happened to be nth of, beside a figure in
+    // another, and picking a range would change the line's colour.
+    return {
+      series: one === undefined ? [] : [{ ...one, color: DISK_COLOR }],
+      window: fs.window,
+    };
   };
 
   // One line for the mount named underneath, unfilled: usage lives between
@@ -801,9 +809,19 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
         className="inline"
         unit="%"
         series={[{ name: mount, color: DISK_COLOR, values }]}
-        // Not the cell's frozen min/max: those are this window's extent, and
-        // the dialog's picker can widen the window. autoScale rescales to
-        // whatever it is showing, which is the same rule the cell follows.
+        // Not the cell's frozen min/max: those are THIS window's extent, and
+        // the picker can widen the window -- a floor held from the old one
+        // clips every older bucket below it off the bottom of the plot, which
+        // is the half fitted() cannot fix (it raises a ceiling, never lowers
+        // a floor).
+        //
+        // So the dialog free-scales, and it does NOT carry DISK_MIN_SPAN:
+        // the two are not the same rule and should not be. The span floor
+        // exists because a 26px strip has no axis -- a flat mount magnified
+        // to full height there is read as movement and there is nothing on
+        // screen to say otherwise. The dialog has a labelled axis: a mount
+        // between 41.9 and 42.1 draws its wobble large and says 41.9 and 42.1
+        // beside it, which is the truth at a zoom the reader asked for.
         autoScale
         fmt={(n) => percent(n)}
         window={row.window}

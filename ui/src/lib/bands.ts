@@ -476,18 +476,6 @@ function sumOptional(i: number, series: (number | null)[][]): number {
 const FS_COLORS = ["var(--s1)", "var(--s8)", "var(--s4)", "var(--s6)"];
 
 /**
- * Every filesystem's Use% over the window, one band each.
- *
- * All of them, not just the fullest: a host's root can sit flat at 40% while
- * a log volume climbs into trouble, and one line for the worst mount hides
- * which of them is moving. It also jumps between filesystems whenever
- * another overtakes, drawing a line no single disk ever followed.
- *
- * df's Use% throughout -- used / (used + free), never used / total, since
- * total includes the root reserve. The same definition the meter beside it
- * and fullestFilesystem() use, so nothing on the row can disagree.
- */
-/**
  * One filesystem's Use% over the window, by its index into res.series.
  *
  * Split out of filesystemBands below so a caller that has already picked a
@@ -517,6 +505,18 @@ export function fsUsePercent(
   return values;
 }
 
+/**
+ * Every filesystem's Use% over the window, one band each.
+ *
+ * All of them, not just the fullest: a host's root can sit flat at 40% while
+ * a log volume climbs into trouble, and one line for the worst mount hides
+ * which of them is moving. It also jumps between filesystems whenever
+ * another overtakes, drawing a line no single disk ever followed.
+ *
+ * df's Use% throughout -- used / (used + free), never used / total, since
+ * total includes the root reserve. The same definition the meter beside it
+ * and fullestFilesystem() use, so nothing on the row can disagree.
+ */
 export function filesystemBands(res: MetricsResponse | null): Band[] {
   if (res === null || res.series.length === 0) return [];
   if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return [];
