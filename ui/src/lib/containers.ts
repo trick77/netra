@@ -93,8 +93,15 @@ function sentence(value: string, subject: string): string {
  * `docker-socket-silent` is the opposite: the agent MEASURED container cgroups
  * and reported none of them, so the empty list is a fault and every panel over
  * it has to take its not-collected state rather than draw a host at rest.
+ *
+ * Exported because it is not only the panels that need it. The container LISTS
+ * need the same answer for a different question -- can a container sample land
+ * on this host at all -- and features/container/columns.tsx used to answer it
+ * from a set of its own. A value added here and not there is a live container
+ * badged "Gone" beside a note saying its host cannot report, with a Purge
+ * button offering to delete its history. One definition, four callers.
  */
-function blocking(value: string): boolean {
+export function containerSamplesBlocked(value: string | undefined): boolean {
   return value === "no-cgroup-scopes" || value === "docker-socket-silent";
 }
 
@@ -111,14 +118,14 @@ export function hostContainersBlocked(
   capabilities: Record<string, string> | undefined,
 ): boolean {
   const value = capabilities?.containers;
-  return value !== undefined && blocking(value);
+  return containerSamplesBlocked(value);
 }
 
 /** Whether any host's containers are missing outright, not merely unnamed. */
 export function fleetContainersBlocked(hosts: readonly CapableHost[]): boolean {
   return hosts.some((host) => {
     const value = host.capabilities?.containers;
-    return value !== undefined && blocking(value);
+    return containerSamplesBlocked(value);
   });
 }
 
@@ -152,7 +159,7 @@ export function hostContainerNote(
  * that looks complete and is not -- and saying so is the whole point, because
  * nothing else on the page can.
  *
- * Keyed off blocking() rather than off `no-cgroup-scopes` by name, so a value
+ * Keyed off containerSamplesBlocked() rather than off `no-cgroup-scopes` by name, so a value
  * added to that set inherits the prefix instead of quietly going without it.
  */
 export function fleetContainerNotes(
@@ -174,7 +181,7 @@ export function fleetContainerNotes(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([value, hostnames]) => {
       const note = sentence(value, `The agent on ${names(hostnames)}`);
-      return blocking(value) && partial
+      return containerSamplesBlocked(value) && partial
         ? `This list is incomplete. ${note}`
         : note;
     });

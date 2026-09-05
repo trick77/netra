@@ -318,12 +318,18 @@ func (c *Containers) Capabilities() map[string]string {
 		// simply has no containers.
 		out = map[string]string{"containers": capNoCgroupScopes}
 	}
-	if c.netCapability != "" {
+	if c.netCapability != "" && !c.socketSilent {
 		if out == nil {
 			out = make(map[string]string, 1)
 		}
 		// Separate key from "containers": CPU, memory and I/O are fine in
 		// every case this reports, and only networking is missing.
+		//
+		// Except under docker-socket-silent, where no row ships at all. The
+		// namespace comparison still runs during the walk and can latch a
+		// host-wide value, and reporting it would have the UI explain the
+		// networking of containers it is not being shown -- the same "one
+		// cause, one explanation" rule restartCapability follows below.
 		out["container_network"] = c.netCapability
 	}
 	if c.restartCapability != "" && !c.socketAbsent && !c.socketSilent {
@@ -490,7 +496,12 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 	case silent && !wasSilent:
 		slog.Warn("docker socket is mounted but named no containers; the cgroup scopes it should have named are NOT being reported until it answers again",
 			"scopes", len(cur), "err", listErr)
-	case !missing && !silent && (wasAbsent || wasSilent):
+	case listErr == nil && !missing && !silent && (wasAbsent || wasSilent):
+		// listErr, not just !silent: a host whose last container exits DURING
+		// an outage has nothing left for the socket to have named, so `silent`
+		// goes false while the list call is still erroring. Without this the
+		// recovery line would announce a socket that is still refusing, and
+		// starting one container would warn about it all over again.
 		slog.Info("docker socket naming containers again", "containers", listed)
 	}
 

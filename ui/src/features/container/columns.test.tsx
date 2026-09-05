@@ -199,6 +199,22 @@ describe("containerColumns", () => {
       expect(screen.getByText("No samples")).toBeInTheDocument();
     });
 
+    // The same blind spot with a different cause -- see containerSamplesBlocked.
+    it("does not call a container silent when the socket has gone quiet", () => {
+      renderRows(
+        [
+          makeRow({
+            last_seen: "2026-08-10T09:00:00Z",
+            host_last_seen: "2026-08-10T14:00:00Z",
+            host_containers_capability: "docker-socket-silent",
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.queryByText("Silent")).toBeNull();
+      expect(screen.getByText("No samples")).toBeInTheDocument();
+    });
+
     // The fleet grid spans 24h, so a container created an hour ago is mostly
     // leading nulls. Warning on that would light up a healthy fleet.
     it("does not call a young container's leading nulls a gap", () => {
@@ -545,6 +561,21 @@ describe("a host that cannot collect containers at all", () => {
       host_last_seen: HOST_SEEN,
       last_seen: stale,
       host_containers_capability: "no-cgroup-scopes",
+    });
+    expect(containerIsGone(row)).toBe(false);
+  });
+
+  // Same argument, different cause: a MOUNTED socket that stops naming
+  // containers means the agent reports none of the scopes it measured, so
+  // every row on that host ages past the window at once. Badging them Gone
+  // would put a Purge button on containers that are still running -- and this
+  // module used to answer the question from a set of its own, which is exactly
+  // how it missed this value while the panels above the list had it.
+  it("marks nothing gone when the Docker socket has gone silent", () => {
+    const row = makeRow({
+      host_last_seen: HOST_SEEN,
+      last_seen: stale,
+      host_containers_capability: "docker-socket-silent",
     });
     expect(containerIsGone(row)).toBe(false);
   });
