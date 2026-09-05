@@ -282,20 +282,25 @@ function systemTiles(
 ): Tile[] {
   const tiles: Tile[] = [];
 
-  // CPU carries NO threshold, and that is deliberate rather than an
-  // oversight: nothing in this codebase judges a CPU percentage -- the fleet
-  // list does not, conditions.ts does not -- and inventing one here would
-  // mean a host reading "warning" on its own page and clean in the row a
-  // reader arrived from. A busy CPU is a fact; whether it is a problem is
-  // what the load chart below and the attention band above are for.
+  // CPU carries the same threshold the fleet row already reads it by. The
+  // fleet's CPU cell hands its percentage to NowReading with no severity of
+  // its own, and NowReading falls through to severityFromPercent against
+  // DEFAULT_THRESHOLDS -- so 96% is red in the row a reader arrived from,
+  // and leaving the tile plain was the disagreement, not the fix for one.
+  // Nothing new is being judged here either: this is the rule memory and
+  // swap below already use, and the one every meter and sparkline in the
+  // app is drawn by.
+  const cpuNow = current(hostMetrics, "cpu_total");
+  const cpuSeverity =
+    cpuNow === null ? null : offOnly(severityFromPercent(cpuNow));
   tiles.push({
     key: "cpu",
     label: "CPU",
-    value: percent(current(hostMetrics, "cpu_total")),
+    value: percent(cpuNow),
     sub: host.cores === null ? undefined : `${host.cores} cores`,
     values: griddedValues(hostMetrics, 0, "cpu_total"),
-    color: "var(--s1)",
-    severity: null,
+    color: trendColor(cpuSeverity, "var(--s1)"),
+    severity: cpuSeverity,
     slug: "host-cpu",
   });
 
@@ -391,7 +396,7 @@ function busiestFilesystemTile(res: MetricsResponse | null): Tile {
   const rows = filesystemRows(res);
   let worstIndex = -1;
   let worstPct = -1;
-  let severity: FillSeverity | null = null;
+  let worstNotable: FillSeverity | null = null;
   // SEVERITY first, percentage only to break a tie within it.
   //
   // Picking by percentage alone is not the same question the attention band
@@ -401,25 +406,29 @@ function busiestFilesystemTile(res: MetricsResponse | null): Tile {
   // warning about a disk it did not name. The band and the tile have to
   // agree about which disk is the problem; they already share diskState, and
   // this is the other half of sharing it.
+  //
+  // WHICH disk, only. What COLOUR the tile then reads is the percentage's
+  // own question, answered below by the same 70/85/95 the meters use -- see
+  // the comment on the returned severity.
   rows.forEach((row, index) => {
     const state = diskState(row.used, row.free);
     if (state === null) return;
     if (
       worstIndex !== -1 &&
-      severityRank(state.severity) < severityRank(severity)
+      severityRank(state.severity) < severityRank(worstNotable)
     ) {
       return;
     }
     if (
       worstIndex !== -1 &&
-      severityRank(state.severity) === severityRank(severity) &&
+      severityRank(state.severity) === severityRank(worstNotable) &&
       state.pct <= worstPct
     ) {
       return;
     }
     worstPct = state.pct;
     worstIndex = index;
-    severity = state.severity;
+    worstNotable = state.severity;
   });
 
   if (worstIndex === -1) {
@@ -444,6 +453,14 @@ function busiestFilesystemTile(res: MetricsResponse | null): Tile {
     if (u === null || f == null || u + f === 0) return null;
     return (u / (u + f)) * 100;
   });
+
+  // The tile is coloured by the percentage it prints, on the same 70/85/95
+  // the Disk panel's meters below it read by -- not by the compound rule
+  // that picked WHICH filesystem this is. The compound rule answers "is this
+  // worth acting on" and is why a 20 TB array with 800 GB free stays out of
+  // the attention band; using it for the fill as well made red unreachable
+  // above roughly 400 GB of capacity, and a 97 % disk drew amber.
+  const severity = offOnly(severityFromPercent(worstPct));
 
   return {
     key: "disk",

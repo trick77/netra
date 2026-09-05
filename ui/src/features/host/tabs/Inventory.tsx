@@ -41,7 +41,6 @@ import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column, type TableProps } from "../../../ui/Table";
 import { Meter, SEVERITY_CLASS } from "../../../ui/Meter";
-import { diskState } from "../../fleet/conditions";
 import { When } from "../../../ui/When";
 import { rangeLabel, type Range } from "../../../lib/range";
 import { RAIL_RANGES } from "../../../lib/range";
@@ -607,15 +606,12 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
             value={(row.used / (row.used + row.free)) * 100}
             max={100}
             label={row.label}
-            // The same rule the Overview's Disk panel, the busiest-filesystem
-            // tile, the fleet's disk cell and both attention lists use. It
-            // weighs the bytes left as well as the ratio, and this table is
-            // the one place a mount is listed BESIDE its free bytes -- a red
-            // bar next to "735.3 GB free" is the contradiction it exists to
-            // prevent. Passed explicitly because Meter's own default is the
-            // percentage-only 70/85/95, which is right for a reading with no
-            // rule of its own and wrong for a filesystem.
-            severity={diskState(row.used, row.free)?.severity ?? "ok"}
+            // No severity passed: Meter's 70/85/95 colours the fill and the
+            // figure, as it does on the Overview's Disk panel and in the
+            // fleet's disk cell. The bytes listed beside the bar are context
+            // for the reading, not a reason to mute it. What keeps a large
+            // volume with real headroom quiet is the attention list, which
+            // judges on the compound rule and leaves it out.
           />
         </div>
       ),

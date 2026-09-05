@@ -38,11 +38,16 @@ export function NowReading({
   /**
    * The severity, when the caller's own rule decides it.
    *
-   * CPU and memory have no rule beyond the percentage and leave this unset.
-   * A filesystem does: diskSeverityFor weighs the bytes left as well as the
-   * ratio, and a disk cell that judged itself from the percentage alone
-   * reddened a 4 TB array at 96% that the very same page's attention list
-   * called fine. One rule per quantity, and the quantity's owner holds it.
+   * Every reading in the app leaves this unset, filesystems included: a bar
+   * answers "what does this number say", and the answer is the same 70/85/95
+   * for a disk as for CPU or memory. Passing diskSeverityFor here instead --
+   * high enough AND with little enough left -- made red unreachable on any
+   * volume over roughly 400 GB, because critical there also needs under
+   * 20 GiB free, so a 97% filesystem drew amber.
+   *
+   * That compound rule answers the other question, "is this worth someone's
+   * attention", and it keeps the attention lists. The prop stays for a
+   * caller that genuinely holds a rule of its own.
    */
   severity?: FillSeverity;
 }) {

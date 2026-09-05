@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { HostDetail, MetricsResponse } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { overviewTiles, type Tile } from "./overviewTiles";
-import { DISK_WARN_PCT } from "../../fleet/conditions";
+import { DISK_WARN_PCT, diskSeverityFor } from "../../fleet/conditions";
 
 const t0 = Date.parse("2026-08-10T00:59:00Z");
 const t1 = Date.parse("2026-08-10T01:00:00Z");
@@ -93,14 +93,23 @@ describe("overviewTiles system group", () => {
     expect(find(system, "CPU")?.value).toBe("37%");
   });
 
-  // Nothing in this codebase judges a CPU percentage -- not conditions.ts,
-  // not the fleet list -- so inventing a threshold here would make a host
-  // read "warning" on its own page and clean in the row a reader arrived
-  // from. A busy CPU is a fact; whether it is a problem is the attention
-  // band's question.
-  it("never puts a status hue on CPU, however busy the host is", () => {
+  // The fleet's CPU cell hands its percentage to NowReading with no severity
+  // of its own, so NowReading judges it with severityFromPercent against
+  // DEFAULT_THRESHOLDS -- 99 % is red in the row a reader arrived from. The
+  // tile reads the same number by the same rule; leaving it plain was the
+  // disagreement between the two pages, not the thing preventing one.
+  it("colours CPU on the same threshold the fleet row reads it by", () => {
     const { system } = tiles({
       hostMetrics: hostMetrics(["cpu_total"], [99], [99]),
+    });
+
+    expect(find(system, "CPU")?.severity).toBe("critical");
+  });
+
+  // `ok` is not a treatment: a calm reading is plain ink, never green.
+  it("leaves a quiet CPU with no hue at all", () => {
+    const { system } = tiles({
+      hostMetrics: hostMetrics(["cpu_total"], [12], [12]),
     });
 
     expect(find(system, "CPU")?.severity).toBeNull();
@@ -235,27 +244,42 @@ describe("overviewTiles busiest filesystem", () => {
     expect(tile?.sub).toBe("/mnt/ark");
   });
 
-  // Through diskState, so this tile, the Disk meters below it, the attention
-  // band above it and the fleet row a reader arrived from cannot disagree
-  // about one disk.
-  it("warns on the fleet's own disk threshold", () => {
+  // On the percentage, like the Disk meters below it and every other bar in
+  // the app: the tile is coloured by the number it prints.
+  it("colours on the meter's own threshold, not the attention rule", () => {
     const used = DISK_WARN_PCT;
     const { system } = tiles({
       filesystemMetrics: fsMetrics([["/mnt/ark", used, 100 - used]]),
     });
 
-    expect(find(system, "Busiest filesystem")?.severity).toBe("warning");
+    expect(find(system, "Busiest filesystem")?.severity).toBe("serious");
   });
 
-  // diskSeverityFor weighs the bytes left as well as the percentage: a 4 TB
-  // disk at 91 % still has 360 GB free.
-  it("stays quiet on a large disk with real headroom left", () => {
+  // A 97 % filesystem reads red however large the volume is. Judging the
+  // FILL by diskSeverityFor put red out of reach above roughly 400 GB of
+  // capacity -- critical there also needs under 20 GiB free -- so a disk
+  // that really was full drew amber.
+  it("reddens a filesystem at 97%, whatever its capacity", () => {
+    const gib = 1024 ** 3;
+    const { system } = tiles({
+      filesystemMetrics: fsMetrics([["/mnt/ark", 3880 * gib, 120 * gib]]),
+    });
+
+    expect(find(system, "Busiest filesystem")?.severity).toBe("critical");
+  });
+
+  // The other half of that split: the tile says how full the disk is, the
+  // attention band decides whether anyone needs to act. A 4 TB volume at
+  // 91 % still has 360 GB free, so it draws its hue here and stays out of
+  // the band -- hostConditions() judges it on the compound rule.
+  it("colours a large disk with headroom, which the band still ignores", () => {
     const gib = 1024 ** 3;
     const { system } = tiles({
       filesystemMetrics: fsMetrics([["/mnt/ark", 3640 * gib, 360 * gib]]),
     });
 
-    expect(find(system, "Busiest filesystem")?.severity).toBeNull();
+    expect(find(system, "Busiest filesystem")?.severity).toBe("serious");
+    expect(diskSeverityFor(91, 360 * gib)).toBeNull();
   });
 
   // Picking by percentage alone asks a different question from the one the
@@ -276,7 +300,9 @@ describe("overviewTiles busiest filesystem", () => {
     const tile = find(system, "Busiest filesystem");
 
     expect(tile?.sub).toBe("/");
-    expect(tile?.severity).toBe("warning");
+    // WHICH disk still comes from diskState. The hue comes from the
+    // percentage that disk is at, 93 %.
+    expect(tile?.severity).toBe("serious");
   });
 
   it("says absent rather than 0% for a host reporting no filesystems", () => {
