@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach, type Mock } from "vitest";
 import {
+  getFleetContainers,
   getFleetMetrics,
   getHosts,
   getMetrics,
@@ -103,6 +104,40 @@ describe("api", () => {
     // silence and "never asked" have to stay distinguishable.
     expect(byHost.get(2)?.series).toEqual([]);
     expect(byHost.get(2)?.tier).toBe("5m");
+  });
+
+  // The same split for the fleet's container listing, which the overview used
+  // to fetch one host at a time.
+  it("splits a fleet container response into one list per host", async () => {
+    mockFetch(200, {
+      hosts: [
+        { host_id: 1, containers: [{ container_key: "proj/web" }] },
+        { host_id: 2, containers: [] },
+      ],
+    });
+
+    const byHost = await getFleetContainers([1, 2]);
+
+    const [url] = (fetch as unknown as Mock).mock.calls[0];
+    expect(url).toContain("/api/v1/containers?");
+    expect(url).toContain("hosts=1%2C2");
+
+    expect(byHost.get(1)?.[0].container_key).toBe("proj/web");
+    // Present with an empty list, never absent: "runs none" and "never asked"
+    // have to stay distinguishable, exactly as they do for the series.
+    expect(byHost.get(2)).toEqual([]);
+  });
+
+  // An empty fleet asks nothing. Without the guard the id list joins to "",
+  // toQueryString keeps the empty value rather than dropping it, and the hub
+  // answers `?hosts=` with a 400 -- so a hub with no hosts registered and the
+  // overview open would take one guaranteed-400 request every poll tick,
+  // forever, with the page's catch hiding it.
+  it("asks nothing when there are no hosts", async () => {
+    mockFetch(200, { hosts: [] });
+
+    expect(await getFleetContainers([])).toEqual(new Map());
+    expect(fetch as unknown as Mock).not.toHaveBeenCalled();
   });
 
   // DELETE /api/v1/hosts/{id} answers 204 with no body at all. Calling

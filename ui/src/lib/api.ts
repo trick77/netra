@@ -576,6 +576,15 @@ type FleetContainersResponse = {
 export async function getFleetContainers(
   hostIds: readonly (number | string)[],
 ): Promise<Map<number, Container[]>> {
+  // No hosts, no question -- the guard fetchFleetTrends and
+  // fetchFleetContainerTrends already make before asking /api/v1/metrics.
+  // Without it an empty list joins to "", toQueryString keeps the empty value
+  // rather than dropping it, and parseHostIDs rejects `?hosts=` with a 400 --
+  // so an empty fleet with the overview open would put one guaranteed-400
+  // request on the hub every poll tick, forever, and the page's catch would
+  // hide it.
+  if (hostIds.length === 0) return new Map();
+
   const res = await request<FleetContainersResponse>(
     `/api/v1/containers${toQueryString({ hosts: hostIds.join(",") })}`,
   );
