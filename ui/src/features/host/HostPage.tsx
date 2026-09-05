@@ -310,23 +310,29 @@ export function HostPage({
       async function load(): Promise<Partial<TabData>> {
         switch (tab) {
           case "overview": {
-            // Five requests, down from eight. The tab stopped drawing the
+            // Six requests, down from eight. The tab stopped drawing the
             // per-core stack (cpu_core), the sensor cards (sensor) and the
             // Inventory counts (containers) when they moved or were dropped,
             // and a page that keeps fetching what it no longer draws is three
             // round trips a reader pays for and never sees. units stays: the
-            // attention band counts the failed ones.
+            // attention band counts the failed ones. drives is here for the
+            // same reason and was the one signal missing -- a host with a
+            // failing disk read clean on this tab while its Storage tab
+            // showed the drive in red, because the listing was fetched only
+            // when that tab was opened.
             const [
               hostMetrics,
               filesystemMetrics,
               agentMetrics,
               units,
+              drives,
               netMetrics,
             ] = await Promise.all([
               metrics("host"),
               metrics("filesystem"),
               metrics("agent"),
               orNull(getUnits(hostId)),
+              orNull(getDrives(hostId)),
               // Traffic: the overview summarised every subsystem except the
               // one most likely to explain a problem.
               metrics("net"),
@@ -336,6 +342,7 @@ export function HostPage({
               filesystemMetrics,
               agentMetrics,
               units,
+              drives,
               netMetrics,
             };
           }
@@ -651,6 +658,7 @@ export function HostPage({
           agentMetrics={data.agentMetrics}
           netMetrics={data.netMetrics}
           units={data.units}
+          drives={data.drives}
           range={range}
           fetchFamily={fetchFamily}
           // A tile's href is /hosts/{id}/chart/<slug>, which the router

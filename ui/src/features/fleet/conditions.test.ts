@@ -9,6 +9,7 @@ import {
   kindLabel,
 } from "./conditions";
 import type { HostRow } from "./hostColumns";
+import type { Drive } from "../../lib/api";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
 
@@ -508,5 +509,91 @@ describe("isConditionKind", () => {
     expect(isConditionKind("critical")).toBe(false);
     expect(isConditionKind("")).toBe(false);
     expect(isConditionKind("toString")).toBe(false);
+  });
+});
+
+// The bug this kind exists to fix: netra rated a drive critical on the host's
+// Storage tab and called the same host healthy one click up, because nothing
+// carried the verdict out of that table.
+describe("drive conditions", () => {
+  const withAttrs = (device: string, attrs: Record<number, number>): Drive => ({
+    device,
+    model: "ST16000NM000J",
+    serial: "ZR5A1M0K",
+    last_seen: "2026-08-12T11:00:00Z",
+    attributes: Object.entries(attrs).map(([id, raw]) => ({
+      id: Number(id),
+      raw,
+      normalized: null,
+    })),
+  });
+
+  it("names the drive and what is wrong with it", () => {
+    // Given a host whose sda has sectors pending reallocation
+    const rows = hostConditions(
+      makeRow({ drives: [withAttrs("sda", { 197: 3 })] }),
+      NOW,
+    );
+
+    // Then the host carries one drive condition, naming the disk
+    const drive = rows.find((c) => c.kind === "drive");
+    expect(drive?.severity).toBe("critical");
+    expect(drive?.label).toBe(kindLabel("drive"));
+    expect(drive?.what).toMatch(/^sda — /);
+    expect(drive?.tab).toBe("storage");
+    // No onset: SMART attributes are counters with no zero baseline, so the
+    // first non-zero reading is when netra started looking.
+    expect(drive?.since).toBeNull();
+  });
+
+  it("collapses several failing drives into one condition for the host", () => {
+    // Given two disks in trouble, one worse than the other
+    const rows = hostConditions(
+      makeRow({
+        drives: [withAttrs("sda", { 5: 12 }), withAttrs("sdb", { 197: 3 })],
+      }),
+      NOW,
+    );
+
+    // Then the host has ONE row, at the worse of the two, saying how many
+    // more there are -- the counts line says hosts, not drives.
+    const drives = rows.filter((c) => c.kind === "drive");
+    expect(drives).toHaveLength(1);
+    expect(drives[0].severity).toBe("critical");
+    expect(drives[0].what).toBe("sdb — 3 pending sectors (+1 more)");
+  });
+
+  it("stays silent when the drives were never fetched", () => {
+    // Given a row assembled without drives -- the fleet-wide call failed, or
+    // has not answered yet
+    const rows = hostConditions(makeRow({ drives: undefined }), NOW);
+
+    // Then netra says nothing rather than saying the disks are fine. It did
+    // not look, and only one of those two readings is honest.
+    expect(rows.some((c) => c.kind === "drive")).toBe(false);
+  });
+
+  it("stays silent for a host whose drives are all healthy", () => {
+    const rows = hostConditions(
+      makeRow({ drives: [withAttrs("sda", { 197: 0, 5: 0 })] }),
+      NOW,
+    );
+    expect(rows.some((c) => c.kind === "drive")).toBe(false);
+  });
+
+  // CRC errors and wear are on the drive row and stop there: neither counter
+  // ever resets, so one cable glitch would park this host in the attention
+  // list permanently -- see driveAlarms.
+  it("does not promote a warning-level finding", () => {
+    const rows = hostConditions(
+      makeRow({ drives: [withAttrs("sda", { 199: 1 })] }),
+      NOW,
+    );
+    expect(rows.some((c) => c.kind === "drive")).toBe(false);
+  });
+
+  it("is a kind the URL filter recognises", () => {
+    // ?attn=drive has to survive a reload like every other kind
+    expect(isConditionKind("drive")).toBe(true);
   });
 });

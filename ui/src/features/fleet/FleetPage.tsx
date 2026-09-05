@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   getFleetContainers,
+  getFleetDrives,
   getHosts,
   type Container,
+  type Drive,
   type Host,
 } from "../../lib/api";
 import { ABSENT, byterate } from "../../lib/format";
@@ -193,6 +195,10 @@ export interface FleetPageProps {
    * could not be asked. Partial data must say it is partial: a list quietly
    * missing three hosts looks exactly like three hosts running none. */
   containerError?: string | null;
+  /** Set by a caller that fetched the drives itself and could not get them.
+   * With no drives no host can be judged on its disks, and every row below
+   * reads clean on them -- which must be said rather than looked like. */
+  driveError?: string | null;
   onEntityChange?: (entity: Entity) => void;
 }
 
@@ -206,6 +212,7 @@ export function FleetPage({
   attentionHref = (next) => (next === "all" ? "/" : `/?attn=${next}`),
   checkedAt: injectedCheckedAt,
   containerError: injectedContainerError,
+  driveError: injectedDriveError,
   now = new Date(),
   onEntityChange,
 }: FleetPageProps) {
@@ -238,6 +245,9 @@ export function FleetPage({
     string | null
   >(null);
   const [fetchedCheckedAt, setFetchedCheckedAt] = useState<string | null>(null);
+  const [fetchedDriveError, setFetchedDriveError] = useState<string | null>(
+    null,
+  );
 
   const injected = rows !== undefined;
 
@@ -256,17 +266,39 @@ export function FleetPage({
         setError(describe(err));
         return;
       }
-      // One request for the whole fleet, not one per host -- see
-      // getFleetContainers. It is still caught separately from the host list:
-      // a failing container call must not claim the host list that already
-      // rendered could not be loaded. Containers simply stay unknown.
-      let listings: Map<number, Container[]> | null;
-      try {
-        listings = await getFleetContainers(hosts.map((host) => host.id));
-      } catch {
-        listings = null;
-      }
+      // Two fleet-wide requests, together rather than one after the other --
+      // they answer different questions and neither needs the other, so
+      // awaiting them in sequence would make the container list wait a whole
+      // round trip it has no reason to. App.tsx's polling path runs them in
+      // one wave for the same reason.
+      //
+      // Each is caught on its own: a failing listing must not claim the host
+      // list that already rendered could not be loaded. Containers simply
+      // stay unknown; the rows keep `drives` undefined, which hostConditions
+      // reads as "not asked" and stays silent about -- a fleet that quietly
+      // drops the one signal saying a disk is dying is worse than one that
+      // admits it, which is what the note beneath the head is for.
+      const ids = hosts.map((host) => host.id);
+      const [drives, listings] = await Promise.all([
+        getFleetDrives(ids).catch(() => null),
+        getFleetContainers(ids).catch(() => null),
+      ]);
       if (!live) return;
+      if (drives !== null) {
+        const withDrives = drives;
+        setFetchedRows((current) =>
+          (current ?? buildHostRows(hosts)).map((row) => ({
+            ...row,
+            drives: withDrives.get(row.id) ?? [],
+          })),
+        );
+      }
+      setFetchedDriveError(
+        drives === null
+          ? `${hosts.length} host${hosts.length === 1 ? "" : "s"} could not be asked for drives`
+          : null,
+      );
+
       const rows = hosts.flatMap((host) =>
         (listings?.get(host.id) ?? []).map((container: Container) => ({
           ...container,
@@ -296,6 +328,7 @@ export function FleetPage({
   const hostRows = rows ?? fetchedRows ?? [];
   const containerRows = containers ?? fetchedContainers ?? [];
   const containerError = injectedContainerError ?? fetchedContainerError;
+  const driveError = injectedDriveError ?? fetchedDriveError;
   // Distinguishes "this fleet runs no containers" from "not fetched yet":
   // the tile may only say 0 for the first.
   const containersKnown =
@@ -358,9 +391,16 @@ export function FleetPage({
     group.conditions.some((c) => (c.severity === "critical") === critical);
   const criticalHosts = groups.filter((g) => hasSeverity(g, true)).length;
   // Everything that is not critical rather than severity === "warning"
-  // exactly: `serious` is a severity the type allows and nothing currently
-  // emits, and a host that started emitting it would otherwise be counted in
-  // `troubled` and be unreachable by either segment.
+  // exactly. The drive condition emits `serious` -- a disk with reallocated
+  // sectors has already substituted for damage, which is worse than a
+  // filesystem at 91% and not yet a failure -- and a segment written as
+  // severity === "warning" would have counted such a host in `troubled` and
+  // left it unreachable from either segment.
+  //
+  // The visible seam: that host's chip reads "Serious" while the segment it
+  // answers to reads "Warning". Two segments rather than three is the trade,
+  // and it is the right way round -- a reader looking for what is not
+  // critical finds it.
   const warningHosts = groups.filter((g) => hasSeverity(g, false)).length;
 
   // One `attn` param, read against the entity on screen. A container kind
@@ -515,6 +555,12 @@ export function FleetPage({
       {containerError !== null ? (
         <p className="note" role="alert">
           The hosts loaded, but their containers did not: {containerError}
+        </p>
+      ) : null}
+      {driveError !== null && driveError !== undefined ? (
+        <p className="note" role="alert">
+          The hosts loaded, but their drives did not: {driveError} — no host
+          below can be judged on its disks.
         </p>
       ) : null}
 

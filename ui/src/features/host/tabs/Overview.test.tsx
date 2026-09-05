@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
+import type {
+  Drive,
+  HostDetail,
+  MetricsResponse,
+  Unit,
+} from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { Overview, needsAttention } from "./Overview";
 import { filesystemRows } from "./overviewTiles";
@@ -908,6 +913,7 @@ describe("needsAttention agrees with the fleet band", () => {
     hostMetrics: null,
     filesystems: [],
     units: null,
+    drives: null,
   };
 
   it("calls a host that has never reported critical, the fleet's word for it", () => {
@@ -1010,5 +1016,57 @@ describe("needsAttention agrees with the fleet band", () => {
     expect(at(12000 * GB, 500 * GB)).toEqual([]);
     // and 96% with under 20 GiB left is the real thing
     expect(at(19 * GB, 0.8 * GB)[0]?.severity).toBe("critical");
+  });
+});
+
+// The panel this tab is judged on used to read clean on a host whose Drives
+// table, one tab away, was showing a critical disk in red.
+describe("needsAttention reads the host's drives", () => {
+  const quietDrives = {
+    agentMetrics: null,
+    hostMetrics: null,
+    filesystems: [],
+    units: null,
+  };
+  const disk = (device: string, attrs: Record<number, number>): Drive => ({
+    device,
+    model: "ST16000NM000J",
+    serial: "ZR5A1M0K",
+    last_seen: "2026-08-10T13:00:00Z",
+    attributes: Object.entries(attrs).map(([id, raw]) => ({
+      id: Number(id),
+      raw,
+      normalized: null,
+    })),
+  });
+
+  it("names each failing drive, one line per thing to replace", () => {
+    // Given two disks in trouble
+    const testee = needsAttention({
+      ...quietDrives,
+      host,
+      now: new Date(host.last_seen as string),
+      drives: [disk("sda", { 197: 3 }), disk("sdb", { 5: 12 })],
+    });
+
+    // Then both are on the list, worst first, each naming its own device --
+    // this panel is what to DO, and two disks are two replacements
+    expect(testee).toEqual([
+      { severity: "critical", what: "sda — 3 pending sectors" },
+      { severity: "serious", what: "sdb — 12 reallocated sectors" },
+    ]);
+  });
+
+  it("stays silent when the drives could not be fetched", () => {
+    // null is "netra did not look", which must not read as "the disks are
+    // fine" -- the same line units: null draws
+    expect(
+      needsAttention({
+        ...quietDrives,
+        host,
+        now: new Date(host.last_seen as string),
+        drives: null,
+      }),
+    ).toEqual([]);
   });
 });

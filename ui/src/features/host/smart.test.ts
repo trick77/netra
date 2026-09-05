@@ -3,6 +3,8 @@ import type { Drive } from "../../lib/api";
 import {
   ATA,
   NVME,
+  DRIVE_STALE_MS,
+  driveAlarms,
   driveFindings,
   drivePowerOnHours,
   driveKind,
@@ -10,6 +12,7 @@ import {
   driveTemperature,
   driveTempAttrId,
   driveWearPct,
+  SMART_THRESHOLDS,
   temperatureFromRaw,
 } from "./smart";
 
@@ -287,5 +290,117 @@ describe("a drive with no attributes", () => {
     expect(driveSeverity(d)).toBe("ok");
     expect(driveTemperature(d)).toBeNull();
     expect(driveWearPct(d)).toBeNull();
+  });
+});
+
+// The rule that carries a drive's verdict out of the Storage tab. netra used
+// to rate a drive critical here and call the same host healthy on the fleet
+// page and in its own attention panel, because nothing read this.
+describe("driveAlarms", () => {
+  it("promotes the states a drive does not come back from", () => {
+    // Given one disk with sectors pending reallocation and one with sectors
+    // already reallocated
+    const testee = driveAlarms([
+      drive({ [ATA.currentPending]: 3 }, { device: "sda" }),
+      drive({ [ATA.reallocatedSectors]: 12 }, { device: "sdb" }),
+    ]);
+
+    // Then both leave the tab, worst first, each naming its own drive
+    expect(testee.map((a) => [a.device, a.severity])).toEqual([
+      ["sda", "critical"],
+      ["sdb", "serious"],
+    ]);
+  });
+
+  it("leaves CRC errors and wear behind", () => {
+    // Given a drive with a cable fault and one at 80% of its rated endurance
+    // -- both worth seeing on the drive row
+    const drives = [
+      drive({ [ATA.crcErrors]: 1 }, { device: "sda" }),
+      drive(
+        { [NVME.percentageUsed]: SMART_THRESHOLDS.wearWarning },
+        { device: "nvme0n1" },
+      ),
+    ];
+
+    // Then the Storage tab still says so
+    expect(driveSeverity(drives[0])).toBe("warning");
+    expect(driveSeverity(drives[1])).toBe("warning");
+    // but neither counter ever resets, so neither may park the host in the
+    // attention list for the rest of its life
+    expect(driveAlarms(drives)).toEqual([]);
+  });
+
+  it("says nothing about a drive with no readings", () => {
+    // Given a drive the hub knows of but holds no attributes for -- its
+    // readings aged out, which is not a claim about the hardware
+    expect(driveAlarms([drive({})])).toEqual([]);
+  });
+
+  it("carries the finding's own words through unchanged", () => {
+    // Given a disk with pending sectors
+    const [alarm] = driveAlarms([drive({ [ATA.currentPending]: 3 })]);
+
+    // Then the sentence on the overview is the sentence on the drive row, so
+    // a reader following the link is not told two different things
+    expect(alarm.text).toBe(
+      driveFindings(drive({ [ATA.currentPending]: 3 }))[0].text,
+    );
+  });
+});
+
+// A devices row outlives the disk: it is unique on (host_id, device), nothing
+// deletes it by set difference, and the prune only reaches it at 120 days. So
+// a failing disk that gets PULLED leaves its last reading behind, and without
+// a gate the host would carry a critical nobody could ever clear -- the exact
+// failure driveAlarms rejects CRC errors for.
+describe("driveAlarms and a drive that is no longer there", () => {
+  const failing = (lastSeen: string) =>
+    drive({ [ATA.currentPending]: 3 }, { last_seen: lastSeen });
+
+  it("drops a drive the host stopped reading a week ago", () => {
+    // Given a host reporting now, whose sda was last read eight days ago
+    const testee = driveAlarms(
+      [failing("2026-08-15T12:00:00Z")],
+      "2026-08-23T12:00:01Z",
+    );
+
+    // Then the disk is gone, not failing, and the host can clear the row by
+    // pulling the drive -- which is what an operator actually does about it
+    expect(testee).toEqual([]);
+  });
+
+  it("keeps one still being read at the edge of the window", () => {
+    // Exactly DRIVE_STALE_MS behind is still current: the boundary belongs to
+    // the drive, because a false silence about a dying disk costs more than a
+    // stale row does
+    const at = (hostLastSeen: string) =>
+      driveAlarms([failing("2026-08-16T12:00:00Z")], hostLastSeen);
+    const seen = new Date("2026-08-16T12:00:00Z").getTime();
+
+    expect(at(new Date(seen + DRIVE_STALE_MS).toISOString())).toHaveLength(1);
+    expect(at(new Date(seen + DRIVE_STALE_MS + 1000).toISOString())).toEqual(
+      [],
+    );
+  });
+
+  it("does not lose an offline host's drives", () => {
+    // Given a host that went silent a month ago with a failing disk. The
+    // window is measured against the HOST's own last report, never the wall
+    // clock: the last thing netra knew about that machine was a dying drive,
+    // and it must keep saying so.
+    const testee = driveAlarms(
+      [failing("2026-07-23T11:00:00Z")],
+      "2026-07-23T12:00:00Z",
+    );
+    expect(testee).toHaveLength(1);
+  });
+
+  it("judges the reading when there is no host timestamp to judge it against", () => {
+    // No reference point is not a reason to go quiet about a dying disk.
+    expect(driveAlarms([failing("2026-08-23T12:00:00Z")], null)).toHaveLength(
+      1,
+    );
+    expect(driveAlarms([failing("2026-08-23T12:00:00Z")])).toHaveLength(1);
   });
 });

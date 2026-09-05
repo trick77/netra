@@ -22,7 +22,7 @@ import {
   UpDownSparkline,
 } from "../../ui/charts/UpDownSparkline";
 import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
-import type { Host } from "../../lib/api";
+import type { Drive, Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
 import { RAIL_RANGES, rangeLabel, type Range } from "../../lib/range";
 import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
@@ -131,6 +131,16 @@ export type HostRow = Host & {
      * as the cell did before the line existed. */
     series?: (number | null)[];
   } | null;
+  /**
+   * The host's physical drives with their latest SMART attributes, for the
+   * drive condition in conditions.ts -- no cell draws them.
+   *
+   * OPTIONAL, and undefined means the fleet-wide /api/v1/drives call has not
+   * answered or failed, which is not the same as a host with no drives (that
+   * is `[]`). hostConditions leans on the distinction: only one of the two may
+   * read as nothing wrong, and it is not the one where netra never looked.
+   */
+  drives?: Drive[];
   /** Every filesystem's Use% over the window, one band each.
    *
    * Not what the Disk cell draws. The list answers "is this one filling up"

@@ -590,3 +590,37 @@ export async function getFleetContainers(
   );
   return new Map(res.hosts.map((host) => [host.host_id, host.containers]));
 }
+
+// internal/hub/read/inventory.go: FleetDrivesResult
+type FleetDrivesResponse = {
+  hosts: { host_id: number; drives: Drive[] }[];
+};
+
+/**
+ * Every named host's drives in one request -- the fleet form of getDrives.
+ *
+ * The overview needs these because a drive with sectors pending reallocation
+ * is a condition ABOUT THE HOST, not a red row on one tab: see driveAlarms in
+ * features/host/smart.ts. Asking per host would put back exactly the fan-out
+ * getFleetContainers removed, on the same page and the same poll tick.
+ *
+ * Returns a Map keyed by host id, holding exactly the Drive[] the per-host
+ * call returns, so every reader downstream is untouched.
+ *
+ * A host reporting no drives comes back with an empty array rather than a
+ * missing entry -- the distinction that lets the fleet page tell "no drives"
+ * from "not asked", which it must, because only one of those two may read as
+ * healthy.
+ */
+export async function getFleetDrives(
+  hostIds: readonly (number | string)[],
+): Promise<Map<number, Drive[]>> {
+  // See getFleetContainers: an empty list would become `?hosts=` and a
+  // guaranteed 400 on every tick.
+  if (hostIds.length === 0) return new Map();
+
+  const res = await request<FleetDrivesResponse>(
+    `/api/v1/drives${toQueryString({ hosts: hostIds.join(",") })}`,
+  );
+  return new Map(res.hosts.map((host) => [host.host_id, host.drives]));
+}
