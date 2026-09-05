@@ -586,7 +586,7 @@ export const SYSTEM: PanelSpec[] = [
     title: "Running processes",
     slug: "running-processes",
     about:
-      "Blocked processes are stuck waiting on I/O rather than on CPU, and count towards load average while using none of it.",
+      "How many tasks were runnable at the instant of the sample, the agent among them, so a handful is normal on a server that is not saturated. Read it against core count rather than against the process total. Blocked processes are stuck waiting on I/O rather than on CPU, and count towards load average while using none of it.",
     source: "host",
     bases: [
       { base: "procs_running", label: "running" },
@@ -604,6 +604,8 @@ export const SYSTEM: PanelSpec[] = [
   {
     title: "Total processes",
     slug: "total-processes",
+    about:
+      "Every process the kernel knows about, runnable or not. A steady climb over hours with no matching load is something leaking processes rather than work arriving.",
     source: "host",
     bases: [{ base: "processes_total", label: "processes" }],
     fmt: count,
