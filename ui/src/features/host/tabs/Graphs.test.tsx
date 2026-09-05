@@ -580,26 +580,30 @@ describe("Graphs", () => {
     expect(screen.getByText("sdb write")).toBeInTheDocument();
   });
 
-  // The window statement is about the RANGE, not about any one chart.
-  // Repeated under twenty panels it was twenty pieces of noise nobody reads
-  // -- spec §7.2 puts it on the range control, once.
-  it("states a clamped window once for the tab, not once per panel", () => {
-    const clamped = response({
+  // A notice is about the RESPONSE, not about any one chart. Repeated under
+  // twenty panels it was twenty pieces of noise nobody reads -- spec §7.2
+  // puts it on the range control, once.
+  //
+  // Truncation is the fixture because it is what is left: a clamped window
+  // says nothing at all now, since the chart already shows where its data
+  // begins and ends. Truncation does not show -- the series is incomplete
+  // and looks whole -- so it is still worth a sentence.
+  it("states a notice once for the tab, not once per panel", () => {
+    const truncated = response({
       family: "host",
       columns: ["uptime_s"],
-      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:50:00Z" },
-      requested_window: {
-        from: "2026-08-10T00:00:00Z",
-        to: "2026-08-10T01:00:00Z",
-      },
+      truncated: true,
+      warnings: [
+        "the result reached the 200000-point limit and is truncated; narrow the window or ask for fewer columns",
+      ],
       series: [{ key: {}, points: [[1_754_784_000_000, 3600]] }],
     });
 
     // ONE subject tab, not the all-tabs shim: the notice is per tab, and
     // three tabs rendered together correctly say it three times.
-    render(<SystemGraphs host={clamped} />);
+    render(<SystemGraphs host={truncated} />);
 
-    expect(screen.getAllByText(/was clamped to/)).toHaveLength(1);
+    expect(screen.getAllByText(/point limit/)).toHaveLength(1);
   });
 });
 

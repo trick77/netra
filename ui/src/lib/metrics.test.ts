@@ -105,7 +105,10 @@ describe("metrics", () => {
     });
   });
 
-  it("reports when the served window is shorter than the requested one", () => {
+  // A window shorter than the one asked for is not worth a sentence: the
+  // chart starts where the data starts, over a dated axis, which says it
+  // better than prose that named a storage tier the reader never picked.
+  it("says nothing about a window the server clamped", () => {
     const clamped = {
       ...raw,
       window: { from: "2026-08-08T14:00:00Z", to: "2026-08-10T14:00:00Z" },
@@ -114,7 +117,7 @@ describe("metrics", () => {
         to: "2026-08-10T14:00:00Z",
       },
     };
-    expect(windowNotice(clamped as never)).toMatch(/retention|available/i);
+    expect(windowNotice(clamped as never)).toBeNull();
     expect(windowNotice(raw as never)).toBeNull();
   });
 
@@ -151,61 +154,56 @@ describe("metrics", () => {
   });
 
   describe("windowNotice edge differences", () => {
-    it("reports a materialization-lag trailing clamp at a rolled-up tier", () => {
-      const laggy = {
-        ...fiveMin,
-        window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T13:50:00Z" },
-        requested_window: {
-          from: "2026-08-09T14:00:00Z",
-          to: "2026-08-10T14:00:00Z",
+    // Both edges, at both kinds of tier, and none of them says anything.
+    //
+    // This is the whole change: the trailing clamp at a rolled-up tier, the
+    // leading retention clamp, and the future-`to` clamp that fires even at
+    // raw all used to produce a sentence here. They were the only prose this
+    // app put under a chart about that chart, and it was written in the
+    // storage engine's vocabulary.
+    it.each([
+      [
+        "a trailing lag clamp at a rolled-up tier",
+        {
+          ...fiveMin,
+          window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T13:50:00Z" },
+          requested_window: {
+            from: "2026-08-09T14:00:00Z",
+            to: "2026-08-10T14:00:00Z",
+          },
         },
-      };
-      expect(windowNotice(laggy as never)).toMatch(
-        /materializ|available|fresh/i,
-      );
+      ],
+      [
+        "a future-to clamp at raw",
+        {
+          ...raw,
+          window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
+          requested_window: {
+            from: "2026-08-09T14:00:00Z",
+            to: "2026-08-11T00:00:00Z",
+          },
+        },
+      ],
+    ])("says nothing about %s", (_name, res) => {
+      expect(windowNotice(res as never)).toBeNull();
     });
 
-    // internal/hub/read/tier.go:165-171 clamps `to` down to `now` whenever the
-    // requested window extends into the future, and this clamp fires at EVERY
-    // tier -- including raw, which has lag: 0 and no materialization step at
-    // all (tier.go:41). A raw-tier future-`to` clamp must never be described
-    // with materialization language: that mechanism does not exist at raw.
-    it("does not claim materialization for a raw-tier future-to clamp", () => {
-      const futureClamped = {
-        ...raw,
-        window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
-        requested_window: {
-          from: "2026-08-09T14:00:00Z",
-          to: "2026-08-11T00:00:00Z",
-        },
-      };
-      const notice = windowNotice(futureClamped as never);
-      expect(notice).not.toBeNull();
-      expect(notice).not.toMatch(/materializ/i);
-    });
-
-    // The server already knows exactly which clamp fired and says so with
-    // real numbers (tier.go's Warnings). The client must surface that
-    // verbatim rather than re-deriving a generic sentence that could get the
-    // mechanism wrong, as the raw-tier case above shows.
-    it("surfaces server warnings verbatim instead of re-deriving them", () => {
+    // What the server still warns about -- a column this tier does not
+    // carry, a truncated result -- is passed through word for word rather
+    // than re-derived. Only the hub knows which of them fired.
+    it("surfaces server warnings verbatim", () => {
       const serverWarned = {
         ...raw,
-        window: { from: "2026-08-09T14:00:00Z", to: "2026-08-10T14:00:00Z" },
-        requested_window: {
-          from: "2026-08-01T14:00:00Z",
-          to: "2026-08-11T00:00:00Z",
-        },
         warnings: [
-          "from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists",
-          "to was in the future and was clamped to now",
+          "column 'cpu_steal' is not available at this resolution and was dropped",
+          "the result reached the 200000-point limit and is truncated; narrow the window or ask for fewer columns",
         ],
       };
       const notice = windowNotice(serverWarned as never);
       expect(notice).toContain(
-        "from predates the raw tier's 7 days retention; the window starts at the oldest data that still exists",
+        "column 'cpu_steal' is not available at this resolution and was dropped",
       );
-      expect(notice).toContain("to was in the future and was clamped to now");
+      expect(notice).toContain("the result reached the 200000-point limit");
     });
 
     // Truncation is a point-limit cut -- exactly the "chart is silently

@@ -656,28 +656,24 @@ export function counterIncrease(
 }
 
 /**
- * Turns a window/requested_window mismatch (and a truncated result) into a
- * sentence a human can act on. Returns null when the response is complete
- * and covers exactly what was asked.
+ * Turns a truncated result into a sentence a human can act on. Returns null
+ * for any response that is complete.
  *
- * The server (internal/hub/read/tier.go's planQuery, metrics.go's Metrics)
- * already knows exactly which clamp fired and states it with real numbers
- * -- "from predates the 5m tier's 30 days retention", "the 5m tier
- * materialises 10 minutes behind now", "to was in the future and was
- * clamped to now". Those three clamps apply at DIFFERENT tiers and edges
- * (retention: leading edge, any tier; materialization lag: trailing edge,
- * 5m/1h only, never raw -- raw has lag 0 and no materialization step at
- * all; future-to: trailing edge, every tier including raw), so
- * res.warnings is surfaced verbatim rather than re-derived: re-deriving
- * risks folding the future-to clamp into materialization wording, which is
- * false at the raw tier.
+ * It used to caption a clamped WINDOW too, surfacing the hub's own sentences
+ * about retention and materialisation lag and deriving its own when the hub
+ * sent none. Both are gone, and the clamps themselves are silent now.
  *
- * A derived sentence is used only as a fallback, for a window mismatch the
- * server did not explain with a warning (e.g. a caller-constructed response
- * in a test). That fallback is tier-aware: it never asserts materialization
- * for the raw tier, since raw has no such mechanism.
+ * The retention one restated the chart: a line that starts a third of the way
+ * in, over a dated axis, has already said "this is where the data begins".
+ * Both named a storage tier the reader never chose -- the picker offers 1h to
+ * 12mo, and "the 5m tier" appears nowhere in this app -- so the one sentence
+ * they were given about their own chart was written in vocabulary belonging
+ * to the database.
  *
- * truncated is folded in too, but NOT unconditionally: internal/hub/read/
+ * Truncation is a different fact and stays: a truncated series is INCOMPLETE
+ * rather than merely narrower than asked, and nothing in the picture says so.
+ *
+ * truncated is folded in, but NOT unconditionally: internal/hub/read/
  * metrics.go:146-150 already appends its own truncation warning ("the
  * result reached the N-point limit and is truncated; narrow the window or
  * ask for fewer columns") into res.warnings whenever it sets
@@ -699,27 +695,6 @@ export function windowNotice(res: MetricsResponse): string | null {
 
   if (res.warnings.length > 0) {
     parts.push(...res.warnings);
-  } else {
-    const { window, requested_window: requested } = res;
-    const fromMoved = window.from !== requested.from;
-    const toMoved = window.to !== requested.to;
-
-    if (fromMoved) {
-      parts.push(
-        `data before ${window.from} is outside the ${res.tier} tier's retention and is not available`,
-      );
-    }
-    if (toMoved) {
-      if (res.tier === "raw") {
-        parts.push(
-          `the requested end time was after now and was clamped to ${window.to}`,
-        );
-      } else {
-        parts.push(
-          `data after ${window.to} has not materialized yet at the ${res.tier} tier`,
-        );
-      }
-    }
   }
 
   const warningsMentionTruncation = res.warnings.some((w) =>

@@ -73,9 +73,6 @@ func TestTierSelectionOlderThanEveryRetention(t *testing.T) {
 	if want := testNow.Add(-500 * day); !p.Requested.From.Equal(want) {
 		t.Errorf("requested.from = %v, want %v", p.Requested.From, want)
 	}
-	if !hasWarning(p, "predates") {
-		t.Errorf("warnings = %q, want one naming the retention clamp", p.Warnings)
-	}
 }
 
 // The trailing edge. Every continuous aggregate in 0001_init.sql is
@@ -112,9 +109,6 @@ func TestTierSelectionClampsToTheMaterialisationHorizon(t *testing.T) {
 			}
 			if !p.Requested.To.Equal(testNow) {
 				t.Errorf("requested.to = %v, want %v", p.Requested.To, testNow)
-			}
-			if !hasWarning(p, "materialises") {
-				t.Errorf("warnings = %q, want one naming the lag", p.Warnings)
 			}
 		})
 	}
@@ -255,15 +249,16 @@ func TestTierSelectionExplicitStepStillObeysRetention(t *testing.T) {
 	if want := testNow.Add(-7 * day); !p.Window.From.Equal(want) {
 		t.Errorf("window.from = %v, want %v", p.Window.From, want)
 	}
-	if !hasWarning(p, "predates") {
-		t.Errorf("warnings = %q, want one naming the retention clamp", p.Warnings)
-	}
 }
 
 // Both clamps firing can leave nothing at all: the last five minutes at a tier
-// that materialises an hour behind. That is a real answer -- an empty 200 with
-// the warning that explains it -- not an error, because nothing about the
-// request was wrong.
+// that materialises an hour behind. That is a real answer -- an empty 200, and
+// Empty says so in a field rather than in prose -- not an error, because
+// nothing about the request was wrong.
+//
+// Unreachable from this app's own picker, which never asks for a window
+// shorter than the tier it resolves to: 1h answers from raw, which has no lag
+// at all. It is an API caller's case.
 func TestTierSelectionCanLeaveAnEmptyWindow(t *testing.T) {
 	p := mustPlan(t, "host", testNow.Add(-5*time.Minute), testNow, time.Hour, true)
 
@@ -272,9 +267,6 @@ func TestTierSelectionCanLeaveAnEmptyWindow(t *testing.T) {
 	}
 	if !p.Window.From.Equal(p.Window.To) {
 		t.Errorf("window = %v..%v, want an empty range", p.Window.From, p.Window.To)
-	}
-	if !hasWarning(p, "materialises") {
-		t.Errorf("warnings = %q, want one explaining the empty window", p.Warnings)
 	}
 }
 
@@ -295,9 +287,6 @@ func TestTierSelectionAtTheFutureEdge(t *testing.T) {
 
 		if !p.Window.To.Equal(testNow) {
 			t.Errorf("window.to = %v, want %v", p.Window.To, testNow)
-		}
-		if !hasWarning(p, "future") {
-			t.Errorf("warnings = %q, want one naming the future clamp", p.Warnings)
 		}
 	})
 
@@ -339,11 +328,35 @@ func TestLookupFamilyRejectsAnUnknownName(t *testing.T) {
 	}
 }
 
-func hasWarning(p Plan, substr string) bool {
-	for _, w := range p.Warnings {
-		if strings.Contains(w, substr) {
-			return true
-		}
+// No clamp captions itself any more.
+//
+// Every one of them used to append a sentence naming the tier it fired at,
+// and the read layer hands those to the UI verbatim -- so a reader who picked
+// "30d" was told about "the 5m tier", a thing this product does not have a
+// name for anywhere they can see. The retention one also restated the chart:
+// a line starting a third of the way in over a dated axis has already said
+// where the data begins.
+//
+// Window and Requested still carry every clamp, in fields, for a caller that
+// wants to compare them. What is gone is the prose.
+func TestTierSelectionClampsSilently(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		from time.Time
+		to   time.Time
+		step time.Duration
+		set  bool
+	}{
+		{"past the retention horizon", testNow.Add(-500 * day), testNow, 0, false},
+		{"past the materialisation horizon", testNow.Add(-24 * time.Hour), testNow, 5 * time.Minute, true},
+		{"to in the future", testNow.Add(-time.Hour), testNow.Add(time.Minute), 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := mustPlan(t, "host", tc.from, tc.to, tc.step, tc.set)
+
+			if len(p.Warnings) != 0 {
+				t.Errorf("warnings = %q, want none: a clamp states itself in Window, not in prose", p.Warnings)
+			}
+		})
 	}
-	return false
 }

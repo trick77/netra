@@ -171,7 +171,13 @@ type Plan struct {
 	// Requested is the window as asked, so a caller can see every clamp
 	// rather than infer it.
 	Requested Window
-	// Warnings names each clamp in words. Empty when nothing moved.
+	// Warnings carries what the caller cannot see for themselves: columns
+	// asked for that this tier does not have, and a truncated result.
+	//
+	// NOT the window clamps. Those used to state themselves here and no
+	// longer do: Window and Requested above are the machine-readable answer
+	// to "what did you actually give me", and the sentences on top of them
+	// named storage tiers at a reader who had only ever picked a range.
 	Warnings []string
 	// Empty reports that the clamps left no window at all -- asking for the
 	// last five minutes at the 1h tier, which materialises an hour behind.
@@ -217,7 +223,6 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 	// cannot be answered past the present either.
 	if to.After(now) {
 		to = now
-		p.Warnings = append(p.Warnings, "to was in the future and was clamped to now")
 		if !from.Before(to) {
 			return Plan{}, fmt.Errorf("%w: the requested window lies entirely in the future", ErrInvalid)
 		}
@@ -228,14 +233,18 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 	p.Step = p.spec.step
 
 	// Leading edge: everything before this has been dropped by the retention
-	// policy. Returning the part that survives, and saying so, beats both
-	// erroring and silently starting the series late.
+	// policy. Returning the part that survives beats both erroring and
+	// silently starting the series late.
+	//
+	// Unannounced, deliberately. This used to append a warning naming the
+	// tier and its retention, and the chart already says it better than the
+	// sentence did: the line starts where the data starts and the time axis
+	// underneath gives the date. A sentence restating a visible fact in
+	// storage vocabulary the reader has never seen -- they picked "30d", not
+	// a tier -- is noise on top of a picture that was already clear.
 	horizon := now.Add(-p.spec.retention)
 	if from.Before(horizon) {
 		from = horizon
-		p.Warnings = append(p.Warnings, fmt.Sprintf(
-			"from predates the %s tier's %s retention; the window starts at the oldest data that still exists",
-			p.spec.name, humanDuration(p.spec.retention)))
 	}
 
 	// Trailing edge: the aggregates are materialized_only, so a query past
@@ -260,12 +269,22 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 		// Truncate aligns to the epoch, which is where time_bucket() puts
 		// its boundaries too, so this lands on a real bucket edge rather
 		// than one derived from the request's own timing.
+		//
+		// Also unannounced. The warning this used to append named a tier the
+		// reader never chose -- the picker offers 1h to 12mo, never "5m" --
+		// in vocabulary borrowed from the storage engine.
+		//
+		// Removing it does lose something the chart does NOT show: at 6h,
+		// 12h and 24h the answered window ends 15-20 minutes before now, and
+		// every headline figure reads the last point, so those numbers are
+		// that stale while looking current. The gap is ~2.7% of a 12h chart's
+		// width and invisible. The fix for that is to close the gap rather
+		// than to caption it -- real-time aggregates would union these
+		// buckets with the raw rows sitting behind them -- and until that
+		// lands the staleness is silent.
 		fresh := p.spec.materialisedThrough(now)
 		if to.After(fresh) {
 			to = fresh
-			p.Warnings = append(p.Warnings, fmt.Sprintf(
-				"the %s tier materialises %s behind now; the window ends at the last whole bucket before that",
-				p.spec.name, humanDuration(p.spec.lag+p.spec.refreshEvery)))
 		}
 	}
 
@@ -333,33 +352,7 @@ func selectTier(tiers []tierSpec, from time.Time, step time.Duration, stepSet bo
 		}
 	}
 
-	// Older than every tier. The coarsest is all there is, and the leading
-	// clamp above will say how much of the request it covers.
+	// Older than every tier. The coarsest is all there is, and the response's
+	// own window says how much of the request it covers.
 	return tiers[len(tiers)-1]
-}
-
-// humanDuration renders the handful of intervals that appear in warnings the
-// way the migration writes them -- "7 days", "48 hours", "10 minutes" --
-// rather than the way Go does, which would put "168h0m0s" in a message meant
-// for a person.
-//
-// The one-week floor on the day unit is what keeps a retention the migrations
-// declare in hours reading back as "48 hours" rather than "2 days": a warning
-// that renames the interval makes it harder to find the line that set it.
-func humanDuration(d time.Duration) string {
-	switch {
-	case d%(24*time.Hour) == 0 && d >= 7*24*time.Hour:
-		return plural(int(d/(24*time.Hour)), "day")
-	case d%time.Hour == 0:
-		return plural(int(d/time.Hour), "hour")
-	default:
-		return plural(int(d/time.Minute), "minute")
-	}
-}
-
-func plural(n int, unit string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s", unit)
-	}
-	return fmt.Sprintf("%d %ss", n, unit)
 }
