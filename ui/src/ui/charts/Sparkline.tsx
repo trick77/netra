@@ -29,11 +29,17 @@ export interface SparklineProps {
   /**
    * Whether to fill the area under the line.
    *
-   * On by default -- for a rate that rests at zero the filled mass IS the
-   * reading. Off for a series that never goes near its floor: filesystem
-   * usage lives between 40% and 95%, so an area anchored at zero floods the
-   * cell and four hosts 40 points apart draw the same solid block. The
-   * line's height is the information there.
+   * On by default, and every sparkline in this app takes the default: for a
+   * rate that rests at zero the filled mass IS the reading, and for a level
+   * the mass is where the line sits inside its box.
+   *
+   * The case for turning it off is narrower than this docstring once claimed.
+   * It named filesystem usage -- 40% to 95%, so shading floods the cell --
+   * but that is a fact about a ZERO-anchored axis, not about the quantity: on
+   * an axis fitted to the window (see diskAxis in the fleet's hostColumns)
+   * the fill closes at the bottom of the box and tracks the line as any other
+   * silhouette does. Off is for a chart that is genuinely about the line's
+   * path rather than its level, and there is currently no such caller.
    */
   fill?: boolean;
 }

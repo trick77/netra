@@ -797,10 +797,17 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
     };
   };
 
-  // One line for the mount named underneath, unfilled: usage lives between
-  // 40% and 95%, so an area anchored at the axis floods the strip and the
-  // line's height -- the only thing that moves -- is what carries the
-  // reading. See Sparkline's own `fill` docstring, which names this case.
+  // One silhouette for the mount named underneath, filled, like every other
+  // sparkline in the app.
+  //
+  // It was briefly a bare line, on the argument Sparkline's `fill` docstring
+  // used to make: filesystem usage sits between 40% and 95%, so shading under
+  // it floods the box. That is true of an axis anchored at ZERO and this axis
+  // is not -- diskAxis fits it to the window, and areaPath closes the fill at
+  // the bottom of the BOX (geometry.ts), so the shaded mass tracks where the
+  // line sits inside its own window exactly as CPU's and Memory's do. An
+  // unfilled line here was the one sparkline in the app drawn differently
+  // from the rest, for a reason that had stopped applying.
   const chart =
     axis === null ? null : (
       <Enlargeable
@@ -834,7 +841,6 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
           min={axis.min}
           max={axis.max}
           color={DISK_COLOR}
-          fill={false}
           height={SPARK_STRIP_HEIGHT}
           label={`Disk trend for ${mount}, ${rangeLabel(range)}`}
         />

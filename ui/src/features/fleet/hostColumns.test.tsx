@@ -465,6 +465,13 @@ describe("hostColumns", () => {
       expect(
         screen.getByLabelText("Disk trend for /var/lib/postgresql, last 1h"),
       ).toBeInTheDocument();
+      // Shaded, like every other sparkline in the app -- a filled mass whose
+      // top edge is the trend, not a bare stroke. The axis is fitted, so the
+      // fill closes at the bottom of the box and tracks the line rather than
+      // flooding the cell.
+      expect(
+        container.querySelector('path[fill="var(--s6)"]'),
+      ).toBeInTheDocument();
       expect(
         screen.getByRole("button", {
           name: "Enlarge disk usage for /var/lib/postgresql on db-02",
