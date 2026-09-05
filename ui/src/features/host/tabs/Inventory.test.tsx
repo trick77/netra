@@ -1084,6 +1084,59 @@ describe("inventory sorting", () => {
 
       expect(firstCells()).toEqual(["data", "root"]);
     });
+
+    /*
+     * Two mounts at the SAME percentage, one of which is a problem.
+     *
+     * This table was the last place a filesystem was judged on its
+     * percentage alone, which is how it came to draw a red bar beside the
+     * words "3.7 TB free". The rule it uses now is diskSeverityFor, the one
+     * the Overview's Disk panel, the busiest-filesystem tile, the fleet's
+     * disk cell and both attention lists already share -- so 96% means
+     * something different on a 250 GB root than on a 4 TB array, which is
+     * what the bytes in the next column over already told the reader.
+     *
+     * Asserted on the class rather than on a colour: the class is what the
+     * stylesheet keys on, and it is the same st-* vocabulary every other
+     * severity in the app is spelled in.
+     */
+    it("judges a mount by the bytes left, not by the percentage alone", () => {
+      const at96 = (used: number, free: number) => [
+        Date.parse("2026-08-10T00:00:00Z"),
+        used + free,
+        used,
+        free,
+      ];
+      render(
+        <Mounts
+          rows={mounts}
+          metrics={
+            {
+              ...sizes,
+              series: [
+                // 96% of a 250 GB root, 9 GB left: hours from full.
+                { key: { filesystem: "root" }, points: [at96(241e9, 9e9)] },
+                // 96% of a 4 TB array, 160 GB left: weeks of headroom.
+                { key: { filesystem: "data" }, points: [at96(3840e9, 160e9)] },
+              ],
+            } as unknown as MetricsResponse
+          }
+        />,
+      );
+
+      const meterFor = (label: string) =>
+        screen
+          .getByText(label, { selector: ".lab" })
+          .closest(".mrow") as HTMLElement;
+
+      expect(meterFor("root").querySelector(".val")).toHaveClass("st-crit");
+      // Not merely a different severity: no status class at all, which is how
+      // "nothing to say here" is spelled everywhere else in the app.
+      const dataValue = meterFor("data").querySelector(".val");
+      expect(dataValue).not.toHaveClass("st-crit");
+      expect(dataValue).not.toHaveClass("st-warn");
+      expect(dataValue).not.toHaveClass("st-serious");
+    });
   });
 
   describe("Network", () => {

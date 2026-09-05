@@ -924,6 +924,19 @@ a:hover {
 .hostname {
   color: var(--accent);
 }
+/* A hostname LINK still has to answer the pointer.
+   `a:hover` paints --accent, which is what .hostname already is, so giving
+   these the accent silently cost them their only hover feedback: the Host
+   column of the containers list, the container detail header and the fleet's
+   container group went from ink-to-accent on hover to no change at all.
+   Underline rather than a second hue, matching .host-cell-name in the row
+   above -- and on the link itself here, because these sit in prose and in
+   table cells that are not themselves the target the row lists. Excluded
+   where the row already owns it, so a fleet row keeps underlining once. */
+a.hostname:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 /* Underlined on row hover rather than on the link itself: the whole row is
    the target a pointer is over, and underlining only under the cursor made
    the name look like the one live thing in a row that is entirely live. */

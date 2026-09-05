@@ -765,9 +765,16 @@ export function Overview({
           order of the row above is the reading order of this one.
 
           "Traffic" and "Load averages", not "Network load" and "System
-          load": those are the titles the Network and System tabs draw these
-          same two specs under, and one chart with two names is how a reader
-          comes to think they are looking at two things. */}
+          load": those are the titles the Network and System tabs draw this
+          subject under, and one chart with two names is how a reader comes to
+          think they are looking at two things.
+
+          Load averages IS the System tab's spec. Traffic is not the Network
+          tab's any more -- that tab draws host-traffic per interface and this
+          panel draws host-traffic-total, the summed pair -- but the title is
+          shared deliberately, for the reason above: they are the same
+          quantity at two levels of detail, and the stack's outer edge there
+          is this line. */}
         <div className="mo" style={{ gridColumn: "span 6" }}>
           <SpecPanel
             spec={TRAFFIC_SPEC}

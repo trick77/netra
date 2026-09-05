@@ -8,7 +8,6 @@ import {
   SystemGraphs,
   type GraphsProps,
 } from "./Graphs";
-import { ABSENT } from "../../../lib/format";
 import {
   ALL_SPECS,
   groupedSlugs,
@@ -292,8 +291,6 @@ describe("Graphs", () => {
     });
     expect(panel).toBeInTheDocument();
   });
-
-  // A collector that STOPPED reports nothing for the buckets it missed, so
 
   // Hub latency is NULL by design while the hub is unreachable -- both gauges
   // time a handshake that completed -- so the panel correctly goes blank

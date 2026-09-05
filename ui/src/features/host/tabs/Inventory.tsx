@@ -41,6 +41,7 @@ import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column, type TableProps } from "../../../ui/Table";
 import { Meter, SEVERITY_CLASS } from "../../../ui/Meter";
+import { diskState } from "../../fleet/conditions";
 import { When } from "../../../ui/When";
 import { rangeLabel, type Range } from "../../../lib/range";
 import { RAIL_RANGES } from "../../../lib/range";
@@ -589,7 +590,8 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
     header: "Usage",
     // used / (used + free), which is df's Use% -- NOT used / total, because
     // total includes the root reserve and would report a full disk as less
-    // full than df does. Same definition as the fleet list's disk meter.
+    // full than df does. Same definition as the fleet list's disk meter, and
+    // now the same SEVERITY rule as well: see the severity prop below.
     cell: (row) =>
       row.used === null || row.free === null || row.used + row.free === 0 ? (
         ABSENT
@@ -605,6 +607,15 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
             value={(row.used / (row.used + row.free)) * 100}
             max={100}
             label={row.label}
+            // The same rule the Overview's Disk panel, the busiest-filesystem
+            // tile, the fleet's disk cell and both attention lists use. It
+            // weighs the bytes left as well as the ratio, and this table is
+            // the one place a mount is listed BESIDE its free bytes -- a red
+            // bar next to "735.3 GB free" is the contradiction it exists to
+            // prevent. Passed explicitly because Meter's own default is the
+            // percentage-only 70/85/95, which is right for a reading with no
+            // rule of its own and wrong for a filesystem.
+            severity={diskState(row.used, row.free)?.severity ?? "ok"}
           />
         </div>
       ),
