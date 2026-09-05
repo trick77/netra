@@ -46,6 +46,11 @@ func (h *readHandler) register(mux *http.ServeMux) {
 	// /api/v1/ -- see NewRouter, which mounts the whole prefix behind
 	// RequireAdmin.
 	mux.Handle("GET /api/v1/metrics", http.HandlerFunc(h.fleetMetrics))
+	// And the fleet form of the containers listing, for the same reason and
+	// in the same place. It is the only listing with one, because it is the
+	// only one the fleet page draws a row from -- the other six are opened
+	// from a single host's own page, one host at a time.
+	mux.Handle("GET /api/v1/containers", http.HandlerFunc(h.fleetContainers))
 	mux.Handle("GET /api/v1/events", http.HandlerFunc(h.events))
 }
 
@@ -164,6 +169,21 @@ func (h *readHandler) fleetMetrics(w http.ResponseWriter, r *http.Request) {
 		StepSet: stepSet,
 		Columns: splitColumns(q["columns"]),
 	}, h.now())
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *readHandler) fleetContainers(w http.ResponseWriter, r *http.Request) {
+	hostIDs, err := parseHostIDs(r.URL.Query()["hosts"])
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+
+	res, err := h.svc.FleetContainers(r.Context(), hostIDs)
 	if err != nil {
 		writeReadError(w, r, err)
 		return

@@ -574,6 +574,97 @@ func TestIntegrationDimensionListingsSeparateEmptyFromMissing(t *testing.T) {
 	})
 }
 
+// The fleet overview draws a row per container across every host and used to
+// fetch that list one host at a time -- a request per host per sixty-second
+// poll tick, for as long as a tab stayed open. FleetContainers is the same
+// listing asked once.
+func TestIntegrationFleetContainersAnswersEveryHostInOneQuery(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+
+	web := seedHost(t, pool, "fleet-web")
+	db := seedHost(t, pool, "fleet-db")
+	quiet := seedHost(t, pool, "fleet-quiet")
+
+	exec(t, pool, `
+		INSERT INTO containers (host_id, container_key, name, image, is_agent)
+		VALUES ($1, 'proj/web', 'web-1', 'nginx:1.27', FALSE),
+		       ($1, 'proj/netra', 'netra-agent', 'ghcr.io/trick77/netra-agent', TRUE)`, web)
+	exec(t, pool, `
+		INSERT INTO containers (host_id, container_key, name, image, is_agent)
+		VALUES ($1, 'proj/pg', 'postgres', 'postgres:17', FALSE)`, db)
+
+	res, err := svc.FleetContainers(ctx, []int32{web, db, quiet})
+	if err != nil {
+		t.Fatalf("FleetContainers: %v", err)
+	}
+
+	if len(res.Hosts) != 3 {
+		t.Fatalf("got %d hosts, want 3 -- every host asked about must appear", len(res.Hosts))
+	}
+	// In the order asked for, so a caller pairing this against its own host
+	// list does not have to sort it back.
+	if res.Hosts[0].HostID != web || res.Hosts[1].HostID != db || res.Hosts[2].HostID != quiet {
+		t.Errorf("host ids = %d, %d, %d; want %d, %d, %d in the order asked",
+			res.Hosts[0].HostID, res.Hosts[1].HostID, res.Hosts[2].HostID, web, db, quiet)
+	}
+
+	if len(res.Hosts[0].Containers) != 2 {
+		t.Fatalf("web got %d containers, want 2", len(res.Hosts[0].Containers))
+	}
+	// Ordered by container_key within each host, exactly as the per-host
+	// listing orders them: proj/netra before proj/web.
+	if !res.Hosts[0].Containers[0].IsAgent {
+		t.Errorf("%q is_agent = false; the fleet must still be able to tell netra's own "+
+			"container from the workload", res.Hosts[0].Containers[0].Key)
+	}
+	if got := res.Hosts[1].Containers; len(got) != 1 || got[0].Key != "proj/pg" {
+		t.Errorf("db containers = %v, want just proj/pg -- a host must not be handed another's rows", got)
+	}
+
+	// A host running none comes back with an empty list, never a missing
+	// entry: the caller draws a row per host, and an absent key would be
+	// indistinguishable from a host it forgot to ask about.
+	if res.Hosts[2].Containers == nil {
+		t.Fatal("quiet host's containers = nil, want an empty slice so it renders as [] rather than null")
+	}
+	if len(res.Hosts[2].Containers) != 0 {
+		t.Errorf("quiet host's containers = %v, want empty", res.Hosts[2].Containers)
+	}
+}
+
+// Unlike the per-host listing, an unregistered id is not an error: the fleet
+// page only ever asks about hosts /api/v1/hosts just handed it, and a host
+// deleted between those two requests must not blank the whole fleet's
+// containers. FleetMetrics makes the same trade for the same reason.
+func TestIntegrationFleetContainersTreatsAnUnknownHostAsEmptyNotMissing(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "fleet-solo")
+
+	res, err := svc.FleetContainers(ctx, []int32{id, 4242})
+	if err != nil {
+		t.Fatalf("FleetContainers: %v", err)
+	}
+	if len(res.Hosts) != 2 {
+		t.Fatalf("got %d hosts, want 2", len(res.Hosts))
+	}
+	if res.Hosts[1].HostID != 4242 || len(res.Hosts[1].Containers) != 0 {
+		t.Errorf("unknown host = %+v, want an empty list under its own id", res.Hosts[1])
+	}
+}
+
+// "Every host" is a tempting default and the wrong one: it would turn a
+// caller's own bug -- a page rendering before its host list arrived -- into
+// the most expensive query the hub can run, silently.
+func TestIntegrationFleetContainersRejectsAnEmptyHostList(t *testing.T) {
+	svc, _ := newService(t)
+
+	if _, err := svc.FleetContainers(context.Background(), nil); !errors.Is(err, read.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}
+
 func TestIntegrationDimensionListingsProjectTheirTables(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)

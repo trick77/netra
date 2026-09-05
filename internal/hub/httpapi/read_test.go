@@ -29,6 +29,7 @@ func TestIntegrationReadEndpointsRequireTheAdminToken(t *testing.T) {
 		// inside a path that already had one -- it is on /api/v1/ and this
 		// list is what says so.
 		"/api/v1/metrics?family=host&hosts=1",
+		"/api/v1/containers?hosts=1",
 		"/api/v1/events",
 	} {
 		resp, err := noRedirectClient(srv).Get(srv.URL + path)
@@ -325,6 +326,81 @@ func TestIntegrationFleetMetricsEnvelopeCarriesEveryHost(t *testing.T) {
 	}
 	if len(res.Hosts[1].Series) != 0 {
 		t.Errorf("host b series = %+v, want none -- it reported nothing", res.Hosts[1].Series)
+	}
+}
+
+// GET /api/v1/containers on the wire: one entry per host asked about, holding
+// exactly the rows /hosts/{id}/containers returns for that host.
+//
+// The overview draws a row per container across the fleet and used to fetch
+// that list one host at a time, every sixty seconds, for as long as a tab was
+// open. This route is what collapses that, so the shape -- a host id beside
+// its own list, in the order asked -- is what a client depends on.
+func TestIntegrationFleetContainersEnvelopeCarriesEveryHost(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	a, _ := createHost(t, srv, "cfleet-one")
+	b, _ := createHost(t, srv, "cfleet-two")
+
+	if _, err := s.Pool().Exec(context.Background(), `
+		INSERT INTO containers (host_id, container_key, name, image, is_agent)
+		VALUES ($1, 'proj/web', 'web-1', 'nginx:1.27', FALSE)`, a); err != nil {
+		t.Fatalf("seed containers: %v", err)
+	}
+
+	resp := doAdmin(t, srv, http.MethodGet,
+		"/api/v1/containers?hosts="+itoa(a)+","+itoa(b), "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.StatusCode, readBody(t, resp))
+	}
+
+	var res struct {
+		Hosts []struct {
+			HostID     int32 `json:"host_id"`
+			Containers []struct {
+				Key  string `json:"container_key"`
+				Name string `json:"name"`
+			} `json:"containers"`
+		} `json:"hosts"`
+	}
+	decodeJSON(t, resp, &res)
+
+	if len(res.Hosts) != 2 {
+		t.Fatalf("hosts = %+v, want both", res.Hosts)
+	}
+	if res.Hosts[0].HostID != a || res.Hosts[1].HostID != b {
+		t.Errorf("host ids = %d,%d, want %d,%d in the order asked",
+			res.Hosts[0].HostID, res.Hosts[1].HostID, a, b)
+	}
+	if len(res.Hosts[0].Containers) != 1 || res.Hosts[0].Containers[0].Key != "proj/web" {
+		t.Errorf("host a containers = %+v, want just proj/web", res.Hosts[0].Containers)
+	}
+	// Empty, never absent: the caller draws a row per host, and a missing key
+	// would be indistinguishable from a host it forgot to ask about.
+	if res.Hosts[1].Containers == nil {
+		t.Error("host b containers = null, want [] -- it runs none, which is not the same as unanswered")
+	}
+	if len(res.Hosts[1].Containers) != 0 {
+		t.Errorf("host b containers = %+v, want none", res.Hosts[1].Containers)
+	}
+}
+
+// The fleet listing shares parseHostIDs with /api/v1/metrics, and the reason
+// an empty list is a 400 rather than "every host" is the same one.
+func TestIntegrationFleetContainersRejectsABadHostList(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	id, _ := createHost(t, srv, "cfleet-strict")
+
+	for _, tc := range []struct{ name, query string }{
+		{"no hosts parameter", ""},
+		{"an empty hosts parameter", "hosts="},
+		{"a hosts parameter that is not an integer", "hosts=" + itoa(id) + ",web-01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := doAdmin(t, srv, http.MethodGet, "/api/v1/containers?"+tc.query, "")
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400: %s", resp.StatusCode, readBody(t, resp))
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   getContainers,
+  getFleetContainers,
   getEvents,
   getHost,
   getHosts,
@@ -427,9 +428,12 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       // Three requests' worth of work in ONE wave, where this used to be two
       // fan-outs of one request per host per family, the second waiting on
       // the first. fetchFleetTrends owns the family list and the reason each
-      // family is on it; the container listing stays per-host because there
-      // is no /api/v1/containers, only the route under each host -- but it no
-      // longer waits for the trends to finish first.
+      // family is on it.
+      //
+      // The container listing is one request too, and was the last thing on
+      // this page that still grew with the fleet: it asked each host in turn,
+      // so every host added a request to every sixty-second tick, forever,
+      // for a listing one WHERE clause answers. See getFleetContainers.
       //
       // The listings are fetched HERE rather than left to FleetPage, which
       // only fetches when nothing was injected -- and this page always
@@ -441,19 +445,21 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
         // a factor of two. fetchFleetTrends reads it off each host.
         fetchFleetTrends(hosts, range),
         fetchFleetContainerTrends(hosts, range),
-        // Settled independently: one host whose container listing answers 500
-        // costs that host's containers, not the fleet's.
-        Promise.allSettled(hosts.map((host) => getContainers(host.id))),
+        // Caught rather than thrown, for the reason the per-host fan-out used
+        // allSettled: a container listing that fails must not take the host
+        // list down with it. The rows the fleet already has are the point of
+        // the page, and the counts chip says what is missing.
+        getFleetContainers(hosts.map((host) => host.id)).catch(() => null),
       ]);
 
       const containers: ContainerRow[] = [];
-      hosts.forEach((host, i) => {
-        const listing = listings[i];
-        if (listing.status !== "fulfilled") return;
+      hosts.forEach((host) => {
+        const listing = listings?.get(host.id);
+        if (listing === undefined) return;
         // The list and its metrics together: a container row with no trend
         // renders as text, which is what the whole list was before.
         const byKey = containerTrends.trends.get(host.id);
-        for (const container of listing.value) {
+        for (const container of listing) {
           const trend = byKey?.get(container.container_key);
           containers.push({
             ...container,
@@ -480,9 +486,13 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       });
       // A host that could not be asked is not a host running nothing, so the
       // count says how many are missing rather than quietly under-reporting.
-      const unreachable = listings.filter(
-        (r) => r.status === "rejected",
-      ).length;
+      //
+      // One request now answers for the whole fleet, so the failure is all or
+      // nothing: either every host was asked or none was. The count is still
+      // a count of hosts rather than a boolean, because that is what the chip
+      // above states and a partial answer stopped being possible, not the
+      // reason for saying how many are missing.
+      const unreachable = listings === null ? hosts.length : 0;
 
       return {
         hosts,

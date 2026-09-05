@@ -550,3 +550,43 @@ export async function getFleetMetrics(
     hosts.map((host) => [host.host_id, { ...header, series: host.series }]),
   );
 }
+
+// internal/hub/read/inventory.go: FleetContainersResult
+type FleetContainersResponse = {
+  hosts: { host_id: number; containers: Container[] }[];
+};
+
+/**
+ * Every named host's containers in one request -- the fleet form of
+ * getContainers, and the same trade getFleetMetrics made.
+ *
+ * The overview drew one row per container across the whole fleet and fetched
+ * that list one host at a time, so a five-host fleet spent five requests a
+ * minute, every minute, on a listing one WHERE clause answers. It was the last
+ * call on the page that grew with the fleet.
+ *
+ * Returns a Map keyed by host id, holding exactly the Container[] the per-host
+ * call returns, so every reader downstream is untouched and never learns how
+ * the list was fetched.
+ *
+ * A host running no containers comes back with an empty array rather than a
+ * missing entry -- the same guarantee getFleetMetrics gives for series, and the
+ * one that lets a caller tell "runs none" from "never asked".
+ */
+export async function getFleetContainers(
+  hostIds: readonly (number | string)[],
+): Promise<Map<number, Container[]>> {
+  // No hosts, no question -- the guard fetchFleetTrends and
+  // fetchFleetContainerTrends already make before asking /api/v1/metrics.
+  // Without it an empty list joins to "", toQueryString keeps the empty value
+  // rather than dropping it, and parseHostIDs rejects `?hosts=` with a 400 --
+  // so an empty fleet with the overview open would put one guaranteed-400
+  // request on the hub every poll tick, forever, and the page's catch would
+  // hide it.
+  if (hostIds.length === 0) return new Map();
+
+  const res = await request<FleetContainersResponse>(
+    `/api/v1/containers${toQueryString({ hosts: hostIds.join(",") })}`,
+  );
+  return new Map(res.hosts.map((host) => [host.host_id, host.containers]));
+}
