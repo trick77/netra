@@ -236,6 +236,11 @@ services:
       # capability rather than nothing when it is denied. Without the cgroup
       # mount above: no containers at all.
       #
+      # Mounted but not answering is a THIRD state, and not this one: there the
+      # agent reports nothing for the containers it could not name. Reporting
+      # them by raw id would mint a new container on the hub per outage, one
+      # that never updates again.
+      #
       # `read_only: true` here restricts the INODE, not the API. Anything that
       # can talk to the Docker socket at all can start a privileged container,
       # which is root on the host — strictly more powerful than the SYS_ADMIN

@@ -147,7 +147,12 @@ type Containers struct {
 	prev   map[string]containerCounters
 	prevAt time.Time
 
+	// socketAbsent is the socket not being MOUNTED -- ErrNoDockerSocket, or no
+	// lister at all. socketSilent is the other half of what used to be this
+	// one flag: mounted, and naming nothing. Only the first permits a
+	// container to be reported under its raw id; see capSocketSilent.
 	socketAbsent bool
+	socketSilent bool
 
 	// lastScopes and lastListed are what the most recent scrape actually saw:
 	// container cgroups found by the walk, and containers the Docker socket
@@ -271,6 +276,21 @@ const (
 	// running no containers must not be flagged as misconfigured, and with the
 	// socket absent there is no second opinion to disagree with.
 	capNoCgroupScopes = "no-cgroup-scopes"
+
+	// capSocketSilent: the socket IS mounted and it named no containers, while
+	// the cgroup walk found scopes. dockerd is restarting, down, or refusing
+	// this agent.
+	//
+	// The scopes are measurable and are deliberately not reported. Reporting
+	// them is what this whole state used to do, and it keyed each one on its
+	// raw container id -- a fresh container_key on the hub, per container, per
+	// outage, which then never updates again and shows up forever as a "gone"
+	// container named by 64 hex characters. One `systemctl restart docker`
+	// duplicated an entire host's container list that way.
+	//
+	// Distinct from no-docker-socket, which is the operator's own choice and
+	// the one state in which a raw id is still better than nothing.
+	capSocketSilent = "docker-socket-silent"
 )
 
 // Capabilities implements CapabilityReporter.
@@ -285,6 +305,12 @@ func (c *Containers) Capabilities() map[string]string {
 		// labels are missing. Saying so distinguishes "no containers" from
 		// "containers whose identity we cannot resolve".
 		out = map[string]string{"containers": "no-docker-socket"}
+	case c.socketSilent:
+		// The socket is mounted and named nothing while the walk found scopes,
+		// so those scopes went unreported -- see capSocketSilent. The scope
+		// count is already in the flag, which is what keeps a host that
+		// genuinely runs no containers from being flagged as broken.
+		out = map[string]string{"containers": capSocketSilent}
 	case c.lastScopes == 0 && c.lastListed > 0:
 		// The reverse case, and the worse one: the socket can see containers
 		// and the cgroup walk cannot. Nothing is collected at all, so without
@@ -300,8 +326,8 @@ func (c *Containers) Capabilities() map[string]string {
 		// every case this reports, and only networking is missing.
 		out["container_network"] = c.netCapability
 	}
-	if c.restartCapability != "" && !c.socketAbsent {
-		// Not raised when the socket is absent: "containers: no-docker-socket"
+	if c.restartCapability != "" && !c.socketAbsent && !c.socketSilent {
+		// Not raised when the socket is absent or silent: the "containers" key
 		// already says nothing Docker knows is reachable, and a second key
 		// repeating it as a restart-specific failure would have the UI print
 		// two explanations for one cause.
@@ -316,19 +342,20 @@ func (c *Containers) Capabilities() map[string]string {
 // socketWasAbsent reports the socket state the PREVIOUS scrape left behind, so
 // the transition logging in Collect compares against it without reading a
 // mutex-guarded field bare.
-func (c *Containers) socketWasAbsent() bool {
+func (c *Containers) socketWasAbsent() (absent, silent bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.socketAbsent
+	return c.socketAbsent, c.socketSilent
 }
 
 // observe records what this scrape saw, for Capabilities and StartupSummary to
 // report. It is the only writer of socketAbsent: that field used to be assigned
 // straight from Collect, unguarded, while Capabilities read it under the mutex.
-func (c *Containers) observe(socketAbsent bool, scopes, listed int) {
+func (c *Containers) observe(socketAbsent, socketSilent bool, scopes, listed int) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.socketAbsent = socketAbsent
+	c.socketSilent = socketSilent
 	c.lastScopes = scopes
 	c.lastListed = listed
 }
@@ -396,48 +423,76 @@ func (c *Containers) pruneNetNSDenied(seen map[string]containerCounters) {
 // Collect implements Collector.
 func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 	meta := map[string]ContainerMeta{}
-	absent, listed := true, 0
-	// Read once, under the mutex, rather than touching the field directly in
-	// the two branches below. observe() exists because this field was assigned
-	// from here unguarded while Capabilities read it under the lock; reading it
+	// answered is whether the list call returned a list at all, which is what
+	// read() means by socketAnswered and is used for nothing else. missing and
+	// silent are the two ways it did not, and conflating them is what this
+	// collector used to do: see socketAbsent and capSocketSilent.
+	answered, listed := false, 0
+	missing := c.lister == nil
+	var listErr error
+	// Read once, under the mutex, rather than touching the fields directly in
+	// the branches below. observe() exists because they were assigned from
+	// here unguarded while Capabilities read them under the lock; reading them
 	// here unguarded would leave the same class of access the split was meant
 	// to remove, even though every caller is on the scrape goroutine today.
-	wasAbsent := c.socketWasAbsent()
+	wasAbsent, wasSilent := c.socketWasAbsent()
 	if c.lister != nil {
 		list, err := c.lister(ctx)
 		if err != nil {
-			// Logged on the TRANSITION only. Every message dockermeta.go builds
-			// used to die right here, discarded, so a daemon that started
-			// refusing connections was indistinguishable from one that was
-			// never mounted. Logging it every scrape would be the opposite
-			// mistake: a host that deliberately declines the socket is a
-			// supported configuration, and it must not warn once a minute
-			// forever.
-			if !wasAbsent {
-				slog.Warn("docker socket unreadable; containers will be keyed by id rather than compose service",
-					"err", err)
-			}
+			listErr = err
+			// The ONE error that means the operator never mounted the socket,
+			// rather than that it is mounted and unwell. Everything downstream
+			// turns on the difference.
+			missing = errors.Is(err, ErrNoDockerSocket)
 		} else {
-			if wasAbsent {
-				slog.Info("docker socket readable again", "containers", len(list))
-			}
-			absent, listed = false, len(list)
+			answered, listed = true, len(list)
 			for _, m := range list {
 				meta[m.ID] = m
 			}
 		}
 	}
-
 	// Cleared before the walk so a capability reflects THIS scrape. A host
 	// that gains pid: host on restart must stop reporting "namespaced".
 	c.setCapability("")
 
-	cur, err := c.read(meta, !absent)
+	cur, err := c.read(meta, answered)
 	if err != nil {
-		c.observe(absent, 0, listed)
+		// No walk, so no scopes to have gone unreported. The read error is the
+		// fact worth carrying, and a second one invented here would only
+		// compete with it.
+		c.observe(missing, false, 0, listed)
 		return nil, err
 	}
-	c.observe(absent, len(cur), listed)
+
+	// Mounted, and naming nothing WHILE the walk found scopes for it to have
+	// named. Two ways in, and the second went unnoticed for this collector's
+	// whole life: the call failed for a reason that is not the socket's
+	// absence, or it SUCCEEDED and returned an empty list, which is what
+	// dockerd answers mid-restart under live-restore. Both used to reach the
+	// hub as a full set of id-keyed containers, the second without a line in
+	// the log.
+	//
+	// The scope count is part of the definition, not a filter applied later: a
+	// host that runs no containers has a socket with nothing to name, and that
+	// is not a fault in any of the three things that read this flag.
+	silent := !missing && listed == 0 && len(cur) > 0
+	c.observe(missing, silent, len(cur), listed)
+
+	// One line per state CHANGE, never one per scrape. A host that deliberately
+	// declines the socket is a supported configuration and must not warn once a
+	// minute forever -- and that same restraint is why the silent case had no
+	// line at all, which is how an operator first learned of it by finding
+	// fifty-five containers named by 64 hex characters in the UI.
+	switch {
+	case missing && !wasAbsent:
+		slog.Warn("docker socket not mounted; containers will be reported under their raw cgroup id, with no name and no compose labels",
+			"err", listErr)
+	case silent && !wasSilent:
+		slog.Warn("docker socket is mounted but named no containers; the cgroup scopes it should have named are NOT being reported until it answers again",
+			"scopes", len(cur), "err", listErr)
+	case !missing && !silent && (wasAbsent || wasSilent):
+		slog.Info("docker socket naming containers again", "containers", listed)
+	}
 
 	prev, prevAt := c.prev, c.prevAt
 	at := c.now()
@@ -488,7 +543,24 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 			continue
 		}
 
-		m := meta[id]
+		m, named := meta[id]
+		if !named && !missing {
+			// The socket is mounted and did not name this scope. Reporting it
+			// anyway is what containerKey's last resort exists for, and on a
+			// mounted socket that resort is always wrong: the raw id is a new
+			// container_key on the hub for every recreate and every outage, so
+			// one `systemctl restart docker` silently duplicated a whole
+			// host's container list, each duplicate stuck at "gone" forever.
+			//
+			// It also drops 64-hex cgroups that are not Docker's at all --
+			// podman, buildkit, kubelet -- which containerIDFromCgroup cannot
+			// tell apart and which could never render as anything but hex.
+			//
+			// Only a socket the operator never mounted still reaches the
+			// fallback: there is no second opinion to defer to there, and the
+			// raw id is genuinely better than nothing. See capSocketSilent.
+			continue
+		}
 		row := &netrav1.ContainerSample{
 			TsMs:         ts,
 			ContainerKey: containerKey(m, id),

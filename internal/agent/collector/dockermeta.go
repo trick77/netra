@@ -3,6 +3,7 @@ package collector
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -16,6 +17,15 @@ import (
 // for names and labels ONLY -- every metric comes from cgroup v2, so a host
 // that declines to mount the socket still gets numbers.
 const dockerSocket = "/var/run/docker.sock"
+
+// ErrNoDockerSocket is the socket not being THERE, as opposed to being there
+// and not answering. From a failed list call the two look identical and they
+// mean opposite things: the first is an operator who chose not to mount it --
+// a supported configuration, and the only one in which containers may be
+// reported under their raw cgroup id -- and the second is a fault, during
+// which reporting a raw id invents a container per cgroup scope that never
+// goes away. See the row guard in Collect.
+var ErrNoDockerSocket = errors.New("docker socket not mounted")
 
 // dockerAPIVersion is pinned low deliberately: /containers/json has been
 // stable since long before this, and pinning avoids a newer daemon changing
@@ -172,8 +182,14 @@ func SystemDockerInspect(ctx context.Context, id string) (uint64, error) {
 }
 
 func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {
+	// Stat, deliberately, and NOT a connect probe. setup-agent.sh bind-mounts
+	// the socket FILE, which pins the inode inside this container, so the stat
+	// still succeeds after dockerd unlinks and recreates the host socket on a
+	// restart -- the dial below then fails and the caller treats it as the
+	// fault it is. A connect probe would report that restart as "no socket
+	// mounted" and re-open the path that keys containers by their raw id.
 	if _, err := os.Stat(dockerSocket); err != nil {
-		return nil, fmt.Errorf("docker socket unavailable: %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrNoDockerSocket, err)
 	}
 
 	// The host part is ignored for a unix socket but must be present and

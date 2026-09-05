@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { fleetContainerNotes, hostContainerNote } from "./containers";
+import {
+  fleetContainerNotes,
+  fleetContainersBlocked,
+  hostContainerNote,
+  hostContainersBlocked,
+} from "./containers";
 
 const cgroups = { containers: "no-cgroup-scopes" };
 const socket = { containers: "no-docker-socket" };
+const silent = { containers: "docker-socket-silent" };
 
 describe("hostContainerNote", () => {
   // The healthy case is the common one, and a note on every host page would
@@ -38,6 +44,19 @@ describe("hostContainerNote", () => {
     expect(note).toContain("Docker socket");
     expect(note).toContain("any containers it collects");
     expect(note).not.toContain("setup-agent.sh");
+  });
+
+  // The third state, and the one this list used to render as fifty-five rows
+  // named by 64 hex characters: the socket IS there and named nothing, so the
+  // agent reports nothing rather than minting an id-keyed container per
+  // outage. The sentence has to say what is missing AND what to do about it.
+  it("names the remedy for docker-socket-silent without mentioning raw ids", () => {
+    const note = hostContainerNote(silent);
+    expect(note).toContain("named no containers");
+    expect(note).toContain("are not reported");
+    expect(note).toContain("readable by the agent");
+    // The raw-id fallback is exactly what this state no longer does.
+    expect(note).not.toContain("raw id");
   });
 
   // capabilities is free-text JSONB with no enum and no CHECK, so a value
@@ -128,5 +147,39 @@ describe("fleetContainerNotes", () => {
       partial,
     );
     expect(note).toContain("a, b and c");
+  });
+
+  // Same argument as no-cgroup-scopes: the agent measured containers and
+  // reported none of them, so a list that looks complete is short by a host.
+  it("calls the list incomplete for docker-socket-silent too", () => {
+    const [note] = fleetContainerNotes(
+      [
+        { hostname: "web-01", capabilities: {} },
+        { hostname: "web-02", capabilities: silent },
+      ],
+      partial,
+    );
+    expect(note).toContain("This list is incomplete.");
+    expect(note).toContain("web-02");
+  });
+});
+
+// Whether the empty list is a FAULT or a FACT. It decides what the two stacked
+// Docker panels draw, and getting it wrong either alarms about a NAS running
+// no containers or draws a host whose docker is down as a host at rest.
+describe("containers blocked", () => {
+  it("treats a silent socket as nothing collected", () => {
+    expect(hostContainersBlocked(silent)).toBe(true);
+    expect(
+      fleetContainersBlocked([{ hostname: "a", capabilities: silent }]),
+    ).toBe(true);
+  });
+
+  // The socket that was never mounted is the healthy case: whatever IS
+  // collected still arrives, badly named.
+  it("leaves an unmounted socket and a healthy host alone", () => {
+    expect(hostContainersBlocked(socket)).toBe(false);
+    expect(hostContainersBlocked(undefined)).toBe(false);
+    expect(hostContainersBlocked(cgroups)).toBe(true);
   });
 });

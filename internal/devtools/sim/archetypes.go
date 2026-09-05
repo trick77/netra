@@ -525,7 +525,15 @@ func homeNAS() *Profile {
 			"users", "diskio", "network", "addresses", "filesystems", "packages", "units",
 		},
 		Capabilities: map[string]string{
-			"containers": "no-docker-socket",
+			// The socket is mounted here and dockerd is not answering, which is
+			// a different host from sim-vps-tiny's socket that was never
+			// mounted at all -- and the two render differently on purpose. This
+			// one's empty container list is a FAULT: the panels take their
+			// not-collected state and the fleet's list calls itself incomplete.
+			// The value exists because the agent used to report these cgroups
+			// under their raw 64-hex ids, which minted a duplicate container on
+			// the hub per outage that then sat in the UI as "gone" forever.
+			"containers": "docker-socket-silent",
 			"sensors":    "absent",
 			"smart":      "no-device-access",
 		},

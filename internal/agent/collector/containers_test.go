@@ -269,8 +269,14 @@ func TestContainersFallsBackToTheContainerName(t *testing.T) {
 // derived from it would be fiction.
 func TestContainersLeavesMemLimitUnsetWhenUnlimited(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	// BOTH scopes named: a mounted socket that does not name a scope means the
+	// scope is not reported at all, so the limited container the assertion
+	// below reaches for has to be one the socket claims.
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
-		fakeLister(collector.ContainerMeta{ID: "def456", Name: "unlimited"}), true)
+		fakeLister(
+			collector.ContainerMeta{ID: "def456", Name: "unlimited"},
+			collector.ContainerMeta{ID: "abc123", Name: "abc123"},
+		), true)
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -287,13 +293,18 @@ func TestContainersLeavesMemLimitUnsetWhenUnlimited(t *testing.T) {
 	}
 }
 
-// The Docker socket supplies names only. Without it the metrics still arrive
-// from cgroup v2 -- the socket is an enrichment, not a dependency -- and the
-// capability says why the names are missing.
+// The Docker socket supplies names only. When it was never MOUNTED the metrics
+// still arrive from cgroup v2 -- the socket is an enrichment, not a dependency
+// -- and the capability says why the names are missing.
+//
+// ErrNoDockerSocket, specifically, and not any old failure: it is the one error
+// that means the operator declined the socket, which is the only state in which
+// a container may be reported under its raw id. A mounted socket that merely
+// stopped answering reports nothing -- see the silent tests below.
 func TestContainersReportsMetricsWithoutTheDockerSocket(t *testing.T) {
 	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
 	failing := func(context.Context) ([]collector.ContainerMeta, error) {
-		return nil, errors.New("dial /var/run/docker.sock: no such file")
+		return nil, fmt.Errorf("%w: stat /var/run/docker.sock: no such file", collector.ErrNoDockerSocket)
 	}
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing, true)
 
@@ -309,6 +320,93 @@ func TestContainersReportsMetricsWithoutTheDockerSocket(t *testing.T) {
 
 	if got := testee.Capabilities()["containers"]; got != "no-docker-socket" {
 		t.Errorf("capability = %q, want no-docker-socket", got)
+	}
+}
+
+// A cgroup scope a MOUNTED socket did not name is not reported at all.
+//
+// The raw id is a fresh container_key on the hub for every recreate, so a
+// scope reported that way becomes a container that exists once, never updates
+// again, and sits in the UI as "gone" under 64 hex characters forever. It also
+// catches 64-hex cgroups that were never Docker's -- podman, buildkit, kubelet
+// -- which containerIDFromCgroup cannot tell apart.
+func TestContainersDropsAScopeTheSocketDidNotName(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
+		fakeLister(collector.ContainerMeta{ID: "abc123", Name: "web"}), true)
+
+	containersAt(t, testee, base)
+	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	if len(res.Containers) != 1 {
+		t.Fatalf("rows = %d, want 1 -- def456 was measured but never named", len(res.Containers))
+	}
+	containerRow(t, res.Containers, "web")
+
+	// Not a fault: the socket answered, and some scopes simply are not its.
+	if got, ok := testee.Capabilities()["containers"]; ok {
+		t.Errorf("capability = %q, want none -- the socket named what it has", got)
+	}
+}
+
+// The loud half of a socket outage: the list call fails for a reason that is
+// NOT the socket's absence. dockerd is down, restarting, or refusing this
+// agent, and every scope it should have named goes unreported until it answers.
+func TestContainersReportsNothingWhenAMountedSocketFails(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	failing := func(context.Context) ([]collector.ContainerMeta, error) {
+		return nil, errors.New("dial unix /var/run/docker.sock: connect: connection refused")
+	}
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing, true)
+
+	containersAt(t, testee, base)
+	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	if len(res.Containers) != 0 {
+		t.Fatalf("rows = %d, want 0 -- a mounted socket that will not answer names nothing", len(res.Containers))
+	}
+	if got := testee.Capabilities()["containers"]; got != "docker-socket-silent" {
+		t.Errorf("capability = %q, want docker-socket-silent", got)
+	}
+}
+
+// The silent half, and the one that went unnoticed: dockerd answers 200 with an
+// empty list while it restarts under live-restore. The containers are still
+// running, their cgroups are still there, and the socket claims none of them.
+//
+// This case used to be indistinguishable from a healthy scrape -- no error, no
+// log line, no capability -- while it duplicated the host's whole container
+// list on the hub under raw ids.
+func TestContainersReportsNothingWhenTheSocketNamesNoContainers(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
+		fakeLister(), true)
+
+	containersAt(t, testee, base)
+	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	if len(res.Containers) != 0 {
+		t.Fatalf("rows = %d, want 0 -- the socket answered and claimed no container", len(res.Containers))
+	}
+	if got := testee.Capabilities()["containers"]; got != "docker-socket-silent" {
+		t.Errorf("capability = %q, want docker-socket-silent", got)
+	}
+}
+
+// A host that genuinely runs nothing is not a host with a broken socket. The
+// socket naming nothing is only a fault when the walk found scopes for it to
+// have named -- the same restraint no-cgroup-scopes states for its own inverse.
+func TestContainersStaysQuietWhenThereIsNothingToName(t *testing.T) {
+	testee := collector.NewContainers(t.TempDir(), noProcRoot, fakeLister(), true)
+
+	if _, err := testee.Collect(context.Background()); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if got, ok := testee.Capabilities()["containers"]; ok {
+		t.Errorf("capability = %q, want none -- no scopes, no containers, no fault", got)
 	}
 }
 
@@ -872,7 +970,7 @@ func TestContainersIgnoresDirectoriesThatAreNotContainerScopes(t *testing.T) {
 // unmounted hierarchy obvious on day one.
 func TestContainersStartupSummaryNamesWhatItSaw(t *testing.T) {
 	failing := func(context.Context) ([]collector.ContainerMeta, error) {
-		return nil, errors.New("dial /var/run/docker.sock: no such file")
+		return nil, fmt.Errorf("%w: stat /var/run/docker.sock: no such file", collector.ErrNoDockerSocket)
 	}
 	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot, failing, true)
 

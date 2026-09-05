@@ -4,22 +4,30 @@ import { griddedValues } from "./metrics";
 /**
  * What the agent's `containers` capability means, in the reader's terms.
  *
- * The agent reports this key only when something went wrong, and the two
- * values it can carry mean opposite things:
+ * The agent reports this key only when something went wrong, and the three
+ * values it can carry mean different things -- two of them opposite:
  *
  *   no-cgroup-scopes  the Docker socket named containers that the cgroup walk
  *                     could not find. NOTHING is collected for that host, so
  *                     the containers simply are not there to list.
- *   no-docker-socket  the reverse, and much milder. cgroup v2 still yields
- *                     CPU, memory and I/O; only the names and compose labels
- *                     are missing, so whatever IS collected is keyed by its
- *                     raw 64-hex id. It says nothing about how many
- *                     containers there are: a host with no Docker installed
- *                     has no socket either, and reports this with an empty
- *                     list. The sentence below is worded not to claim
- *                     otherwise.
+ *   no-docker-socket  the reverse, and much milder. The socket was never
+ *                     MOUNTED. cgroup v2 still yields CPU, memory and I/O;
+ *                     only the names and compose labels are missing, so
+ *                     whatever IS collected is keyed by its raw 64-hex id. It
+ *                     says nothing about how many containers there are: a host
+ *                     with no Docker installed has no socket either, and
+ *                     reports this with an empty list. The sentence below is
+ *                     worded not to claim otherwise.
+ *   docker-socket-silent
+ *                     the socket IS mounted and named no containers while the
+ *                     agent's cgroup walk found scopes -- dockerd down,
+ *                     restarting, or refusing the agent. Blocking, like
+ *                     no-cgroup-scopes: those scopes are deliberately not
+ *                     reported, because keying them by raw id mints a new
+ *                     container on the hub per outage that then never updates
+ *                     again and sits in this list as "gone" forever.
  *
- * Both mirror internal/agent/collector/containers.go. The values are free
+ * All three mirror internal/agent/collector/containers.go. The values are free
  * text on the wire -- capabilities is JSONB with no enum and no CHECK -- so an
  * unrecognised one must still render as something the operator can act on,
  * the same rule ContainerPage's NETWORK_UNAVAILABLE follows.
@@ -60,6 +68,11 @@ function sentence(value: string, subject: string): string {
       // Careful not to assert that containers exist: no Docker installed
       // means no socket, and that host reports this alongside an empty list.
       return `${subject} cannot read the Docker socket, so any containers it collects are named by their raw id rather than by compose project and service. Their CPU, memory and I/O are still measured.`;
+    case "docker-socket-silent":
+      // Deliberately says what was NOT reported and why, then the remedy.
+      // Naming these containers by their raw id is what the agent used to do
+      // here, and it is what filled this list with unnamed "gone" rows.
+      return `${subject} can reach the Docker socket but it named no containers, so the container cgroups it measured are not reported. Check that Docker is running on the host and that its socket is readable by the agent.`;
     default:
       // A capability netra does not know the wording of is still the agent
       // saying something went wrong, and quoting it verbatim is more use than
@@ -71,14 +84,18 @@ function sentence(value: string, subject: string): string {
 /**
  * Does this value mean NOTHING was collected, as opposed to collected badly?
  *
- * Only `no-cgroup-scopes` does. The distinction decides whether an empty list
- * is a fault or a fact: a fleet of hosts with no Docker installed reports
- * `no-docker-socket` and an empty list, and it is perfectly healthy -- calling
- * that "no containers collected" turns a fleet that simply runs none into a
- * problem, and drops the one true sentence available about it.
+ * `no-cgroup-scopes` and `docker-socket-silent` do. The distinction decides
+ * whether an empty list is a fault or a fact: a fleet of hosts with no Docker
+ * installed reports `no-docker-socket` and an empty list, and it is perfectly
+ * healthy -- calling that "no containers collected" turns a fleet that simply
+ * runs none into a problem, and drops the one true sentence available about it.
+ *
+ * `docker-socket-silent` is the opposite: the agent MEASURED container cgroups
+ * and reported none of them, so the empty list is a fault and every panel over
+ * it has to take its not-collected state rather than draw a host at rest.
  */
 function blocking(value: string): boolean {
-  return value === "no-cgroup-scopes";
+  return value === "no-cgroup-scopes" || value === "docker-socket-silent";
 }
 
 /**
@@ -129,11 +146,14 @@ export function hostContainerNote(
  * each naming the hosts that reported it.
  *
  * `partial` is whether the list being explained has rows in it. It changes
- * only the `no-cgroup-scopes` sentence, and it has to: a fleet where every
- * host is misconfigured has an empty list, which the empty state already
- * frames as "nothing here". A fleet where one host of twelve is
- * misconfigured has a list that looks complete and is not -- and saying so is
- * the whole point, because nothing else on the page can.
+ * only the BLOCKING sentences, and it has to: a fleet where every host is
+ * misconfigured has an empty list, which the empty state already frames as
+ * "nothing here". A fleet where one host of twelve is misconfigured has a list
+ * that looks complete and is not -- and saying so is the whole point, because
+ * nothing else on the page can.
+ *
+ * Keyed off blocking() rather than off `no-cgroup-scopes` by name, so a value
+ * added to that set inherits the prefix instead of quietly going without it.
  */
 export function fleetContainerNotes(
   hosts: readonly CapableHost[],
@@ -154,7 +174,7 @@ export function fleetContainerNotes(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([value, hostnames]) => {
       const note = sentence(value, `The agent on ${names(hostnames)}`);
-      return value === "no-cgroup-scopes" && partial
+      return blocking(value) && partial
         ? `This list is incomplete. ${note}`
         : note;
     });
