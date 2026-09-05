@@ -316,25 +316,66 @@ describe("overviewTiles kernel and pressure groups", () => {
   it("reads the kernel rates off their own columns", () => {
     const { kernel } = tiles({
       hostMetrics: hostMetrics(
-        ["ctxt_per_s", "intr_per_s", "procs_running", "procs_blocked"],
-        [51000, 41000, 7, 0],
+        ["ctxt_per_s", "intr_per_s", "processes_total", "procs_running"],
+        [51000, 41000, 312, 7],
       ),
     });
 
     expect(find(kernel, "Context switches")?.value).toBe("51 000");
     expect(find(kernel, "Interrupts")?.value).toBe("41 000");
-    expect(find(kernel, "Running processes")?.value).toBe("7");
-    expect(find(kernel, "Running processes")?.sub).toBe("0 blocked");
+    expect(find(kernel, "Processes")?.value).toBe("312");
+  });
+
+  // The number a reader checks is the total. procs_running is how many tasks
+  // were runnable at the instant of the sample, which is a handful on any
+  // server that is not saturated -- a headline of "3" under the word
+  // "processes" reads as a broken agent rather than as an idle box.
+  it("leads with the process total and carries the states beneath it", () => {
+    const { kernel } = tiles({
+      hostMetrics: hostMetrics(
+        ["processes_total", "procs_running", "procs_blocked"],
+        [312, 3, 0],
+      ),
+    });
+    const tile = find(kernel, "Processes");
+
+    expect(tile?.value).toBe("312");
+    // 0 blocked is a reading, not a missing one, and says so.
+    expect(tile?.sub).toBe("3 running, 0 blocked");
+    expect(tile?.slug).toBe("total-processes");
+  });
+
+  it("names each state it has when the host reports only one of them", () => {
+    const { kernel } = tiles({
+      hostMetrics: hostMetrics(["processes_total", "procs_blocked"], [312, 2]),
+    });
+
+    expect(find(kernel, "Processes")?.sub).toBe("2 blocked");
+  });
+
+  // A PID-namespaced agent sees its own namespace rather than the host's, so
+  // it leaves processes_total unset. The runnable count is still true, and a
+  // label that says what it is beats an absent tile.
+  it("falls back to the runnable count where the total is unreported", () => {
+    const { kernel } = tiles({
+      hostMetrics: hostMetrics(["procs_running", "procs_blocked"], [3, 1]),
+    });
+    const tile = find(kernel, "Runnable now");
+
+    expect(tile?.value).toBe("3");
+    expect(tile?.sub).toBe("1 blocked");
+    expect(tile?.slug).toBe("running-processes");
+    expect(find(kernel, "Processes")).toBeUndefined();
   });
 
   // A rate has a "/s"; a level -- things that exist right now -- does not.
   it("marks a rate as per second and a level as neither", () => {
     const { kernel } = tiles({
-      hostMetrics: hostMetrics(["ctxt_per_s", "procs_running"], [10, 3]),
+      hostMetrics: hostMetrics(["ctxt_per_s", "processes_total"], [10, 312]),
     });
 
     expect(find(kernel, "Context switches")?.unit).toBe("/s");
-    expect(find(kernel, "Running processes")?.unit).toBeUndefined();
+    expect(find(kernel, "Processes")?.unit).toBeUndefined();
   });
 
   // None of these carries a threshold: nothing measured a good value for a

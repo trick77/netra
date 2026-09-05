@@ -483,9 +483,8 @@ function busiestFilesystemTile(res: MetricsResponse | null): Tile {
  *
  * So each group carries its three most-read figures and nothing else. The
  * rest are not lost: every tile links to the panel that draws its column in
- * full, and those panels carry the readings beside it -- total processes on
- * `total-processes`, TCP retransmits on `tcp-statistics`, swap-in on
- * `memory-pressure`.
+ * full, and those panels carry the readings beside it -- TCP retransmits on
+ * `tcp-statistics`, swap-in on `memory-pressure`.
  */
 function kernelTiles(res: MetricsResponse | null): Tile[] {
   return [
@@ -505,19 +504,60 @@ function kernelTiles(res: MetricsResponse | null): Tile[] {
       "interrupts",
       "var(--s1)",
     ),
-    // Blocked, not total, as the sub-line: blocked processes are stuck on
-    // I/O rather than on CPU, which is the fact that makes a running count
-    // mean something.
-    levelTile(
+    processesTile(res),
+  ];
+}
+
+/**
+ * The total is the headline and the runnable count is the context, not the
+ * other way round.
+ *
+ * procs_running is /proc/stat's count of tasks in the runnable state at the
+ * instant of the sample, the agent included, so a server that is not
+ * saturated reads 1-5 all day. Under the words "Running processes" that reads
+ * as "this server has three processes", which is not what the column says and
+ * not believable. processes_total is the figure a reader actually checks --
+ * what ps counts -- and the runnable and blocked counts underneath are what
+ * make it mean something: how many of those want CPU, how many are stuck on
+ * I/O.
+ *
+ * A PID-namespaced agent cannot see the host's processes and leaves
+ * processes_total unset, so there the tile falls back to the runnable count
+ * under a label that says what it is.
+ */
+function processesTile(res: MetricsResponse | null): Tile {
+  const total = current(res, "processes_total");
+  if (total === null) {
+    return levelTile(
       res,
       "procs-running",
-      "Running processes",
+      "Runnable now",
       "procs_running",
       "running-processes",
       "var(--s2)",
       blockedSub(res),
-    ),
-  ];
+    );
+  }
+  return levelTile(
+    res,
+    "procs-running",
+    "Processes",
+    "processes_total",
+    "total-processes",
+    "var(--s2)",
+    stateSub(res),
+  );
+}
+
+/** "3 running, 1 blocked" -- whichever of the two the host reports. Zero is a
+ * reading like any other and renders; only null drops a part. */
+function stateSub(res: MetricsResponse | null): string | undefined {
+  const running = current(res, "procs_running");
+  const parts: string[] = [];
+  if (running !== null) parts.push(`${cardinal(running)} running`);
+  const blocked = current(res, "procs_blocked");
+  if (blocked !== null) parts.push(`${cardinal(blocked)} blocked`);
+  return parts.length === 0 ? undefined : parts.join(", ");
 }
 
 function blockedSub(res: MetricsResponse | null): string | undefined {
