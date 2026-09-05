@@ -261,10 +261,15 @@ function bandsFor(sampled: Sampled | null): ContainerBands {
     band("shmem", "var(--s4)", sampled?.memShmem ?? empty),
     band("kernel", "var(--s8)", sampled?.memKernel ?? empty),
   ].filter((b) => hasReading(b.values));
+  // The unsplit fallback is mem_used, which is exactly what this container's
+  // sparkline cell and the host's Docker Memory panel draw -- so it wears
+  // their colour. The split above still names its four kinds of byte from the
+  // series ramp; giving THAT its own memory family is a separate decision,
+  // and it is the host stack's --mem-* question, not this one.
   const memBands =
     memSplit.length > 1
       ? memSplit
-      : [band("used", "var(--s2)", sampled?.memUsed ?? empty)];
+      : [band("used", "var(--cmem-1)", sampled?.memUsed ?? empty)];
 
   return {
     cpuBands,

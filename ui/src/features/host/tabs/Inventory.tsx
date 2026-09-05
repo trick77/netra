@@ -408,7 +408,7 @@ export function Containers({
  * add up to "the containers on this box are holding 11 GB and four cores'
  * worth of CPU, and have been all day". Two stacked panels do, and they are
  * the same two quantities each row already draws -- CPU in blue, memory in
- * green -- so the overview and the cells under it read as one picture.
+ * amber -- so the overview and the cells under it read as one picture.
  *
  * IT IS DELIBERATELY NOT FILTERED. The caller hands it the whole
  * family=container response rather than the rows that survived the search box
