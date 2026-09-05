@@ -3,6 +3,7 @@ import type { Drive } from "../../lib/api";
 import {
   ATA,
   NVME,
+  DRIVE_STALE_MS,
   driveAlarms,
   driveFindings,
   drivePowerOnHours,
@@ -345,5 +346,61 @@ describe("driveAlarms", () => {
     expect(alarm.text).toBe(
       driveFindings(drive({ [ATA.currentPending]: 3 }))[0].text,
     );
+  });
+});
+
+// A devices row outlives the disk: it is unique on (host_id, device), nothing
+// deletes it by set difference, and the prune only reaches it at 120 days. So
+// a failing disk that gets PULLED leaves its last reading behind, and without
+// a gate the host would carry a critical nobody could ever clear -- the exact
+// failure driveAlarms rejects CRC errors for.
+describe("driveAlarms and a drive that is no longer there", () => {
+  const failing = (lastSeen: string) =>
+    drive({ [ATA.currentPending]: 3 }, { last_seen: lastSeen });
+
+  it("drops a drive the host stopped reading a week ago", () => {
+    // Given a host reporting now, whose sda was last read eight days ago
+    const testee = driveAlarms(
+      [failing("2026-08-15T12:00:00Z")],
+      "2026-08-23T12:00:01Z",
+    );
+
+    // Then the disk is gone, not failing, and the host can clear the row by
+    // pulling the drive -- which is what an operator actually does about it
+    expect(testee).toEqual([]);
+  });
+
+  it("keeps one still being read at the edge of the window", () => {
+    // Exactly DRIVE_STALE_MS behind is still current: the boundary belongs to
+    // the drive, because a false silence about a dying disk costs more than a
+    // stale row does
+    const at = (hostLastSeen: string) =>
+      driveAlarms([failing("2026-08-16T12:00:00Z")], hostLastSeen);
+    const seen = new Date("2026-08-16T12:00:00Z").getTime();
+
+    expect(at(new Date(seen + DRIVE_STALE_MS).toISOString())).toHaveLength(1);
+    expect(at(new Date(seen + DRIVE_STALE_MS + 1000).toISOString())).toEqual(
+      [],
+    );
+  });
+
+  it("does not lose an offline host's drives", () => {
+    // Given a host that went silent a month ago with a failing disk. The
+    // window is measured against the HOST's own last report, never the wall
+    // clock: the last thing netra knew about that machine was a dying drive,
+    // and it must keep saying so.
+    const testee = driveAlarms(
+      [failing("2026-07-23T11:00:00Z")],
+      "2026-07-23T12:00:00Z",
+    );
+    expect(testee).toHaveLength(1);
+  });
+
+  it("judges the reading when there is no host timestamp to judge it against", () => {
+    // No reference point is not a reason to go quiet about a dying disk.
+    expect(driveAlarms([failing("2026-08-23T12:00:00Z")], null)).toHaveLength(
+      1,
+    );
+    expect(driveAlarms([failing("2026-08-23T12:00:00Z")])).toHaveLength(1);
   });
 });

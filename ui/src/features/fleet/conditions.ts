@@ -635,7 +635,10 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
   // silent, because the only other reading is "no alarms", and a page that
   // says a host is fine because it could not find out is the bug this whole
   // condition exists to fix.
-  const alarms = driveAlarms(row.drives ?? []);
+  // last_seen gates a drive the hub still holds a row for but the host has
+  // stopped reading -- a pulled disk, or one that came back as a different
+  // /dev/sdX. See DRIVE_STALE_MS.
+  const alarms = driveAlarms(row.drives ?? [], row.last_seen);
   if (alarms.length > 0) {
     const worst = alarms[0];
     out.push({

@@ -228,6 +228,44 @@ export interface DriveAlarm {
 }
 
 /**
+ * How far a drive's last reading may fall behind the host's last report
+ * before the drive counts as gone rather than as failing.
+ *
+ * A `devices` row outlives the disk. It is unique on (host_id, device), it is
+ * never deleted by set difference, and the prune only reaches it at 120 days
+ * -- so a failing disk that is PULLED, or that comes back as a different
+ * /dev/sdX after a reorder, leaves its row behind frozen at its last SMART
+ * reading. DISTINCT ON (attr_id) keeps handing that reading back, and without
+ * this gate the host would carry "Drive errors · Critical" for the ninety days
+ * it takes the readings to age out, with nothing an operator could do to clear
+ * it. That is exactly the permanent-condition failure driveAlarms rejects CRC
+ * errors for; it must not be reintroduced by the back door.
+ *
+ * Seven days, against the HOST's own last report rather than the wall clock,
+ * so an offline host does not lose its drives: the last thing netra knew about
+ * that machine was a failing disk, and it should keep saying so. The window is
+ * wide because the collector's interval is the operator's to set -- an hour by
+ * default (AGENT_SMART_INTERVAL), and a daily or weekly schedule is a
+ * reasonable thing to want on spinning rust.
+ */
+export const DRIVE_STALE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether this drive was still being read when the host last reported.
+ *
+ * Unknown timestamps do not disqualify a drive: with no reference point the
+ * honest answer is the reading netra holds, not silence about a disk that may
+ * be dying.
+ */
+function driveIsCurrent(drive: Drive, hostLastSeen?: string | null): boolean {
+  if (hostLastSeen === null || hostLastSeen === undefined) return true;
+  const host = new Date(hostLastSeen).getTime();
+  const seen = new Date(drive.last_seen).getTime();
+  if (Number.isNaN(host) || Number.isNaN(seen)) return true;
+  return host - seen <= DRIVE_STALE_MS;
+}
+
+/**
  * The findings serious enough to count against the HOST, worst first.
  *
  * This is the one place the drive table and the attention panels meet, and
@@ -245,9 +283,13 @@ export interface DriveAlarm {
  * warning, spare below threshold, rated endurance spent, and the two counters
  * that mean the drive has already started substituting for damage.
  */
-export function driveAlarms(drives: readonly Drive[]): DriveAlarm[] {
+export function driveAlarms(
+  drives: readonly Drive[],
+  hostLastSeen?: string | null,
+): DriveAlarm[] {
   const out: DriveAlarm[] = [];
   for (const drive of drives) {
+    if (!driveIsCurrent(drive, hostLastSeen)) continue;
     for (const finding of driveFindings(drive)) {
       if (finding.severity !== "serious" && finding.severity !== "critical") {
         continue;

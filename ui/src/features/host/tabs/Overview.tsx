@@ -243,7 +243,7 @@ export function needsAttention(input: {
   // sectors are two things to replace, and this panel is a list of what to do
   // -- the fleet page is the one that collapses them, because there the unit
   // of interest is the machine.
-  for (const alarm of driveAlarms(input.drives ?? [])) {
+  for (const alarm of driveAlarms(input.drives ?? [], input.host.last_seen)) {
     out.push({
       severity: alarm.severity,
       what: `${alarm.device} — ${alarm.text}`,
