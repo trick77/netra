@@ -26,7 +26,7 @@ import type { Host } from "../../lib/api";
 import { hostStatus, isReporting } from "../../lib/host";
 import { RAIL_RANGES, rangeLabel, type Range } from "../../lib/range";
 import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
-import { memoryBands } from "../../lib/bands";
+import { filesystemBands, memoryBands } from "../../lib/bands";
 import {
   MAX_PER_CORE,
   cpuBands,
@@ -125,15 +125,21 @@ export type HostRow = Host & {
     // convention lib/api.ts uses for a field added after its fixtures.
     since?: string | null;
     sinceAtLeast?: boolean;
+    /** THIS mount's Use% over the window, one value per bucket, gaps kept as
+     * null -- the line the Disk cell draws over its bar. Optional for the
+     * same reason `since` is: a row without it draws the bar alone, exactly
+     * as the cell did before the line existed. */
+    series?: (number | null)[];
   } | null;
   /** Every filesystem's Use% over the window, one band each.
    *
-   * Nothing in the list draws these any more: the fleet answers "how full" with
-   * the Disk meter alone, because usage over a day is near-flat and what a row
-   * is scanned for is how close to full a mount is NOW. The per-mount history
-   * is one click away, on the host page's Filesystem usage panel
-   * (chartSpecs.ts). Still assembled -- it costs no extra fetch, the Disk
-   * meter's own `fullest` reads the same response. */
+   * Not what the Disk cell draws. The list answers "is this one filling up"
+   * with a single line for the mount the cell already names -- `fullest.series`
+   * above -- because six lines inside a 26px strip are a texture, not a
+   * reading. All of them together are one click away, on the host page's
+   * Filesystem usage panel (chartSpecs.ts). Still assembled: it costs no extra
+   * fetch, `fullest` reads the same response, and the attention band reads
+   * these. */
   disk: Band[];
   /** OOM kills inside the window -- the increase, never the cumulative
    * counter. null is "cannot say", which the attention band stays silent
@@ -337,16 +343,17 @@ const CPU_PERCENT_MAX = 100;
 
 // The three saturation cells are as wide as the sparkline, from the same
 // constant the chart is drawn with, so the now-bar under a chart is exactly
-// the chart's width and the disk cell -- which has no chart to size it --
-// lines up with the two beside it. Inline rather than a CSS literal: the
-// stylesheet has copied SPARK_WIDTH before and been left behind when it moved
-// (see the note above .tablewrap svg.spark in index.css).
+// the chart's width. Inline rather than a CSS literal: the stylesheet has
+// copied SPARK_WIDTH before and been left behind when it moved (see the note
+// above .tablewrap svg.spark in index.css).
 const METRIC_CELL_STYLE = { width: SPARK_WIDTH };
 // The gap .metric-cell puts between its chart and its now-line, in
-// index.css. Named here because the disk cell has to reserve the chart's
-// height plus that gap above its own bar, so the three bars in a row form one
-// line: without it the chartless cell sits centred in the row and its bar
-// lands 16px above the other two.
+// index.css. Named here for the disk cell that cannot draw its line -- a
+// mount with no bucket carrying both used and free, and every hand-built row
+// in the tests -- which has to reserve the chart's height plus that gap above
+// its own bar so the three bars in a row still form one line: without it the
+// chartless cell sits centred in the row and its bar lands 16px above the
+// other two.
 const METRIC_CELL_GAP = 3;
 const DISK_CELL_STYLE = {
   width: SPARK_WIDTH,
@@ -696,7 +703,62 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 // the row's assembler already did the picking -- and it picks by severity
 // before percentage, so this is not always the highest number on the host.
 // See outranks() in hostTrends.ts.
-function DiskCell({ row }: { row: HostRow }) {
+// The disk line's own hue: the colour the host page's busiest-filesystem tile
+// already defaults to, and neither --cpu-1 nor --mem-used, so the three
+// silhouettes in a row are three readings and not one gradient. Not the
+// severity colour: the bar and the figure under it already carry that, and a
+// line that changed hue at 80% would say "it started filling here", which is
+// not what the threshold means.
+const DISK_COLOR = "var(--s6)";
+
+// The narrowest window the disk line is ever drawn against, in percentage
+// points.
+//
+// The axis is fitted rather than pinned to 0-100 -- that is the whole point
+// of the line, since five points of growth over a day is 1.3px inside a 26px
+// strip -- but a fitted axis with nothing to fit magnifies whatever is left:
+// a mount that did not move all day would draw its own rounding as a
+// mountain range. Below two points the extent is widened to two, so a flat
+// disk draws flat.
+const DISK_MIN_SPAN = 2;
+
+/**
+ * The floor and ceiling for one mount's Use% line: its own extent, widened to
+ * DISK_MIN_SPAN and slid back inside 0-100 if that pushed it out.
+ *
+ * null when the series has no reading at all -- the caller then draws no
+ * chart rather than an empty box, the same answer every other cell here gives
+ * for a reading it does not have.
+ */
+export function diskAxis(
+  values: readonly (number | null)[],
+): { min: number; max: number } | null {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of values) {
+    if (v === null) continue;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (lo === Infinity) return null;
+  const grow = Math.max(0, (DISK_MIN_SPAN - (hi - lo)) / 2);
+  let min = lo - grow;
+  let max = hi + grow;
+  // Slid, not clipped: a root at 0.4% and one at 99.8% both keep the full
+  // span, which is what makes their lines the same steepness for the same
+  // growth. Only a disk whose own extent is already wider than the window
+  // can lose any of it, and that one never needed the floor.
+  if (min < 0) {
+    max = Math.min(100, max - min);
+    min = 0;
+  } else if (max > 100) {
+    min = Math.max(0, min - (max - 100));
+    max = 100;
+  }
+  return { min, max };
+}
+
+function DiskCell({ row, range }: { row: HostRow; range: Range }) {
   if (row.fullest === null) {
     // A host that has reported no filesystems has no fullest one. Drawing a
     // meter anyway would put an empty green bar where "never collected"
@@ -704,21 +766,97 @@ function DiskCell({ row }: { row: HostRow }) {
     // is the same mistake one step quieter. See MemoryCell.
     return null;
   }
-  const { mount, pct, others, free } = row.fullest;
+  const { mount, pct, others, free, series } = row.fullest;
   const label = others > 0 ? `${mount} +${others}` : mount;
+  const values = series ?? [];
+  const axis = diskAxis(values);
+
+  // The same ONE mount at another range, never the whole host's filesystems:
+  // enlarging has to show more of the shape that was clicked, not a different
+  // chart. The all-mounts view is a real view and it has a home -- the host
+  // page's Filesystem usage panel -- but opening it from here would answer a
+  // question the reader did not ask, the way an unnormalised per-core stack
+  // would in the CPU cell.
+  const fetchSeries = async (next: Range): Promise<DetailData> => {
+    const fs = await fetchHostFamily(row.id, "filesystem", next);
+    const bands = filesystemBands(fs);
+    // By name here, unlike the assembler: at another range this is a fresh
+    // response whose series order is the hub's, so the index that won over
+    // the page's window means nothing against it. A mount that has stopped
+    // reporting in the wider window is simply absent, and the dialog then
+    // draws nothing rather than another disk's line under this one's title.
+    const one = bands.find((band) => band.name === mount);
+    // Recoloured, because filesystemBands colours by POSITION -- FS_COLORS
+    // cycling over the mounts that reported -- and this cell draws one mount
+    // in DISK_COLOR. Taken as it comes, the dialog and its rail would open in
+    // whatever hue this mount happened to be nth of, beside a figure in
+    // another, and picking a range would change the line's colour.
+    return {
+      series: one === undefined ? [] : [{ ...one, color: DISK_COLOR }],
+      window: fs.window,
+    };
+  };
+
+  // One line for the mount named underneath, unfilled: usage lives between
+  // 40% and 95%, so an area anchored at the axis floods the strip and the
+  // line's height -- the only thing that moves -- is what carries the
+  // reading. See Sparkline's own `fill` docstring, which names this case.
+  const chart =
+    axis === null ? null : (
+      <Enlargeable
+        title={`Disk · ${mount} · ${row.hostname}`}
+        label={`Enlarge disk usage for ${mount} on ${row.hostname}`}
+        className="inline"
+        unit="%"
+        series={[{ name: mount, color: DISK_COLOR, values }]}
+        // Not the cell's frozen min/max: those are THIS window's extent, and
+        // the picker can widen the window -- a floor held from the old one
+        // clips every older bucket below it off the bottom of the plot, which
+        // is the half fitted() cannot fix (it raises a ceiling, never lowers
+        // a floor).
+        //
+        // So the dialog free-scales, and it does NOT carry DISK_MIN_SPAN:
+        // the two are not the same rule and should not be. The span floor
+        // exists because a 26px strip has no axis -- a flat mount magnified
+        // to full height there is read as movement and there is nothing on
+        // screen to say otherwise. The dialog has a labelled axis: a mount
+        // between 41.9 and 42.1 draws its wobble large and says 41.9 and 42.1
+        // beside it, which is the truth at a zoom the reader asked for.
+        autoScale
+        fmt={(n) => percent(n)}
+        window={row.window}
+        range={range}
+        ranges={RAIL_RANGES}
+        fetchSeries={fetchSeries}
+      >
+        <Sparkline
+          values={values}
+          min={axis.min}
+          max={axis.max}
+          color={DISK_COLOR}
+          fill={false}
+          height={SPARK_STRIP_HEIGHT}
+          label={`Disk trend for ${mount}, ${rangeLabel(range)}`}
+        />
+      </Enlargeable>
+    );
+
   // The same now-bar the CPU and Memory cells draw under their sparklines,
-  // with no sparkline over it: disk usage over a day is near-flat and "how
-  // close to full" is the question, so the bar IS the cell. Drawing it with
-  // the shared NowReading rather than Meter is what makes the three
-  // saturation columns read alike -- the same ten cells, the same figure in
-  // the same severity colour, the same quiet line underneath. The mount and
-  // what is left go on that line: the mount is which disk the reading is
-  // about, and bytes left is what the percentage cannot say on its own (90%
-  // of a 6.7 TB array is 674 GB free, 90% of a 4 GB root is not). Null free
-  // is "not known" -- the assembler leaves it unset when the host reported
-  // no size -- and prints nothing rather than a dash.
+  // and now under one of its own. Drawing it with the shared NowReading
+  // rather than Meter is what makes the three saturation columns read alike
+  // -- the same ten cells, the same figure in the same severity colour, the
+  // same quiet line underneath. The mount and what is left go on that line:
+  // the mount is which disk the reading is about, and bytes left is what the
+  // percentage cannot say on its own (90% of a 6.7 TB array is 674 GB free,
+  // 90% of a 4 GB root is not). Null free is "not known" -- the assembler
+  // leaves it unset when the host reported no size -- and prints nothing
+  // rather than a dash.
   return (
-    <div className="metric-cell disk-cell" style={DISK_CELL_STYLE}>
+    <div
+      className="metric-cell disk-cell"
+      style={axis === null ? DISK_CELL_STYLE : METRIC_CELL_STYLE}
+    >
+      {chart}
       <NowReading
         pct={pct}
         label={`Disk ${label}`}
@@ -814,7 +952,7 @@ export function hostColumns(range: Range): Column<HostRow>[] {
     {
       key: "disk",
       header: "Disk",
-      cell: (row) => <DiskCell row={row} />,
+      cell: (row) => <DiskCell row={row} range={range} />,
       // The percentage of the mount the cell NAMES -- sorting on anything the
       // row does not show would order the list by a number nobody can see.
       // Which is why this is no longer strictly "fullest first": the row

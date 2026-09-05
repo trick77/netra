@@ -4,6 +4,7 @@ import {
   CPU_SHADES,
   containerBands,
   containerStackTotal,
+  fsUsePercent,
   memoryBands,
   perCoreBands,
 } from "./bands";
@@ -585,5 +586,56 @@ describe("containerBands", () => {
     expect(bandsOf(response({ series: [] }), "cpu")).toEqual([]);
     expect(bandsOf(null, "mem")).toEqual([]);
     expect(containerStackTotal([])).toEqual([]);
+  });
+});
+
+// The one filesystem the fleet's Disk cell draws, split out of
+// filesystemBands so the cell and the panel cannot derive Use% two ways.
+describe("fsUsePercent", () => {
+  const fs = response({
+    family: "filesystem",
+    key_columns: ["filesystem"],
+    columns: ["used", "free"],
+    series: [
+      {
+        key: { filesystem: "root" },
+        points: [
+          [t0, 66, 34],
+          [t0 + hour, 71, 29],
+        ],
+      },
+      {
+        key: { filesystem: "data" },
+        points: [
+          [t0, 10, 90],
+          [t0 + hour, null, 90],
+        ],
+      },
+    ],
+  });
+
+  // df's Use%: used / (used + free), never used / total. total carries the
+  // root reserve, which is neither in use nor allocatable.
+  it("reads one series as df's own percentage", () => {
+    expect(fsUsePercent(fs, 0)).toEqual([66, 71]);
+  });
+
+  // A bucket the host reported nothing for is a hole, not an empty disk, and
+  // a line drawn straight across it would say usage held steady through an
+  // outage.
+  it("keeps a bucket missing either half as a gap", () => {
+    expect(fsUsePercent(fs, 1)).toEqual([10, null]);
+  });
+
+  // A filesystem with no bytes at all cannot have a ratio: 0/0 is not 0%.
+  it("keeps a filesystem with no bytes as a gap", () => {
+    const empty = response({
+      family: "filesystem",
+      key_columns: ["filesystem"],
+      columns: ["used", "free"],
+      series: [{ key: { filesystem: "tmp" }, points: [[t0, 0, 0]] }],
+    });
+
+    expect(fsUsePercent(empty, 0)).toEqual([null, null]);
   });
 });

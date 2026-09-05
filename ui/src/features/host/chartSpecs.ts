@@ -1050,12 +1050,15 @@ export const STORAGE: PanelSpec[] = [
       { base: "free", label: "free" },
     ],
     bands: filesystemBands,
-    // Both ends fixed, like the cell (DiskTrendCell passes min={0} max={100}).
-    // The ceiling alone is not enough: a non-stacked panel is otherwise
-    // scaled from the data's own floor, so six mounts between 88% and 95%
-    // would be spread across the whole plot -- the exact self-scaling this
-    // chart exists to avoid, and a different picture from the sparkline the
-    // reader clicked.
+    // Both ends fixed. The ceiling alone is not enough: a non-stacked panel
+    // is otherwise scaled from the data's own floor, so six mounts between
+    // 88% and 95% would be spread across the whole plot -- the exact
+    // self-scaling this chart exists to avoid.
+    //
+    // Not a contradiction of the fleet's Disk cell, which fits its axis to
+    // its window: that cell draws ONE mount and asks whether it is filling
+    // up, with the bar under it carrying how full. This panel draws every
+    // mount against each other, and mounts can only be compared on one axis.
     min: 0,
     max: 100,
     fmt: (n) => percent(n),

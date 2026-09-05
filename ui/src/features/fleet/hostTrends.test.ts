@@ -398,6 +398,10 @@ describe("fetchHostTrends", () => {
       // bytes, not only the ratio.
       free: 12,
       others: 2,
+      // The winner's OWN Use%, not root's and not an average across the
+      // three: the cell draws this line under the percentage beside it. The
+      // buckets before the one reading are gaps, not a climb from zero.
+      series: [null, null, 88],
       // Under DISK_WARN_PCT, so there is no crossing to date.
       since: null,
       sinceAtLeast: false,
@@ -496,6 +500,11 @@ describe("fetchHostTrends", () => {
       pct: 20,
       free: 80,
       others: 0,
+      // The LIVE mount's series, holes and all -- the retired one at 94 %
+      // does not win the line any more than it wins the figure, and the two
+      // empty buckets before this host started reporting stay null rather
+      // than becoming a climb from zero.
+      series: [null, null, 20],
       since: null,
       sinceAtLeast: false,
     });

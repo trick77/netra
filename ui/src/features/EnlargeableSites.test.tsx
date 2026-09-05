@@ -243,6 +243,44 @@ describe("the list sparklines enlarge", () => {
       },
     );
 
+    // The Disk cell is the fourth, and it is the odd one: it draws ONE mount
+    // out of a family that returns all of them, so widening has to ask for
+    // `filesystem` and then find the same mount again in a fresh response
+    // whose series order is the hub's.
+    //
+    // What is NOT asserted here, deliberately: the refetched line's colour.
+    // DiskCell recolours the band it finds to DISK_COLOR, because
+    // filesystemBands colours by position and this cell draws one mount --
+    // but the dialog draws DISK_COLOR either way in this harness, so an
+    // assertion on the hue would pass whether or not the recolour is there.
+    // A test that cannot fail is worse than no test.
+    it("widens Disk as the filesystem family", async () => {
+      getMetrics.mockResolvedValue(
+        response({
+          family: "filesystem",
+          key_columns: ["filesystem"],
+          columns: ["used", "free"],
+          series: [
+            { key: { filesystem: "/boot" }, points: [[t0, 10, 90]] },
+            { key: { filesystem: "/" }, points: [[t0, 60, 40]] },
+          ],
+        }),
+      );
+      renderRow({
+        fullest: { mount: "/", pct: 60, others: 1, series: [58, 59, 60] },
+      });
+
+      await open("Enlarge disk usage for / on ark");
+      await pick("6h");
+
+      await waitFor(() =>
+        expect(getMetrics).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({ family: "filesystem" }),
+        ),
+      );
+    });
+
     it("asks the API for nothing at all until one is opened", () => {
       renderRow();
 
