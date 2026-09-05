@@ -139,8 +139,11 @@ func TestIntegrationMetricsColumnNamesDifferBetweenTiers(t *testing.T) {
 }
 
 // The trailing clamp, end to end: a 5m query asking for "up to now" comes back
-// with a window ending ten minutes ago and says why. Without it the missing
-// last ten minutes read as a host that stopped reporting.
+// with a window ending ten minutes ago.
+//
+// In the window, not in a warning. It used to say so in a sentence naming the
+// tier, which is vocabulary this product does not use in front of anyone --
+// Requested and Window are the answer, and they are machine-readable.
 func TestIntegrationMetricsReportsTheWindowItActuallyCovers(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
@@ -163,8 +166,8 @@ func TestIntegrationMetricsReportsTheWindowItActuallyCovers(t *testing.T) {
 	if !res.Window.To.Before(now.Add(-9 * time.Minute)) {
 		t.Errorf("window.to = %v, want it clamped ten minutes back from %v", res.Window.To, now)
 	}
-	if len(res.Warnings) == 0 {
-		t.Error("warnings = [], want one explaining the clamp")
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %q, want none: the clamp is in Window", res.Warnings)
 	}
 }
 
@@ -415,7 +418,12 @@ func TestIntegrationMetricsRejectsBadRequests(t *testing.T) {
 }
 
 // A window the clamps closed entirely is a valid answer, not an error:
-// nothing about the request was wrong, and the warning already explains it.
+// nothing about the request was wrong.
+//
+// Silently, like every other clamp. Requested and Window come back equal and
+// empty, which is the answer; there is no sentence on top of it. Not
+// reachable from this app's own picker, whose shortest range resolves to the
+// raw tier and its zero lag -- this is an API caller's case.
 func TestIntegrationMetricsAnswersAnEmptyWindowWithNoSeries(t *testing.T) {
 	ctx := context.Background()
 	svc, pool := newService(t)
@@ -436,8 +444,8 @@ func TestIntegrationMetricsAnswersAnEmptyWindowWithNoSeries(t *testing.T) {
 	if len(res.Series) != 0 {
 		t.Errorf("series = %+v, want none", res.Series)
 	}
-	if len(res.Warnings) == 0 {
-		t.Error("warnings = [], want one explaining why the window closed")
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %q, want none: the empty window is the answer", res.Warnings)
 	}
 }
 
