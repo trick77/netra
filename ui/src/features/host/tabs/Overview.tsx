@@ -351,7 +351,10 @@ function requireSpec(slug: string): PanelSpec {
 }
 
 const LOAD_SPEC = requireSpec("load-averages");
-const TRAFFIC_SPEC = requireSpec("host-traffic");
+// The SUMMED pair, not the per-interface stack the Network tab draws: this
+// page asks what the box is moving, and which cable moved it is that tab's
+// question. See host-traffic-total in chartSpecs.ts.
+const TRAFFIC_SPEC = requireSpec("host-traffic-total");
 
 /**
  * Twelve tracks split between two cards, by how many tiles each holds.
@@ -809,6 +812,15 @@ export function Overview({
                         ? null
                         : fs.used + fs.free
                     }
+                    // The SAME rule the attention list above and the busiest
+                    // filesystem tile beside it already use, rather than
+                    // Meter's own percentage-only default. It weighs the bytes
+                    // left as well as the ratio, so a 4 TB array at 96% with
+                    // 160 GB free stops drawing a red bar directly under an
+                    // attention list that pointedly does not mention it -- and
+                    // a 250 GB root at the same 96% with 9 GB left still does.
+                    // null is "not worth attention", which Meter spells `ok`.
+                    severity={diskState(fs.used, fs.free)?.severity ?? "ok"}
                     formatValue={() =>
                       `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`
                     }

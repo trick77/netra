@@ -505,7 +505,9 @@ export function ContainerPage({
         </span>
         <h1>{displayTitle(container)}</h1>
         <div className="meta">
-          <a href={`/hosts/${host.id}/overview`}>{host.hostname}</a>
+          <a className="hostname" href={`/hosts/${host.id}/overview`}>
+            {host.hostname}
+          </a>
           {" · "}
           {container.image ?? ABSENT}
         </div>
@@ -683,7 +685,9 @@ export function ContainerPage({
             <dd>{container.image ?? ABSENT}</dd>
             <dt>Host</dt>
             <dd>
-              <a href={`/hosts/${host.id}/overview`}>{host.hostname}</a>
+              <a className="hostname" href={`/hosts/${host.id}/overview`}>
+                {host.hostname}
+              </a>
             </dd>
             <dt>is_agent</dt>
             <dd>{container.is_agent ? "yes" : "no"}</dd>

@@ -786,7 +786,7 @@ export function FleetPage({
           Showing <strong>{attentionContainers.length}</strong> of{" "}
           {containerRows.length} container
           {containerRows.length === 1 ? "" : "s"} with{" "}
-          {stateKindLabel(containerKind).toLowerCase()} ·{" "}
+          {stateKindLabel(containerKind)} ·{" "}
           <a
             href={attentionHref("all")}
             onClick={(event) => {

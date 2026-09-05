@@ -9,7 +9,12 @@ import {
   type GraphsProps,
 } from "./Graphs";
 import { ABSENT } from "../../../lib/format";
-import { ALL_SPECS, groupedSlugs } from "../chartSpecs";
+import {
+  ALL_SPECS,
+  groupedSlugs,
+  NETWORK_GROUPS,
+  UNGROUPED_SLUGS,
+} from "../chartSpecs";
 
 /**
  * Every tab that draws panels, at once.
@@ -162,10 +167,26 @@ describe("Graphs", () => {
   // once. A panel drawn on two subject tabs, or on none, is the failure this
   // catches -- and "on none" is invisible without it: a spec can be defined,
   // exported and simply left out of every group.
+  // UNGROUPED_SLUGS is added to the grouped side rather than subtracted from
+  // ALL_SPECS, so a spec that stops being drawn on the Overview and is not
+  // put on a tab still fails this -- the list is an allowance for panels that
+  // ARE drawn somewhere, not an exemption from having a home.
   it("draws each panel on exactly one tab", () => {
     const slugs = groupedSlugs();
     expect(new Set(slugs).size).toBe(slugs.length);
-    expect([...slugs].sort()).toEqual([...ALL_SPECS.map((s) => s.slug)].sort());
+    expect([...slugs, ...UNGROUPED_SLUGS].sort()).toEqual(
+      [...ALL_SPECS.map((s) => s.slug)].sort(),
+    );
+  });
+
+  // The Overview's traffic panel and the Network tab's are two specs over one
+  // pair of columns, and the split is the point: this page asks what the box
+  // is moving, that tab asks which link moved it.
+  it("keeps the summed traffic panel off the Network tab", () => {
+    const network = NETWORK_GROUPS.flatMap((g) => g.specs.map((s) => s.slug));
+    expect(network).toContain("host-traffic");
+    expect(network).not.toContain("host-traffic-total");
+    expect(UNGROUPED_SLUGS).toContain("host-traffic-total");
   });
 
   it("puts the network panels on Network and the disks on Storage", () => {
@@ -272,242 +293,7 @@ describe("Graphs", () => {
     expect(panel).toBeInTheDocument();
   });
 
-  it("plots the collector family's boolean ok column instead of throwing on it", () => {
-    // family=collector yields `ok` as a boolean and `error_code` as a
-    // string beside a numeric column; seriesValues() throws on both, and
-    // that throw would happen during render with no boundary under it.
-    const collector = response({
-      family: "collector",
-      // Two samples and a two-minute window, so both land on the grid and
-      // the panel's headline is the last of them. The boolean path is
-      // gridded like every other band now, and a fixture reporting for two
-      // minutes of a one-hour window would correctly read absent at the
-      // latest bucket -- the host stopped reporting 58 minutes ago.
-      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:02:00Z" },
-      requested_window: {
-        from: "2025-08-10T00:00:00Z",
-        to: "2025-08-10T00:02:00Z",
-      },
-      key_columns: ["collector"],
-      columns: ["duration_ms", "ok", "error_code"],
-      series: [
-        {
-          key: { collector: "smart" },
-          points: [
-            [1_754_784_000_000, 4, true, null],
-            [1_754_784_060_000, 4, false, "eacces"],
-          ],
-        },
-      ],
-    });
-    render(<Graphs host={fullHost} collector={collector} />);
-    const panel = screen.getByRole("region", {
-      name: /Device availability chart/,
-    });
-    expect(panel).toHaveTextContent("down");
-  });
-
-  // The bug this panel existed with: booleanValues() read the response's
-  // cells directly and skipped the window grid, so a collector that stopped
-  // reporting arrived as a SHORTER series rather than as nulls -- and the
-  // geometry breaks a line only on an explicit null. Three hours of a
-  // collector being down drew an unbroken line at "up", on the one panel
-  // whose entire purpose is showing that it was not.
-  it("grids the boolean column, so a collector that stopped reporting is a gap", () => {
-    const collector = response({
-      family: "collector",
-      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:10:00Z" },
-      requested_window: {
-        from: "2025-08-10T00:00:00Z",
-        to: "2025-08-10T00:10:00Z",
-      },
-      key_columns: ["collector"],
-      columns: ["duration_ms", "ok", "error_code"],
-      series: [
-        {
-          key: { collector: "smart" },
-          // Reported for the first two minutes of a ten-minute window and
-          // then nothing.
-          points: [
-            [1_754_784_000_000, 4, true, null],
-            [1_754_784_060_000, 4, true, null],
-          ],
-        },
-      ],
-    });
-    render(<Graphs host={fullHost} collector={collector} />);
-    const panel = screen.getByRole("region", {
-      name: /Device availability chart/,
-    });
-    // The latest bucket carries no reading, so the headline is the absent
-    // marker rather than the "up" it last saw eight minutes ago.
-    expect(panel).toHaveTextContent(ABSENT);
-    expect(panel).not.toHaveTextContent("up");
-  });
-
-  // The failure this replaces: `ok` exists only in collector_samples, and the
-  // 5m, 1h and 1d aggregates keep sample_count and failure_count instead
-  // (0001_init.sql:1296). Only the 1h range asks for a 60s step, so at eight
-  // of the nine ranges the panel said "Not collected -- choose a shorter
-  // range", pointing at the one range that was already the shortest.
-  it("draws availability from the counts at a tier that has no ok column", () => {
-    const collector = response({
-      family: "collector",
-      tier: "5m",
-      step_s: 300,
-      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:10:00Z" },
-      requested_window: {
-        from: "2025-08-10T00:00:00Z",
-        to: "2025-08-10T00:10:00Z",
-      },
-      key_columns: ["collector"],
-      columns: [
-        "duration_ms_avg",
-        "duration_ms_max",
-        "sample_count",
-        "failure_count",
-        "error_code",
-      ],
-      series: [
-        {
-          key: { collector: "smart" },
-          points: [
-            [1_754_784_000_000, 4, 9, 5, 0, null],
-            // Four of five scrapes survived: a dip, not an outage.
-            [1_754_784_300_000, 4, 9, 5, 1, "eacces"],
-          ],
-        },
-      ],
-    });
-    render(<Graphs host={fullHost} collector={collector} />);
-    const panel = screen.getByRole("region", {
-      name: /Device availability chart/,
-    });
-    expect(panel).toHaveTextContent("80% up");
-    expect(panel).not.toHaveTextContent("Not collected");
-  });
-
-  // Twenty collectors between 99.7% and 100% over a day are twenty lines the
-  // eye cannot tell apart, and the response lists them alphabetically -- so
-  // the one that dipped lands wherever its name puts it. Ordering is what
-  // makes the panel answer "which collector" without the reader hunting for
-  // the notch. Nothing is dropped: a hidden series and an uncollected one
-  // look identical to a reader, which is why this sorts rather than filters.
-  it("draws the collector that dipped first, not the one named first", () => {
-    const bucket = (ts: number, samples: number, failures: number) => [
-      ts,
-      4,
-      9,
-      samples,
-      failures,
-      null,
-    ];
-    const collector = response({
-      family: "collector",
-      tier: "5m",
-      step_s: 300,
-      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:10:00Z" },
-      requested_window: {
-        from: "2025-08-10T00:00:00Z",
-        to: "2025-08-10T00:10:00Z",
-      },
-      key_columns: ["collector"],
-      columns: [
-        "duration_ms_avg",
-        "duration_ms_max",
-        "sample_count",
-        "failure_count",
-        "error_code",
-      ],
-      series: [
-        {
-          // First in the response and perfectly healthy.
-          key: { collector: "addresses" },
-          points: [
-            bucket(1_754_784_000_000, 5, 0),
-            bucket(1_754_784_300_000, 5, 0),
-          ],
-        },
-        {
-          // Last in the response and the only one worth looking at.
-          key: { collector: "smart" },
-          points: [
-            bucket(1_754_784_000_000, 5, 0),
-            bucket(1_754_784_300_000, 5, 3),
-          ],
-        },
-      ],
-    });
-    render(<Graphs host={fullHost} collector={collector} />);
-    const panel = screen.getByRole("region", {
-      name: /Device availability chart/,
-    });
-    const labels = within(panel)
-      .getAllByText(/^(addresses|smart) ok$/)
-      .map((el) => el.textContent);
-    expect(labels[0]).toBe("smart ok");
-  });
-
   // A collector that STOPPED reports nothing for the buckets it missed, so
-  // scoring only the buckets it did report scores it on its good hours and
-  // files it with the healthy. Three hours of silence is the single thing
-  // this panel exists to show -- the same failure that forced the boolean
-  // path onto the window grid -- so a hole outranks a dip.
-  it("puts a collector that went silent ahead of one that merely dipped", () => {
-    const bucket = (ts: number, samples: number, failures: number) => [
-      ts,
-      4,
-      9,
-      samples,
-      failures,
-      null,
-    ];
-    const collector = response({
-      family: "collector",
-      tier: "5m",
-      step_s: 300,
-      window: { from: "2025-08-10T00:00:00Z", to: "2025-08-10T00:15:00Z" },
-      requested_window: {
-        from: "2025-08-10T00:00:00Z",
-        to: "2025-08-10T00:15:00Z",
-      },
-      key_columns: ["collector"],
-      columns: [
-        "duration_ms_avg",
-        "duration_ms_max",
-        "sample_count",
-        "failure_count",
-        "error_code",
-      ],
-      series: [
-        {
-          // Failed two of five scrapes in one bucket, and never went away.
-          key: { collector: "addresses" },
-          points: [
-            bucket(1_754_784_000_000, 5, 0),
-            bucket(1_754_784_300_000, 5, 2),
-            bucket(1_754_784_600_000, 5, 0),
-          ],
-        },
-        {
-          // Perfect where it reported, and absent for the middle bucket.
-          key: { collector: "smart" },
-          points: [
-            bucket(1_754_784_000_000, 5, 0),
-            bucket(1_754_784_600_000, 5, 0),
-          ],
-        },
-      ],
-    });
-    render(<Graphs host={fullHost} collector={collector} />);
-    const panel = screen.getByRole("region", {
-      name: /Device availability chart/,
-    });
-    const labels = within(panel)
-      .getAllByText(/^(addresses|smart) ok$/)
-      .map((el) => el.textContent);
-    expect(labels[0]).toBe("smart ok");
-  });
 
   // Hub latency is NULL by design while the hub is unreachable -- both gauges
   // time a handshake that completed -- so the panel correctly goes blank

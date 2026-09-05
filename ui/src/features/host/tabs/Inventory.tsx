@@ -40,7 +40,7 @@ import { Badge, type Severity } from "../../../ui/Badge";
 import { Input } from "../../../ui/Control";
 import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column, type TableProps } from "../../../ui/Table";
-import { Meter } from "../../../ui/Meter";
+import { Meter, SEVERITY_CLASS } from "../../../ui/Meter";
 import { When } from "../../../ui/When";
 import { rangeLabel, type Range } from "../../../lib/range";
 import { RAIL_RANGES } from "../../../lib/range";
@@ -835,7 +835,17 @@ function DriveHealthPill({ drive }: { drive: Drive }) {
     return <span className="badge drive-unread">not read</span>;
   }
   const label = severity === "ok" ? "healthy" : severity;
-  return <span className={`badge drive drive-${severity}`}>{label}</span>;
+  // The dot, added by hand rather than by borrowing Badge: this pill keeps
+  // its own coloured border (see .badge.drive-* in index.css), which Badge
+  // does not draw. What it must not keep is being the one severity in the
+  // app whose meaning rides on hue alone -- see the header of Badge.tsx.
+  // `.dot.st-*` is the standalone spelling of the same pair Badge nests.
+  return (
+    <span className={`badge drive drive-${severity}`}>
+      <span className={`dot ${SEVERITY_CLASS[severity]}`} aria-hidden="true" />
+      {label}
+    </span>
+  );
 }
 
 /**

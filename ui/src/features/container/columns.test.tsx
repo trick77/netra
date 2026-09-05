@@ -130,7 +130,7 @@ describe("containerColumns", () => {
       renderRows([makeRow({ host_last_seen: "2026-08-10T14:00:00Z" })], {
         now: NOW,
       });
-      expect(screen.getByText("Reporting")).toBeInTheDocument();
+      expect(screen.getByText("reporting")).toBeInTheDocument();
     });
 
     // Five minutes of missed posts on a host that is still reporting: past
@@ -146,7 +146,7 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.getByText("Silent")).toBeInTheDocument();
+      expect(screen.getByText("silent")).toBeInTheDocument();
     });
 
     // And past the gone window it is the stronger word, not both words.
@@ -160,8 +160,8 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.getByText("Gone")).toBeInTheDocument();
-      expect(screen.queryByText("Silent")).toBeNull();
+      expect(screen.getByText("gone")).toBeInTheDocument();
+      expect(screen.queryByText("silent")).toBeNull();
     });
 
     // The same rule the detail badge follows: a host that went quiet stopped
@@ -177,8 +177,8 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.getByText("Host offline")).toBeInTheDocument();
-      expect(screen.queryByText("Silent")).toBeNull();
+      expect(screen.getByText("host offline")).toBeInTheDocument();
+      expect(screen.queryByText("silent")).toBeNull();
     });
 
     // The host keeps posting while no container sample can land, so last_seen
@@ -195,8 +195,8 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.queryByText("Silent")).toBeNull();
-      expect(screen.getByText("No samples")).toBeInTheDocument();
+      expect(screen.queryByText("silent")).toBeNull();
+      expect(screen.getByText("no samples")).toBeInTheDocument();
     });
 
     // The same blind spot with a different cause -- see containerSamplesBlocked.
@@ -211,8 +211,8 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.queryByText("Silent")).toBeNull();
-      expect(screen.getByText("No samples")).toBeInTheDocument();
+      expect(screen.queryByText("silent")).toBeNull();
+      expect(screen.getByText("no samples")).toBeInTheDocument();
     });
 
     // The fleet grid spans 24h, so a container created an hour ago is mostly
@@ -229,8 +229,8 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.queryByText("Series gap")).toBeNull();
-      expect(screen.getByText("Reporting")).toBeInTheDocument();
+      expect(screen.queryByText("series gap")).toBeNull();
+      expect(screen.getByText("reporting")).toBeInTheDocument();
     });
 
     it("still calls a hole between readings a gap", () => {
@@ -245,7 +245,7 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.getByText("Series gap")).toBeInTheDocument();
+      expect(screen.getByText("series gap")).toBeInTheDocument();
     });
 
     // The detail page reads the last READING; off the latest bucket instead,
@@ -262,7 +262,7 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.getByText("Near mem_limit")).toBeInTheDocument();
+      expect(screen.getByText("near mem_limit")).toBeInTheDocument();
     });
 
     // Warnings that need a series are simply out of reach on a listing that
@@ -279,7 +279,7 @@ describe("containerColumns", () => {
         ],
         { now: NOW },
       );
-      expect(screen.getByText("Near mem_limit")).toBeInTheDocument();
+      expect(screen.getByText("near mem_limit")).toBeInTheDocument();
     });
   });
 
@@ -490,19 +490,24 @@ describe("the gone state and the purge action", () => {
       ...overrides,
     });
 
-  // The Status column says it, and it is the only thing that does. The
-  // lowercase pill beside the name is gone with the contradiction it caused:
-  // it stood next to a Status column reading "Silent" about the same
+  // The Status column says it, and it is the ONLY thing that does. The pill
+  // that used to sit beside the name is gone with the contradiction it
+  // caused: it stood next to a Status column reading "silent" about the same
   // container in the same instant.
+  //
+  // Counted rather than case-checked. This used to tell the two apart by
+  // their capitals -- "Gone" was the column, "gone" was the pill -- and every
+  // status word in the app is lowercase now, so that distinction no longer
+  // exists to assert. What the test is actually about survives it: exactly
+  // one thing in the row says the word.
   it("states a gone row in the Status column and leaves a reporting one alone", () => {
     renderRows([goneRow()]);
-    expect(screen.getByText("Gone")).toBeInTheDocument();
-    expect(screen.queryByText("gone")).toBeNull();
-    expect(screen.queryByText("Silent")).toBeNull();
+    expect(screen.getAllByText("gone")).toHaveLength(1);
+    expect(screen.queryByText("silent")).toBeNull();
 
     cleanup();
     renderRows([makeRow({ host_last_seen: HOST_SEEN })]);
-    expect(screen.queryByText("Gone")).toBeNull();
+    expect(screen.queryByText("gone")).toBeNull();
   });
 
   // A state, so it carries the dot every state in that column carries -- and
@@ -510,7 +515,7 @@ describe("the gone state and the purge action", () => {
   // container improved when the word changed.
   it("draws Gone as a serious state with a dot", () => {
     renderRows([goneRow()]);
-    const badge = screen.getByText("Gone").closest(".badge")!;
+    const badge = screen.getByText("gone").closest(".badge")!;
     expect(badge.querySelector(".dot")).not.toBeNull();
     expect(badge.classList.contains("st-serious")).toBe(true);
   });

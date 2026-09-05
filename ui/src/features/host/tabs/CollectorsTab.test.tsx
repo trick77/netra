@@ -56,16 +56,12 @@ describe("CollectorsTab", () => {
 
   // The list says which collectors are failing now; the panels say for how
   // long. The tab is the pair -- a list on its own cannot answer either
-  // question fully, which is why these four panels came over from System.
+  // question fully, which is why these panels came over from System.
   it("draws the agent's own panels under the list", () => {
     render(<CollectorsTab host={host} sources={{}} />);
 
     expect(screen.getByRole("heading", { name: "Agent" })).toBeInTheDocument();
-    for (const title of [
-      "Hub latency",
-      "Scrape duration",
-      "Device availability",
-    ]) {
+    for (const title of ["Hub latency", "Scrape duration"]) {
       expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
     }
   });

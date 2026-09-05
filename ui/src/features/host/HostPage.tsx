@@ -581,7 +581,7 @@ export function HostPage({
               control 11.8px low, and the page's own mark with them. In a row
               whose tallest item is the h1 they centre on the title itself. */}
           <div className="hostbar">
-            <h1 className="serif">{host.hostname}</h1>
+            <h1 className="serif hostname">{host.hostname}</h1>
             <Badge severity={status.severity}>{status.label}</Badge>
             {/* Beside the reporting status, not instead of it: the two answer
               different questions, and a host can be online AND four minutes

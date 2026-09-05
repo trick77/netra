@@ -624,7 +624,9 @@ export function containerColumns({
       key: "host",
       header: "Host",
       cell: (row) => (
-        <a href={`/hosts/${row.host_id}/overview`}>{row.hostname}</a>
+        <a className="hostname" href={`/hosts/${row.host_id}/overview`}>
+          {row.hostname}
+        </a>
       ),
       sortValue: (row) => row.hostname,
     });

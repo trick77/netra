@@ -271,13 +271,13 @@ describe("FleetPage entity tabs", () => {
 
       const list = screen.getByRole("list", { name: /by kind/i });
       expect(
-        within(list).getByRole("link", { name: "Silent, 1, Serious" }),
+        within(list).getByRole("link", { name: "silent, 1, Serious" }),
       ).toBeInTheDocument();
       expect(
-        within(list).getByRole("link", { name: "Gone, 1, Serious" }),
+        within(list).getByRole("link", { name: "gone, 1, Serious" }),
       ).toBeInTheDocument();
       // The one that is fine is not a chip: a filter names what is wrong.
-      expect(within(list).queryByText("Reporting")).toBeNull();
+      expect(within(list).queryByText("reporting")).toBeNull();
     });
 
     it("narrows the list to the state that was picked", () => {

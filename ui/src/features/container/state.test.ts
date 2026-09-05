@@ -72,7 +72,7 @@ describe("deriveState", () => {
       now: NOW,
       hostState: { severity: "critical", label: "offline" },
     });
-    expect(state.label).toBe("Host offline");
+    expect(state.label).toBe("host offline");
     expect(state.kind).toBe("host-down");
   });
 
@@ -88,7 +88,7 @@ describe("deriveState", () => {
       hostState: { severity: "critical", label: "never seen" },
     });
     expect(state.severity).toBe("neutral");
-    expect(state.label).toBe("Host never seen");
+    expect(state.label).toBe("host never seen");
   });
 
   // A host answering badly is still answering: its containers' own readings
@@ -133,7 +133,7 @@ describe("deriveState", () => {
       gone: true,
     });
     expect(state.kind).toBe("gone");
-    expect(state.label).toBe("Gone");
+    expect(state.label).toBe("gone");
     expect(state.severity).toBe("serious");
   });
 

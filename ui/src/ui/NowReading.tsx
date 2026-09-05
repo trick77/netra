@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 import { SegmentBar } from "./SegmentBar";
-import { SEVERITY_CLASS, severityFromPercent } from "./Meter";
+import {
+  SEVERITY_CLASS,
+  severityFromPercent,
+  type FillSeverity,
+} from "./Meter";
 
 /**
  * The fleet row's "now" line: a segmented bar for a percentage, the figure
@@ -22,6 +26,7 @@ export function NowReading({
   pct,
   under,
   label,
+  severity: given,
 }: {
   /** The percentage the bar shows and the figure prints, unrounded. */
   pct: number;
@@ -30,8 +35,18 @@ export function NowReading({
   under?: ReactNode;
   /** Names the bar for assistive tech: "CPU now", "Disk /var/log". */
   label?: string;
+  /**
+   * The severity, when the caller's own rule decides it.
+   *
+   * CPU and memory have no rule beyond the percentage and leave this unset.
+   * A filesystem does: diskSeverityFor weighs the bytes left as well as the
+   * ratio, and a disk cell that judged itself from the percentage alone
+   * reddened a 4 TB array at 96% that the very same page's attention list
+   * called fine. One rule per quantity, and the quantity's owner holds it.
+   */
+  severity?: FillSeverity;
 }) {
-  const severity = severityFromPercent(pct);
+  const severity = given ?? severityFromPercent(pct);
   // No class at all when there is nothing to say: a calm figure is plain
   // ink, not green. The bar keeps st-ok, because its lit cells need a colour.
   const figureClass = severity === "ok" ? "v" : `v ${SEVERITY_CLASS[severity]}`;
