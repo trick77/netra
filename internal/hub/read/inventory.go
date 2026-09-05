@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/trick77/netra/internal/hub/systemdstate"
 )
 
@@ -415,17 +417,7 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 		return nil, err
 	}
 
-	rows, err := s.pool.Query(ctx, `
-		SELECT d.device, d.model, d.serial, d.last_seen,
-		       a.attr_id, a.raw, a.normalized
-		  FROM devices d
-		  LEFT JOIN LATERAL (
-		       SELECT DISTINCT ON (s.attr_id)
-		              s.attr_id, s.raw, s.normalized
-		         FROM smart_attributes s
-		        WHERE s.host_id = d.host_id AND s.device_id = d.id
-		        ORDER BY s.attr_id, s.ts DESC
-		  ) a ON TRUE
+	rows, err := s.pool.Query(ctx, driveSelect+`
 		 WHERE d.host_id = $1
 		 ORDER BY d.device, a.attr_id`, hostID)
 	if err != nil {
@@ -435,43 +427,167 @@ func (s *Service) Drives(ctx context.Context, hostID int32) ([]Drive, error) {
 
 	out := []Drive{}
 	for rows.Next() {
-		var device string
-		var model, serial *string
-		var lastSeen time.Time
-		var attrID *int16
-		var raw *int64
-		var normalized *int16
-		if err := rows.Scan(&device, &model, &serial, &lastSeen,
-			&attrID, &raw, &normalized); err != nil {
-			return nil, fmt.Errorf("scan drive: %w", err)
+		row, err := scanDriveRow(rows)
+		if err != nil {
+			return nil, err
 		}
-
-		// Ordered by device, so a new name is always a new drive and the fold
-		// needs no map.
-		if len(out) == 0 || out[len(out)-1].Device != device {
-			out = append(out, Drive{
-				Device: device, Model: model, Serial: serial,
-				LastSeen: lastSeen,
-				// An empty slice, not nil: nil marshals as `null`, and the UI
-				// reads .length on this to decide between "healthy" and
-				// "not read". The same reason every listing here starts at
-				// []T{} rather than a nil slice.
-				Attributes: []DriveAttribute{},
-			})
-		}
-		d := &out[len(out)-1]
-
-		// The LEFT JOIN's miss: a drive with no attributes yields one row with
-		// every attribute column NULL. It is the drive that matters there, not
-		// a nil attribute.
-		if attrID == nil {
-			continue
-		}
-		d.Attributes = append(d.Attributes, DriveAttribute{
-			ID: *attrID, Raw: raw, Normalized: normalized,
-		})
+		foldDriveRow(&out, row)
 	}
 	return out, rowsErr(rows.Err(), "drives")
+}
+
+// driveSelect is the SELECT both drive listings share, up to the WHERE clause
+// each one adds.
+//
+// One text rather than two near-identical ones, because the LEFT JOIN LATERAL
+// is the subtle part -- it is what makes a drive with no attributes still
+// appear, for the reason spelled out above Drives -- and a correction to it
+// must not land on one caller only.
+//
+// host_id is selected even by the per-host form, which already knows it. The
+// alternative is two column lists, two scan signatures and then two copies of
+// the fold below.
+const driveSelect = `
+		SELECT d.host_id, d.device, d.model, d.serial, d.last_seen,
+		       a.attr_id, a.raw, a.normalized
+		  FROM devices d
+		  LEFT JOIN LATERAL (
+		       SELECT DISTINCT ON (s.attr_id)
+		              s.attr_id, s.raw, s.normalized
+		         FROM smart_attributes s
+		        WHERE s.host_id = d.host_id AND s.device_id = d.id
+		        ORDER BY s.attr_id, s.ts DESC
+		  ) a ON TRUE`
+
+// driveRow is one driveSelect row before it is folded: a drive, and at most
+// one of its attributes. Scanning and folding are separate steps because the
+// fleet form has to read host_id before it knows which accumulator the fold
+// should append to.
+type driveRow struct {
+	hostID     int32
+	device     string
+	model      *string
+	serial     *string
+	lastSeen   time.Time
+	attrID     *int16
+	raw        *int64
+	normalized *int16
+}
+
+func scanDriveRow(rows pgx.Rows) (driveRow, error) {
+	var r driveRow
+	if err := rows.Scan(&r.hostID, &r.device, &r.model, &r.serial, &r.lastSeen,
+		&r.attrID, &r.raw, &r.normalized); err != nil {
+		return driveRow{}, fmt.Errorf("scan drive: %w", err)
+	}
+	return r, nil
+}
+
+// foldDriveRow appends `row` to `out`, starting a new Drive when the device
+// name differs from the last one.
+//
+// Both queries order by device, so a name that differs from the previous row's
+// is always a NEW drive rather than a return to an earlier one, and the fold
+// needs no map. The fleet query orders by host_id first and folds into one
+// accumulator per host, which keeps that true across a host boundary -- two
+// hosts whose first drive is called "sda" must not merge into one.
+func foldDriveRow(out *[]Drive, row driveRow) {
+	if len(*out) == 0 || (*out)[len(*out)-1].Device != row.device {
+		*out = append(*out, Drive{
+			Device: row.device, Model: row.model, Serial: row.serial,
+			LastSeen: row.lastSeen,
+			// An empty slice, not nil: nil marshals as `null`, and the UI
+			// reads .length on this to decide between "healthy" and
+			// "not read". The same reason every listing here starts at
+			// []T{} rather than a nil slice.
+			Attributes: []DriveAttribute{},
+		})
+	}
+	d := &(*out)[len(*out)-1]
+
+	// The LEFT JOIN's miss: a drive with no attributes yields one row with
+	// every attribute column NULL. It is the drive that matters there, not a
+	// nil attribute.
+	if row.attrID == nil {
+		return
+	}
+	d.Attributes = append(d.Attributes, DriveAttribute{
+		ID: *row.attrID, Raw: row.raw, Normalized: row.normalized,
+	})
+}
+
+// HostDrives is one host's entry in a fleet drives answer.
+type HostDrives struct {
+	HostID int32 `json:"host_id"`
+	// Drives is empty rather than absent for a host reporting none, so a
+	// caller can tell a host with no drives from one it never asked about --
+	// the same distinction HostContainers draws.
+	Drives []Drive `json:"drives"`
+}
+
+// FleetDrivesResult is a /drives answer covering several hosts.
+type FleetDrivesResult struct {
+	Hosts []HostDrives `json:"hosts"`
+}
+
+// FleetDrives lists the drives on several hosts in one query.
+//
+// The fleet page judges a host partly on its drives now -- sectors pending
+// reallocation are a condition on the overview rather than only a red row on
+// that one host's Storage tab -- and asking each host separately would put
+// back the per-host fan-out FleetContainers had just removed from the same
+// page, on the same poll tick.
+//
+// The hosts are NOT checked for existence, exactly as FleetContainers does not
+// check them: an id nobody registered contributes no rows and comes back with
+// an empty list, which is also what a registered host with no drives looks
+// like -- and the fleet page only ever asks about hosts /api/v1/hosts just
+// handed it.
+//
+// Every requested host gets an entry whether or not it has drives, and in the
+// order asked for, so a caller pairing this against its own host list never
+// has to tell "reports none" apart from "not in the answer".
+func (s *Service) FleetDrives(ctx context.Context, hostIDs []int32) (FleetDrivesResult, error) {
+	if len(hostIDs) == 0 {
+		return FleetDrivesResult{}, fmt.Errorf("%w: hosts must name at least one host", ErrInvalid)
+	}
+
+	rows, err := s.pool.Query(ctx, driveSelect+`
+		 WHERE d.host_id = ANY($1)
+		 ORDER BY d.host_id, d.device, a.attr_id`, hostIDs)
+	if err != nil {
+		return FleetDrivesResult{}, fmt.Errorf("query fleet drives: %w", err)
+	}
+	defer rows.Close()
+
+	// One accumulator per host -- see foldDriveRow for why the fold cannot run
+	// over the whole result set at once.
+	byHost := make(map[int32]*[]Drive, len(hostIDs))
+	for rows.Next() {
+		row, err := scanDriveRow(rows)
+		if err != nil {
+			return FleetDrivesResult{}, err
+		}
+		acc, ok := byHost[row.hostID]
+		if !ok {
+			acc = &[]Drive{}
+			byHost[row.hostID] = acc
+		}
+		foldDriveRow(acc, row)
+	}
+	if err := rowsErr(rows.Err(), "fleet drives"); err != nil {
+		return FleetDrivesResult{}, err
+	}
+
+	out := FleetDrivesResult{Hosts: make([]HostDrives, 0, len(hostIDs))}
+	for _, id := range hostIDs {
+		list := []Drive{}
+		if acc := byHost[id]; acc != nil {
+			list = *acc
+		}
+		out.Hosts = append(out.Hosts, HostDrives{HostID: id, Drives: list})
+	}
+	return out, nil
 }
 
 // Interfaces lists the host's network interfaces.

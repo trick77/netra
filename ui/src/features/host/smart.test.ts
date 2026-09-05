@@ -3,6 +3,7 @@ import type { Drive } from "../../lib/api";
 import {
   ATA,
   NVME,
+  driveAlarms,
   driveFindings,
   drivePowerOnHours,
   driveKind,
@@ -10,6 +11,7 @@ import {
   driveTemperature,
   driveTempAttrId,
   driveWearPct,
+  SMART_THRESHOLDS,
   temperatureFromRaw,
 } from "./smart";
 
@@ -287,5 +289,61 @@ describe("a drive with no attributes", () => {
     expect(driveSeverity(d)).toBe("ok");
     expect(driveTemperature(d)).toBeNull();
     expect(driveWearPct(d)).toBeNull();
+  });
+});
+
+// The rule that carries a drive's verdict out of the Storage tab. netra used
+// to rate a drive critical here and call the same host healthy on the fleet
+// page and in its own attention panel, because nothing read this.
+describe("driveAlarms", () => {
+  it("promotes the states a drive does not come back from", () => {
+    // Given one disk with sectors pending reallocation and one with sectors
+    // already reallocated
+    const testee = driveAlarms([
+      drive({ [ATA.currentPending]: 3 }, { device: "sda" }),
+      drive({ [ATA.reallocatedSectors]: 12 }, { device: "sdb" }),
+    ]);
+
+    // Then both leave the tab, worst first, each naming its own drive
+    expect(testee.map((a) => [a.device, a.severity])).toEqual([
+      ["sda", "critical"],
+      ["sdb", "serious"],
+    ]);
+  });
+
+  it("leaves CRC errors and wear behind", () => {
+    // Given a drive with a cable fault and one at 80% of its rated endurance
+    // -- both worth seeing on the drive row
+    const drives = [
+      drive({ [ATA.crcErrors]: 1 }, { device: "sda" }),
+      drive(
+        { [NVME.percentageUsed]: SMART_THRESHOLDS.wearWarning },
+        { device: "nvme0n1" },
+      ),
+    ];
+
+    // Then the Storage tab still says so
+    expect(driveSeverity(drives[0])).toBe("warning");
+    expect(driveSeverity(drives[1])).toBe("warning");
+    // but neither counter ever resets, so neither may park the host in the
+    // attention list for the rest of its life
+    expect(driveAlarms(drives)).toEqual([]);
+  });
+
+  it("says nothing about a drive with no readings", () => {
+    // Given a drive the hub knows of but holds no attributes for -- its
+    // readings aged out, which is not a claim about the hardware
+    expect(driveAlarms([drive({})])).toEqual([]);
+  });
+
+  it("carries the finding's own words through unchanged", () => {
+    // Given a disk with pending sectors
+    const [alarm] = driveAlarms([drive({ [ATA.currentPending]: 3 })]);
+
+    // Then the sentence on the overview is the sentence on the drive row, so
+    // a reader following the link is not told two different things
+    expect(alarm.text).toBe(
+      driveFindings(drive({ [ATA.currentPending]: 3 }))[0].text,
+    );
   });
 });

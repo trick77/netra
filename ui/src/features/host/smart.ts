@@ -215,6 +215,57 @@ export function driveSeverity(drive: Drive): Finding["severity"] {
 }
 
 /**
+ * One drive finding that has left the Storage tab, with the drive it is about.
+ *
+ * `text` is the finding's own words, unchanged -- the sentence an operator
+ * reads on the overview is the sentence they will read again on the drive row
+ * they click through to.
+ */
+export interface DriveAlarm {
+  device: string;
+  severity: "serious" | "critical";
+  text: string;
+}
+
+/**
+ * The findings serious enough to count against the HOST, worst first.
+ *
+ * This is the one place the drive table and the attention panels meet, and
+ * both read it rather than re-deriving anything: netra used to rate a drive
+ * `critical` on the Storage tab while the same host read clean on the fleet
+ * page and in its own "Needs attention" list, because nothing carried the
+ * verdict out of that one table.
+ *
+ * `warning` findings stay behind, and that is the whole judgement here. CRC
+ * errors and 80% wear are worth seeing on the drive row, but neither counter
+ * ever resets -- one cable glitch two years ago would park the host in the
+ * attention list for the rest of its life, and a list nobody can ever clear
+ * stops being read. What escalates is the states a drive does not come back
+ * from on its own: pending and uncorrectable sectors, an NVMe critical
+ * warning, spare below threshold, rated endurance spent, and the two counters
+ * that mean the drive has already started substituting for damage.
+ */
+export function driveAlarms(drives: readonly Drive[]): DriveAlarm[] {
+  const out: DriveAlarm[] = [];
+  for (const drive of drives) {
+    for (const finding of driveFindings(drive)) {
+      if (finding.severity !== "serious" && finding.severity !== "critical") {
+        continue;
+      }
+      out.push({
+        device: drive.device,
+        severity: finding.severity,
+        text: finding.text,
+      });
+    }
+  }
+  // Across drives as well as within one: a host with a spent NVMe and a disk
+  // with one reallocated sector is a host with a spent NVMe. Stable, so two
+  // alarms of equal severity keep drive order.
+  return out.sort((a, b) => RANK[a.severity] - RANK[b.severity]);
+}
+
+/**
  * The drive's state as a number a column can be ORDERED by, worst highest.
  *
  * Inverted against RANK above, which is worst-first because it drives a

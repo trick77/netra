@@ -1741,3 +1741,125 @@ func TestIntegrationDrivesSeparateEmptyFromMissing(t *testing.T) {
 		t.Errorf("err = %v, want ErrNotFound for an unknown host", err)
 	}
 }
+
+// The fleet page rates a host partly on its drives now, so it needs every
+// host's drives on one tick. The fold is the part worth pinning: it runs over
+// one flat result set, and two hosts whose first drive is both called "sda"
+// must not merge into one.
+func TestIntegrationFleetDrivesKeepEachHostsDrivesApart(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+
+	one := seedHost(t, pool, "fleet-drive-one")
+	two := seedHost(t, pool, "fleet-drive-two")
+	none := seedHost(t, pool, "fleet-drive-none")
+
+	// The same device NAME on both hosts, which is the ordinary case -- every
+	// Linux box calls its first disk sda -- and the one a fold keyed on the
+	// name alone gets wrong.
+	exec(t, pool, `
+		INSERT INTO devices (host_id, device, model, serial, last_seen)
+		VALUES ($1, 'sda', 'ST16000NM000J', 'ZR5A1M0K', TIMESTAMPTZ '2026-08-23T11:00:00Z'),
+		       ($2, 'sda', 'SAMSUNG MZQL2', 'S64FNE0R', TIMESTAMPTZ '2026-08-23T11:00:00Z'),
+		       ($2, 'sdb', 'WDC WD40EFPX', 'WD-WX22D', TIMESTAMPTZ '2026-08-23T11:00:00Z')`,
+		one, two)
+
+	exec(t, pool, `
+		INSERT INTO smart_attributes (host_id, ts, device_id, attr_id, raw, normalized)
+		SELECT d.host_id, ts, d.id, attr_id, raw, normalized
+		  FROM devices d,
+		       (VALUES
+		          ('sda', TIMESTAMPTZ '2026-08-23T10:00:00Z', 197::smallint, 1::bigint, 99::smallint),
+		          ('sda', TIMESTAMPTZ '2026-08-23T11:00:00Z', 197::smallint, 3::bigint, 97::smallint)
+		       ) AS v(device, ts, attr_id, raw, normalized)
+		 WHERE d.host_id = $1 AND d.device = v.device`, one)
+
+	res, err := svc.FleetDrives(ctx, []int32{one, two, none})
+	if err != nil {
+		t.Fatalf("FleetDrives: %v", err)
+	}
+
+	if len(res.Hosts) != 3 {
+		t.Fatalf("got %d hosts, want 3 -- every host asked about must appear", len(res.Hosts))
+	}
+	// In the order asked for, so a caller pairing this against its own host
+	// list does not have to sort it back.
+	if res.Hosts[0].HostID != one || res.Hosts[1].HostID != two || res.Hosts[2].HostID != none {
+		t.Errorf("host ids = %d, %d, %d; want %d, %d, %d in the order asked",
+			res.Hosts[0].HostID, res.Hosts[1].HostID, res.Hosts[2].HostID, one, two, none)
+	}
+
+	if got := res.Hosts[0].Drives; len(got) != 1 || got[0].Device != "sda" {
+		t.Fatalf("host one drives = %v, want just sda", got)
+	}
+	if got := res.Hosts[1].Drives; len(got) != 2 ||
+		got[0].Device != "sda" || got[1].Device != "sdb" {
+		t.Fatalf("host two drives = %v, want sda and sdb ordered by device", got)
+	}
+
+	// The two sdas are different disks. A fold that keyed on the name alone
+	// would have folded host two's into host one's and left this model wrong.
+	oneSda, twoSda := res.Hosts[0].Drives[0], res.Hosts[1].Drives[0]
+	if oneSda.Model == nil || *oneSda.Model != "ST16000NM000J" {
+		t.Errorf("host one's sda model = %v, want ST16000NM000J", oneSda.Model)
+	}
+	if twoSda.Model == nil || *twoSda.Model != "SAMSUNG MZQL2" {
+		t.Errorf("host two's sda model = %v, want SAMSUNG MZQL2", twoSda.Model)
+	}
+
+	// The newest reading per attribute, exactly as the per-host listing folds
+	// it -- both go through the same driveSelect and the same foldDriveRow.
+	if len(oneSda.Attributes) != 1 {
+		t.Fatalf("host one's sda attributes = %v, want the one newest 197", oneSda.Attributes)
+	}
+	if a := oneSda.Attributes[0]; a.ID != 197 || a.Raw == nil || *a.Raw != 3 {
+		t.Errorf("attribute = %+v, want id 197 raw 3 -- the 11:00 reading, not the 10:00 one", a)
+	}
+
+	// A drive whose readings have aged out still appears, with an empty
+	// attribute list rather than a missing entry: the UI reads .length on it
+	// to tell "healthy" from "not read".
+	if twoSdb := res.Hosts[1].Drives[1]; twoSdb.Attributes == nil {
+		t.Error("sdb attributes = nil, want an empty slice so it marshals as [] rather than null")
+	} else if len(twoSdb.Attributes) != 0 {
+		t.Errorf("sdb attributes = %v, want empty", twoSdb.Attributes)
+	}
+
+	// A host with no devices at all comes back with an empty list, never a
+	// missing entry. The fleet page must be able to tell "reports no drives"
+	// from "not asked" -- only one of those two may read as healthy.
+	if res.Hosts[2].Drives == nil {
+		t.Fatal("driveless host's drives = nil, want an empty slice")
+	}
+	if len(res.Hosts[2].Drives) != 0 {
+		t.Errorf("driveless host's drives = %v, want empty", res.Hosts[2].Drives)
+	}
+}
+
+// Unlike the per-host listing, an unregistered id is not an error, for the
+// reason FleetContainers and FleetMetrics both take: a host deleted between
+// the hosts request and this one must not blank the whole fleet's drives.
+func TestIntegrationFleetDrivesTreatsAnUnknownHostAsEmptyNotMissing(t *testing.T) {
+	ctx := context.Background()
+	svc, pool := newService(t)
+	id := seedHost(t, pool, "fleet-drive-solo")
+
+	res, err := svc.FleetDrives(ctx, []int32{id, 4242})
+	if err != nil {
+		t.Fatalf("FleetDrives: %v", err)
+	}
+	if len(res.Hosts) != 2 {
+		t.Fatalf("got %d hosts, want 2", len(res.Hosts))
+	}
+	if res.Hosts[1].HostID != 4242 || len(res.Hosts[1].Drives) != 0 {
+		t.Errorf("unknown host = %+v, want an empty list under its own id", res.Hosts[1])
+	}
+}
+
+func TestIntegrationFleetDrivesRejectsAnEmptyHostList(t *testing.T) {
+	svc, _ := newService(t)
+
+	if _, err := svc.FleetDrives(context.Background(), nil); !errors.Is(err, read.ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid", err)
+	}
+}

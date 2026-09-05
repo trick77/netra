@@ -25,6 +25,7 @@ import type { Severity } from "../../ui/Badge";
 import type { HostTab } from "../host/HostPage";
 import type { HostRow } from "./hostColumns";
 import { hostStatus } from "../../lib/host";
+import { driveAlarms } from "../host/smart";
 import { percent } from "../../lib/format";
 
 /**
@@ -43,7 +44,8 @@ export type ConditionKind =
   | "oom"
   | "post-failures"
   | "failed-units"
-  | "disk";
+  | "disk"
+  | "drive";
 
 /**
  * The mark that PROVES a condition, chosen by the condition rather than by
@@ -330,6 +332,12 @@ const CONDITION_KIND_INFO: Record<
   "post-failures": { label: "Failed deliveries", severity: "warning" },
   "failed-units": { label: "Failed units", severity: "warning" },
   disk: { label: "Filesystem nearly full", severity: "warning" },
+  // A measurement, not a diagnosis -- the rule every condition here follows.
+  // "Drive failing" would be a verdict on hardware, and it would overstate a
+  // host whose only alarm is a handful of reallocated sectors: that drive has
+  // substituted for damage, which is worth acting on and is not the same as
+  // failing.
+  drive: { label: "Drive errors", severity: "critical" },
 };
 
 const CONDITION_KINDS = Object.keys(
@@ -609,6 +617,50 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       evidence: { type: "meter", pct: fullest.pct },
       // Only the fullest mount is named here; the Storage tab is where this
       // host's other mounts are -- and now its disk charts too.
+      tab: "storage",
+    });
+  }
+
+  // The host's own drives, judged by the rule the Storage tab has always used
+  // -- driveAlarms in features/host/smart.ts, which promotes the states a
+  // drive does not recover from and leaves CRC errors and wear behind.
+  //
+  // ONE condition for the host, never one per drive or one per finding: the
+  // same collapse the disk and failed-units rows make. Four alarms across two
+  // disks are one thing to go and look at, and the counts line would otherwise
+  // read "Drive errors 1" while the list showed four rows for that host.
+  //
+  // `row.drives` is optional and undefined means NOT ASKED -- the fleet-wide
+  // drives call failed, or the row was assembled without it. That stays
+  // silent, because the only other reading is "no alarms", and a page that
+  // says a host is fine because it could not find out is the bug this whole
+  // condition exists to fix.
+  const alarms = driveAlarms(row.drives ?? []);
+  if (alarms.length > 0) {
+    const worst = alarms[0];
+    out.push({
+      ...base,
+      kind: "drive",
+      severity: worst.severity,
+      label: kindLabel("drive"),
+      // Names the drive and what is wrong with it. The count of the rest
+      // rides along rather than expanding into rows -- see the collapse above.
+      what:
+        alarms.length === 1
+          ? `${worst.device} — ${worst.text}`
+          : `${worst.device} — ${worst.text} (+${alarms.length - 1} more)`,
+      // Deliberately none, and this one cannot be walked back the way the
+      // filesystem is. SMART attributes are counters with no zero baseline,
+      // sampled hourly: the first non-zero reading netra holds is when netra
+      // started LOOKING, not when the sector went bad. A drive whose agent
+      // was installed on Tuesday would claim its sectors failed on Tuesday.
+      since: null,
+      // Deliberately none. Evidence's marks are meter, units, memory and
+      // reporting; a raw attribute counter is none of them, and the finding
+      // it would be drawn from is already the sentence above.
+      evidence: null,
+      // The Storage tab holds the Drives table, with every attribute this
+      // sentence was derived from.
       tab: "storage",
     });
   }

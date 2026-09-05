@@ -3,6 +3,7 @@ import {
   ApiError,
   getContainers,
   getFleetContainers,
+  getFleetDrives,
   getEvents,
   getHost,
   getHosts,
@@ -439,18 +440,25 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       // only fetches when nothing was injected -- and this page always
       // injects its rows, so the Containers tab sat empty claiming no host in
       // the fleet had ever reported one.
-      const [trends, containerTrends, listings] = await Promise.all([
-        // threads, not cores: the per-core samples are one per logical CPU
-        // (the N in /proc/stat's cpuN), and on an SMT host the two differ by
-        // a factor of two. fetchFleetTrends reads it off each host.
-        fetchFleetTrends(hosts, range),
-        fetchFleetContainerTrends(hosts, range),
-        // Caught rather than thrown, for the reason the per-host fan-out used
-        // allSettled: a container listing that fails must not take the host
-        // list down with it. The rows the fleet already has are the point of
-        // the page, and the counts chip says what is missing.
-        getFleetContainers(hosts.map((host) => host.id)).catch(() => null),
-      ]);
+      const [trends, containerTrends, listings, driveListings] =
+        await Promise.all([
+          // threads, not cores: the per-core samples are one per logical CPU
+          // (the N in /proc/stat's cpuN), and on an SMT host the two differ by
+          // a factor of two. fetchFleetTrends reads it off each host.
+          fetchFleetTrends(hosts, range),
+          fetchFleetContainerTrends(hosts, range),
+          // Caught rather than thrown, for the reason the per-host fan-out used
+          // allSettled: a container listing that fails must not take the host
+          // list down with it. The rows the fleet already has are the point of
+          // the page, and the counts chip says what is missing.
+          getFleetContainers(hosts.map((host) => host.id)).catch(() => null),
+          // The drives, for the drive condition -- one fleet-wide request,
+          // caught on its own for the same reason the containers call is.
+          // Null leaves every row's `drives` undefined, which hostConditions
+          // reads as "not asked" and stays silent about; the note on the page
+          // is what says so.
+          getFleetDrives(hosts.map((host) => host.id)).catch(() => null),
+        ]);
 
       const containers: ContainerRow[] = [];
       hosts.forEach((host) => {
@@ -498,6 +506,7 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
         hosts,
         trends,
         containers,
+        drives: driveListings,
         unreachable,
         at: new Date().toISOString(),
       };
@@ -507,10 +516,22 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   );
   useAuthRedirect(poll.error, go, { name: "fleet" });
 
-  const rows = useMemo(
-    () => buildRows(poll.data?.hosts ?? [], poll.data?.trends ?? new Map()),
-    [poll.data],
-  );
+  const rows = useMemo(() => {
+    const built = buildRows(
+      poll.data?.hosts ?? [],
+      poll.data?.trends ?? new Map(),
+    );
+    // Drives ride the row rather than a second argument to buildRows: no cell
+    // draws them, only hostConditions reads them, and buildRows is shared
+    // with the path that has the host list and nothing else.
+    //
+    // Left undefined when the listing failed, which is NOT the same as an
+    // empty array: only one of "reports no drives" and "netra could not ask"
+    // may read as nothing wrong with the disks.
+    const listings = poll.data?.drives;
+    if (!listings) return built;
+    return built.map((row) => ({ ...row, drives: listings.get(row.id) ?? [] }));
+  }, [poll.data]);
 
   // The same guard HostScreen makes, for the same reason. This screen is
   // remounted by every navigation back to it, so its first render has no
@@ -545,6 +566,13 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       containerError={
         poll.data && poll.data.unreachable > 0
           ? `${poll.data.unreachable} host${poll.data.unreachable === 1 ? "" : "s"} could not be asked for containers`
+          : null
+      }
+      // All or nothing, like the containers: one request answers for the
+      // whole fleet, so either every host was asked or none was.
+      driveError={
+        poll.data && poll.data.drives === null
+          ? `${poll.data.hosts.length} host${poll.data.hosts.length === 1 ? "" : "s"} could not be asked for drives`
           : null
       }
     />

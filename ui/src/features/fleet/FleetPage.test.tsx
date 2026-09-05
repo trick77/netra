@@ -648,6 +648,52 @@ describe("FleetPage data fetching", () => {
     );
   });
 
+  // A fleet that quietly drops the one signal saying a disk is dying is
+  // worse than one that admits it: with no drives, every host below reads
+  // clean on its disks, and nothing on the page would say why.
+  it("says so when the drives could not be fetched", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/drives")) return new Response("", { status: 500 });
+        if (url.includes("/containers"))
+          return new Response(JSON.stringify({ hosts: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        return new Response(
+          JSON.stringify(
+            url.includes("/sites")
+              ? []
+              : [
+                  {
+                    id: 1,
+                    hostname: "web-01",
+                    last_seen: "2026-08-10T13:59:30Z",
+                    cpu_total: 1,
+                    mem_used: null,
+                    mem_total: null,
+                    uptime_s: 10,
+                    threads: null,
+                  },
+                ],
+          ),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    render(<FleetPage now={NOW} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/drives did not/i),
+    );
+    // And the host list it did get still renders -- one failing listing must
+    // not claim the rest of the page is gone.
+    expect(screen.getByText("web-01")).toBeInTheDocument();
+  });
+
   // Containers are a per-host fan-out with no fleet-wide endpoint; one
   // failing call must not claim the host list that already rendered is gone.
   it("keeps the host list when only the container fan-out fails", async () => {
@@ -657,6 +703,14 @@ describe("FleetPage data fetching", () => {
         const url = String(input);
         if (url.includes("/containers"))
           return new Response("", { status: 500 });
+        // The drives call answers, so the alert below is unambiguously the
+        // containers one: this test is about a failing listing not claiming
+        // the host list failed, and two broken listings would prove less.
+        if (url.includes("/drives"))
+          return new Response(JSON.stringify({ hosts: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
         return new Response(
           JSON.stringify(
             url.includes("/sites")

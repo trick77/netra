@@ -595,3 +595,88 @@ func itoa64(v int64) string { return strconv.FormatInt(v, 10) }
 func rfc(d time.Duration) string {
 	return time.Now().Add(d).UTC().Format(time.RFC3339)
 }
+
+// The fleet form of /hosts/{id}/drives, added when the overview started
+// rating a host on its SMART readings. Same envelope as /api/v1/containers,
+// and the same contract: a host id beside its own list, in the order asked,
+// empty rather than absent.
+func TestIntegrationFleetDrivesEnvelopeCarriesEveryHost(t *testing.T) {
+	srv, s := newAdminFixture(t)
+	a, _ := createHost(t, srv, "dfleet-one")
+	b, _ := createHost(t, srv, "dfleet-two")
+
+	if _, err := s.Pool().Exec(context.Background(), `
+		INSERT INTO devices (host_id, device, model, serial, last_seen)
+		VALUES ($1, 'sda', 'ST16000NM000J', 'ZR5A1M0K', NOW())`, a); err != nil {
+		t.Fatalf("seed devices: %v", err)
+	}
+	if _, err := s.Pool().Exec(context.Background(), `
+		INSERT INTO smart_attributes (host_id, ts, device_id, attr_id, raw, normalized)
+		SELECT $1, NOW(), d.id, 197::smallint, 3::bigint, 97::smallint
+		  FROM devices d WHERE d.host_id = $1 AND d.device = 'sda'`, a); err != nil {
+		t.Fatalf("seed smart_attributes: %v", err)
+	}
+
+	resp := doAdmin(t, srv, http.MethodGet,
+		"/api/v1/drives?hosts="+itoa(a)+","+itoa(b), "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d: %s", resp.StatusCode, readBody(t, resp))
+	}
+
+	var res struct {
+		Hosts []struct {
+			HostID int32 `json:"host_id"`
+			Drives []struct {
+				Device     string `json:"device"`
+				Attributes []struct {
+					ID  int16  `json:"id"`
+					Raw *int64 `json:"raw"`
+				} `json:"attributes"`
+			} `json:"drives"`
+		} `json:"hosts"`
+	}
+	decodeJSON(t, resp, &res)
+
+	if len(res.Hosts) != 2 {
+		t.Fatalf("hosts = %+v, want both", res.Hosts)
+	}
+	if res.Hosts[0].HostID != a || res.Hosts[1].HostID != b {
+		t.Errorf("host ids = %d,%d, want %d,%d in the order asked",
+			res.Hosts[0].HostID, res.Hosts[1].HostID, a, b)
+	}
+	if len(res.Hosts[0].Drives) != 1 || res.Hosts[0].Drives[0].Device != "sda" {
+		t.Fatalf("host a drives = %+v, want just sda", res.Hosts[0].Drives)
+	}
+	// The attribute the UI's drive rule reads: 197, pending sectors. Carried
+	// through the envelope so the fleet page can rate the host on it.
+	attrs := res.Hosts[0].Drives[0].Attributes
+	if len(attrs) != 1 || attrs[0].ID != 197 || attrs[0].Raw == nil || *attrs[0].Raw != 3 {
+		t.Errorf("sda attributes = %+v, want the one 197 reading with raw 3", attrs)
+	}
+	// Empty, never absent -- only one of "reports no drives" and "not asked"
+	// may read as healthy, and the caller tells them apart by this.
+	if res.Hosts[1].Drives == nil {
+		t.Error("host b drives = null, want [] -- it reports none, which is not the same as unanswered")
+	}
+	if len(res.Hosts[1].Drives) != 0 {
+		t.Errorf("host b drives = %+v, want none", res.Hosts[1].Drives)
+	}
+}
+
+func TestIntegrationFleetDrivesRejectsABadHostList(t *testing.T) {
+	srv, _ := newAdminFixture(t)
+	id, _ := createHost(t, srv, "dfleet-strict")
+
+	for _, tc := range []struct{ name, query string }{
+		{"no hosts parameter", ""},
+		{"an empty hosts parameter", "hosts="},
+		{"a hosts parameter that is not an integer", "hosts=" + itoa(id) + ",web-01"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := doAdmin(t, srv, http.MethodGet, "/api/v1/drives?"+tc.query, "")
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", resp.StatusCode)
+			}
+		})
+	}
+}

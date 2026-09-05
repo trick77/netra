@@ -51,6 +51,11 @@ func (h *readHandler) register(mux *http.ServeMux) {
 	// only one the fleet page draws a row from -- the other six are opened
 	// from a single host's own page, one host at a time.
 	mux.Handle("GET /api/v1/containers", http.HandlerFunc(h.fleetContainers))
+	// And the fleet form of the drives listing, once the overview started
+	// judging a host on its SMART readings: a drive with sectors pending
+	// reallocation is a condition on the fleet page, so the page needs every
+	// host's drives on the same tick and must not ask for them one at a time.
+	mux.Handle("GET /api/v1/drives", http.HandlerFunc(h.fleetDrives))
 	mux.Handle("GET /api/v1/events", http.HandlerFunc(h.events))
 }
 
@@ -184,6 +189,21 @@ func (h *readHandler) fleetContainers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.svc.FleetContainers(r.Context(), hostIDs)
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *readHandler) fleetDrives(w http.ResponseWriter, r *http.Request) {
+	hostIDs, err := parseHostIDs(r.URL.Query()["hosts"])
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+
+	res, err := h.svc.FleetDrives(r.Context(), hostIDs)
 	if err != nil {
 		writeReadError(w, r, err)
 		return

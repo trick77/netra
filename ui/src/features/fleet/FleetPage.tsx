@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
   getFleetContainers,
+  getFleetDrives,
   getHosts,
   type Container,
+  type Drive,
   type Host,
 } from "../../lib/api";
 import { ABSENT, byterate } from "../../lib/format";
@@ -193,6 +195,10 @@ export interface FleetPageProps {
    * could not be asked. Partial data must say it is partial: a list quietly
    * missing three hosts looks exactly like three hosts running none. */
   containerError?: string | null;
+  /** Set by a caller that fetched the drives itself and could not get them.
+   * With no drives no host can be judged on its disks, and every row below
+   * reads clean on them -- which must be said rather than looked like. */
+  driveError?: string | null;
   onEntityChange?: (entity: Entity) => void;
 }
 
@@ -206,6 +212,7 @@ export function FleetPage({
   attentionHref = (next) => (next === "all" ? "/" : `/?attn=${next}`),
   checkedAt: injectedCheckedAt,
   containerError: injectedContainerError,
+  driveError: injectedDriveError,
   now = new Date(),
   onEntityChange,
 }: FleetPageProps) {
@@ -238,6 +245,9 @@ export function FleetPage({
     string | null
   >(null);
   const [fetchedCheckedAt, setFetchedCheckedAt] = useState<string | null>(null);
+  const [fetchedDriveError, setFetchedDriveError] = useState<string | null>(
+    null,
+  );
 
   const injected = rows !== undefined;
 
@@ -256,6 +266,34 @@ export function FleetPage({
         setError(describe(err));
         return;
       }
+      // The drives, for the drive condition -- one fleet-wide request, and
+      // caught on its own for the same reason the containers call below is.
+      // On failure the rows keep `drives` undefined, which hostConditions
+      // reads as "not asked" and stays silent about; the note beneath the head
+      // is what says so, because a fleet that quietly drops the one signal
+      // that says a disk is dying is worse than one that admits it.
+      let drives: Map<number, Drive[]> | null;
+      try {
+        drives = await getFleetDrives(hosts.map((host) => host.id));
+      } catch {
+        drives = null;
+      }
+      if (!live) return;
+      if (drives !== null) {
+        const withDrives = drives;
+        setFetchedRows((current) =>
+          (current ?? buildHostRows(hosts)).map((row) => ({
+            ...row,
+            drives: withDrives.get(row.id) ?? [],
+          })),
+        );
+      }
+      setFetchedDriveError(
+        drives === null
+          ? `${hosts.length} host${hosts.length === 1 ? "" : "s"} could not be asked for drives`
+          : null,
+      );
+
       // One request for the whole fleet, not one per host -- see
       // getFleetContainers. It is still caught separately from the host list:
       // a failing container call must not claim the host list that already
@@ -296,6 +334,7 @@ export function FleetPage({
   const hostRows = rows ?? fetchedRows ?? [];
   const containerRows = containers ?? fetchedContainers ?? [];
   const containerError = injectedContainerError ?? fetchedContainerError;
+  const driveError = injectedDriveError ?? fetchedDriveError;
   // Distinguishes "this fleet runs no containers" from "not fetched yet":
   // the tile may only say 0 for the first.
   const containersKnown =
@@ -515,6 +554,12 @@ export function FleetPage({
       {containerError !== null ? (
         <p className="note" role="alert">
           The hosts loaded, but their containers did not: {containerError}
+        </p>
+      ) : null}
+      {driveError !== null && driveError !== undefined ? (
+        <p className="note" role="alert">
+          The hosts loaded, but their drives did not: {driveError} — no host
+          below can be judged on its disks.
         </p>
       ) : null}
 

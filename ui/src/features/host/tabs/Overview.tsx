@@ -18,7 +18,13 @@
 // tabs; and the sensor cards, which are hardware facts and are now on System.
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
-import type { HostDetail, MetricsResponse, Unit } from "../../../lib/api";
+import type {
+  Drive,
+  HostDetail,
+  MetricsResponse,
+  Unit,
+} from "../../../lib/api";
+import { driveAlarms } from "../smart";
 import { counterIncrease, griddedValues } from "../../../lib/metrics";
 import {
   ABSENT,
@@ -128,6 +134,15 @@ export function needsAttention(input: {
   hostMetrics?: MetricsResponse | null;
   filesystems: FilesystemRow[];
   units: Unit[] | null;
+  /**
+   * The host's drives, or null when they could not be fetched.
+   *
+   * null stays silent rather than reading as "nothing wrong with the disks" --
+   * the same line `units: null` draws. A panel that says nothing needs
+   * attention because it never looked is exactly the failure this input was
+   * added to end.
+   */
+  drives: Drive[] | null;
   now?: Date;
 }): Attention[] {
   const out: Attention[] = [];
@@ -216,6 +231,22 @@ export function needsAttention(input: {
     out.push({
       severity: disk.severity,
       what: `${fs.label} is ${percent(disk.pct)} full — ${bytes(fs.free)} free`,
+    });
+  }
+
+  // Drives, by the same rule the Storage tab's own table uses -- driveAlarms
+  // in features/host/smart.ts, which promotes only the states a drive does not
+  // come back from on its own. This panel used to read clean on a host whose
+  // Drives table was showing a critical, failing disk one tab away.
+  //
+  // One line per alarm rather than one per host: two disks with pending
+  // sectors are two things to replace, and this panel is a list of what to do
+  // -- the fleet page is the one that collapses them, because there the unit
+  // of interest is the machine.
+  for (const alarm of driveAlarms(input.drives ?? [])) {
+    out.push({
+      severity: alarm.severity,
+      what: `${alarm.device} — ${alarm.text}`,
     });
   }
 
@@ -387,6 +418,10 @@ export interface OverviewProps {
   /** family=net for this host, one series per interface. */
   netMetrics?: MetricsResponse | null;
   units: Unit[] | null;
+  /** The host's drives, read only by the attention panel -- no tile on this
+   * tab draws them. null when the listing could not be fetched; see
+   * needsAttention for why that is not the same as "no drives". */
+  drives?: Drive[] | null;
   /** The range this page is showing. Seeds the picker in every chart
    * enlarged out of this tab. */
   range?: Range;
@@ -458,6 +493,7 @@ export function Overview({
   filesystemMetrics,
   agentMetrics,
   units,
+  drives = null,
   range,
   fetchFamily,
   onOpenChart,
@@ -470,6 +506,7 @@ export function Overview({
     hostMetrics,
     filesystems,
     units,
+    drives,
     now,
   });
 
