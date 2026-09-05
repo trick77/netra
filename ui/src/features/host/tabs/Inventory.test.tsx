@@ -1100,7 +1100,7 @@ describe("inventory sorting", () => {
      * stylesheet keys on, and it is the same st-* vocabulary every other
      * severity in the app is spelled in.
      */
-    it("judges a mount by the bytes left, not by the percentage alone", () => {
+    it("reddens the figure of every mount at 96%, whatever its size", () => {
       const at96 = (used: number, free: number) => [
         Date.parse("2026-08-10T00:00:00Z"),
         used + free,
@@ -1129,13 +1129,13 @@ describe("inventory sorting", () => {
           .getByText(label, { selector: ".lab" })
           .closest(".mrow") as HTMLElement;
 
+      // Both, and on the FIGURE rather than only the bar: a bar answers
+      // "what does this number say", and 96% says the same thing on a 4 TB
+      // array as on a 250 GB root. Judging the fill by the bytes left --
+      // which is the attention band's rule, and right there -- left the
+      // array plain at 96% and put red out of reach on any large volume.
       expect(meterFor("root").querySelector(".val")).toHaveClass("st-crit");
-      // Not merely a different severity: no status class at all, which is how
-      // "nothing to say here" is spelled everywhere else in the app.
-      const dataValue = meterFor("data").querySelector(".val");
-      expect(dataValue).not.toHaveClass("st-crit");
-      expect(dataValue).not.toHaveClass("st-warn");
-      expect(dataValue).not.toHaveClass("st-serious");
+      expect(meterFor("data").querySelector(".val")).toHaveClass("st-crit");
     });
   });
 

@@ -819,15 +819,22 @@ export function Overview({
                         ? null
                         : fs.used + fs.free
                     }
-                    // The SAME rule the attention list above and the busiest
-                    // filesystem tile beside it already use, rather than
-                    // Meter's own percentage-only default. It weighs the bytes
-                    // left as well as the ratio, so a 4 TB array at 96% with
-                    // 160 GB free stops drawing a red bar directly under an
-                    // attention list that pointedly does not mention it -- and
-                    // a 250 GB root at the same 96% with 9 GB left still does.
-                    // null is "not worth attention", which Meter spells `ok`.
-                    severity={diskState(fs.used, fs.free)?.severity ?? "ok"}
+                    // No severity passed: Meter's own 70/85/95 colours the
+                    // fill and the figure, the rule every other bar, meter
+                    // and sparkline in the app is read by. A bar answers
+                    // "what does this number say", and 97% says the same
+                    // thing on a 4 TB array as on a 250 GB root.
+                    //
+                    // The compound rule -- high enough AND with little enough
+                    // left, diskSeverityFor in fleet/conditions.ts -- answers
+                    // the OTHER question, "is this worth someone's
+                    // attention", and it still governs the attention list
+                    // above. Putting the fill on it as well made red
+                    // unreachable on any volume over roughly 400 GB, since
+                    // critical there also needs under 20 GiB free: a 97%
+                    // filesystem drew amber. The two questions are allowed to
+                    // disagree -- a full disk with real headroom draws a red
+                    // bar and is still not in the list.
                     formatValue={() =>
                       `${bytes(fs.used)} used · ${bytes(fs.free)} free · ${bytes(fs.total)} size`
                     }
