@@ -25,6 +25,8 @@ import {
 } from "./geometry";
 import {
   areaFillOpacity,
+  AREA_FILL_OPACITY,
+  LINE_STROKE_WIDTH,
   AXIS_WIDTH,
   MIRROR_FILL_OPACITY,
   BAND_STROKE_WIDTH,
@@ -64,6 +66,8 @@ export interface ChartSeries {
   band?: (number | null)[];
 }
 
+export type MirrorWeight = "mass" | "line";
+
 export type ChartMark = "line" | "area" | "stack" | "mirror" | "mirrorStack";
 
 /**
@@ -95,6 +99,17 @@ export interface ChartProps {
   /** The floor. Defaults to the data's own minimum, for a free-scaled chart. */
   min?: number;
   mark?: ChartMark;
+  /**
+   * How heavily a MIRRORED mark is drawn. Ignored by every other mark.
+   *
+   * "mass" is the default and what a mirror has always been: at more than a
+   * point per pixel it fills solid, because an outline finer than the column
+   * spacing becomes the mark. "line" asks for the weight the row's other
+   * silhouettes carry instead -- a line with a light fill under it -- for the
+   * one place a mirror sits in a ROW of such cells and has to read as one of
+   * them rather than as a block of colour.
+   */
+  mirrorWeight?: MirrorWeight;
   pad?: number;
   label?: string;
   /** Dim every series but this one, rather than hiding them. */
@@ -151,6 +166,7 @@ export function Chart({
   max,
   min,
   mark = "line",
+  mirrorWeight = "mass",
   pad = 2,
   label = "chart",
   highlight,
@@ -337,7 +353,7 @@ export function Chart({
           <MirrorStackMarks {...{ series, w, h, max, pad, highlight }} />
         )}
         {mirrored && !mirrorStacked && (
-          <MirrorMarks {...{ series, w, h, max, pad }} />
+          <MirrorMarks {...{ series, w, h, max, pad, mirrorWeight }} />
         )}
         {!mirrored && stacked && (
           <StackMarks {...{ series, w, h, max, pad, highlight, bandStroke }} />
@@ -499,12 +515,14 @@ function MirrorMarks({
   h,
   max,
   pad,
+  mirrorWeight,
 }: {
   series: ChartSeries[];
   w: number;
   h: number;
   max: number;
   pad: number;
+  mirrorWeight: MirrorWeight;
   /** Let each half use its own ceiling and the whole half-height. See
    * mirrorPaths -- true only where no tick ladder claims a shared scale. */
 }) {
@@ -520,7 +538,18 @@ function MirrorMarks({
         // at three and a half, and only one of those can carry a 1.25px
         // outline without
         // the outline becoming the mark. See mirrorEdge().
-        const edge = mirrorEdge(w, longest([up, ...(down ? [down] : [])]), pad);
+        // Asked for the row's weight, the density question does not arise:
+        // the caller is drawing this beside three cells that are a line and a
+        // light fill at exactly this spacing, and the answer has to be the
+        // same mark. AREA_FILL_OPACITY and LINE_STROKE_WIDTH are the values
+        // those cells use, read from the same place they read them.
+        const edge =
+          mirrorWeight === "line"
+            ? {
+                fillOpacity: AREA_FILL_OPACITY,
+                strokeWidth: LINE_STROKE_WIDTH,
+              }
+            : mirrorEdge(w, longest([up, ...(down ? [down] : [])]), pad);
         // Both calls on ONE pair of ceilings, derived from the peak where
         // there is one. The envelope and the mean inside it are handed
         // different values, so left to derive their own they would place

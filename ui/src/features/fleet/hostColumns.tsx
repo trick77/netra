@@ -289,7 +289,17 @@ function HostCell({ row }: { row: HostRow }) {
             bookmark all have to work, and a row-wide handler would swallow
             the text selection someone needs to read an id off the screen.
             The fleet list had no link into detail at all. */}
-          <a className="host-cell-name" href={`/hosts/${row.id}/overview`}>
+          {/* `gone` only when the host is not reporting -- see
+            .host-cell-name.gone. The name is the last thing left to mark on a
+            row whose figures have all gone absent; every other row's name is
+            plain ink, so the colour marks the exception instead of every
+            line in the column. */}
+          <a
+            className={`host-cell-name${
+              status.severity === "critical" ? " gone" : ""
+            }`}
+            href={`/hosts/${row.id}/overview`}
+          >
             {row.hostname}
           </a>
           {/* After the name, and only when there is something to say. Healthy is
@@ -386,16 +396,33 @@ const DISK_CELL_STYLE = {
  * (AREA_FILL_OPACITY) -- the shade is still what says how high the line sits
  * in its box.
  *
- * NOT the traffic cell. That one keeps --in-1/--out-1, because it is the one
- * cell with no bar under it -- a rate has no ceiling to fill one against --
- * so its two hues are what separate in from out above and below the midline,
- * and dropping them fuses the halves into one grey mass.
+ * The traffic cell too, though as a PAIR rather than as this one value. It
+ * is the cell with no bar under it, so --in-1/--out-1 were the last saturated
+ * marks in the row and a green-and-purple chart beside three grey silhouettes
+ * read as the column that mattered. The hue is not what separates in from out
+ * there, but a lightness step still has to: see ROW_TREND_COLOR_2.
  *
  * Cell only. The ENLARGED views and the host page keep the full palette: a
  * dialog is a chart someone opened to read, not a mark scanned down a column,
  * and its stacks name their bands by colour.
  */
 const ROW_TREND_COLOR = "var(--ink-2)";
+
+/**
+ * The second neutral, for the lower half of the traffic mirror only.
+ *
+ * ROW_TREND_COLOR on both halves is what the note above asks for and it is
+ * one step too far: mirrored around a midline, two identical greys meet as a
+ * single silhouette, and telling in from out is the one comparison that cell
+ * exists to make. A step down the same neutral ramp keeps the row grey and
+ * gives the halves back their edge -- see --ink-3 in index.css for why it is
+ * its own token and not --muted or --muted-2.
+ *
+ * Which half gets which is not arbitrary: in is the lighter of the two, the
+ * same way it is the brighter --in-1 against --out-1 in the enlarged chart,
+ * so opening the cell does not swap the halves' weight.
+ */
+const ROW_TREND_COLOR_2 = "var(--ink-3)";
 
 // One line and a light fill. The row used to draw the per-core stack here --
 // up to 32 bands in four cycling blues, a hairline between each, inside 45px.
@@ -693,9 +720,21 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         ranges={RAIL_RANGES}
         fetchSeries={fetchSeries}
       >
+        {/* Two steps of the row's own neutral, not two hues: --in-1/--out-1
+            were the last saturated marks in a row of grey silhouettes. The
+            hues stay on the ENLARGED chart above, where a legend names the
+            bands; here the midline and the lightness step are what separate
+            in from out. See ROW_TREND_COLOR_2. */}
         <UpDownSparkline
           up={row.rx}
           down={row.tx}
+          upColor={ROW_TREND_COLOR}
+          downColor={ROW_TREND_COLOR_2}
+          // The row's weight, not a mirror's default mass. At cell density a
+          // mirror fills solid, which put a block of grey in a row of
+          // silhouettes drawn as a line over a light fill -- the same colour
+          // as its neighbours and still not the same mark. See MirrorWeight.
+          weight="line"
           label={`Traffic trend, ${rangeLabel(range)}`}
         />
       </Enlargeable>
@@ -950,29 +989,6 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       cell: (row) => <HostCell row={row} />,
       sortValue: (row) => row.hostname,
     },
-    // Second, immediately right of the host it belongs to. Traffic is the
-    // reading a fleet list is most often scanned for -- "is anything moving
-    // that should not be" -- and it sat fourth, past two charts, where the eye
-    // reached it last.
-    {
-      key: "traffic",
-      header: "Traffic",
-      cell: (row) => <TrafficCell row={row} range={range} />,
-      // The two rates the cell PRINTS, added: the cell shows in and out as a
-      // pair and the fleet question is which host is moving the most, not
-      // which direction it moved it in. Read through the same isReporting
-      // guard the cell reads them through, so a host whose last rates are
-      // hours stale sorts as unknown rather than as busy -- the sparkline
-      // beside them has already gone to a gap, and ordering the list by a
-      // number the cell refuses to draw would put a silent host at the top.
-      sortValue: (row) => {
-        if (!isReporting(row)) return null;
-        const rx = row.net_rx_bytes;
-        const tx = row.net_tx_bytes;
-        if (rx === null && tx === null) return null;
-        return (rx ?? 0) + (tx ?? 0);
-      },
-    },
     {
       key: "cpu",
       header: "CPU",
@@ -1019,6 +1035,31 @@ export function hostColumns(range: Range): Column<HostRow>[] {
       // top. Sorting on bytes would put the biggest disk first instead, which
       // answers no question at all.
       sortValue: (row) => row.fullest?.pct ?? null,
+    },
+    // Last, at the right end of the row. It sat second, on the argument that
+    // traffic is what a fleet list is most often scanned for; the three
+    // columns after it are the ones with a bar and a threshold, so scanning
+    // for what needs acting on had to step over a rate that has neither.
+    // CPU, memory and disk now run as one uninterrupted block of gauges and
+    // traffic reads as the context beside them.
+    {
+      key: "traffic",
+      header: "Traffic",
+      cell: (row) => <TrafficCell row={row} range={range} />,
+      // The two rates the cell PRINTS, added: the cell shows in and out as a
+      // pair and the fleet question is which host is moving the most, not
+      // which direction it moved it in. Read through the same isReporting
+      // guard the cell reads them through, so a host whose last rates are
+      // hours stale sorts as unknown rather than as busy -- the sparkline
+      // beside them has already gone to a gap, and ordering the list by a
+      // number the cell refuses to draw would put a silent host at the top.
+      sortValue: (row) => {
+        if (!isReporting(row)) return null;
+        const rx = row.net_rx_bytes;
+        const tx = row.net_tx_bytes;
+        if (rx === null && tx === null) return null;
+        return (rx ?? 0) + (tx ?? 0);
+      },
     },
   ];
 }

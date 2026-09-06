@@ -177,6 +177,17 @@ export const MIRROR_FILL_OPACITY = 0.45;
 export const BAND_STROKE_WIDTH = 1.25;
 
 /**
+ * The weight of a LINE -- the reading itself, wherever a mark draws one.
+ *
+ * Heavier than BAND_STROKE_WIDTH, which is an edge on a filled region and
+ * has to stay under the thing it bounds. Here rather than inline in Chart.tsx
+ * because two marks have to agree on it now: the line a CPU or memory cell
+ * draws, and the outline a mirrored pair draws when it is asked for the same
+ * weight as the cells beside it (see UpDownSparkline's `weight`).
+ */
+export const LINE_STROKE_WIDTH = 1.5;
+
+/**
  * The vertical headroom a stacked band spends, against `pad` for a line.
  *
  * Half its own edge, and nothing more. `pad` is two pixels because that is

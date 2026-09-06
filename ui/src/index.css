@@ -108,6 +108,25 @@
   --border-strong: #3b3b38;
   --ink: #c7c4bb;
   --ink-2: #a3a099;
+  /* A THIRD neutral, for a mark rather than for text: the lower half of the
+     fleet row's mirrored traffic chart, against --ink-2 above the midline.
+     Drawn in one neutral both halves fused into a single grey mass, which is
+     the reading that pair exists to separate -- and the two grey text tokens
+     under --ink-2 are both spoken for (--muted is the secondary TEXT floor,
+     --muted-2 annotates and may carry no fact of its own), so a series
+     cannot take either without contradicting what they mean elsewhere.
+
+     Two steps down the ramp rather than one. #807e77 was the first value
+     tried and it is measurably a different grey -- the halves render exactly
+     #a3a099 and #807e77, no blending -- and still not a difference you see
+     scanning a column of five rows, which is the only place it has to work.
+     This is 3.2:1 on --surface against --ink-2's 6.7:1, and it separates.
+     Not darker again: a third step puts the out half at the weight of the
+     row border, which says "inactive" about a reading that is neither.
+
+     It is a mark, not body text, so the 4.5 body floor is not the bar here;
+     the 3:1 non-text floor is, and this clears it. */
+  --ink-3: #6a6963;
   --muted: #94918a;
   /* One step under --muted, and the first value in this palette that is
      deliberately BELOW the 4.5 body-text floor: 3.5:1 on --surface.
@@ -904,14 +923,34 @@ a:hover {
   gap: var(--space-2);
   flex-wrap: wrap;
 }
-/* The name, in the accent. Everything else in a row is a reading; this is
-   the thing a reader came to find, and it is also the only link in the row,
-   so the colour does two jobs at once. Both lists get it: the container name
-   one column over is the same kind of thing. */
+/* The name, in ink. It was --accent, on the argument that this is the thing
+   a reader came to find and the only link in the row -- but every row has
+   one, so the accent marked nothing: a column of orange down the left of the
+   page while the rows that actually need acting on are marked by a badge, a
+   bar and a figure further right. Colour in this list means severity
+   everywhere else, and the identity column was the one place it did not.
+
+   Weight and the link affordance carry what the hue was carrying: 500
+   against the row's regular text, and the underline on row hover directly
+   below. Both lists get it, hosts and containers -- the container name one
+   column over is the same kind of thing, and the two tabs of one page cannot
+   colour their identity column differently. */
 .host-cell-name {
   font-weight: 500;
   font-size: var(--text-ui);
-  color: var(--accent);
+  color: var(--ink);
+}
+/* Except a host that is not reporting. That one keeps a hue, and it is the
+   status palette's rather than the brand's: the name IS the reading on a row
+   whose figures have all gone absent, so it is the only thing left to mark.
+   The badge beside it still says the word -- this is the same fact at the
+   scan distance where nobody has read the badge yet.
+   Critical only, which is offline and never-seen: a sporadic host is
+   answering, and its own amber badge is where that belongs. */
+.host-cell-name.gone {
+  /* The TEXT step of the critical hue, not the fill: --st-crit is a bar
+     colour and reads under the body floor as type. */
+  color: var(--st-crit-text);
 }
 /* The same accent, everywhere else a hostname is written.
    The fleet row had it and nothing else did: the host page's own <h1>, the
