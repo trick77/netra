@@ -20,7 +20,7 @@ describe("NowReading", () => {
       render(<NowReading pct={pct} />).container.querySelector(
         ".metric-now .v",
       )!.className;
-    expect(at(21)).toBe("v");
+    expect(at(21)).toBe("v st-ok");
     expect(at(76)).toBe("v st-warn");
     expect(at(96)).toBe("v st-crit");
   });

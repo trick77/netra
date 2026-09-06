@@ -315,11 +315,12 @@ describe("hostColumns", () => {
           {disk.cell(makeRow({ fullest: { mount: "/", pct: 21, others: 0 } }))}
         </>,
       );
-      // No severity class at all when there is nothing to say: a calm row is
-      // plain ink, not green.
+      // Ok is a severity like any other and it is drawn: green says netra
+      // measured this mount and it is fine, where plain ink said the same
+      // thing an empty cell does.
       expect(
         calm.container.querySelector(".disk-cell .metric-now .v")?.className,
-      ).toBe("v");
+      ).toBe("v st-ok");
     });
 
     // free is optional on the row -- the assembler leaves it unset when the
@@ -489,7 +490,7 @@ describe("hostColumns", () => {
       // top edge is the trend, not a bare stroke. The axis is fitted, so the
       // fill closes at the bottom of the box and tracks the line rather than
       // flooding the cell.
-      // data-area, not fill="var(--ink-2)": a point dot carries that fill too,
+      // data-area, not a fill selector: a point dot carries the same fill too,
       // so the colour selector would pass on a bare line with a marker on it.
       expect(container.querySelector("path[data-area]")).toBeInTheDocument();
       expect(
@@ -627,10 +628,40 @@ describe("hostColumns", () => {
         2,
       ).paths;
       expect(line.getAttribute("d")).toBe(expected[0]);
-      // Filled to the baseline, in the row's one trend colour -- the three
-      // saturation cells are neutral so the severity bars own colour in a row.
+      // Filled to the baseline, in the row's neutral: this fixture's host
+      // stopped reporting, so there is no current value to judge and the
+      // silhouette is history without a reading. See the severity case below.
       const area = container.querySelector("path[data-area]")!;
       expect(area.getAttribute("fill")).toBe("var(--ink-2)");
+    });
+
+    // The whole cell is one reading: the silhouette takes the severity of the
+    // value the bar under it prints, ok included. Grey is what this table
+    // draws when it has nothing -- no data, not reporting -- so a healthy
+    // host has to look different from an empty one.
+    it("draws the silhouette in the severity of the value under it", () => {
+      const cpuCol = hostColumns("1h").find((c) => c.header === "CPU")!;
+      const fill = (pct: number) => {
+        const { container, unmount } = render(
+          <>
+            {cpuCol.cell(
+              makeRow({
+                last_seen: new Date().toISOString(),
+                reporting: [10, 20, pct],
+              }),
+            )}
+          </>,
+        );
+        const got = container
+          .querySelector("path[data-area]")!
+          .getAttribute("fill");
+        unmount();
+        return got;
+      };
+      expect(fill(21)).toBe("var(--st-ok)");
+      expect(fill(76)).toBe("var(--st-warn)");
+      expect(fill(88)).toBe("var(--st-serious)");
+      expect(fill(96)).toBe("var(--st-crit)");
     });
 
     // The cell drew a shape and no number: "how loaded is that host" was
@@ -995,6 +1026,9 @@ describe("hostColumns", () => {
       expect(area.getAttribute("d")).toBe(
         areaPath(expected, SPARK_WIDTH, SPARK_STRIP_HEIGHT, 2)[0],
       );
+      // The row's neutral, not a severity: this fixture stopped reporting, so
+      // mem_used has no current value to judge. A reporting host draws the
+      // same silhouette in its own severity -- see the CPU cell's case.
       expect(area.getAttribute("fill")).toBe("var(--ink-2)");
     });
 
