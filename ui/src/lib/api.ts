@@ -114,6 +114,27 @@ export type Host = {
   location?: string | null;
   provider?: string | null;
   facility?: string | null;
+  /**
+   * Every mount on this host that has ever reported bytes, each with its last
+   * reading and the timestamp of that reading.
+   *
+   * On the LIST for the same reason capabilities is: the absence it repairs
+   * is fleet-wide. The Disk cell used to take its figure from the last slot
+   * of the answered window, so a host switched off longer than that window
+   * lost the cell entirely -- and disk fullness is the one saturation reading
+   * that survives an outage intact. Filling that column from metrics would
+   * mean one request per host.
+   *
+   * Bytes only, no series: the filesystem metric family still owns the
+   * history, and the sparkline beside the figure is still drawn from it, gaps
+   * and all.
+   *
+   * Optional, like the fields above: a response without it makes
+   * currentFilesystems return null and every reader falls back to the
+   * window-derived reading. An empty array is the other fact -- asked, and
+   * this host has no reporting mounts.
+   */
+  filesystems?: Filesystem[];
 };
 
 // internal/hub/read/host.go: HostDetail (embeds HostSummary)
@@ -183,6 +204,33 @@ export type Filesystem = {
   label: string;
   mountpoint: string | null;
   device_id: number | null;
+  /**
+   * When the three figures below were measured. Null on a mount that has
+   * never reported bytes.
+   *
+   * Load-bearing rather than decorative. The `filesystems` table is never
+   * pruned, so a mount that stopped being reported keeps its row and its last
+   * bytes forever -- and a mount frozen at 94 % outranks every live disk on
+   * the host. Compared against the host's own `last_seen`, this separates
+   * "the host is off, so every mount's reading is legitimately its last" from
+   * "the host is talking and this one mount is not". currentFilesystems in
+   * lib/host.ts is the one place that rule lives.
+   */
+  ts?: string | null;
+  /**
+   * The last reading, in bytes as measured. Fullness is used / (used + free),
+   * never used / total: the gap is the root reserve, which is neither in use
+   * nor allocatable. See filesystem_samples in 0001_init.sql.
+   *
+   * These come from filesystem_current, which has no window and no rollup lag
+   * -- so unlike a figure read off the metrics grid they survive a host being
+   * switched off for a month. Optional, like capabilities on Host and for the
+   * same reason: the hand-built literals across the tests predate them, and a
+   * response without them falls back to the window-derived reading.
+   */
+  total?: number | null;
+  used?: number | null;
+  free?: number | null;
 };
 
 // internal/hub/read/inventory.go: Address

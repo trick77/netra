@@ -608,7 +608,13 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
       kind: "disk",
       severity: fullestSeverity,
       label: kindLabel("disk"),
-      what: `${fullest.mount} is ${percent(fullest.pct)} full`,
+      // "was", once this host has stopped reporting. The SEVERITY does not
+      // move with the tense, and that is the judgement: a 96 % disk on a
+      // machine that is off is still a 96 % disk, and it is worth clearing
+      // before the machine comes back. The row already carries "Stopped
+      // reporting" as its own critical condition, so both facts are on
+      // screen; this one only stops claiming to describe this minute.
+      what: `${fullest.mount} ${status.severity === "critical" ? "was" : "is"} ${percent(fullest.pct)} full`,
       // Walked back through THIS mount's own series -- see fullestFilesystem
       // in hostTrends.ts, which owns the walk because it is the only place
       // that knows which series the mount came from.

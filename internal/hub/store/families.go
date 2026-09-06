@@ -690,7 +690,79 @@ func (s *Store) InsertFilesystemSamples(ctx context.Context, hostID int32, rows 
 			int64OrNil(r.InodesTotal), int64OrNil(r.InodesUsed),
 			r.ReadBytes, r.WriteBytes)
 	}
-	return execBatch(ctx, s.pool, batch, "filesystem sample")
+	n, err := execBatch(ctx, s.pool, batch, "filesystem sample")
+	if err != nil {
+		return n, err
+	}
+	if err := s.upsertFilesystemCurrent(ctx, hostID, rows, ids); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
+// upsertFilesystemCurrent carries the newest row per filesystem into the gauge
+// the fleet cell reads when the host is not talking.
+//
+// Its own statement rather than a column on filesystem_samples, and the whole
+// argument is in 0013_filesystem_current.sql: fullness is a gauge, and a gauge
+// read off a windowed grid goes blank the moment the window holds nothing --
+// which for a machine that is switched off overnight is most of the time.
+//
+// Keyed on the RESOLVED fs_id, not on the label as sent. resolveFilesystemIDs
+// collapses the two spellings of one mount -- the marker-prefixed
+// /netra/fs/ark and a bare ark -- onto a single id, so a newest-map keyed on
+// the label picks one spelling and can hand the gauge the older of the two
+// readings for the same disk.
+func (s *Store) upsertFilesystemCurrent(ctx context.Context, hostID int32, rows []*netrav1.FilesystemSample, ids map[string]int32) error {
+	newest := make(map[int32]*netrav1.FilesystemSample, len(ids))
+	for _, r := range rows {
+		id, ok := ids[r.GetLabel()]
+		if !ok {
+			continue
+		}
+		if cur, seen := newest[id]; seen && cur.GetTsMs() >= r.GetTsMs() {
+			continue
+		}
+		newest[id] = r
+	}
+	if len(newest) == 0 {
+		return nil
+	}
+
+	// The WHERE guard is UpsertHostCurrent's, and it is load-bearing for the
+	// same reason: an agent buffers scrapes while the hub is down and replays
+	// them afterwards, in whatever order the batches land. Without it the
+	// gauge takes whichever row arrived last rather than the newest one, and
+	// walks backwards.
+	//
+	// No COALESCE on the three byte columns, unlike host_current's traffic
+	// pair. The collector reads total, used and free from ONE statfs and skips
+	// the filesystem entirely when it cannot (collector/filesystems.go), so a
+	// NULL here means the agent genuinely could not measure -- and carrying
+	// the previous bytes forward under a fresh ts is exactly the frozen
+	// reading this feature is scoped away from.
+	const stmt = `
+		INSERT INTO filesystem_current (host_id, fs_id, ts, total, used, free)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (host_id, fs_id) DO UPDATE
+		   SET ts    = EXCLUDED.ts,
+		       total = EXCLUDED.total,
+		       used  = EXCLUDED.used,
+		       free  = EXCLUDED.free
+		 WHERE filesystem_current.ts <= EXCLUDED.ts`
+
+	batch := &pgx.Batch{}
+	for id, r := range newest {
+		batch.Queue(stmt, hostID, id, tsOf(r.GetTsMs()),
+			int64OrNil(r.Total), int64OrNil(r.Used), int64OrNil(r.Free))
+	}
+	// The error is returned rather than logged, unlike UpsertHostCurrent's.
+	// That one is upserted AHEAD of the 503-capable path and so must not 503;
+	// this runs inside a family whose contract is already "503 and the agent
+	// replays an identical batch", and the replay is deduped by the ts guard
+	// above.
+	_, err := execBatch(ctx, s.pool, batch, "filesystem current")
+	return err
 }
 
 // resolveDeviceIDs upserts the drives named in rows and returns device -> id.

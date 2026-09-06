@@ -472,3 +472,96 @@ describe("overviewTiles network group", () => {
     expect(network.map((tile) => tile.label)).not.toContain("Traffic rx");
   });
 });
+
+// The tile and the Disk card below it read ONE source, so they cannot print
+// two different answers about one disk eight lines apart. The tile used to
+// take only the metrics window, so on a host switched off longer than the
+// window is wide it drew ABSENT above a card showing 96 % from the stored
+// gauge.
+describe("the busiest-filesystem tile on a host that is switched off", () => {
+  const at = "2026-08-10T01:00:00Z";
+  const pool = {
+    id: 1,
+    label: "pool",
+    mountpoint: "/srv/pool",
+    device_id: null,
+    ts: at,
+    total: 100,
+    used: 96,
+    free: 4,
+  };
+  const offline = { ...host, filesystems: [pool] } as unknown as HostDetail;
+
+  it("prints the stored reading when the window holds nothing", () => {
+    const tile = find(tiles({ host: offline }).system, "Busiest filesystem");
+
+    expect(tile?.value).toBe("96%");
+    expect(tile?.sub).toBe("/srv/pool");
+    // No window, so no shape. The figure stands alone rather than being
+    // suppressed along with it.
+    expect(tile?.values).toEqual([]);
+  });
+
+  // Matched back to the response BY NAME. The gauge's order is the hub's
+  // inventory and means nothing against res.series, so indexing across the
+  // two would draw another disk's line under this one's figure.
+  it("draws the named mount's own line, not whichever series sits at its index", () => {
+    const filesystemMetrics = response({
+      family: "filesystem",
+      key_columns: ["filesystem", "mountpoint"],
+      columns: ["total", "used", "free"],
+      series: [
+        {
+          key: { filesystem: "boot", mountpoint: "/boot" },
+          points: [
+            [t0, 100, 10, 90],
+            [t1, 100, 10, 90],
+          ],
+        },
+        {
+          key: { filesystem: "pool", mountpoint: "/srv/pool" },
+          points: [
+            [t0, 100, 90, 10],
+            [t1, 100, 90, 10],
+          ],
+        },
+      ] as unknown as MetricsResponse["series"],
+    });
+
+    const tile = find(
+      tiles({ host: offline, filesystemMetrics }).system,
+      "Busiest filesystem",
+    );
+
+    expect(tile?.sub).toBe("/srv/pool");
+    // 90/(90+10) -- the pool's own line, not /boot's 10 %, which is what
+    // indexing by the gauge's position would have drawn.
+    expect(tile?.values.filter((v) => v !== null)).toEqual([90, 90]);
+  });
+
+  // A retired mount keeps its ROW and loses its NUMBERS, the same rule the
+  // window branch has always followed -- so it cannot win the tile either,
+  // because diskState skips a null.
+  it("ignores a mount the host has stopped reporting", () => {
+    const retired = {
+      ...host,
+      filesystems: [
+        { ...pool, used: 20, free: 80 },
+        {
+          ...pool,
+          id: 2,
+          label: "old",
+          mountpoint: "/mnt/old",
+          ts: "2026-08-09T01:00:00Z",
+          used: 94,
+          free: 6,
+        },
+      ],
+    } as unknown as HostDetail;
+
+    const tile = find(tiles({ host: retired }).system, "Busiest filesystem");
+
+    expect(tile?.sub).toBe("/srv/pool");
+    expect(tile?.value).toBe("20%");
+  });
+});

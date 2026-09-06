@@ -71,12 +71,18 @@ type Container struct {
 	Labels map[string]string `json:"labels"`
 }
 
-// Filesystem is one row of /hosts/{id}/filesystems.
+// Filesystem is one row of /hosts/{id}/filesystems, and the same shape the
+// host list embeds per host.
 //
-// No capacity figures here: those are the filesystem metric family, where
-// total, used and free carry their timestamps. The comment on
-// filesystem_samples in 0001_init.sql governs any fullness a consumer
-// computes -- used / (used + free), never used / total.
+// The capacity figures are the GAUGE, from filesystem_current -- the last
+// reading netra has for this mount, with no window and no rollup lag. They are
+// not the series: the filesystem metric family still answers "what has this
+// disk been doing", and a consumer drawing a line wants that. This answers
+// "how full is it", which for a machine that is switched off is still a
+// question with a true answer. 0013_filesystem_current.sql has the argument.
+//
+// The comment on filesystem_samples in 0001_init.sql governs any fullness a
+// consumer computes from these: used / (used + free), never used / total.
 type Filesystem struct {
 	ID         int32   `json:"id"`
 	Label      string  `json:"label"`
@@ -84,6 +90,19 @@ type Filesystem struct {
 	// DeviceID is the st_dev the collector dedups bind mounts by, not a
 	// reference to the devices table.
 	DeviceID *int64 `json:"device_id"`
+	// TS dates the three figures below. Null when this mount has never
+	// reported one.
+	//
+	// Load-bearing, not decoration: `filesystems` is never pruned, so a mount
+	// that stopped being reported keeps its row and its last bytes forever.
+	// Compared against the host's own last_seen it separates a host that is
+	// off -- every mount's reading legitimately its last -- from a host that
+	// is talking while this one mount is not, which is a retired mount and
+	// must not be shown as a fact about now.
+	TS    *time.Time `json:"ts"`
+	Total *int64     `json:"total"`
+	Used  *int64     `json:"used"`
+	Free  *int64     `json:"free"`
 }
 
 // Address is one row of /hosts/{id}/addresses.
@@ -335,11 +354,18 @@ func (s *Service) Filesystems(ctx context.Context, hostID int32) ([]Filesystem, 
 		return nil, err
 	}
 
+	// LEFT JOIN, unlike the host list's LATERAL: this endpoint is the
+	// inventory of what the host HAS, so a mount that has never reported bytes
+	// still belongs in the list with nulls beside it. The list's per-host
+	// embed answers a different question and joins inner.
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, label, mountpoint, device_id
-		  FROM filesystems
-		 WHERE host_id = $1
-		 ORDER BY label`, hostID)
+		SELECT f.id, f.label, f.mountpoint, f.device_id,
+		       c.ts, c.total, c.used, c.free
+		  FROM filesystems f
+		  LEFT JOIN filesystem_current c
+		         ON c.fs_id = f.id AND c.host_id = f.host_id
+		 WHERE f.host_id = $1
+		 ORDER BY f.label`, hostID)
 	if err != nil {
 		return nil, fmt.Errorf("query filesystems: %w", err)
 	}
@@ -348,7 +374,8 @@ func (s *Service) Filesystems(ctx context.Context, hostID int32) ([]Filesystem, 
 	out := []Filesystem{}
 	for rows.Next() {
 		var f Filesystem
-		if err := rows.Scan(&f.ID, &f.Label, &f.Mountpoint, &f.DeviceID); err != nil {
+		if err := rows.Scan(&f.ID, &f.Label, &f.Mountpoint, &f.DeviceID,
+			&f.TS, &f.Total, &f.Used, &f.Free); err != nil {
 			return nil, fmt.Errorf("scan filesystem: %w", err)
 		}
 		out = append(out, f)

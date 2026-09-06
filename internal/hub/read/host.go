@@ -158,6 +158,26 @@ type HostSummary struct {
 	// carries the host's full inventory, its site and provider join, and its
 	// coordinates, none of which belongs on a row of a list.
 	Capabilities map[string]string `json:"capabilities"`
+	// Filesystems is every mount on this host that has ever reported bytes,
+	// each with its last reading and the timestamp of that reading.
+	//
+	// On the SUMMARY for the same reason Capabilities is: the absence it
+	// repairs is fleet-wide. The fleet's Disk cell used to take its figure
+	// from the last slot of the answered window, so a host that had been
+	// switched off longer than that window lost the cell entirely -- and disk
+	// fullness is the one saturation reading that survives an outage intact.
+	// Answering that from a metrics fetch would mean one request per host to
+	// fill one column.
+	//
+	// Bytes only, no series: the filesystem metric family still owns the
+	// history, and the sparkline beside the figure is still drawn from it,
+	// gaps and all. Fullness is used / (used + free) -- see the comment on
+	// filesystem_samples in 0001_init.sql, and 0013_filesystem_current.sql on
+	// why the gauge is stored rather than derived.
+	//
+	// Never null: a host with no reporting mounts gets an empty array, which
+	// is "asked, and there are none" rather than "not asked".
+	Filesystems []Filesystem `json:"filesystems"`
 }
 
 // HostDetail is everything the hub knows about one host that is not a time
@@ -196,6 +216,39 @@ type HostDetail struct {
 // HostSummary.FailedUnits for why it is capped at all.
 const failedUnitNames = 3
 
+// filesystemsLateral is the per-host filesystem gauge, as one JSONB column.
+//
+// Shared between ListHosts and Host rather than repeated the way the
+// failed-unit LATERAL above is, and the difference is deliberate: that one
+// carries a different placeholder number on each side and so cannot be one
+// string. This one takes no parameter, and HostDetail EMBEDS HostSummary --
+// so selecting it on the list and forgetting it on the detail would publish a
+// confident empty array to every host page, the exact trap the failed-unit
+// comment describes. One string cannot be added to one side only.
+//
+// The join to filesystem_current is INNER: a mount that has never reported
+// bytes has nothing to say here, and letting it through would inflate the
+// "+N others" count the fleet cell prints beside the mount it names. The
+// /hosts/{id}/filesystems endpoint joins the other way round, because there
+// the question is what the host HAS.
+//
+// No hypertable, so the promise on HostSummary that this list touches none
+// still holds -- filesystem_current is a plain table keyed on (host_id,
+// fs_id), and this is one host's own rows.
+const filesystemsLateral = `
+		  LEFT JOIN LATERAL (
+		       SELECT jsonb_agg(jsonb_build_object(
+		                  'id', f.id, 'label', f.label,
+		                  'mountpoint', f.mountpoint, 'device_id', f.device_id,
+		                  'ts', c.ts, 'total', c.total,
+		                  'used', c.used, 'free', c.free
+		              ) ORDER BY f.label) AS rows
+		         FROM filesystems f
+		         JOIN filesystem_current c
+		           ON c.fs_id = f.id AND c.host_id = f.host_id
+		        WHERE f.host_id = h.id
+		  ) fs ON TRUE`
+
 // ListHosts returns every host with its current gauges, ordered by hostname.
 func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 	// The LATERAL reads systemd_units, which is a plain table with a unique
@@ -214,7 +267,8 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		       c.net_rx_bytes, c.net_tx_bytes, c.services_total, c.services_failed,
 		       h.threads, coalesce(h.capabilities, '{}'::jsonb),
 		       h.location, h.provider, h.facility, h.os_name,
-		       coalesce(fu.names, '{}'::text[]), fu.since
+		       coalesce(fu.names, '{}'::text[]), fu.since,
+		       coalesce(fs.rows, '[]'::jsonb)
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
 		  LEFT JOIN LATERAL (
@@ -227,7 +281,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 		              min(state_ts) AS since
 		         FROM systemd_units
 		        WHERE host_id = h.id AND `+systemdstate.NotableSQL("")+`
-		  ) fu ON TRUE
+		  ) fu ON TRUE`+filesystemsLateral+`
 		 ORDER BY h.hostname, h.id`, failedUnitNames)
 	if err != nil {
 		return nil, fmt.Errorf("query hosts: %w", err)
@@ -242,7 +296,7 @@ func (s *Service) ListHosts(ctx context.Context) ([]HostSummary, error) {
 			&h.NetRxBytes, &h.NetTxBytes, &h.ServicesTotal, &h.ServicesFailed,
 			&h.Threads, &h.Capabilities,
 			&h.Location, &h.Provider, &h.Facility, &h.OSName,
-			&h.FailedUnits, &h.FailedSince); err != nil {
+			&h.FailedUnits, &h.FailedSince, &h.Filesystems); err != nil {
 			return nil, fmt.Errorf("scan host: %w", err)
 		}
 		hosts = append(hosts, h)
@@ -272,7 +326,8 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		       h.fingerprint, h.host_type, h.agent_version, h.go_version, h.build_commit,
 		       h.kernel, h.os_name, h.arch, h.cpu_model, h.cores, h.threads, h.memory_total,
 		       h.latitude, h.longitude, h.created_at, h.capabilities,
-		       coalesce(fu.names, '{}'::text[]), fu.since
+		       coalesce(fu.names, '{}'::text[]), fu.since,
+		       coalesce(fs.rows, '[]'::jsonb)
 		  FROM hosts h
 		  LEFT JOIN host_current c ON c.host_id = h.id
 		  LEFT JOIN LATERAL (
@@ -283,7 +338,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		              min(state_ts) AS since
 		         FROM systemd_units
 		        WHERE host_id = h.id AND `+systemdstate.NotableSQL("")+`
-		  ) fu ON TRUE
+		  ) fu ON TRUE`+filesystemsLateral+`
 		 WHERE h.id = $1`, hostID, failedUnitNames).Scan(
 		&h.ID, &h.Hostname,
 		&h.LastSeen, &h.CPUTotal, &h.MemUsed, &h.MemTotal, &h.UptimeS,
@@ -292,7 +347,7 @@ func (s *Service) Host(ctx context.Context, hostID int32) (HostDetail, error) {
 		&h.Fingerprint, &h.HostType, &h.AgentVersion, &h.GoVersion, &h.BuildCommit,
 		&h.Kernel, &h.OSName, &h.Arch, &h.CPUModel, &h.Cores, &h.Threads, &h.MemoryTotal,
 		&h.Latitude, &h.Longitude, &h.CreatedAt, &h.Capabilities, &h.FailedUnits,
-		&h.FailedSince)
+		&h.FailedSince, &h.Filesystems)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return HostDetail{}, ErrNotFound
 	}
