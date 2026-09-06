@@ -21,7 +21,7 @@ import {
   cardinal,
   percent,
 } from "../../../lib/format";
-import { isReporting } from "../../../lib/host";
+import { currentFilesystems, isReporting } from "../../../lib/host";
 import { severityFromPercent, type FillSeverity } from "../../../ui/Meter";
 // The fleet's disk thresholds, imported rather than restated: the tile, the
 // Disk meters below it, the attention band above it and the fleet row a
@@ -85,6 +85,13 @@ export interface FilesystemRow {
   total: number | null;
   used: number | null;
   free: number | null;
+  /** When the reading was taken, from the hub's stored gauge; null when it
+   * came off the metrics window instead.
+   *
+   * Optional, unlike the three above: filesystemRows always sets it, and the
+   * hand-built row literals across the tests predate it. Same convention
+   * lib/api.ts uses for a field added after its fixtures. */
+  asOf?: string | null;
 }
 
 /**
@@ -100,24 +107,72 @@ export interface FilesystemRow {
  *
  * Here rather than in Overview.tsx because current() is here now and this is
  * its other caller. Overview imports it back for the Disk card.
+ *
+ * Two sources, the same pair fullestFilesystem in the fleet's hostTrends.ts
+ * chooses between, and for the same reason -- the fleet row and this card must
+ * not disagree about one machine's disks. The host's stored gauge answers when
+ * it is there, so a machine that is switched off shows the last figures
+ * anybody measured instead of a column of dashes; the window is the fallback
+ * for a hub that does not send the gauge yet.
  */
-export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
+export function filesystemRows(
+  res: MetricsResponse | null,
+  host?: Pick<HostDetail, "last_seen" | "filesystems"> | null,
+): FilesystemRow[] {
+  const stored = host == null ? null : currentFilesystems(host);
+  if (stored !== null) {
+    // EVERY mount the host has, not only the ones still being measured --
+    // and that is the same rule the window branch below states. A retired
+    // mount keeps its row and loses its NUMBERS; it does not vanish. The
+    // disk existed, and dropping the row would claim it never did.
+    //
+    // Listing only the current ones read worse the further you looked: a
+    // live host whose filesystem collector stalls (a statfs that blocks, a
+    // mount namespace that changed) would have every row disappear three
+    // minutes later and the card would print "No filesystems have been read
+    // yet" about disks it read minutes ago.
+    //
+    // The fleet's Disk cell does drop them, and the difference is the
+    // question each is answering: it names ONE mount and must not name a
+    // retired one, while this lists them all and a list can say "this disk
+    // is here and I cannot currently measure it".
+    const current = new Set(stored);
+    return (host?.filesystems ?? []).map((fs) => {
+      const measured = current.has(fs);
+      return {
+        // Same spelling as the fleet row and as the branch below: one disk
+        // must not be called /mnt/ark on one page and ark on the other.
+        label: fsName(
+          { filesystem: fs.label, mountpoint: fs.mountpoint ?? "" },
+          ABSENT,
+        ),
+        total: measured ? (fs.total ?? null) : null,
+        used: measured ? (fs.used ?? null) : null,
+        free: measured ? (fs.free ?? null) : null,
+        asOf: measured ? (fs.ts ?? null) : null,
+      };
+    });
+  }
   // `== null`, not `=== null`: these props are optional, so a caller that
   // simply does not have this family yet passes undefined -- and reading
   // .series off it threw during render, with no error boundary under it.
   if (res == null) return [];
   return res.series.map((series, index) => ({
-    // The mount point, same as the fleet row: one disk must not be called
-    // /mnt/ark on one page and ark on the other.
     label: fsName(series.key, ABSENT),
     // current(), not latest(): a filesystem that has stopped reporting has no
     // fullness right now, and saying otherwise is what kept a retired row on
     // the page beside the one that replaced it. The card renders the absent
     // marker for the nulls and diskWarnings already skips them, so the disk
     // stays listed -- it is only its numbers that stop claiming to be current.
+    //
+    // The rule still holds on this branch, and the branch above does not
+    // escape it: currentFilesystems drops a mount whose stored reading has
+    // fallen behind its host's own last_seen, which is the retired row said
+    // with evidence rather than inferred from a null.
     total: current(res, "total", index),
     used: current(res, "used", index),
     free: current(res, "free", index),
+    asOf: null,
   }));
 }
 
@@ -328,7 +383,7 @@ function systemTiles(
   // The one filesystem worth a tile: the fullest. Which one it is goes in
   // the sub-line, because "94%" with no mount point is a number a reader
   // cannot act on -- and the Disk card below lists all of them anyway.
-  tiles.push(busiestFilesystemTile(filesystemMetrics));
+  tiles.push(busiestFilesystemTile(filesystemMetrics, host));
 
   return tiles;
 }
@@ -392,8 +447,16 @@ function gib(bytesValue: number): string {
  * ABSENT in it rather than no tile: "we have no filesystem readings" is
  * worth saying on a page whose whole job is to say what is going on.
  */
-function busiestFilesystemTile(res: MetricsResponse | null): Tile {
-  const rows = filesystemRows(res);
+function busiestFilesystemTile(
+  res: MetricsResponse | null,
+  // The host, for the same reason the Disk card below takes it: both read
+  // filesystemRows, so a tile given only the window would print ABSENT above
+  // a card drawing 96 % from the stored gauge -- one disk reading two ways
+  // eight lines apart, which is the disagreement this tile's own note below
+  // forbids.
+  host?: Pick<HostDetail, "last_seen" | "filesystems"> | null,
+): Tile {
+  const rows = filesystemRows(res, host);
   let worstIndex = -1;
   let worstPct = -1;
   let worstNotable: FillSeverity | null = null;
@@ -446,8 +509,20 @@ function busiestFilesystemTile(res: MetricsResponse | null): Tile {
   // The percentage OVER THE WINDOW, on the same used/(used+free) definition
   // as the figure -- not a used-bytes series, which would climb on a disk
   // that was being grown and read as filling up.
-  const used = griddedValues(res, worstIndex, "used");
-  const free = griddedValues(res, worstIndex, "free");
+  //
+  // Matched back to the response BY NAME rather than by worstIndex, because
+  // the rows may have come from the host's stored gauge, whose order is the
+  // hub's inventory and means nothing against res.series. -1 is the host
+  // that has been off longer than the window is wide: it has a figure and no
+  // shape, and the tile draws the figure alone.
+  const seriesIndex =
+    res === null
+      ? -1
+      : res.series.findIndex(
+          (one) => fsName(one.key, ABSENT) === rows[worstIndex]?.label,
+        );
+  const used = seriesIndex < 0 ? [] : griddedValues(res, seriesIndex, "used");
+  const free = seriesIndex < 0 ? [] : griddedValues(res, seriesIndex, "free");
   const pctSeries = used.map((u, i) => {
     const f = free[i];
     if (u === null || f == null || u + f === 0) return null;

@@ -3,12 +3,13 @@ import {
   buildRows,
   fetchFleetTrends,
   fetchHostTrends,
+  fullestFilesystem,
   trafficDetailSeries,
   trafficSeries,
   type HostTrends,
 } from "./hostTrends";
 import * as api from "../../lib/api";
-import type { Host, MetricsResponse } from "../../lib/api";
+import type { Filesystem, Host, MetricsResponse } from "../../lib/api";
 
 vi.mock("../../lib/api", async () => {
   const actual = await vi.importActual<typeof api>("../../lib/api");
@@ -391,7 +392,7 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest).toEqual({
+    expect(fullestFilesystem(trends.filesystem, null)).toEqual({
       mount: "data",
       pct: 88,
       // Carried through beside the percentage: the condition rule needs the
@@ -405,6 +406,9 @@ describe("fetchHostTrends", () => {
       // Under DISK_WARN_PCT, so there is no crossing to date.
       since: null,
       sinceAtLeast: false,
+      // null on this path: the figure came off the window, not the hub's
+      // stored gauge, so there is no reading timestamp to date it by.
+      asOf: null,
     });
   });
 
@@ -434,8 +438,8 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest?.mount).toBe("/");
-    expect(trends.fullest?.others).toBe(1);
+    expect(fullestFilesystem(trends.filesystem, null)?.mount).toBe("/");
+    expect(fullestFilesystem(trends.filesystem, null)?.others).toBe(1);
   });
 
   // A filesystem is named to an operator by its mount point -- the thing they
@@ -462,7 +466,7 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest?.mount).toBe("/mnt/ark");
+    expect(fullestFilesystem(trends.filesystem, null)?.mount).toBe("/mnt/ark");
     expect(trends.disk.map((b) => b.name)).toEqual(["/mnt/ark", "root"]);
   });
 
@@ -495,7 +499,7 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest).toEqual({
+    expect(fullestFilesystem(trends.filesystem, null)).toEqual({
       mount: "/mnt/ark",
       pct: 20,
       free: 80,
@@ -507,6 +511,7 @@ describe("fetchHostTrends", () => {
       series: [null, null, 20],
       since: null,
       sinceAtLeast: false,
+      asOf: null,
     });
   });
 
@@ -536,8 +541,12 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest?.sinceAtLeast).toBe(false);
-    expect(trends.fullest?.since).toBe("2026-08-10T02:00:00.000Z");
+    expect(fullestFilesystem(trends.filesystem, null)?.sinceAtLeast).toBe(
+      false,
+    );
+    expect(fullestFilesystem(trends.filesystem, null)?.since).toBe(
+      "2026-08-10T02:00:00.000Z",
+    );
   });
 
   // The onset walk, and the case that made it lie. A gap at the start of the
@@ -567,8 +576,10 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest?.sinceAtLeast).toBe(true);
-    expect(trends.fullest?.since).toBe("2026-08-10T00:00:00Z");
+    expect(fullestFilesystem(trends.filesystem, null)?.sinceAtLeast).toBe(true);
+    expect(fullestFilesystem(trends.filesystem, null)?.since).toBe(
+      "2026-08-10T00:00:00Z",
+    );
   });
 
   // The other half of the same rule: a reading BELOW the threshold inside the
@@ -593,11 +604,15 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(trends.fullest?.sinceAtLeast).toBe(false);
+    expect(fullestFilesystem(trends.filesystem, null)?.sinceAtLeast).toBe(
+      false,
+    );
     // Milliseconds because this one is computed from the grid rather than
     // echoed from the window string -- both parse to the same instant, which
     // is all `relative()` reads.
-    expect(trends.fullest?.since).toBe("2026-08-10T01:00:00.000Z");
+    expect(fullestFilesystem(trends.filesystem, null)?.since).toBe(
+      "2026-08-10T01:00:00.000Z",
+    );
   });
 
   // Never a zero-percent meter: an empty green bar says the disks were
@@ -605,7 +620,8 @@ describe("fetchHostTrends", () => {
   it("reports no fullest filesystem rather than an empty meter", async () => {
     serve({ filesystem: response({ columns: [], series: [] }) });
 
-    expect((await fetchHostTrends(1, "1h")).fullest).toBeNull();
+    const trends = await fetchHostTrends(1, "1h");
+    expect(fullestFilesystem(trends.filesystem, null)).toBeNull();
   });
 
   // One family the hub cannot answer costs that column, not the row: a
@@ -622,7 +638,7 @@ describe("fetchHostTrends", () => {
     const trends = await fetchHostTrends(1, "1h");
 
     expect(trends.cpu).toHaveLength(1);
-    expect(trends.fullest).toBeNull();
+    expect(fullestFilesystem(trends.filesystem, null)).toBeNull();
   });
 
   // The hub rejects relative times outright, and the fan-out is the one
@@ -806,7 +822,7 @@ describe("buildRows", () => {
       tx: [20],
       rxPeak: [],
       txPeak: [],
-      fullest: { mount: "/", pct: 50, others: 0 },
+      filesystem: null,
       disk: [],
       oomKills: 0,
       dropped: 0,
@@ -817,7 +833,11 @@ describe("buildRows", () => {
 
     expect(rows[0]!.cpu).toEqual(trends.cpu);
     expect(rows[0]!.memUsed).toEqual(trends.memUsed);
-    expect(rows[0]!.fullest).toEqual(trends.fullest);
+    // fullest is REDUCED here rather than carried: it needs the host as well
+    // as the trends. With neither a response nor a stored gauge there is no
+    // fullest mount, which is the same null the cell has always drawn nothing
+    // for.
+    expect(rows[0]!.fullest).toBeNull();
   });
 });
 
@@ -983,5 +1003,179 @@ describe("trafficSeries", () => {
     const [rawRx] = trafficDetailSeries(trafficSeries(raw(), 3));
     expect(rawRx?.values).toEqual([10, 20, 30]);
     expect(rawRx?.band).toBeUndefined();
+  });
+});
+
+// The disk gauge, which is the one reading on a fleet row that survives its
+// host being switched off. The bug: a NAS powered down overnight lost its
+// whole Disk cell -- chart included -- while CPU and Memory beside it kept
+// their history and dropped only their now-bar. See fullestFilesystem.
+describe("the disk reading on a host that is not permanently up", () => {
+  const at = "2026-08-10T02:00:00Z";
+
+  const gauge = (
+    over: Partial<Filesystem> & { label: string },
+  ): Filesystem => ({
+    id: 1,
+    mountpoint: `/mnt/${over.label}`,
+    device_id: null,
+    ts: at,
+    total: 100,
+    used: 90,
+    free: 10,
+    ...over,
+  });
+
+  const hostFixture: Host = {
+    id: 1,
+    hostname: "nas",
+    last_seen: at,
+    cpu_total: null,
+    mem_used: null,
+    mem_total: null,
+    uptime_s: null,
+    net_rx_bytes: null,
+    net_tx_bytes: null,
+    threads: null,
+  };
+
+  const trendsWith = (filesystem: MetricsResponse | null): HostTrends => ({
+    window: null,
+    cpu: [],
+    mem: [],
+    reporting: [],
+    memUsed: [],
+    rx: [],
+    tx: [],
+    rxPeak: [],
+    txPeak: [],
+    filesystem,
+    disk: [],
+    oomKills: null,
+    dropped: null,
+    postFailures: null,
+  });
+
+  // A window with nothing in it at all: the host has been off longer than the
+  // fleet's 24 h range is wide, so there is no bucket to read and no line to
+  // draw. The reading survives anyway, because it does not come from here.
+  it("reads a host that has been off longer than the window is wide", () => {
+    const empty = response({
+      family: "filesystem",
+      key_columns: ["filesystem"],
+      columns: ["used", "free"],
+      series: [],
+    });
+
+    const got = fullestFilesystem(empty, [
+      gauge({ label: "pool", used: 87, free: 13 }),
+    ]);
+
+    expect(got?.mount).toBe("/mnt/pool");
+    expect(got?.pct).toBe(87);
+    expect(got?.free).toBe(13);
+    expect(got?.asOf).toBe(at);
+    // No line, and empty rather than a row of zeroes: the cell draws the
+    // reading alone, the way it draws a chart alone for a mount with history
+    // and no gauge.
+    expect(got?.series).toEqual([]);
+  });
+
+  // The commoner case, and the one the reader sees: off since this morning,
+  // so the window holds the shape up to the moment it stopped. The line keeps
+  // its gap and the bar keeps the last figure.
+  it("draws the window's line under a reading the window no longer reaches", () => {
+    const partial = response({
+      family: "filesystem",
+      key_columns: ["filesystem", "mountpoint"],
+      columns: ["used", "free"],
+      series: [
+        {
+          key: { filesystem: "pool", mountpoint: "/mnt/pool" },
+          points: [[t0, 80, 20]],
+        },
+      ],
+    });
+
+    const got = fullestFilesystem(partial, [
+      gauge({ label: "pool", used: 87, free: 13 }),
+    ]);
+
+    expect(got?.pct).toBe(87);
+    // The line is the window's, gaps and all -- the two buckets after the
+    // host went quiet stay null rather than repeating the last reading.
+    expect(got?.series).toEqual([80, null, null]);
+  });
+
+  // The regression the gauge must not reintroduce. Reading the last non-null
+  // value off the window would let a mount frozen at 94 % win the cell on a
+  // host whose real disks are at 20 %. The gauge avoids it by DATE instead,
+  // in currentFilesystems -- so by the time a retired mount reaches here it
+  // is already gone.
+  it("names the live mount, not the retired one", () => {
+    const both = response({
+      family: "filesystem",
+      key_columns: ["filesystem", "mountpoint"],
+      columns: ["used", "free"],
+      series: [
+        {
+          key: { filesystem: "ark", mountpoint: "/mnt/ark" },
+          points: [[tNow, 20, 80]],
+        },
+      ],
+    });
+
+    const rows = buildRows(
+      [
+        {
+          ...hostFixture,
+          filesystems: [
+            gauge({ label: "ark", used: 20, free: 80 }),
+            // Frozen a day before the host last spoke: retired.
+            gauge({
+              label: "old",
+              ts: "2026-08-09T02:00:00Z",
+              used: 94,
+              free: 6,
+            }),
+          ],
+        },
+      ],
+      new Map([[1, trendsWith(both)]]),
+    );
+
+    expect(rows[0]!.fullest?.mount).toBe("/mnt/ark");
+    expect(rows[0]!.fullest?.pct).toBe(20);
+    // The "+N" counts the mounts this host HAS, never one it has merely once
+    // had.
+    expect(rows[0]!.fullest?.others).toBe(0);
+  });
+
+  // A hub that does not send the gauge yet falls back to the window, exactly
+  // as before -- including the last-slot rule, which is what kept a retired
+  // series from winning back when no date was available.
+  it("falls back to the window when the host carries no gauge", () => {
+    const rows = buildRows(
+      [hostFixture],
+      new Map([
+        [
+          1,
+          trendsWith(
+            response({
+              family: "filesystem",
+              key_columns: ["filesystem"],
+              columns: ["used", "free"],
+              series: [
+                { key: { filesystem: "root" }, points: [[tNow, 60, 40]] },
+              ],
+            }),
+          ),
+        ],
+      ]),
+    );
+
+    expect(rows[0]!.fullest?.mount).toBe("root");
+    expect(rows[0]!.fullest?.pct).toBe(60);
+    expect(rows[0]!.fullest?.asOf).toBeNull();
   });
 });

@@ -221,6 +221,7 @@ export function needsAttention(input: {
     }
   }
 
+  const reporting = isReporting(input.host, now);
   for (const fs of input.filesystems) {
     // df's Use% and the bytes behind it, judged by the same rule the fleet
     // page uses -- see diskState in fleet/conditions.ts. total is not the
@@ -230,7 +231,12 @@ export function needsAttention(input: {
     if (disk === null || disk.severity === null) continue;
     out.push({
       severity: disk.severity,
-      what: `${fs.label} is ${percent(disk.pct)} full — ${bytes(fs.free)} free`,
+      // "was", not "is", once the host has stopped reporting. The severity is
+      // unchanged and deliberately so -- a 96 % disk on a machine that is off
+      // is still a 96 % disk, and it is worth fixing before the machine comes
+      // back. Only the tense moves, because the figure is now the last one
+      // anybody measured rather than a statement about this minute.
+      what: `${fs.label} ${reporting ? "is" : "was"} ${percent(disk.pct)} full — ${bytes(fs.free)} free`,
     });
   }
 
@@ -499,7 +505,11 @@ export function Overview({
   onOpenChart,
   now,
 }: OverviewProps) {
-  const filesystems = filesystemRows(filesystemMetrics);
+  // The host, not just the metrics: filesystemRows prefers the hub's stored
+  // per-mount gauge, which is what keeps this card readable on a machine that
+  // is switched off. See its docstring, and the fleet's fullestFilesystem for
+  // the same choice made for the same reason one page up.
+  const filesystems = filesystemRows(filesystemMetrics, host);
   const attention = needsAttention({
     host,
     agentMetrics,
@@ -836,7 +846,7 @@ export function Overview({
         <div className="mo" style={{ gridColumn: "span 12" }}>
           <Panel label="Disk" title="Disk">
             {filesystems.length === 0 ? (
-              <p className="note">No filesystem samples in this window.</p>
+              <p className="note">No filesystems have been read yet.</p>
             ) : (
               <div className="fs-list">
                 {filesystems.map((fs) => (

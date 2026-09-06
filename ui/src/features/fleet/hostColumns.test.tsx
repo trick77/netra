@@ -733,6 +733,72 @@ describe("hostColumns", () => {
       expect(container.querySelector(".segbar")).not.toBeInTheDocument();
       expect(container.textContent).toBe("");
     });
+
+    // The bug. A host switched off overnight used to hit the branch above --
+    // its reading came off the last slot of the answered window, so there was
+    // no fullest mount and the whole cell went, chart included. CPU and
+    // Memory beside it keep their history and drop only their now-bar; disk
+    // fullness does not change while a machine is off, so the reading stays
+    // too. It comes from the hub's stored gauge now, which no window can
+    // empty.
+    it("keeps the bar, the figure and the line on a host that is switched off", () => {
+      const diskCol = hostColumns("24h").find((c) => c.header === "Disk")!;
+      const { container } = render(
+        <>
+          {diskCol.cell(
+            makeRow({
+              // Three days quiet.
+              last_seen: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+              fullest: {
+                mount: "/srv/pool",
+                pct: 87,
+                free: 1_400_000_000_000,
+                others: 0,
+                // The shape up to the moment it stopped, gap kept.
+                series: [80, 84, null, null],
+                asOf: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+              },
+            }),
+          )}
+        </>,
+      );
+
+      // Full weight, exactly as a live host draws it: the figure is still
+      // true, and the row's status chip and its "stopped reporting" condition
+      // are what say how long ago it was measured.
+      expect(container.querySelector(".segbar")).toBeInTheDocument();
+      expect(container.querySelector(".metric-now .v")?.textContent).toBe(
+        "87%",
+      );
+      expect(container.textContent).toContain("/srv/pool");
+      expect(container.querySelector("svg.spark")).toBeInTheDocument();
+    });
+
+    // The weekend case: off for longer than the 24 h window is wide, so there
+    // is no history to draw. The reading survives regardless, because it does
+    // not come from the window.
+    it("draws the reading with no line when the window holds nothing", () => {
+      const diskCol = hostColumns("24h").find((c) => c.header === "Disk")!;
+      const { container } = render(
+        <>
+          {diskCol.cell(
+            makeRow({
+              last_seen: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+              fullest: {
+                mount: "/srv/pool",
+                pct: 87,
+                free: 1_400_000_000_000,
+                others: 0,
+                series: [],
+              },
+            }),
+          )}
+        </>,
+      );
+
+      expect(container.querySelector(".segbar")).toBeInTheDocument();
+      expect(container.querySelector("svg.spark")).not.toBeInTheDocument();
+    });
   });
 
   describe("traffic cell", () => {

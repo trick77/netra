@@ -1,6 +1,7 @@
 import {
   getFleetMetrics,
   getMetrics,
+  type Filesystem,
   type Host,
   type MetricsResponse,
 } from "../../lib/api";
@@ -25,6 +26,7 @@ import {
 // lib/bands.ts builds the host page's stacked Docker panels from it now, and
 // lib importing from features would be the wrong direction.
 import { containerTrends, type ContainerTrend } from "../../lib/containers";
+import { currentFilesystems } from "../../lib/host";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { SPARK_WIDTH } from "../../ui/charts/size";
@@ -123,7 +125,17 @@ export interface HostTrends {
    */
   rxPeak: (number | null)[];
   txPeak: (number | null)[];
-  fullest: HostRow["fullest"];
+  /**
+   * The filesystem family's own response, carried rather than reduced.
+   *
+   * `fullest` used to be computed here, and cannot be any more: picking the
+   * mount now needs the HOST -- its stored filesystem gauge, and its
+   * last_seen to tell a retired mount from a machine that is simply off. Only
+   * buildRows has both, so the reduction happens there and this hands it the
+   * material. The by-window bands below are unaffected: they are a fact about
+   * the response alone.
+   */
+  filesystem: MetricsResponse | null;
   /** Every filesystem's usage over the window, as df's Use%, one band each.
    * The meter beside it says how full the worst one is now; these say which
    * of them is moving and how fast -- the difference between "watch it" and
@@ -290,63 +302,145 @@ function crossedAt(
   };
 }
 
-function fullestFilesystem(res: MetricsResponse | null): HostRow["fullest"] {
-  if (res === null || res.series.length === 0) return null;
-  if (!carriesColumn(res, "used") || !carriesColumn(res, "free")) return null;
+/**
+ * The mount this host's Disk cell names, and everything the cell prints.
+ *
+ * Two sources, and which one answers is the whole shape of this function.
+ *
+ * `filesystems` is the GAUGE -- filesystem_current, one stored row per mount,
+ * no window and no rollup lag (0013_filesystem_current.sql). It answers
+ * whenever the hub sends it, because it is the only one that survives the host
+ * being switched off: the fleet page is pinned to 24 h, so a NAS off since
+ * Friday has no bucket in the answered window at all, and the cell used to go
+ * blank on a machine whose disks had not moved a byte.
+ *
+ * `res` is the SERIES, and stays the fallback for a hub that does not send the
+ * gauge yet. It reads the window's last slot through latestValue -- last slot
+ * INCLUDING a trailing null, not last non-null -- and that was never about
+ * freshness for its own sake. This picks the MAXIMUM across a host's mounts,
+ * so a retired series is not merely a stale row here, it is one that WINS: a
+ * filesystem frozen at 94 % the moment its agent was upgraded outranks every
+ * live disk on the host, and the cell then reports 94 % for a host whose real
+ * disks are at 20 %, naming a mount nobody is measuring.
+ *
+ * That defence has not been dropped, it has MOVED. currentFilesystems in
+ * lib/host.ts makes the same call on better evidence -- the mount's own
+ * reading timestamp against the host's last_seen -- which separates the
+ * retired mount from the host that is simply off, a distinction the window's
+ * last slot cannot draw because both of them look like a null.
+ *
+ * Either way `measured` counts the filesystems this host HAS, so the "+N"
+ * beside the meter never counts one it has merely once had.
+ */
+export function fullestFilesystem(
+  res: MetricsResponse | null,
+  filesystems: Filesystem[] | null,
+): HostRow["fullest"] {
+  const usable =
+    res !== null &&
+    res.series.length > 0 &&
+    carriesColumn(res, "used") &&
+    carriesColumn(res, "free");
+  if (filesystems === null && !usable) return null;
 
   let best: {
     mount: string;
     pct: number;
     free: number;
     severity: DiskSeverity;
+    asOf: string | null;
     index: number;
   } | null = null;
   let measured = 0;
-  for (let i = 0; i < res.series.length; i++) {
-    // latestValue, not lastNumber: this picks the MAXIMUM across a host's
-    // filesystems, so a retired series is not merely a stale row here, it is
-    // one that WINS. A filesystem frozen at 94 % the moment its agent was
-    // upgraded outranks every live disk on the host, and the fleet cell then
-    // reports 94 % for a host whose real disks are at 20 % -- naming a mount
-    // that is not being measured any more.
-    //
-    // It also keeps `measured` honest: the "+N" beside the meter counts the
-    // filesystems this host HAS, not every one it has ever had.
-    const used = latestValue(griddedValues(res, i, "used"));
-    const free = latestValue(griddedValues(res, i, "free"));
-    if (used === null || free === null || used + free === 0) continue;
+
+  const consider = (
+    mount: string,
+    used: number | null,
+    free: number | null,
+    asOf: string | null,
+    index: number,
+  ) => {
+    if (used === null || free === null || used + free === 0) return;
     measured++;
     const state = diskState(used, free)!;
-    const mount = fsName(res.series[i]!.key, "?");
     const candidate = {
       mount,
       pct: state.pct,
       free,
       severity: state.severity,
-      index: i,
+      asOf,
+      index,
     };
     if (best === null || outranks(candidate, best)) best = candidate;
+  };
+
+  if (filesystems !== null) {
+    for (const fs of filesystems) {
+      const mount = fsName(
+        { filesystem: fs.label, mountpoint: fs.mountpoint ?? "" },
+        "?",
+      );
+      // By NAME, unlike the series branch below. These rows are the hub's
+      // stored gauge and the response is a separate answer over a window, so
+      // the index that wins here means nothing against res.series -- and a
+      // mount the window never reached is simply absent from it, which is the
+      // offline case and draws no line at all.
+      const index =
+        res === null
+          ? -1
+          : res.series.findIndex((one) => fsName(one.key, "?") === mount);
+      consider(mount, fs.used ?? null, fs.free ?? null, fs.ts ?? null, index);
+    }
+  } else {
+    const answered = res!;
+    for (let i = 0; i < answered.series.length; i++) {
+      consider(
+        fsName(answered.series[i]!.key, "?"),
+        latestValue(griddedValues(answered, i, "used")),
+        latestValue(griddedValues(answered, i, "free")),
+        null,
+        i,
+      );
+    }
   }
+
   if (best === null) return null;
+  const winner: {
+    mount: string;
+    pct: number;
+    free: number;
+    severity: DiskSeverity;
+    asOf: string | null;
+    index: number;
+  } = best;
+  const drawable = res !== null && winner.index >= 0;
   // The onset is computed for the winner only, and only when it is notable at
-  // all: every other mount on the host is a walk nobody reads.
+  // all: every other mount on the host is a walk nobody reads. A winner with
+  // no series in this window -- the host that has been off longer than the
+  // window is wide -- has no onset to find either.
   const crossed =
-    best.severity !== null
-      ? crossedAt(res, best.index)
+    winner.severity !== null && drawable
+      ? crossedAt(res!, winner.index)
       : { since: null, atLeast: false };
   return {
-    mount: best.mount,
-    pct: best.pct,
-    free: best.free,
+    mount: winner.mount,
+    pct: winner.pct,
+    free: winner.free,
     others: Math.max(0, measured - 1),
     // The winner's OWN Use% over the window, taken by the index that won --
     // not matched back out of filesystemBands by name, which drops the mounts
     // that reported nothing and so does not index alike. This is the series
     // the Disk cell draws, and it has to be the same mount the percentage
     // beside it names or the cell says two things about two disks.
-    series: fsUsePercent(res, best.index),
+    //
+    // Empty when the window holds nothing for this mount, which is the host
+    // that has been off all day. The cell then draws the reading with no line
+    // above it -- the mirror of a mount that is being measured and has no
+    // stored gauge yet, which draws a line with no reading.
+    series: drawable ? fsUsePercent(res!, winner.index) : [],
     since: crossed.since,
     sinceAtLeast: crossed.atLeast,
+    asOf: winner.asOf,
   };
 }
 
@@ -728,7 +822,7 @@ export function hostTrendsFrom(
     tx: traffic.tx,
     rxPeak: traffic.rxPeak,
     txPeak: traffic.txPeak,
-    fullest: fullestFilesystem(filesystem),
+    filesystem,
     disk: filesystemBands(filesystem),
     oomKills: counterIncrease(griddedValues(host, 0, "oom_kill_total")),
     // The last value the agent reported, gaps and all -- see HostTrends.dropped
@@ -884,10 +978,19 @@ export function buildRows(
       tx: trend?.tx ?? [],
       rxPeak: trend?.rxPeak ?? [],
       txPeak: trend?.txPeak ?? [],
+      // Reduced HERE rather than in hostTrendsFrom, because picking the mount
+      // needs the host: currentFilesystems reads its stored gauge and dates
+      // each reading against its own last_seen, which is what separates a
+      // mount the agent has stopped naming from a machine that is simply
+      // switched off. The second of those keeps its Disk cell now.
+      //
       // null, not a zero percentage: a host whose filesystems have not been
       // read has no fullest one, and an empty green meter would say its
       // disks are empty.
-      fullest: trend?.fullest ?? null,
+      fullest: fullestFilesystem(
+        trend?.filesystem ?? null,
+        currentFilesystems(host),
+      ),
       disk: trend?.disk ?? [],
       // null, not 0: a host whose trends failed to load has not told us
       // there were no kills, and a fleet page must not report silence it
