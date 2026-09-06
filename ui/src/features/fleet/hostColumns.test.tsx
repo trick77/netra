@@ -469,7 +469,7 @@ describe("hostColumns", () => {
       // top edge is the trend, not a bare stroke. The axis is fitted, so the
       // fill closes at the bottom of the box and tracks the line rather than
       // flooding the cell.
-      // data-area, not fill="var(--s6)": a point dot carries that fill too,
+      // data-area, not fill="var(--ink-2)": a point dot carries that fill too,
       // so the colour selector would pass on a bare line with a marker on it.
       expect(container.querySelector("path[data-area]")).toBeInTheDocument();
       expect(
@@ -607,9 +607,10 @@ describe("hostColumns", () => {
         2,
       ).paths;
       expect(line.getAttribute("d")).toBe(expected[0]);
-      // Filled to the baseline, in the one hue cpu_total draws in everywhere.
+      // Filled to the baseline, in the row's one trend colour -- the three
+      // saturation cells are neutral so the severity bars own colour in a row.
       const area = container.querySelector("path[data-area]")!;
-      expect(area.getAttribute("fill")).toBe("var(--cpu-1)");
+      expect(area.getAttribute("fill")).toBe("var(--ink-2)");
     });
 
     // The cell drew a shape and no number: "how loaded is that host" was
@@ -908,7 +909,7 @@ describe("hostColumns", () => {
       expect(area.getAttribute("d")).toBe(
         areaPath(expected, SPARK_WIDTH, SPARK_STRIP_HEIGHT, 2)[0],
       );
-      expect(area.getAttribute("fill")).toBe("var(--mem-used)");
+      expect(area.getAttribute("fill")).toBe("var(--ink-2)");
     });
 
     it("renders nothing at all, not a chart with an invented ceiling, when mem_total is unknown", () => {
