@@ -63,8 +63,15 @@ CREATE TABLE IF NOT EXISTS filesystem_current (
 -- this ships is not blank until it next reports -- which for the machine that
 -- prompted this table may be days.
 --
--- Bounded by the 7-day retention on filesystem_samples and served by
--- filesystem_samples_fs_id_host_id_idx. DO NOTHING rather than DO UPDATE
+-- Bounded by the 7-day retention on filesystem_samples, and no index serves
+-- it: filesystem_samples_fs_id_host_id_idx is (fs_id, host_id) with no ts,
+-- so this is a scan and a sort of that whole retention window inside the
+-- migration's transaction. Accepted rather than indexed around, because an
+-- index built for one statement that never runs again costs the same scan
+-- and then stays on a hypertable forever. It is a one-off at upgrade, on a
+-- table whose per-host row count is mounts x scrapes.
+--
+-- DO NOTHING rather than DO UPDATE
 -- because a live agent's write is newer than anything here: on a re-run this
 -- statement must never overwrite the gauge with history.
 INSERT INTO filesystem_current (host_id, fs_id, ts, total, used, free)

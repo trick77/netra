@@ -1130,10 +1130,11 @@ describe("filesystemRows, from the host's stored gauge", () => {
     ]);
   });
 
-  // The rule the window's last slot used to enforce, now enforced by date:
-  // a mount the agent has stopped naming while the host keeps talking is
-  // retired, and must not sit on the page beside the one that replaced it.
-  it("drops a mount the host has stopped reporting", () => {
+  // The rule the window's last slot used to enforce, now enforced by date: a
+  // mount the agent has stopped naming while the host keeps talking is
+  // retired, and its 94 % must not sit on the page as a fact about now beside
+  // the mount that replaced it.
+  it("stops a retired mount claiming a reading", () => {
     const rows = filesystemRows(null, {
       last_seen: at,
       filesystems: [
@@ -1142,7 +1143,8 @@ describe("filesystemRows, from the host's stored gauge", () => {
       ],
     });
 
-    expect(rows.map((r) => r.label)).toEqual(["/mnt/ark"]);
+    expect(rows[0]).toMatchObject({ label: "/mnt/ark", used: 20 });
+    expect(rows[1]).toMatchObject({ label: "/mnt/old", used: null });
   });
 
   // A hub that does not send the gauge yet keeps the window-derived reading,
@@ -1150,5 +1152,53 @@ describe("filesystemRows, from the host's stored gauge", () => {
   it("falls back to the window when the host carries no gauge", () => {
     const [row] = filesystemRows(fsMetrics, { last_seen: at });
     expect(row).toMatchObject({ label: "/", used: 40_000_000_000, asOf: null });
+  });
+});
+
+// A retired mount keeps its ROW and loses its NUMBERS, which is the rule the
+// window branch has always followed. Listing only the measured ones made a
+// live host whose filesystem collector stalls -- a statfs that blocks, a
+// mount namespace that changed -- lose every row three minutes later, and
+// the card then said "No filesystems have been read yet" about disks it had
+// read minutes before.
+describe("filesystemRows keeps a retired mount listed", () => {
+  const at = "2026-08-10T02:00:00Z";
+  const mount = (label: string, ts: string, used: number) => ({
+    id: 1,
+    label,
+    mountpoint: `/mnt/${label}`,
+    device_id: null,
+    ts,
+    total: 100,
+    used,
+    free: 100 - used,
+  });
+
+  it("lists it with no reading rather than dropping it", () => {
+    const rows = filesystemRows(null, {
+      last_seen: at,
+      filesystems: [
+        mount("ark", at, 20),
+        mount("old", "2026-08-09T02:00:00Z", 94),
+      ],
+    });
+
+    expect(rows.map((r) => r.label)).toEqual(["/mnt/ark", "/mnt/old"]);
+    // The numbers are what stop claiming to be current. diskState skips a
+    // null, so the retired mount raises nothing and colours nothing -- the
+    // same outcome the window branch reaches through current().
+    expect(rows[1]).toMatchObject({ total: null, used: null, free: null });
+  });
+
+  // The empty state must mean "never reported", not "not measured this
+  // minute": every mount stale at once is a stalled collector, not a host
+  // without disks.
+  it("does not empty the card when every mount goes stale at once", () => {
+    const rows = filesystemRows(null, {
+      last_seen: at,
+      filesystems: [mount("old", "2026-08-09T02:00:00Z", 94)],
+    });
+
+    expect(rows).toHaveLength(1);
   });
 });
