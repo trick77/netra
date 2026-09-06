@@ -53,7 +53,8 @@ export function NowReading({
 }) {
   const severity = given ?? severityFromPercent(pct);
   // No class at all when there is nothing to say: a calm figure is plain
-  // ink, not green. The bar keeps st-ok, because its lit cells need a colour.
+  // ink, not green. The bar keeps the st-ok class, but that class draws its
+  // lit cells in the same neutral ink -- only warn and above wear a hue.
   const figureClass = severity === "ok" ? "v" : `v ${SEVERITY_CLASS[severity]}`;
   return (
     <div className="metric-now-wrap">
