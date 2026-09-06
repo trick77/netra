@@ -370,15 +370,42 @@ const DISK_CELL_STYLE = {
   paddingTop: SPARK_STRIP_HEIGHT + METRIC_CELL_GAP,
 };
 
-// One line and a light fill, in --cpu-1: the colour a one-core host's
-// cpu_total already drew in, and the colour every host's cpu_total is drawn
-// in on the host page. The row used to draw the per-core stack here -- up to
-// 32 bands in four cycling blues, a hairline between each, inside 45px. What
-// a fleet glance reads off this cell is whether the top edge moved, and the
-// stripes buried exactly that under a texture whose hues meant "core index".
-// The per-core stack is still what the ENLARGED view opens on: it has the
-// room, and "which core is pinned" is the question someone opens it to ask.
-const CPU_COLOR = "var(--cpu-1)";
+/**
+ * The colour every saturation silhouette in a fleet row is drawn in.
+ *
+ * ONE neutral, not three hues. CPU was --cpu-1, memory --mem-used and disk
+ * --s6, and down a row those hues answered "which column is this" -- which
+ * the column header answers already. The reading that actually varies row to
+ * row is the severity underneath, and the segment bar and its figure carry it
+ * in the status palette. Two colour systems in one row meant an amber memory
+ * silhouette sat beside an amber warn bar meaning something else entirely.
+ *
+ * --ink-2 rather than a dimmed series colour: it is the row's own secondary
+ * ink, so the silhouette reads as part of the row's text block and the only
+ * saturated thing left in the cell is the bar. The fill weight is unchanged
+ * (AREA_FILL_OPACITY) -- the shade is still what says how high the line sits
+ * in its box.
+ *
+ * NOT the traffic cell. That one keeps --in-1/--out-1, because it is the one
+ * cell with no bar under it -- a rate has no ceiling to fill one against --
+ * so its two hues are what separate in from out above and below the midline,
+ * and dropping them fuses the halves into one grey mass.
+ *
+ * Cell only. The ENLARGED views and the host page keep the full palette: a
+ * dialog is a chart someone opened to read, not a mark scanned down a column,
+ * and its stacks name their bands by colour.
+ */
+const ROW_TREND_COLOR = "var(--ink-2)";
+
+// One line and a light fill. The row used to draw the per-core stack here --
+// up to 32 bands in four cycling blues, a hairline between each, inside 45px.
+// What a fleet glance reads off this cell is whether the top edge moved, and
+// the stripes buried exactly that under a texture whose hues meant "core
+// index". The per-core stack is still what the ENLARGED view opens on: it has
+// the room, and "which core is pinned" is the question someone opens it to
+// ask.
+//
+// The colour is ROW_TREND_COLOR, not --cpu-1; see the note there.
 
 function CpuCell({ row, range }: { row: HostRow; range: Range }) {
   // The right-hand edge of the silhouette the cell draws, which is also what
@@ -443,7 +470,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
         // steady at 40% as a flat line along the bottom of the box.
         min={0}
         max={CPU_PERCENT_MAX}
-        color={CPU_COLOR}
+        color={ROW_TREND_COLOR}
         // Shorter than the traffic chart beside it: the now-bar and its unit
         // line sit underneath and take the rest of the row's height.
         height={SPARK_STRIP_HEIGHT}
@@ -490,7 +517,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
 // ceiling.
 const MEM_HEADROOM = 1.08;
 
-// The row draws mem_used as one silhouette, in --mem-used, and NOT the
+// The row draws mem_used as one silhouette, in ROW_TREND_COLOR, and NOT the
 // five-band stack any more. The stack's top edge is "not free" -- used,
 // shared, ARC, buffers, cached -- which on a Linux host that caches
 // everything is nearly the whole box, so every row was a near-full brick
@@ -500,7 +527,6 @@ const MEM_HEADROOM = 1.08;
 // beside it are one reading. The stack is still what the ENLARGED view opens
 // on, with the bands named -- "which part of memory is growing" is the
 // question someone opens it to ask.
-const MEM_COLOR = "var(--mem-used)";
 
 function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
   if (row.mem_total === null) {
@@ -565,7 +591,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
         // avoid.
         min={0}
         max={total * MEM_HEADROOM}
-        color={MEM_COLOR}
+        color={ROW_TREND_COLOR}
         height={SPARK_STRIP_HEIGHT}
         // No legend, like every other cell in this row. A previous review
         // argued the five memory bands carry identity a legend should name and
@@ -713,12 +739,13 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 // the row's assembler already did the picking -- and it picks by severity
 // before percentage, so this is not always the highest number on the host.
 // See outranks() in hostTrends.ts.
-// The disk line's own hue: the colour the host page's busiest-filesystem tile
-// already defaults to, and neither --cpu-1 nor --mem-used, so the three
-// silhouettes in a row are three readings and not one gradient. Not the
-// severity colour: the bar and the figure under it already carry that, and a
-// line that changed hue at 80% would say "it started filling here", which is
-// not what the threshold means.
+// The hue the ENLARGED disk chart and its range rail open in: the colour the
+// host page's busiest-filesystem tile already defaults to, so a mount looks
+// the same wherever it is drawn large. The cell itself is ROW_TREND_COLOR
+// like the two silhouettes beside it -- the dialog is where a filesystem gets
+// a colour of its own. Not the severity colour in either place: the bar and
+// the figure under it already carry that, and a line that changed hue at 80%
+// would say "it started filling here", which is not what the threshold means.
 const DISK_COLOR = "var(--s6)";
 
 // The narrowest window the disk line is ever drawn against, in percentage
@@ -858,7 +885,7 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
           values={values}
           min={axis.min}
           max={axis.max}
-          color={DISK_COLOR}
+          color={ROW_TREND_COLOR}
           height={SPARK_STRIP_HEIGHT}
           label={`Disk trend for ${mount}, ${rangeLabel(range)}`}
         />
