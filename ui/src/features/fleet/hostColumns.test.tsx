@@ -101,17 +101,18 @@ describe("hostColumns", () => {
   // now, on its bar, and whether it is filling up, on the line above it. The
   // second column drew every mount on a fixed axis, which is a texture rather
   // than a reading; all of them together are one click away on the host page.
-  // Traffic sits second, right of the host it belongs to, rather than fourth
-  // behind two other charts: it is the reading this list is most often
-  // scanned for.
-  it("yields Host, Traffic, CPU, Memory, Disk in that exact order", () => {
+  // Traffic sits last. It is the one column with no bar and no threshold, so
+  // it ran through the middle of the three that have both; the gauges are the
+  // block a reader scans for what needs acting on, and they now run
+  // uninterrupted.
+  it("yields Host, CPU, Memory, Disk, Traffic in that exact order", () => {
     const cols = hostColumns("1h");
     expect(cols.map((c) => c.header)).toEqual([
       "Host",
-      "Traffic",
       "CPU",
       "Memory",
       "Disk",
+      "Traffic",
     ]);
   });
 
@@ -337,6 +338,25 @@ describe("hostColumns", () => {
   });
 
   describe("host cell", () => {
+    // The name is plain ink on every row and the status hue on the rows that
+    // have stopped answering -- accent on all of them marked nothing, since
+    // every row has a name. Critical only: a sporadic host IS answering, and
+    // its amber badge is where that belongs.
+    it("marks a hostname that is no longer reporting, and no other", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Host")!;
+      const name = (row: HostRow): Element => {
+        const { container } = render(<>{col.cell(row)}</>);
+        return container.querySelector(".host-cell-name")!;
+      };
+
+      expect(
+        name(makeRow({ last_seen: "2020-01-01T00:00:00Z" })).className,
+      ).toContain("gone");
+      expect(
+        name(makeRow({ last_seen: new Date().toISOString() })).className,
+      ).not.toContain("gone");
+    });
+
     // The provider and the place, both reported by the host's own agent. The
     // fleet used to print the site NAME here -- an internal label out of a
     // table somebody fills in by hand, which told a reader scanning the list

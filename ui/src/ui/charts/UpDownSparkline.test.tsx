@@ -1,10 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { mirrorPaths } from "./geometry";
-import { SPARK_WIDTH } from "./size";
+import { AREA_FILL_OPACITY, LINE_STROKE_WIDTH, SPARK_WIDTH } from "./size";
 import { UpDownSparkline } from "./UpDownSparkline";
 
 describe("UpDownSparkline", () => {
+  // The fleet row draws this beside three cells that are a line over a light
+  // fill. Left to a mirror's own answer it fills SOLID at that density -- the
+  // outline would be finer than the column spacing -- so the one cell with no
+  // bar under it was a block of grey in a row of silhouettes. `weight` is how
+  // the caller says "the row's mark, not the mirror's default".
+  it("draws a mirror at the row's weight when asked for one", () => {
+    const up = [1, 2, 3, 4, 3];
+    const down = [1, 1, 1, 1, 1];
+    const solid = render(<UpDownSparkline up={up} down={down} max={4} />);
+    const line = render(
+      <UpDownSparkline up={up} down={down} max={4} weight="line" />,
+    );
+    const half = (c: HTMLElement): Element => c.querySelector("path[data-up]")!;
+
+    expect(half(solid.container).getAttribute("fill-opacity")).not.toBe(
+      String(AREA_FILL_OPACITY),
+    );
+    expect(half(line.container).getAttribute("fill-opacity")).toBe(
+      String(AREA_FILL_OPACITY),
+    );
+    expect(half(line.container).getAttribute("stroke-width")).toBe(
+      String(LINE_STROKE_WIDTH),
+    );
+  });
+
   // 5 points, gap at index 2: two surviving runs of length >= 2 each
   // ([0,1] and [3,4]) -- mirrorPaths() drops any run of length 1, so a gap
   // too close to an edge would leave only one run and not actually prove
