@@ -5,11 +5,19 @@ import { SEGMENT_CELLS, SegmentBar, litCells } from "./SegmentBar";
 describe("litCells", () => {
   it("lights the nearest tenth", () => {
     expect(litCells(0)).toBe(0);
-    expect(litCells(4)).toBe(0);
     expect(litCells(5)).toBe(1);
     expect(litCells(68)).toBe(7);
     expect(litCells(91)).toBe(9);
     expect(litCells(100)).toBe(10);
+  });
+
+  // Anything the host is actually doing gets a cell. A row that rounds down
+  // to nothing is indistinguishable from a host reporting nothing at all,
+  // so only a true zero leaves the row dark.
+  it("lights one cell for a value that rounds to none", () => {
+    expect(litCells(0.4)).toBe(1);
+    expect(litCells(3)).toBe(1);
+    expect(litCells(4)).toBe(1);
   });
 
   // A percentage past the ceiling -- a meter fed a value over its max --
