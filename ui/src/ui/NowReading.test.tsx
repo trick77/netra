@@ -13,9 +13,10 @@ describe("NowReading", () => {
   });
 
   // The figure and the bar are one reading, so the figure takes the bar's
-  // severity -- and no class at all when there is nothing to say, so a calm
-  // row is plain ink rather than green.
-  it("colours the figure with the bar's severity, and only then", () => {
+  // severity -- every severity, ok included. Plain ink at ok said the same
+  // thing an empty cell says, and this table draws no data, a host that
+  // stopped reporting and nothing collected all in grey already.
+  it("colours the figure with the bar's severity, ok included", () => {
     const at = (pct: number) =>
       render(<NowReading pct={pct} />).container.querySelector(
         ".metric-now .v",

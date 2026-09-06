@@ -1138,8 +1138,8 @@ tbody tr:hover .host-cell-name {
    nothing collected. A quiet row and an empty one looked alike. Lit green
    says netra measured this and it is fine, which is a reading; an unlit
    track says nothing was measured. The whole cell agrees: silhouette, bar
-   and figure take one severity colour (see ROW_TREND_COLOR in
-   trendColor() in hostColumns.tsx). */
+   and figure take one severity colour (see trendColor() in
+   hostColumns.tsx). */
 .segbar.st-ok i.on {
   background: var(--st-ok);
 }
@@ -2907,8 +2907,13 @@ details.sysfold > .body {
    Written as `.mrow .val.st-*` rather than leaning on the generic .st-* text
    rules further up: those are a single class and lose to `.mrow .val`, which
    is two -- which is exactly how a red bar came to sit beside a --muted
-   number at every percentage. `ok` gets no rule, deliberately: a calm figure
-   is plain ink, not green (see NowReading and StatTile, which both say so). */
+   number at every percentage. `ok` gets no rule here, and that is now a
+   difference from the fleet row rather than a rule the app shares: the row's
+   figure is green at ok because its silhouette and bar are (see trendColor()
+   in hostColumns.tsx), and a meter row on the host page has neither beside
+   it -- one number in a stack of labelled numbers, where a green figure is
+   the only mark and reads as a status badge on a fact the reader already
+   asked for. StatTile takes the same view. */
 .mrow .val.st-warn {
   color: var(--st-warn-text);
 }
