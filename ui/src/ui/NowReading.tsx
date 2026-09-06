@@ -52,10 +52,13 @@ export function NowReading({
   severity?: FillSeverity;
 }) {
   const severity = given ?? severityFromPercent(pct);
-  // No class at all when there is nothing to say: a calm figure is plain
-  // ink, not green. The bar keeps the st-ok class, but that class draws its
-  // lit cells in the same neutral ink -- only warn and above wear a hue.
-  const figureClass = severity === "ok" ? "v" : `v ${SEVERITY_CLASS[severity]}`;
+  // Every severity wears its colour, ok included. A quiet row was drawn in
+  // plain ink on the argument that green carries no decision, and what it
+  // actually cost was the reading itself: grey is also what an unknown, an
+  // idle and a stopped host look like, so "this host is fine" and "there is
+  // nothing here" were the same mark. Green is a statement -- netra looked,
+  // and it is healthy -- and it is the state the eye skips past anyway.
+  const figureClass = `v ${SEVERITY_CLASS[severity]}`;
   return (
     <div className="metric-now-wrap">
       <div className="metric-now">

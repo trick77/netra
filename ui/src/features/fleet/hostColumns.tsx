@@ -11,6 +11,7 @@ import { NowReading } from "../../ui/NowReading";
 import { OsIcon } from "../../ui/OsIcon";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { Sparkline } from "../../ui/charts/Sparkline";
+import { SEVERITY_COLOR, severityFromPercent } from "../../ui/Meter";
 import {
   DETAIL_WIDTH,
   SPARK_STRIP_HEIGHT,
@@ -396,48 +397,50 @@ const DISK_CELL_STYLE = {
 };
 
 /**
- * The colour every saturation silhouette in a fleet row is drawn in.
+ * The colour a fleet row's saturation silhouette is drawn in: the severity of
+ * what it is reading NOW, from the same 70/85/95 the bar under it uses.
  *
- * ONE neutral, not three hues. CPU was --cpu-1, memory --mem-used and disk
- * --s6, and down a row those hues answered "which column is this" -- which
- * the column header answers already. The reading that actually varies row to
- * row is the severity underneath, and the segment bar and its figure carry it
- * in the status palette. Two colour systems in one row meant an amber memory
- * silhouette sat beside an amber warn bar meaning something else entirely.
+ * ONE colour system in the row, and it means severity. The three cells were
+ * --cpu-1, --mem-used and --s6, hues that answered "which column is this" --
+ * which the header answers already -- and an amber memory silhouette sat
+ * beside an amber warn bar meaning something else entirely. They were then
+ * all --ink-2, which fixed the collision by giving the silhouette nothing to
+ * say at all: grey is also how this table draws a host with no data and one
+ * that stopped reporting, so a healthy row and an empty one read alike.
  *
- * --ink-2 rather than a dimmed series colour: it is the row's own secondary
- * ink, so the silhouette reads as part of the row's text block and the only
- * saturated thing left in the cell is the bar. The fill weight is unchanged
- * (AREA_FILL_OPACITY) -- the shade is still what says how high the line sits
- * in its box.
+ * So the whole cell agrees instead. Silhouette, bar and figure take one
+ * severity, and a row that is fine is green in all three -- a statement that
+ * netra measured this, not the absence of one. Green is also the colour the
+ * eye skips, which is what a fleet list wants: the rows that went amber are
+ * the only ones that break the field.
  *
- * The traffic cell too, though as a PAIR rather than as this one value. It
- * is the cell with no bar under it, so --in-1/--out-1 were the last saturated
- * marks in the row and a green-and-purple chart beside three grey silhouettes
- * read as the column that mattered. The hue is not what separates in from out
- * there, but a lightness step still has to: see ROW_TREND_COLOR_2.
+ * The CURRENT severity over the whole shape, not a line that changes hue at
+ * the point it crossed 70: the cell is a reading of now with its history
+ * behind it, and a two-tone line would say "it started filling here", which
+ * is not what a threshold means. The fill weight is unchanged
+ * (AREA_FILL_OPACITY) -- the shade still says how high the line sits.
+ *
+ * NEUTRAL_TREND_COLOR when there is no current value to judge: a host that
+ * stopped reporting still draws the history it has, and colouring that by a
+ * severity nobody measured would be an invention. The now-bar is already
+ * absent in that case, so the cell reads as history without a reading.
+ *
+ * NOT the traffic cell. A rate has no ceiling, so there is no percentage, no
+ * threshold and no severity to draw -- it keeps --in-1/--out-1, where hue
+ * separates in from out across the midline.
  *
  * Cell only. The ENLARGED views and the host page keep the full palette: a
  * dialog is a chart someone opened to read, not a mark scanned down a column,
  * and its stacks name their bands by colour.
  */
-const ROW_TREND_COLOR = "var(--ink-2)";
+function trendColor(pct: number | null): string {
+  return pct === null
+    ? NEUTRAL_TREND_COLOR
+    : SEVERITY_COLOR[severityFromPercent(pct)];
+}
 
-/**
- * The second neutral, for the lower half of the traffic mirror only.
- *
- * ROW_TREND_COLOR on both halves is what the note above asks for and it is
- * one step too far: mirrored around a midline, two identical greys meet as a
- * single silhouette, and telling in from out is the one comparison that cell
- * exists to make. A step down the same neutral ramp keeps the row grey and
- * gives the halves back their edge -- see --ink-3 in index.css for why it is
- * its own token and not --muted or --muted-2.
- *
- * Which half gets which is not arbitrary: in is the lighter of the two, the
- * same way it is the brighter --in-1 against --out-1 in the enlarged chart,
- * so opening the cell does not swap the halves' weight.
- */
-const ROW_TREND_COLOR_2 = "var(--ink-3)";
+/** The row's own secondary ink, for a silhouette with no reading to judge. */
+const NEUTRAL_TREND_COLOR = "var(--ink-2)";
 
 // One line and a light fill. The row used to draw the per-core stack here --
 // up to 32 bands in four cycling blues, a hairline between each, inside 45px.
@@ -447,7 +450,7 @@ const ROW_TREND_COLOR_2 = "var(--ink-3)";
 // the room, and "which core is pinned" is the question someone opens it to
 // ask.
 //
-// The colour is ROW_TREND_COLOR, not --cpu-1; see the note there.
+// The colour is the cell's own severity, not --cpu-1; see trendColor().
 
 function CpuCell({ row, range }: { row: HostRow; range: Range }) {
   // The right-hand edge of the silhouette the cell draws, which is also what
@@ -512,7 +515,7 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
         // steady at 40% as a flat line along the bottom of the box.
         min={0}
         max={CPU_PERCENT_MAX}
-        color={ROW_TREND_COLOR}
+        color={trendColor(busy)}
         // Shorter than the traffic chart beside it: the now-bar and its unit
         // line sit underneath and take the rest of the row's height.
         height={SPARK_STRIP_HEIGHT}
@@ -559,7 +562,8 @@ function CpuCell({ row, range }: { row: HostRow; range: Range }) {
 // ceiling.
 const MEM_HEADROOM = 1.08;
 
-// The row draws mem_used as one silhouette, in ROW_TREND_COLOR, and NOT the
+// The row draws mem_used as one silhouette, in its own severity colour (see
+// trendColor), and NOT the
 // five-band stack any more. The stack's top edge is "not free" -- used,
 // shared, ARC, buffers, cached -- which on a Linux host that caches
 // everything is nearly the whole box, so every row was a near-full brick
@@ -633,7 +637,7 @@ function MemoryCell({ row, range }: { row: HostRow; range: Range }) {
         // avoid.
         min={0}
         max={total * MEM_HEADROOM}
-        color={ROW_TREND_COLOR}
+        color={trendColor(used === null ? null : (used / total) * 100)}
         height={SPARK_STRIP_HEIGHT}
         // No legend, like every other cell in this row. A previous review
         // argued the five memory bands carry identity a legend should name and
@@ -735,16 +739,17 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         ranges={RAIL_RANGES}
         fetchSeries={fetchSeries}
       >
-        {/* Two steps of the row's own neutral, not two hues: --in-1/--out-1
-            were the last saturated marks in a row of grey silhouettes. The
-            hues stay on the ENLARGED chart above, where a legend names the
-            bands; here the midline and the lightness step are what separate
-            in from out. See ROW_TREND_COLOR_2. */}
+        {/* --in-1/--out-1, the sparkline's own defaults and the hues the
+            enlarged chart names its bands in. The cell was briefly two steps
+            of grey, to stop it being the one saturated mark in a row of
+            neutral silhouettes; the three beside it carry severity colour
+            again, so the odd one out now is the cell with no severity to
+            carry. Hue is what separates in from out here -- a rate has no
+            ceiling, so there is no threshold for it to mean instead, and
+            mirrored around a midline two greys fuse into one shape. */}
         <UpDownSparkline
           up={row.rx}
           down={row.tx}
-          upColor={ROW_TREND_COLOR}
-          downColor={ROW_TREND_COLOR_2}
           // The row's weight, not a mirror's default mass. At cell density a
           // mirror fills solid, which put a block of grey in a row of
           // silhouettes drawn as a line over a light fill -- the same colour
@@ -795,11 +800,10 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
 // See outranks() in hostTrends.ts.
 // The hue the ENLARGED disk chart and its range rail open in: the colour the
 // host page's busiest-filesystem tile already defaults to, so a mount looks
-// the same wherever it is drawn large. The cell itself is ROW_TREND_COLOR
-// like the two silhouettes beside it -- the dialog is where a filesystem gets
-// a colour of its own. Not the severity colour in either place: the bar and
-// the figure under it already carry that, and a line that changed hue at 80%
-// would say "it started filling here", which is not what the threshold means.
+// the same wherever it is drawn large. The cell itself takes the mount's
+// severity like the two silhouettes beside it (see trendColor) -- the dialog
+// is where a filesystem gets a colour of its own, because there it is a chart
+// someone opened to read rather than a mark scanned down a column.
 const DISK_COLOR = "var(--s6)";
 
 // The narrowest window the disk line is ever drawn against, in percentage
@@ -949,7 +953,7 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
           values={values}
           min={axis.min}
           max={axis.max}
-          color={ROW_TREND_COLOR}
+          color={trendColor(pct)}
           height={SPARK_STRIP_HEIGHT}
           label={`Disk trend for ${mount}, ${rangeLabel(range)}`}
         />

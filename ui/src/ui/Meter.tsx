@@ -27,7 +27,16 @@ export const DEFAULT_THRESHOLDS: MeterThresholds = {
 // concrete type to narrow to when they hand a severity to `Meter`.
 export type FillSeverity = Exclude<Severity, "neutral">;
 
-const STATUS_VAR: Record<FillSeverity, string> = {
+/**
+ * A severity as the colour it is FILLED with: the status palette's mark hue,
+ * never its --st-*-text step.
+ *
+ * Exported for a caller that paints an SVG and so cannot reach the colour
+ * through SEVERITY_CLASS and a stylesheet -- the fleet row hands this
+ * straight to Sparkline's `color`. One map, so a silhouette and the bar
+ * under it cannot draw the same severity in two different greens.
+ */
+export const SEVERITY_COLOR: Record<FillSeverity, string> = {
   ok: "var(--st-ok)",
   warning: "var(--st-warn)",
   serious: "var(--st-serious)",
@@ -170,7 +179,9 @@ export function Meter({
   const resolvedSeverity: FillSeverity =
     severity ?? severityFromPercent(rawPct, thresholds);
   const fillColor =
-    series !== undefined ? SERIES_VAR[series] : STATUS_VAR[resolvedSeverity];
+    series !== undefined
+      ? SERIES_VAR[series]
+      : SEVERITY_COLOR[resolvedSeverity];
   const valueText = formatValue
     ? formatValue(value, max, rawPct)
     : percent(rawPct);

@@ -69,7 +69,7 @@ describe("Meter", () => {
     expect(screen.getByText("12/8 (150%)")).toBeInTheDocument();
   });
 
-  // STATUS_VAR and SERIES_VAR never contain --accent by construction, so a
+  // SEVERITY_COLOR and SERIES_VAR never contain --accent by construction, so a
   // test that renders one configuration and asserts the absence of the
   // word "accent" cannot fail on any reachable input. This whitelists
   // every severity and every series slot instead, so it fails the moment
