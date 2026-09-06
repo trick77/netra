@@ -23,10 +23,15 @@ import {
  */
 export const SEGMENT_CELLS = 10;
 
-/** Cells lit for a percentage: the nearest tenth, clamped to the row. */
+/**
+ * Cells lit for a percentage: the nearest tenth, clamped to the row, with a
+ * floor of one cell for anything above zero. Rounding alone leaves a host at
+ * 3% with an unlit row, which reads as "no reading" rather than "barely
+ * busy" -- an empty row is reserved for a value that really is zero.
+ */
 export function litCells(pct: number): number {
-  if (!Number.isFinite(pct)) return 0;
-  return Math.max(0, Math.min(SEGMENT_CELLS, Math.round(pct / 10)));
+  if (!Number.isFinite(pct) || pct <= 0) return 0;
+  return Math.max(1, Math.min(SEGMENT_CELLS, Math.round(pct / 10)));
 }
 
 export function SegmentBar({
