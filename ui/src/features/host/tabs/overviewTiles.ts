@@ -21,7 +21,7 @@ import {
   cardinal,
   percent,
 } from "../../../lib/format";
-import { isReporting } from "../../../lib/host";
+import { currentFilesystems, isReporting } from "../../../lib/host";
 import { severityFromPercent, type FillSeverity } from "../../../ui/Meter";
 // The fleet's disk thresholds, imported rather than restated: the tile, the
 // Disk meters below it, the attention band above it and the fleet row a
@@ -85,6 +85,13 @@ export interface FilesystemRow {
   total: number | null;
   used: number | null;
   free: number | null;
+  /** When the reading was taken, from the hub's stored gauge; null when it
+   * came off the metrics window instead.
+   *
+   * Optional, unlike the three above: filesystemRows always sets it, and the
+   * hand-built row literals across the tests predate it. Same convention
+   * lib/api.ts uses for a field added after its fixtures. */
+  asOf?: string | null;
 }
 
 /**
@@ -100,24 +107,53 @@ export interface FilesystemRow {
  *
  * Here rather than in Overview.tsx because current() is here now and this is
  * its other caller. Overview imports it back for the Disk card.
+ *
+ * Two sources, the same pair fullestFilesystem in the fleet's hostTrends.ts
+ * chooses between, and for the same reason -- the fleet row and this card must
+ * not disagree about one machine's disks. The host's stored gauge answers when
+ * it is there, so a machine that is switched off shows the last figures
+ * anybody measured instead of a column of dashes; the window is the fallback
+ * for a hub that does not send the gauge yet.
  */
-export function filesystemRows(res: MetricsResponse | null): FilesystemRow[] {
+export function filesystemRows(
+  res: MetricsResponse | null,
+  host?: Pick<HostDetail, "last_seen" | "filesystems"> | null,
+): FilesystemRow[] {
+  const stored = host == null ? null : currentFilesystems(host);
+  if (stored !== null) {
+    return stored.map((fs) => ({
+      // Same spelling as the fleet row and as the branch below: one disk must
+      // not be called /mnt/ark on one page and ark on the other.
+      label: fsName(
+        { filesystem: fs.label, mountpoint: fs.mountpoint ?? "" },
+        ABSENT,
+      ),
+      total: fs.total ?? null,
+      used: fs.used ?? null,
+      free: fs.free ?? null,
+      asOf: fs.ts ?? null,
+    }));
+  }
   // `== null`, not `=== null`: these props are optional, so a caller that
   // simply does not have this family yet passes undefined -- and reading
   // .series off it threw during render, with no error boundary under it.
   if (res == null) return [];
   return res.series.map((series, index) => ({
-    // The mount point, same as the fleet row: one disk must not be called
-    // /mnt/ark on one page and ark on the other.
     label: fsName(series.key, ABSENT),
     // current(), not latest(): a filesystem that has stopped reporting has no
     // fullness right now, and saying otherwise is what kept a retired row on
     // the page beside the one that replaced it. The card renders the absent
     // marker for the nulls and diskWarnings already skips them, so the disk
     // stays listed -- it is only its numbers that stop claiming to be current.
+    //
+    // The rule still holds on this branch, and the branch above does not
+    // escape it: currentFilesystems drops a mount whose stored reading has
+    // fallen behind its host's own last_seen, which is the retired row said
+    // with evidence rather than inferred from a null.
     total: current(res, "total", index),
     used: current(res, "used", index),
     free: current(res, "free", index),
+    asOf: null,
   }));
 }
 

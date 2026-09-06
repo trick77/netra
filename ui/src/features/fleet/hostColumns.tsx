@@ -128,8 +128,23 @@ export type HostRow = Host & {
     /** THIS mount's Use% over the window, one value per bucket, gaps kept as
      * null -- the line the Disk cell draws over its bar. Optional for the
      * same reason `since` is: a row without it draws the bar alone, exactly
-     * as the cell did before the line existed. */
+     * as the cell did before the line existed.
+     *
+     * Empty on a host that has been off longer than the window is wide: the
+     * reading survives that, because it comes from the stored gauge rather
+     * than from the window, and the cell draws it with no line above it. */
     series?: (number | null)[];
+    /**
+     * When this reading was taken, from the hub's stored gauge. Null when the
+     * figure came from the window instead.
+     *
+     * The cell does not print it: at 150px the mount and what is left are
+     * what a reader needs, and the row already says how long the host has
+     * been quiet in its status chip and in its "stopped reporting" condition.
+     * It is here so the disk condition can say "was 96 % full" rather than
+     * "is", and so a test can tell the two sources apart.
+     */
+    asOf?: string | null;
   } | null;
   /**
    * The host's physical drives with their latest SMART attributes, for the
@@ -801,6 +816,16 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
     // meter anyway would put an empty green bar where "never collected"
     // belongs, which reads as a fact rather than as an absence -- and a dash
     // is the same mistake one step quieter. See MemoryCell.
+    //
+    // This used to catch a second, much commoner case that did not belong in
+    // it: a host that had simply STOPPED reporting. The reading came off the
+    // last slot of the answered window, so a machine switched off for the day
+    // had no fullest mount either, and the whole cell went with it -- chart
+    // included, while CPU and Memory beside it kept drawing their history and
+    // dropped only their now-bar. Disk fullness does not change while a
+    // machine is off, so there was a true reading to show and the row showed
+    // nothing. fullestFilesystem reads the hub's stored gauge now and the case
+    // no longer reaches here.
     return null;
   }
   const { mount, pct, others, free, series } = row.fullest;

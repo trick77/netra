@@ -1,4 +1,4 @@
-import type { Host } from "./api";
+import type { Filesystem, Host } from "./api";
 import { ABSENT } from "./format";
 
 /**
@@ -26,6 +26,66 @@ const SCRAPE_INTERVAL_S = 60;
 // all of that say nothing needed attention. One definition of down, in the
 // one place that states why it is three scrapes.
 export const STALE_THRESHOLD_MS = 3 * SCRAPE_INTERVAL_S * 1000;
+
+/**
+ * How far a mount's last reading may trail its host's own last_seen before
+ * netra stops calling it one of the host's filesystems.
+ *
+ * The same three scrapes the host-down rule takes, and deliberately tight
+ * rather than generous, because the filesystem collector runs on EVERY scrape
+ * tick rather than on an interval of its own (cmd/netra-agent/main.go) -- so
+ * a mount's ts and its host's last_seen come out of the same batch. That is
+ * the difference from DRIVE_STALE_MS in features/host/smart.ts, which is a
+ * week wide because AGENT_SMART_INTERVAL is the operator's to set.
+ */
+export const MOUNT_STALE_MS = STALE_THRESHOLD_MS;
+
+/**
+ * The mounts a host still has, from the gauge the hub stores per filesystem.
+ *
+ * The rule is one comparison, and it is against the HOST'S OWN last_seen
+ * rather than the wall clock -- the discipline driveIsCurrent already follows,
+ * and the reason is the same: an agent with a skewed clock would otherwise
+ * lose its whole inventory to a fact about its NTP config. So:
+ *
+ *   host silent    -> every mount's ts sits at last_seen -> all kept, and
+ *                     their readings are the last anybody measured, which for
+ *                     a disk is still true. This is the case the gauge exists
+ *                     for: a NAS switched off overnight keeps its Disk cell.
+ *   host reporting,
+ *   one mount old  -> that mount is RETIRED. Dropped.
+ *
+ * The second half is not hypothetical. `filesystems` is never pruned, so a
+ * mount keeps its row forever after the agent stops naming it -- and the
+ * fleet's Disk cell picks the fullest mount on the host, so a retired one
+ * frozen at 94 % does not merely linger, it WINS, and the row then names a
+ * disk nobody is measuring. That is what latestValue in lib/metrics.ts was
+ * defending against by reading the window's last slot; this replaces that
+ * defence rather than removing it, because the window's last slot is also
+ * what went blank when the host went away.
+ *
+ * A mount with no ts is kept, on driveIsCurrent's reasoning: with no
+ * reference point the honest answer is the reading netra holds.
+ *
+ * null when the host carries no `filesystems` at all -- an older hub, or one
+ * of the hand-built literals in the tests. Callers fall back to their
+ * window-derived reading on null, and treat [] as "asked, and there are none".
+ */
+export function currentFilesystems(
+  host: Pick<Host, "last_seen" | "filesystems">,
+): Filesystem[] | null {
+  const rows = host.filesystems;
+  if (rows === undefined) return null;
+  const seen =
+    host.last_seen === null ? NaN : new Date(host.last_seen).getTime();
+  if (Number.isNaN(seen)) return rows.slice();
+  return rows.filter((fs) => {
+    if (fs.ts === null || fs.ts === undefined) return true;
+    const at = new Date(fs.ts).getTime();
+    if (Number.isNaN(at)) return true;
+    return seen - at <= MOUNT_STALE_MS;
+  });
+}
 
 /**
  * How many recorded state changes in the last hour make a systemd unit

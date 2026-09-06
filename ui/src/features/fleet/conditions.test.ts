@@ -295,6 +295,22 @@ describe("hostConditions", () => {
     // last_seen IS the onset here -- the one condition with a real one.
     expect(rows[0]?.since).toBe("2026-08-12T11:00:00Z");
     expect(rows).toHaveLength(2);
+    // The disk still counts, and at the same severity: a 97 % disk on a
+    // machine that is off is still a 97 % disk, and it is worth clearing
+    // before the machine comes back. Only the tense moves -- the figure is
+    // the last one anybody measured, not a statement about this minute.
+    expect(rows[1]?.kind).toBe("disk");
+    expect(rows[1]?.severity).toBe("critical");
+    expect(String(rows[1]?.what)).toMatch(/\/ was 97% full/);
+  });
+
+  // The other side of the same rule: a host that is talking says "is".
+  it("keeps the present tense for a host that is still reporting", () => {
+    const rows = hostConditions(
+      makeRow({ fullest: { mount: "/", pct: 97, others: 0 } }),
+      NOW,
+    );
+    expect(String(rows[0]?.what)).toMatch(/\/ is 97% full/);
   });
 
   it("distinguishes a host that has never reported from one that stopped", () => {
