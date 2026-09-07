@@ -353,9 +353,12 @@ func (s *Store) dropUnchangedStates(ctx context.Context, hostID int32, rows []*n
 // latestEventStates reads the most recent stored state for each (type,
 // subject) the batch touches.
 //
-// Rides events_host_type_subject_ts_idx (0017), so this is one index hit per
-// pair rather than a walk of the host's event history, however much of it has
-// accumulated.
+// Rides events_host_type_subject_ts_idx (0017) on its (host_id, type) prefix,
+// and takes the index's ts ordering rather than sorting: it reads one type's
+// rows for one host instead of the host's whole event history. The COALESCE
+// below is not sargable, so the subject is a filter and not a seek -- which is
+// the right trade, since the guard is what keeps a type's rows per host down
+// to the transitions in the first place.
 //
 // Subjects are compared through COALESCE on both sides: a host-wide event
 // stores NULL, and an equality join would silently match nothing for it --
