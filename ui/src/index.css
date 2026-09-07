@@ -3503,6 +3503,19 @@ svg.spark {
 .tablewrap svg.spark {
   max-width: none;
 }
+/* But the enlarge dialog is not a table cell. It renders in place rather than
+   in a portal, so .cd-back and the figure inside it are .tablewrap
+   descendants and the rule above unclamps the 1000px detail chart too. At a
+   1024px viewport (iPad Pro portrait) .cd-fig computes to 750 while the svg
+   still draws at 1000: it runs over the range rail beside it and past the
+   dialog's own edge, and .cd grows a horizontal scrollbar. The reasoning
+   above does not apply here -- the dialog is a fixed overlay with no row to
+   hold open, and the rail is the thing that must not be covered -- so inside
+   it charts scale to fit again. */
+.tablewrap .cd svg.spark {
+  max-width: 100%;
+  height: auto;
+}
 /* Axis labels, drawn INSIDE the chart image as SVG text rather than beside
    it as HTML. That is what keeps a label glued to the gridline it names at
    any rendered size: both scale with the viewBox. The HTML gutter this
