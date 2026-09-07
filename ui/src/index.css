@@ -1303,9 +1303,17 @@ tbody tr:hover .host-cell-name {
   white-space: nowrap;
 }
 /* The direction, before the rate it belongs to. Quieter than the number: it
-   is the same word on every row and the figure is what changes. */
+   is the same word on every row and the figure is what changes.
+
+   Set to the unit line's type -- --text-micro at --muted-2, the same pair
+   .metric-now-wrap .u uses for "of 8 cores" -- because that is the same job.
+   Both name what the figure beside them is measured against and neither is
+   ever the reading. Inheriting .traffic-rates' --text-label drew these words
+   a step larger than every other label in the row, so the one part of the
+   cell that never changes was also the loudest. */
 .rate i {
   font-style: normal;
+  font-size: var(--text-micro);
   color: var(--muted-2);
   margin-right: 3px;
 }
