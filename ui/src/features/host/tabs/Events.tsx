@@ -16,11 +16,18 @@ const STATED_SEVERITIES: Severity[] = ["warning", "critical"];
 /**
  * The severity the emitting collector stated, or null.
  *
- * The events table has no severity column at all -- it stores type,
- * subject and the collector's own detail JSON. Deriving a severity from
- * the type would mean this UI inventing a judgement no collector made, so
- * the only accepted source is an explicit `severity` in detail, and only
- * when it is one of the two the design admits.
+ * Deriving a severity from the TYPE would mean this UI inventing a judgement
+ * no collector made, so the only accepted source is one the producer stated,
+ * and only when it is one of the two the design admits.
+ *
+ * Read from `detail.severity` rather than from the top-level `severity` the
+ * API now also returns, and that is not an oversight yet: the column
+ * (0015_event_severity.sql) defaults to `info`, so a row that stated nothing
+ * is indistinguishable there from one that said "this is routine" -- and this
+ * tab's whole rule is that an unstated severity gets no mark at all rather
+ * than a quiet one. Moving to the field wants `severity` to become nullable,
+ * or this tab to accept `info` as a stated value; either is a change to make
+ * deliberately, not by swapping the accessor.
  */
 export function eventSeverity(event: Event): Severity | null {
   const detail = event.detail;

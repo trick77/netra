@@ -25,7 +25,6 @@ import type {
   Unit,
 } from "../../../lib/api";
 import { driveAlarms } from "../smart";
-import { counterIncrease, griddedValues } from "../../../lib/metrics";
 import {
   ABSENT,
   binaryBytes,
@@ -128,7 +127,6 @@ const SEVERITY_CLASS: Record<Severity, string> = {
  */
 export function needsAttention(input: {
   host: HostDetail;
-  agentMetrics: MetricsResponse | null;
   hostMetrics?: MetricsResponse | null;
   filesystems: FilesystemRow[];
   units: Unit[] | null;
@@ -373,7 +371,6 @@ export interface OverviewProps {
   host: HostDetail;
   hostMetrics: MetricsResponse | null;
   filesystemMetrics: MetricsResponse | null;
-  agentMetrics: MetricsResponse | null;
   /** family=net for this host, one series per interface. */
   netMetrics?: MetricsResponse | null;
   units: Unit[] | null;
@@ -450,7 +447,6 @@ export function Overview({
   hostMetrics,
   netMetrics,
   filesystemMetrics,
-  agentMetrics,
   units,
   drives = null,
   range,
@@ -465,7 +461,6 @@ export function Overview({
   const filesystems = filesystemRows(filesystemMetrics, host);
   const attention = needsAttention({
     host,
-    agentMetrics,
     hostMetrics,
     filesystems,
     units,

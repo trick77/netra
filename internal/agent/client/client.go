@@ -914,6 +914,12 @@ func (c *Client) Flush(ctx context.Context) error {
 			// to count. These are scrapes no retry will ever deliver, which is
 			// the difference between this and an ordinary outage.
 			c.outage.discarded += uint64(c.ring.Depth())
+			// Latched, not reported. An event written here would go into the
+			// next scrape and be dumped by the next 401 -- exactly what the
+			// inventory comment below says about a set emitted at this point.
+			// The run stays open and the first flush that succeeds, once the
+			// token is fixed, reports it with the whole discarded total.
+			c.noteReason(reasonTokenRejected)
 			c.ring.AckThrough(math.MaxUint64)
 			// Everything just discarded may have included an inventory set the
 			// hub never saw. Noted rather than acted on now: the token is still
@@ -923,12 +929,6 @@ func (c *Client) Flush(ctx context.Context) error {
 			c.inventoryLost = true
 			c.replaying = false
 			c.retryAfter = 0
-			// Reported HERE rather than on a recovery that may never come: a
-			// revoked token is not a hub that will be back shortly, and the
-			// buffer has just been discarded. Waiting for a successful flush
-			// would mean the one incident an operator must act on is the one
-			// incident that never gets reported.
-			c.endOutage("token-rejected")
 			return err
 		}
 
@@ -953,6 +953,11 @@ func (c *Client) Flush(ctx context.Context) error {
 				"err", err, "scrapes", len(samples), "rows", rows,
 				"buffer_depth", c.ring.Depth())
 			c.outage.discarded += uint64(len(samples))
+			// Not "unreachable": this hub answered, and refused the body. A
+			// host permanently over maxBatchRows hits this on every flush, and
+			// reporting it as an outage would put "Hub unreachable for 0 s" in
+			// the log of a hub that was never away.
+			c.noteReason(reasonRejectedBody)
 			c.ring.AckThrough(highest)
 			// The dropped batch may have carried an inventory set the hub never
 			// saw, exactly as an overflow drop would. Latched, not acted on
@@ -1018,7 +1023,7 @@ func (c *Client) Flush(ctx context.Context) error {
 	// c.replaying's clear below: the outage ended when delivery resumed, not
 	// when the backlog finished draining, and a 7200-sample replay would
 	// otherwise date the recovery several batches late.
-	c.endOutage("unreachable")
+	c.endOutage()
 	// Cleared only now, beside the ring's own ack, so a POST that failed or
 	// was refused re-sends it. collect and Flush run on the same goroutine, so
 	// nothing can have replaced it since it went out.

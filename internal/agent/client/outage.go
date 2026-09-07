@@ -39,6 +39,42 @@ type outage struct {
 	// those -- they leave through AckThrough, which is the same call a success
 	// makes.
 	discarded uint64
+	// reason is what this run should be CALLED, once it ends.
+	//
+	// Empty means an ordinary unreachable hub, which is the common case and
+	// needs nothing recorded. The two paths that give up on samples set it,
+	// because "the hub was away and came back" is a different sentence with a
+	// different fix -- and because a run that says "unreachable" about a hub
+	// that answered every request is simply wrong.
+	reason string
+}
+
+// Reasons a run of failed deliveries ends. Ordered by how much they need a
+// human: a rejected token outranks a refused body, which outranks a hub that
+// was merely away, and a run reports the worst thing that happened in it.
+const (
+	reasonUnreachable   = "unreachable"
+	reasonRejectedBody  = "rejected"
+	reasonTokenRejected = "token-rejected"
+)
+
+func reasonRank(reason string) int {
+	switch reason {
+	case reasonTokenRejected:
+		return 2
+	case reasonRejectedBody:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// noteReason records why this run is worse than an ordinary outage, keeping
+// whichever reason needs a human most.
+func (c *Client) noteReason(reason string) {
+	if reasonRank(reason) > reasonRank(c.outage.reason) {
+		c.outage.reason = reason
+	}
 }
 
 func (c *Client) clock() time.Time {
@@ -78,15 +114,33 @@ type hubDetail struct {
 
 // endOutage emits one event for the run that just finished and clears it.
 //
+// Called ONLY from the successful-flush path, and that is not a convenience --
+// it is the only place an event can be written and survive. A 401 dumps the
+// whole ring (AckThrough(math.MaxUint64)), so an event emitted at that moment
+// goes into the next scrape and is thrown away by the next 401 five minutes
+// later. The comment in that branch already said as much about inventory: "a
+// set emitted here would go straight into the ring and be dumped again on the
+// next attempt". The same is true of this event, which is why the reason is
+// LATCHED there and reported here.
+//
+// The cost is honest and small: a token that is never fixed produces no event,
+// because the agent has no way to deliver one. That host goes silent, and the
+// hub says so on its own.
+//
 // Severity is decided by outcome, not by the fact of failing: an outage the
 // ring absorbed entirely is `info`, because the samples arrived and the only
 // thing that happened is that they arrived late. One that cost samples is
 // `critical`, because that is a hole in this host's history that nothing can
 // fill. Since the events page opens at warning and above, a hub restart during
 // a deploy sits quietly below the fold and a lossy outage does not.
-func (c *Client) endOutage(reason string) {
+func (c *Client) endOutage() {
 	if c.outage.startedAt.IsZero() {
 		return
+	}
+
+	reason := c.outage.reason
+	if reason == "" {
+		reason = reasonUnreachable
 	}
 
 	lost := c.ring.Dropped() - c.outage.droppedAtStart + c.outage.discarded
@@ -94,10 +148,10 @@ func (c *Client) endOutage(reason string) {
 	if lost > 0 {
 		severity = "critical"
 	}
-	// A revoked token is never merely late: the buffer was dumped and an
+	// A rejected token is never merely late: the buffer was dumped and an
 	// operator has to act, so it says so even when the arithmetic above found
 	// nothing to count.
-	if reason == "token-rejected" && severity == "info" {
+	if reason == reasonTokenRejected && severity == "info" {
 		severity = "critical"
 	}
 

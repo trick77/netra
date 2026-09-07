@@ -18,24 +18,21 @@
 -- of the wire, the API and the UI. An enum would also make adding a fourth
 -- level an ALTER TYPE, which is exactly the migration nobody wants to be
 -- holding a lock for.
+-- The CHECK rides the ADD COLUMN rather than arriving as a separate NOT VALID
+-- constraint validated afterwards. That split is the right pattern for adding
+-- a constraint to a populated column, because VALIDATE takes only SHARE UPDATE
+-- EXCLUSIVE where a plain ADD CONSTRAINT holds ACCESS EXCLUSIVE through the
+-- scan -- and it buys exactly nothing here. applyMigration runs a whole file
+-- in ONE transaction unless it carries the no-transaction marker
+-- (internal/hub/store/migrate.go), so the ACCESS EXCLUSIVE lock this ALTER
+-- takes is held until commit regardless, through both backfills and the index
+-- below. Splitting it would have looked careful while changing nothing.
+--
+-- Nothing needs scanning in any case: every existing row takes the DEFAULT,
+-- which satisfies the constraint by construction.
 ALTER TABLE events
-    ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT 'info';
-
--- Added separately and NOT VALID first, then validated: a plain ADD CONSTRAINT
--- takes an ACCESS EXCLUSIVE lock and scans the whole table under it. This
--- table is small today, but the pattern is the one that stays correct when it
--- is not, and validation takes only a SHARE UPDATE EXCLUSIVE lock.
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint WHERE conname = 'events_severity_check'
-    ) THEN
-        ALTER TABLE events
-            ADD CONSTRAINT events_severity_check
-            CHECK (severity IN ('info', 'warning', 'critical')) NOT VALID;
-        ALTER TABLE events VALIDATE CONSTRAINT events_severity_check;
-    END IF;
-END $$;
+    ADD COLUMN IF NOT EXISTS severity TEXT NOT NULL DEFAULT 'info'
+        CHECK (severity IN ('info', 'warning', 'critical'));
 
 -- Backfill, in the same migration as the column.
 --

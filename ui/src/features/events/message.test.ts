@@ -467,4 +467,22 @@ describe("hub delivery events", () => {
       messageOf(hub({ reason: "token-rejected", failures: 1, lost: 1 })),
     ).toBe("Hub rejected this agent's token — 1 scrape discarded");
   });
+
+  // A hub that answered and refused the BODY was never away, so it must not be
+  // described as an outage. A host permanently over maxBatchRows earns this on
+  // every flush, and "Hub unreachable for 0 s" would be a hub that answered
+  // every request appearing in the log as one that did not.
+  it("does not call a refused batch an outage", () => {
+    expect(
+      messageOf(
+        hub({ severity: "critical", reason: "rejected", failures: 1, lost: 5 }),
+      ),
+    ).toBe("Hub refused a batch — 5 scrapes discarded");
+  });
+
+  it("names a refused batch even when it discarded nothing", () => {
+    expect(messageOf(hub({ reason: "rejected", failures: 1 }))).toBe(
+      "Hub refused a batch",
+    );
+  });
 });

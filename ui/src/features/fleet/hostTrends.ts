@@ -7,7 +7,6 @@ import {
 } from "../../lib/api";
 import {
   carriesColumn,
-  counterIncrease,
   fsName,
   griddedValues,
   latestValue,
@@ -420,20 +419,6 @@ function outranks(
   const rb = FULLEST_RANK[b.severity ?? "none"];
   if (ra !== rb) return ra > rb;
   return a.pct > b.pct;
-}
-
-/** The latest non-null value, or null when the series never reported.
- *
- * NOT lib/metrics.ts's latestValue(), which is the LATEST BUCKET including a
- * trailing null. The two answer different questions and only this one is
- * right for mem_limit: a configured ceiling does not stop being the ceiling
- * because the newest bucket has not materialised yet. */
-function lastNumber(values: readonly (number | null)[]): number | null {
-  for (let i = values.length - 1; i >= 0; i--) {
-    const v = values[i];
-    if (v !== null && v !== undefined) return v;
-  }
-  return null;
 }
 
 // Generic over what it swallows, so the per-host fetch (one MetricsResponse)

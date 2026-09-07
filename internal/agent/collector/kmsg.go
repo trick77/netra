@@ -893,10 +893,19 @@ func (k *Kmsg) event(key foldKey, f *suppression, carried int, ts time.Time) *ne
 		body = []byte("{}")
 	}
 
+	severity := f.severity
 	return &netrav1.Event{
-		TsMs:       ts.UnixMilli(),
-		Type:       key.Type,
-		Subject:    key.Subject,
+		TsMs:    ts.UnixMilli(),
+		Type:    key.Type,
+		Subject: key.Subject,
+		// Stated in the field as well as the detail. The detail key is what
+		// both event views read and it is not going anywhere yet, but it is
+		// scheduled to go: the field is what the hub stores in events.severity
+		// and what anything other than a browser reads. Left out here, every
+		// ATA exception and block-layer error would silently reclassify as
+		// info the day the key is dropped -- the exact rows this collector
+		// exists to surface.
+		Severity:   &severity,
 		DetailJson: string(body),
 	}
 }

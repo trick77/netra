@@ -139,37 +139,17 @@ const netMetrics = response({
   ],
 });
 
-function agentMetrics(dropped: number) {
-  return response({
-    family: "agent",
-    columns: ["buffer_depth", "buffer_dropped_total", "post_failures_total"],
-    series: [{ key: {}, points: [[1_754_784_000_000, 2, dropped, 0]] }],
-  });
-}
-
 function renderOverview(over: Partial<Parameters<typeof Overview>[0]> = {}) {
   return render(
     <Overview
       host={host}
       hostMetrics={hostMetrics(null, null)}
       filesystemMetrics={fsMetrics}
-      agentMetrics={agentMetrics(0)}
       units={[]}
       now={new Date("2026-08-10T01:00:30Z")}
       {...over}
     />,
   );
-}
-
-// post_failures_total is cumulative for the life of the agent PROCESS and is
-// never reset by a success, so it needs the same window-relative reading as
-// oom_kill_total. Two points, so counterIncrease has a pair to difference.
-function deliveryFailures(points: [number, number][]) {
-  return response({
-    family: "agent",
-    columns: ["buffer_depth", "buffer_dropped_total", "post_failures_total"],
-    series: [{ key: {}, points: points.map(([ts, n]) => [ts, 2, 0, n]) }],
-  });
 }
 
 /** The System block's one-line summary, which is what the card looks like

@@ -340,10 +340,20 @@ function hubMessage(f: Record<string, unknown>): string {
   // that way, so "19 m" sits in the same column as "2 h 4 m".
   const lasted = duration(secs);
 
+  const scrapes = (n: number) => `${n} ${n === 1 ? "scrape" : "scrapes"}`;
+
   if (text(f, "reason") === "token-rejected") {
     return lost > 0
-      ? `Hub rejected this agent's token — ${lost} ${lost === 1 ? "scrape" : "scrapes"} discarded`
+      ? `Hub rejected this agent's token — ${scrapes(lost)} discarded`
       : "Hub rejected this agent's token";
+  }
+  // The hub answered and refused the body, so it was never unreachable and
+  // must not be described as though it were. A duration would be meaningless
+  // here too: nothing was waiting for the hub to come back.
+  if (text(f, "reason") === "rejected") {
+    return lost > 0
+      ? `Hub refused a batch — ${scrapes(lost)} discarded`
+      : "Hub refused a batch";
   }
   if (lost > 0) {
     return `Hub unreachable for ${lasted} — ${lost} ${lost === 1 ? "scrape" : "scrapes"} lost`;
