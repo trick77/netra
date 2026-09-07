@@ -35,6 +35,24 @@ export const KERNEL_EVENT_TYPES = [
   "link_change",
 ] as const;
 
+/** The condition kinds the hub opens and clears, which reach this log as
+ * transitions.
+ *
+ * The kinds ScanConditions actually PRODUCES, which is narrower than the Kind
+ * constants in internal/hub/conditions: `sporadic` and `drive` are declared
+ * there and have no observer yet. Listing them here would put two options in
+ * the type dropdown that return an empty log with no explanation.
+ *
+ * A kind missing from this list still renders -- the dropdown unions it with
+ * whatever arrived -- but falls through to the generic detail dump, which for
+ * a transition reads "root — transition opened · severity warning" instead of
+ * a sentence. So this grows when an observer does, not when a constant does. */
+export const CONDITION_EVENT_TYPES = [
+  "silent",
+  "disk",
+  "failed-units",
+] as const;
+
 /** The known event types, which is also the order a type filter offers them.
  *
  * Hardcoded, unlike everything else here, because the type dropdown is built
@@ -49,6 +67,7 @@ export const KNOWN_EVENT_TYPES = [
   "package",
   "unit",
   "hub",
+  ...CONDITION_EVENT_TYPES,
   ...KERNEL_EVENT_TYPES,
 ] as const;
 
@@ -361,6 +380,53 @@ function hubMessage(f: Record<string, unknown>): string {
   return `Hub unreachable for ${lasted} — buffered and replayed`;
 }
 
+/** What a condition transition says.
+ *
+ * These are the hub's own judgements arriving in the log: a disk crossed its
+ * threshold, a host went quiet, units started failing. The sentence names the
+ * KIND rather than restating the numbers, because the row beside it already
+ * carries the subject and the condition list carries the figures -- what the
+ * log adds is WHEN it started and stopped.
+ *
+ * A cleared row says how long it was open, which is the fact only the log
+ * holds: the condition row is gone from the open set by then, and the
+ * attention list never knew the duration at all. */
+function conditionMessage(
+  type: string,
+  subject: string,
+  f: Record<string, unknown>,
+): string {
+  const what = CONDITION_LABELS[type] ?? type;
+  const named = subject ? `${what} — ${subject}` : what;
+
+  if (text(f, "transition") === "cleared") {
+    // count() is the guard, not duration(): duration(0) is "0 s" rather than
+    // "", so testing the formatted string would have made the bare sentence
+    // unreachable and printed "cleared after 0 s" for an event that carried no
+    // duration at all.
+    const openMs = count(f, "open_ms");
+    const open = openMs > 0 ? duration(Math.round(openMs / 1000)) : "";
+    // "no longer reported" is not a recovery, and conflating them is how a
+    // fleet goes green because nobody is looking at it. See resolved_reason
+    // in 0016_conditions.sql.
+    const how =
+      text(f, "reason") === "vanished" ? "no longer reported" : "cleared";
+    return open ? `${named} ${how} after ${open}` : `${named} ${how}`;
+  }
+  return named;
+}
+
+/** The kinds as sentences. Mirrors CONDITION_KIND_INFO in fleet/conditions.ts,
+ * which names the same kinds for the attention list -- one vocabulary, so a
+ * reader who followed an ?attn= link recognises what the log calls it. */
+const CONDITION_LABELS: Record<string, string> = {
+  silent: "Stopped reporting",
+  sporadic: "Reporting sporadically",
+  disk: "Filesystem nearly full",
+  "failed-units": "Failed units",
+  drive: "Drive errors",
+};
+
 export function messageOf(event: Event): string {
   const f = fields(event);
   const subject = event.subject ?? "";
@@ -375,6 +441,12 @@ export function messageOf(event: Event): string {
     case "hub":
       // No subject: a delivery outage is about the host as a whole.
       return hubMessage(f);
+    case "silent":
+    case "sporadic":
+    case "disk":
+    case "failed-units":
+    case "drive":
+      return conditionMessage(event.type, subject, f);
     default: {
       // Widened deliberately: the tuple is `as const` so the dropdown keeps
       // its order and its literal types, and `event.type` is a plain string

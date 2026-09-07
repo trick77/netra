@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import type { Event } from "../../lib/api";
 import {
+  CONDITION_EVENT_TYPES,
   KERNEL_EVENT_TYPES,
   KNOWN_EVENT_TYPES,
   mdraidSeverity,
@@ -214,6 +215,8 @@ describe("KNOWN_EVENT_TYPES", () => {
       // The agent's own delivery, which is a producer like any other now that
       // a hub outage is an event rather than a warning derived from a counter.
       "hub",
+      // The hub's own judgements, arriving as transitions.
+      ...CONDITION_EVENT_TYPES,
       ...KERNEL_EVENT_TYPES,
     ]);
   });
@@ -484,5 +487,78 @@ describe("hub delivery events", () => {
     expect(messageOf(hub({ reason: "rejected", failures: 1 }))).toBe(
       "Hub refused a batch",
     );
+  });
+});
+
+describe("condition transitions", () => {
+  function cond(
+    type: string,
+    subject: string | null,
+    detail: Record<string, unknown>,
+  ): Event {
+    return event({ type, subject, detail });
+  }
+
+  // These arrive in the log the moment the hub starts evaluating, so they must
+  // read as sentences rather than as the generic detail dump -- which for a
+  // transition says "root — transition opened · severity warning".
+  it("names the kind and the subject when a condition opens", () => {
+    expect(
+      messageOf(
+        cond("disk", "root", {
+          transition: "opened",
+          severity: "warning",
+          opened_ts: "2026-09-07T03:00:00Z",
+        }),
+      ),
+    ).toBe("Filesystem nearly full — root");
+  });
+
+  // A host-wide condition has no subject, and must not render a dangling dash.
+  it("says the kind alone for a host-wide condition", () => {
+    expect(
+      messageOf(
+        cond("silent", null, { transition: "opened", severity: "critical" }),
+      ),
+    ).toBe("Stopped reporting");
+  });
+
+  // How long it was open is the fact only the log holds: by then the row is
+  // out of the open set, and the attention list never knew the duration.
+  it("says how long a cleared condition was open", () => {
+    expect(
+      messageOf(
+        cond("disk", "root", {
+          transition: "cleared",
+          reason: "cleared",
+          open_ms: 2 * 60 * 60 * 1000,
+        }),
+      ),
+    ).toBe("Filesystem nearly full — root cleared after 2 h");
+  });
+
+  // "No longer reported" is not a recovery. A mount that was unmounted did not
+  // get better, and conflating the two is how a fleet goes green because
+  // nobody is looking at it.
+  it("does not call a vanished subject a recovery", () => {
+    expect(
+      messageOf(
+        cond("disk", "backup", {
+          transition: "cleared",
+          reason: "vanished",
+          open_ms: 30 * 60 * 1000,
+        }),
+      ),
+    ).toBe("Filesystem nearly full — backup no longer reported after 30 m");
+  });
+
+  it("renders every kind it claims to know", () => {
+    for (const type of CONDITION_EVENT_TYPES) {
+      const sentence = messageOf(cond(type, "x", { transition: "opened" }));
+      // The fallback spells out raw keys; a kind that fell through to it would
+      // show "transition opened" instead of a name.
+      expect(sentence).not.toMatch(/transition/);
+      expect(sentence).toContain("x");
+    }
   });
 });

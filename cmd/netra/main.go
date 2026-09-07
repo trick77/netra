@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/trick77/netra/internal/hub/auth"
+	"github.com/trick77/netra/internal/hub/conditions"
 	"github.com/trick77/netra/internal/hub/config"
 	"github.com/trick77/netra/internal/hub/httpapi"
 	"github.com/trick77/netra/internal/hub/oidc"
@@ -81,6 +82,32 @@ func run() error {
 		}
 		slog.Info("browser sign-in enabled", "issuer", cfg.OIDC.Issuer, "redirect", cfg.RedirectURL())
 	}
+
+	// The hub's first background loop, and the reason it has to be one: every
+	// other condition is a reading in the data, but `silent` is the ABSENCE of
+	// data. No ingest happens for a host that has stopped talking, so nothing
+	// driven by ingest would ever notice.
+	//
+	// Started before the listener rather than after, so the warm-up clock
+	// begins at the earliest honest moment. That clock is what stops a hub
+	// restart recording one outage of its own as an outage of every host it
+	// monitors -- see warmUp in the conditions package.
+	//
+	// One instance is assumed. A second hub against the same database would
+	// evaluate in parallel; the writes are idempotent (ON CONFLICT DO NOTHING
+	// against the partial unique index, and a resolve that guards on
+	// resolved_ts IS NULL), so the outcome is correct rather than corrupt, but
+	// nothing here elects a leader.
+	// Its own context, cancelled before the pool closes.
+	//
+	// The process context's cancel is deferred above the store's Close, and
+	// defers run last-in-first-out, so on the error path the pool would shut
+	// while the evaluator was still querying it. Harmless -- the process is
+	// leaving either way -- but it logs failures that describe the shutdown
+	// rather than anything wrong.
+	evalCtx, stopEval := context.WithCancel(ctx)
+	defer stopEval()
+	go conditions.New(s, time.Now()).Run(evalCtx)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
