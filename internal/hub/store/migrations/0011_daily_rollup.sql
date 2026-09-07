@@ -31,9 +31,12 @@
 --
 -- start_offset is 7 days: the 1h policy reaches back 12 hours, so a day's
 -- bucket is settled long before this stops revisiting it. end_offset is
--- 2 hours, which with the hourly schedule puts materialisedThrough() three
--- hours back -- truncated to a day, that is "every whole day up to today",
--- which is exactly what a daily tier can honestly answer.
+-- 2 hours, which with the hourly schedule bounds how much of a query on this
+-- tier is computed live rather than read -- see 0014_realtime_aggregates.sql,
+-- which made every view here real-time. It no longer decides what the tier
+-- ANSWERS: planQuery excludes the open bucket and nothing else, so a daily
+-- tier reports every whole day up to today and not today itself, which is
+-- exactly what a day-shaped reading can honestly say.
 --
 -- The CALL after each view backfills it from the 1h tier's 90 days in one
 -- go. Without it the widest tiles would ship empty and fill in at one day
