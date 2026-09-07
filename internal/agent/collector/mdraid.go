@@ -23,6 +23,18 @@ type arrayState struct {
 	SyncAction string `json:"sync_action"`
 }
 
+// mdraidDetail is what lands in events.detail: the array's state, plus the
+// severity this collector decided.
+//
+// Embedded rather than a field, so the detail keeps the flat shape it has
+// always had -- state, level, raid_disks, degraded, sync_action -- and gains
+// one key. A nested object would have broken every reader of the old shape,
+// including the migration that backfills historical rows.
+type mdraidDetail struct {
+	arrayState
+	Severity string `json:"severity"`
+}
+
 // healthyStates are the md/array_state values that all mean "nothing is wrong
 // with this array".
 //
@@ -49,6 +61,48 @@ func normalizeArrayState(state string) string {
 		return "clean"
 	}
 	return state
+}
+
+// rebuildActions are the sync_action values that mean the kernel is putting a
+// missing member back.
+var rebuildActions = map[string]bool{
+	"recover": true,
+	"resync":  true,
+	"repair":  true,
+}
+
+// severityOf is how bad this array's state is, decided HERE rather than by
+// whoever renders the event.
+//
+// It lived in the browser until now (mdraidCondition in
+// ui/src/features/events/message.ts), which was survivable while a person
+// reading a page was the only consumer and is not once anything else has to
+// ask "what is critical". A rule that only exists in TypeScript is a rule an
+// alerting engine cannot apply, and a degraded array is the single thing this
+// collector exists to report.
+//
+// `state` is deliberately NOT consulted, and that is the whole subtlety. It is
+// sysfs array_state, whose vocabulary is clear / inactive / suspended /
+// readonly / read-auto / clean / active / write-pending / active-idle -- and
+// "degraded" is not among them. The kernel reports a raid1 with one disk left
+// as `clean`, because clean is about consistency and not about how many disks
+// are still there; the repo's own fixture says so, testdata/mdraid/degraded
+// reads array_state=clean with degraded=1. So the device count is the only
+// honest source for "is this array in trouble", and sync_action the only one
+// for "is it fixing itself".
+//
+// An array that is missing members and NOT rebuilding is critical: nothing is
+// coming to help it, and the next failure is data loss. One that is rebuilding
+// is a warning -- it is degraded now, but the kernel is already doing the thing
+// an operator would otherwise be woken up to start.
+func (s arrayState) severityOf() string {
+	if s.Degraded <= 0 {
+		return "info"
+	}
+	if rebuildActions[s.SyncAction] {
+		return "warning"
+	}
+	return "critical"
 }
 
 // compareKey is the arrayState reduced to what a CHANGE means.
@@ -141,7 +195,8 @@ func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
 			continue
 		}
 
-		detail, err := json.Marshal(state)
+		severity := state.severityOf()
+		detail, err := json.Marshal(mdraidDetail{arrayState: state, Severity: severity})
 		if err != nil {
 			// Marshalling a struct of strings and ints cannot fail in
 			// practice; if it somehow does, the array's state change is worth
@@ -150,9 +205,15 @@ func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
 		}
 
 		events = append(events, &netrav1.Event{
-			TsMs:       ts,
-			Type:       "mdraid",
-			Subject:    name,
+			TsMs:     ts,
+			Type:     "mdraid",
+			Subject:  name,
+			Severity: &severity,
+			// Severity is in BOTH the field and the detail, deliberately. The
+			// field is what the hub stores and what a non-browser reader uses;
+			// the key is what both event views read first, and the host Events
+			// tab accepts nothing else -- so dropping it here would leave a
+			// degraded array uncoloured on the very page that lists it.
 			DetailJson: string(detail),
 		})
 	}

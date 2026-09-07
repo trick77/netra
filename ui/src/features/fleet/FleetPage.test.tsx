@@ -34,9 +34,6 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     net_tx_bytes: 5.5e5,
     fullest: { mount: "/", pct: 41 },
     disk: [],
-    oomKills: null,
-    dropped: null,
-    postFailures: null,
     ...overrides,
   };
 }
@@ -138,7 +135,7 @@ describe("FleetPage entity tabs", () => {
     const hosts = renderPage({
       rows: [
         makeRow({ id: 1 }),
-        makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+        makeRow({ id: 2, hostname: "db-01", services_failed: 3 }),
       ],
     });
     expect(
@@ -774,13 +771,13 @@ describe("FleetPage data fetching", () => {
 
   // The band existed from the start and had nothing to render: `conditions`
   // defaulted to [], so this page said "nothing needs attention" beside a
-  // host whose own page was showing three OOM kills in red.
+  // host whose own page was showing three failed units in red.
   it("derives what is wrong from the rows instead of claiming nothing is", () => {
     render(
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+          makeRow({ id: 2, hostname: "db-01", services_failed: 3 }),
         ]}
         checkedAt={null}
         now={NOW}
@@ -788,7 +785,7 @@ describe("FleetPage data fetching", () => {
     );
 
     const counts = screen.getByRole("list", { name: /by kind/i });
-    expect(within(counts).getByText(/OOM kills/)).toBeInTheDocument();
+    expect(within(counts).getByText(/Failed units/)).toBeInTheDocument();
   });
 
   // The point of the counts line, in one assertion: the number of entries is
@@ -799,7 +796,7 @@ describe("FleetPage data fetching", () => {
     render(
       <FleetPage
         rows={Array.from({ length: 12 }, (_, i) =>
-          makeRow({ id: i + 1, hostname: `web-${i + 1}`, oomKills: 1 }),
+          makeRow({ id: i + 1, hostname: `web-${i + 1}`, services_failed: 1 }),
         )}
         checkedAt={null}
         now={NOW}
@@ -819,7 +816,7 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+          makeRow({ id: 2, hostname: "db-01", services_failed: 3 }),
         ]}
         checkedAt={null}
         now={NOW}
@@ -827,7 +824,9 @@ describe("FleetPage data fetching", () => {
     );
 
     const counts = screen.getByRole("list", { name: /by kind/i });
-    await user.click(within(counts).getByRole("link", { name: /OOM kills/ }));
+    await user.click(
+      within(counts).getByRole("link", { name: /Failed units/ }),
+    );
 
     expect(screen.getByText("db-01")).toBeInTheDocument();
     // The healthy host is gone, and the page says so rather than leaving the
@@ -845,7 +844,13 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+          // A disk both high enough AND with little enough left is the
+          // compound rule's critical -- 97% of a 100 GB root leaves 3 GB.
+          makeRow({
+            id: 2,
+            hostname: "db-01",
+            fullest: { mount: "/", pct: 97, free: 3e9 },
+          }),
           makeRow({
             id: 3,
             hostname: "build-01",
@@ -867,13 +872,13 @@ describe("FleetPage data fetching", () => {
   });
 
   // Onboarding copy in front of a hundred hosts is the page contradicting
-  // itself. Reachable by opening a shared "/?attn=oom" link after that kind
+  // itself. Reachable by opening a shared "/?attn=failed-units" link after that kind
   // cleared -- and by the text filter, which could always do it.
   it("says the filter is hiding the fleet, not that the fleet is empty", () => {
     render(
       <FleetPage
-        rows={[makeRow({ id: 1, hostname: "web-01", oomKills: 3 })]}
-        attention="oom"
+        rows={[makeRow({ id: 1, hostname: "web-01", services_failed: 3 })]}
+        attention="failed-units"
         onAttentionChange={() => {}}
         conditions={[]}
         checkedAt={null}
@@ -899,7 +904,7 @@ describe("FleetPage data fetching", () => {
     render(
       <FleetPage
         rows={[makeRow({ id: 1, hostname: "web-01" })]}
-        attention="oom"
+        attention="failed-units"
         onAttentionChange={() => {}}
         conditions={[]}
         checkedAt={null}
@@ -907,7 +912,7 @@ describe("FleetPage data fetching", () => {
       />,
     );
 
-    expect(screen.getByText(/with oom kills/i)).toBeInTheDocument();
+    expect(screen.getByText(/with failed units/i)).toBeInTheDocument();
   });
 
   // A cmd-click never reaches onAttentionChange -- it follows the href -- so
@@ -915,7 +920,7 @@ describe("FleetPage data fetching", () => {
   it("lets the page decide where a filter link points", () => {
     render(
       <FleetPage
-        rows={[makeRow({ id: 1, hostname: "web-01", oomKills: 3 })]}
+        rows={[makeRow({ id: 1, hostname: "web-01", services_failed: 3 })]}
         attentionHref={(next) =>
           next === "all"
             ? "/?entity=containers"
@@ -926,9 +931,9 @@ describe("FleetPage data fetching", () => {
       />,
     );
 
-    expect(screen.getByRole("link", { name: /OOM kills/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: /Failed units/ })).toHaveAttribute(
       "href",
-      "/?entity=containers&attn=oom",
+      "/?entity=containers&attn=failed-units",
     );
   });
 
@@ -949,7 +954,7 @@ describe("FleetPage data fetching", () => {
           makeRow({
             id: 2,
             hostname: "db-01",
-            oomKills: 3,
+            services_failed: 3,
             fullest: { mount: "/var/log", pct: 97 },
           }),
         ]}
@@ -981,7 +986,7 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+          makeRow({ id: 2, hostname: "db-01", services_failed: 3 }),
         ]}
         checkedAt={null}
         now={NOW}
@@ -990,9 +995,9 @@ describe("FleetPage data fetching", () => {
 
     await user.type(screen.getByPlaceholderText(/filter hosts/i), "web");
     const counts = screen.getByRole("list", { name: /by kind/i });
-    // db-01 is filtered out of the list; its OOM kills are still counted,
+    // db-01 is filtered out of the list; its failed units are still counted,
     // and the segment still knows the fleet has two hosts in it.
-    expect(within(counts).getByText(/OOM kills/)).toBeInTheDocument();
+    expect(within(counts).getByText(/Failed units/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "All 2" })).toBeInTheDocument();
   });
 
@@ -1005,7 +1010,13 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          makeRow({ id: 2, hostname: "db-01", oomKills: 3 }),
+          // Critical needs the compound disk rule: high enough AND with
+          // little enough left. 97% of a 100 GB root is 3 GB free.
+          makeRow({
+            id: 2,
+            hostname: "db-01",
+            fullest: { mount: "/", pct: 97, free: 3e9 },
+          }),
         ]}
         checkedAt={null}
         now={NOW}

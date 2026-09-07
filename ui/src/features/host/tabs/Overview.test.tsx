@@ -172,60 +172,6 @@ function deliveryFailures(points: [number, number][]) {
   });
 }
 
-describe("Overview delivery failures", () => {
-  // The bug this replaced: a hub restart produced one failed post, the agent
-  // re-sent that 1 on every scrape for the rest of its life, and the page
-  // carried "1 failed deliveries to the hub" permanently -- even though the
-  // ring buffer replayed the samples and nothing was lost.
-  it("clears once the failures fall outside the window", () => {
-    renderOverview({
-      agentMetrics: deliveryFailures([
-        [1_786_320_000_000, 1],
-        [1_786_320_060_000, 1],
-      ]),
-    });
-    expect(screen.queryByText(/failed deliver/i)).toBeNull();
-  });
-
-  it("reports failures that happened inside the window", () => {
-    renderOverview({
-      agentMetrics: deliveryFailures([
-        [1_786_320_000_000, 1],
-        [1_786_320_060_000, 4],
-      ]),
-    });
-    const attention = screen.getByRole("region", { name: /needs attention/i });
-    expect(
-      within(attention).getByText(/3 failed deliveries to the hub/i),
-    ).toBeInTheDocument();
-  });
-
-  // "1 failed deliveries" was the old copy, and it was wrong twice over.
-  it("says delivery, singular, for a single failure", () => {
-    renderOverview({
-      agentMetrics: deliveryFailures([
-        [1_786_320_000_000, 0],
-        [1_786_320_060_000, 1],
-      ]),
-    });
-    expect(
-      screen.getByText(/1 failed delivery to the hub in this window/i),
-    ).toBeInTheDocument();
-  });
-
-  // The counter zeroes when the agent process restarts. counterDeltas drops
-  // a negative step, so the restart is skipped rather than counted.
-  it("does not read an agent restart as a burst of failures", () => {
-    renderOverview({
-      agentMetrics: deliveryFailures([
-        [1_786_320_000_000, 900],
-        [1_786_320_060_000, 0],
-      ]),
-    });
-    expect(screen.queryByText(/failed deliver/i)).toBeNull();
-  });
-});
-
 /** The System block's one-line summary, which is what the card looks like
  * before anyone clicks it. Five of the eight facts are on it and the same
  * five are also in the strip underneath, so a bare getByText inside the
@@ -413,20 +359,26 @@ describe("Overview", () => {
     expect(disk.textContent).not.toMatch(/%/);
   });
 
-  it("raises a dropped-sample count into needs-attention, with a word beside the dot", () => {
-    renderOverview({ agentMetrics: agentMetrics(12) });
-    const attention = screen.getByRole("region", { name: /needs attention/i });
-    expect(within(attention).getByText(/critical/i)).toBeInTheDocument();
-    expect(within(attention).getByText(/12/)).toBeInTheDocument();
-  });
-
   // The band is the first thing on the tab and spans the page, so a healthy
   // host must not spend that position on a box saying nothing. One quiet line
   // confirms the check ran instead -- the same rule the fleet band follows.
   // A card inside the mosaic is at most half the page wide. The band has to
   // be outside the grid altogether to span the page and be read first.
   it("puts the band above the mosaic, not inside it", () => {
-    const { container } = renderOverview({ agentMetrics: agentMetrics(12) });
+    // A failed unit rather than a dropped-sample count: this test is about
+    // where the band sits, and it only needs SOMETHING in it.
+    const { container } = renderOverview({
+      units: [
+        {
+          id: 1,
+          unit_name: "exim4.service",
+          state: "failed",
+          substate: "failed",
+          since: "2026-08-10T00:00:00Z",
+          restarts_1h: 0,
+        },
+      ],
+    });
     const band = screen.getByRole("region", { name: /needs attention/i });
     const grid = container.querySelector(".mosaic");
     expect(grid).not.toBeNull();
@@ -817,55 +769,6 @@ describe("Overview network tiles", () => {
     expect(
       within(traffic).getAllByText(new RegExp(ABSENT)).length,
     ).toBeGreaterThan(0);
-  });
-});
-
-// An OOM kill is the one memory fact no chart can carry: mem_used is back to
-// normal by the time anyone looks, precisely BECAUSE the kill happened.
-describe("Overview OOM attention", () => {
-  function oomResponse(points: (number | null)[][]): MetricsResponse {
-    return {
-      family: "host",
-      tier: "raw",
-      step_s: 60,
-      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:05:00Z" },
-      requested_window: {
-        from: "2026-08-10T00:00:00Z",
-        to: "2026-08-10T00:05:00Z",
-      },
-      warnings: [],
-      key_columns: [],
-      columns: ["oom_kill_total"],
-      series: [{ key: {}, points }],
-      truncated: false,
-    };
-  }
-
-  it("reports kills that happened inside the window", () => {
-    renderOverview({
-      hostMetrics: oomResponse([
-        [1_786_320_000_000, 4],
-        [1_786_320_060_000, 6],
-      ]),
-    });
-    const attention = screen.getByRole("region", { name: /attention/i });
-    expect(within(attention).getByText(/2 OOM kills/)).toBeInTheDocument();
-  });
-
-  // The counter is cumulative since boot. A host that killed something a
-  // year ago and nothing since is healthy, and must not carry a permanent
-  // badge -- which is what reading the raw total would do.
-  it("stays silent for a counter that is high but flat", () => {
-    renderOverview({
-      hostMetrics: oomResponse([
-        [1_786_320_000_000, 4000],
-        [1_786_320_060_000, 4000],
-      ]),
-    });
-    // Nothing wrong at all, so there is no band to look inside: its absence
-    // is the assertion.
-    expect(screen.queryByRole("region", { name: /attention/i })).toBeNull();
-    expect(screen.queryByText(/OOM/)).toBeNull();
   });
 });
 

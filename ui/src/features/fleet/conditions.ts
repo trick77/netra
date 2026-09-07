@@ -38,14 +38,7 @@ import { percent } from "../../lib/format";
  * URL filter carries, and what tells an evidence cell which mark to draw.
  */
 export type ConditionKind =
-  | "silent"
-  | "sporadic"
-  | "dropped"
-  | "oom"
-  | "post-failures"
-  | "failed-units"
-  | "disk"
-  | "drive";
+  "silent" | "sporadic" | "failed-units" | "disk" | "drive";
 
 /**
  * The mark that PROVES a condition, chosen by the condition rather than by
@@ -326,9 +319,6 @@ const CONDITION_KIND_INFO: Record<
 > = {
   silent: { label: "Stopped reporting", severity: "critical" },
   sporadic: { label: "Reporting sporadically", severity: "warning" },
-  dropped: { label: "Samples dropped", severity: "critical" },
-  oom: { label: "OOM kills", severity: "critical" },
-  "post-failures": { label: "Failed deliveries", severity: "warning" },
   "failed-units": { label: "Failed units", severity: "warning" },
   disk: { label: "Filesystem nearly full", severity: "warning" },
   // A measurement, not a diagnosis -- the rule every condition here follows.
@@ -493,70 +483,26 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
     });
   }
 
-  // The agent's ring buffer overflowed: samples it collected were never
-  // delivered. Nothing else netra reports about a host is more important,
-  // because it is the one condition that says the rest of the row may be
-  // incomplete -- and no sparkline can show it, since the missing data is
-  // the evidence.
+  // dropped, oom and post-failures used to be conditions here, and are now
+  // events instead.
   //
-  // The agent's running total, not this window's increase, and the same
-  // number the host page prints -- see HostTrends.dropped in hostTrends.ts
-  // for why an increase reads as 0 for exactly the host that dropped
-  // something.
-  if (row.dropped !== null && row.dropped > 0) {
-    out.push({
-      ...base,
-      kind: "dropped",
-      severity: "critical",
-      label: kindLabel("dropped"),
-      what: `${row.dropped} ${row.dropped === 1 ? "sample" : "samples"} dropped before delivery — this host's history has holes`,
-      since: null,
-      // Deliberately none. The evidence is data that is not there, and every
-      // mark this column can draw would be drawn out of the samples that DID
-      // arrive -- which is the half that is not in question.
-      evidence: null,
-      tab: null,
-    });
-  }
-
-  // Cumulative since boot, so this is the INCREASE across the window --
-  // otherwise a host that killed something a year ago carries a permanent
-  // condition. null means the window had no usable pair to difference, which
-  // is "cannot say" and stays silent; 0 is the host confirming nothing
-  // happened, which is also silence but a different kind.
-  if (row.oomKills !== null && row.oomKills > 0) {
-    out.push({
-      ...base,
-      kind: "oom",
-      severity: "critical",
-      label: kindLabel("oom"),
-      what: `${row.oomKills} OOM ${row.oomKills === 1 ? "kill" : "kills"} — the kernel killed processes to reclaim memory`,
-      since: null,
-      evidence: { type: "memory" },
-      // Counted from a metric, not listed anywhere: no tab holds the list
-      // this row would be summarising.
-      tab: null,
-    });
-  }
-
-  // The increase, for a sharper reason than the OOM counter above: this one
-  // is cumulative for the life of the agent PROCESS and is never reset by a
-  // success, so read as a latest value one hub restart pins "1 failed
-  // delivery" here forever -- even though the ring buffer replayed those
-  // samples the moment the hub came back and nothing was actually lost.
-  if (row.postFailures !== null && row.postFailures > 0) {
-    out.push({
-      ...base,
-      kind: "post-failures",
-      severity: "warning",
-      label: kindLabel("post-failures"),
-      what: `${row.postFailures} failed ${row.postFailures === 1 ? "delivery" : "deliveries"} to the hub in this window`,
-      since: null,
-      evidence: null,
-      tab: null,
-    });
-  }
-
+  // All three read a COUNTER'S INCREASE OVER THE RANGE PICKER'S WINDOW, which
+  // is what made them the wrong shape: change the range and the condition
+  // appears or disappears, so what they stated was a fact about the reader
+  // rather than about the host. They are also the three kinds the `since`
+  // comment above lists as unable to say when they began, which is the same
+  // observation from the other side -- a thing that happened at an instant
+  // does not have an onset, it has a timestamp.
+  //
+  //   - a hub outage is one `hub` event, written by the agent when delivery
+  //     resumes, carrying how long it lasted and whether the ring lost
+  //     anything. Warning was always wrong for it: the samples were buffered
+  //     and replayed, which the host page's own comment admitted while
+  //     raising the warning anyway.
+  //   - dropped samples are that same event at `critical`, because they are
+  //     the same incident: the ring only overflows while the hub is away.
+  //   - an OOM kill is already a `critical` kmsg event, and a better record
+  //     than this was -- it names the process that died and says when.
   // One condition for the whole set, never one per unit -- but it NAMES the
   // units, up to the three the hosts list carries. Eight unit names would
   // bury the next host, which is why the list is capped there and the count

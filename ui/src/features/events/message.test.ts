@@ -211,6 +211,9 @@ describe("KNOWN_EVENT_TYPES", () => {
       "mdraid",
       "package",
       "unit",
+      // The agent's own delivery, which is a producer like any other now that
+      // a hub outage is an event rather than a warning derived from a counter.
+      "hub",
       ...KERNEL_EVENT_TYPES,
     ]);
   });
