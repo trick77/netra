@@ -252,7 +252,7 @@ describe("overviewTiles busiest filesystem", () => {
       filesystemMetrics: fsMetrics([["/mnt/ark", used, 100 - used]]),
     });
 
-    expect(find(system, "Busiest filesystem")?.severity).toBe("serious");
+    expect(find(system, "Busiest filesystem")?.severity).toBe("warning");
   });
 
   // A 97 % filesystem reads red however large the volume is. Judging the
@@ -278,7 +278,7 @@ describe("overviewTiles busiest filesystem", () => {
       filesystemMetrics: fsMetrics([["/mnt/ark", 3640 * gib, 360 * gib]]),
     });
 
-    expect(find(system, "Busiest filesystem")?.severity).toBe("serious");
+    expect(find(system, "Busiest filesystem")?.severity).toBe("warning");
     expect(diskSeverityFor(91, 360 * gib)).toBeNull();
   });
 
@@ -302,7 +302,7 @@ describe("overviewTiles busiest filesystem", () => {
     expect(tile?.sub).toBe("/");
     // WHICH disk still comes from diskState. The hue comes from the
     // percentage that disk is at, 93 %.
-    expect(tile?.severity).toBe("serious");
+    expect(tile?.severity).toBe("warning");
   });
 
   it("says absent rather than 0% for a host reporting no filesystems", () => {

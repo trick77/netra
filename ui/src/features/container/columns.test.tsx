@@ -513,11 +513,11 @@ describe("the gone state and the purge action", () => {
   // A state, so it carries the dot every state in that column carries -- and
   // the severity the row had when it read Silent, since nothing about the
   // container improved when the word changed.
-  it("draws Gone as a serious state with a dot", () => {
+  it("draws Gone as a warning state with a dot", () => {
     renderRows([goneRow()]);
     const badge = screen.getByText("gone").closest(".badge")!;
     expect(badge.querySelector(".dot")).not.toBeNull();
-    expect(badge.classList.contains("st-serious")).toBe(true);
+    expect(badge.classList.contains("st-warn")).toBe(true);
   });
 
   // The fleet list passes no onPurge, and this is what that buys: no column,

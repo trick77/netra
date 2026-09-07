@@ -207,7 +207,6 @@ export interface Tile {
 const STATUS_COLOR: Record<FillSeverity, string> = {
   ok: "var(--st-ok)",
   warning: "var(--st-warn)",
-  serious: "var(--st-serious)",
   critical: "var(--st-crit)",
 };
 
@@ -222,7 +221,6 @@ function trendColor(severity: FillSeverity | null, series: string): string {
  * null it answers with for a healthy disk. */
 const SEVERITY_RANK: Record<string, number> = {
   critical: 3,
-  serious: 2,
   warning: 1,
 };
 

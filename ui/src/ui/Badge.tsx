@@ -14,12 +14,11 @@
 // one, which is a label rather than a severity and keeps its own.
 import type { ReactNode } from "react";
 
-export type Severity = "ok" | "warning" | "serious" | "critical" | "neutral";
+export type Severity = "ok" | "warning" | "critical" | "neutral";
 
 const SEVERITY_CLASS: Record<Severity, string | null> = {
   ok: "st-ok",
   warning: "st-warn",
-  serious: "st-serious",
   critical: "st-crit",
   neutral: null,
 };

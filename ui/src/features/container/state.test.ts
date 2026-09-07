@@ -30,7 +30,7 @@ describe("deriveState", () => {
       now: NOW,
     });
     expect(state.label).toMatch(/silent/i);
-    expect(state.severity).toBe("serious");
+    expect(state.severity).toBe("warning");
   });
 
   // Memory approaching mem_limit is a warning (spec 11); a gap is reported
@@ -134,7 +134,7 @@ describe("deriveState", () => {
     });
     expect(state.kind).toBe("gone");
     expect(state.label).toBe("gone");
-    expect(state.severity).toBe("serious");
+    expect(state.severity).toBe("warning");
   });
 
   // And the window below it is still silent: quiet for four minutes on a host
@@ -235,13 +235,13 @@ describe("deriveState with Docker's own answers", () => {
   it("quotes Docker's unhealthy rather than calling the container fine", () => {
     const state = deriveState({ ...FRESH, health: "unhealthy" });
     expect(state.kind).toBe("unhealthy");
-    expect(state.severity).toBe("serious");
+    expect(state.severity).toBe("critical");
   });
 
   it("names a restarting container, which is a crash loop when it persists", () => {
     const state = deriveState({ ...FRESH, dockerState: "restarting" });
     expect(state.kind).toBe("restarting");
-    expect(state.severity).toBe("serious");
+    expect(state.severity).toBe("critical");
   });
 
   // Somebody paused it. Its flat charts are the consequence, not a fault.

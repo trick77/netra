@@ -545,8 +545,8 @@ export function Sensors({ sensorMetrics, range, fetchFamily }: SensorsProps) {
             {/* Temperature is --s1, not the --s7 orange it used to be. Orange
                 was chosen because temperature reads as heat, and that is
                 exactly the problem: --s7 sits a few degrees from --accent and
-                --st-serious, so a CPU at a perfectly normal 46 degrees drew
-                itself in the colour this app uses for "look at this". A
+                the warm status hues, so a CPU at a perfectly normal 46 degrees
+                drew itself in the colour this app uses for "look at this". A
                 sensor list states a reading; it does not rank it. --s1 is the
                 single-series default (Sparkline), which is what each row here
                 is. */}

@@ -804,7 +804,7 @@ export function containerColumns({
  */
 export function containerSeverity(
   row: ContainerRow,
-): "warning" | "serious" | "critical" | null {
+): "warning" | "critical" | null {
   const limit = row.mem_limit_bytes ?? null;
   if (limit === null || limit <= 0) return null;
   const used = lastReported(row.mem);

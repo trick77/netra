@@ -643,7 +643,7 @@ describe("hostColumns", () => {
       };
       expect(fill(21)).toBe("var(--st-ok)");
       expect(fill(76)).toBe("var(--st-warn)");
-      expect(fill(88)).toBe("var(--st-serious)");
+      expect(fill(88)).toBe("var(--st-warn)");
       expect(fill(96)).toBe("var(--st-crit)");
     });
 

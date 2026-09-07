@@ -87,9 +87,9 @@ describe("driveFindings", () => {
     );
   });
 
-  // Reallocated sectors are what the spare pool is FOR, so a non-zero count is
-  // serious rather than critical -- and must not outrank a sector that is
-  // unreadable right now.
+  // Reallocated sectors are a drive that has already substituted for damage,
+  // so a non-zero count is critical -- but it must not outrank a sector that
+  // is unreadable right now, which is why the order is asserted too.
   it("orders findings worst first", () => {
     const found = driveFindings(
       drive({
@@ -100,11 +100,11 @@ describe("driveFindings", () => {
     );
     expect(found.map((f) => f.severity)).toEqual([
       "critical",
-      "serious",
+      "critical",
       "warning",
     ]);
     expect(driveSeverity(drive({ [ATA.reallocatedSectors]: 12 }))).toBe(
-      "serious",
+      "critical",
     );
   });
 
@@ -118,10 +118,10 @@ describe("driveFindings", () => {
     expect(found[0]!.text).toBe("2 uncorrectable sectors");
   });
 
-  it("reports uncorrectable errors as serious", () => {
+  it("reports uncorrectable errors as critical", () => {
     const found = driveFindings(drive({ [ATA.reportedUncorrect]: 7 }));
     expect(found).toHaveLength(1);
-    expect(found[0]!.severity).toBe("serious");
+    expect(found[0]!.severity).toBe("critical");
     expect(found[0]!.text).toBe("7 uncorrectable errors");
   });
 
@@ -192,7 +192,7 @@ describe("driveFindings on NVMe", () => {
 
   it("reports media errors", () => {
     const found = driveFindings(drive({ [NVME.mediaErrors]: 2 }));
-    expect(found[0]!.severity).toBe("serious");
+    expect(found[0]!.severity).toBe("critical");
     expect(found[0]!.text).toBe("2 media errors");
   });
 });
@@ -308,7 +308,7 @@ describe("driveAlarms", () => {
     // Then both leave the tab, worst first, each naming its own drive
     expect(testee.map((a) => [a.device, a.severity])).toEqual([
       ["sda", "critical"],
-      ["sdb", "serious"],
+      ["sdb", "critical"],
     ]);
   });
 

@@ -36,10 +36,10 @@ describe("NowReading", () => {
   it("gives the bar the same severity as the figure", () => {
     const { container } = render(<NowReading pct={86} />);
     expect(container.querySelector(".segbar")?.className).toBe(
-      "segbar st-serious",
+      "segbar st-warn",
     );
     expect(container.querySelector(".metric-now .v")?.className).toBe(
-      "v st-serious",
+      "v st-warn",
     );
   });
 

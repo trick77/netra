@@ -271,10 +271,10 @@ describe("FleetPage entity tabs", () => {
 
       const list = screen.getByRole("list", { name: /by kind/i });
       expect(
-        within(list).getByRole("link", { name: "silent, 1, Serious" }),
+        within(list).getByRole("link", { name: "silent, 1, Warning" }),
       ).toBeInTheDocument();
       expect(
-        within(list).getByRole("link", { name: "gone, 1, Serious" }),
+        within(list).getByRole("link", { name: "gone, 1, Warning" }),
       ).toBeInTheDocument();
       // The one that is fine is not a chip: a filter names what is wrong.
       expect(within(list).queryByText("reporting")).toBeNull();

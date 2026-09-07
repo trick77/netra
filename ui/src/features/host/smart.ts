@@ -142,7 +142,7 @@ export function driveFindings(drive: Drive): Finding[] {
     // not return it at all.
     const media = attr(drive, NVME.mediaErrors);
     if (media !== null && media > 0) {
-      add("serious", plural(media, "media error"));
+      add("critical", plural(media, "media error"));
     }
     return sorted(out);
   }
@@ -167,12 +167,12 @@ export function driveFindings(drive: Drive): Finding[] {
     // spare pool is for -- but a count that climbs is a drive consuming it.
     const reallocated = attr(drive, ATA.reallocatedSectors);
     if (reallocated !== null && reallocated > 0) {
-      add("serious", plural(reallocated, "reallocated sector"));
+      add("critical", plural(reallocated, "reallocated sector"));
     }
 
     const uncorrect = attr(drive, ATA.reportedUncorrect);
     if (uncorrect !== null && uncorrect > 0) {
-      add("serious", plural(uncorrect, "uncorrectable error"));
+      add("critical", plural(uncorrect, "uncorrectable error"));
     }
 
     // The cable, not the drive. UDMA CRC errors are corruption on the wire
@@ -191,9 +191,8 @@ export function driveFindings(drive: Drive): Finding[] {
 
 const RANK: Record<Finding["severity"], number> = {
   critical: 0,
-  serious: 1,
-  warning: 2,
-  ok: 3,
+  warning: 1,
+  ok: 2,
 };
 
 function sorted(findings: Finding[]): Finding[] {
@@ -223,7 +222,7 @@ export function driveSeverity(drive: Drive): Finding["severity"] {
  */
 export interface DriveAlarm {
   device: string;
-  severity: "serious" | "critical";
+  severity: "critical";
   text: string;
 }
 
@@ -291,9 +290,7 @@ export function driveAlarms(
   for (const drive of drives) {
     if (!driveIsCurrent(drive, hostLastSeen)) continue;
     for (const finding of driveFindings(drive)) {
-      if (finding.severity !== "serious" && finding.severity !== "critical") {
-        continue;
-      }
+      if (finding.severity !== "critical") continue;
       out.push({
         device: drive.device,
         severity: finding.severity,

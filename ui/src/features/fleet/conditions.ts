@@ -218,8 +218,7 @@ export function diskState(
 // condition is definitionally something wrong), but are ranked lowest so a
 // stray one sorts to the bottom rather than crashing.
 const SEVERITY_RANK: Record<Severity, number> = {
-  critical: 4,
-  serious: 3,
+  critical: 3,
   warning: 2,
   ok: 1,
   neutral: 0,

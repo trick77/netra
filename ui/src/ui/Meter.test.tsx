@@ -78,7 +78,6 @@ describe("Meter", () => {
     const allowed = [
       "var(--st-ok)",
       "var(--st-warn)",
-      "var(--st-serious)",
       "var(--st-crit)",
       "var(--s1)",
       "var(--s2)",
@@ -86,7 +85,7 @@ describe("Meter", () => {
       "var(--s4)",
     ];
 
-    const severities = ["ok", "warning", "serious", "critical"] as const;
+    const severities = ["ok", "warning", "critical"] as const;
     for (const severity of severities) {
       const { container, unmount } = render(
         <Meter value={30} max={100} severity={severity} />,
@@ -119,11 +118,7 @@ describe("Meter", () => {
 
   it("accepts custom thresholds instead of hardcoding them", () => {
     const { container } = render(
-      <Meter
-        value={50}
-        max={100}
-        thresholds={{ warning: 40, serious: 60, critical: 80 }}
-      />,
+      <Meter value={50} max={100} thresholds={{ warning: 40, critical: 80 }} />,
     );
     const fill = container.querySelector(".meter i") as HTMLElement;
     expect(fill.style.background).toContain("--st-warn");

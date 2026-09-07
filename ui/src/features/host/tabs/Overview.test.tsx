@@ -1081,7 +1081,7 @@ describe("needsAttention reads the host's drives", () => {
     // this panel is what to DO, and two disks are two replacements
     expect(testee).toEqual([
       { severity: "critical", what: "sda — 3 pending sectors" },
-      { severity: "serious", what: "sdb — 12 reallocated sectors" },
+      { severity: "critical", what: "sdb — 12 reallocated sectors" },
     ]);
   });
 
