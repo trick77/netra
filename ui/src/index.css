@@ -294,35 +294,44 @@
      background. The walk wraps rather than growing -- a host with five
      reportable NICs repeats a shade and the legend, which that panel always
      carries, is what tells them apart. */
-  /* The traffic pair is RRDtool's own, sampled out of the operator's
-     Observium graphs rather than derived from the series ramp: #aeca4f green
-     for in, #9596de blue-violet for out. An operator reads the same two
-     hosts in both tools on the same screen, and a traffic chart that swaps
-     the hues between them is a chart they have to re-learn each time. The
-     ramp above stays as it is -- it is for charts with no such counterpart.
+  /* The traffic pair is the status palette's own two hues: --st-ok #0ca30c
+     for in, --st-warn #fab219 for out. It was RRDtool's pair, sampled out of
+     the operator's Observium graphs (#aeca4f / #9596de) so a host read the
+     same in both tools; that match is deliberately given up here. The
+     argument that won is the nearer one -- the colours on the SCREEN the
+     reader is on. The old pair matched nothing else in netra, and a traffic
+     cell drawn in two hues that appear in no other column read as a foreign
+     object in the row.
 
-     Used exactly as sampled, and NOT compensated for the fill.
+     This is a knowing exception to the 0-41 degree rule above, and a bigger
+     one than --mem-used: both of these are full-brightness status hues, not
+     a dimmed cousin, and the out band carries --st-warn permanently rather
+     than on a state change. What makes it survivable is that severity on the
+     fleet row is never carried by this cell -- the rail, the dot and the
+     word all sit to the LEFT of it, and the traffic cell has no severity of
+     its own to confuse them with. A reader who learns "orange here is
+     outbound bytes" learns it once, in the one column that has no state.
+
+     Used exactly as named, and NOT compensated for the fill.
 
      A mirrored area is filled at MIRROR_FILL_OPACITY over --surface, so what
      reaches the eye is 45 % of the way from #1b1b1a to the token: these
-     render as #657143 and #5d5e75, duller than the graph they come from.
+     render as #145814 and #7f5f1a, duller than the swatch they come from.
      Brightening the tokens to compensate was tried and reverted -- on a dark
      ground with nothing behind the band, "translucent" IS "dimmer", so
      pushing the token toward white makes the band read as SOLID, which is
-     the opposite of what was wanted. The two cannot both hold: an exact
-     match through a 45 % fill would need rgb(354, 416, 144), and anything
-     approaching it costs the see-through look.
+     the opposite of what was wanted.
 
-     Keeping the sampled values means the token names the reference colour
-     honestly, and the fill weight is the one dial left to turn. */
-  --in-1: #aeca4f;
-  --in-2: #c0d977;
-  --in-3: #d2e6a0;
-  --in-4: #e4f2c9;
-  --out-1: #9596de;
-  --out-2: #aeafe6;
-  --out-3: #c7c8ee;
-  --out-4: #e0e0f6;
+     Keeping the status values exactly means the token names the status
+     colour honestly, and the fill weight is the one dial left to turn. */
+  --in-1: #0ca30c;
+  --in-2: #42b742;
+  --in-3: #78cc78;
+  --in-4: #aee0ae;
+  --out-1: #fab219;
+  --out-2: #fbc34c;
+  --out-3: #fcd47f;
+  --out-4: #fde5b2;
   /* THE PER-CORE CPU STACK, built the way --in-* and --out-* are built: one
      hue, four lightness steps, walked and wrapped.
 

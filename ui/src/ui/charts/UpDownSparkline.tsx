@@ -62,12 +62,11 @@ export interface UpDownSparklineProps {
 }
 
 /**
- * Green above the axis, purple below. Inbound is the green half in every
+ * Green above the axis, amber below. Inbound is the green half in every
  * traffic graph an operator has already read, and these started out the
- * other way round. Purple rather than blue for the lower half: against the
- * green above it, blue-vs-green separates by CVD dE 9 and reads as one mass
- * at a glance, where purple is 20 -- and the two halves of this chart are the
- * one comparison it exists to make.
+ * other way round. The lower half was a blue-violet sampled from RRDtool and
+ * is now --st-warn; index.css owns why the status hues are allowed here at
+ * all, and it is the only place that argument lives.
  *
  * Exported because the enlarged view of a traffic sparkline is drawn by
  * Overlay rather than by this component, and a chart that changed colour on
