@@ -217,7 +217,7 @@ function trendColor(severity: FillSeverity | null, series: string): string {
   return severity === null ? series : STATUS_COLOR[severity];
 }
 
-/** Worse sorts higher. Only the three diskState can answer with, plus the
+/** Worse sorts higher. Only the two diskState can answer with, plus the
  * null it answers with for a healthy disk. */
 const SEVERITY_RANK: Record<string, number> = {
   critical: 3,

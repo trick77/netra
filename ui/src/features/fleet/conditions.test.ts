@@ -563,7 +563,7 @@ describe("drive conditions", () => {
   });
 
   it("collapses several failing drives into one condition for the host", () => {
-    // Given two disks in trouble
+    // Given two disks in trouble, one worse than the other
     const rows = hostConditions(
       makeRow({
         drives: [withAttrs("sda", { 5: 12 }), withAttrs("sdb", { 197: 3 })],
@@ -571,12 +571,12 @@ describe("drive conditions", () => {
       NOW,
     );
 
-    // Then the host has ONE row, at the worst severity of the two, saying how
-    // many more there are -- the counts line says hosts, not drives.
+    // Then the host has ONE row, at the more urgent of the two, saying how many
+    // more there are -- the counts line says hosts, not drives.
     const drives = rows.filter((c) => c.kind === "drive");
     expect(drives).toHaveLength(1);
     expect(drives[0].severity).toBe("critical");
-    expect(drives[0].what).toBe("sda — 12 reallocated sectors (+1 more)");
+    expect(drives[0].what).toBe("sdb — 3 pending sectors (+1 more)");
   });
 
   it("stays silent when the drives were never fetched", () => {

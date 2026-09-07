@@ -70,8 +70,32 @@ export function attr(drive: Drive, id: number): number | null {
  */
 export interface Finding {
   severity: Exclude<Severity, "neutral">;
+  /** See URGENCY. Never shown; it only orders findings of equal severity. */
+  urgency: Urgency;
   text: string;
 }
+
+/**
+ * The tie-break between two findings of the SAME severity, worst lowest.
+ *
+ * Not a fourth severity by another name: nothing renders it, and a reader
+ * never sees these words. It exists because everything that escalates to the
+ * host is now `critical`, so a severity comparison can no longer decide which
+ * drive the host's one attention line names -- and "sda, 12 reallocated
+ * sectors (+1 more)" hides an unreadable sector behind a counter that is
+ * merely climbing. Ordering is not a judgement a reader has to rank; the word
+ * on the chip still is, and there are two of those.
+ */
+const URGENCY = {
+  /** Unreadable now, or the drive's own verdict on itself. */
+  failing: 0,
+  /** Already substituting for damage, or running out of what it substitutes from. */
+  substituting: 1,
+  /** Out of rated life, or a fault on the wire rather than on the platter. */
+  wearing: 2,
+} as const;
+
+type Urgency = (typeof URGENCY)[keyof typeof URGENCY];
 
 /**
  * Thresholds, in one place, because every one of them is a judgement.
@@ -105,8 +129,8 @@ function plural(n: number, one: string, many = `${one}s`): string {
  */
 export function driveFindings(drive: Drive): Finding[] {
   const out: Finding[] = [];
-  const add = (severity: Finding["severity"], text: string) =>
-    out.push({ severity, text });
+  const add = (severity: Finding["severity"], urgency: Urgency, text: string) =>
+    out.push({ severity, urgency, text });
 
   const kind = driveKind(drive);
 
@@ -116,7 +140,7 @@ export function driveFindings(drive: Drive): Finding[] {
     // else here.
     const warning = attr(drive, NVME.criticalWarning);
     if (warning !== null && warning !== 0) {
-      add("critical", "drive reports a critical warning");
+      add("critical", URGENCY.failing, "drive reports a critical warning");
     }
 
     // Spare against the drive's OWN threshold. The percentage means nothing
@@ -127,22 +151,27 @@ export function driveFindings(drive: Drive): Finding[] {
     if (spare !== null && spareFloor !== null && spare <= spareFloor) {
       add(
         "critical",
+        URGENCY.substituting,
         `spare blocks at ${spare}%, at or below the drive's ${spareFloor}% floor`,
       );
     }
 
     const used = attr(drive, NVME.percentageUsed);
     if (used !== null && used >= SMART_THRESHOLDS.wearCritical) {
-      add("critical", `${used}% of rated write endurance used`);
+      add(
+        "critical",
+        URGENCY.wearing,
+        `${used}% of rated write endurance used`,
+      );
     } else if (used !== null && used >= SMART_THRESHOLDS.wearWarning) {
-      add("warning", `${used}% of rated write endurance used`);
+      add("warning", URGENCY.wearing, `${used}% of rated write endurance used`);
     }
 
     // Uncorrected data-integrity errors: the drive returned bad data or could
     // not return it at all.
     const media = attr(drive, NVME.mediaErrors);
     if (media !== null && media > 0) {
-      add("critical", plural(media, "media error"));
+      add("critical", URGENCY.failing, plural(media, "media error"));
     }
     return sorted(out);
   }
@@ -153,26 +182,36 @@ export function driveFindings(drive: Drive): Finding[] {
     // unreadable, and the count moves on the next write or the next failure.
     const pending = attr(drive, ATA.currentPending);
     if (pending !== null && pending > 0) {
-      add("critical", plural(pending, "pending sector"));
+      add("critical", URGENCY.failing, plural(pending, "pending sector"));
     }
 
     // Sectors that failed even offline verification -- unreadable and not
     // recoverable by rewriting.
     const offline = attr(drive, ATA.offlineUncorrectable);
     if (offline !== null && offline > 0) {
-      add("critical", plural(offline, "uncorrectable sector"));
+      add("critical", URGENCY.failing, plural(offline, "uncorrectable sector"));
     }
 
-    // Already swapped for spares. Not urgent on its own -- that is what the
-    // spare pool is for -- but a count that climbs is a drive consuming it.
+    // Already swapped for spares: the drive has started substituting for
+    // damage, and it does not come back from that on its own -- which is what
+    // driveAlarms escalates on, so it is critical. It still ranks below a
+    // sector that is unreadable RIGHT NOW; see URGENCY.
     const reallocated = attr(drive, ATA.reallocatedSectors);
     if (reallocated !== null && reallocated > 0) {
-      add("critical", plural(reallocated, "reallocated sector"));
+      add(
+        "critical",
+        URGENCY.substituting,
+        plural(reallocated, "reallocated sector"),
+      );
     }
 
     const uncorrect = attr(drive, ATA.reportedUncorrect);
     if (uncorrect !== null && uncorrect > 0) {
-      add("critical", plural(uncorrect, "uncorrectable error"));
+      add(
+        "critical",
+        URGENCY.failing,
+        plural(uncorrect, "uncorrectable error"),
+      );
     }
 
     // The cable, not the drive. UDMA CRC errors are corruption on the wire
@@ -181,7 +220,11 @@ export function driveFindings(drive: Drive): Finding[] {
     // replacing a healthy drive.
     const crc = attr(drive, ATA.crcErrors);
     if (crc !== null && crc > 0) {
-      add("warning", `${plural(crc, "CRC error")} — check the cable`);
+      add(
+        "warning",
+        URGENCY.wearing,
+        `${plural(crc, "CRC error")} — check the cable`,
+      );
     }
     return sorted(out);
   }
@@ -196,7 +239,9 @@ const RANK: Record<Finding["severity"], number> = {
 };
 
 function sorted(findings: Finding[]): Finding[] {
-  return [...findings].sort((a, b) => RANK[a.severity] - RANK[b.severity]);
+  return [...findings].sort(
+    (a, b) => RANK[a.severity] - RANK[b.severity] || a.urgency - b.urgency,
+  );
 }
 
 /**
@@ -223,6 +268,7 @@ export function driveSeverity(drive: Drive): Finding["severity"] {
 export interface DriveAlarm {
   device: string;
   severity: "critical";
+  urgency: Urgency;
   text: string;
 }
 
@@ -294,14 +340,20 @@ export function driveAlarms(
       out.push({
         device: drive.device,
         severity: finding.severity,
+        urgency: finding.urgency,
         text: finding.text,
       });
     }
   }
-  // Across drives as well as within one: a host with a spent NVMe and a disk
-  // with one reallocated sector is a host with a spent NVMe. Stable, so two
-  // alarms of equal severity keep drive order.
-  return out.sort((a, b) => RANK[a.severity] - RANK[b.severity]);
+  // Across drives as well as within one: a host with an unreadable sector on
+  // one disk and a reallocated sector on another is a host with an unreadable
+  // sector. Every alarm here is `critical` by the filter above, so URGENCY is
+  // what does the work; the severity term is kept so the sort still reads as
+  // worst-first if a second severity ever escalates. Stable, so two alarms
+  // that tie on both keep drive order.
+  return out.sort(
+    (a, b) => RANK[a.severity] - RANK[b.severity] || a.urgency - b.urgency,
+  );
 }
 
 /**
