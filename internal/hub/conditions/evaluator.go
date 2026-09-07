@@ -31,15 +31,28 @@ type Evaluator struct {
 	// startedAt is when this process began, which the warm-up is measured
 	// against.
 	startedAt time.Time
+	// interval is the tick. In production it is always Interval; it is a field
+	// only so a test can watch the loop without waiting a minute for it, the
+	// same escape hatch the agent's client keeps for its own ticker. Nothing
+	// mutates it after construction.
+	interval time.Duration
 }
 
 // New builds an Evaluator that began running at startedAt.
 func New(store Store, startedAt time.Time) *Evaluator {
-	return &Evaluator{store: store, now: time.Now, startedAt: startedAt}
+	return &Evaluator{
+		store:     store,
+		now:       time.Now,
+		startedAt: startedAt,
+		interval:  Interval,
+	}
 }
 
 // SetClockForTest drives the evaluator's sense of time.
 func (e *Evaluator) SetClockForTest(now func() time.Time) { e.now = now }
+
+// SetIntervalForTest drives the loop faster than a minute.
+func (e *Evaluator) SetIntervalForTest(d time.Duration) { e.interval = d }
 
 // warmUp is how long after start-up the evaluator declines to judge silence.
 //
@@ -60,7 +73,7 @@ const warmUp = StaleAfter
 
 // Run evaluates on a ticker until the context ends.
 func (e *Evaluator) Run(ctx context.Context) {
-	ticker := time.NewTicker(Interval)
+	ticker := time.NewTicker(e.interval)
 	defer ticker.Stop()
 
 	for {

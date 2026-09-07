@@ -3,13 +3,18 @@ package conditions_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/trick77/netra/internal/hub/conditions"
 )
 
+// fakeStore is guarded because Run drives it from its own goroutine while the
+// test reads the counters, and CI runs with -race.
 type fakeStore struct {
+	mu       sync.Mutex
 	scan     conditions.Scan
 	scanErr  error
 	open     []conditions.Open
@@ -20,17 +25,35 @@ type fakeStore struct {
 }
 
 func (f *fakeStore) ScanConditions(context.Context, time.Time) (conditions.Scan, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.passes++
 	return f.scan, f.scanErr
 }
 
 func (f *fakeStore) OpenConditions(context.Context) ([]conditions.Open, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.open, f.openErr
 }
 
 func (f *fakeStore) ApplyConditions(_ context.Context, a []conditions.Action, _ time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.applied = append(f.applied, a...)
 	return f.applyErr
+}
+
+func (f *fakeStore) passCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.passes
+}
+
+func (f *fakeStore) appliedActions() []conditions.Action {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.applied)
 }
 
 // silentScan is a pass in which one host has not been heard from.
@@ -64,8 +87,8 @@ func TestSilenceIsNotJudgedDuringWarmUp(t *testing.T) {
 	if err := e.Once(context.Background()); err != nil {
 		t.Fatalf("Once: %v", err)
 	}
-	if len(store.applied) != 0 {
-		t.Fatalf("opened a condition during warm-up: %+v", store.applied)
+	if len(store.appliedActions()) != 0 {
+		t.Fatalf("opened a condition during warm-up: %+v", store.appliedActions())
 	}
 }
 
@@ -94,8 +117,8 @@ func TestWarmUpDoesNotResolveOpenSilence(t *testing.T) {
 	if err := e.Once(context.Background()); err != nil {
 		t.Fatalf("Once: %v", err)
 	}
-	if len(store.applied) != 0 {
-		t.Fatalf("resolved a silent condition during warm-up: %+v", store.applied)
+	if len(store.appliedActions()) != 0 {
+		t.Fatalf("resolved a silent condition during warm-up: %+v", store.appliedActions())
 	}
 }
 
@@ -110,8 +133,8 @@ func TestSilenceIsJudgedOnceWarmedUp(t *testing.T) {
 	if err := e.Once(context.Background()); err != nil {
 		t.Fatalf("Once: %v", err)
 	}
-	if len(store.applied) != 1 || store.applied[0].Open == nil {
-		t.Fatalf("want one open action, got %+v", store.applied)
+	if len(store.appliedActions()) != 1 || store.appliedActions()[0].Open == nil {
+		t.Fatalf("want one open action, got %+v", store.appliedActions())
 	}
 }
 
@@ -136,8 +159,8 @@ func TestWarmUpDoesNotSuppressOtherKinds(t *testing.T) {
 	if err := e.Once(context.Background()); err != nil {
 		t.Fatalf("Once: %v", err)
 	}
-	if len(store.applied) != 1 || store.applied[0].Open == nil {
-		t.Fatalf("warm-up suppressed a disk condition: %+v", store.applied)
+	if len(store.appliedActions()) != 1 || store.appliedActions()[0].Open == nil {
+		t.Fatalf("warm-up suppressed a disk condition: %+v", store.appliedActions())
 	}
 }
 
@@ -150,8 +173,48 @@ func TestAFailedScanStopsThePass(t *testing.T) {
 	if err := e.Once(context.Background()); err == nil {
 		t.Fatal("a failed scan was treated as a successful pass")
 	}
-	if len(store.applied) != 0 {
-		t.Fatalf("wrote something after a failed scan: %+v", store.applied)
+	if len(store.appliedActions()) != 0 {
+		t.Fatalf("wrote something after a failed scan: %+v", store.appliedActions())
+	}
+}
+
+// The loop ticks, and keeps ticking through a failure.
+//
+// A pass that errors is one missed evaluation and the next is a tick away.
+// Ending the loop instead would mean a transient database error silently
+// stops condition tracking for the life of the process -- the kind of failure
+// that is only noticed weeks later, when someone asks why nothing has opened.
+func TestRunKeepsTickingAfterAFailedPass(t *testing.T) {
+	store := &fakeStore{scanErr: errors.New("connection refused")}
+	e := conditions.New(store, time.Now().Add(-time.Hour))
+	e.SetIntervalForTest(time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		e.Run(ctx)
+		close(done)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if store.passCount() >= 3 {
+			break
+		}
+		select {
+		case <-deadline:
+			cancel()
+			<-done
+			t.Fatalf("the loop stopped after %d passes", store.passCount())
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return when its context ended")
 	}
 }
 
@@ -169,7 +232,7 @@ func TestAQuietPassWritesNothing(t *testing.T) {
 	if err := e.Once(context.Background()); err != nil {
 		t.Fatalf("Once: %v", err)
 	}
-	if len(store.applied) != 0 {
-		t.Fatalf("a quiet pass wrote %+v", store.applied)
+	if len(store.appliedActions()) != 0 {
+		t.Fatalf("a quiet pass wrote %+v", store.appliedActions())
 	}
 }

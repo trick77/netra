@@ -115,27 +115,34 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 // row stays a rendering decision. Collapsed here, the condition would open and
 // close every time the fullest mount changed from /var to /mnt.
 //
-// A mount whose own reading predates the host's last_seen is skipped entirely
-// -- not seen, not judged. `filesystems` is never pruned, so a mount that
-// stopped being reported keeps its row forever; 0013's comment carries the
-// argument. Skipping it means Diff sees the subject disappear while the host
-// is still talking, which is exactly ReasonVanished.
+// The SUBJECT is the label, not the mountpoint, and read/family.go states why:
+// "the label is the identity -- stable, unique per host, what the inventory
+// joins on -- while the mountpoint is what an operator recognises". A state
+// machine keys on identity, so a mount moved from /mnt/old to /mnt/new stays
+// one condition rather than vanishing and reopening. The mountpoint rides the
+// detail, where the sentence needs it, and it is nullable so the label is the
+// fallback there too.
 func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan) error {
-	// The SUBJECT is the label, not the mountpoint, and read/family.go states
-	// why: "the label is the identity -- stable, unique per host, what the
-	// inventory joins on -- while the mountpoint is what an operator
-	// recognises". A state machine keys on identity, so a mount moved from
-	// /mnt/old to /mnt/new stays one condition rather than vanishing and
-	// reopening. The mountpoint rides the detail, where the sentence needs it,
-	// and it is nullable so the label is the fallback there too.
+	// Every mount the host still has a row for, with the age of its reading.
+	//
+	// Deliberately UNFILTERED by that age, and the distinction is the one this
+	// query is easiest to get wrong. `filesystem_current` keeps a row per
+	// mount; a stale reading means the mount was not re-measured, not that the
+	// mount is gone. The agent's own statfs backoff makes that routine -- a
+	// wedged mountpoint is skipped for exponentially many scrapes while the
+	// host keeps posting (collector/filesystems.go) -- so filtering here would
+	// drop a still-mounted, still-full disk out of Seen on a REPORTING host.
+	// Diff reads that as ReasonVanished, which skips the hysteresis, resolves
+	// on that single tick, and reopens with a fresh onset when statfs answers
+	// again. Present and measurable are two questions, and only the second
+	// depends on the age.
 	rows, err := s.pool.Query(ctx, `
-		SELECT fc.host_id, f.label, f.mountpoint, fc.used, fc.free
+		SELECT fc.host_id, f.label, f.mountpoint, fc.used, fc.free,
+		       fc.ts, hc.last_seen
 		  FROM filesystem_current fc
 		  JOIN filesystems f ON f.id = fc.fs_id AND f.host_id = fc.host_id
 		  JOIN host_current hc ON hc.host_id = fc.host_id
-		 WHERE hc.last_seen IS NOT NULL
-		   AND fc.ts >= hc.last_seen - $1::interval`,
-		staleMountWindow.String())
+		 WHERE hc.last_seen IS NOT NULL`)
 	if err != nil {
 		return fmt.Errorf("query filesystems: %w", err)
 	}
@@ -146,12 +153,23 @@ func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan) erro
 		var label string
 		var mountpoint *string
 		var used, free *int64
-		if err := rows.Scan(&hostID, &label, &mountpoint, &used, &free); err != nil {
+		var readingTS, lastSeen time.Time
+		if err := rows.Scan(&hostID, &label, &mountpoint, &used, &free,
+			&readingTS, &lastSeen); err != nil {
 			return fmt.Errorf("scan filesystem: %w", err)
 		}
 
 		key := conditions.Key{HostID: hostID, Kind: conditions.KindDisk, Subject: label}
+		// Seen because the mount exists, whatever the reading's age.
 		scan.Seen[key] = true
+
+		// Judged only on a CURRENT reading, against the host's own last_seen
+		// rather than the wall clock -- the same comparison currentFilesystems
+		// makes in ui/src/lib/host.ts, so the hub and the browser retire a
+		// mount at the same moment rather than three minutes apart.
+		if lastSeen.Sub(readingTS) > conditions.StaleAfter {
+			continue
+		}
 
 		pct, ok := conditions.UsePct(used, free)
 		if !ok {
@@ -172,20 +190,25 @@ func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan) erro
 		if free != nil {
 			detail["free"] = *free
 		}
-		scan.Bad[key] = conditions.Finding{Key: key, Severity: severity, Detail: detail}
+		scan.Bad[key] = conditions.Finding{
+			Key:      key,
+			Severity: severity,
+			Detail:   detail,
+			// The reading's own timestamp, as a FLOOR rather than a moment.
+			//
+			// The honest answer is a walk back through the mount's series to
+			// the first sample over the threshold, and that walk is not
+			// written yet. Until it is, this says "it was already this full
+			// when this reading was taken", which is true and is bounded; the
+			// alternative -- letting Diff fill in now() -- silently records
+			// detection time as onset, and on a host that has been off for a
+			// month that is a month wrong with nothing marking it.
+			OpenedTS:      readingTS,
+			OpenedAtLeast: true,
+		}
 	}
 	return rows.Err()
 }
-
-// staleMountWindow is how far a mount's own reading may lag the host's before
-// the mount is treated as no longer reported.
-//
-// Generous, because the two timestamps come from different places: last_seen
-// advances on every scrape, and a filesystem reading is written when the
-// filesystem collector runs. A tight window would call a mount vanished
-// because of ordinary skew, and a vanished resolution is not something to be
-// wrong about -- it closes a condition without waiting out the hysteresis.
-const staleMountWindow = 15 * time.Minute
 
 // scanUnits raises the failed-units condition, one subject per HOST.
 //
@@ -197,16 +220,29 @@ const staleMountWindow = 15 * time.Minute
 // The onset is the OLDEST failing unit's state_ts: five units failing at five
 // times is one condition that began with the first.
 func (s *Store) scanUnits(ctx context.Context, scan *conditions.Scan) error {
+	// The COUNT comes from host_current.services_failed, and the names and the
+	// onset from the unit rows.
+	//
+	// Not one source, because the UI already made this decision and stated it:
+	// "the count leads and comes from services_failed, which is the agent's
+	// own summary; the names annotate it and come from the hub's unit rows.
+	// The two are ALLOWED to disagree -- a host heard from once has a summary
+	// and no unit rows yet" (fleet/conditions.ts). Counting unit rows here
+	// instead would make the hub and the browser disagree by construction: the
+	// summary rides every 60s scrape while the snapshot that fills the unit
+	// rows arrives every five minutes, so they differ routinely and not only
+	// in the edge case. The equality gate this whole engine is measured
+	// against would never pass.
 	rows, err := s.pool.Query(ctx, `
-		SELECT u.host_id,
-		       count(*) FILTER (WHERE u.state = 'failed') AS failed,
+		SELECT hc.host_id,
+		       coalesce(hc.services_failed, 0) AS failed,
 		       min(u.state_ts) FILTER (WHERE u.state = 'failed') AS since,
 		       (array_agg(u.unit_name ORDER BY u.unit_name)
 		          FILTER (WHERE u.state = 'failed'))[1:3] AS names
-		  FROM systemd_units u
-		  JOIN host_current hc ON hc.host_id = u.host_id
+		  FROM host_current hc
+		  LEFT JOIN systemd_units u ON u.host_id = hc.host_id
 		 WHERE hc.last_seen IS NOT NULL
-		 GROUP BY u.host_id`)
+		 GROUP BY hc.host_id, hc.services_failed`)
 	if err != nil {
 		return fmt.Errorf("query units: %w", err)
 	}
@@ -232,6 +268,13 @@ func (s *Store) scanUnits(ctx context.Context, scan *conditions.Scan) error {
 		}
 
 		detail := map[string]any{"count": failed}
+		// Never MORE names than the count claims. A row reading "1 failed
+		// unit" beside two unit names contradicts itself, and the count is
+		// what every other part of netra is counting -- the same three
+		// branches failedUnitsShown resolves, resolved the same way.
+		if len(names) > failed {
+			names = names[:failed]
+		}
 		if len(names) > 0 {
 			detail["units"] = names
 		}

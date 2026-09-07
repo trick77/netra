@@ -71,7 +71,7 @@ func (s *Store) ApplyConditions(ctx context.Context, actions []conditions.Action
 	for _, a := range actions {
 		switch {
 		case a.Open != nil:
-			if err := openCondition(ctx, tx, *a.Open); err != nil {
+			if err := openCondition(ctx, tx, *a.Open, now); err != nil {
 				return err
 			}
 		case a.Resolve != nil:
@@ -88,7 +88,7 @@ func (s *Store) ApplyConditions(ctx context.Context, actions []conditions.Action
 	return tx.Commit(ctx)
 }
 
-func openCondition(ctx context.Context, tx pgx.Tx, f conditions.Finding) error {
+func openCondition(ctx context.Context, tx pgx.Tx, f conditions.Finding, recordedAt time.Time) error {
 	detail, err := detailJSON(f.Detail)
 	if err != nil {
 		return err
@@ -114,12 +114,28 @@ func openCondition(ctx context.Context, tx pgx.Tx, f conditions.Finding) error {
 		return nil
 	}
 
-	// The event carries the opening timestamp, not now(): a filesystem walked
-	// back to 03:00 opened at 03:00, and an event stamped with the tick that
-	// noticed would put the transition hours after the thing it describes.
-	return insertConditionEvent(ctx, tx, f.Key, f.OpenedTS, f.Severity, map[string]any{
+	// The event is stamped when the transition was RECORDED, and the onset
+	// rides its detail.
+	//
+	// Back-dating it to f.OpenedTS is the obvious move and it is wrong twice.
+	// A failed unit's onset is min(state_ts), which is never pruned and can be
+	// years old, so the opening event would land outside
+	// netra_prune_discrete_events' 90-day horizon and be deleted at the next
+	// daily run -- while the condition it opened is still open. That is
+	// precisely the scar 0016 cites as the reason resolved rows are kept.
+	// It also hides the row from every windowed read: read/events.go bounds by
+	// `e.ts >= $3 AND e.ts <= $4`, so a transition backdated a month never
+	// appears in a day's log.
+	//
+	// The row's opened_ts is the onset and always was. This event answers
+	// "when did netra conclude it", which is a different and also true fact.
+	return insertConditionEvent(ctx, tx, f.Key, recordedAt, f.Severity, map[string]any{
 		"transition": "opened",
 		"severity":   f.Severity,
+		"opened_ts":  f.OpenedTS.UTC().Format(time.RFC3339),
+		// True when the onset is a floor rather than a moment, so a reader
+		// knows "since" is the earliest netra can vouch for.
+		"opened_at_least": f.OpenedAtLeast,
 	})
 }
 

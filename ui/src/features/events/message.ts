@@ -35,6 +35,21 @@ export const KERNEL_EVENT_TYPES = [
   "link_change",
 ] as const;
 
+/** The condition kinds the hub opens and clears, which reach this log as
+ * transitions.
+ *
+ * Mirrors the Kind constants in internal/hub/conditions. A kind missing here
+ * still renders -- the dropdown unions this list with whatever arrived -- but
+ * it falls through to the generic detail dump, which for a transition reads
+ * "root — transition opened · severity warning" instead of a sentence. */
+export const CONDITION_EVENT_TYPES = [
+  "silent",
+  "sporadic",
+  "disk",
+  "failed-units",
+  "drive",
+] as const;
+
 /** The known event types, which is also the order a type filter offers them.
  *
  * Hardcoded, unlike everything else here, because the type dropdown is built
@@ -49,6 +64,7 @@ export const KNOWN_EVENT_TYPES = [
   "package",
   "unit",
   "hub",
+  ...CONDITION_EVENT_TYPES,
   ...KERNEL_EVENT_TYPES,
 ] as const;
 
@@ -361,6 +377,48 @@ function hubMessage(f: Record<string, unknown>): string {
   return `Hub unreachable for ${lasted} — buffered and replayed`;
 }
 
+/** What a condition transition says.
+ *
+ * These are the hub's own judgements arriving in the log: a disk crossed its
+ * threshold, a host went quiet, units started failing. The sentence names the
+ * KIND rather than restating the numbers, because the row beside it already
+ * carries the subject and the condition list carries the figures -- what the
+ * log adds is WHEN it started and stopped.
+ *
+ * A cleared row says how long it was open, which is the fact only the log
+ * holds: the condition row is gone from the open set by then, and the
+ * attention list never knew the duration at all. */
+function conditionMessage(
+  type: string,
+  subject: string,
+  f: Record<string, unknown>,
+): string {
+  const what = CONDITION_LABELS[type] ?? type;
+  const named = subject ? `${what} — ${subject}` : what;
+
+  if (text(f, "transition") === "cleared") {
+    const open = duration(Math.round(count(f, "open_ms") / 1000));
+    // "no longer reported" is not a recovery, and conflating them is how a
+    // fleet goes green because nobody is looking at it. See resolved_reason
+    // in 0016_conditions.sql.
+    const how =
+      text(f, "reason") === "vanished" ? "no longer reported" : "cleared";
+    return open ? `${named} ${how} after ${open}` : `${named} ${how}`;
+  }
+  return named;
+}
+
+/** The kinds as sentences. Mirrors CONDITION_KIND_INFO in fleet/conditions.ts,
+ * which names the same kinds for the attention list -- one vocabulary, so a
+ * reader who followed an ?attn= link recognises what the log calls it. */
+const CONDITION_LABELS: Record<string, string> = {
+  silent: "Stopped reporting",
+  sporadic: "Reporting sporadically",
+  disk: "Filesystem nearly full",
+  "failed-units": "Failed units",
+  drive: "Drive errors",
+};
+
 export function messageOf(event: Event): string {
   const f = fields(event);
   const subject = event.subject ?? "";
@@ -375,6 +433,12 @@ export function messageOf(event: Event): string {
     case "hub":
       // No subject: a delivery outage is about the host as a whole.
       return hubMessage(f);
+    case "silent":
+    case "sporadic":
+    case "disk":
+    case "failed-units":
+    case "drive":
+      return conditionMessage(event.type, subject, f);
     default: {
       // Widened deliberately: the tuple is `as const` so the dropdown keeps
       // its order and its literal types, and `event.type` is a plain string
