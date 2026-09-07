@@ -16,6 +16,7 @@ package conditions
 
 import (
 	"maps"
+	"slices"
 	"time"
 )
 
@@ -106,6 +107,20 @@ type Finding struct {
 // stopped being reported -- and telling those apart is the whole of
 // ReasonVanished.
 type Scan struct {
+	// Evaluated is the kinds this pass actually looked at.
+	//
+	// The most important field here, and the least obvious. Absence in Seen
+	// means "this subject was not reported"; absence of the whole KIND means
+	// "nobody looked", and conflating them is destructive: if the filesystem
+	// query fails, every disk subject is missing from Seen, every disk
+	// condition reads as vanished, and -- because a vanished subject skips the
+	// hysteresis -- they all resolve on that single tick and reopen on the
+	// next with opened_ts = now. The onset 0016 says can only be walked once,
+	// at open, is then gone for good, destroyed by one failed query.
+	//
+	// So a kind that is not in here is left entirely alone, exactly as a
+	// silent host's conditions are.
+	Evaluated map[string]bool
 	// Seen is every (host, kind, subject) the pass actually evaluated,
 	// including the healthy ones.
 	Seen map[Key]bool
@@ -142,11 +157,46 @@ type Update struct {
 	ID       int64
 	Key      Key
 	Severity string
-	// Detail is refreshed on every pass: a disk that opened at 91% and is now
-	// at 97% is the same condition, and the row must not keep printing the
+	// Detail refreshes the stored numbers: a disk that opened at 91% and is
+	// now at 97% is the same condition, and the row must not keep printing the
 	// number it opened with.
+	//
+	// NIL MEANS LEAVE IT ALONE, and the distinction matters because the column
+	// is NOT NULL. The miss-counting update below carries no detail -- the
+	// pass found nothing to describe -- and writing that as an empty object
+	// would blank the numbers a still-open condition is displayed with, for
+	// the one tick before it either clears or comes back.
 	Detail       map[string]any
 	MissingTicks int
+}
+
+// cloneDetail copies a finding's detail deeply enough that the caller cannot
+// change it afterwards.
+//
+// maps.Clone alone is not enough and the difference is not theoretical: the
+// failed-units detail carries a SLICE of unit names, and a shallow copy leaves
+// that slice aliased to whatever the observer reuses between passes. One level
+// of slice and map values is copied, which covers every shape a detail
+// actually has; anything deeper stays shared, and a detail that needs it wants
+// a type rather than a deeper clone here.
+func cloneDetail(in map[string]any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]any, len(in))
+	for k, v := range in {
+		switch t := v.(type) {
+		case []string:
+			out[k] = slices.Clone(t)
+		case []any:
+			out[k] = slices.Clone(t)
+		case map[string]any:
+			out[k] = maps.Clone(t)
+		default:
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // Diff decides what changes a scan implies, given what is currently open.
@@ -167,10 +217,16 @@ func Diff(open []Open, scan Scan, now time.Time) []Action {
 		existing, isOpen := byKey[key]
 		if !isOpen {
 			f := finding
+			// The MAP key wins over the copy inside the finding. They are the
+			// same thing said twice, and an observer that fills the map but
+			// leaves the struct's copy zero would otherwise open a row against
+			// host 0 -- a foreign key violation whose cause is nowhere near
+			// where it surfaces.
+			f.Key = key
 			if f.OpenedTS.IsZero() {
 				f.OpenedTS = now
 			}
-			f.Detail = maps.Clone(f.Detail)
+			f.Detail = cloneDetail(f.Detail)
 			actions = append(actions, Action{Open: &f})
 			continue
 		}
@@ -181,7 +237,7 @@ func Diff(open []Open, scan Scan, now time.Time) []Action {
 			ID:           existing.ID,
 			Key:          key,
 			Severity:     finding.Severity,
-			Detail:       maps.Clone(finding.Detail),
+			Detail:       cloneDetail(finding.Detail),
 			MissingTicks: 0,
 		}})
 	}
@@ -189,6 +245,13 @@ func Diff(open []Open, scan Scan, now time.Time) []Action {
 	// Open, and no longer bad.
 	for key, o := range byKey {
 		if _, stillBad := scan.Bad[key]; stillBad {
+			continue
+		}
+
+		// Nobody looked at this kind, so its subjects being absent from Seen
+		// says nothing about them. See Scan.Evaluated: without this a failed
+		// query resolves every condition of the kind and destroys its onset.
+		if !scan.Evaluated[key.Kind] {
 			continue
 		}
 

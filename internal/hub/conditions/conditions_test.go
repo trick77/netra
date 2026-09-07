@@ -17,6 +17,7 @@ func key(host int32, kind, subject string) conditions.Key {
 // reporting, which is the ordinary case.
 func scan(seen []conditions.Key, bad map[conditions.Key]conditions.Finding) conditions.Scan {
 	s := conditions.Scan{
+		Evaluated: map[string]bool{},
 		Seen:      map[conditions.Key]bool{},
 		Bad:       bad,
 		Reporting: map[int32]bool{},
@@ -24,10 +25,12 @@ func scan(seen []conditions.Key, bad map[conditions.Key]conditions.Finding) cond
 	for _, k := range seen {
 		s.Seen[k] = true
 		s.Reporting[k.HostID] = true
+		s.Evaluated[k.Kind] = true
 	}
 	for k := range bad {
 		s.Seen[k] = true
 		s.Reporting[k.HostID] = true
+		s.Evaluated[k.Kind] = true
 	}
 	return s
 }
@@ -158,6 +161,7 @@ func TestAVanishedSubjectResolvesAsVanished(t *testing.T) {
 
 	// The host is reporting, and this mount is not among what it reported.
 	s := conditions.Scan{
+		Evaluated: map[string]bool{conditions.KindDisk: true},
 		Seen:      map[conditions.Key]bool{key(1, conditions.KindDisk, "/"): true},
 		Bad:       nil,
 		Reporting: map[int32]bool{1: true},
@@ -180,6 +184,7 @@ func TestAVanishedSubjectDoesNotWaitOutTheHysteresis(t *testing.T) {
 	open := []conditions.Open{{ID: 7, Key: k, Severity: conditions.SeverityWarning, MissingTicks: 0}}
 
 	s := conditions.Scan{
+		Evaluated: map[string]bool{conditions.KindDisk: true},
 		Seen:      map[conditions.Key]bool{},
 		Bad:       nil,
 		Reporting: map[int32]bool{1: true},
@@ -202,6 +207,7 @@ func TestASilentHostsConditionsAreLeftAlone(t *testing.T) {
 	open := []conditions.Open{{ID: 7, Key: k, Severity: conditions.SeverityWarning}}
 
 	s := conditions.Scan{
+		Evaluated: map[string]bool{conditions.KindDisk: true},
 		Seen:      map[conditions.Key]bool{},
 		Bad:       nil,
 		Reporting: map[int32]bool{1: false},
@@ -219,6 +225,7 @@ func TestASilentHostAccruesNoMisses(t *testing.T) {
 	open := []conditions.Open{{ID: 7, Key: k, Severity: conditions.SeverityWarning, MissingTicks: 1}}
 
 	s := conditions.Scan{
+		Evaluated: map[string]bool{conditions.KindDisk: true},
 		Seen:      map[conditions.Key]bool{},
 		Bad:       nil,
 		Reporting: map[int32]bool{1: false},
@@ -264,8 +271,9 @@ func TestSubjectsAreTrackedSeparately(t *testing.T) {
 // its maps across passes, and a row holding a reference to one would change
 // underneath the caller between the diff and the write.
 func TestDetailIsCopiedNotAliased(t *testing.T) {
-	k := key(1, conditions.KindDisk, "/var")
-	detail := map[string]any{"pct": 91.0}
+	k := key(1, conditions.KindFailedUnits, "")
+	units := []string{"exim4.service"}
+	detail := map[string]any{"pct": 91.0, "units": units}
 
 	got := only(t, conditions.Diff(nil, scan(nil, map[conditions.Key]conditions.Finding{
 		k: {Key: k, Severity: conditions.SeverityWarning, Detail: detail},
@@ -275,6 +283,14 @@ func TestDetailIsCopiedNotAliased(t *testing.T) {
 	if got.Open.Detail["pct"] != 91.0 {
 		t.Errorf("detail aliased the observer's map: %+v", got.Open.Detail)
 	}
+
+	// The half a shallow copy misses, and the one that actually occurs: the
+	// failed-units detail carries a slice, which maps.Clone leaves pointing at
+	// whatever the observer reuses between passes.
+	units[0] = "nginx.service"
+	if got.Open.Detail["units"].([]string)[0] != "exim4.service" {
+		t.Errorf("detail's slice aliased the observer's: %+v", got.Open.Detail)
+	}
 }
 
 // Nothing wrong and nothing open is no work at all, which is the state a
@@ -283,5 +299,80 @@ func TestAHealthyFleetProducesNoActions(t *testing.T) {
 	k := key(1, conditions.KindDisk, "/")
 	if actions := conditions.Diff(nil, scan([]conditions.Key{k}, nil), now); len(actions) != 0 {
 		t.Fatalf("a healthy fleet produced work: %+v", actions)
+	}
+}
+
+// The failure that would quietly destroy every onset netra holds.
+//
+// A kind whose observer errored contributes nothing to Seen, so every subject
+// of that kind looks absent. Treated as vanished -- which skips the hysteresis
+// -- they would all resolve on that one tick and reopen on the next with
+// opened_ts = now. The onset 0016 says can only be walked once, at open, would
+// be gone, and one failed query would have rewritten the fleet's history.
+func TestAKindNobodyEvaluatedIsLeftAlone(t *testing.T) {
+	k := key(1, conditions.KindDisk, "/var")
+	open := []conditions.Open{{ID: 7, Key: k, Severity: conditions.SeverityWarning}}
+
+	// The host is reporting and the pass looked at units, but the filesystem
+	// query failed, so `disk` is absent from Evaluated entirely.
+	s := conditions.Scan{
+		Evaluated: map[string]bool{conditions.KindFailedUnits: true},
+		Seen:      map[conditions.Key]bool{},
+		Bad:       nil,
+		Reporting: map[int32]bool{1: true},
+	}
+
+	if actions := conditions.Diff(open, s, now); len(actions) != 0 {
+		t.Fatalf("an unevaluated kind was resolved: %+v", actions)
+	}
+}
+
+// The same guard must not stop a kind that WAS evaluated from resolving, or it
+// is a mute button rather than a safety catch.
+func TestAnEvaluatedKindStillResolves(t *testing.T) {
+	k := key(1, conditions.KindDisk, "/var")
+	open := []conditions.Open{{ID: 7, Key: k, Severity: conditions.SeverityWarning}}
+
+	s := conditions.Scan{
+		Evaluated: map[string]bool{conditions.KindDisk: true},
+		Seen:      map[conditions.Key]bool{},
+		Bad:       nil,
+		Reporting: map[int32]bool{1: true},
+	}
+
+	got := only(t, conditions.Diff(open, s, now))
+	if got.Resolve == nil || got.Resolve.Reason != conditions.ReasonVanished {
+		t.Fatalf("want a vanished resolve, got %+v", got)
+	}
+}
+
+// A miss-counting update carries no detail, and that must read as "leave the
+// stored numbers alone" rather than as an empty object. The column is NOT
+// NULL, and blanking it would strip the figures a still-open condition is
+// displayed with for the tick before it clears or comes back.
+func TestAMissCarriesNoDetailToWrite(t *testing.T) {
+	k := key(1, conditions.KindDisk, "/var")
+	open := []conditions.Open{{ID: 7, Key: k, Severity: conditions.SeverityWarning}}
+
+	got := only(t, conditions.Diff(open, scan([]conditions.Key{k}, nil), now))
+	if got.Update == nil {
+		t.Fatalf("want an update, got %+v", got)
+	}
+	if got.Update.Detail != nil {
+		t.Errorf("a miss proposed writing detail %+v; nil means leave it", got.Update.Detail)
+	}
+}
+
+// The map key is authoritative, so an observer that fills the map but leaves
+// the finding's own copy zero still opens against the right host rather than
+// against host 0 -- a foreign key violation nowhere near where it surfaces.
+func TestTheMapKeyWinsOverTheFindingsOwnCopy(t *testing.T) {
+	k := key(42, conditions.KindDisk, "/var")
+	got := only(t, conditions.Diff(nil, scan(nil, map[conditions.Key]conditions.Finding{
+		k: {Severity: conditions.SeverityWarning},
+	}), now))
+
+	if got.Open.Key != k {
+		t.Errorf("key = %+v, want %+v", got.Open.Key, k)
 	}
 }
