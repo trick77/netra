@@ -46,7 +46,6 @@ func detailOf(t *testing.T, ev *netrav1.Event) map[string]any {
 	return d
 }
 
-
 // liveSource models the real device: opened ONCE and drained on every scrape,
 // with whatever the kernel has written since. A source rebuilt per Collect
 // would not -- the collector holds its handle across scrapes precisely so the
