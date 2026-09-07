@@ -826,10 +826,18 @@ func TestIntegrationAWedgedMountIsStillSeen(t *testing.T) {
 	}
 }
 
-// Past the point the agent's backoff can explain, the mount is gone rather
-// than slow -- and only then is ReasonVanished reachable, because nothing ever
-// deletes a filesystem row.
-func TestIntegrationALongGoneMountIsNotSeenAtAll(t *testing.T) {
+// Even a mount silent for days stays UNJUDGED rather than being declared gone.
+//
+// The hub cannot tell a hung NFS export from an unmounted volume: a mount the
+// agent cannot stat produces no sample at all, and markWedged re-arms its
+// backoff on every failed retry, so the reading freezes indefinitely in both
+// cases. Any age-based "it must be gone by now" would eventually resolve a
+// still-mounted, still-full disk without the hysteresis and destroy its onset.
+//
+// The cost, stated plainly: a genuinely removed mount keeps a stale open
+// condition until someone dismisses it. That is visible and wrong in a way a
+// reader can see, where the alternative is invisible and is a lie.
+func TestIntegrationALongSilentMountIsNeverDeclaredGone(t *testing.T) {
 	ctx, s := condCtx(t)
 	host := newHost(t, ctx, s, "cond-gone")
 	now := time.Now().UTC()
@@ -845,7 +853,8 @@ func TestIntegrationALongGoneMountIsNotSeenAtAll(t *testing.T) {
 		t.Fatalf("filesystems: %v", err)
 	}
 	gb := int64(1024) * 1024 * 1024
-	// Two days: well past the ~17 hours the statfs backoff can produce.
+	// Two days silent, which is well past anything the statfs backoff explains
+	// -- and still not enough to conclude the mount is gone.
 	if _, err := s.Pool().Exec(ctx, `
 		INSERT INTO filesystem_current (host_id, fs_id, ts, total, used, free)
 		VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -858,8 +867,41 @@ func TestIntegrationALongGoneMountIsNotSeenAtAll(t *testing.T) {
 		t.Fatalf("scan: %v", err)
 	}
 	k := diskKey(host, "gone")
-	if scan.Seen[k] || scan.Unjudged[k] {
-		t.Error("a long-gone mount was still tracked, so it can never resolve as vanished")
+	if !scan.Unjudged[k] {
+		t.Error("a long-silent mount was not unjudged; an age rule would resolve it")
+	}
+	if scan.Seen[k] {
+		t.Error("a long-silent mount was recorded as judged, which reads as healthy")
+	}
+	if _, bad := scan.Bad[k]; bad {
+		t.Error("a two-day-old reading was judged as if it were current")
+	}
+}
+
+// A host that has never reported is unprovisioned, not silent.
+//
+// admin.CreateHost inserts the row and hands over a token; the agent is
+// installed later. Opening a critical condition in that gap writes a false
+// outage into the log alerting reads, and clears it two ticks after the agent
+// comes up.
+func TestIntegrationANeverSeenHostRaisesNothing(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(t, ctx, s, "cond-unprovisioned")
+
+	// No host_current row at all, which is exactly what CreateHost leaves.
+	scan, err := s.ScanConditions(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	k := conditions.Key{HostID: host, Kind: conditions.KindSilent}
+	if _, bad := scan.Bad[k]; bad {
+		t.Error("a host with no agent yet was reported as silent")
+	}
+	if !scan.Unjudged[k] {
+		t.Error("a never-seen host was not marked unjudged")
+	}
+	if scan.Seen[k] {
+		t.Error("a never-seen host was recorded as judged, which reads as healthy")
 	}
 }
 

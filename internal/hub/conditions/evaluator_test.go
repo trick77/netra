@@ -128,7 +128,7 @@ func TestSilenceIsJudgedOnceWarmedUp(t *testing.T) {
 	store := &fakeStore{scan: silentScan(1)}
 
 	e := conditions.New(store, started)
-	e.SetClockForTest(func() time.Time { return started.Add(conditions.StaleAfter + time.Second) })
+	e.SetClockForTest(func() time.Time { return started.Add(conditions.WarmUp + time.Second) })
 
 	if err := e.Once(context.Background()); err != nil {
 		t.Fatalf("Once: %v", err)

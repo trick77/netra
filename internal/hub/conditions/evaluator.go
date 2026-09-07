@@ -54,7 +54,7 @@ func (e *Evaluator) SetClockForTest(now func() time.Time) { e.now = now }
 // SetIntervalForTest drives the loop faster than a minute.
 func (e *Evaluator) SetIntervalForTest(d time.Duration) { e.interval = d }
 
-// warmUp is how long after start-up the evaluator declines to judge silence.
+// WarmUp is how long after start-up the evaluator declines to judge silence.
 //
 // THE bug this prevents, and it is not subtle. When the hub restarts, every
 // host's last_seen is as old as the downtime, so the first pass would open
@@ -66,10 +66,22 @@ func (e *Evaluator) SetIntervalForTest(d time.Duration) { e.interval = d }
 // which is why nobody has had to think about it. Writing it down is what makes
 // it matter.
 //
-// StaleAfter, because that is precisely how long the hub must have been up
-// before "this host has not been seen for StaleAfter" can be a statement about
-// the host rather than about the hub.
-const warmUp = StaleAfter
+// StaleAfter alone is exactly the wrong length, because it leaves no margin
+// over the thing it is guarding.
+//
+// After an outage an agent does not reconnect instantly: its flush backoff
+// doubles to a 60s cap and it waits backoff plus jitter, and a hub-supplied
+// retry_after is adopted up to maxAdoptedRetryAfter -- ten minutes
+// (agent/client/client.go). Add a scrape tick of alignment and a host can
+// legitimately not post until well past three minutes, at which point a
+// warm-up of exactly StaleAfter would open `silent` on it and clear it again
+// once it lands. That is the same "one hub outage recorded as N host outages"
+// this exists to prevent, just quieter.
+//
+// So: the agent's own ceiling, plus the staleness window, plus one tick of
+// slack. Erring long costs a few minutes of not reporting silence after a
+// restart; erring short writes false history that nothing deletes.
+const WarmUp = 10*time.Minute + StaleAfter + Interval
 
 // Run evaluates on a ticker until the context ends.
 func (e *Evaluator) Run(ctx context.Context) {
@@ -105,7 +117,7 @@ func (e *Evaluator) Once(ctx context.Context) error {
 	// host whose backlog has not arrived yet, so it declines to say. The kind
 	// is dropped from BOTH halves: out of Bad so nothing opens, and out of
 	// Evaluated so nothing already open is resolved either.
-	if now.Sub(e.startedAt) < warmUp {
+	if now.Sub(e.startedAt) < WarmUp {
 		delete(scan.Evaluated, KindSilent)
 		for key := range scan.Bad {
 			if key.Kind == KindSilent {

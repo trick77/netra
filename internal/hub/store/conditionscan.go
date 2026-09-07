@@ -81,6 +81,27 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 		scan.Reporting[id] = reporting
 
 		key := conditions.Key{HostID: id, Kind: conditions.KindSilent}
+
+		// A host that has NEVER reported is unprovisioned, not silent.
+		//
+		// admin.CreateHost inserts the row and hands over a token; the operator
+		// then goes and installs the agent, which is minutes or hours later. A
+		// critical condition raised in that gap -- with an event in the log
+		// alerting reads -- says a machine has stopped talking when it has not
+		// started yet, and clears two ticks after the agent comes up, leaving a
+		// permanent opened/cleared pair describing nothing but the
+		// provisioning.
+		//
+		// Unjudged rather than healthy: netra has no observation of this host,
+		// which is not the same as a good one. The cost is that a host whose
+		// agent is never installed raises nothing, and that is the right
+		// direction -- an empty row in the hosts list already says it, without
+		// putting a false outage in the log.
+		if lastSeen == nil {
+			scan.Unjudged[key] = true
+			continue
+		}
+
 		scan.Seen[key] = true
 
 		severity := conditions.SilentSeverity(lastSeen, now)
@@ -88,20 +109,16 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 			continue
 		}
 
-		detail := map[string]any{}
-		f := conditions.Finding{Key: key, Severity: severity, Detail: detail}
-		if lastSeen != nil {
-			// The one condition whose onset needs no derivation: last_seen IS
-			// the moment it began.
-			f.OpenedTS = *lastSeen
-			detail["last_seen"] = lastSeen.UTC().Format(time.RFC3339)
-		} else {
-			// Never seen at all. There is no honest onset -- the host was
-			// registered at some point, but netra has never had a reading --
-			// so the row takes the tick's time and says why.
-			detail["never_reported"] = true
+		// The one condition whose onset needs no derivation: last_seen IS the
+		// moment it began.
+		scan.Bad[key] = conditions.Finding{
+			Key:      key,
+			Severity: severity,
+			OpenedTS: *lastSeen,
+			Detail: map[string]any{
+				"last_seen": lastSeen.UTC().Format(time.RFC3339),
+			},
 		}
-		scan.Bad[key] = f
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("read hosts: %w", err)
@@ -125,12 +142,13 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 // fallback there too.
 func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan) error {
 	// Every mount the host still has a row for, WITH the age of its reading,
-	// because that age is the only thing separating three different states.
+	// because that age is what separates a mount this pass can judge from one
+	// it can only note the existence of.
 	//
 	// The query cannot filter on it: `filesystem_current` keeps a row per
-	// mount and nothing prunes it, so a stale reading means the mount was not
-	// re-measured, not that the mount is gone. Which of the two it is depends
-	// on how stale, and the loop below decides -- see mountGoneAfter.
+	// mount and nothing prunes it, so filtering would erase the difference
+	// between "not re-measured" and "gone" -- and the loop below is careful
+	// not to claim it can tell them apart either.
 	rows, err := s.pool.Query(ctx, `
 		SELECT fc.host_id, f.label, f.mountpoint, fc.used, fc.free,
 		       fc.ts, hc.last_seen
@@ -157,22 +175,30 @@ func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan) erro
 		key := conditions.Key{HostID: hostID, Kind: conditions.KindDisk, Subject: label}
 		age := lastSeen.Sub(readingTS)
 
-		switch {
-		case age >= mountGoneAfter:
-			// Long past anything the agent's backoff can explain, so the mount
-			// is gone rather than slow. Left out of Seen AND out of Unjudged,
-			// which is what makes ReasonVanished reachable at all.
-			//
-			// Nothing deletes rows from `filesystems` or `filesystem_current`
-			// -- 0013 says filesystems are never pruned -- so an unmounted
-			// volume keeps its row forever. Without this branch its condition
-			// would resolve as `cleared`: a recovery that never happened,
-			// which is the exact failure resolved_reason exists to prevent.
-			continue
-		case age > conditions.StaleAfter:
-			// Stale, but inside what the statfs backoff can produce on a
-			// still-mounted disk. Present, unmeasurable, and emphatically not
-			// healthy.
+		// A stale reading is UNJUDGED, for as long as it stays stale, and this
+		// deliberately has no expiry.
+		//
+		// The tempting rule is "stale beyond what the backoff explains, so the
+		// mount is gone" -- and the hub cannot support it. A mount the agent
+		// cannot stat produces NO sample at all (Filesystems.Collect skips it),
+		// and markWedged re-arms the backoff on every failed retry, so a hung
+		// NFS export freezes fc.ts indefinitely. From here that is
+		// byte-for-byte what an unmounted volume looks like. Any horizon picked
+		// would eventually call a still-mounted, still-full disk "no longer
+		// reported", resolve its condition without the hysteresis, and destroy
+		// the onset -- while the disk carries on filling.
+		//
+		// So the two failure modes are: a removed mount leaves a stale
+		// condition open until someone dismisses it, or a wedged mount is
+		// silently declared recovered. The first is visible and wrong in a way
+		// a reader can see; the second is invisible and is a lie. This takes
+		// the first.
+		//
+		// ReasonVanished is still the right resolution for a subject that is
+		// genuinely gone -- it wants an observer that can SAY so, which means
+		// the agent reporting its live mount list rather than the hub
+		// inferring absence from silence.
+		if age > conditions.StaleAfter {
 			scan.Unjudged[key] = true
 			continue
 		}
@@ -224,21 +250,6 @@ func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan) erro
 	}
 	return rows.Err()
 }
-
-// mountGoneAfter is how far a mount's reading may lag the host's before the
-// mount is treated as removed rather than merely unmeasured.
-//
-// Sized against the agent, not guessed. markWedged backs a timing-out
-// mountpoint off by 2^min(failures-1, wedgedBackoffShifts) scrapes, and
-// wedgedBackoffShifts is 10, so a still-mounted disk can legitimately go
-// 1024 scrapes -- about seventeen hours at the 60s cadence -- without a fresh
-// reading. The collector's own comments call it "a seventeen-hour cadence".
-//
-// A day clears that ceiling with room to spare, which is the direction to err
-// in: calling a present mount gone resolves a real condition as a recovery,
-// while calling a gone mount present leaves a stale row open a few hours
-// longer than necessary.
-const mountGoneAfter = 24 * time.Hour
 
 // scanUnits raises the failed-units condition, one subject per HOST.
 //
