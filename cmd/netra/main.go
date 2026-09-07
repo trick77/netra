@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/trick77/netra/internal/hub/auth"
+	"github.com/trick77/netra/internal/hub/conditions"
 	"github.com/trick77/netra/internal/hub/config"
 	"github.com/trick77/netra/internal/hub/httpapi"
 	"github.com/trick77/netra/internal/hub/oidc"
@@ -81,6 +82,23 @@ func run() error {
 		}
 		slog.Info("browser sign-in enabled", "issuer", cfg.OIDC.Issuer, "redirect", cfg.RedirectURL())
 	}
+
+	// The hub's first background loop, and the reason it has to be one: every
+	// other condition is a reading in the data, but `silent` is the ABSENCE of
+	// data. No ingest happens for a host that has stopped talking, so nothing
+	// driven by ingest would ever notice.
+	//
+	// Started before the listener rather than after, so the warm-up clock
+	// begins at the earliest honest moment. That clock is what stops a hub
+	// restart recording one outage of its own as an outage of every host it
+	// monitors -- see warmUp in the conditions package.
+	//
+	// One instance is assumed. A second hub against the same database would
+	// evaluate in parallel; the writes are idempotent (ON CONFLICT DO NOTHING
+	// against the partial unique index, and a resolve that guards on
+	// resolved_ts IS NULL), so the outcome is correct rather than corrupt, but
+	// nothing here elects a leader.
+	go conditions.New(s, time.Now()).Run(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
