@@ -598,7 +598,8 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
   // which also passes the winner's remaining bytes through -- the percentage
   // alone cannot say whether this is worth waking up for. Only the fullest
   // one: the row carries a single pre-picked summary, and a second mount at
-  // 91% is not a second thing to do -- the disk column already says "+N".
+  // 91% is not a second thing to do -- the row's Filesystem column reports
+  // that one mount and nothing about the others.
   const fullest = row.fullest;
   const fullestSeverity =
     fullest === null ? null : diskSeverityFor(fullest.pct, fullest.free);
