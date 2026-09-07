@@ -349,6 +349,81 @@ describe("hostColumns", () => {
       ).not.toContain("gone");
     });
 
+    // The pill is the whole point of the column's second mark, and what it
+    // has to get right is the RANKING -- see hostPill. Every case below is a
+    // host that is more than one thing at once.
+    describe("severity pill", () => {
+      const now = () => new Date().toISOString();
+      const pill = (
+        row: HostRow,
+        worst?: (row: HostRow) => "warning" | "critical" | null,
+      ): Element | null => {
+        const col = hostColumns("1h", worst).find((c) => c.header === "Host")!;
+        const { container } = render(<>{col.cell(row)}</>);
+        return container.querySelector(".badge");
+      };
+
+      it("says nothing about a host with nothing wrong", () => {
+        expect(pill(makeRow({ last_seen: now() }), () => null)).toBeNull();
+      });
+
+      // A caller that derives no conditions at all still gets the reporting
+      // status it always had -- the fleet list is not the only table built
+      // from these columns.
+      it("keeps the reporting status when no severity is supplied", () => {
+        const badge = pill(makeRow({ last_seen: "2020-01-01T00:00:00Z" }));
+        expect(badge?.textContent).toBe("offline");
+      });
+
+      it("words a reporting host's worst condition as its severity", () => {
+        expect(
+          pill(makeRow({ last_seen: now() }), () => "critical")?.textContent,
+        ).toBe("critical");
+        expect(
+          pill(makeRow({ last_seen: now() }), () => "warning")?.textContent,
+        ).toBe("warning");
+      });
+
+      // The rule the fleet is read by: a machine nobody has heard from has
+      // stale figures for everything else, so its silence is the one fact
+      // worth marking. The disk that is still 96% full is in the row's own
+      // Filesystem cell either way.
+      it("says only offline for a silent host that also has a critical", () => {
+        const badge = pill(
+          makeRow({ last_seen: "2020-01-01T00:00:00Z" }),
+          () => "critical",
+        );
+        expect(badge?.textContent).toBe("offline");
+        expect(badge?.className).toContain("st-crit");
+      });
+
+      // The other direction, and it is NOT symmetric: a sporadic host is
+      // answering, so a critical reading off it is current and outranks the
+      // gaps in its series.
+      it("lets a critical outrank sporadic, and sporadic outrank a warning", () => {
+        const gappy = makeRow({
+          last_seen: now(),
+          reporting: [1, null, null, 1, null, 1, null, 1],
+        });
+
+        expect(pill(gappy, () => "critical")?.textContent).toBe("critical");
+        expect(pill(gappy, () => "warning")?.textContent).toBe("sporadic");
+      });
+
+      // One pill, never two -- the ranking is this column's to do, not the
+      // reader's.
+      it("draws exactly one pill however many things are wrong", () => {
+        const col = hostColumns("1h", () => "critical").find(
+          (c) => c.header === "Host",
+        )!;
+        const { container } = render(
+          <>{col.cell(makeRow({ last_seen: "2020-01-01T00:00:00Z" }))}</>,
+        );
+
+        expect(container.querySelectorAll(".badge")).toHaveLength(1);
+      });
+    });
+
     // The provider and the place, both reported by the host's own agent. The
     // fleet used to print the site NAME here -- an internal label out of a
     // table somebody fills in by hand, which told a reader scanning the list

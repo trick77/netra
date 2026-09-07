@@ -24,7 +24,7 @@ import {
 } from "../../ui/charts/UpDownSparkline";
 import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
 import type { Drive, Host } from "../../lib/api";
-import { hostStatus, isReporting } from "../../lib/host";
+import { hostStatus, isReporting, type HostStatus } from "../../lib/host";
 import { RAIL_RANGES, rangeLabel, type Range } from "../../lib/range";
 import { Enlargeable, type DetailData } from "../../ui/charts/Enlargeable";
 import { filesystemBands, memoryBands } from "../../lib/bands";
@@ -270,7 +270,73 @@ function reported(value: string | null | undefined): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
-function HostCell({ row }: { row: HostRow }) {
+/**
+ * What the one pill beside a hostname says, or null when the row has nothing
+ * to report.
+ *
+ * ONE pill, never two. A row that said "sporadic" and "critical" side by side
+ * spent the identity column on two marks and left the reader to rank them --
+ * and the ranking is not theirs to do: it is the same worst-first rule the
+ * rail down the row's leading edge and the counts line above the table
+ * already apply.
+ *
+ * The order below IS that rule, and each step earns its place:
+ *
+ *   offline / never seen -- a host nobody has heard from has stale figures
+ *     for everything else, so a "critical" derived from its last known disk
+ *     reading would claim to describe this minute. It outranks everything,
+ *     including conditions that are still true of the machine: the row's own
+ *     Filesystem cell still says "was 96 % full", and the host page holds the
+ *     rest.
+ *   critical -- something on a host that IS reporting needs acting on now.
+ *   sporadic -- the same severity as the generic warning below, and the more
+ *     specific word at that severity, so a host with gaps keeps saying so
+ *     instead of being flattened into "warning".
+ *   warning
+ *
+ * The word is the SEVERITY, not the kind that earned it -- "critical", the
+ * way the Events tab and the counts line above this table already write it.
+ * The kind is named in the row's own cells and in full on the host page, and
+ * this is the narrowest column in the table: "Filesystem nearly full" set
+ * beside a hostname is a variable-width pill repeating what the counts line
+ * above the table already groups by.
+ */
+function hostPill(
+  status: HostStatus,
+  worst: "warning" | "critical" | null,
+): { severity: "warning" | "critical"; label: string } | null {
+  if (status.severity === "critical") {
+    return { severity: "critical", label: status.label };
+  }
+  if (worst === "critical") return { severity: "critical", label: "critical" };
+  if (status.severity === "warning") {
+    return { severity: "warning", label: status.label };
+  }
+  if (worst === "warning") return { severity: "warning", label: "warning" };
+  return null;
+}
+
+function HostCell({
+  row,
+  worst,
+  now,
+}: {
+  row: HostRow;
+  /** The instant the page is reading itself at. undefined is the wall clock,
+   * which is what a browser wants and what every caller that derives no
+   * conditions of its own gets. */
+  now?: Date;
+  /**
+   * The worst severity anything on this host is at -- read through the very
+   * function that draws the row's rail, so the pill and the rail can never
+   * disagree about the same host.
+   *
+   * undefined is a caller that derives no conditions at all, and leaves the
+   * row with only its reporting status to say. That is not a degraded mode to
+   * design around: it is the honest reading when nobody has looked.
+   */
+  worst?: (row: HostRow) => "warning" | "critical" | null;
+}) {
   // Judged from row.reporting -- cpu_total, from the `host` family -- and
   // never from row.cpu[0], which is a per-core band under 32 threads and the
   // cpu_total fallback above it. Reading cpu[0] judged one host against
@@ -279,13 +345,24 @@ function HostCell({ row }: { row: HostRow }) {
   // adjacent rows of the same page. A host that answers now but keeps
   // dropping scrapes reads as sporadic rather than healthy; the gaps are
   // already visible in its sparkline, and this says the same thing in a word.
-  const status = hostStatus(row, undefined, row.reporting);
+  //
+  // `now` comes from the page rather than being read off the wall clock here,
+  // and that matters now that the pill is the row's only severity mark: the
+  // conditions this cell's `worst` is derived from are judged against the
+  // page's clock, so a cell reading its own would let the two halves of one
+  // pill disagree about whether a host is still reporting. They are the same
+  // instant in a browser; they are not in a test, and they are not for a
+  // caller that supplies its own.
+  const status = hostStatus(row, now, row.reporting);
   // The location, and NOT the OS name beside it. The mark says which
   // distribution at a glance; spelling out "Debian GNU/Linux 12 (bookworm)"
   // under every hostname said it a second time in the row's longest string,
   // and os-release runs long enough that it had to be truncated to stay on
   // one line. The host page names the release in full.
   const location = hostLocationLines(row);
+  // Null on almost every row -- healthy is the majority state. See hostPill
+  // for which of a host's several truths it picks, and why only one.
+  const pill = hostPill(status, worst?.(row) ?? null);
   return (
     // Its own wrapper rather than .host-cell itself: the container list's
     // name cell is built from .host-cell too, and it has no mark to seat, so
@@ -321,9 +398,10 @@ function HostCell({ row }: { row: HostRow }) {
           the overwhelming majority state, so a badge on every row spent the
           eye's first stop -- and the leftmost column -- on the word "online"
           repeated down the page. What a reader scans for is the exception,
-          which is now the only thing marked. */}
-          {status.severity !== "ok" && (
-            <Badge severity={status.severity}>{status.label}</Badge>
+          which is now the only thing marked. Which exception it marks when a
+          host has more than one, and why it marks only one: see hostPill. */}
+          {pill !== null && (
+            <Badge severity={pill.severity}>{pill.label}</Badge>
           )}
         </div>
         {/* The location goes under the name rather than beside it: the two are
@@ -1024,12 +1102,20 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
 // (HostPage.tsx, RECENT_BOOT_S), which is where a reader who has asked
 // about one machine can act on it.
 
-export function hostColumns(range: Range): Column<HostRow>[] {
+export function hostColumns(
+  range: Range,
+  /** See HostCell's own `worst`. Passed straight through: which severity a
+   * host is at is the PAGE's to derive -- it owns the conditions -- and this
+   * module's only to draw. */
+  worst?: (row: HostRow) => "warning" | "critical" | null,
+  /** See HostCell's own `now` -- the clock `worst` was derived against. */
+  now?: Date,
+): Column<HostRow>[] {
   return [
     {
       key: "host",
       header: "Host",
-      cell: (row) => <HostCell row={row} />,
+      cell: (row) => <HostCell row={row} worst={worst} now={now} />,
       sortValue: (row) => row.hostname,
     },
     {
