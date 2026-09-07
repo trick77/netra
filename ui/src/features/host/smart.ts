@@ -85,13 +85,20 @@ export interface Finding {
  * sectors (+1 more)" hides an unreadable sector behind a counter that is
  * merely climbing. Ordering is not a judgement a reader has to rank; the word
  * on the chip still is, and there are two of those.
+ *
+ * The split is the one the severities themselves drew before `serious` was
+ * folded in, so no pair of findings changed places: `acute` is what was
+ * critical, `accrued` is what was serious. Written down rather than inferred,
+ * because it is no longer readable off the severity.
  */
 const URGENCY = {
-  /** Unreadable now, or the drive's own verdict on itself. */
-  failing: 0,
-  /** Already substituting for damage, or running out of what it substitutes from. */
-  substituting: 1,
-  /** Out of rated life, or a fault on the wire rather than on the platter. */
+  /** Unreadable now, out of spares, out of rated life, or the drive's own
+   * verdict on itself. */
+  acute: 0,
+  /** A counter recording damage the drive has already absorbed. */
+  accrued: 1,
+  /** Below both, and only ever on a `warning`: wear short of the limit, and a
+   * fault on the wire rather than on the platter. */
   wearing: 2,
 } as const;
 
@@ -140,7 +147,7 @@ export function driveFindings(drive: Drive): Finding[] {
     // else here.
     const warning = attr(drive, NVME.criticalWarning);
     if (warning !== null && warning !== 0) {
-      add("critical", URGENCY.failing, "drive reports a critical warning");
+      add("critical", URGENCY.acute, "drive reports a critical warning");
     }
 
     // Spare against the drive's OWN threshold. The percentage means nothing
@@ -151,18 +158,14 @@ export function driveFindings(drive: Drive): Finding[] {
     if (spare !== null && spareFloor !== null && spare <= spareFloor) {
       add(
         "critical",
-        URGENCY.substituting,
+        URGENCY.acute,
         `spare blocks at ${spare}%, at or below the drive's ${spareFloor}% floor`,
       );
     }
 
     const used = attr(drive, NVME.percentageUsed);
     if (used !== null && used >= SMART_THRESHOLDS.wearCritical) {
-      add(
-        "critical",
-        URGENCY.wearing,
-        `${used}% of rated write endurance used`,
-      );
+      add("critical", URGENCY.acute, `${used}% of rated write endurance used`);
     } else if (used !== null && used >= SMART_THRESHOLDS.wearWarning) {
       add("warning", URGENCY.wearing, `${used}% of rated write endurance used`);
     }
@@ -171,7 +174,7 @@ export function driveFindings(drive: Drive): Finding[] {
     // not return it at all.
     const media = attr(drive, NVME.mediaErrors);
     if (media !== null && media > 0) {
-      add("critical", URGENCY.failing, plural(media, "media error"));
+      add("critical", URGENCY.accrued, plural(media, "media error"));
     }
     return sorted(out);
   }
@@ -182,14 +185,14 @@ export function driveFindings(drive: Drive): Finding[] {
     // unreadable, and the count moves on the next write or the next failure.
     const pending = attr(drive, ATA.currentPending);
     if (pending !== null && pending > 0) {
-      add("critical", URGENCY.failing, plural(pending, "pending sector"));
+      add("critical", URGENCY.acute, plural(pending, "pending sector"));
     }
 
     // Sectors that failed even offline verification -- unreadable and not
     // recoverable by rewriting.
     const offline = attr(drive, ATA.offlineUncorrectable);
     if (offline !== null && offline > 0) {
-      add("critical", URGENCY.failing, plural(offline, "uncorrectable sector"));
+      add("critical", URGENCY.acute, plural(offline, "uncorrectable sector"));
     }
 
     // Already swapped for spares: the drive has started substituting for
@@ -200,7 +203,7 @@ export function driveFindings(drive: Drive): Finding[] {
     if (reallocated !== null && reallocated > 0) {
       add(
         "critical",
-        URGENCY.substituting,
+        URGENCY.accrued,
         plural(reallocated, "reallocated sector"),
       );
     }
@@ -209,7 +212,7 @@ export function driveFindings(drive: Drive): Finding[] {
     if (uncorrect !== null && uncorrect > 0) {
       add(
         "critical",
-        URGENCY.failing,
+        URGENCY.accrued,
         plural(uncorrect, "uncorrectable error"),
       );
     }
@@ -345,12 +348,12 @@ export function driveAlarms(
       });
     }
   }
-  // Across drives as well as within one: a host with an unreadable sector on
-  // one disk and a reallocated sector on another is a host with an unreadable
-  // sector. Every alarm here is `critical` by the filter above, so URGENCY is
-  // what does the work; the severity term is kept so the sort still reads as
-  // worst-first if a second severity ever escalates. Stable, so two alarms
-  // that tie on both keep drive order.
+  // Across drives as well as within one: a host with a spent NVMe and a disk
+  // with one reallocated sector is a host with a spent NVMe. Every alarm here
+  // is `critical` by the filter above, so URGENCY is what does the work; the
+  // severity term is kept so the sort still reads as worst-first if a second
+  // severity ever escalates. Stable, so two alarms that tie on both keep
+  // drive order.
   return out.sort(
     (a, b) => RANK[a.severity] - RANK[b.severity] || a.urgency - b.urgency,
   );
@@ -367,10 +370,21 @@ export function driveAlarms(
  *
  * Lives here rather than in the table so RANK stays the single statement of
  * how these severities compare.
+ *
+ * URGENCY breaks the ties RANK now leaves, so the Findings column and the
+ * Overview panel one tab away order the same two drives the same way: with
+ * `serious` folded into `critical`, severity alone puts a drive with one
+ * reallocated sector level with a drive whose sectors are unreadable. The
+ * tie-break is a fraction below 1, so it can only ever separate drives that
+ * already sit in the same severity.
  */
 export function driveSeverityRank(drive: Drive): number {
-  const worst = driveSeverity(drive);
-  return Object.keys(RANK).length - RANK[worst];
+  const findings = driveFindings(drive);
+  const worst = findings.length === 0 ? "ok" : findings[0]!.severity;
+  const tier = Object.keys(RANK).length - RANK[worst];
+  if (findings.length === 0) return tier;
+  const urgency = findings[0]!.urgency;
+  return tier + (URGENCY.wearing - urgency) / (URGENCY.wearing + 1);
 }
 
 /**

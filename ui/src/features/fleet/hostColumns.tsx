@@ -397,7 +397,7 @@ const DISK_CELL_STYLE = {
 
 /**
  * The colour a fleet row's saturation silhouette is drawn in: the severity of
- * what it is reading NOW, from the same 70/85/95 the bar under it uses.
+ * what it is reading NOW, from the same 70/95 the bar under it uses.
  *
  * ONE colour system in the row, and it means severity. The three cells were
  * --cpu-1, --mem-used and --s6, hues that answered "which column is this" --
@@ -977,7 +977,7 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
       <NowReading
         pct={pct}
         label={`Disk ${mount}`}
-        // No severity passed: NowReading's own 70/85/95, the rule every
+        // No severity passed: NowReading's own 70/95, the rule every
         // reading in this table is drawn by. The bytes underneath say how
         // much room is left; the bar says how full the mount is. What decides
         // whether it is worth acting on is hostConditions(), which still

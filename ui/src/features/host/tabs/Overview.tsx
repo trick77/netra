@@ -862,7 +862,7 @@ export function Overview({
                         ? null
                         : fs.used + fs.free
                     }
-                    // No severity passed: Meter's own 70/85/95 colours the
+                    // No severity passed: Meter's own 70/95 colours the
                     // fill and the figure, the rule every other bar, meter
                     // and sparkline in the app is read by. A bar answers
                     // "what does this number say", and 97% says the same

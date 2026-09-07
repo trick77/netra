@@ -606,7 +606,7 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
             value={(row.used / (row.used + row.free)) * 100}
             max={100}
             label={row.label}
-            // No severity passed: Meter's 70/85/95 colours the fill and the
+            // No severity passed: Meter's 70/95 colours the fill and the
             // figure, as it does on the Overview's Disk panel and in the
             // fleet's disk cell. The bytes listed beside the bar are context
             // for the reading, not a reason to mute it. What keeps a large
