@@ -10,7 +10,7 @@
 // twice. Sharing the constants is what makes that true by construction rather
 // than by everyone remembering to edit both files.
 import { extent } from "./geometry";
-import { Chart, type MirrorWeight } from "./Chart";
+import { Chart } from "./Chart";
 // The mirror weights and the midline stroke are Chart's now; only the shared
 // sparkline width is still read here.
 import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";
@@ -35,13 +35,6 @@ export interface UpDownSparklineProps {
    * that does want a specific pair of series colours can override them. */
   upColor?: string;
   downColor?: string;
-  /**
-   * "mass" is the default mirror: at fleet-cell density the halves fill
-   * solid. "line" draws them the way the CPU, memory and disk cells in the
-   * same row are drawn -- a line with a light fill under it -- for a mirror
-   * that has to read as one of a row of silhouettes rather than as a block.
-   */
-  weight?: MirrorWeight;
   label?: string;
 }
 
@@ -91,7 +84,6 @@ export function UpDownSparkline({
   pad = 2,
   upColor = UP_COLOR,
   downColor = DOWN_COLOR,
-  weight = "mass",
   label = "up/down traffic chart",
 }: UpDownSparklineProps) {
   // Both directions share one ceiling, which is what makes the two halves
@@ -118,7 +110,6 @@ export function UpDownSparkline({
       max={effectiveMax}
       pad={pad}
       mark="mirror"
-      mirrorWeight={weight}
       label={label}
     />
   );

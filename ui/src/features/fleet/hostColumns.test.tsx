@@ -105,13 +105,13 @@ describe("hostColumns", () => {
   // it ran through the middle of the three that have both; the gauges are the
   // block a reader scans for what needs acting on, and they now run
   // uninterrupted.
-  it("yields Host, CPU, Memory, Disk, Traffic in that exact order", () => {
+  it("yields Host, CPU, Memory, Filesystem, Traffic in that exact order", () => {
     const cols = hostColumns("1h");
     expect(cols.map((c) => c.header)).toEqual([
       "Host",
       "CPU",
       "Memory",
-      "Disk",
+      "Filesystem",
       "Traffic",
     ]);
   });
@@ -134,7 +134,7 @@ describe("hostColumns", () => {
       });
 
       const host = cols.find((c) => c.header === "Host")!;
-      const disk = cols.find((c) => c.header === "Disk")!;
+      const disk = cols.find((c) => c.header === "Filesystem")!;
       expect(host.sortValue!(row)).toBe("web-01");
       // The percentage, not bytes: sorting on size would put the biggest
       // disk first rather than the one closest to filling up.
@@ -144,7 +144,7 @@ describe("hostColumns", () => {
     // Unknown must not sort as zero, or a host whose filesystems were never
     // read would rank as the emptiest disk on the page.
     it("gives a host with no filesystems no disk sort value at all", () => {
-      const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const disk = hostColumns("1h").find((c) => c.header === "Filesystem")!;
 
       expect(disk.sortValue!(makeRow({ fullest: null }))).toBeNull();
     });
@@ -268,7 +268,7 @@ describe("hostColumns", () => {
     // The percentage cannot say on its own whether a mount is in trouble:
     // 90% of a 6.7 TB array is 674 GB free and 90% of a 4 GB root is not.
     it("prints the mount, how full it is, and what is left", () => {
-      const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const disk = hostColumns("1h").find((c) => c.header === "Filesystem")!;
       const { container } = render(
         <>
           {disk.cell(
@@ -296,7 +296,7 @@ describe("hostColumns", () => {
     // take the same severity -- a red bar over an ink number said one thing
     // twice and only half of it the second time.
     it("colours the percentage with the fill's own severity", () => {
-      const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const disk = hostColumns("1h").find((c) => c.header === "Filesystem")!;
       const crit = render(
         <>{disk.cell(makeRow({ fullest: { mount: "/", pct: 96 } }))}</>,
       );
@@ -320,7 +320,7 @@ describe("hostColumns", () => {
     // host reported no size -- and an absent fact prints nothing, never a
     // dash. Same rule the readings and the location line follow.
     it("says nothing about free space when the host did not report it", () => {
-      const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const disk = hostColumns("1h").find((c) => c.header === "Filesystem")!;
       const { container } = render(
         <>{disk.cell(makeRow({ fullest: { mount: "/", pct: 40 } }))}</>,
       );
@@ -442,7 +442,7 @@ describe("hostColumns", () => {
     // above it is about.
     it("names the fullest mount, with no count of the others", () => {
       const cols = hostColumns("1h");
-      const diskCol = cols.find((c) => c.header === "Disk")!;
+      const diskCol = cols.find((c) => c.header === "Filesystem")!;
       const row = makeRow({ fullest: { mount: "/data", pct: 88 } });
       render(<>{diskCol.cell(row)}</>);
       expect(screen.getByText("/data")).toBeInTheDocument();
@@ -450,10 +450,10 @@ describe("hostColumns", () => {
     });
 
     // The line is about the mount the figure beside it names, so it is named
-    // after that mount and not after the column: twenty rows of "Disk trend"
+    // after that mount and not after the column: twenty rows of "Filesystem trend"
     // name twenty different charts identically.
     it("draws a trend line for the mount it names, and can be enlarged", () => {
-      const diskCol = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const diskCol = hostColumns("1h").find((c) => c.header === "Filesystem")!;
       const { container } = render(
         <>
           {diskCol.cell(
@@ -471,7 +471,9 @@ describe("hostColumns", () => {
 
       expect(container.querySelector("svg.spark")).toBeInTheDocument();
       expect(
-        screen.getByLabelText("Disk trend for /var/lib/postgresql, last 1h"),
+        screen.getByLabelText(
+          "Filesystem trend for /var/lib/postgresql, last 1h",
+        ),
       ).toBeInTheDocument();
       // Shaded, like every other sparkline in the app -- a filled mass whose
       // top edge is the trend, not a bare stroke. The axis is fitted, so the
@@ -482,7 +484,7 @@ describe("hostColumns", () => {
       expect(container.querySelector("path[data-area]")).toBeInTheDocument();
       expect(
         screen.getByRole("button", {
-          name: "Enlarge disk usage for /var/lib/postgresql on db-02",
+          name: "Enlarge filesystem usage for /var/lib/postgresql on db-02",
         }),
       ).toBeInTheDocument();
     });
@@ -493,7 +495,7 @@ describe("hostColumns", () => {
     // so the bar stands alone and keeps its reserved strip, which is what
     // holds the three bars in a row on one line.
     it("draws the bar alone, still aligned, when there is no series", () => {
-      const diskCol = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const diskCol = hostColumns("1h").find((c) => c.header === "Filesystem")!;
       const { container } = render(
         <>{diskCol.cell(makeRow({ fullest: { mount: "/", pct: 40 } }))}</>,
       );
@@ -739,7 +741,7 @@ describe("hostColumns", () => {
     // pct: 0 -- an empty, healthy, green bar where "never collected"
     // belongs, absent rendered as a fact.
     it("renders neither a meter nor a dash when nothing was collected", () => {
-      const diskCol = hostColumns("1h").find((c) => c.header === "Disk")!;
+      const diskCol = hostColumns("1h").find((c) => c.header === "Filesystem")!;
       const { container } = render(
         <>{diskCol.cell(makeRow({ fullest: null }))}</>,
       );
@@ -756,7 +758,9 @@ describe("hostColumns", () => {
     // too. It comes from the hub's stored gauge now, which no window can
     // empty.
     it("keeps the bar, the figure and the line on a host that is switched off", () => {
-      const diskCol = hostColumns("24h").find((c) => c.header === "Disk")!;
+      const diskCol = hostColumns("24h").find(
+        (c) => c.header === "Filesystem",
+      )!;
       const { container } = render(
         <>
           {diskCol.cell(
@@ -791,7 +795,9 @@ describe("hostColumns", () => {
     // is no history to draw. The reading survives regardless, because it does
     // not come from the window.
     it("draws the reading with no line when the window holds nothing", () => {
-      const diskCol = hostColumns("24h").find((c) => c.header === "Disk")!;
+      const diskCol = hostColumns("24h").find(
+        (c) => c.header === "Filesystem",
+      )!;
       const { container } = render(
         <>
           {diskCol.cell(

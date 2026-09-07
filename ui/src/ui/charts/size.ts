@@ -6,16 +6,14 @@
  * charts are different widths reads as three unrelated pictures rather than
  * one host.
  *
- * It went 120 -> 170 on the argument that a stacked chart with thirty-two
- * bands needs horizontal room to show a shape at all, and it is now 150. The
- * twenty pixels are not withdrawn from that argument, they are spent on the
- * one axis a band actually occupies: SPARK_HEIGHT below went 32 -> 45 in the
- * same change. A thirty-two-core stack has more shape to show for a third
- * more height than for the last twenty pixels of width, where each band is a
- * ribbon a pixel tall whatever the width, and the row still has the length
- * back for the cells that are not charts.
+ * 175, and that is a floor as well as a default: a sparkline in this app is
+ * always this long. It went 120 -> 170 on the argument that a stacked chart
+ * with thirty-two bands needs horizontal room to show a shape at all, then to
+ * 150 when SPARK_HEIGHT went 32 -> 45 and the width paid for the height. At
+ * 150 the mark had given up more length than the height bought back, so the
+ * length is restored and the height keeps its 45.
  */
-export const SPARK_WIDTH = 150;
+export const SPARK_WIDTH = 175;
 
 /**
  * The height every sparkline in a list uses.
@@ -37,7 +35,7 @@ export const SPARK_HEIGHT = 45;
  * line take about 37px under it, so the cell measures ~63px and the fleet
  * row is taller than the 45px traffic chart beside it; that is the row's
  * height now, and the traffic cell centres in it. 26 is the least a
- * silhouette stays readable at over 150px. */
+ * silhouette stays readable at over SPARK_WIDTH. */
 export const SPARK_STRIP_HEIGHT = 26;
 
 /**
