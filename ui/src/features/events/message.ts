@@ -38,16 +38,19 @@ export const KERNEL_EVENT_TYPES = [
 /** The condition kinds the hub opens and clears, which reach this log as
  * transitions.
  *
- * Mirrors the Kind constants in internal/hub/conditions. A kind missing here
- * still renders -- the dropdown unions this list with whatever arrived -- but
- * it falls through to the generic detail dump, which for a transition reads
- * "root — transition opened · severity warning" instead of a sentence. */
+ * The kinds ScanConditions actually PRODUCES, which is narrower than the Kind
+ * constants in internal/hub/conditions: `sporadic` and `drive` are declared
+ * there and have no observer yet. Listing them here would put two options in
+ * the type dropdown that return an empty log with no explanation.
+ *
+ * A kind missing from this list still renders -- the dropdown unions it with
+ * whatever arrived -- but falls through to the generic detail dump, which for
+ * a transition reads "root — transition opened · severity warning" instead of
+ * a sentence. So this grows when an observer does, not when a constant does. */
 export const CONDITION_EVENT_TYPES = [
   "silent",
-  "sporadic",
   "disk",
   "failed-units",
-  "drive",
 ] as const;
 
 /** The known event types, which is also the order a type filter offers them.
