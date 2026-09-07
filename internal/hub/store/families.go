@@ -1,11 +1,13 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -238,6 +240,14 @@ func (s *Store) InsertEvents(ctx context.Context, hostID int32, rows []*netrav1.
 		return 0, nil
 	}
 
+	rows, err := s.dropUnchangedStates(ctx, hostID, rows)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
 	const stmt = `
 		INSERT INTO events (host_id, ts, type, subject, detail, severity)
 		VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb), $6)
@@ -259,6 +269,134 @@ func (s *Store) InsertEvents(ctx context.Context, hostID int32, rows []*netrav1.
 			eventSeverity(r))
 	}
 	return execBatch(ctx, s.pool, batch, "event")
+}
+
+// dropUnchangedStates removes the rows that restate a state the hub already
+// has, leaving every other row untouched and in order.
+//
+// Only types eventStateKey recognises are considered; an occurrence type takes
+// no query and no comparison, so a scrape carrying nothing but kernel errors
+// costs exactly what it did before.
+//
+// The comparison is against the state as it stood BEFORE this batch, which is
+// the same choice InsertSystemdUnitEvents documents: the rows are then walked
+// oldest-first per subject against a running key, so a replayed batch holding
+// clean -> degraded -> clean records all three, while three identical cleans
+// record one.
+//
+// A failure reading the stored state fails the insert, EXCEPT for a row
+// Postgres can never accept: see the quarantine note inside.
+func (s *Store) dropUnchangedStates(ctx context.Context, hostID int32, rows []*netrav1.Event) ([]*netrav1.Event, error) {
+	byKey := map[eventSubject][]stateRow{}
+	for i, r := range rows {
+		key, ok := eventStateKey(r.GetType(), r.GetDetailJson())
+		if !ok {
+			continue
+		}
+		id := eventSubject{typ: r.GetType(), subject: r.GetSubject()}
+		byKey[id] = append(byKey[id], stateRow{idx: i, key: key})
+	}
+	if len(byKey) == 0 {
+		return rows, nil
+	}
+
+	stored, err := s.latestEventStates(ctx, hostID, byKey)
+	if err != nil {
+		if !poisonRow(err) {
+			return nil, err
+		}
+		// The batch carries a subject Postgres will not accept -- a NUL byte in
+		// an array name -- and it poisoned the LOOKUP before the insert could
+		// quarantine it. Failing here would 503 the flush, and the agent
+		// re-sends the identical batch forever: the exact wedge the quarantine
+		// exists to prevent, reached through a door it cannot see.
+		//
+		// So the pass continues knowing nothing about what is stored. Every key
+		// looks new, the in-batch comparison below still runs, and the poison
+		// row is rejected where it always was. The cost is at most one
+		// redundant row per subject in one batch.
+		stored = nil
+	}
+
+	drop := make(map[int]bool)
+	for id, group := range byKey {
+		// Oldest first, so the running comparison walks the batch the way time
+		// did. Stable, so two events sharing a timestamp keep the order the
+		// agent sent them in.
+		sorted := slices.Clone(group)
+		slices.SortStableFunc(sorted, func(a, b stateRow) int {
+			return cmp.Compare(rows[a.idx].GetTsMs(), rows[b.idx].GetTsMs())
+		})
+
+		last, seen := stored[id]
+		for _, sr := range sorted {
+			if seen && sr.key == last {
+				drop[sr.idx] = true
+				continue
+			}
+			last, seen = sr.key, true
+		}
+	}
+	if len(drop) == 0 {
+		return rows, nil
+	}
+
+	kept := make([]*netrav1.Event, 0, len(rows)-len(drop))
+	for i, r := range rows {
+		if !drop[i] {
+			kept = append(kept, r)
+		}
+	}
+	return kept, nil
+}
+
+// latestEventStates reads the most recent stored state for each (type,
+// subject) the batch touches.
+//
+// Rides events_host_type_subject_ts_idx (0017), so this is one index hit per
+// pair rather than a walk of the host's event history, however much of it has
+// accumulated.
+//
+// Subjects are compared through COALESCE on both sides: a host-wide event
+// stores NULL, and an equality join would silently match nothing for it --
+// which would not error, it would just never dedup those rows.
+func (s *Store) latestEventStates(ctx context.Context, hostID int32, want map[eventSubject][]stateRow) (map[eventSubject]string, error) {
+	types := make([]string, 0, len(want))
+	subjects := make([]string, 0, len(want))
+	for id := range want {
+		types = append(types, id.typ)
+		subjects = append(subjects, id.subject)
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ON (e.type, e.subject) e.type, COALESCE(e.subject, ''), e.detail::text
+		  FROM events e
+		  JOIN unnest($2::text[], $3::text[]) AS k(type, subject)
+		    ON e.type = k.type AND COALESCE(e.subject, '') = k.subject
+		 WHERE e.host_id = $1
+		 ORDER BY e.type, e.subject, e.ts DESC`, hostID, types, subjects)
+	if err != nil {
+		return nil, fmt.Errorf("read latest event states: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[eventSubject]string, len(want))
+	for rows.Next() {
+		var typ, subject, detail string
+		if err := rows.Scan(&typ, &subject, &detail); err != nil {
+			return nil, fmt.Errorf("scan latest event state: %w", err)
+		}
+		// A stored row whose detail no longer parses -- written by a producer
+		// since changed -- has no comparable state, so the incoming row is
+		// stored and becomes the new baseline.
+		if key, ok := eventStateKey(typ, detail); ok {
+			out[eventSubject{typ: typ, subject: subject}] = key
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read latest event states: %w", err)
+	}
+	return out, nil
 }
 
 // eventSeverity is what lands in events.severity, preferring the field over
