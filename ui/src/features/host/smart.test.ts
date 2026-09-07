@@ -9,6 +9,7 @@ import {
   drivePowerOnHours,
   driveKind,
   driveSeverity,
+  driveSeverityRank,
   driveTemperature,
   driveTempAttrId,
   driveWearPct,
@@ -87,9 +88,9 @@ describe("driveFindings", () => {
     );
   });
 
-  // Reallocated sectors are what the spare pool is FOR, so a non-zero count is
-  // serious rather than critical -- and must not outrank a sector that is
-  // unreadable right now.
+  // Reallocated sectors are a drive that has already substituted for damage,
+  // so a non-zero count is critical -- but it must not outrank a sector that
+  // is unreadable right now, which is why the order is asserted too.
   it("orders findings worst first", () => {
     const found = driveFindings(
       drive({
@@ -98,13 +99,13 @@ describe("driveFindings", () => {
         [ATA.currentPending]: 1,
       }),
     );
-    expect(found.map((f) => f.severity)).toEqual([
-      "critical",
-      "serious",
-      "warning",
+    expect(found.map((f) => [f.severity, f.text])).toEqual([
+      ["critical", "1 pending sector"],
+      ["critical", "12 reallocated sectors"],
+      ["warning", "4 CRC errors — check the cable"],
     ]);
     expect(driveSeverity(drive({ [ATA.reallocatedSectors]: 12 }))).toBe(
-      "serious",
+      "critical",
     );
   });
 
@@ -118,10 +119,10 @@ describe("driveFindings", () => {
     expect(found[0]!.text).toBe("2 uncorrectable sectors");
   });
 
-  it("reports uncorrectable errors as serious", () => {
+  it("reports uncorrectable errors as critical", () => {
     const found = driveFindings(drive({ [ATA.reportedUncorrect]: 7 }));
     expect(found).toHaveLength(1);
-    expect(found[0]!.severity).toBe("serious");
+    expect(found[0]!.severity).toBe("critical");
     expect(found[0]!.text).toBe("7 uncorrectable errors");
   });
 
@@ -192,7 +193,7 @@ describe("driveFindings on NVMe", () => {
 
   it("reports media errors", () => {
     const found = driveFindings(drive({ [NVME.mediaErrors]: 2 }));
-    expect(found[0]!.severity).toBe("serious");
+    expect(found[0]!.severity).toBe("critical");
     expect(found[0]!.text).toBe("2 media errors");
   });
 });
@@ -308,7 +309,7 @@ describe("driveAlarms", () => {
     // Then both leave the tab, worst first, each naming its own drive
     expect(testee.map((a) => [a.device, a.severity])).toEqual([
       ["sda", "critical"],
-      ["sdb", "serious"],
+      ["sdb", "critical"],
     ]);
   });
 
@@ -402,5 +403,54 @@ describe("driveAlarms and a drive that is no longer there", () => {
       1,
     );
     expect(driveAlarms([failing("2026-08-23T12:00:00Z")])).toHaveLength(1);
+  });
+});
+
+// The ordering `serious` used to carry for free. Folding it into `critical`
+// made every escalating finding compare equal, so the host's one drive line
+// named whichever disk the API happened to list first. These are the two pairs
+// that inverted, plus the column that has to agree with them.
+describe("which of two critical drives is named first", () => {
+  it("puts a spent NVMe above a disk with one reallocated sector", () => {
+    // Given one drive out of rated life and one that has swapped a single
+    // sector for a spare
+    const testee = driveAlarms([
+      drive({ [ATA.reallocatedSectors]: 1 }, { device: "sda" }),
+      drive({ [NVME.percentageUsed]: 105 }, { device: "nvme0" }),
+    ]);
+
+    // Then the spent drive is the one the host's line names
+    expect(testee.map((a) => a.device)).toEqual(["nvme0", "sda"]);
+  });
+
+  it("puts an unreadable sector above a reallocated one", () => {
+    // Given one drive with sectors it cannot read and one that has already
+    // swapped twelve away
+    const testee = driveAlarms([
+      drive({ [ATA.reallocatedSectors]: 12 }, { device: "sda" }),
+      drive({ [ATA.currentPending]: 3 }, { device: "sdb" }),
+    ]);
+
+    // Then the unreadable sectors are not hidden behind "+1 more"
+    expect(testee.map((a) => a.device)).toEqual(["sdb", "sda"]);
+  });
+
+  it("orders the Storage tab's Findings column the same way", () => {
+    // Given the same two drives, and a healthy third
+    const pending = drive({ [ATA.currentPending]: 3 }, { device: "sdb" });
+    const reallocated = drive(
+      { [ATA.reallocatedSectors]: 12 },
+      { device: "sda" },
+    );
+    const clean = drive({}, { device: "sdc" });
+
+    // Then the column ranks them as the attention panel does, rather than
+    // tying the two criticals and splitting them alphabetically
+    expect(driveSeverityRank(pending)).toBeGreaterThan(
+      driveSeverityRank(reallocated),
+    );
+    expect(driveSeverityRank(reallocated)).toBeGreaterThan(
+      driveSeverityRank(clean),
+    );
   });
 });

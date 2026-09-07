@@ -67,7 +67,7 @@ export interface TableProps<T> {
    * Returning null (or omitting the prop) draws no rail, which is what an
    * ordinary row gets: a table where every row is marked has marked nothing.
    */
-  rowSeverity?: (row: T) => "warning" | "serious" | "critical" | null;
+  rowSeverity?: (row: T) => "warning" | "critical" | null;
   /**
    * Splits the rows into labelled groups, each its own `<tbody>` under a
    * header row.
@@ -165,11 +165,10 @@ export interface TableProps<T> {
 
 export type SortState = { key: string; dir: "asc" | "desc" };
 
-/** What each rail hue means, in a word. Only the three severities a rail is
+/** What each rail hue means, in a word. Only the two severities a rail is
  * ever drawn for -- see rowSeverity. */
-const SEVERITY_WORD: Record<"warning" | "serious" | "critical", string> = {
+const SEVERITY_WORD: Record<"warning" | "critical", string> = {
   warning: "Warning",
-  serious: "Serious",
   critical: "Critical",
 };
 

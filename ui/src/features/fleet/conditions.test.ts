@@ -571,7 +571,7 @@ describe("drive conditions", () => {
       NOW,
     );
 
-    // Then the host has ONE row, at the worse of the two, saying how many
+    // Then the host has ONE row, at the more urgent of the two, saying how many
     // more there are -- the counts line says hosts, not drives.
     const drives = rows.filter((c) => c.kind === "drive");
     expect(drives).toHaveLength(1);

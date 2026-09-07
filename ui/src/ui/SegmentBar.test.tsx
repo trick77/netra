@@ -40,7 +40,7 @@ describe("SegmentBar", () => {
     expect(cells[7]!.className).toBe("");
   });
 
-  // The Meter's own thresholds: 70 warning, 85 serious, 95 critical. The
+  // The Meter's own thresholds: 70 warning, 95 critical. The
   // whole bar takes the class, so a host at 76 is an amber bar and not a
   // green one with an amber cell at the end.
   it("takes the meter's severity as a class on the whole bar", () => {
@@ -49,7 +49,7 @@ describe("SegmentBar", () => {
         .className;
     expect(at(21)).toBe("segbar st-ok");
     expect(at(70)).toBe("segbar st-warn");
-    expect(at(85)).toBe("segbar st-serious");
+    expect(at(85)).toBe("segbar st-warn");
     expect(at(96)).toBe("segbar st-crit");
   });
 

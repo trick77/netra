@@ -34,9 +34,6 @@ describe("Badge", () => {
     );
     expect(container.querySelector(".badge")).toHaveClass("st-warn");
 
-    rerender(<Badge severity="serious">at risk</Badge>);
-    expect(container.querySelector(".badge")).toHaveClass("st-serious");
-
     rerender(<Badge severity="critical">down</Badge>);
     expect(container.querySelector(".badge")).toHaveClass("st-crit");
 
@@ -49,7 +46,6 @@ describe("Badge", () => {
     const badge = container.querySelector(".badge");
     expect(badge).not.toHaveClass("st-ok");
     expect(badge).not.toHaveClass("st-warn");
-    expect(badge).not.toHaveClass("st-serious");
     expect(badge).not.toHaveClass("st-crit");
     expect(screen.getByText("plain")).toBeInTheDocument();
   });

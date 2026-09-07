@@ -1,5 +1,5 @@
 // Fill colour comes from the series palette (--s1..--s4) or the status
-// palette (--st-ok/--st-warn/--st-serious/--st-crit), NEVER --accent -- the
+// palette (--st-ok/--st-warn/--st-crit), NEVER --accent -- the
 // accent is chrome (brand, current tab, ghost button, focus ring, primary
 // button), not a data or severity fill. See index.css's comment above
 // `.meter`. Links and the active nav entry rest in ink and are no longer on
@@ -10,7 +10,6 @@ import type { Severity } from "./Badge";
 
 export interface MeterThresholds {
   warning: number;
-  serious: number;
   critical: number;
 }
 
@@ -18,7 +17,6 @@ export interface MeterThresholds {
 // prop with a sensible default rather than a hardcoded cutoff.
 export const DEFAULT_THRESHOLDS: MeterThresholds = {
   warning: 70,
-  serious: 85,
   critical: 95,
 };
 
@@ -39,7 +37,6 @@ export type FillSeverity = Exclude<Severity, "neutral">;
 export const SEVERITY_COLOR: Record<FillSeverity, string> = {
   ok: "var(--st-ok)",
   warning: "var(--st-warn)",
-  serious: "var(--st-serious)",
   critical: "var(--st-crit)",
 };
 
@@ -63,21 +60,19 @@ export function severityFromPercent(
   thresholds: MeterThresholds = DEFAULT_THRESHOLDS,
 ): FillSeverity {
   if (pct >= thresholds.critical) return "critical";
-  if (pct >= thresholds.serious) return "serious";
   if (pct >= thresholds.warning) return "warning";
   return "ok";
 }
 
 /**
  * The app's own spelling of a severity as a class: st-ok, st-warn,
- * st-serious, st-crit (see the status pair in index.css). One map, beside
+ * st-crit (see the status pair in index.css). One map, beside
  * the function that decides the severity, so a bar and the figure printed
  * next to it -- SegmentBar and NowReading -- cannot spell it differently.
  */
 export const SEVERITY_CLASS: Record<FillSeverity, string> = {
   ok: "st-ok",
   warning: "st-warn",
-  serious: "st-serious",
   critical: "st-crit",
 };
 

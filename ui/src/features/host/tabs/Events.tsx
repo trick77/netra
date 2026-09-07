@@ -42,7 +42,6 @@ const SEVERITY_RANK: Record<Severity, number> = {
   neutral: 0,
   ok: 1,
   warning: 2,
-  serious: 3,
   critical: 4,
 };
 

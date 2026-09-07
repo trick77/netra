@@ -65,7 +65,6 @@ export interface AttentionCountsProps {
 
 const SEVERITY_CLASS: Record<Severity, string> = {
   critical: "st-crit",
-  serious: "st-serious",
   warning: "st-warn",
   ok: "st-ok",
   neutral: "",
@@ -83,14 +82,13 @@ const SEVERITY_CLASS: Record<Severity, string> = {
  * argument that a kind fixes its own severity; a kind does, but only for a
  * reader who already knows the table.
  *
- * What was actually wrong with it is the reading order: "Silent 8 Serious" is
+ * What was actually wrong with it is the reading order: "Silent 8 Warning" is
  * three values in a row with nothing between them. The separator in the chip
  * below is the fix -- the severity is an annotation on a count, not a third
  * figure competing with it.
  */
 export const SEVERITY_WORD: Record<Severity, string> = {
   critical: "Critical",
-  serious: "Serious",
   warning: "Warning",
   ok: "OK",
   neutral: "Unknown",

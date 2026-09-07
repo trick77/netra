@@ -207,7 +207,6 @@ export interface Tile {
 const STATUS_COLOR: Record<FillSeverity, string> = {
   ok: "var(--st-ok)",
   warning: "var(--st-warn)",
-  serious: "var(--st-serious)",
   critical: "var(--st-crit)",
 };
 
@@ -218,11 +217,10 @@ function trendColor(severity: FillSeverity | null, series: string): string {
   return severity === null ? series : STATUS_COLOR[severity];
 }
 
-/** Worse sorts higher. Only the three diskState can answer with, plus the
+/** Worse sorts higher. Only the two diskState can answer with, plus the
  * null it answers with for a healthy disk. */
 const SEVERITY_RANK: Record<string, number> = {
   critical: 3,
-  serious: 2,
   warning: 1,
 };
 
@@ -471,7 +469,7 @@ function busiestFilesystemTile(
   // this is the other half of sharing it.
   //
   // WHICH disk, only. What COLOUR the tile then reads is the percentage's
-  // own question, answered below by the same 70/85/95 the meters use -- see
+  // own question, answered below by the same 70/95 the meters use -- see
   // the comment on the returned severity.
   rows.forEach((row, index) => {
     const state = diskState(row.used, row.free);
@@ -529,7 +527,7 @@ function busiestFilesystemTile(
     return (u / (u + f)) * 100;
   });
 
-  // The tile is coloured by the percentage it prints, on the same 70/85/95
+  // The tile is coloured by the percentage it prints, on the same 70/95
   // the Disk panel's meters below it read by -- not by the compound rule
   // that picked WHICH filesystem this is. The compound rule answers "is this
   // worth acting on" and is why a 20 TB array with 800 GB free stays out of

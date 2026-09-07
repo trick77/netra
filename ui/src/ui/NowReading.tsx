@@ -39,7 +39,7 @@ export function NowReading({
    * The severity, when the caller's own rule decides it.
    *
    * Every reading in the app leaves this unset, filesystems included: a bar
-   * answers "what does this number say", and the answer is the same 70/85/95
+   * answers "what does this number say", and the answer is the same 70/95
    * for a disk as for CPU or memory. Passing diskSeverityFor here instead --
    * high enough AND with little enough left -- made red unreachable on any
    * volume over roughly 400 GB, because critical there also needs under

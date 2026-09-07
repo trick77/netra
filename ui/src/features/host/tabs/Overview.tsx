@@ -91,15 +91,14 @@ export interface Attention {
 // above a panel saying nothing needed attention. lib/host.ts anchors the
 // number to the product's alerting rule; there is one definition of down.
 
-// Worst first, and the only three needsAttention() emits: `ok` is not a
+// Worst first, and the only two needsAttention() emits: `ok` is not a
 // condition and `neutral` is not a severity anything here can be at. A
 // severity missing from this list would drop its rows silently, which is why
 // it is written out rather than derived from the data.
-const ATTENTION_SEVERITIES = ["critical", "serious", "warning"] as const;
+const ATTENTION_SEVERITIES = ["critical", "warning"] as const;
 
 const SEVERITY_WORD: Record<Severity, string> = {
   critical: "Critical",
-  serious: "Serious",
   warning: "Warning",
   ok: "OK",
   neutral: "Unknown",
@@ -107,7 +106,6 @@ const SEVERITY_WORD: Record<Severity, string> = {
 
 const SEVERITY_CLASS: Record<Severity, string> = {
   critical: "st-crit",
-  serious: "st-serious",
   warning: "st-warn",
   ok: "st-ok",
   neutral: "",
@@ -201,14 +199,12 @@ export function needsAttention(input: {
     });
   }
 
-  // `critical`, not `serious`, and that is the fleet page's word for this
-  // exact fact: hostConditions() in fleet/conditions.ts has always rated a
-  // host that stopped reporting `critical`. The two pages used to print
-  // different severities for one condition, so the same host read "serious"
-  // here and "critical" one click up -- the kind of disagreement the shared
-  // disk thresholds below exist to prevent, in the one place a constant
-  // could not fix it. `serious` remains a Badge severity; nothing else that
-  // uses it changed.
+  // `critical`, and that is the fleet page's word for this exact fact:
+  // hostConditions() in fleet/conditions.ts has always rated a host that
+  // stopped reporting `critical`. The two pages used to print different
+  // severities for one condition -- the kind of disagreement the shared disk
+  // thresholds below exist to prevent, in the one place a constant could not
+  // fix it.
   if (input.host.last_seen === null) {
     out.push({ severity: "critical", what: "never reported" });
   } else {
@@ -866,7 +862,7 @@ export function Overview({
                         ? null
                         : fs.used + fs.free
                     }
-                    // No severity passed: Meter's own 70/85/95 colours the
+                    // No severity passed: Meter's own 70/95 colours the
                     // fill and the figure, the rule every other bar, meter
                     // and sparkline in the app is read by. A bar answers
                     // "what does this number say", and 97% says the same

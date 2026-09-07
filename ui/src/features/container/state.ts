@@ -164,21 +164,24 @@ export function deriveState({
   // containerIsGone returns false when one does not parse and on a host whose
   // agent cannot see containers, which are the two ways a row loses it.
   //
-  // Serious rather than neutral. A container that crashed at 03:00 and never
-  // came back is not a settled administrative fact at 03:15; it is the same
-  // problem it was at 03:04, when the row still read silent.
+  // A severity rather than neutral. A container that crashed at 03:00 and
+  // never came back is not a settled administrative fact at 03:15; it is the
+  // same problem it was at 03:04, when the row still read silent. Warning,
+  // not critical, for the reason KIND_RANK gives: this is netra inferring a
+  // fault from an absence, and an absence is also what a deliberate removal
+  // looks like.
   if (gone) {
     return {
       kind: "gone",
       label: "gone",
-      severity: "serious",
+      severity: "warning",
       why: "it stopped being reported while its host kept reporting; it was probably stopped or removed",
     };
   }
 
   // Then, above even "No samples": every branch below reads the sample
   // stream, and on a host that is not reporting there is no stream to read.
-  // Neutral, not serious -- the severity belongs to the host, which carries
+  // Neutral -- the severity belongs to the host, which carries
   // it on its own page and in its fleet row, and a second critical here would
   // count one outage twice. The host's own word is reused rather than a fifth
   // synonym invented for it.
@@ -215,7 +218,7 @@ export function deriveState({
     return {
       kind: "silent",
       label: "silent",
-      severity: "serious",
+      severity: "warning",
       why: "samples stopped arriving for this container while its host kept reporting",
     };
   }
@@ -235,7 +238,7 @@ export function deriveState({
     return {
       kind: "restarting",
       label: "restarting",
-      severity: "serious",
+      severity: "critical",
       why: "Docker reports the container as restarting, which on a container that stays in this state is a crash loop",
     };
   }
@@ -244,7 +247,7 @@ export function deriveState({
     return {
       kind: "unhealthy",
       label: "unhealthy",
-      severity: "serious",
+      severity: "critical",
       why: "the container's own HEALTHCHECK is failing; the samples below are what it is doing while it fails",
     };
   }
@@ -365,10 +368,10 @@ export function stateKindLabel(kind: ContainerStateKind): string {
 const KIND_SEVERITY: Record<ContainerStateKind, Severity> = {
   "host-down": "neutral",
   "no-samples": "neutral",
-  gone: "serious",
-  silent: "serious",
-  unhealthy: "serious",
-  restarting: "serious",
+  gone: "warning",
+  silent: "warning",
+  unhealthy: "critical",
+  restarting: "critical",
   paused: "neutral",
   "mem-pressure": "warning",
   "series-gap": "warning",

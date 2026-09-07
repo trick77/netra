@@ -131,7 +131,6 @@ const SEVERITY_CLASS: Record<Severity, string | undefined> = {
   ok: undefined,
   neutral: undefined,
   warning: "st-warn",
-  serious: "st-serious",
   critical: "st-crit",
 };
 
@@ -391,16 +390,8 @@ export function FleetPage({
     group.conditions.some((c) => (c.severity === "critical") === critical);
   const criticalHosts = groups.filter((g) => hasSeverity(g, true)).length;
   // Everything that is not critical rather than severity === "warning"
-  // exactly. The drive condition emits `serious` -- a disk with reallocated
-  // sectors has already substituted for damage, which is worse than a
-  // filesystem at 91% and not yet a failure -- and a segment written as
-  // severity === "warning" would have counted such a host in `troubled` and
-  // left it unreachable from either segment.
-  //
-  // The visible seam: that host's chip reads "Serious" while the segment it
-  // answers to reads "Warning". Two segments rather than three is the trade,
-  // and it is the right way round -- a reader looking for what is not
-  // critical finds it.
+  // exactly: a severity added later that is neither would otherwise count a
+  // host in `troubled` and leave it unreachable from either segment.
   const warningHosts = groups.filter((g) => hasSeverity(g, false)).length;
 
   // One `attn` param, read against the entity on screen. A container kind
@@ -524,11 +515,9 @@ export function FleetPage({
   // troubled host to the top: a rail down the leading edge says which hosts
   // to look at without moving any of them. Only the severities that mean
   // something is wrong -- a rail on every row would say nothing.
-  const railSeverity = (
-    row: HostRow,
-  ): "warning" | "serious" | "critical" | null => {
+  const railSeverity = (row: HostRow): "warning" | "critical" | null => {
     const worst = byHost.get(String(row.id))?.worst.severity;
-    if (worst === "critical" || worst === "serious" || worst === "warning") {
+    if (worst === "critical" || worst === "warning") {
       return worst;
     }
     return null;

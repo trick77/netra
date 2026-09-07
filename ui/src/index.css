@@ -72,7 +72,6 @@
      (spec §3.5). */
   --st-ok: #0ca30c;
   --st-warn: #fab219;
-  --st-serious: #ec835a;
   --st-crit: #d03b3b;
 
   /* palette "Clay".
@@ -150,7 +149,7 @@
   --accent-fill: #b85a30;
   --accent-soft: #2e211a;
   /* The unfilled part of a meter. Neutral rather than a tint of --accent:
-     the fill beside it is the FIXED status palette (ok/warn/serious/crit),
+     the fill beside it is the FIXED status palette (ok/warn/crit),
      and a warm track behind a green or amber bar muddied both. Lighter than
      --accent-soft was, so the empty portion reads as empty and the fill
      carries the contrast. Its own token because --accent-soft also backs
@@ -188,14 +187,13 @@
   /* status TEXT colours. The chip ground keeps the fixed hue (--st-* above);
      the word on it is the actual colour-blindness mitigation (spec §3.3/3.5),
      so it must clear 4.5:1 on its own. Measured on the page --bg (#131312):
-     ok 5.54:1, warn 10.13:1 and serious 7.05:1 clear as they are and keep
-     their mark hue exactly. crit is the one that had to move: the true mark
+     ok 5.54:1 and warn 10.13:1 clear as they are and keep their mark hue
+     exactly. crit is the one that had to move: the true mark
      #d03b3b measures 3.87:1 even on this darker ground, so the TEXT step
      stays lightened to #d96060 (5.13:1) while the dot beside it keeps the
      real hue. */
   --st-ok-text: #0ca30c;
   --st-warn-text: #fab219;
-  --st-serious-text: #ec835a;
   --st-crit-text: #d96060;
 
   /* series palette.
@@ -216,8 +214,8 @@
      249°, 337°) rather than crowding any of them: s6 ≈180° (cyan) falls
      between s2's green and s1's blue; s5 ≈277° (violet) falls between
      s3's purple and s4's pink. Both stay well clear of the 0–41° band
-     reserved for accent/status (accent 18°, crit 0°, serious 17°,
-     warn 41°, ok 120° also avoided). */
+     reserved for accent/status (accent 18°, crit 0°, warn 41°, ok 120°
+     also avoided). */
   --s1: #3987e5;
   --s2: #199e70;
   --s3: #9085e9;
@@ -456,7 +454,7 @@ h3 {
    column (.host-cell-name) -- so none of them ride on this rule.
 
    That column is the exception this rule used to be written against: dark
-   --accent (#d97757) and --st-serious (#ec835a) are near neighbours, so an
+   --accent (#d97757) sits in the same warm band as the status hues, so an
    orange name beside a severity mark can read as a severity itself. What
    makes it safe where it is: the mark beside a hostname is a BADGE with a
    word in it ("offline", "sporadic"), not a bare dot, so the hue is never
@@ -761,7 +759,7 @@ a:hover {
   font-size: var(--text-micro);
   color: var(--muted);
 }
-/* The separator before the severity word. "Silent 8 Serious" set three values
+/* The separator before the severity word. "Silent 8 Warning" set three values
    side by side with nothing between them, and the reader's own word for it
    was weird; the middot is what makes the last one read as an annotation on
    the count rather than as a second figure. Its own span so it stays --muted
@@ -791,10 +789,6 @@ a:hover {
 .atile.st-warn .v,
 .atile.st-warn .d {
   color: var(--st-warn-text);
-}
-.atile.st-serious .v,
-.atile.st-serious .d {
-  color: var(--st-serious-text);
 }
 /* The unit keeps its quiet grey inside a coloured value: it is the noun, not
    the reading. */
@@ -1083,9 +1077,6 @@ tbody tr:hover .host-cell-name {
 .metric-now .v.st-warn {
   color: var(--st-warn-text);
 }
-.metric-now .v.st-serious {
-  color: var(--st-serious-text);
-}
 .metric-now .v.st-crit {
   color: var(--st-crit-text);
 }
@@ -1145,9 +1136,6 @@ tbody tr:hover .host-cell-name {
 }
 .segbar.st-warn i.on {
   background: var(--st-warn);
-}
-.segbar.st-serious i.on {
-  background: var(--st-serious);
 }
 .segbar.st-crit i.on {
   background: var(--st-crit);
@@ -1342,9 +1330,6 @@ tbody tr:hover .host-cell-name {
 }
 .rail-warning td:first-child {
   box-shadow: inset 3px 0 0 var(--st-warn);
-}
-.rail-serious td:first-child {
-  box-shadow: inset 3px 0 0 var(--st-serious);
 }
 .rail-critical td:first-child {
   box-shadow: inset 3px 0 0 var(--st-crit);
@@ -2031,9 +2016,6 @@ tbody tr:hover .host-cell-name {
 .fleettitle em.st-crit {
   color: var(--st-crit-text);
 }
-.fleettitle em.st-serious {
-  color: var(--st-serious-text);
-}
 .fleettitle em.st-warn {
   color: var(--st-warn-text);
 }
@@ -2294,7 +2276,6 @@ tbody tr:hover .host-cell-name {
    contrast. */
 .badge.st-ok,
 .badge.st-warn,
-.badge.st-serious,
 .badge.st-crit {
   font-weight: 500;
 }
@@ -2323,10 +2304,6 @@ tbody tr:hover .host-cell-name {
 .dot.st-warn {
   background: var(--st-warn);
 }
-.st-serious .dot,
-.dot.st-serious {
-  background: var(--st-serious);
-}
 .st-crit .dot,
 .dot.st-crit {
   background: var(--st-crit);
@@ -2341,9 +2318,6 @@ tbody tr:hover .host-cell-name {
 }
 .st-warn {
   color: var(--st-warn-text);
-}
-.st-serious {
-  color: var(--st-serious-text);
 }
 .st-crit {
   color: var(--st-crit-text);
@@ -2938,9 +2912,6 @@ details.sysfold > .body {
 .mrow .val.st-warn {
   color: var(--st-warn-text);
 }
-.mrow .val.st-serious {
-  color: var(--st-serious-text);
-}
 .mrow .val.st-crit {
   color: var(--st-crit-text);
 }
@@ -3137,16 +3108,6 @@ a.tile:focus-visible {
 }
 .tile.sev-warning .v {
   color: var(--st-warn-text);
-}
-.tile.sev-serious {
-  background: color-mix(in srgb, var(--st-serious) 12%, var(--surface));
-  border-color: color-mix(in srgb, var(--st-serious) 38%, var(--border));
-}
-.tile.sev-serious::before {
-  background: var(--st-serious);
-}
-.tile.sev-serious .v {
-  color: var(--st-serious-text);
 }
 .tile.sev-critical {
   background: color-mix(in srgb, var(--st-crit) 12%, var(--surface));
@@ -4119,10 +4080,6 @@ tbody:first-of-type .grouprow th {
   color: var(--st-warn-text);
   border-color: #5a4a1e;
 }
-.badge.drive-serious {
-  color: var(--st-serious-text);
-  border-color: #5a3a28;
-}
 .badge.drive-critical {
   color: var(--st-crit-text);
   border-color: #5a2828;
@@ -4153,9 +4110,6 @@ tbody:first-of-type .grouprow th {
    traffic light, not a sentence. */
 .finding-warning {
   color: var(--st-warn-text);
-}
-.finding-serious {
-  color: var(--st-serious-text);
 }
 .finding-critical {
   color: var(--st-crit-text);
