@@ -32,7 +32,7 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     // do not, which is the whole point of them being separate.
     net_rx_bytes: 1.5e6,
     net_tx_bytes: 5.5e5,
-    fullest: { mount: "/", pct: 41, others: 1 },
+    fullest: { mount: "/", pct: 41 },
     disk: [],
     oomKills: null,
     dropped: null,
@@ -950,7 +950,7 @@ describe("FleetPage data fetching", () => {
             id: 2,
             hostname: "db-01",
             oomKills: 3,
-            fullest: { mount: "/var/log", pct: 97, others: 0 },
+            fullest: { mount: "/var/log", pct: 97 },
           }),
         ]}
         checkedAt={null}

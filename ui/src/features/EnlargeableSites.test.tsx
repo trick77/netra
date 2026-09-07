@@ -267,7 +267,7 @@ describe("the list sparklines enlarge", () => {
         }),
       );
       renderRow({
-        fullest: { mount: "/", pct: 60, others: 1, series: [58, 59, 60] },
+        fullest: { mount: "/", pct: 60, series: [58, 59, 60] },
       });
 
       await open("Enlarge disk usage for / on ark");
