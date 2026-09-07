@@ -157,3 +157,21 @@ func SetLogindBusDialForTest(dial func(context.Context) (sessionConn, error)) fu
 		logindBus = heldBus[sessionConn]{}
 	}
 }
+
+// ParseKmsgRecordForTest exposes the /dev/kmsg record parser. It is a pure
+// function over bytes, which is why the wire format is tested directly rather
+// than through a fake device: the framing is the part with edge cases, and the
+// drain loop around it has almost none.
+func ParseKmsgRecordForTest(raw []byte) (kmsgRecord, bool) { return parseKmsgRecord(raw) }
+
+// KmsgSuppressWindowForTest and KmsgMaxEventsForTest expose the two folding
+// bounds, so a test can assert against them without restating the literal --
+// which would then agree with a wrong value as readily as a right one.
+const (
+	KmsgSuppressWindowForTest = kmsgSuppressWindow
+	KmsgMaxEventsForTest      = kmsgMaxEvents
+)
+
+// ErrKmsgGapForTest is the EPIPE sentinel, so a stand-in source can report a
+// ring that wrapped past the reader.
+var ErrKmsgGapForTest = errKmsgGap

@@ -18,6 +18,7 @@ import {
   severityOf,
   type EventFilters,
 } from "./EventsPage";
+import { KNOWN_EVENT_TYPES } from "./message";
 import { ABSENT } from "../../lib/format";
 
 const NOW = new Date("2026-08-10T14:00:00Z");
@@ -67,6 +68,15 @@ const RECOVERING = event({
   },
 });
 
+/** The defaults with the severity floor lifted.
+ *
+ * The page opens at warning-and-above, which is a filter and is tested as one
+ * below. Every OTHER test here is about something else -- rendering a chip,
+ * ordering rows, handing a change back -- and its fixtures are ordinary info
+ * events, so starting them behind the floor would have them assert against an
+ * empty table for the wrong reason. */
+const EVERY_SEVERITY: EventFilters = { ...DEFAULT_FILTERS, severity: "" };
+
 const HOSTS = [
   { id: 3, hostname: "web-01" },
   { id: 4, hostname: "db-01" },
@@ -76,6 +86,7 @@ function renderPage(
   overrides: {
     events?: Event[];
     filters?: Partial<EventFilters>;
+    truncated?: boolean;
   } = {},
 ) {
   const onFiltersChange = vi.fn();
@@ -83,7 +94,8 @@ function renderPage(
     <EventsPage
       events={overrides.events ?? [event(), DEGRADED, RECOVERING]}
       hosts={HOSTS}
-      filters={{ ...DEFAULT_FILTERS, ...overrides.filters }}
+      truncated={overrides.truncated ?? false}
+      filters={{ ...EVERY_SEVERITY, ...overrides.filters }}
       onFiltersChange={onFiltersChange}
       now={NOW}
     />,
@@ -129,9 +141,26 @@ describe("filters in the URL", () => {
   // remembered preference now, so an absent range means "whatever the
   // reader's browser remembers" rather than 24h -- and a sent link exists
   // to override exactly that.
-  it("writes nothing but the range for the defaults", () => {
-    expect(filtersToQuery(DEFAULT_FILTERS)).toBe("range=24h");
+  it("writes nothing but the range and the severity for the defaults", () => {
+    expect(filtersToQuery(DEFAULT_FILTERS)).toBe("range=24h&severity=warning");
     expect(filtersFromQuery("")).toEqual(DEFAULT_FILTERS);
+  });
+
+  // "" is every severity, and it is a real choice rather than the absence of
+  // one. Since the DEFAULT became `warning`, omitting the key would resolve
+  // back to warning -- so a reader looking at everything could not send anyone
+  // a link to what they were looking at.
+  it("round-trips a reader who cleared the severity floor", () => {
+    const all: EventFilters = { ...DEFAULT_FILTERS, severity: "" };
+    expect(filtersToQuery(all)).toContain("severity=");
+    expect(filtersFromQuery(filtersToQuery(all))).toEqual(all);
+  });
+
+  // A link written before `info` left the dropdown must not open a control
+  // rendered blank: a <select> whose value matches no <option> shows nothing
+  // while behaving as "all severities".
+  it("folds the lowest severity onto the option that means the same thing", () => {
+    expect(filtersFromQuery("severity=info").severity).toBe("");
   });
 
   it("ignores a range the page does not have", () => {
@@ -152,30 +181,57 @@ describe("applyFilters", () => {
 
   it("matches the search against subject, type and host", () => {
     expect(
-      applyFilters(events, { ...DEFAULT_FILTERS, search: "db-01" }),
+      applyFilters(events, { ...EVERY_SEVERITY, search: "db-01" }),
     ).toEqual([RECOVERING]);
     expect(
-      applyFilters(events, { ...DEFAULT_FILTERS, search: "NGINX" }),
+      applyFilters(events, { ...EVERY_SEVERITY, search: "NGINX" }),
     ).toHaveLength(1);
   });
 
   it("filters by host, type and derived severity", () => {
-    expect(applyFilters(events, { ...DEFAULT_FILTERS, host: "4" })).toEqual([
+    expect(applyFilters(events, { ...EVERY_SEVERITY, host: "4" })).toEqual([
       RECOVERING,
     ]);
     expect(
-      applyFilters(events, { ...DEFAULT_FILTERS, type: "mdraid" }),
+      applyFilters(events, { ...EVERY_SEVERITY, type: "mdraid" }),
     ).toHaveLength(2);
     expect(
-      applyFilters(events, { ...DEFAULT_FILTERS, severity: "critical" }),
+      applyFilters(events, { ...EVERY_SEVERITY, severity: "critical" }),
     ).toEqual([DEGRADED]);
+  });
+
+  // The severity filter is a THRESHOLD, not an equality, and this is the test
+  // that makes the default safe: selecting `warning` while a critical event is
+  // in the list has to keep the critical one. As an equality it would hide
+  // exactly the rows the filter looks like it is for.
+  // `info` is a valid value -- an old link may carry it -- and as a threshold
+  // it selects everything, which is why it is not offered in the dropdown.
+  it("treats the lowest severity as no filter at all", () => {
+    expect(
+      applyFilters(events, { ...EVERY_SEVERITY, severity: "info" }),
+    ).toHaveLength(3);
+  });
+
+  it("treats severity as a floor, not an exact match", () => {
+    expect(
+      applyFilters(events, { ...EVERY_SEVERITY, severity: "warning" }),
+    ).toEqual([DEGRADED, RECOVERING]);
+  });
+
+  // What the page does on open, with nothing selected.
+  it("hides info by default and keeps everything worse", () => {
+    expect(applyFilters(events, DEFAULT_FILTERS)).toEqual([
+      DEGRADED,
+      RECOVERING,
+    ]);
+    expect(applyFilters(events, EVERY_SEVERITY)).toHaveLength(3);
   });
 
   // The range is a server-side window (api.ts's since/until), not a
   // predicate over rows already fetched.
   it("leaves the range alone", () => {
     expect(
-      applyFilters(events, { ...DEFAULT_FILTERS, range: "1h" }),
+      applyFilters(events, { ...EVERY_SEVERITY, range: "1h" }),
     ).toHaveLength(3);
   });
 });
@@ -297,7 +353,7 @@ describe("EventsPage", () => {
     await userEvent.type(screen.getByLabelText("Search"), "n");
 
     expect(onFiltersChange).toHaveBeenCalledWith({
-      ...DEFAULT_FILTERS,
+      ...EVERY_SEVERITY,
       host: "3",
       search: "n",
     });
@@ -312,11 +368,42 @@ describe("EventsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "7d" }));
 
     expect(onFiltersChange.mock.calls.map(([f]) => f)).toEqual([
-      { ...DEFAULT_FILTERS, host: "4" },
-      { ...DEFAULT_FILTERS, type: "mdraid" },
-      { ...DEFAULT_FILTERS, severity: "warning" },
-      { ...DEFAULT_FILTERS, range: "7d" },
+      { ...EVERY_SEVERITY, host: "4" },
+      { ...EVERY_SEVERITY, type: "mdraid" },
+      { ...EVERY_SEVERITY, severity: "warning" },
+      { ...EVERY_SEVERITY, range: "7d" },
     ]);
+  });
+
+  // Every filter but the range runs over rows already fetched, so a window
+  // the server truncated can hide a critical event behind a severity floor
+  // that never saw it. Saying "nothing matches these filters" would be a
+  // false statement about what happened.
+  it("says the window was truncated rather than blaming the filters", () => {
+    renderPage({
+      events: [],
+      filters: { severity: "critical" },
+      truncated: true,
+    });
+
+    expect(screen.getByText(/cut off before any filter ran/i)).toBeTruthy();
+  });
+
+  it("blames the filters when nothing was truncated", () => {
+    renderPage({ events: [], filters: { severity: "critical" } });
+
+    expect(screen.getByText(/matches these filters/i)).toBeTruthy();
+  });
+
+  // Two options that select identical rows is one option too many: as a
+  // threshold, "info and worse" IS "all severities".
+  it("offers no severity that means the same as no filter", () => {
+    renderPage();
+
+    const options = [
+      ...screen.getByLabelText("Severity").querySelectorAll("option"),
+    ];
+    expect(options.map((o) => o.value)).toEqual(["", "critical", "warning"]);
   });
 
   // The known types are always on offer, because filtering by type narrows
@@ -330,9 +417,7 @@ describe("EventsPage", () => {
     ];
     expect(options.map((o) => o.value)).toEqual([
       "",
-      "mdraid",
-      "package",
-      "unit",
+      ...[...KNOWN_EVENT_TYPES].sort(),
     ]);
   });
 

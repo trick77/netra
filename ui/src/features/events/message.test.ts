@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import type { Event } from "../../lib/api";
 import {
+  KERNEL_EVENT_TYPES,
   KNOWN_EVENT_TYPES,
   mdraidSeverity,
   messageOf,
@@ -201,10 +202,89 @@ describe("messageOf, anything else", () => {
 });
 
 describe("KNOWN_EVENT_TYPES", () => {
-  // The hub's three branches in internal/hub/read/events.go. If a fourth is
-  // added there, this list is the other half of the change.
+  // Two sources, unioned. The first three are the hub's own branches in
+  // internal/hub/read/events.go; the rest are what the kmsg collector
+  // classifies, and ride the generic `events` branch. If a producer is added
+  // on either side, this list is the other half of the change.
   it("is the set the hub's union can emit", () => {
-    expect([...KNOWN_EVENT_TYPES]).toEqual(["mdraid", "package", "unit"]);
+    expect([...KNOWN_EVENT_TYPES]).toEqual([
+      "mdraid",
+      "package",
+      "unit",
+      ...KERNEL_EVENT_TYPES,
+    ]);
+  });
+
+  // The kernel types mirror kmsgClasses in agent/collector/kmsg.go. A type the
+  // collector emits and this list omits still renders, but as a generic detail
+  // dump rather than as the kernel's own sentence.
+  it("covers every type the kmsg collector emits", () => {
+    expect([...KERNEL_EVENT_TYPES]).toEqual([
+      "disk_error",
+      "ata_error",
+      "scsi_error",
+      "nvme_error",
+      "md_fail",
+      "fs_error",
+      "oom_kill",
+      "hw_error",
+      "thermal",
+      "kernel_fault",
+      "link_change",
+    ]);
+  });
+});
+
+describe("kernel events", () => {
+  const kernelEvent = (detail: Record<string, unknown>) =>
+    event({
+      type: "disk_error",
+      subject: "sdd",
+      detail: { severity: "critical", priority: 3, ...detail },
+    });
+
+  // The kernel's own sentence, verbatim. An operator searching for the string
+  // their monitoring gave them has to find it here, and a paraphrase is both
+  // longer and less useful than the line itself.
+  it("renders the kernel line as the kernel wrote it", () => {
+    expect(
+      messageOf(
+        kernelEvent({
+          message:
+            "blk_update_request: I/O error, dev sdd, sector 13211246 op 0x0:(READ)",
+        }),
+      ),
+    ).toBe(
+      "blk_update_request: I/O error, dev sdd, sector 13211246 op 0x0:(READ)",
+    );
+  });
+
+  // The count is the difference between "sdd threw an error" and "sdd threw
+  // four hundred", which is the whole diagnosis.
+  it("shows how many records were folded into the row", () => {
+    expect(
+      messageOf(kernelEvent({ message: "ata4.00: error: { UNC }", count: 4 })),
+    ).toBe("ata4.00: error: { UNC } (×4)");
+  });
+
+  it("shows what the quiet window withheld", () => {
+    expect(
+      messageOf(
+        kernelEvent({
+          message: "ata4.00: error: { UNC }",
+          count: 2,
+          suppressed: 118,
+        }),
+      ),
+    ).toBe("ata4.00: error: { UNC } (×2, 118 more since)");
+  });
+
+  // A count of 1 is the uninteresting case and the collector omits it; a row
+  // reading "(×1)" would be noise dressed as information.
+  it("says nothing about a count of one", () => {
+    expect(
+      messageOf(kernelEvent({ message: "mce: [Hardware Error]", count: 1 })),
+    ).toBe("mce: [Hardware Error]");
   });
 });
 

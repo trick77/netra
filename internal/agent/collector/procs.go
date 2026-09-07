@@ -44,6 +44,25 @@ type Procs struct {
 	// host this replaces the heuristics below with a fact.
 	pidHost bool
 
+	// nsOnce guards the part of the namespace judgement that cannot change
+	// while this process lives, so it is made once rather than every scrape.
+	//
+	// This is not an optimisation. The comm comparison reads /proc/1/comm, and
+	// PID 1 on a host with pid: host is the host's own init -- an UNCONFINED
+	// process, which a docker-default container may not ptrace. Asking every
+	// scrape meant one AppArmor denial per minute, forever, in the host's
+	// kernel log: 1440 audit lines a day per agent, and on one surveyed host
+	// they were the single most frequent kernel message on the box, 508 of the
+	// ring buffer's entries. netra's own event log would now be reporting them.
+	//
+	// Asking once is not a weaker answer. A process cannot change its PID
+	// namespace after exec, so every input to steps 1 to 3 is fixed for the
+	// lifetime of the agent; only the process COUNT of step 4 varies, and that
+	// is still read on every scrape.
+	nsOnce    sync.Once
+	nsVerdict bool
+	nsSettled bool
+
 	mu           sync.Mutex
 	capabilities map[string]string
 }
@@ -132,14 +151,33 @@ func (p *Procs) Collect(_ context.Context) (*Result, error) {
 // implausibly low count as though it were the host. It degrades to a wrong
 // number rather than a crash, and setting AGENT_PID_HOST removes the guess.
 func (p *Procs) namespaced(count int) bool {
+	// Steps 1 to 3 read nothing that can change while this process lives, so
+	// they are asked once. See nsOnce for why that matters beyond the syscall.
+	p.nsOnce.Do(func() { p.nsVerdict, p.nsSettled = p.judgeNamespace() })
+	if p.nsSettled {
+		return p.nsVerdict
+	}
+
+	// 4. Too few processes to be a host, which always runs kernel threads.
+	//    The only step whose input varies, so the only one asked every scrape.
+	return count < minPlausibleProcs
+}
+
+// judgeNamespace runs the three fixed checks, reporting whether any of them
+// reached a verdict at all.
+//
+// `settled` is separate from the verdict because "could not read /proc/1/comm"
+// is not a no: it is the absence of an answer, and it has to fall through to
+// the process count rather than being cached as "not namespaced".
+func (p *Procs) judgeNamespace() (verdict, settled bool) {
 	// 1. The operator said so.
 	if p.pidHost {
-		return false
+		return false, true
 	}
 
 	// 2. The agent is itself PID 1, which never happens on a host.
 	if os.Getpid() == 1 {
-		return true
+		return true, true
 	}
 
 	// 3. PID 1 has the same comm as this process, i.e. the agent is the
@@ -147,12 +185,11 @@ func (p *Procs) namespaced(count int) bool {
 	//    read here, and must never be -- see argv_guard_test.go.
 	if self, ok := p.readComm("self"); ok {
 		if one, ok := p.readComm("1"); ok && one == self {
-			return true
+			return true, true
 		}
 	}
 
-	// 4. Too few processes to be a host, which always runs kernel threads.
-	return count < minPlausibleProcs
+	return false, false
 }
 
 func (p *Procs) readComm(pid string) (string, bool) {

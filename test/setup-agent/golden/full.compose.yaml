@@ -84,9 +84,12 @@ services:
         source: "/var/run/utmp"
         target: /var/run/utmp
         read_only: true
+    devices:
+      - "/dev/kmsg:/dev/kmsg:r"
     device_cgroup_rules:
       - "b *:* rw"
       - "c *:* rw"
     cap_add:
       - SYS_RAWIO
       - SYS_ADMIN
+      - SYSLOG

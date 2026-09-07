@@ -59,6 +59,7 @@ func newSchedule(p *Profile, s signal, from, to time.Time) *schedule {
 	evs = append(evs, unitFailures(p, s, from, to)...)
 	evs = append(evs, packageChanges(p, s, from, to)...)
 	evs = append(evs, mdraidTrouble(p, s, from, to)...)
+	evs = append(evs, kernelTrouble(p, s, from, to)...)
 
 	sort.SliceStable(evs, func(i, j int) bool { return evs[i].ts.Before(evs[j].ts) })
 	return &schedule{events: evs}
@@ -348,6 +349,66 @@ func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"idle"}`,
 		}},
 	}
+}
+
+// kernelInterval is how often the failing drive throws a burst. Far shorter
+// than mdraidInterval on purpose: a drive that is dying complains repeatedly,
+// and the folding the collector does is only visible in a log that has several
+// of these in it.
+const kernelInterval = 6 * 24 * time.Hour
+
+// kernelTrouble is what agent/collector/kmsg.go emits, simulated.
+//
+// It is keyed on the drive the fleet already marks Failing, not on a field of
+// its own, and that is the point: the same host's SMART panel shows sdc's
+// reallocated sectors climbing, and the event log now says the kernel was
+// throwing UNC errors at it. Those two being about DIFFERENT devices would
+// make the dev environment useless for checking the one query an operator
+// actually runs -- which drive is dying, and what did the kernel say about it.
+//
+// The detail JSON is kmsgDetail from agent/collector/kmsg.go marshalled by
+// hand: severity, message, priority, and count when a burst folded. Keep it
+// identical to the struct, both keys and values -- the mdraid comment above
+// records what two rounds of drift in exactly this spot cost.
+//
+// TWO events per incident, and that is not duplication: the kernel reports one
+// bad read at both ends -- the transport (ata_error, subject ata4.00) and the
+// block layer (disk_error, subject sdc) -- and the collector does not try to
+// map a port onto a device. A real log looks like this.
+func kernelTrouble(p *Profile, s signal, from, to time.Time) []timedEvent {
+	var failing string
+	for _, d := range p.Drives {
+		if d.Failing {
+			failing = d.Device
+			break
+		}
+	}
+	if failing == "" {
+		return nil
+	}
+
+	var evs []timedEvent
+	for i, at := 0, from.Add(kernelInterval/3); at.Before(to); i, at = i+1, at.Add(kernelInterval) {
+		at := at.Add(time.Duration(s.unit(fmt.Sprintf("%s/kmsg/%d", p.Hostname, i), from) * float64(kernelInterval) * 0.4))
+
+		evs = append(evs, timedEvent{ts: at, event: &netrav1.Event{
+			Type:       "ata_error",
+			Subject:    "ata4.00",
+			DetailJson: `{"severity":"critical","message":"ata4.00: exception Emask 0x0 SAct 0x780381ff SErr 0x0 action 0x0","priority":3,"count":4}`,
+		}})
+		// A minute later rather than the same instant: both would land in the
+		// same slot on the coarse grid, and the unique index on
+		// (host_id, ts, type, subject) does not separate them by type alone
+		// once the timestamps match -- see the mdraid note above.
+		evs = append(evs, timedEvent{ts: at.Add(time.Minute), event: &netrav1.Event{
+			Type:    "disk_error",
+			Subject: failing,
+			DetailJson: fmt.Sprintf(
+				`{"severity":"critical","message":"blk_update_request: I/O error, dev %s, sector 13211246 op 0x0:(READ) flags 0x0 phys_seg 20 prio class 0","priority":3,"count":4,"suppressed":118}`,
+				failing),
+		}})
+	}
+	return evs
 }
 
 // bumpVersion increments the trailing revision of a version string. It is

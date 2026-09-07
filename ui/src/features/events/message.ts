@@ -11,6 +11,29 @@
 // narrowly.
 import type { Event } from "../../lib/api";
 
+/** The types the kmsg collector emits, grouped by what they are about:
+ * storage first, because that is what a fleet's kernel log is mostly made of,
+ * then memory, hardware, the kernel itself, and link state last. The type
+ * dropdown sorts, so this order is documentation rather than presentation.
+ *
+ * Mirrors kmsgClasses in agent/collector/kmsg.go. A type missing here still
+ * renders -- the dropdown unions this list with whatever arrived -- but it
+ * falls back to the generic detail dump instead of the kernel's own sentence,
+ * so the two lists are kept in step deliberately. */
+export const KERNEL_EVENT_TYPES = [
+  "disk_error",
+  "ata_error",
+  "scsi_error",
+  "nvme_error",
+  "md_fail",
+  "fs_error",
+  "oom_kill",
+  "hw_error",
+  "thermal",
+  "kernel_fault",
+  "link_change",
+] as const;
+
 /** The known event types, which is also the order a type filter offers them.
  *
  * Hardcoded, unlike everything else here, because the type dropdown is built
@@ -20,7 +43,12 @@ import type { Event } from "../../lib/api";
  * dropdown and the reader cannot switch without first clearing the filter.
  * The list is unioned with whatever actually arrived, so an emitter added
  * later still appears. */
-export const KNOWN_EVENT_TYPES = ["mdraid", "package", "unit"] as const;
+export const KNOWN_EVENT_TYPES = [
+  "mdraid",
+  "package",
+  "unit",
+  ...KERNEL_EVENT_TYPES,
+] as const;
 
 function fields(event: Event): Record<string, unknown> {
   // `detail` is `unknown` in lib/api.ts on purpose -- its shape is the
@@ -155,16 +183,42 @@ function unitMessage(name: string, f: Record<string, unknown>): string {
  * count, and the only source for "is it fixing itself" is sync_action. Both
  * the sentence and the severity are derived here, once, so they cannot
  * disagree about the same array. */
+/** The array_state words that all mean "nothing is wrong with this array".
+ *
+ * Mirrors healthyStates in agent/collector/mdraid.go, which is what decides
+ * whether an event is emitted at all. Kept in step deliberately: a word the
+ * collector treats as healthy and this renders verbatim would show a row
+ * reading "md3 write-pending" that no operator can act on. */
+const HEALTHY_ARRAY_STATES = [
+  "clean",
+  "active",
+  "active-idle",
+  "write-pending",
+  "read-auto",
+];
+
+function normalizeArrayState(state: string): string {
+  return HEALTHY_ARRAY_STATES.includes(state) ? "clean" : state;
+}
+
 function mdraidCondition(f: Record<string, unknown>): {
   word: string;
   severity: "critical" | "warning" | null;
 } {
   const degraded = Number(f["degraded"]);
   const missing = Number.isFinite(degraded) && degraded > 0;
-  // A whole array is described by whatever array_state said, with no
-  // substitute invented for it: an event carrying no state at all has nothing
-  // to report, and the caller falls back to spelling the detail out.
-  if (!missing) return { word: text(f, "state"), severity: null };
+  // A whole array is described by array_state, normalized: the kernel toggles
+  // it between `active` and `clean` as the superblock dirty bit moves, so the
+  // raw word says only whether a write happened to be in flight when the
+  // sample was taken -- which is not a fact about the array. Every healthy
+  // spelling therefore renders as "clean", matching what the collector
+  // compares on (agent/collector/mdraid.go compareKey).
+  //
+  // An event carrying no state at all still has nothing to report, and the
+  // caller falls back to spelling the detail out.
+  if (!missing) {
+    return { word: normalizeArrayState(text(f, "state")), severity: null };
+  }
 
   // sync_action is idle / resync / recover / check / repair. The first two of
   // the repair verbs mean the array is actively rebuilding onto a spare, which
@@ -222,6 +276,37 @@ function mdraidMessage(name: string, f: Record<string, unknown>): string {
     : `${name} ${word} — ${parts.join(", ")}`;
 }
 
+/** What a kernel-log event says.
+ *
+ * The message is the kernel's own sentence, and it is rendered VERBATIM rather
+ * than reworded. An operator searching for the string their monitoring or a
+ * mailing list gave them has to find it here, and a paraphrase of
+ * "blk_update_request: I/O error, dev sdd, sector 13211246" is both longer and
+ * less useful than the line itself.
+ *
+ * The subject is already its own column, so it is not repeated in front of the
+ * message the way mdraid's array name is -- the kernel line already names the
+ * device inside the sentence.
+ *
+ * `count` and `suppressed` are the collector's folding, and both are shown:
+ * they are the difference between "sdd threw an error" and "sdd threw four
+ * hundred", which is the whole diagnosis. */
+function kernelMessage(subject: string, f: Record<string, unknown>): string {
+  const message = text(f, "message");
+  if (!message) return subject || everyField(f);
+
+  const count = Number(f["count"]);
+  const suppressed = Number(f["suppressed"]);
+
+  const notes: string[] = [];
+  if (Number.isFinite(count) && count > 1) notes.push(`×${count}`);
+  if (Number.isFinite(suppressed) && suppressed > 0) {
+    notes.push(`${suppressed} more since`);
+  }
+
+  return notes.length === 0 ? message : `${message} (${notes.join(", ")})`;
+}
+
 /**
  * One line saying what this event was.
  *
@@ -240,6 +325,12 @@ export function messageOf(event: Event): string {
     case "mdraid":
       return mdraidMessage(subject, f);
     default: {
+      // Widened deliberately: the tuple is `as const` so the dropdown keeps
+      // its order and its literal types, and `event.type` is a plain string
+      // off the wire.
+      if ((KERNEL_EVENT_TYPES as readonly string[]).includes(event.type)) {
+        return kernelMessage(subject, f);
+      }
       // An unrecognised type still has a subject and a detail blob, and both
       // belong on the row. This is the pre-existing rendering, kept.
       const rest = everyField(f);

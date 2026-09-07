@@ -39,7 +39,25 @@ export const EVENT_RANGE_VALUES: readonly Range[] = EVENT_RANGES.map(
  * detail, and no severity column at all. */
 export type EventSeverity = "critical" | "warning" | "info";
 
-const SEVERITIES: EventSeverity[] = ["critical", "warning", "info"];
+/** What the dropdown offers, which is NOT every severity.
+ *
+ * `info` is missing on purpose. The filter is a threshold, so "info and worse"
+ * selects precisely what "All severities" already selects -- two options, one
+ * behaviour, and a reader who picks the wrong one learns nothing from the
+ * result. It stays a valid value in a URL, because a link written before this
+ * existed should still open the page it named. */
+const SEVERITY_CHOICES: EventSeverity[] = ["critical", "warning"];
+
+/** Severity as a number, so the filter can be a THRESHOLD rather than an
+ * equality. Selecting "warning" has to mean "warning and worse": an operator
+ * narrowing to warning and thereby hiding every critical event is the opposite
+ * of what the control looks like it does, and it only became load-bearing when
+ * warning became the default. Higher is worse. */
+const SEVERITY_RANK: Record<EventSeverity, number> = {
+  info: 0,
+  warning: 1,
+  critical: 2,
+};
 
 // The states an emitter puts in its own detail JSON.
 //
@@ -102,11 +120,18 @@ export interface EventFilters {
   range: Range;
 }
 
+/** The page opens on what needs attention.
+ *
+ * severity defaults to `warning`, not to everything: the log is dominated by
+ * info rows -- every package install, every link change -- and a reader who
+ * has to filter before the page says anything stops opening it. Info is one
+ * dropdown away, and the filter is a threshold, so nothing worse than warning
+ * is ever hidden by it. */
 export const DEFAULT_FILTERS: EventFilters = {
   search: "",
   host: "",
   type: "",
-  severity: "",
+  severity: "warning",
   range: "24h",
 };
 
@@ -122,11 +147,30 @@ export const DEFAULT_FILTERS: EventFilters = {
 export function filtersToQuery(filters: EventFilters): string {
   const usp = new URLSearchParams();
   for (const key of Object.keys(DEFAULT_FILTERS) as (keyof EventFilters)[]) {
-    if (key === "range") continue;
+    if (key === "range" || key === "severity") continue;
     if (filters[key] !== DEFAULT_FILTERS[key]) usp.set(key, filters[key]);
   }
   usp.set("range", filters.range);
+  // SEVERITY is written for the same reason as range, and became so for a
+  // different one: "" means every severity, and omitting a key resolves it to
+  // the DEFAULT, which is now `warning`. Left out, a link sent by a reader
+  // looking at all severities would open filtered for the recipient -- the
+  // one state a shared link could no longer express.
+  usp.set("severity", filters.severity);
   return usp.toString();
+}
+
+/** A severity out of a URL, reduced to something the dropdown can show.
+ *
+ * A missing key (null) is the default; "" and any offered severity are kept;
+ * the lowest severity collapses to "" because as a threshold it means the same
+ * thing; anything else is a hand-edited URL and falls back to the default. */
+function normalizeSeverityFilter(raw: string | null): EventSeverity | "" {
+  if (raw === null) return DEFAULT_FILTERS.severity;
+  if (raw === "" || raw === "info") return "";
+  return SEVERITY_CHOICES.includes(raw as EventSeverity)
+    ? (raw as EventSeverity)
+    : DEFAULT_FILTERS.severity;
 }
 
 /** The inverse. An unknown range or severity falls back to its default
@@ -148,9 +192,16 @@ export function filtersFromQuery(
     search: usp.get("search") ?? DEFAULT_FILTERS.search,
     host: usp.get("host") ?? DEFAULT_FILTERS.host,
     type: usp.get("type") ?? DEFAULT_FILTERS.type,
-    severity: SEVERITIES.includes(severity as EventSeverity)
-      ? (severity as EventSeverity)
-      : DEFAULT_FILTERS.severity,
+    // "" is a VALID value here -- every severity -- and must not fall through
+    // to the default the way an unknown word does, or the link that spells out
+    // "all severities" would open filtered. Only a MISSING key means default.
+    //
+    // `info` normalises to "" rather than being kept. As a threshold the two
+    // select identical rows, which is why the dropdown offers only one of
+    // them -- and a value with no matching <option> leaves the select rendered
+    // blank, so a link written before this change would open a control showing
+    // nothing while the list behaved as "all severities".
+    severity: normalizeSeverityFilter(severity),
     range: EVENT_RANGES.some((r) => r.value === range)
       ? (range as Range)
       : fallbackRange,
@@ -174,7 +225,10 @@ export function applyFilters(
       return false;
     }
     if (filters.type !== "" && event.type !== filters.type) return false;
-    if (filters.severity !== "" && severityOf(event) !== filters.severity) {
+    if (
+      filters.severity !== "" &&
+      SEVERITY_RANK[severityOf(event)] < SEVERITY_RANK[filters.severity]
+    ) {
       return false;
     }
     if (needle === "") return true;
@@ -215,6 +269,16 @@ export interface EventsPageProps {
   hosts: readonly { id: number; hostname: string }[];
   filters: EventFilters;
   onFiltersChange: (filters: EventFilters) => void;
+  /** Whether the server returned as many rows as were asked for, so older
+   * events inside the window were cut off before this page ever saw them.
+   *
+   * It matters because every filter here except the range is applied to rows
+   * ALREADY FETCHED. The server sends the newest N and knows nothing about the
+   * severity floor, so on a noisy fleet a critical event from twenty hours ago
+   * can be truncated away by a few hundred info rows in front of it -- and the
+   * page would otherwise say "nothing matches these filters", which is not
+   * what happened. */
+  truncated?: boolean;
   /** Injectable so relative timestamps are deterministic in tests. */
   now?: Date;
 }
@@ -224,6 +288,7 @@ export function EventsPage({
   hosts,
   filters,
   onFiltersChange,
+  truncated = false,
   now = new Date(),
 }: EventsPageProps) {
   // Every control hands back the WHOLE filter object, never a patch: the
@@ -310,9 +375,12 @@ export function EventsPage({
           }
         >
           <option value="">All severities</option>
-          {SEVERITIES.map((severity) => (
+          {SEVERITY_CHOICES.map((severity) => (
             <option key={severity} value={severity}>
-              {severity}
+              {/* "and worse" spelled out: the control filters by threshold,
+                  and a bare "warning" reads as an equality. critical IS the
+                  worst, so it needs no suffix. */}
+              {severity === "critical" ? severity : `${severity} and worse`}
             </option>
           ))}
         </Select>
@@ -330,7 +398,11 @@ export function EventsPage({
           <EmptyState
             icon={Inbox}
             title="No events"
-            body="Nothing in this window matches these filters. Widen the range, or clear a filter."
+            body={
+              truncated
+                ? "This window held more events than one page can carry, so the oldest were cut off before any filter ran. Narrow the range, or filter by host or type."
+                : "Nothing in this window matches these filters. Widen the range, or clear a filter."
+            }
           />
         ) : (
           // role="list" on a div rather than a <ul>: index.css styles

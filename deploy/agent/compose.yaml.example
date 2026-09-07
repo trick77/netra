@@ -28,7 +28,7 @@
 #   procs, and per-container net_rx/net_tx.
 #
 # Needing a privilege the operator grants explicitly:
-#   SMART (device access).
+#   SMART (device access), kmsg (the /dev/kmsg device plus CAP_SYSLOG).
 #
 # A collector that cannot run reports WHY as a capability and is skipped; it
 # never prevents the agent from starting. So a host that grants none of the
@@ -416,11 +416,54 @@ services:
     # This is also why NVMe temperatures are free: they come from hwmon, not from
     # smartctl. See the SYS_ADMIN note below.
 
+    # --- OPTIONAL: the kernel ring buffer -------------------------------------
+    #
+    # Enables the kmsg collector, which is where the events an operator acts on
+    # actually come from: ATA and NVMe errors, block I/O failures, a filesystem
+    # remounting read-only, the OOM killer, MCEs, thermal throttling, an md
+    # member being kicked out of an array. Without it the event log is limited
+    # to what mdraid, dpkg and systemd happen to say, which on a stable host is
+    # very little.
+    #
+    # A `devices:` entry, NOT a bind. This is the one place the distinction
+    # bites: /dev/kmsg is char device 1:11, which is not on Docker's default
+    # device cgroup allowlist, and chrdev_open checks the device cgroup however
+    # the node got into the container. A bind mount therefore creates a node
+    # that cannot be opened — EPERM, at runtime, with nothing at startup saying
+    # so. A devices: entry does both jobs, exactly as the SMART note below
+    # explains. Unlike the SMART list this one is not brittle: /dev/kmsg exists
+    # on every Linux kernel, so it cannot be a device that is not there.
+    #
+    # `:r` — read only, and meant literally. Writing to /dev/kmsg injects
+    # messages into the host's kernel log, which the agent has no business
+    # doing.
+    # devices:
+    #   - "/dev/kmsg:/dev/kmsg:r"
+    #
+    # CAP_SYSLOG goes with it whenever kernel.dmesg_restrict=1, which is the
+    # default on Debian and Ubuntu — check with
+    # `sysctl kernel.dmesg_restrict`. Without it the open is refused by
+    # check_syslog_permissions, and the refusal is EPERM just like the device
+    # cgroup one above, so the agent cannot tell you which of the two it hit:
+    # it reports `kmsg: denied` and you check both.
+    #
+    # Far narrower than it may look: CAP_SYSLOG permits reading the kernel log
+    # and nothing else. It is not in the same family as the SYS_ADMIN below.
+    #
+    # Without either: the collector reports `kmsg: unavailable` or
+    # `kmsg: denied` as a capability and every other collector is unaffected.
+    # cap_add:
+    #   - SYSLOG
+
     # --- SMART ---------------------------------------------------------------
     #
     # smartctl ships inside the image at a pinned version, so behaviour does not
     # vary with whatever the host distro packaged. It drives disks through kernel
     # ioctls, which is what these capabilities are for.
+    #
+    # NOTE: cap_add is ONE list. If you uncommented SYSLOG above, add the
+    # entries below to that list rather than writing a second cap_add key —
+    # compose keeps only the last one, and the first silently disappears.
     #
     # SYS_RAWIO covers SATA/SAS drives (ATA passthrough) and is the ordinary
     # case. Without it every SMART reading disappears and the agent reports SMART

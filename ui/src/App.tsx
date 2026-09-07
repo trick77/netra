@@ -774,7 +774,15 @@ function EventsScreen({ search, go }: { search: string; go: Go }) {
         }),
         getHosts(),
       ]);
-      return { events, hosts };
+      // A full page back means the server had more and cut them off. Every
+      // filter on the page except the range runs over what arrived, so the
+      // page has to be told -- otherwise a severity floor that hides nothing
+      // it was shown still looks like it found nothing at all.
+      return {
+        events,
+        hosts,
+        truncated: events.length >= EVENT_LIMITS[filters.range],
+      };
     },
     POLL_MS,
     [filters.range],
@@ -784,6 +792,7 @@ function EventsScreen({ search, go }: { search: string; go: Go }) {
   return (
     <EventsPage
       events={(poll.data?.events ?? []) as Event[]}
+      truncated={poll.data?.truncated ?? false}
       hosts={(poll.data?.hosts ?? []).map((h: Host) => ({
         id: h.id,
         hostname: h.hostname,
