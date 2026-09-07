@@ -363,6 +363,51 @@ func TestAMissCarriesNoDetailToWrite(t *testing.T) {
 	}
 }
 
+// Present but unmeasurable is not healthy, and this is the distinction that
+// keeps a wedged disk's condition alive.
+//
+// The agent's statfs backoff skips a timing-out mountpoint for up to about
+// seventeen hours while the host keeps posting. Without a third state that
+// mount is either absent from Seen -- resolving as vanished on the spot -- or
+// present in it, which reads as "judged healthy" and clears as a recovery two
+// ticks later. Either way a genuinely full disk is recorded as fixed, and its
+// onset is destroyed when it reopens.
+func TestAnUnjudgedSubjectIsLeftAlone(t *testing.T) {
+	k := key(1, conditions.KindDisk, "/var")
+	open := []conditions.Open{{ID: 7, Key: k, Severity: conditions.SeverityCritical}}
+
+	s := conditions.Scan{
+		Evaluated: map[string]bool{conditions.KindDisk: true},
+		Seen:      map[conditions.Key]bool{},
+		Unjudged:  map[conditions.Key]bool{k: true},
+		Bad:       nil,
+		Reporting: map[int32]bool{1: true},
+	}
+
+	if actions := conditions.Diff(open, s, now); len(actions) != 0 {
+		t.Fatalf("an unmeasurable subject was touched: %+v", actions)
+	}
+}
+
+// And it accrues no misses, or a long enough wedge clears the condition
+// anyway -- the same bug one tick slower.
+func TestAnUnjudgedSubjectAccruesNoMisses(t *testing.T) {
+	k := key(1, conditions.KindDisk, "/var")
+	open := []conditions.Open{{ID: 7, Key: k, Severity: conditions.SeverityCritical, MissingTicks: 1}}
+
+	s := conditions.Scan{
+		Evaluated: map[string]bool{conditions.KindDisk: true},
+		Seen:      map[conditions.Key]bool{},
+		Unjudged:  map[conditions.Key]bool{k: true},
+		Bad:       nil,
+		Reporting: map[int32]bool{1: true},
+	}
+
+	if actions := conditions.Diff(open, s, now); len(actions) != 0 {
+		t.Fatalf("an unmeasurable subject accrued a miss: %+v", actions)
+	}
+}
+
 // The map key is authoritative, so an observer that fills the map but leaves
 // the finding's own copy zero still opens against the right host rather than
 // against host 0 -- a foreign key violation nowhere near where it surfaces.

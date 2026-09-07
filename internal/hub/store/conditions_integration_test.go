@@ -48,10 +48,14 @@ func TestIntegrationOpeningWritesBothHalves(t *testing.T) {
 	ctx, s := condCtx(t)
 	host := newHost(t, ctx, s, "cond-open")
 	at := time.Now().UTC().Truncate(time.Second)
+	// Deliberately different from `at`, so the assertions below can tell the
+	// onset and the recording time apart. With one value for both, this test
+	// passed whichever timestamp the event carried.
+	onset := at.Add(-6 * time.Hour)
 	k := diskKey(host, "root")
 
 	if err := s.ApplyConditions(ctx,
-		[]conditions.Action{{Open: ptrFinding(openFinding(k, conditions.SeverityCritical, at))}},
+		[]conditions.Action{{Open: ptrFinding(openFinding(k, conditions.SeverityCritical, onset))}},
 		at); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -67,8 +71,10 @@ func TestIntegrationOpeningWritesBothHalves(t *testing.T) {
 		t.Errorf("severity = %q", open[0].Severity)
 	}
 
-	// The event carries the OPENING timestamp, not the tick that noticed: a
-	// filesystem walked back to 03:00 opened at 03:00.
+	// The event is stamped when the transition was RECORDED, and the onset
+	// rides its detail. Backdating the row would put a months-old transition
+	// outside netra_prune_discrete_events' horizon -- deleted while the
+	// condition it opened is still open -- and outside every windowed read.
 	var evTS time.Time
 	var severity string
 	var detail []byte
@@ -78,7 +84,19 @@ func TestIntegrationOpeningWritesBothHalves(t *testing.T) {
 		t.Fatalf("read event: %v", err)
 	}
 	if !evTS.UTC().Equal(at) {
-		t.Errorf("event ts = %v, want the onset %v", evTS.UTC(), at)
+		t.Errorf("event ts = %v, want the recording time %v", evTS.UTC(), at)
+	}
+	// The onset is not lost: it is on the row, and repeated in the detail.
+	if got, ok := onsetOf(t, detail); !ok || !got.Equal(onset) {
+		t.Errorf("detail opened_ts = %v, want the onset %v", got, onset)
+	}
+	var storedOnset time.Time
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT opened_ts FROM host_conditions WHERE host_id = $1`, host).Scan(&storedOnset); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if !storedOnset.UTC().Equal(onset) {
+		t.Errorf("row opened_ts = %v, want the onset %v", storedOnset.UTC(), onset)
 	}
 	if severity != conditions.SeverityCritical {
 		t.Errorf("event severity = %q, want critical", severity)
@@ -501,8 +519,12 @@ func TestIntegrationAHealthyHostIsStillSeen(t *testing.T) {
 	host := newHost(t, ctx, s, "cond-healthy")
 	now := time.Now().UTC()
 
-	if _, err := s.Pool().Exec(ctx,
-		`INSERT INTO host_current (host_id, last_seen) VALUES ($1, $2)`, host, now); err != nil {
+	// services_failed = 0 is the host CONFIRMING its units are fine, which is
+	// what entitles the hub to clear a condition on it. NULL would be "cannot
+	// say" and is tested separately below.
+	if _, err := s.Pool().Exec(ctx, `
+		INSERT INTO host_current (host_id, last_seen, services_failed)
+		VALUES ($1, $2, 0)`, host, now); err != nil {
 		t.Fatalf("host_current: %v", err)
 	}
 	if _, err := s.Pool().Exec(ctx, `
@@ -521,6 +543,35 @@ func TestIntegrationAHealthyHostIsStillSeen(t *testing.T) {
 	}
 	if _, bad := scan.Bad[k]; bad {
 		t.Error("a host with no failed units was flagged")
+	}
+}
+
+// NULL services_failed is "cannot say", never "none failed".
+//
+// 0001_init.sql gives it that meaning -- no systemd, or not heard from -- and
+// fleet/conditions.ts keeps the distinction by staying silent on null.
+// Coalescing it to zero would make an agent that stopped collecting systemd
+// look like a host whose units all recovered.
+func TestIntegrationANullUnitSummaryIsNotAnAllClear(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(t, ctx, s, "cond-units-null")
+	now := time.Now().UTC()
+
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO host_current (host_id, last_seen) VALUES ($1, $2)`, host, now); err != nil {
+		t.Fatalf("host_current: %v", err)
+	}
+
+	scan, err := s.ScanConditions(ctx, now)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	k := conditions.Key{HostID: host, Kind: conditions.KindFailedUnits}
+	if scan.Seen[k] {
+		t.Error("a null summary was read as an all-clear")
+	}
+	if !scan.Unjudged[k] {
+		t.Error("a null summary was not marked unjudged")
 	}
 }
 
@@ -759,12 +810,56 @@ func TestIntegrationAWedgedMountIsStillSeen(t *testing.T) {
 		t.Fatalf("scan: %v", err)
 	}
 	k := diskKey(host, "wedged")
-	if !scan.Seen[k] {
-		t.Error("a wedged mount fell out of Seen, so it would resolve as vanished")
+	// Unjudged, not Seen. Seen would read as "looked at and healthy", and Diff
+	// would clear the condition as a recovery two ticks later; absent from
+	// both would resolve it as vanished on the spot. Neither is true of a disk
+	// that is still mounted and still full, and whose agent is simply backing
+	// off a timing-out statfs.
+	if !scan.Unjudged[k] {
+		t.Error("a wedged mount was not marked unjudged")
 	}
-	// Present, but not judged on an hour-old reading.
+	if scan.Seen[k] {
+		t.Error("a wedged mount was recorded as judged, which reads as healthy")
+	}
 	if _, bad := scan.Bad[k]; bad {
 		t.Error("a stale reading was judged as if it were current")
+	}
+}
+
+// Past the point the agent's backoff can explain, the mount is gone rather
+// than slow -- and only then is ReasonVanished reachable, because nothing ever
+// deletes a filesystem row.
+func TestIntegrationALongGoneMountIsNotSeenAtAll(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(t, ctx, s, "cond-gone")
+	now := time.Now().UTC()
+
+	if _, err := s.Pool().Exec(ctx,
+		`INSERT INTO host_current (host_id, last_seen) VALUES ($1, $2)`, host, now); err != nil {
+		t.Fatalf("host_current: %v", err)
+	}
+	var fsID int32
+	if err := s.Pool().QueryRow(ctx, `
+		INSERT INTO filesystems (host_id, label, mountpoint)
+		VALUES ($1, 'gone', '/mnt/gone') RETURNING id`, host).Scan(&fsID); err != nil {
+		t.Fatalf("filesystems: %v", err)
+	}
+	gb := int64(1024) * 1024 * 1024
+	// Two days: well past the ~17 hours the statfs backoff can produce.
+	if _, err := s.Pool().Exec(ctx, `
+		INSERT INTO filesystem_current (host_id, fs_id, ts, total, used, free)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		host, fsID, now.Add(-48*time.Hour), 100*gb, 97*gb, 3*gb); err != nil {
+		t.Fatalf("filesystem_current: %v", err)
+	}
+
+	scan, err := s.ScanConditions(ctx, now)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	k := diskKey(host, "gone")
+	if scan.Seen[k] || scan.Unjudged[k] {
+		t.Error("a long-gone mount was still tracked, so it can never resolve as vanished")
 	}
 }
 
@@ -809,6 +904,22 @@ func TestIntegrationDiskOnsetIsTheReadingNotTheTick(t *testing.T) {
 	if !f.OpenedAtLeast {
 		t.Error("the onset is a floor and must say so")
 	}
+}
+
+// onsetOf reads the opened_ts an opening event carries in its detail.
+func onsetOf(t *testing.T, detail []byte) (time.Time, bool) {
+	t.Helper()
+	var d struct {
+		OpenedTS string `json:"opened_ts"`
+	}
+	if err := json.Unmarshal(detail, &d); err != nil || d.OpenedTS == "" {
+		return time.Time{}, false
+	}
+	ts, err := time.Parse(time.RFC3339, d.OpenedTS)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return ts.UTC(), true
 }
 
 func ptrFinding(f conditions.Finding) *conditions.Finding { return &f }

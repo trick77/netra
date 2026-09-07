@@ -94,6 +94,10 @@ func openCondition(ctx context.Context, tx pgx.Tx, f conditions.Finding, recorde
 		return err
 	}
 
+	// COALESCE on the detail, because the column is NOT NULL and a Finding is
+	// allowed to carry none. Without it one detail-less finding would abort the
+	// whole transaction and discard every other action in the pass.
+	//
 	// ON CONFLICT DO NOTHING against the partial unique index, so a second
 	// evaluator -- or a retry of a transaction that committed -- cannot open
 	// the same condition twice. The event below is skipped with it: writing
@@ -102,7 +106,7 @@ func openCondition(ctx context.Context, tx pgx.Tx, f conditions.Finding, recorde
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO host_conditions
 		    (host_id, kind, subject, severity, opened_ts, opened_at_least, detail)
-		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+		VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::jsonb, '{}'::jsonb))
 		ON CONFLICT (host_id, kind, subject) WHERE resolved_ts IS NULL
 		DO NOTHING`,
 		f.Key.HostID, f.Key.Kind, f.Key.Subject, f.Severity,

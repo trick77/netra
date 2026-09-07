@@ -26,6 +26,7 @@ func (s *Store) ScanConditions(ctx context.Context, now time.Time) (conditions.S
 	scan := conditions.Scan{
 		Evaluated: map[string]bool{},
 		Seen:      map[conditions.Key]bool{},
+		Unjudged:  map[conditions.Key]bool{},
 		Bad:       map[conditions.Key]conditions.Finding{},
 		Reporting: map[int32]bool{},
 	}
@@ -123,19 +124,13 @@ func (s *Store) scanHosts(ctx context.Context, scan *conditions.Scan, now time.T
 // detail, where the sentence needs it, and it is nullable so the label is the
 // fallback there too.
 func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan) error {
-	// Every mount the host still has a row for, with the age of its reading.
+	// Every mount the host still has a row for, WITH the age of its reading,
+	// because that age is the only thing separating three different states.
 	//
-	// Deliberately UNFILTERED by that age, and the distinction is the one this
-	// query is easiest to get wrong. `filesystem_current` keeps a row per
-	// mount; a stale reading means the mount was not re-measured, not that the
-	// mount is gone. The agent's own statfs backoff makes that routine -- a
-	// wedged mountpoint is skipped for exponentially many scrapes while the
-	// host keeps posting (collector/filesystems.go) -- so filtering here would
-	// drop a still-mounted, still-full disk out of Seen on a REPORTING host.
-	// Diff reads that as ReasonVanished, which skips the hysteresis, resolves
-	// on that single tick, and reopens with a fresh onset when statfs answers
-	// again. Present and measurable are two questions, and only the second
-	// depends on the age.
+	// The query cannot filter on it: `filesystem_current` keeps a row per
+	// mount and nothing prunes it, so a stale reading means the mount was not
+	// re-measured, not that the mount is gone. Which of the two it is depends
+	// on how stale, and the loop below decides -- see mountGoneAfter.
 	rows, err := s.pool.Query(ctx, `
 		SELECT fc.host_id, f.label, f.mountpoint, fc.used, fc.free,
 		       fc.ts, hc.last_seen
@@ -160,21 +155,41 @@ func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan) erro
 		}
 
 		key := conditions.Key{HostID: hostID, Kind: conditions.KindDisk, Subject: label}
-		// Seen because the mount exists, whatever the reading's age.
-		scan.Seen[key] = true
+		age := lastSeen.Sub(readingTS)
+
+		switch {
+		case age >= mountGoneAfter:
+			// Long past anything the agent's backoff can explain, so the mount
+			// is gone rather than slow. Left out of Seen AND out of Unjudged,
+			// which is what makes ReasonVanished reachable at all.
+			//
+			// Nothing deletes rows from `filesystems` or `filesystem_current`
+			// -- 0013 says filesystems are never pruned -- so an unmounted
+			// volume keeps its row forever. Without this branch its condition
+			// would resolve as `cleared`: a recovery that never happened,
+			// which is the exact failure resolved_reason exists to prevent.
+			continue
+		case age > conditions.StaleAfter:
+			// Stale, but inside what the statfs backoff can produce on a
+			// still-mounted disk. Present, unmeasurable, and emphatically not
+			// healthy.
+			scan.Unjudged[key] = true
+			continue
+		}
 
 		// Judged only on a CURRENT reading, against the host's own last_seen
 		// rather than the wall clock -- the same comparison currentFilesystems
 		// makes in ui/src/lib/host.ts, so the hub and the browser retire a
 		// mount at the same moment rather than three minutes apart.
-		if lastSeen.Sub(readingTS) > conditions.StaleAfter {
-			continue
-		}
+		scan.Seen[key] = true
 
 		pct, ok := conditions.UsePct(used, free)
 		if !ok {
-			// Measured nothing. Seen, so it does not read as vanished, but
-			// there is nothing to judge.
+			// The reading is current and says nothing measurable. Unjudged
+			// rather than healthy: a filesystem netra could not size is not a
+			// filesystem with room.
+			scan.Unjudged[key] = true
+			delete(scan.Seen, key)
 			continue
 		}
 		severity := conditions.DiskSeverity(pct, free)
@@ -210,6 +225,21 @@ func (s *Store) scanFilesystems(ctx context.Context, scan *conditions.Scan) erro
 	return rows.Err()
 }
 
+// mountGoneAfter is how far a mount's reading may lag the host's before the
+// mount is treated as removed rather than merely unmeasured.
+//
+// Sized against the agent, not guessed. markWedged backs a timing-out
+// mountpoint off by 2^min(failures-1, wedgedBackoffShifts) scrapes, and
+// wedgedBackoffShifts is 10, so a still-mounted disk can legitimately go
+// 1024 scrapes -- about seventeen hours at the 60s cadence -- without a fresh
+// reading. The collector's own comments call it "a seventeen-hour cadence".
+//
+// A day clears that ceiling with room to spare, which is the direction to err
+// in: calling a present mount gone resolves a real condition as a recovery,
+// while calling a gone mount present leaves a stale row open a few hours
+// longer than necessary.
+const mountGoneAfter = 24 * time.Hour
+
 // scanUnits raises the failed-units condition, one subject per HOST.
 //
 // Per host, unlike disk, and that is not an inconsistency: the fleet page
@@ -235,7 +265,7 @@ func (s *Store) scanUnits(ctx context.Context, scan *conditions.Scan) error {
 	// against would never pass.
 	rows, err := s.pool.Query(ctx, `
 		SELECT hc.host_id,
-		       coalesce(hc.services_failed, 0) AS failed,
+		       hc.services_failed AS failed,
 		       min(u.state_ts) FILTER (WHERE u.state = 'failed') AS since,
 		       (array_agg(u.unit_name ORDER BY u.unit_name)
 		          FILTER (WHERE u.state = 'failed'))[1:3] AS names
@@ -250,7 +280,7 @@ func (s *Store) scanUnits(ctx context.Context, scan *conditions.Scan) error {
 
 	for rows.Next() {
 		var hostID int32
-		var failed int
+		var failed *int
 		var since *time.Time
 		var names []string
 		if err := rows.Scan(&hostID, &failed, &since, &names); err != nil {
@@ -258,22 +288,34 @@ func (s *Store) scanUnits(ctx context.Context, scan *conditions.Scan) error {
 		}
 
 		key := conditions.Key{HostID: hostID, Kind: conditions.KindFailedUnits}
+
+		// NULL is "cannot say", never "none failed". 0001_init.sql gives it
+		// that meaning -- a host with no systemd, or one not yet heard from --
+		// and fleet/conditions.ts keeps the distinction by staying silent on
+		// null. Coalescing it to zero would make an agent that stopped
+		// collecting systemd look like a host whose units all recovered, and
+		// close an open condition on the strength of it.
+		if failed == nil {
+			scan.Unjudged[key] = true
+			continue
+		}
+
 		// Seen whether or not anything failed: a host whose units are all
 		// healthy has been LOOKED AT, which is what lets a condition on it
 		// clear rather than hang.
 		scan.Seen[key] = true
 
-		if failed == 0 {
+		if *failed == 0 {
 			continue
 		}
 
-		detail := map[string]any{"count": failed}
+		detail := map[string]any{"count": *failed}
 		// Never MORE names than the count claims. A row reading "1 failed
 		// unit" beside two unit names contradicts itself, and the count is
 		// what every other part of netra is counting -- the same three
 		// branches failedUnitsShown resolves, resolved the same way.
-		if len(names) > failed {
-			names = names[:failed]
+		if len(names) > *failed {
+			names = names[:*failed]
 		}
 		if len(names) > 0 {
 			detail["units"] = names

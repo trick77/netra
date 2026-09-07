@@ -397,7 +397,12 @@ function conditionMessage(
   const named = subject ? `${what} — ${subject}` : what;
 
   if (text(f, "transition") === "cleared") {
-    const open = duration(Math.round(count(f, "open_ms") / 1000));
+    // count() is the guard, not duration(): duration(0) is "0 s" rather than
+    // "", so testing the formatted string would have made the bare sentence
+    // unreachable and printed "cleared after 0 s" for an event that carried no
+    // duration at all.
+    const openMs = count(f, "open_ms");
+    const open = openMs > 0 ? duration(Math.round(openMs / 1000)) : "";
     // "no longer reported" is not a recovery, and conflating them is how a
     // fleet goes green because nobody is looking at it. See resolved_reason
     // in 0016_conditions.sql.

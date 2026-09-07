@@ -121,9 +121,24 @@ type Scan struct {
 	// So a kind that is not in here is left entirely alone, exactly as a
 	// silent host's conditions are.
 	Evaluated map[string]bool
-	// Seen is every (host, kind, subject) the pass actually evaluated,
-	// including the healthy ones.
+	// Seen is every (host, kind, subject) the pass actually JUDGED, including
+	// the ones it judged healthy. Membership here is what entitles Diff to
+	// clear a condition.
 	Seen map[Key]bool
+	// Unjudged is present-but-unmeasurable: the subject still exists, and this
+	// pass could not say anything about its state.
+	//
+	// The third state, and it has to exist. Without it "the reading is too old
+	// to trust" collapses into "judged healthy", and a condition clears on a
+	// subject nobody actually looked at. The case is routine rather than
+	// exotic: the agent's statfs backoff skips a wedged mountpoint for
+	// 2^min(failures-1,10) scrapes -- up to about seventeen hours -- while the
+	// host keeps posting, so a genuinely full wedged disk would have its
+	// critical condition closed as a recovery two ticks in.
+	//
+	// Treated exactly as a silent host's conditions are: left alone, and
+	// accruing no misses.
+	Unjudged map[Key]bool
 	// Bad is the subset judged to be in a bad state.
 	Bad map[Key]Finding
 	// Reporting is the hosts whose data is current enough to conclude anything
@@ -252,6 +267,12 @@ func Diff(open []Open, scan Scan, now time.Time) []Action {
 		// says nothing about them. See Scan.Evaluated: without this a failed
 		// query resolves every condition of the kind and destroys its onset.
 		if !scan.Evaluated[key.Kind] {
+			continue
+		}
+
+		// The subject is there and could not be judged. Same treatment as a
+		// silent host: untouched, and no miss counted -- see Scan.Unjudged.
+		if scan.Unjudged[key] {
 			continue
 		}
 
