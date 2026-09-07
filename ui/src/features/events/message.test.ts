@@ -390,3 +390,81 @@ describe("packagesOmitted / packageRunSize", () => {
     );
   });
 });
+
+describe("hub delivery events", () => {
+  function hub(detail: Record<string, unknown>): Event {
+    return event({ type: "hub", subject: null, detail });
+  }
+
+  // The ordinary case, and the reason the warning this replaced was wrong: the
+  // ring buffered the scrapes and replayed them, so the outage cost nothing.
+  // Saying so is what stops a reader going to look for damage that is not
+  // there.
+  it("says an outage that lost nothing was replayed", () => {
+    expect(
+      messageOf(
+        hub({
+          severity: "info",
+          reason: "unreachable",
+          outage_ms: 19 * 60 * 1000,
+          failures: 19,
+        }),
+      ),
+    ).toBe("Hub unreachable for 19 m — buffered and replayed");
+  });
+
+  // The half that is worth acting on: the ring overflowed, so this host's
+  // history has holes that nothing can fill.
+  it("names what an outage cost when it cost something", () => {
+    expect(
+      messageOf(
+        hub({
+          severity: "critical",
+          reason: "unreachable",
+          outage_ms: 2 * 60 * 60 * 1000,
+          failures: 120,
+          lost: 47,
+        }),
+      ),
+    ).toBe("Hub unreachable for 2 h — 47 scrapes lost");
+  });
+
+  it("counts one lost scrape in the singular", () => {
+    expect(
+      messageOf(
+        hub({ reason: "unreachable", outage_ms: 60_000, failures: 1, lost: 1 }),
+      ),
+    ).toBe("Hub unreachable for 1 m — 1 scrape lost");
+  });
+
+  // A rejected token gets its own sentence. "The hub was away and came back"
+  // and "this agent is not allowed to talk to the hub" are different problems
+  // with different fixes, and only one of them resolves itself.
+  it("says a rejected token is a rejected token", () => {
+    expect(
+      messageOf(
+        hub({
+          severity: "critical",
+          reason: "token-rejected",
+          outage_ms: 60_000,
+          failures: 1,
+          lost: 47,
+        }),
+      ),
+    ).toBe("Hub rejected this agent's token — 47 scrapes discarded");
+  });
+
+  it("still names a rejected token when the buffer was already empty", () => {
+    expect(
+      messageOf(
+        hub({ severity: "critical", reason: "token-rejected", failures: 1 }),
+      ),
+    ).toBe("Hub rejected this agent's token");
+  });
+
+  it("counts one discarded scrape in the singular", () => {
+    expect(
+      messageOf(hub({ reason: "token-rejected", failures: 1, lost: 1 })),
+    ).toBe("Hub rejected this agent's token — 1 scrape discarded");
+  });
+});
