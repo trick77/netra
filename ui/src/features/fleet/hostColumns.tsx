@@ -120,7 +120,6 @@ export type HostRow = Host & {
     // whether the mount is worth surfacing: 90% of a 6.7 TB array is 674 GB
     // free. Null is "not known", which falls back to the percentage alone.
     free?: number | null;
-    others: number;
     // Optional, unlike the two fields above: hostTrends always sets both, and
     // the hand-built row literals across the tests predate them. Same
     // convention lib/api.ts uses for a field added after its fixtures.
@@ -871,8 +870,7 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
     // no longer reaches here.
     return null;
   }
-  const { mount, pct, others, free, series } = row.fullest;
-  const label = others > 0 ? `${mount} +${others}` : mount;
+  const { mount, pct, free, series } = row.fullest;
   const values = series ?? [];
   const axis = diskAxis(values);
 
@@ -978,7 +976,7 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
       {chart}
       <NowReading
         pct={pct}
-        label={`Disk ${label}`}
+        label={`Disk ${mount}`}
         // No severity passed: NowReading's own 70/85/95, the rule every
         // reading in this table is drawn by. The bytes underneath say how
         // much room is left; the bar says how full the mount is. What decides
@@ -987,7 +985,7 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
         // with headroom out of the attention counts.
         under={
           <>
-            <span className="dmount">{label}</span>
+            <span className="dmount">{mount}</span>
             {free == null ? null : (
               <span className="dfree">{bytes(free)} left</span>
             )}

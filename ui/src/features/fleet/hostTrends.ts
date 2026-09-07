@@ -231,7 +231,7 @@ function totalBand(values: (number | null)[]): Band[] {
 }
 
 /**
- * The fullest filesystem, named, plus how many others there are.
+ * The fullest filesystem, named.
  *
  * The percentage is used / (used + free) -- df's Use% -- and NOT
  * used / total: total includes the root reserve, so dividing by it reports a
@@ -328,9 +328,6 @@ function crossedAt(
  * reading timestamp against the host's last_seen -- which separates the
  * retired mount from the host that is simply off, a distinction the window's
  * last slot cannot draw because both of them look like a null.
- *
- * Either way `measured` counts the filesystems this host HAS, so the "+N"
- * beside the meter never counts one it has merely once had.
  */
 export function fullestFilesystem(
   res: MetricsResponse | null,
@@ -351,7 +348,6 @@ export function fullestFilesystem(
     asOf: string | null;
     index: number;
   } | null = null;
-  let measured = 0;
 
   const consider = (
     mount: string,
@@ -361,7 +357,6 @@ export function fullestFilesystem(
     index: number,
   ) => {
     if (used === null || free === null || used + free === 0) return;
-    measured++;
     const state = diskState(used, free)!;
     const candidate = {
       mount,
@@ -426,7 +421,6 @@ export function fullestFilesystem(
     mount: winner.mount,
     pct: winner.pct,
     free: winner.free,
-    others: Math.max(0, measured - 1),
     // The winner's OWN Use% over the window, taken by the index that won --
     // not matched back out of filesystemBands by name, which drops the mounts
     // that reported nothing and so does not index alike. This is the series

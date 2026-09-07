@@ -36,7 +36,7 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     reporting: [10, 11, 12, 11, 10, 11],
     rx: [],
     tx: [],
-    fullest: { mount: "/", pct: 41, others: 1 },
+    fullest: { mount: "/", pct: 41 },
     disk: [],
     oomKills: 0,
     dropped: null,
@@ -159,7 +159,7 @@ describe("hostConditions", () => {
   // the module header for why they cannot ride the hosts list.
   it("leads with dropped samples, because the missing data is the evidence", () => {
     const rows = hostConditions(
-      makeRow({ dropped: 12, fullest: { mount: "/", pct: 97, others: 0 } }),
+      makeRow({ dropped: 12, fullest: { mount: "/", pct: 97 } }),
       NOW,
     );
     expect(rows[0]?.severity).toBe("critical");
@@ -196,14 +196,14 @@ describe("hostConditions", () => {
 
   it("warns on a filesystem at 90% and escalates at 95%", () => {
     const warn = hostConditions(
-      makeRow({ fullest: { mount: "/var/log", pct: 91, others: 2 } }),
+      makeRow({ fullest: { mount: "/var/log", pct: 91 } }),
       NOW,
     );
     expect(warn[0]?.severity).toBe("warning");
     expect(String(warn[0]?.what)).toMatch(/\/var\/log is 91% full/);
 
     const crit = hostConditions(
-      makeRow({ fullest: { mount: "/var/log", pct: 96, others: 2 } }),
+      makeRow({ fullest: { mount: "/var/log", pct: 96 } }),
       NOW,
     );
     expect(crit[0]?.severity).toBe("critical");
@@ -215,7 +215,7 @@ describe("hostConditions", () => {
   it("stays quiet about a big volume with room left, at any percentage", () => {
     const rows = hostConditions(
       makeRow({
-        fullest: { mount: "/mnt/ark", pct: 90, free: 674 * GB, others: 3 },
+        fullest: { mount: "/mnt/ark", pct: 90, free: 674 * GB },
       }),
       NOW,
     );
@@ -224,7 +224,7 @@ describe("hostConditions", () => {
 
   it("warns on the same percentage when the bytes are nearly gone", () => {
     const [c] = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 90, free: 2 * GB, others: 3 } }),
+      makeRow({ fullest: { mount: "/", pct: 90, free: 2 * GB } }),
       NOW,
     );
     expect(c?.severity).toBe("warning");
@@ -238,7 +238,7 @@ describe("hostConditions", () => {
   it("holds a deep-but-roomy volume below critical", () => {
     const [warn] = hostConditions(
       makeRow({
-        fullest: { mount: "/mnt/ark", pct: 96, free: 67 * GB, others: 3 },
+        fullest: { mount: "/mnt/ark", pct: 96, free: 67 * GB },
       }),
       NOW,
     );
@@ -247,7 +247,7 @@ describe("hostConditions", () => {
     expect(
       hostConditions(
         makeRow({
-          fullest: { mount: "/mnt/ark", pct: 96, free: 500 * GB, others: 3 },
+          fullest: { mount: "/mnt/ark", pct: 96, free: 500 * GB },
         }),
         NOW,
       ),
@@ -256,7 +256,7 @@ describe("hostConditions", () => {
 
   it("criticals when the same percentage leaves under 20 GiB", () => {
     const [c] = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 96, free: 800 * MB, others: 3 } }),
+      makeRow({ fullest: { mount: "/", pct: 96, free: 800 * MB } }),
       NOW,
     );
     expect(c?.severity).toBe("critical");
@@ -266,7 +266,7 @@ describe("hostConditions", () => {
   // 97%: unknown headroom falls back to the percentage alone.
   it("judges on the percentage alone when free bytes are unknown", () => {
     const [c] = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 97, free: null, others: 0 } }),
+      makeRow({ fullest: { mount: "/", pct: 97, free: null } }),
       NOW,
     );
     expect(c?.severity).toBe("critical");
@@ -274,7 +274,7 @@ describe("hostConditions", () => {
 
   it("leaves a comfortable disk alone", () => {
     const rows = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 89, others: 0 } }),
+      makeRow({ fullest: { mount: "/", pct: 89 } }),
       NOW,
     );
     expect(rows).toEqual([]);
@@ -286,7 +286,7 @@ describe("hostConditions", () => {
     const rows = hostConditions(
       makeRow({
         last_seen: "2026-08-12T11:00:00Z",
-        fullest: { mount: "/", pct: 97, others: 0 },
+        fullest: { mount: "/", pct: 97 },
       }),
       NOW,
     );
@@ -307,7 +307,7 @@ describe("hostConditions", () => {
   // The other side of the same rule: a host that is talking says "is".
   it("keeps the present tense for a host that is still reporting", () => {
     const rows = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 97, others: 0 } }),
+      makeRow({ fullest: { mount: "/", pct: 97 } }),
       NOW,
     );
     expect(String(rows[0]?.what)).toMatch(/\/ is 97% full/);
@@ -357,7 +357,7 @@ describe("fleetConditions", () => {
       makeRow({
         id: 3,
         hostname: "log-01",
-        fullest: { mount: "/var/log", pct: 93, others: 0 },
+        fullest: { mount: "/var/log", pct: 93 },
       }),
     ];
     const all = fleetConditions(rows, NOW);

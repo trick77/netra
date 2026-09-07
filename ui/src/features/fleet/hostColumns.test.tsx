@@ -40,7 +40,7 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     tx: [5e5, 6e5, 4e5],
     net_rx_bytes: 1.5e6,
     net_tx_bytes: 4e5,
-    fullest: { mount: "/data", pct: 88, others: 2 },
+    fullest: { mount: "/data", pct: 88 },
     disk: [],
     oomKills: null,
     dropped: null,
@@ -130,7 +130,7 @@ describe("hostColumns", () => {
       const cols = hostColumns("1h");
       const row = makeRow({
         hostname: "web-01",
-        fullest: { mount: "/data", pct: 88, others: 2 },
+        fullest: { mount: "/data", pct: 88 },
       });
 
       const host = cols.find((c) => c.header === "Host")!;
@@ -277,16 +277,13 @@ describe("hostColumns", () => {
                 mount: "/var/log",
                 pct: 91,
                 free: 3_100_000_000,
-                others: 6,
               },
             }),
           )}
         </>,
       );
 
-      expect(container.querySelector(".dmount")?.textContent).toBe(
-        "/var/log +6",
-      );
+      expect(container.querySelector(".dmount")?.textContent).toBe("/var/log");
       expect(
         container.querySelector(".disk-cell .metric-now .v")?.textContent,
       ).toBe("91%");
@@ -301,9 +298,7 @@ describe("hostColumns", () => {
     it("colours the percentage with the fill's own severity", () => {
       const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
       const crit = render(
-        <>
-          {disk.cell(makeRow({ fullest: { mount: "/", pct: 96, others: 0 } }))}
-        </>,
+        <>{disk.cell(makeRow({ fullest: { mount: "/", pct: 96 } }))}</>,
       );
       expect(
         crit.container.querySelector(".disk-cell .metric-now .v.st-crit"),
@@ -311,9 +306,7 @@ describe("hostColumns", () => {
       crit.unmount();
 
       const calm = render(
-        <>
-          {disk.cell(makeRow({ fullest: { mount: "/", pct: 21, others: 0 } }))}
-        </>,
+        <>{disk.cell(makeRow({ fullest: { mount: "/", pct: 21 } }))}</>,
       );
       // Ok is a severity like any other and it is drawn: green says netra
       // measured this mount and it is fine, where plain ink said the same
@@ -329,9 +322,7 @@ describe("hostColumns", () => {
     it("says nothing about free space when the host did not report it", () => {
       const disk = hostColumns("1h").find((c) => c.header === "Disk")!;
       const { container } = render(
-        <>
-          {disk.cell(makeRow({ fullest: { mount: "/", pct: 40, others: 0 } }))}
-        </>,
+        <>{disk.cell(makeRow({ fullest: { mount: "/", pct: 40 } }))}</>,
       );
 
       expect(container.querySelector(".dfree")).toBeNull();
@@ -444,21 +435,18 @@ describe("hostColumns", () => {
   });
 
   describe("disk cell", () => {
-    it("names the fullest mount and its +N count of other filesystems", () => {
+    // The cell reports the ONE mount worth acting on, so the line under it
+    // names that mount and nothing else. It used to carry a "+N" count of the
+    // host's other filesystems, which answered a question the cell does not
+    // ask -- none of those mounts is what the bar, the figure or the trend
+    // above it is about.
+    it("names the fullest mount, with no count of the others", () => {
       const cols = hostColumns("1h");
       const diskCol = cols.find((c) => c.header === "Disk")!;
-      const row = makeRow({ fullest: { mount: "/data", pct: 88, others: 2 } });
+      const row = makeRow({ fullest: { mount: "/data", pct: 88 } });
       render(<>{diskCol.cell(row)}</>);
-      expect(screen.getByText("/data +2")).toBeInTheDocument();
-    });
-
-    it("omits the +N suffix when there are no other filesystems", () => {
-      const cols = hostColumns("1h");
-      const diskCol = cols.find((c) => c.header === "Disk")!;
-      const row = makeRow({ fullest: { mount: "/", pct: 40, others: 0 } });
-      render(<>{diskCol.cell(row)}</>);
-      expect(screen.getByText("/")).toBeInTheDocument();
-      expect(screen.queryByText(/\+0/)).not.toBeInTheDocument();
+      expect(screen.getByText("/data")).toBeInTheDocument();
+      expect(screen.queryByText(/\+\d/)).not.toBeInTheDocument();
     });
 
     // The line is about the mount the figure beside it names, so it is named
@@ -474,7 +462,6 @@ describe("hostColumns", () => {
               fullest: {
                 mount: "/var/lib/postgresql",
                 pct: 71,
-                others: 3,
                 series: [66, 68, 71],
               },
             }),
@@ -508,11 +495,7 @@ describe("hostColumns", () => {
     it("draws the bar alone, still aligned, when there is no series", () => {
       const diskCol = hostColumns("1h").find((c) => c.header === "Disk")!;
       const { container } = render(
-        <>
-          {diskCol.cell(
-            makeRow({ fullest: { mount: "/", pct: 40, others: 0 } }),
-          )}
-        </>,
+        <>{diskCol.cell(makeRow({ fullest: { mount: "/", pct: 40 } }))}</>,
       );
 
       expect(container.querySelector("svg.spark")).toBeNull();
@@ -784,7 +767,6 @@ describe("hostColumns", () => {
                 mount: "/srv/pool",
                 pct: 87,
                 free: 1_400_000_000_000,
-                others: 0,
                 // The shape up to the moment it stopped, gap kept.
                 series: [80, 84, null, null],
                 asOf: new Date(Date.now() - 3 * 86_400_000).toISOString(),
@@ -819,7 +801,6 @@ describe("hostColumns", () => {
                 mount: "/srv/pool",
                 pct: 87,
                 free: 1_400_000_000_000,
-                others: 0,
                 series: [],
               },
             }),

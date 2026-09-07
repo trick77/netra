@@ -1177,14 +1177,22 @@ tbody tr:hover .host-cell-name {
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
-/* The unit rides the figure a step smaller and a step quieter -- "34 %", not
-   "34%". At the same size the percent sign reads as a digit, which is
-   exactly what a column of tabular figures does not need. */
+/* The unit rides the figure a step smaller -- "34 %", not "34%". At the same
+   size the percent sign reads as a digit, which is exactly what a column of
+   tabular figures does not need. */
 .metric-read .v small,
 .metric-now .v small {
   font-size: var(--text-micro);
   color: var(--muted);
   margin-left: 2px;
+}
+/* In the fleet's now-line the percent sign takes the figure's severity with
+   it. Grey there split one reading in two: an amber "76" beside a grey "%"
+   read as a number that had half changed its mind, and the sign is part of
+   what the figure says, not a label beside it. Size still steps down, so it
+   stays a unit and not another digit. */
+.metric-now .v small {
+  color: inherit;
 }
 /* The unit line -- "of 8 cores", "of 62.8 GiB". --muted-2, the same step the
    location under a hostname takes: it says what the figure above it is

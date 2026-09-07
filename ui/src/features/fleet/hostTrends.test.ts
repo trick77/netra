@@ -398,7 +398,6 @@ describe("fetchHostTrends", () => {
       // Carried through beside the percentage: the condition rule needs the
       // bytes, not only the ratio.
       free: 12,
-      others: 2,
       // The winner's OWN Use%, not root's and not an average across the
       // three: the cell draws this line under the percentage beside it. The
       // buckets before the one reading are gaps, not a climb from zero.
@@ -415,8 +414,7 @@ describe("fetchHostTrends", () => {
   // Highest percentage is the wrong pick once a percentage no longer decides
   // anything on its own: the array is fuller but has 674 GB left, the root is
   // a hair behind it and nearly out. Naming the array would leave the row
-  // with nothing to say while the disk that is actually filling sat behind a
-  // "+1".
+  // with nothing to say while the disk that is actually filling went unnamed.
   it("names the mount worth acting on, not the biggest percentage", async () => {
     const GB = 1024 ** 3;
     serve({
@@ -439,7 +437,6 @@ describe("fetchHostTrends", () => {
     const trends = await fetchHostTrends(1, "1h");
 
     expect(fullestFilesystem(trends.filesystem, null)?.mount).toBe("/");
-    expect(fullestFilesystem(trends.filesystem, null)?.others).toBe(1);
   });
 
   // A filesystem is named to an operator by its mount point -- the thing they
@@ -503,7 +500,6 @@ describe("fetchHostTrends", () => {
       mount: "/mnt/ark",
       pct: 20,
       free: 80,
-      others: 0,
       // The LIVE mount's series, holes and all -- the retired one at 94 %
       // does not win the line any more than it wins the figure, and the two
       // empty buckets before this host started reporting stay null rather
@@ -1146,9 +1142,6 @@ describe("the disk reading on a host that is not permanently up", () => {
 
     expect(rows[0]!.fullest?.mount).toBe("/mnt/ark");
     expect(rows[0]!.fullest?.pct).toBe(20);
-    // The "+N" counts the mounts this host HAS, never one it has merely once
-    // had.
-    expect(rows[0]!.fullest?.others).toBe(0);
   });
 
   // A hub that does not send the gauge yet falls back to the window, exactly
