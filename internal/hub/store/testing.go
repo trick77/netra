@@ -433,6 +433,10 @@ func quoteIdentifier(name string) string {
 // deletes a host is simultaneously cascading through. It is netra's own job
 // rather than one of Timescale's, but the scheduler treats it identically.
 //
+// netra_prune_conditions joins them: it DELETEs resolved rows from
+// host_conditions, which a host-delete test is cascading through from the
+// other end at the same time.
+//
 // netra_prune_stale_containers is the same shape: it removes container rows,
 // which cascade into container_samples, another hypertable a host-delete test
 // is walking from the other end.
@@ -519,6 +523,7 @@ func (s *Store) unschedulePolicyJobs(ctx context.Context) error {
 			  FROM timescaledb_information.jobs
 			 WHERE proc_name IN ('policy_retention', 'policy_refresh_continuous_aggregate',
 			                     'netra_prune_discrete_events',
+			                     'netra_prune_conditions',
 			                     'netra_prune_stale_devices',
 			                     'netra_prune_stale_containers')`)
 		if err == nil {
