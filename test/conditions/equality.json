@@ -1,0 +1,171 @@
+{
+  "_comment": [
+    "The dark-launch fixture: one description of a fleet, read by the hub's",
+    "integration test and by the browser's, so the two can be shown to agree",
+    "before the browser's copy of the rules is deleted.",
+    "",
+    "Every timestamp is an OFFSET IN SECONDS from a reference `now` each side",
+    "picks for itself, so the fixture does not rot and neither side has to be",
+    "run at a particular time of day.",
+    "",
+    "The verdicts below are not a reading of the rules written by hand. They",
+    "were produced by RUNNING the pre-change derivation over this fleet --",
+    "fleetConditions and fullestFilesystem as of 9213f80, before any of it was",
+    "deleted -- and both halves of the gate now assert that answer. That is",
+    "what makes 'the hub agrees with the browser' a claim rather than a hope:",
+    "the hub half proves the hub produces these verdicts, the browser half",
+    "proves the renderer prints them, and this list is what the browser said",
+    "when it still decided for itself.",
+    "",
+    "The samples sit on exact step boundaries, and that is load-bearing rather",
+    "than tidy. The hub's disk onset is a raw filesystem_samples.ts; the",
+    "browser's is a BUCKET EDGE, window.from + index * step. They are the same",
+    "instant only when each sample lands on one, so a fixture written off the",
+    "grid would produce a disagreement that is an artefact of the fixture and",
+    "would get 'fixed' by loosening the assertion.",
+    "",
+    "What is deliberately NOT here, and why:",
+    "  sporadic  - a rate over missing buckets. The browser counts them over",
+    "              whatever range the reader picked and the hub over a fixed",
+    "              three hours, so the two do not agree on a tick boundary and",
+    "              cannot be made to without one of them lying.",
+    "  never-seen hosts - the hub refuses to judge them (scanHosts marks them",
+    "              Unjudged), because a critical event in the gap between",
+    "              creating a host and installing its agent is false history in",
+    "              the log alerting reads. The page still says it, synthesised",
+    "              by the renderer from last_seen === null.",
+    "  stale subjects - the hub keeps the condition open and marks it; the old",
+    "              browser dropped the mount after 180 s. That difference is the",
+    "              point of serving `stale`, not a disagreement to reconcile."
+  ],
+
+  "step_s": 60,
+  "window_from_offset_s": -600,
+  "window_to_offset_s": 0,
+
+  "hosts": [
+    {
+      "hostname": "web-01",
+      "last_seen_offset_s": 0,
+      "services_failed": 2,
+      "units": [
+        { "name": "a.service", "state": "failed", "state_ts_offset_s": -7200 },
+        { "name": "b.service", "state": "failed", "state_ts_offset_s": -3600 },
+        { "name": "c.service", "state": "active", "state_ts_offset_s": -86400 }
+      ],
+      "filesystems": [
+        {
+          "label": "root",
+          "mountpoint": "/",
+          "_comment": "97 GiB used, 3 GiB free: over both halves of the compound rule. Healthy until it crossed at -180 s.",
+          "samples": [
+            { "offset_s": -600, "used": 42949672960, "free": 64424509440 },
+            { "offset_s": -540, "used": 42949672960, "free": 64424509440 },
+            { "offset_s": -480, "used": 42949672960, "free": 64424509440 },
+            { "offset_s": -420, "used": 42949672960, "free": 64424509440 },
+            { "offset_s": -360, "used": 42949672960, "free": 64424509440 },
+            { "offset_s": -300, "used": 42949672960, "free": 64424509440 },
+            { "offset_s": -240, "used": 42949672960, "free": 64424509440 },
+            { "offset_s": -180, "used": 104144670720, "free": 3221225472 },
+            { "offset_s": -120, "used": 104144670720, "free": 3221225472 },
+            { "offset_s": -60, "used": 104144670720, "free": 3221225472 },
+            { "offset_s": 0, "used": 104144670720, "free": 3221225472 }
+          ]
+        },
+        {
+          "label": "var",
+          "mountpoint": "/var",
+          "_comment": "Healthy throughout, so the fullest-mount pick has something to beat.",
+          "samples": [
+            { "offset_s": -600, "used": 21474836480, "free": 85899345920 },
+            { "offset_s": -300, "used": 21474836480, "free": 85899345920 },
+            { "offset_s": 0, "used": 21474836480, "free": 85899345920 }
+          ]
+        }
+      ]
+    },
+
+    {
+      "hostname": "ark",
+      "last_seen_offset_s": 0,
+      "services_failed": 0,
+      "units": [],
+      "filesystems": [
+        {
+          "label": "ark",
+          "mountpoint": "/mnt/ark",
+          "_comment": [
+            "91% of a 6.7 TB array, with 674 GB free. The case the compound",
+            "rule exists for: netra used to say '90% full -- 674.4 GB free' in",
+            "one breath and expect someone to act on it. Neither side flags it."
+          ],
+          "samples": [
+            { "offset_s": -600, "used": 6657199308800, "free": 723999924224 },
+            { "offset_s": -300, "used": 6657199308800, "free": 723999924224 },
+            { "offset_s": 0, "used": 6657199308800, "free": 723999924224 }
+          ]
+        }
+      ]
+    },
+
+    {
+      "hostname": "db-01",
+      "_comment": "Silent: last heard from an hour ago, well past three scrapes.",
+      "last_seen_offset_s": -3600,
+      "services_failed": 0,
+      "units": [],
+      "filesystems": []
+    },
+
+    {
+      "hostname": "app-01",
+      "_comment": "Nothing wrong with it. A fleet where every host is broken proves nothing about the healthy path.",
+      "last_seen_offset_s": 0,
+      "services_failed": 0,
+      "units": [
+        { "name": "nginx.service", "state": "active", "state_ts_offset_s": -86400 }
+      ],
+      "filesystems": [
+        {
+          "label": "root",
+          "mountpoint": "/",
+          "samples": [
+            { "offset_s": -600, "used": 10737418240, "free": 96636764160 },
+            { "offset_s": -300, "used": 10737418240, "free": 96636764160 },
+            { "offset_s": 0, "used": 10737418240, "free": 96636764160 }
+          ]
+        }
+      ]
+    }
+  ],
+
+  "expect": [
+    {
+      "hostname": "web-01",
+      "kind": "failed-units",
+      "subject": "",
+      "severity": "warning",
+      "_comment": "The count comes from services_failed; the names and the onset from the unit rows, and five units failing at five times is one condition that began with the first.",
+      "since_offset_s": -7200,
+      "since_at_least": false
+    },
+    {
+      "hostname": "web-01",
+      "kind": "disk",
+      "subject": "root",
+      "severity": "critical",
+      "_comment": "Walked back to the sample it crossed on, which is the whole payoff: not the moment netra happened to look.",
+      "since_offset_s": -180,
+      "since_at_least": false
+    },
+    {
+      "hostname": "db-01",
+      "kind": "silent",
+      "subject": "",
+      "severity": "critical",
+      "_comment": "The one condition whose onset needs no derivation: last_seen IS the moment.",
+      "since_offset_s": -3600,
+      "since_at_least": false
+    }
+  ]
+}

@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   getContainers,
+  getConditions,
   getFleetContainers,
-  getFleetDrives,
   getEvents,
   getHost,
   getHosts,
@@ -29,7 +29,12 @@ import {
   type Entity,
   type FleetFilter,
 } from "./features/fleet/FleetPage";
-import { isConditionKind } from "./features/fleet/conditions";
+import {
+  catalogueOf,
+  diskThresholds,
+  EMPTY_CATALOGUE,
+  isConditionKind,
+} from "./features/fleet/conditions";
 import { isContainerStateKind } from "./features/container/state";
 import {
   buildRows,
@@ -405,16 +410,6 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   // silent host. The severity segments are hosts-only: every condition netra
   // ranks that way is host-level.
   const attnParam = params.get("attn") ?? "";
-  const attention: FleetFilter =
-    entity === "containers"
-      ? isContainerStateKind(attnParam)
-        ? attnParam
-        : "all"
-      : attnParam === "critical" || attnParam === "warning"
-        ? attnParam
-        : isConditionKind(attnParam)
-          ? attnParam
-          : "all";
   const setParam = paramSetter("/", search, go);
   const range = FLEET_RANGE;
 
@@ -440,8 +435,8 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       // only fetches when nothing was injected -- and this page always
       // injects its rows, so the Containers tab sat empty claiming no host in
       // the fleet had ever reported one.
-      const [trends, containerTrends, listings, driveListings] =
-        await Promise.all([
+      const [trends, containerTrends, listings, conditions] = await Promise.all(
+        [
           // threads, not cores: the per-core samples are one per logical CPU
           // (the N in /proc/stat's cpuN), and on an SMT host the two differ by
           // a factor of two. fetchFleetTrends reads it off each host.
@@ -452,13 +447,19 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
           // list down with it. The rows the fleet already has are the point of
           // the page, and the counts chip says what is missing.
           getFleetContainers(hosts.map((host) => host.id)).catch(() => null),
-          // The drives, for the drive condition -- one fleet-wide request,
-          // caught on its own for the same reason the containers call is.
-          // Null leaves every row's `drives` undefined, which hostConditions
-          // reads as "not asked" and stays silent about; the note on the page
-          // is what says so.
-          getFleetDrives(hosts.map((host) => host.id)).catch(() => null),
-        ]);
+          // What is WRONG with the fleet, decided by the hub. This replaced a
+          // fleet-wide drives listing that existed for one reason -- no cell
+          // drew it, the drive condition was derived from it here -- and the
+          // request is smaller for it: open conditions are bounded by what is
+          // actually broken rather than by how many disks the fleet has.
+          //
+          // Caught on its own, like the container listing: a failing call must
+          // not take down the host list that already rendered. Null leaves the
+          // page with no conditions AND no catalogue, which every reader
+          // degrades honestly on -- see EMPTY_CATALOGUE.
+          getConditions().catch(() => null),
+        ],
+      );
 
       const containers: ContainerRow[] = [];
       hosts.forEach((host) => {
@@ -506,7 +507,7 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
         hosts,
         trends,
         containers,
-        drives: driveListings,
+        conditions,
         unreachable,
         at: new Date().toISOString(),
       };
@@ -516,22 +517,47 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
   );
   useAuthRedirect(poll.error, go, { name: "fleet" });
 
-  const rows = useMemo(() => {
-    const built = buildRows(
-      poll.data?.hosts ?? [],
-      poll.data?.trends ?? new Map(),
-    );
-    // Drives ride the row rather than a second argument to buildRows: no cell
-    // draws them, only hostConditions reads them, and buildRows is shared
-    // with the path that has the host list and nothing else.
-    //
-    // Left undefined when the listing failed, which is NOT the same as an
-    // empty array: only one of "reports no drives" and "netra could not ask"
-    // may read as nothing wrong with the disks.
-    const listings = poll.data?.drives;
-    if (!listings) return built;
-    return built.map((row) => ({ ...row, drives: listings.get(row.id) ?? [] }));
-  }, [poll.data]);
+  // The kind vocabulary the hub serves, and the disk thresholds with it.
+  //
+  // EMPTY_CATALOGUE when the call failed or has not landed: everything
+  // downstream degrades honestly on it rather than falling back to a copy of
+  // the hub's rules, which is the duplication this whole change deleted.
+  const catalogue = useMemo(
+    () =>
+      poll.data?.conditions
+        ? catalogueOf(poll.data.conditions.kinds)
+        : EMPTY_CATALOGUE,
+    [poll.data?.conditions],
+  );
+
+  const rows = useMemo(
+    () =>
+      buildRows(
+        poll.data?.hosts ?? [],
+        poll.data?.trends ?? new Map(),
+        // For the Disk cell's ranking only. The conditions themselves are the
+        // hub's; this is what lets the meter colour a mount no condition
+        // covers, which is most of them.
+        diskThresholds(catalogue),
+      ),
+    [poll.data, catalogue],
+  );
+
+  // Resolved HERE rather than off the query string alone, because a kind is
+  // only a kind if the hub says so -- and the catalogue arrives with the
+  // conditions. An unrecognised value is "all", which includes every value
+  // before the first response lands: one poll of the unfiltered fleet beats a
+  // link that silently filters to nothing.
+  const attention: FleetFilter =
+    entity === "containers"
+      ? isContainerStateKind(attnParam)
+        ? attnParam
+        : "all"
+      : attnParam === "critical" || attnParam === "warning"
+        ? attnParam
+        : isConditionKind(catalogue, attnParam)
+          ? attnParam
+          : "all";
 
   // The same guard HostScreen makes, for the same reason. This screen is
   // remounted by every navigation back to it, so its first render has no
@@ -561,6 +587,8 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
       attentionHref={(next) =>
         "/" + withParam(search, "attn", next === "all" ? "" : next)
       }
+      conditionRows={poll.data?.conditions?.conditions ?? []}
+      catalogue={catalogue}
       checkedAt={poll.data?.at ?? null}
       containers={poll.data?.containers}
       containerError={
@@ -568,11 +596,14 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
           ? `${poll.data.unreachable} host${poll.data.unreachable === 1 ? "" : "s"} could not be asked for containers`
           : null
       }
-      // All or nothing, like the containers: one request answers for the
-      // whole fleet, so either every host was asked or none was.
-      driveError={
-        poll.data && poll.data.drives === null
-          ? `${poll.data.hosts.length} host${poll.data.hosts.length === 1 ? "" : "s"} could not be asked for drives`
+      // All or nothing, like the containers: one request answers for the whole
+      // fleet, so either it was asked or it was not. A page that silently
+      // shows no conditions because the call failed is exactly the "green
+      // because nobody looked" failure this engine exists to prevent, so it
+      // says so instead.
+      conditionError={
+        poll.data && poll.data.conditions === null
+          ? "netra could not be asked what is wrong"
           : null
       }
     />

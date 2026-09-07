@@ -3,6 +3,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    // The shared condition fixture (test/conditions/equality.json) is imported
+    // by conditions.equality.test.ts rather than read off the filesystem: the
+    // suite carries no node types, and a fixture both this side and the hub's
+    // integration test read has to be ONE file rather than two copies.
+    "resolveJsonModule": true,
     "jsx": "react-jsx",
     "strict": true,
     "skipLibCheck": true,

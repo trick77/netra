@@ -1,314 +1,299 @@
 import { describe, expect, it } from "vitest";
 import {
+  catalogueOf,
+  diskSeverityFor,
+  diskThresholds,
+  EMPTY_CATALOGUE,
   failedUnitsShown,
+  filterKind,
   fleetConditions,
   groupByHost,
   groupByKind,
   hostConditions,
+  hostsNeedingAttention,
   isConditionKind,
   kindLabel,
+  kindSeverity,
 } from "./conditions";
-import type { HostRow } from "./hostColumns";
-import type { Drive } from "../../lib/api";
+import type { ConditionKindInfo, ConditionRow } from "../../lib/api";
 
 const NOW = new Date("2026-08-12T12:00:00Z");
-
 const GB = 1024 ** 3;
-const MB = 1024 ** 2;
 
-function makeRow(overrides: Partial<HostRow> = {}): HostRow {
+// The catalogue as the hub actually serves it -- internal/hub/conditions/
+// catalogue.go. Written out here rather than imported from anywhere, because
+// that is exactly what a fixture is for: if the hub's labels move, these tests
+// keep asserting the old ones and the API test on the Go side is what catches
+// it. What must NOT drift is the shape.
+const KINDS: ConditionKindInfo[] = [
+  { kind: "silent", label: "Stopped reporting", severity: "critical" },
+  { kind: "sporadic", label: "Reporting sporadically", severity: "warning" },
+  { kind: "failed-units", label: "Failed units", severity: "warning" },
+  {
+    kind: "disk",
+    label: "Filesystem nearly full",
+    severity: "warning",
+    thresholds: {
+      warn_pct: 90,
+      crit_pct: 95,
+      warn_free: 100 * GB,
+      crit_free: 20 * GB,
+    },
+  },
+  { kind: "drive", label: "Drive errors", severity: "critical" },
+];
+
+const CATALOGUE = catalogueOf(KINDS);
+
+function row(over: Partial<ConditionRow> = {}): ConditionRow {
   return {
     id: 1,
+    host_id: 1,
     hostname: "web-01",
-    window: null,
-    last_seen: "2026-08-12T11:59:30Z",
-    cpu_total: 20,
-    mem_used: 4_000_000_000,
-    mem_total: 16_000_000_000,
-    uptime_s: 86_400,
-    net_rx_bytes: null,
-    net_tx_bytes: null,
-    threads: 8,
-    cpu: [],
-    mem: [],
-    // Long enough and clean enough that reportsSporadically() has something
-    // to judge and finds nothing wrong.
-    reporting: [10, 11, 12, 11, 10, 11],
-    rx: [],
-    tx: [],
-    fullest: { mount: "/", pct: 41 },
-    disk: [],
-    ...overrides,
+    kind: "disk",
+    subject: "root",
+    severity: "warning",
+    opened_ts: "2026-08-12T06:00:00Z",
+    opened_at_least: false,
+    detail: { pct: 91.2, mount: "/", free: 9 * GB },
+    measured_ts: "2026-08-12T11:59:30Z",
+    stale: false,
+    ...over,
   };
 }
 
+const HOST = { id: 1, hostname: "web-01", last_seen: "2026-08-12T11:59:30Z" };
+
 describe("hostConditions", () => {
-  it("says nothing about a healthy host", () => {
-    expect(hostConditions(makeRow(), NOW)).toEqual([]);
+  it("says nothing about a host the hub raised nothing for", () => {
+    expect(hostConditions([], CATALOGUE, NOW)).toEqual([]);
   });
 
-  // The other half of the disagreement this module exists to end: a host page
-  // listing "nginx.service failed" beside a fleet row that showed nothing,
-  // because the band had no notion of a unit at all.
-  it("raises failed units", () => {
-    const [c] = hostConditions(makeRow({ services_failed: 3 }), NOW);
-    expect(c?.severity).toBe("warning");
-    expect(String(c?.what)).toMatch(/3 failed units/);
+  // The column that used to be empty for four kinds out of five, and the whole
+  // point of moving the judgement to the hub: a derivation reading the current
+  // row has no memory of when it first became true.
+  it("takes the onset from the row rather than inventing one", () => {
+    const [condition] = hostConditions([row()], CATALOGUE, NOW);
+    expect(condition!.since).toBe("2026-08-12T06:00:00Z");
+    expect(condition!.sinceAtLeast).toBe(false);
+  });
+
+  // "over 7 d", not a bucket where nothing happened: the hub's walk hit the
+  // end of what is retained and says so.
+  it("carries the floor flag when the onset is only a floor", () => {
+    const [condition] = hostConditions(
+      [row({ opened_at_least: true })],
+      CATALOGUE,
+      NOW,
+    );
+    expect(condition!.sinceAtLeast).toBe(true);
+  });
+
+  it("writes the disk sentence from the row's own numbers", () => {
+    const [condition] = hostConditions([row()], CATALOGUE, NOW);
+    expect(condition!.kind).toBe("disk");
+    expect(condition!.severity).toBe("warning");
+    expect(condition!.label).toBe("Filesystem nearly full");
+    expect(condition!.what).toBe("/ is 91% full");
+    expect(condition!.evidence).toEqual({ type: "meter", pct: 91.2 });
+    expect(condition!.tab).toBe("storage");
+  });
+
+  // A 96 % disk on a machine that is off is still a 96 % disk. Only the TENSE
+  // moves: the figure is the last one anybody measured rather than a statement
+  // about this minute, and the severity is deliberately unchanged.
+  it("says a silent host's disk WAS full, without softening the severity", () => {
+    const conditions = hostConditions(
+      [
+        row({ kind: "silent", subject: "", severity: "critical", detail: {} }),
+        row({ id: 2, severity: "critical", detail: { pct: 97, mount: "/" } }),
+      ],
+      CATALOGUE,
+      NOW,
+    );
+    const disk = conditions.find((c) => c.kind === "disk")!;
+    expect(disk.what).toBe("/ was 97% full");
+    expect(disk.severity).toBe("critical");
+  });
+
+  // Reporting leads, because it qualifies everything below it: a host that has
+  // not spoken for an hour has stale disk figures too.
+  it("writes reporting first, whatever order the rows arrive in", () => {
+    const conditions = hostConditions(
+      [
+        row(),
+        row({ id: 2, kind: "silent", subject: "", severity: "critical" }),
+      ],
+      CATALOGUE,
+      NOW,
+    );
+    expect(conditions.map((c) => c.kind)).toEqual(["silent", "disk"]);
+  });
+
+  it("counts failed units from the row and names them as evidence", () => {
+    const [condition] = hostConditions(
+      [
+        row({
+          kind: "failed-units",
+          subject: "",
+          detail: { count: 5, units: ["a.service", "b.service"] },
+        }),
+      ],
+      CATALOGUE,
+      NOW,
+    );
+    expect(condition!.what).toBe("5 failed units");
+    expect(condition!.evidence).toEqual({
+      type: "units",
+      names: ["a.service", "b.service"],
+      extra: 3,
+    });
+    expect(condition!.tab).toBe("units");
   });
 
   it("counts one failed unit in the singular", () => {
-    const [c] = hostConditions(makeRow({ services_failed: 1 }), NOW);
-    expect(String(c?.what)).toMatch(/1 failed unit\b/);
-  });
-
-  // One row however many are broken: the row names up to three of them and
-  // stays one row, rather than becoming one row per unit.
-  it("says it once, not once per unit", () => {
-    expect(hostConditions(makeRow({ services_failed: 8 }), NOW)).toHaveLength(
-      1,
-    );
-  });
-
-  // The dead end this fixes: the row said "1 failed unit" and the only way to
-  // learn whether that was a backup job or the container runtime was to open
-  // the host. The names are the row's EVIDENCE now rather than part of its
-  // sentence -- the sentence is the count, and the count is what the list
-  // groups thirty-one hosts by.
-  it("names the failed unit as evidence and points at the tab that lists it", () => {
-    const [c] = hostConditions(
-      makeRow({ services_failed: 1, failed_units: ["docker.service"] }),
+    const [condition] = hostConditions(
+      [row({ kind: "failed-units", subject: "", detail: { count: 1 } })],
+      CATALOGUE,
       NOW,
     );
-    expect(String(c?.what)).toBe("1 failed unit");
-    expect(c?.evidence).toEqual({
-      type: "units",
-      names: ["docker.service"],
-      extra: 0,
-    });
-    expect(c?.kind).toBe("failed-units");
-    expect(c?.tab).toBe("units");
+    expect(condition!.what).toBe("1 failed unit");
   });
 
-  // systemd's own timestamp, and the OLDEST of them: five units failing at
-  // five times is one condition that began with the first.
-  it("dates the failed units from the hub's oldest state change", () => {
-    const [c] = hostConditions(
-      makeRow({
-        services_failed: 2,
-        failed_units: ["a.service", "b.service"],
-        failed_since: "2026-08-13T09:00:00Z",
-      }),
-      NOW,
-    );
-    expect(c?.since).toBe("2026-08-13T09:00:00Z");
-  });
-
-  // Null is the honest answer, not now(): state_ts is nullable and a host
-  // with a count but no unit rows has nothing to date.
-  it("leaves the onset empty when the hub cannot date the units", () => {
-    const [c] = hostConditions(makeRow({ services_failed: 2 }), NOW);
-    expect(c?.since).toBeNull();
-  });
-
-  it("falls back to the bare count when the hub cannot name them", () => {
-    const [c] = hostConditions(
-      makeRow({ services_failed: 2, failed_units: [] }),
-      NOW,
-    );
-    expect(String(c?.what)).toBe("2 failed units");
-  });
-
-  // 0 is the host confirming its units are fine. null is a host that has
-  // never reported a unit -- no systemd collector, or nothing heard yet --
-  // and reporting that as an all-clear would be netra vouching for something
-  // it has never looked at. Both stay silent, for different reasons.
-  it("stays silent for no failures and for a host it has never looked at", () => {
-    expect(hostConditions(makeRow({ services_failed: 0 }), NOW)).toEqual([]);
-    expect(hostConditions(makeRow({ services_failed: null }), NOW)).toEqual([]);
-    expect(
-      hostConditions(makeRow({ services_failed: undefined }), NOW),
-    ).toEqual([]);
-  });
-
-  it("warns on a filesystem at 90% and escalates at 95%", () => {
-    const warn = hostConditions(
-      makeRow({ fullest: { mount: "/var/log", pct: 91 } }),
-      NOW,
-    );
-    expect(warn[0]?.severity).toBe("warning");
-    expect(String(warn[0]?.what)).toMatch(/\/var\/log is 91% full/);
-
-    const crit = hostConditions(
-      makeRow({ fullest: { mount: "/var/log", pct: 96 } }),
-      NOW,
-    );
-    expect(crit[0]?.severity).toBe("critical");
-  });
-
-  // The report this rule exists for: "/mnt/ark is 90% full -- 674.4 GB free"
-  // is a sentence that argues with itself, and nobody has anything to do
-  // about it.
-  it("stays quiet about a big volume with room left, at any percentage", () => {
-    const rows = hostConditions(
-      makeRow({
-        fullest: { mount: "/mnt/ark", pct: 90, free: 674 * GB },
-      }),
-      NOW,
-    );
-    expect(rows).toEqual([]);
-  });
-
-  it("warns on the same percentage when the bytes are nearly gone", () => {
-    const [c] = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 90, free: 2 * GB } }),
-      NOW,
-    );
-    expect(c?.severity).toBe("warning");
-    expect(String(c?.what)).toMatch(/\/ is 90% full/);
-  });
-
-  // Both floors have to bind for the worse word to apply. 96% of a 6.8 TB
-  // array with 67 GB left is under the warning floor and over the critical
-  // one: worth a word, not an emergency. With 500 GB left neither binds and
-  // the percentage on its own buys nothing.
-  it("holds a deep-but-roomy volume below critical", () => {
-    const [warn] = hostConditions(
-      makeRow({
-        fullest: { mount: "/mnt/ark", pct: 96, free: 67 * GB },
-      }),
-      NOW,
-    );
-    expect(warn?.severity).toBe("warning");
-
-    expect(
-      hostConditions(
-        makeRow({
-          fullest: { mount: "/mnt/ark", pct: 96, free: 500 * GB },
+  // A rate has no onset: the gaps ARE the condition, and naming the first of
+  // them would date it to a scrape the host happened to miss.
+  it("leaves the onset empty for sporadic, whatever the row says", () => {
+    const [condition] = hostConditions(
+      [
+        row({
+          kind: "sporadic",
+          subject: "",
+          detail: { present: 24, span: 30 },
         }),
-        NOW,
-      ),
-    ).toEqual([]);
-  });
-
-  it("criticals when the same percentage leaves under 20 GiB", () => {
-    const [c] = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 96, free: 800 * MB } }),
+      ],
+      CATALOGUE,
       NOW,
     );
-    expect(c?.severity).toBe("critical");
+    expect(condition!.since).toBeNull();
+    expect(condition!.what).toBe(
+      "Reporting sporadically — gaps in the last few hours",
+    );
   });
 
-  // A row that has lost track of the bytes must not go silent about a disk at
-  // 97%: unknown headroom falls back to the percentage alone.
-  it("judges on the percentage alone when free bytes are unknown", () => {
-    const [c] = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 97, free: null } }),
+  // The hub keeps a condition per MOUNT, deliberately -- collapsed in the state
+  // machine, it would open and close every time the fullest mount changed from
+  // /var to /mnt. The collapse to one line per host is a RENDERING decision,
+  // and this is where it lives now.
+  it("collapses a host's mounts to the worst one", () => {
+    const conditions = hostConditions(
+      [
+        row({ subject: "var", detail: { pct: 91, mount: "/var" } }),
+        row({
+          id: 2,
+          subject: "root",
+          severity: "critical",
+          detail: { pct: 97, mount: "/" },
+        }),
+      ],
+      CATALOGUE,
       NOW,
     );
-    expect(c?.severity).toBe("critical");
+    expect(conditions).toHaveLength(1);
+    expect(conditions[0]!.what).toBe("/ is 97% full");
   });
 
-  it("leaves a comfortable disk alone", () => {
-    const rows = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 89 } }),
+  // A subject the hub can no longer measure is SAID, not dropped. The page used
+  // to retire a mount whose reading was three minutes old, which silently
+  // retired the condition on it -- and the hub refuses to make that call at all
+  // because a hung NFS export and an unmounted volume are indistinguishable
+  // from where it stands.
+  it("keeps a stale subject on screen and says the reading is old", () => {
+    const [condition] = hostConditions(
+      [
+        row({
+          stale: true,
+          measured_ts: "2026-08-12T08:00:00Z",
+          detail: { pct: 97, mount: "/mnt/backup" },
+        }),
+      ],
+      CATALOGUE,
       NOW,
     );
-    expect(rows).toEqual([]);
+    expect(condition!.stale).toBe(true);
+    expect(condition!.what).toBe(
+      "/mnt/backup is 97% full — not measured since 4 h ago",
+    );
   });
 
-  // A host that stopped reporting has stale disk and memory figures too, so
-  // saying so FIRST stops everything below it reading as current.
-  it("leads with a host that stopped reporting, and dates it honestly", () => {
-    const rows = hostConditions(
-      makeRow({
-        last_seen: "2026-08-12T11:00:00Z",
-        fullest: { mount: "/", pct: 97 },
-      }),
+  // A kind the hub raised and this file has no sentence for still appears.
+  // Dropping it would be a fleet reading clean because the browser did not
+  // recognise what was wrong with it -- the exact failure the engine exists to
+  // end, reintroduced by an incomplete switch statement.
+  it("still shows a kind it has no sentence for, named by the catalogue", () => {
+    const catalogue = catalogueOf([
+      ...KINDS,
+      { kind: "thermal", label: "Running hot", severity: "warning" },
+    ]);
+    const [condition] = hostConditions(
+      [row({ kind: "thermal", subject: "", detail: {} })],
+      catalogue,
       NOW,
     );
-    expect(rows[0]?.severity).toBe("critical");
-    expect(String(rows[0]?.what)).toMatch(/Stopped reporting/);
-    // last_seen IS the onset here -- the one condition with a real one.
-    expect(rows[0]?.since).toBe("2026-08-12T11:00:00Z");
-    expect(rows).toHaveLength(2);
-    // The disk still counts, and at the same severity: a 97 % disk on a
-    // machine that is off is still a 97 % disk, and it is worth clearing
-    // before the machine comes back. Only the tense moves -- the figure is
-    // the last one anybody measured, not a statement about this minute.
-    expect(rows[1]?.kind).toBe("disk");
-    expect(rows[1]?.severity).toBe("critical");
-    expect(String(rows[1]?.what)).toMatch(/\/ was 97% full/);
+    expect(condition!.kind).toBe("thermal");
+    expect(condition!.what).toBe("Running hot");
   });
 
-  // The other side of the same rule: a host that is talking says "is".
-  it("keeps the present tense for a host that is still reporting", () => {
-    const rows = hostConditions(
-      makeRow({ fullest: { mount: "/", pct: 97 } }),
-      NOW,
-    );
-    expect(String(rows[0]?.what)).toMatch(/\/ is 97% full/);
-  });
-
-  it("distinguishes a host that has never reported from one that stopped", () => {
-    const [c] = hostConditions(makeRow({ last_seen: null }), NOW);
-    expect(String(c?.what)).toMatch(/never reported/);
-    expect(c?.since).toBeNull();
-  });
-
-  it("reports a host answering now but dropping scrapes as sporadic", () => {
-    const [c] = hostConditions(
-      makeRow({ reporting: [10, null, 12, null, 10, 11] }),
-      NOW,
-    );
-    expect(c?.severity).toBe("warning");
-    expect(String(c?.what)).toMatch(/sporadic/);
-  });
-
-  // The band said "reporting sporadically -- gaps in the last few hours"
-  // beside a host whose agent had been running for five minutes. The gaps
-  // were real and they were the window before the host existed: the fleet
-  // page asks for its whole range regardless of when a host was added.
-  it("says nothing about a host that was only just added", () => {
-    const justAdded = makeRow({
-      reporting: [...Array<number | null>(283).fill(null), 12],
-    });
-
-    expect(hostConditions(justAdded, NOW)).toEqual([]);
-  });
-
-  // No honest onset exists for most of these: a filesystem at 91 % crossed
-  // 90 at some moment netra never recorded. A plausible-looking timestamp
-  // would be read literally, so there is none.
-  it("carries no onset for a condition whose start was never observed", () => {
-    const [c] = hostConditions(makeRow({ services_failed: 2 }), NOW);
-    expect(c?.since).toBeNull();
+  // detail is `unknown` on the wire on purpose: its shape belongs to the
+  // observer that produced it. Anything that is not a plain object says
+  // nothing rather than throwing.
+  it("survives a detail that is not an object", () => {
+    for (const detail of [null, "text", 7, ["a"]]) {
+      const [condition] = hostConditions([row({ detail })], CATALOGUE, NOW);
+      expect(condition!.what).toBe("root is 0% full");
+    }
   });
 });
 
 describe("fleetConditions", () => {
-  it("gathers every host's conditions", () => {
-    const rows = [
-      makeRow({ id: 1, hostname: "web-01" }),
-      makeRow({ id: 2, hostname: "db-01", services_failed: 4 }),
-      makeRow({
-        id: 3,
-        hostname: "log-01",
-        fullest: { mount: "/var/log", pct: 93 },
-      }),
-    ];
-    const all = fleetConditions(rows, NOW);
-    expect(all).toHaveLength(2);
-    expect(all.map((c) => c.hostname)).toEqual(["db-01", "log-01"]);
+  it("renders every host's rows, in host order", () => {
+    const conditions = fleetConditions(
+      [
+        row({ host_id: 2, hostname: "db-01" }),
+        row({ host_id: 1, hostname: "web-01" }),
+      ],
+      [HOST, { id: 2, hostname: "db-01", last_seen: "2026-08-12T11:59:00Z" }],
+      CATALOGUE,
+      NOW,
+    );
+    expect(conditions.map((c) => c.hostname)).toEqual(["web-01", "db-01"]);
+    expect(hostsNeedingAttention(conditions)).toBe(2);
   });
 
-  it("is empty for a wholly healthy fleet, so the all-clear line shows", () => {
-    expect(fleetConditions([makeRow(), makeRow({ id: 2 })], NOW)).toEqual([]);
+  // The hub deliberately refuses to raise this: a critical condition in the
+  // gap between creating a host and installing its agent is false history in
+  // the log an alerting engine reads. The PAGE states what is true now and
+  // forgets it, which is what this fact wants.
+  it("says a never-reported host is silent, though the hub raised nothing", () => {
+    const conditions = fleetConditions(
+      [],
+      [{ id: 3, hostname: "new-01", last_seen: null }],
+      CATALOGUE,
+      NOW,
+    );
+    expect(conditions).toHaveLength(1);
+    expect(conditions[0]!.kind).toBe("silent");
+    expect(conditions[0]!.severity).toBe("critical");
+    expect(conditions[0]!.what).toBe("Has never reported");
+    // No onset: the host has never been observed at all, so there is nothing
+    // to date it from.
+    expect(conditions[0]!.since).toBeNull();
+  });
+
+  it("says nothing about a healthy host", () => {
+    expect(fleetConditions([], [HOST], CATALOGUE, NOW)).toEqual([]);
   });
 });
 
-// The count leads and the names annotate it. The two come from different
-// tables and are allowed to disagree; every branch resolves that in favour of
-// the count.
 describe("failedUnitsShown", () => {
   it("names what it can and counts the rest", () => {
     expect(
@@ -447,20 +432,89 @@ describe("groupByKind", () => {
 // else pins the copy: the kind was renamed from "Filesystem over 90%" the
 // moment the rule stopped being a bare percentage, and every one of those
 // fixtures went on passing with the old wording in it.
-describe("kindLabel", () => {
-  it("names the disk kind without quoting a percentage the rule outgrew", () => {
-    expect(kindLabel("disk")).toBe("Filesystem nearly full");
-    expect(kindLabel("disk")).not.toMatch(/%/);
+// The catalogue is the hub's, and everything that reads it has to survive not
+// having one yet -- the first render happens before the first response.
+describe("the kind catalogue", () => {
+  it("names a kind from the hub's own label", () => {
+    expect(kindLabel(CATALOGUE, "disk")).toBe("Filesystem nearly full");
+    // The kind was renamed from "Filesystem over 90%" the moment the rule
+    // stopped being a bare percentage. It is the hub's wording now, so this
+    // pins the shape rather than the copy.
+    expect(kindLabel(CATALOGUE, "disk")).not.toMatch(/%/);
+    expect(kindSeverity(CATALOGUE, "silent")).toBe("critical");
+  });
+
+  // A filter for a kind NOBODY is carrying must still name itself, which is
+  // the whole reason the catalogue is fetched rather than derived from the
+  // rows on screen.
+  it("names a kind no host is carrying", () => {
+    expect(kindLabel(CATALOGUE, "drive")).toBe("Drive errors");
+    expect(isConditionKind(CATALOGUE, "drive")).toBe(true);
+  });
+
+  it("falls back to the kind's own name rather than blanking it", () => {
+    expect(kindLabel(EMPTY_CATALOGUE, "disk")).toBe("disk");
+  });
+
+  // A ?attn= nobody recognises is "all", never a filter that silently matches
+  // nothing -- and that includes every value before the catalogue lands.
+  it("validates a URL parameter against the hub's vocabulary", () => {
+    expect(isConditionKind(CATALOGUE, "disk")).toBe(true);
+    expect(isConditionKind(CATALOGUE, "critical")).toBe(false);
+    expect(isConditionKind(CATALOGUE, "")).toBe(false);
+    expect(isConditionKind(CATALOGUE, "toString")).toBe(false);
+    expect(isConditionKind(EMPTY_CATALOGUE, "disk")).toBe(false);
+    expect(filterKind(EMPTY_CATALOGUE, "disk")).toBeNull();
+    expect(filterKind(CATALOGUE, "disk")).toBe("disk");
+    expect(filterKind(CATALOGUE, "critical")).toBeNull();
+  });
+
+  // An older hub, or one that answers without the field. A page that threw
+  // here would be a total loss where an unnamed filter is a small one.
+  it("treats a missing kinds list as no catalogue rather than a crash", () => {
+    expect(catalogueOf(undefined).kinds).toEqual([]);
+    expect(catalogueOf(null).kinds).toEqual([]);
   });
 });
 
-describe("isConditionKind", () => {
-  it("accepts the kinds and rejects everything else", () => {
-    expect(isConditionKind("disk")).toBe(true);
-    expect(isConditionKind("failed-units")).toBe(true);
-    expect(isConditionKind("critical")).toBe(false);
-    expect(isConditionKind("")).toBe(false);
-    expect(isConditionKind("toString")).toBe(false);
+// The four numbers stopped being written out in TypeScript and arrive from the
+// hub instead. They survive at all only because the Disk meter and the host
+// page's disk tile have to judge HEALTHY mounts, which no condition covers.
+describe("the disk thresholds", () => {
+  it("reads the hub's numbers off the catalogue", () => {
+    expect(diskThresholds(CATALOGUE)).toEqual({
+      warnPct: 90,
+      critPct: 95,
+      warnFree: 100 * GB,
+      critFree: 20 * GB,
+    });
+  });
+
+  // Null is not a default. Writing 90 and 95 here would restore the second
+  // copy this change deleted, and it would go on being wrong invisibly if the
+  // hub's numbers ever moved.
+  it("has no numbers of its own before the catalogue lands", () => {
+    expect(diskThresholds(EMPTY_CATALOGUE)).toBeNull();
+    expect(diskSeverityFor(99, 1, null)).toBeNull();
+  });
+
+  // The compound rule, and the case that made it necessary: netra used to say
+  // "/mnt/ark is 90% full -- 674.4 GB free" in one breath and expect someone
+  // to act on it.
+  it("needs both a high percentage and little room left", () => {
+    const t = diskThresholds(CATALOGUE);
+    expect(diskSeverityFor(91, 9 * GB, t)).toBe("warning");
+    expect(diskSeverityFor(97, 3 * GB, t)).toBe("critical");
+    expect(diskSeverityFor(91, 674 * GB, t)).toBeNull();
+    expect(diskSeverityFor(89, 1 * GB, t)).toBeNull();
+  });
+
+  // "not known" and "none left" are different facts: a row that has lost track
+  // of the bytes must not go silent about a disk at 97%.
+  it("falls back to the percentage alone when the bytes are unknown", () => {
+    const t = diskThresholds(CATALOGUE);
+    expect(diskSeverityFor(97, null, t)).toBe("critical");
+    expect(diskSeverityFor(91, undefined, t)).toBe("warning");
   });
 });
 
@@ -468,84 +522,69 @@ describe("isConditionKind", () => {
 // Storage tab and called the same host healthy one click up, because nothing
 // carried the verdict out of that table.
 describe("drive conditions", () => {
-  const withAttrs = (device: string, attrs: Record<number, number>): Drive => ({
-    device,
-    model: "ST16000NM000J",
-    serial: "ZR5A1M0K",
-    last_seen: "2026-08-12T11:00:00Z",
-    attributes: Object.entries(attrs).map(([id, raw]) => ({
-      id: Number(id),
-      raw,
-      normalized: null,
-    })),
-  });
+  const drive = (over: Partial<ConditionRow> = {}) =>
+    row({
+      kind: "drive",
+      subject: "sda",
+      severity: "critical",
+      detail: {
+        device: "sda",
+        text: "2 pending sectors",
+        alarms: 1,
+        urgency: 0,
+      },
+      ...over,
+    });
 
   it("names the drive and what is wrong with it", () => {
-    // Given a host whose sda has sectors pending reallocation
-    const rows = hostConditions(
-      makeRow({ drives: [withAttrs("sda", { 197: 3 })] }),
+    const [condition] = hostConditions([drive()], CATALOGUE, NOW);
+    expect(condition!.severity).toBe("critical");
+    expect(condition!.label).toBe("Drive errors");
+    expect(condition!.what).toBe("sda — 2 pending sectors");
+    expect(condition!.tab).toBe("storage");
+  });
+
+  // ONE condition for the host, never one per drive: the counts line would
+  // otherwise read "Drive errors 1" while the list showed four rows for it.
+  // The count of the rest rides along instead of expanding into rows.
+  it("collapses a host's drives into one line and counts the rest", () => {
+    const conditions = hostConditions(
+      [
+        drive({
+          detail: {
+            device: "sda",
+            text: "12 reallocated sectors",
+            alarms: 2,
+            urgency: 1,
+          },
+        }),
+        drive({
+          id: 2,
+          subject: "sdb",
+          detail: {
+            device: "sdb",
+            text: "2 pending sectors",
+            alarms: 1,
+            urgency: 0,
+          },
+        }),
+      ],
+      CATALOGUE,
       NOW,
     );
-
-    // Then the host carries one drive condition, naming the disk
-    const drive = rows.find((c) => c.kind === "drive");
-    expect(drive?.severity).toBe("critical");
-    expect(drive?.label).toBe(kindLabel("drive"));
-    expect(drive?.what).toMatch(/^sda — /);
-    expect(drive?.tab).toBe("storage");
-    // No onset: SMART attributes are counters with no zero baseline, so the
-    // first non-zero reading is when netra started looking.
-    expect(drive?.since).toBeNull();
+    expect(conditions).toHaveLength(1);
+    // The acute finding leads: everything that escalates is critical, so
+    // severity alone cannot say whether an unreadable sector or a counter that
+    // is merely climbing is the one to name.
+    expect(conditions[0]!.what).toBe("sdb — 2 pending sectors (+2 more)");
   });
 
-  it("collapses several failing drives into one condition for the host", () => {
-    // Given two disks in trouble, one worse than the other
-    const rows = hostConditions(
-      makeRow({
-        drives: [withAttrs("sda", { 5: 12 }), withAttrs("sdb", { 197: 3 })],
-      }),
-      NOW,
-    );
-
-    // Then the host has ONE row, at the more urgent of the two, saying how many
-    // more there are -- the counts line says hosts, not drives.
-    const drives = rows.filter((c) => c.kind === "drive");
-    expect(drives).toHaveLength(1);
-    expect(drives[0].severity).toBe("critical");
-    expect(drives[0].what).toBe("sdb — 3 pending sectors (+1 more)");
-  });
-
-  it("stays silent when the drives were never fetched", () => {
-    // Given a row assembled without drives -- the fleet-wide call failed, or
-    // has not answered yet
-    const rows = hostConditions(makeRow({ drives: undefined }), NOW);
-
-    // Then netra says nothing rather than saying the disks are fine. It did
-    // not look, and only one of those two readings is honest.
-    expect(rows.some((c) => c.kind === "drive")).toBe(false);
-  });
-
-  it("stays silent for a host whose drives are all healthy", () => {
-    const rows = hostConditions(
-      makeRow({ drives: [withAttrs("sda", { 197: 0, 5: 0 })] }),
-      NOW,
-    );
-    expect(rows.some((c) => c.kind === "drive")).toBe(false);
-  });
-
-  // CRC errors and wear are on the drive row and stop there: neither counter
-  // ever resets, so one cable glitch would park this host in the attention
-  // list permanently -- see driveAlarms.
-  it("does not promote a warning-level finding", () => {
-    const rows = hostConditions(
-      makeRow({ drives: [withAttrs("sda", { 199: 1 })] }),
-      NOW,
-    );
-    expect(rows.some((c) => c.kind === "drive")).toBe(false);
-  });
-
-  it("is a kind the URL filter recognises", () => {
-    // ?attn=drive has to survive a reload like every other kind
-    expect(isConditionKind("drive")).toBe(true);
+  // SMART attributes are counters with no zero baseline, sampled hourly: the
+  // first non-zero reading netra holds is when netra started LOOKING, not when
+  // the sector went bad.
+  it("dates nothing, and the hub offers no onset either", () => {
+    const [condition] = hostConditions([drive()], CATALOGUE, NOW);
+    expect(condition!.since).toBeNull();
+    expect(condition!.evidence).toBeNull();
   });
 });

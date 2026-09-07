@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Host } from "../../lib/api";
+import type { ConditionKindInfo, ConditionRow, Host } from "../../lib/api";
+import { catalogueOf } from "./conditions";
 import { ABSENT } from "../../lib/format";
 import type { HostRow } from "./hostColumns";
 import type { ContainerRow } from "./FleetContainers";
@@ -88,6 +89,61 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// The conditions the hub would serve, and its kind catalogue. This page used
+// to derive both from the rows it happened to have, which is why nothing on it
+// could say when a condition began.
+const KINDS: ConditionKindInfo[] = [
+  { kind: "silent", label: "Stopped reporting", severity: "critical" },
+  { kind: "sporadic", label: "Reporting sporadically", severity: "warning" },
+  { kind: "failed-units", label: "Failed units", severity: "warning" },
+  {
+    kind: "disk",
+    label: "Filesystem nearly full",
+    severity: "warning",
+    thresholds: {
+      warn_pct: 90,
+      crit_pct: 95,
+      warn_free: 100 * 1024 ** 3,
+      crit_free: 20 * 1024 ** 3,
+    },
+  },
+  { kind: "drive", label: "Drive errors", severity: "critical" },
+];
+const CATALOGUE = catalogueOf(KINDS);
+
+let conditionId = 0;
+function cond(
+  hostId: number,
+  hostname: string,
+  over: Partial<ConditionRow> = {},
+): ConditionRow {
+  return {
+    id: ++conditionId,
+    host_id: hostId,
+    hostname,
+    kind: "failed-units",
+    subject: "",
+    severity: "warning",
+    opened_ts: "2026-08-10T09:00:00Z",
+    opened_at_least: false,
+    detail: { count: 3 },
+    measured_ts: null,
+    stale: false,
+    ...over,
+  };
+}
+
+/** A critical disk: high enough AND with little enough left, which is the
+ * compound rule the hub judges by. */
+function fullDisk(hostId: number, hostname: string): ConditionRow {
+  return cond(hostId, hostname, {
+    kind: "disk",
+    subject: "root",
+    severity: "critical",
+    detail: { pct: 97, mount: "/", free: 3e9 },
+  });
+}
+
 describe("FleetPage entity tabs", () => {
   it("swaps the list and the filter's placeholder when the entity changes", () => {
     const hosts = renderPage();
@@ -133,10 +189,9 @@ describe("FleetPage entity tabs", () => {
   // from, so the sentence and the chips under it cannot disagree.
   it("says how much of the list needs looking at", () => {
     const hosts = renderPage({
-      rows: [
-        makeRow({ id: 1 }),
-        makeRow({ id: 2, hostname: "db-01", services_failed: 3 }),
-      ],
+      rows: [makeRow({ id: 1 }), makeRow({ id: 2, hostname: "db-01" })],
+      conditionRows: [cond(2, "db-01")],
+      catalogue: CATALOGUE,
     });
     expect(
       screen.getByRole("heading", {
@@ -645,15 +700,16 @@ describe("FleetPage data fetching", () => {
     );
   });
 
-  // A fleet that quietly drops the one signal saying a disk is dying is
-  // worse than one that admits it: with no drives, every host below reads
-  // clean on its disks, and nothing on the page would say why.
-  it("says so when the drives could not be fetched", async () => {
+  // A fleet that goes green because nobody looked is the exact failure the
+  // condition engine exists to prevent: with no answer from the hub, every row
+  // below carries no mark, and nothing on the page would say why.
+  it("says so when the hub could not be asked what is wrong", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
-        if (url.includes("/drives")) return new Response("", { status: 500 });
+        if (url.includes("/conditions"))
+          return new Response("", { status: 500 });
         if (url.includes("/containers"))
           return new Response(JSON.stringify({ hosts: [] }), {
             status: 200,
@@ -684,7 +740,9 @@ describe("FleetPage data fetching", () => {
     render(<FleetPage now={NOW} />);
 
     await waitFor(() =>
-      expect(screen.getByRole("alert")).toHaveTextContent(/drives did not/i),
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /could not be asked what is wrong/i,
+      ),
     );
     // And the host list it did get still renders -- one failing listing must
     // not claim the rest of the page is gone.
@@ -700,11 +758,12 @@ describe("FleetPage data fetching", () => {
         const url = String(input);
         if (url.includes("/containers"))
           return new Response("", { status: 500 });
-        // The drives call answers, so the alert below is unambiguously the
-        // containers one: this test is about a failing listing not claiming
-        // the host list failed, and two broken listings would prove less.
-        if (url.includes("/drives"))
-          return new Response(JSON.stringify({ hosts: [] }), {
+        // The conditions call answers, so the alert below is unambiguously
+        // the containers one: this test is about a failing listing not
+        // claiming the host list failed, and two broken calls would prove
+        // less.
+        if (url.includes("/conditions"))
+          return new Response(JSON.stringify({ conditions: [], kinds: [] }), {
             status: 200,
             headers: { "content-type": "application/json" },
           });
@@ -777,8 +836,10 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          makeRow({ id: 2, hostname: "db-01", services_failed: 3 }),
+          makeRow({ id: 2, hostname: "db-01" }),
         ]}
+        conditionRows={[cond(2, "db-01")]}
+        catalogue={CATALOGUE}
         checkedAt={null}
         now={NOW}
       />,
@@ -796,8 +857,12 @@ describe("FleetPage data fetching", () => {
     render(
       <FleetPage
         rows={Array.from({ length: 12 }, (_, i) =>
-          makeRow({ id: i + 1, hostname: `web-${i + 1}`, services_failed: 1 }),
+          makeRow({ id: i + 1, hostname: `web-${i + 1}` }),
         )}
+        conditionRows={Array.from({ length: 12 }, (_, i) =>
+          cond(i + 1, `web-${i + 1}`, { detail: { count: 1 } }),
+        )}
+        catalogue={CATALOGUE}
         checkedAt={null}
         now={NOW}
       />,
@@ -816,8 +881,10 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          makeRow({ id: 2, hostname: "db-01", services_failed: 3 }),
+          makeRow({ id: 2, hostname: "db-01" }),
         ]}
+        conditionRows={[cond(2, "db-01")]}
+        catalogue={CATALOGUE}
         checkedAt={null}
         now={NOW}
       />,
@@ -844,19 +911,14 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          // A disk both high enough AND with little enough left is the
-          // compound rule's critical -- 97% of a 100 GB root leaves 3 GB.
-          makeRow({
-            id: 2,
-            hostname: "db-01",
-            fullest: { mount: "/", pct: 97, free: 3e9 },
-          }),
-          makeRow({
-            id: 3,
-            hostname: "build-01",
-            services_failed: 2,
-          }),
+          makeRow({ id: 2, hostname: "db-01" }),
+          makeRow({ id: 3, hostname: "build-01" }),
         ]}
+        conditionRows={[
+          fullDisk(2, "db-01"),
+          cond(3, "build-01", { detail: { count: 2 } }),
+        ]}
+        catalogue={CATALOGUE}
         checkedAt={null}
         now={NOW}
       />,
@@ -877,9 +939,10 @@ describe("FleetPage data fetching", () => {
   it("says the filter is hiding the fleet, not that the fleet is empty", () => {
     render(
       <FleetPage
-        rows={[makeRow({ id: 1, hostname: "web-01", services_failed: 3 })]}
+        rows={[makeRow({ id: 1, hostname: "web-01" })]}
         attention="failed-units"
         onAttentionChange={() => {}}
+        catalogue={CATALOGUE}
         conditions={[]}
         checkedAt={null}
         now={NOW}
@@ -906,6 +969,7 @@ describe("FleetPage data fetching", () => {
         rows={[makeRow({ id: 1, hostname: "web-01" })]}
         attention="failed-units"
         onAttentionChange={() => {}}
+        catalogue={CATALOGUE}
         conditions={[]}
         checkedAt={null}
         now={NOW}
@@ -920,7 +984,9 @@ describe("FleetPage data fetching", () => {
   it("lets the page decide where a filter link points", () => {
     render(
       <FleetPage
-        rows={[makeRow({ id: 1, hostname: "web-01", services_failed: 3 })]}
+        rows={[makeRow({ id: 1, hostname: "web-01" })]}
+        conditionRows={[cond(1, "web-01")]}
+        catalogue={CATALOGUE}
         attentionHref={(next) =>
           next === "all"
             ? "/?entity=containers"
@@ -951,13 +1017,10 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          makeRow({
-            id: 2,
-            hostname: "db-01",
-            services_failed: 3,
-            fullest: { mount: "/var/log", pct: 97 },
-          }),
+          makeRow({ id: 2, hostname: "db-01" }),
         ]}
+        conditionRows={[cond(2, "db-01"), fullDisk(2, "db-01")]}
+        catalogue={CATALOGUE}
         checkedAt={null}
         now={NOW}
       />,
@@ -986,8 +1049,10 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          makeRow({ id: 2, hostname: "db-01", services_failed: 3 }),
+          makeRow({ id: 2, hostname: "db-01" }),
         ]}
+        conditionRows={[cond(2, "db-01")]}
+        catalogue={CATALOGUE}
         checkedAt={null}
         now={NOW}
       />,
@@ -1010,14 +1075,10 @@ describe("FleetPage data fetching", () => {
       <FleetPage
         rows={[
           makeRow({ id: 1, hostname: "web-01" }),
-          // Critical needs the compound disk rule: high enough AND with
-          // little enough left. 97% of a 100 GB root is 3 GB free.
-          makeRow({
-            id: 2,
-            hostname: "db-01",
-            fullest: { mount: "/", pct: 97, free: 3e9 },
-          }),
+          makeRow({ id: 2, hostname: "db-01" }),
         ]}
+        conditionRows={[fullDisk(2, "db-01")]}
+        catalogue={CATALOGUE}
         checkedAt={null}
         now={NOW}
       />,

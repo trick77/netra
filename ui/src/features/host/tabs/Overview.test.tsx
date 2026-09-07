@@ -10,7 +10,28 @@ import type {
 import { ABSENT } from "../../../lib/format";
 import { Overview, needsAttention } from "./Overview";
 import { filesystemRows } from "./overviewTiles";
-import { DISK_WARN_PCT, DISK_CRIT_PCT } from "../../fleet/conditions";
+import { catalogueOf } from "../../fleet/conditions";
+import type { ConditionKindInfo, ConditionRow } from "../../../lib/api";
+
+// The catalogue as internal/hub/conditions/catalogue.go serves it.
+const KINDS: ConditionKindInfo[] = [
+  { kind: "silent", label: "Stopped reporting", severity: "critical" },
+  { kind: "sporadic", label: "Reporting sporadically", severity: "warning" },
+  { kind: "failed-units", label: "Failed units", severity: "warning" },
+  {
+    kind: "disk",
+    label: "Filesystem nearly full",
+    severity: "warning",
+    thresholds: {
+      warn_pct: 90,
+      crit_pct: 95,
+      warn_free: 100 * 1024 ** 3,
+      crit_free: 20 * 1024 ** 3,
+    },
+  },
+  { kind: "drive", label: "Drive errors", severity: "critical" },
+];
+const CATALOGUE = catalogueOf(KINDS);
 import { STALE_THRESHOLD_MS } from "../../../lib/host";
 
 const host: HostDetail = {
@@ -331,6 +352,22 @@ describe("Overview System summary", () => {
 });
 
 describe("Overview", () => {
+  // "Nothing is wrong" and "netra could not be asked what is wrong" render
+  // identically as an absent panel, and only one of them is a fact about this
+  // host. Without this the failure is invisible: an offline host with a full
+  // disk and a failing drive shows a page with no attention panel at all.
+  it("says so when the conditions could not be fetched", () => {
+    renderOverview({ conditionsUnavailable: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /could not be asked what is wrong/i,
+    );
+  });
+
+  it("says nothing of the sort when they were fetched and there is nothing wrong", () => {
+    renderOverview();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("shows disk as absolute bytes per filesystem, never as a ratio", () => {
     renderOverview();
     const disk = screen.getByRole("region", { name: /disk/i });
@@ -784,113 +821,119 @@ describe("Overview system card", () => {
   });
 });
 
-// The two facts this page and the fleet band have to agree on. Both used to
-// be written twice -- the severity as a different word, the thresholds as
-// bare numbers -- and both are now single-sourced. These tests pin the
-// agreement rather than the constants: they import the same values the fleet
-// band imports, so a threshold that moves has to move on both pages or one
-// of these fails.
-describe("needsAttention agrees with the fleet band", () => {
+// The band renders the HUB's verdicts now. The thresholds it used to apply
+// here -- written out in TypeScript, beside a second copy in the fleet module
+// and a third in Go -- are the hub's, and they are pinned where they live:
+// internal/hub/conditions/rules_test.go for the numbers,
+// TestIntegrationHubVerdictEqualsTheBrowsersOnTheSharedFixture for the
+// agreement this page and the fleet page used to state in comments to each
+// other. What is left here is the sentence and the onset beside it.
+describe("the attention band", () => {
   const quiet = {
     agentMetrics: null,
     hostMetrics: null,
-    filesystems: [],
     units: null,
-    drives: null,
+    catalogue: CATALOGUE,
   };
-
-  it("calls a host that has never reported critical, the fleet's word for it", () => {
-    // Given a host the hub has never heard from
-    const testee = needsAttention({
-      ...quiet,
-      host: { ...host, last_seen: null },
-    });
-
-    // Then it is critical -- hostConditions() rates the same fact critical
-    expect(testee).toEqual([{ severity: "critical", what: "never reported" }]);
+  const row = (over: Partial<ConditionRow> = {}): ConditionRow => ({
+    id: 1,
+    host_id: host.id,
+    hostname: host.hostname,
+    kind: "disk",
+    subject: "pool",
+    severity: "critical",
+    opened_ts: "2026-08-10T00:00:00Z",
+    opened_at_least: false,
+    detail: { pct: 96, mount: "/srv/pool", free: 4 * 1024 ** 3 },
+    measured_ts: "2026-08-10T01:00:00Z",
+    stale: false,
+    ...over,
   });
 
-  it("calls a host that stopped reporting critical too", () => {
-    // Given a host last seen well beyond the stale cutoff
-    const testee = needsAttention({
-      ...quiet,
-      host: { ...host, last_seen: "2026-08-10T00:00:00Z" },
-      now: new Date("2026-08-10T01:00:00Z"),
-    });
-
-    // Then the one condition is critical
-    expect(testee).toHaveLength(1);
-    expect(testee[0].severity).toBe("critical");
-    expect(testee[0].what).toMatch(/last reported/);
-  });
-
-  // The gap that survived the first pass at this: both pages said "critical"
-  // but disagreed about WHEN, this one at five minutes and hostStatus() at
-  // three. A host four minutes silent had its own header call it offline and
-  // this panel call it fine. Judged against the shared constant, so a change
-  // to the alerting rule cannot move one page without the other.
-  it("goes stale on the same threshold the header and the fleet use", () => {
-    const lastSeen = new Date("2026-08-10T01:00:00Z");
-    const justBefore = new Date(lastSeen.getTime() + STALE_THRESHOLD_MS);
-    const justAfter = new Date(lastSeen.getTime() + STALE_THRESHOLD_MS + 1000);
-    const at = (now: Date) =>
-      needsAttention({
-        ...quiet,
-        host: { ...host, last_seen: lastSeen.toISOString() },
-        now,
-      });
-
-    // Given a host exactly at the threshold, nothing is wrong yet
-    expect(at(justBefore)).toEqual([]);
-    // and one second past it, the panel agrees with the header
-    expect(at(justAfter)).toHaveLength(1);
-    expect(at(justAfter)[0].severity).toBe("critical");
-  });
-
-  it("warns and criticals on the same disk thresholds the fleet uses", () => {
-    // Given four filesystems straddling both shared thresholds. used/free are
-    // the only inputs -- Use% is used/(used+free), never total.
-    const fs = (label: string, pct: number) => ({
-      label,
-      total: 100,
-      used: pct,
-      free: 100 - pct,
-    });
+  // The evaluator declines to judge silence for fourteen minutes after a hub
+  // restart (conditions.WarmUp), which is right for the LOG -- a false outage
+  // there is permanent -- and wrong for a page, which states what is true now
+  // and forgets it.
+  //
+  // Reading the tense off the `silent` condition would print "is 96% full" on
+  // a machine that has been off since Tuesday, for fourteen minutes after
+  // every hub restart, while the fleet row's own pill said offline beside it.
+  // That is #92's disagreement rebuilt on a timer.
+  it("dates the host from last_seen, not from a condition the hub may be withholding", () => {
+    const conditions = [
+      row({ id: 9, kind: "disk", detail: { pct: 96, mount: "/srv/pool" } }),
+    ];
     const testee = needsAttention({
       ...quiet,
       host,
-      now: new Date(host.last_seen as string),
-      filesystems: [
-        fs("just-under", DISK_WARN_PCT - 1),
-        fs("at-warn", DISK_WARN_PCT),
-        fs("under-crit", DISK_CRIT_PCT - 1),
-        fs("at-crit", DISK_CRIT_PCT),
-      ],
+      // No `silent` row at all -- the hub is inside its warm-up.
+      conditions,
+      now: new Date("2026-08-13T01:00:00Z"),
     });
 
-    // Then the boundaries fall exactly where fleet/conditions.ts puts them:
-    // below warn is silent, at warn is a warning, at crit is critical.
-    expect(testee.map((a) => a.severity)).toEqual([
-      "warning",
-      "warning",
-      "critical",
+    // The page says so anyway, off the timestamp it already has.
+    expect(testee[0]!.severity).toBe("critical");
+    expect(String(testee[0]!.what)).toMatch(/last reported/);
+    // And the tense follows it, so the two lines agree with each other.
+    const disk = testee.find((a) => /srv\/pool/.test(String(a.what)))!;
+    expect(String(disk.what)).toMatch(/was 96% full/);
+  });
+
+  // The hub refuses to raise this: a critical condition in the gap between
+  // creating a host and installing its agent is false history in the log an
+  // alerting engine reads. The page states what is true now and forgets it.
+  it("says a never-reported host is critical, though the hub raised nothing", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host: { ...host, last_seen: null },
+      conditions: [],
+    });
+    expect(testee).toEqual([
+      { severity: "critical", what: "never reported", since: null },
     ]);
+  });
+
+  // The column that used to be empty on every line here, because nothing in
+  // the browser could know: a derivation reading the current row has no memory
+  // of when it first became true.
+  it("prints how long a condition has been true", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      conditions: [row()],
+      now: new Date("2026-08-10T06:00:00Z"),
+    });
+    // The host is five hours past its last_seen at this instant, so the band
+    // leads with that; the onset being asserted is the disk's own.
+    const disk = testee.find((a) => /srv\/pool/.test(String(a.what)))!;
+    expect(disk.since).toBe("2026-08-10T00:00:00Z");
+    expect(disk.sinceAtLeast).toBe(false);
+  });
+
+  it("marks an onset the hub could only bound as a floor", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      conditions: [row({ opened_at_least: true })],
+      now: new Date("2026-08-10T06:00:00Z"),
+    });
+    const disk = testee.find((a) => /srv\/pool/.test(String(a.what)))!;
+    expect(disk.sinceAtLeast).toBe(true);
   });
 
   // The tense, and only the tense. A host that is off keeps its disk figure
   // and keeps its severity -- a 96 % disk on a machine that is switched off is
   // still a 96 % disk, and it is worth clearing before the machine comes back.
   // What changes is that the sentence stops claiming to describe this minute.
-  // fleet/conditions.ts states the same rule for the row one page up.
   it("says a disk WAS full once the host has stopped reporting", () => {
-    const fs = { label: "/srv/pool", total: 100, used: 96, free: 4 };
-
     const offline = needsAttention({
       ...quiet,
       host,
-      // Long past STALE_THRESHOLD_MS.
-      now: new Date(Date.parse(host.last_seen as string) + 3 * 86_400_000),
-      filesystems: [fs],
+      conditions: [
+        row({ id: 2, kind: "silent", subject: "", detail: {} }),
+        row(),
+      ],
+      now: new Date("2026-08-13T01:00:00Z"),
     });
     const disk = offline.find((a) => /\/srv\/pool/.test(String(a.what)));
     expect(String(disk?.what)).toMatch(/\/srv\/pool was 96% full/);
@@ -899,86 +942,169 @@ describe("needsAttention agrees with the fleet band", () => {
     const live = needsAttention({
       ...quiet,
       host,
-      now: new Date(host.last_seen as string),
-      filesystems: [fs],
+      conditions: [row()],
+      now: new Date("2026-08-10T01:00:00Z"),
     });
     expect(String(live[0]?.what)).toMatch(/\/srv\/pool is 96% full/);
   });
 
-  // The same four cases the fleet's conditions.test.ts pins, so the two pages
-  // can be seen agreeing about bytes and not only about percentages.
-  it("weighs the bytes left, not the percentage alone", () => {
-    const GB = 1024 ** 3;
-    const at = (used: number, free: number) =>
-      needsAttention({
-        ...quiet,
-        host,
-        now: new Date(host.last_seen as string),
-        filesystems: [{ label: "/mnt/ark", total: used + free, used, free }],
-      });
+  // One line per MOUNT, not the fullest one: the fleet page collapses because
+  // there the unit of interest is the machine, and here it is the thing to go
+  // and fix.
+  it("lists every bad mount rather than the worst one", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      conditions: [
+        row({ subject: "pool", detail: { pct: 96, mount: "/srv/pool" } }),
+        row({
+          id: 2,
+          subject: "var",
+          severity: "warning",
+          detail: { pct: 91, mount: "/var" },
+        }),
+      ],
+      now: new Date("2026-08-10T01:00:00Z"),
+    });
+    expect(testee.map((a) => String(a.what))).toEqual([
+      "/srv/pool is 96% full",
+      "/var is 91% full",
+    ]);
+  });
 
-    // Given 6.7 TB at 90%, 674 GB is left and there is nothing to do
-    expect(at(6100 * GB, 674 * GB)).toEqual([]);
-    // and the same percentage on a small root, where 2 GB is left, warns
-    expect(at(18 * GB, 2 * GB)[0]?.severity).toBe("warning");
-    // 96% of a big array with 67 GB left is worth a word, not an emergency,
-    // and with 500 GB left neither floor binds and there is nothing to say
-    expect(at(1600 * GB, 67 * GB)[0]?.severity).toBe("warning");
-    expect(at(12000 * GB, 500 * GB)).toEqual([]);
-    // and 96% with under 20 GiB left is the real thing
-    expect(at(19 * GB, 0.8 * GB)[0]?.severity).toBe("critical");
+  // Said rather than hidden. The page used to drop a mount whose reading had
+  // stopped moving, which silently retired the condition on it -- and the hub
+  // will not make that call at all, because a hung NFS export and an unmounted
+  // volume are indistinguishable from where it stands.
+  it("keeps a subject the hub can no longer measure, and says so", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      conditions: [row({ stale: true, measured_ts: "2026-08-09T21:00:00Z" })],
+      now: new Date("2026-08-10T01:00:00Z"),
+    });
+    expect(String(testee[0]!.what)).toMatch(/not measured since 4 h ago/);
+  });
+
+  // The units stay derived here, and that is not an oversight: the hub keeps
+  // ONE failed-units condition per host because the fleet list counts hosts,
+  // while this panel lists the units -- and the flapping ones, which are a
+  // rate off the event log and not a condition at all.
+  it("lists the failed units itself, dated from systemd's own timestamp", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      conditions: [],
+      units: [
+        {
+          id: 1,
+          unit_name: "nginx.service",
+          state: "failed",
+          substate: "failed",
+          since: "2026-08-09T22:00:00Z",
+          restarts_1h: 0,
+        },
+      ],
+      now: new Date("2026-08-10T01:00:00Z"),
+    });
+    expect(testee).toEqual([
+      {
+        severity: "warning",
+        what: "nginx.service failed",
+        since: "2026-08-09T22:00:00Z",
+      },
+    ]);
+  });
+
+  // A kind the hub raised that this file has no sentence for still appears.
+  // Dropping it would be a host page reading clean because the browser did not
+  // recognise what was wrong with it.
+  it("shows a kind it has no sentence for, named by the catalogue", () => {
+    const catalogue = catalogueOf([
+      ...KINDS,
+      { kind: "thermal", label: "Running hot", severity: "warning" },
+    ]);
+    const testee = needsAttention({
+      ...quiet,
+      catalogue,
+      host,
+      conditions: [
+        row({ kind: "thermal", subject: "", severity: "warning", detail: {} }),
+      ],
+      now: new Date("2026-08-10T01:00:00Z"),
+    });
+    expect(String(testee[0]!.what)).toBe("running hot");
   });
 });
 
 // The panel this tab is judged on used to read clean on a host whose Drives
 // table, one tab away, was showing a critical disk in red.
-describe("needsAttention reads the host's drives", () => {
-  const quietDrives = {
+describe("the attention band and the host's drives", () => {
+  const quiet = {
     agentMetrics: null,
     hostMetrics: null,
-    filesystems: [],
     units: null,
+    catalogue: CATALOGUE,
   };
-  const disk = (device: string, attrs: Record<number, number>): Drive => ({
-    device,
-    model: "ST16000NM000J",
-    serial: "ZR5A1M0K",
-    last_seen: "2026-08-10T13:00:00Z",
-    attributes: Object.entries(attrs).map(([id, raw]) => ({
-      id: Number(id),
-      raw,
-      normalized: null,
-    })),
+  const drive = (
+    device: string,
+    text: string,
+    over: Partial<ConditionRow> = {},
+  ): ConditionRow => ({
+    id: device.charCodeAt(2),
+    host_id: host.id,
+    hostname: host.hostname,
+    kind: "drive",
+    subject: device,
+    severity: "critical",
+    opened_ts: "2026-08-10T00:00:00Z",
+    opened_at_least: false,
+    detail: { device, text, alarms: 1, urgency: 0 },
+    measured_ts: "2026-08-10T01:00:00Z",
+    stale: false,
+    ...over,
   });
 
+  // One line per device: this panel is what to DO, and two disks are two
+  // replacements. The fleet page is the one that collapses them, because
+  // there the unit of interest is the machine.
   it("names each failing drive, one line per thing to replace", () => {
-    // Given two disks in trouble
     const testee = needsAttention({
-      ...quietDrives,
+      ...quiet,
       host,
-      now: new Date(host.last_seen as string),
-      drives: [disk("sda", { 197: 3 }), disk("sdb", { 5: 12 })],
+      conditions: [
+        drive("sda", "3 pending sectors"),
+        drive("sdb", "12 reallocated sectors"),
+      ],
+      now: new Date("2026-08-10T01:00:00Z"),
     });
-
-    // Then both are on the list, worst first, each naming its own device --
-    // this panel is what to DO, and two disks are two replacements
     expect(testee).toEqual([
-      { severity: "critical", what: "sda — 3 pending sectors" },
-      { severity: "critical", what: "sdb — 12 reallocated sectors" },
+      {
+        severity: "critical",
+        what: "sda — 3 pending sectors",
+        since: null,
+        sinceAtLeast: false,
+      },
+      {
+        severity: "critical",
+        what: "sdb — 12 reallocated sectors",
+        since: null,
+        sinceAtLeast: false,
+      },
     ]);
   });
 
-  it("stays silent when the drives could not be fetched", () => {
-    // null is "netra did not look", which must not read as "the disks are
-    // fine" -- the same line units: null draws
-    expect(
-      needsAttention({
-        ...quietDrives,
-        host,
-        now: new Date(host.last_seen as string),
-        drives: null,
-      }),
-    ).toEqual([]);
+  // SMART attributes are counters with no zero baseline, sampled hourly: the
+  // first non-zero reading netra holds is when netra started LOOKING, not when
+  // the sector went bad.
+  it("dates no drive, however old the condition is", () => {
+    const testee = needsAttention({
+      ...quiet,
+      host,
+      conditions: [drive("sda", "3 pending sectors")],
+      now: new Date("2026-08-10T01:00:00Z"),
+    });
+    expect(testee[0]!.since).toBeNull();
   });
 });
 

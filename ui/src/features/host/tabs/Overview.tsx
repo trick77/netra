@@ -19,12 +19,11 @@
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import type {
-  Drive,
+  ConditionRow,
   HostDetail,
   MetricsResponse,
   Unit,
 } from "../../../lib/api";
-import { driveAlarms } from "../smart";
 import {
   ABSENT,
   binaryBytes,
@@ -33,22 +32,22 @@ import {
   percent,
   relative,
 } from "../../../lib/format";
-import {
-  FLAP_THRESHOLD,
-  isReporting,
-  osLabel,
-  STALE_THRESHOLD_MS,
-} from "../../../lib/host";
+import { FLAP_THRESHOLD, isReporting, osLabel } from "../../../lib/host";
 import { Badge, type Severity } from "../../../ui/Badge";
 import { Panel } from "./Panel";
 import { Meter } from "../../../ui/Meter";
 import { StatTile } from "../../../ui/StatTile";
 import type { Range } from "../../../lib/range";
-// The fleet band's thresholds, imported rather than written out again. The
-// comment on them in fleet/conditions.ts spells out why: this page and that
-// one must agree on when a filesystem is worth mentioning, or a host warns
-// in one place and reads clean in the other.
-import { diskState } from "../../fleet/conditions";
+// The kind vocabulary and the disk thresholds it carries, both the hub's.
+// This page and the fleet page must agree on when a filesystem is worth
+// mentioning, or a host warns in one place and reads clean in the other (#92)
+// -- and the way they agree now is that neither of them decides.
+import {
+  diskThresholds,
+  EMPTY_CATALOGUE,
+  kindLabel,
+  type Catalogue,
+} from "../../fleet/conditions";
 // The tiles' own module: what each one reads, what it says when the column is
 // absent, and when it earns a status hue. Also the home of latest(),
 // current() and filesystemRows(), which moved there with it -- both files
@@ -81,6 +80,43 @@ import { specForSlug, type PanelSpec } from "../chartSpecs";
 export interface Attention {
   severity: Severity;
   what: ReactNode;
+  /**
+   * When this started -- host_conditions.opened_ts, walked once when the hub
+   * opened the condition.
+   *
+   * This band said WHAT was wrong and never for how long, because nothing in
+   * the browser could know: a derivation reading the current row has no memory
+   * of when it first became true. The rows the hub decides carry it now.
+   *
+   * Null for the rows this page still derives itself -- a failed unit and a
+   * flapping one -- and for a kind whose onset is genuinely unknowable.
+   */
+  since?: string | null;
+  /**
+   * `since` is a floor rather than a moment: the hub's walk back through the
+   * series hit the end of what is retained, so the row says "over 7 d" instead
+   * of naming a bucket where nothing happened.
+   */
+  sinceAtLeast?: boolean;
+}
+
+/**
+ * "· since 6 h ago", or "· over 7 d" when the onset is only a floor.
+ *
+ * Appended to the sentence rather than given a column of its own: the band is
+ * prose, one line per problem, and how long it has been true reads as part of
+ * the sentence rather than as a second field to line up.
+ */
+function sinceClause(row: Attention, now: Date): string {
+  if (row.since === null || row.since === undefined) return "";
+  const age = relative(row.since, now);
+  if (age === ABSENT) return "";
+  if (row.sinceAtLeast === true) {
+    // "over 7 d", not "over 7 d ago": the floor is a span, and the walk could
+    // not see past it. relative() writes an age, so the suffix comes off.
+    return ` · over ${age.replace(/ ago$/, "")}`;
+  }
+  return ` · since ${age}`;
 }
 
 // When a host counts as stale rather than merely late. Imported, never
@@ -128,17 +164,28 @@ const SEVERITY_CLASS: Record<Severity, string> = {
 export function needsAttention(input: {
   host: HostDetail;
   hostMetrics?: MetricsResponse | null;
-  filesystems: FilesystemRow[];
-  units: Unit[] | null;
   /**
-   * The host's drives, or null when they could not be fetched.
+   * What the HUB says is wrong with this host, straight off
+   * /api/v1/conditions -- this host's rows only.
    *
-   * null stays silent rather than reading as "nothing wrong with the disks" --
-   * the same line `units: null` draws. A panel that says nothing needs
-   * attention because it never looked is exactly the failure this input was
-   * added to end.
+   * Everything on this list except the units used to be worked out here, from
+   * whatever the page had fetched, against thresholds written out in
+   * TypeScript. That is what made the fleet page and this page disagree about
+   * one host (#92), reconciled by hand and by comment, and it is why not one
+   * row could say how long it had been true.
+   *
+   * The hub keeps a condition per MOUNT and per DEVICE, which is this band's
+   * own granularity rather than the fleet's: two disks with pending sectors
+   * are two things to replace, and this panel is a list of what to do.
+   *
+   * An empty list is not "nothing is wrong" on its own, and this type cannot
+   * tell the two apart -- `conditionsUnavailable` beside it is what does, for
+   * the reason `units: null` used to draw a line.
    */
-  drives: Drive[] | null;
+  conditions: readonly ConditionRow[];
+  /** The kind vocabulary, for naming a kind this file has no sentence for. */
+  catalogue: Catalogue;
+  units: Unit[] | null;
   now?: Date;
 }): Attention[] {
   const out: Attention[] = [];
@@ -154,66 +201,171 @@ export function needsAttention(input: {
   // event at critical, since the ring only overflows while the hub is away;
   // and an OOM kill is already a critical kmsg event that names the process
   // it killed, which is more than this row ever said.
-  // `critical`, and that is the fleet page's word for this exact fact:
-  // hostConditions() in fleet/conditions.ts has always rated a host that
-  // stopped reporting `critical`. The two pages used to print different
-  // severities for one condition -- the kind of disagreement the shared disk
-  // thresholds below exist to prevent, in the one place a constant could not
-  // fix it.
-  if (input.host.last_seen === null) {
-    out.push({ severity: "critical", what: "never reported" });
-  } else {
-    const age = now.getTime() - new Date(input.host.last_seen).getTime();
-    if (age > STALE_THRESHOLD_MS) {
-      out.push({
-        severity: "critical",
-        what: `last reported ${relative(input.host.last_seen, now)}`,
-      });
-    }
-  }
 
-  const reporting = isReporting(input.host, now);
-  for (const fs of input.filesystems) {
-    // df's Use% and the bytes behind it, judged by the same rule the fleet
-    // page uses -- see diskState in fleet/conditions.ts. total is not the
-    // denominator -- see filesystemRows above. Used only to decide whether to
-    // warn; the card itself still shows bytes.
-    const disk = diskState(fs.used, fs.free);
-    if (disk === null || disk.severity === null) continue;
-    out.push({
-      severity: disk.severity,
-      // "was", not "is", once the host has stopped reporting. The severity is
-      // unchanged and deliberately so -- a 96 % disk on a machine that is off
-      // is still a 96 % disk, and it is worth fixing before the machine comes
-      // back. Only the tense moves, because the figure is now the last one
-      // anybody measured rather than a statement about this minute.
-      what: `${fs.label} ${reporting ? "is" : "was"} ${percent(disk.pct)} full — ${bytes(fs.free)} free`,
-    });
-  }
-
-  // Drives, by the same rule the Storage tab's own table uses -- driveAlarms
-  // in features/host/smart.ts, which promotes only the states a drive does not
-  // come back from on its own. This panel used to read clean on a host whose
-  // Drives table was showing a critical, failing disk one tab away.
+  // A host that has NEVER reported, said by the page and by nothing else.
   //
-  // One line per alarm rather than one per host: two disks with pending
-  // sectors are two things to replace, and this panel is a list of what to do
-  // -- the fleet page is the one that collapses them, because there the unit
-  // of interest is the machine.
-  for (const alarm of driveAlarms(input.drives ?? [], input.host.last_seen)) {
+  // The hub refuses to raise this and is right to: admin.CreateHost inserts
+  // the row and hands over a token, and the operator installs the agent
+  // minutes or hours later. A critical condition in that gap -- with an event
+  // in the log an alerting engine reads -- says a machine has stopped talking
+  // when it has not started yet. A page states what is true now and forgets
+  // it, which is exactly what this fact wants.
+  if (input.host.last_seen === null) {
+    out.push({ severity: "critical", what: "never reported", since: null });
+  }
+
+  const byKind = new Map<string, ConditionRow[]>();
+  for (const row of input.conditions) {
+    const existing = byKind.get(row.kind);
+    if (existing) existing.push(row);
+    else byKind.set(row.kind, [row]);
+  }
+  const rowsOf = (kind: string): ConditionRow[] => byKind.get(kind) ?? [];
+  const severityOf = (row: ConditionRow): Severity =>
+    row.severity === "critical" ? "critical" : "warning";
+  const detailOf = (row: ConditionRow): Record<string, unknown> => {
+    if (typeof row.detail !== "object" || row.detail === null) return {};
+    if (Array.isArray(row.detail)) return {};
+    return row.detail as Record<string, unknown>;
+  };
+  const numberOf = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+  const textOf = (v: unknown): string | null =>
+    typeof v === "string" && v !== "" ? v : null;
+  // "— not measured since 4 h ago". Said rather than hidden: the page used to
+  // drop a mount whose reading had stopped moving, which silently retired the
+  // condition on it. The hub will not make that call at all, because a hung
+  // NFS export and an unmounted volume are indistinguishable from where it
+  // stands, so the reader is told the number beside it is old.
+  const staleNote = (row: ConditionRow): string =>
+    row.stale ? ` — not measured since ${relative(row.measured_ts, now)}` : "";
+  const carry = (row: ConditionRow) => ({
+    severity: severityOf(row),
+    since: row.opened_ts,
+    sinceAtLeast: row.opened_at_least,
+  });
+
+  // Whether the host is talking, from last_seen and NOT from the hub's
+  // `silent` condition.
+  //
+  // The condition would be the tidier source and it is the wrong one: the
+  // evaluator deliberately declines to judge silence for the first fourteen
+  // minutes after a hub restart (conditions.WarmUp), so for that window a
+  // genuinely dead host carries no `silent` row. Reading the tense off it
+  // would print "/var IS 96% full" on a machine that has been off since
+  // Tuesday, while the fleet row's own pill -- still computed from last_seen
+  // -- said offline beside it. That is #92's disagreement rebuilt on a timer.
+  //
+  // The hub's refusal is right for the LOG, where a false outage is permanent.
+  // A page states what is true now and forgets it, so it can just look.
+  const reporting = isReporting(input.host, now);
+
+  // Reporting first, because it qualifies everything below it.
+  if (!reporting && input.host.last_seen !== null) {
     out.push({
-      severity: alarm.severity,
-      what: `${alarm.device} — ${alarm.text}`,
+      severity: "critical",
+      what: `last reported ${relative(input.host.last_seen, now)}`,
+      // The onset IS last_seen, which the sentence already names. Printing it
+      // twice in one line would read as two different facts.
+      since: null,
+    });
+  }
+  const sporadic = rowsOf("sporadic")[0];
+  if (sporadic !== undefined) {
+    out.push({
+      ...carry(sporadic),
+      what: "reporting sporadically — gaps in the last few hours",
+      // A rate has no onset: the gaps ARE the condition, and naming the first
+      // of them would date it to a scrape the host happened to miss.
+      since: null,
     });
   }
 
+  // One line per MOUNT, not the fullest one. The fleet page collapses because
+  // there the unit of interest is the machine; here it is the thing to go and
+  // fix.
+  for (const row of rowsOf("disk")) {
+    const detail = detailOf(row);
+    const mount = textOf(detail.mount) ?? row.subject;
+    const pct = numberOf(detail.pct) ?? 0;
+    const free = numberOf(detail.free);
+    // "was", not "is", once the host has stopped reporting. The severity is
+    // unchanged and deliberately so -- a 96 % disk on a machine that is off is
+    // still a 96 % disk, and it is worth fixing before the machine comes back.
+    // Only the tense moves, because the figure is now the last one anybody
+    // measured rather than a statement about this minute.
+    out.push({
+      ...carry(row),
+      what: `${mount} ${reporting ? "is" : "was"} ${percent(pct)} full${
+        free === null ? "" : ` — ${bytes(free)} free`
+      }${staleNote(row)}`,
+    });
+  }
+
+  // Drives, by the rule the Storage tab's own table uses -- the hub's copy of
+  // it now. This panel used to read clean on a host whose Drives table was
+  // showing a critical, failing disk one tab away.
+  //
+  // One line per device rather than one per host: two disks with pending
+  // sectors are two things to replace.
+  for (const row of rowsOf("drive")) {
+    const detail = detailOf(row);
+    const device = textOf(detail.device) ?? row.subject;
+    const text = textOf(detail.text) ?? "";
+    out.push({
+      ...carry(row),
+      what: `${device} — ${text}${staleNote(row)}`,
+      // Deliberately none. SMART attributes are counters with no zero
+      // baseline, sampled hourly: the first non-zero reading netra holds is
+      // when netra started LOOKING, not when the sector went bad.
+      since: null,
+    });
+  }
+
+  // The units stay derived HERE, and that is not an oversight. The hub keeps
+  // ONE failed-units condition per host, because the fleet list counts hosts;
+  // this panel lists the units themselves, and it also lists the ones
+  // RESTARTING repeatedly, which is a rate off the event log and not a
+  // condition at all. Neither is a threshold anybody could disagree with the
+  // hub about, so neither is the duplication this change deleted.
   for (const unit of input.units ?? []) {
     if (unit.state === "failed") {
-      out.push({ severity: "warning", what: `${unit.unit_name} failed` });
+      out.push({
+        severity: "warning",
+        what: `${unit.unit_name} failed`,
+        // systemd's own timestamp for entering this state, which is the same
+        // source the hub dates its failed-units condition from.
+        since: unit.since,
+      });
     } else if (flapping(unit)) {
       out.push({
         severity: "warning",
         what: `${unit.unit_name} restarted ${unit.restarts_1h} times in the last hour`,
+        // A rate over the last hour, which is a window rather than an onset.
+        since: null,
+      });
+    }
+  }
+
+  // Anything the hub raised that this file has no sentence for still appears,
+  // named by the catalogue. Dropping it would be a host page reading clean
+  // because the browser did not recognise what was wrong with it -- the exact
+  // failure the whole engine exists to end, reintroduced by an incomplete
+  // switch statement.
+  const written = new Set([
+    "silent",
+    "sporadic",
+    "disk",
+    "drive",
+    "failed-units",
+  ]);
+  for (const [kind, rows] of byKind) {
+    if (written.has(kind)) continue;
+    for (const row of rows) {
+      const name = kindLabel(input.catalogue, kind).toLowerCase();
+      out.push({
+        ...carry(row),
+        what: row.subject === "" ? name : `${row.subject} — ${name}`,
       });
     }
   }
@@ -374,10 +526,15 @@ export interface OverviewProps {
   /** family=net for this host, one series per interface. */
   netMetrics?: MetricsResponse | null;
   units: Unit[] | null;
-  /** The host's drives, read only by the attention panel -- no tile on this
-   * tab draws them. null when the listing could not be fetched; see
-   * needsAttention for why that is not the same as "no drives". */
-  drives?: Drive[] | null;
+  /** This host's open conditions, as the hub decided them. Read by the
+   * attention panel; the disk tile takes its thresholds off the catalogue
+   * beside it. */
+  conditions?: readonly ConditionRow[];
+  catalogue?: Catalogue;
+  /** The conditions call failed. An empty list then means "netra could not
+   * look", never "nothing is wrong", and the panel says so rather than
+   * vanishing -- which is what an empty list makes it do. */
+  conditionsUnavailable?: boolean;
   /** The range this page is showing. Seeds the picker in every chart
    * enlarged out of this tab. */
   range?: Range;
@@ -448,7 +605,9 @@ export function Overview({
   netMetrics,
   filesystemMetrics,
   units,
-  drives = null,
+  conditions = [],
+  catalogue = EMPTY_CATALOGUE,
+  conditionsUnavailable = false,
   range,
   fetchFamily,
   onOpenChart,
@@ -462,9 +621,9 @@ export function Overview({
   const attention = needsAttention({
     host,
     hostMetrics,
-    filesystems,
+    conditions,
+    catalogue,
     units,
-    drives,
     now,
   });
 
@@ -473,6 +632,9 @@ export function Overview({
     hostMetrics,
     filesystemMetrics,
     netMetrics,
+    // The hub's disk thresholds, for the Disk tile's own colour: the tile has
+    // to judge a mount that is perfectly healthy, which no condition covers.
+    thresholds: diskThresholds(catalogue),
     now,
   });
 
@@ -524,6 +686,16 @@ export function Overview({
           run and found nothing, which is the one thing a reader can already
           see, in the position the real answer occupies on every other host.
           AttentionCounts does the same on the fleet page. */}
+      {/* The one case where saying nothing is the lie. "Nothing is wrong" and
+          "netra could not be asked what is wrong" render identically as an
+          absent panel, and only one of them is a fact about this host. */}
+      {conditionsUnavailable && (
+        <p className="note" role="alert">
+          netra could not be asked what is wrong with this host — nothing below
+          is judged, so an empty panel means it could not look rather than that
+          it looked and found nothing.
+        </p>
+      )}
       {attention.length > 0 && (
         <section className="attn" aria-label="Needs attention">
           {/* The severity is a heading over the rows at that severity, said
@@ -555,7 +727,21 @@ export function Overview({
                         className={`dot ${SEVERITY_CLASS[severity]}`}
                         aria-hidden="true"
                       />
-                      <span className="what">{a.what}</span>
+                      <span className="what">
+                        {a.what}
+                        {/* How long it has been true, from the hub's own
+                            onset. Nothing in the browser could say this
+                            before: a derivation reading the current row has
+                            no memory of when it first became true, so every
+                            line here stated a fact with no age against it.
+                            Muted, because the sentence is what to act on and
+                            the age is context for it. */}
+                        {sinceClause(a, now ?? new Date()) === "" ? null : (
+                          <span className="muted">
+                            {sinceClause(a, now ?? new Date())}
+                          </span>
+                        )}
+                      </span>
                     </li>
                   ))}
                 </ul>

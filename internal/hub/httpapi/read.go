@@ -57,6 +57,13 @@ func (h *readHandler) register(mux *http.ServeMux) {
 	// host's drives on the same tick and must not ask for them one at a time.
 	mux.Handle("GET /api/v1/drives", http.HandlerFunc(h.fleetDrives))
 	mux.Handle("GET /api/v1/events", http.HandlerFunc(h.events))
+
+	// No query parameters, deliberately. The counts line above the host list
+	// needs every open condition in order to count them, so a server-side
+	// filter would hand back a subset that cannot produce its own counts. The
+	// page fetches them all and filters in the browser, which is cheap because
+	// open conditions are bounded by what is wrong rather than by fleet size.
+	mux.Handle("GET /api/v1/conditions", http.HandlerFunc(h.conditions))
 }
 
 // listing adapts the seven dimension listings, which differ only in their row
@@ -233,6 +240,15 @@ func parseHostIDs(values []string) ([]int32, error) {
 		out = append(out, id)
 	}
 	return out, nil
+}
+
+func (h *readHandler) conditions(w http.ResponseWriter, r *http.Request) {
+	res, err := h.svc.Conditions(r.Context(), h.now())
+	if err != nil {
+		writeReadError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (h *readHandler) events(w http.ResponseWriter, r *http.Request) {

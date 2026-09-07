@@ -106,13 +106,13 @@ export type HostRow = Host & {
   // null when the host has reported no filesystems at all. Non-nullable, the
   // only way to say "never collected" was pct: 0, which renders as an empty,
   // healthy, green disk -- absent read as a fact.
-  // `since` is when this mount last became notable under the compound disk
-  // rule -- high enough AND with little enough left, see diskSeverityFor in
-  // conditions.ts -- and stayed there, walked back through its own series by
-  // crossedAt in hostTrends.ts. `sinceAtLeast` marks the case where it was
-  // already notable at the start of the window, which is a floor rather than
-  // a moment: the row says "over 24 h" instead of naming a bucket where
-  // nothing actually happened.
+  //
+  // `since` and `sinceAtLeast` used to be here, walked back through this
+  // mount's own series on every render. The hub does that walk once, when the
+  // condition opens and while the raw samples still exist, and the answer
+  // reaches the page on the condition row instead -- see Condition.since. A
+  // walk bounded by the range picker answered differently on every range and
+  // changed shape as the data aged through tiers.
   fullest: {
     mount: string;
     pct: number;
@@ -120,15 +120,10 @@ export type HostRow = Host & {
     // whether the mount is worth surfacing: 90% of a 6.7 TB array is 674 GB
     // free. Null is "not known", which falls back to the percentage alone.
     free?: number | null;
-    // Optional, unlike the two fields above: hostTrends always sets both, and
-    // the hand-built row literals across the tests predate them. Same
-    // convention lib/api.ts uses for a field added after its fixtures.
-    since?: string | null;
-    sinceAtLeast?: boolean;
     /** THIS mount's Use% over the window, one value per bucket, gaps kept as
-     * null -- the line the Disk cell draws over its bar. Optional for the
-     * same reason `since` is: a row without it draws the bar alone, exactly
-     * as the cell did before the line existed.
+     * null -- the line the Disk cell draws over its bar. Optional because the
+     * hand-built row literals across the tests predate it: a row without it
+     * draws the bar alone, exactly as the cell did before the line existed.
      *
      * Empty on a host that has been off longer than the window is wide: the
      * reading survives that, because it comes from the stored gauge rather
@@ -293,11 +288,20 @@ function reported(value: string | null | undefined): string | null {
 function hostPill(
   status: HostStatus,
   worst: "warning" | "critical" | null,
+  sporadic: boolean,
 ): { severity: "warning" | "critical"; label: string } | null {
   if (status.severity === "critical") {
     return { severity: "critical", label: status.label };
   }
   if (worst === "critical") return { severity: "critical", label: "critical" };
+  // A host that answers now but keeps dropping scrapes. It is neither online
+  // nor offline, and "online" is exactly as wrong a summary of it as "offline"
+  // -- so the word is its own rather than the generic "warning" below.
+  //
+  // Judged by the HUB now. This used to be counted here off row.reporting,
+  // over whatever range the reader had picked, which made the badge a fact
+  // about the range as much as about the host.
+  if (sporadic) return { severity: "warning", label: "sporadic" };
   if (status.severity === "warning") {
     return { severity: "warning", label: status.label };
   }
@@ -308,6 +312,7 @@ function hostPill(
 function HostCell({
   row,
   worst,
+  sporadic,
   now,
 }: {
   row: HostRow;
@@ -325,6 +330,10 @@ function HostCell({
    * design around: it is the honest reading when nobody has looked.
    */
   worst?: (row: HostRow) => "warning" | "critical" | null;
+  /** Whether the hub raised `sporadic` on this host. Read through the same
+   * conditions `worst` is, so the pill's word and its colour cannot come from
+   * two different answers. */
+  sporadic?: (row: HostRow) => boolean;
 }) {
   // Judged from row.reporting -- cpu_total, from the `host` family -- and
   // never from row.cpu[0], which is a per-core band under 32 threads and the
@@ -342,7 +351,7 @@ function HostCell({
   // pill disagree about whether a host is still reporting. They are the same
   // instant in a browser; they are not in a test, and they are not for a
   // caller that supplies its own.
-  const status = hostStatus(row, now, row.reporting);
+  const status = hostStatus(row, now);
   // The location, and NOT the OS name beside it. The mark says which
   // distribution at a glance; spelling out "Debian GNU/Linux 12 (bookworm)"
   // under every hostname said it a second time in the row's longest string,
@@ -351,7 +360,7 @@ function HostCell({
   const location = hostLocationLines(row);
   // Null on almost every row -- healthy is the majority state. See hostPill
   // for which of a host's several truths it picks, and why only one.
-  const pill = hostPill(status, worst?.(row) ?? null);
+  const pill = hostPill(status, worst?.(row) ?? null, sporadic?.(row) ?? false);
   return (
     // Its own wrapper rather than .host-cell itself: the container list's
     // name cell is built from .host-cell too, and it has no mark to seat, so
@@ -1103,6 +1112,8 @@ export function hostColumns(
    * host is at is the PAGE's to derive -- it owns the conditions -- and this
    * module's only to draw. */
   worst?: (row: HostRow) => "warning" | "critical" | null,
+  /** See HostCell's own `sporadic`. */
+  sporadic?: (row: HostRow) => boolean,
   /** See HostCell's own `now` -- the clock `worst` was derived against. */
   now?: Date,
 ): Column<HostRow>[] {
@@ -1110,7 +1121,9 @@ export function hostColumns(
     {
       key: "host",
       header: "Host",
-      cell: (row) => <HostCell row={row} worst={worst} now={now} />,
+      cell: (row) => (
+        <HostCell row={row} worst={worst} sporadic={sporadic} now={now} />
+      ),
       sortValue: (row) => row.hostname,
     },
     {
