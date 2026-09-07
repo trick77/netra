@@ -19,12 +19,23 @@ import { ABSENT } from "./format";
  * engine must not disagree about which hosts are down.
  */
 const SCRAPE_INTERVAL_S = 60;
-// Exported because the host page's needsAttention() judges the same fact and
-// used to carry its own five-minute constant. A host last seen four minutes
-// ago then had its header say "offline", its traffic gauges blanked, its
-// fleet row marked critical -- and the "Needs attention" panel directly below
-// all of that say nothing needed attention. One definition of down, in the
-// one place that states why it is three scrapes.
+// Exported because the host page's header judges the same fact and used to
+// carry its own five-minute constant. A host last seen four minutes ago then
+// had its header say "offline", its traffic gauges blanked, its fleet row
+// marked critical -- and the "Needs attention" panel directly below all of
+// that say nothing needed attention. One definition of down, in the one place
+// that states why it is three scrapes.
+//
+// There is a SECOND copy, in Go: conditions.StaleAfter, which is what the hub
+// judges a `silent` condition by. It cannot import this one and no compiler in
+// this repo can see across that boundary -- so a change here is only half a
+// change. The comment on the other side says the same.
+//
+// It stays here rather than arriving from the hub because it is not a
+// condition: this is the online/offline chip and, as MOUNT_STALE_MS below, the
+// rule that retires a mount from the Disk cell. Both have to answer for hosts
+// and mounts no condition covers, and both have to answer before any fetch has
+// landed.
 export const STALE_THRESHOLD_MS = 3 * SCRAPE_INTERVAL_S * 1000;
 
 /**
@@ -108,74 +119,21 @@ export type HostStatus = {
   label: string;
 };
 
-/**
- * The share of a window's buckets a host may miss before it is reporting
- * badly rather than merely reporting.
- *
- * A host that answers now but dropped a fifth of the last few hours is not
- * healthy, and "online" is exactly as wrong a summary of it as "offline" --
- * both say the thing is fine or gone, when the interesting state is neither.
- */
-const SPORADIC_MISS_RATIO = 0.2;
-
-/**
- * Whether a series shows a host missing scrapes rather than reporting
- * cleanly.
- *
- * Both edges of the window are trimmed before anything is counted, for the
- * same reason: a null there is not a scrape the host failed to send.
- *
- * Trailing nulls are every tier materialising behind now (the 5m aggregate
- * by ten minutes), so the newest buckets are empty for every host on the
- * page, healthy or not. Counting those would mark the whole fleet sporadic.
- *
- * Leading nulls are the time before the host was reporting at all. The
- * window is always the range the PAGE is on -- the read API never clamps
- * `from` to when a host first appeared -- so a host added five minutes ago
- * gets 24h of grid with one real bucket at the end of it. Counting the
- * emptiness in front of it called every newly added agent sporadic on its
- * first day, and the badge only cleared once four fifths of the range had
- * elapsed since the host was added.
- *
- * The cost is that a host down for the first stretch of the window and
- * reporting cleanly ever since reads as online. That is the right answer for
- * a column whose wording is "gaps in the last few hours": one healed outage
- * at the far edge is not ongoing flakiness, and a host that is down NOW is
- * already critical by last_seen above. Telling "did not exist yet" apart
- * from "was down" needs a first_seen on the host, which the summary the
- * fleet reads does not carry.
- */
-export function reportsSporadically(
-  values: readonly (number | null)[],
-): boolean {
-  let end = values.length;
-  while (end > 0 && values[end - 1] === null) end--;
-  let start = 0;
-  while (start < end && values[start] === null) start++;
-  // Too little history to judge, measured over the span the host was
-  // actually reporting across and not over the whole grid. Two buckets
-  // cannot distinguish a gap from a host that started reporting mid-window.
-  const span = end - start;
-  if (span < 5) return false;
-  let missed = 0;
-  for (let i = start; i < end; i++) if (values[i] === null) missed++;
-  // One gap is never "gaps in the last few hours". At the shortest span this
-  // will judge, a single miss is exactly the 0.2 ratio, so a host added
-  // twenty-five minutes ago that dropped one scrape while its agent settled
-  // would be badged sporadic on the strength of that one bucket. Two is the
-  // smallest number of misses that can be a pattern rather than an event.
-  if (missed < 2) return false;
-  return missed / span >= SPORADIC_MISS_RATIO;
-}
+// reportsSporadically and SPORADIC_MISS_RATIO used to live here: a count of
+// missing buckets over whatever range the reader had picked.
+//
+// The hub decides it now (conditions.SporadicSeverity), over a FIXED window,
+// and that is the point rather than a relocation. A judgement made over the
+// range picker's window is a fact about the reader as much as about the host:
+// change the range and the badge appeared or disappeared. It is the same shape
+// error that took `oom` and `dropped` out of conditions entirely.
+//
+// The chip reads the host's `sporadic` condition instead -- see hostPill in
+// features/fleet/hostColumns.tsx.
 
 export function hostStatus(
   host: Pick<Host, "last_seen">,
   now: Date = new Date(),
-  /** A trend series for this host, if the caller has one. Given it, a host
-   * that answers now but keeps dropping scrapes reports as sporadic rather
-   * than as healthy -- the gaps are already drawn in its sparkline, and this
-   * is the same fact said in a word. */
-  trend?: readonly (number | null)[],
 ): HostStatus {
   if (host.last_seen === null) {
     // Never seen is not the same fact as gone quiet, and the host admin page
@@ -187,9 +145,6 @@ export function hostStatus(
   const ageMs = now.getTime() - new Date(host.last_seen).getTime();
   if (!Number.isFinite(ageMs) || ageMs > STALE_THRESHOLD_MS) {
     return { severity: "critical", label: "offline" };
-  }
-  if (trend !== undefined && reportsSporadically(trend)) {
-    return { severity: "warning", label: "sporadic" };
   }
   return { severity: "ok", label: "online" };
 }

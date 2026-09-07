@@ -2,7 +2,18 @@ import { describe, expect, it } from "vitest";
 import type { HostDetail, MetricsResponse } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
 import { overviewTiles, type Tile } from "./overviewTiles";
-import { DISK_WARN_PCT, diskSeverityFor } from "../../fleet/conditions";
+import { diskSeverityFor } from "../../fleet/conditions";
+
+// The hub's own disk thresholds, as the conditions catalogue serves them. The
+// tile has to pick WHICH mount to name, and it picks by severity before
+// percentage -- so it needs them, and taking them as an argument rather than
+// writing 90 and 95 here is what stopped this file carrying a second copy.
+const THRESHOLDS = {
+  warnPct: 90,
+  critPct: 95,
+  warnFree: 100 * 1024 ** 3,
+  critFree: 20 * 1024 ** 3,
+};
 
 const t0 = Date.parse("2026-08-10T00:59:00Z");
 const t1 = Date.parse("2026-08-10T01:00:00Z");
@@ -75,6 +86,7 @@ function tiles(over: Partial<Parameters<typeof overviewTiles>[0]> = {}) {
     hostMetrics: null,
     filesystemMetrics: null,
     netMetrics: null,
+    thresholds: THRESHOLDS,
     now,
     ...over,
   });
@@ -247,7 +259,7 @@ describe("overviewTiles busiest filesystem", () => {
   // On the percentage, like the Disk meters below it and every other bar in
   // the app: the tile is coloured by the number it prints.
   it("colours on the meter's own threshold, not the attention rule", () => {
-    const used = DISK_WARN_PCT;
+    const used = THRESHOLDS.warnPct;
     const { system } = tiles({
       filesystemMetrics: fsMetrics([["/mnt/ark", used, 100 - used]]),
     });
@@ -279,7 +291,7 @@ describe("overviewTiles busiest filesystem", () => {
     });
 
     expect(find(system, "Busiest filesystem")?.severity).toBe("warning");
-    expect(diskSeverityFor(91, 360 * gib)).toBeNull();
+    expect(diskSeverityFor(91, 360 * gib, THRESHOLDS)).toBeNull();
   });
 
   // Picking by percentage alone asks a different question from the one the

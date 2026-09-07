@@ -172,6 +172,19 @@ type Update struct {
 	ID       int64
 	Key      Key
 	Severity string
+	// PrevSeverity is what the row said before this pass.
+	//
+	// Carried so the store can tell an ESCALATION from a condition merely
+	// staying as it is. A disk that opened at 91% and reached 97% is the same
+	// condition, and it used to change in place with nothing written -- silent
+	// in the log an alerting reader consumes, which is the one place it had to
+	// be audible.
+	//
+	// The miss-counting update below sets this equal to Severity, because a
+	// pass that found nothing to describe has not changed the severity either.
+	// So no event fires there, which is what keeps a flapping predicate out of
+	// the log.
+	PrevSeverity string
 	// Detail refreshes the stored numbers: a disk that opened at 91% and is
 	// now at 97% is the same condition, and the row must not keep printing the
 	// number it opened with.
@@ -252,6 +265,7 @@ func Diff(open []Open, scan Scan, now time.Time) []Action {
 			ID:           existing.ID,
 			Key:          key,
 			Severity:     finding.Severity,
+			PrevSeverity: existing.Severity,
 			Detail:       cloneDetail(finding.Detail),
 			MissingTicks: 0,
 		}})
@@ -312,6 +326,7 @@ func Diff(open []Open, scan Scan, now time.Time) []Action {
 			ID:           o.ID,
 			Key:          key,
 			Severity:     o.Severity,
+			PrevSeverity: o.Severity,
 			MissingTicks: o.MissingTicks + 1,
 		}})
 	}

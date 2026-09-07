@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  currentFilesystems,
-  hostStatus,
-  isReporting,
-  reportsSporadically,
-} from "./host";
+import { currentFilesystems, hostStatus, isReporting } from "./host";
 import type { Filesystem } from "./api";
 
 const now = new Date("2026-08-11T12:00:00Z");
@@ -50,81 +45,15 @@ describe("hostStatus", () => {
   });
 });
 
-describe("reportsSporadically", () => {
-  const nulls = (n: number) => Array<number | null>(n).fill(null);
-
-  it("calls a host that keeps dropping scrapes sporadic", () => {
-    // Six of twenty missing inside the span it was reporting across.
-    const values = Array.from({ length: 20 }, (_, i) =>
-      i % 3 === 0 ? null : 10,
-    );
-
-    expect(reportsSporadically(values)).toBe(true);
-  });
-
-  // Every tier materialises behind now, so the newest buckets are empty for
-  // every host on the page, healthy or not.
-  it("ignores the trailing buckets no tier has written yet", () => {
-    expect(reportsSporadically([...Array(20).fill(10), ...nulls(10)])).toBe(
-      false,
-    );
-  });
-
-  // The reported bug: an agent started five minutes ago against a 24h/5m
-  // grid is 283 empty buckets and one real one, and it was reading as 99%
-  // missed. The emptiness in front of a host is not scrapes it failed to
-  // send.
-  it("does not call a just-added host sporadic for the time before it existed", () => {
-    expect(reportsSporadically([...nulls(283), 12])).toBe(false);
-    expect(reportsSporadically([...nulls(282), 11, 12])).toBe(false);
-  });
-
-  it("judges a host that appeared mid-window on the half it was there for", () => {
-    const clean = [...nulls(144), ...Array(144).fill(10)];
-
-    expect(reportsSporadically(clean)).toBe(false);
-  });
-
-  // The leading trim must not blunt real detection: gaps AFTER the host
-  // started reporting are still gaps.
-  it("still catches a mid-window host that misses scrapes once it is up", () => {
-    const gappy = [
-      ...nulls(144),
-      ...Array.from({ length: 144 }, (_, i) => (i % 4 === 0 ? null : 10)),
-    ];
-
-    expect(reportsSporadically(gappy)).toBe(true);
-  });
-
-  it("counts neither edge when a clean run sits between them", () => {
-    expect(
-      reportsSporadically([...nulls(50), ...Array(30).fill(10), ...nulls(8)]),
-    ).toBe(false);
-  });
-
-  // At the shortest span the rule will judge, a single missing bucket is
-  // exactly the 0.2 ratio -- so a host added minutes ago that dropped one
-  // scrape while its agent settled would have been badged on one bucket.
-  it("does not call a single missed bucket a pattern", () => {
-    expect(reportsSporadically([...nulls(283), 10, null, 10, 10, 12])).toBe(
-      false,
-    );
-    expect(reportsSporadically([...nulls(283), 10, null, 10, null, 12])).toBe(
-      true,
-    );
-  });
-
-  // The minimum is measured over the span the host reported across, not
-  // over the grid -- which is exactly what let the whole-grid span slip past
-  // it before.
-  it("declines to judge a span too short to tell a gap from a start", () => {
-    expect(reportsSporadically([...nulls(200), 10, null, 12, null])).toBe(
-      false,
-    );
-    expect(reportsSporadically([])).toBe(false);
-    expect(reportsSporadically(nulls(288))).toBe(false);
-  });
-});
+// reportsSporadically's tests moved to the hub with the rule itself --
+// TestSporadicNeedsEnoughHistoryAndMoreThanOneMiss in
+// internal/hub/conditions/rules_test.go covers the same three guards, and the
+// SQL that trims the window's edges is covered by
+// TestIntegrationScanFindsASporadicHost.
+//
+// Deleted rather than kept against a shim: this counted missing buckets over
+// whatever range the reader had picked, so the badge was a fact about the
+// range as much as about the host. The hub counts over a fixed window.
 
 describe("currentFilesystems", () => {
   const mount = (label: string, ts: string | null): Filesystem => ({

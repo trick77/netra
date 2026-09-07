@@ -1,44 +1,49 @@
-// What is wrong with the fleet, derived from the rows the page already has.
+// What is wrong with the fleet, as the HUB decided it.
 //
-// This is not an alerting engine. It has no rules, no thresholds a user can
-// set, no history and no notion of acknowledgement. It states what is already
-// true in the row.
+// This module used to derive every condition here, from whatever rows the page
+// happened to have fetched. That was survivable while a person reading a page
+// was the only consumer of the answer, and it stopped being survivable the
+// moment anything else had to ask what is wrong -- an alerting engine cannot
+// call into a browser.
 //
-// Most of what it states is free. Reporting, OOM kills and the fullest
-// filesystem are read from data the page fetched for its sparklines, and the
-// failed-unit count rides the hosts list the page already asks for. Two facts
-// are not: buffer_dropped_total and post_failures_total only mean anything
-// against the series around them, so a gauge on the list cannot carry either.
-// They cost this page one more family per host -- see the note on
-// fetchHostTrends in hostTrends.ts, which owns that fan-out.
+// It also meant nothing recorded when a condition BEGAN. Four of the five
+// kinds left their onset empty, because a derivation has no memory: a disk
+// that filled at 03:00 and drained by 09:00 left no trace anywhere in netra.
+// The hub opens a condition with an event and closes it with one now, and the
+// row carries the onset. What is left here is RENDERING -- turning a row and
+// its detail into the sentence and the mark a reader sees.
 //
-// The fleet page used to render these as a band above the list: one block per
-// host, capped at twenty, with the overflow written as "+30 more hosts" that
-// was not a link. At fifty warned hosts out of a hundred that is a wall with
-// no way past it, so the band is gone and the host list itself carries the
-// conditions -- which is why every Condition now names its KIND. A kind is
-// what lets fifty hosts that all failed the same unit collapse to one line
-// the reader can click, instead of fifty rows that have to be read one by
-// one.
+// The other half of the change is what is no longer here. The disk thresholds,
+// the staleness window and the SMART alarm rules were all written out in this
+// directory and in lib/host.ts and features/host/smart.ts, and no compiler in
+// this repo could see across the boundary to the hub's copies -- so a change on
+// one side was half a change. The thresholds that are still needed to colour a
+// meter for a HEALTHY mount now arrive from the hub in the catalogue, rather
+// than being restated.
+//
+// The fleet page used to render conditions as a band above the list: one block
+// per host, capped at twenty, with the overflow written as "+30 more hosts"
+// that was not a link. At fifty warned hosts out of a hundred that is a wall
+// with no way past it, so the band is gone and the host list itself carries the
+// conditions -- which is why every Condition names its KIND. A kind is what
+// lets fifty hosts that all failed the same unit collapse to one line the
+// reader can click, instead of fifty rows read one by one.
 import type { ReactNode } from "react";
+import type { ConditionKindInfo, ConditionRow } from "../../lib/api";
 import type { Severity } from "../../ui/Badge";
 import type { HostTab } from "../host/HostPage";
-import type { HostRow } from "./hostColumns";
-import { hostStatus } from "../../lib/host";
-import { driveAlarms } from "../host/smart";
-import { percent } from "../../lib/format";
+import { percent, relative } from "../../lib/format";
 
 /**
- * Every kind of thing netra says about a host, as a value rather than as a
- * sentence.
+ * Every kind of thing netra says about a host.
  *
- * The sentence in `what` cannot serve as the identity of a condition: it is a
- * ReactNode, it has the host's own numbers baked into it, and no two hosts
- * write it the same way. The kind is what the counts line groups by, what the
- * URL filter carries, and what tells an evidence cell which mark to draw.
+ * A bare string, deliberately, where this was a hand-maintained union. The hub
+ * owns which kinds exist -- internal/hub/conditions declares them and the
+ * catalogue below carries them over the wire -- and a union here would be a
+ * second list to keep in step, silently wrong for exactly as long as it took
+ * somebody to notice a filter naming a kind TypeScript had never heard of.
  */
-export type ConditionKind =
-  "silent" | "sporadic" | "failed-units" | "disk" | "drive";
+export type ConditionKind = string;
 
 /**
  * The mark that PROVES a condition, chosen by the condition rather than by
@@ -47,29 +52,25 @@ export type ConditionKind =
  * A row about a full filesystem used to be drawn beside the host's CPU and
  * memory sparklines, which say nothing about why the row is there and quietly
  * suggest CPU is the problem. What belongs next to "94% full" is the disk
- * meter; next to "2 failed units", the unit names; next to an OOM kill, the
- * memory series it happened in.
+ * meter; next to "2 failed units", the unit names.
  *
  * The honest cost: a column whose meaning changes per row cannot be sorted or
  * compared downward. That is acceptable here and nowhere else -- this is a
  * list of DIFFERENT problems, not a table of the same measurement.
  *
- * `memory` and `reporting` carry no data because the row already holds those
- * series; naming them keeps the series out of a type that is otherwise cheap
- * to construct for every host on every render.
+ * `reporting` carries no data because the row already holds that series;
+ * naming it keeps the series out of a type that is otherwise cheap to build.
  */
 export type Evidence =
   | { type: "meter"; pct: number }
   | { type: "units"; names: readonly string[]; extra: number }
-  | { type: "memory" }
   | { type: "reporting" }
   | null;
 
 /**
- * A host-level condition worth surfacing on the overview. `what` is a
- * ReactNode (not string) so a caller can embed a value inline (e.g. "disk
- * 92% full") without this module's readers reaching back into formatting
- * logic they have no business owning.
+ * A host-level condition worth surfacing. `what` is a ReactNode (not string)
+ * so a caller can embed a value inline without this module's readers reaching
+ * back into formatting logic they have no business owning.
  */
 export interface Condition {
   hostId: string;
@@ -86,34 +87,40 @@ export interface Condition {
   /** What is wrong with THIS host, in its own numbers. */
   what: ReactNode;
   /**
-   * When this started, when that is genuinely known -- and null when it is
-   * not.
+   * When this started -- host_conditions.opened_ts, walked once when the
+   * condition opened and never re-derived.
    *
-   * Three kinds can answer honestly. A silent host has last_seen, which IS
-   * the moment. A failed unit has systemd_units.state_ts, when it entered the
-   * failed state; a host with five of them takes the OLDEST, because five
-   * units failing at five times is one condition that began with the first.
-   * A filesystem is walked back through its own series to the first sample
-   * over the threshold, and says "over <window>" rather than a number when it
-   * was already full when the window opened.
+   * This is the column that used to be empty for four kinds out of five, and
+   * filling it is the point of the whole engine. A derivation could only ever
+   * say a counter had moved; the obvious stand-ins -- the window start,
+   * last_seen, now -- are all a timestamp a reader takes literally, and "since
+   * 5 m ago" beside a disk that has been filling for a week is worse than
+   * saying nothing.
    *
-   * The other four cannot. A counter delta over a window says only that the
-   * total moved; the obvious stand-ins -- the window start, last_seen, now --
-   * are all a timestamp the reader would take literally, and "since 5 m ago"
-   * beside a disk that has been filling for a week is worse than saying
-   * nothing. Those rows leave the column empty.
+   * Still nullable, because one kind genuinely has no onset: `sporadic` is a
+   * rate, and the gaps ARE the condition. Naming the first of them would date
+   * it to a scrape the host happened to miss.
    */
   since: string | null;
   /**
    * `since` is a FLOOR rather than a moment.
    *
-   * Only the filesystem walk can say this: netra cannot see past the range
-   * the reader picked, so a disk that was already full when the window opened
-   * gets the window's own start and this flag, and the row prints "over 24 h"
-   * instead of naming a bucket where nothing happened. Optional because six
-   * of the seven kinds never set it.
+   * The hub's walk back through a mount's series hit the end of what is
+   * retained -- raw samples are kept 7 days -- so the row says "over 7 d"
+   * instead of naming a bucket where nothing happened.
    */
   sinceAtLeast?: boolean;
+  /**
+   * The subject is present and unmeasurable: still reported, and not re-read
+   * for longer than its kind allows.
+   *
+   * The page used to make this disappear, dropping a mount whose reading was
+   * three minutes old. That is the same lie the hub refuses to tell -- it
+   * cannot distinguish a hung NFS export from an unmounted volume, so it keeps
+   * the condition open rather than declaring a still-full disk recovered. The
+   * row stays on screen and says the reading is old.
+   */
+  stale?: boolean;
   /** See Evidence. */
   evidence: Evidence;
   /**
@@ -127,41 +134,96 @@ export interface Condition {
 }
 
 /**
- * How full a filesystem has to be before it is worth someone's attention.
+ * The kind vocabulary, as the hub serves it.
  *
- * The same two thresholds the host page's needsAttention() uses, and
- * literally the same two constants: the host page imports these rather than
- * writing 90 and 95 out again. That is the part that had to stop drifting: a
- * host that warns on its own page and reads clean on the fleet page is the
- * disagreement this whole module exists to end.
+ * Every kind, present or not, and that is the whole reason it is fetched
+ * rather than derived from the rows on screen: a label taken from the
+ * conditions present disappears the moment the last host carrying that kind
+ * recovers, and the page is then holding a filter it cannot name -- "Showing 0
+ * of 100 hosts with", with a segment pressed for something no longer on
+ * screen. A reader who followed a link to a kind that has since cleared
+ * deserves to be told which kind cleared.
  */
-export const DISK_WARN_PCT = 90;
-export const DISK_CRIT_PCT = 95;
+export interface Catalogue {
+  kinds: readonly ConditionKindInfo[];
+  byKind: ReadonlyMap<string, ConditionKindInfo>;
+}
+
+export function catalogueOf(
+  kinds: readonly ConditionKindInfo[] | null | undefined,
+): Catalogue {
+  // Anything that is not a list of kinds is no catalogue, not a crash. The
+  // page renders against whatever the hub said, and an older hub that answers
+  // without this field must leave the fleet list working rather than blanking
+  // it -- an unnamed filter is a small loss, a page that threw is a total one.
+  const list = Array.isArray(kinds) ? kinds : [];
+  return { kinds: list, byKind: new Map(list.map((k) => [k.kind, k])) };
+}
 
 /**
- * How little room has to be LEFT before a percentage means anything.
+ * The catalogue before the first response lands, and after one that failed.
  *
- * A percentage on its own is the wrong unit for a disk. Ten per cent of a
- * 20 GB root is 2 GB and genuinely urgent; ten per cent of a 6.7 TB array is
- * 674 GB and a week of headroom, and netra used to say "/mnt/ark is 90% full
- * -- 674.4 GB free" in one breath and expect someone to act on it. What an
- * operator actually runs out of is bytes.
- *
- * So both halves have to agree: the disk is a high proportion full AND there
- * is little enough left that filling it is near.
- *
- * Where each floor starts to bite follows from its own percentage, and they
- * are NOT the same point. At 90% the tenth that is left passes 100 GiB once
- * the volume is over a terabyte, so nothing under that size warns any
- * differently than before. At 95% the twentieth that is left passes 20 GiB at
- * about 400 GiB of capacity -- so a 512 GB SSD at 96%, which has 20.5 GB
- * free, is now a warning where it used to be critical, and stays one until
- * roughly 96.1%. That is the intended reading of "critical": twenty gigabytes
- * is the point where filling up is hours away, and five per cent of a
- * half-terabyte disk is not.
+ * Empty rather than a hardcoded fallback, deliberately: a stand-in list would
+ * be the copy of the hub's rules this change exists to delete, and it would be
+ * indistinguishable from the real thing right up to the moment the two
+ * disagreed. Everything below degrades to something honest on it -- an
+ * unrecognised filter reads as "all", and a meter draws without a severity
+ * colour rather than guessing one.
  */
-export const DISK_WARN_FREE = 100 * 1024 ** 3;
-export const DISK_CRIT_FREE = 20 * 1024 ** 3;
+export const EMPTY_CATALOGUE: Catalogue = catalogueOf([]);
+
+/** The kind's name, or the kind itself for one the catalogue has not named. */
+export function kindLabel(catalogue: Catalogue, kind: ConditionKind): string {
+  return catalogue.byKind.get(kind)?.label ?? kind;
+}
+
+/**
+ * The severity a kind ENTERS at, used only when nothing is carrying the kind
+ * any more.
+ *
+ * A kind that IS present takes its severity from the conditions themselves
+ * (see groupByKind), because one disk warns where another criticals and the
+ * counts line must not understate that.
+ */
+export function kindSeverity(
+  catalogue: Catalogue,
+  kind: ConditionKind,
+): Severity {
+  return catalogue.byKind.get(kind)?.severity ?? "warning";
+}
+
+/** How full a filesystem has to be, and how little has to be left, before it
+ * is worth someone's attention. The hub's numbers, carried on the wire.
+ *
+ * The rule is a CONJUNCTION and both halves are here for that reason. netra
+ * used to say "/mnt/ark is 90% full -- 674.4 GB free" in one breath and expect
+ * someone to act on it; what an operator runs out of is bytes. */
+export interface DiskThresholds {
+  warnPct: number;
+  critPct: number;
+  warnFree: number;
+  critFree: number;
+}
+
+/**
+ * The disk thresholds the hub judges by, or null before the catalogue lands.
+ *
+ * Null is not a default. There is no honest default: writing 90 and 95 here
+ * would restore exactly the second copy that had the fleet page and the host
+ * page disagreeing about one fact, and it would go on being wrong invisibly if
+ * the hub's numbers ever moved. Callers draw without a severity instead, for
+ * the one poll it takes.
+ */
+export function diskThresholds(catalogue: Catalogue): DiskThresholds | null {
+  const t = catalogue.byKind.get("disk")?.thresholds;
+  if (t === undefined) return null;
+  return {
+    warnPct: t.warn_pct,
+    critPct: t.crit_pct,
+    warnFree: t.warn_free,
+    critFree: t.crit_free,
+  };
+}
 
 /** How bad a filesystem is, or null for one nobody needs to look at. */
 export type DiskSeverity = "critical" | "warning" | null;
@@ -169,20 +231,34 @@ export type DiskSeverity = "critical" | "warning" | null;
 /**
  * The severity a percentage earns given the headroom behind it.
  *
- * `free` is bytes, and `null`/undefined is "not known" rather than "none
- * left": a caller that cannot say how much room is left falls back to the
- * percentage alone. A row that has lost track of the bytes must not go silent
- * about a disk at 97%.
+ * `free` is bytes, and null/undefined is "not known" rather than "none left":
+ * a caller that cannot say how much room is left falls back to the percentage
+ * alone. A row that has lost track of the bytes must not go silent about a
+ * disk at 97%.
+ *
+ * This is NOT what decides a condition any more -- the hub does that, and this
+ * agrees with it by taking its numbers. It survives because the fleet's Disk
+ * meter ranks a host's mounts by severity before percentage and the host
+ * page's disk tile colours itself the same way, and both have to judge mounts
+ * that are perfectly healthy and that no condition will ever mention.
  */
 export function diskSeverityFor(
   pct: number,
   free: number | null | undefined,
+  thresholds: DiskThresholds | null,
 ): DiskSeverity {
+  if (thresholds === null) return null;
   const room = free ?? null;
-  if (pct >= DISK_CRIT_PCT && (room === null || room < DISK_CRIT_FREE)) {
+  if (
+    pct >= thresholds.critPct &&
+    (room === null || room < thresholds.critFree)
+  ) {
     return "critical";
   }
-  if (pct >= DISK_WARN_PCT && (room === null || room < DISK_WARN_FREE)) {
+  if (
+    pct >= thresholds.warnPct &&
+    (room === null || room < thresholds.warnFree)
+  ) {
     return "warning";
   }
   return null;
@@ -199,12 +275,13 @@ export function diskSeverityFor(
 export function diskState(
   used: number | null,
   free: number | null,
+  thresholds: DiskThresholds | null,
 ): { pct: number; severity: DiskSeverity } | null {
   if (used === null || free === null) return null;
   const capacity = used + free;
   if (capacity === 0) return null;
   const pct = (used / capacity) * 100;
-  return { pct, severity: diskSeverityFor(pct, free) };
+  return { pct, severity: diskSeverityFor(pct, free, thresholds) };
 }
 
 // Higher rank == worse. `ok` and `neutral` never appear in practice (a
@@ -298,65 +375,31 @@ export function groupByHost(conditions: readonly Condition[]): HostGroup[] {
  */
 export type AttentionFilter = "all" | "critical" | "warning" | ConditionKind;
 
-/**
- * Every kind's name and the severity it is normally at.
- *
- * Static, and that is the point: a label derived from the conditions actually
- * present disappears the moment the last host carrying that kind recovers,
- * and the page is then holding a filter it cannot name -- "Showing 0 of 100
- * hosts with · show all", with a severity segment pressed for something that
- * is no longer on screen. A reader who followed a link to a kind that has
- * since cleared deserves to be told which kind cleared.
- *
- * The severity here is the kind's ENTRY severity, used only when nothing is
- * carrying the kind any more; a kind that is present takes its severity from
- * the conditions themselves (see groupByKind), because one disk warns where
- * another criticals and the counts line must not understate that.
- */
-const CONDITION_KIND_INFO: Record<
-  ConditionKind,
-  { label: string; severity: Severity }
-> = {
-  silent: { label: "Stopped reporting", severity: "critical" },
-  sporadic: { label: "Reporting sporadically", severity: "warning" },
-  "failed-units": { label: "Failed units", severity: "warning" },
-  disk: { label: "Filesystem nearly full", severity: "warning" },
-  // A measurement, not a diagnosis -- the rule every condition here follows.
-  // "Drive failing" would be a verdict on hardware, and it would overstate a
-  // host whose only alarm is a handful of reallocated sectors: that drive has
-  // substituted for damage, which is worth acting on and is not the same as
-  // failing.
-  drive: { label: "Drive errors", severity: "critical" },
-};
-
-const CONDITION_KINDS = Object.keys(
-  CONDITION_KIND_INFO,
-) as readonly ConditionKind[];
-
-/** The kind's name, with no data needed to produce it. */
-export function kindLabel(kind: ConditionKind): string {
-  return CONDITION_KIND_INFO[kind].label;
-}
-
-/** The severity a kind enters at -- see CONDITION_KIND_INFO. */
-export function kindSeverity(kind: ConditionKind): Severity {
-  return CONDITION_KIND_INFO[kind].severity;
-}
-
 /** Narrows an AttentionFilter to a kind -- and validates an arbitrary string,
- * which is what a URL parameter is. A ?attn= nobody recognises is "all",
- * never a filter that silently matches nothing. */
-export function isConditionKind(value: string): value is ConditionKind {
-  return (CONDITION_KINDS as readonly string[]).includes(value);
+ * which is what a URL parameter is.
+ *
+ * Validated against the CATALOGUE the hub served, so the browser is not
+ * holding its own list of what exists. A ?attn= nobody recognises is "all",
+ * never a filter that silently matches nothing -- and that includes every
+ * value before the catalogue has landed, which is the honest reading for one
+ * poll rather than a link that quietly filters to zero. */
+export function isConditionKind(
+  catalogue: Catalogue,
+  value: string,
+): value is ConditionKind {
+  return catalogue.byKind.has(value);
 }
 
 /**
- * The kind a filter names, or null -- looked up in the static table rather
- * than in the conditions on screen, so a filter whose last host recovered can
- * still say what it is filtering to.
+ * The kind a filter names, or null -- looked up in the catalogue rather than
+ * in the conditions on screen, so a filter whose last host recovered can still
+ * say what it is filtering to.
  */
-export function filterKind(filter: AttentionFilter): ConditionKind | null {
-  return isConditionKind(filter) ? filter : null;
+export function filterKind(
+  catalogue: Catalogue,
+  filter: AttentionFilter,
+): ConditionKind | null {
+  return isConditionKind(catalogue, filter) ? filter : null;
 }
 
 export interface KindGroup {
@@ -381,7 +424,8 @@ export interface KindGroup {
  * one click away rather than thirty-one rows already on screen.
  *
  * A host is counted once per kind even if it somehow produced the kind twice;
- * the count is hosts, not conditions, because that is what the line says.
+ * the count is hosts, not conditions, because that is what the line says --
+ * which is also what makes the per-host collapse in hostConditions free.
  */
 export function groupByKind(conditions: readonly Condition[]): KindGroup[] {
   const byKind = new Map<ConditionKind, KindGroup>();
@@ -433,105 +477,173 @@ export function failedUnitsShown(
   return { names: shown, extra: Math.max(count - shown.length, 0) };
 }
 
+// --- Rendering the hub's rows -------------------------------------------
+
+/** A condition's detail, narrowed rather than cast.
+ *
+ * `detail` is `unknown` on the wire on purpose -- its shape belongs to the
+ * observer that produced it, not to the API -- so anything that is not a plain
+ * object simply says nothing, exactly as the event log's own reader does. */
+function fields(row: ConditionRow): Record<string, unknown> {
+  if (typeof row.detail !== "object" || row.detail === null) return {};
+  if (Array.isArray(row.detail)) return {};
+  return row.detail as Record<string, unknown>;
+}
+
+function num(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function str(v: unknown): string | null {
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
+function names(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((one): one is string => typeof one === "string");
+}
+
+/**
+ * The severity words the wire uses, narrowed to the ones a badge can draw.
+ *
+ * `ok` and `neutral` are UI vocabulary for the ABSENCE of a condition and can
+ * never arrive here -- a condition is definitionally something wrong, and the
+ * hub's own CHECK constraint allows only these two.
+ */
+function severityOf(row: ConditionRow): Severity {
+  return row.severity === "critical" ? "critical" : "warning";
+}
+
+/**
+ * Worst first, then by onset, then by subject.
+ *
+ * The tie-breaks are what stop the collapse below flickering. Two mounts on
+ * one host at the same severity would otherwise take turns being named as the
+ * page re-rendered, because the hub's row order is stable but the reason for
+ * choosing between them was not.
+ */
+function worstRow(rows: readonly ConditionRow[]): ConditionRow {
+  return [...rows].sort((a, b) => {
+    const bySeverity =
+      SEVERITY_RANK[severityOf(b)] - SEVERITY_RANK[severityOf(a)];
+    if (bySeverity !== 0) return bySeverity;
+    // Drive alarms carry an urgency the hub decided: everything that escalates
+    // is critical, so severity alone cannot say whether an unreadable sector
+    // or a counter that is merely climbing is the one to name.
+    const urgency =
+      (num(fields(a).urgency) ?? 0) - (num(fields(b).urgency) ?? 0);
+    if (urgency !== 0) return urgency;
+    const pct = (num(fields(b).pct) ?? 0) - (num(fields(a).pct) ?? 0);
+    if (pct !== 0) return pct;
+    return a.subject.localeCompare(b.subject);
+  })[0];
+}
+
+/**
+ * "— not measured since 4 h ago", appended to a stale subject's sentence.
+ *
+ * Said rather than hidden. The old page dropped a mount whose reading was
+ * three minutes old, which silently retired the condition on it; the hub
+ * refuses to make that call at all, because a hung NFS export and an unmounted
+ * volume look identical from where it stands. So the row stays and the reader
+ * is told the number beside it is old.
+ */
+function staleNote(row: ConditionRow, now: Date): string {
+  if (!row.stale) return "";
+  return ` — not measured since ${relative(row.measured_ts, now)}`;
+}
+
 /**
  * Everything wrong with one host, in a stable written order.
  *
  * Every condition names a MEASUREMENT and what it means, never a diagnosis:
- * "3 OOM kills" is a thing that happened, "the host is out of memory" is a
- * guess about why. Callers group and order these; ordering within a host is
- * left as written so the reading is stable.
+ * "2 failed units" is a thing that is true, "the host is broken" is a guess
+ * about why. Callers group and order these; ordering within a host is left as
+ * written so the reading is stable.
+ *
+ * The per-mount and per-device rows COLLAPSE here. The hub keeps a condition
+ * per mount and per device deliberately -- collapsed in the state machine, a
+ * condition would open and close every time the fullest mount changed from
+ * /var to /mnt, writing transition pairs that describe nothing -- and this is
+ * the rendering decision that was always separate from it: one line per host,
+ * because the unit of interest on a fleet list is the machine.
  */
-export function hostConditions(row: HostRow, now: Date): Condition[] {
-  const out: Condition[] = [];
-  const base = { hostId: String(row.id), hostname: row.hostname };
-  // Every `what` below starts a cell of its own now, so it is capitalised as
-  // a sentence -- these used to trail a hostname inside a band row, where
-  // "web-01 stopped reporting" read as one line of prose.
+export function hostConditions(
+  rows: readonly ConditionRow[],
+  catalogue: Catalogue,
+  now: Date = new Date(),
+): Condition[] {
+  if (rows.length === 0) return [];
+  const base = {
+    hostId: String(rows[0].host_id),
+    hostname: rows[0].hostname,
+  };
+  const byKind = new Map<string, ConditionRow[]>();
+  for (const row of rows) {
+    const existing = byKind.get(row.kind);
+    if (existing) existing.push(row);
+    else byKind.set(row.kind, [row]);
+  }
 
-  // Reporting first, because it qualifies everything below it: a host that
-  // has not spoken for an hour has stale disk and memory figures too, and
-  // saying so first stops the rest reading as current.
-  const status = hostStatus(row, now, row.reporting);
-  if (status.severity === "critical") {
+  const of = (kind: string): ConditionRow | undefined => {
+    const found = byKind.get(kind);
+    return found === undefined ? undefined : worstRow(found);
+  };
+
+  const out: Condition[] = [];
+  const common = (row: ConditionRow) => ({
+    ...base,
+    kind: row.kind,
+    severity: severityOf(row),
+    label: kindLabel(catalogue, row.kind),
+    since: row.opened_ts,
+    sinceAtLeast: row.opened_at_least,
+    stale: row.stale,
+  });
+
+  // Reporting first, because it qualifies everything below it: a host that has
+  // not spoken for an hour has stale disk and memory figures too, and saying so
+  // first stops the rest reading as current.
+  const silent = of("silent");
+  if (silent !== undefined) {
     out.push({
-      ...base,
-      kind: "silent",
-      severity: "critical",
-      label: kindLabel("silent"),
-      what:
-        row.last_seen === null
-          ? "Has never reported"
-          : "Stopped reporting — every figure here is its last known one",
-      // The one condition whose onset needs no derivation: this IS the
-      // timestamp.
-      since: row.last_seen,
+      ...common(silent),
+      what: "Stopped reporting — every figure here is its last known one",
       // The series stopping is the evidence, and the row already holds it.
       evidence: { type: "reporting" },
       // No tab explains a silent host better than the host page itself does.
       tab: null,
     });
-  } else if (status.severity === "warning") {
+  }
+
+  const sporadic = of("sporadic");
+  if (sporadic !== undefined) {
     out.push({
-      ...base,
-      kind: "sporadic",
-      severity: "warning",
-      label: kindLabel("sporadic"),
+      ...common(sporadic),
       what: "Reporting sporadically — gaps in the last few hours",
+      // A rate has no onset: the gaps ARE the condition, and naming the first
+      // of them would date it to a scrape the host happened to miss. The hub
+      // stamps this when it CONCLUDED it, which is a different and less
+      // interesting fact, so the column stays empty rather than printing one.
       since: null,
+      sinceAtLeast: false,
       evidence: { type: "reporting" },
       tab: null,
     });
   }
 
-  // dropped, oom and post-failures used to be conditions here, and are now
-  // events instead.
-  //
-  // All three read a COUNTER'S INCREASE OVER THE RANGE PICKER'S WINDOW, which
-  // is what made them the wrong shape: change the range and the condition
-  // appears or disappears, so what they stated was a fact about the reader
-  // rather than about the host. They are also the three kinds the `since`
-  // comment above lists as unable to say when they began, which is the same
-  // observation from the other side -- a thing that happened at an instant
-  // does not have an onset, it has a timestamp.
-  //
-  //   - a hub outage is one `hub` event, written by the agent when delivery
-  //     resumes, carrying how long it lasted and whether the ring lost
-  //     anything. Warning was always wrong for it: the samples were buffered
-  //     and replayed, which the host page's own comment admitted while
-  //     raising the warning anyway.
-  //   - dropped samples are that same event at `critical`, because they are
-  //     the same incident: the ring only overflows while the hub is away.
-  //   - an OOM kill is already a `critical` kmsg event, and a better record
-  //     than this was -- it names the process that died and says when.
-  // One condition for the whole set, never one per unit -- but it NAMES the
-  // units, up to the three the hosts list carries. Eight unit names would
-  // bury the next host, which is why the list is capped there and the count
-  // stays authoritative here -- see read.HostSummary.FailedUnits.
-  //
-  // null is a host with no systemd at all, or one not yet heard from, and
-  // stays silent -- netra has not looked, which is not the same as nothing
-  // being wrong. 0 is the host confirming its units are fine, which is also
-  // silence, but earned. The agent draws that line itself; the hub carries it.
-  if (
-    row.services_failed !== null &&
-    row.services_failed !== undefined &&
-    row.services_failed > 0
-  ) {
-    const shown = failedUnitsShown(row.services_failed, row.failed_units ?? []);
+  const units = of("failed-units");
+  if (units !== undefined) {
+    const detail = fields(units);
+    const count = num(detail.count) ?? 0;
+    const shown = failedUnitsShown(count, names(detail.units));
     out.push({
-      ...base,
-      kind: "failed-units",
-      severity: "warning",
-      label: kindLabel("failed-units"),
-      // The count alone: the names are the evidence beside it now, not part
-      // of the sentence. Grouped by kind, thirty-one hosts print thirty-one
+      ...common(units),
+      // The count alone: the names are the evidence beside it now, not part of
+      // the sentence. Grouped by kind, thirty-one hosts print thirty-one
       // sentences, and repeating three unit names inside every one of them
       // made the column that says HOW MANY unreadable.
-      what: `${row.services_failed} failed ${row.services_failed === 1 ? "unit" : "units"}`,
-      // The oldest state_ts of this host's failed units -- see Condition.
-      // null when the hub has no unit rows for it yet, or when systemd
-      // reported no timestamp.
-      since: row.failed_since ?? null,
+      what: `${count} failed ${count === 1 ? "unit" : "units"}`,
       evidence: { type: "units", ...shown },
       // The units tab lists every failed unit with its state and its restart
       // count -- the names beside this row are a summary of exactly that page.
@@ -539,80 +651,58 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
     });
   }
 
-  // df's Use%, already computed as used / (used + free) by fullestFilesystem,
-  // which also passes the winner's remaining bytes through -- the percentage
-  // alone cannot say whether this is worth waking up for. Only the fullest
-  // one: the row carries a single pre-picked summary, and a second mount at
-  // 91% is not a second thing to do -- the row's Filesystem column reports
-  // that one mount and nothing about the others.
-  const fullest = row.fullest;
-  const fullestSeverity =
-    fullest === null ? null : diskSeverityFor(fullest.pct, fullest.free);
-  if (fullest !== null && fullestSeverity !== null) {
+  const disk = of("disk");
+  if (disk !== undefined) {
+    const detail = fields(disk);
+    const pct = num(detail.pct) ?? 0;
+    const mount = str(detail.mount) ?? disk.subject;
     out.push({
-      ...base,
-      kind: "disk",
-      severity: fullestSeverity,
-      label: kindLabel("disk"),
+      ...common(disk),
       // "was", once this host has stopped reporting. The SEVERITY does not
       // move with the tense, and that is the judgement: a 96 % disk on a
       // machine that is off is still a 96 % disk, and it is worth clearing
       // before the machine comes back. The row already carries "Stopped
-      // reporting" as its own critical condition, so both facts are on
-      // screen; this one only stops claiming to describe this minute.
-      what: `${fullest.mount} ${status.severity === "critical" ? "was" : "is"} ${percent(fullest.pct)} full`,
-      // Walked back through THIS mount's own series -- see fullestFilesystem
-      // in hostTrends.ts, which owns the walk because it is the only place
-      // that knows which series the mount came from.
-      since: fullest.since ?? null,
-      sinceAtLeast: fullest.sinceAtLeast ?? false,
-      evidence: { type: "meter", pct: fullest.pct },
-      // Only the fullest mount is named here; the Storage tab is where this
-      // host's other mounts are -- and now its disk charts too.
+      // reporting" as its own critical condition, so both facts are on screen;
+      // this one only stops claiming to describe this minute.
+      what: `${mount} ${silent !== undefined ? "was" : "is"} ${percent(pct)} full${staleNote(disk, now)}`,
+      evidence: { type: "meter", pct },
+      // Only one mount is named here; the Storage tab is where this host's
+      // other mounts are -- and now its disk charts too.
       tab: "storage",
     });
   }
 
-  // The host's own drives, judged by the rule the Storage tab has always used
-  // -- driveAlarms in features/host/smart.ts, which promotes the states a
-  // drive does not recover from and leaves CRC errors and wear behind.
-  //
-  // ONE condition for the host, never one per drive or one per finding: the
-  // same collapse the disk and failed-units rows make. Four alarms across two
-  // disks are one thing to go and look at, and the counts line would otherwise
-  // read "Drive errors 1" while the list showed four rows for that host.
-  //
-  // `row.drives` is optional and undefined means NOT ASKED -- the fleet-wide
-  // drives call failed, or the row was assembled without it. That stays
-  // silent, because the only other reading is "no alarms", and a page that
-  // says a host is fine because it could not find out is the bug this whole
-  // condition exists to fix.
-  // last_seen gates a drive the hub still holds a row for but the host has
-  // stopped reading -- a pulled disk, or one that came back as a different
-  // /dev/sdX. See DRIVE_STALE_MS.
-  const alarms = driveAlarms(row.drives ?? [], row.last_seen);
-  if (alarms.length > 0) {
-    const worst = alarms[0];
+  const drives = byKind.get("drive");
+  if (drives !== undefined && drives.length > 0) {
+    const worst = worstRow(drives);
+    const detail = fields(worst);
+    const device = str(detail.device) ?? worst.subject;
+    const text = str(detail.text) ?? "";
+    // Every alarm across every drive, not just the number of drives: two
+    // findings on one disk are two things wrong, and the count has to add up
+    // to what the Storage tab lists.
+    const total = drives.reduce(
+      (sum, row) => sum + (num(fields(row).alarms) ?? 1),
+      0,
+    );
     out.push({
-      ...base,
-      kind: "drive",
-      severity: worst.severity,
-      label: kindLabel("drive"),
-      // Names the drive and what is wrong with it. The count of the rest
-      // rides along rather than expanding into rows -- see the collapse above.
+      ...common(worst),
+      // Names the drive and what is wrong with it. The count of the rest rides
+      // along rather than expanding into rows -- see the collapse above.
       what:
-        alarms.length === 1
-          ? `${worst.device} — ${worst.text}`
-          : `${worst.device} — ${worst.text} (+${alarms.length - 1} more)`,
-      // Deliberately none, and this one cannot be walked back the way the
-      // filesystem is. SMART attributes are counters with no zero baseline,
-      // sampled hourly: the first non-zero reading netra holds is when netra
-      // started LOOKING, not when the sector went bad. A drive whose agent
-      // was installed on Tuesday would claim its sectors failed on Tuesday.
+        total <= 1
+          ? `${device} — ${text}${staleNote(worst, now)}`
+          : `${device} — ${text} (+${total - 1} more)${staleNote(worst, now)}`,
+      // Deliberately none, and the hub does not offer one. SMART attributes
+      // are counters with no zero baseline, sampled hourly: the first non-zero
+      // reading netra holds is when netra started LOOKING, not when the sector
+      // went bad. A drive whose agent was installed on Tuesday would claim its
+      // sectors failed on Tuesday.
       since: null,
-      // Deliberately none. Evidence's marks are meter, units, memory and
-      // reporting; a raw attribute counter is none of them, and the finding
-      // it would be drawn from is already the sentence above.
+      sinceAtLeast: false,
+      // Deliberately none. Evidence's marks are meter, units and reporting; a
+      // raw attribute counter is none of them, and the finding it would be
+      // drawn from is already the sentence above.
       evidence: null,
       // The Storage tab holds the Drives table, with every attribute this
       // sentence was derived from.
@@ -620,29 +710,107 @@ export function hostConditions(row: HostRow, now: Date): Condition[] {
     });
   }
 
+  // Anything the hub raised that this renderer has no sentence for still
+  // appears, named by the catalogue.
+  //
+  // A kind added hub-side reaches the page as a row before anybody writes its
+  // prose here, and the alternative -- dropping it -- is a fleet that reads
+  // clean because the browser did not recognise what was wrong with it. That
+  // is the failure this whole module exists to end, so it must not be
+  // reintroduced by an incomplete switch statement.
+  const written = new Set([
+    "silent",
+    "sporadic",
+    "failed-units",
+    "disk",
+    "drive",
+  ]);
+  for (const [kind, rows] of byKind) {
+    if (written.has(kind)) continue;
+    const row = worstRow(rows);
+    out.push({
+      ...common(row),
+      what: kindLabel(catalogue, kind),
+      evidence: null,
+      tab: null,
+    });
+  }
+
   return out;
 }
 
+/** A host as the renderer needs it: enough to say a machine exists and has
+ * never spoken. */
+export interface ConditionHost {
+  id: number;
+  hostname: string;
+  last_seen: string | null;
+}
+
 /**
- * The whole fleet's conditions, in row order.
+ * The whole fleet's conditions, in host order.
  *
- * Ordering is the caller's job, not this one's -- groupByHost ranks hosts by
- * their worst and groupByKind ranks kinds by theirs. Sorting here as well
- * would be a third ordering rule to keep in step with the other two.
+ * Ordering beyond that is the caller's job -- groupByHost ranks hosts by their
+ * worst and groupByKind ranks kinds by theirs. Sorting here as well would be a
+ * third ordering rule to keep in step with the other two.
  */
 export function fleetConditions(
-  rows: readonly HostRow[],
-  now: Date,
+  rows: readonly ConditionRow[],
+  hosts: readonly ConditionHost[],
+  catalogue: Catalogue,
+  now: Date = new Date(),
 ): Condition[] {
-  return rows.flatMap((row) => hostConditions(row, now));
+  const byHost = new Map<number, ConditionRow[]>();
+  for (const row of rows) {
+    const existing = byHost.get(row.host_id);
+    if (existing) existing.push(row);
+    else byHost.set(row.host_id, [row]);
+  }
+
+  const out: Condition[] = [];
+  for (const host of hosts) {
+    // A host that has NEVER reported, said by the page and by nothing else.
+    //
+    // The hub refuses to raise this, and it is right to: admin.CreateHost
+    // inserts the row and hands over a token, and the operator installs the
+    // agent minutes or hours later. A critical condition in that gap -- with
+    // an event in the log an alerting engine reads -- says a machine has
+    // stopped talking when it has not started yet, and clears two ticks after
+    // the agent comes up, leaving a permanent opened/cleared pair describing
+    // nothing but the provisioning.
+    //
+    // The PAGE has no such problem: it states what is true right now and
+    // forgets it, which is exactly what this fact wants. One boolean off a
+    // field the hosts list already carries, not a threshold rule -- so it is
+    // not the kind of derivation this change deleted.
+    if (host.last_seen === null) {
+      out.push({
+        hostId: String(host.id),
+        hostname: host.hostname,
+        kind: "silent",
+        severity: "critical",
+        label: kindLabel(catalogue, "silent"),
+        what: "Has never reported",
+        since: null,
+        evidence: { type: "reporting" },
+        tab: null,
+      });
+    }
+    const rows = byHost.get(host.id);
+    if (rows !== undefined) {
+      out.push(...hostConditions(rows, catalogue, now));
+    }
+  }
+  return out;
 }
 
 /**
  * How many distinct hosts the conditions cover.
  *
- * Exported for the same reason the thresholds are constants: the line above
- * the list states a count, and the count has to be derived from the same
- * conditions the list renders or the two disagree on screen.
+ * Exported for the same reason the counts line is built from the same list it
+ * renders: the line above the list states a count, and the count has to be
+ * derived from the same conditions the list filters by or the two disagree on
+ * screen.
  */
 export function hostsNeedingAttention(
   conditions: readonly Condition[],

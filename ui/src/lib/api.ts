@@ -355,6 +355,73 @@ export type Event = {
   detail: unknown;
 };
 
+// internal/hub/read/conditions.go: Condition
+//
+// What is wrong with a host RIGHT NOW, decided by the hub rather than derived
+// here. The page used to work these out from the rows it happened to have,
+// which is why four of the five kinds left their onset column empty: a
+// derivation has no memory of when it first became true.
+export type ConditionRow = {
+  id: number;
+  host_id: number;
+  hostname: string;
+  // The kind's stable name. NOT a hand-maintained union any more -- the
+  // catalogue below is what says which kinds exist, and it comes from the hub.
+  kind: string;
+  // A mount label for disk, a device for drive, empty for a condition about
+  // the host as a whole. Finer than this page displays: collapsing a host's
+  // mounts or drives into one row is a rendering decision, made in
+  // fleet/conditions.ts.
+  subject: string;
+  severity: "warning" | "critical";
+  // When this started. The column that used to be empty.
+  opened_ts: string;
+  // The onset is a FLOOR rather than a moment, because the hub's walk back
+  // through the series hit the end of what is retained.
+  opened_at_least: boolean;
+  // The condition's own numbers, shaped by its kind, for the sentence the row
+  // writes. Unknown for the same reason Event.detail is: its shape belongs to
+  // the observer that produced it.
+  detail: unknown;
+  // When this condition's SUBJECT was last actually measured, for the kinds
+  // that have one. Null for the host-wide kinds, whose measurement is
+  // last_seen and which say so themselves.
+  measured_ts: string | null;
+  // The subject is present and unmeasurable: still listed, not re-read for
+  // longer than its kind allows. The hub deliberately does not resolve such a
+  // condition -- a hung NFS export looks exactly like an unmounted one from
+  // the hub -- so the row is served, marked, and the page says the reading is
+  // old rather than dropping the mount and pretending the problem ended.
+  stale: boolean;
+};
+
+// internal/hub/conditions/catalogue.go: KindInfo
+//
+// Every kind, present or not. That is the point: a filter for a kind no host
+// currently carries must still be able to name itself, or a reader who
+// followed a link to a kind that has since cleared is left holding a filter
+// the page cannot name.
+export type ConditionKindInfo = {
+  kind: string;
+  label: string;
+  severity: "warning" | "critical";
+  // Only `disk` carries any, and only because they do double duty: the Disk
+  // meter ranks a host's mounts by severity before percentage, and it has to
+  // judge HEALTHY mounts, which no condition covers. Serving them is what
+  // keeps the four numbers from growing back here as a second copy.
+  thresholds?: {
+    warn_pct: number;
+    crit_pct: number;
+    warn_free: number;
+    crit_free: number;
+  };
+};
+
+export type ConditionsResponse = {
+  conditions: ConditionRow[];
+  kinds: ConditionKindInfo[];
+};
+
 // internal/hub/read/tier.go: Window
 export type MetricsWindow = {
   from: string;
@@ -471,6 +538,17 @@ export function getPackages(id: number | string): Promise<Pkg[]> {
 
 export function getUnits(id: number | string): Promise<Unit[]> {
   return request<Unit[]>(`/api/v1/hosts/${id}/units`);
+}
+
+// Everything currently wrong with the fleet, plus the vocabulary for it.
+//
+// No parameters, and that is deliberate rather than an omission: the counts
+// line above the host list states how many hosts carry each kind, so it needs
+// every open condition in order to count them. A server-side ?attn= would hand
+// back a subset that cannot produce its own counts. It is cheap because open
+// conditions are bounded by what is actually wrong, not by fleet size.
+export function getConditions(): Promise<ConditionsResponse> {
+  return request<ConditionsResponse>("/api/v1/conditions");
 }
 
 // BACKEND_HUB_URL as the hub itself has it, or "" when it is unset. The

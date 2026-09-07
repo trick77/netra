@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getAddresses,
+  getConditions,
   getContainers,
   getEvents,
   getFilesystems,
@@ -15,6 +16,7 @@ import {
   getPackages,
   getUnits,
   type Address,
+  type ConditionsResponse,
   type Container,
   type Drive,
   type Event,
@@ -30,6 +32,7 @@ import { Segmented } from "../../ui/Segmented";
 import { Tabs } from "../../ui/Tabs";
 import { ABSENT, duration, relative } from "../../lib/format";
 import { hostStatus } from "../../lib/host";
+import { catalogueOf, EMPTY_CATALOGUE } from "../fleet/conditions";
 import { hostTabForSlug } from "../../lib/router";
 import {
   clampRange,
@@ -128,6 +131,11 @@ interface TabData {
   containers: Container[] | null;
   filesystems: Filesystem[] | null;
   drives: Drive[] | null;
+  /** Everything the hub says is wrong, fleet-wide -- narrowed to this host
+   * where the band reads it. One endpoint answers for the whole fleet, so
+   * there is nothing per-host to ask for. null when the call failed, which
+   * the band must not read as "nothing is wrong". */
+  conditions: ConditionsResponse | null;
   addresses: Address[] | null;
   interfaces: Iface[] | null;
   packages: Pkg[] | null;
@@ -151,6 +159,7 @@ const NO_DATA: TabData = {
   containers: null,
   filesystems: null,
   drives: null,
+  conditions: null,
   addresses: null,
   interfaces: null,
   packages: null,
@@ -315,11 +324,14 @@ export function HostPage({
             // Inventory counts (containers) when they moved or were dropped,
             // and a page that keeps fetching what it no longer draws is three
             // round trips a reader pays for and never sees. units stays: the
-            // attention band counts the failed ones. drives is here for the
-            // same reason and was the one signal missing -- a host with a
-            // failing disk read clean on this tab while its Storage tab
-            // showed the drive in red, because the listing was fetched only
-            // when that tab was opened.
+            // attention band lists the failed ones, and the ones restarting
+            // repeatedly, neither of which the hub models per unit. drives is
+            // here for the Storage tab.
+            //
+            // The conditions are what the band renders now: the disk and
+            // drive rows used to be worked out on this page against thresholds
+            // written out in TypeScript, which is how it came to disagree with
+            // the fleet page about one host.
             const [
               hostMetrics,
               filesystemMetrics,
@@ -327,6 +339,7 @@ export function HostPage({
               units,
               drives,
               netMetrics,
+              conditions,
             ] = await Promise.all([
               metrics("host"),
               metrics("filesystem"),
@@ -336,6 +349,7 @@ export function HostPage({
               // Traffic: the overview summarised every subsystem except the
               // one most likely to explain a problem.
               metrics("net"),
+              orNull(getConditions()),
             ]);
             return {
               hostMetrics,
@@ -344,6 +358,7 @@ export function HostPage({
               units,
               drives,
               netMetrics,
+              conditions,
             };
           }
           // Each subject tab fetches the families ITS panels draw, rather than
@@ -657,7 +672,20 @@ export function HostPage({
           filesystemMetrics={data.filesystemMetrics}
           netMetrics={data.netMetrics}
           units={data.units}
-          drives={data.drives}
+          conditions={(data.conditions?.conditions ?? []).filter(
+            (row) => row.host_id === host.id,
+          )}
+          // null is "netra could not be asked", which the panel must not
+          // render as "nothing is wrong" -- it draws nothing at all when the
+          // list is empty, so an offline host with a full disk and a failing
+          // drive would show no panel whatsoever. The same line the fleet page
+          // draws for the same failure.
+          conditionsUnavailable={data.conditions === null}
+          catalogue={
+            data.conditions
+              ? catalogueOf(data.conditions.kinds)
+              : EMPTY_CATALOGUE
+          }
           range={range}
           fetchFamily={fetchFamily}
           // A tile's href is /hosts/{id}/chart/<slug>, which the router

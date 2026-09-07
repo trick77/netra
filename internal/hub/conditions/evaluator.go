@@ -18,7 +18,28 @@ const Interval = 60 * time.Second
 // An interface so the loop -- warm-up, ticking, error handling -- is testable
 // against a fake, without a database and without waiting out a minute.
 type Store interface {
-	ScanConditions(ctx context.Context, now time.Time) (Scan, error)
+	// ScanConditions is given the keys already open, and it is not an
+	// optimisation.
+	//
+	// The disk onset is a walk back through the mount's own series to the first
+	// sample over the threshold, and 0016 is explicit that it can be done ONCE:
+	// raw retention is 7 days and every aggregate is materialized_only, so a
+	// walk attempted later reaches a different distance and returns a different
+	// answer. A scan that could not tell an already-open condition from a new
+	// one would either re-walk on every tick -- computing an answer it then
+	// discards, and a different one each week -- or skip the walk entirely.
+	//
+	// `since` is the earliest instant this hub PROCESS can vouch for. A rate
+	// counted over buckets the hub was not running for is a measurement of the
+	// hub's own downtime, not of the host: the agent's ring buffers an hour by
+	// default (AGENT_BUFFER_WINDOW), so a longer outage leaves a hole no
+	// replay fills, identically on every host. Without the clamp the first
+	// pass after a two-hour outage finds a third of the window empty
+	// fleet-wide and opens `sporadic` on all of it -- the same "one hub outage
+	// recorded as N host outages" WarmUp exists to prevent, arriving through
+	// the other door and outliving any warm-up, because the hole sits in the
+	// window for as long as the window is wide.
+	ScanConditions(ctx context.Context, now time.Time, open map[Key]bool, since time.Time) (Scan, error)
 	OpenConditions(ctx context.Context) ([]Open, error)
 	ApplyConditions(ctx context.Context, actions []Action, now time.Time) error
 }
@@ -108,7 +129,18 @@ func (e *Evaluator) Run(ctx context.Context) {
 func (e *Evaluator) Once(ctx context.Context) error {
 	now := e.now()
 
-	scan, err := e.store.ScanConditions(ctx, now)
+	// Open first, so the scan knows which conditions already have an onset and
+	// does not walk one back a second time -- see Store.ScanConditions.
+	open, err := e.store.OpenConditions(ctx)
+	if err != nil {
+		return err
+	}
+	openKeys := make(map[Key]bool, len(open))
+	for _, o := range open {
+		openKeys[o.Key] = true
+	}
+
+	scan, err := e.store.ScanConditions(ctx, now, openKeys, e.startedAt)
 	if err != nil {
 		return err
 	}
@@ -117,6 +149,14 @@ func (e *Evaluator) Once(ctx context.Context) error {
 	// host whose backlog has not arrived yet, so it declines to say. The kind
 	// is dropped from BOTH halves: out of Bad so nothing opens, and out of
 	// Evaluated so nothing already open is resolved either.
+	//
+	// `sporadic` is guarded differently and not here -- see the `since`
+	// argument to ScanConditions. Dropping it for a fixed warm-up would only
+	// DELAY the same damage: its window is three hours, so a hub outage leaves
+	// a hole that is still there long after any warm-up expires. Clamping the
+	// window to what this process can vouch for fixes it at the source, and
+	// the span floor then declines to judge until there is enough window to
+	// judge over.
 	if now.Sub(e.startedAt) < WarmUp {
 		delete(scan.Evaluated, KindSilent)
 		for key := range scan.Bad {
@@ -124,11 +164,6 @@ func (e *Evaluator) Once(ctx context.Context) error {
 				delete(scan.Bad, key)
 			}
 		}
-	}
-
-	open, err := e.store.OpenConditions(ctx)
-	if err != nil {
-		return err
 	}
 
 	actions := Diff(open, scan, now)

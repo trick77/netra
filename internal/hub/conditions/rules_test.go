@@ -12,6 +12,34 @@ func gb(n int64) *int64 {
 	return &v
 }
 
+// Sporadic is a RATE, and every guard on it exists because of a host that was
+// fine.
+func TestSporadicNeedsEnoughHistoryAndMoreThanOneMiss(t *testing.T) {
+	for name, tc := range map[string]struct {
+		present, span int
+		want          string
+	}{
+		// Two buckets cannot tell a gap from a host that started reporting
+		// mid-window.
+		"too little history to judge": {2, 4, ""},
+		// At the shortest span judged, ONE miss is exactly the ratio -- so a
+		// host that dropped a single scrape while its agent settled would be
+		// badged on the strength of that one bucket.
+		"a single miss is an event, not a pattern": {4, 5, ""},
+		"two misses in five is a pattern":          {3, 5, conditions.SeverityWarning},
+		"a fifth of a long window":                 {24, 30, conditions.SeverityWarning},
+		"under a fifth of a long window":           {28, 30, ""},
+		"reporting cleanly":                        {30, 30, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := conditions.SporadicSeverity(tc.present, tc.span); got != tc.want {
+				t.Errorf("SporadicSeverity(%d, %d) = %q, want %q",
+					tc.present, tc.span, got, tc.want)
+			}
+		})
+	}
+}
+
 // The compound rule, and the case that made it necessary.
 //
 // netra used to say "/mnt/ark is 90% full -- 674.4 GB free" in one breath and

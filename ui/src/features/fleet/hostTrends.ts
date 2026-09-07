@@ -31,7 +31,7 @@ import type { Band } from "../../ui/charts/StackedSparkline";
 import { SPARK_WIDTH } from "../../ui/charts/size";
 import { DOWN_COLOR, UP_COLOR } from "../../ui/charts/UpDownSparkline";
 import type { HostRow } from "./hostColumns";
-import { diskState } from "./conditions";
+import { diskState, type DiskThresholds } from "./conditions";
 import type { DiskSeverity } from "./conditions";
 
 /**
@@ -196,68 +196,20 @@ function totalBand(values: (number | null)[]): Band[] {
  * already seen over SSH. The API deliberately computes no percentage, so
  * this definition lives here.
  */
-/**
- * When this filesystem last became notable and stayed that way.
- *
- * Walked backwards from the newest reading through THIS series and no other:
- * the row names one mount, and dating it from whichever series crossed first
- * would put a timestamp from /var beside a sentence about /srv. The caller
- * has the series index for exactly that reason.
- *
- * A gap does not end the run. A host that was down for an hour did not empty
- * its disk while it was away, and treating the hole as a return under the
- * threshold would restart the clock every time the agent restarted.
- *
- * `atLeast` is the honest answer to a disk that was already full when the
- * window opened: netra cannot see past the range the reader picked, so the
- * row says "over 24 h" rather than naming the first bucket as if something
- * happened there.
- */
-function crossedAt(
-  res: MetricsResponse,
-  index: number,
-): { since: string | null; atLeast: boolean } {
-  const used = griddedValues(res, index, "used");
-  const free = griddedValues(res, index, "free");
-  const count = Math.min(used.length, free.length);
-  const from = Date.parse(res.window.from);
-  const stepMs = res.step_s * 1000;
-  if (count === 0 || !Number.isFinite(from) || !(stepMs > 0)) {
-    return { since: null, atLeast: false };
-  }
-
-  let start = -1;
-  // Whether the walk ever SAW this filesystem below notable. That, not
-  // reaching index 0, is what separates a crossing from a floor: the loop
-  // steps over gap buckets, so an agent that restarted at the window edge
-  // leaves bucket 0 empty and the walk stops at bucket 1 having never seen a
-  // reading below the line. Dated from `start` that printed a precise
-  // "23 h ago" for a disk that was over threshold for the whole observable
-  // window -- the fabricated onset this function exists to avoid.
-  let dropped = false;
-  for (let i = count - 1; i >= 0; i--) {
-    const u = used[i];
-    const f = free[i];
-    // A bucket with no reading, or one whose two halves add to nothing, says
-    // nothing either way -- keep walking.
-    if (u === null || f === null || u + f === 0) continue;
-    // The same compound rule the condition itself is judged by, not a bare
-    // percentage: dating a mount from when it crossed 90% would put a
-    // timestamp on a disk that only became worth reading about days later,
-    // when the bytes ran low.
-    if (diskState(u, f)?.severity == null) {
-      dropped = true;
-      break;
-    }
-    start = i;
-  }
-  if (start < 0) return { since: null, atLeast: false };
-  if (!dropped) return { since: res.window.from, atLeast: true };
-  return {
-    since: new Date(from + start * stepMs).toISOString(),
-    atLeast: false,
-  };
-}
+// crossedAt used to live here: a walk backwards through THIS mount's series to
+// the bucket it crossed on, run again on every render.
+//
+// It is the hub's job now, done once when the condition opens
+// (Store.diskOnset), and that is not a relocation -- it is the difference
+// between an onset and a guess. This walk was bounded by the range the reader
+// had picked, so the same disk answered "since 14:02" on one range and "over
+// 24 h" on another; and it read whichever tier the range selected, so the
+// answer changed shape as the data aged. The hub walks raw samples while they
+// still exist and stores the result, so it is exact and it stops moving.
+//
+// What is left of the pair is `fullest.since`, which is gone from this row
+// entirely: nothing derives an onset in the browser any more, and
+// Condition.since comes from host_conditions.opened_ts.
 
 /**
  * The mount this host's Disk cell names, and everything the cell prints.
@@ -289,6 +241,11 @@ function crossedAt(
 export function fullestFilesystem(
   res: MetricsResponse | null,
   filesystems: Filesystem[] | null,
+  // The hub's own disk thresholds, from the conditions catalogue. Null before
+  // the catalogue lands: every mount then ranks as "none" and the fullest is
+  // decided by percentage alone, which is the honest answer for one poll --
+  // restating 90 and 95 here is the second copy this change deleted.
+  thresholds: DiskThresholds | null,
 ): HostRow["fullest"] {
   const usable =
     res !== null &&
@@ -314,7 +271,7 @@ export function fullestFilesystem(
     index: number,
   ) => {
     if (used === null || free === null || used + free === 0) return;
-    const state = diskState(used, free)!;
+    const state = diskState(used, free, thresholds)!;
     const candidate = {
       mount,
       pct: state.pct,
@@ -366,14 +323,6 @@ export function fullestFilesystem(
     index: number;
   } = best;
   const drawable = res !== null && winner.index >= 0;
-  // The onset is computed for the winner only, and only when it is notable at
-  // all: every other mount on the host is a walk nobody reads. A winner with
-  // no series in this window -- the host that has been off longer than the
-  // window is wide -- has no onset to find either.
-  const crossed =
-    winner.severity !== null && drawable
-      ? crossedAt(res!, winner.index)
-      : { since: null, atLeast: false };
   return {
     mount: winner.mount,
     pct: winner.pct,
@@ -389,8 +338,6 @@ export function fullestFilesystem(
     // above it -- the mirror of a mount that is being measured and has no
     // stored gauge yet, which draws a line with no reading.
     series: drawable ? fsUsePercent(res!, winner.index) : [],
-    since: crossed.since,
-    sinceAtLeast: crossed.atLeast,
     asOf: winner.asOf,
   };
 }
@@ -878,6 +825,9 @@ export async function fetchFleetContainerTrends(
 export function buildRows(
   hosts: readonly Host[],
   trends: ReadonlyMap<number, HostTrends>,
+  // The hub's disk thresholds, for the Disk cell's ranking. See
+  // fullestFilesystem: null until the conditions catalogue lands.
+  thresholds: DiskThresholds | null = null,
 ): HostRow[] {
   return hosts.map((host) => {
     const trend = trends.get(host.id);
@@ -909,6 +859,7 @@ export function buildRows(
       fullest: fullestFilesystem(
         trend?.filesystem ?? null,
         currentFilesystems(host),
+        thresholds,
       ),
       disk: trend?.disk ?? [],
       // null, not 0: a host whose trends failed to load has not told us

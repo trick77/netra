@@ -79,7 +79,7 @@ func (s *Store) ApplyConditions(ctx context.Context, actions []conditions.Action
 				return err
 			}
 		case a.Update != nil:
-			if err := updateCondition(ctx, tx, *a.Update); err != nil {
+			if err := updateCondition(ctx, tx, *a.Update, now); err != nil {
 				return err
 			}
 		}
@@ -175,11 +175,12 @@ func resolveCondition(ctx context.Context, tx pgx.Tx, r conditions.Resolution, n
 	})
 }
 
-func updateCondition(ctx context.Context, tx pgx.Tx, u conditions.Update) error {
-	// No event: this is a condition staying as it is. Only opening and
-	// clearing are transitions, and writing a row per tick for an unchanged
-	// condition is the near-constant-series waste the whole event model exists
-	// to keep out of the log.
+func updateCondition(ctx context.Context, tx pgx.Tx, u conditions.Update, now time.Time) error {
+	// A condition merely staying as it is writes NO event. Writing a row per
+	// tick for an unchanged condition is the near-constant-series waste the
+	// whole event model exists to keep out of the log, and a predicate flapping
+	// either side of its threshold must not fill the log with transitions that
+	// describe nothing.
 	//
 	// A nil detail leaves the stored numbers alone -- see Update.Detail. The
 	// COALESCE is what makes that true against a NOT NULL column.
@@ -187,16 +188,60 @@ func updateCondition(ctx context.Context, tx pgx.Tx, u conditions.Update) error 
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
+	var openedTS time.Time
+	err = tx.QueryRow(ctx, `
 		UPDATE host_conditions
 		   SET severity = $2,
 		       missing_ticks = $3,
 		       detail = COALESCE($4::jsonb, detail)
-		 WHERE id = $1 AND resolved_ts IS NULL`,
-		u.ID, u.Severity, u.MissingTicks, detail); err != nil {
+		 WHERE id = $1 AND resolved_ts IS NULL
+		RETURNING opened_ts`,
+		u.ID, u.Severity, u.MissingTicks, detail).Scan(&openedTS)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Resolved by someone else between the scan and here. Not an error, and
+		// emphatically not an event about a row that is closed.
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("update condition %d: %w", u.ID, err)
 	}
-	return nil
+
+	// GETTING WORSE is a transition, and it used to be silent.
+	//
+	// A disk that opened at 91% and reached 97% is the same condition -- the
+	// row changes in place, which is right -- but an engine reading the log saw
+	// `opened` at warning and nothing after it, so the thing that would have
+	// paged someone never appeared. host_conditions.severity is the current
+	// truth; the log has to carry the moment it changed, or "what became
+	// critical since T" cannot be asked of it at all.
+	//
+	// One direction only. A condition easing off is not something to notify on,
+	// and pairing every escalation with a de-escalation would make an
+	// oscillating disk noisier in the log than a steady one.
+	if !severityRose(u.PrevSeverity, u.Severity) {
+		return nil
+	}
+	return insertConditionEvent(ctx, tx, u.Key, now, u.Severity, map[string]any{
+		"transition": "escalated",
+		"severity":   u.Severity,
+		// What it was, so a reader does not have to find the opening event to
+		// learn what changed.
+		"from": u.PrevSeverity,
+		// The condition this belongs to, the same way `cleared` carries it --
+		// it is what lets a consumer attach this to a lifecycle rather than
+		// scanning the log for a matching open.
+		"opened_ts": openedTS.UTC().Format(time.RFC3339),
+	})
+}
+
+// severityRose reports whether a condition got worse.
+//
+// Only one step exists -- warning to critical -- so this is written as the one
+// question rather than as a rank table nothing else needs. An empty previous
+// severity is a row this pass did not carry one for, which is not an
+// escalation.
+func severityRose(prev, next string) bool {
+	return prev == conditions.SeverityWarning && next == conditions.SeverityCritical
 }
 
 // insertConditionEvent writes a transition into the events table.

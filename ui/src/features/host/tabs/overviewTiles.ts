@@ -26,7 +26,7 @@ import { severityFromPercent, type FillSeverity } from "../../../ui/Meter";
 // The fleet's disk thresholds, imported rather than restated: the tile, the
 // Disk meters below it, the attention band above it and the fleet row a
 // reader arrived from must not disagree about one filesystem.
-import { diskState } from "../../fleet/conditions";
+import { diskState, type DiskThresholds } from "../../fleet/conditions";
 // The one derivation of a host's traffic pair, shared with the fleet row.
 import { trafficSeries } from "../../fleet/hostTrends";
 
@@ -304,6 +304,20 @@ export interface TileInput {
   hostMetrics: MetricsResponse | null;
   filesystemMetrics: MetricsResponse | null;
   netMetrics?: MetricsResponse | null;
+  /**
+   * The hub's disk thresholds, from the conditions catalogue.
+   *
+   * The Disk tile has to pick WHICH mount to name, and it picks by severity
+   * before percentage for the reason spelled out on busiestFilesystemTile: a
+   * 20 TB array at 96 % with 800 GB free must not outrank a 256 GB root at
+   * 93 % with 17 GB left. That judgement is the hub's, so its numbers arrive
+   * from the hub rather than being restated here.
+   *
+   * Null before the catalogue lands: every mount then ranks alike and the
+   * fullest by percentage wins, which is honest for one poll. It is not a
+   * default -- writing 90 and 95 here is the second copy this change deleted.
+   */
+  thresholds?: DiskThresholds | null;
   /** Injected by tests so "is this host reporting" is deterministic. */
   now?: Date;
 }
@@ -319,9 +333,10 @@ export interface TileInput {
  */
 export function overviewTiles(input: TileInput): Record<TileGroup, Tile[]> {
   const { host, hostMetrics, filesystemMetrics, netMetrics, now } = input;
+  const thresholds = input.thresholds ?? null;
 
   return {
-    system: systemTiles(host, hostMetrics, filesystemMetrics),
+    system: systemTiles(host, hostMetrics, filesystemMetrics, thresholds),
     kernel: kernelTiles(hostMetrics),
     pressure: pressureTiles(hostMetrics),
     network: networkTiles(host, hostMetrics, netMetrics ?? null, now),
@@ -332,6 +347,7 @@ function systemTiles(
   host: HostDetail,
   hostMetrics: MetricsResponse | null,
   filesystemMetrics: MetricsResponse | null,
+  thresholds: DiskThresholds | null,
 ): Tile[] {
   const tiles: Tile[] = [];
 
@@ -381,7 +397,7 @@ function systemTiles(
   // The one filesystem worth a tile: the fullest. Which one it is goes in
   // the sub-line, because "94%" with no mount point is a number a reader
   // cannot act on -- and the Disk card below lists all of them anyway.
-  tiles.push(busiestFilesystemTile(filesystemMetrics, host));
+  tiles.push(busiestFilesystemTile(filesystemMetrics, host, thresholds));
 
   return tiles;
 }
@@ -453,6 +469,7 @@ function busiestFilesystemTile(
   // eight lines apart, which is the disagreement this tile's own note below
   // forbids.
   host?: Pick<HostDetail, "last_seen" | "filesystems"> | null,
+  thresholds?: DiskThresholds | null,
 ): Tile {
   const rows = filesystemRows(res, host);
   let worstIndex = -1;
@@ -472,7 +489,7 @@ function busiestFilesystemTile(
   // own question, answered below by the same 70/95 the meters use -- see
   // the comment on the returned severity.
   rows.forEach((row, index) => {
-    const state = diskState(row.used, row.free);
+    const state = diskState(row.used, row.free, thresholds ?? null);
     if (state === null) return;
     if (
       worstIndex !== -1 &&

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ApiError,
+  getConditions,
   getFleetContainers,
-  getFleetDrives,
   getHosts,
   type Container,
-  type Drive,
+  type ConditionRow,
+  type ConditionsResponse,
   type Host,
 } from "../../lib/api";
 import { ABSENT, byterate } from "../../lib/format";
@@ -15,6 +16,8 @@ import { StatFigure, StatRail } from "../../ui/StatRail";
 import { AttentionCounts } from "./AttentionCounts";
 import { SinceLastCheck } from "./SinceLastCheck";
 import {
+  catalogueOf,
+  EMPTY_CATALOGUE,
   filterKind,
   fleetConditions,
   groupByHost,
@@ -25,6 +28,7 @@ import {
   kindSeverity,
   worstSeverity,
   type AttentionFilter,
+  type Catalogue,
   type Condition,
   type HostGroup,
 } from "./conditions";
@@ -140,16 +144,31 @@ export interface FleetPageProps {
   /** Injected containers. When omitted the page fetches its own. */
   containers?: readonly ContainerRow[];
   /**
-   * Conditions for the attention band.
+   * What the HUB says is wrong, straight off /api/v1/conditions.
    *
-   * Derived from the rows by default -- see conditions.ts. It used to
-   * default to [], with a note that computing them was a separate alerting
-   * workstream, which meant the band was dead code and this page said
-   * "nothing needs attention" beside a host whose own page was showing three
-   * OOM kills in red.
+   * These were derived here from whatever rows the page had fetched, which is
+   * why four of the five kinds could not say when they began. The rows are
+   * rendered into Conditions rather than computed -- see fleetConditions --
+   * and the only thing this page still decides for itself is the never-seen
+   * host, which the hub deliberately refuses to judge.
    *
-   * Still injectable, for tests and for a future alerting engine that will
-   * know things a row cannot.
+   * Defaults to [] rather than to a derivation: with no answer from the hub
+   * there is nothing to say, and `conditionError` below is what says so.
+   */
+  conditionRows?: readonly ConditionRow[];
+  /**
+   * The kind vocabulary, from the same response.
+   *
+   * Empty by default. Everything that reads it degrades honestly on an empty
+   * one -- an unrecognised filter is "all", a kind with no entry keeps its own
+   * name -- rather than falling back to a copy of the hub's table.
+   */
+  catalogue?: Catalogue;
+  /**
+   * Fully-formed conditions, bypassing the render step.
+   *
+   * For tests, and for anything that wants to put a specific list on screen
+   * without a wire shape behind it.
    */
   conditions?: Condition[];
   entity?: Entity;
@@ -194,16 +213,19 @@ export interface FleetPageProps {
    * could not be asked. Partial data must say it is partial: a list quietly
    * missing three hosts looks exactly like three hosts running none. */
   containerError?: string | null;
-  /** Set by a caller that fetched the drives itself and could not get them.
-   * With no drives no host can be judged on its disks, and every row below
-   * reads clean on them -- which must be said rather than looked like. */
-  driveError?: string | null;
+  /** Set by a caller that asked the hub what is wrong and could not get an
+   * answer. With no conditions every row below reads clean -- a fleet that
+   * goes green because nobody looked is the exact failure the engine exists to
+   * prevent, so it is said rather than looked like. */
+  conditionError?: string | null;
   onEntityChange?: (entity: Entity) => void;
 }
 
 export function FleetPage({
   rows,
   containers,
+  conditionRows,
+  catalogue = EMPTY_CATALOGUE,
   conditions: injectedConditions,
   entity: controlledEntity = "hosts",
   attention: controlledAttention,
@@ -211,7 +233,7 @@ export function FleetPage({
   attentionHref = (next) => (next === "all" ? "/" : `/?attn=${next}`),
   checkedAt: injectedCheckedAt,
   containerError: injectedContainerError,
-  driveError: injectedDriveError,
+  conditionError: injectedConditionError,
   now = new Date(),
   onEntityChange,
 }: FleetPageProps) {
@@ -244,9 +266,11 @@ export function FleetPage({
     string | null
   >(null);
   const [fetchedCheckedAt, setFetchedCheckedAt] = useState<string | null>(null);
-  const [fetchedDriveError, setFetchedDriveError] = useState<string | null>(
-    null,
-  );
+  const [fetchedConditions, setFetchedConditions] =
+    useState<ConditionsResponse | null>(null);
+  const [fetchedConditionError, setFetchedConditionError] = useState<
+    string | null
+  >(null);
 
   const injected = rows !== undefined;
 
@@ -272,29 +296,20 @@ export function FleetPage({
       // one wave for the same reason.
       //
       // Each is caught on its own: a failing listing must not claim the host
-      // list that already rendered could not be loaded. Containers simply
-      // stay unknown; the rows keep `drives` undefined, which hostConditions
-      // reads as "not asked" and stays silent about -- a fleet that quietly
-      // drops the one signal saying a disk is dying is worse than one that
-      // admits it, which is what the note beneath the head is for.
+      // list that already rendered could not be loaded. Containers simply stay
+      // unknown; the conditions stay empty, and the note beneath the head is
+      // what says so -- a fleet that quietly reads clean because netra could
+      // not be asked is worse than one that admits it.
       const ids = hosts.map((host) => host.id);
-      const [drives, listings] = await Promise.all([
-        getFleetDrives(ids).catch(() => null),
+      const [answer, listings] = await Promise.all([
+        getConditions().catch(() => null),
         getFleetContainers(ids).catch(() => null),
       ]);
       if (!live) return;
-      if (drives !== null) {
-        const withDrives = drives;
-        setFetchedRows((current) =>
-          (current ?? buildHostRows(hosts)).map((row) => ({
-            ...row,
-            drives: withDrives.get(row.id) ?? [],
-          })),
-        );
-      }
-      setFetchedDriveError(
-        drives === null
-          ? `${hosts.length} host${hosts.length === 1 ? "" : "s"} could not be asked for drives`
+      setFetchedConditions(answer ?? null);
+      setFetchedConditionError(
+        answer === null || answer === undefined
+          ? "netra could not be asked what is wrong"
           : null,
       );
 
@@ -327,7 +342,11 @@ export function FleetPage({
   const hostRows = rows ?? fetchedRows ?? [];
   const containerRows = containers ?? fetchedContainers ?? [];
   const containerError = injectedContainerError ?? fetchedContainerError;
-  const driveError = injectedDriveError ?? fetchedDriveError;
+  const conditionError = injectedConditionError ?? fetchedConditionError;
+  const kindCatalogue =
+    fetchedConditions !== null
+      ? catalogueOf(fetchedConditions.kinds)
+      : catalogue;
   // Distinguishes "this fleet runs no containers" from "not fetched yet":
   // the tile may only say 0 for the first.
   const containersKnown =
@@ -354,11 +373,18 @@ export function FleetPage({
   );
 
   const reporting = hostRows.filter((row) => isReporting(row, now)).length;
-  // Derived from the rows unless a caller supplied its own. Computed over
-  // hostRows rather than visibleHosts on purpose: a filter is someone
-  // looking for one machine, and hiding a critical host because its name
-  // does not match what was typed is exactly how an overview lies.
-  const shown = injectedConditions ?? fleetConditions(hostRows, now);
+  // The hub's rows, rendered. Built over hostRows rather than visibleHosts on
+  // purpose: a filter is someone looking for one machine, and hiding a
+  // critical host because its name does not match what was typed is exactly
+  // how an overview lies.
+  const shown =
+    injectedConditions ??
+    fleetConditions(
+      conditionRows ?? fetchedConditions?.conditions ?? [],
+      hostRows,
+      kindCatalogue,
+      now,
+    );
   const troubled = hostsNeedingAttention(shown);
   const groups = groupByHost(shown);
   const byHost = new Map<string, HostGroup>(groups.map((g) => [g.hostId, g]));
@@ -402,7 +428,7 @@ export function FleetPage({
     entity === "hosts" &&
     (attention === "critical" ||
       attention === "warning" ||
-      isConditionKind(attention))
+      isConditionKind(kindCatalogue, attention))
       ? attention
       : "all";
   const containerKind: ContainerStateKind | null =
@@ -425,7 +451,7 @@ export function FleetPage({
   // host carrying a kind can recover between the link being sent and being
   // opened, and a page that cannot name the filter it is applying reads as
   // broken ("Showing 0 of 100 hosts with").
-  const activeKind = filterKind(hostAttention);
+  const activeKind = filterKind(kindCatalogue, hostAttention);
   const filtered = hostAttention === "all";
   const attentionHosts = filtered
     ? visibleHosts
@@ -520,6 +546,14 @@ export function FleetPage({
   // one commit, which is one fact drawn twice in one row. The pill won: a
   // rail can only be a hue, and needed a screen-reader-only word planted in
   // the first cell to survive without colour. See HostTable's `severity`.
+  // Whether the hub raised `sporadic` on this host, read off the same groups
+  // rowSeverity reads. The badge used to be counted in the browser over
+  // whatever range the reader had picked, which made it a fact about the range
+  // as much as about the host.
+  const rowSporadic = (row: HostRow): boolean =>
+    byHost.get(String(row.id))?.conditions.some((c) => c.kind === "sporadic") ??
+    false;
+
   const rowSeverity = (row: HostRow): "warning" | "critical" | null => {
     const worst = byHost.get(String(row.id))?.worst.severity;
     if (worst === "critical" || worst === "warning") {
@@ -551,10 +585,11 @@ export function FleetPage({
           The hosts loaded, but their containers did not: {containerError}
         </p>
       ) : null}
-      {driveError !== null && driveError !== undefined ? (
+      {conditionError !== null && conditionError !== undefined ? (
         <p className="note" role="alert">
-          The hosts loaded, but their drives did not: {driveError} — no host
-          below can be judged on its disks.
+          The hosts loaded, but {conditionError} — nothing below is judged, so a
+          row with no mark on it means netra could not look rather than that it
+          looked and found nothing.
         </p>
       ) : null}
 
@@ -767,7 +802,7 @@ export function FleetPage({
               activeKind === null
                 ? attention
                 : (kinds.find((k) => k.kind === activeKind)?.severity ??
-                      kindSeverity(activeKind)) === "critical"
+                      kindSeverity(kindCatalogue, activeKind)) === "critical"
                   ? "critical"
                   : "warning"
             }
@@ -786,7 +821,7 @@ export function FleetPage({
           host{hostRows.length === 1 ? "" : "s"}
           {activeKind === null
             ? ` with something ${attention}`
-            : ` with ${kindLabel(activeKind).toLowerCase()}`}{" "}
+            : ` with ${kindLabel(kindCatalogue, activeKind).toLowerCase()}`}{" "}
           ·{" "}
           <a
             href={attentionHref("all")}
@@ -848,6 +883,7 @@ export function FleetPage({
           rows={attentionHosts}
           range={range}
           severity={rowSeverity}
+          sporadic={rowSporadic}
           now={now}
           filtered={hostRows.length > 0}
         />

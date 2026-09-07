@@ -561,4 +561,36 @@ describe("condition transitions", () => {
       expect(sentence).toContain("x");
     }
   });
+
+  // Every kind the hub can PRODUCE has to be offerable in the type filter, or
+  // the log holds rows a reader cannot select. Both of these had observers
+  // added in the same change that put them here.
+  it("offers the kinds the hub now has observers for", () => {
+    expect(CONDITION_EVENT_TYPES).toContain("drive");
+    expect(CONDITION_EVENT_TYPES).toContain("sporadic");
+  });
+
+  // Getting worse is its own transition. Without a sentence of its own it read
+  // exactly like the row that opened the condition hours earlier -- which is
+  // the silence in the log that the escalation event was added to end.
+  it("says a condition worsened, and what it worsened from", () => {
+    expect(
+      messageOf(
+        cond("disk", "var-log", {
+          transition: "escalated",
+          from: "warning",
+          severity: "critical",
+        }),
+      ),
+    ).toBe("Filesystem nearly full — var-log worsened from warning");
+  });
+
+  // An escalation must not read as the opening it followed.
+  it("does not print an escalation as if the condition had just opened", () => {
+    const opened = messageOf(cond("disk", "var-log", { transition: "opened" }));
+    const worse = messageOf(
+      cond("disk", "var-log", { transition: "escalated", from: "warning" }),
+    );
+    expect(worse).not.toBe(opened);
+  });
 });

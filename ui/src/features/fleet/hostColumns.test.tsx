@@ -354,8 +354,11 @@ describe("hostColumns", () => {
       const pill = (
         row: HostRow,
         worst?: (row: HostRow) => "warning" | "critical" | null,
+        sporadic?: (row: HostRow) => boolean,
       ): Element | null => {
-        const col = hostColumns("1h", worst).find((c) => c.header === "Host")!;
+        const col = hostColumns("1h", worst, sporadic).find(
+          (c) => c.header === "Host",
+        )!;
         const { container } = render(<>{col.cell(row)}</>);
         return container.querySelector(".badge");
       };
@@ -397,14 +400,27 @@ describe("hostColumns", () => {
       // The other direction, and it is NOT symmetric: a sporadic host is
       // answering, so a critical reading off it is current and outranks the
       // gaps in its series.
+      //
+      // Sporadic is the HUB's verdict now, read off the same conditions the
+      // severity is, so the pill's word and its colour cannot come from two
+      // different answers.
       it("lets a critical outrank sporadic, and sporadic outrank a warning", () => {
-        const gappy = makeRow({
-          last_seen: now(),
-          reporting: [1, null, null, 1, null, 1, null, 1],
-        });
+        const gappy = makeRow({ last_seen: now() });
 
-        expect(pill(gappy, () => "critical")?.textContent).toBe("critical");
-        expect(pill(gappy, () => "warning")?.textContent).toBe("sporadic");
+        expect(
+          pill(
+            gappy,
+            () => "critical",
+            () => true,
+          )?.textContent,
+        ).toBe("critical");
+        expect(
+          pill(
+            gappy,
+            () => "warning",
+            () => true,
+          )?.textContent,
+        ).toBe("sporadic");
       });
 
       // One pill, never two -- the ranking is this column's to do, not the
@@ -1211,94 +1227,45 @@ describe("hostColumns", () => {
     // Answering now, but a fifth of the window missing. "online" and
     // "offline" are both wrong summaries of that host: one says it is fine,
     // the other says it is gone, and the interesting state is neither.
-    it("marks a host that answers but keeps dropping scrapes as sporadic", () => {
-      const cols = hostColumns("1h");
+    //
+    // The counting moved to the hub (conditions.SporadicSeverity), over a
+    // FIXED window rather than the range the reader had picked -- the guards
+    // it needs are pinned in internal/hub/conditions/rules_test.go and the
+    // SQL that trims the window's edges in
+    // TestIntegrationScanFindsASporadicHost. What is left here is the badge.
+    it("marks a host the hub called sporadic", () => {
+      const cols = hostColumns("1h", undefined, () => true);
       const hostCol = cols.find((c) => c.header === "Host")!;
       const row = makeRow({
         last_seen: new Date(Date.now() - 10_000).toISOString(),
-        reporting: [10, null, 12, null, 11, null, 9, 10, 11, 12],
       });
       const { container } = render(<>{hostCol.cell(row)}</>);
       expect(screen.getByText("sporadic")).toBeInTheDocument();
       expect(container.querySelector(".badge.st-crit")).not.toBeInTheDocument();
-    });
-
-    // Leading nulls are the time before the host was reporting at all. A
-    // host added minutes ago is one real bucket at the end of a whole
-    // window's grid, and counting the emptiness in front of it badged every
-    // newly added agent sporadic for most of its first day.
-    it("does not call a just-added host sporadic for the time before it existed", () => {
-      const cols = hostColumns("24h");
-      const hostCol = cols.find((c) => c.header === "Host")!;
-      const row = makeRow({
-        last_seen: new Date(Date.now() - 10_000).toISOString(),
-        reporting: [...Array<number | null>(283).fill(null), 12],
-      });
-      const { container } = render(<>{hostCol.cell(row)}</>);
-      expect(screen.queryByText("sporadic")).toBeNull();
-      expect(container.querySelector(".badge.st-crit")).not.toBeInTheDocument();
-    });
-
-    // Trailing nulls are every tier materialising behind now, not a fault:
-    // the newest buckets are empty for every host on the page.
-    it("does not call a clean host sporadic for the buckets no tier has yet", () => {
-      const cols = hostColumns("1h");
-      const hostCol = cols.find((c) => c.header === "Host")!;
-      const row = makeRow({
-        last_seen: new Date(Date.now() - 10_000).toISOString(),
-        reporting: [10, 11, 12, 11, 10, 11, 12, null, null],
-      });
-      render(<>{hostCol.cell(row)}</>);
-      expect(screen.queryByText("sporadic")).toBeNull();
-    });
-
-    // The badge used to read row.cpu[0], which is a per-core band under 32
-    // threads and the cpu_total fallback above it -- so one host was judged
-    // against the cpu_core family and its neighbour against host_samples.
-    // Two relations, two materialisation lags, one column claiming to mean
-    // the same thing on every row.
-    it("judges sporadic from the reporting series, never from the CPU bands", () => {
-      const cols = hostColumns("1h");
-      const hostCol = cols.find((c) => c.header === "Host")!;
-      // A gappy per-core band beside a clean cpu_total series: the host is
-      // reporting fine, and only the cpu_core tier lags.
-      const row = makeRow({
-        last_seen: new Date(Date.now() - 10_000).toISOString(),
-        cpu: [
-          {
-            name: "core 0",
-            color: "var(--s1)",
-            values: [10, null, 12, null, 11, null, 9, null, 11, null],
-          },
-        ],
-        reporting: [10, 11, 12, 11, 10, 11, 12, 11, 10, 11],
-      });
-
-      render(<>{hostCol.cell(row)}</>);
-
-      expect(screen.queryByText("sporadic")).toBeNull();
     });
 
     // And the converse, so the test above cannot pass by the badge simply
-    // never appearing.
-    it("marks sporadic from the reporting series even when the CPU bands are clean", () => {
-      const cols = hostColumns("1h");
+    // always appearing.
+    it("says nothing about a host the hub did not call sporadic", () => {
+      const cols = hostColumns("1h", undefined, () => false);
       const hostCol = cols.find((c) => c.header === "Host")!;
       const row = makeRow({
         last_seen: new Date(Date.now() - 10_000).toISOString(),
-        cpu: [
-          {
-            name: "core 0",
-            color: "var(--s1)",
-            values: [10, 11, 12, 11, 10, 11, 12, 11, 10, 11],
-          },
-        ],
-        reporting: [10, null, 12, null, 11, null, 9, 10, 11, 12],
       });
-
       render(<>{hostCol.cell(row)}</>);
+      expect(screen.queryByText("sporadic")).toBeNull();
+    });
 
-      expect(screen.getByText("sporadic")).toBeInTheDocument();
+    // A host that has genuinely stopped is offline, not sporadic: its silence
+    // is the one fact worth marking, and the gaps in its series are that same
+    // outage said a second time.
+    it("says offline rather than sporadic for a host that stopped", () => {
+      const cols = hostColumns("1h", undefined, () => true);
+      const hostCol = cols.find((c) => c.header === "Host")!;
+      const row = makeRow({ last_seen: "2020-01-01T00:00:00Z" });
+      render(<>{hostCol.cell(row)}</>);
+      expect(screen.getByText("offline")).toBeInTheDocument();
+      expect(screen.queryByText("sporadic")).toBeNull();
     });
 
     it("reads offline at 181s since last_seen, just past 3x the scrape interval", () => {

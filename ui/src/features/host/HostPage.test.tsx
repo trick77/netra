@@ -17,6 +17,8 @@ vi.mock("../../lib/api", () => ({
   getUnits: vi.fn(),
   getMetrics: vi.fn(),
   getEvents: vi.fn(),
+  getConditions: vi.fn(),
+  getDrives: vi.fn(),
 }));
 
 import * as api from "../../lib/api";
@@ -82,6 +84,8 @@ beforeEach(() => {
   vi.mocked(api.getPackages).mockResolvedValue([]);
   vi.mocked(api.getUnits).mockResolvedValue([]);
   vi.mocked(api.getEvents).mockResolvedValue([]);
+  vi.mocked(api.getDrives).mockResolvedValue([]);
+  vi.mocked(api.getConditions).mockResolvedValue({ conditions: [], kinds: [] });
 });
 
 describe("hostTabHref", () => {
@@ -397,9 +401,10 @@ describe("HostPage", () => {
         vi.advanceTimersByTime(60_000);
       });
 
-      expect(await screen.findByRole("alert")).toHaveTextContent(
-        "stopped refreshing",
-      );
+      // By text rather than by role: this page has more than one thing it can
+      // alert about -- the Overview says its own piece when the conditions
+      // call fails -- so the role alone does not name which one is meant.
+      expect(await screen.findByText(/stopped refreshing/)).toBeInTheDocument();
       // Still the host's page, not an error page: the hostname and the
       // readings under it are what the reader was looking at.
       expect(

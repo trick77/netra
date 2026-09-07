@@ -30,6 +30,15 @@ func newHost(t *testing.T, ctx context.Context, s *store.Store, name string) int
 	return id
 }
 
+// hubUp is "this hub has been running long enough to judge a rate".
+//
+// ScanConditions clamps the sporadic window to it, so a test that wants the
+// full three hours has to say the hub was already up for them. A test that
+// wants the opposite -- the fleet-wide false positive a hub restart used to
+// cause -- passes a recent instant instead; see
+// TestIntegrationSporadicIsNotJudgedOverTheHubsOwnDowntime.
+var hubUp = time.Now().UTC().Add(-24 * time.Hour)
+
 func diskKey(host int32, label string) conditions.Key {
 	return conditions.Key{HostID: host, Kind: conditions.KindDisk, Subject: label}
 }
@@ -364,7 +373,7 @@ func TestIntegrationScanFindsAFullDisk(t *testing.T) {
 		t.Fatalf("filesystem_current: %v", err)
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -420,7 +429,7 @@ func TestIntegrationScanLeavesABigArrayAlone(t *testing.T) {
 		t.Fatalf("filesystem_current: %v", err)
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -445,7 +454,7 @@ func TestIntegrationScanFindsASilentHost(t *testing.T) {
 		t.Fatalf("host_current: %v", err)
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -495,7 +504,7 @@ func TestIntegrationScanCountsFailedUnitsOncePerHost(t *testing.T) {
 		}
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -533,7 +542,7 @@ func TestIntegrationAHealthyHostIsStillSeen(t *testing.T) {
 		t.Fatalf("insert unit: %v", err)
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -562,7 +571,7 @@ func TestIntegrationANullUnitSummaryIsNotAnAllClear(t *testing.T) {
 		t.Fatalf("host_current: %v", err)
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -575,38 +584,47 @@ func TestIntegrationANullUnitSummaryIsNotAnAllClear(t *testing.T) {
 	}
 }
 
-// A condition that gets worse is the same condition. It updates in place and
-// writes NO event: only opening and clearing are transitions, and a row per
-// tick for an unchanged condition is the near-constant-series waste the whole
-// event model exists to keep out of the log.
-func TestIntegrationSeverityChangesInPlaceWithoutAnEvent(t *testing.T) {
+// A condition that gets worse is the SAME condition -- one row, updated in
+// place -- and getting worse is a transition, which it did not used to be.
+//
+// A disk that opened at 91% and reached 97% changed the row and wrote nothing,
+// so an engine reading the log saw `opened` at warning and nothing after it:
+// the thing that would have paged someone never appeared. host_conditions
+// carries the current severity; the log has to carry the moment it changed, or
+// "what became critical since T" cannot be asked of the log at all.
+func TestIntegrationGettingWorseUpdatesInPlaceAndWritesOneEvent(t *testing.T) {
 	ctx, s := condCtx(t)
 	host := newHost(t, ctx, s, "cond-worse")
 	at := time.Now().UTC().Truncate(time.Second)
+	onset := at.Add(-3 * time.Hour)
 	k := diskKey(host, "root")
 
 	if err := s.ApplyConditions(ctx,
-		[]conditions.Action{{Open: ptrFinding(openFinding(k, conditions.SeverityWarning, at))}},
+		[]conditions.Action{{Open: ptrFinding(openFinding(k, conditions.SeverityWarning, onset))}},
 		at); err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	open, _ := s.OpenConditions(ctx)
 
+	worse := at.Add(time.Minute)
 	if err := s.ApplyConditions(ctx, []conditions.Action{{Update: &conditions.Update{
-		ID:       open[0].ID,
-		Key:      k,
-		Severity: conditions.SeverityCritical,
-		Detail:   map[string]any{"pct": 99.0, "mount": "/var"},
-	}}}, at.Add(time.Minute)); err != nil {
+		ID:           open[0].ID,
+		Key:          k,
+		Severity:     conditions.SeverityCritical,
+		PrevSeverity: conditions.SeverityWarning,
+		Detail:       map[string]any{"pct": 99.0, "mount": "/var"},
+	}}}, worse); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 
+	// Still ONE row, and it is the same one.
 	after, err := s.OpenConditions(ctx)
 	if err != nil {
 		t.Fatalf("open conditions: %v", err)
 	}
-	if len(after) != 1 || after[0].Severity != conditions.SeverityCritical {
-		t.Fatalf("open = %+v, want one critical", after)
+	if len(after) != 1 || after[0].ID != open[0].ID ||
+		after[0].Severity != conditions.SeverityCritical {
+		t.Fatalf("open = %+v, want the same row, now critical", after)
 	}
 
 	var detail []byte
@@ -622,13 +640,96 @@ func TestIntegrationSeverityChangesInPlaceWithoutAnEvent(t *testing.T) {
 		t.Errorf("detail = %+v, want the refreshed numbers", d)
 	}
 
+	// The escalation is one event, stated at the severity it rose TO, naming
+	// what it rose from and which condition it belongs to.
+	var evTS time.Time
+	var severity string
+	var evDetail []byte
+	if err := s.Pool().QueryRow(ctx, `
+		SELECT ts, severity, detail FROM events
+		 WHERE host_id = $1 AND type = 'disk'
+		   AND detail ->> 'transition' = 'escalated'`,
+		host).Scan(&evTS, &severity, &evDetail); err != nil {
+		t.Fatalf("read escalated event: %v", err)
+	}
+	if severity != conditions.SeverityCritical {
+		t.Errorf("event severity = %q, want critical -- an alerting reader filters on it", severity)
+	}
+	if !evTS.UTC().Equal(worse) {
+		t.Errorf("event ts = %v, want the moment it was recorded %v", evTS.UTC(), worse)
+	}
+	var ed map[string]any
+	if err := json.Unmarshal(evDetail, &ed); err != nil {
+		t.Fatalf("event detail: %v", err)
+	}
+	if ed["from"] != conditions.SeverityWarning {
+		t.Errorf("from = %v, want warning", ed["from"])
+	}
+	if got, ok := onsetOf(t, evDetail); !ok || !got.Equal(onset) {
+		t.Errorf("opened_ts = %v, want the condition's onset %v -- it is what pairs "+
+			"this with the lifecycle", got, onset)
+	}
+
+	// Two events total: the open, and this one. Nothing else.
+	var events int
+	if err := s.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM events WHERE host_id = $1 AND type = 'disk'`, host).Scan(&events); err != nil {
+		t.Fatalf("count events: %v", err)
+	}
+	if events != 2 {
+		t.Errorf("events = %d, want 2 -- the open and the escalation", events)
+	}
+}
+
+// The other direction, and a condition merely staying as it is, write NOTHING.
+//
+// Easing off is not something to notify on, and pairing every escalation with a
+// de-escalation would make an oscillating disk noisier in the log than a steady
+// one. The miss-counting update carries no severity change at all, which is
+// what keeps a flapping predicate out of the log entirely.
+func TestIntegrationEasingOffAndStandingStillWriteNoEvent(t *testing.T) {
+	ctx, s := condCtx(t)
+	host := newHost(t, ctx, s, "cond-easing")
+	at := time.Now().UTC().Truncate(time.Second)
+	k := diskKey(host, "root")
+
+	if err := s.ApplyConditions(ctx,
+		[]conditions.Action{{Open: ptrFinding(openFinding(k, conditions.SeverityCritical, at))}},
+		at); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	open, _ := s.OpenConditions(ctx)
+
+	// Critical back down to warning.
+	if err := s.ApplyConditions(ctx, []conditions.Action{{Update: &conditions.Update{
+		ID:           open[0].ID,
+		Key:          k,
+		Severity:     conditions.SeverityWarning,
+		PrevSeverity: conditions.SeverityCritical,
+		Detail:       map[string]any{"pct": 91.0, "mount": "/var"},
+	}}}, at.Add(time.Minute)); err != nil {
+		t.Fatalf("ease: %v", err)
+	}
+
+	// And a pass that found nothing to say: the miss counter moves, the
+	// severity does not.
+	if err := s.ApplyConditions(ctx, []conditions.Action{{Update: &conditions.Update{
+		ID:           open[0].ID,
+		Key:          k,
+		Severity:     conditions.SeverityWarning,
+		PrevSeverity: conditions.SeverityWarning,
+		MissingTicks: 1,
+	}}}, at.Add(2*time.Minute)); err != nil {
+		t.Fatalf("stand still: %v", err)
+	}
+
 	var events int
 	if err := s.Pool().QueryRow(ctx,
 		`SELECT count(*) FROM events WHERE host_id = $1 AND type = 'disk'`, host).Scan(&events); err != nil {
 		t.Fatalf("count events: %v", err)
 	}
 	if events != 1 {
-		t.Errorf("events = %d, want 1 -- getting worse is not a transition", events)
+		t.Errorf("events = %d, want 1 -- only the open", events)
 	}
 }
 
@@ -726,7 +827,7 @@ func TestIntegrationFailedUnitsTrustTheSummaryOverTheRows(t *testing.T) {
 		t.Fatalf("host_current: %v", err)
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -763,7 +864,7 @@ func TestIntegrationFailedUnitsNeverNameMoreThanTheCount(t *testing.T) {
 		}
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -805,7 +906,7 @@ func TestIntegrationAWedgedMountIsStillSeen(t *testing.T) {
 		t.Fatalf("filesystem_current: %v", err)
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -862,7 +963,7 @@ func TestIntegrationALongSilentMountIsNeverDeclaredGone(t *testing.T) {
 		t.Fatalf("filesystem_current: %v", err)
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -889,7 +990,7 @@ func TestIntegrationANeverSeenHostRaisesNothing(t *testing.T) {
 	host := newHost(t, ctx, s, "cond-unprovisioned")
 
 	// No host_current row at all, which is exactly what CreateHost leaves.
-	scan, err := s.ScanConditions(ctx, time.Now().UTC())
+	scan, err := s.ScanConditions(ctx, time.Now().UTC(), nil, time.Now().UTC().Add(-24*time.Hour))
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -932,7 +1033,7 @@ func TestIntegrationDiskOnsetIsTheReadingNotTheTick(t *testing.T) {
 		t.Fatalf("filesystem_current: %v", err)
 	}
 
-	scan, err := s.ScanConditions(ctx, now)
+	scan, err := s.ScanConditions(ctx, now, nil, hubUp)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}

@@ -38,6 +38,17 @@ function response(over: Partial<MetricsResponse>): MetricsResponse {
   } as MetricsResponse;
 }
 
+// The hub's own disk thresholds, as the conditions catalogue serves them.
+// fullestFilesystem ranks a host's mounts by severity before percentage, so it
+// needs them -- and taking them as an argument rather than writing 90 and 95
+// here is what stopped this file carrying a second copy of the rule.
+const THRESHOLDS = {
+  warnPct: 90,
+  critPct: 95,
+  warnFree: 100 * 1024 ** 3,
+  critFree: 20 * 1024 ** 3,
+};
+
 const t0 = Date.parse("2026-08-10T00:00:00Z");
 const hour = 3_600_000;
 // The window's FINAL bucket. A filesystem's fullness is read there rather
@@ -326,7 +337,7 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(fullestFilesystem(trends.filesystem, null)).toEqual({
+    expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)).toEqual({
       mount: "data",
       pct: 88,
       // Carried through beside the percentage: the condition rule needs the
@@ -336,9 +347,6 @@ describe("fetchHostTrends", () => {
       // three: the cell draws this line under the percentage beside it. The
       // buckets before the one reading are gaps, not a climb from zero.
       series: [null, null, 88],
-      // Under DISK_WARN_PCT, so there is no crossing to date.
-      since: null,
-      sinceAtLeast: false,
       // null on this path: the figure came off the window, not the hub's
       // stored gauge, so there is no reading timestamp to date it by.
       asOf: null,
@@ -370,7 +378,9 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(fullestFilesystem(trends.filesystem, null)?.mount).toBe("/");
+    expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)?.mount).toBe(
+      "/",
+    );
   });
 
   // A filesystem is named to an operator by its mount point -- the thing they
@@ -397,7 +407,9 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(fullestFilesystem(trends.filesystem, null)?.mount).toBe("/mnt/ark");
+    expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)?.mount).toBe(
+      "/mnt/ark",
+    );
     expect(trends.disk.map((b) => b.name)).toEqual(["/mnt/ark", "root"]);
   });
 
@@ -430,7 +442,7 @@ describe("fetchHostTrends", () => {
 
     const trends = await fetchHostTrends(1, "1h");
 
-    expect(fullestFilesystem(trends.filesystem, null)).toEqual({
+    expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)).toEqual({
       mount: "/mnt/ark",
       pct: 20,
       free: 80,
@@ -439,111 +451,20 @@ describe("fetchHostTrends", () => {
       // empty buckets before this host started reporting stay null rather
       // than becoming a climb from zero.
       series: [null, null, 20],
-      since: null,
-      sinceAtLeast: false,
       asOf: null,
     });
   });
 
-  // The onset is dated from when the mount became worth reading about, which
-  // on a big array is not when it crossed 90%. This one is over 90% for the
-  // whole window and only runs short of bytes in the last bucket.
-  it("dates the onset from the bytes, not from the percentage", async () => {
-    const GB = 1024 ** 3;
-    serve({
-      filesystem: response({
-        key_columns: ["filesystem"],
-        columns: ["used", "free", "total"],
-        series: [
-          {
-            key: { filesystem: "ark" },
-            points: [
-              // 91%, and 600 GB still left: nothing to say.
-              [t0, 6060 * GB, 600 * GB, 6800 * GB],
-              [t0 + hour, 6260 * GB, 400 * GB, 6800 * GB],
-              // 99%, and now under the 100 GiB floor.
-              [tNow, 6610 * GB, 50 * GB, 6800 * GB],
-            ],
-          },
-        ],
-      }),
-    });
-
-    const trends = await fetchHostTrends(1, "1h");
-
-    expect(fullestFilesystem(trends.filesystem, null)?.sinceAtLeast).toBe(
-      false,
-    );
-    expect(fullestFilesystem(trends.filesystem, null)?.since).toBe(
-      "2026-08-10T02:00:00.000Z",
-    );
-  });
-
-  // The onset walk, and the case that made it lie. A gap at the start of the
-  // window is not the moment a disk filled up: the walk steps over empty
-  // buckets, so an agent that restarted at the window edge left it stopping
-  // at bucket 1 with nothing under the threshold behind it, and the row
-  // printed a precise timestamp for a disk that was full the whole time netra
-  // can see.
-  it("states a floor when the disk was over the line for the whole window", async () => {
-    serve({
-      filesystem: response({
-        key_columns: ["filesystem"],
-        columns: ["used", "free", "total"],
-        series: [
-          {
-            key: { filesystem: "root" },
-            // Nothing in the first bucket -- the agent was restarting -- and
-            // over 90% in both buckets after it.
-            points: [
-              [t0 + hour, 95, 5, 110],
-              [tNow, 96, 4, 110],
-            ],
-          },
-        ],
-      }),
-    });
-
-    const trends = await fetchHostTrends(1, "1h");
-
-    expect(fullestFilesystem(trends.filesystem, null)?.sinceAtLeast).toBe(true);
-    expect(fullestFilesystem(trends.filesystem, null)?.since).toBe(
-      "2026-08-10T00:00:00Z",
-    );
-  });
-
-  // The other half of the same rule: a reading BELOW the threshold inside the
-  // window is a real crossing and gets a real timestamp.
-  it("dates the crossing when the disk was under the line earlier in the window", async () => {
-    serve({
-      filesystem: response({
-        key_columns: ["filesystem"],
-        columns: ["used", "free", "total"],
-        series: [
-          {
-            key: { filesystem: "root" },
-            points: [
-              [t0, 40, 60, 110],
-              [t0 + hour, 95, 5, 110],
-              [tNow, 96, 4, 110],
-            ],
-          },
-        ],
-      }),
-    });
-
-    const trends = await fetchHostTrends(1, "1h");
-
-    expect(fullestFilesystem(trends.filesystem, null)?.sinceAtLeast).toBe(
-      false,
-    );
-    // Milliseconds because this one is computed from the grid rather than
-    // echoed from the window string -- both parse to the same instant, which
-    // is all `relative()` reads.
-    expect(fullestFilesystem(trends.filesystem, null)?.since).toBe(
-      "2026-08-10T01:00:00.000Z",
-    );
-  });
+  // The onset tests moved to the hub with the walk itself: the compound rule
+  // rather than a bare percentage, the floor when the window runs out, the
+  // real crossing when a reading below the line is inside it, and a gap that
+  // must not restart the clock. See TestIntegrationDiskOnset* in
+  // internal/hub/store/conditionscan_integration_test.go.
+  //
+  // Deleted rather than kept, because the thing they tested is gone from this
+  // file: the walk was bounded by the range the reader had picked, so the same
+  // disk answered "since 14:02" on one range and "over 24 h" on another. The
+  // hub walks raw samples once, when the condition opens.
 
   // Never a zero-percent meter: an empty green bar says the disks were
   // measured and are empty.
@@ -551,7 +472,7 @@ describe("fetchHostTrends", () => {
     serve({ filesystem: response({ columns: [], series: [] }) });
 
     const trends = await fetchHostTrends(1, "1h");
-    expect(fullestFilesystem(trends.filesystem, null)).toBeNull();
+    expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)).toBeNull();
   });
 
   // One family the hub cannot answer costs that column, not the row: a
@@ -568,7 +489,7 @@ describe("fetchHostTrends", () => {
     const trends = await fetchHostTrends(1, "1h");
 
     expect(trends.cpu).toHaveLength(1);
-    expect(fullestFilesystem(trends.filesystem, null)).toBeNull();
+    expect(fullestFilesystem(trends.filesystem, null, THRESHOLDS)).toBeNull();
   });
 
   // The hub rejects relative times outright, and the fan-out is the one
@@ -993,9 +914,11 @@ describe("the disk reading on a host that is not permanently up", () => {
       series: [],
     });
 
-    const got = fullestFilesystem(empty, [
-      gauge({ label: "pool", used: 87, free: 13 }),
-    ]);
+    const got = fullestFilesystem(
+      empty,
+      [gauge({ label: "pool", used: 87, free: 13 })],
+      THRESHOLDS,
+    );
 
     expect(got?.mount).toBe("/mnt/pool");
     expect(got?.pct).toBe(87);
@@ -1023,9 +946,11 @@ describe("the disk reading on a host that is not permanently up", () => {
       ],
     });
 
-    const got = fullestFilesystem(partial, [
-      gauge({ label: "pool", used: 87, free: 13 }),
-    ]);
+    const got = fullestFilesystem(
+      partial,
+      [gauge({ label: "pool", used: 87, free: 13 })],
+      THRESHOLDS,
+    );
 
     expect(got?.pct).toBe(87);
     // The line is the window's, gaps and all -- the two buckets after the

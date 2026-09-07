@@ -22,12 +22,21 @@ type fakeStore struct {
 	applied  []conditions.Action
 	applyErr error
 	passes   int
+	// scannedOpen is what the last pass handed the scan, so a test can assert
+	// the onset walk is told which conditions already have one.
+	scannedOpen map[conditions.Key]bool
+	// scannedSince is the uptime bound the pass handed down, which is what
+	// stops a rate being counted over the hub's own downtime.
+	scannedSince time.Time
 }
 
-func (f *fakeStore) ScanConditions(context.Context, time.Time) (conditions.Scan, error) {
+func (f *fakeStore) ScanConditions(_ context.Context, _ time.Time,
+	open map[conditions.Key]bool, since time.Time) (conditions.Scan, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.passes++
+	f.scannedOpen = open
+	f.scannedSince = since
 	return f.scan, f.scanErr
 }
 
@@ -161,6 +170,34 @@ func TestWarmUpDoesNotSuppressOtherKinds(t *testing.T) {
 	}
 	if len(store.appliedActions()) != 1 || store.appliedActions()[0].Open == nil {
 		t.Fatalf("warm-up suppressed a disk condition: %+v", store.appliedActions())
+	}
+}
+
+// The evaluator tells the scan how far back this PROCESS can vouch for.
+//
+// It is what stops `sporadic` -- a rate over missing sample buckets -- being
+// counted across the hub's own downtime and reported as a fleet of flaky
+// machines. The warm-up could not do this job: its window is minutes and the
+// rate's is hours, so the hole a two-hour outage leaves outlives any warm-up.
+func TestTheScanIsToldHowFarBackTheHubCanVouchFor(t *testing.T) {
+	started := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	store := &fakeStore{scan: conditions.Scan{
+		Evaluated: map[string]bool{},
+		Seen:      map[conditions.Key]bool{},
+		Bad:       map[conditions.Key]conditions.Finding{},
+		Reporting: map[int32]bool{},
+	}}
+
+	e := conditions.New(store, started)
+	e.SetClockForTest(func() time.Time { return started.Add(4 * time.Hour) })
+
+	if err := e.Once(context.Background()); err != nil {
+		t.Fatalf("Once: %v", err)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if !store.scannedSince.Equal(started) {
+		t.Errorf("since = %v, want the process start %v", store.scannedSince, started)
 	}
 }
 

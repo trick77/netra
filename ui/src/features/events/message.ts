@@ -38,10 +38,12 @@ export const KERNEL_EVENT_TYPES = [
 /** The condition kinds the hub opens and clears, which reach this log as
  * transitions.
  *
- * The kinds ScanConditions actually PRODUCES, which is narrower than the Kind
- * constants in internal/hub/conditions: `sporadic` and `drive` are declared
- * there and have no observer yet. Listing them here would put two options in
- * the type dropdown that return an empty log with no explanation.
+ * The kinds ScanConditions actually PRODUCES. This was narrower than the Kind
+ * constants in internal/hub/conditions while `sporadic` and `drive` were
+ * declared there with no observer behind them -- listing them then would have
+ * put two options in the type dropdown that return an empty log with no
+ * explanation. Both have observers now (scanReporting and scanDrives), so both
+ * are here.
  *
  * A kind missing from this list still renders -- the dropdown unions it with
  * whatever arrived -- but falls through to the generic detail dump, which for
@@ -49,8 +51,10 @@ export const KERNEL_EVENT_TYPES = [
  * a sentence. So this grows when an observer does, not when a constant does. */
 export const CONDITION_EVENT_TYPES = [
   "silent",
+  "sporadic",
   "disk",
   "failed-units",
+  "drive",
 ] as const;
 
 /** The known event types, which is also the order a type filter offers them.
@@ -398,6 +402,16 @@ function conditionMessage(
 ): string {
   const what = CONDITION_LABELS[type] ?? type;
   const named = subject ? `${what} — ${subject}` : what;
+
+  // Getting WORSE is its own transition, and it has to read as one. The hub
+  // writes it when a condition's severity rises -- a disk that opened at 91%
+  // and reached 97% -- and without a sentence of its own it would print
+  // identically to the row that opened it hours earlier, which is the silence
+  // this event was added to end.
+  if (text(f, "transition") === "escalated") {
+    const from = text(f, "from");
+    return from ? `${named} worsened from ${from}` : `${named} worsened`;
+  }
 
   if (text(f, "transition") === "cleared") {
     // count() is the guard, not duration(): duration(0) is "0 s" rather than

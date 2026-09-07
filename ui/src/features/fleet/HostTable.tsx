@@ -28,6 +28,10 @@ export interface HostTableProps {
    * still hands this straight to a column.
    */
   severity?: TableProps<HostRow>["rowSeverity"];
+  /** Whether the hub raised `sporadic` on a host -- read off the same
+   * conditions `severity` is, so the pill's word and its colour cannot come
+   * from two different answers. */
+  sporadic?: (row: HostRow) => boolean;
   /** The instant the page is reading itself at -- the same one `severity` was
    * derived against, so a row's pill cannot judge a host still reporting by
    * one clock and its conditions by another. */
@@ -51,6 +55,7 @@ export function HostTable({
   rows,
   range,
   severity,
+  sporadic,
   now,
   filtered = false,
 }: HostTableProps) {
@@ -62,7 +67,7 @@ export function HostTable({
 
   return (
     <Table
-      columns={hostColumns(range, severity, now)}
+      columns={hostColumns(range, severity, sporadic, now)}
       rows={rows}
       rowKey={(row) => row.id}
     />
