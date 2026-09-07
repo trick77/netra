@@ -11,9 +11,10 @@
   guaranteed to survive. The geometry caps coverage at 65%: the chip's rx-4
   corner bulges sqrt(2)*(12-3-4) + 4 = 11.071 units out from the centre in the
   24-space, and 25.6/11.071 = 2.312 is the largest outer scale that fits, i.e.
-  2.312*18/64. 46% sits comfortably under it, and the trace inside the chip is
-  narrower than the chip's own corners, so the corners are what the safe circle
-  actually has to clear.
+  2.312*18/64. 46% sits comfortably under it, and the mark inside the chip
+  reaches only sqrt(2)*6 = 8.485 units out from the centre against the chip's
+  own 11.071, so the chip's corners are what the safe circle actually has to
+  clear.
 
   Transform is scale = 64*0.46/18, translate = 32 - 12*scale, per icon.svg.
 -->
@@ -25,8 +26,8 @@
   <rect width="64" height="64" fill="#131312"/>
   <g transform="translate(12.3733 12.3733) scale(1.63556)">
     <rect x="3" y="3" width="18" height="18" rx="4" fill="url(#og)"/>
-    <g transform="translate(4.7273 4.7273) scale(0.606061)" fill="none" stroke="#131312" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M3.5 12h3.2L9 5l6 14 2.3-7H20.5"/>
+    <g transform="translate(4 4) scale(0.666667)" fill="#131312">
+      <path d="M4 3H20C20.5523 3 21 3.44772 21 4V11H3V4C3 3.44772 3.44772 3 4 3ZM3 13H21V20C21 20.5523 20.5523 21 20 21H4C3.44772 21 3 20.5523 3 20V13ZM7 16V18H10V16H7ZM7 6V8H10V6H7Z"/>
     </g>
   </g>
 </svg>

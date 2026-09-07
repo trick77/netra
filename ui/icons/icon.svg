@@ -1,63 +1,42 @@
 <!--
-  netra's icon: remix's "pulse-fill" knocked out of a solid chip. This is the
+  netra's icon: remix's "server-fill" painted onto a solid chip. This is the
   master — the other two sources here are copies of it, and it is the file that
   ships as /icon.svg as well as rendering the PWA rasters.
 
-  A heartbeat trace, not a chart. ismimodown's mark is three rising bars and its
-  own comment explains why it is not a line: at 16px a polyline "paints at about
-  one pixel and reads as a scratch". That verdict is about a STROKED lucide
-  polyline at lucide's weight. Remix ships this glyph pre-outlined at weight 2 in
-  the 24-space, i.e. as a shape whose weight is a number rather than an
-  inherited default, and once the weight is tunable the objection is a tuning
-  problem instead of a shape problem. Rendered at 16px against the same
-  candidates, a 2.8-weight trace holds a continuous line where three separate
-  small marks each fight for one pixel of their own.
+  A MACHINE, NOT A READING. netra watches a fleet of hosts, and two stacked
+  units with an indicator on each are the thing the product is pointed at; the
+  heartbeat trace that stood here before was a reading taken off one of them,
+  which is a picture of the output rather than of the subject. At favicon size
+  the distinction is also a legibility argument. A trace is one thin continuous
+  line, and its thinnest run — the flat baseline, the part that says "trace"
+  rather than "zigzag" — lands at about a pixel at 16px and had to be tuned up
+  to survive; two solid bars with a gap between them are blocks, and the only
+  feature that has to hold is the gap, which is 1.3 units of the chip's 18 and
+  never in doubt. Remix ships this glyph as a fill, and it is used as one here,
+  so there is no stroke weight in this file to tune at all.
 
-  THE CHIP IS THE INK, and the mark is cut out of it — the same inversion peeq
-  and ismimodown made, for the reason ismimodown's tile.svg states: filled, the
+  The path is remix's (Apache 2.0), copied rather than imported — nothing loads
+  an icon library to draw a static asset.
+
+  THE CHIP IS THE INK, and the mark sits on it — the same inversion peeq and
+  ismimodown made, for the reason ismimodown's tile.svg states: filled, the
   silhouette is one solid object at any size, and the same object on every
   ground. Safari composites a tab icon onto a light favourites plate, Chrome
   onto its own dark strip, and a filled chip reads on both without either being
   humoured.
 
-  The trace is PAINTED #131312 (netra's color-bg token — an XML comment cannot
+  The mark is PAINTED #131312 (netra's color-bg token — an XML comment cannot
   carry the token's own two-dash prefix), not punched through the chip. A real
-  knockout would let whatever is behind the icon show through the trace, which
+  knockout would let whatever is behind the icon show through the mark, which
   on a light plate means a hollow-looking chip; the mark has to stay dark-on-warm
   wherever the icon lands.
 
-  IT IS A STROKE HERE, not remix's outlined path. The two are the same geometry:
-  remix's fill path is this centreline —
-
-    (1,12) (6.7,12) (9,5) (15,19) (17.3,12) (23,12)
-
-  — offset by 1 unit either side, mitred, with flat ends. Kept as a stroke, the
-  weight and the arm length stay numbers this file can set, and the caps and
-  joins become round, which is what the chip's own rx-4 corners are. The path is
-  remix's (Apache 2.0), copied rather than imported — nothing loads an icon
-  library to draw a static asset.
-
-  THE ARMS ARE CROPPED to x 3.5 and x 20.5, from remix's 1 and 23. The spike
-  itself — (9,5) to (15,19), and the two short transitions at 6.7 and 17.3 —
-  is untouched, so this is only a decision about how much flat baseline runs out
-  either side of it.
-
-  It is the one free parameter in the mark, because the inner scale is derived
-  from the drawn width: shorter arms make the glyph narrower, a narrower glyph
-  scales up to hit the same 12-unit width, and scaling up makes the SPIKE
-  taller. Arms and spike trade against each other at constant width. Full arms
-  (remix's own, pulled to 2 and 22) put the spike at 8.84 units of the chip's 18
-  and the mark reads as a baseline with a wobble; cropping to 5 and 19 puts it at
-  12 and the arms stop reading as a trace at all, leaving a zigzag. 3.5 and 20.5
-  is the midpoint: spike 10.18, arms still long enough to run out toward both
-  edges.
-
-  THE WEIGHT IS 2.8, not remix's 2. At 16px the chip is 18 units wide, so one
-  glyph unit draws at about 0.89px and the flat baseline sections — the thinnest
-  part of the mark, and the part that says "trace" rather than "zigzag" — land
-  at roughly 1px at remix's own weight. 2.8 puts them at about 1.3px, which
-  paints. Nothing else in the glyph needed it; the two diagonals were never at
-  risk.
+  THE TWO INDICATOR SLOTS ARE the exception, and they are holes on purpose: each
+  is a subpath wound against its own panel, so the nonzero fill rule drops it,
+  and what shows through is the chip — which is opaque — never the page. They
+  draw about 0.9px wide at 16px and largely close up there. That is intended:
+  at tab size the mark is two bars and a gap, and the slots are detail the
+  larger rasters get to keep.
 
   THE INK IS A GRADIENT, #e08a68 down to #c25f34 at roughly 145° — the family's
   ramp, byte for byte what peeq and ismimodown ship, so netra's chip sits flush
@@ -86,26 +65,26 @@
   THE TRANSFORMS ARE DERIVED, not typed:
 
     outer: scale = 64*C/18,          translate = 32 - 12*scale
-    inner: scale = 12/19.8 = 0.6061, translate = 12*(1 - scale)
+    inner: scale = 12/18 = 0.666667, translate = 12*(1 - scale)
 
   where C is the file's coverage of the canvas: 1.0 here, 0.60 in icon-tile.svg,
   0.46 in icon-maskable.svg — peeq's three coverages, unchanged.
 
-  The inner scale's denominator is 19.8 and not 17, and that is the whole reason
-  it is written as a division. 19.8 is the mark's DRAWN width: the centreline
-  spans x 3.5 to 20.5, which is 17, and a 2.8-wide stroke with round caps adds
-  half its weight at each end. Sizing off the centreline alone would ship a mark
-  16% over the target and quietly break the one thing this line exists to
-  guarantee — that the mark's longest dimension draws at 12 of the chip's 18
-  units, which is what ismimodown's bars measure and therefore what makes these
-  two icons look like siblings. Its drawn height, 16.8*0.6061 = 10.18 units, is
-  the shorter one and does not constrain the fit. The mark is symmetric about
-  (12,12) in both axes — with the arms cropped by the same amount at each end,
-  deliberately, so that stays true — so no optical nudge is needed.
+  The inner scale's denominator is 18 because 18 is the mark's DRAWN width.
+  remix's server-fill spans x[3,21] and y[3,21] in its own 24-space, and it is a
+  fill, so the path's bbox IS what draws — unlike the stroked trace it replaces,
+  whose denominator was 19.8 because a 2.8-wide stroke with round caps added
+  half its weight at each end of a 17-unit centreline. This is the one line that
+  guarantees the mark's longest dimension draws at 12 of the chip's 18 units,
+  which is what ismimodown's bars measure and therefore what makes these two
+  icons look like siblings. The glyph is square, so both dimensions land on 12
+  and neither is slack, and it is symmetric about (12,12) in both axes, so no
+  optical nudge is needed.
 
-  Change the weight OR the arm length and the inner scale has to be recomputed
-  from the new drawn width, or the mark silently stops filling the coverage its
-  own comment claims. Change a coverage and its outer transform follows.
+  Change the glyph and the inner scale has to be recomputed from the new drawn
+  width — a stroked replacement has to add its weight to the bbox before
+  dividing — or the mark silently stops filling the coverage its own comment
+  claims. Change a coverage and its outer transform follows.
 
   Regenerate the rasters with hack/gen-icons.sh after touching this file — and
   mirror any shape change into the two tiled sources beside it, which are copies
@@ -119,8 +98,8 @@
   </linearGradient>
   <g transform="translate(-10.6667 -10.6667) scale(3.55556)">
     <rect x="3" y="3" width="18" height="18" rx="4" fill="url(#og)"/>
-    <g transform="translate(4.7273 4.7273) scale(0.606061)" fill="none" stroke="#131312" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M3.5 12h3.2L9 5l6 14 2.3-7H20.5"/>
+    <g transform="translate(4 4) scale(0.666667)" fill="#131312">
+      <path d="M4 3H20C20.5523 3 21 3.44772 21 4V11H3V4C3 3.44772 3.44772 3 4 3ZM3 13H21V20C21 20.5523 20.5523 21 20 21H4C3.44772 21 3 20.5523 3 20V13ZM7 16V18H10V16H7ZM7 6V8H10V6H7Z"/>
     </g>
   </g>
 </svg>
