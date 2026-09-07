@@ -70,6 +70,13 @@ func run() error {
 		collector.NewSensors(cfg.SysRoot, cfg.SensorsTimeout),
 		collector.NewMdraid(cfg.SysRoot),
 
+		// Group 3b: needs a device grant. The kernel ring buffer is where the
+		// events an operator acts on actually live -- disk and filesystem
+		// errors, OOM kills, MCEs -- and without it the event log is whatever
+		// mdraid, dpkg and systemd happen to say. Reports a capability and
+		// stays quiet when the device is not granted.
+		collector.NewKmsg("/dev/kmsg", cfg.ProcRoot),
+
 		// Group 2: needs network_mode: host to see the host's interfaces
 		// rather than the container's.
 		collector.NewNetwork(cfg.ProcRoot),
