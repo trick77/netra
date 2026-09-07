@@ -847,7 +847,13 @@ describe("trafficSeries", () => {
       family: "net",
       tier: "5m",
       step_s: 60,
-      window: { from: iso(0), to: iso(3) },
+      // `to` is the LEFT EDGE of the newest bucket, not one step past it: the
+      // hub's SQL is `bucket <= $3` against a `to` that planQuery has already
+      // put on a bucket boundary, so a three-bucket answer spans from..to
+      // inclusive. seriesOnGrid counts its slots the same way, and a fixture
+      // written half-open here would be asserting against a response shape
+      // the hub does not send.
+      window: { from: iso(0), to: iso(2) },
       requested_window: { from: iso(0), to: iso(3) },
       warnings: [],
       key_columns: ["iface"],

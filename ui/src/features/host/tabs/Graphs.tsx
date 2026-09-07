@@ -90,21 +90,27 @@ export function SpecPanel({
     extra[source] = sources[source] ?? null;
   }
 
-  const series = bandsFor(spec, res, { extra });
-  // The enlarged view has room for the pair -- mean as the line, the
-  // bucket's peak as a pale envelope under it -- and the 260px panel does
-  // not: two marks in that space are a smear, so it draws the peak alone.
-  // bandsFor only builds an envelope for the specs that can carry one (a
-  // mirrored rate chart at a rollup tier), so every other panel is handed
-  // exactly what it already had.
+  // The pair at BOTH sizes: mean as the line, the bucket's peak as a pale
+  // envelope under it.
+  //
+  // The 260px panel used to draw the peak ALONE, on the argument that two
+  // marks in that space are a smear. The argument was about ink and the cost
+  // was about meaning: the line meant the average on most panels and the peak
+  // on the few with `peak` set, and the stats table under each panel reads the
+  // LINE -- so a panel drawing the peak reported it under the heading "Mean".
+  // With the envelope at both sizes the line means one thing everywhere, the
+  // envelope means one thing everywhere, and enlarging a chart no longer
+  // changes which quantity the mark is.
+  //
+  // bandsFor only builds an envelope for the specs that can carry one (a rate
+  // chart at a rollup tier whose mark is not a plain stack), so every other
+  // panel is handed exactly what it already had.
+  //
   // Wherever the tier has a max column, at every window: bandsFor asks that
   // question and nothing else. There was a 48-hour floor here, the
   // reference's own -- see the note in fleet/hostTrends for what dropping it
   // costs on the ceiling.
-  const detailSeries = bandsFor(spec, res, {
-    withPeakBand: true,
-    extra,
-  });
+  const series = bandsFor(spec, res, { withPeakBand: true, extra });
 
   // The same bandsFor the panel uses, over a response for one family at one
   // other range -- so an enlarged chart draws its wider window exactly as
@@ -189,7 +195,10 @@ export function SpecPanel({
       // builds its ChartPanels by hand and passes nothing at all, so it stays
       // clean by construction rather than by an exception here.
       about={spec.about}
-      detailSeries={detailSeries}
+      // No detailSeries. It existed to hand the dialog a pair the 260px panel
+      // was not given, and the panel is given the pair now, so the two would
+      // be the same array. Enlargeable falls back to `series` when it is
+      // absent.
       // "Not collected" would be a lie here: the bands exist, the scale to
       // read them against does not, and a reader sent looking for a broken
       // collector would find a perfectly healthy one.
