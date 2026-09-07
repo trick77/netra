@@ -687,7 +687,7 @@ export const NETWORK: PanelSpec[] = [
       { base: "rx_bytes", label: "in" },
       { base: "tx_bytes", label: "out" },
     ],
-    // Green above / purple below, one lightness step per interface. Direction
+    // Green above / orange below, one lightness step per interface. Direction
     // is the strong read and the interface the weak one, which is the way
     // round the fleet cell forces: it has two bands and no legend, and this
     // panel must not re-hue the pair it was opened from. See PanelSpec.shades.

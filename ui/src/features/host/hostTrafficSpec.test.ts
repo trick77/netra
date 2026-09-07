@@ -111,7 +111,7 @@ describe("the host-traffic spec", () => {
     expect(cell.rx[2]).toBeNull();
   });
 
-  it("keeps green above and purple below, one step per interface", () => {
+  it("keeps green above and orange below, one step per interface", () => {
     // Given the page's bands
     const bands = bandsFor(specForSlug("host-traffic")!, net());
 

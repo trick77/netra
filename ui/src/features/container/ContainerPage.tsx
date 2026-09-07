@@ -275,9 +275,10 @@ function bandsFor(sampled: Sampled | null): ContainerBands {
     cpuBands,
     memBands,
     // Mirrored about a midline, ingress above and egress below, like every
-    // other traffic chart in the app. Green over purple for the same reason
-    // the fleet row uses them: against green, blue separates by CVD dE 9 and
-    // the two halves read as one mass.
+    // other traffic chart in the app. Green over violet, from the series ramp
+    // rather than the fleet row's --in-1/--out-1 pair: this panel always
+    // carries a legend, and blue below green would separate by only CVD dE 9
+    // and read as one mass.
     netBands: [
       band("in", "var(--s2)", sampled?.netRx ?? empty),
       band("out", "var(--s5)", sampled?.netTx ?? empty),
@@ -632,9 +633,9 @@ export function ContainerPage({
         {/* Mirrored about a midline, ingress above and egress below, like
             every other traffic chart in the app -- two lines climbing one
             axis make a reader compare shapes to answer which way the traffic
-            is going. Green over purple for the same reason the fleet row
-            uses them: against green, blue separates by CVD dE 9 and the two
-            halves read as one mass. */}
+            is going. Green over violet, from the series ramp rather than
+            the fleet row's --in-1/--out-1 pair: blue below green would
+            separate by only CVD dE 9 and read as one mass. */}
         <ChartPanel
           title="Network"
           fmt={byterate}

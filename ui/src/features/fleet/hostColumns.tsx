@@ -745,7 +745,13 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
             again, so the odd one out now is the cell with no severity to
             carry. Hue is what separates in from out here -- a rate has no
             ceiling, so there is no threshold for it to mean instead, and
-            mirrored around a midline two greys fuse into one shape. */}
+            mirrored around a midline two greys fuse into one shape.
+
+            Those two hues ARE the status green and amber now (index.css owns
+            the argument). Nothing about this cell means severity: the green
+            is not "ok" and the amber is not "warning", they are inbound and
+            outbound bytes. The rail, the dot and the word all sit left of
+            here and are the only marks on the row that carry state. */}
         <UpDownSparkline
           up={row.rx}
           down={row.tx}
