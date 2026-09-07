@@ -16,7 +16,7 @@ import (
 
 // The dark-launch gate: the hub's verdict must equal the browser's.
 //
-// One fixture, test/conditions/equality.json, read by this test and by
+// One fixture, ui/test/conditions/equality.json, read by this test and by
 // ui/src/features/fleet/conditions.equality.test.ts. No cross-language runner
 // and no shelling out -- each side seeds itself from the same description and
 // asserts the same verdicts, so a disagreement shows up as one of them going
@@ -71,7 +71,11 @@ type equalityFixture struct {
 
 func loadEqualityFixture(t *testing.T) equalityFixture {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "test", "conditions", "equality.json")
+	// Under ui/, not beside this file, and that is the container build's doing:
+	// the SPA is compiled in a node stage that copies ui/ alone, so a fixture at
+	// the repo root cannot be type-checked there -- see the note on the
+	// TypeScript half. One file either way; this is the side that can reach it.
+	path := filepath.Join("..", "..", "..", "ui", "test", "conditions", "equality.json")
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)

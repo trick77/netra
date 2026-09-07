@@ -1,6 +1,6 @@
 // The dark-launch gate, browser half.
 //
-// One fixture, test/conditions/equality.json, read by this file and by
+// One fixture, ui/test/conditions/equality.json, read by this file and by
 // internal/hub/store/equality_integration_test.go. Each side seeds itself from
 // the same description and asserts the same verdicts, so a disagreement shows
 // up as one of them going red rather than as a comparison nobody runs -- and
@@ -23,7 +23,16 @@ import type { ConditionKindInfo, ConditionRow } from "../../lib/api";
 // than read off the filesystem: this suite carries no node types, vite resolves
 // JSON natively, and two copies of a fixture that has to describe one fleet
 // would be exactly the disagreement this gate exists to catch.
-import fixtureJson from "../../../../test/conditions/equality.json";
+//
+// It lives under ui/ rather than beside the Go test that also reads it, and the
+// reason is the container build: build/Containerfile.hub compiles the SPA in a
+// node stage that copies ui/ and nothing else, `npm run build` runs
+// `tsc --noEmit` over these test files, and a repo-root path therefore fails to
+// resolve there while passing under vitest. The obvious fix -- copying the
+// fixture into the stage -- means un-ignoring test/ in .dockerignore, which
+// exists to keep an edit to a shell test from invalidating the Go build cache.
+// So the shared file sits on the side that has the tighter constraint.
+import fixtureJson from "../../../test/conditions/equality.json";
 
 type Fixture = {
   hosts: {
