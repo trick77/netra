@@ -913,6 +913,11 @@ a:hover {
    the mark's brand colour: it is decoration beside an identifier, and the
    release it stands for is spelled out on the line underneath. */
 .fleet-host .osicon {
+  /* Hidden for now, and hidden rather than removed: the mark may come back,
+     and the sizing and colour below are what it comes back as. OsIcon still
+     renders, so the row keeps its structure and the tests that look for the
+     mark still find it -- only the eye stops seeing it. */
+  display: none;
   width: 22px;
   height: 22px;
   flex: none;
@@ -942,6 +947,15 @@ a:hover {
   font-weight: 500;
   font-size: var(--text-ui);
   color: var(--ink);
+}
+/* The fleet's hostname, and only the fleet's, in the brand serif. The
+   identity column is the one place on the page that names a thing rather
+   than measuring it, and the serif says so at a glance -- every figure
+   around it stays in the sans. Scoped to .fleet-host because .host-cell-name
+   is shared with the container list, whose name column is one of several in
+   a row of like text and reads wrong set apart. */
+.fleet-host .host-cell-name {
+  font-family: var(--font-serif);
 }
 /* Except a host that is not reporting. That one keeps a hue, and it is the
    status palette's rather than the brand's: the name IS the reading on a row
