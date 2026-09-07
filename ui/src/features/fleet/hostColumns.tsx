@@ -47,9 +47,9 @@ export type { Range };
  * The view-model both renderers consume. `Host` as the read API actually
  * returns it (lib/api.ts), plus everything a later assembly task derives
  * from a host's metrics: pre-built, pre-coloured chart series and the
- * fullest-filesystem summary (never a per-filesystem list -- Disk shows
- * the one that matters plus a count of the rest, see the Disk column
- * below).
+ * fullest-filesystem summary (never a per-filesystem list -- the Filesystem
+ * column shows the one mount that matters and says nothing about the rest,
+ * see that column below).
  *
  * Nothing about WHERE a host is is derived here. `GET /api/v1/hosts` carries
  * location, provider and facility on every row, straight from what each
@@ -749,11 +749,14 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         <UpDownSparkline
           up={row.rx}
           down={row.tx}
-          // The row's weight, not a mirror's default mass. At cell density a
-          // mirror fills solid, which put a block of grey in a row of
-          // silhouettes drawn as a line over a light fill -- the same colour
-          // as its neighbours and still not the same mark. See MirrorWeight.
-          weight="line"
+          // No weight override: a mirror fills solid at this density and
+          // that is the mark. It drew as a line over a light fill for a
+          // while, to read as one of a row of silhouettes, and what that
+          // cost is the reading -- a translucent wash where rrdtool, and
+          // every traffic graph an operator has already read, draws a filled
+          // area. The cell is allowed to be the one mass in the row: it is
+          // the one column whose two halves are a comparison rather than a
+          // level against a threshold.
           label={`Traffic trend, ${rangeLabel(range)}`}
         />
       </Enlargeable>
@@ -914,8 +917,8 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
   const chart =
     axis === null ? null : (
       <Enlargeable
-        title={`Disk · ${mount} · ${row.hostname}`}
-        label={`Enlarge disk usage for ${mount} on ${row.hostname}`}
+        title={`Filesystem · ${mount} · ${row.hostname}`}
+        label={`Enlarge filesystem usage for ${mount} on ${row.hostname}`}
         className="inline"
         unit="%"
         series={[{ name: mount, color: DISK_COLOR, values }]}
@@ -953,7 +956,7 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
           max={axis.max}
           color={trendColor(pct)}
           height={SPARK_STRIP_HEIGHT}
-          label={`Disk trend for ${mount}, ${rangeLabel(range)}`}
+          label={`Filesystem trend for ${mount}, ${rangeLabel(range)}`}
         />
       </Enlargeable>
     );
@@ -976,7 +979,7 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
       {chart}
       <NowReading
         pct={pct}
-        label={`Disk ${mount}`}
+        label={`Filesystem ${mount}`}
         // No severity passed: NowReading's own 70/95, the rule every
         // reading in this table is drawn by. The bytes underneath say how
         // much room is left; the bar says how full the mount is. What decides
@@ -1051,7 +1054,14 @@ export function hostColumns(range: Range): Column<HostRow>[] {
     },
     {
       key: "disk",
-      header: "Disk",
+      // "Filesystem", not "Disk": the app draws that line already -- the host
+      // page's Storage tab groups its charts as Filesystems (usage, space,
+      // inodes) and Disks (throughput, operations), so "Disk" here named the
+      // drive while the cell reports a mount. The attention band directly
+      // above this column says "Filesystem nearly full" and the chart this
+      // cell opens is titled "Filesystem usage", which is also what Observium
+      // calls it. Singular: the cell reports the ONE mount worth acting on.
+      header: "Filesystem",
       cell: (row) => <DiskCell row={row} range={range} />,
       // The percentage of the mount the cell NAMES -- sorting on anything the
       // row does not show would order the list by a number nobody can see.

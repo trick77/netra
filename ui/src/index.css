@@ -1238,8 +1238,15 @@ tbody tr:hover .host-cell-name {
   /* A fixed block, like .metric-read in the container list, so a column of
      rates starts at one x. Left-aligned, not right: each
      line opens with its direction, and those two words are what a reader
-     scans down, not the digits. */
-  width: 98px;
+     scans down, not the digits.
+
+     110px, measured rather than guessed: the widest rate this cell can print
+     is "out 999.9 MB/s", which sets 104.6px at --text-label. At 98 it fitted
+     "in 22.7 kB/s" and broke "out 126.5 kB/s" across two lines -- a rate
+     wrapped between its figure and its unit, which is the one thing a
+     reading must never do. See the nowrap on .rate below, which is what
+     makes this width a promise rather than a hope. */
+  width: 110px;
   line-height: 1.45;
   /* --muted, matching the disk percentage in the same row (.mrow .val).
      These are both the number BESIDE a chart -- a reading the sparkline or
@@ -1265,6 +1272,12 @@ tbody tr:hover .host-cell-name {
 }
 .rate {
   font-variant-numeric: tabular-nums;
+  /* One rate, one line. The figure and its unit are a single reading and a
+     break between them ("out 126.5" over "kB/s") reads as two. The block
+     above is sized to hold the widest of them, so this never overflows; if a
+     wider unit ever appears it will spill visibly rather than wrap silently,
+     which is the failure that gets noticed and fixed. */
+  white-space: nowrap;
 }
 /* The direction, before the rate it belongs to. Quieter than the number: it
    is the same word on every row and the figure is what changes. */

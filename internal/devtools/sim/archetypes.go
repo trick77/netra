@@ -327,6 +327,12 @@ func smartBaremetal() *Profile {
 		Collectors: []string{
 			"cpu", "percpu", "memory", "load", "kernelstat", "vmstat", "limits", "procs", "netstat",
 			"users", "diskio", "sensors", "mdraid", "network", "addresses",
+			// kmsg belongs here because this host emits ata_error and
+			// disk_error events -- see kernelTrouble. A family in the data
+			// table whose collector is missing from the health table is a host
+			// page showing events produced by a collector it says is not
+			// running.
+			"kmsg",
 			"containers", "filesystems", "systemd", "packages", "smart",
 		},
 		Capabilities: map[string]string{},

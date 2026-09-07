@@ -1,33 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { mirrorPaths } from "./geometry";
-import { AREA_FILL_OPACITY, LINE_STROKE_WIDTH, SPARK_WIDTH } from "./size";
+import { SPARK_WIDTH } from "./size";
 import { UpDownSparkline } from "./UpDownSparkline";
 
 describe("UpDownSparkline", () => {
-  // The fleet row draws this beside three cells that are a line over a light
-  // fill. Left to a mirror's own answer it fills SOLID at that density -- the
-  // outline would be finer than the column spacing -- so the one cell with no
-  // bar under it was a block of grey in a row of silhouettes. `weight` is how
-  // the caller says "the row's mark, not the mirror's default".
-  it("draws a mirror at the row's weight when asked for one", () => {
-    const up = [1, 2, 3, 4, 3];
-    const down = [1, 1, 1, 1, 1];
-    const solid = render(<UpDownSparkline up={up} down={down} max={4} />);
-    const line = render(
-      <UpDownSparkline up={up} down={down} max={4} weight="line" />,
-    );
-    const half = (c: HTMLElement): Element => c.querySelector("path[data-up]")!;
+  // At cell density both halves are FILLED, and filled solid: an outline
+  // finer than the column spacing becomes the mark, so mirrorEdge drops the
+  // stroke and takes the fill to 1. The cell carried a caller-supplied
+  // "line" weight for a while -- a stroke over a light tint -- and the tint
+  // is what this asserts against: a traffic mirror is an area, the way
+  // rrdtool draws one, not a wash inside an outline.
+  it("fills both halves solid at cell density", () => {
+    const n = SPARK_WIDTH;
+    const up = Array.from({ length: n }, (_, i) => (i % 5) + 1);
+    const down = Array.from({ length: n }, (_, i) => (i % 3) + 1);
+    const { container } = render(<UpDownSparkline up={up} down={down} />);
 
-    expect(half(solid.container).getAttribute("fill-opacity")).not.toBe(
-      String(AREA_FILL_OPACITY),
-    );
-    expect(half(line.container).getAttribute("fill-opacity")).toBe(
-      String(AREA_FILL_OPACITY),
-    );
-    expect(half(line.container).getAttribute("stroke-width")).toBe(
-      String(LINE_STROKE_WIDTH),
-    );
+    for (const side of ["up", "down"]) {
+      const half = container.querySelector(`path[data-${side}]`)!;
+      expect(half.getAttribute("fill-opacity")).toBe("1");
+      expect(half.getAttribute("stroke-width")).toBe("0");
+    }
   });
 
   // 5 points, gap at index 2: two surviving runs of length >= 2 each

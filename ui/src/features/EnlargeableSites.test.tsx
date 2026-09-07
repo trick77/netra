@@ -270,7 +270,7 @@ describe("the list sparklines enlarge", () => {
         fullest: { mount: "/", pct: 60, series: [58, 59, 60] },
       });
 
-      await open("Enlarge disk usage for / on ark");
+      await open("Enlarge filesystem usage for / on ark");
 
       // The dialog draws the same MARK as the cell. markFor() reads an absent
       // `filled` as "line", so a shaded silhouette in the row opened into a

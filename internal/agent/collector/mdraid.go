@@ -23,6 +23,50 @@ type arrayState struct {
 	SyncAction string `json:"sync_action"`
 }
 
+// healthyStates are the md/array_state values that all mean "nothing is wrong
+// with this array".
+//
+// The kernel moves between them as the superblock dirty bit toggles -- `active`
+// while a write is outstanding, `clean` once the metadata has been flushed --
+// so on any array taking writes the raw string flaps, and during a `check` it
+// flaps every few minutes for days. None of that is a state change: it is the
+// same healthy array, twice.
+//
+// Anything NOT listed here -- inactive, readonly, suspended, clear, or an empty
+// read -- is a real condition, keeps its own identity, and still raises an
+// event.
+var healthyStates = map[string]bool{
+	"clean":         true,
+	"active":        true,
+	"active-idle":   true,
+	"write-pending": true,
+	"read-auto":     true,
+}
+
+// normalizeArrayState collapses the healthy array_state words onto one of them.
+func normalizeArrayState(state string) string {
+	if healthyStates[state] {
+		return "clean"
+	}
+	return state
+}
+
+// compareKey is the arrayState reduced to what a CHANGE means.
+//
+// Identical to arrayState except that State is normalized. level, raid_disks,
+// degraded and sync_action still compare exactly, so `idle` -> `check` and
+// `check` -> `idle` each still emit one event -- the scrub start and finish are
+// the mdraid collector's own account of a scrub, and survive untouched. Only
+// the dirty-bit flapping underneath them is dropped.
+//
+// The value receiver copies, so the caller's arrayState is untouched and the
+// stored detail keeps the RAW state the kernel reported. Normalizing what is
+// REPORTED would throw away the one place the exact word is visible.
+func (a arrayState) compareKey() arrayState {
+	a.State = normalizeArrayState(a.State)
+	return a
+}
+
 // Mdraid reports md array state changes as EVENTS, not samples.
 //
 // It has no hypertable, and that is by design rather than omission (spec §5.2,
@@ -89,10 +133,11 @@ func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
 
 	for _, name := range names {
 		state := cur[name]
-		if p, seen := prev[name]; seen && p == state {
-			// Unchanged. Emitting anyway would turn `events` into the 60s
-			// series this collector exists to avoid, and bury the transitions
-			// that matter under weeks of identical rows.
+		if p, seen := prev[name]; seen && p.compareKey() == state.compareKey() {
+			// Unchanged, as compareKey defines it. Emitting anyway would
+			// turn `events` into the 60s series this collector exists to
+			// avoid, and bury the transitions that matter under weeks of
+			// identical rows.
 			continue
 		}
 

@@ -773,6 +773,8 @@ init_paths() {
     P_DPKG="${AGENT_DPKG_PATH:-$(_p /var/lib/dpkg/status)}"
     P_APK="${AGENT_APK_PATH:-$(_p /lib/apk/db/installed)}"
     P_DBUS="${AGENT_DBUS_PATH:-$(_p /run/dbus/system_bus_socket)}"
+    P_KMSG="${AGENT_KMSG_PATH:-$(_p /dev/kmsg)}"
+    P_DMESG_RESTRICT="${AGENT_DMESG_RESTRICT_PATH:-$(_p /proc/sys/kernel/dmesg_restrict)}"
     P_DOCKERSOCK="${AGENT_DOCKERSOCK_PATH:-$(_p /var/run/docker.sock)}"
     # utmp holds the logged-in session list. Absent on Alpine and other
     # busybox systems, which ship no utmp writer at all, so its presence is
@@ -2262,24 +2264,41 @@ $_bv_body"
 # between kernels and can move across a reboot. A list narrow enough to be
 # worth writing is exactly the list that breaks silently later, which is the
 # failure this whole change exists to remove.
+# It renders TWO keys, and they are not interchangeable. `devices:` names one
+# node and does both jobs for it, which is what /dev/kmsg needs: a single char
+# device that exists on every kernel, so naming it is not the brittleness the
+# SMART list had. `device_cgroup_rules:` is the wildcard half of the SMART
+# grant, paired with the /dev bind in build_volume_block.
 build_device_block() {
     AGENT_BLK_DEVICES=""
-    if [ "${SMART_ENABLED:-0}" != 1 ]; then
-        # Declined. The key vanishes entirely rather than rendering an empty
-        # list, the same way every other conditional block in this file does.
-        export AGENT_BLK_DEVICES
-        return 0
+    _bd_body=""
+
+    if [ "${KMSG_ENABLED:-0}" = 1 ]; then
+        # ":r" -- read only, and meant literally. Writing to /dev/kmsg injects
+        # messages into the host's kernel log, which the agent has no business
+        # doing.
+        # shellcheck disable=SC2089
+        _bd_body="$_bd_body    devices:
+      - \"/dev/kmsg:/dev/kmsg:r\"
+"
     fi
 
+    if [ "${SMART_ENABLED:-0}" = 1 ]; then
+        _bd_body="$_bd_body    device_cgroup_rules:
+      - \"b *:* rw\"
+      - \"c *:* rw\"
+"
+    fi
+
+    # Declined both: the key vanishes entirely rather than rendering an empty
+    # list, the same way every other conditional block in this file does.
+    #
     # SC2089/SC2090: the quotes are DATA -- YAML syntax on their way into
     # compose.yaml, not shell quoting -- and the variable is only ever exported
     # for awk's ENVIRON, never expanded as a command. Same rule, same reason as
     # build_volume_block.
     # shellcheck disable=SC2089
-    AGENT_BLK_DEVICES="    device_cgroup_rules:
-      - \"b *:* rw\"
-      - \"c *:* rw\"
-"
+    AGENT_BLK_DEVICES="$_bd_body"
     # shellcheck disable=SC2090
     export AGENT_BLK_DEVICES
 }
@@ -2295,6 +2314,13 @@ build_cap_block() {
     fi
     if [ "${CAP_SYS_ADMIN:-0}" = 1 ]; then
         _bc_body="$_bc_body      - SYS_ADMIN
+"
+    fi
+    # Narrow, and unrelated to the two above: CAP_SYSLOG permits reading the
+    # kernel log and nothing else. Needed whenever kernel.dmesg_restrict=1,
+    # which is the default on Debian and Ubuntu.
+    if [ "${CAP_SYSLOG:-0}" = 1 ]; then
+        _bc_body="$_bc_body      - SYSLOG
 "
     fi
     if [ -n "$_bc_body" ]; then
@@ -2545,6 +2571,43 @@ plan_extras() {
     if [ -f "$P_MOUNTINFO" ]; then
         MOUNTINFO_ENABLED=1
         info "  mount table:     /proc/1/mountinfo (read-only, awareness only)"
+    fi
+
+    # The kernel ring buffer, where the events an operator acts on come from:
+    # ATA and NVMe errors, block I/O failures, a filesystem going read-only,
+    # the OOM killer, MCEs, thermal trips.
+    #
+    # NOT prompted, unlike SMART, and the difference is the size of the grant.
+    # SMART needs the whole device tree plus cgroup rules covering every block
+    # and character device. This needs ONE device node, read-only, and
+    # CAP_SYSLOG -- which permits reading the kernel log and nothing else. That
+    # is the same weight as the read-only binds above, so it is treated the
+    # same way.
+    #
+    # A `devices:` entry rather than a bind, because /dev/kmsg is char device
+    # 1:11 and is not on Docker's default device cgroup allowlist: a bind would
+    # create a node the container cannot open. See build_device_block.
+    # `-e`, not `-c`. The fixture tree stands device nodes in as ordinary
+    # files, exactly as it does for the Docker socket and the SMART devices, so
+    # a type test here would make this branch untestable. On a real host the
+    # only thing at /dev/kmsg is the character device, and if something else is
+    # there the collector reports it rather than this guessing.
+    KMSG_ENABLED=0
+    CAP_SYSLOG=0
+    if [ -e "$P_KMSG" ]; then
+        KMSG_ENABLED=1
+        CAP_SYSLOG=1
+        # dmesg_restrict is only reported, never acted on. CAP_SYSLOG is
+        # granted either way: it is what the restricted case needs, and on an
+        # unrestricted host it grants nothing the open did not already allow.
+        if [ "$(cat "$P_DMESG_RESTRICT" 2>/dev/null || echo 0)" = 1 ]; then
+            info "  kernel log:      /dev/kmsg (read-only) + SYSLOG (dmesg_restrict=1)"
+        else
+            info "  kernel log:      /dev/kmsg (read-only) + SYSLOG"
+        fi
+    else
+        warn "no character device at $P_KMSG, so the agent cannot read the kernel log." \
+            "Disk errors, filesystem faults and OOM kills will not appear in the event log."
     fi
 
     # Read-only, like the two above, and for the same reason not prompted.

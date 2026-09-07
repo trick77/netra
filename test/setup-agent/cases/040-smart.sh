@@ -170,10 +170,13 @@ assert_eq 1 "$AGENT_ANSWER_INDEX" \
     "--sys-admin consumes no answer of its own: the one line read is the SMART grant"
 GRANT_SYS_ADMIN=0
 
-# --- 5. the device block is rules, not a device list --------------------------
+# --- 5. SMART's half of the device block is rules, not a device list ----------
 #
-# Unconditional, and that is the point: there is no host state that can empty
-# it, because there is no host state it reads.
+# Unconditional for SMART, and that is the point: there is no host state that
+# can empty it, because there is no host state it reads. The block does now
+# also carry a `devices:` key when the kernel log is granted -- that half is
+# 045's -- so KMSG_ENABLED is pinned off here to test this one alone.
+KMSG_ENABLED=0
 build_device_block
 assert_contains "$AGENT_BLK_DEVICES" "device_cgroup_rules" "the device block is cgroup rules"
 assert_contains "$AGENT_BLK_DEVICES" 'b *:* rw' "block devices are permitted"
@@ -183,7 +186,8 @@ assert_contains "$AGENT_BLK_DEVICES" 'c *:* rw' \
 # so with it the container could make a block node on its own writable layer -
 # where the read-only /dev bind does not reach - and write the raw disk.
 assert_not_contains "$AGENT_BLK_DEVICES" "rmw" "mknod is never granted"
-assert_not_contains "$AGENT_BLK_DEVICES" "devices:" "no devices: key is rendered any more"
+assert_not_contains "$AGENT_BLK_DEVICES" "devices:" \
+    "SMART renders no devices: list of its own any more"
 
 # --- 6. /dev is bound, at /dev ------------------------------------------------
 #
