@@ -211,6 +211,9 @@ describe("KNOWN_EVENT_TYPES", () => {
       "mdraid",
       "package",
       "unit",
+      // The agent's own delivery, which is a producer like any other now that
+      // a hub outage is an event rather than a warning derived from a counter.
+      "hub",
       ...KERNEL_EVENT_TYPES,
     ]);
   });
@@ -384,6 +387,102 @@ describe("packagesOmitted / packageRunSize", () => {
     // Including via the unknown-action fallback, which spells out every key.
     expect(messageOf(pkg({ action: "held", more: 397, run_size: 400 }))).toBe(
       "action held",
+    );
+  });
+});
+
+describe("hub delivery events", () => {
+  function hub(detail: Record<string, unknown>): Event {
+    return event({ type: "hub", subject: null, detail });
+  }
+
+  // The ordinary case, and the reason the warning this replaced was wrong: the
+  // ring buffered the scrapes and replayed them, so the outage cost nothing.
+  // Saying so is what stops a reader going to look for damage that is not
+  // there.
+  it("says an outage that lost nothing was replayed", () => {
+    expect(
+      messageOf(
+        hub({
+          severity: "info",
+          reason: "unreachable",
+          outage_ms: 19 * 60 * 1000,
+          failures: 19,
+        }),
+      ),
+    ).toBe("Hub unreachable for 19 m — buffered and replayed");
+  });
+
+  // The half that is worth acting on: the ring overflowed, so this host's
+  // history has holes that nothing can fill.
+  it("names what an outage cost when it cost something", () => {
+    expect(
+      messageOf(
+        hub({
+          severity: "critical",
+          reason: "unreachable",
+          outage_ms: 2 * 60 * 60 * 1000,
+          failures: 120,
+          lost: 47,
+        }),
+      ),
+    ).toBe("Hub unreachable for 2 h — 47 scrapes lost");
+  });
+
+  it("counts one lost scrape in the singular", () => {
+    expect(
+      messageOf(
+        hub({ reason: "unreachable", outage_ms: 60_000, failures: 1, lost: 1 }),
+      ),
+    ).toBe("Hub unreachable for 1 m — 1 scrape lost");
+  });
+
+  // A rejected token gets its own sentence. "The hub was away and came back"
+  // and "this agent is not allowed to talk to the hub" are different problems
+  // with different fixes, and only one of them resolves itself.
+  it("says a rejected token is a rejected token", () => {
+    expect(
+      messageOf(
+        hub({
+          severity: "critical",
+          reason: "token-rejected",
+          outage_ms: 60_000,
+          failures: 1,
+          lost: 47,
+        }),
+      ),
+    ).toBe("Hub rejected this agent's token — 47 scrapes discarded");
+  });
+
+  it("still names a rejected token when the buffer was already empty", () => {
+    expect(
+      messageOf(
+        hub({ severity: "critical", reason: "token-rejected", failures: 1 }),
+      ),
+    ).toBe("Hub rejected this agent's token");
+  });
+
+  it("counts one discarded scrape in the singular", () => {
+    expect(
+      messageOf(hub({ reason: "token-rejected", failures: 1, lost: 1 })),
+    ).toBe("Hub rejected this agent's token — 1 scrape discarded");
+  });
+
+  // A hub that answered and refused the BODY was never away, so it must not be
+  // described as an outage. A host permanently over maxBatchRows earns this on
+  // every flush, and "Hub unreachable for 0 s" would be a hub that answered
+  // every request appearing in the log as one that did not.
+  it("does not call a refused batch an outage", () => {
+    expect(
+      messageOf(
+        hub({ severity: "critical", reason: "rejected", failures: 1, lost: 5 }),
+      ),
+    ).toBe("Hub refused a batch — 5 scrapes discarded");
+  });
+
+  it("names a refused batch even when it discarded nothing", () => {
+    expect(messageOf(hub({ reason: "rejected", failures: 1 }))).toBe(
+      "Hub refused a batch",
     );
   });
 });

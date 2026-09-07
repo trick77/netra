@@ -38,9 +38,6 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
     tx: [],
     fullest: { mount: "/", pct: 41 },
     disk: [],
-    oomKills: 0,
-    dropped: null,
-    postFailures: null,
     ...overrides,
   };
 }
@@ -48,27 +45,6 @@ function makeRow(overrides: Partial<HostRow> = {}): HostRow {
 describe("hostConditions", () => {
   it("says nothing about a healthy host", () => {
     expect(hostConditions(makeRow(), NOW)).toEqual([]);
-  });
-
-  // The disagreement this module exists to end: the host page showed three
-  // OOM kills in red while the fleet page said "nothing needs attention".
-  it("raises OOM kills that happened inside the window", () => {
-    const [c] = hostConditions(makeRow({ oomKills: 3 }), NOW);
-    expect(c?.severity).toBe("critical");
-    expect(String(c?.what)).toMatch(/3 OOM kills/);
-  });
-
-  it("counts one kill in the singular", () => {
-    const [c] = hostConditions(makeRow({ oomKills: 1 }), NOW);
-    expect(String(c?.what)).toMatch(/1 OOM kill\b/);
-  });
-
-  // The counter is cumulative since boot, so the row carries the INCREASE.
-  // 0 is the host confirming nothing happened; null is "we cannot say",
-  // which must not be reported as either trouble or an all-clear.
-  it("stays silent for no kills and for an unanswerable window alike", () => {
-    expect(hostConditions(makeRow({ oomKills: 0 }), NOW)).toEqual([]);
-    expect(hostConditions(makeRow({ oomKills: null }), NOW)).toEqual([]);
   });
 
   // The other half of the disagreement this module exists to end: a host page
@@ -151,46 +127,6 @@ describe("hostConditions", () => {
     expect(hostConditions(makeRow({ services_failed: null }), NOW)).toEqual([]);
     expect(
       hostConditions(makeRow({ services_failed: undefined }), NOW),
-    ).toEqual([]);
-  });
-
-  // The agent's own health. Both counters are the increase across the window,
-  // and both are worth a request the sparklines did not already need -- see
-  // the module header for why they cannot ride the hosts list.
-  it("leads with dropped samples, because the missing data is the evidence", () => {
-    const rows = hostConditions(
-      makeRow({ dropped: 12, fullest: { mount: "/", pct: 97 } }),
-      NOW,
-    );
-    expect(rows[0]?.severity).toBe("critical");
-    expect(String(rows[0]?.what)).toMatch(/12 samples dropped before delivery/);
-  });
-
-  it("says sample, singular, for a single dropped sample", () => {
-    const [c] = hostConditions(makeRow({ dropped: 1 }), NOW);
-    expect(String(c?.what)).toMatch(/1 sample dropped\b/);
-  });
-
-  it("reports failed deliveries to the hub", () => {
-    const [c] = hostConditions(makeRow({ postFailures: 4 }), NOW);
-    expect(c?.severity).toBe("warning");
-    expect(String(c?.what)).toMatch(/4 failed deliveries/);
-  });
-
-  it("counts one failed delivery in the singular", () => {
-    const [c] = hostConditions(makeRow({ postFailures: 1 }), NOW);
-    expect(String(c?.what)).toMatch(/1 failed delivery\b/);
-  });
-
-  // post_failures_total is cumulative for the life of the agent process and
-  // is never reset by a success, so read as a latest value one hub restart
-  // would pin a failure here forever. 0 and null are both silence.
-  it("stays silent for a clean window and an unanswerable one alike", () => {
-    expect(
-      hostConditions(makeRow({ dropped: 0, postFailures: 0 }), NOW),
-    ).toEqual([]);
-    expect(
-      hostConditions(makeRow({ dropped: null, postFailures: null }), NOW),
     ).toEqual([]);
   });
 
@@ -344,7 +280,7 @@ describe("hostConditions", () => {
   // 90 at some moment netra never recorded. A plausible-looking timestamp
   // would be read literally, so there is none.
   it("carries no onset for a condition whose start was never observed", () => {
-    const [c] = hostConditions(makeRow({ oomKills: 2 }), NOW);
+    const [c] = hostConditions(makeRow({ services_failed: 2 }), NOW);
     expect(c?.since).toBeNull();
   });
 });
@@ -353,7 +289,7 @@ describe("fleetConditions", () => {
   it("gathers every host's conditions", () => {
     const rows = [
       makeRow({ id: 1, hostname: "web-01" }),
-      makeRow({ id: 2, hostname: "db-01", oomKills: 4 }),
+      makeRow({ id: 2, hostname: "db-01", services_failed: 4 }),
       makeRow({
         id: 3,
         hostname: "log-01",
@@ -409,7 +345,7 @@ describe("groupByHost", () => {
   const cond = (
     hostId: string,
     severity: "critical" | "warning",
-    kind: "disk" | "oom" | "failed-units",
+    kind: "disk" | "drive" | "failed-units",
   ) => ({
     hostId,
     hostname: `host-${hostId}`,
@@ -428,7 +364,7 @@ describe("groupByHost", () => {
     const groups = groupByHost([
       cond("noisy", "warning", "disk"),
       cond("noisy", "warning", "failed-units"),
-      cond("broken", "critical", "oom"),
+      cond("broken", "critical", "drive"),
     ]);
     expect(groups.map((g) => g.hostId)).toEqual(["broken", "noisy"]);
     expect(groups[0]!.worst.severity).toBe("critical");
@@ -437,11 +373,11 @@ describe("groupByHost", () => {
   it("orders a host's own conditions worst first, stably", () => {
     const [group] = groupByHost([
       cond("h", "warning", "disk"),
-      cond("h", "critical", "oom"),
+      cond("h", "critical", "drive"),
       cond("h", "warning", "failed-units"),
     ]);
     expect(group!.conditions.map((c) => c.kind)).toEqual([
-      "oom",
+      "drive",
       "disk",
       "failed-units",
     ]);

@@ -7,7 +7,6 @@ import {
 } from "../../lib/api";
 import {
   carriesColumn,
-  counterIncrease,
   fsName,
   griddedValues,
   latestValue,
@@ -142,58 +141,16 @@ export interface HostTrends {
    * "act today". */
   disk: Band[];
   /**
-   * OOM kills inside the window, or null when the window carries no usable
-   * pair of readings to difference.
+   * The three delivery/kill counters that used to live here -- oomKills,
+   * dropped and postFailures -- are gone, and with them the `agent` family
+   * this module fetched solely to carry two of them.
    *
-   * The INCREASE, never oom_kill_total itself: the counter is cumulative
-   * since boot, so a host that killed something a year ago would otherwise
-   * carry a permanent condition. null is "cannot say", which stays silent;
-   * 0 is the host confirming nothing happened.
-   *
-   * From the `host` family, which is fetched unconditionally below, so this
-   * costs no extra request -- the same reason `reporting` reads from it.
+   * All three fed conditions that read a counter's increase across the range
+   * picker's window, so each stated something that moved when the reader moved
+   * the range. They are events now: one `hub` event per outage from the agent,
+   * at critical when the ring lost anything, and OOM kills from the kmsg
+   * collector, which names the process it killed.
    */
-  oomKills: number | null;
-  /**
-   * Samples the agent's ring buffer overflowed and never delivered, as the
-   * agent last reported it. null when it never reported one.
-   *
-   * The LATEST value, not the window increase, and it is the one counter here
-   * that has to be read that way. The ring only evicts once it is full, and it
-   * holds a whole BufferWindow of scrapes (buffer/ring.go, an hour by
-   * default), so buffer_dropped_total cannot move until the hub has been
-   * unreachable for that entire window -- which guarantees a gap of at least
-   * that long in the very series this counter arrives on. griddedValues fills
-   * the gap with nulls and counterDeltas refuses any pair with a null end, so
-   * the increase across it is discarded and the flat runs either side sum to
-   * exactly 0. Read as an increase, this condition was silent precisely when
-   * it was true.
-   *
-   * postFailures below is the opposite case and stays an increase: those posts
-   * are retried and their samples arrive, so its series has no hole in it.
-   *
-   * The cost of latest() is that the count is cumulative for the life of the
-   * agent process, so a host carries it until the agent restarts. That is the
-   * honest reading: the dropped samples are gone, the history has holes, and
-   * the holes do not heal. The host page has always read it this way.
-   */
-  dropped: number | null;
-  /**
-   * Failed deliveries to the hub inside the window, or null when the window
-   * carries no usable pair.
-   *
-   * The INCREASE, and for a sharper reason than oomKills: post_failures_total
-   * is cumulative for the whole life of the agent PROCESS and is deliberately
-   * never reset by a success (see postFailures in
-   * internal/agent/client/client.go), and the agent re-sends it every scrape.
-   * Read as a latest value it is a permanent badge -- one hub restart pins
-   * "1 failed delivery" to the page forever, even though the ring buffer
-   * replayed those samples the moment the hub came back and nothing was lost.
-   *
-   * counterDeltas drops a negative step, so a counter going back to zero on
-   * an agent restart is skipped rather than counted as a huge recovery.
-   */
-  postFailures: number | null;
 }
 
 // The CPU and memory bands both moved to lib/bands.ts, which the host page
@@ -464,20 +421,6 @@ function outranks(
   return a.pct > b.pct;
 }
 
-/** The latest non-null value, or null when the series never reported.
- *
- * NOT lib/metrics.ts's latestValue(), which is the LATEST BUCKET including a
- * trailing null. The two answer different questions and only this one is
- * right for mem_limit: a configured ceiling does not stop being the ceiling
- * because the newest bucket has not materialised yet. */
-function lastNumber(values: readonly (number | null)[]): number | null {
-  for (let i = values.length - 1; i >= 0; i--) {
-    const v = values[i];
-    if (v !== null && v !== undefined) return v;
-  }
-  return null;
-}
-
 // Generic over what it swallows, so the per-host fetch (one MetricsResponse)
 // and the fleet fetch (a Map of them) share one failure rule.
 async function orNull<T>(p: Promise<T>): Promise<T | null> {
@@ -720,7 +663,6 @@ const FLEET_COLUMNS: Record<string, string[]> = {
   // used and free, never a percentage: fullestFilesystem() and
   // filesystemBands() both derive the ratio themselves.
   filesystem: ["used", "free"],
-  agent: ["buffer_dropped_total", "post_failures_total"],
   cpu_core: ["busy"],
   container: ["cpu_pct", "mem_used", "mem_limit"],
 };
@@ -746,18 +688,14 @@ export async function fetchHostTrends(
       }),
     );
 
-  const [host, net, filesystem, agent, cores] = await Promise.all([
+  const [host, net, filesystem, cores] = await Promise.all([
     ask("host"),
     ask("net"),
     ask("filesystem"),
-    // Plots nothing. Fetched for the two delivery counters the attention band
-    // reports -- see HostTrends.dropped and .postFailures for why they cannot
-    // ride the hosts list instead.
-    ask("agent"),
     wantsCores(threads) ? ask("cpu_core") : Promise.resolve(null),
   ]);
 
-  return hostTrendsFrom(host, net, filesystem, agent, cores);
+  return hostTrendsFrom(host, net, filesystem, cores);
 }
 
 /**
@@ -780,7 +718,6 @@ export function hostTrendsFrom(
   host: MetricsResponse | null,
   net: MetricsResponse | null,
   filesystem: MetricsResponse | null,
-  agent: MetricsResponse | null,
   cores: MetricsResponse | null,
 ): HostTrends {
   // Per-core when the host is small enough to ask for it, and cpu_total
@@ -803,7 +740,7 @@ export function hostTrendsFrom(
     // Whichever family answered. They are all asked for the same window, so
     // any of them names it; host is listed first because it is the one fetch
     // this row cannot do without.
-    window: (host ?? net ?? filesystem ?? agent)?.window ?? null,
+    window: (host ?? net ?? filesystem)?.window ?? null,
     cpu: cpuBands(host, cores).bands,
     mem: memoryBands(host),
     reporting: total,
@@ -818,16 +755,6 @@ export function hostTrendsFrom(
     txPeak: traffic.txPeak,
     filesystem,
     disk: filesystemBands(filesystem),
-    oomKills: counterIncrease(griddedValues(host, 0, "oom_kill_total")),
-    // The last value the agent reported, gaps and all -- see HostTrends.dropped
-    // for why this one cannot be an increase. lastNumber, not latestValue: the
-    // final bucket is null whenever this counter is interesting, and the
-    // question here is "what did the agent last say" rather than "what is true
-    // in the newest bucket".
-    dropped: lastNumber(griddedValues(agent, 0, "buffer_dropped_total")),
-    postFailures: counterIncrease(
-      griddedValues(agent, 0, "post_failures_total"),
-    ),
   };
 }
 
@@ -880,11 +807,10 @@ export async function fetchFleetTrends(
   // same either way.
   const coreIds = hosts.filter((h) => wantsCores(h.threads)).map((h) => h.id);
 
-  const [host, net, filesystem, agent, cores] = await Promise.all([
+  const [host, net, filesystem, cores] = await Promise.all([
     ask("host", ids),
     ask("net", ids),
     ask("filesystem", ids),
-    ask("agent", ids),
     coreIds.length > 0 ? ask("cpu_core", coreIds) : Promise.resolve(null),
   ]);
 
@@ -895,7 +821,6 @@ export async function fetchFleetTrends(
         host?.get(id) ?? null,
         net?.get(id) ?? null,
         filesystem?.get(id) ?? null,
-        agent?.get(id) ?? null,
         cores?.get(id) ?? null,
       ),
     );
@@ -990,9 +915,6 @@ export function buildRows(
       // there were no kills, and a fleet page must not report silence it
       // never heard. The two delivery counters below follow the same rule --
       // an unanswered `agent` family is "cannot say", never "nothing wrong".
-      oomKills: trend?.oomKills ?? null,
-      dropped: trend?.dropped ?? null,
-      postFailures: trend?.postFailures ?? null,
     };
   });
 }

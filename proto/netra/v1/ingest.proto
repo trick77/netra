@@ -831,6 +831,19 @@ message Event {
   // JSON object. Kept as a string on the wire so the agent needs no structured
   // representation of something the hub only stores.
   string detail_json = 4;
+  // "info", "warning" or "critical" -- how bad this event is, stated by the
+  // producer rather than derived by whoever reads it.
+  //
+  // It rode detail_json's `severity` key before this field existed, and both
+  // event views still read it there. That was enough while a browser was the
+  // only reader: alerting cannot call into the UI, so the judgement has to
+  // arrive as a field rather than as a convention inside a blob.
+  //
+  // Optional, and the hub falls back to the detail key when it is unset --
+  // agents are deployed per host, so an agent older than this field must keep
+  // classifying correctly. An unrecognised value is treated as unset for the
+  // same reason: a hub must not reject a batch over a word it does not know.
+  optional string severity = 5;
 }
 
 // HostAddress is one address on one interface. The agent reports raw facts

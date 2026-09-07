@@ -168,6 +168,30 @@ type Client struct {
 	// spiking to the probe timeout.
 	hubConnectFailures uint64
 
+	// outage is the run of consecutive failed flushes the agent is currently
+	// in, and is the zero value when the last flush succeeded.
+	//
+	// This exists because post_failures_total cannot answer the question
+	// anyone actually asks. The counter is on every buffered scrape, so a
+	// twenty-minute outage replays to the hub as a staircase -- 0, 1, 2, ...,
+	// 20 -- and anything deriving events from that delta writes twenty rows
+	// for one incident. The agent is the only party that knows an outage was
+	// ONE outage, so it says so itself, once, when it ends.
+	outage outage
+
+	// pendingEvents are events this client generated about itself, waiting for
+	// a scrape to carry them.
+	//
+	// Attached in ScrapeOnce rather than emitted directly, so they ride the
+	// ordinary delivery path -- buffered, replayed and acked exactly like a
+	// collector's events. The same "filled in from outside the collectors"
+	// move Scrape.Collectors already makes.
+	pendingEvents []*netrav1.Event
+
+	// now is a seam so a test can drive the outage clock without sleeping.
+	// nil means time.Now.
+	now func() time.Time
+
 	// resolver is a seam so a test can resolve a name without touching DNS.
 	// nil means net.DefaultResolver.
 	resolver *net.Resolver
@@ -263,6 +287,16 @@ func (c *Client) BufferCapacity() int { return c.ring.Capacity() }
 // for the caller's convenience; the per-entity rows go to the ring with it.
 func (c *Client) ScrapeOnce(ctx context.Context) *netrav1.HostSample {
 	scrape := c.collect(ctx)
+	// The client's own events join the scrape's, so they buffer, replay and
+	// ack on exactly the path a collector's do. Appended rather than assigned:
+	// the mdraid and kmsg collectors put theirs here too, and a scrape that
+	// carried both must carry both.
+	//
+	// Attaching AFTER collect and BEFORE the ring means a hub event survives
+	// the outage it describes: it is written when delivery resumes, rides the
+	// next scrape, and reaches the hub with the backlog rather than ahead of
+	// it.
+	scrape.Events = append(scrape.Events, c.takePendingEvents()...)
 	c.seq++
 
 	// Add overwrites the oldest entry when the ring is full, and that entry
@@ -850,6 +884,10 @@ func (c *Client) Flush(ctx context.Context) error {
 		// one place: a network error, a 401 and a 503 are all "the agent could
 		// not deliver", which is the question this number answers.
 		c.postFailures++
+		// The same reasoning one level up: the counter says how many times,
+		// the outage says it was one incident. Started here so every failure
+		// kind opens it, exactly as every failure kind counts.
+		c.beginOutage()
 
 		// The flag means "the attempt that just happened was refused for the
 		// token", so anything else clears it. A transport error or a 503 says
@@ -872,6 +910,16 @@ func (c *Client) Flush(ctx context.Context) error {
 			// indefinitely, which is exactly the state this branch says it is
 			// avoiding. math.MaxUint64 is above every sequence number the agent
 			// can issue.
+			// Counted before the dump, because after it there is nothing left
+			// to count. These are scrapes no retry will ever deliver, which is
+			// the difference between this and an ordinary outage.
+			c.outage.discarded += uint64(c.ring.Depth())
+			// Latched, not reported. An event written here would go into the
+			// next scrape and be dumped by the next 401 -- exactly what the
+			// inventory comment below says about a set emitted at this point.
+			// The run stays open and the first flush that succeeds, once the
+			// token is fixed, reports it with the whole discarded total.
+			c.noteReason(reasonTokenRejected)
 			c.ring.AckThrough(math.MaxUint64)
 			// Everything just discarded may have included an inventory set the
 			// hub never saw. Noted rather than acted on now: the token is still
@@ -904,6 +952,12 @@ func (c *Client) Flush(ctx context.Context) error {
 			slog.Error("hub permanently rejected a batch; dropping it to unblock the buffer",
 				"err", err, "scrapes", len(samples), "rows", rows,
 				"buffer_depth", c.ring.Depth())
+			c.outage.discarded += uint64(len(samples))
+			// Not "unreachable": this hub answered, and refused the body. A
+			// host permanently over maxBatchRows hits this on every flush, and
+			// reporting it as an outage would put "Hub unreachable for 0 s" in
+			// the log of a hub that was never away.
+			c.noteReason(reasonRejectedBody)
 			c.ring.AckThrough(highest)
 			// The dropped batch may have carried an inventory set the hub never
 			// saw, exactly as an overflow drop would. Latched, not acted on
@@ -952,6 +1006,7 @@ func (c *Client) Flush(ctx context.Context) error {
 		// post_failures_total = 0 throughout -- the one metric that would have
 		// shown the outage insisting nothing was wrong.
 		c.postFailures++
+		c.beginOutage()
 		c.replaying = true
 		// This failure carried no retry_after of its own, so any value left
 		// over from an earlier 503 must be cleared here too — the same rule
@@ -963,6 +1018,12 @@ func (c *Client) Flush(ctx context.Context) error {
 	}
 
 	c.ring.AckThrough(resp.GetAckSeq())
+	// The hub took a batch, so any run of failures before it is over and gets
+	// its one event. Placed on the FIRST successful flush rather than beside
+	// c.replaying's clear below: the outage ended when delivery resumed, not
+	// when the backlog finished draining, and a 7200-sample replay would
+	// otherwise date the recovery several batches late.
+	c.endOutage()
 	// Cleared only now, beside the ring's own ack, so a POST that failed or
 	// was refused re-sends it. collect and Flush run on the same goroutine, so
 	// nothing can have replaced it since it went out.

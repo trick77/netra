@@ -655,7 +655,6 @@ export function HostPage({
           host={host}
           hostMetrics={data.hostMetrics}
           filesystemMetrics={data.filesystemMetrics}
-          agentMetrics={data.agentMetrics}
           netMetrics={data.netMetrics}
           units={data.units}
           drives={data.drives}

@@ -29,6 +29,20 @@ type Event struct {
 	// Detail is the event's payload, passed through as stored. Its shape is
 	// the emitting collector's, not this API's.
 	Detail json.RawMessage `json:"detail"`
+	// Severity is "info", "warning" or "critical", and every branch of the
+	// union answers it.
+	//
+	// It is a column on `events` and a derivation on the other two, which is
+	// deliberate rather than an inconsistency. A unit's severity is a pure
+	// function of its state -- systemdstate.NotableSQL, one definition --
+	// so storing it would duplicate a derived value AND let it drift, since
+	// ApplySystemdSnapshot rewrites unit state and a stored severity would not
+	// follow. A package upgrade is a fact, not an emergency, and is always
+	// info.
+	//
+	// Duplicated in the detail JSON for now, where the UI still reads it. The
+	// field is what a non-browser reader uses.
+	Severity string `json:"severity"`
 }
 
 // EventQuery is a parsed /api/v1/events request. A zero HostID means every
@@ -119,7 +133,8 @@ func (s *Service) Events(ctx context.Context, q EventQuery, now time.Time) ([]Ev
 	out := []Event{}
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(&e.ID, &e.HostID, &e.Hostname, &e.TS, &e.Type, &e.Subject, &e.Detail); err != nil {
+		if err := rows.Scan(&e.ID, &e.HostID, &e.Hostname, &e.TS, &e.Type, &e.Subject,
+			&e.Detail, &e.Severity); err != nil {
 			return nil, fmt.Errorf("scan event: %w", err)
 		}
 		out = append(out, e)
@@ -222,7 +237,7 @@ var eventsSQL = fmt.Sprintf(`
 	)
 	(
 		SELECT 'e:' || e.id AS id, e.host_id, coalesce(h.hostname, '') AS hostname,
-		       e.ts, e.type, e.subject, e.detail
+		       e.ts, e.type, e.subject, e.detail, e.severity
 		  FROM events e
 		  JOIN hosts h ON h.id = e.host_id
 		 WHERE ($1::integer IS NULL OR e.host_id = $1)
@@ -243,7 +258,8 @@ var eventsSQL = fmt.Sprintf(`
 		           'run_size',     CASE WHEN r.run_size > %[3]d THEN r.run_size END,
 		           'more',         CASE WHEN r.rn = 1 AND r.run_size > %[3]d
 		                                THEN r.run_size - %[3]d END
-		       )) AS detail
+		       )) AS detail,
+		       'info' AS severity
 		  FROM (
 		      SELECT p.host_id, p.ts, p.name, p.action,
 		             p.from_version, p.to_version,
@@ -279,7 +295,8 @@ var eventsSQL = fmt.Sprintf(`
 		           'substate',       t.substate,
 		           'previous_state', t.prev_state,
 		           'severity',       CASE WHEN t.notable THEN 'critical' END
-		       )) AS detail
+		       )) AS detail,
+		       CASE WHEN t.notable THEN 'critical' ELSE 'info' END AS severity
 		  FROM unit_transitions t
 		  JOIN systemd_units u ON u.id = t.unit_id AND u.host_id = t.host_id
 		  JOIN hosts h ON h.id = t.host_id

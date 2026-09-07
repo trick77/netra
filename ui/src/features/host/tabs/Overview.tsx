@@ -25,7 +25,6 @@ import type {
   Unit,
 } from "../../../lib/api";
 import { driveAlarms } from "../smart";
-import { counterIncrease, griddedValues } from "../../../lib/metrics";
 import {
   ABSENT,
   binaryBytes,
@@ -128,7 +127,6 @@ const SEVERITY_CLASS: Record<Severity, string> = {
  */
 export function needsAttention(input: {
   host: HostDetail;
-  agentMetrics: MetricsResponse | null;
   hostMetrics?: MetricsResponse | null;
   filesystems: FilesystemRow[];
   units: Unit[] | null;
@@ -146,59 +144,16 @@ export function needsAttention(input: {
   const out: Attention[] = [];
   const now = input.now ?? new Date();
 
-  const dropped = latest(input.agentMetrics, "buffer_dropped_total");
-  if (dropped !== null && dropped > 0) {
-    // The agent's ring buffer overflowed: samples that were collected were
-    // never delivered. Nothing else netra reports is more important, and
-    // no chart can show it, because the missing data is the evidence.
-    out.push({
-      severity: "critical",
-      what: `${dropped} ${dropped === 1 ? "sample" : "samples"} dropped before delivery — this host's history has holes`,
-    });
-  }
-
-  // The kernel killed something to stay alive. This is the one memory fact
-  // no chart can carry: mem_used is back to normal by the time anyone
-  // looks, precisely BECAUSE the kill happened, so a host that OOM-killed
-  // its database at 04:00 shows a calm memory panel at 09:00. It belongs
-  // here, as an event that occurred, and not on an axis.
+  // Dropped samples, OOM kills and failed hub deliveries used to raise
+  // attention rows here. They are events now, and this list is for states.
   //
-  // The increase across the window, never the raw total: oom_kill_total is
-  // cumulative since boot, so a host that killed one process a year ago
-  // would otherwise carry a permanent badge. counterIncrease returns null
-  // when no usable pair exists, which is "we cannot say" and stays silent
-  // -- distinct from 0, which is a host confirming nothing happened.
-  const oomKills = counterIncrease(
-    griddedValues(input.hostMetrics ?? null, 0, "oom_kill_total"),
-  );
-  if (oomKills !== null && oomKills > 0) {
-    out.push({
-      severity: "critical",
-      what: `${oomKills} OOM ${oomKills === 1 ? "kill" : "kills"} in this window — the kernel killed processes to reclaim memory`,
-    });
-  }
-
-  // The increase across the window, for the same reason as the OOM block
-  // above: post_failures_total is cumulative for the whole life of the agent
-  // PROCESS and is deliberately never reset by a success (see the comment on
-  // postFailures in internal/agent/client/client.go), and the agent re-sends
-  // it on every scrape. Read with latest() it was the permanent badge the OOM
-  // comment warns about -- one hub restart pinned "1 failed deliveries" to
-  // the page forever, even though the ring buffer replayed those samples the
-  // moment the hub came back and nothing was actually lost.
-  //
-  // counterDeltas drops a negative step, so the counter going back to zero on
-  // an agent restart is skipped rather than counted as a huge recovery.
-  const failures = counterIncrease(
-    griddedValues(input.agentMetrics, 0, "post_failures_total"),
-  );
-  if (failures !== null && failures > 0) {
-    out.push({
-      severity: "warning",
-      what: `${failures} failed ${failures === 1 ? "delivery" : "deliveries"} to the hub in this window`,
-    });
-  }
-
+  // Each read a counter's increase across the window, so each said something
+  // that changed when the reader changed the range -- and none of them could
+  // say when it happened, which is the tell. A hub outage is one `hub` event
+  // written by the agent when delivery resumes; dropped samples are that same
+  // event at critical, since the ring only overflows while the hub is away;
+  // and an OOM kill is already a critical kmsg event that names the process
+  // it killed, which is more than this row ever said.
   // `critical`, and that is the fleet page's word for this exact fact:
   // hostConditions() in fleet/conditions.ts has always rated a host that
   // stopped reporting `critical`. The two pages used to print different
@@ -416,7 +371,6 @@ export interface OverviewProps {
   host: HostDetail;
   hostMetrics: MetricsResponse | null;
   filesystemMetrics: MetricsResponse | null;
-  agentMetrics: MetricsResponse | null;
   /** family=net for this host, one series per interface. */
   netMetrics?: MetricsResponse | null;
   units: Unit[] | null;
@@ -493,7 +447,6 @@ export function Overview({
   hostMetrics,
   netMetrics,
   filesystemMetrics,
-  agentMetrics,
   units,
   drives = null,
   range,
@@ -508,7 +461,6 @@ export function Overview({
   const filesystems = filesystemRows(filesystemMetrics, host);
   const attention = needsAttention({
     host,
-    agentMetrics,
     hostMetrics,
     filesystems,
     units,

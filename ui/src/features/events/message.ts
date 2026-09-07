@@ -10,6 +10,7 @@
 // page's filter vocabulary, and the host tab deliberately judges severity more
 // narrowly.
 import type { Event } from "../../lib/api";
+import { duration } from "../../lib/format";
 
 /** The types the kmsg collector emits, grouped by what they are about:
  * storage first, because that is what a fleet's kernel log is mostly made of,
@@ -47,6 +48,7 @@ export const KNOWN_EVENT_TYPES = [
   "mdraid",
   "package",
   "unit",
+  "hub",
   ...KERNEL_EVENT_TYPES,
 ] as const;
 
@@ -313,6 +315,52 @@ function kernelMessage(subject: string, f: Record<string, unknown>): string {
  * Returns "" only when the emitter sent nothing to say, which the callers
  * render as the absent marker rather than as a gap.
  */
+/** What a hub delivery event says.
+ *
+ * One event per outage, written by the agent when delivery resumes -- which is
+ * the only place that knows an outage was ONE outage. post_failures_total
+ * rides every buffered scrape, so a twenty-minute outage replays to the hub as
+ * a staircase, and anything counting those deltas would report twenty
+ * incidents for one.
+ *
+ * The sentence says what it COST, because that is the whole question. An
+ * outage the ring absorbed is not a problem -- the samples arrived, late --
+ * and "buffered and replayed" is what stops a reader going to look for damage
+ * that is not there. One that lost samples says so instead, and carries the
+ * severity to match.
+ *
+ * A rejected token gets its own sentence rather than a shared one. "The hub
+ * was away and came back" and "this agent is not allowed to talk to the hub"
+ * are different problems with different fixes, and only one of them resolves
+ * itself. */
+function hubMessage(f: Record<string, unknown>): string {
+  const lost = count(f, "lost");
+  const secs = Math.round(count(f, "outage_ms") / 1000);
+  // duration() rather than a bare seconds figure: the log already prints ages
+  // that way, so "19 m" sits in the same column as "2 h 4 m".
+  const lasted = duration(secs);
+
+  const scrapes = (n: number) => `${n} ${n === 1 ? "scrape" : "scrapes"}`;
+
+  if (text(f, "reason") === "token-rejected") {
+    return lost > 0
+      ? `Hub rejected this agent's token — ${scrapes(lost)} discarded`
+      : "Hub rejected this agent's token";
+  }
+  // The hub answered and refused the body, so it was never unreachable and
+  // must not be described as though it were. A duration would be meaningless
+  // here too: nothing was waiting for the hub to come back.
+  if (text(f, "reason") === "rejected") {
+    return lost > 0
+      ? `Hub refused a batch — ${scrapes(lost)} discarded`
+      : "Hub refused a batch";
+  }
+  if (lost > 0) {
+    return `Hub unreachable for ${lasted} — ${lost} ${lost === 1 ? "scrape" : "scrapes"} lost`;
+  }
+  return `Hub unreachable for ${lasted} — buffered and replayed`;
+}
+
 export function messageOf(event: Event): string {
   const f = fields(event);
   const subject = event.subject ?? "";
@@ -324,6 +372,9 @@ export function messageOf(event: Event): string {
       return unitMessage(subject, f);
     case "mdraid":
       return mdraidMessage(subject, f);
+    case "hub":
+      // No subject: a delivery outage is about the host as a whole.
+      return hubMessage(f);
     default: {
       // Widened deliberately: the tuple is `as const` so the dropdown keeps
       // its order and its literal types, and `event.type` is a plain string

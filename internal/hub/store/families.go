@@ -239,8 +239,8 @@ func (s *Store) InsertEvents(ctx context.Context, hostID int32, rows []*netrav1.
 	}
 
 	const stmt = `
-		INSERT INTO events (host_id, ts, type, subject, detail)
-		VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb))
+		INSERT INTO events (host_id, ts, type, subject, detail, severity)
+		VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb), $6)
 		ON CONFLICT (host_id, ts, type, subject) DO NOTHING`
 
 	batch := &pgx.Batch{}
@@ -255,9 +255,44 @@ func (s *Store) InsertEvents(ctx context.Context, hostID int32, rows []*netrav1.
 			v := r.GetDetailJson()
 			detail = &v
 		}
-		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), r.GetType(), subject, detail)
+		batch.Queue(stmt, hostID, tsOf(r.GetTsMs()), r.GetType(), subject, detail,
+			eventSeverity(r))
 	}
 	return execBatch(ctx, s.pool, batch, "event")
+}
+
+// eventSeverity is what lands in events.severity, preferring the field over
+// the detail key.
+//
+// Both are read because they coexist for one release: the field is the real
+// channel, and detail_json's `severity` is where every producer put it before
+// the field existed. An agent is deployed per host and versions independently
+// of the hub, so an old agent's events must still classify rather than all
+// arrive as "info" -- which would be a silent downgrade of exactly the rows
+// that matter, since only the notable ones ever stated a severity at all.
+//
+// An unrecognised word falls through to "info" rather than failing the row.
+// The column has a CHECK on it, so passing a value through unexamined would
+// turn one malformed event into a rejected BATCH, taking every other family in
+// it down with a host's whole scrape.
+func eventSeverity(r *netrav1.Event) string {
+	if s := r.GetSeverity(); validEventSeverity(s) {
+		return s
+	}
+	// Only the key is read, not the shape around it: detail_json is the
+	// producer's own object and this must not care what else is in it.
+	var detail struct {
+		Severity string `json:"severity"`
+	}
+	if err := json.Unmarshal([]byte(r.GetDetailJson()), &detail); err == nil &&
+		validEventSeverity(detail.Severity) {
+		return detail.Severity
+	}
+	return "info"
+}
+
+func validEventSeverity(s string) bool {
+	return s == "info" || s == "warning" || s == "critical"
 }
 
 // -------------------------------------------------------------- dimensions
