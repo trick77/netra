@@ -996,9 +996,11 @@ describe("FleetPage data fetching", () => {
     expect(screen.getByRole("button", { name: "All 2" })).toBeInTheDocument();
   });
 
-  // The rail replaces the worst-first ordering: rows stay where the API put
-  // them, and the mark says which of them to look at.
-  it("rails a troubled row and leaves a healthy one unmarked", () => {
+  // The mark replaces the worst-first ordering: rows stay where the API put
+  // them, and the mark says which of them to look at. It is the pill beside
+  // the hostname now rather than a rail down the row's edge -- one mark, and
+  // the one that says a word instead of only a hue.
+  it("marks a troubled row and leaves a healthy one unmarked", () => {
     const { container } = render(
       <FleetPage
         rows={[
@@ -1011,12 +1013,16 @@ describe("FleetPage data fetching", () => {
     );
 
     const rows = container.querySelectorAll("tbody tr");
+    // No rail on either row any more -- the pill is the whole mark, so a
+    // troubled row is no longer stated twice.
     expect(rows[0].className).toBe("");
-    expect(rows[1].className).toContain("rail-critical");
-    // The colour is never the only channel: the word rides the row for a
-    // reader who gets no colour, and a healthy row says nothing.
-    expect(rows[1].querySelector(".sr-only")?.textContent).toBe("Critical");
-    expect(rows[0].querySelector(".sr-only")).toBeNull();
+    expect(rows[1].className).toBe("");
+    // The colour is never the only channel, and the pill needs no
+    // screen-reader-only word to manage that: the word IS the pill.
+    expect(rows[1].querySelector(".badge")?.textContent).toBe("critical");
+    expect(rows[1].querySelector(".badge")?.className).toContain("st-crit");
+    expect(rows[0].querySelector(".badge")).toBeNull();
+    expect(rows[1].querySelector(".sr-only")).toBeNull();
   });
 
   it("draws no attention row for a healthy fleet", () => {

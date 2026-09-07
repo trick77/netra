@@ -512,10 +512,15 @@ export function FleetPage({
   );
 
   // The mark on the row itself, in place of the ordering that used to lift a
-  // troubled host to the top: a rail down the leading edge says which hosts
-  // to look at without moving any of them. Only the severities that mean
-  // something is wrong -- a rail on every row would say nothing.
-  const railSeverity = (row: HostRow): "warning" | "critical" | null => {
+  // troubled host to the top: the row says which hosts to look at without
+  // moving any of them. Only the severities that mean something is wrong --
+  // a mark on every row would say nothing.
+  //
+  // It was a rail down the leading edge and a pill beside the hostname for
+  // one commit, which is one fact drawn twice in one row. The pill won: a
+  // rail can only be a hue, and needed a screen-reader-only word planted in
+  // the first cell to survive without colour. See HostTable's `severity`.
+  const rowSeverity = (row: HostRow): "warning" | "critical" | null => {
     const worst = byHost.get(String(row.id))?.worst.severity;
     if (worst === "critical" || worst === "warning") {
       return worst;
@@ -842,7 +847,8 @@ export function FleetPage({
         <HostTable
           rows={attentionHosts}
           range={range}
-          severity={railSeverity}
+          severity={rowSeverity}
+          now={now}
           filtered={hostRows.length > 0}
         />
       ) : (
