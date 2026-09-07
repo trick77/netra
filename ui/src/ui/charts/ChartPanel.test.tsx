@@ -73,6 +73,47 @@ describe("ChartPanel", () => {
     expect(container.querySelectorAll("path[data-line]")).toHaveLength(2);
   });
 
+  // The auto-ceiling reads the BAND, not the line.
+  //
+  // The band is the bucket's peak and the line is its mean, so the band is
+  // always the taller of the two, and linePath() does not clamp. Scaled to
+  // the mean, an unpinned line panel drew its envelope outside the plot and
+  // clipped off exactly the burst the envelope exists to show -- which is
+  // every unpinned panel now that the pair is drawn at 260px too:
+  // interrupts, load averages, running processes, disk await.
+  //
+  // Asserted through the geometry rather than through a number: at a ceiling
+  // of 100 the envelope's top sits near the top of the box, and at a ceiling
+  // of 10 it would be drawn far above it, at a negative y.
+  it("scales a banded panel against its envelope, not its mean", () => {
+    const { container } = render(
+      <ChartPanel
+        title="Interrupts"
+        height={100}
+        series={[
+          // The line has to VARY. A flat one makes max === min, and scaleY
+          // short-circuits that to h/2 for every point -- a degenerate chart
+          // that hides the very overflow this is about.
+          {
+            name: "intr",
+            color: "var(--s1)",
+            values: [1, 10, 5],
+            band: [1, 100, 5],
+          },
+        ]}
+      />,
+    );
+
+    const area = container.querySelector("path[data-band]");
+    expect(area).not.toBeNull();
+    const ys = [...area!.getAttribute("d")!.matchAll(/[ ,](-?[\d.]+)(?=[ L])/g)]
+      .map((m) => Number(m[1]))
+      .filter((n) => Number.isFinite(n));
+    // Nothing is drawn above the top of the box. With the old mean-derived
+    // ceiling of 10 the peak of 100 landed at roughly -800.
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(0);
+  });
+
   it("renders the not-collected panel instead of an empty chart", () => {
     render(
       <ChartPanel

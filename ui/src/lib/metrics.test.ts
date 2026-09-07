@@ -7,6 +7,7 @@ import {
   griddedValues,
   hasGaps,
   optionalValues,
+  meanBase,
   peakBase,
   ratioValues,
   reduceToColumns,
@@ -357,7 +358,11 @@ describe("ratioValues", () => {
     family: "collector",
     tier: "5m",
     step_s: 300,
-    window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:15:00Z" },
+    // `to` is the LEFT EDGE of the newest bucket. The hub's SQL is
+    // `bucket <= $3` against a `to` planQuery has already put on a boundary,
+    // so a three-bucket answer spans from..to inclusive and seriesOnGrid
+    // counts three slots for it.
+    window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:10:00Z" },
     requested_window: {
       from: "2026-08-10T00:00:00Z",
       to: "2026-08-10T00:15:00Z",
@@ -489,7 +494,133 @@ describe("peakBase", () => {
   });
 });
 
+describe("meanBase", () => {
+  // The pair peakBase is compared against. A caller deciding whether to draw
+  // an envelope is asking "is the peak a DIFFERENT reading from the line",
+  // and the line is whatever candidates() lands on -- which is not the bare
+  // base name on any rolled-up tier.
+  it("when a rolled_up tier carries both peers_then resolves the average", () => {
+    const net = {
+      ...raw,
+      tier: "5m",
+      columns: ["rx_bytes_avg", "rx_bytes_max"],
+      series: [{ key: {}, points: [[1, 10, 90]] }],
+    };
+
+    expect(meanBase(net as never, "rx_bytes")).toBe("rx_bytes_avg");
+    expect(peakBase(net as never, "rx_bytes")).toBe("rx_bytes_max");
+  });
+
+  // At raw the two agree, which is what tells a caller there is no envelope
+  // to draw: the sample is its own peak and a band would sit exactly on the
+  // line it is meant to stand behind.
+  it("when the tier is raw_then agrees with peakBase", () => {
+    const net = { ...raw, tier: "raw", columns: ["rx_bytes"] };
+
+    expect(meanBase(net as never, "rx_bytes")).toBe("rx_bytes");
+    expect(peakBase(net as never, "rx_bytes")).toBe("rx_bytes");
+  });
+
+  // container mem_limit rolls up as max(mem_limit) AS mem_limit_max and
+  // nothing else, so the LINE already reads the peak. Comparing peakBase
+  // against the bare base name would say "different" and draw an envelope on
+  // top of its own line; comparing it against this says they are the same
+  // column, which they are.
+  it("when the max is the only aggregate_then the line already reads it", () => {
+    const c = {
+      ...raw,
+      tier: "5m",
+      columns: ["mem_limit_max"],
+      series: [{ key: {}, points: [[1, 512]] }],
+    };
+
+    expect(meanBase(c as never, "mem_limit")).toBe("mem_limit_max");
+    expect(peakBase(c as never, "mem_limit")).toBe("mem_limit_max");
+  });
+
+  // The mirror case: filesystem `free` is min(free) AS free_min and has no
+  // max at all, so peakBase falls back to the bare name while the line
+  // resolves to free_min. Two names, one column, and no envelope.
+  it("when only a min peer exists_then resolves it", () => {
+    const fs = {
+      ...raw,
+      tier: "5m",
+      columns: ["free_min"],
+      series: [{ key: {}, points: [[1, 90]] }],
+    };
+
+    expect(meanBase(fs as never, "free")).toBe("free_min");
+    expect(peakBase(fs as never, "free")).toBe("free");
+  });
+
+  it("when the response is absent_then falls back rather than throwing", () => {
+    expect(meanBase(null, "rx_bytes")).toBe("rx_bytes");
+    expect(meanBase(undefined, "rx_bytes")).toBe("rx_bytes");
+  });
+});
+
 describe("seriesOnGrid", () => {
+  // The freshest bucket of every rolled-up response used to be fetched and
+  // then thrown away.
+  //
+  // The hub's SQL is `bucket <= $3` and planQuery puts `to` on a bucket
+  // boundary, so the newest row IS the bucket at `to`; its slot index is
+  // (to - from) / step, and a grid counted with ceil() of that same quantity
+  // has no such slot. Every chart therefore ended one bucket earlier than the
+  // window it printed -- five minutes at 24h, an hour at 7d -- which is the
+  // same "the chart does not show what just happened" the trailing clamp was
+  // causing, one layer down.
+  it("when a rolled_up window ends on a bucket_then that bucket is the last slot", () => {
+    const res = {
+      ...raw,
+      tier: "5m",
+      step_s: 300,
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:10:00Z" },
+      columns: ["busy"],
+      series: [
+        {
+          key: {},
+          points: [
+            [Date.parse("2026-08-10T00:00:00Z"), 1],
+            [Date.parse("2026-08-10T00:05:00Z"), 2],
+            [Date.parse("2026-08-10T00:10:00Z"), 3],
+          ],
+        },
+      ],
+    };
+
+    expect(griddedValues(res as never, 0, "busy")).toEqual([1, 2, 3]);
+  });
+
+  // Raw keeps the half-open count, and this is the reason. Its `to` is a
+  // clock reading rather than a bucket edge, so an extra slot is one nothing
+  // is guaranteed to land in -- and every headline figure on a page reads the
+  // LAST slot, so a live host would print "no value" whenever its newest
+  // sample rounded into the slot before it.
+  it("when the tier is raw_then the grid does not grow a trailing slot", () => {
+    const res = {
+      ...raw,
+      tier: "raw",
+      step_s: 60,
+      window: { from: "2026-08-10T00:00:00Z", to: "2026-08-10T00:03:00Z" },
+      columns: ["busy"],
+      series: [
+        {
+          key: {},
+          points: [
+            [Date.parse("2026-08-10T00:00:00Z"), 1],
+            [Date.parse("2026-08-10T00:01:00Z"), 2],
+            // 40 seconds short of `to`, which is where a scrape actually
+            // lands: it rounds into the 00:02 slot and that slot is last.
+            [Date.parse("2026-08-10T00:02:20Z"), 3],
+          ],
+        },
+      ],
+    };
+
+    expect(griddedValues(res as never, 0, "busy")).toEqual([1, 2, 3]);
+  });
+
   // The read API emits only the rows that exist, so an outage is a MISSING
   // point, not a null cell -- and the geometry breaks a line only on an
   // explicit null. Without this, a host down for three hours inside a 24h

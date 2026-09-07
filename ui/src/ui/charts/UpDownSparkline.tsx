@@ -18,6 +18,29 @@ import { SPARK_HEIGHT, SPARK_WIDTH } from "./size";
 export interface UpDownSparklineProps {
   up: (number | null)[];
   down: (number | null)[];
+  /**
+   * The bucket PEAK behind each mean, drawn as a pale envelope.
+   *
+   * The reason the cell has them at all: past the 1h range a point is a
+   * five-minute or hourly AVERAGE, and a saturation that lasted three minutes
+   * is a fifth of its own height by the time it reaches the mean -- then half
+   * that again where reduceToColumns folds two buckets into one pixel. The
+   * hub materialises max(rx_bytes) beside the average at every rolled-up tier
+   * and the cell simply never asked for it, so the one reading an operator
+   * scans this column FOR was the one it could not show.
+   *
+   * The mean stays the line. Drawing the peak ALONE was tried and reverted:
+   * taking the bucket peak and then the peak of each pixel column compounds,
+   * and the quiet body of a real host's chart -- which is most of it -- drops
+   * under one pixel. The envelope carries the burst, the line carries the
+   * number.
+   *
+   * Empty at the raw tier, where the sample IS its own peak and an envelope
+   * drawn exactly on its own line would be ink for nothing. Chart handles
+   * that: an empty band draws no path.
+   */
+  upBand?: (number | null)[];
+  downBand?: (number | null)[];
   /** Shared scale for both sides. Auto-computed from up/down when omitted.
    *
    * Read only by furniture that names a value: a sparkline carries no tick
@@ -78,6 +101,8 @@ export const DOWN_SHADES = [
 export function UpDownSparkline({
   up,
   down,
+  upBand,
+  downBand,
   max,
   width = SPARK_WIDTH,
   height = SPARK_HEIGHT,
@@ -91,7 +116,15 @@ export function UpDownSparkline({
   // egress the same size as a saturated ingress. The mark derives that
   // ceiling from the pair itself now (mirrorPaths' `independent`); this is
   // still computed for the furniture a caller may hang on the same Chart.
-  const effectiveMax = max ?? Math.max(extent(up).max, extent(down).max);
+  // Taken from the ENVELOPE where there is one, not from the mean: the peak
+  // is the tallest thing on the chart, and a ceiling derived from the mean
+  // would let the envelope run off the top of the cell.
+  const effectiveMax =
+    max ??
+    Math.max(
+      extent(upBand && upBand.length > 0 ? upBand : up).max,
+      extent(downBand && downBand.length > 0 ? downBand : down).max,
+    );
 
   /* Proportional, and the ceiling is the window's own peak -- what RRDtool
      and the graphs an operator already reads draw. A bursty host's quiet
@@ -102,8 +135,8 @@ export function UpDownSparkline({
   return (
     <Chart
       series={[
-        { name: "up", color: upColor, values: up },
-        { name: "down", color: downColor, values: down },
+        { name: "up", color: upColor, values: up, band: upBand },
+        { name: "down", color: downColor, values: down, band: downBand },
       ]}
       width={width}
       height={height}

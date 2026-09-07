@@ -749,6 +749,19 @@ function TrafficCell({ row, range }: { row: HostRow; range: Range }) {
         <UpDownSparkline
           up={row.rx}
           down={row.tx}
+          // The peak envelope, which the row has carried since trafficSeries
+          // started computing it and this cell alone dropped on the floor.
+          //
+          // The cell is fixed at 24h, which resolves to the 5m tier, so every
+          // point it draws is a five-minute average: a saturation that lasted
+          // three minutes reached the mean at a fifth of its height and the
+          // pixel fold halved it again. It was invisible here and visible on
+          // the 1h chart, which is the one range that reads raw -- reported as
+          // "the sparkline never shows it". The dialog this cell opens into
+          // already drew the envelope, so the cell was also disagreeing with
+          // its own enlarged view.
+          upBand={row.rxPeak}
+          downBand={row.txPeak}
           // No weight override: a mirror fills solid at this density and
           // that is the mark. It drew as a line over a light fill for a
           // while, to read as one of a row of silhouettes, and what that

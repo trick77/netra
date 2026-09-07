@@ -34,23 +34,30 @@ type tierSpec struct {
 	// step is the distance between consecutive points.
 	step time.Duration
 	// lag is the end_offset of this tier's refresh policy: how far back a
-	// refresh RUN reaches. Every continuous aggregate in 0001_init.sql is
-	// materialized_only = true (the TimescaleDB default since 2.13), so a
-	// query past the materialised horizon returns nothing rather than falling
-	// through to the raw table. Zero for raw tiers, which have no
-	// materialisation step.
+	// refresh RUN reaches. Zero for raw tiers, which have no materialisation
+	// step.
+	//
+	// It used to clamp the answered window. It no longer does, and the reason
+	// is 0014_realtime_aggregates.sql: every aggregate is now a REAL-TIME
+	// aggregate, so the view unions the materialised rows with a live query
+	// over everything past the watermark and a question about the last five
+	// minutes gets an answer instead of nothing. What lag and refreshEvery
+	// still describe is how wide that live tail is -- how much the query
+	// computes on the fly rather than reads -- which is why both are still
+	// pinned against timescaledb_information by
+	// TestIntegrationTierSpecsMatchTheSchema. A policy that quietly grew its
+	// end_offset would make every query on this tier scan further back, and
+	// nothing else in the system would say so.
 	lag time.Duration
 	// refreshEvery is the schedule_interval of that same policy: how often a
-	// run happens, and therefore how stale end_offset's reach can be.
+	// run happens, and therefore how far past end_offset the live tail can
+	// reach between runs.
 	//
 	// It is a separate field rather than folded into lag because every number
 	// in this struct mirrors exactly ONE value in 0001_init.sql, which is
 	// what lets TestIntegrationTierSpecsMatchTheSchema pin each of them
 	// against timescaledb_information. A single combined constant would drift
 	// silently the next time either half of the policy changed.
-	//
-	// The two are added at the point of use -- see materialisedThrough. Zero
-	// for raw tiers, which have no policy.
 	refreshEvery time.Duration
 	// retention is the interval of this tier's retention policy: data older
 	// than now - retention has been dropped.
@@ -97,13 +104,12 @@ var (
 	// rows -- 1/24 of what an hour costs -- beside the 90 days of hourly the
 	// tier above already keeps.
 	//
-	// lag + refreshEvery is three hours, which materialisedThrough truncates
-	// to the day: every WHOLE day up to today, which is all a daily bucket
-	// can honestly report. Today's partial bucket IS materialised -- the
-	// policy reaches to two hours ago -- and is deliberately left outside the
-	// answered window, because a day that is four hours old is not a
-	// day-shaped reading and the LAST point on a chart is what every headline
-	// value reads.
+	// Today is deliberately left outside the answered window. The tier is
+	// real-time now, so the day the clock is inside CAN be computed -- and a
+	// day that is four hours old is not a day-shaped reading, while the LAST
+	// point on a chart is what every headline value reads. planQuery's open-
+	// bucket floor is what excludes it, at every tier and for the same
+	// reason.
 	dailyTier = tierSpec{
 		name: Tier1d, suffix: "_1d", tsColumn: "bucket",
 		step: 24 * time.Hour, lag: 2 * time.Hour,
@@ -124,24 +130,6 @@ var smartTiers = []tierSpec{{
 	name: TierRaw, suffix: "", tsColumn: "ts",
 	step: time.Hour, lag: 0, retention: 90 * 24 * time.Hour,
 }}
-
-// materialisedThrough is the newest bucket boundary this tier can be relied on
-// to have written, given the clock.
-//
-// end_offset is how far back a refresh run reaches; schedule_interval is how
-// long it can be since the last run. Between runs, everything newer than the
-// last one is missing, so the horizon is the SUM -- reading end_offset alone
-// left every 5m and 1h window ending on buckets no run had written yet.
-//
-// Truncated to the step because an aggregate materialises whole buckets. The
-// client lays the answer on a grid of step-wide slots (seriesOnGrid), so a
-// horizon in the middle of a bucket becomes a slot nothing can fill -- and
-// every headline value on a page reads the LAST slot, which is the rule that
-// stops a dead host reporting its final rate as current. Truncate aligns to
-// the epoch, which is where time_bucket() puts its boundaries too.
-func (s tierSpec) materialisedThrough(now time.Time) time.Time {
-	return now.Add(-(s.lag + s.refreshEvery)).Truncate(s.step)
-}
 
 // Window is a half-open-in-spirit time range carried in a /metrics response.
 type Window struct {
@@ -164,9 +152,9 @@ type Plan struct {
 	// the tier's real step, never the step the caller asked for.
 	Step time.Duration
 	// Window is what the response ACTUALLY covers, clamped by retention on
-	// the leading edge and by materialisation lag on the trailing one. The
-	// SQL is bounded by this and not by Requested, which is what makes a gap
-	// inside it mean "the host reported nothing" rather than "the hub lagged".
+	// the leading edge and by the open bucket on the trailing one. The SQL is
+	// bounded by this and not by Requested, which is what makes a gap inside
+	// it mean "the host reported nothing" rather than "the hub lagged".
 	Window Window
 	// Requested is the window as asked, so a caller can see every clamp
 	// rather than infer it.
@@ -180,9 +168,9 @@ type Plan struct {
 	// named storage tiers at a reader who had only ever picked a range.
 	Warnings []string
 	// Empty reports that the clamps left no window at all -- asking for the
-	// last five minutes at the 1h tier, which materialises an hour behind.
-	// The response is a valid 200 with no points; it is a real answer, not an
-	// error.
+	// last five minutes with step=1h, where the only closed hourly bucket is
+	// already behind `from`. The response is a valid 200 with no points; it is
+	// a real answer, not an error.
 	Empty bool
 
 	spec tierSpec
@@ -247,44 +235,46 @@ func planQuery(fam *family, req Window, step time.Duration, stepSet bool, now ti
 		from = horizon
 	}
 
-	// Trailing edge: the aggregates are materialized_only, so a query past
-	// the refresh policy's end_offset returns nothing at all rather than
-	// falling through to the raw rows behind it.
-	if p.spec.lag > 0 {
-		// Truncated to a whole bucket, not left at the horizon itself.
-		//
-		// An aggregate materialises whole buckets. now-lag almost always
-		// lands in the middle of one, and a window ending mid-bucket asks
-		// for a bucket that does not exist yet: the client puts the answer
-		// on a grid of step-wide slots (seriesOnGrid), so that half-bucket
-		// becomes a whole trailing slot nothing can ever fill.
-		//
-		// Every headline value on the page reads the LAST slot -- that is
-		// the rule that stops a dead host reporting its final rate as
-		// current -- so an unfillable slot meant every 5m and 1h chart
-		// showed its trend correctly and its number as absent. The fleet's
-		// traffic, the fleet-traffic tile and the host page's limits meters
-		// all read "—" together on a host that was reporting perfectly.
-		//
-		// Truncate aligns to the epoch, which is where time_bucket() puts
-		// its boundaries too, so this lands on a real bucket edge rather
-		// than one derived from the request's own timing.
-		//
-		// Also unannounced. The warning this used to append named a tier the
-		// reader never chose -- the picker offers 1h to 12mo, never "5m" --
-		// in vocabulary borrowed from the storage engine.
-		//
-		// Removing it does lose something the chart does NOT show: at 6h,
-		// 12h and 24h the answered window ends 15-20 minutes before now, and
-		// every headline figure reads the last point, so those numbers are
-		// that stale while looking current. The gap is ~2.7% of a 12h chart's
-		// width and invisible. The fix for that is to close the gap rather
-		// than to caption it -- real-time aggregates would union these
-		// buckets with the raw rows sitting behind them -- and until that
-		// lands the staleness is silent.
-		fresh := p.spec.materialisedThrough(now)
-		if to.After(fresh) {
-			to = fresh
+	// There is no trailing clamp any more, and that is the whole point of
+	// 0014_realtime_aggregates.sql.
+	//
+	// There was one. Every aggregate was materialized_only, so a query past
+	// the refresh policy's end_offset returned nothing at all rather than
+	// falling through to the rows behind it, and this clamped `to` back to
+	// now - (end_offset + schedule_interval): fifteen minutes at the 5m tier,
+	// ninety at the 1h tier, three hours at 1d. Only the 1h range, which reads
+	// the raw table, was ever live. A saturation on an interface was therefore
+	// absent from the 24h chart for a quarter of an hour and then appeared --
+	// which is exactly what an operator reported, and is the difference
+	// against rrdtool, whose file is written at poll time and read on the next
+	// page load.
+	//
+	// The aggregates are real-time now: the view unions its materialised rows
+	// with a live query over everything past the watermark, all the way down
+	// the hierarchy, so every tier answers to the present and the clamp has
+	// nothing left to protect against.
+	//
+	// One clamp survives, and it is much smaller than the one it replaces:
+	// the OPEN bucket is still excluded.
+	//
+	// A real-time aggregate will happily compute the bucket the clock is
+	// currently inside, from however few samples have landed in it. Drawing
+	// that is not freshness, it is a last point built from a fifth of the
+	// readings its neighbours were built from -- and every headline figure on
+	// a page reads the last point. rrdtool does not draw its unfinished CDP
+	// either, so this is also what the reference does.
+	//
+	// The cost is bounded by ONE bucket rather than by a policy: at the 5m
+	// tier the newest reading now covers a window that ended between zero and
+	// five minutes ago, against fifteen to twenty before. The 1h tier gains an
+	// hour and the 1d tier gains two.
+	//
+	// Written as a floor on `to` rather than as an unconditional step back,
+	// because a request for a window that ENDED hours ago is asking about
+	// closed buckets already and must not lose its last one.
+	if p.spec.tsColumn == "bucket" {
+		if lastClosed := now.Truncate(p.spec.step).Add(-p.spec.step); to.After(lastClosed) {
+			to = lastClosed
 		}
 	}
 

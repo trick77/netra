@@ -248,6 +248,44 @@ export function peakBase(
 }
 
 /**
+ * The column a plain read of `base` actually lands on: candidates() order,
+ * resolved against this response.
+ *
+ * peakBase's counterpart, and it exists for one question -- is there a PEAK
+ * here that is a different reading from the line? Comparing peakBase's answer
+ * against the bare base name is not that question, and gets two cases wrong:
+ *
+ *  - a base whose ONLY aggregate is the max. container mem_limit rolls up as
+ *    max(mem_limit) AS mem_limit_max and nothing else, so the line already
+ *    reads the peak; an envelope there is a second copy of the line drawn
+ *    under it.
+ *  - a base whose only aggregate is the min. filesystem `free` is
+ *    min(free) AS free_min, so peakBase falls back to the bare name while the
+ *    line resolves to free_min -- two names, one column.
+ *
+ * Returns `base` unchanged when the response carries nothing for it, which is
+ * the same non-answer column() would throw on; a caller comparing two
+ * resolutions gets "no envelope" out of it, which is the right outcome for a
+ * column this tier does not have.
+ */
+export function meanBase(
+  res: MetricsResponse | null | undefined,
+  base: string,
+): string {
+  // An EXACT match on each candidate, not carriesColumn: that helper resolves
+  // the name it is handed through candidates() as well, so asking it about
+  // "rx_bytes" is answered true by the presence of rx_bytes_avg and this
+  // would return the bare name every time -- the same non-answer it gives for
+  // a column that is genuinely absent, and an envelope drawn on its own line
+  // wherever the two were then compared.
+  if (res == null) return base;
+  for (const name of candidates(base)) {
+    if (res.columns.includes(name)) return name;
+  }
+  return base;
+}
+
+/**
  * seriesValues for a column that may legitimately not be there.
  *
  * seriesValues throws when the answering tier has no such column, which is
@@ -337,7 +375,28 @@ export function seriesOnGrid(
     if (!byBucket.has(bucket)) byBucket.set(bucket, values[i] ?? null);
   }
 
-  const count = Math.ceil((to - from) / stepMs);
+  // The grid is INCLUSIVE of `to` at a rolled-up tier, and half-open at raw.
+  //
+  // The SQL is `bucket <= $3` and planQuery puts `to` on a real bucket edge,
+  // so the newest row a rolled-up response carries is the bucket AT `to`. Its
+  // index here is exactly (to - from) / stepMs, and a count of ceil() of the
+  // same quantity is one short of it -- so the freshest bucket in every
+  // response was fetched over the wire, placed in a slot past the end of the
+  // grid, and dropped. A 24h chart ended five minutes earlier than the window
+  // it reported and a 7d chart an hour earlier, on top of whatever the
+  // trailing clamp was taking off before 0014.
+  //
+  // Raw keeps the half-open count. Its `to` is a clock reading rather than a
+  // bucket edge -- read/metrics.go selects the bare s.ts there -- so the
+  // extra slot is one nothing is guaranteed to land in: a host whose newest
+  // sample is 45 seconds old rounds into the slot BEFORE it and leaves the
+  // last one null. Every headline figure on a page reads the last slot, so
+  // that is a live host reporting "no value", which is the failure the
+  // trailing edge has been shaped around all along.
+  const count =
+    res.tier === "raw"
+      ? Math.ceil((to - from) / stepMs)
+      : Math.floor((to - from) / stepMs) + 1;
   const out: (number | null)[] = new Array(count).fill(null);
   for (const [bucket, value] of byBucket) {
     if (bucket >= 0 && bucket < count) out[bucket] = value;

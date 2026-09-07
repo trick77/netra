@@ -3,6 +3,7 @@ import {
   carriesColumn,
   counterDeltas,
   griddedValues,
+  meanBase,
   optionalValues,
   peakBase,
   ratioValues,
@@ -231,13 +232,15 @@ interface PanelSpec {
    * thing the panel is about.
    */
   fraction?: { part: string; whole: string; invert?: boolean };
-  /**
-   * Resolve each base to its _max peer at the rolled-up tiers rather than
-   * letting column() take the _avg it prefers. For a rate read as a shape --
-   * traffic -- the burst IS the reading, and averaging a 60s scrape into a
-   * 5m or 1h bucket is what flattened it. See peakBase() in lib/metrics.
-   */
-  peak?: boolean;
+  // There is no `peak` flag any more.
+  //
+  // It marked the specs whose bases should resolve to their _max peer rather
+  // than the _avg column() prefers, and it sat on the two traffic panels and
+  // nowhere else -- so every other chart drew the average alone at every
+  // range past 1h, with the max it needed shipping unread in the same
+  // response. bandsFor asks the tier instead: wherever a base has a max that
+  // is a different reading from its line, the mean is the line and the max is
+  // the envelope behind it. See wantsBand there.
   /**
    * These bases are cumulative totals since boot; draw the per-bucket
    * increase instead of the running sum.
@@ -692,13 +695,13 @@ export const NETWORK: PanelSpec[] = [
     mirrored: true,
     stacked: true,
     hideIdleSeries: true,
-    // The peak, as ONE outer envelope over the whole stack rather than one
-    // per interface. Per interface is the invented number this refused for
-    // good reason -- the interfaces do not peak in the same bucket -- but the
-    // summed edge is the very reading the fleet cell's enlarged view already
-    // draws, and a host's traffic chart that disagrees with the cell it was
-    // opened from is worse than the bias. One chart, two sizes.
-    peak: true,
+    // The peak comes from the tier now, not from a flag here -- see the note
+    // where PanelSpec.peak used to be. It arrives as ONE outer envelope over
+    // the whole stack rather than one per interface: per interface is the
+    // invented number this refused for good reason -- the interfaces do not
+    // peak in the same bucket -- but the summed edge is the very reading the
+    // fleet cell's enlarged view draws, and a host's traffic chart that
+    // disagrees with the cell it was opened from is worse than the bias.
     fmt: bytes,
   },
   /**
@@ -742,13 +745,12 @@ export const NETWORK: PanelSpec[] = [
     mirrored: true,
     // NOT stacked. There is one band per direction to stack.
     summed: true,
-    // The envelope behind the mean, exactly as the fleet cell's enlarged view
-    // draws it. Summing peaks across interfaces overstates a bucket no single
-    // second carried -- the panel above declines that bias because it is
-    // drawn per interface and would be read as a per-interface fact. Here the
-    // reading is already the host's total, which is the case the fleet cell
-    // accepts it for.
-    peak: true,
+    // The envelope behind the mean, exactly as the fleet cell draws it.
+    // Summing peaks across interfaces overstates a bucket no single second
+    // carried -- the panel above declines that bias because it is drawn per
+    // interface and would be read as a per-interface fact. Here the reading
+    // is already the host's total, which is the case the fleet cell accepts
+    // it for.
     fmt: bytes,
   },
   // Half of net_samples, stored since the collector was written and drawn
@@ -1375,7 +1377,7 @@ function bandsFor(
       // one unbroken line across the hole.
       // Resolved per response, not per tier constant: the raw table has no
       // _max peer, and there peakBase() falls back to the base name.
-      const peakColumn = spec.peak ? peakBase(bandRes, base) : base;
+      const peakColumn = peakBase(bandRes, base);
       // With the envelope, the LINE is the mean and the band is the peak.
       // peakBase falls back to the bare name at the raw tier, and there the
       // two resolve to the same column -- which is the signal that this tier
@@ -1388,13 +1390,46 @@ function bandsFor(
       // It was mirrored-only while Chart drew the envelope in its mirror
       // branch alone, so a plain rate panel threw away the max its own tier
       // had materialised.
+      //
+      // It is no longer opt-in per spec, and that is the fix for "all the
+      // charts are wrong". `peak: true` sat on the two traffic panels and
+      // nowhere else, so CPU, load, disk I/O, await, the error rates, the
+      // kernel-limit counters, container CPU and memory -- every one of which
+      // has a max materialised beside its average in the same response --
+      // drew the average alone at every range past 1h. A three-minute
+      // saturation is a fifth of its height in a five-minute average and a
+      // sixtieth in an hourly one, so the reading an operator opens the chart
+      // FOR was the one the chart could not show.
+      //
+      // The question asked instead is whether this tier has a peak that is a
+      // DIFFERENT reading from the line, which is meanBase against peakBase
+      // rather than a name against a flag. It answers no in three places
+      // where a flag would have said yes: at the raw tier, where the sample
+      // is its own peak; on a base whose only aggregate IS the max (container
+      // mem_limit); and on one whose only aggregate is the min (filesystem
+      // free). All three would otherwise draw an envelope exactly on the line
+      // it is meant to sit behind.
+      //
+      // Counters and fractions are out. A counter's band would skip
+      // counterDeltas below and draw a cumulative total against a per-bucket
+      // increase, and a fraction's two reads both fall through to the same
+      // reconstructed ratio -- another envelope on its own line.
       const wantsBand =
         opts.withPeakBand === true &&
-        spec.peak === true &&
+        spec.counter !== true &&
+        spec.boolean !== true &&
+        spec.fraction === undefined &&
         (spec.stacked !== true || spec.mirrored === true) &&
-        peakColumn !== base;
-      const column = wantsBand ? base : peakColumn;
-      const gridded = bandRead(column);
+        peakColumn === `${base}_max` &&
+        peakColumn !== meanBase(bandRes, base);
+      // The LINE is always the plain read of the base, which candidates()
+      // resolves to the average wherever a tier has one. It used to be the
+      // peak on a spec with `peak` set and no room for an envelope, and that
+      // is the ambiguity this removes: the stats table under every panel
+      // reads the line and calls its centre "Mean", so a peak-valued line
+      // reported a peak under that heading. One quantity, one mark, every
+      // chart.
+      const gridded = bandRead(base);
       const band = wantsBand ? bandRead(peakColumn) : undefined;
       // After the grid, never before: counterDeltas subtracts NEIGHBOURING
       // buckets, so it has to run on the window's own even spacing. Applied

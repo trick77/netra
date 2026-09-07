@@ -45,7 +45,8 @@ func TestIntegrationTierSpecsMatchTheSchema(t *testing.T) {
 					if n := countPolicies(t, ctx, s.Pool(),
 						"policy_refresh_continuous_aggregate", rel); n != 0 {
 						t.Errorf("%s has %d refresh policies but tier.go gives it no lag; "+
-							"a materialized_only relation that lags is queried past its horizon", rel, n)
+							"a relation that materialises is one whose live tail this table "+
+							"is meant to describe", rel, n)
 					}
 				})
 				continue
@@ -58,11 +59,12 @@ func TestIntegrationTierSpecsMatchTheSchema(t *testing.T) {
 
 			// The other half of the same policy. end_offset says how far back
 			// a refresh RUN reaches; schedule_interval says how long it can be
-			// since one ran, and the horizon planQuery clamps to is the sum.
-			// Pinned separately, and each field mirrors exactly one value in
-			// the migration, so lengthening the schedule without widening the
-			// horizon fails here instead of quietly handing clients buckets
-			// nothing has written yet.
+			// since one ran, and together they bound how much of a real-time
+			// aggregate's answer is computed live rather than read. Pinned
+			// separately, and each field mirrors exactly one value in the
+			// migration, so a policy that quietly widened -- making every
+			// query on the tier scan further back -- fails here instead of
+			// only showing up as a slow page.
 			t.Run(name+"/"+spec.name+"/refresh schedule", func(t *testing.T) {
 				assertScheduleInterval(t, ctx, s.Pool(), rel, spec.refreshEvery)
 			})
@@ -171,11 +173,22 @@ func TestIntegrationNoValueColumnNameIsSharedBetweenTiers(t *testing.T) {
 	}
 }
 
-// Every continuous aggregate must stay materialized_only. If one is ever
-// created with real-time aggregation on, its data is fresh to now and the lag
-// clamp in tier.go turns from a correctness fix into a bug that hides the most
-// recent hour.
-func TestIntegrationEveryAggregateIsMaterializedOnly(t *testing.T) {
+// Every continuous aggregate must be a REAL-TIME aggregate.
+//
+// The inverse of this test used to stand here, and it was right at the time:
+// tier.go clamped every window back to now - (end_offset + schedule_interval)
+// on the assumption that a query past the watermark returned nothing, so an
+// aggregate created with real-time aggregation on would have had its freshest
+// buckets thrown away by a clamp that no longer needed to exist.
+//
+// 0014_realtime_aggregates.sql flipped every view and planQuery dropped the
+// clamp, so the assumption runs the other way now: a view that goes back to
+// materialized_only silently loses its newest fifteen minutes at the 5m tier
+// and its newest ninety at 1h, with nothing on the chart to say so. That is
+// the defect the migration exists to fix -- a saturation absent from the 24h
+// chart for a quarter of an hour -- so it is the one worth failing a build
+// over.
+func TestIntegrationEveryAggregateIsRealTime(t *testing.T) {
 	ctx := context.Background()
 	s := store.OpenTest(t)
 	if err := s.Migrate(ctx); err != nil {
@@ -184,7 +197,7 @@ func TestIntegrationEveryAggregateIsMaterializedOnly(t *testing.T) {
 
 	rows, err := s.Pool().Query(ctx, `
 		SELECT view_name FROM timescaledb_information.continuous_aggregates
-		 WHERE NOT materialized_only`)
+		 WHERE materialized_only`)
 	if err != nil {
 		t.Fatalf("query aggregates: %v", err)
 	}
@@ -195,8 +208,9 @@ func TestIntegrationEveryAggregateIsMaterializedOnly(t *testing.T) {
 		if err := rows.Scan(&view); err != nil {
 			t.Fatalf("scan: %v", err)
 		}
-		t.Errorf("%s is not materialized_only; tier.go clamps every aggregate query to "+
-			"now - end_offset on the assumption that it is", view)
+		t.Errorf("%s is materialized_only; planQuery answers to the last CLOSED bucket "+
+			"on the assumption that every aggregate is real-time, so this view now "+
+			"returns nothing for the window past its watermark", view)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate: %v", err)

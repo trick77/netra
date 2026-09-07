@@ -13,6 +13,7 @@ import { widestLabel } from "./plot";
 import type { OverlaySeries } from "./Overlay";
 import { Overlay } from "./Overlay";
 import { Enlargeable, type DetailData } from "./Enlargeable";
+import { peak } from "./ChartDetail";
 import { useMeasuredWidth } from "./useMeasuredWidth";
 import { InfoTip } from "../InfoTip";
 import type { Range } from "../../lib/range";
@@ -244,24 +245,25 @@ export function ChartPanel({
     );
   }
 
-  // A stack is as tall as the running TOTAL at an index, so the largest
-  // single value understates it and the top of the stack would be drawn
-  // outside the box. Only matters when no explicit ceiling is given, which
-  // is the unnormalised per-core chart: N cores stack to N x 100.
+  // The ceiling the plot is drawn against, when no explicit one is given.
   //
-  // A MIRRORED stack is two stacks, and each half accumulates every OTHER
-  // series -- summing all of them would scale a traffic chart against
-  // in-plus-out, and neither half is ever that tall.
-  const autoMax =
-    stacked && mirrored
-      ? Math.max(
-          runningTotalMax(series.filter((_, i) => i % 2 === 0)),
-          runningTotalMax(series.filter((_, i) => i % 2 === 1)),
-        )
-      : stacked
-        ? runningTotalMax(series)
-        : extent(series.flatMap((s) => s.values)).max;
-  const effectiveMax = max ?? autoMax;
+  // peak() rather than a second copy of the rules here, and that is the fix
+  // for a real defect. This used to be three hand-written branches ending in
+  // `extent(series.flatMap((s) => s.values)).max`, which reads the LINE and
+  // nothing else. That was safe while only the enlarged view was handed a
+  // banded pair; now every panel is, and the band is the bucket peak, which
+  // is always the taller of the two. linePath() does not clamp -- see the
+  // note beside peak()'s own unstacked branch -- so an unpinned line panel
+  // scaled to its mean drew the envelope outside the plot and clipped off
+  // exactly the burst it exists to show. Interrupts, load averages, running
+  // processes and disk await are all unpinned line panels.
+  //
+  // The stack and mirrored-stack rules it replaces are peak()'s too, word for
+  // word: a stack is as tall as the running TOTAL at an index, and a mirrored
+  // stack is two stacks each accumulating every OTHER series, because summing
+  // all of them would scale a traffic chart against in-plus-out and neither
+  // half is ever that tall.
+  const effectiveMax = max ?? peak(series, stacked, mirrored);
 
   // The value at the LATEST bucket, trailing nulls included. Filtering the
   // nulls out first and taking the last survivor reported the last value
@@ -498,22 +500,8 @@ export function ChartPanel({
   );
 }
 
-/**
- * The largest running total across a stack's series -- what stackBands()
- * scales against. Indices where any series is null are skipped, matching
- * stackBands' own gap rule: a running total is undefined there.
- */
-function runningTotalMax(series: readonly Band[]): number {
-  const n = series.reduce(
-    (longest, s) => Math.max(longest, s.values.length),
-    0,
-  );
-  let best = 0;
-  for (let i = 0; i < n; i++) {
-    if (series.some((s) => s.values[i] == null)) continue;
-    let sum = 0;
-    for (const s of series) sum += s.values[i] as number;
-    if (sum > best) best = sum;
-  }
-  return best;
-}
+// runningTotalMax lived here and is gone: it was the stacked half of an
+// auto-ceiling this file computed for itself, and peak() in ChartDetail is
+// the same walk with the peak envelope accounted for. Two copies of one rule
+// is how the panel came to scale against its mean while the chart it opens
+// into scaled against its band.

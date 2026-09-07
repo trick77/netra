@@ -15,11 +15,12 @@ import (
 
 // refresh materialises a continuous aggregate.
 //
-// Every aggregate in 0001_init.sql is created WITH NO DATA and OpenTest
-// unschedules the refresh policies, so an insert-then-query against a _5m or
-// _1h view returns nothing at all unless this runs first. That is not a quirk
-// of the test harness: it is the same materialized_only behaviour tier.go
-// clamps the query window for.
+// Since 0014 the aggregates are real-time, so a query does come back with the
+// un-materialised tail and this is no longer what stands between an insert and
+// an answer. It is still what a test wants when the point is the MATERIALISED
+// path: every aggregate is created WITH NO DATA and OpenTest unschedules the
+// refresh policies, so without this every row a test reads back has come out
+// of the live half of the union and the stored half is never exercised.
 func refresh(t *testing.T, pool *pgxpool.Pool, view string) {
 	t.Helper()
 
@@ -138,8 +139,14 @@ func TestIntegrationMetricsColumnNamesDifferBetweenTiers(t *testing.T) {
 	}
 }
 
-// The trailing clamp, end to end: a 5m query asking for "up to now" comes back
-// with a window ending ten minutes ago.
+// The trailing edge, end to end: a 5m query asking for "up to now" comes back
+// with a window ending at the last CLOSED five-minute bucket.
+//
+// It used to end fifteen to twenty minutes back, because the aggregates were
+// materialized_only and a query past the refresh policy could not be answered.
+// 0014_realtime_aggregates.sql made them real-time and planQuery dropped that
+// clamp; what remains is the open bucket, which no chart should draw from a
+// fraction of its readings.
 //
 // In the window, not in a warning. It used to say so in a sentence naming the
 // tier, which is vocabulary this product does not use in front of anyone --
@@ -163,8 +170,11 @@ func TestIntegrationMetricsReportsTheWindowItActuallyCovers(t *testing.T) {
 	if !res.Requested.To.Equal(now) {
 		t.Errorf("requested_window.to = %v, want the echo of now", res.Requested.To)
 	}
-	if !res.Window.To.Before(now.Add(-9 * time.Minute)) {
-		t.Errorf("window.to = %v, want it clamped ten minutes back from %v", res.Window.To, now)
+	// The left edge of the last closed bucket: between five and ten minutes
+	// back, never more, and never the bucket the clock is inside.
+	wantTo := now.Truncate(5 * time.Minute).Add(-5 * time.Minute)
+	if !res.Window.To.Equal(wantTo) {
+		t.Errorf("window.to = %v, want the last closed bucket %v", res.Window.To, wantTo)
 	}
 	if len(res.Warnings) != 0 {
 		t.Errorf("warnings = %q, want none: the clamp is in Window", res.Warnings)
@@ -582,9 +592,11 @@ func TestIntegrationMetricsHourlyTierReturnsBuckets(t *testing.T) {
 	if res.Tier != read.Tier1h || res.StepS != 3600 {
 		t.Fatalf("tier = %s/%ds, want 1h/3600s", res.Tier, res.StepS)
 	}
-	if want := now.Add(-time.Hour); res.Window.To.After(want.Add(time.Second)) {
-		t.Errorf("window.to = %v, want it clamped to the 1h materialisation horizon %v",
-			res.Window.To, want)
+	// The last CLOSED hour. Before 0014 this was the materialisation horizon
+	// ninety minutes back; a real-time aggregate gives up only the hour the
+	// clock is inside.
+	if want := now.Truncate(time.Hour).Add(-time.Hour); !res.Window.To.Equal(want) {
+		t.Errorf("window.to = %v, want the last closed hourly bucket %v", res.Window.To, want)
 	}
 	if len(res.Series) != 1 {
 		t.Fatalf("got %d series, want 1 -- the 1h relation returned nothing, which is exactly "+

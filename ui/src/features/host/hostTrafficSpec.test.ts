@@ -284,6 +284,67 @@ describe("the Traffic page on a rolled-up tier", () => {
   });
 });
 
+describe("the peak envelope on charts that are not traffic", () => {
+  // The defect this covers: `peak: true` sat on the two traffic panels and
+  // nowhere else, so every other chart drew the average alone past the 1h
+  // range with the max shipping unread in the same response. bandsFor asks
+  // the tier now, so any base with a max that differs from its line gets the
+  // pair.
+  function hostRolledUp(columns: string[], points: number[]): MetricsResponse {
+    const iso = "2026-08-10T00:00:00Z";
+    return {
+      family: "host",
+      tier: "5m",
+      step_s: 300,
+      window: { from: iso, to: "2026-08-10T00:05:00Z" },
+      requested_window: { from: iso, to: "2026-08-10T00:05:00Z" },
+      warnings: [],
+      key_columns: [],
+      columns,
+      series: [{ key: {}, points: [[Date.parse(iso), ...points]] }],
+      truncated: false,
+    } as unknown as MetricsResponse;
+  }
+
+  const bandOf = (b: unknown) => (b as { band?: (number | null)[] }).band;
+
+  it("when an interrupt rate carries both peers_then the line is the mean and the band is the peak", () => {
+    // Given a 5m host response with intr_per_s_avg beside intr_per_s_max
+    const res = hostRolledUp(["intr_per_s_avg", "intr_per_s_max"], [12, 97]);
+
+    // When the Interrupts panel's bands are built the way SpecPanel builds
+    // them -- a spec that never carried `peak: true` and never could
+    const bands = bandsFor(specForSlug("interrupts")!, res, {
+      withPeakBand: true,
+    });
+
+    // Then the line is the average and the envelope is the peak -- a storm
+    // filling one minute of a five-minute bucket reads 12 on the line and 97
+    // behind it, where before it read 12 and nothing else.
+    expect(bands[0]!.values[0]).toBe(12);
+    expect(bandOf(bands[0])?.[0]).toBe(97);
+  });
+
+  it("when the tier is raw_then there is no envelope", () => {
+    // Given the same panel answered from the raw table
+    const res = {
+      ...hostRolledUp(["intr_per_s"], [12]),
+      tier: "raw",
+      step_s: 60,
+    } as unknown as MetricsResponse;
+
+    // When its bands are built
+    const bands = bandsFor(specForSlug("interrupts")!, res, {
+      withPeakBand: true,
+    });
+
+    // Then the sample is its own peak and a band would be a second copy of
+    // the line drawn under it.
+    expect(bands[0]!.values[0]).toBe(12);
+    expect(bandOf(bands[0])).toBeUndefined();
+  });
+});
+
 describe("the CPU page on a host too large for the fleet cell", () => {
   function cores(n: number): MetricsResponse {
     const at = (i: number) => Date.parse(`2026-08-10T00:0${i}:00Z`);
