@@ -220,7 +220,15 @@ func (k *Kmsg) Collect(_ context.Context) (*Result, error) {
 func (k *Kmsg) drain() []kmsgRecord {
 	var out []kmsgRecord
 
-	for len(out) < kmsgMaxRecords {
+	// Gaps count against the same budget as records, and must. An EPIPE
+	// consumes no record, so a `continue` that did not count would spin
+	// forever on a ring wrapping faster than one scrape can drain it -- and
+	// the agent runs its collectors sequentially in one goroutine, so that is
+	// not one stuck collector, it is the scrape loop never coming back.
+	reads := 0
+
+	for reads < kmsgMaxRecords {
+		reads++
 		raw, err := k.src.ReadRecord()
 		switch {
 		case err == nil:
@@ -765,16 +773,23 @@ func (k *Kmsg) eventsFor(records []kmsgRecord, now time.Time, up time.Duration) 
 	var events []*netrav1.Event
 
 	for _, key := range order {
-		if len(events) >= kmsgMaxEvents {
-			break
-		}
 		f := folds[key]
+
+		// Past the cap, a key is SUPPRESSED rather than dropped. `break` here
+		// discarded the remaining folds outright -- no event, and no
+		// suppression entry either, so their count never surfaced in a later
+		// rollup. A wide incident touching more than kmsgMaxEvents devices at
+		// once would lose records silently, which is the one thing the folding
+		// is documented not to do.
+		if len(events) >= kmsgMaxEvents {
+			k.hold(key, f, now)
+			continue
+		}
 
 		if s, quiet := k.suppress[key]; quiet && now.Before(s.until) {
 			// Still inside this key's quiet window: keep the count and the
 			// newest sample, say nothing.
-			s.held += f.held
-			s.message, s.severity, s.priority, s.last = f.message, f.severity, f.priority, f.last
+			k.hold(key, f, now)
 			continue
 		}
 
@@ -793,6 +808,23 @@ func (k *Kmsg) eventsFor(records []kmsgRecord, now time.Time, up time.Duration) 
 	events = append(events, k.flushExpired(now, len(events))...)
 
 	return events
+}
+
+// hold folds this scrape's records into a key's quiet window instead of
+// emitting them, keeping the newest sample so a later rollup has something
+// concrete to say.
+//
+// Reached two ways -- the key spoke recently, or this scrape has already
+// emitted its cap -- and both mean the same thing to the operator: the records
+// happened, and they are counted rather than lost.
+func (k *Kmsg) hold(key foldKey, f *suppression, now time.Time) {
+	s, ok := k.suppress[key]
+	if !ok {
+		s = &suppression{until: now.Add(kmsgSuppressWindow)}
+		k.suppress[key] = s
+	}
+	s.held += f.held
+	s.message, s.severity, s.priority, s.last = f.message, f.severity, f.priority, f.last
 }
 
 // flushExpired emits a rollup for every key whose quiet window has closed with
@@ -824,7 +856,18 @@ func (k *Kmsg) flushExpired(now time.Time, emitted int) []*netrav1.Event {
 		if emitted+len(events) >= kmsgMaxEvents {
 			break
 		}
-		events = append(events, k.event(key, s, 0, s.last))
+		// The held records are reported as SUPPRESSED, not as a count. They
+		// did not arrive together in this scrape -- they trickled in across a
+		// ten-minute window -- and `count` means a burst, which the UI renders
+		// as "x118". Saying 118 records landed at once when they arrived over
+		// ten minutes describes an incident that did not happen.
+		rollup := &suppression{
+			message:  s.message,
+			severity: s.severity,
+			priority: s.priority,
+			held:     1,
+		}
+		events = append(events, k.event(key, rollup, s.held, s.last))
 		k.suppress[key] = &suppression{until: now.Add(kmsgSuppressWindow)}
 	}
 	return events

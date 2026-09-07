@@ -86,6 +86,7 @@ function renderPage(
   overrides: {
     events?: Event[];
     filters?: Partial<EventFilters>;
+    truncated?: boolean;
   } = {},
 ) {
   const onFiltersChange = vi.fn();
@@ -93,6 +94,7 @@ function renderPage(
     <EventsPage
       events={overrides.events ?? [event(), DEGRADED, RECOVERING]}
       hosts={HOSTS}
+      truncated={overrides.truncated ?? false}
       filters={{ ...EVERY_SEVERITY, ...overrides.filters }}
       onFiltersChange={onFiltersChange}
       now={NOW}
@@ -152,6 +154,13 @@ describe("filters in the URL", () => {
     const all: EventFilters = { ...DEFAULT_FILTERS, severity: "" };
     expect(filtersToQuery(all)).toContain("severity=");
     expect(filtersFromQuery(filtersToQuery(all))).toEqual(all);
+  });
+
+  // A link written before `info` left the dropdown must not open a control
+  // rendered blank: a <select> whose value matches no <option> shows nothing
+  // while behaving as "all severities".
+  it("folds the lowest severity onto the option that means the same thing", () => {
+    expect(filtersFromQuery("severity=info").severity).toBe("");
   });
 
   it("ignores a range the page does not have", () => {
@@ -364,6 +373,26 @@ describe("EventsPage", () => {
       { ...EVERY_SEVERITY, severity: "warning" },
       { ...EVERY_SEVERITY, range: "7d" },
     ]);
+  });
+
+  // Every filter but the range runs over rows already fetched, so a window
+  // the server truncated can hide a critical event behind a severity floor
+  // that never saw it. Saying "nothing matches these filters" would be a
+  // false statement about what happened.
+  it("says the window was truncated rather than blaming the filters", () => {
+    renderPage({
+      events: [],
+      filters: { severity: "critical" },
+      truncated: true,
+    });
+
+    expect(screen.getByText(/cut off before any filter ran/i)).toBeTruthy();
+  });
+
+  it("blames the filters when nothing was truncated", () => {
+    renderPage({ events: [], filters: { severity: "critical" } });
+
+    expect(screen.getByText(/matches these filters/i)).toBeTruthy();
   });
 
   // Two options that select identical rows is one option too many: as a

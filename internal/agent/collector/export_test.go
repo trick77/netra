@@ -171,3 +171,7 @@ const (
 	KmsgSuppressWindowForTest = kmsgSuppressWindow
 	KmsgMaxEventsForTest      = kmsgMaxEvents
 )
+
+// ErrKmsgGapForTest is the EPIPE sentinel, so a stand-in source can report a
+// ring that wrapped past the reader.
+var ErrKmsgGapForTest = errKmsgGap

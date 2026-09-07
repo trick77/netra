@@ -39,8 +39,6 @@ export const EVENT_RANGE_VALUES: readonly Range[] = EVENT_RANGES.map(
  * detail, and no severity column at all. */
 export type EventSeverity = "critical" | "warning" | "info";
 
-const SEVERITIES: EventSeverity[] = ["critical", "warning", "info"];
-
 /** What the dropdown offers, which is NOT every severity.
  *
  * `info` is missing on purpose. The filter is a threshold, so "info and worse"
@@ -162,6 +160,19 @@ export function filtersToQuery(filters: EventFilters): string {
   return usp.toString();
 }
 
+/** A severity out of a URL, reduced to something the dropdown can show.
+ *
+ * A missing key (null) is the default; "" and any offered severity are kept;
+ * the lowest severity collapses to "" because as a threshold it means the same
+ * thing; anything else is a hand-edited URL and falls back to the default. */
+function normalizeSeverityFilter(raw: string | null): EventSeverity | "" {
+  if (raw === null) return DEFAULT_FILTERS.severity;
+  if (raw === "" || raw === "info") return "";
+  return SEVERITY_CHOICES.includes(raw as EventSeverity)
+    ? (raw as EventSeverity)
+    : DEFAULT_FILTERS.severity;
+}
+
 /** The inverse. An unknown range or severity falls back to its default
  * rather than being trusted: a hand-edited URL must not be able to put the
  * page in a state its controls cannot express.
@@ -184,12 +195,13 @@ export function filtersFromQuery(
     // "" is a VALID value here -- every severity -- and must not fall through
     // to the default the way an unknown word does, or the link that spells out
     // "all severities" would open filtered. Only a MISSING key means default.
-    severity:
-      severity === ""
-        ? ""
-        : SEVERITIES.includes(severity as EventSeverity)
-          ? (severity as EventSeverity)
-          : DEFAULT_FILTERS.severity,
+    //
+    // `info` normalises to "" rather than being kept. As a threshold the two
+    // select identical rows, which is why the dropdown offers only one of
+    // them -- and a value with no matching <option> leaves the select rendered
+    // blank, so a link written before this change would open a control showing
+    // nothing while the list behaved as "all severities".
+    severity: normalizeSeverityFilter(severity),
     range: EVENT_RANGES.some((r) => r.value === range)
       ? (range as Range)
       : fallbackRange,
@@ -257,6 +269,16 @@ export interface EventsPageProps {
   hosts: readonly { id: number; hostname: string }[];
   filters: EventFilters;
   onFiltersChange: (filters: EventFilters) => void;
+  /** Whether the server returned as many rows as were asked for, so older
+   * events inside the window were cut off before this page ever saw them.
+   *
+   * It matters because every filter here except the range is applied to rows
+   * ALREADY FETCHED. The server sends the newest N and knows nothing about the
+   * severity floor, so on a noisy fleet a critical event from twenty hours ago
+   * can be truncated away by a few hundred info rows in front of it -- and the
+   * page would otherwise say "nothing matches these filters", which is not
+   * what happened. */
+  truncated?: boolean;
   /** Injectable so relative timestamps are deterministic in tests. */
   now?: Date;
 }
@@ -266,6 +288,7 @@ export function EventsPage({
   hosts,
   filters,
   onFiltersChange,
+  truncated = false,
   now = new Date(),
 }: EventsPageProps) {
   // Every control hands back the WHOLE filter object, never a patch: the
@@ -375,7 +398,11 @@ export function EventsPage({
           <EmptyState
             icon={Inbox}
             title="No events"
-            body="Nothing in this window matches these filters. Widen the range, or clear a filter."
+            body={
+              truncated
+                ? "This window held more events than one page can carry, so the oldest were cut off before any filter ran. Narrow the range, or filter by host or type."
+                : "Nothing in this window matches these filters. Widen the range, or clear a filter."
+            }
           />
         ) : (
           // role="list" on a div rather than a <ul>: index.css styles

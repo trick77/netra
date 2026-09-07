@@ -385,8 +385,13 @@ func TestKmsgFlushesWhatItHeldWhenTheIncidentStops(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expiry flush events = %d, want 1", len(got))
 	}
-	if s := detailOf(t, got[0])["count"]; s != float64(2) {
-		t.Errorf("count = %v, want the 2 records held", s)
+	// Reported as SUPPRESSED, not as a count: they trickled in across the
+	// window rather than arriving together, and `count` means a burst.
+	if s := detailOf(t, got[0])["suppressed"]; s != float64(2) {
+		t.Errorf("suppressed = %v, want the 2 records held", s)
+	}
+	if _, ok := detailOf(t, got[0])["count"]; ok {
+		t.Error("the rollup claims a burst that never happened")
 	}
 
 	// And once it has been flushed with nothing further, the key is forgotten
@@ -596,5 +601,114 @@ func TestKmsgCapsWhatOneScrapeEmits(t *testing.T) {
 	_, events := kmsgFixture(t, records, time.Unix(1_800_000_000, 0).UTC(), time.Hour)
 	if len(events) > collector.KmsgMaxEventsForTest {
 		t.Fatalf("events = %d, want at most %d", len(events), collector.KmsgMaxEventsForTest)
+	}
+}
+
+// gapSource returns errKmsgGap forever, which is what a ring wrapping faster
+// than one scrape can drain it looks like from here.
+type gapSource struct{ reads int }
+
+func (g *gapSource) ReadRecord() ([]byte, error) {
+	g.reads++
+	return nil, collector.ErrKmsgGapForTest
+}
+
+func (g *gapSource) Close() error { return nil }
+
+// A drain that only ever hits gaps still ends.
+//
+// An EPIPE consumes no record, so counting only records against the budget
+// meant the loop never advanced. That is not one wedged collector: the agent
+// runs its collectors sequentially in a single goroutine, so the scrape loop
+// would never come back, and it would log a warning per iteration while doing
+// it.
+func TestKmsgDrainEndsWhenEveryReadIsAGap(t *testing.T) {
+	src := &gapSource{}
+	testee := collector.NewKmsg("/dev/kmsg", "")
+	testee.SetSourceForTest(
+		func() (collector.KmsgSource, error) { return src, nil },
+		func() (time.Duration, error) { return time.Hour, nil },
+		func() time.Time { return time.Unix(1_800_000_000, 0).UTC() },
+	)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := testee.Collect(context.Background()); err != nil {
+			t.Errorf("Collect: %v", err)
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Collect did not return after %d gap reads: the drain is spinning", src.reads)
+	}
+}
+
+// Past the per-scrape cap, records are HELD, not dropped.
+//
+// The folding is documented to hide nothing, only fold. Breaking out of the
+// loop discarded the remaining keys outright -- no event and no suppression
+// entry -- so a wide incident touching more devices than the cap lost records
+// with nothing recording that they had existed.
+func TestKmsgHoldsWhatItCannotEmitInOneScrape(t *testing.T) {
+	line := func(dev string) string {
+		return fmt.Sprintf(
+			"blk_update_request: I/O error, dev %s, sector 1 op 0x0:(READ) flags 0x0 phys_seg 1 prio class 0",
+			dev)
+	}
+
+	start := time.Unix(1_800_000_000, 0).UTC()
+	now := start
+	var records [][]byte
+
+	testee := collector.NewKmsg("/dev/kmsg", "")
+	testee.SetSourceForTest(
+		func() (collector.KmsgSource, error) { return &liveSource{pending: &records}, nil },
+		func() (time.Duration, error) { return time.Hour, nil },
+		func() time.Time { return now },
+	)
+	drain := func() []*netrav1.Event {
+		t.Helper()
+		res, err := testee.Collect(context.Background())
+		if err != nil {
+			t.Fatalf("Collect: %v", err)
+		}
+		return res.Events
+	}
+
+	// Comfortably more distinct devices than one scrape may emit.
+	devices := make([]string, 0, collector.KmsgMaxEventsForTest+10)
+	for i := range collector.KmsgMaxEventsForTest + 10 {
+		devices = append(devices, fmt.Sprintf("sd%c%c", 'a'+byte(i/26), 'a'+byte(i%26)))
+	}
+	for _, dev := range devices {
+		records = append(records, rec(3, 1, 1_000_000, line(dev)))
+	}
+
+	first := drain()
+	if len(first) != collector.KmsgMaxEventsForTest {
+		t.Fatalf("first scrape emitted %d events, want the cap of %d",
+			len(first), collector.KmsgMaxEventsForTest)
+	}
+
+	// The ones over the cap were held, so once their windows close they are
+	// reported rather than having vanished.
+	now = start.Add(collector.KmsgSuppressWindowForTest + time.Minute)
+	records = nil
+	rest := drain()
+	if len(rest) == 0 {
+		t.Fatal("nothing was reported for the devices over the cap: they were dropped")
+	}
+
+	seen := make(map[string]bool, len(first)+len(rest))
+	for _, ev := range append(append([]*netrav1.Event{}, first...), rest...) {
+		seen[ev.GetSubject()] = true
+	}
+	for _, dev := range devices {
+		if !seen[dev] {
+			t.Errorf("device %s was never reported at all", dev)
+		}
 	}
 }
