@@ -2,6 +2,7 @@ package collector
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -165,7 +166,7 @@ func TestDockerContainerDecodesStateAndStatus(t *testing.T) {
 
 // The inspect body, pinned for the same reason the list body is: one wrong tag
 // and every container reports zero restarts, which reads as a healthy fleet.
-func TestDockerInspectDecodesRestartCount(t *testing.T) {
+func TestDecodeInspectReadsBothFields(t *testing.T) {
 	// Given a trimmed real /containers/{id}/json body, with sibling keys netra
 	// does not read left in so the fixture stays a subset of the real shape.
 	const body = `{
@@ -179,23 +180,30 @@ func TestDockerInspectDecodesRestartCount(t *testing.T) {
 	  },
 	  "HostConfig": { "RestartPolicy": { "Name": "unless-stopped" } }
 	}`
-	var got dockerInspect
 
 	// When it is decoded the way SystemDockerInspect decodes it.
-	if err := json.Unmarshal([]byte(body), &got); err != nil {
-		t.Fatalf("decode: %v", err)
+	got, err := decodeInspect(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("decodeInspect: %v", err)
 	}
 
 	// Then the restart count arrives.
 	if got.RestartCount != 7 {
 		t.Errorf("RestartCount = %d, want 7", got.RestartCount)
 	}
-
 	// And so does the start time, off the SAME response -- which is the whole
 	// point: it costs no extra request, only a struct tag.
-	started := parseStartedAt(got.State.StartedAt)
-	if want := time.Date(2026, 8, 1, 9, 12, 45, 123456789, time.UTC); !started.Equal(want) {
-		t.Errorf("StartedAt = %v, want %v", started, want)
+	if want := time.Date(2026, 8, 1, 9, 12, 45, 123456789, time.UTC); !got.StartedAt.Equal(want) {
+		t.Errorf("StartedAt = %v, want %v", got.StartedAt, want)
+	}
+}
+
+// A body that is not JSON at all must fail rather than yield a zero status: a
+// silent zero would report "this container has never restarted", which is the
+// reading an operator most wants to be able to trust.
+func TestDecodeInspectRejectsGarbage(t *testing.T) {
+	if _, err := decodeInspect(strings.NewReader("<html>nope</html>")); err == nil {
+		t.Error("decodeInspect accepted a non-JSON body")
 	}
 }
 
@@ -222,14 +230,14 @@ func TestStartedAtIsZeroWhenThereIsNoneToRead(t *testing.T) {
 // The two fields fail together only when the daemon refuses the whole call --
 // not when one key is missing.
 func TestDockerInspectWithoutStateStillCarriesTheCount(t *testing.T) {
-	var got dockerInspect
-	if err := json.Unmarshal([]byte(`{"RestartCount": 4}`), &got); err != nil {
-		t.Fatalf("decode: %v", err)
+	got, err := decodeInspect(strings.NewReader(`{"RestartCount": 4}`))
+	if err != nil {
+		t.Fatalf("decodeInspect: %v", err)
 	}
 	if got.RestartCount != 4 {
 		t.Errorf("RestartCount = %d, want 4", got.RestartCount)
 	}
-	if started := parseStartedAt(got.State.StartedAt); !started.IsZero() {
-		t.Errorf("StartedAt = %v, want the zero time", started)
+	if !got.StartedAt.IsZero() {
+		t.Errorf("StartedAt = %v, want the zero time", got.StartedAt)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -186,8 +187,21 @@ func SystemDockerInspect(ctx context.Context, id string) (ContainerStatus, error
 		return ContainerStatus{}, fmt.Errorf("docker returned %s", resp.Status)
 	}
 
+	return decodeInspect(resp.Body)
+}
+
+// decodeInspect turns one /containers/{id}/json body into a ContainerStatus.
+//
+// Split from the request above so the part with decisions in it -- which JSON
+// keys are read, and what a missing or unusable StartedAt does to the
+// RestartCount beside it -- can be tested without a daemon or an httptest
+// server. What is left in SystemDockerInspect is transport: build, send, check
+// the status. That is the only part a unit test could not reach anyway, and
+// keeping it thin is what stops a signature change turning the whole function
+// into uncovered new lines.
+func decodeInspect(r io.Reader) (ContainerStatus, error) {
 	var out dockerInspect
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.NewDecoder(r).Decode(&out); err != nil {
 		return ContainerStatus{}, fmt.Errorf("decode docker inspect response: %w", err)
 	}
 	return ContainerStatus{
@@ -203,8 +217,12 @@ func SystemDockerInspect(ctx context.Context, id string) (ContainerStatus, error
 // the zero value rather than as an error: an empty string (an older daemon, or
 // a response shape without the State object), a value that will not parse, and
 // Docker's own zero time "0001-01-01T00:00:00Z", which is what it reports for a
-// container that has never run. The last is why IsZero is checked after
-// parsing succeeds and not only before.
+// container that has never run.
+//
+// Only the first two need a branch. Docker's zero time parses cleanly into
+// Go's OWN zero Time, so it arrives at the caller already answering IsZero and
+// needs no special case -- which is worth stating, because the absence of a
+// check for it looks like an oversight and is not.
 func parseStartedAt(s string) time.Time {
 	if s == "" {
 		return time.Time{}

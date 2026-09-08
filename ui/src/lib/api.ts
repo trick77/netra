@@ -193,6 +193,25 @@ export type Container = {
    * container_key is the compose service rather than the id, so a decrease
    * across the history is a redeploy and an increase is a crash-restart. */
   restart_count: number | null;
+  /**
+   * When Docker says this container's CURRENT incarnation started, and the
+   * only field here that answers "how long has it been up".
+   *
+   * NOT `state_since`, which is when the HUB first observed a state: for a
+   * container netra met yesterday that reads as yesterday however long it had
+   * actually been running.
+   *
+   * Uptime is `now - started_at` only while `last_seen` is current; for a row
+   * that has gone quiet the honest statement is "up for at least
+   * last_seen - started_at", because nothing here says it is still running.
+   * That is why the wire carries an instant and not a duration -- a duration
+   * would be stale by the time it was rendered.
+   *
+   * Null is "no agent could inspect it", the same fact `restart_count` reports
+   * as null and for the same reason: they ride one inspect response. It never
+   * means "just started".
+   */
+  started_at: string | null;
   /** Every label the daemon reported. `{}` is a container with no labels;
    * null is a container nobody could ask about. */
   labels: Record<string, string> | null;

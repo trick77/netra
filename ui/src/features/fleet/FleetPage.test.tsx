@@ -49,6 +49,7 @@ function makeContainer(overrides: Partial<ContainerRow> = {}): ContainerRow {
     docker_state: null,
     health: null,
     state_since: null,
+    started_at: null,
     restart_count: null,
     labels: null,
     last_seen: "2026-08-10T14:00:00Z",

@@ -56,13 +56,26 @@ const capRestartsNoInspect = "no-inspect"
 // got busy. At the 60s default this closes that hole within ten minutes, which
 // is the resolution a restart count is read at.
 //
-// The two cached fields wear this staleness differently, and it matters. The
-// COUNT is a gauge, so a late read is a number that was briefly wrong. The
-// START TIME is constant for the life of an incarnation, so a late read is the
-// right answer arriving late and never a wrong one -- and when it does change,
-// the recreate detector has already forced the inspect that catches it. That
-// is why a restart event dated from StartedAt is exact even when the counter
-// that revealed it was ten scrapes behind.
+// The two cached fields wear this staleness differently, and the difference is
+// worth stating precisely because it is easy to overstate.
+//
+// WITHIN one incarnation the start time cannot go stale: it does not change, so
+// every re-read returns the same instant and a skipped scrape costs nothing.
+// The count is a gauge and a skipped scrape leaves it behind.
+//
+// ACROSS a restart both are stale together, and for the same window. While the
+// detector above misses -- the busier-after-restart case it describes, or an id
+// pushed past maxInspectsPerScrape -- the cache still holds the PREVIOUS
+// incarnation's pair, so the count is low AND the start time names a life that
+// has ended. A container that restarted a minute ago can read as up for a week
+// until the refresh comes round.
+//
+// That is the same bounded trade the count already makes, not a new one, and it
+// closes within restartRefreshEvery. What the start time buys is not immunity
+// from it: it is that once the inspect DOES land, the restart can be dated to
+// the second it actually happened rather than to the scrape that noticed. The
+// hub records which of the two it had -- see detail.ts_source on the restart
+// event -- so a late reading is never presented as an exact one.
 const restartRefreshEvery = 10
 
 // maxInspectsPerScrape bounds the cost of a scrape on a host that just rebooted
