@@ -909,3 +909,46 @@ func TestPackageUpgradesFormOneChainPerPackage(t *testing.T) {
 // hub is not a dependency of the simulator; the test above exists to catch the
 // simulator drifting under it.
 const packageRunRowsForTest = 3
+
+// A container whose counter FALLS -- the simulated mid-window redeploy -- must
+// report one start time per incarnation, not a new one on every scrape.
+//
+// The boundary integer differs by direction, and getting it wrong is silent in
+// the simulator and loud in the hub: a start time solved for the integer the
+// ramp is heading toward is in the future of every sample in that incarnation,
+// so the clamp returns the sample's own ts, so each scrape reports a start time
+// one step later than the last. The hub's derivation reads that as a redeploy
+// and writes a container_recreate per sample -- 4322 of them over a 72-hour
+// backfill, for a container that was recreated six times.
+func TestAFallingRestartCounterReportsOneStartTimePerIncarnation(t *testing.T) {
+	// Given: the archetypes' own descending spec, a 6 -> 0 redeploy.
+	to := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	from := to.Add(-72 * time.Hour)
+	spec := ContainerSpec{
+		Key: "shop/cache", Name: "shop-cache-1", Image: "redis:7-alpine",
+		RestartsStart: 6, RestartsEnd: 0,
+	}
+	g := NewGenerator(&Profile{}, 1, from, to)
+
+	// When: walked minute by minute, the way a backfill walks it.
+	var moves int
+	var prevStarted time.Time
+	var prevCount uint64
+	first := true
+	for ts := from; ts.Before(to); ts = ts.Add(time.Minute) {
+		restarts := ramp(from, to, ts, float64(spec.RestartsStart), float64(spec.RestartsEnd))
+		started := containerStartedAt(g, spec, ts, restarts, true)
+		if !first && started.After(prevStarted) && uint64(restarts) == prevCount {
+			moves++
+		}
+		first, prevStarted, prevCount = false, started, uint64(restarts)
+	}
+
+	// Then: the start time never moves on its own. Every incarnation boundary
+	// this container has is a step of the counter, which the hub already reads
+	// as a recreate from the counter alone.
+	if moves != 0 {
+		t.Errorf("start time moved on %d samples that reported an unchanged counter, "+
+			"each of which the hub derives as a redeploy; want 0", moves)
+	}
+}

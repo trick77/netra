@@ -883,7 +883,23 @@ func (g *Generator) containers(ts time.Time, cpu float64) []*netrav1.ContainerSa
 func containerStartedAt(g *Generator, c ContainerSpec, ts time.Time, restarts float64, ramping bool) time.Time {
 	if ramping && c.RestartsEnd != c.RestartsStart {
 		span := g.to.Sub(g.from)
-		f := (math.Trunc(restarts) - float64(c.RestartsStart)) /
+		// The integer the ramp crossed to ENTER this incarnation, which is not
+		// the same integer in both directions. A counter climbing 2 -> 31
+		// enters the incarnation reporting 5 when it reaches 5; a counter
+		// falling 6 -> 0 reports 5 from the moment it drops BELOW 6, so the
+		// boundary is 6 -- solving for 5 names the instant it will leave this
+		// incarnation, which is in the future of every sample in it.
+		//
+		// That is not a cosmetic error. A future instant hits the clamp below
+		// and comes back as the sample's own ts, so every scrape reports a
+		// start time one minute later than the last, and the hub's derivation
+		// reads each one as a redeploy: 4322 container_recreate events for a
+		// container that was recreated once.
+		boundary := math.Trunc(restarts)
+		if c.RestartsEnd < c.RestartsStart {
+			boundary++
+		}
+		f := (boundary - float64(c.RestartsStart)) /
 			(float64(c.RestartsEnd) - float64(c.RestartsStart))
 		at := g.from.Add(time.Duration(f * float64(span)))
 		// Never after the sample reporting it: a start time in the future of

@@ -12,6 +12,7 @@ import {
   containerIsGone,
   GONE_AFTER_S,
   lastReported,
+  memDenominator,
   trendScales,
   type ContainerRow,
 } from "./columns";
@@ -445,6 +446,48 @@ describe("containerColumns", () => {
 // What a collapsed group header prints. One definition for both lists -- the
 // host page's, grouped by compose project, and the fleet's, grouped by stack --
 // for the same reason the column set is one definition.
+// The branch no simulated container can reach: netra-sim gives every
+// container a mem_limit, so an unlimited one is only ever seen in production
+// and here. Without a denominator a row drew no bar at all, which is what
+// this function exists to prevent.
+describe("memDenominator", () => {
+  it("measures a limited container against its own limit", () => {
+    expect(memDenominator(makeRow({ mem_limit_bytes: 1e9 }))).toEqual({
+      denom: 1e9,
+      under: "of 1 GB",
+      isHostShare: false,
+    });
+  });
+
+  // Docker writes 0 for "no limit", so <= 0 is unlimited rather than a
+  // container capped at zero bytes.
+  it("reads Docker's 0 as unlimited, not as a limit of zero", () => {
+    const row = makeRow({ mem_limit_bytes: 0, host_mem_total: 8 * 1024 ** 3 });
+    expect(memDenominator(row).isHostShare).toBe(true);
+  });
+
+  // The " host" suffix is the whole point: it is what keeps a share of the
+  // machine apart from a share of a limit on a list where both appear.
+  it("falls back to host RAM, and says so", () => {
+    expect(
+      memDenominator(
+        makeRow({ mem_limit_bytes: null, host_mem_total: 8 * 1024 ** 3 }),
+      ),
+    ).toEqual({
+      denom: 8 * 1024 ** 3,
+      under: "of 8 GiB host",
+      isHostShare: true,
+    });
+  });
+
+  // Neither ceiling known: no bar rather than a bar against an invented one.
+  it("has no denominator when neither ceiling is known", () => {
+    expect(
+      memDenominator(makeRow({ mem_limit_bytes: null, host_mem_total: null })),
+    ).toEqual({ denom: null, under: null, isHostShare: false });
+  });
+});
+
 describe("containerGroupReading", () => {
   it("sums the latest reported reading, not the latest bucket", () => {
     const got = containerGroupReading([

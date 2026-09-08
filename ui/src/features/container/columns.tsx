@@ -885,7 +885,15 @@ function UptimeMark({ row, now }: { row: ContainerRow; now: Date }) {
   );
 }
 
-/** The largest whole unit of `seconds`, and nothing below it. */
+/**
+ * The largest whole unit of `seconds`, and nothing below it.
+ *
+ * The hours branch is unreachable while UPTIME_MARK_S is an hour -- the caller
+ * has already returned null by then. It stays because it is what makes this
+ * function correct for whatever the threshold becomes: raising UPTIME_MARK_S
+ * without it would print "up 240 m", and a threshold is a number someone will
+ * change without reading the formatter below it.
+ */
 function coarseAge(seconds: number): string {
   if (seconds >= 3600) return `${Math.floor(seconds / 3600)} h`;
   if (seconds >= 60) return `${Math.floor(seconds / 60)} m`;
