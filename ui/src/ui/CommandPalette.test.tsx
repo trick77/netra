@@ -40,6 +40,11 @@ function container(key: string, name: string | null): api.Container {
     state_since: null,
     restart_count: null,
     labels: null,
+    started_at: null,
+    restarts_window: 0,
+    recreates_window: 0,
+    last_restart: null,
+    restarts_window_seconds: 3600,
   };
 }
 
