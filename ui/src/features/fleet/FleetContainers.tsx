@@ -3,12 +3,17 @@ import { Boxes } from "lucide-react";
 import { EmptyState } from "../../ui/EmptyState";
 import { Table } from "../../ui/Table";
 import {
+  composeIdentity,
   containerColumns,
-  ContainerGroupTotals,
+  containerGroupCells,
+  containerGroupWorst,
   containerSeverity,
   trendScales,
   type ContainerRow,
 } from "../container/columns";
+import { stateKindLabel } from "../container/state";
+import { Badge } from "../../ui/Badge";
+import { ABSENT } from "../../lib/format";
 import {
   fleetContainerNotes,
   fleetContainersBlocked,
@@ -81,11 +86,11 @@ export function FleetContainers({
   filtered = false,
 }: FleetContainersProps) {
   // Before the empty-state returns below, because it is a hook. Memoised, and
-  // on the flag alone: BY_HOST is hoisted precisely so Table's partition memo
+  // on the flag alone: BY_STACK is hoisted precisely so Table's partition memo
   // can hold on its identity, and a fresh object every render would undo
   // that.
   const grouping = useMemo(
-    () => ({ ...BY_HOST, forceExpanded: filtered }),
+    () => ({ ...BY_STACK, forceExpanded: filtered }),
     [filtered],
   );
   // A search that matched nothing says nothing about the fleet, so it gets no
@@ -215,44 +220,85 @@ export function FleetContainers({
 // `columns`, and the call below builds a fresh array every render.) Neither
 // half closes over anything, so there is nothing to capture.
 //
-// Grouped by host_id, never by hostname: two hosts in different sites may
-// share a hostname (see HostTable), and grouping on the name would merge two
-// machines into one group and file one host's containers under the other
-// host's link. It is the same reason rowKey is a pair.
+// Grouped by (host, compose project) -- a STACK, which is what somebody
+// deployed and what fails together. Eighty-four containers are not eighty-four
+// things; they are a dozen stacks, and a list that says so is a list a reader
+// can hold in their head.
 //
-// ORDERED by hostname, though, which is a different question from identity.
-// On the id, the groups came out in registration order under headings that
-// read as names -- and the Hosts tab of the same page is alphabetical, because
-// the read API sorts it that way (internal/hub/read/host.go: ORDER BY
-// h.hostname, h.id). Two tabs of one page ordering the same hosts differently
-// makes the second one look arbitrary, and more so with every host added.
-const BY_HOST = {
-  key: (row: ContainerRow) => String(row.host_id),
-  order: (_key: string, group: readonly ContainerRow[]) => group[0].hostname,
+// The host is half the key rather than the whole of it, and that is the part
+// worth explaining. A compose project running on two machines is two
+// deployments, not one -- but the decisive reason is the DENOMINATOR: a
+// group's heading reports its share of the machine's cores and RAM, and a
+// group spanning three machines has no cores to be a share of. Keying on the
+// pair is what keeps every heading answerable.
+//
+// host_id and not hostname, for the reason rowKey is a pair: two hosts in
+// different sites may share a hostname (see HostTable), and grouping on the
+// name would file one machine's containers under another's link.
+//
+// ORDERED by hostname then project, which is a different question from
+// identity. On the raw key the groups came out in host registration order
+// under headings that read as names, beside a Hosts tab the API returns
+// alphabetically -- two tabs of one page ordering the same hosts differently
+// looks arbitrary, and more so with every host added. Ordering this way also
+// keeps a host's stacks contiguous, so "by host" survives as a reading of this
+// list rather than needing a second view of it.
+const BY_STACK = {
+  // A separator that cannot occur in either half, so "7" + "web" and "7web"
+  // cannot collide.
+  key: (row: ContainerRow) => `${row.host_id} ${projectOf(row)}`,
+  order: (_key: string, group: readonly ContainerRow[]) => {
+    const project = projectOf(group[0]);
+    // The unnamed group last WITHIN its host rather than at the end of the
+    // page: it is that host's containers, and exiling them under a different
+    // machine's stacks would be worse than the empty-key rule Table applies
+    // to a single grouping level.
+    return `${group[0].hostname} ${project === "" ? "￿" : project}`;
+  },
   label: (_key: string, group: readonly ContainerRow[]) => (
-    <HostGroup rows={group} />
+    <StackGroup rows={group} />
   ),
-  // The key here is a host_id ("7"), which names nothing -- hence labelText.
+  // The key is "7\0web", which names nothing -- hence labelText.
   labelText: (_key: string, group: readonly ContainerRow[]) =>
-    group[0].hostname,
-  // Same disclosure the host page's Containers tab uses, for the same reason:
-  // a fleet list is the longer of the two, not the shorter.
+    `${projectName(projectOf(group[0]))} on ${group[0].hostname}`,
   collapsible: true,
-  summary: (_key: string, group: readonly ContainerRow[]) => (
-    <ContainerGroupTotals rows={group} />
-  ),
+  cells: (_key: string, group: readonly ContainerRow[]) =>
+    containerGroupCells(group),
+  // Folded when there is nothing in it worth opening. Safe only because the
+  // heading is a full row -- the group's own CPU and memory bars over the same
+  // denominators as the rows beneath, and the worst state in it beside the
+  // name. See Table's own note, which this reverses on exactly that ground.
+  defaultOpen: (_key: string, group: readonly ContainerRow[]) =>
+    containerGroupWorst(group) !== null,
 };
 
-/** A group header that is also the way into the host it names. */
-function HostGroup({ rows }: { rows: readonly ContainerRow[] }) {
-  // Every row in the group carries the same host by construction, so the
-  // first one is as good as any -- and a group is never empty.
+/** The compose project a row belongs to, or "" for a container with none. */
+function projectOf(row: ContainerRow): string {
+  const { project } = composeIdentity(row.container_key);
+  return project === ABSENT ? "" : project;
+}
+
+const projectName = (key: string) => (key === "" ? "No compose project" : key);
+
+/** A group header naming the stack, the host it runs on, and what is wrong. */
+function StackGroup({ rows }: { rows: readonly ContainerRow[] }) {
+  // Every row in the group shares a host and a project by construction, so
+  // the first one is as good as any -- and a group is never empty.
   const { host_id, hostname } = rows[0];
+  const worst = containerGroupWorst(rows);
   return (
     <>
-      <a className="hostname" href={`/hosts/${host_id}/overview`}>
-        {hostname}
-      </a>
+      <span className="proj">{projectName(projectOf(rows[0]))}</span>
+      {/* The host names the GROUP rather than every row. Eighty-four rows
+          restating what a dozen headings say is the widest column in the
+          table spent on the answer the reader was just given -- the same
+          argument the Host column's own note made before it was removed. */}
+      <span className="onhost">
+        {" on "}
+        <a className="hostname" href={`/hosts/${host_id}/overview`}>
+          {hostname}
+        </a>
+      </span>
       {/* A real text node, not a CSS ::before: the separator is the only
           thing between two facts, and read aloud "db-011 container" is not
           the sentence. */}
@@ -260,6 +306,13 @@ function HostGroup({ rows }: { rows: readonly ContainerRow[] }) {
         {" · "}
         {rows.length} container{rows.length === 1 ? "" : "s"}
       </span>
+      {/* What a folded group needs to be honest. No badge when nothing is
+          wrong, which is itself the signal that folding it cost nothing. */}
+      {worst === null ? null : (
+        <Badge severity={worst.state.severity}>
+          {worst.count} {stateKindLabel(worst.state.kind)}
+        </Badge>
+      )}
     </>
   );
 }

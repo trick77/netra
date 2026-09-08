@@ -6,8 +6,9 @@ import { userEvent } from "@testing-library/user-event";
 import {
   composeIdentity,
   containerColumns,
-  containerGroupTotals,
-  ContainerGroupTotals,
+  containerGroupCells,
+  containerGroupReading,
+  containerGroupWorst,
   containerIsGone,
   GONE_AFTER_S,
   lastReported,
@@ -371,98 +372,133 @@ describe("containerColumns", () => {
   });
 });
 // What a collapsed group header prints. One definition for both lists -- the
-// host page's, grouped by compose project, and the fleet's, grouped by host --
+// host page's, grouped by compose project, and the fleet's, grouped by stack --
 // for the same reason the column set is one definition.
-describe("containerGroupTotals", () => {
+describe("containerGroupReading", () => {
   it("sums the latest reported reading, not the latest bucket", () => {
-    const totals = containerGroupTotals([
+    const got = containerGroupReading([
       // The newest bucket has not materialised for either; a container does
       // not stop using memory because the grid ticked over.
-      makeRow({ cpu: [10, 20, null], mem: [100, 200, null] }),
-      makeRow({ id: 2, cpu: [1, 2, null], mem: [10, 20, null] }),
+      makeRow({
+        cpu: [10, 20, null],
+        mem: [100, 200, null],
+        host_threads: 4,
+        host_mem_total: 1000,
+      }),
+      makeRow({
+        id: 2,
+        cpu: [1, 2, null],
+        mem: [10, 20, null],
+        host_threads: 4,
+        host_mem_total: 1000,
+      }),
     ]);
 
-    expect(totals.cpu).toBe(22);
-    expect(totals.mem).toBe(220);
+    // 22 % of one core over four of them.
+    expect(got.cpuPct).toBeCloseTo(5.5);
+    expect(got.memBytes).toBe(220);
+    expect(got.memPct).toBeCloseTo(22);
+  });
+
+  // The denominator is the HOST's, never a sum of the containers' own limits:
+  // a group is a share of one machine, and summing limits could not be done
+  // honestly for a group where only some are capped.
+  it("measures memory against the host, not against the group's limits", () => {
+    const got = containerGroupReading([
+      makeRow({ mem: [500], mem_limit_bytes: 1000, host_mem_total: 10_000 }),
+      makeRow({
+        id: 2,
+        mem: [500],
+        mem_limit_bytes: null,
+        host_mem_total: 10_000,
+      }),
+    ]);
+    // 1000 of the machine's 10 000, not of the 1000 one of them declared.
+    expect(got.memPct).toBeCloseTo(10);
   });
 
   // Absent is not zero. A group nobody fetched metrics for has not reported
-  // 0% CPU.
-  it("stays absent when nothing in the group has reported", () => {
-    expect(containerGroupTotals([makeRow(), makeRow({ id: 2 })])).toEqual({
-      cpu: null,
-      mem: null,
-      limit: null,
+  // 0 % CPU, and one on a host that never said how many cores it has cannot be
+  // a percentage of anything.
+  it("stays absent when there is nothing to read or nothing to read against", () => {
+    expect(
+      containerGroupReading([makeRow(), makeRow({ id: 2 })]),
+    ).toMatchObject({
+      cpuPct: null,
+      memPct: null,
+      memBytes: null,
     });
-  });
-
-  // A group of two where one is capped has no ceiling to be a percentage of,
-  // and summing only the capped one would put the numerator above a
-  // denominator it can legitimately exceed.
-  it("has no limit unless every container in the group has one", () => {
     expect(
-      containerGroupTotals([
-        makeRow({ cpu: [1], mem: [10], mem_limit_bytes: 100 }),
-        makeRow({ id: 2, cpu: [1], mem: [10], mem_limit_bytes: null }),
-      ]).limit,
-    ).toBeNull();
-
-    expect(
-      containerGroupTotals([
-        makeRow({ cpu: [1], mem: [10], mem_limit_bytes: 100 }),
-        makeRow({ id: 2, cpu: [1], mem: [10], mem_limit_bytes: 400 }),
-      ]).limit,
-    ).toBe(500);
+      containerGroupReading([makeRow({ cpu: [10], mem: [100] })]),
+    ).toMatchObject({ cpuPct: null, memPct: null, memBytes: 100 });
   });
 });
 
-describe("ContainerGroupTotals", () => {
-  it("prints CPU as a percentage and memory against the group's ceiling", () => {
-    render(
-      <ContainerGroupTotals
-        rows={[
-          makeRow({ cpu: [40], mem: [1024], mem_limit_bytes: 4096 }),
-          makeRow({ id: 2, cpu: [20], mem: [1024], mem_limit_bytes: 4096 }),
-        ]}
-      />,
-    );
-
-    expect(screen.getByText("60%")).toBeInTheDocument();
-    expect(screen.getByText("2 kB")).toBeInTheDocument();
-    expect(screen.getByText("/ 8.2 kB")).toBeInTheDocument();
-  });
-
-  // Meter's own rule, applied to a group: no bar against a denominator nobody
-  // set.
-  it("draws no bar for a group with an uncapped container in it", () => {
+describe("containerGroupCells", () => {
+  it("puts the group's bars in the CPU and Memory columns", () => {
+    const cells = containerGroupCells([
+      makeRow({
+        cpu: [40],
+        mem: [1024],
+        host_threads: 2,
+        host_mem_total: 4096,
+        last_seen: new Date().toISOString(),
+      }),
+    ]);
     const { container } = render(
-      <ContainerGroupTotals
-        rows={[makeRow({ cpu: [40], mem: [1024], mem_limit_bytes: null })]}
-      />,
+      <>
+        {cells.cpu}
+        {cells.memory}
+      </>,
     );
 
-    expect(container.querySelector(".meter")).toBeNull();
-    expect(screen.getByText("1 kB")).toBeInTheDocument();
+    const bars = container.querySelectorAll(".segbar");
+    expect(bars).toHaveLength(2);
+    // 40 % of one core over two of them, and 1024 of 4096.
+    expect(bars[0]!.getAttribute("aria-valuenow")).toBe("20");
+    expect(bars[1]!.getAttribute("aria-valuenow")).toBe("25");
+    // The bare denominator: a heading is always a share of one machine, so
+    // there is nothing to tell it apart from.
+    expect(screen.getByText("of 4 KiB")).toBeInTheDocument();
   });
 
-  it("renders the absent marker for a group that has reported nothing", () => {
-    render(<ContainerGroupTotals rows={[makeRow()]} />);
+  it("draws nothing for a group with no denominator", () => {
+    const cells = containerGroupCells([makeRow({ cpu: [40], mem: [1024] })]);
+    expect(cells.cpu).toBeNull();
+    expect(cells.memory).toBeNull();
+  });
+});
 
-    expect(screen.getAllByText(ABSENT)).toHaveLength(2);
+// What lets a folded group be honest: a heading that says "nothing here needs
+// you" has to be able to say the opposite.
+describe("containerGroupWorst", () => {
+  const NOW = new Date("2026-08-10T14:00:00Z");
+  const healthy = {
+    last_seen: "2026-08-10T14:00:00Z",
+    host_last_seen: "2026-08-10T14:00:00Z",
+  };
+
+  it("is null for a group where everything is reporting", () => {
+    expect(
+      containerGroupWorst(
+        [makeRow(healthy), makeRow({ id: 2, ...healthy })],
+        NOW,
+      ),
+    ).toBeNull();
   });
 
-  // A capped group that has not reported: the ceiling is known, the reading
-  // is not. One absent marker for the reading, and no Meter behind it -- with
-  // no value Meter prints an absent marker of its own, so the header would
-  // otherwise say "Mem — / 4.1 kB —".
-  it("draws no bar for a capped group that has reported no memory", () => {
-    const { container } = render(
-      <ContainerGroupTotals rows={[makeRow({ mem_limit_bytes: 4096 })]} />,
+  it("names the worst kind and how many rows carry it", () => {
+    const got = containerGroupWorst(
+      [
+        makeRow(healthy),
+        makeRow({ id: 2, ...healthy, docker_state: "restarting" }),
+        makeRow({ id: 3, ...healthy, health: "unhealthy" }),
+      ],
+      NOW,
     );
-
-    expect(container.querySelector(".meter")).toBeNull();
-    expect(screen.getByText("/ 4.1 kB")).toBeInTheDocument();
-    expect(screen.getAllByText(ABSENT)).toHaveLength(2);
+    // Unhealthy outranks restarting -- see KIND_RANK.
+    expect(got?.state.kind).toBe("unhealthy");
+    expect(got?.count).toBe(1);
   });
 });
 

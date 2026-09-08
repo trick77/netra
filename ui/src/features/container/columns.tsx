@@ -64,6 +64,7 @@
 // on -- but it is no longer a pill of its own beside the Status column. It
 // feeds deriveState, which says "Gone" once, in the words the rest of the
 // column uses.
+import type { ReactNode } from "react";
 import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { Reading } from "../../ui/Reading";
@@ -349,30 +350,80 @@ export function trendScales(rows: readonly ContainerRow[]): {
  * not stopped using memory, and dropping it from the total would make the
  * group's figure dip every time the grid ticks over.
  *
- * `limit` is null unless EVERY container in the group has one. A group of
- * four where three are capped has no ceiling to be a percentage of, and
- * summing only the three that do would draw a meter against a denominator
- * smaller than the numerator can reach. That is Meter's own rule -- no bar
- * against an invented total -- applied to a group.
+ * The DENOMINATOR is the host's, never a sum of the containers' own limits.
+ * A group is a share of one machine: "this stack is holding 64 % of the box"
+ * is a fact an operator acts on, while "64 % of the limits its containers
+ * happen to declare" is a number about a configuration. Summing limits also
+ * could not be done honestly -- a group where three of four are capped has no
+ * ceiling the fourth can be counted against -- which is why the old shape
+ * returned null for the whole group in that very common case, and drew no bar
+ * at all.
+ *
+ * That is also what makes the group key (host, project) rather than project:
+ * a stack spread over three machines has no cores and no RAM to be a share OF,
+ * and its heading would fall back to the bare sums this replaced.
  */
-export function containerGroupTotals(rows: readonly ContainerRow[]): {
-  cpu: number | null;
-  mem: number | null;
-  limit: number | null;
+export function containerGroupReading(rows: readonly ContainerRow[]): {
+  cpuPct: number | null;
+  memPct: number | null;
+  memBytes: number | null;
+  threads: number | null;
+  memTotal: number | null;
 } {
   let cpu: number | null = null;
   let mem: number | null = null;
-  let limit: number | null = 0;
   for (const row of rows) {
     const c = lastReported(row.cpu);
     if (c !== null) cpu = (cpu ?? 0) + c;
     const m = lastReported(row.mem);
     if (m !== null) mem = (mem ?? 0) + m;
-    const l = row.mem_limit_bytes ?? null;
-    if (l === null) limit = null;
-    else if (limit !== null) limit += l;
   }
-  return { cpu, mem, limit };
+  // Every row in a group shares a host by construction, so the first one's
+  // denominators are the group's.
+  const first = rows[0];
+  const threads =
+    first?.host_threads != null && first.host_threads > 0
+      ? first.host_threads
+      : null;
+  const memTotal =
+    first?.host_mem_total != null && first.host_mem_total > 0
+      ? first.host_mem_total
+      : null;
+
+  return {
+    cpuPct: cpu !== null && threads !== null ? cpu / threads : null,
+    memPct: mem !== null && memTotal !== null ? (mem / memTotal) * 100 : null,
+    memBytes: mem,
+    threads,
+    memTotal,
+  };
+}
+
+/**
+ * The worst thing wrong inside a group, and how many rows carry it.
+ *
+ * What lets a folded group be honest: a heading that says "nothing here needs
+ * you" has to be able to say the opposite. `reporting` and `no-samples` are
+ * not "wrong" -- the first is healthy and the second is nobody having looked
+ * -- so a group of those returns null and is safe to arrive folded.
+ */
+export function containerGroupWorst(
+  rows: readonly ContainerRow[],
+  now: Date = new Date(),
+): { state: DerivedState; count: number } | null {
+  let worst: DerivedState | null = null;
+  for (const row of rows) {
+    const state = containerState(row, now);
+    if (state.kind === "reporting" || state.kind === "no-samples") continue;
+    if (worst === null || stateKindRank(state.kind) < stateKindRank(worst.kind))
+      worst = state;
+  }
+  if (worst === null) return null;
+  const kind = worst.kind;
+  const count = rows.filter(
+    (row) => containerState(row, now).kind === kind,
+  ).length;
+  return { state: worst, count };
 }
 
 /**
@@ -388,41 +439,49 @@ export function containerGroupTotals(rows: readonly ContainerRow[]): {
  * A group that has reported nothing renders the absent marker rather than a
  * zero -- the same distinction every cell in this module keeps.
  */
-export function ContainerGroupTotals({
-  rows,
-}: {
-  rows: readonly ContainerRow[];
-}) {
-  const { cpu, mem, limit } = containerGroupTotals(rows);
-  return (
-    <>
-      <span className="gstat">
-        <span className="lbl">CPU</span>
-        <span className="val">{percent(cpu)}</span>
-      </span>
-      <span className="gstat">
-        <span className="lbl">Mem</span>
-        <span className="val">{bytes(mem)}</span>
-        {/* Always emitted, even empty: they are tracks of the header's grid,
-            and a group with no ceiling still has to line its meter up with
-            the groups that have one. */}
-        <span className="of">{limit === null ? "" : `/ ${bytes(limit)}`}</span>
-        <span className="gmeter">
-          {limit === null || mem === null ? null : (
-            // Meter, not a bar of this file's own: the severity thresholds and
-            // the >100% clamp are decisions that must not exist twice. Its
-            // reading is blanked because the bytes and the ceiling are already
-            // printed to its left -- a third number saying the same ratio is
-            // the clutter, not the information. Which is also why a group that
-            // has reported no memory draws nothing here rather than a Meter:
-            // with no value Meter falls back to printing the absent marker,
-            // and the header already carries one where the bytes would be.
-            <Meter value={mem} max={limit} formatValue={() => ""} />
-          )}
-        </span>
-      </span>
-    </>
-  );
+export function containerGroupCells(
+  rows: readonly ContainerRow[],
+): Record<string, ReactNode> {
+  const { cpuPct, memPct, memBytes, threads, memTotal } =
+    containerGroupReading(rows);
+
+  // The same block a row draws, minus the silhouette: there is no series to
+  // sum, and a heading is a reading of now rather than a history. Everything
+  // else is identical -- the same ten cells, the same 70/95, the same
+  // denominator -- which is the entire point of putting it in the column.
+  return {
+    cpu:
+      cpuPct === null ? null : (
+        <div className="metric-cell" style={METRIC_CELL_STYLE}>
+          <NowReading
+            pct={cpuPct}
+            label="CPU for this group"
+            under={`of ${threads} core${threads === 1 ? "" : "s"}`}
+          />
+        </div>
+      ),
+    memory:
+      memPct === null || memTotal === null ? null : (
+        <div className="metric-cell" style={METRIC_CELL_STYLE}>
+          <NowReading
+            pct={memPct}
+            label="Memory for this group"
+            // The bare form, with no ` host` suffix: a heading is always a
+            // share of one machine, so there is nothing to tell it apart
+            // from. A row says "of 62.6 GiB host" only because the row beside
+            // it might be saying "of 4.0 GB" about a limit.
+            under={`of ${binaryBytes(memTotal)}`}
+          />
+        </div>
+      ),
+    // The bytes themselves, where the Image column sits. A percentage says how
+    // full the machine is and says nothing about how big the stack is; on a
+    // page listing several hosts those are different questions.
+    image:
+      memBytes === null ? null : (
+        <span className="gbytes">{bytes(memBytes)}</span>
+      ),
+  };
 }
 
 // The container_key is the stable identity (it survives a rename); the name

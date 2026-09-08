@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useId,
   useMemo,
   useState,
@@ -101,20 +102,52 @@ export interface TableProps<T> {
      */
     order?: (key: string, rows: readonly T[]) => string | number;
     /**
-     * A reading for the WHOLE group, drawn at the right end of its header.
+     * A reading for the WHOLE group, placed in the group header's own CELLS,
+     * keyed by column.
      *
      * The point of a collapsed group: shut, a heading that says only
      * "immich · 4 containers" answers what is in there and nothing about what
      * any of it is doing, so closing one costs the reader the very thing the
-     * list existed to show. A summary is what makes collapsed the honest
-     * default rather than a way of hiding data.
+     * list existed to show. This is what makes collapsed the honest default
+     * rather than a way of hiding data.
+     *
+     * IN THE COLUMNS, which is the whole difference from the `summary` this
+     * replaces. That drew the group's figures as spans floating after its
+     * name, so a heading's memory total and the memory readings underneath it
+     * sat in different places and could not be compared by eye. Returning
+     * `{ cpu: <...>, memory: <...> }` puts the group's own bars directly over
+     * the rows' bars, on the same ten cells and the same denominator, and a
+     * folded group then says exactly what an open one would, one line shorter.
+     *
+     * The header spans every column up to the FIRST one named here; the rest
+     * become real `<td>`s carrying that column's width. A groupBy that returns
+     * nothing keeps the single full-width heading every other grouped table
+     * has.
      *
      * Handed the group's rows, not a precomputed value, because only the
      * caller knows what summing its own rows means -- and it is given the
      * rows that are actually IN the group, which under a filter is the rows
      * that survived it.
      */
-    summary?: (key: string, rows: readonly T[]) => ReactNode;
+    cells?: (key: string, rows: readonly T[]) => Record<string, ReactNode>;
+    /**
+     * Whether a group arrives OPEN, decided per group from its own rows.
+     *
+     * Unset, every collapsible group arrives open, which is what the argument
+     * under `collapsible` demands of a heading that says only what is in it.
+     * A caller whose heading is a full row -- see `cells` -- can reverse that
+     * for the groups with nothing worth opening, because such a heading no
+     * longer hides anything: it carries the group's own readings and the worst
+     * state in it.
+     *
+     * LATCHED ON FIRST SIGHT, never re-evaluated. The fleet re-polls every
+     * sixty seconds and several container states are derived per render, so a
+     * predicate consulted on every pass would fold and unfold groups under a
+     * reader who touched nothing. A group that goes bad after being seeded
+     * clean stays as it is until someone opens it -- and its heading is
+     * already carrying the badge that says it went bad.
+     */
+    defaultOpen?: (key: string, rows: readonly T[]) => boolean;
     /**
      * The group's name as plain text, for the disclosure button's accessible
      * name.
@@ -137,8 +170,19 @@ export interface TableProps<T> {
      * hidden them.
      *
      * Open by default, and the disclosure stays for the reader who wants to
-     * fold a noisy host away. Only lists that carry a `summary` should ask for
+     * fold a noisy host away. Only lists that carry `cells` should ask for
      * this -- see above.
+     *
+     * THAT ARGUMENT IS NOW NARROWER THAN IT READS, and `defaultOpen` is the
+     * exception it did not anticipate. It was written against a heading that
+     * said "immich · 4 containers" -- a name and a count, which is indeed
+     * hiding rather than summarising. A heading built from `cells` is a row:
+     * the group's CPU and memory bars sit in the CPU and Memory columns over
+     * the same denominators as the rows beneath, with the worst state in the
+     * group beside the name. Folding a group whose heading says all of that,
+     * and which contains nothing wrong, hides nothing a reader was going to
+     * act on. Folding one that IS wrong would, which is why the predicate
+     * decides per group rather than a flag deciding for all of them.
      */
     collapsible?: boolean;
     /**
@@ -190,14 +234,25 @@ export function Table<T>({
     defaultSort?.dir ?? "asc",
   );
 
-  // The groups the reader has CLOSED, not the ones they opened. Collapsible
-  // groups start open, so the empty set is the initial state and no group key
-  // has to exist before it can be tracked -- the same property the inverse set
-  // had when they started closed, which is why this is a rename of the state
-  // and not a new one. A group that disappears (a project whose last container
-  // went away) leaves a stale key behind, which costs a string and means the
-  // group comes back folded the way it was left.
-  const [closed, setClosed] = useState<ReadonlySet<string>>(new Set());
+  // Whether each group is open, seeded once per key and then owned by the
+  // reader.
+  //
+  // A map rather than the set of closed keys this replaces, because there are
+  // now two ways a group can start: open, which is every collapsible group's
+  // default, or folded, which `defaultOpen` decides from the group's own rows.
+  // A set of exceptions cannot express both without also encoding which
+  // default it is an exception TO.
+  //
+  // SEEDED ON FIRST SIGHT AND NEVER RE-SEEDED. That is the whole reason the
+  // seeding happens in a memo keyed on the groups rather than inline: the
+  // fleet re-polls every sixty seconds, and several of the states a caller
+  // decides on are derived per render, so consulting the predicate again would
+  // move groups under a reader who touched nothing.
+  //
+  // A group that disappears (a project whose last container went away) leaves
+  // a stale key behind, which costs a string and means the group comes back
+  // the way it was left.
+  const [choice, setChoice] = useState<ReadonlyMap<string, boolean>>(new Map());
   // One id per table instance; each group header's aria-controls points at
   // its own tbody, built from it.
   const tableId = useId();
@@ -260,6 +315,29 @@ export function Table<T>({
       return String(x).localeCompare(String(y), undefined, { numeric: true });
     });
   }, [sorted, groupBy]);
+
+  // Seed a group's open state the first time it is seen, and only then.
+  //
+  // In an effect rather than during render because it writes state, and keyed
+  // on the group list so it runs when a group appears rather than on every
+  // poll. Groups already in `choice` are left exactly as they are -- that is
+  // what makes this a seed and not a reset, and it is why a reader's fold
+  // survives the next sixty-second refetch.
+  const defaultOpen = groupBy?.defaultOpen;
+  useEffect(() => {
+    if (groups === null || defaultOpen === undefined) return;
+    setChoice((prev) => {
+      let next: Map<string, boolean> | null = null;
+      for (const [key, rowsInGroup] of groups) {
+        if (prev.has(key)) continue;
+        next ??= new Map(prev);
+        next.set(key, defaultOpen(key, rowsInGroup));
+      }
+      // The same map when nothing was new, so this never re-renders on a poll
+      // that changed no group.
+      return next ?? prev;
+    });
+  }, [groups, defaultOpen]);
 
   // Three stops per column, and the cycle starts where the column already
   // stands: ascending for one the reader clicked, and the caller's own
@@ -346,14 +424,31 @@ export function Table<T>({
             // `closed` is never written while it is on (the toggle below
             // refuses), so clearing the box restores exactly what they had.
             const forced = groupBy?.forceExpanded === true;
-            const open = !collapsible || forced || !closed.has(key);
+            // Open unless something says otherwise: the reader's own choice
+            // first, then the seed, then the default every collapsible group
+            // has always had.
+            const open = !collapsible || forced || (choice.get(key) ?? true);
             const bodyId = `${tableId}-${key}`;
+            // The heading's own cells, and how far the name is allowed to
+            // span: up to the first column the caller filled. A caller that
+            // fills none keeps the full-width heading every other grouped
+            // table has, which is what makes this backward compatible.
+            const headCells = groupBy?.cells?.(key, rowsInGroup) ?? null;
+            const headSpan =
+              headCells === null
+                ? columns.length
+                : Math.max(
+                    1,
+                    columns.findIndex((col) => col.key in headCells) === -1
+                      ? columns.length
+                      : columns.findIndex((col) => col.key in headCells),
+                  );
             return (
               <tbody key={key} id={bodyId}>
                 <tr className="grouprow">
                   {/* A header for the rows below it, so scope is rowgroup
                       rather than col -- it names the group, not a column. */}
-                  <th scope="rowgroup" colSpan={columns.length}>
+                  <th scope="rowgroup" colSpan={headSpan}>
                     <div className="ghead">
                       {/* The button holds ONLY the chevron; the label sits
                           beside it in normal flow. It has to, because a group
@@ -377,10 +472,9 @@ export function Table<T>({
                             // box -- the one thing forceExpanded promises
                             // not to do.
                             if (forced) return;
-                            setClosed((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(key)) next.delete(key);
-                              else next.add(key);
+                            setChoice((prev) => {
+                              const next = new Map(prev);
+                              next.set(key, !(prev.get(key) ?? true));
                               return next;
                             });
                           }}
@@ -398,13 +492,20 @@ export function Table<T>({
                       <span className="glabel">
                         {groupBy?.label(key, rowsInGroup)}
                       </span>
-                      {groupBy?.summary ? (
-                        <span className="gsummary">
-                          {groupBy.summary(key, rowsInGroup)}
-                        </span>
-                      ) : null}
                     </div>
                   </th>
+                  {/* The columns the heading did not span, each carrying its
+                      own width so the group's bars land over the rows' bars.
+                      cellStyle, not bare tds: the width lives on the column
+                      and all three rows of it -- header, heading, body -- have
+                      to agree or the alignment this exists for is lost. */}
+                  {headCells !== null
+                    ? columns.slice(headSpan).map((col) => (
+                        <td key={col.key} style={cellStyle(col)}>
+                          {headCells[col.key] ?? null}
+                        </td>
+                      ))
+                    : null}
                 </tr>
                 {/* Not rendered at all rather than hidden with CSS: a closed
                     group's rows are off the page for a screen reader and for

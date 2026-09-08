@@ -42,6 +42,7 @@ import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column, type TableProps } from "../../../ui/Table";
 import { Meter, SEVERITY_CLASS } from "../../../ui/Meter";
 import { When } from "../../../ui/When";
+import { stateKindLabel } from "../../container/state";
 import { rangeLabel, type Range } from "../../../lib/range";
 import { RAIL_RANGES } from "../../../lib/range";
 import { griddedValues, latestValue, windowNotice } from "../../../lib/metrics";
@@ -52,7 +53,8 @@ import { fetchHostFamily } from "../../fleet/hostTrends";
 import {
   composeIdentity,
   containerColumns,
-  ContainerGroupTotals,
+  containerGroupCells,
+  containerGroupWorst,
   containerSeverity,
   lastReported,
   trendScales,
@@ -216,26 +218,46 @@ const BY_PROJECT = {
     const { project } = composeIdentity(row.container_key);
     return project === ABSENT ? "" : project;
   },
-  label: (key: string, group: readonly ContainerRow[]) => (
-    <>
-      <span>{projectName(key)}</span>
-      <span className="groupcount">
-        {" · "}
-        {group.length} container{group.length === 1 ? "" : "s"}
-      </span>
-    </>
-  ),
+  label: (key: string, group: readonly ContainerRow[]) => {
+    const worst = containerGroupWorst(group);
+    return (
+      <>
+        <span className="proj">{projectName(key)}</span>
+        {/* No "on <host>" clause here, unlike the fleet's own list: every
+            group on this page is on the host the page is about, and saying so
+            once per stack would repeat the page title down the table. */}
+        <span className="groupcount">
+          {" · "}
+          {group.length} container{group.length === 1 ? "" : "s"}
+        </span>
+        {worst === null ? null : (
+          <Badge severity={worst.state.severity}>
+            {worst.count} {stateKindLabel(worst.state.kind)}
+          </Badge>
+        )}
+      </>
+    );
+  },
   labelText: (key: string) => projectName(key),
-  // Open by default now -- see Table's own note. A list that arrives showing
-  // nothing but headings has not summarised itself, it has hidden itself. The
-  // disclosure stays for the reader who wants to fold a noisy stack away, and
-  // the summary below is what a folded one keeps saying.
   collapsible: true,
   // The one definition of what a group of containers is using, shared with
   // the fleet's list so the two cannot come to disagree.
-  summary: (_key: string, group: readonly ContainerRow[]) => (
-    <ContainerGroupTotals rows={group} />
-  ),
+  cells: (_key: string, group: readonly ContainerRow[]) =>
+    containerGroupCells(group),
+  // Folded when nothing in it needs opening.
+  //
+  // This REVERSES the argument that used to sit here -- "a list that arrives
+  // showing nothing but headings has not summarised itself, it has hidden
+  // itself" -- and the reversal is narrow. That was written against a heading
+  // reading "immich · 4 containers": a name and a count, which hides. A
+  // heading built from `cells` is a row, carrying the stack's CPU and memory
+  // bars in the CPU and Memory columns over the same denominators as the rows
+  // beneath, plus the worst state in it. Folding a group that says all of that
+  // and contains nothing wrong hides nothing anyone was going to act on -- and
+  // a group that IS wrong arrives open, which is why this is a predicate
+  // rather than a flag.
+  defaultOpen: (_key: string, group: readonly ContainerRow[]) =>
+    containerGroupWorst(group) !== null,
 };
 
 const projectName = (key: string) => (key === "" ? "No compose project" : key);

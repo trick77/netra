@@ -209,7 +209,7 @@ describe("Table grouping", () => {
 });
 
 // A group that can be shut is only honest if its heading keeps answering what
-// its rows would have -- which is why `summary` and `collapsible` arrive
+// its rows would have -- which is why `cells` and `collapsible` arrive
 // together, and why every test below checks both halves.
 describe("Table collapsible groups", () => {
   interface Grouped {
@@ -220,6 +220,7 @@ describe("Table collapsible groups", () => {
 
   const groupedColumns: Column<Grouped>[] = [
     { key: "name", header: "Host", cell: (r) => r.name },
+    { key: "up", header: "Up", width: "120px", cell: () => "yes" },
   ];
 
   const groupedRows: Grouped[] = [
@@ -232,7 +233,9 @@ describe("Table collapsible groups", () => {
     label: (key: string) => key,
     labelText: (key: string) => key,
     collapsible: true,
-    summary: (_key: string, rs: readonly Grouped[]) => `${rs.length} up`,
+    cells: (_key: string, rs: readonly Grouped[]) => ({
+      up: `${rs.length} up`,
+    }),
   };
 
   function renderTable(over: Record<string, unknown> = {}) {
@@ -257,15 +260,88 @@ describe("Table collapsible groups", () => {
     expect(screen.getAllByRole("rowheader")).toHaveLength(2);
   });
 
-  // The summary is readable in both states: it is what a shut group says about
-  // itself, and it must not appear or vanish as one is folded.
-  it("keeps the summary readable open or shut", () => {
+  // The heading's own reading is there in both states: it is what a shut group
+  // says about itself, and it must not appear or vanish as one is folded.
+  it("keeps the group reading readable open or shut", () => {
     renderTable();
     expect(screen.getAllByText("1 up")).toHaveLength(2);
 
     fireEvent.click(screen.getAllByRole("button", { expanded: true })[0]!);
 
     expect(screen.getAllByText("1 up")).toHaveLength(2);
+  });
+
+  // The point of `cells` over the `summary` it replaces: the group's figure
+  // sits in the COLUMN it belongs to, so it lands over the rows' own figures
+  // rather than floating after the name where nothing can be compared to it.
+  it("puts the group reading in its own column", () => {
+    const { container } = renderTable();
+    const heading = container.querySelector("tr.grouprow")!;
+    const th = heading.querySelector("th")!;
+    expect(th.getAttribute("colspan")).toBe("1");
+
+    const cells = heading.querySelectorAll("td");
+    expect(cells).toHaveLength(1);
+    expect(cells[0]!.textContent).toBe("1 up");
+    // And it carries the column's width, or the alignment this exists for is
+    // lost on the one row that most needs it.
+    expect((cells[0] as HTMLElement).style.width).toBe("120px");
+  });
+
+  // A caller that fills no cells keeps the single full-width heading every
+  // other grouped table in the app has. This is the regression guard for the
+  // six callers that never asked for any of this.
+  it("keeps a full-width heading when no cells are given", () => {
+    const { container } = renderTable({ cells: undefined });
+    const th = container.querySelector("tr.grouprow th")!;
+    expect(th.getAttribute("colspan")).toBe("2");
+    expect(container.querySelectorAll("tr.grouprow td")).toHaveLength(0);
+  });
+
+  it("folds a group its predicate calls closed, and leaves the rest open", () => {
+    renderTable({ defaultOpen: (key: string) => key !== "ams" });
+    expect(screen.queryByText("host-b")).toBeNull();
+    expect(screen.getByText("host-a")).toBeInTheDocument();
+  });
+
+  // Folding is only safe if it is decided ONCE. The fleet re-polls every sixty
+  // seconds over states derived per render, so a predicate consulted again
+  // would fold and unfold groups under a reader who touched nothing.
+  it("latches the default rather than re-deciding on every render", () => {
+    let openAll = true;
+    const view = (
+      <Table
+        columns={groupedColumns}
+        rows={groupedRows}
+        rowKey={(r) => r.id}
+        groupBy={{ ...collapsible, defaultOpen: () => openAll }}
+      />
+    );
+    const { rerender } = render(view);
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+
+    // The predicate now says the opposite. Nothing may move: these groups
+    // were seeded on first sight.
+    openAll = false;
+    rerender(
+      <Table
+        columns={groupedColumns}
+        rows={groupedRows}
+        rowKey={(r) => r.id}
+        groupBy={{ ...collapsible, defaultOpen: () => openAll }}
+      />,
+    );
+    expect(screen.getByText("host-b")).toBeInTheDocument();
+  });
+
+  // And the reader still wins over the seed.
+  it("lets a click reopen a group that arrived folded", () => {
+    renderTable({ defaultOpen: () => false });
+    expect(screen.queryByText("host-a")).toBeNull();
+
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]!);
+
+    expect(screen.getByText("host-b")).toBeInTheDocument();
   });
 
   it("shuts one group without shutting the others", () => {
