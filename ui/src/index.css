@@ -1376,11 +1376,6 @@ tbody tr:hover .host-cell-name {
    number costs width, which the row has, rather than height, which it does
    not, and it stays --muted because the sparkline is the subject and this
    annotates it. */
-.ccell {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
 
 /* A shell command the reader is meant to copy. .ai-cmd above is the inline
    peer of this, scoped to the drawer; both take their face and ground from
@@ -3963,7 +3958,7 @@ tbody:first-of-type .grouprow th {
 }
 /* Meter brings its own .mrow -- a 1fr/92px row with padding and a rule, all
    three wrong inside a header cell that has its own. The same override
-   .mem-cell and .disk-cell make, for the same reason; here the value column
+   .disk-cell and .usage-cell make, for the same reason; here the value column
    goes too, because Meter's reading is blanked (see ContainerGroupTotals). */
 .gstat .gmeter .mrow {
   grid-template-columns: 1fr;
@@ -3987,31 +3982,34 @@ tbody:first-of-type .grouprow th {
   }
 }
 
-/* The container list's memory cell: the trend, and under it the reading
-   against the container's own mem_limit. Meter brings its own .mrow, which
-   is a 1fr/92px row with padding and a rule of its own -- all three wrong
-   inside a <td> that already has them. Same override .disk-cell makes, for
-   the same reason. */
-.mem-cell .mrow {
-  grid-template-columns: 1fr auto;
-  gap: var(--space-2);
-  padding: 2px 0 0;
-  border-bottom: 0;
-}
-/* What the meter is measured against, one step under it -- the same role
-   and the same tokens as .metric-read .u across the two lists. */
-.climit {
+/* .mem-cell, .climit and .ccell are gone. The container list's CPU and memory
+   cells are .metric-cell now -- the same chart, segmented bar, figure and
+   denominator line the fleet's host row draws -- so the three shapes this list
+   kept for itself have nothing left rendering them. See the note above
+   .metric-cell, and NowReading, whose docstring named this list as the one
+   surface still drawing the older form.
+
+   Docker's restart counter, as a mark beside a container's name. Only ever
+   drawn above zero: a literal 0 on four hundred healthy rows is noise wearing
+   the shape of a fact, which is also why it is a mark and not a column. --muted-2
+   because it annotates a name rather than carrying a reading of its own, and it
+   takes the row's status colour only when the row is already critical for a
+   reason the Status column states. */
+.rst {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
   font-size: var(--text-micro);
-  color: var(--muted-2);
   font-variant-numeric: tabular-nums;
-  text-align: right;
-  margin-top: 2px;
+  color: var(--muted-2);
+  white-space: nowrap;
 }
-.mem-cell .val {
-  /* --text-label, like .uptime-cell and .traffic-cell .rate: the same job
-     -- a quiet secondary reading inside a table cell -- and --text-micro
-     has only its three sanctioned uses (spec 3.6). */
-  font-size: var(--text-label);
+/* The glyph alone, one step smaller than the figure it labels. */
+.rst .g {
+  font-size: 11px;
+}
+.rst.st-crit {
+  color: var(--st-crit-text);
 }
 
 /* An identifier and its classification in one cell: an address with its
@@ -4138,10 +4136,10 @@ tbody:first-of-type .grouprow th {
   gap: var(--space-3);
 }
 .temp-cell .val {
-  /* --text-label, like .uptime-cell, .mem-cell .val and .traffic-cell .rate:
+  /* --text-label, like .uptime-cell, .usage-cell .val and .traffic-cell .rate:
      the same job, a quiet secondary reading inside a table cell. --muted for
      the same reason those carry it (.sensor-tile .lab, .mrow .val, which is
-     where .mem-cell and .usage-cell get theirs): at the table body's own ink
+     where .usage-cell gets its own): at the table body's own ink
      the temperature reads a step louder than every other number-beside-a-
      chart in the app. */
   font-size: var(--text-label);
@@ -4156,7 +4154,7 @@ tbody:first-of-type .grouprow th {
 /* The Storage tab's mount table, Usage column. The third table cell to draw
    a Meter and the only one that had no override, so every mount's bar came
    with a rule the row already had and a percentage pinned 92px away from it.
-   Same shape as .disk-cell and .mem-cell above. */
+   Same shape as .disk-cell above. */
 .usage-cell .mrow {
   grid-template-columns: 1fr auto;
   gap: var(--space-2);

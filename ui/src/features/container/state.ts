@@ -43,6 +43,21 @@ export const SILENT_AFTER_S = 180;
 export const MEM_PRESSURE_PCT = 90;
 
 /**
+ * How long a container may report `health: starting` before it is stuck.
+ *
+ * Five minutes, which is comfortably past the longest start-period anyone
+ * writes by hand and five scrape intervals at the 60s default. Under it a
+ * container is doing exactly what it was told to do and saying so would put a
+ * warning on every deploy; past it the healthcheck is not going to pass on its
+ * own, and nothing else in netra would ever have mentioned it.
+ *
+ * Measured from Docker's own start time, which is why this state could not
+ * exist before that was collected: `health` says a check has not passed, and
+ * on its own it cannot tell two seconds from two days.
+ */
+export const STARTING_STUCK_S = 5 * 60;
+
+/**
  * What a state IS, as opposed to what it is called.
  *
  * The kind is what the counts line groups by and what `?attn=` carries, the
@@ -58,6 +73,7 @@ export type ContainerStateKind =
   | "silent"
   | "unhealthy"
   | "restarting"
+  | "starting"
   | "paused"
   | "mem-pressure"
   | "series-gap"
@@ -109,6 +125,20 @@ export interface DerivedStateInput {
   gone?: boolean;
   silentAfterS?: number;
   /**
+   * When Docker says this container's current incarnation started, from
+   * containers.started_at.
+   *
+   * The `starting` branch needs it and cannot exist without it: `health` says
+   * a healthcheck has not passed yet, and NOTHING on the wire says how long
+   * that has been true. A container two seconds into its start-period and one
+   * wedged forever report the identical word, so without a start time the only
+   * honest thing to do is say nothing -- which is what netra did.
+   *
+   * Null is "no agent could inspect it", and the branch then does not fire:
+   * absent is not "just started".
+   */
+  startedAtMs?: number | null;
+  /**
    * Docker's own word for what the container is doing, from
    * containers.docker_state.
    *
@@ -151,6 +181,7 @@ export function deriveState({
   dockerState = null,
   health = null,
   restartsInWindow = null,
+  startedAtMs = null,
 }: DerivedStateInput): DerivedState {
   // First, above every branch that reads the sample stream, because this one
   // says the stream STOPPED while the host kept posting -- which is the fact
@@ -243,6 +274,34 @@ export function deriveState({
     };
   }
 
+  // Stuck in its healthcheck, which is a different fault from failing one.
+  //
+  // Below `restarting` and above `unhealthy` on purpose. A container Docker is
+  // restarting reports "starting" on every fresh attempt, so the crash loop
+  // must win or a looping container would read as one that is merely slow to
+  // come up. And a healthcheck that has actually FAILED is worse news than one
+  // that has not answered yet.
+  //
+  // Gated on duration, and it is the gate that makes this a state at all: the
+  // word "starting" alone cannot separate a container doing what it was told
+  // from one that will never be ready, and netra said nothing rather than
+  // guess. With a start time it can wait STARTING_STUCK_S and then say so.
+  // Absent a start time it still says nothing -- the list draws a plain badge
+  // instead, which claims only that the container is not ready.
+  if (
+    health === "starting" &&
+    startedAtMs !== null &&
+    startedAtMs !== undefined &&
+    (now.getTime() - startedAtMs) / 1000 > STARTING_STUCK_S
+  ) {
+    return {
+      kind: "starting",
+      label: "stuck starting",
+      severity: "warning",
+      why: "the container's HEALTHCHECK has not passed since it started, so it is not becoming ready",
+    };
+  }
+
   if (health === "unhealthy") {
     return {
       kind: "unhealthy",
@@ -326,6 +385,7 @@ export function deriveState({
 export const FILTERABLE_STATE_KINDS: readonly ContainerStateKind[] = [
   "unhealthy",
   "restarting",
+  "starting",
   "silent",
   "gone",
   "mem-pressure",
@@ -349,6 +409,7 @@ const KIND_LABEL: Record<ContainerStateKind, string> = {
   silent: "silent",
   unhealthy: "unhealthy",
   restarting: "restarting",
+  starting: "stuck starting",
   paused: "paused",
   "mem-pressure": "near mem_limit",
   "series-gap": "series gap",
@@ -372,6 +433,7 @@ const KIND_SEVERITY: Record<ContainerStateKind, Severity> = {
   silent: "warning",
   unhealthy: "critical",
   restarting: "critical",
+  starting: "warning",
   paused: "neutral",
   "mem-pressure": "warning",
   "series-gap": "warning",
@@ -410,14 +472,15 @@ export function isContainerStateKind(
 const KIND_RANK: Record<ContainerStateKind, number> = {
   unhealthy: 0,
   restarting: 1,
-  silent: 2,
-  gone: 3,
-  "mem-pressure": 4,
-  "series-gap": 5,
-  paused: 6,
-  "host-down": 7,
-  "no-samples": 8,
-  reporting: 9,
+  starting: 2,
+  silent: 3,
+  gone: 4,
+  "mem-pressure": 5,
+  "series-gap": 6,
+  paused: 7,
+  "host-down": 8,
+  "no-samples": 9,
+  reporting: 10,
 };
 
 export function stateKindRank(kind: ContainerStateKind): number {
@@ -435,5 +498,6 @@ export function stateKindRank(kind: ContainerStateKind): number {
 export const DOCKER_STATED_KINDS: ReadonlySet<ContainerStateKind> = new Set([
   "unhealthy",
   "restarting",
+  "starting",
   "paused",
 ]);

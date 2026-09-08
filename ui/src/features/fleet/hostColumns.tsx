@@ -11,12 +11,11 @@ import { NowReading } from "../../ui/NowReading";
 import { OsIcon } from "../../ui/OsIcon";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { Sparkline } from "../../ui/charts/Sparkline";
-import { SEVERITY_COLOR, severityFromPercent } from "../../ui/Meter";
-// The one neutral, shared with the host page's tiles: a silhouette with no
-// reading to judge and a rate with no threshold draw in the same grey.
-import { NEUTRAL_TREND_COLOR } from "../../ui/StatTile";
+import { severityFromPercent, trendColor } from "../../ui/Meter";
 import {
   DETAIL_WIDTH,
+  METRIC_CELL_GAP,
+  METRIC_CELL_STYLE,
   SPARK_STRIP_HEIGHT,
   SPARK_WIDTH,
 } from "../../ui/charts/size";
@@ -455,68 +454,10 @@ function HostCell({
 
 const CPU_PERCENT_MAX = 100;
 
-// The three saturation cells are as wide as the sparkline, from the same
-// constant the chart is drawn with, so the now-bar under a chart is exactly
-// the chart's width. Inline rather than a CSS literal: the stylesheet has
-// copied SPARK_WIDTH before and been left behind when it moved (see the note
-// above .tablewrap svg.spark in index.css).
-const METRIC_CELL_STYLE = { width: SPARK_WIDTH };
-// The gap .metric-cell puts between its chart and its now-line, in
-// index.css. Named here for the disk cell that cannot draw its line -- a
-// mount with no bucket carrying both used and free, and every hand-built row
-// in the tests -- which has to reserve the chart's height plus that gap above
-// its own bar so the three bars in a row still form one line: without it the
-// chartless cell sits centred in the row and its bar lands 16px above the
-// other two.
-const METRIC_CELL_GAP = 3;
 const DISK_CELL_STYLE = {
   width: SPARK_WIDTH,
   paddingTop: SPARK_STRIP_HEIGHT + METRIC_CELL_GAP,
 };
-
-/**
- * The colour a fleet row's saturation silhouette is drawn in: the severity of
- * what it is reading NOW, from the same 70/95 the bar under it uses.
- *
- * ONE colour system in the row, and it means severity. The three cells were
- * --cpu-1, --mem-used and --s6, hues that answered "which column is this" --
- * which the header answers already -- and an amber memory silhouette sat
- * beside an amber warn bar meaning something else entirely. They were then
- * all --ink-2, which fixed the collision by giving the silhouette nothing to
- * say at all: grey is also how this table draws a host with no data and one
- * that stopped reporting, so a healthy row and an empty one read alike.
- *
- * So the whole cell agrees instead. Silhouette, bar and figure take one
- * severity, and a row that is fine is green in all three -- a statement that
- * netra measured this, not the absence of one. Green is also the colour the
- * eye skips, which is what a fleet list wants: the rows that went amber are
- * the only ones that break the field.
- *
- * The CURRENT severity over the whole shape, not a line that changes hue at
- * the point it crossed 70: the cell is a reading of now with its history
- * behind it, and a two-tone line would say "it started filling here", which
- * is not what a threshold means. The fill weight is unchanged
- * (AREA_FILL_OPACITY) -- the shade still says how high the line sits.
- *
- * NEUTRAL_TREND_COLOR when there is no current value to judge: a host that
- * stopped reporting still draws the history it has, and colouring that by a
- * severity nobody measured would be an invention. The now-bar is already
- * absent in that case, so the cell reads as history without a reading.
- *
- * NOT the traffic cell. A rate has no ceiling, so there is no percentage, no
- * threshold and no severity to draw -- it keeps --in-1/--out-1, where hue
- * separates in from out across the midline.
- *
- * Cell and the host page's tiles, which follow the same rule (see
- * overviewTiles.ts trendColor). The ENLARGED views and the host page's chart
- * panels keep the full palette: a dialog is a chart someone opened to read,
- * not a mark scanned down a column, and its stacks name their bands by colour.
- */
-function trendColor(pct: number | null): string {
-  return pct === null
-    ? NEUTRAL_TREND_COLOR
-    : SEVERITY_COLOR[severityFromPercent(pct)];
-}
 
 // One line and a light fill. The row used to draw the per-core stack here --
 // up to 32 bands in four cycling blues, a hairline between each, inside 45px.

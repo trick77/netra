@@ -289,6 +289,12 @@ export function FleetPage({
           ...container,
           host_id: host.id,
           hostname: host.hostname,
+          // The same denominators App's own poll attaches. This path builds
+          // rows too -- it is the one a page rendered on its own takes -- and
+          // omitting them here would leave half the fleet's containers with no
+          // bar for a reason nothing on screen could explain.
+          host_threads: host.threads,
+          host_mem_total: host.mem_total,
         })),
       );
       setFetchedContainers(rows);

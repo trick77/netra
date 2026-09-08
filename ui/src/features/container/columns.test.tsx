@@ -26,6 +26,10 @@ function makeRow(overrides: Partial<ContainerRow> = {}): ContainerRow {
     health: null,
     state_since: null,
     started_at: null,
+    restarts_window: 0,
+    recreates_window: 0,
+    last_restart: null,
+    restarts_window_seconds: 86400,
     restart_count: null,
     labels: null,
     last_seen: "2026-08-10T14:00:00Z",
@@ -297,32 +301,62 @@ describe("containerColumns", () => {
 
   // The one filled colour a container row can honestly carry, and the one
   // question a memory sparkline cannot answer: how close to being OOM-killed.
-  it("meters memory against the container's own limit", () => {
+  it("bars memory against the container's own limit", () => {
     const { container } = renderRows(
       [makeRow({ mem: [900], mem_limit_bytes: 1000, cpu: [1] })],
       { cpuMax: 1, memMax: 1000 },
     );
-    expect(container.querySelector(".meter")).not.toBeNull();
-    expect(screen.getByText("90%")).toBeInTheDocument();
+    // The fleet row's segmented bar, not this list's old continuous Meter.
+    const bar = container.querySelector(".segbar");
+    expect(bar).not.toBeNull();
+    expect(bar!.getAttribute("aria-valuenow")).toBe("90");
+    expect(screen.getByText("of 1 kB")).toBeInTheDocument();
   });
 
-  // A container running unlimited has nothing to be a percentage of, and a
-  // bar against an invented denominator would be a number netra made up.
-  it("draws no meter for a container with no mem_limit", () => {
+  // The gap this rework closes. A container with no mem_limit -- which on a
+  // real fleet is nearly all of them -- used to draw a silhouette with no bar
+  // and no figure at all. Measured against the host it is holding 20 % of the
+  // machine, and the caption says which denominator that is.
+  it("bars an unlimited container against the host's memory", () => {
+    const { container } = renderRows(
+      [
+        makeRow({
+          mem: [2_000_000_000],
+          mem_limit_bytes: null,
+          host_mem_total: 10_000_000_000,
+          cpu: [1],
+        }),
+      ],
+      { cpuMax: 1, memMax: 1e10 },
+    );
+    const bar = container.querySelector(".segbar");
+    expect(bar).not.toBeNull();
+    expect(bar!.getAttribute("aria-valuenow")).toBe("20");
+    expect(screen.getByText(/host$/)).toBeInTheDocument();
+  });
+
+  // With NEITHER denominator there is still nothing to be a percentage of, and
+  // a bar against an invented one would be a number netra made up.
+  it("draws no memory bar without a limit or a host total", () => {
     const { container } = renderRows(
       [makeRow({ mem: [900], mem_limit_bytes: null, cpu: [1] })],
       { cpuMax: 1, memMax: 1000 },
     );
-    expect(container.querySelector(".meter")).toBeNull();
+    expect(container.querySelector(".segbar")).toBeNull();
   });
 
-  // Without it CPU was the one column in the set that could not answer its
-  // own question, while Container, Image and Memory all sorted.
-  it("sorts CPU on the latest reported percentage", () => {
+  // cpu_pct is percent of ONE core, so ordering on it ranked a container using
+  // 90 % of one core above one using 600 % of a 32-thread box. The column now
+  // sorts the way its bars read: by share of the host.
+  it("sorts CPU on the share of the host, not the raw percentage", () => {
     const cpu = containerColumns({ cpuMax: 1, memMax: 1000 }).find(
       (c) => c.key === "cpu",
     )!;
-    expect(cpu.sortValue!(makeRow({ cpu: [4, 61, null] }))).toBe(61);
+    expect(
+      cpu.sortValue!(makeRow({ cpu: [4, 400, null], host_threads: 8 })),
+    ).toBe(50);
+    // No denominator, so it cannot be compared with the rows that have one.
+    expect(cpu.sortValue!(makeRow({ cpu: [4, 61, null] }))).toBeNull();
   });
 
   // Sorting on percent-of-limit would drop every unlimited container into
@@ -614,7 +648,7 @@ describe("a host that cannot collect containers at all", () => {
   // The meter says how close to the limit; it never said what the limit IS,
   // so two containers with the same bar and a tenfold difference in headroom
   // read identically.
-  it("names the limit its memory meter is measured against", () => {
+  it("names the limit its memory bar is measured against", () => {
     const memory = containerColumns({ memMax: 1e9 }).find(
       (c) => c.header === "Memory",
     )!;
@@ -624,6 +658,11 @@ describe("a host that cannot collect containers at all", () => {
       </>,
     );
 
-    expect(container.querySelector(".climit")?.textContent).toBe("of 2 GB");
+    // A bar that says how close to the limit without saying what the limit IS
+    // reads identically for two containers with a tenfold difference in
+    // headroom.
+    expect(container.querySelector(".metric-now-wrap .u")?.textContent).toBe(
+      "of 2 GB",
+    );
   });
 });

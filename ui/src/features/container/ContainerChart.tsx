@@ -49,6 +49,20 @@ export interface ContainerChartProps {
   /** The ranges the PAGE offers. The dialog must not ask for a window its
    * own page could not express. */
   ranges?: readonly Range[];
+  /**
+   * The cell's severity hue, for the INLINE sparkline only.
+   *
+   * Unset keeps the metric's own colour, which is what the container detail
+   * page's panels want. A LIST passes trendColor(), so the silhouette, the bar
+   * under it and the figure beside it are one reading rather than three marks
+   * that happen to share a row -- see trendColor in ui/Meter.
+   *
+   * Deliberately not applied to the enlarged series below. That is
+   * hostColumns' own rule, verbatim: a dialog is a chart someone opened to
+   * read, not a mark scanned down a column, and its bands name themselves by
+   * colour.
+   */
+  color?: string;
 }
 
 export function ContainerChart({
@@ -59,6 +73,7 @@ export function ContainerChart({
   range,
   window: answered = null,
   ranges,
+  color,
 }: ContainerChartProps) {
   const spec = SPEC[metric];
   // What a reader calls it, for the accessible name: twenty rows of
@@ -112,7 +127,7 @@ export function ContainerChart({
         values={values}
         min={0}
         max={max}
-        color={spec.color}
+        color={color ?? spec.color}
         label={`${spec.title} trend, ${rangeLabel(range)}`}
       />
     </Enlargeable>

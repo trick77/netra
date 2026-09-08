@@ -13,10 +13,40 @@
 // had drifted into a different column list, a different agent badge, no
 // sorting and -- worst -- no link to the container detail page at all.
 //
-// There is still deliberately no health, restart-count or uptime column:
-// none of those reach the wire or the schema (container_samples carries CPU
-// and memory only), and a column showing "running" for every row would be an
-// assertion netra cannot make.
+// WHAT IS NOT A COLUMN, and why. This note used to say there was "deliberately
+// no health, restart-count or uptime column: none of those reach the wire or
+// the schema (container_samples carries CPU and memory only)". Both halves were
+// false: migration 0012 put docker_state, health, state_ts, restart_count and
+// labels on every listing row, and container_samples has carried net_rx/net_tx,
+// io_read/io_write and the cpu and memory splits since 0001_init.sql. The
+// comment survived long enough to persuade readers the data did not exist,
+// which is the most expensive thing a comment can do.
+//
+//   - HEALTH is the Status column's word already. `unhealthy` reaches it
+//     through deriveState; a second column reading "healthy" on four hundred
+//     rows and "none" on most of the rest is an inventory of HEALTHCHECK
+//     adoption, not a reading. `starting` is the one health value Status could
+//     not carry, and now it can -- see STARTING_STUCK_S in state.ts, which
+//     needs the start time this row finally has.
+//
+//   - RESTARTS are a MARK beside the name, drawn only above zero, so a column
+//     of blanks with a heading over it never happens. The figure is
+//     restarts_window -- summed from the restart event log over 24h (migration
+//     0019) -- falling back to Docker's cumulative counter, which resets on
+//     recreate and is why a column headed "Restarts" would read as "recently"
+//     and be wrong for a two-year-old container.
+//
+//   - UPTIME is in the derivation rather than on the row: a column would be
+//     blank on every host whose socket refuses inspect, and "up 41 d" on a
+//     healthy container is not a thing anyone scans a column for. It appears
+//     as a mark only while it is SHORT, where "this came up just now" is the
+//     fact worth seeing beside a container that is misbehaving.
+//
+//   - NET RX/TX and DISK I/O have no denominator. A rate has no ceiling to
+//     fill a bar against, so it cannot join the two saturation columns below,
+//     and that is the same reason the fleet host row draws traffic as a pair
+//     of rates rather than a metric-cell. They are one array literal away in
+//     hostTrends.ts and the container detail page already charts all four.
 //
 // The Status column is not that column. It says nothing Docker told us -- it
 // reports what netra MEASURED: samples arriving, samples stopped, memory near
@@ -38,9 +68,11 @@ import { Badge } from "../../ui/Badge";
 import { Button } from "../../ui/Button";
 import { Reading } from "../../ui/Reading";
 import { When } from "../../ui/When";
-import { Meter, severityFromPercent } from "../../ui/Meter";
+import { Meter, severityFromPercent, trendColor } from "../../ui/Meter";
+import { NowReading } from "../../ui/NowReading";
+import { METRIC_CELL_STYLE } from "../../ui/charts/size";
 import type { Column } from "../../ui/Table";
-import { ABSENT, bytes, percent } from "../../lib/format";
+import { ABSENT, binaryBytes, bytes, percent } from "../../lib/format";
 import type { Container } from "../../lib/api";
 import { type Range } from "../../lib/range";
 import { ContainerChart } from "./ContainerChart";
@@ -92,6 +124,26 @@ export type ContainerRow = Container & {
    * lib/containers.ts.
    */
   host_containers_capability?: string | undefined;
+  /**
+   * The host's logical CPUs, for the CPU cell's denominator.
+   *
+   * `threads`, not `cores`: `cores` exists only on HostDetail, which the fleet
+   * never fetches, and the fleet host row already prints "of N cores" from
+   * threads. One wording across both lists, whatever the field is called.
+   *
+   * Carried on the row for the same reason hostname and host_last_seen are:
+   * the party that fanned out the per-host calls is the only one that cannot
+   * attribute a container to the wrong machine.
+   */
+  host_threads?: number | null;
+  /**
+   * The host's RAM, for the memory bar on a container with no limit.
+   *
+   * `Host.mem_total` (the fleet list's gauge) and `HostDetail.memory_total`
+   * (the host page's inventory) are the same box's memory under two names; the
+   * row calls it one thing.
+   */
+  host_mem_total?: number | null;
 };
 
 /**
@@ -137,11 +189,20 @@ export function containerState(
     // exists at all.
     dockerState: row.docker_state,
     health: row.health,
-    // No restart series here, and not an oversight: a list has no window, so
-    // there is nothing for a difference to be measured across. Left null, the
-    // gap reason falls back to the wording it had, which is exactly as much as
-    // a list knows.
-    restartsInWindow: null,
+    // The restart log's own count over the listing's window, which a list CAN
+    // now answer -- it rides the row from the events table (migration 0019)
+    // rather than being differenced out of a series the fleet's tier does not
+    // carry. So "a hole in the series usually means a restart, but no restart
+    // count is available for this range" is no longer the best netra can say
+    // about a gap; deriveState already writes the two better sentences.
+    //
+    // Undefined -- an older payload, or a caller building rows by hand --
+    // still means null, and the wording falls back exactly as it did.
+    restartsInWindow: row.restarts_window ?? null,
+    // What separates a container legitimately booting from one wedged in its
+    // healthcheck. Null on any host whose agent cannot inspect, where the
+    // branch correctly does not fire.
+    startedAtMs: row.started_at ? Date.parse(row.started_at) : null,
   });
 }
 
@@ -395,9 +456,14 @@ function nameSaysIt(
 function NameCell({
   row,
   groupedByProject,
+  state,
 }: {
   row: ContainerRow;
   groupedByProject: boolean;
+  /** The row's derived state, passed in rather than re-derived: the restart
+   * mark takes its severity from it, and two calls to containerState against
+   * two different clocks could disagree inside one row. */
+  state: DerivedState;
 }) {
   const { project, service } = composeIdentity(row.container_key);
 
@@ -438,6 +504,18 @@ function NameCell({
             "agent" is an identity, not a health state, and green would assert
             a state netra does not collect. */}
         {row.is_agent ? <Badge label>agent</Badge> : null}
+        {/* Docker's `starting` health, which reaches nothing else. Status
+            carries `unhealthy` through deriveState, and a container wedged
+            in its healthcheck long enough becomes a state of its own -- but
+            under that threshold, and on any host whose agent cannot report a
+            start time to measure the threshold against, this badge is the
+            only thing that says a container is not ready yet. Warning rather
+            than neutral: a container that is starting is a container not
+            serving, which is worth a mark even when it is legitimate. */}
+        {row.health === "starting" && state.kind !== "starting" ? (
+          <Badge severity="warning">starting</Badge>
+        ) : null}
+        <RestartMark row={row} state={state} />
         {/* No "gone" pill here any more. It stood beside a Status column that
             said "Silent" about the same container in the same instant, and
             the two were not two opinions: gone measures last_seen against the
@@ -454,14 +532,78 @@ function NameCell({
 }
 
 /**
- * The memory cell: the trend, plus the reading against the container's own
- * ceiling when it has one.
+ * What a container's memory is measured AGAINST, and what to call it.
  *
- * The meter is the only filled colour a container row can honestly carry --
- * every other candidate (state, health, restarts) is uncollected -- and it
- * answers the one question a memory sparkline cannot: how close is this to
- * being OOM-killed. A container running unlimited gets no bar rather than a
- * bar against an invented denominator, which is Meter's own rule.
+ * Two denominators, and they are two different claims, so one function answers
+ * both and every caller renders the same words for the same case.
+ *
+ *   - A real mem_limit is "how close is this to being OOM-killed". <= 0, not
+ *     just null: Docker writes 0 for "no limit" and the rest of this codebase
+ *     already reads it that way (containerSeverity, ContainerPage's
+ *     memLimit > 0). Taken as a ceiling it drew a meter with no fill under a
+ *     line reading "of 0 B" -- an unlimited container asserting a limit of
+ *     nothing.
+ *
+ *   - The HOST's RAM is "how much of this machine is it holding", which on a
+ *     fleet where almost nothing sets a limit is the only bar that can be
+ *     drawn at all. Before this, those rows were a silhouette with no figure
+ *     and no bar -- the same gap the CPU column had before it was given a
+ *     reading.
+ *
+ * The ` host` suffix is what keeps the two apart on a row where either is
+ * possible. A group heading prints the bare form, because a heading is always
+ * a share of one machine and has nothing to be told apart from.
+ *
+ * Decimal bytes for a container's own limit and BINARY for host RAM, which
+ * looks like an inconsistency and is not: every other memory figure in a
+ * container row is decimal (the sparkline's values, the group totals) while
+ * the fleet's host memory is binary because its stack is drawn against a
+ * binary ceiling. Each figure keeps the units of the thing it is a share of.
+ */
+export function memDenominator(row: ContainerRow): {
+  denom: number | null;
+  under: string | null;
+  isHostShare: boolean;
+} {
+  const limit =
+    row.mem_limit_bytes != null && row.mem_limit_bytes > 0
+      ? row.mem_limit_bytes
+      : null;
+  if (limit !== null) {
+    return { denom: limit, under: `of ${bytes(limit)}`, isHostShare: false };
+  }
+  const host =
+    row.host_mem_total != null && row.host_mem_total > 0
+      ? row.host_mem_total
+      : null;
+  if (host !== null) {
+    return {
+      denom: host,
+      under: `of ${binaryBytes(host)} host`,
+      isHostShare: true,
+    };
+  }
+  return { denom: null, under: null, isHostShare: false };
+}
+
+/** The displayed name, falling back to the key every other cell falls back to. */
+function nameOf(row: ContainerRow): string {
+  return row.name ?? row.container_key;
+}
+
+/**
+ * The memory cell: the trend, then the bar and the figure it ends on.
+ *
+ * The fleet host row's own composition -- metric-cell, NowReading, SegmentBar
+ * -- rather than a Meter of this list's own. Those were two shapes for one
+ * job, and NowReading's docstring named this list as the surface still drawing
+ * the older one.
+ *
+ * The bar judges 70/95 like every other reading in the app, the share-of-host
+ * case included: NowReading leaves severity unset everywhere, deliberately,
+ * because a bar answers "what does this number say". The row's RAIL is what
+ * stays limit-only (see containerSeverity) -- holding 64 % of a box you were
+ * given warns in the bar without striping the row.
  */
 function MemoryCell({
   row,
@@ -479,19 +621,19 @@ function MemoryCell({
   // dimming cannot reach it from there.
   if (row.mem === undefined || row.mem.length === 0)
     return <span className="absent">{ABSENT}</span>;
-  // <= 0, not just null: Docker writes 0 for "no limit", and the rest of
-  // this codebase already reads it that way (containerSeverity below,
-  // ContainerPage's memLimit > 0). Taken as a ceiling it drew a meter with
-  // no fill and a line reading "of 0 B" -- an unlimited container asserting
-  // a limit of nothing.
-  const limit =
+
+  const { denom, under } = memDenominator(row);
+  const used = lastReported(row.mem);
+  const pct = denom !== null && used !== null ? (used / denom) * 100 : null;
+  const ownLimit =
     row.mem_limit_bytes != null && row.mem_limit_bytes > 0
       ? row.mem_limit_bytes
       : null;
+
   return (
-    <div className="mem-cell">
+    <div className="metric-cell" style={METRIC_CELL_STYLE}>
       {/* The chart is the button that enlarges it -- only the chart, not the
-          meter beside it: the meter answers "how close to being killed" at a
+          bar beside it: the bar answers "how close to being killed" at a
           glance and has nothing bigger to show. */}
       <ContainerChart
         row={row}
@@ -501,33 +643,137 @@ function MemoryCell({
         // Against its OWN limit when it has one -- that is what "how close to
         // being killed" means -- and against the list's largest container when
         // it does not, so the unlimited ones stay comparable with each other.
-        max={limit ?? memMax}
+        // NOT the host total: scaling every unlimited container against the
+        // machine would flatten all of them into the floor of the chart.
+        max={ownLimit ?? memMax}
         range={range}
         ranges={ranges}
+        color={trendColor(pct)}
       />
-      {/* The percentage alone, with no label: the bytes are already the
-          sparkline's subject, and a table cell has no room for
-          "1.8 GB of 2.0 GB". */}
-      {limit === null ? null : (
-        <>
-          <Meter value={lastReported(row.mem)} max={limit} />
-          {/* What the meter is measured against. The meter said how close
-              to the limit without ever saying what the limit IS, so two
-              containers with the same bar and a tenfold difference in
-              headroom read identically.
-
-              Decimal bytes, unlike the fleet's memory cell one list over:
-              every other memory figure in a container row is decimal --
-              the sparkline's own values, the group totals -- and a ceiling
-              labelled binarily under a stack labelled decimally makes one
-              quantity look like two. The fleet cell is binary for the same
-              reason in reverse: its stack is drawn against a binary
-              ceiling. */}
-          <div className="climit">of {bytes(limit)}</div>
-        </>
+      {pct !== null && under !== null && (
+        <NowReading
+          pct={pct}
+          label={`Memory now, ${nameOf(row)}`}
+          under={under}
+        />
       )}
     </div>
   );
+}
+
+/**
+ * The CPU cell: the trend, then how much of the HOST it is using.
+ *
+ * cpu_pct is percent of ONE core, so a container at 150 % means nothing until
+ * it is set against the machine: 150 % of a 4-thread VPS is most of it and of
+ * a 32-thread box it is noise. Dividing by threads is what makes the column
+ * comparable across a mixed fleet, and it is exactly what the fleet host row
+ * does with cpu_total.
+ *
+ * With NO denominator the figure still prints but the bar does not. A
+ * SegmentBar clamps at ten lit cells, so it would report a container at 300 %
+ * as merely saturated -- an assertion nobody measured -- while the raw
+ * percentage remains a true thing to say.
+ */
+function CpuCell({
+  row,
+  cpuMax,
+  range,
+  ranges,
+}: {
+  row: ContainerRow;
+  cpuMax: number;
+  range: Range;
+  ranges?: readonly Range[];
+}) {
+  if (row.cpu === undefined || row.cpu.length === 0)
+    return <span className="absent">{ABSENT}</span>;
+
+  const busy = lastReported(row.cpu);
+  const threads =
+    row.host_threads != null && row.host_threads > 0 ? row.host_threads : null;
+  const pct = busy !== null && threads !== null ? busy / threads : null;
+
+  return (
+    <div className="metric-cell" style={METRIC_CELL_STYLE}>
+      <ContainerChart
+        row={row}
+        metric="cpu"
+        values={row.cpu}
+        window={row.window ?? null}
+        max={cpuMax}
+        range={range}
+        ranges={ranges}
+        color={trendColor(pct)}
+      />
+      {pct !== null ? (
+        <NowReading
+          pct={pct}
+          label={`CPU now, ${nameOf(row)}`}
+          under={`of ${threads} core${threads === 1 ? "" : "s"}`}
+        />
+      ) : (
+        busy !== null && <Reading value={String(Math.round(busy))} unit="%" />
+      )}
+    </div>
+  );
+}
+
+/**
+ * How often Docker has restarted this container, as a mark beside its name.
+ *
+ * Drawn only above zero. A literal 0 on four hundred healthy rows is noise
+ * wearing the shape of a fact, and it is why this is a mark and not a column:
+ * a column would be a stack of blanks under a heading.
+ *
+ * Two different numbers can reach it and the TITLE is the only place they are
+ * told apart, because printing them identically is the lie. The windowed count
+ * is a sum over the restart event log (migration 0019) and means "in the last
+ * day". The fallback is Docker's cumulative counter, which resets when a
+ * container is recreated and so says nothing about when.
+ *
+ * The severity echoes the row's STATE rather than inventing a restart
+ * threshold: nobody can say how many restarts is too many, but a container
+ * Docker reports as restarting is already critical for a reason the Status
+ * column states.
+ */
+function RestartMark({
+  row,
+  state,
+}: {
+  row: ContainerRow;
+  state: DerivedState;
+}) {
+  const windowed = row.restarts_window ?? null;
+  const n = windowed ?? row.restart_count ?? null;
+  if (n === null || n <= 0) return null;
+
+  const plural = n === 1 ? "" : "s";
+  const title =
+    windowed !== null
+      ? `${n} restart${plural} in the last ${restartWindowLabel(row)}`
+      : `${n} restart${plural} since this container was created -- Docker's ` +
+        `cumulative counter, which resets when a container is recreated`;
+
+  return (
+    <span
+      className={state.kind === "restarting" ? "rst st-crit" : "rst"}
+      title={title}
+    >
+      <span className="g" aria-hidden="true">
+        &#8635;
+      </span>
+      {n}
+    </span>
+  );
+}
+
+/** The window the restart count was taken over, in words. */
+function restartWindowLabel(row: ContainerRow): string {
+  const secs = row.restarts_window_seconds;
+  if (secs == null || secs <= 0) return "24 h";
+  const hours = Math.round(secs / 3600);
+  return hours === 24 ? "24 h" : `${hours} h`;
 }
 
 export interface ContainerColumnsOptions {
@@ -613,7 +859,13 @@ export function containerColumns({
     {
       key: "container",
       header: "Container",
-      cell: (row) => <NameCell row={row} groupedByProject={groupedByProject} />,
+      cell: (row) => (
+        <NameCell
+          row={row}
+          groupedByProject={groupedByProject}
+          state={containerState(row, now)}
+        />
+      ),
       // The displayed name, falling back to the key the cell falls back to,
       // so the order matches what a reader sees rather than an id behind it.
       sortValue: (row) => row.name ?? row.container_key,
@@ -679,48 +931,28 @@ export function containerColumns({
     columns.push({
       key: "cpu",
       header: "CPU",
-      // The chart, and the reading it ends on beside it. Memory has carried
-      // its number since it got a meter; CPU was a shape with no value at
-      // all, so "which container is busiest" could be sorted but not read.
-      // Drawn by the shared Reading, which is what the fleet's own CPU and
-      // Memory cells use: one shape for "a chart and its figure" across both
-      // lists.
-      cell: (row) =>
-        row.cpu === undefined || row.cpu.length === 0 ? (
-          ABSENT
-        ) : (
-          <div className="ccell">
-            <ContainerChart
-              row={row}
-              metric="cpu"
-              values={row.cpu}
-              window={row.window ?? null}
-              max={cpuMax ?? 1}
-              range={range}
-              ranges={ranges}
-            />
-            {/* Nothing, not a dash, when the series reported no value at
-                all: the same rule the fleet row's absent readings follow --
-                a mark asserts netra looked and found a number it could not
-                print, and the gap in the sparkline beside it already says
-                the container reported nothing. */}
-            {lastReported(row.cpu) === null ? null : (
-              // The same block the fleet's CPU cell draws, so "a chart and
-              // the figure it ends on" is one shape in both lists rather
-              // than two that happen to sit one nav entry apart.
-              <Reading
-                value={String(Math.round(lastReported(row.cpu) as number))}
-                unit="%"
-              />
-            )}
-          </div>
-        ),
-      // The latest reported percentage, same rule as Memory below. Without
-      // it CPU was the one column in this set that could not answer its own
-      // question -- "which container is busiest" -- while Container, Image
-      // and Memory all sorted, which is the kind of gap this whole module
-      // exists to close.
-      sortValue: (row) => lastReported(row.cpu),
+      // The fleet row's own cell: the silhouette in the reading's severity
+      // hue, the segmented bar, the figure, and what it is a share OF.
+      cell: (row) => (
+        <CpuCell row={row} cpuMax={cpuMax ?? 1} range={range} ranges={ranges} />
+      ),
+      // The SHARE of the host, not the raw percentage, so the column orders
+      // the way the bars in it read. Sorting on cpu_pct ranked a container
+      // using 90 % of one core above one using 600 % of a 32-thread box --
+      // the same mistake the fleet's own memory column documents fixing, and
+      // it put the wrong container at the top of "what is busiest".
+      //
+      // A row with no denominator sorts as unknown rather than by its raw
+      // figure: it cannot be compared with the rows that have one, and Table
+      // puts nulls last in both directions.
+      sortValue: (row) => {
+        const busy = lastReported(row.cpu);
+        const threads =
+          row.host_threads != null && row.host_threads > 0
+            ? row.host_threads
+            : null;
+        return busy === null || threads === null ? null : busy / threads;
+      },
     });
     columns.push({
       key: "memory",

@@ -212,6 +212,30 @@ export type Container = {
    * means "just started".
    */
   started_at: string | null;
+  /**
+   * How many times this container restarted inside `restarts_window_seconds`,
+   * SUMMED from the restart event log rather than differenced from a counter
+   * (migration 0019).
+   *
+   * Summed, never counted: one event can carry a delta of three, because a
+   * crash-looping container advances Docker's counter by more than one between
+   * two observations. This is the reading that catches a container broken
+   * without ever LOOKING broken -- one that dies and comes back every few
+   * minutes is `running` at almost every scrape.
+   *
+   * Zero is a real answer: the log was read and there were none. That is not
+   * the same fact as `restart_count` being null, which is nobody having looked.
+   */
+  restarts_window: number;
+  /** Redeploys in the same window -- operator actions, not faults, and counted
+   * apart so a deploy does not read as an incident. */
+  recreates_window: number;
+  /** When the newest restart in the window was recorded, or null for none. An
+   * upper bound on an event whose `ts_source` is `observed`. */
+  last_restart: string | null;
+  /** The window the two counts were taken over, echoed so no client has to
+   * assume the server's default. */
+  restarts_window_seconds: number;
   /** Every label the daemon reported. `{}` is a container with no labels;
    * null is a container nobody could ask about. */
   labels: Record<string, string> | null;
