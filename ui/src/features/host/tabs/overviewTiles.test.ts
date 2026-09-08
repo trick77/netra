@@ -118,13 +118,39 @@ describe("overviewTiles system group", () => {
     expect(find(system, "CPU")?.severity).toBe("critical");
   });
 
-  // `ok` is not a treatment: a calm reading is plain ink, never green.
+  // `ok` is not a treatment: a calm reading gets no tint and plain ink.
   it("leaves a quiet CPU with no hue at all", () => {
     const { system } = tiles({
       hostMetrics: hostMetrics(["cpu_total"], [12], [12]),
     });
 
     expect(find(system, "CPU")?.severity).toBeNull();
+  });
+
+  // The LINE is another matter: it is the fleet row's silhouette one click
+  // later, and there green says "measured, and fine". Status hue at every
+  // severity, never a series colour, so a threshold tile and the fleet cell
+  // it came from draw one reading in one colour.
+  it("draws the trend in the fleet row's severity hue, ok included", () => {
+    const quiet = tiles({
+      hostMetrics: hostMetrics(["cpu_total"], [12], [12]),
+    });
+    const pinned = tiles({
+      hostMetrics: hostMetrics(["cpu_total"], [99], [99]),
+    });
+
+    expect(find(quiet.system, "CPU")?.color).toBe("var(--st-ok)");
+    expect(find(pinned.system, "CPU")?.color).toBe("var(--st-crit)");
+  });
+
+  // No current value, no severity to draw: the history is grey, the same
+  // neutral the fleet draws a host that stopped reporting in.
+  it("draws a CPU with no current reading in the neutral", () => {
+    const { system } = tiles({
+      hostMetrics: hostMetrics(["cpu_total"], [12], [null]),
+    });
+
+    expect(find(system, "CPU")?.color).toBe("var(--ink-2)");
   });
 
   it("says absent, never 0, for a tier that does not carry the column", () => {
@@ -421,6 +447,23 @@ describe("overviewTiles kernel and pressure groups", () => {
     }
   });
 
+  // A rate has no ceiling, so nothing to judge it by -- and a hue on this
+  // page means severity, so a reading with none draws in none. These used to
+  // wear four different series colours across six tiles, answering "which
+  // column is this" when the label already does.
+  it("draws every rate and count in the one neutral", () => {
+    const { kernel, pressure } = tiles({
+      hostMetrics: hostMetrics(
+        ["ctxt_per_s", "intr_per_s", "pgmajfault_per_s", "pswpout_per_s"],
+        [900000, 900000, 900000, 900000],
+      ),
+    });
+
+    for (const tile of [...kernel, ...pressure]) {
+      expect(tile.color).toBe("var(--ink-2)");
+    }
+  });
+
   // All three read together and all three open the same panel: swap-out
   // climbing with major faults flat is reclaim doing its job, both climbing
   // together is thrash.
@@ -482,6 +525,16 @@ describe("overviewTiles network group", () => {
 
     expect(network.map((tile) => tile.label)).toContain("Traffic in");
     expect(network.map((tile) => tile.label)).not.toContain("Traffic rx");
+  });
+
+  // The fleet row's traffic cell and the Traffic chart under these tiles
+  // both draw in as --in-1 and out as --out-1. Two tiles in blue and green
+  // were a third legend for the same pair.
+  it("draws in and out in the fleet's own pair", () => {
+    const { network } = tiles({ netMetrics });
+
+    expect(find(network, "Traffic in")?.color).toBe("var(--in-1)");
+    expect(find(network, "Traffic out")?.color).toBe("var(--out-1)");
   });
 });
 

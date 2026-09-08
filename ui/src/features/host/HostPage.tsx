@@ -59,7 +59,6 @@ import {
   Units,
 } from "./tabs/Inventory";
 import { Overview } from "./tabs/Overview";
-import { Server } from "lucide-react";
 
 export type HostTab =
   | "overview"
@@ -589,21 +588,23 @@ export function HostPage({
       {/* The header is identical on every tab -- it is what you are
           looking at, not what you are looking at it through. */}
       <header className="hosthead" aria-label="Host summary">
-        {/* The rail's own mark for hosts. A detail page has no rail
-            destination of its own, so it wears its parent's. It stays outside
-            .hostident, and is centred on the title's line by .hosthead. */}
-        <span className="pageicon">
-          <Server aria-hidden="true" />
-        </span>
+        {/* No mark beside the name. The page used to wear the rail's Hosts
+            glyph here, which said "this is a host" next to a name that says
+            so already, and the fleet row this page is opened from carries
+            none. The rail's own highlight says where the reader is. */}
         {/* The name and everything that qualifies it, as one block. */}
         <div className="hostident">
           {/* The title's own line, and everything that qualifies it. These were
               siblings of .hostident, so the row centred them against the whole
               block -- which left the badge, the last-seen time and the range
-              control 11.8px low, and the page's own mark with them. In a row
-              whose tallest item is the h1 they centre on the title itself. */}
+              control 11.8px low. In a row whose tallest item is the h1 they
+              centre on the title itself. */}
           <div className="hostbar">
-            <h1 className="serif hostname">{host.hostname}</h1>
+            {/* Ink, not .hostname's accent: the fleet row prints the name in
+                --ink and the serif, and this is the same name one click later.
+                Accent on the fleet page is spent on the clause saying what is
+                wrong, and a title in it read as the page's one alarm. */}
+            <h1 className="serif">{host.hostname}</h1>
             <Badge severity={status.severity}>{status.label}</Badge>
             {/* Beside the reporting status, not instead of it: the two answer
               different questions, and a host can be online AND four minutes
