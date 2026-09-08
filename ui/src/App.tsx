@@ -66,6 +66,7 @@ import {
   KeyRound,
   LayoutGrid,
   LogOut,
+  Plus,
   Server,
   Settings2,
   type LucideIcon,
@@ -90,10 +91,7 @@ export default function App() {
 
   const onClick = useDelegatedNavigation(go);
 
-  // Which of the fleet's two lists the rail should mark. The page owns the
-  // parameter; the rail only reads it.
-  const onContainers =
-    new URLSearchParams(search).get("entity") === "containers";
+  useDocumentTitle(route);
 
   return (
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions
@@ -105,44 +103,56 @@ export default function App() {
         Skip to content
       </a>
       {/* Still a <header>, and still the banner landmark: only its position
-          moved. HostPage's own header is disambiguated from this one by
-          accessible name, not by there being exactly one. */}
-      <header className="siderail">
-        {/* No wordmark: 56px does not hold one, and the first nav item
-            already points at "/", so home is not lost with it. */}
+          moved -- across the top, where the wordmark, the glyphs and the one
+          action the app has read as one line. HostPage's own header is
+          disambiguated from this one by accessible name, not by there being
+          exactly one. */}
+      <header className="topbar">
+        {/* The wordmark is the link home. The rail had none -- 56px did not
+            hold one -- and its first item carried "/" instead; a bar has the
+            width, and a product that never says its own name reads as a page
+            someone else built. */}
+        <a className="wordmark" href="/">
+          Netra
+        </a>
+        <div className="spacer" />
         {/* Named because it is not the only nav landmark on a page -- Tabs
             renders one too -- and "navigation" twice over tells a screen
             reader user nothing about which is which. */}
         <nav className="nav" aria-label="Primary">
           <div className="navgroup">
-            {/* The rail carries no labels, so each glyph has to name its
+            {/* The bar carries no labels, so each glyph has to name its
                 destination on its own. A dial said "utilisation", which is a
                 reading the fleet page takes rather than the thing it lists;
                 a server says hosts. Containers get the four tiles the page
                 actually renders. */}
+            {/* A detail page marks the list it came out of. Neither of these
+                lit at all on a host or a container page, so the bar said
+                "nowhere" on the two pages a reader spends the most time in --
+                and the way back to the list was the one thing they needed it
+                to point at. */}
             <NavLink
               href="/"
               icon={Server}
-              active={route.name === "fleet" && !onContainers}
+              active={here(route.name, "fleet", "host")}
             >
               Hosts
             </NavLink>
-            {/* The entity still lives in the query string -- see FleetScreen
-                -- so this is the same page with a different reading, and the
-                rail has to split on the parameter rather than on the route
-                name. Without that both entries light at once on the
-                containers view, which tells a reader the rail is broken. */}
+            {/* Its own route now, so this splits on the route name like every
+                other entry. While the entity lived in the query string this
+                had to read the parameter, and both entries lit at once on any
+                URL that lost it. */}
             <NavLink
-              href="/?entity=containers"
+              href="/containers"
               icon={LayoutGrid}
-              active={route.name === "fleet" && onContainers}
+              active={here(route.name, "containers", "container")}
             >
               Containers
             </NavLink>
             <NavLink
               href="/events"
               icon={Bell}
-              active={route.name === "events"}
+              active={here(route.name, "events")}
             >
               Events
             </NavLink>
@@ -155,13 +165,13 @@ export default function App() {
             <NavLink
               href="/admin/hosts"
               icon={KeyRound}
-              active={route.name === "admin"}
+              active={here(route.name, "admin")}
             >
               Agents
             </NavLink>
             {/* Settings and sign out sat in a second group at the FOOT of the
                 rail, with a rule above them, because Settings is the one
-                destination here that is not about the fleet. Six glyphs and no
+                destination here that is not about the fleet. Glyphs and no
                 words could not carry that distinction: what a reader saw was
                 two icons marooned at the bottom of an empty column, far enough
                 from the other four to read as a different control rather than
@@ -169,7 +179,7 @@ export default function App() {
             <NavLink
               href="/settings"
               icon={Settings2}
-              active={route.name === "settings"}
+              active={here(route.name, "settings")}
             >
               Settings
             </NavLink>
@@ -186,6 +196,15 @@ export default function App() {
             </form>
           </div>
         </nav>
+        {/* The one action the app has, at the end of the line where an action
+            belongs. It goes to Agents, which is where a token is minted and
+            the install command is shown -- that page keeps its own button
+            until adding a host is a dialog this can open. */}
+        <div className="topbar-sep" aria-hidden="true" />
+        <a className="btn primary addhost" href="/admin/hosts">
+          <Plus aria-hidden="true" />
+          Add host
+        </a>
       </header>
       <main id="main" tabIndex={-1}>
         <Screen route={route} search={search} go={go} />
@@ -252,6 +271,59 @@ function useDelegatedNavigation(go: Go) {
   };
 }
 
+/**
+ * The tab's title, per page.
+ *
+ * index.html ships one static <title>netra</title> and nothing ever changed
+ * it, so five open tabs of this app were five tabs reading "netra" -- and a
+ * bookmark or a history entry carried no more than that either.
+ *
+ * The detail pages are deliberately NOT here: their title is a hostname or a
+ * container key, which App does not have until the poll lands. They keep the
+ * bare product name rather than flashing "netra" and then a name a moment
+ * later, and naming themselves is the page's own job to take on later.
+ */
+const PAGE_TITLES: Partial<Record<Route["name"], string>> = {
+  fleet: "All hosts",
+  containers: "All containers",
+  events: "Events",
+  admin: "Agents",
+  settings: "Settings",
+  login: "Log in",
+};
+
+function useDocumentTitle(route: Route) {
+  const page = PAGE_TITLES[route.name];
+  useEffect(() => {
+    document.title = page === undefined ? "netra" : `${page} — netra`;
+  }, [page]);
+}
+
+/**
+ * Which of the two "you are here" states an entry is in.
+ *
+ * "page" is this URL. "true" is the list a detail page came out of: the bar
+ * marks Hosts while the reader is on /hosts/3, and announcing THAT link as
+ * the current PAGE tells a screen-reader user the one link they need -- the
+ * way back to the list -- is the page they are already on. "true" is aria's
+ * word for "current within this set, but not this URL". Same fill either
+ * way; the distinction is only ever spoken.
+ */
+type Here = "page" | "true" | null;
+
+/**
+ * Where the reader is, relative to one bar entry: the entry's own page, a
+ * detail page under it, or somewhere else entirely.
+ */
+function here(
+  current: Route["name"],
+  page: Route["name"],
+  ...under: Route["name"][]
+): Here {
+  if (current === page) return "page";
+  return under.includes(current) ? "true" : null;
+}
+
 function NavLink({
   href,
   active,
@@ -259,7 +331,7 @@ function NavLink({
   children,
 }: {
   href: string;
-  active: boolean;
+  active: Here;
   icon: LucideIcon;
   // A string, not a node: it has to survive into data-tip as well as into
   // the hidden label, and only one of those can hold markup.
@@ -272,7 +344,7 @@ function NavLink({
     // at all.
     <a
       href={href}
-      aria-current={active ? "page" : undefined}
+      aria-current={active === null ? undefined : active}
       data-tip={children}
     >
       <Icon aria-hidden="true" />
@@ -292,7 +364,9 @@ function Screen({
 }) {
   switch (route.name) {
     case "fleet":
-      return <FleetScreen search={search} go={go} />;
+      return <FleetScreen entity="hosts" search={search} go={go} />;
+    case "containers":
+      return <FleetScreen entity="containers" search={search} go={go} />;
     case "host":
       return (
         <HostScreen
@@ -391,26 +465,45 @@ function paramSetter(path: string, search: string, go: Go) {
     go(path + withParam(search, key, value), { replace: true });
 }
 
-function FleetScreen({ search, go }: { search: string; go: Go }) {
-  // Entity lives in the URL: a fleet view someone sends must arrive as the
-  // view they were looking at, not as whatever the recipient's browser last
-  // remembered. The window does not, because there is only one -- every row
-  // is drawn over FLEET_RANGE.
+function FleetScreen({
+  entity,
+  search,
+  go,
+}: {
+  entity: Entity;
+  search: string;
+  go: Go;
+}) {
+  // Entity lives in the PATH now: a fleet view someone sends must arrive as
+  // the view they were looking at, and two lists this different are two
+  // pages. The window does not, because there is only one -- every row is
+  // drawn over FLEET_RANGE.
   const params = new URLSearchParams(search);
-  const entity: Entity =
-    params.get("entity") === "containers" ? "containers" : "hosts";
+  // The URL the entity used to live in, kept working. Somebody's bookmark or
+  // a link in a chat still says ?entity=containers, and 404 -- or worse, a
+  // silent fall back to the host list -- is the wrong answer to it.
+  const stale = params.get("entity") === "containers" && entity === "hosts";
+  useEffect(() => {
+    if (stale)
+      go("/containers" + withParam(search, "entity", ""), {
+        replace: true,
+      });
+  }, [stale, search, go]);
   // What is wrong is a view of this page like any other, so it is a link:
   // "the fleet, filtered to failed units" is a URL someone can paste into a
   // chat. An unrecognised value is "all" rather than a filter that silently
   // matches nothing -- see isConditionKind.
   //
   // Read against the entity, because both vocabularies have a "silent" and
-  // the entity is already in the URL beside it. `?entity=containers&
-  // attn=silent` is a silent container; the same word without the entity is a
-  // silent host. The severity segments are hosts-only: every condition netra
-  // ranks that way is host-level.
+  // the entity is the page it is read on. `/containers?attn=silent` is a
+  // silent container; the same word on `/` is a silent host. The severity
+  // segments are hosts-only: every condition netra ranks that way is
+  // host-level.
   const attnParam = params.get("attn") ?? "";
-  const setParam = paramSetter("/", search, go);
+  // Every link this page builds stays on the page it was built from -- the
+  // attention filter is a view of THIS list, not a way back to the other one.
+  const base = entity === "containers" ? "/containers" : "/";
+  const setParam = paramSetter(base, search, go);
   const range = FLEET_RANGE;
 
   const poll = usePoll(
@@ -573,23 +666,24 @@ function FleetScreen({ search, go }: { search: string; go: Go }) {
     <FleetPage
       rows={rows}
       entity={entity}
-      onEntityChange={(next) =>
-        setParam("entity", next === "containers" ? "containers" : "")
-      }
+      // The other list is a page now, so switching entity is navigation and
+      // not a parameter write. The filter does not travel with it: an
+      // attention kind is read against one vocabulary, and carrying "silent"
+      // across would land on the other page's meaning of the word.
+      onEntityChange={(next) => go(next === "containers" ? "/containers" : "/")}
       attention={attention}
       // "" clears the parameter -- withParam drops an empty value, so the
       // unfiltered fleet is the bare URL rather than /?attn=all.
       onAttentionChange={(next) => setParam("attn", next === "all" ? "" : next)}
-      // Built from the CURRENT query string, so the entity the reader is on
-      // survives a cmd-click or a copied link -- withParam drops the value
-      // when it is empty, which is how "all" becomes the bare fleet URL
-      // rather than ?attn=all.
+      // Built from the CURRENT query string and THIS page's path, so the list
+      // the reader is on survives a cmd-click or a copied link -- withParam
+      // drops the value when it is empty, which is how "all" becomes the bare
+      // URL rather than ?attn=all.
       attentionHref={(next) =>
-        "/" + withParam(search, "attn", next === "all" ? "" : next)
+        base + withParam(search, "attn", next === "all" ? "" : next)
       }
       conditionRows={poll.data?.conditions?.conditions ?? []}
       catalogue={catalogue}
-      checkedAt={poll.data?.at ?? null}
       containers={poll.data?.containers}
       containerError={
         poll.data && poll.data.unreachable > 0

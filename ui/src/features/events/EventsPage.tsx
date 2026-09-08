@@ -7,7 +7,7 @@
 // router that puts it there. filtersToQuery/filtersFromQuery below are this
 // page's half of that contract -- the serialization lives with the type it
 // serializes, and nothing here touches history or location.
-import { Bell, Inbox } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { Badge } from "../../ui/Badge";
 import { Card } from "../../ui/Card";
 import { EmptyState } from "../../ui/EmptyState";
@@ -318,26 +318,33 @@ export function EventsPage({
 
   return (
     <>
-      <div className="section">
-        <span className="pageicon">
-          <Bell aria-hidden="true" />
-        </span>
-        <h2>Events</h2>
-        <span className="hint">
-          What happened, when. An event is an instant, not a state.
-        </span>
+      {/* The same head every page draws: the name of the page, and the one
+          control that narrows what is under it off the right end. No glyph --
+          the bar carries the marks now, and a page that repeats its own is
+          saying the same thing twice. */}
+      <div className="pagehead">
+        <h1>Events</h1>
+        <div className="spacer" />
+        <div className="filterbox">
+          <Input
+            id="ev-search"
+            type="search"
+            placeholder="Filter events"
+            aria-label="Filter events"
+            value={filters.search}
+            onChange={(e) => set("search", e.target.value)}
+          />
+        </div>
       </div>
+      <p className="pagesub">
+        What happened, when. An event is an instant, not a state.
+      </p>
 
+      {/* What is left in the toolbar narrows by FIELD rather than by text:
+          three selects and the window. The free-text search went up beside
+          the title with the fleet's, so the two pages say "narrow this" in
+          the same place. */}
       <div className="toolbar">
-        <label htmlFor="ev-search">Search</label>
-        <Input
-          id="ev-search"
-          type="search"
-          placeholder="subject, type or host"
-          value={filters.search}
-          onChange={(e) => set("search", e.target.value)}
-        />
-
         <label htmlFor="ev-host">Host</label>
         <Select
           id="ev-host"

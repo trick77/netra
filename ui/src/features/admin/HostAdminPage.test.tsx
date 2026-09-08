@@ -309,7 +309,7 @@ describe("HostAdminPage", () => {
 });
 
 describe("heading rows", () => {
-  it("keeps every .section a heading row, with the section body as its sibling", async () => {
+  it("keeps every .pagehead a heading row, with the page body as its sibling", async () => {
     getHosts.mockResolvedValue([host]);
     const { container } = render(<HostAdminPage />);
 
@@ -319,16 +319,19 @@ describe("heading rows", () => {
     expect(await screen.findByText("web-01")).toBeInTheDocument();
     expect(container.querySelectorAll("table")).toHaveLength(1);
 
-    const sections = [...container.querySelectorAll(".section")];
+    const sections = [...container.querySelectorAll(".pagehead")];
     expect(sections).toHaveLength(1);
 
     for (const section of sections) {
       // Keyed by the heading text rather than asserted bare: a failure has to
       // say WHICH section leaked, and what leaked into it.
-      const heading = section.querySelector("h2")?.textContent;
+      const heading = section.querySelector("h1")?.textContent;
+      // The spacer is part of the head row itself -- it is what pushes a
+      // filter to the right end -- so it is not a stray. Anything else is.
       const strays = [...section.children]
+        .filter((el) => !el.classList.contains("spacer"))
         .map((el) => el.tagName)
-        .filter((tag) => tag !== "H2" && tag !== "SPAN");
+        .filter((tag) => tag !== "H1" && tag !== "SPAN");
 
       expect({ heading, strays }).toEqual({ heading, strays: [] });
       expect({

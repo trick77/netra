@@ -167,115 +167,36 @@ describe("FleetPage entity tabs", () => {
   // The host is named ONCE, by the group it heads. A Host column beside it
   // restated that heading on every row -- eighty-four rows saying what four
   // headings say, in the widest table on the page.
-  // The rail marks Containers as its own destination; a heading fixed at
-  // "Fleet" would contradict it, and mislabel the page for anyone landing
-  // there by link. It no longer names the list at all on a fleet it can
-  // state: it says what that list currently IS, in the vocabulary of the
-  // entity on screen.
+  // The heading names the LIST, and that is all it does. It used to be a
+  // sentence stating the set and what was wrong with it -- "2 hosts, 1 needs
+  // attention" -- which said the fleet's size twice over the figure line
+  // under it and said what is wrong twice over the chips under that. What is
+  // wrong is the chips' job, and they have their own tests.
   it("states the list it is showing", () => {
     const hosts = renderPage();
     expect(
-      screen.getByRole("heading", { level: 1, name: "1 host, steady" }),
+      screen.getByRole("heading", { level: 1, name: "All hosts" }),
     ).toBeInTheDocument();
     hosts.unmount();
 
     renderPage({ entity: "containers" });
     expect(
-      screen.getByRole("heading", { level: 1, name: "1 container, reporting" }),
+      screen.getByRole("heading", { level: 1, name: "All containers" }),
     ).toBeInTheDocument();
   });
 
-  // The heading counts what is wrong off the same tiles the chips are drawn
-  // from, so the sentence and the chips under it cannot disagree.
-  it("says how much of the list needs looking at", () => {
-    const hosts = renderPage({
+  // The title is fixed, so a fleet with something wrong on it must not be
+  // able to change it -- the whole reason the sentence went is that a heading
+  // that moves is a heading nobody trusts to name the page.
+  it("keeps the same heading on a fleet that needs attention", () => {
+    renderPage({
       rows: [makeRow({ id: 1 }), makeRow({ id: 2, hostname: "db-01" })],
       conditionRows: [cond(2, "db-01")],
       catalogue: CATALOGUE,
     });
-    expect(
-      screen.getByRole("heading", {
-        level: 1,
-        name: "2 hosts, 1 needs attention",
-      }),
-    ).toBeInTheDocument();
-    hosts.unmount();
-
-    // A container that stopped posting five minutes ago, on a host that
-    // kept posting: silent, and counted by the sentence.
-    renderPage({
-      entity: "containers",
-      containers: [
-        makeContainer(),
-        makeContainer({
-          id: 2,
-          container_key: "aa11",
-          name: "redis",
-          last_seen: "2026-08-10T13:55:00Z",
-        }),
-      ],
-    });
-    expect(
-      screen.getByRole("heading", {
-        level: 1,
-        name: "2 containers, 1 not reporting normally",
-      }),
-    ).toBeInTheDocument();
-  });
-
-  // A host whose cgroup mount is unreadable reports nothing for any container
-  // on it. That kind has no chip -- one chip per host-wide outage is not what
-  // says so -- but it is emphatically not reporting normally, and counted off
-  // the chips alone the heading read "2 containers, all reporting" above two
-  // rows both saying No samples.
-  it("counts containers that cannot be sampled at all", () => {
-    renderPage({
-      entity: "containers",
-      containers: [
-        makeContainer({ host_containers_capability: "no-cgroup-scopes" }),
-        makeContainer({
-          id: 2,
-          container_key: "aa11",
-          name: "redis",
-          host_containers_capability: "no-cgroup-scopes",
-        }),
-      ],
-    });
 
     expect(
-      screen.getByRole("heading", {
-        level: 1,
-        name: "2 containers, 2 not reporting normally",
-      }),
-    ).toBeInTheDocument();
-  });
-
-  // Somebody paused it, and the silence check has already passed -- it is
-  // still being sampled. It has a chip, because the list may be filtered to
-  // it, and it must not make the heading claim a container stopped
-  // reporting.
-  it("does not count a paused container as one that stopped reporting", () => {
-    renderPage({
-      entity: "containers",
-      containers: [makeContainer({ docker_state: "paused" })],
-    });
-
-    expect(
-      screen.getByRole("heading", { level: 1, name: "1 container, reporting" }),
-    ).toBeInTheDocument();
-  });
-
-  // The list is short by whatever the host that answered 500 runs. The note
-  // above says so; the heading must not contradict it by calling the rest
-  // healthy.
-  it("withholds the all-clear when a host could not be asked", () => {
-    renderPage({
-      entity: "containers",
-      containerError: "1 host could not be asked for containers",
-    });
-
-    expect(
-      screen.getByRole("heading", { level: 1, name: "1 container" }),
+      screen.getByRole("heading", { level: 1, name: "All hosts" }),
     ).toBeInTheDocument();
   });
 
@@ -799,24 +720,6 @@ describe("FleetPage data fetching", () => {
     expect(screen.getByText("web-01")).toBeInTheDocument();
   });
 
-  it("dates the rail's check figure from injected data too", () => {
-    renderPage({ checkedAt: "2026-08-10T13:59:20Z" });
-
-    // The age alone, with the words that finish it as its label: the rail
-    // states figures, and "40 s ago since last check" is not a sentence.
-    expect(screen.getByText("40 s")).toBeInTheDocument();
-    expect(screen.getByText("since last check")).toBeInTheDocument();
-  });
-
-  // ABSENT under "since last check" reads as "the check failed", which is a
-  // claim the page has no basis for: a hub that did not say when it last
-  // looked has not said anything went wrong either.
-  it("omits the check figure entirely rather than dashing it", () => {
-    renderPage({ checkedAt: null });
-
-    expect(screen.queryByText("since last check")).toBeNull();
-  });
-
   it("says what went wrong instead of rendering an empty fleet", async () => {
     vi.stubGlobal(
       "fetch",
@@ -840,7 +743,6 @@ describe("FleetPage data fetching", () => {
         ]}
         conditionRows={[cond(2, "db-01")]}
         catalogue={CATALOGUE}
-        checkedAt={null}
         now={NOW}
       />,
     );
@@ -863,7 +765,6 @@ describe("FleetPage data fetching", () => {
           cond(i + 1, `web-${i + 1}`, { detail: { count: 1 } }),
         )}
         catalogue={CATALOGUE}
-        checkedAt={null}
         now={NOW}
       />,
     );
@@ -885,7 +786,6 @@ describe("FleetPage data fetching", () => {
         ]}
         conditionRows={[cond(2, "db-01")]}
         catalogue={CATALOGUE}
-        checkedAt={null}
         now={NOW}
       />,
     );
@@ -919,7 +819,6 @@ describe("FleetPage data fetching", () => {
           cond(3, "build-01", { detail: { count: 2 } }),
         ]}
         catalogue={CATALOGUE}
-        checkedAt={null}
         now={NOW}
       />,
     );
@@ -944,7 +843,6 @@ describe("FleetPage data fetching", () => {
         onAttentionChange={() => {}}
         catalogue={CATALOGUE}
         conditions={[]}
-        checkedAt={null}
         now={NOW}
       />,
     );
@@ -954,7 +852,7 @@ describe("FleetPage data fetching", () => {
   });
 
   it("keeps the onboarding state for a hub with no hosts at all", () => {
-    render(<FleetPage rows={[]} checkedAt={null} now={NOW} />);
+    render(<FleetPage rows={[]} now={NOW} />);
 
     expect(screen.getByText(/no hosts yet/i)).toBeInTheDocument();
   });
@@ -971,7 +869,6 @@ describe("FleetPage data fetching", () => {
         onAttentionChange={() => {}}
         catalogue={CATALOGUE}
         conditions={[]}
-        checkedAt={null}
         now={NOW}
       />,
     );
@@ -988,27 +885,22 @@ describe("FleetPage data fetching", () => {
         conditionRows={[cond(1, "web-01")]}
         catalogue={CATALOGUE}
         attentionHref={(next) =>
-          next === "all"
-            ? "/?entity=containers"
-            : `/?entity=containers&attn=${next}`
+          next === "all" ? "/containers" : `/containers?attn=${next}`
         }
-        checkedAt={null}
         now={NOW}
       />,
     );
 
     expect(screen.getByRole("link", { name: /Failed units/ })).toHaveAttribute(
       "href",
-      "/?entity=containers&attn=failed-units",
+      "/containers?attn=failed-units",
     );
   });
 
   // A host with nothing wrong is never in an attention view, whichever way
   // the reader got there.
   it("offers no severity control when the whole fleet is healthy", () => {
-    render(
-      <FleetPage rows={[makeRow({ id: 1 })]} checkedAt={null} now={NOW} />,
-    );
+    render(<FleetPage rows={[makeRow({ id: 1 })]} now={NOW} />);
     expect(screen.queryByRole("button", { name: /critical/i })).toBeNull();
   });
 
@@ -1021,7 +913,6 @@ describe("FleetPage data fetching", () => {
         ]}
         conditionRows={[cond(2, "db-01"), fullDisk(2, "db-01")]}
         catalogue={CATALOGUE}
-        checkedAt={null}
         now={NOW}
       />,
     );
@@ -1053,7 +944,6 @@ describe("FleetPage data fetching", () => {
         ]}
         conditionRows={[cond(2, "db-01")]}
         catalogue={CATALOGUE}
-        checkedAt={null}
         now={NOW}
       />,
     );
@@ -1079,7 +969,6 @@ describe("FleetPage data fetching", () => {
         ]}
         conditionRows={[fullDisk(2, "db-01")]}
         catalogue={CATALOGUE}
-        checkedAt={null}
         now={NOW}
       />,
     );
@@ -1098,9 +987,7 @@ describe("FleetPage data fetching", () => {
   });
 
   it("draws no attention row for a healthy fleet", () => {
-    render(
-      <FleetPage rows={[makeRow({ id: 1 })]} checkedAt={null} now={NOW} />,
-    );
+    render(<FleetPage rows={[makeRow({ id: 1 })]} now={NOW} />);
     expect(screen.queryByRole("list", { name: /by kind/i })).toBeNull();
   });
 });
@@ -1112,7 +999,7 @@ describe("FleetPage stat figures as controls", () => {
 
     expect(screen.getByPlaceholderText(/filter hosts/i)).toBeInTheDocument();
 
-    await user.click(tile("/?entity=containers"));
+    await user.click(tile("/containers"));
 
     expect(
       screen.getByPlaceholderText(/filter containers/i),
@@ -1134,28 +1021,28 @@ describe("FleetPage stat figures as controls", () => {
     renderPage();
 
     expect(tile("/")).not.toBeNull();
-    expect(tile("/?entity=containers")).not.toBeNull();
+    expect(tile("/containers")).not.toBeNull();
   });
 
   // The heading on the containers tab has just counted the containers; the
   // figure would restate that number directly under its own sentence.
-  it("drops the containers figure on the containers tab", () => {
+  // It used to be dropped here, because the heading on this list had just
+  // counted the containers and the figure would have restated that number
+  // directly under its own sentence. The heading counts nothing now, so this
+  // is the only place either page says how many there are.
+  it("keeps the containers figure on the containers list", () => {
     renderPage({ entity: "containers" });
 
-    expect(tile("/?entity=containers")).toBeNull();
+    expect(tile("/containers")).not.toBeNull();
     expect(tile("/")).not.toBeNull();
   });
 
-  // Unless the heading counted nothing. A fan-out that has not answered
-  // leaves the heading at the bare word "Containers", and the figure is then
-  // the only thing on the tab that can say the count is not known.
-  it("keeps the containers figure when the heading counts nothing", () => {
+  // A fan-out that has not answered knows nothing about the count, and the
+  // absent marker is what says so -- 0 would be a claim.
+  it("marks the containers figure absent when nobody has answered", () => {
     render(<FleetPage now={NOW} rows={[makeRow()]} entity="containers" />);
 
-    expect(
-      screen.getByRole("heading", { level: 1, name: "Containers" }),
-    ).toBeInTheDocument();
-    expect(tile("/?entity=containers")).not.toBeNull();
+    expect(tile("/containers")).not.toBeNull();
     expect(screen.getByText(ABSENT)).toBeInTheDocument();
   });
 

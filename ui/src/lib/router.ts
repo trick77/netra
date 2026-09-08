@@ -24,6 +24,11 @@ import type { HostTab } from "../features/host/HostPage";
  */
 export type Route =
   | { name: "fleet" }
+  // A page of its own, not a reading of the fleet: the two lists have
+  // different columns, different vocabularies and now different URLs. Both
+  // still render FleetPage -- the entity is what it takes -- but a link to
+  // one is no longer a query parameter on the other.
+  | { name: "containers" }
   | { name: "host"; hostId: string; tab: HostTab }
   | { name: "container"; hostId: string; key: string }
   | { name: "events" }
@@ -160,6 +165,7 @@ export function parseRoute(pathname: string): Route {
   }
 
   if (parts.length === 1) {
+    if (parts[0] === "containers") return { name: "containers" };
     if (parts[0] === "events") return { name: "events" };
     if (parts[0] === "settings") return { name: "settings" };
     if (parts[0] === "login") return { name: "login" };
@@ -175,6 +181,8 @@ export function routePath(route: Route): string {
   switch (route.name) {
     case "fleet":
       return "/";
+    case "containers":
+      return "/containers";
     case "host":
       return `/hosts/${encodeURIComponent(route.hostId)}/${route.tab}`;
     case "container":
