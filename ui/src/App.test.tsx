@@ -467,6 +467,10 @@ describe("the top bar", () => {
   // A detail page is not its own destination -- there is no glyph for one
   // host -- so it marks the list it came out of. Marking nothing left the bar
   // saying "nowhere" on the two pages a reader spends the most time in.
+  //
+  // "true", not "page": the link points at the LIST, and announcing it as the
+  // current page would tell a screen-reader user that the one link they need
+  // from a detail page is the page they are already on.
   it.each([
     ["/hosts/3/overview", "Hosts"],
     ["/containers/3/web", "Containers"],
@@ -480,12 +484,12 @@ describe("the top bar", () => {
 
     expect(bar.getByRole("link", { name: label })).toHaveAttribute(
       "aria-current",
-      "page",
+      "true",
     );
+    // Marked once, whichever token it is: two entries claiming "you are here"
+    // says nothing, and no entry saying it is what this replaced.
     expect(
-      bar
-        .getAllByRole("link")
-        .filter((a) => a.getAttribute("aria-current") === "page"),
+      bar.getAllByRole("link").filter((a) => a.hasAttribute("aria-current")),
     ).toHaveLength(1);
   });
 

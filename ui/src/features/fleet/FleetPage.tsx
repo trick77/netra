@@ -498,11 +498,11 @@ export function FleetPage({
   // takes over the moment a reader clicks a header.
 
   return (
-    // A named wrapper rather than a fragment: this page's list is flush with
-    // the page instead of framed as a card, and its toolbar closes the
-    // chrome with a rule -- both are scoped to .fleet so the host page and
-    // the container detail keep the card treatment they share with every
-    // other table in the app.
+    // A named wrapper rather than a fragment: what is scoped to .fleet is the
+    // list's own spacing and the toolbar above it. The list itself is the
+    // framed, striped box every other table in the app draws -- it used to be
+    // flush with the page instead, so which table style you got depended on
+    // which page you were on.
     <div className="fleet">
       {error !== null ? (
         <p className="note" role="alert">
@@ -588,16 +588,13 @@ export function FleetPage({
           to read first. The attention row is what this page is for; these are
           context for it, and are set as context. See StatRail. */}
       <StatRail>
-        {/* The first two figures count a set the page can show, and sit
-            directly above the tabs that show it -- so they are the control
-            they already looked like. Their hrefs match the tabs' own, which
-            is what keeps them bookmarkable and what makes clicking one the
-            same act as clicking the tab. */}
+        {/* The first two figures count a set that has a page of its own, so
+            they are links to it -- the same two destinations the bar's first
+            two glyphs carry. Real hrefs, which is what keeps them
+            bookmarkable and what makes cmd-click work. */}
         <StatFigure
           value={reporting}
-          // Pluralised, like the all-clear sentence directly above it: a
-          // one-host fleet read "of 1 hosts reporting" against a line already
-          // saying "All 1 host reporting".
+          // Pluralised: a one-host fleet read "of 1 hosts reporting".
           label={`of ${hostRows.length} host${
             hostRows.length === 1 ? "" : "s"
           } reporting`}
@@ -663,12 +660,15 @@ export function FleetPage({
         />
       ) : null}
 
-      <div className="toolbar">
-        {/* The filter it composes with is up in the title row now -- both of
-            them change WHICH hosts are in the list. Hosts only -- every
-            condition netra has is host-level, so on the Containers tab this
-            control would offer three segments that all show the same list. */}
-        {entity === "hosts" && troubled > 0 ? (
+      {/* The severity segments, and nothing else -- the filter they compose
+          with is up in the title row now. Rendered only when there ARE
+          segments: the toolbar used to hold the filter as well, so it always
+          had something in it, and an empty one is a band of padding above a
+          list that has not started. Hosts only -- every condition netra has is
+          host-level, so on the containers list this control would offer three
+          segments that all show the same rows. */}
+      {entity === "hosts" && troubled > 0 ? (
+        <div className="toolbar">
           <Segmented
             options={[
               { value: "all", label: `All ${hostRows.length}` },
@@ -696,9 +696,9 @@ export function FleetPage({
             }
             onChange={(next) => setAttention(next as AttentionFilter)}
           />
-        ) : null}
-        <div className="spacer" />
-      </div>
+          <div className="spacer" />
+        </div>
+      ) : null}
 
       {entity === "hosts" && !filtered ? (
         // Says what was left out, and how to stop leaving it out. The band's

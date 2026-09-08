@@ -134,7 +134,7 @@ export default function App() {
             <NavLink
               href="/"
               icon={Server}
-              active={route.name === "fleet" || route.name === "host"}
+              active={here(route.name, "fleet", "host")}
             >
               Hosts
             </NavLink>
@@ -145,14 +145,14 @@ export default function App() {
             <NavLink
               href="/containers"
               icon={LayoutGrid}
-              active={route.name === "containers" || route.name === "container"}
+              active={here(route.name, "containers", "container")}
             >
               Containers
             </NavLink>
             <NavLink
               href="/events"
               icon={Bell}
-              active={route.name === "events"}
+              active={here(route.name, "events")}
             >
               Events
             </NavLink>
@@ -165,7 +165,7 @@ export default function App() {
             <NavLink
               href="/admin/hosts"
               icon={KeyRound}
-              active={route.name === "admin"}
+              active={here(route.name, "admin")}
             >
               Agents
             </NavLink>
@@ -179,7 +179,7 @@ export default function App() {
             <NavLink
               href="/settings"
               icon={Settings2}
-              active={route.name === "settings"}
+              active={here(route.name, "settings")}
             >
               Settings
             </NavLink>
@@ -299,6 +299,31 @@ function useDocumentTitle(route: Route) {
   }, [page]);
 }
 
+/**
+ * Which of the two "you are here" states an entry is in.
+ *
+ * "page" is this URL. "true" is the list a detail page came out of: the bar
+ * marks Hosts while the reader is on /hosts/3, and announcing THAT link as
+ * the current PAGE tells a screen-reader user the one link they need -- the
+ * way back to the list -- is the page they are already on. "true" is aria's
+ * word for "current within this set, but not this URL". Same fill either
+ * way; the distinction is only ever spoken.
+ */
+type Here = "page" | "true" | null;
+
+/**
+ * Where the reader is, relative to one bar entry: the entry's own page, a
+ * detail page under it, or somewhere else entirely.
+ */
+function here(
+  current: Route["name"],
+  page: Route["name"],
+  ...under: Route["name"][]
+): Here {
+  if (current === page) return "page";
+  return under.includes(current) ? "true" : null;
+}
+
 function NavLink({
   href,
   active,
@@ -306,7 +331,7 @@ function NavLink({
   children,
 }: {
   href: string;
-  active: boolean;
+  active: Here;
   icon: LucideIcon;
   // A string, not a node: it has to survive into data-tip as well as into
   // the hidden label, and only one of those can hold markup.
@@ -319,7 +344,7 @@ function NavLink({
     // at all.
     <a
       href={href}
-      aria-current={active ? "page" : undefined}
+      aria-current={active === null ? undefined : active}
       data-tip={children}
     >
       <Icon aria-hidden="true" />

@@ -2192,13 +2192,13 @@ tbody tr:hover .host-cell-name {
      scrolled sideways a little and .seg was crushed to 2px trying to fit. */
   flex-wrap: wrap;
 }
-/* The fleet's toolbar closes the page's chrome: a rule under it, so the head,
-   the chips and the controls read as one block and the list starts below a
-   line rather than in mid-air. */
+/* The fleet's toolbar used to close the page's chrome with a rule under it,
+   so the head, the chips and the controls read as one block and the list
+   started below a line rather than in mid-air. The list is a framed box now
+   and draws its own top edge, so that rule landed a second hairline one gap
+   above the first. The frame is the line. */
 .fleet .toolbar {
-  padding-bottom: var(--space-3);
-  margin-bottom: 0;
-  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-4);
 }
 /* The filter and the key that focuses it, in one box. Relative so the hint
    can sit inside the field's right edge instead of beside it, which would
@@ -3600,6 +3600,45 @@ svg.spark {
   }
 }
 
+/* ── The bar takes a second line ───────────────────────────────────────
+   Every item in the bar is fixed-width -- six 36px squares, a wordmark and a
+   button -- so below about 430px they add up to more than the window and the
+   PAGE scrolls sideways, which is the one thing this file says a layout must
+   never do. Measured at 320px it overflowed by 67px.
+
+   Nothing is dropped to fix it: the glyphs get a row of their own, spread
+   across it, with the wordmark and the action on the line above. That is what
+   the rail did at this width too, for the same reason. */
+@media (max-width: 430px) {
+  .topbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: var(--space-2) var(--space-3);
+    row-gap: var(--space-2);
+  }
+  /* Ordered, not just wrapped: source order puts the nav between the spacer
+     and the action, so a nav claiming a whole line pushed Add host onto a
+     THIRD one. The action moves up beside the wordmark and the glyphs take
+     the line below both. */
+  .topbar .nav {
+    order: 2;
+    flex: 1 0 100%;
+  }
+  .addhost {
+    order: 1;
+  }
+  .navgroup {
+    width: 100%;
+    justify-content: space-between;
+    gap: 0;
+  }
+  /* It separated the destinations from the action; they are on different
+     lines now, which says it without a rule. */
+  .topbar-sep {
+    display: none;
+  }
+}
+
 /* ── Content-width overrides ───────────────────────────────────────────
    These fire on the VIEWPORT, but every one of them is really about the width
    the CONTENT gets. The two were different numbers while a 56px rail stood
@@ -4183,15 +4222,11 @@ summary:focus-visible,
    page, and with a bar overhead and a title above the rows the frame is what
    ends the list rather than what boxes the page.
 
-   The stripe climbs a rung with its ground. --surface over --bg was the
-   fleet's step against the page; inside a --surface box the same 1.08:1 step
-   is --surface-2, and hover moves up to --raised to stay above it. */
-.tablewrap tbody tr:nth-child(even):not(.grouprow) {
-  background: var(--surface-2);
-}
-.tablewrap tbody tr:hover:not(.grouprow) {
-  background: var(--raised);
-}
+   Nothing is added here for the tables: the bare `tbody tr:nth-child(even)`
+   stripe and its hover have been the app's rule all along, and what the fleet
+   had was an OVERRIDE of them -- a full-bleed box with the stripe dropped a
+   rung to match. Removing that override is the whole change; restating the
+   rule under .tablewrap would only be a second place to keep in sync. */
 /* The events log is the one list that is not a table -- .evrow is a grid, in
    a card -- and it stripes like one. The row reaches the card's own edge
    rather than stopping inside its padding, so a stripe is a band across the
