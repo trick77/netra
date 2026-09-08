@@ -189,6 +189,24 @@ describe("containerColumns", () => {
       expect(container.querySelector(".upmark")).toBeNull();
     });
 
+    // "up 20 m" beside a badge reading Silent is a mark contradicting the
+    // column next to it. api.ts states the rule on the field: now - started_at
+    // is uptime only while the row is still reporting.
+    it("says nothing about uptime once the row has stopped reporting", () => {
+      const { container } = renderRows(
+        [
+          makeRow({
+            started_at: "2026-08-10T13:56:00Z",
+            last_seen: "2026-08-10T13:50:00Z",
+            host_last_seen: "2026-08-10T14:00:00Z",
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("silent")).toBeInTheDocument();
+      expect(container.querySelector(".upmark")).toBeNull();
+    });
+
     // A host clock ahead of the hub's is skew, not a container that has been
     // up for negative time.
     it("clamps a start time in the future rather than printing it", () => {

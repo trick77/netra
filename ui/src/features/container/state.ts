@@ -79,6 +79,51 @@ export const STARTING_STUCK_S = 5 * 60;
 export const UPTIME_MARK_S = 60 * 60;
 
 /**
+ * How long this container has been up, or null when nothing here says it is.
+ *
+ * `now - started_at` is uptime only while the container is still REPORTING.
+ * api.ts states the rule on the field itself: for a row that has gone quiet
+ * the honest statement is "up for at least last_seen - started_at", because
+ * nothing on the wire says it is still running. Without this guard a
+ * container that came up twenty minutes ago and stopped fifteen minutes ago
+ * reads `up 20 m` beside a badge saying `silent`, and the mark contradicts
+ * the column next to it -- which is the bug the gone pill and the Status
+ * column already had once.
+ *
+ * SILENT_AFTER_S is the same threshold deriveState calls it silent at, so the
+ * two never disagree: the instant a row stops being Reporting, the uptime it
+ * carries stops being a reading. That covers silent, gone, host-down and a
+ * container Docker has exited in ONE predicate, because all four are the same
+ * fact -- no sample has arrived.
+ *
+ * Null for an absent or unparseable start time as well, which is the null
+ * `restart_count` reports and never means "just started".
+ */
+export function uptimeSeconds({
+  startedAt,
+  lastSeen,
+  now,
+}: {
+  startedAt: string | null | undefined;
+  lastSeen: string | null | undefined;
+  now: Date;
+}): number | null {
+  if (!startedAt) return null;
+  const startedMs = Date.parse(startedAt);
+  if (Number.isNaN(startedMs)) return null;
+
+  if (!lastSeen) return null;
+  const lastSeenMs = Date.parse(lastSeen);
+  if (Number.isNaN(lastSeenMs)) return null;
+  if ((now.getTime() - lastSeenMs) / 1000 > SILENT_AFTER_S) return null;
+
+  // A start time in the future is a clock skewed between the host and the
+  // hub, not a container that has been up for negative time. Clamped rather
+  // than printed: "up -3 m" reads as a netra bug to whoever sees it.
+  return Math.max(0, Math.round((now.getTime() - startedMs) / 1000));
+}
+
+/**
  * What a state IS, as opposed to what it is called.
  *
  * The kind is what the counts line groups by and what `?attn=` carries, the

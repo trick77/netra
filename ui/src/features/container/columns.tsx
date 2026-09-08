@@ -91,6 +91,7 @@ import {
   stateKindRank,
   STARTING_STUCK_S,
   UPTIME_MARK_S,
+  uptimeSeconds,
   type DerivedState,
 } from "./state";
 
@@ -850,8 +851,9 @@ function RestartMark({
  * How long ago this container came up, as a mark beside its name -- and only
  * while that is recent.
  *
- * Nothing at all above UPTIME_MARK_S, and nothing when the host's agent could
- * not report a start time, which is the same shape RestartMark uses: no
+ * Nothing at all above UPTIME_MARK_S, nothing when the host's agent could not
+ * report a start time, and nothing once the row stops reporting -- see
+ * uptimeSeconds, which owns that last rule. Same shape as RestartMark: no
  * column, no dashes, no heading over a stack of blanks. A container that has
  * been up for six weeks says what it has to say by staying silent.
  *
@@ -864,16 +866,12 @@ function RestartMark({
  * measured. The exact instant is in the title for the reader who wants it.
  */
 function UptimeMark({ row, now }: { row: ContainerRow; now: Date }) {
-  if (!row.started_at) return null;
-  const startedMs = Date.parse(row.started_at);
-  if (Number.isNaN(startedMs)) return null;
-
-  const seconds = (now.getTime() - startedMs) / 1000;
-  // A start time in the future is a clock skewed between the host and the
-  // hub, not a container that has been up for negative time. Clamp rather
-  // than print "up -3 m", which would read as a netra bug to whoever saw it.
-  const age = Math.max(0, Math.round(seconds));
-  if (age >= UPTIME_MARK_S) return null;
+  const age = uptimeSeconds({
+    startedAt: row.started_at,
+    lastSeen: row.last_seen,
+    now,
+  });
+  if (age === null || age >= UPTIME_MARK_S) return null;
 
   return (
     <span

@@ -162,6 +162,21 @@ describe("ContainerPage", () => {
     expect(screen.queryByText(/ up /)).toBeNull();
   });
 
+  // The header badge and the figure beside it must not disagree. Nothing on
+  // the wire says a container that stopped reporting is still running, so
+  // "up 20 m" beside Silent is a claim netra cannot make -- see api.ts on
+  // started_at, and uptimeSeconds, which both surfaces call.
+  it("says nothing about uptime once the container has stopped reporting", () => {
+    renderPage({
+      container: {
+        ...CONTAINER,
+        started_at: "2026-08-10T13:40:00Z",
+        last_seen: "2026-08-10T13:45:00Z",
+      },
+    });
+    expect(screen.queryByText(/ up /)).toBeNull();
+  });
+
   // An empty traffic chart claims this container moved no bytes. When the
   // agent has told us it could not enter the host's network namespaces, that
   // claim is false and the agent's own sentence is the answer.
