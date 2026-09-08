@@ -125,13 +125,15 @@ type Containers struct {
 	procRoot   string
 	lister     ContainerLister
 
-	// inspector reads Docker's RestartCount, and restarts caches what it
-	// returned so it does not have to be asked again. Both are touched only on
-	// the scrape goroutine -- refreshRestarts and the row build that follows it
-	// -- so unlike netNSDenied they need no mutex; restartCapability is the one
-	// piece Capabilities reads from another goroutine and it is guarded below.
+	// inspector reads what only /containers/{id}/json answers -- Docker's
+	// RestartCount and the current incarnation's StartedAt -- and inspects
+	// caches what it returned so it does not have to be asked again. Both are
+	// touched only on the scrape goroutine -- refreshInspect and the row build
+	// that follows it -- so unlike netNSDenied they need no mutex;
+	// restartCapability is the one piece Capabilities reads from another
+	// goroutine and it is guarded below.
 	inspector ContainerInspector
-	restarts  map[string]restartEntry
+	inspects  map[string]inspectEntry
 	scrapeN   uint64
 	// inspectFailStreak counts CONSECUTIVE scrapes on which every inspect
 	// attempted was refused. It is what separates a daemon that will not answer
@@ -522,7 +524,7 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 	// The row loop below reaches the same conclusion for its own purpose --
 	// it refuses to rate a counter that went backwards -- but it reaches it
 	// too late and with a `continue`, so the restart it just detected would
-	// go unreported. Computed here, it is what tells refreshRestarts which
+	// go unreported. Computed here, it is what tells refreshInspect which
 	// ids are worth a request.
 	recreated := make(map[string]bool)
 	for id, n := range cur {
@@ -530,7 +532,7 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 			recreated[id] = true
 		}
 	}
-	c.refreshRestarts(ctx, meta, recreated)
+	c.refreshInspect(ctx, meta, recreated)
 
 	ids := make([]string, 0, len(cur))
 	for id := range cur {
@@ -597,8 +599,16 @@ func (c *Containers) Collect(ctx context.Context) (*Result, error) {
 		if m.Labels != nil {
 			row.Labels = &netrav1.ContainerLabels{Values: c.cappedLabels(id, m.Labels)}
 		}
-		if restarts, ok := c.readRestart(id); ok {
-			row.RestartCount = ptrTo(restarts)
+		if st, ok := c.readInspect(id); ok {
+			row.RestartCount = ptrTo(st.RestartCount)
+			// Asymmetric on purpose. The two share a cache entry, so they
+			// arrive and are dropped together -- but a container Docker
+			// reports the zero time for, or whose StartedAt would not parse,
+			// still has a perfectly good count. Sending a zero instant would
+			// put it at 1970 and assert an uptime of 56 years.
+			if !st.StartedAt.IsZero() {
+				row.StartedAtMs = ptrTo(st.StartedAt.UnixMilli())
+			}
 		}
 		// Gauges: reported on every scrape a container survives, unlike the
 		// rates above which need a previous reading -- but only where the

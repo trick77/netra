@@ -321,3 +321,22 @@ export const GRID_WIDTH = 1;
  */
 export const ZERO_STROKE = "var(--axis)";
 export const ZERO_WIDTH = 1;
+
+// A saturation cell is as wide as the sparkline it draws, from the same
+// constant the chart uses, so the now-bar under a chart is exactly the chart's
+// width. Inline rather than a CSS literal: the stylesheet has copied
+// SPARK_WIDTH before and been left behind when it moved (see the note above
+// .tablewrap svg.spark in index.css).
+//
+// Here rather than in hostColumns because the CONTAINER list draws the same
+// cell now. Two copies of 175 in two files is exactly the drift the note this
+// comment points at describes happening once already.
+export const METRIC_CELL_STYLE = { width: SPARK_WIDTH };
+
+// The gap .metric-cell puts between its chart and its now-line, in index.css.
+// Named for the cells that cannot draw a chart -- a mount with no bucket
+// carrying both used and free, a container with no series, and every
+// hand-built row in the tests -- which reserve the chart's height plus this gap
+// above their own bar so every bar in a row still forms one line. Without it a
+// chartless cell sits centred and its bar lands 16px above the others.
+export const METRIC_CELL_GAP = 3;

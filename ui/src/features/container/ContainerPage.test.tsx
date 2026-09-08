@@ -75,6 +75,11 @@ const CONTAINER: Container = {
   docker_state: null,
   health: null,
   state_since: null,
+  started_at: null,
+  restarts_window: 0,
+  recreates_window: 0,
+  last_restart: null,
+  restarts_window_seconds: 86400,
   restart_count: null,
   labels: null,
   last_seen: "2026-08-10T14:00:00Z",
@@ -138,6 +143,38 @@ describe("ContainerPage", () => {
       expect(link).toHaveAttribute("href", "/hosts/3/overview");
     }
     expect(screen.getAllByText("nginx:1.27").length).toBeGreaterThan(0);
+  });
+
+  // The one surface where a bare uptime figure belongs, whatever the answer
+  // is: "when did this last come up" is a reason someone opened this page.
+  // The lists draw it only while it is short -- see UPTIME_MARK_S.
+  it("prints uptime in the header however long the container has been up", () => {
+    renderPage({
+      container: { ...CONTAINER, started_at: "2026-06-30T09:00:00Z" },
+    });
+    expect(screen.getByText(/up 41 d 5 h/)).toBeInTheDocument();
+  });
+
+  // Absent, not dashed. Every host whose socket refuses inspect reports no
+  // start time, and a dash would present that as a reading.
+  it("says nothing about uptime when there is no start time", () => {
+    renderPage({ container: { ...CONTAINER, started_at: null } });
+    expect(screen.queryByText(/ up /)).toBeNull();
+  });
+
+  // The header badge and the figure beside it must not disagree. Nothing on
+  // the wire says a container that stopped reporting is still running, so
+  // "up 20 m" beside Silent is a claim netra cannot make -- see api.ts on
+  // started_at, and uptimeSeconds, which both surfaces call.
+  it("says nothing about uptime once the container has stopped reporting", () => {
+    renderPage({
+      container: {
+        ...CONTAINER,
+        started_at: "2026-08-10T13:40:00Z",
+        last_seen: "2026-08-10T13:45:00Z",
+      },
+    });
+    expect(screen.queryByText(/ up /)).toBeNull();
   });
 
   // An empty traffic chart claims this container moved no bytes. When the

@@ -43,6 +43,87 @@ export const SILENT_AFTER_S = 180;
 export const MEM_PRESSURE_PCT = 90;
 
 /**
+ * How long a container may report `health: starting` before it is stuck.
+ *
+ * Five minutes, which is comfortably past the longest start-period anyone
+ * writes by hand and five scrape intervals at the 60s default. Under it a
+ * container is doing exactly what it was told to do and saying so would put a
+ * warning on every deploy; past it the healthcheck is not going to pass on its
+ * own, and nothing else in netra would ever have mentioned it.
+ *
+ * Measured from Docker's own start time, which is why this state could not
+ * exist before that was collected: `health` says a check has not passed, and
+ * on its own it cannot tell two seconds from two days.
+ */
+export const STARTING_STUCK_S = 5 * 60;
+
+/**
+ * How young a container has to be before its uptime is worth printing.
+ *
+ * An hour. Uptime is not a column (see the note at the top of columns.tsx):
+ * "up 41 d" is not a thing anyone scans a column for, and a column of it
+ * would be blank on every host whose socket refuses inspect. It is a MARK,
+ * drawn only while the answer is "this came up just now" -- which is the one
+ * uptime fact worth seeing beside a container that is misbehaving.
+ *
+ * The accepted cost is a threshold the reader cannot see: above an hour the
+ * mark's absence is indistinguishable from a container with no start time at
+ * all. That is the same shape the restart mark already has -- nothing is
+ * drawn rather than a dash -- and it buys a name cell that stays quiet on the
+ * four hundred rows where uptime says nothing.
+ *
+ * The amber tier is STARTING_STUCK_S above, deliberately: the two thresholds
+ * are the same clock read twice, and a second "five minutes" invented here
+ * would drift the day that one moves.
+ */
+export const UPTIME_MARK_S = 60 * 60;
+
+/**
+ * How long this container has been up, or null when nothing here says it is.
+ *
+ * `now - started_at` is uptime only while the container is still REPORTING.
+ * api.ts states the rule on the field itself: for a row that has gone quiet
+ * the honest statement is "up for at least last_seen - started_at", because
+ * nothing on the wire says it is still running. Without this guard a
+ * container that came up twenty minutes ago and stopped fifteen minutes ago
+ * reads `up 20 m` beside a badge saying `silent`, and the mark contradicts
+ * the column next to it -- which is the bug the gone pill and the Status
+ * column already had once.
+ *
+ * SILENT_AFTER_S is the same threshold deriveState calls it silent at, so the
+ * two never disagree: the instant a row stops being Reporting, the uptime it
+ * carries stops being a reading. That covers silent, gone, host-down and a
+ * container Docker has exited in ONE predicate, because all four are the same
+ * fact -- no sample has arrived.
+ *
+ * Null for an absent or unparseable start time as well, which is the null
+ * `restart_count` reports and never means "just started".
+ */
+export function uptimeSeconds({
+  startedAt,
+  lastSeen,
+  now,
+}: {
+  startedAt: string | null | undefined;
+  lastSeen: string | null | undefined;
+  now: Date;
+}): number | null {
+  if (!startedAt) return null;
+  const startedMs = Date.parse(startedAt);
+  if (Number.isNaN(startedMs)) return null;
+
+  if (!lastSeen) return null;
+  const lastSeenMs = Date.parse(lastSeen);
+  if (Number.isNaN(lastSeenMs)) return null;
+  if ((now.getTime() - lastSeenMs) / 1000 > SILENT_AFTER_S) return null;
+
+  // A start time in the future is a clock skewed between the host and the
+  // hub, not a container that has been up for negative time. Clamped rather
+  // than printed: "up -3 m" reads as a netra bug to whoever sees it.
+  return Math.max(0, Math.round((now.getTime() - startedMs) / 1000));
+}
+
+/**
  * What a state IS, as opposed to what it is called.
  *
  * The kind is what the counts line groups by and what `?attn=` carries, the
@@ -58,6 +139,7 @@ export type ContainerStateKind =
   | "silent"
   | "unhealthy"
   | "restarting"
+  | "starting"
   | "paused"
   | "mem-pressure"
   | "series-gap"
@@ -109,6 +191,20 @@ export interface DerivedStateInput {
   gone?: boolean;
   silentAfterS?: number;
   /**
+   * When Docker says this container's current incarnation started, from
+   * containers.started_at.
+   *
+   * The `starting` branch needs it and cannot exist without it: `health` says
+   * a healthcheck has not passed yet, and NOTHING on the wire says how long
+   * that has been true. A container two seconds into its start-period and one
+   * wedged forever report the identical word, so without a start time the only
+   * honest thing to do is say nothing -- which is what netra did.
+   *
+   * Null is "no agent could inspect it", and the branch then does not fire:
+   * absent is not "just started".
+   */
+  startedAtMs?: number | null;
+  /**
    * Docker's own word for what the container is doing, from
    * containers.docker_state.
    *
@@ -151,6 +247,7 @@ export function deriveState({
   dockerState = null,
   health = null,
   restartsInWindow = null,
+  startedAtMs = null,
 }: DerivedStateInput): DerivedState {
   // First, above every branch that reads the sample stream, because this one
   // says the stream STOPPED while the host kept posting -- which is the fact
@@ -243,6 +340,34 @@ export function deriveState({
     };
   }
 
+  // Stuck in its healthcheck, which is a different fault from failing one.
+  //
+  // Below `restarting` and above `unhealthy` on purpose. A container Docker is
+  // restarting reports "starting" on every fresh attempt, so the crash loop
+  // must win or a looping container would read as one that is merely slow to
+  // come up. And a healthcheck that has actually FAILED is worse news than one
+  // that has not answered yet.
+  //
+  // Gated on duration, and it is the gate that makes this a state at all: the
+  // word "starting" alone cannot separate a container doing what it was told
+  // from one that will never be ready, and netra said nothing rather than
+  // guess. With a start time it can wait STARTING_STUCK_S and then say so.
+  // Absent a start time it still says nothing -- the list draws a plain badge
+  // instead, which claims only that the container is not ready.
+  if (
+    health === "starting" &&
+    startedAtMs !== null &&
+    startedAtMs !== undefined &&
+    (now.getTime() - startedAtMs) / 1000 > STARTING_STUCK_S
+  ) {
+    return {
+      kind: "starting",
+      label: "stuck starting",
+      severity: "warning",
+      why: "the container's HEALTHCHECK has not passed since it started, so it is not becoming ready",
+    };
+  }
+
   if (health === "unhealthy") {
     return {
       kind: "unhealthy",
@@ -326,6 +451,7 @@ export function deriveState({
 export const FILTERABLE_STATE_KINDS: readonly ContainerStateKind[] = [
   "unhealthy",
   "restarting",
+  "starting",
   "silent",
   "gone",
   "mem-pressure",
@@ -349,6 +475,7 @@ const KIND_LABEL: Record<ContainerStateKind, string> = {
   silent: "silent",
   unhealthy: "unhealthy",
   restarting: "restarting",
+  starting: "stuck starting",
   paused: "paused",
   "mem-pressure": "near mem_limit",
   "series-gap": "series gap",
@@ -372,6 +499,7 @@ const KIND_SEVERITY: Record<ContainerStateKind, Severity> = {
   silent: "warning",
   unhealthy: "critical",
   restarting: "critical",
+  starting: "warning",
   paused: "neutral",
   "mem-pressure": "warning",
   "series-gap": "warning",
@@ -410,14 +538,15 @@ export function isContainerStateKind(
 const KIND_RANK: Record<ContainerStateKind, number> = {
   unhealthy: 0,
   restarting: 1,
-  silent: 2,
-  gone: 3,
-  "mem-pressure": 4,
-  "series-gap": 5,
-  paused: 6,
-  "host-down": 7,
-  "no-samples": 8,
-  reporting: 9,
+  starting: 2,
+  silent: 3,
+  gone: 4,
+  "mem-pressure": 5,
+  "series-gap": 6,
+  paused: 7,
+  "host-down": 8,
+  "no-samples": 9,
+  reporting: 10,
 };
 
 export function stateKindRank(kind: ContainerStateKind): number {
@@ -435,5 +564,6 @@ export function stateKindRank(kind: ContainerStateKind): number {
 export const DOCKER_STATED_KINDS: ReadonlySet<ContainerStateKind> = new Set([
   "unhealthy",
   "restarting",
+  "starting",
   "paused",
 ]);

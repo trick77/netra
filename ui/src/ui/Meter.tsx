@@ -4,6 +4,7 @@
 // button), not a data or severity fill. See index.css's comment above
 // `.meter`. Links and the active nav entry rest in ink and are no longer on
 // that list -- see the comment above `a` in index.css.
+import { NEUTRAL_TREND_COLOR } from "./StatTile";
 import type { ReactNode } from "react";
 import { ABSENT, percent } from "../lib/format";
 import type { Severity } from "./Badge";
@@ -39,6 +40,56 @@ export const SEVERITY_COLOR: Record<FillSeverity, string> = {
   warning: "var(--st-warn)",
   critical: "var(--st-crit)",
 };
+
+/**
+ * The colour a saturation silhouette is drawn in: the severity of
+ * what it is reading NOW, from the same 70/95 the bar under it uses.
+ *
+ * ONE colour system in the row, and it means severity. The three cells were
+ * --cpu-1, --mem-used and --s6, hues that answered "which column is this" --
+ * which the header answers already -- and an amber memory silhouette sat
+ * beside an amber warn bar meaning something else entirely. They were then
+ * all --ink-2, which fixed the collision by giving the silhouette nothing to
+ * say at all: grey is also how this table draws a host with no data and one
+ * that stopped reporting, so a healthy row and an empty one read alike.
+ *
+ * So the whole cell agrees instead. Silhouette, bar and figure take one
+ * severity, and a row that is fine is green in all three -- a statement that
+ * netra measured this, not the absence of one. Green is also the colour the
+ * eye skips, which is what a fleet list wants: the rows that went amber are
+ * the only ones that break the field.
+ *
+ * The CURRENT severity over the whole shape, not a line that changes hue at
+ * the point it crossed 70: the cell is a reading of now with its history
+ * behind it, and a two-tone line would say "it started filling here", which
+ * is not what a threshold means. The fill weight is unchanged
+ * (AREA_FILL_OPACITY) -- the shade still says how high the line sits.
+ *
+ * NEUTRAL_TREND_COLOR when there is no current value to judge: a host that
+ * stopped reporting still draws the history it has, and colouring that by a
+ * severity nobody measured would be an invention. The now-bar is already
+ * absent in that case, so the cell reads as history without a reading.
+ *
+ * NOT the traffic cell. A rate has no ceiling, so there is no percentage, no
+ * threshold and no severity to draw -- it keeps --in-1/--out-1, where hue
+ * separates in from out across the midline.
+ *
+ * Cell and the host page's tiles, which follow the same rule (see
+ * overviewTiles.ts trendColor). The ENLARGED views and the host page's chart
+ * panels keep the full palette: a dialog is a chart someone opened to read,
+ * not a mark scanned down a column, and its stacks name their bands by colour.
+ *
+ * Lives here rather than in hostColumns because the CONTAINER list uses it
+ * too now. Its cells were --s1 blue and --cmem-1 amber whatever they were
+ * reading, so a container at 96 %% of its memory limit drew the same amber as
+ * one at 4 %% -- the collision this function was written to end, left standing
+ * one directory over.
+ */
+export function trendColor(pct: number | null): string {
+  return pct === null
+    ? NEUTRAL_TREND_COLOR
+    : SEVERITY_COLOR[severityFromPercent(pct)];
+}
 
 const SERIES_VAR: Record<1 | 2 | 3 | 4, string> = {
   1: "var(--s1)",

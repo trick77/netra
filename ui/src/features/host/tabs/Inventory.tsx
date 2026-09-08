@@ -42,6 +42,7 @@ import { EmptyState } from "../../../ui/EmptyState";
 import { Table, type Column, type TableProps } from "../../../ui/Table";
 import { Meter, SEVERITY_CLASS } from "../../../ui/Meter";
 import { When } from "../../../ui/When";
+import { stateKindLabel } from "../../container/state";
 import { rangeLabel, type Range } from "../../../lib/range";
 import { RAIL_RANGES } from "../../../lib/range";
 import { griddedValues, latestValue, windowNotice } from "../../../lib/metrics";
@@ -52,7 +53,8 @@ import { fetchHostFamily } from "../../fleet/hostTrends";
 import {
   composeIdentity,
   containerColumns,
-  ContainerGroupTotals,
+  containerGroupCells,
+  containerGroupWorst,
   containerSeverity,
   lastReported,
   trendScales,
@@ -216,26 +218,46 @@ const BY_PROJECT = {
     const { project } = composeIdentity(row.container_key);
     return project === ABSENT ? "" : project;
   },
-  label: (key: string, group: readonly ContainerRow[]) => (
-    <>
-      <span>{projectName(key)}</span>
-      <span className="groupcount">
-        {" · "}
-        {group.length} container{group.length === 1 ? "" : "s"}
-      </span>
-    </>
-  ),
+  label: (key: string, group: readonly ContainerRow[]) => {
+    const worst = containerGroupWorst(group);
+    return (
+      <>
+        <span className="proj">{projectName(key)}</span>
+        {/* No "on <host>" clause here, unlike the fleet's own list: every
+            group on this page is on the host the page is about, and saying so
+            once per stack would repeat the page title down the table. */}
+        <span className="groupcount">
+          {" · "}
+          {group.length} container{group.length === 1 ? "" : "s"}
+        </span>
+        {worst === null ? null : (
+          <Badge severity={worst.state.severity}>
+            {worst.count} {stateKindLabel(worst.state.kind)}
+          </Badge>
+        )}
+      </>
+    );
+  },
   labelText: (key: string) => projectName(key),
-  // Open by default now -- see Table's own note. A list that arrives showing
-  // nothing but headings has not summarised itself, it has hidden itself. The
-  // disclosure stays for the reader who wants to fold a noisy stack away, and
-  // the summary below is what a folded one keeps saying.
   collapsible: true,
   // The one definition of what a group of containers is using, shared with
   // the fleet's list so the two cannot come to disagree.
-  summary: (_key: string, group: readonly ContainerRow[]) => (
-    <ContainerGroupTotals rows={group} />
-  ),
+  cells: (_key: string, group: readonly ContainerRow[]) =>
+    containerGroupCells(group),
+  // Folded when nothing in it needs opening.
+  //
+  // This REVERSES the argument that used to sit here -- "a list that arrives
+  // showing nothing but headings has not summarised itself, it has hidden
+  // itself" -- and the reversal is narrow. That was written against a heading
+  // reading "immich · 4 containers": a name and a count, which hides. A
+  // heading built from `cells` is a row, carrying the stack's CPU and memory
+  // bars in the CPU and Memory columns over the same denominators as the rows
+  // beneath, plus the worst state in it. Folding a group that says all of that
+  // and contains nothing wrong hides nothing anyone was going to act on -- and
+  // a group that IS wrong arrives open, which is why this is a predicate
+  // rather than a flag.
+  defaultOpen: (_key: string, group: readonly ContainerRow[]) =>
+    containerGroupWorst(group) !== null,
 };
 
 const projectName = (key: string) => (key === "" ? "No compose project" : key);
@@ -258,7 +280,17 @@ export function Containers({
    * knows the name, so both come down from there rather than being
    * re-derived here.
    */
-  host: { id: number; hostname: string; last_seen: string | null };
+  host: {
+    id: number;
+    hostname: string;
+    last_seen: string | null;
+    /** Logical CPUs, for the CPU cell's "of N cores". Optional so a caller
+     * that has none still renders: the cell then prints the figure without a
+     * bar rather than a bar against nothing. */
+    threads?: number | null;
+    /** The host's RAM, for the memory bar on a container with no limit. */
+    mem_total?: number | null;
+  };
   /** A family=container response for this host. */
   metrics?: MetricsResponse | null;
   range?: Range;
@@ -316,6 +348,11 @@ export function Containers({
     // cannot collect containers at all. See containerIsGone.
     host_last_seen: host.last_seen,
     host_containers_capability: capabilities?.containers,
+    // The saturation cells' denominators, so this tab and the fleet's list
+    // draw one container identically -- which is the whole reason both render
+    // the same column set.
+    host_threads: host.threads,
+    host_mem_total: host.mem_total,
     window: metrics?.window ?? null,
     ...byKey.get(row.container_key),
   }));
@@ -595,7 +632,7 @@ const FILESYSTEM_COLUMNS: Column<FilesystemRow>[] = [
       row.used === null || row.free === null || row.used + row.free === 0 ? (
         ABSENT
       ) : (
-        // Wrapped, for the reason .disk-cell and .mem-cell are: Meter brings
+        // Wrapped, for the reason .disk-cell and .usage-cell are: Meter brings
         // its own .mrow, a 1fr/92px row with padding and a rule of its own,
         // and all three are wrong inside a <td> that already has them. This
         // cell had no such scope, so every mount's bar sat under a second
@@ -918,7 +955,7 @@ function DriveTempCell({
   if (now === null) return ABSENT;
 
   // .val, the name every other cell in the app gives the number beside its
-  // chart or meter -- .mem-cell .val, .usage-cell .val, .mrow .val.
+  // chart or meter -- .usage-cell .val, .metric-now .v, .mrow .val.
   const reading = <span className="val">{now} °C</span>;
   // No history is not an error: SMART is hourly, so a drive first seen this
   // hour has a reading and no line yet, and the number is still the answer.

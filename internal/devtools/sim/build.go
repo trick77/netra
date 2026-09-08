@@ -824,13 +824,30 @@ func (g *Generator) containers(ts time.Time, cpu float64) []*netrav1.ContainerSa
 		if c.Labels != nil {
 			sample.Labels = &netrav1.ContainerLabels{Values: c.Labels}
 		}
-		if c.RestartsStart > 0 || c.RestartsEnd > 0 {
+		restarts, ramping := 0.0, c.RestartsStart > 0 || c.RestartsEnd > 0
+		if ramping {
 			// A step rather than a smooth ramp: a restart count moves in whole
 			// numbers, and rounding a ramp is what produces one. Truncation
 			// also means the value only ever sits on integers a daemon could
 			// actually have reported.
-			n := ramp(g.from, g.to, ts, float64(c.RestartsStart), float64(c.RestartsEnd))
-			sample.RestartCount = proto.Uint64(uint64(n))
+			restarts = ramp(g.from, g.to, ts, float64(c.RestartsStart), float64(c.RestartsEnd))
+			sample.RestartCount = proto.Uint64(uint64(restarts))
+		}
+
+		// When this incarnation started, which Docker answers on the SAME
+		// inspect response as the restart count -- so a profile whose agent
+		// could read the socket reports both, and one that could not reports
+		// neither. Gated on DockerState for exactly that reason: it is this
+		// file's one marker for "the socket was asked".
+		//
+		// Without this every simulated container lands with started_at NULL,
+		// and the column could not be exercised in the running app at all --
+		// which matters more than usual here, because the fleet rework reads
+		// it to tell a container wedged in its healthcheck from one that is
+		// merely booting.
+		if c.DockerState != "" {
+			sample.StartedAtMs = proto.Int64(
+				containerStartedAt(g, c, ts, restarts, ramping).UnixMilli())
 		}
 
 		// Traffic only where the agent could measure it. A host reporting
@@ -847,6 +864,59 @@ func (g *Generator) containers(ts time.Time, cpu float64) []*netrav1.ContainerSa
 		out = append(out, sample)
 	}
 	return out
+}
+
+// containerStartedAt is when the container's CURRENT incarnation began.
+//
+// For a container whose counter is ramping, every whole-number step of that
+// counter IS a new incarnation, so the current one began at the instant the
+// ramp crossed the integer the sample is reporting. Solving the ramp for that
+// crossing keeps the two consistent: a hub differencing the counter finds a
+// restart at exactly the moment this function names it, which is what the
+// restart-event derivation is judged on.
+//
+// A container that is not ramping has been up since before the window, and
+// saying so is the point -- it is the case where state_ts (first sighting) and
+// a real start time disagree most, and the reading the fleet page exists to get
+// right. Staggered per container so a simulated fleet does not report every
+// container as having started at the same second.
+func containerStartedAt(g *Generator, c ContainerSpec, ts time.Time, restarts float64, ramping bool) time.Time {
+	if ramping && c.RestartsEnd != c.RestartsStart {
+		span := g.to.Sub(g.from)
+		// The integer the ramp crossed to ENTER this incarnation, which is not
+		// the same integer in both directions. A counter climbing 2 -> 31
+		// enters the incarnation reporting 5 when it reaches 5; a counter
+		// falling 6 -> 0 reports 5 from the moment it drops BELOW 6, so the
+		// boundary is 6 -- solving for 5 names the instant it will leave this
+		// incarnation, which is in the future of every sample in it.
+		//
+		// That is not a cosmetic error. A future instant hits the clamp below
+		// and comes back as the sample's own ts, so every scrape reports a
+		// start time one minute later than the last, and the hub's derivation
+		// reads each one as a redeploy: 4322 container_recreate events for a
+		// container that was recreated once.
+		boundary := math.Trunc(restarts)
+		if c.RestartsEnd < c.RestartsStart {
+			boundary++
+		}
+		f := (boundary - float64(c.RestartsStart)) /
+			(float64(c.RestartsEnd) - float64(c.RestartsStart))
+		at := g.from.Add(time.Duration(f * float64(span)))
+		// Never after the sample reporting it: a start time in the future of
+		// its own reading is the one value no consumer can do anything sane
+		// with.
+		if at.After(ts) {
+			return ts
+		}
+		return at
+	}
+	// Deterministic, and comfortably older than any window the sim backfills,
+	// so "up for months" is the reading rather than "up since the simulator
+	// started". Seeded off the generator's own signal at a FIXED instant, so
+	// one container's start time is the same on every scrape rather than
+	// wandering with ts.
+	stagger := time.Duration(g.sig.unit(c.Key+"/started", g.from)*720) * time.Hour
+	return g.from.Add(-30*24*time.Hour - stagger)
 }
 
 func (g *Generator) filesystems(ts time.Time) []*netrav1.FilesystemSample {

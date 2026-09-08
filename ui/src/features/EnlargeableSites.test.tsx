@@ -103,8 +103,12 @@ describe("the list sparklines enlarge", () => {
       getMetrics.mockResolvedValue(containerMetrics([40, 50]));
 
       render(<FleetContainers rows={rows} range="1h" />);
-      // The groups start collapsed, so the row carrying the chart is not in
-      // the DOM until its host is opened.
+      // A stack with nothing wrong in it arrives FOLDED, and a folded group's
+      // rows are not rendered at all -- so the chart has to be reached the way
+      // a reader reaches it, by opening the group first.
+      await userEvent.click(
+        screen.getByRole("button", { name: /shop on ark/ }),
+      );
       // Named for the row: twenty "Enlarge CPU" buttons name twenty charts
       // identically.
       await open("Enlarge CPU for api");
@@ -125,6 +129,10 @@ describe("the list sparklines enlarge", () => {
     // tile is one read of one host rather than a fan-out across the fleet.
     it("offers the whole ladder, not the page's own set", async () => {
       render(<FleetContainers rows={rows} range="1h" />);
+      // As above: a stack with nothing wrong in it arrives folded.
+      await userEvent.click(
+        screen.getByRole("button", { name: /shop on ark/ }),
+      );
       const dialog = await open("Enlarge Memory for api");
 
       for (const range of RAIL_RANGES) {

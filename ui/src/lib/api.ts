@@ -193,6 +193,49 @@ export type Container = {
    * container_key is the compose service rather than the id, so a decrease
    * across the history is a redeploy and an increase is a crash-restart. */
   restart_count: number | null;
+  /**
+   * When Docker says this container's CURRENT incarnation started, and the
+   * only field here that answers "how long has it been up".
+   *
+   * NOT `state_since`, which is when the HUB first observed a state: for a
+   * container netra met yesterday that reads as yesterday however long it had
+   * actually been running.
+   *
+   * Uptime is `now - started_at` only while `last_seen` is current; for a row
+   * that has gone quiet the honest statement is "up for at least
+   * last_seen - started_at", because nothing here says it is still running.
+   * That is why the wire carries an instant and not a duration -- a duration
+   * would be stale by the time it was rendered.
+   *
+   * Null is "no agent could inspect it", the same fact `restart_count` reports
+   * as null and for the same reason: they ride one inspect response. It never
+   * means "just started".
+   */
+  started_at: string | null;
+  /**
+   * How many times this container restarted inside `restarts_window_seconds`,
+   * SUMMED from the restart event log rather than differenced from a counter
+   * (migration 0019).
+   *
+   * Summed, never counted: one event can carry a delta of three, because a
+   * crash-looping container advances Docker's counter by more than one between
+   * two observations. This is the reading that catches a container broken
+   * without ever LOOKING broken -- one that dies and comes back every few
+   * minutes is `running` at almost every scrape.
+   *
+   * Zero is a real answer: the log was read and there were none. That is not
+   * the same fact as `restart_count` being null, which is nobody having looked.
+   */
+  restarts_window: number;
+  /** Redeploys in the same window -- operator actions, not faults, and counted
+   * apart so a deploy does not read as an incident. */
+  recreates_window: number;
+  /** When the newest restart in the window was recorded, or null for none. An
+   * upper bound on an event whose `ts_source` is `observed`. */
+  last_restart: string | null;
+  /** The window the two counts were taken over, echoed so no client has to
+   * assume the server's default. */
+  restarts_window_seconds: number;
   /** Every label the daemon reported. `{}` is a container with no labels;
    * null is a container nobody could ask about. */
   labels: Record<string, string> | null;
