@@ -625,7 +625,7 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 		// state_ts is when the state was ENTERED, advanced only on an actual
 		// change -- the rule read.Unit.Since documents for systemd. IS DISTINCT
 		// FROM rather than <>, so the first transition out of NULL counts.
-		id, ok, err := s.resolveOne(ctx, "container", key, `
+		const stmt = `
 			INSERT INTO containers (host_id, container_key, name, image, is_agent, last_seen,
 			                        docker_state, health, labels, restart_count, state_ts,
 			                        started_at)
@@ -643,10 +643,28 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 			           THEN EXCLUDED.last_seen
 			           ELSE containers.state_ts
 			       END
-			RETURNING id`,
+			RETURNING id`
+		args := []any{
 			hostID, key, r.GetName(), r.GetImage(), r.GetIsAgent(), tsOf(r.GetTsMs()),
 			r.DockerState, r.Health, labelsJSON(r.GetLabels()), int64OrNil(r.RestartCount),
-			tsPtrOf(r.StartedAtMs))
+			tsPtrOf(r.StartedAtMs),
+		}
+
+		var (
+			id  int32
+			ok  bool
+			err error
+		)
+		if carriesRestartData(rows, key) {
+			id, ok, err = s.upsertContainerWithRestarts(ctx, hostID, key, stmt, args, rows, &r.Image)
+		} else {
+			// Nothing inspect-derived for this container, so no restart event
+			// is derivable however the counter moved -- see
+			// carriesRestartData. It keeps the single statement it has always
+			// had rather than paying for a transaction that could not produce
+			// anything.
+			id, ok, err = s.resolveOne(ctx, "container", key, stmt, args...)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -656,6 +674,98 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 		out[key] = id
 	}
 	return out, nil
+}
+
+// upsertContainerWithRestarts moves the container row forward and records the
+// restarts that move implies, in ONE transaction.
+//
+// One transaction PER CONTAINER, and the two halves of that choice pull against
+// each other. The row and the event that explains it are two halves of one
+// fact: the stored counter advances past a restart, so a crash between them
+// loses that restart forever, with nothing left to re-derive it from. But one
+// transaction for the whole BATCH would let a single row Postgres refuses abort
+// every other container in it -- exactly the wedge resolveOne's poison-row
+// quarantine exists to prevent. Per container is the only shape that keeps
+// both.
+//
+// SELECT ... FOR UPDATE rather than a plain read: two flushes for the same host
+// can otherwise both read the same prior count and both emit the same restart.
+func (s *Store) upsertContainerWithRestarts(
+	ctx context.Context,
+	hostID int32,
+	key, stmt string,
+	args []any,
+	rows []*netrav1.ContainerSample,
+	image *string,
+) (int32, bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, false, fmt.Errorf("begin container %s: %w", key, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var prev containerState
+	err = tx.QueryRow(ctx, `
+		SELECT restart_count, started_at, last_seen, image
+		  FROM containers
+		 WHERE host_id = $1 AND container_key = $2
+		 FOR UPDATE`, hostID, key).
+		Scan(&prev.Count, &prev.StartedAt, &prev.LastSeen, &prev.Image)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		// The quarantine has to be here too, not only on the upsert below.
+		// This read runs FIRST and takes the same key, so an unstorable one --
+		// a NUL byte in a container name, the classic case -- fails here and
+		// would take the whole batch down before the upsert ever got the
+		// chance to refuse it politely. Same treatment, same reason: one bad
+		// container must not cost every other container on the host.
+		if poisonRow(err) {
+			slog.Warn("dropped a dimension row Postgres refused to store",
+				"dimension", "container", "key", key, "err", err)
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("read container %s: %w", key, err)
+	}
+	// ErrNoRows is a first sighting: prev stays zero, and a walk with no
+	// previous count emits nothing. A container netra has just met has not
+	// restarted as far as anyone here knows.
+
+	var id int32
+	if err := tx.QueryRow(ctx, stmt, args...).Scan(&id); err != nil {
+		if poisonRow(err) {
+			slog.Warn("dropped a dimension row Postgres refused to store",
+				"dimension", "container", "key", key, "err", err)
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("resolve container %s: %w", key, err)
+	}
+
+	for _, ev := range restartEvents(prev, observationsOf(rows, key), image) {
+		body, err := detailBody(ev.Detail)
+		if err != nil {
+			return 0, false, err
+		}
+		// DO NOTHING is what makes a replayed ring buffer idempotent: the same
+		// batch delivered twice re-derives the same rows at the same instants,
+		// and the natural key refuses the duplicates. It is the same clause
+		// InsertEvents uses, for the same reason.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO events (host_id, ts, type, subject, detail, severity)
+			VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+			ON CONFLICT (host_id, ts, type, subject) DO NOTHING`,
+			hostID, ev.TS, ev.Type, key, body, ev.Severity); err != nil {
+			if poisonRow(err) {
+				slog.Warn("dropped a restart event Postgres refused to store",
+					"key", key, "type", ev.Type, "err", err)
+				continue
+			}
+			return 0, false, fmt.Errorf("insert restart event for %s: %w", key, err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, false, fmt.Errorf("commit container %s: %w", key, err)
+	}
+	return id, true, nil
 }
 
 // InsertContainerSamples resolves container keys to ids and writes the rows.
