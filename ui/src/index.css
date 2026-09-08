@@ -1786,15 +1786,17 @@ tbody tr:hover .host-cell-name {
    the app a link to a page nobody visits twice, and left the bar with two
    competing marks once the current-page square was there too. .btn's own
    34px is a .seg's 32 plus its frame, so the two already stand the same
-   height; only the ink is quieted, to the glyphs' own --ink-2. */
-.addhost {
+   height; only the ink is quieted, to the glyphs' own --ink-2. Written
+   .btn.addhost because .btn sets its own colour further down the file, and
+   a bare .addhost -- same specificity, earlier -- lost the cascade to it. */
+.btn.addhost {
   flex: none;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--ink-2);
 }
-.addhost:hover {
+.btn.addhost:hover {
   color: var(--ink);
   background: var(--surface-2);
 }
@@ -3578,11 +3580,11 @@ svg.spark {
 
 @media (max-width: 700px) {
   /* The bar is already horizontal at every width; what has to give here is
-     what it HOLDS. The label goes off Add host -- a "+" in the accent is the
-     same target and the same colour, and the words cost more than the five
-     glyphs beside them -- and the wordmark keeps its place, because a bar
-     that drops its own name reads as a fragment. */
-  .addhost {
+     what it HOLDS. The label goes off Add host -- the "+" is the same target
+     in the same frame, and the words cost more than the five glyphs beside
+     them -- and the wordmark keeps its place, because a bar that drops its
+     own name reads as a fragment. */
+  .btn.addhost {
     padding-left: var(--space-2);
     padding-right: var(--space-2);
     font-size: 0;
