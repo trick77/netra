@@ -3,22 +3,48 @@ package collector
 import (
 	"context"
 	"slices"
+	"time"
 )
 
-// ContainerInspector returns Docker's RestartCount for one container id.
+// ContainerStatus is everything one inspect call answers.
+//
+// A struct rather than two return values, and the reason is an invariant
+// rather than tidiness: both facts come from ONE decode of ONE response, and
+// they must never be mixed across generations of a container. A fresh
+// RestartCount beside a previous incarnation's StartedAt would report a
+// restart that had already been counted, at a time it did not happen. They are
+// cached together and dropped together for the same reason.
+type ContainerStatus struct {
+	// Docker's RestartCount for this container id. Resets to 0 when the
+	// container is RECREATED, which is why a decrease is a redeploy.
+	RestartCount uint64
+	// When the CURRENT incarnation started, from State.StartedAt.
+	//
+	// Zero when Docker reported the zero time ("0001-01-01T00:00:00Z", a
+	// container that has never run) or when the value would not parse --
+	// never a guessed now(), which would assert an uptime of zero for a
+	// container that has been up for months.
+	StartedAt time.Time
+}
+
+// ContainerInspector returns what one inspect call says about a container.
 //
 // Injected for the same two reasons ContainerLister is: the tests need no
 // daemon, and the socket stays an optional enrichment. It is a SECOND seam
 // rather than another field on ContainerMeta because it is the only part of
 // this collector's Docker enrichment that costs a request, and the policy that
-// rations those requests -- refreshRestarts, below -- is the thing worth
+// rations those requests -- refreshInspect, below -- is the thing worth
 // testing.
-type ContainerInspector func(ctx context.Context, id string) (uint64, error)
+type ContainerInspector func(ctx context.Context, id string) (ContainerStatus, error)
 
 // capRestartsNoInspect: the daemon lists containers but will not inspect them,
 // or no inspector was wired up at all. Reported under its own key because
 // everything else on the card still works -- state, health and labels all ride
-// on the list response -- and only the restart count is missing.
+// on the list response -- and only what inspect answers is missing.
+//
+// The NAME says restarts because that is the wire value the UI keys on and it
+// predates the second field. It now covers the start time too: both come from
+// the one response, so a daemon that refuses inspect withholds both.
 const capRestartsNoInspect = "no-inspect"
 
 // restartRefreshEvery is how many scrapes may pass before a container that has
@@ -29,6 +55,14 @@ const capRestartsNoInspect = "no-inspect"
 // leaves usage_usec higher than it was and looks like a container that simply
 // got busy. At the 60s default this closes that hole within ten minutes, which
 // is the resolution a restart count is read at.
+//
+// The two cached fields wear this staleness differently, and it matters. The
+// COUNT is a gauge, so a late read is a number that was briefly wrong. The
+// START TIME is constant for the life of an incarnation, so a late read is the
+// right answer arriving late and never a wrong one -- and when it does change,
+// the recreate detector has already forced the inspect that catches it. That
+// is why a restart event dated from StartedAt is exact even when the counter
+// that revealed it was ten scrapes behind.
 const restartRefreshEvery = 10
 
 // maxInspectsPerScrape bounds the cost of a scrape on a host that just rebooted
@@ -63,25 +97,29 @@ const noInspectAfterScrapes = 3
 // ten minutes without restarting the agent.
 const backoffScrapes = 10
 
-// restartEntry is one container's last known restart count and the scrape it
+// inspectEntry is one container's last known inspect answer and the scrape it
 // was read on.
-type restartEntry struct {
-	count  uint64
+//
+// The status is held whole rather than as loose fields: it is written and
+// deleted as a unit, which is what keeps ContainerStatus's invariant true all
+// the way to the wire.
+type inspectEntry struct {
+	status ContainerStatus
 	scrape uint64
 }
 
-// SetInspector wires up the restart-count reader. Not a NewContainers
+// SetInspector wires up the inspect reader. Not a NewContainers
 // parameter: the constructor already takes four, every existing test would
 // grow a nil argument that says nothing, and an agent with a socket but no
 // inspect permission is a supported configuration that this being separate
 // makes easy to express.
 func (c *Containers) SetInspector(fn ContainerInspector) { c.inspector = fn }
 
-// refreshRestarts brings the restart cache up to date for the containers this
-// scrape saw, and returns nothing -- readRestart is how the row build asks.
+// refreshInspect brings the inspect cache up to date for the containers this
+// scrape saw, and returns nothing -- readInspect is how the row build asks.
 //
-// The whole design is about NOT calling inspect. RestartCount is the one field
-// the list endpoint does not carry, and the obvious implementation -- inspect
+// The whole design is about NOT calling inspect. RestartCount and StartedAt are
+// the fields the list endpoint does not carry, and the obvious implementation -- inspect
 // every container every scrape -- is the same cost shape dockermeta.go already
 // rejects for /containers/{id}/stats: per-container daemon work, once a minute,
 // forever, on hosts running hundreds of containers.
@@ -108,7 +146,7 @@ func (c *Containers) SetInspector(fn ContainerInspector) { c.inspector = fn }
 // can be up to restartRefreshEvery scrapes behind, so a restart shows up on the
 // chart within ten minutes rather than within one. A counter read at that
 // resolution is the trade the rationing buys.
-func (c *Containers) refreshRestarts(ctx context.Context, meta map[string]ContainerMeta, recreated map[string]bool) {
+func (c *Containers) refreshInspect(ctx context.Context, meta map[string]ContainerMeta, recreated map[string]bool) {
 	if c.inspector == nil {
 		c.setRestartCapability(capRestartsNoInspect)
 		return
@@ -117,8 +155,8 @@ func (c *Containers) refreshRestarts(ctx context.Context, meta map[string]Contai
 	c.scrapeN++
 	scrape := c.scrapeN
 
-	if c.restarts == nil {
-		c.restarts = make(map[string]restartEntry, len(meta))
+	if c.inspects == nil {
+		c.inspects = make(map[string]inspectEntry, len(meta))
 	}
 
 	// A daemon that has refused everything for noInspectAfterScrapes in a row
@@ -143,7 +181,7 @@ func (c *Containers) refreshRestarts(ctx context.Context, meta map[string]Contai
 
 	spent, failed, attempted := 0, 0, 0
 	for _, id := range ids {
-		entry, cached := c.restarts[id]
+		entry, cached := c.inspects[id]
 		switch {
 		case !cached, recreated[id]:
 		case scrape-entry.scrape >= restartRefreshEvery && staggerSlot(id) == scrape%restartRefreshEvery:
@@ -156,7 +194,7 @@ func (c *Containers) refreshRestarts(ctx context.Context, meta map[string]Contai
 		spent++
 		attempted++
 
-		count, err := c.inspector(ctx, id)
+		status, err := c.inspector(ctx, id)
 		if err != nil {
 			// The cached entry is DROPPED, not left standing. An agent that has
 			// just been refused is no longer in a position to assert a restart
@@ -169,11 +207,11 @@ func (c *Containers) refreshRestarts(ctx context.Context, meta map[string]Contai
 			// container is not re-attempted until the slow refresh comes round,
 			// so a revoked socket takes up to restartRefreshEvery scrapes to
 			// show as unknown rather than showing wrong immediately.
-			delete(c.restarts, id)
+			delete(c.inspects, id)
 			failed++
 			continue
 		}
-		c.restarts[id] = restartEntry{count: count, scrape: scrape}
+		c.inspects[id] = inspectEntry{status: status, scrape: scrape}
 	}
 
 	c.evictUnlisted(meta)
@@ -200,28 +238,30 @@ func (c *Containers) refreshRestarts(ctx context.Context, meta map[string]Contai
 	c.setRestartCapability("")
 }
 
-// evictUnlisted drops cached counts for containers this scrape did not see.
+// evictUnlisted drops cached inspect answers for containers this scrape did
+// not see.
 //
 // A container that is gone will not be asked about again, and one that comes
 // back arrives with a new id and so a fresh read -- which is right, because
 // Docker resets RestartCount when a container is recreated.
 func (c *Containers) evictUnlisted(meta map[string]ContainerMeta) {
-	for id := range c.restarts {
+	for id := range c.inspects {
 		if _, ok := meta[id]; !ok {
-			delete(c.restarts, id)
+			delete(c.inspects, id)
 		}
 	}
 }
 
-// readRestart returns the last restart count read for one container.
+// readInspect returns the last inspect answer read for one container.
 //
 // The CACHED value, reported on every scrape rather than only on the ones that
-// inspected -- see refreshRestarts for why a one-in-ten series is not a series.
+// inspected -- see refreshInspect for why a one-in-ten series is not a series.
 // It is absent only for a container never successfully inspected, or one whose
-// inspect has since been refused.
-func (c *Containers) readRestart(id string) (uint64, bool) {
-	entry, ok := c.restarts[id]
-	return entry.count, ok
+// inspect has since been refused -- and then BOTH fields are absent, which is
+// the invariant ContainerStatus exists to hold.
+func (c *Containers) readInspect(id string) (ContainerStatus, bool) {
+	entry, ok := c.inspects[id]
+	return entry.status, ok
 }
 
 // setRestartCapability records why restart counts are absent, or clears it.

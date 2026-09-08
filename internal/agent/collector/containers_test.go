@@ -1149,7 +1149,9 @@ func TestContainersCarriesWhatDockerSaid(t *testing.T) {
 			Health: "unhealthy",
 			Labels: map[string]string{"traefik.enable": "true"},
 		}), true)
-	testee.SetInspector(func(context.Context, string) (uint64, error) { return 9, nil })
+	testee.SetInspector(func(context.Context, string) (collector.ContainerStatus, error) {
+		return collector.ContainerStatus{RestartCount: 9, StartedAt: base.Add(-3 * time.Hour)}, nil
+	})
 
 	containersAt(t, testee, base)
 	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
@@ -1165,10 +1167,46 @@ func TestContainersCarriesWhatDockerSaid(t *testing.T) {
 	if got := row.GetRestartCount(); got != 9 {
 		t.Errorf("restart_count = %d, want 9", got)
 	}
+	// The start time rides the same inspect response as the count above, so a
+	// row carrying one must carry the other.
+	if want := base.Add(-3 * time.Hour).UnixMilli(); row.GetStartedAtMs() != want {
+		t.Errorf("started_at_ms = %d, want %d", row.GetStartedAtMs(), want)
+	}
 	// Every label, not just the two compose keys folded into container_key --
 	// that folding is why a container started outside compose contributed none.
 	if got := row.GetLabels().GetValues()["traefik.enable"]; got != "true" {
 		t.Errorf("labels[traefik.enable] = %q, want true", got)
+	}
+}
+
+// A container Docker reports no usable start time for still gets its restart
+// count. The two share a cache entry, so they arrive and are dropped together
+// -- but a zero instant is not a reading, and sending it would date the
+// container to 1970 and assert an uptime of half a century.
+func TestContainersSendsTheCountWithoutAnUnusableStartTime(t *testing.T) {
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	testee := collector.NewContainers("testdata/cgroup/first/sys/fs/cgroup", noProcRoot,
+		fakeLister(collector.ContainerMeta{
+			ID: "abc123", Name: "proj-web-1", Image: "nginx:1",
+			Project: "proj", Service: "web", State: "running",
+		}), true)
+	// A successful inspect, but with the zero time -- what Docker reports for a
+	// container that has never run.
+	testee.SetInspector(func(context.Context, string) (collector.ContainerStatus, error) {
+		return collector.ContainerStatus{RestartCount: 2}, nil
+	})
+
+	containersAt(t, testee, base)
+	testee.SetCgroupRootForTest("testdata/cgroup/second/sys/fs/cgroup")
+	res := containersAt(t, testee, base.Add(10*time.Second))
+
+	row := containerRow(t, res.Containers, "proj/web")
+	if got := row.GetRestartCount(); got != 2 {
+		t.Errorf("restart_count = %d, want 2", got)
+	}
+	if row.StartedAtMs != nil {
+		t.Errorf("started_at_ms = %d, want unset for a container with no usable start time",
+			row.GetStartedAtMs())
 	}
 }
 

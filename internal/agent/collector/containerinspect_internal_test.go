@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 )
 
 // The policy is the whole feature. RestartCount is the one field the list
@@ -19,15 +20,16 @@ import (
 type spyInspector struct {
 	calls  []string
 	counts map[string]uint64
+	starts map[string]time.Time
 	err    error
 }
 
-func (s *spyInspector) inspect(_ context.Context, id string) (uint64, error) {
+func (s *spyInspector) inspect(_ context.Context, id string) (ContainerStatus, error) {
 	s.calls = append(s.calls, id)
 	if s.err != nil {
-		return 0, s.err
+		return ContainerStatus{}, s.err
 	}
-	return s.counts[id], nil
+	return ContainerStatus{RestartCount: s.counts[id], StartedAt: s.starts[id]}, nil
 }
 
 func (s *spyInspector) reset() { s.calls = nil }
@@ -49,15 +51,15 @@ func TestRefreshRestarts(t *testing.T) {
 		testee := &Containers{inspector: spy.inspect}
 
 		// When the scrape refreshes.
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 
 		// Then it asked, and the answer is available to the row build.
 		if len(spy.calls) != 1 {
 			t.Fatalf("inspected %d times, want 1", len(spy.calls))
 		}
-		got, ok := testee.readRestart("a")
-		if !ok || got != 3 {
-			t.Errorf("readRestart = (%d, %v), want (3, true)", got, ok)
+		got, ok := testee.readInspect("a")
+		if !ok || got.RestartCount != 3 {
+			t.Errorf("readInspect = (%d, %v), want (3, true)", got.RestartCount, ok)
 		}
 	})
 
@@ -67,12 +69,12 @@ func TestRefreshRestarts(t *testing.T) {
 		// Given a container already inspected once.
 		spy := &spyInspector{counts: map[string]uint64{"a": 3}}
 		testee := &Containers{inspector: spy.inspect}
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 		spy.reset()
 
 		// When several more scrapes pass with nothing happening.
 		for range restartRefreshEvery - 2 {
-			testee.refreshRestarts(ctx, metaOf("a"), nil)
+			testee.refreshInspect(ctx, metaOf("a"), nil)
 		}
 
 		// Then the daemon was not asked again.
@@ -89,19 +91,19 @@ func TestRefreshRestarts(t *testing.T) {
 		// Given a container already inspected.
 		spy := &spyInspector{counts: map[string]uint64{"a": 3}}
 		testee := &Containers{inspector: spy.inspect}
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 		spy.reset()
 		spy.counts["a"] = 4
 
 		// When the next scrape reports its counters went backwards.
-		testee.refreshRestarts(ctx, metaOf("a"), map[string]bool{"a": true})
+		testee.refreshInspect(ctx, metaOf("a"), map[string]bool{"a": true})
 
 		// Then it was asked, and the new count is what the row build sees.
 		if len(spy.calls) != 1 {
 			t.Fatalf("inspected %d times after a recreate, want 1", len(spy.calls))
 		}
-		if got, _ := testee.readRestart("a"); got != 4 {
-			t.Errorf("readRestart = %d, want 4", got)
+		if got, _ := testee.readInspect("a"); got.RestartCount != 4 {
+			t.Errorf("readInspect count = %d, want 4", got.RestartCount)
 		}
 	})
 
@@ -118,7 +120,7 @@ func TestRefreshRestarts(t *testing.T) {
 		}
 
 		// When one scrape refreshes.
-		testee.refreshRestarts(ctx, metaOf(ids...), nil)
+		testee.refreshInspect(ctx, metaOf(ids...), nil)
 
 		// Then it stopped at the cap.
 		if len(spy.calls) != maxInspectsPerScrape {
@@ -128,7 +130,7 @@ func TestRefreshRestarts(t *testing.T) {
 		// And the ones it skipped are still uncached, so the next scrape takes
 		// them -- deferred, not dropped.
 		spy.reset()
-		testee.refreshRestarts(ctx, metaOf(ids...), nil)
+		testee.refreshInspect(ctx, metaOf(ids...), nil)
 		if len(spy.calls) != maxInspectsPerScrape {
 			t.Errorf("second scrape inspected %d times, want %d", len(spy.calls), maxInspectsPerScrape)
 		}
@@ -143,10 +145,10 @@ func TestRefreshRestarts(t *testing.T) {
 		testee := &Containers{inspector: spy.inspect}
 
 		// When the scrape refreshes.
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 
 		// Then the container carries no restart count at all.
-		if _, ok := testee.readRestart("a"); ok {
+		if _, ok := testee.readInspect("a"); ok {
 			t.Error("readRestart returned a value after a failed inspect")
 		}
 	})
@@ -159,18 +161,18 @@ func TestRefreshRestarts(t *testing.T) {
 		// Given a container whose count was read once.
 		spy := &spyInspector{counts: map[string]uint64{"a": 12}}
 		testee := &Containers{inspector: spy.inspect}
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
-		if _, ok := testee.readRestart("a"); !ok {
+		testee.refreshInspect(ctx, metaOf("a"), nil)
+		if _, ok := testee.readInspect("a"); !ok {
 			t.Fatal("no count cached after a successful inspect")
 		}
 
 		// When the daemon starts refusing and the container is asked again.
 		spy.err = errors.New("403 Forbidden")
-		testee.refreshRestarts(ctx, metaOf("a"), map[string]bool{"a": true})
+		testee.refreshInspect(ctx, metaOf("a"), map[string]bool{"a": true})
 
 		// Then the stale number is gone rather than kept.
-		if got, ok := testee.readRestart("a"); ok {
-			t.Errorf("readRestart = %d after the daemon refused; the agent must stop asserting it", got)
+		if got, ok := testee.readInspect("a"); ok {
+			t.Errorf("readInspect = %d after the daemon refused; the agent must stop asserting it", got.RestartCount)
 		}
 	})
 
@@ -181,16 +183,16 @@ func TestRefreshRestarts(t *testing.T) {
 		// Given a container inspected once.
 		spy := &spyInspector{counts: map[string]uint64{"a": 5}}
 		testee := &Containers{inspector: spy.inspect}
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 
 		// When later scrapes do not inspect it.
 		for range 3 {
-			testee.refreshRestarts(ctx, metaOf("a"), nil)
+			testee.refreshInspect(ctx, metaOf("a"), nil)
 		}
 
 		// Then the count is still available to the row build.
-		if got, ok := testee.readRestart("a"); !ok || got != 5 {
-			t.Errorf("readRestart = (%d, %v), want (5, true) between inspects", got, ok)
+		if got, ok := testee.readInspect("a"); !ok || got.RestartCount != 5 {
+			t.Errorf("readInspect = (%d, %v), want (5, true) between inspects", got.RestartCount, ok)
 		}
 	})
 
@@ -204,7 +206,7 @@ func TestRefreshRestarts(t *testing.T) {
 
 		// When enough consecutive scrapes fail to rule out a transient.
 		for range noInspectAfterScrapes {
-			testee.refreshRestarts(ctx, metaOf("a", "b"), nil)
+			testee.refreshInspect(ctx, metaOf("a", "b"), nil)
 		}
 
 		// Then the capability names the reason.
@@ -223,7 +225,7 @@ func TestRefreshRestarts(t *testing.T) {
 		testee := &Containers{inspector: spy.inspect}
 
 		// When a single scrape hits it.
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 
 		// Then nothing is claimed about the daemon.
 		if got, ok := testee.Capabilities()["container_restarts"]; ok {
@@ -240,13 +242,13 @@ func TestRefreshRestarts(t *testing.T) {
 		testee := &Containers{inspector: spy.inspect}
 		meta := metaOf("a", "b", "c")
 		for range noInspectAfterScrapes {
-			testee.refreshRestarts(ctx, meta, nil)
+			testee.refreshInspect(ctx, meta, nil)
 		}
 		spy.reset()
 
 		// When many more scrapes pass.
 		for range backoffScrapes * 2 {
-			testee.refreshRestarts(ctx, meta, nil)
+			testee.refreshInspect(ctx, meta, nil)
 		}
 
 		// Then it is probed occasionally rather than on every scrape.
@@ -266,18 +268,18 @@ func TestRefreshRestarts(t *testing.T) {
 		spy := &spyInspector{counts: map[string]uint64{"a": 2}, err: errors.New("403 Forbidden")}
 		testee := &Containers{inspector: spy.inspect}
 		for range noInspectAfterScrapes {
-			testee.refreshRestarts(ctx, metaOf("a"), nil)
+			testee.refreshInspect(ctx, metaOf("a"), nil)
 		}
 
 		// When the daemon starts answering and the back-off next probes.
 		spy.err = nil
 		for range backoffScrapes + 1 {
-			testee.refreshRestarts(ctx, metaOf("a"), nil)
+			testee.refreshInspect(ctx, metaOf("a"), nil)
 		}
 
 		// Then the count is back and the capability is cleared.
-		if got, ok := testee.readRestart("a"); !ok || got != 2 {
-			t.Errorf("readRestart = (%d, %v), want (2, true) once the daemon answered again", got, ok)
+		if got, ok := testee.readInspect("a"); !ok || got.RestartCount != 2 {
+			t.Errorf("readInspect = (%d, %v), want (2, true) once the daemon answered again", got.RestartCount, ok)
 		}
 		if got, ok := testee.Capabilities()["container_restarts"]; ok {
 			t.Errorf("container_restarts = %q, want cleared once inspect worked again", got)
@@ -291,7 +293,7 @@ func TestRefreshRestarts(t *testing.T) {
 		testee := &Containers{}
 
 		// When the scrape refreshes.
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 
 		// Then it says so rather than staying silent.
 		if got := testee.Capabilities()["container_restarts"]; got != capRestartsNoInspect {
@@ -308,7 +310,7 @@ func TestRefreshRestarts(t *testing.T) {
 		testee.observe(true, false, 0, 0)
 
 		// When the scrape refreshes.
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 
 		// Then only the socket is reported.
 		caps := testee.Capabilities()
@@ -327,13 +329,13 @@ func TestRefreshRestarts(t *testing.T) {
 		// Given two containers, both inspected.
 		spy := &spyInspector{counts: map[string]uint64{"a": 1, "b": 2}}
 		testee := &Containers{inspector: spy.inspect}
-		testee.refreshRestarts(ctx, metaOf("a", "b"), nil)
+		testee.refreshInspect(ctx, metaOf("a", "b"), nil)
 
 		// When one of them stops appearing.
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 
 		// Then its cached count is gone rather than reported forever.
-		if _, ok := testee.readRestart("b"); ok {
+		if _, ok := testee.readInspect("b"); ok {
 			t.Error("readRestart still answers for a container that is no longer listed")
 		}
 	})
@@ -345,12 +347,12 @@ func TestRefreshRestarts(t *testing.T) {
 		// Given a container inspected once and never flagged again.
 		spy := &spyInspector{counts: map[string]uint64{"a": 1}}
 		testee := &Containers{inspector: spy.inspect}
-		testee.refreshRestarts(ctx, metaOf("a"), nil)
+		testee.refreshInspect(ctx, metaOf("a"), nil)
 		spy.reset()
 
 		// When enough scrapes pass to cover a full refresh cycle.
 		for range restartRefreshEvery * 2 {
-			testee.refreshRestarts(ctx, metaOf("a"), nil)
+			testee.refreshInspect(ctx, metaOf("a"), nil)
 		}
 
 		// Then it was asked again -- and not on every scrape.
@@ -448,6 +450,89 @@ func TestCapLabels(t *testing.T) {
 					t.Errorf("label %q survived one scrape and not the next", k)
 				}
 			}
+		}
+	})
+}
+
+// The invariant ContainerStatus exists to hold: the two fields come from one
+// decode of one response, so they arrive together and are forgotten together.
+//
+// A fresh RestartCount beside a previous incarnation's StartedAt would report a
+// restart that had already been counted, at a time it did not happen -- and a
+// stale StartedAt beside a dropped count would put an uptime on a container the
+// agent has just admitted it cannot see.
+func TestInspectCacheHoldsBothFieldsAsOne(t *testing.T) {
+	ctx := context.Background()
+	started := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+
+	t.Run("a successful inspect caches both", func(t *testing.T) {
+		// Given an inspector answering with a count and a start time.
+		spy := &spyInspector{
+			counts: map[string]uint64{"a": 3},
+			starts: map[string]time.Time{"a": started},
+		}
+		testee := &Containers{inspector: spy.inspect}
+
+		// When the scrape refreshes.
+		testee.refreshInspect(ctx, metaOf("a"), nil)
+
+		// Then both reach the row build.
+		got, ok := testee.readInspect("a")
+		if !ok {
+			t.Fatal("nothing cached after a successful inspect")
+		}
+		if got.RestartCount != 3 {
+			t.Errorf("RestartCount = %d, want 3", got.RestartCount)
+		}
+		if !got.StartedAt.Equal(started) {
+			t.Errorf("StartedAt = %v, want %v", got.StartedAt, started)
+		}
+	})
+
+	t.Run("a refused inspect forgets both", func(t *testing.T) {
+		// Given a container whose count and start time were both read.
+		spy := &spyInspector{
+			counts: map[string]uint64{"a": 3},
+			starts: map[string]time.Time{"a": started},
+		}
+		testee := &Containers{inspector: spy.inspect}
+		testee.refreshInspect(ctx, metaOf("a"), nil)
+
+		// When the daemon starts refusing and the container is asked again.
+		spy.err = errors.New("403 Forbidden")
+		testee.refreshInspect(ctx, metaOf("a"), map[string]bool{"a": true})
+
+		// Then NEITHER survives -- not the count, and not the start time.
+		if got, ok := testee.readInspect("a"); ok {
+			t.Errorf("readInspect = %+v after a refusal; both fields must go together", got)
+		}
+	})
+
+	// The start time is constant for the life of an incarnation, so unlike the
+	// counter it is never made WRONG by the rationing -- only late. Between
+	// inspects the cached instant is still the right answer.
+	t.Run("the start time rides scrapes that did not inspect", func(t *testing.T) {
+		// Given a container inspected once.
+		spy := &spyInspector{
+			counts: map[string]uint64{"a": 1},
+			starts: map[string]time.Time{"a": started},
+		}
+		testee := &Containers{inspector: spy.inspect}
+		testee.refreshInspect(ctx, metaOf("a"), nil)
+		spy.reset()
+
+		// When several scrapes pass without inspecting it.
+		for range 3 {
+			testee.refreshInspect(ctx, metaOf("a"), nil)
+		}
+
+		// Then it was not asked again, and the instant is unchanged.
+		if len(spy.calls) != 0 {
+			t.Fatalf("inspected %d times on a steady container, want 0", len(spy.calls))
+		}
+		got, ok := testee.readInspect("a")
+		if !ok || !got.StartedAt.Equal(started) {
+			t.Errorf("StartedAt = (%v, %v), want (%v, true) between inspects", got.StartedAt, ok, started)
 		}
 	})
 }

@@ -66,6 +66,24 @@ type Container struct {
 	// container is recreated, so against a compose-keyed history a DECREASE is
 	// a redeploy and an increase is a crash-restart.
 	RestartCount *int64 `json:"restart_count"`
+	// StartedAt is when Docker says this container's CURRENT incarnation came
+	// up, and it is the only thing here that answers "how long has it been up".
+	//
+	// Not StateSince, which is when the HUB first observed a state: for a
+	// container netra met yesterday that reads as yesterday however long it had
+	// actually been running, and nothing else on this struct contradicts it.
+	//
+	// Uptime is now - StartedAt only while LastSeen is current. For a row that
+	// has gone quiet the honest statement is "up for at least LastSeen -
+	// StartedAt", because nothing here says the container is still running --
+	// which is why this is an instant and not a duration: a duration would rot
+	// between the write and the read.
+	//
+	// Null is "no agent could inspect it" -- no socket, or a socket that
+	// refuses inspect -- the same fact RestartCount reports as null, and for
+	// the same reason: they ride one inspect response. It never means "just
+	// started".
+	StartedAt *time.Time `json:"started_at"`
 	// Labels is every label the daemon reported. An empty object is a container
 	// with no labels; null is a container nobody could ask about.
 	Labels map[string]string `json:"labels"`
@@ -255,7 +273,7 @@ func (s *Service) Containers(ctx context.Context, hostID int32) ([]Container, er
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, container_key, name, image, is_agent, last_seen,
-		       docker_state, health, state_ts, restart_count, labels
+		       docker_state, health, state_ts, restart_count, labels, started_at
 		  FROM containers
 		 WHERE host_id = $1
 		 ORDER BY container_key`, hostID)
@@ -268,7 +286,8 @@ func (s *Service) Containers(ctx context.Context, hostID int32) ([]Container, er
 	for rows.Next() {
 		var c Container
 		if err := rows.Scan(&c.ID, &c.Key, &c.Name, &c.Image, &c.IsAgent, &c.LastSeen,
-			&c.DockerState, &c.Health, &c.StateSince, &c.RestartCount, &c.Labels); err != nil {
+			&c.DockerState, &c.Health, &c.StateSince, &c.RestartCount, &c.Labels,
+			&c.StartedAt); err != nil {
 			return nil, fmt.Errorf("scan container: %w", err)
 		}
 		out = append(out, c)
@@ -314,7 +333,7 @@ func (s *Service) FleetContainers(ctx context.Context, hostIDs []int32) (FleetCo
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT host_id, id, container_key, name, image, is_agent, last_seen,
-		       docker_state, health, state_ts, restart_count, labels
+		       docker_state, health, state_ts, restart_count, labels, started_at
 		  FROM containers
 		 WHERE host_id = ANY($1)
 		 ORDER BY host_id, container_key`, hostIDs)
@@ -328,7 +347,8 @@ func (s *Service) FleetContainers(ctx context.Context, hostIDs []int32) (FleetCo
 		var hostID int32
 		var c Container
 		if err := rows.Scan(&hostID, &c.ID, &c.Key, &c.Name, &c.Image, &c.IsAgent, &c.LastSeen,
-			&c.DockerState, &c.Health, &c.StateSince, &c.RestartCount, &c.Labels); err != nil {
+			&c.DockerState, &c.Health, &c.StateSince, &c.RestartCount, &c.Labels,
+			&c.StartedAt); err != nil {
 			return FleetContainersResult{}, fmt.Errorf("scan fleet container: %w", err)
 		}
 		byHost[hostID] = append(byHost[hostID], c)

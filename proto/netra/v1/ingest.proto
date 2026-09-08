@@ -703,7 +703,7 @@ message ContainerSample {
 
   // --- what the Docker socket says, as opposed to what the cgroup measures ---
   //
-  // These four ride on every sample row rather than being announced once,
+  // These five ride on every sample row rather than being announced once,
   // because ingest is stateless per batch and the purge endpoint deletes the
   // containers row: a hub that missed the one batch carrying them would never
   // learn them again.
@@ -736,9 +736,11 @@ message ContainerSample {
 
   // Docker's RestartCount for this container id.
   //
-  // The only one of the four that is not free: it exists on
-  // /containers/{id}/json alone, so the agent inspects lazily and caches --
-  // see the restart cache in containerinspect.go.
+  // One of the two that are not free: it exists on /containers/{id}/json
+  // alone, so the agent inspects lazily and caches -- see the inspect cache in
+  // containerinspect.go. started_at_ms below is the other, and rides the SAME
+  // response, so the two are always from one generation of one container or
+  // both absent.
   //
   // The cached value rides on EVERY scrape, not only on the ones that called
   // inspect, because a series carrying a point one time in ten is not a series
@@ -764,6 +766,35 @@ message ContainerSample {
   // that never looked and a container that genuinely carries no labels would
   // serialize identically. Message presence is what separates them.
   optional ContainerLabels labels = 22;
+
+  // When this container's CURRENT incarnation started, from the inspect
+  // endpoint's State.StartedAt -- epoch milliseconds, UTC.
+  //
+  // This is what uptime is computed from, and containers.state_ts is NOT:
+  // that column is hub-derived from OBSERVED transitions and is stamped with
+  // the first sample's ts, so a container that had been up for a year read as
+  // "since two minutes ago" from the moment netra first saw it. There was no
+  // reading anywhere that contradicted it.
+  //
+  // FREE, despite riding the inspect path: the agent already fetched the whole
+  // /containers/{id}/json response to read RestartCount out of it and decoded
+  // this field away. No extra request, no extra round trip.
+  //
+  // It rides the SAME response as restart_count, so the two are always from
+  // one generation of one container -- a fresh count beside a previous
+  // incarnation's start time would report a restart that had already been
+  // counted, at a time it did not happen. They are cached and dropped as a
+  // unit for that reason.
+  //
+  // Unlike the counter it is CONSTANT while a container runs, so the up-to-ten
+  // scrapes the cache admits make it LATE, never wrong -- and the recreate
+  // detector refreshes it at exactly the moment it changes.
+  //
+  // Unset means the agent cannot answer: it has never successfully inspected
+  // this container, the daemon refuses inspect, or Docker reported the zero
+  // time for a container that has never run. A hub must never read absence as
+  // "just started".
+  optional int64 started_at_ms = 23;
 }
 
 // ContainerLabels exists to give ContainerSample.labels presence. See the

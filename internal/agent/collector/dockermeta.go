@@ -144,11 +144,23 @@ func parseHealth(status string) string {
 
 // dockerInspect is the subset of /containers/{id}/json netra reads.
 //
-// One field. RestartCount is the only thing in this entire change that the list
-// endpoint does not already carry, which is why the inspect call is rationed --
-// see the restart cache in containers.go, not this function.
+// Two fields, and neither is carried by the list endpoint -- which is the whole
+// reason the inspect call is rationed; see the inspect cache in
+// containerinspect.go, not this function.
+//
+// StartedAt costs NOTHING to add. The response was already fetched in full and
+// decoded away to read one integer out of it, so a container's true start time
+// is a struct tag, not a request.
 type dockerInspect struct {
 	RestartCount uint64 `json:"RestartCount"`
+	State        struct {
+		// RFC3339Nano, Docker's own format. Kept as a STRING rather than
+		// decoded into time.Time so an unparseable or missing value costs only
+		// the start time: a decode error here would discard the RestartCount
+		// beside it, and the two are meant to fail together only when the
+		// daemon refuses the whole call.
+		StartedAt string `json:"StartedAt"`
+	} `json:"State"`
 }
 
 // SystemDockerInspect is the production ContainerInspector.
@@ -157,28 +169,51 @@ type dockerInspect struct {
 // call, for the reason spelled out above it: a hand-built http.Transport has
 // IdleConnTimeout zero, and this function runs on far more scrapes than
 // SystemDockerContainers has containers.
-func SystemDockerInspect(ctx context.Context, id string) (uint64, error) {
+func SystemDockerInspect(ctx context.Context, id string) (ContainerStatus, error) {
 	endpoint := "http://docker/" + dockerAPIVersion + "/containers/" + url.PathEscape(id) + "/json"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return 0, fmt.Errorf("build docker inspect request: %w", err)
+		return ContainerStatus{}, fmt.Errorf("build docker inspect request: %w", err)
 	}
 
 	resp, err := dockerClient.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("inspect container: %w", err)
+		return ContainerStatus{}, fmt.Errorf("inspect container: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("docker returned %s", resp.Status)
+		return ContainerStatus{}, fmt.Errorf("docker returned %s", resp.Status)
 	}
 
 	var out dockerInspect
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return 0, fmt.Errorf("decode docker inspect response: %w", err)
+		return ContainerStatus{}, fmt.Errorf("decode docker inspect response: %w", err)
 	}
-	return out.RestartCount, nil
+	return ContainerStatus{
+		RestartCount: out.RestartCount,
+		StartedAt:    parseStartedAt(out.State.StartedAt),
+	}, nil
+}
+
+// parseStartedAt turns Docker's State.StartedAt into an instant, or the zero
+// time when there is not one to be had.
+//
+// Three things all mean "no start time", and all three must reach the caller as
+// the zero value rather than as an error: an empty string (an older daemon, or
+// a response shape without the State object), a value that will not parse, and
+// Docker's own zero time "0001-01-01T00:00:00Z", which is what it reports for a
+// container that has never run. The last is why IsZero is checked after
+// parsing succeeds and not only before.
+func parseStartedAt(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
 }
 
 func SystemDockerContainers(ctx context.Context) ([]ContainerMeta, error) {

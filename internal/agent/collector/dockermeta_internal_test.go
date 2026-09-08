@@ -3,6 +3,7 @@ package collector
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // The decode is worth pinning on its own because nothing else can catch it
@@ -171,7 +172,11 @@ func TestDockerInspectDecodesRestartCount(t *testing.T) {
 	  "Id": "8dfafdbc3a40",
 	  "Created": "2026-08-01T09:12:44.1Z",
 	  "RestartCount": 7,
-	  "State": { "Status": "running", "Restarting": false },
+	  "State": {
+	    "Status": "running",
+	    "Restarting": false,
+	    "StartedAt": "2026-08-01T09:12:45.123456789Z"
+	  },
 	  "HostConfig": { "RestartPolicy": { "Name": "unless-stopped" } }
 	}`
 	var got dockerInspect
@@ -184,5 +189,47 @@ func TestDockerInspectDecodesRestartCount(t *testing.T) {
 	// Then the restart count arrives.
 	if got.RestartCount != 7 {
 		t.Errorf("RestartCount = %d, want 7", got.RestartCount)
+	}
+
+	// And so does the start time, off the SAME response -- which is the whole
+	// point: it costs no extra request, only a struct tag.
+	started := parseStartedAt(got.State.StartedAt)
+	if want := time.Date(2026, 8, 1, 9, 12, 45, 123456789, time.UTC); !started.Equal(want) {
+		t.Errorf("StartedAt = %v, want %v", started, want)
+	}
+}
+
+// The three ways there is no start time to be had. All must be the zero value
+// and none may be an error: a container that has never run, an older daemon
+// whose response has no State.StartedAt, and a value that will not parse.
+// Docker's own zero time is the one that would otherwise slip through as a real
+// instant and put the container's uptime at two thousand years.
+func TestStartedAtIsZeroWhenThereIsNoneToRead(t *testing.T) {
+	for _, tc := range []struct{ name, in string }{
+		{"absent", ""},
+		{"docker's zero time", "0001-01-01T00:00:00Z"},
+		{"unparseable", "not a timestamp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseStartedAt(tc.in); !got.IsZero() {
+				t.Errorf("parseStartedAt(%q) = %v, want the zero time", tc.in, got)
+			}
+		})
+	}
+}
+
+// A response with no State object at all must still yield the restart count.
+// The two fields fail together only when the daemon refuses the whole call --
+// not when one key is missing.
+func TestDockerInspectWithoutStateStillCarriesTheCount(t *testing.T) {
+	var got dockerInspect
+	if err := json.Unmarshal([]byte(`{"RestartCount": 4}`), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.RestartCount != 4 {
+		t.Errorf("RestartCount = %d, want 4", got.RestartCount)
+	}
+	if started := parseStartedAt(got.State.StartedAt); !started.IsZero() {
+		t.Errorf("StartedAt = %v, want the zero time", started)
 	}
 }

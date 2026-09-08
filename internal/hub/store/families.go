@@ -596,7 +596,7 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 		// What Docker said about this container, from the same newest row the
 		// name and image come from.
 		//
-		// All four OVERWRITE, including with NULL. An agent whose socket went
+		// All five OVERWRITE, including with NULL. An agent whose socket went
 		// away is no longer in a position to assert that a container is
 		// healthy, and keeping the last "healthy" the hub happened to hear is
 		// the worst failure available here -- a green badge on a container
@@ -611,13 +611,25 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 		// nobody is asserting any more -- "Restarts: 12" above a State and a
 		// Health that both correctly read "not reported".
 		//
+		// started_at overwrites for a stronger reason than the convention: it
+		// shares the agent's inspect cache entry with restart_count, so an
+		// agent that has lost inspect drops BOTH. Coalescing one while
+		// overwriting the other would leave a start time from a generation
+		// whose count is gone -- an uptime asserted for an incarnation nobody
+		// can still see.
+		//
+		// It is also the one column here that is not derived from a
+		// transition: Docker states it outright, which is exactly why it can
+		// answer what state_ts cannot.
+		//
 		// state_ts is when the state was ENTERED, advanced only on an actual
 		// change -- the rule read.Unit.Since documents for systemd. IS DISTINCT
 		// FROM rather than <>, so the first transition out of NULL counts.
 		id, ok, err := s.resolveOne(ctx, "container", key, `
 			INSERT INTO containers (host_id, container_key, name, image, is_agent, last_seen,
-			                        docker_state, health, labels, restart_count, state_ts)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $6)
+			                        docker_state, health, labels, restart_count, state_ts,
+			                        started_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $6, $11)
 			ON CONFLICT (host_id, container_key) DO UPDATE
 			   SET name = EXCLUDED.name, image = EXCLUDED.image, is_agent = EXCLUDED.is_agent,
 			       last_seen = GREATEST(containers.last_seen, EXCLUDED.last_seen),
@@ -625,6 +637,7 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 			       health = EXCLUDED.health,
 			       labels = EXCLUDED.labels,
 			       restart_count = EXCLUDED.restart_count,
+			       started_at = EXCLUDED.started_at,
 			       state_ts = CASE
 			           WHEN containers.docker_state IS DISTINCT FROM EXCLUDED.docker_state
 			           THEN EXCLUDED.last_seen
@@ -632,7 +645,8 @@ func (s *Store) resolveContainerIDs(ctx context.Context, hostID int32, rows []*n
 			       END
 			RETURNING id`,
 			hostID, key, r.GetName(), r.GetImage(), r.GetIsAgent(), tsOf(r.GetTsMs()),
-			r.DockerState, r.Health, labelsJSON(r.GetLabels()), int64OrNil(r.RestartCount))
+			r.DockerState, r.Health, labelsJSON(r.GetLabels()), int64OrNil(r.RestartCount),
+			tsPtrOf(r.StartedAtMs))
 		if err != nil {
 			return nil, err
 		}
@@ -1402,6 +1416,22 @@ func int64OrNil(v *uint64) *int64 {
 	}
 	n := int64(*v)
 	return &n
+}
+
+// tsPtrOf renders an optional epoch-milliseconds field as a nullable instant.
+//
+// Non-positive is treated as absent rather than converted, which is a guard
+// and not a nicety: zero is what an agent sends for a timestamp it does not
+// have if it ever forgets to check, and stored as an instant that is 1970 --
+// a container reported as having been up for fifty-odd years. The agent
+// already omits the field for an unusable start time; this makes the hub
+// refuse it too, because only one of the two has to be wrong.
+func tsPtrOf(ms *int64) *time.Time {
+	if ms == nil || *ms <= 0 {
+		return nil
+	}
+	t := tsOf(*ms)
+	return &t
 }
 
 // labelsJSON renders a container's labels for the JSONB column, keeping the
