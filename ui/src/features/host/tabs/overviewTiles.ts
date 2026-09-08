@@ -22,7 +22,15 @@ import {
   percent,
 } from "../../../lib/format";
 import { currentFilesystems, isReporting } from "../../../lib/host";
-import { severityFromPercent, type FillSeverity } from "../../../ui/Meter";
+import {
+  SEVERITY_COLOR,
+  severityFromPercent,
+  type FillSeverity,
+} from "../../../ui/Meter";
+import { NEUTRAL_TREND_COLOR } from "../../../ui/StatTile";
+// The fleet row's own in/out pair, so the two traffic tiles and the Traffic
+// chart under them are one legend.
+import { DOWN_COLOR, UP_COLOR } from "../../../ui/charts/UpDownSparkline";
 // The fleet's disk thresholds, imported rather than restated: the tile, the
 // Disk meters below it, the attention band above it and the fleet row a
 // reader arrived from must not disagree about one filesystem.
@@ -194,6 +202,8 @@ export interface Tile {
    * null, never "ok". severityFromPercent answers "ok" for a healthy
    * reading, and a green tile would make a hue on this page mean "someone
    * checked" rather than "look at this" -- see StatTile's own note.
+   * The trend line is the exception and is `color`'s: it IS green at ok,
+   * see trendColor().
    */
   severity: FillSeverity | null;
   /**
@@ -204,17 +214,28 @@ export interface Tile {
   slug?: string;
 }
 
-const STATUS_COLOR: Record<FillSeverity, string> = {
-  ok: "var(--st-ok)",
-  warning: "var(--st-warn)",
-  critical: "var(--st-crit)",
-};
-
-/** A tile that is off draws its trend in the status hue, not in its series
- * colour: the tint, the figure and the line have to agree, or the tile says
- * "warning" in three places and "normal blue" in a fourth. */
-function trendColor(severity: FillSeverity | null, series: string): string {
-  return severity === null ? series : STATUS_COLOR[severity];
+/**
+ * The colour a THRESHOLD tile draws its trend in: the severity of what it is
+ * reading now, ok included.
+ *
+ * One colour system on this page, and it means severity -- the rule the
+ * fleet row's trendColor() already follows. The tiles used to draw in series
+ * hues while healthy (CPU blue, memory purple, the disk cyan, swap violet)
+ * and switch to the status hue only when off, so a grid of twelve tiles wore
+ * seven colours, most of them answering "which column is this" when the label
+ * over the figure answers that already. Green in the fleet row means
+ * "measured, and fine", and this is the same reading one click later.
+ *
+ * Takes the FULL severity, not the offOnly() one Tile.severity carries: "ok"
+ * is not a tint on the tile, but it is the colour of the line. null is a
+ * reading with no current value, which draws in the neutral -- colouring
+ * history by a severity nobody measured would be an invention.
+ *
+ * SEVERITY_COLOR is Meter's map, the one the fleet row reads too -- one map,
+ * so the tile and the cell cannot draw one severity in two greens.
+ */
+function trendColor(severity: FillSeverity | null): string {
+  return severity === null ? NEUTRAL_TREND_COLOR : SEVERITY_COLOR[severity];
 }
 
 /** Worse sorts higher. Only the two diskState can answer with, plus the
@@ -228,8 +249,9 @@ function severityRank(severity: FillSeverity | null): number {
   return severity === null ? 0 : (SEVERITY_RANK[severity] ?? 0);
 }
 
-/** "ok" is not a status treatment here. See Tile.severity. */
-function offOnly(severity: FillSeverity): FillSeverity | null {
+/** "ok" is not a status treatment here. See Tile.severity. Passes null
+ * through, so a reading with no current value needs no guard of its own. */
+function offOnly(severity: FillSeverity | null): FillSeverity | null {
   return severity === "ok" ? null : severity;
 }
 
@@ -253,14 +275,14 @@ function ratioSeries(
   });
 }
 
-/** One rate off the host family, as a count per second. */
+/** One rate off the host family, as a count per second. A rate has no
+ * ceiling, so no threshold and no severity: it draws in the neutral. */
 function rateTile(
   res: MetricsResponse | null,
   key: string,
   label: string,
   base: string,
   slug: string,
-  color: string,
   sub?: string,
 ): Tile {
   return {
@@ -270,21 +292,20 @@ function rateTile(
     unit: "/s",
     sub,
     values: griddedValues(res, 0, base),
-    color,
+    color: NEUTRAL_TREND_COLOR,
     severity: null,
     slug,
   };
 }
 
 /** One level off the host family -- a count of things that exist right now,
- * not a rate. No "/s". */
+ * not a rate. No "/s", and like a rate no threshold, so the neutral. */
 function levelTile(
   res: MetricsResponse | null,
   key: string,
   label: string,
   base: string,
   slug: string,
-  color: string,
   sub?: string,
 ): Tile {
   return {
@@ -293,7 +314,7 @@ function levelTile(
     value: cardinal(current(res, base)),
     sub,
     values: griddedValues(res, 0, base),
-    color,
+    color: NEUTRAL_TREND_COLOR,
     severity: null,
     slug,
   };
@@ -360,16 +381,15 @@ function systemTiles(
   // swap below already use, and the one every meter and sparkline in the
   // app is drawn by.
   const cpuNow = current(hostMetrics, "cpu_total");
-  const cpuSeverity =
-    cpuNow === null ? null : offOnly(severityFromPercent(cpuNow));
+  const cpuState = cpuNow === null ? null : severityFromPercent(cpuNow);
   tiles.push({
     key: "cpu",
     label: "CPU",
     value: percent(cpuNow),
     sub: host.cores === null ? undefined : `${host.cores} cores`,
     values: griddedValues(hostMetrics, 0, "cpu_total"),
-    color: trendColor(cpuSeverity, "var(--s1)"),
-    severity: cpuSeverity,
+    color: trendColor(cpuState),
+    severity: offOnly(cpuState),
     slug: "host-cpu",
   });
 
@@ -381,16 +401,15 @@ function systemTiles(
   const memTotal = griddedValues(hostMetrics, 0, "mem_total");
   const memPct = ratioSeries(memUsed, memTotal);
   const memNow = latestValue(memPct);
-  const memSeverity =
-    memNow === null ? null : offOnly(severityFromPercent(memNow));
+  const memState = memNow === null ? null : severityFromPercent(memNow);
   tiles.push({
     key: "memory",
     label: "Memory",
     value: percent(memNow),
     sub: memorySub(hostMetrics),
     values: memPct,
-    color: trendColor(memSeverity, "var(--s3)"),
-    severity: memSeverity,
+    color: trendColor(memState),
+    severity: offOnly(memState),
     slug: "host-memory",
   });
 
@@ -515,7 +534,7 @@ function busiestFilesystemTile(
       label: "Busiest filesystem",
       value: ABSENT,
       values: [],
-      color: "var(--s6)",
+      color: NEUTRAL_TREND_COLOR,
       severity: null,
       slug: "host-filesystem",
     };
@@ -550,7 +569,7 @@ function busiestFilesystemTile(
   // worth acting on" and is why a 20 TB array with 800 GB free stays out of
   // the attention band; using it for the fill as well made red unreachable
   // above roughly 400 GB of capacity, and a 97 % disk drew amber.
-  const severity = offOnly(severityFromPercent(worstPct));
+  const state = severityFromPercent(worstPct);
 
   return {
     key: "disk",
@@ -558,8 +577,8 @@ function busiestFilesystemTile(
     value: percent(worstPct),
     sub: rows[worstIndex]?.label,
     values: pctSeries,
-    color: trendColor(severity, "var(--s6)"),
-    severity,
+    color: trendColor(state),
+    severity: offOnly(state),
     slug: "host-filesystem",
   };
 }
@@ -578,22 +597,8 @@ function busiestFilesystemTile(
  */
 function kernelTiles(res: MetricsResponse | null): Tile[] {
   return [
-    rateTile(
-      res,
-      "ctxt",
-      "Context switches",
-      "ctxt_per_s",
-      "context-switches",
-      "var(--s1)",
-    ),
-    rateTile(
-      res,
-      "intr",
-      "Interrupts",
-      "intr_per_s",
-      "interrupts",
-      "var(--s1)",
-    ),
+    rateTile(res, "ctxt", "Context switches", "ctxt_per_s", "context-switches"),
+    rateTile(res, "intr", "Interrupts", "intr_per_s", "interrupts"),
     processesTile(res),
   ];
 }
@@ -631,7 +636,6 @@ function processesTile(res: MetricsResponse | null): Tile {
       "Runnable now",
       "procs_running",
       "running-processes",
-      "var(--s2)",
       blockedSub(res),
     );
   }
@@ -641,7 +645,6 @@ function processesTile(res: MetricsResponse | null): Tile {
     "Processes",
     "processes_total",
     "total-processes",
-    "var(--s2)",
     stateSub(res),
   );
 }
@@ -674,7 +677,6 @@ function pressureTiles(res: MetricsResponse | null): Tile[] {
       "Major page faults",
       "pgmajfault_per_s",
       "memory-pressure",
-      "var(--s7)",
     ),
   ];
 
@@ -699,28 +701,19 @@ function pressureTiles(res: MetricsResponse | null): Tile[] {
   const swapNow = latestValue(swapPct);
   // The same threshold the Memory meter carried on this page before the
   // tiles replaced it. Nothing new is judged; the judgement moved.
-  const swapSeverity =
-    !asPercent || swapNow === null
-      ? null
-      : offOnly(severityFromPercent(swapNow));
+  const swapState =
+    !asPercent || swapNow === null ? null : severityFromPercent(swapNow);
   tiles.push({
     key: "swap",
     label: "Swap used",
     value: asPercent ? percent(swapNow) : binaryBytes(swapNow),
     values: swapPct,
-    color: trendColor(swapSeverity, "var(--s5)"),
-    severity: swapSeverity,
+    color: trendColor(swapState),
+    severity: offOnly(swapState),
     slug: "host-memory",
   });
   tiles.push(
-    rateTile(
-      res,
-      "pswpout",
-      "Swap out",
-      "pswpout_per_s",
-      "memory-pressure",
-      "var(--s8)",
-    ),
+    rateTile(res, "pswpout", "Swap out", "pswpout_per_s", "memory-pressure"),
   );
   return tiles;
 }
@@ -750,7 +743,7 @@ function networkTiles(
       label: "Traffic in",
       value: byterate(live ? host.net_rx_bytes : null),
       values: rx,
-      color: "var(--s1)",
+      color: UP_COLOR,
       severity: null,
       slug: "host-traffic",
     },
@@ -759,7 +752,7 @@ function networkTiles(
       label: "Traffic out",
       value: byterate(live ? host.net_tx_bytes : null),
       values: tx,
-      color: "var(--s2)",
+      color: DOWN_COLOR,
       severity: null,
       slug: "host-traffic",
     },
@@ -769,7 +762,6 @@ function networkTiles(
       "TCP established",
       "tcp_curr_estab",
       "tcp-connections",
-      "var(--s6)",
     ),
   ];
 }

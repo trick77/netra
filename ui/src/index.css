@@ -969,14 +969,17 @@ a:hover {
      colour and reads under the body floor as type. */
   color: var(--st-crit-text);
 }
-/* The same accent, everywhere else a hostname is written.
-   The fleet row had it and nothing else did: the host page's own <h1>, the
-   Host column of the containers list, the container detail header and the
-   fleet's container list all rendered the machine's name as ordinary link
-   ink, so the one word the whole page is about was the quietest thing on it.
+/* The accent, where a hostname is a LINK to the host: the Host column of
+   the containers list, the container detail header and the fleet's container
+   list. These rendered the machine's name as ordinary link ink, so the one
+   word the row was about was the quietest thing in it.
+
+   NOT the host page's own <h1> any more. It wore this too, and the fleet row
+   it is opened from prints the same name in --ink and the serif; the accent
+   there is spent on the clause naming what is wrong, and a title in it read
+   as the page's one alarm. The h1 keeps the serif and the base --ink.
    Its own class rather than reusing .host-cell-name, which also carries that
-   row's weight and size -- a 23px serif <h1> must not be reset to
-   --text-ui. */
+   row's weight and size. */
 .hostname {
   color: var(--accent);
 }
@@ -3226,12 +3229,12 @@ a.tile:focus-visible {
   flex-direction: column;
   /* Tight: a subtitle, not a second row of chrome. */
   gap: 2px;
-  /* Shares the row with the mark instead of wrapping under it. The block is
-     as wide as its widest line, which at 400px is wider than what is left
-     beside a 22px glyph -- so it wrapped, and the mark sat alone on a line
-     above the title it belongs to. Shrinking is what keeps the two together;
-     min-width:0 is what lets it shrink at all, since a flex item will not go
-     below its content's width without it. */
+  /* The only item on the row since the page's mark went, and still allowed
+     to shrink: the block is as wide as its widest line, and a flex item will
+     not go below its content's width without min-width:0 -- at 390px that
+     is the header pushing the page sideways rather than .hostbar wrapping.
+     (While the mark was beside it, this is also what kept the two on one
+     line instead of the glyph sitting alone above the title.) */
   flex: 1 1 0;
   min-width: 0;
 }
@@ -3737,10 +3740,11 @@ svg.spark {
     flex-wrap: wrap;
   }
   /* The badges and the range control start a row of their own at this width
-     rather than trailing a title that has already used most of one. The h1 is
-     what claims the full line now, not the whole name block: claiming it on
-     .hostident pushed the page's mark -- which sits beside that block, not in
-     it -- onto a line of its own above the title. */
+     rather than trailing a title that has already used most of one. The h1
+     claims the line, not the whole name block: .hostident is the row's only
+     item now, but it is the title alone that should own a line, so the
+     badges and the range control wrap under it rather than the block
+     growing to hold them all on one. */
   .hosthead .hostbar > h1 {
     flex: 1 1 100%;
   }

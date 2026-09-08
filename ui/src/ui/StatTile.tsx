@@ -41,7 +41,8 @@ export interface StatTileProps {
   /** The series behind the figure, over the page's window. Nulls are gaps,
    * and Sparkline draws them as gaps. */
   values: (number | null)[];
-  /** A series token, never a hex literal -- the palette lives in index.css. */
+  /** A status or in/out token, never a hex literal -- the palette lives in
+   * index.css. Defaults to NEUTRAL_TREND_COLOR. */
   color?: string;
   /**
    * The status treatment, or null for none.
@@ -53,6 +54,11 @@ export interface StatTileProps {
    * status palette only when something is actually off, which is the same
    * rule the attention band and the fleet list already follow. Callers map
    * "ok" to null.
+   *
+   * The trend LINE is the one exception, and it is `color`'s to decide, not
+   * this prop's: a threshold tile draws its line green at ok, because that
+   * is the fleet row's silhouette one click later and there green means
+   * "measured, and fine". The tint stays reserved for something being off.
    */
   severity?: FillSeverity | null;
   /** The chart this tile is a summary of. Given one, the tile is a real link
@@ -61,6 +67,14 @@ export interface StatTileProps {
   /** Client-side navigation, matching StatFigure and Tabs. */
   onSelect?: () => void;
 }
+
+/** The trend colour of a tile with nothing to judge: a rate or a count with
+ * no threshold, or a threshold reading that has no current value. The same
+ * grey the fleet row draws a silhouette in when there is no reading to colour
+ * by (hostColumns.tsx imports this), and for the same reason: a hue
+ * on this page means severity, so a reading that has none draws in none. The
+ * series ramp is for a large chart with a legend, where hue names a band. */
+export const NEUTRAL_TREND_COLOR = "var(--ink-2)";
 
 /** Wide enough to have a shape before ResizeObserver answers, narrow enough
  * that it never forces the grid track wider than the tile. The tile is fluid;
@@ -81,7 +95,7 @@ export function StatTile({
   unit,
   sub,
   values,
-  color = "var(--s1)",
+  color = NEUTRAL_TREND_COLOR,
   severity = null,
   href,
   onSelect,

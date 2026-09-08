@@ -12,6 +12,9 @@ import { OsIcon } from "../../ui/OsIcon";
 import type { Band } from "../../ui/charts/StackedSparkline";
 import { Sparkline } from "../../ui/charts/Sparkline";
 import { SEVERITY_COLOR, severityFromPercent } from "../../ui/Meter";
+// The one neutral, shared with the host page's tiles: a silhouette with no
+// reading to judge and a rate with no threshold draw in the same grey.
+import { NEUTRAL_TREND_COLOR } from "../../ui/StatTile";
 import {
   DETAIL_WIDTH,
   SPARK_STRIP_HEIGHT,
@@ -504,18 +507,16 @@ const DISK_CELL_STYLE = {
  * threshold and no severity to draw -- it keeps --in-1/--out-1, where hue
  * separates in from out across the midline.
  *
- * Cell only. The ENLARGED views and the host page keep the full palette: a
- * dialog is a chart someone opened to read, not a mark scanned down a column,
- * and its stacks name their bands by colour.
+ * Cell and the host page's tiles, which follow the same rule (see
+ * overviewTiles.ts trendColor). The ENLARGED views and the host page's chart
+ * panels keep the full palette: a dialog is a chart someone opened to read,
+ * not a mark scanned down a column, and its stacks name their bands by colour.
  */
 function trendColor(pct: number | null): string {
   return pct === null
     ? NEUTRAL_TREND_COLOR
     : SEVERITY_COLOR[severityFromPercent(pct)];
 }
-
-/** The row's own secondary ink, for a silhouette with no reading to judge. */
-const NEUTRAL_TREND_COLOR = "var(--ink-2)";
 
 // One line and a light fill. The row used to draw the per-core stack here --
 // up to 32 bands in four cycling blues, a hairline between each, inside 45px.
