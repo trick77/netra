@@ -1760,13 +1760,18 @@ tbody tr:hover .host-cell-name {
      with everything else. */
   z-index: 5;
 }
-/* The product's name, and the link home. Serif, at the size the login card
-   sets its own brand -- it is the one piece of type in the bar, and the bar
-   is the only place the app ever says what it is. */
+/* The product's name, and the link home. Serif, and sized to the control
+   beside it rather than to a type token: the name is the masthead, and at
+   --text-title it read as one more label among the glyphs. 32px on a 34px
+   line box stands exactly as tall as the search field it sits next to, and
+   the pair reads as one line rather than as a label in front of a box. The
+   line height is stated because 32px of leading would otherwise push the
+   bar past its own 52px. */
 .topbar .wordmark {
   flex: none;
   font-family: var(--font-serif);
-  font-size: var(--text-title);
+  font-size: 32px;
+  line-height: 34px;
   font-weight: 500;
   letter-spacing: -0.01em;
   color: var(--ink);
