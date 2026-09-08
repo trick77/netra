@@ -18,6 +18,7 @@
 // tabs; and the sensor cards, which are hardware facts and are now on System.
 import type { ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
+import { AttentionBand } from "../../../ui/AttentionBand";
 import type {
   ConditionRow,
   HostDetail,
@@ -98,25 +99,6 @@ export interface Attention {
    * of naming a bucket where nothing happened.
    */
   sinceAtLeast?: boolean;
-}
-
-/**
- * "· since 6 h ago", or "· over 7 d" when the onset is only a floor.
- *
- * Appended to the sentence rather than given a column of its own: the band is
- * prose, one line per problem, and how long it has been true reads as part of
- * the sentence rather than as a second field to line up.
- */
-function sinceClause(row: Attention, now: Date): string {
-  if (row.since === null || row.since === undefined) return "";
-  const age = relative(row.since, now);
-  if (age === ABSENT) return "";
-  if (row.sinceAtLeast === true) {
-    // "over 7 d", not "over 7 d ago": the floor is a span, and the walk could
-    // not see past it. relative() writes an age, so the suffix comes off.
-    return ` · over ${age.replace(/ ago$/, "")}`;
-  }
-  return ` · since ${age}`;
 }
 
 // When a host counts as stale rather than merely late. Imported, never
@@ -696,60 +678,10 @@ export function Overview({
           it looked and found nothing.
         </p>
       )}
-      {attention.length > 0 && (
-        <section className="attn" aria-label="Needs attention">
-          {/* The severity is a heading over the rows at that severity, said
-              once, rather than a chip repeated on every one of them. Three
-              critical rows do not need the word "critical" three times, and
-              the chip that used to carry it printed the raw severity literal
-              in lowercase. The dot on each row is the mark; the heading above
-              it is the word §3.3 requires, and it is a real heading so a
-              screen reader reaches the rows through it.
-
-              The fleet list groups the same way, and this page has to match
-              it -- see #92, where the two disagreed about one host. */}
-          {ATTENTION_SEVERITIES.map((severity) => {
-            // Stable partition, so the written order of needsAttention()
-            // survives inside each severity: reporting still leads, which is
-            // the whole reason it is written first.
-            const rows = attention.filter((a) => a.severity === severity);
-            if (rows.length === 0) return null;
-            return (
-              <div key={severity}>
-                <h3 className={`attn-sev ${SEVERITY_CLASS[severity]}`}>
-                  {SEVERITY_WORD[severity]}{" "}
-                  <span className="n">{rows.length}</span>
-                </h3>
-                <ul className="attn-list">
-                  {rows.map((a, index) => (
-                    <li className="attn-row" key={index}>
-                      <span
-                        className={`dot ${SEVERITY_CLASS[severity]}`}
-                        aria-hidden="true"
-                      />
-                      <span className="what">
-                        {a.what}
-                        {/* How long it has been true, from the hub's own
-                            onset. Nothing in the browser could say this
-                            before: a derivation reading the current row has
-                            no memory of when it first became true, so every
-                            line here stated a fact with no age against it.
-                            Muted, because the sentence is what to act on and
-                            the age is context for it. */}
-                        {sinceClause(a, now ?? new Date()) === "" ? null : (
-                          <span className="muted">
-                            {sinceClause(a, now ?? new Date())}
-                          </span>
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })}
-        </section>
-      )}
+      {/* One band, shared with the fleet's container list. Two renderings of
+          one vocabulary is how this page and the fleet came to disagree about
+          a single host (#92). */}
+      <AttentionBand rows={attention} now={now ?? new Date()} />
       {/* Out of the flow, like the attention band -- but not because it has to
           be read first. It is the machine's identity card, and it was asked
           for at the top right of the page. The columns cannot give it one:

@@ -14,6 +14,8 @@ import { Input } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import { StatFigure, StatRail } from "../../ui/StatRail";
 import { AttentionCounts } from "./AttentionCounts";
+import { AttentionBand } from "../../ui/AttentionBand";
+import { ATTENTION_CAP, containerAttention } from "./containerAttention";
 import {
   catalogueOf,
   EMPTY_CATALOGUE,
@@ -463,6 +465,32 @@ export function FleetPage({
     };
   }).filter((tile) => tile.ids.length > 0);
 
+  // The band's rows, over every container rather than the filtered ones -- see
+  // the band's own note. The sentence is built here because only this page
+  // knows how it routes to a container and to a host.
+  const containerAttentionRows = containerAttention(containerRows, {
+    now,
+    sentence: (row, why) => (
+      <>
+        <a
+          href={`/containers/${row.host_id}/${encodeURIComponent(row.container_key)}`}
+        >
+          {row.name ?? row.container_key}
+        </a>
+        {" on "}
+        <a href={`/hosts/${row.host_id}/overview`}>{row.hostname}</a>
+        {" — "}
+        {why}
+      </>
+    ),
+  });
+
+  // Where an overflow line points: the worst kind present at that severity, so
+  // "+ 12 more warnings" lands on the filter a reader would have chosen. The
+  // tiles are already in rank order, so the first match is the worst.
+  const worstKindAt = (severity: string) =>
+    containerTiles.find((tile) => tile.severity === severity)?.kind ?? "all";
+
   const attentionContainers =
     containerKind === null
       ? visibleContainers
@@ -663,6 +691,32 @@ export function FleetPage({
           active={containerKind}
           href={(next) => attentionHref(next as FleetFilter)}
           onSelect={(next) => setAttention(next as FleetFilter)}
+        />
+      ) : null}
+      {/* What is wrong, in sentences, above the inventory rather than
+          distributed through it. The same band the host page's Overview draws
+          -- one component, because two renderings of one vocabulary is how
+          this page and that one came to disagree about a host (#92).
+
+          Over ALL the container rows, never the filtered ones: the band says
+          what is wrong with the fleet, and a reader typing in the search box
+          is narrowing what they are LOOKING for, not changing what is true.
+          Same rule the counts line above it already follows.
+
+          Capped, with a linked overflow: a fleet's band is unbounded where a
+          host's is not, and one lossy host can put a series-gap row here for
+          every container it runs. */}
+      {entity === "containers" ? (
+        <AttentionBand
+          rows={containerAttentionRows}
+          now={now}
+          cap={ATTENTION_CAP}
+          overflow={(severity, hidden) => (
+            <a href={attentionHref(worstKindAt(severity) as FleetFilter)}>
+              + {hidden} more {severity}
+              {hidden === 1 ? "" : "s"}
+            </a>
+          )}
         />
       ) : null}
 

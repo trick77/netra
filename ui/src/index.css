@@ -868,6 +868,17 @@ a:hover {
   font-size: var(--text-label);
   font-variant-numeric: tabular-nums;
 }
+/* What was left out, and the way to it.
+   A host's band is bounded by how many things can be wrong with one machine; a
+   FLEET's is not, and one lossy host can put a row here for every container it
+   runs. The overflow is a LINK rather than a count, because the band this
+   replaced was faulted for exactly that: "+30 more hosts" with nothing to
+   click. Quieter than a row that names a problem -- it is a way out, not a
+   finding. */
+.attn-row.attn-more .what {
+  color: var(--muted);
+  font-size: var(--text-label);
+}
 /* A real list, so a screen reader announces how many things are wrong before
    reading them. */
 .attn-list {
