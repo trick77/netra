@@ -81,7 +81,7 @@ import {
   percent,
 } from "../../lib/format";
 import type { Container } from "../../lib/api";
-import { type Range } from "../../lib/range";
+import { rangeMs, type Range } from "../../lib/range";
 import { ContainerChart } from "./ContainerChart";
 import { hasInteriorGaps } from "../../lib/metrics";
 import { hostStatus } from "../../lib/host";
@@ -172,6 +172,7 @@ export type ContainerRow = Container & {
 export function containerState(
   row: ContainerRow,
   now: Date = new Date(),
+  range?: Range,
 ): DerivedState {
   const lastSeen = Date.parse(row.last_seen);
   // A host whose cgroup mount is unreadable keeps posting host samples while
@@ -203,21 +204,56 @@ export function containerState(
     // exists at all.
     dockerState: row.docker_state,
     health: row.health,
-    // The restart log's own count over the listing's window, which a list CAN
-    // now answer -- it rides the row from the events table (migration 0019)
-    // rather than being differenced out of a series the fleet's tier does not
-    // carry. So "a hole in the series usually means a restart, but no restart
-    // count is available for this range" is no longer the best netra can say
-    // about a gap; deriveState already writes the two better sentences.
+    // The restart log's own count, which a list CAN now answer -- it rides
+    // the row from the events table (migration 0019) rather than being
+    // differenced out of a series the fleet's tier does not carry. So "a hole
+    // in the series usually means a restart, but no restart count is
+    // available for this range" is no longer the best netra can say about a
+    // gap; deriveState already writes the two better sentences.
+    //
+    // ONLY when the count's window is the range the gap was found in. The
+    // sentences deriveState builds from this say "in this window", and the
+    // window they mean is the CHART's -- so handing them a fixed 24h count
+    // for a 30d list makes "the container did not restart" a claim about
+    // thirty days that was measured over one, and a 1h list would blame a
+    // one-hour hole on a restart twenty hours before it. Mismatched, the row
+    // says the honest thing instead: no count is available for this range.
+    // The detail page has no such problem -- it counts over the samples it
+    // actually drew -- and this is what keeps the two surfaces from stating
+    // different things about one gap.
     //
     // Undefined -- an older payload, or a caller building rows by hand --
     // still means null, and the wording falls back exactly as it did.
-    restartsInWindow: row.restarts_window ?? null,
+    restartsInWindow: restartsForRange(row, range),
     // What separates a container legitimately booting from one wedged in its
     // healthcheck. Null on any host whose agent cannot inspect, where the
     // branch correctly does not fire.
     startedAtMs: row.started_at ? Date.parse(row.started_at) : null,
   });
+}
+
+/**
+ * The row's restart count, but only when it answers for the range asked about.
+ *
+ * The hub sums the restart log over a window of its own choosing and says
+ * which on the row (`restarts_window_seconds`, 24h today). A list drawing a
+ * 30-day chart and a list drawing a one-hour chart both get that same figure,
+ * and only one of them can honestly call it "this window".
+ *
+ * Equal, not "close enough": these are the discrete ranges of RAIL_RANGES, so
+ * there is no near-miss to accommodate, and a rule that accepted one would
+ * have to decide how wrong is acceptable. Null when they differ, which is the
+ * case deriveState already has words for.
+ *
+ * No range at all -- a caller with no chart behind it -- is the same answer
+ * for the same reason: nothing here says what window the gap was found in.
+ */
+function restartsForRange(row: ContainerRow, range?: Range): number | null {
+  if (range === undefined) return null;
+  const windowSeconds = row.restarts_window_seconds;
+  if (windowSeconds == null || windowSeconds <= 0) return null;
+  if (rangeMs(range) !== windowSeconds * 1000) return null;
+  return row.restarts_window ?? null;
 }
 
 /**
@@ -993,7 +1029,7 @@ export function containerColumns({
         <NameCell
           row={row}
           groupedByProject={groupedByProject}
-          state={containerState(row, now)}
+          state={containerState(row, now, range)}
           now={now}
         />
       ),
@@ -1024,7 +1060,7 @@ export function containerColumns({
     // title, and giving every badge in the app one to serve this cell is a
     // wider change than the cell is worth.
     cell: (row) => {
-      const state = containerState(row, now);
+      const state = containerState(row, now, range);
       return (
         <span title={state.why}>
           <Badge severity={state.severity}>{state.label}</Badge>
@@ -1033,7 +1069,7 @@ export function containerColumns({
     },
     // Worst first, by kind rather than by the label's alphabet: sorting a
     // status column is a reader asking which rows to look at.
-    sortValue: (row) => stateKindRank(containerState(row, now).kind),
+    sortValue: (row) => stateKindRank(containerState(row, now, range).kind),
   });
   columns.push({
     key: "image",

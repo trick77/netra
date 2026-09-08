@@ -744,21 +744,42 @@ func (s *Store) upsertContainerWithRestarts(
 		if err != nil {
 			return 0, false, err
 		}
+		// A SAVEPOINT, not a bare Exec, and only for the quarantine below.
+		// Postgres aborts the whole transaction on a failed statement, so
+		// `continue` past a poison row would leave every later Exec failing
+		// with 25P02 and the commit returning ErrTxCommitRollback -- the
+		// container would error, and error again on every replay, which is
+		// the exact wedge the quarantine exists to prevent. Rolling back to
+		// the savepoint drops the one row and leaves the transaction usable.
+		//
 		// DO NOTHING is what makes a replayed ring buffer idempotent: the same
 		// batch delivered twice re-derives the same rows at the same instants,
 		// and the natural key refuses the duplicates. It is the same clause
 		// InsertEvents uses, for the same reason.
-		if _, err := tx.Exec(ctx, `
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			return 0, false, fmt.Errorf("savepoint for restart event %s: %w", key, err)
+		}
+		if _, err := sp.Exec(ctx, `
 			INSERT INTO events (host_id, ts, type, subject, detail, severity)
 			VALUES ($1, $2, $3, $4, $5::jsonb, $6)
 			ON CONFLICT (host_id, ts, type, subject) DO NOTHING`,
 			hostID, ev.TS, ev.Type, key, body, ev.Severity); err != nil {
+			// Rolled back either way: the savepoint is dead the moment the
+			// statement inside it failed, and leaving it open would poison
+			// the commit as surely as the row would have.
+			if rbErr := sp.Rollback(ctx); rbErr != nil {
+				return 0, false, fmt.Errorf("roll back restart event for %s: %w", key, rbErr)
+			}
 			if poisonRow(err) {
 				slog.Warn("dropped a restart event Postgres refused to store",
 					"key", key, "type", ev.Type, "err", err)
 				continue
 			}
 			return 0, false, fmt.Errorf("insert restart event for %s: %w", key, err)
+		}
+		if err := sp.Commit(ctx); err != nil {
+			return 0, false, fmt.Errorf("release savepoint for restart event %s: %w", key, err)
 		}
 	}
 

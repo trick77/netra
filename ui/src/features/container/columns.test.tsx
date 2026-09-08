@@ -344,6 +344,57 @@ describe("containerColumns", () => {
       expect(screen.getByText("series gap")).toBeInTheDocument();
     });
 
+    // The gap sentence says "in this window", and the window it means is the
+    // CHART's. The hub's restart count is over a window of its own (24 h), so
+    // it may only be spoken when the two are the same span.
+    describe("what a series gap says about restarts", () => {
+      const GAPPY = {
+        host_last_seen: "2026-08-10T14:00:00Z",
+        cpu: [1, null, 2],
+        mem: [1e8, null, 1e8],
+        mem_limit_bytes: 1e9,
+        restarts_window_seconds: 86400,
+      };
+      const gapTitle = () =>
+        screen
+          .getByText("series gap")
+          .closest("[title]")!
+          .getAttribute("title")!;
+
+      it("names the count when the list draws that same window", () => {
+        renderRows([makeRow({ ...GAPPY, restarts_window: 2 })], {
+          now: NOW,
+          range: "24h",
+        });
+        expect(gapTitle()).toContain("restarted the container 2 times");
+      });
+
+      // A 30-day list holding a 24 h count must not say "the container did
+      // not restart": it did not restart TODAY, and the hole may be three
+      // weeks back. The honest sentence is the one from before the counter
+      // existed.
+      it("refuses the count on a longer range rather than misdating it", () => {
+        renderRows([makeRow({ ...GAPPY, restarts_window: 0 })], {
+          now: NOW,
+          range: "30d",
+        });
+        expect(gapTitle()).toContain(
+          "no restart count is available for this range",
+        );
+        expect(gapTitle()).not.toContain("did not restart");
+      });
+
+      // The other direction: a one-hour hole is not explained by a restart
+      // twenty hours before it.
+      it("refuses the count on a shorter range too", () => {
+        renderRows([makeRow({ ...GAPPY, restarts_window: 3 })], {
+          now: NOW,
+          range: "1h",
+        });
+        expect(gapTitle()).toContain("no restart count is available");
+      });
+    });
+
     // The detail page reads the last READING; off the latest bucket instead,
     // one empty trailing bucket hid pressure here that the page still showed.
     it("reads memory past an empty trailing bucket", () => {

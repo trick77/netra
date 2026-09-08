@@ -1,6 +1,6 @@
 import {
-  useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useState,
   type CSSProperties,
@@ -323,8 +323,15 @@ export function Table<T>({
   // poll. Groups already in `choice` are left exactly as they are -- that is
   // what makes this a seed and not a reset, and it is why a reader's fold
   // survives the next sixty-second refetch.
+  //
+  // LAYOUT effect, not a passive one. `choice` starts empty and the row loop
+  // below falls back to open, so a passive effect lets the browser paint every
+  // group expanded and then fold them a frame later -- a full-height jump on
+  // exactly the two lists whose point is that a quiet stack is already folded
+  // when the reader arrives. useLayoutEffect runs after the DOM is written and
+  // before the paint, so the expanded state never reaches the screen.
   const defaultOpen = groupBy?.defaultOpen;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (groups === null || defaultOpen === undefined) return;
     setChoice((prev) => {
       let next: Map<string, boolean> | null = null;

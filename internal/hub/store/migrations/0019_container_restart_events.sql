@@ -83,6 +83,16 @@
 --
 -- ON CONFLICT DO NOTHING, so re-running this file on a database where ingest has
 -- already written live events is a no-op rather than a violation.
+--
+-- The NULL rows stay IN the window. Filtering restart_count IS NOT NULL inside
+-- the CTE would make lag() reach over a hole and compare the last reading
+-- before it against the first one after, counting one step for however many
+-- restarts happened in between and dating it at the wrong instant. The live
+-- derivation refuses exactly that step -- restartEvents emits nothing when
+-- either side of a comparison is nil, because a delta from an unknown is not a
+-- reading -- and the same history must not yield different events depending on
+-- which path produced them. So the NULLs are visible here, prev comes back
+-- NULL across a gap, and both filters below drop the step.
 WITH stepped AS (
     SELECT s.host_id,
            s.ts,
@@ -93,7 +103,6 @@ WITH stepped AS (
                                           ORDER BY s.ts) AS prev
       FROM container_samples s
       JOIN containers c ON c.id = s.container_id AND c.host_id = s.host_id
-     WHERE s.restart_count IS NOT NULL
 )
 INSERT INTO events (host_id, ts, type, subject, detail, severity)
 SELECT host_id,
@@ -112,6 +121,7 @@ SELECT host_id,
        CASE WHEN cur > prev THEN 'warning' ELSE 'info' END
   FROM stepped
  WHERE prev IS NOT NULL
+   AND cur IS NOT NULL
    AND cur IS DISTINCT FROM prev
 ON CONFLICT (host_id, ts, type, subject) DO NOTHING;
 
