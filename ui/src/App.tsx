@@ -23,6 +23,7 @@ import {
 import { clampRange, rangeWindow, EVENT_LIMITS, type Range } from "./lib/range";
 import { RANGE_KEY, writePref } from "./lib/prefs";
 import { EmptyState } from "./ui/EmptyState";
+import { BarSearch } from "./ui/CommandPalette";
 import {
   FleetPage,
   FLEET_RANGE,
@@ -115,6 +116,11 @@ export default function App() {
         <a className="wordmark" href="/">
           Netra
         </a>
+        {/* Beside the name, where a product search goes, and reachable from
+            every page: the fleet filter only ever reached the list it sits
+            in, and a container could not be found at all without knowing its
+            host first. */}
+        <BarSearch go={go} />
         <div className="spacer" />
         {/* Named because it is not the only nav landmark on a page -- Tabs
             renders one too -- and "navigation" twice over tells a screen

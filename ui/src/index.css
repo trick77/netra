@@ -1778,6 +1778,179 @@ tbody tr:hover .host-cell-name {
 .topbar .spacer {
   flex: 1;
 }
+/* The bar's search, drawn as a field and behaving as a button: see
+   ui/CommandPalette.tsx for why it is not an input. .ctl's own frame and
+   height, so it stands in the bar exactly as a filter box stands in a
+   toolbar, with the glyph and the key cap inset at either end. It is the
+   only thing in the bar that gives width: the wordmark, the five squares
+   and the action are all fixed, so the shrink has to land somewhere, and a
+   field is the one control that reads the same 200px narrower. */
+.searchbox {
+  flex: 0 1 320px;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 34px;
+  padding: 0 8px 0 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-ui);
+  background: var(--surface);
+  color: var(--muted-2);
+  font: inherit;
+  font-size: var(--text-label);
+  text-align: left;
+  cursor: pointer;
+}
+.searchbox:hover {
+  background: var(--surface-2);
+  color: var(--ink-2);
+}
+.searchbox:focus-visible {
+  outline: 2px solid var(--accent-fill);
+  outline-offset: 1px;
+  border-color: var(--accent-fill);
+}
+.searchbox > svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.75;
+}
+/* The label is what gives, before the field does: a placeholder is a hint,
+   and a hint is the first thing a narrow window can afford to lose. */
+.searchbox-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.searchbox .kbd {
+  flex: none;
+}
+
+/* --- the palette itself --- */
+
+/* Near the top rather than centred, unlike the chart dialog: this one is
+   typed into and read downwards, so the list grows away from the caret
+   instead of shifting it. Same dim over the page, and it covers the bar the
+   control sits in -- the bar is z-index 5, this is 20. */
+.pal-back {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 10vh var(--space-5) var(--space-5);
+  z-index: 20;
+}
+.pal {
+  width: min(560px, 100%);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-ui);
+  box-shadow: var(--shadow-drawer);
+  overflow: hidden;
+}
+.pal-field {
+  position: relative;
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+.pal-field > svg {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.75;
+  color: var(--muted-2);
+  pointer-events: none;
+}
+/* The field is the dialog's top edge, so it drops the frame the .ctl class
+   gives it and keeps only the typing: a box inside a box, 1px from the
+   corner radius, reads as a mistake. */
+.pal-field .ctl {
+  width: 100%;
+  height: 46px;
+  padding: 0 var(--space-4) 0 40px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: var(--text-ui);
+}
+.pal-field .ctl:focus-visible {
+  outline: none;
+  border: 0;
+}
+.pal-list {
+  overflow-y: auto;
+  padding: var(--space-2) 0;
+}
+/* The kind, said once above its run, rather than a badge repeated on every
+   row: two groups of eight would otherwise carry sixteen labels that say
+   what the glyph beside each name already says. */
+.pal-group {
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  font-size: var(--text-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.pal-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 7px var(--space-4);
+  color: var(--ink);
+  text-decoration: none;
+}
+.pal-row svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.75;
+  color: var(--muted-2);
+}
+/* One highlight, driven by the cursor rather than by :hover, because the
+   keyboard and the mouse move the same cursor here: with both, a reader
+   arrowing down while the pointer rests over row 3 would see two rows lit
+   and Enter would take the one they were not looking at. */
+.pal-row.on {
+  background: var(--raised);
+}
+.pal-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pal-under {
+  margin-left: auto;
+  padding-left: var(--space-3);
+  font-size: var(--text-micro);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pal-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-label);
+  color: var(--muted);
+}
+.pal-foot {
+  margin: 0;
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-micro);
+  color: var(--muted);
+}
 /* A rule between the destinations and the one ACTION, because they are
    different kinds of thing sitting in the same row of squares. */
 .topbar-sep {
@@ -3615,6 +3788,19 @@ svg.spark {
     right: 0;
     transform: none;
   }
+  /* The search keeps its glyph and loses its words, the same trade Add host
+     makes two rules up: the label was the hint, and the palette behind the
+     glyph says the same thing in full the moment it opens. */
+  .searchbox-label,
+  .searchbox .kbd {
+    display: none;
+  }
+  .searchbox {
+    flex: none;
+    width: 36px;
+    justify-content: center;
+    padding: 0;
+  }
   .app > main {
     padding: var(--space-4) var(--space-5) 64px;
   }
@@ -3651,6 +3837,33 @@ svg.spark {
     width: 100%;
     justify-content: space-between;
     gap: 0;
+  }
+  /* Row one is wordmark, search, action; the search is the only elastic
+     thing on it, so it takes what the other two leave -- which at this width
+     is enough for the words again, so the label the 700px rule dropped comes
+     back rather than leaving a wide box with a glyph adrift in it. */
+  .searchbox {
+    order: 1;
+    /* A small basis, not auto: a wrapping flex row moves an item that does
+       not fit to the next line rather than shrinking it, and at 320px the
+       label's own width was enough to send the search -- and the action
+       after it -- onto a third row. Sized from below and grown into the
+       space instead. */
+    flex: 1 1 90px;
+    width: auto;
+    justify-content: flex-start;
+    padding: 0 8px 0 9px;
+  }
+  .searchbox-label {
+    display: block;
+  }
+  /* The spacer has to go with it. It is order 0 and flex: 1, so it took the
+     whole of row one and pushed the search and the action onto lines of
+     their own -- three rows of bar over a 375px phone. The search does the
+     spacer's job here: it is the elastic thing between the name and the
+     action. */
+  .topbar .spacer {
+    display: none;
   }
   /* It separated the destinations from the action; they are on different
      lines now, which says it without a rule. */
