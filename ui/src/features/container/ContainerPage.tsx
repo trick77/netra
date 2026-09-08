@@ -16,7 +16,7 @@ import { Segmented } from "../../ui/Segmented";
 import { ChartPanel, type Band } from "../../ui/charts/ChartPanel";
 import type { Container, MetricsResponse } from "../../lib/api";
 import { hostStatus } from "../../lib/host";
-import { deriveState, DOCKER_STATED_KINDS } from "./state";
+import { deriveState, DOCKER_STATED_KINDS, uptimeSeconds } from "./state";
 import {
   hasInteriorGaps,
   hasReading,
@@ -28,9 +28,11 @@ import {
 } from "../../lib/metrics";
 import {
   ABSENT,
+  absolute,
   byterate,
   bytes,
   bytesPair,
+  duration,
   percent,
   relativeMs,
 } from "../../lib/format";
@@ -460,6 +462,14 @@ export function ContainerPage({
     restartsInWindow: restartsInWindow(sampled),
   });
 
+  // The same clock the badge above was derived against. Two clocks in one
+  // header is how a page comes to say "up 20 m" beside "Silent".
+  const uptime = uptimeSeconds({
+    startedAt: container.started_at,
+    lastSeen: container.last_seen,
+    now,
+  });
+
   const { cpuBands, memBands, netBands, ioBands } = bandsFor(sampled);
 
   async function onPurge() {
@@ -511,6 +521,22 @@ export function ContainerPage({
           </a>
           {" · "}
           {container.image ?? ABSENT}
+          {/* The one place a bare uptime figure belongs. The lists draw it as
+              a mark and only while it is short (UPTIME_MARK_S), because "up
+              41 d" is not something anyone scans a column for -- but "when did
+              this last come up" is a reason someone opens THIS page, so here
+              it is printed at whatever length it has. Omitted rather than
+              dashed when there is no answer -- no start time, or a container
+              that has stopped reporting, which uptimeSeconds decides for both
+              surfaces. An absent fact and a fact worth a dash are different
+              things, and "up 20 m" beside a badge reading Silent is the
+              contradiction this header exists to avoid. */}
+          {uptime === null ? null : (
+            <span title={`Started ${absolute(container.started_at)}`}>
+              {" · up "}
+              {duration(uptime)}
+            </span>
+          )}
         </div>
         <Badge severity={state.severity}>{state.label}</Badge>
         {/* Which of the two the badge is. It used to always say "derived from

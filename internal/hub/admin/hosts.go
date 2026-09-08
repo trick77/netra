@@ -241,19 +241,40 @@ func (s *Service) DeleteHost(ctx context.Context, hostID int32) error {
 // Retried on a deadlock for the same reason DeleteHost is: the cascade reaches
 // container_samples' chunks, which policy_retention concurrently wants to
 // drop.
+// The restart log goes too, and it needs saying because nothing enforces it:
+// events are keyed on (host_id, subject) as TEXT, not by a foreign key to
+// containers, so the cascade that takes the samples leaves them standing.
+// Purging a container the operator deliberately made disappear would otherwise
+// leave ninety days of "restarted" lines in the fleet log for something that no
+// longer exists anywhere else in the database.
+//
+// One statement, so the two cannot come apart: the CTE deletes the container
+// and hands its natural key to the delete beside it. RowsAffected then counts
+// EVENT rows rather than containers, which is why the existence check reads the
+// returned count instead -- a container with no restarts would otherwise report
+// ErrNotFound after successfully deleting itself.
 func (s *Service) DeleteContainer(ctx context.Context, hostID, containerID int32) error {
-	var tag pgconn.CommandTag
+	var deleted int64
 
 	err := retryOnDeadlock(ctx, func() error {
-		var err error
-		tag, err = s.pool.Exec(ctx,
-			`DELETE FROM containers WHERE id = $1 AND host_id = $2`, containerID, hostID)
-		return err
+		return s.pool.QueryRow(ctx, `
+			WITH gone AS (
+			    DELETE FROM containers
+			     WHERE id = $1 AND host_id = $2
+			 RETURNING host_id, container_key
+			), purged AS (
+			    DELETE FROM events e
+			      USING gone
+			     WHERE e.host_id = gone.host_id
+			       AND e.subject = gone.container_key
+			       AND e.type IN ('container_restart', 'container_recreate')
+			)
+			SELECT count(*) FROM gone`, containerID, hostID).Scan(&deleted)
 	})
 	if err != nil {
 		return fmt.Errorf("delete container: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
+	if deleted == 0 {
 		return ErrNotFound
 	}
 	return nil

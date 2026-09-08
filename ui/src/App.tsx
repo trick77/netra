@@ -574,6 +574,17 @@ function FleetScreen({
             // ones. See containerIsGone.
             host_last_seen: host.last_seen,
             host_containers_capability: host.capabilities?.containers,
+            // The denominators the two saturation cells are read against.
+            // cpu_pct is percent of ONE core and mem_used is bytes, so
+            // neither means anything until it is set against the machine --
+            // and only the party that fanned these calls out knows which
+            // machine that is. Same argument as hostname above.
+            //
+            // `threads`, not `cores`: cores lives on HostDetail, which the
+            // fleet never fetches, and the fleet host row already labels
+            // threads "cores".
+            host_threads: host.threads,
+            host_mem_total: host.mem_total,
             // Still per ROW, and now the same window on every one of them:
             // this list spans hosts, and one request answered all of them
             // from one plan. It was per row because it had to be -- N

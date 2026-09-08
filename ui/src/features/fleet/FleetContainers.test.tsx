@@ -18,6 +18,11 @@ function makeRow(overrides: Partial<ContainerRow> = {}): ContainerRow {
     docker_state: null,
     health: null,
     state_since: null,
+    started_at: null,
+    restarts_window: 0,
+    recreates_window: 0,
+    last_restart: null,
+    restarts_window_seconds: 86400,
     restart_count: null,
     labels: null,
     last_seen: "2026-08-10T14:00:00Z",
@@ -58,16 +63,17 @@ describe("FleetContainers", () => {
     expect(within(row).getByText("db-01")).toBeInTheDocument();
   });
 
-  // A fleet-wide list is a list of several hosts' containers, and which host
-  // a container runs on is the first thing that groups them.
-  it("groups the rows by host, naming and linking each one", () => {
+  // A stack is what somebody deployed and what fails together; a host is
+  // where it happens to run. Both are in the heading, so the host names the
+  // group once instead of every row restating it.
+  it("groups the rows by stack, naming the project and linking the host", () => {
     render(
       <FleetContainers
         rows={[
-          makeRow(),
+          makeRow({ container_key: "shop/db" }),
           makeRow({
             id: 2,
-            container_key: "web",
+            container_key: "shop/web",
             host_id: 8,
             hostname: "web-01",
           }),
@@ -76,31 +82,66 @@ describe("FleetContainers", () => {
     );
 
     const heads = screen.getAllByRole("rowheader");
-    expect(groupLabels()).toEqual([
-      "db-01 · 1 container",
-      "web-01 · 1 container",
+    expect(groupLabels().map((l) => l.split(" · ")[0])).toEqual([
+      "shop on db-01",
+      "shop on web-01",
     ]);
     expect(
       within(heads[0]!).getByRole("link", { name: "db-01" }),
     ).toHaveAttribute("href", "/hosts/7/overview");
   });
 
-  // Identity is the id; ORDER is the name. On the id the groups came out in
-  // registration order under headings that read as names, beside a Hosts tab
-  // the read API returns alphabetically.
-  it("orders the host groups by hostname, not by host id", () => {
+  // The same project on two machines is two deployments -- and, decisively,
+  // the heading reports a share of ONE machine's cores and RAM, which a group
+  // spanning two of them could not.
+  it("keeps one project on two hosts as two groups", () => {
     render(
       <FleetContainers
         rows={[
-          makeRow({ host_id: 9, hostname: "app-01" }),
-          makeRow({ id: 2, host_id: 3, hostname: "web-01" }),
+          makeRow({ container_key: "shop/web" }),
+          makeRow({
+            id: 2,
+            container_key: "shop/web",
+            host_id: 8,
+            hostname: "web-01",
+          }),
         ]}
       />,
     );
 
-    expect(groupLabels()).toEqual([
-      "app-01 \u00b7 1 container",
-      "web-01 \u00b7 1 container",
+    expect(screen.getAllByRole("rowheader")).toHaveLength(2);
+  });
+
+  // Ordered by hostname then project, so a host's stacks stay contiguous --
+  // which is what keeps "by host" a readable order of this list rather than a
+  // second view of it. On the raw key the groups came out in host
+  // registration order, beside a Hosts tab the read API returns
+  // alphabetically.
+  it("orders the groups by hostname, then by project", () => {
+    render(
+      <FleetContainers
+        rows={[
+          makeRow({ host_id: 9, hostname: "web-01", container_key: "b/one" }),
+          makeRow({
+            id: 2,
+            host_id: 9,
+            hostname: "web-01",
+            container_key: "a/one",
+          }),
+          makeRow({
+            id: 3,
+            host_id: 3,
+            hostname: "app-01",
+            container_key: "z/one",
+          }),
+        ]}
+      />,
+    );
+
+    expect(groupLabels().map((l) => l.split(" · ")[0])).toEqual([
+      "z on app-01",
+      "a on web-01",
+      "b on web-01",
     ]);
   });
 

@@ -6,11 +6,13 @@ import { userEvent } from "@testing-library/user-event";
 import {
   composeIdentity,
   containerColumns,
-  containerGroupTotals,
-  ContainerGroupTotals,
+  containerGroupCells,
+  containerGroupReading,
+  containerGroupWorst,
   containerIsGone,
   GONE_AFTER_S,
   lastReported,
+  memDenominator,
   trendScales,
   type ContainerRow,
 } from "./columns";
@@ -25,6 +27,11 @@ function makeRow(overrides: Partial<ContainerRow> = {}): ContainerRow {
     docker_state: null,
     health: null,
     state_since: null,
+    started_at: null,
+    restarts_window: 0,
+    recreates_window: 0,
+    last_restart: null,
+    restarts_window_seconds: 86400,
     restart_count: null,
     labels: null,
     last_seen: "2026-08-10T14:00:00Z",
@@ -119,6 +126,95 @@ describe("containerColumns", () => {
     renderRows([makeRow({ is_agent: true })]);
     const badge = screen.getByText("agent").closest(".badge")!;
     expect(badge.className).not.toContain("st-ok");
+  });
+
+  // A mark, never a column: it is drawn on the few rows where "this came up
+  // just now" is worth seeing and on no others, which is the same shape the
+  // restart mark has.
+  describe("the uptime mark", () => {
+    const NOW = new Date("2026-08-10T14:00:00Z");
+
+    it("says how long ago a container just came up", () => {
+      renderRows([makeRow({ started_at: "2026-08-10T13:56:00Z" })], {
+        now: NOW,
+      });
+      expect(screen.getByText(/up 4 m/)).toBeInTheDocument();
+    });
+
+    // One unit. `duration` would say "4 m 12 s", which is precision nobody
+    // reads beside a name.
+    it("prints one unit, not two", () => {
+      renderRows([makeRow({ started_at: "2026-08-10T13:55:48Z" })], {
+        now: NOW,
+      });
+      expect(screen.getByText(/up 4 m/)).toBeInTheDocument();
+      expect(screen.queryByText(/12 s/)).toBeNull();
+    });
+
+    // Under STARTING_STUCK_S the Status column beside it may still change
+    // its mind about this container.
+    it("takes the warning colour while the container is very young", () => {
+      const { container } = renderRows(
+        [makeRow({ started_at: "2026-08-10T13:59:10Z" })],
+        { now: NOW },
+      );
+      expect(container.querySelector(".upmark.fresh")).not.toBeNull();
+    });
+
+    it("is a plain annotation once past the starting window", () => {
+      const { container } = renderRows(
+        [makeRow({ started_at: "2026-08-10T13:30:00Z" })],
+        { now: NOW },
+      );
+      expect(container.querySelector(".upmark")).not.toBeNull();
+      expect(container.querySelector(".upmark.fresh")).toBeNull();
+    });
+
+    // Above UPTIME_MARK_S there is nothing to say, and it says nothing --
+    // no dash, no "up 41 d".
+    it("draws nothing at all once the container is no longer new", () => {
+      const { container } = renderRows(
+        [makeRow({ started_at: "2026-08-10T02:00:00Z" })],
+        { now: NOW },
+      );
+      expect(container.querySelector(".upmark")).toBeNull();
+    });
+
+    // Every host whose socket refuses inspect reports no start time. That is
+    // the case a column would have turned into four hundred dashes.
+    it("draws nothing when the agent could not report a start time", () => {
+      const { container } = renderRows([makeRow({ started_at: null })], {
+        now: NOW,
+      });
+      expect(container.querySelector(".upmark")).toBeNull();
+    });
+
+    // "up 20 m" beside a badge reading Silent is a mark contradicting the
+    // column next to it. api.ts states the rule on the field: now - started_at
+    // is uptime only while the row is still reporting.
+    it("says nothing about uptime once the row has stopped reporting", () => {
+      const { container } = renderRows(
+        [
+          makeRow({
+            started_at: "2026-08-10T13:56:00Z",
+            last_seen: "2026-08-10T13:50:00Z",
+            host_last_seen: "2026-08-10T14:00:00Z",
+          }),
+        ],
+        { now: NOW },
+      );
+      expect(screen.getByText("silent")).toBeInTheDocument();
+      expect(container.querySelector(".upmark")).toBeNull();
+    });
+
+    // A host clock ahead of the hub's is skew, not a container that has been
+    // up for negative time.
+    it("clamps a start time in the future rather than printing it", () => {
+      renderRows([makeRow({ started_at: "2026-08-10T14:05:00Z" })], {
+        now: NOW,
+      });
+      expect(screen.getByText(/up 0 s/)).toBeInTheDocument();
+    });
   });
 
   // The whole point of the column: the words are deriveState's, so a
@@ -248,6 +344,57 @@ describe("containerColumns", () => {
       expect(screen.getByText("series gap")).toBeInTheDocument();
     });
 
+    // The gap sentence says "in this window", and the window it means is the
+    // CHART's. The hub's restart count is over a window of its own (24 h), so
+    // it may only be spoken when the two are the same span.
+    describe("what a series gap says about restarts", () => {
+      const GAPPY = {
+        host_last_seen: "2026-08-10T14:00:00Z",
+        cpu: [1, null, 2],
+        mem: [1e8, null, 1e8],
+        mem_limit_bytes: 1e9,
+        restarts_window_seconds: 86400,
+      };
+      const gapTitle = () =>
+        screen
+          .getByText("series gap")
+          .closest("[title]")!
+          .getAttribute("title")!;
+
+      it("names the count when the list draws that same window", () => {
+        renderRows([makeRow({ ...GAPPY, restarts_window: 2 })], {
+          now: NOW,
+          range: "24h",
+        });
+        expect(gapTitle()).toContain("restarted the container 2 times");
+      });
+
+      // A 30-day list holding a 24 h count must not say "the container did
+      // not restart": it did not restart TODAY, and the hole may be three
+      // weeks back. The honest sentence is the one from before the counter
+      // existed.
+      it("refuses the count on a longer range rather than misdating it", () => {
+        renderRows([makeRow({ ...GAPPY, restarts_window: 0 })], {
+          now: NOW,
+          range: "30d",
+        });
+        expect(gapTitle()).toContain(
+          "no restart count is available for this range",
+        );
+        expect(gapTitle()).not.toContain("did not restart");
+      });
+
+      // The other direction: a one-hour hole is not explained by a restart
+      // twenty hours before it.
+      it("refuses the count on a shorter range too", () => {
+        renderRows([makeRow({ ...GAPPY, restarts_window: 3 })], {
+          now: NOW,
+          range: "1h",
+        });
+        expect(gapTitle()).toContain("no restart count is available");
+      });
+    });
+
     // The detail page reads the last READING; off the latest bucket instead,
     // one empty trailing bucket hid pressure here that the page still showed.
     it("reads memory past an empty trailing bucket", () => {
@@ -296,32 +443,62 @@ describe("containerColumns", () => {
 
   // The one filled colour a container row can honestly carry, and the one
   // question a memory sparkline cannot answer: how close to being OOM-killed.
-  it("meters memory against the container's own limit", () => {
+  it("bars memory against the container's own limit", () => {
     const { container } = renderRows(
       [makeRow({ mem: [900], mem_limit_bytes: 1000, cpu: [1] })],
       { cpuMax: 1, memMax: 1000 },
     );
-    expect(container.querySelector(".meter")).not.toBeNull();
-    expect(screen.getByText("90%")).toBeInTheDocument();
+    // The fleet row's segmented bar, not this list's old continuous Meter.
+    const bar = container.querySelector(".segbar");
+    expect(bar).not.toBeNull();
+    expect(bar!.getAttribute("aria-valuenow")).toBe("90");
+    expect(screen.getByText("of 1 kB")).toBeInTheDocument();
   });
 
-  // A container running unlimited has nothing to be a percentage of, and a
-  // bar against an invented denominator would be a number netra made up.
-  it("draws no meter for a container with no mem_limit", () => {
+  // The gap this rework closes. A container with no mem_limit -- which on a
+  // real fleet is nearly all of them -- used to draw a silhouette with no bar
+  // and no figure at all. Measured against the host it is holding 20 % of the
+  // machine, and the caption says which denominator that is.
+  it("bars an unlimited container against the host's memory", () => {
+    const { container } = renderRows(
+      [
+        makeRow({
+          mem: [2_000_000_000],
+          mem_limit_bytes: null,
+          host_mem_total: 10_000_000_000,
+          cpu: [1],
+        }),
+      ],
+      { cpuMax: 1, memMax: 1e10 },
+    );
+    const bar = container.querySelector(".segbar");
+    expect(bar).not.toBeNull();
+    expect(bar!.getAttribute("aria-valuenow")).toBe("20");
+    expect(screen.getByText(/host$/)).toBeInTheDocument();
+  });
+
+  // With NEITHER denominator there is still nothing to be a percentage of, and
+  // a bar against an invented one would be a number netra made up.
+  it("draws no memory bar without a limit or a host total", () => {
     const { container } = renderRows(
       [makeRow({ mem: [900], mem_limit_bytes: null, cpu: [1] })],
       { cpuMax: 1, memMax: 1000 },
     );
-    expect(container.querySelector(".meter")).toBeNull();
+    expect(container.querySelector(".segbar")).toBeNull();
   });
 
-  // Without it CPU was the one column in the set that could not answer its
-  // own question, while Container, Image and Memory all sorted.
-  it("sorts CPU on the latest reported percentage", () => {
+  // cpu_pct is percent of ONE core, so ordering on it ranked a container using
+  // 90 % of one core above one using 600 % of a 32-thread box. The column now
+  // sorts the way its bars read: by share of the host.
+  it("sorts CPU on the share of the host, not the raw percentage", () => {
     const cpu = containerColumns({ cpuMax: 1, memMax: 1000 }).find(
       (c) => c.key === "cpu",
     )!;
-    expect(cpu.sortValue!(makeRow({ cpu: [4, 61, null] }))).toBe(61);
+    expect(
+      cpu.sortValue!(makeRow({ cpu: [4, 400, null], host_threads: 8 })),
+    ).toBe(50);
+    // No denominator, so it cannot be compared with the rows that have one.
+    expect(cpu.sortValue!(makeRow({ cpu: [4, 61, null] }))).toBeNull();
   });
 
   // Sorting on percent-of-limit would drop every unlimited container into
@@ -336,98 +513,175 @@ describe("containerColumns", () => {
   });
 });
 // What a collapsed group header prints. One definition for both lists -- the
-// host page's, grouped by compose project, and the fleet's, grouped by host --
+// host page's, grouped by compose project, and the fleet's, grouped by stack --
 // for the same reason the column set is one definition.
-describe("containerGroupTotals", () => {
-  it("sums the latest reported reading, not the latest bucket", () => {
-    const totals = containerGroupTotals([
-      // The newest bucket has not materialised for either; a container does
-      // not stop using memory because the grid ticked over.
-      makeRow({ cpu: [10, 20, null], mem: [100, 200, null] }),
-      makeRow({ id: 2, cpu: [1, 2, null], mem: [10, 20, null] }),
-    ]);
-
-    expect(totals.cpu).toBe(22);
-    expect(totals.mem).toBe(220);
-  });
-
-  // Absent is not zero. A group nobody fetched metrics for has not reported
-  // 0% CPU.
-  it("stays absent when nothing in the group has reported", () => {
-    expect(containerGroupTotals([makeRow(), makeRow({ id: 2 })])).toEqual({
-      cpu: null,
-      mem: null,
-      limit: null,
+// The branch no simulated container can reach: netra-sim gives every
+// container a mem_limit, so an unlimited one is only ever seen in production
+// and here. Without a denominator a row drew no bar at all, which is what
+// this function exists to prevent.
+describe("memDenominator", () => {
+  it("measures a limited container against its own limit", () => {
+    expect(memDenominator(makeRow({ mem_limit_bytes: 1e9 }))).toEqual({
+      denom: 1e9,
+      under: "of 1 GB",
+      isHostShare: false,
     });
   });
 
-  // A group of two where one is capped has no ceiling to be a percentage of,
-  // and summing only the capped one would put the numerator above a
-  // denominator it can legitimately exceed.
-  it("has no limit unless every container in the group has one", () => {
-    expect(
-      containerGroupTotals([
-        makeRow({ cpu: [1], mem: [10], mem_limit_bytes: 100 }),
-        makeRow({ id: 2, cpu: [1], mem: [10], mem_limit_bytes: null }),
-      ]).limit,
-    ).toBeNull();
+  // Docker writes 0 for "no limit", so <= 0 is unlimited rather than a
+  // container capped at zero bytes.
+  it("reads Docker's 0 as unlimited, not as a limit of zero", () => {
+    const row = makeRow({ mem_limit_bytes: 0, host_mem_total: 8 * 1024 ** 3 });
+    expect(memDenominator(row).isHostShare).toBe(true);
+  });
 
+  // The " host" suffix is the whole point: it is what keeps a share of the
+  // machine apart from a share of a limit on a list where both appear.
+  it("falls back to host RAM, and says so", () => {
     expect(
-      containerGroupTotals([
-        makeRow({ cpu: [1], mem: [10], mem_limit_bytes: 100 }),
-        makeRow({ id: 2, cpu: [1], mem: [10], mem_limit_bytes: 400 }),
-      ]).limit,
-    ).toBe(500);
+      memDenominator(
+        makeRow({ mem_limit_bytes: null, host_mem_total: 8 * 1024 ** 3 }),
+      ),
+    ).toEqual({
+      denom: 8 * 1024 ** 3,
+      under: "of 8 GiB host",
+      isHostShare: true,
+    });
+  });
+
+  // Neither ceiling known: no bar rather than a bar against an invented one.
+  it("has no denominator when neither ceiling is known", () => {
+    expect(
+      memDenominator(makeRow({ mem_limit_bytes: null, host_mem_total: null })),
+    ).toEqual({ denom: null, under: null, isHostShare: false });
   });
 });
 
-describe("ContainerGroupTotals", () => {
-  it("prints CPU as a percentage and memory against the group's ceiling", () => {
-    render(
-      <ContainerGroupTotals
-        rows={[
-          makeRow({ cpu: [40], mem: [1024], mem_limit_bytes: 4096 }),
-          makeRow({ id: 2, cpu: [20], mem: [1024], mem_limit_bytes: 4096 }),
-        ]}
-      />,
-    );
+describe("containerGroupReading", () => {
+  it("sums the latest reported reading, not the latest bucket", () => {
+    const got = containerGroupReading([
+      // The newest bucket has not materialised for either; a container does
+      // not stop using memory because the grid ticked over.
+      makeRow({
+        cpu: [10, 20, null],
+        mem: [100, 200, null],
+        host_threads: 4,
+        host_mem_total: 1000,
+      }),
+      makeRow({
+        id: 2,
+        cpu: [1, 2, null],
+        mem: [10, 20, null],
+        host_threads: 4,
+        host_mem_total: 1000,
+      }),
+    ]);
 
-    expect(screen.getByText("60%")).toBeInTheDocument();
-    expect(screen.getByText("2 kB")).toBeInTheDocument();
-    expect(screen.getByText("/ 8.2 kB")).toBeInTheDocument();
+    // 22 % of one core over four of them.
+    expect(got.cpuPct).toBeCloseTo(5.5);
+    expect(got.memBytes).toBe(220);
+    expect(got.memPct).toBeCloseTo(22);
   });
 
-  // Meter's own rule, applied to a group: no bar against a denominator nobody
-  // set.
-  it("draws no bar for a group with an uncapped container in it", () => {
+  // The denominator is the HOST's, never a sum of the containers' own limits:
+  // a group is a share of one machine, and summing limits could not be done
+  // honestly for a group where only some are capped.
+  it("measures memory against the host, not against the group's limits", () => {
+    const got = containerGroupReading([
+      makeRow({ mem: [500], mem_limit_bytes: 1000, host_mem_total: 10_000 }),
+      makeRow({
+        id: 2,
+        mem: [500],
+        mem_limit_bytes: null,
+        host_mem_total: 10_000,
+      }),
+    ]);
+    // 1000 of the machine's 10 000, not of the 1000 one of them declared.
+    expect(got.memPct).toBeCloseTo(10);
+  });
+
+  // Absent is not zero. A group nobody fetched metrics for has not reported
+  // 0 % CPU, and one on a host that never said how many cores it has cannot be
+  // a percentage of anything.
+  it("stays absent when there is nothing to read or nothing to read against", () => {
+    expect(
+      containerGroupReading([makeRow(), makeRow({ id: 2 })]),
+    ).toMatchObject({
+      cpuPct: null,
+      memPct: null,
+      memBytes: null,
+    });
+    expect(
+      containerGroupReading([makeRow({ cpu: [10], mem: [100] })]),
+    ).toMatchObject({ cpuPct: null, memPct: null, memBytes: 100 });
+  });
+});
+
+describe("containerGroupCells", () => {
+  it("puts the group's bars in the CPU and Memory columns", () => {
+    const cells = containerGroupCells([
+      makeRow({
+        cpu: [40],
+        mem: [1024],
+        host_threads: 2,
+        host_mem_total: 4096,
+        last_seen: new Date().toISOString(),
+      }),
+    ]);
     const { container } = render(
-      <ContainerGroupTotals
-        rows={[makeRow({ cpu: [40], mem: [1024], mem_limit_bytes: null })]}
-      />,
+      <>
+        {cells.cpu}
+        {cells.memory}
+      </>,
     );
 
-    expect(container.querySelector(".meter")).toBeNull();
-    expect(screen.getByText("1 kB")).toBeInTheDocument();
+    const bars = container.querySelectorAll(".segbar");
+    expect(bars).toHaveLength(2);
+    // 40 % of one core over two of them, and 1024 of 4096.
+    expect(bars[0]!.getAttribute("aria-valuenow")).toBe("20");
+    expect(bars[1]!.getAttribute("aria-valuenow")).toBe("25");
+    // The bare denominator: a heading is always a share of one machine, so
+    // there is nothing to tell it apart from.
+    expect(screen.getByText("of 4 KiB")).toBeInTheDocument();
   });
 
-  it("renders the absent marker for a group that has reported nothing", () => {
-    render(<ContainerGroupTotals rows={[makeRow()]} />);
+  it("draws nothing for a group with no denominator", () => {
+    const cells = containerGroupCells([makeRow({ cpu: [40], mem: [1024] })]);
+    expect(cells.cpu).toBeNull();
+    expect(cells.memory).toBeNull();
+  });
+});
 
-    expect(screen.getAllByText(ABSENT)).toHaveLength(2);
+// What lets a folded group be honest: a heading that says "nothing here needs
+// you" has to be able to say the opposite.
+describe("containerGroupWorst", () => {
+  const NOW = new Date("2026-08-10T14:00:00Z");
+  const healthy = {
+    last_seen: "2026-08-10T14:00:00Z",
+    host_last_seen: "2026-08-10T14:00:00Z",
+  };
+
+  it("is null for a group where everything is reporting", () => {
+    expect(
+      containerGroupWorst(
+        [makeRow(healthy), makeRow({ id: 2, ...healthy })],
+        NOW,
+      ),
+    ).toBeNull();
   });
 
-  // A capped group that has not reported: the ceiling is known, the reading
-  // is not. One absent marker for the reading, and no Meter behind it -- with
-  // no value Meter prints an absent marker of its own, so the header would
-  // otherwise say "Mem — / 4.1 kB —".
-  it("draws no bar for a capped group that has reported no memory", () => {
-    const { container } = render(
-      <ContainerGroupTotals rows={[makeRow({ mem_limit_bytes: 4096 })]} />,
+  it("names the worst kind and how many rows carry it", () => {
+    const got = containerGroupWorst(
+      [
+        makeRow(healthy),
+        makeRow({ id: 2, ...healthy, docker_state: "restarting" }),
+        makeRow({ id: 3, ...healthy, health: "unhealthy" }),
+      ],
+      NOW,
     );
-
-    expect(container.querySelector(".meter")).toBeNull();
-    expect(screen.getByText("/ 4.1 kB")).toBeInTheDocument();
-    expect(screen.getAllByText(ABSENT)).toHaveLength(2);
+    // Unhealthy outranks restarting -- see KIND_RANK.
+    expect(got?.state.kind).toBe("unhealthy");
+    expect(got?.count).toBe(1);
   });
 });
 
@@ -613,7 +867,7 @@ describe("a host that cannot collect containers at all", () => {
   // The meter says how close to the limit; it never said what the limit IS,
   // so two containers with the same bar and a tenfold difference in headroom
   // read identically.
-  it("names the limit its memory meter is measured against", () => {
+  it("names the limit its memory bar is measured against", () => {
     const memory = containerColumns({ memMax: 1e9 }).find(
       (c) => c.header === "Memory",
     )!;
@@ -623,6 +877,11 @@ describe("a host that cannot collect containers at all", () => {
       </>,
     );
 
-    expect(container.querySelector(".climit")?.textContent).toBe("of 2 GB");
+    // A bar that says how close to the limit without saying what the limit IS
+    // reads identically for two containers with a tenfold difference in
+    // headroom.
+    expect(container.querySelector(".metric-now-wrap .u")?.textContent).toBe(
+      "of 2 GB",
+    );
   });
 });

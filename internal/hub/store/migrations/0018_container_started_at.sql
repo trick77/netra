@@ -1,0 +1,48 @@
+-- netra could not say how long a container had been up.
+--
+-- The container page showed containers.state_ts as "since", and that column is
+-- not uptime: it is hub-derived from OBSERVED transitions, and 0012's upsert
+-- stamps it with the sample ts on the FIRST insert. So a container that had
+-- been running for a year read as "since 2 minutes ago" from the moment netra
+-- first heard of it, and there was no reading anywhere that contradicted it.
+--
+-- Docker has the true answer in State.StartedAt, on the same
+-- /containers/{id}/json response the agent already fetched and decoded away to
+-- read RestartCount out of it. The daemon cost of this column is zero: it is a
+-- struct tag, not a request.
+
+-- When the container's CURRENT incarnation started, as Docker reports it --
+-- not when netra first saw it, and not when the hub observed a state change.
+--
+-- UPTIME IS DERIVED, NEVER STORED. `now() - started_at` for a container whose
+-- last_seen is current; for one that has gone quiet the honest statement is
+-- "up for at least last_seen - started_at", because nothing here says the
+-- container is still running. A stored duration would be a number that rots
+-- between the write and the read.
+--
+-- It arrives on the same inspect response as restart_count and is cached and
+-- dropped with it, so the two are always from one generation of one container
+-- or both absent. A fresh count beside a previous incarnation's start time
+-- would report a restart that had already been counted, at a time it did not
+-- happen -- which is also why the upsert overwrites this column with NULL
+-- rather than coalescing it.
+--
+-- NULL is "no agent has told us", which immediately after this migration means
+-- every row: there is deliberately NO BACKFILL, because no relation in this
+-- database holds a container's start time. Every container gets a value on the
+-- first scrape whose inspect succeeds, and one that never gets a value is a
+-- container on a socket that refuses inspect -- the same fact restart_count
+-- already reports as NULL.
+--
+-- It must NEVER be defaulted to now(), which would assert an uptime of zero
+-- for a host that has been up for months, and would do it silently.
+ALTER TABLE containers ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+
+-- Deliberately NOT on container_samples.
+--
+-- It is constant for the life of an incarnation, so a per-sample column would
+-- store one unchanging timestamp 1440 times a day per container to answer a
+-- question the containers row already answers. That is the argument 0012 makes
+-- for docker_state, and here the tier problem it warns about does not even
+-- arise: nothing needs a start time at 5m, 1h or 1d resolution, because it does
+-- not vary within an incarnation.

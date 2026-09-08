@@ -49,6 +49,11 @@ function makeContainer(overrides: Partial<ContainerRow> = {}): ContainerRow {
     docker_state: null,
     health: null,
     state_since: null,
+    started_at: null,
+    restarts_window: 0,
+    recreates_window: 0,
+    last_restart: null,
+    restarts_window_seconds: 86400,
     restart_count: null,
     labels: null,
     last_seen: "2026-08-10T14:00:00Z",
@@ -264,8 +269,12 @@ describe("FleetPage entity tabs", () => {
         ],
       });
 
-      expect(screen.getByRole("link", { name: "web" })).toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: "postgres" })).toBeNull();
+      // Scoped to the LIST. The attention band above it names the same
+      // containers -- that is what a band is -- so an unscoped query now finds
+      // the sentence as well as the row.
+      const list = within(screen.getByRole("table"));
+      expect(list.getByRole("link", { name: "web" })).toBeInTheDocument();
+      expect(list.queryByRole("link", { name: "postgres" })).toBeNull();
     });
 
     it("narrows to the gone containers on their own", () => {
@@ -276,8 +285,9 @@ describe("FleetPage entity tabs", () => {
         containers: [SILENT, GONE],
       });
 
-      expect(screen.getByRole("link", { name: "api" })).toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: "web" })).toBeNull();
+      const list = within(screen.getByRole("table"));
+      expect(list.getByRole("link", { name: "api" })).toBeInTheDocument();
+      expect(list.queryByRole("link", { name: "web" })).toBeNull();
     });
 
     // The counts line drops a kind once nothing carries it, so a link to a
@@ -310,10 +320,9 @@ describe("FleetPage entity tabs", () => {
         ],
       });
 
-      expect(
-        screen.getByRole("link", { name: "postgres" }),
-      ).toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "web" })).toBeInTheDocument();
+      const list = within(screen.getByRole("table"));
+      expect(list.getByRole("link", { name: "postgres" })).toBeInTheDocument();
+      expect(list.getByRole("link", { name: "web" })).toBeInTheDocument();
     });
   });
 });

@@ -2,7 +2,9 @@ package collector
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 )
 
 // The decode is worth pinning on its own because nothing else can catch it
@@ -164,25 +166,78 @@ func TestDockerContainerDecodesStateAndStatus(t *testing.T) {
 
 // The inspect body, pinned for the same reason the list body is: one wrong tag
 // and every container reports zero restarts, which reads as a healthy fleet.
-func TestDockerInspectDecodesRestartCount(t *testing.T) {
+func TestDecodeInspectReadsBothFields(t *testing.T) {
 	// Given a trimmed real /containers/{id}/json body, with sibling keys netra
 	// does not read left in so the fixture stays a subset of the real shape.
 	const body = `{
 	  "Id": "8dfafdbc3a40",
 	  "Created": "2026-08-01T09:12:44.1Z",
 	  "RestartCount": 7,
-	  "State": { "Status": "running", "Restarting": false },
+	  "State": {
+	    "Status": "running",
+	    "Restarting": false,
+	    "StartedAt": "2026-08-01T09:12:45.123456789Z"
+	  },
 	  "HostConfig": { "RestartPolicy": { "Name": "unless-stopped" } }
 	}`
-	var got dockerInspect
 
 	// When it is decoded the way SystemDockerInspect decodes it.
-	if err := json.Unmarshal([]byte(body), &got); err != nil {
-		t.Fatalf("decode: %v", err)
+	got, err := decodeInspect(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("decodeInspect: %v", err)
 	}
 
 	// Then the restart count arrives.
 	if got.RestartCount != 7 {
 		t.Errorf("RestartCount = %d, want 7", got.RestartCount)
+	}
+	// And so does the start time, off the SAME response -- which is the whole
+	// point: it costs no extra request, only a struct tag.
+	if want := time.Date(2026, 8, 1, 9, 12, 45, 123456789, time.UTC); !got.StartedAt.Equal(want) {
+		t.Errorf("StartedAt = %v, want %v", got.StartedAt, want)
+	}
+}
+
+// A body that is not JSON at all must fail rather than yield a zero status: a
+// silent zero would report "this container has never restarted", which is the
+// reading an operator most wants to be able to trust.
+func TestDecodeInspectRejectsGarbage(t *testing.T) {
+	if _, err := decodeInspect(strings.NewReader("<html>nope</html>")); err == nil {
+		t.Error("decodeInspect accepted a non-JSON body")
+	}
+}
+
+// The three ways there is no start time to be had. All must be the zero value
+// and none may be an error: a container that has never run, an older daemon
+// whose response has no State.StartedAt, and a value that will not parse.
+// Docker's own zero time is the one that would otherwise slip through as a real
+// instant and put the container's uptime at two thousand years.
+func TestStartedAtIsZeroWhenThereIsNoneToRead(t *testing.T) {
+	for _, tc := range []struct{ name, in string }{
+		{"absent", ""},
+		{"docker's zero time", "0001-01-01T00:00:00Z"},
+		{"unparseable", "not a timestamp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseStartedAt(tc.in); !got.IsZero() {
+				t.Errorf("parseStartedAt(%q) = %v, want the zero time", tc.in, got)
+			}
+		})
+	}
+}
+
+// A response with no State object at all must still yield the restart count.
+// The two fields fail together only when the daemon refuses the whole call --
+// not when one key is missing.
+func TestDockerInspectWithoutStateStillCarriesTheCount(t *testing.T) {
+	got, err := decodeInspect(strings.NewReader(`{"RestartCount": 4}`))
+	if err != nil {
+		t.Fatalf("decodeInspect: %v", err)
+	}
+	if got.RestartCount != 4 {
+		t.Errorf("RestartCount = %d, want 4", got.RestartCount)
+	}
+	if !got.StartedAt.IsZero() {
+		t.Errorf("StartedAt = %v, want the zero time", got.StartedAt)
 	}
 }

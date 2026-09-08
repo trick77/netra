@@ -868,6 +868,17 @@ a:hover {
   font-size: var(--text-label);
   font-variant-numeric: tabular-nums;
 }
+/* What was left out, and the way to it.
+   A host's band is bounded by how many things can be wrong with one machine; a
+   FLEET's is not, and one lossy host can put a row here for every container it
+   runs. The overflow is a LINK rather than a count, because the band this
+   replaced was faulted for exactly that: "+30 more hosts" with nothing to
+   click. Quieter than a row that names a problem -- it is a way out, not a
+   finding. */
+.attn-row.attn-more .what {
+  color: var(--muted);
+  font-size: var(--text-label);
+}
 /* A real list, so a screen reader announces how many things are wrong before
    reading them. */
 .attn-list {
@@ -1376,11 +1387,6 @@ tbody tr:hover .host-cell-name {
    number costs width, which the row has, rather than height, which it does
    not, and it stays --muted because the sparkline is the subject and this
    annotates it. */
-.ccell {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
 
 /* A shell command the reader is meant to copy. .ai-cmd above is the inline
    peer of this, scoped to the drawer; both take their face and ground from
@@ -2367,7 +2373,7 @@ table {
 }
 /* A column label is the quietest thing in a table, not the loudest. It shipped
    at Label 14px, which put it 2px above every other uppercase eyebrow in the
-   UI (.grouphead, .attn-sev, .gstat .lbl, .sysstrip dt are all Micro) and made
+   UI (.grouphead, .attn-sev, .grouprow .gbytes, .sysstrip dt are all Micro) and
    the header rail the first thing the eye landed on. It was never actually
    BIGGER than the data -- td inherits body's --text-ui 15px, so the label was a
    pixel smaller -- but caps set every glyph at cap height, which is taller than
@@ -3911,121 +3917,104 @@ tbody:first-of-type .grouprow th {
   outline-offset: -2px;
 }
 
-/* The group's own reading, at the end of the header.
-   A GRID rather than a flex row: every number sits in a fixed track, so the
-   headers line their readings up with each other down the page instead of
-   each one packing to its own width. Tracks are sized to the widest value
-   they will hold and no wider -- a right-aligned number in a roomy track
-   pushes itself away from the label naming it. 4px from label to value, the
-   full --space-5 between the two pairs: two pairs, not four loose items. */
-.gsummary {
-  margin-left: auto;
-  display: grid;
-  align-items: center;
-  /* minmax, not a fixed width. The minimum is what aligns the groups with
-     each other -- every header is its own grid, so only a shared floor makes
-     the totals read as a column. max-content is what stops a reading longer
-     than that floor ("232.2 MB" beside a 6-character sibling) from sliding
-     left over the label naming it: a right-aligned cell that outgrows its
-     track does not widen the track, it overflows it. A group with an unusual
-     reading steps out of the column rather than becoming unreadable inside
-     it. */
-  grid-template-columns:
-    auto minmax(52px, max-content)
-    auto minmax(78px, max-content) minmax(86px, max-content) 64px;
-  gap: 0 var(--space-2);
+/* The group heading's own parts.
+   .gsummary, .gstat and .gmeter are gone with them. Those drew a group's CPU
+   and memory as spans floating after its name, so a heading's figures and the
+   readings underneath it sat in different places and could not be compared by
+   eye -- which is the whole thing a grouped table is for. The heading is a row
+   of real cells now (Table's `cells`), carrying .metric-cell in the CPU and
+   Memory columns over the same denominators as the rows beneath. */
+.grouprow .proj {
+  color: var(--ink);
+  font-weight: 500;
+}
+/* The host the stack runs on, named once in the heading instead of on every
+   row. Quieter than the project: the project is what the reader came for and
+   the host is where it happens to be. */
+.grouprow .onhost {
+  color: var(--muted);
   font-weight: 400;
 }
-/* Each stat's parts are tracks of .gsummary's grid, not a box of their own --
-   which is what lets one grid align parts belonging to two stats. */
-.gstat {
-  display: contents;
+.grouprow .onhost a {
+  color: var(--ink-2);
 }
-/* The gap BETWEEN the two stats, as a margin rather than a spacer track: with
-   `display: contents` there is no element to put in a gutter column, and a
-   grid track with nothing in it shifts every item after it one column left --
-   which is what once squeezed "Mem" into a 24px gutter and slid its reading
-   over the top of it. Two pairs, not four loose items. */
-.gsummary .gstat + .gstat .lbl {
-  margin-left: var(--space-4);
-}
-.gstat .lbl {
+/* The group's memory in bytes, in the Image column. A percentage says how full
+   the machine is and says nothing about how big the stack is; on a page
+   listing several hosts those are different questions. --text-micro and
+   --muted-2 for the same reason .imgcell takes them: it annotates, and the
+   bars beside it carry the reading. */
+.grouprow .gbytes {
   font-size: var(--text-micro);
-  color: var(--muted);
-  font-weight: 500;
-  white-space: nowrap;
-}
-.gstat .val {
-  font-size: var(--text-label);
-  color: var(--ink);
-  font-weight: 600;
-  /* Tabular, so "8%" over "142%" still lines up on the last digit. */
+  color: var(--muted-2);
   font-variant-numeric: tabular-nums;
-  text-align: right;
-  white-space: nowrap;
 }
-/* "/ 10.5 GB" continues the value before it rather than being a third item.
-   Its track is fixed rather than sized to content so a group whose containers
-   have no limits -- nothing to print here -- still lines its meter up with
-   the groups that do. */
-.gstat .of {
-  font-size: var(--text-label);
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  padding-left: 3px;
-}
-/* Meter brings its own .mrow -- a 1fr/92px row with padding and a rule, all
-   three wrong inside a header cell that has its own. The same override
-   .mem-cell and .disk-cell make, for the same reason; here the value column
-   goes too, because Meter's reading is blanked (see ContainerGroupTotals). */
-.gstat .gmeter .mrow {
-  grid-template-columns: 1fr;
-  gap: 0;
-  padding: 0;
-  border-bottom: 0;
-}
-.gstat .gmeter .meter {
-  width: 64px;
+/* The heading's cells take the body's padding, ground and rules, or the row
+   breaks in half where the spanned name ends. */
+.grouprow td {
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 7px var(--space-3);
+  vertical-align: middle;
 }
 
-/* Below the fleet breakpoint the reading drops under the name: the header is
-   the one row on the page that carries two columns' worth of numbers, and at
-   360px they would push the table sideways. */
+/* Below the fleet breakpoint the heading's own name may wrap: it is the one
+   row on the page carrying a project, a host and a badge, and at 360px those
+   would push the table sideways. The readings no longer need a rule here --
+   they are in their own columns now, and a column that is too narrow is the
+   table's problem to solve rather than this heading's. */
 @media (max-width: 720px) {
   .ghead {
     flex-wrap: wrap;
   }
-  .gsummary {
-    margin-left: calc(16px + var(--space-3));
-  }
 }
 
-/* The container list's memory cell: the trend, and under it the reading
-   against the container's own mem_limit. Meter brings its own .mrow, which
-   is a 1fr/92px row with padding and a rule of its own -- all three wrong
-   inside a <td> that already has them. Same override .disk-cell makes, for
-   the same reason. */
-.mem-cell .mrow {
-  grid-template-columns: 1fr auto;
-  gap: var(--space-2);
-  padding: 2px 0 0;
-  border-bottom: 0;
-}
-/* What the meter is measured against, one step under it -- the same role
-   and the same tokens as .metric-read .u across the two lists. */
-.climit {
+/* .mem-cell, .climit and .ccell are gone. The container list's CPU and memory
+   cells are .metric-cell now -- the same chart, segmented bar, figure and
+   denominator line the fleet's host row draws -- so the three shapes this list
+   kept for itself have nothing left rendering them. See the note above
+   .metric-cell, and NowReading, whose docstring named this list as the one
+   surface still drawing the older form.
+
+   Docker's restart counter, as a mark beside a container's name. Only ever
+   drawn above zero: a literal 0 on four hundred healthy rows is noise wearing
+   the shape of a fact, which is also why it is a mark and not a column. --muted-2
+   because it annotates a name rather than carrying a reading of its own, and it
+   takes the row's status colour only when the row is already critical for a
+   reason the Status column states. */
+.rst {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
   font-size: var(--text-micro);
-  color: var(--muted-2);
   font-variant-numeric: tabular-nums;
-  text-align: right;
-  margin-top: 2px;
+  color: var(--muted-2);
+  white-space: nowrap;
 }
-.mem-cell .val {
-  /* --text-label, like .uptime-cell and .traffic-cell .rate: the same job
-     -- a quiet secondary reading inside a table cell -- and --text-micro
-     has only its three sanctioned uses (spec 3.6). */
-  font-size: var(--text-label);
+/* The glyph alone, one step smaller than the figure it labels. */
+.rst .g {
+  font-size: 11px;
+}
+.rst.st-crit {
+  color: var(--st-crit-text);
+}
+
+/* How long ago a container came up, beside its name, and only while that is
+   recent -- see UPTIME_MARK_S in features/container/state.ts. The same
+   typography as .rst because it is the same kind of thing: an annotation on
+   a name, not a reading of its own, drawn on the few rows where it says
+   something and absent everywhere else. */
+.upmark {
+  font-size: var(--text-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+/* Under STARTING_STUCK_S: young enough that the Status column beside it may
+   be about to change its mind. Warning rather than the row's own colour --
+   a container that just came up is not by itself wrong. */
+.upmark.fresh {
+  color: var(--st-warn-text);
 }
 
 /* An identifier and its classification in one cell: an address with its
@@ -4152,10 +4141,10 @@ tbody:first-of-type .grouprow th {
   gap: var(--space-3);
 }
 .temp-cell .val {
-  /* --text-label, like .uptime-cell, .mem-cell .val and .traffic-cell .rate:
+  /* --text-label, like .uptime-cell, .usage-cell .val and .traffic-cell .rate:
      the same job, a quiet secondary reading inside a table cell. --muted for
      the same reason those carry it (.sensor-tile .lab, .mrow .val, which is
-     where .mem-cell and .usage-cell get theirs): at the table body's own ink
+     where .usage-cell gets its own): at the table body's own ink
      the temperature reads a step louder than every other number-beside-a-
      chart in the app. */
   font-size: var(--text-label);
@@ -4170,7 +4159,7 @@ tbody:first-of-type .grouprow th {
 /* The Storage tab's mount table, Usage column. The third table cell to draw
    a Meter and the only one that had no override, so every mount's bar came
    with a rule the row already had and a percentage pinned 92px away from it.
-   Same shape as .disk-cell and .mem-cell above. */
+   Same shape as .disk-cell above. */
 .usage-cell .mrow {
   grid-template-columns: 1fr auto;
   gap: var(--space-2);

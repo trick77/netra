@@ -28,6 +28,13 @@ import (
 //
 // A type absent from this map is an occurrence and is stored unconditionally.
 // Adding a state type is one entry.
+//
+// container_restart and container_recreate must NEVER be added, and the
+// temptation will come from the fact that two of them can look identical. They
+// are occurrences: two restarts are two facts, and HOW OFTEN a container
+// restarts is the entire reading -- the same argument that keeps the kmsg
+// family out of this map. Collapsing them would turn a crash loop into a single
+// line and delete exactly the signal someone went looking for.
 var eventStateKeys = map[string]func(json.RawMessage) (string, error){
 	"mdraid": mdraidStateKey,
 }
