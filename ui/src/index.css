@@ -57,11 +57,13 @@
   --radius-sm: 5px;
   --radius-pill: 999px;
 
-  /* The nav rail. A token rather than a literal because it is the one width
-     the content is measured AGAINST now that the page itself has none: the
-     grid track on .app is what every breakpoint below is really about. The
-     off-canvas override drops the track entirely rather than restating it. */
-  --rail-w: 56px;
+  /* The top bar. A token rather than a literal because it is what every
+     sticky thing under it would have to clear, and what the page's first line
+     of content is measured from. It replaced a 56px RAIL, whose width was the
+     one number every breakpoint below was really about -- with the bar across
+     the top, content is the full window at every width and those thresholds
+     came down by the rail's width. */
+  --bar-h: 52px;
   /* The measure for running text. The page is full-bleed, so prose that used
      to be bounded by the old 1180px page width is now bounded by nothing.
      .note is the one prose class the app has and caps itself here; a block of
@@ -1706,13 +1708,20 @@ tbody tr:hover .host-cell-name {
 }
 
 /* ── Primitives: buttons, controls, cards, badges, tables, charts ─── */
-/* Two tracks: a fixed rail and everything else. The page carries no width of
-   its own any more -- a fleet table is as wide as the fleet needs, and the
-   old 1180px cap was what forced six columns of chart-plus-figure to squeeze.
-   What the cap USED to do for prose is now done per block by --measure. */
+/* One bar over one column. This was a fixed rail track beside the content;
+   the page carries no width of its own either way -- a fleet table is as wide
+   as the fleet needs, and the old 1180px cap was what forced six columns of
+   chart-plus-figure to squeeze. What the cap USED to do for prose is now done
+   per block by --measure. */
 .app {
   display: grid;
-  grid-template-columns: var(--rail-w) 1fr;
+  /* One column, two rows: the bar, then everything else. The rows are stated
+     because the grid keeps its 100dvh floor below -- with both rows auto, a
+     page shorter than the window has slack to hand out and the grid gives
+     half of it to the BAR, which lands the heading a third of the way down an
+     empty page. */
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 1fr;
   /* dvh, not vh, and the vh line above it is the fallback for browsers that
      do not know the unit. On iOS Safari 100vh is the LARGE viewport -- the
      height the page would have if the toolbars were retracted -- so with them
@@ -1723,56 +1732,86 @@ tbody tr:hover .host-cell-name {
   min-height: 100dvh;
 }
 
-.siderail {
+.topbar {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  padding: var(--space-2);
-  border-right: 1px solid var(--border);
+  gap: var(--space-4);
+  height: var(--bar-h);
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--border);
   background: var(--surface);
-  /* Sticky rather than fixed: fixed would take the rail out of the grid and
-     leave the content track sized against a column nothing occupies. */
+  /* Sticky rather than fixed: fixed would take the bar out of the grid and
+     leave the content row sized against a track nothing occupies. */
   position: sticky;
   top: 0;
-  /* Same reason as .app above: on iOS a 100vh rail hangs below the visible
-     area and takes the page with it. */
-  height: 100vh;
-  height: 100dvh;
   /* Stated because sticky makes this a stacking context whatever we do, and
      an unstated one sits at level 0 -- under every positioned thing in main
-     that comes after it, which is most of a page. The tooltip is the rail's
-     only label now, and at level 0 it drew behind stat tiles and chart
-     panels: the one word the rail still has, hidden. 5 clears main's own
-     z-index:1 layers while staying under the skip link (10), which lands on
-     top of the rail when focused, and under .cd-back (20), which has to dim
-     the rail along with everything else. */
+     that comes after it, which is most of a page. The tooltip is the bar's
+     only label, and at level 0 it drew behind stat tiles and chart panels:
+     the one word the bar has, hidden. 5 clears main's own z-index:1 layers
+     while staying under the skip link (10), which lands on top of the bar
+     when focused, and under .cd-back (20), which has to dim the bar along
+     with everything else. */
   z-index: 5;
+}
+/* The product's name, and the link home. Serif, at the size the login card
+   sets its own brand -- it is the one piece of type in the bar, and the bar
+   is the only place the app ever says what it is. */
+.topbar .wordmark {
+  flex: none;
+  font-family: var(--font-serif);
+  font-size: var(--text-title);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  text-decoration: none;
+}
+.topbar .wordmark:hover {
+  color: #fff;
+}
+.topbar .spacer {
+  flex: 1;
+}
+/* A rule between the destinations and the one ACTION, because they are
+   different kinds of thing sitting in the same row of squares. */
+.topbar-sep {
+  flex: none;
+  width: 1px;
+  height: 22px;
+  background: var(--border-strong);
+}
+.addhost {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.addhost svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 2;
 }
 .nav {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  flex: 1;
-  gap: var(--space-1);
-  align-self: stretch;
+  flex: none;
 }
-/* One run, top to bottom. Settings and sign out used to sit in a second group
+/* One run, left to right. Settings and sign out used to sit in a second group
    pushed to the FOOT of the rail with a rule above them, because Settings is
    the only destination here that is not about the fleet. That distinction
-   survived while the rail had words; six glyphs and no words could not carry
-   it, and what was left was two icons marooned at the bottom of an empty
-   column, far enough from the other four to read as a different control
-   rather than as the rest of the same list. */
+   survived while the rail had words; glyphs and no words could not carry it,
+   and what was left was two icons marooned at the bottom of an empty column,
+   far enough from the other four to read as a different control rather than
+   as the rest of the same list. */
 .navgroup {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: var(--space-1);
-  align-self: stretch;
+  gap: 2px;
 }
 /* A square, not a row: with the label gone there is nothing for a text
-   baseline to align to, so the glyph is centred in a fixed box. 36px inside a
-   56px rail leaves the same 10px either side that the padded row used to. */
+   baseline to align to, so the glyph is centred in a fixed box. 36px in a
+   52px bar leaves 8px above and below, the same breathing room the rail's
+   padded row had. */
 .nav a,
 .nav button {
   display: grid;
@@ -1806,31 +1845,22 @@ tbody tr:hover .host-cell-name {
   stroke-width: 1.75;
   flex: none;
 }
-/* Where you are. The fill is the same neutral one as before, but the weight
-   that used to separate it from :hover went with the labels -- there is no
-   text left to embolden, so active and hover became the same pixels. The bar
-   is what replaces it, and it is back on different terms than the 3px grey
-   rule that was removed for reading as a rendering seam: 2px, in accent, and
-   inset from the rail's ends so it reads as a mark against one item rather
-   than as an edge. It is the only accent in the rail, which is what makes one
-   of six items findable without reading anything. */
-.nav a[aria-current] {
-  background: var(--surface-2);
+/* Where you are: the fill, and nothing else. An accent bar under the current
+   glyph was tried and removed -- in a bar whose one coloured thing is Add
+   host, a second accent mark competes with the only action on the page, and
+   it read as a stray rule rather than as a marker.
+   --surface-2 was enough against the page's --bg while this was a rail; the
+   bar is itself --surface, so the square goes a rung further up the ladder to
+   --raised and the glyph to full --ink. That is a step you see without
+   looking for it, which is the whole job. */
+.nav a[aria-current],
+.nav a[aria-current]:hover {
+  background: var(--raised);
   color: var(--ink);
 }
-.nav a[aria-current]::before {
-  content: "";
-  position: absolute;
-  left: calc(-1 * var(--space-2));
-  top: 7px;
-  bottom: 7px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-}
-/* Sign out is the one rail item that is a control rather than a destination,
+/* Sign out is the one bar item that is a control rather than a destination,
    because clearing the session is a POST. It is stripped back to the shape of
-   the links above it -- same box, same icon size, same hover -- so the rail
+   the links beside it -- same box, same icon size, same hover -- so the bar
    reads as one list and not as five links and a button. */
 .nav button {
   border: 0;
@@ -1839,20 +1869,23 @@ tbody tr:hover .host-cell-name {
   cursor: pointer;
 }
 
-/* The label, now that the rail does not show one. Drawn in CSS rather than
+/* The label, now that the bar does not show one. Drawn in CSS rather than
    with the title attribute: the native tooltip waits about a second, which is
    too slow to answer "which of these is Events". It is decorative by
    necessity -- generated content is not reliably announced -- so every item
    also carries the same word in .sr-only, which is what names the link.
-   :focus-visible is not a nicety here: a keyboard user tabbing the rail has
-   no hover to fall back on. */
+   :focus-visible is not a nicety here: a keyboard user tabbing the bar has
+   no hover to fall back on.
+
+   Below the item, not beside it: in a horizontal bar there is no room to the
+   right of one, and the last item is a few px from the window edge. */
 .nav a::after,
 .nav button::after {
   content: attr(data-tip);
   position: absolute;
-  left: calc(100% + var(--space-2));
-  top: 50%;
-  transform: translateY(-50%);
+  left: 50%;
+  top: calc(100% + var(--space-2));
+  transform: translateX(-50%);
   white-space: nowrap;
   background: var(--raised);
   color: var(--ink);
@@ -1895,50 +1928,43 @@ tbody tr:hover .host-cell-name {
   padding: var(--space-5) var(--space-5) 80px;
 }
 
-.section {
-  margin: var(--space-6) 0 var(--space-3);
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-3);
-}
-.section h2 {
-  font-family: var(--font-serif);
-  font-size: var(--text-title);
-}
-.section .hint {
-  font-size: var(--text-label);
-  color: var(--muted);
-}
+/* ── The page head ────────────────────────────────────────────────────
+   One row on every page: the page's name, and off the right end whatever
+   narrows what is under it. Every page states its own name now -- the bar
+   carries no labels, so the heading is what says where you landed -- and
+   they all state it the same way.
 
-/* ── The page's own glyph ─────────────────────────────────────────────
-   The same mark the rail carries for this destination, repeated beside the
-   page's name. The rail shows no labels any more, so a heading is the only
-   place a glyph and the word for it are ever seen together: this line is what
-   teaches the rail, and it does it on the page the reader just arrived at
-   rather than in a tooltip they have to go looking for.
-
-   Muted, not accent: it names the page, and on the fleet page the one colour
-   that carries meaning is the one on the clause saying what is wrong. */
-.pageicon {
-  display: grid;
-  place-items: center;
-  flex: none;
-  /* The heading rows are baseline-aligned boxes and an svg has no baseline of
-     its own, so it would otherwise hang below the type it sits beside. */
-  align-self: center;
-  color: var(--muted);
-}
-.pageicon svg {
-  width: 22px;
-  height: 22px;
-  stroke-width: 1.75;
-}
-/* Glyph and name on one line, with whatever the page hangs beneath them --
-   the fleet's ambient figures -- under both rather than under the name. */
-.pagetitle {
+   Where .section was a baseline-aligned line of title + hint, this is a
+   flex ROW with a spacer: the hint moved under it (.pagesub) so the filter
+   has the right end to itself. */
+.pagehead {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+.pagehead .spacer {
+  flex: 1;
+  min-width: var(--space-4);
+}
+/* The page's name, in the serif the wordmark uses. Display size and a normal
+   weight rather than a heavier one: it is the quietest possible way to say
+   what page this is, and everything under it -- the chips, the figures, the
+   list -- is louder on purpose. */
+.pagehead h1 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--text-display);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+/* The line the .hint used to be, under the name rather than beside it. */
+.pagesub {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-label);
+  color: var(--muted);
 }
 
 .card {
@@ -2007,51 +2033,14 @@ tbody tr:hover .host-cell-name {
    .atiles row above is gone entirely and this is the only thing left, and a
    page that collapses to a single sentence reads as broken rather than as
    calm. */
-/* Title left, figures right, one line. The two were stacked, which made
-   the figures a second band rather than the tail of the first: they are what
-   the page currently holds, and they read off the end of the line that names
-   it. Baseline-aligned so the 28px title and the 14px figures sit on one
-   line of type; wrapping is allowed, and on a narrow window the figures drop
-   under the title rather than squeezing it. */
-.fleethead {
-  margin-bottom: var(--space-5);
-}
-/* Under the sentence, not off the end of it. The head states the fleet now
-   ("4 hosts, 2 need attention"), and these figures are what that sentence is
-   measured against -- a subtitle to it rather than a second thing on its
-   line. Tight to the heading and loose from the chips below, so the two read
-   as one block. */
-.fleethead .srail {
-  margin-top: var(--space-2);
-  margin-bottom: 0;
-}
-
-/* The page's name, in the serif the brand mark uses. Display size and a
-   normal weight rather than a heavier one: it is the quietest possible way
-   to say what page this is, and everything under it -- the chips, the
-   figures, the list -- is louder on purpose. */
-.fleettitle {
-  font-family: var(--font-serif);
-  font-size: var(--text-display);
-  font-weight: 500;
-  letter-spacing: -0.01em;
-  margin: 0;
-  /* It is a sentence now, and a long one wraps on a narrow window. Display
-     type at its default line-height sets wrapped lines too far apart to read
-     as one heading. */
-  line-height: 1.2;
-}
-/* The clause that says something is wrong, in the fixed status hue. Not
-   italic -- <em> is here because the clause IS the emphasis of the sentence,
-   and a serif italic at display size reads as a quotation. */
-.fleettitle em {
-  font-style: normal;
-}
-.fleettitle em.st-crit {
-  color: var(--st-crit-text);
-}
-.fleettitle em.st-warn {
-  color: var(--st-warn-text);
+/* The figure line sits directly under the page head, tight to it and loose
+   from the chips below, so the two read as one block. It used to hang under a
+   heading that was a SENTENCE about the fleet -- "4 hosts, 2 need
+   attention" -- and was what that sentence was measured against; the heading
+   names the list now and these are the only place the counts are said. */
+.pagehead + .srail {
+  margin-top: 0;
+  margin-bottom: var(--space-4);
 }
 
 /* A LINE, not a rail of boxes. Four bordered segments under a row of chips
@@ -3211,18 +3200,6 @@ a.tile:focus-visible {
      on it, including the nav. */
   flex-wrap: wrap;
 }
-/* The page's mark, centred on the TITLE rather than on the block beside it.
-   1lh is the title's own line box -- font-size is set here only so that unit
-   resolves against the same type as the h1, since the glyph inside is sized
-   in px and does not read it. Written this way rather than as the 43.4px it
-   computes to, so it follows --text-display if that ever moves. */
-.hosthead > .pageicon {
-  /* Overrides the shared rule's align-self:center, which would centre the
-     glyph on the whole name block again whatever the row does. */
-  align-self: flex-start;
-  font-size: var(--text-display);
-  height: 1lh;
-}
 /* The name block: the title's line and anything stacked under it. */
 .hosthead .hostident {
   display: flex;
@@ -3588,66 +3565,32 @@ svg.spark {
 }
 
 @media (max-width: 700px) {
-  /* The rail goes off-canvas -- back across the top -- rather than eating a
-     fifth of a small window. That was written when the rail was 212px, which
-     on a 900px window was a fifth of it; at 56px it is a sixteenth, and the
-     flip was costing every tablet the layout it has the room for. A 744px iPad
-     in portrait is the narrowest one made and it now keeps the rail. It is
-     also what makes the viewport an honest stand-in for the content width
-     again, which FleetPage's own 640px matchMedia depends on: below here
-     there is no rail to subtract, and 700 still sits above that. The rules
-     that care about content width rather than window width live in their own
-     block above, and start earlier than this one for that reason. */
-  .app {
-    display: block;
+  /* The bar is already horizontal at every width; what has to give here is
+     what it HOLDS. The label goes off Add host -- a "+" in the accent is the
+     same target and the same colour, and the words cost more than the five
+     glyphs beside them -- and the wordmark keeps its place, because a bar
+     that drops its own name reads as a fragment. */
+  .addhost {
+    padding-left: var(--space-2);
+    padding-right: var(--space-2);
+    font-size: 0;
+    gap: 0;
   }
-  .siderail {
-    position: static;
-    height: auto;
-    flex-direction: row;
-    align-items: center;
-    gap: var(--space-5);
-    padding: 14px var(--space-3);
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
+  .addhost svg {
+    width: 18px;
+    height: 18px;
   }
-  .nav {
-    flex-direction: row;
-    flex: 0 1 auto;
-    gap: 2px;
-    margin-left: auto;
-    align-self: auto;
-  }
-  .navgroup {
-    flex-direction: row;
-    gap: 2px;
-    align-self: auto;
-  }
-  /* The bar turned with the rail: under the item, not beside it. Left of a
-     glyph in a horizontal row it read as a separator between two items. */
-  .nav a[aria-current]::before {
-    left: 7px;
-    right: 7px;
-    top: auto;
-    bottom: calc(-1 * var(--space-1));
-    width: auto;
-    height: 2px;
-  }
-  /* Below the item rather than beside it: in a top bar there is no room to
-     the right of one. */
-  .nav a::after,
-  .nav button::after {
-    left: 50%;
-    top: calc(100% + var(--space-1));
-    transform: translateX(-50%);
+  .topbar {
+    gap: var(--space-2);
+    padding: 0 var(--space-3);
   }
   /* Except the last one, which is a few px from the window edge: centred on
      it, half the bubble hangs off the right of the viewport. An invisible
      pseudo-element still counts toward scrollable overflow, so that is a
      permanent sliver of horizontal scroll on every narrow window, not just
      while someone is pointing at it. Anchored by its right edge instead. */
-  .navgroup > :last-child::after,
-  .navgroup > .navform > button::after {
+  .addhost::after,
+  .navform > button::after {
     left: auto;
     right: 0;
     transform: none;
@@ -3659,17 +3602,16 @@ svg.spark {
 
 /* ── Content-width overrides ───────────────────────────────────────────
    These fire on the VIEWPORT, but every one of them is really about the width
-   the CONTENT gets -- and those stopped being the same number when the rail
-   arrived. While the rail is up, content is viewport - 56px of rail - 48px of
-   main's padding, so content crosses the ~860px these rules were written to
-   rescue at a 964px window. This moved down from 1120px when the rail
-   collapsed from 212px to 56px: the gap between window and content narrowed
-   by the 156px the rail gave back, and holding the old number would have
-   fired every rule below on a window that no longer needs them. Below 700 the
-   rail is a top bar and content is viewport - 48, comfortably inside this. */
-@media (max-width: 964px) {
-  /* The rail wraps on its own -- it is a flex row, not the grid the stat
-     tiles were, so there is no column count to reset here. It gets the width
+   the CONTENT gets. The two were different numbers while a 56px rail stood
+   beside the content: content was viewport - 56 of rail - 48 of main's
+   padding, so it crossed the ~860px these rules were written to rescue at a
+   964px window, and the threshold was set there to match. The bar is across
+   the top now and takes no width of its own, so content is viewport - 48 at
+   every size and the number comes back down by the rail's own 56. */
+@media (max-width: 908px) {
+  /* The figure rail wraps on its own -- it is a flex row, not the grid the
+     stat tiles were, so there is no column count to reset here. It gets the
+     width
      back instead, so the figures stay on one line in the band where the
      content column is narrowing. Nothing is drawn between them any more, so
      a wrap costs nothing but the break itself. */
@@ -3748,18 +3690,11 @@ svg.spark {
   .hosthead .hostbar > h1 {
     flex: 1 1 100%;
   }
-  .siderail {
-    flex-wrap: wrap;
+  /* The bar holds five glyphs, a wordmark and a "+" at this width and does
+     not wrap: wrapping it would push the page's first line of content half a
+     screen down on the narrowest window there is. */
+  .pagehead {
     gap: var(--space-2);
-  }
-  .nav {
-    margin-left: 0;
-    width: 100%;
-    overflow-x: visible;
-    flex-wrap: wrap;
-  }
-  .navgroup {
-    flex-wrap: wrap;
   }
 }
 
@@ -4236,32 +4171,38 @@ summary:focus-visible,
   top: var(--space-3);
 }
 
-/* ── The fleet's two lists sit ON the page ──────────────────────────────
-   Everywhere else a table is a card: a bordered box on --surface, which is
-   right for a panel among other panels on the host page. The fleet page is
-   nothing BUT its list, and a card around the only thing on a page draws a
-   line around the page. Flush, the rows start under the toolbar's rule and
-   the eye goes to the first hostname instead of to a corner radius.
+/* ── One list style, everywhere ────────────────────────────────────────
+   Three shapes used to coexist: the framed .tablewrap the host tabs and the
+   Agents page draw, the fleet's own full-bleed striped list, and the events
+   log -- rows in a card, framed but unstriped. Which one you got depended on
+   which page you were on, which is the one thing a list style must not do.
 
-   Scoped to .fleet -- both entities, because the two lists are one page and
-   a frame that appeared with the query string would read as a bug -- and NOT
-   to .tablewrap, which the host page and the container detail still need.
+   Every list is the framed box now (see .tablewrap above), and every list is
+   striped. The fleet's exception is gone with its reason: it was full-bleed
+   because a card around the only thing on the page drew a line around the
+   page, and with a bar overhead and a title above the rows the frame is what
+   ends the list rather than what boxes the page.
 
-   The stripe drops a rung with the ground it now sits on: --surface over
-   --bg is the same 1.08:1 step --surface-2 over --surface was. */
-.fleet .tablewrap {
-  background: none;
-  border: 0;
-  border-radius: 0;
-  overflow-x: auto;
-}
-.fleet .tablewrap tbody tr:nth-child(even):not(.grouprow) {
-  background: var(--surface);
-}
-.fleet .tablewrap tbody tr:hover:not(.grouprow) {
+   The stripe climbs a rung with its ground. --surface over --bg was the
+   fleet's step against the page; inside a --surface box the same 1.08:1 step
+   is --surface-2, and hover moves up to --raised to stay above it. */
+.tablewrap tbody tr:nth-child(even):not(.grouprow) {
   background: var(--surface-2);
 }
-/* The header rail keeps its rule, which is the only line the list needs. */
-.fleet .tablewrap thead th {
-  background: var(--bg);
+.tablewrap tbody tr:hover:not(.grouprow) {
+  background: var(--raised);
+}
+/* The events log is the one list that is not a table -- .evrow is a grid, in
+   a card -- and it stripes like one. The row reaches the card's own edge
+   rather than stopping inside its padding, so a stripe is a band across the
+   box instead of a floating strip. */
+.card .body > [role="list"] {
+  margin: 0 calc(-1 * var(--space-4));
+}
+.evrow {
+  padding-left: var(--space-4);
+  padding-right: var(--space-4);
+}
+.evrow:nth-child(even) {
+  background: var(--surface-2);
 }

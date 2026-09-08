@@ -35,7 +35,6 @@ import {
   relativeMs,
 } from "../../lib/format";
 import { RAIL_RANGES, type Range } from "../../lib/range";
-import { Box } from "lucide-react";
 
 // The windows this page OFFERS. The type is lib/range's, so a range chosen
 // anywhere else -- Settings' stored default, a link from the host page --
@@ -499,11 +498,12 @@ export function ContainerPage({
   return (
     <>
       <div className="hosthead">
-        {/* Box, not the rail's LayoutGrid: the four tiles say "the set of
-            containers", and this page is one of them. */}
-        <span className="pageicon">
-          <Box aria-hidden="true" />
-        </span>
+        {/* No glyph beside the name. This page drew a box, and the fleet and
+            the section pages each drew their own mark, back when the rail
+            showed no labels and a heading was the only place a glyph and its
+            word were seen together. The bar names its own destinations now,
+            and a title is the page's name rather than a second copy of the
+            mark that got you here. */}
         <h1>{displayTitle(container)}</h1>
         <div className="meta">
           <a className="hostname" href={`/hosts/${host.id}/overview`}>

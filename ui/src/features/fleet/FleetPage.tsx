@@ -14,7 +14,6 @@ import { Input } from "../../ui/Control";
 import { Segmented } from "../../ui/Segmented";
 import { StatFigure, StatRail } from "../../ui/StatRail";
 import { AttentionCounts } from "./AttentionCounts";
-import { SinceLastCheck } from "./SinceLastCheck";
 import {
   catalogueOf,
   EMPTY_CATALOGUE,
@@ -26,15 +25,12 @@ import {
   isConditionKind,
   kindLabel,
   kindSeverity,
-  worstSeverity,
   type AttentionFilter,
   type Catalogue,
   type Condition,
   type HostGroup,
 } from "./conditions";
 import { FleetContainers, type ContainerRow } from "./FleetContainers";
-import { containerHeadline, hostHeadline, type Headline } from "./headline";
-import type { Severity } from "../../ui/Badge";
 import { containerState } from "../container/columns";
 import {
   FILTERABLE_STATE_KINDS,
@@ -48,7 +44,6 @@ import { hostLocation, type HostRow } from "./hostColumns";
 import { isReporting } from "../../lib/host";
 import { buildRows } from "./hostTrends";
 import { FLEET_RANGE } from "./ranges";
-import { LayoutGrid, Server } from "lucide-react";
 
 /** What you are looking at (spec 4.5's first axis). */
 export type Entity = "hosts" | "containers";
@@ -123,21 +118,6 @@ function useSlashToFocus() {
 // this page's own tests have always taken them from here.
 export { FLEET_RANGE } from "./ranges";
 
-/**
- * The clause's colour, by the worst thing on screen.
- *
- * The same class names Badge maps its severities to, so a critical clause in
- * the heading and a critical badge in the list below it are the one hue --
- * and `neutral` and `ok` get none, because a heading that colours itself when
- * nothing is wrong makes the colour mean "the page rendered".
- */
-const SEVERITY_CLASS: Record<Severity, string | undefined> = {
-  ok: undefined,
-  neutral: undefined,
-  warning: "st-warn",
-  critical: "st-crit",
-};
-
 export interface FleetPageProps {
   /** Injected rows. When omitted the page fetches its own. */
   rows?: readonly HostRow[];
@@ -194,12 +174,6 @@ export interface FleetPageProps {
    * comment says a shared fleet view must not do.
    */
   attentionHref?: (next: FleetFilter) => string;
-  /**
-   * When the fleet was last read, for the rail's "since last check" figure.
-   * Spec 4.3: the page has to confirm the check RAN, so a page handed its
-   * data from outside (Wave 5's poller, or a test) must be able to say when.
-   */
-  checkedAt?: string | null;
   /** Injectable so tests are deterministic instead of racing the clock. */
   now?: Date;
   /**
@@ -231,7 +205,6 @@ export function FleetPage({
   attention: controlledAttention,
   onAttentionChange,
   attentionHref = (next) => (next === "all" ? "/" : `/?attn=${next}`),
-  checkedAt: injectedCheckedAt,
   containerError: injectedContainerError,
   conditionError: injectedConditionError,
   now = new Date(),
@@ -265,7 +238,6 @@ export function FleetPage({
   const [fetchedContainerError, setFetchedContainerError] = useState<
     string | null
   >(null);
-  const [fetchedCheckedAt, setFetchedCheckedAt] = useState<string | null>(null);
   const [fetchedConditions, setFetchedConditions] =
     useState<ConditionsResponse | null>(null);
   const [fetchedConditionError, setFetchedConditionError] = useState<
@@ -283,7 +255,6 @@ export function FleetPage({
         hosts = await getHosts();
         if (!live) return;
         setFetchedRows(buildHostRows(hosts));
-        setFetchedCheckedAt(new Date().toISOString());
       } catch (err) {
         if (!live) return;
         setError(describe(err));
@@ -338,7 +309,6 @@ export function FleetPage({
     };
   }, [injected]);
 
-  const checkedAt = injectedCheckedAt ?? fetchedCheckedAt;
   const hostRows = rows ?? fetchedRows ?? [];
   const containerRows = containers ?? fetchedContainers ?? [];
   const containerError = injectedContainerError ?? fetchedContainerError;
@@ -496,47 +466,6 @@ export function FleetPage({
             containerKind,
         );
 
-  // What the page calls itself, on whichever tab is up.
-  //
-  // Counted off the derived STATES rather than off the tiles the chips are
-  // drawn from, because the two sets differ at both ends and the heading
-  // wants neither edge of the tiles:
-  //
-  //   `no-samples` has no tile on purpose -- a host whose cgroup mount is
-  //   unreadable reports nothing for any container on it, and a chip per kind
-  //   is not what says so. It is emphatically not "reporting normally"
-  //   though, and counted off the tiles a fleet like that read "12
-  //   containers, all reporting" over twelve rows saying No samples.
-  //
-  //   `paused` has a tile and is not a fault: the silence check has already
-  //   passed, so a paused container IS still being sampled. Somebody stopped
-  //   it on purpose, and three of them must not make the heading claim three
-  //   containers stopped reporting.
-  const troubledContainers = [...containerStates.values()].filter(
-    (state) => state.kind !== "reporting" && state.kind !== "paused",
-  ).length;
-  const head: Headline =
-    entity === "containers"
-      ? containerHeadline(
-          containerRows.length,
-          troubledContainers,
-          containersKnown,
-          // A fan-out that lost a host to a 500 knows what it has and not
-          // what it is missing, so it may count the unwell and may not call
-          // the rest well. The note stating which hosts went unasked is
-          // directly above this line.
-          containerError === null,
-        )
-      : hostHeadline(hostRows.length, troubled);
-  // Coloured by the worst kind on screen, off the same tiles: a kind enters
-  // at one severity and the grouping hands back the worst one actually on
-  // this fleet, so the clause follows the chips rather than a fixed table.
-  const headSeverity = worstSeverity(
-    (entity === "containers" ? containerTiles : hostTiles).map(
-      (tile) => tile.severity,
-    ),
-  );
-
   // The mark on the row itself, in place of the ordering that used to lift a
   // troubled host to the top: the row says which hosts to look at without
   // moving any of them. Only the severities that mean something is wrong --
@@ -612,122 +541,104 @@ export function FleetPage({
           people stop reading, which is the same reason the band it replaced
           was not a green card. */}
 
-      {/* The ambient figures, on a rail rather than in cards.
-          They were three cards with 28px numbers sitting directly under
-          three ATTENTION cards with 28px numbers -- six cards of equal
-          weight, so the fleet's problems and its inventory shouted the same
-          and nothing said which to read first. The attention row is what
-          this page is for; these are context for it, and are set as
-          context. See StatRail. */}
-      {/* The page says what it is. The fleet list had no heading at all: the
-          first thing on it was a row of problem tiles, which reads as a
-          dashboard fragment rather than as the page a bookmark lands on --
-          and left the ambient figures under it with nothing to be subordinate
-          TO.
+      {/* The page says what it is, and what narrows it sits on the same line.
+          The heading used to be a sentence -- "5 hosts, 1 needs attention" --
+          which under a bar that already names the product said the fleet's
+          size a second time and then said what the chips below it say. It
+          names the LIST now, which is also what makes the two lists two
+          pages: each is a title and a URL rather than one route read two
+          ways. */}
+      <div className="pagehead">
+        <h1>{entity === "containers" ? "All containers" : "All hosts"}</h1>
+        <div className="spacer" />
+        {/* The filter, off the right end of the title rather than in a
+            toolbar under it: it is the one control that narrows what the
+            heading names, and a row holding nothing else was a band of chrome
+            between the page's name and its list.
 
-          It names the LIST, not the route: the two entities are one route
-          with a different query string and the rail marks them as two
-          destinations, so a heading fixed at "Fleet" would contradict the
-          rail on the containers view and mislabel the page for a screen
-          reader landing on it. */}
-      {/* The sentence, and the figures under it. They used to be one line --
-          the page's name on the left, what it holds off the right end -- and
-          that name was the word the nav rail had already said. The heading
-          states the SET and what is wrong with it instead, so the figures
-          became what the sentence is measured against and read below it
-          rather than beside it. headline.ts has the wording and why the set
-          leads rather than the count. */}
-      <div className="fleethead">
-        {/* The glyph tracks the ENTITY, not the route: one route serves both
-            lists and the rail marks them as two destinations, so a fixed mark
-            here would contradict the rail on the containers view -- the same
-            reason the heading below states the set rather than saying
-            "Fleet". */}
-        <div className="pagetitle">
-          <span className="pageicon">
-            {entity === "containers" ? (
-              <LayoutGrid aria-hidden="true" />
-            ) : (
-              <Server aria-hidden="true" />
-            )}
+            The key that focuses it is said where the field is. "/" has
+            focused the filter since useSlashToFocus was written and nothing
+            on screen mentioned it, which makes a shortcut a thing you either
+            already know or never learn. aria-hidden: it is a hint about the
+            keyboard, and a screen-reader user reaching this field has not
+            typed "/" to get here. */}
+        <div className="filterbox">
+          <Input
+            ref={filterRef}
+            type="search"
+            value={filter}
+            placeholder={
+              entity === "hosts" ? "Filter hosts" : "Filter containers"
+            }
+            aria-label={
+              entity === "hosts" ? "Filter hosts" : "Filter containers"
+            }
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <span className="kbd" aria-hidden="true">
+            /
           </span>
-          <h1 className="fleettitle">
-            {head.stem}
-            {head.clause !== null ? (
-              <>
-                {", "}
-                {/* The colour lands on the CLAUSE, which is the part that says
-                    something is wrong -- painting the whole line would put the
-                    fleet's size in red as well. */}
-                <em className={SEVERITY_CLASS[headSeverity]}>{head.clause}</em>
-              </>
-            ) : null}
-            {head.steady !== null ? `, ${head.steady}` : null}
-          </h1>
         </div>
-        <StatRail>
-          {/* The first two figures count a set the page can show, and sit
+      </div>
+
+      {/* The ambient figures, on a rail rather than in cards. They were three
+          cards with 28px numbers sitting directly under three ATTENTION cards
+          with 28px numbers -- six cards of equal weight, so the fleet's
+          problems and its inventory shouted the same and nothing said which
+          to read first. The attention row is what this page is for; these are
+          context for it, and are set as context. See StatRail. */}
+      <StatRail>
+        {/* The first two figures count a set the page can show, and sit
             directly above the tabs that show it -- so they are the control
             they already looked like. Their hrefs match the tabs' own, which
             is what keeps them bookmarkable and what makes clicking one the
             same act as clicking the tab. */}
-          <StatFigure
-            value={reporting}
-            // Pluralised, like the all-clear sentence directly above it: a
-            // one-host fleet read "of 1 hosts reporting" against a line already
-            // saying "All 1 host reporting".
-            label={`of ${hostRows.length} host${
-              hostRows.length === 1 ? "" : "s"
-            } reporting`}
-            href="/"
-            onSelect={() => setEntity("hosts")}
-          />
-          {/* Dropped only where the heading has just counted the containers,
-              which is the one case the figure would say the same number
-              twice. When the heading falls back to the bare word (a fleet
-              running none, or a fan-out that has not answered) it counts
-              nothing, and the figure is the only thing on the page that
-              would -- including the absent marker for the unanswered
-              case. */}
-          {entity === "hosts" || head.stem === "Containers" ? (
-            <StatFigure
-              value={containersKnown ? containerRows.length : ABSENT}
-              label="containers"
-              href="/?entity=containers"
-              onSelect={() => setEntity("containers")}
-            />
-          ) : null}
-          {/* No href: fleet traffic is a rate, not a set, so there is no list
+        <StatFigure
+          value={reporting}
+          // Pluralised, like the all-clear sentence directly above it: a
+          // one-host fleet read "of 1 hosts reporting" against a line already
+          // saying "All 1 host reporting".
+          label={`of ${hostRows.length} host${
+            hostRows.length === 1 ? "" : "s"
+          } reporting`}
+          href="/"
+          onSelect={() => setEntity("hosts")}
+        />
+        {/* On both pages now. It used to be dropped on the containers view
+              because the heading there had just counted them; the heading
+              counts nothing any more, so this is the only thing on either
+              page that says how many containers the fleet runs -- including
+              the absent marker when nobody has answered yet. */}
+        <StatFigure
+          value={containersKnown ? containerRows.length : ABSENT}
+          label="containers"
+          href="/containers"
+          onSelect={() => setEntity("containers")}
+        />
+        {/* No href: fleet traffic is a rate, not a set, so there is no list
             of it to go to. A figure that looks clickable and does nothing is
             worse than one that plainly is not. */}
-          <StatFigure
-            value={fleetTraffic(hostRows, now)}
-            // "in + out", the words this app already uses for the two
-            // directions: Graphs.tsx names its bands that ("not rx and tx --
-            // the direction is the point of this chart"), and both traffic
-            // sparklines announce themselves as "Traffic in and out over
-            // time".
-            //
-            // The "right now" that used to qualify this is gone with the card
-            // that had room for it. It stays true -- the number is a gauge off
-            // host_current, not the latest bucket of a range -- and the rail
-            // has no line for a qualifier that repeats for all three figures.
-            label="in + out"
-          />
-          {/* The age of the poll, in the place the fleet's other ambient
-            figures are read. It used to be the tail of a summary sentence
-            above the page; the sentence is gone and this is the fact on it
-            that was not said twice.
-
-            Its own component because it is the only figure here that has to
-            move between renders: computed from this page's `now` it read
-            "0 s" forever, since the poll landing is both what sets the
-            timestamp and what repaints the page. It owns a clock, and the
-            reasons for `duration` over `relative` and for omitting rather
-            than dashing moved there with it. */}
-          <SinceLastCheck checkedAt={checkedAt} now={now} />
-        </StatRail>
-      </div>
+        <StatFigure
+          value={fleetTraffic(hostRows, now)}
+          // "in + out", the words this app already uses for the two
+          // directions: Graphs.tsx names its bands that ("not rx and tx --
+          // the direction is the point of this chart"), and both traffic
+          // sparklines announce themselves as "Traffic in and out over
+          // time".
+          //
+          // The "right now" that used to qualify this is gone with the card
+          // that had room for it. It stays true -- the number is a gauge off
+          // host_current, not the latest bucket of a range -- and the rail
+          // has no line for a qualifier that repeats for all three figures.
+          label="in + out"
+        />
+        {/* "12 s since last check" used to close this rail. It is gone: the
+              page repolls on its own every POLL_MS, so the figure counted up
+              to a minute and reset forever, and a reader who never has to act
+              on it stops reading the line it sits in. What it was really
+              confirming -- that the check RAN -- is said by the readings
+              themselves going stale, and by a host's own "last seen". */}
+      </StatRail>
 
       {/* One counts line, reading whichever entity is on screen. The host
           conditions and the container states are different vocabularies over
@@ -753,30 +664,7 @@ export function FleetPage({
       ) : null}
 
       <div className="toolbar">
-        {/* The key that focuses this field, said where the field is. "/" has
-            focused the filter since useSlashToFocus was written and nothing
-            on screen mentioned it, which makes a shortcut a thing you either
-            already know or never learn. aria-hidden: it is a hint about the
-            keyboard, and a screen-reader user reaching this field has not
-            typed "/" to get here. */}
-        <div className="filterbox">
-          <Input
-            ref={filterRef}
-            type="search"
-            value={filter}
-            placeholder={
-              entity === "hosts" ? "Filter hosts" : "Filter containers"
-            }
-            aria-label={
-              entity === "hosts" ? "Filter hosts" : "Filter containers"
-            }
-            onChange={(e) => setFilter(e.target.value)}
-          />
-          <span className="kbd" aria-hidden="true">
-            /
-          </span>
-        </div>
-        {/* Left of the spacer, beside the filter it composes with: both of
+        {/* The filter it composes with is up in the title row now -- both of
             them change WHICH hosts are in the list. Hosts only -- every
             condition netra has is host-level, so on the Containers tab this
             control would offer three segments that all show the same list. */}

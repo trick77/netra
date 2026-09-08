@@ -350,7 +350,7 @@ describe("EventsPage", () => {
   it("hands every filter change back whole, never as a partial", async () => {
     const { onFiltersChange } = renderPage({ filters: { host: "3" } });
 
-    await userEvent.type(screen.getByLabelText("Search"), "n");
+    await userEvent.type(screen.getByLabelText("Filter events"), "n");
 
     expect(onFiltersChange).toHaveBeenCalledWith({
       ...EVERY_SEVERITY,

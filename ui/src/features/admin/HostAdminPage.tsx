@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { KeyRound, MapPin, ServerCog } from "lucide-react";
+import { MapPin, ServerCog } from "lucide-react";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
 import { Input, Select } from "../../ui/Control";
@@ -317,25 +317,23 @@ export function HostAdminPage() {
 
   return (
     <>
-      {/* `.section` is a heading ROW -- a baseline flex line holding the
-          title and its hint (see EventsPage). Everything below is a sibling
-          of it, not a child: as a child it was laid out as another column of
-          that row, which put the whole page beside its own heading. */}
-      <div className="section">
-        <span className="pageicon">
-          <KeyRound aria-hidden="true" />
-        </span>
-        {/* "Agents", the word the rail uses to reach this page. It headed
-            itself "Hosts" while the rail entry above it said Agents and the
-            monitoring list beside it also said Hosts -- one word claiming two
-            pages, which is the confusion the rename set out to end rather
-            than to move one level down. The hint is what ties the two words
+      {/* `.pagehead` is a heading ROW -- a flex line holding the title and
+          whatever narrows the page (see EventsPage). Everything below is a
+          sibling of it, not a child: as a child it was laid out as another
+          column of that row, which put the whole page beside its own
+          heading. */}
+      <div className="pagehead">
+        {/* "Agents", the word the bar uses to reach this page. It headed
+            itself "Hosts" while the bar entry said Agents and the monitoring
+            list beside it also said Hosts -- one word claiming two pages,
+            which is the confusion the rename set out to end rather than to
+            move one level down. The line under it is what ties the two words
             together: this page is where a host's AGENT gets its token. */}
-        <h2>Agents</h2>
-        <span className="hint">
-          One agent token per host, minted when the host is created.
-        </span>
+        <h1>Agents</h1>
       </div>
+      <p className="pagesub">
+        One agent token per host, minted when the host is created.
+      </p>
 
       {loadError ? (
         <p className="error" role="alert">

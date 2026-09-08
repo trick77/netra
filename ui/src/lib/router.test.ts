@@ -14,6 +14,7 @@ describe("parseRoute", () => {
       hostId: "3",
       key: "web/api",
     });
+    expect(parseRoute("/containers")).toEqual({ name: "containers" });
     expect(parseRoute("/events")).toEqual({ name: "events" });
     expect(parseRoute("/settings")).toEqual({ name: "settings" });
     expect(parseRoute("/admin/hosts")).toEqual({ name: "admin" });
@@ -28,6 +29,20 @@ describe("parseRoute", () => {
       hostId: "3",
       tab: "overview",
     });
+  });
+
+  // /containers is the list; /containers/<host>/<key> is one container. The
+  // list path was added second and has to thread past the detail branch,
+  // which matches on the same first segment.
+  it("keeps the container list and a container apart", () => {
+    expect(parseRoute("/containers")).toEqual({ name: "containers" });
+    expect(parseRoute("/containers/3/web%2Fapi")).toEqual({
+      name: "container",
+      hostId: "3",
+      key: "web/api",
+    });
+    // Half a detail path is neither, and must not fall through to the list.
+    expect(parseRoute("/containers/3").name).toBe("notFound");
   });
 
   // A tab name that does not exist must not reach HostPage, which would

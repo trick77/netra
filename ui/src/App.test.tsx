@@ -134,6 +134,33 @@ describe("App routing", () => {
     ).toBeInTheDocument();
   });
 
+  // The containers list lived at /?entity=containers until it became a page
+  // of its own. Somebody's bookmark and every link already sent still say
+  // that, and silently rendering the HOST list for them is the worst answer:
+  // it looks like the page they asked for, one list too far.
+  it("sends the old container-list URL to the page it became", async () => {
+    goTo("/?entity=containers");
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/containers"));
+    expect(window.location.search).toBe("");
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "All containers" }),
+    ).toBeInTheDocument();
+  });
+
+  // The rest of the query string is not the parameter's to take with it: a
+  // link filtered to a container state has to arrive filtered.
+  it("keeps the other filters while it redirects", async () => {
+    goTo("/?entity=containers&attn=unhealthy");
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/containers"));
+    expect(window.location.search).toBe("?attn=unhealthy");
+  });
+
   it("says so rather than rendering an empty shell for an unknown path", async () => {
     goTo("/nowhere");
 
@@ -354,7 +381,7 @@ describe("the fleet's container listing", () => {
     vi.mocked(api.getFleetContainers).mockRejectedValue(
       new ApiError(500, "boom"),
     );
-    goTo("/?entity=containers");
+    goTo("/containers");
 
     render(<App />);
 
@@ -369,12 +396,12 @@ describe("the fleet's container listing", () => {
   });
 });
 
-// The rail is the one piece of chrome on every page, so it is also the one
+// The bar is the one piece of chrome on every page, so it is also the one
 // place a broken href strands a keyboard user with no way out.
-describe("the nav rail", () => {
+describe("the top bar", () => {
   const DESTINATIONS = [
     ["Hosts", "/"],
-    ["Containers", "/?entity=containers"],
+    ["Containers", "/containers"],
     ["Events", "/events"],
     ["Agents", "/admin/hosts"],
     ["Settings", "/settings"],
@@ -384,9 +411,9 @@ describe("the nav rail", () => {
     render(<App />);
     await screen.findByText("web-01");
 
-    const rail = within(screen.getByRole("navigation", { name: "Primary" }));
+    const bar = within(screen.getByRole("navigation", { name: "Primary" }));
     for (const [label, href] of DESTINATIONS) {
-      expect(rail.getByRole("link", { name: label })).toHaveAttribute(
+      expect(bar.getByRole("link", { name: label })).toHaveAttribute(
         "href",
         href,
       );
@@ -399,43 +426,70 @@ describe("the nav rail", () => {
     goTo(path);
 
     render(<App />);
-    const rail = within(
+    const bar = within(
       await screen.findByRole("navigation", { name: "Primary" }),
     );
 
-    expect(rail.getByRole("link", { name: label })).toHaveAttribute(
+    expect(bar.getByRole("link", { name: label })).toHaveAttribute(
       "aria-current",
       "page",
     );
     // Exactly one, or "you are here" means nothing.
     expect(
-      rail
+      bar
         .getAllByRole("link")
         .filter((a) => a.getAttribute("aria-current") === "page"),
     ).toHaveLength(1);
   });
 
-  // Hosts and Containers are the same route with a different query string, so
-  // the rail cannot decide between them on route.name alone -- and if it
-  // tries, both light up and "you are here" stops meaning anything.
+  // Hosts and Containers were one route with a different query string, and
+  // the rail could not decide between them on route.name alone -- both lit up
+  // and "you are here" stopped meaning anything. They are two routes now, and
+  // this is what holds that: the container list marks Containers and only
+  // Containers.
   it("marks Containers, not Hosts, on the container list", async () => {
-    goTo("/?entity=containers");
+    goTo("/containers");
 
     render(<App />);
-    const rail = within(
+    const bar = within(
       await screen.findByRole("navigation", { name: "Primary" }),
     );
 
-    expect(rail.getByRole("link", { name: "Containers" })).toHaveAttribute(
+    expect(bar.getByRole("link", { name: "Containers" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(rail.getByRole("link", { name: "Hosts" })).not.toHaveAttribute(
+    expect(bar.getByRole("link", { name: "Hosts" })).not.toHaveAttribute(
       "aria-current",
     );
   });
 
-  // Sign-out is the one rail item that is not a link, and the distinction is
+  // A detail page is not its own destination -- there is no glyph for one
+  // host -- so it marks the list it came out of. Marking nothing left the bar
+  // saying "nowhere" on the two pages a reader spends the most time in.
+  it.each([
+    ["/hosts/3/overview", "Hosts"],
+    ["/containers/3/web", "Containers"],
+  ])("marks the list a detail page came out of (%s)", async (path, label) => {
+    goTo(path);
+
+    render(<App />);
+    const bar = within(
+      await screen.findByRole("navigation", { name: "Primary" }),
+    );
+
+    expect(bar.getByRole("link", { name: label })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(
+      bar
+        .getAllByRole("link")
+        .filter((a) => a.getAttribute("aria-current") === "page"),
+    ).toHaveLength(1);
+  });
+
+  // Sign-out is the one bar item that is not a link, and the distinction is
   // load-bearing: POST /logout is what clears the cookie, and a GET would let
   // anything that follows links end the session. The form's method and action
   // are the whole feature, so they are what this pins.
@@ -443,8 +497,8 @@ describe("the nav rail", () => {
     render(<App />);
     await screen.findByText("web-01");
 
-    const rail = within(screen.getByRole("navigation", { name: "Primary" }));
-    const button = rail.getByRole("button", { name: "Sign out" });
+    const bar = within(screen.getByRole("navigation", { name: "Primary" }));
+    const button = bar.getByRole("button", { name: "Sign out" });
 
     expect(button).toHaveAttribute("type", "submit");
     const form = button.closest("form");
@@ -452,7 +506,52 @@ describe("the nav rail", () => {
     expect(form?.getAttribute("method")?.toLowerCase()).toBe("post");
   });
 
-  // The rail now precedes the content in DOM order on every page, so the skip
+  // The wordmark is the only way home now that the first nav item is not the
+  // whole answer -- and it is the one place the app says its own name.
+  it("takes the wordmark home", async () => {
+    goTo("/settings");
+    render(<App />);
+
+    expect(await screen.findByRole("link", { name: "Netra" })).toHaveAttribute(
+      "href",
+      "/",
+    );
+  });
+
+  // The bar's one action. It goes to Agents, which is where a token is minted
+  // today -- not to a dialog, which does not exist yet.
+  it("points Add host at the page that mints a token", async () => {
+    render(<App />);
+    await screen.findByText("web-01");
+
+    expect(screen.getByRole("link", { name: /Add host/ })).toHaveAttribute(
+      "href",
+      "/admin/hosts",
+    );
+  });
+
+  // Five tabs of this app all read "netra" in the tab strip, and so did every
+  // bookmark and history entry, because index.html sets one static title and
+  // nothing ever changed it.
+  it("names the page in the tab title", async () => {
+    goTo("/events");
+    render(<App />);
+    await screen.findByRole("heading", { level: 1, name: "Events" });
+
+    expect(document.title).toBe("Events — netra");
+  });
+
+  // A host page's title is a hostname App does not have until the poll lands,
+  // so it keeps the bare product name rather than flashing a wrong one.
+  it("falls back to the product name where the page names itself", async () => {
+    goTo("/hosts/3/overview");
+    render(<App />);
+    await screen.findByText("web-01");
+
+    expect(document.title).toBe("netra");
+  });
+
+  // The bar precedes the content in DOM order on every page, so the skip
   // link is the only thing between a keyboard user and walking the whole nav.
   it("keeps a skip link that resolves to the main region", async () => {
     render(<App />);
