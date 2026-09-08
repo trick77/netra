@@ -145,6 +145,23 @@ describe("ContainerPage", () => {
     expect(screen.getAllByText("nginx:1.27").length).toBeGreaterThan(0);
   });
 
+  // The one surface where a bare uptime figure belongs, whatever the answer
+  // is: "when did this last come up" is a reason someone opened this page.
+  // The lists draw it only while it is short -- see UPTIME_MARK_S.
+  it("prints uptime in the header however long the container has been up", () => {
+    renderPage({
+      container: { ...CONTAINER, started_at: "2026-06-30T09:00:00Z" },
+    });
+    expect(screen.getByText(/up 41 d 5 h/)).toBeInTheDocument();
+  });
+
+  // Absent, not dashed. Every host whose socket refuses inspect reports no
+  // start time, and a dash would present that as a reading.
+  it("says nothing about uptime when there is no start time", () => {
+    renderPage({ container: { ...CONTAINER, started_at: null } });
+    expect(screen.queryByText(/ up /)).toBeNull();
+  });
+
   // An empty traffic chart claims this container moved no bytes. When the
   // agent has told us it could not enter the host's network namespaces, that
   // claim is false and the agent's own sentence is the answer.

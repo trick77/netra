@@ -58,6 +58,27 @@ export const MEM_PRESSURE_PCT = 90;
 export const STARTING_STUCK_S = 5 * 60;
 
 /**
+ * How young a container has to be before its uptime is worth printing.
+ *
+ * An hour. Uptime is not a column (see the note at the top of columns.tsx):
+ * "up 41 d" is not a thing anyone scans a column for, and a column of it
+ * would be blank on every host whose socket refuses inspect. It is a MARK,
+ * drawn only while the answer is "this came up just now" -- which is the one
+ * uptime fact worth seeing beside a container that is misbehaving.
+ *
+ * The accepted cost is a threshold the reader cannot see: above an hour the
+ * mark's absence is indistinguishable from a container with no start time at
+ * all. That is the same shape the restart mark already has -- nothing is
+ * drawn rather than a dash -- and it buys a name cell that stays quiet on the
+ * four hundred rows where uptime says nothing.
+ *
+ * The amber tier is STARTING_STUCK_S above, deliberately: the two thresholds
+ * are the same clock read twice, and a second "five minutes" invented here
+ * would drift the day that one moves.
+ */
+export const UPTIME_MARK_S = 60 * 60;
+
+/**
  * What a state IS, as opposed to what it is called.
  *
  * The kind is what the counts line groups by and what `?attn=` carries, the

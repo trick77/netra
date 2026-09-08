@@ -3985,6 +3985,24 @@ tbody:first-of-type .grouprow th {
   color: var(--st-crit-text);
 }
 
+/* How long ago a container came up, beside its name, and only while that is
+   recent -- see UPTIME_MARK_S in features/container/state.ts. The same
+   typography as .rst because it is the same kind of thing: an annotation on
+   a name, not a reading of its own, drawn on the few rows where it says
+   something and absent everywhere else. */
+.upmark {
+  font-size: var(--text-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+/* Under STARTING_STUCK_S: young enough that the Status column beside it may
+   be about to change its mind. Warning rather than the row's own colour --
+   a container that just came up is not by itself wrong. */
+.upmark.fresh {
+  color: var(--st-warn-text);
+}
+
 /* An identifier and its classification in one cell: an address with its
    scope, an interface with its link state. Two columns apart, answering
    "is this box reachable from the internet" took two saccades. */

@@ -28,9 +28,11 @@ import {
 } from "../../lib/metrics";
 import {
   ABSENT,
+  absolute,
   byterate,
   bytes,
   bytesPair,
+  duration,
   percent,
   relativeMs,
 } from "../../lib/format";
@@ -511,6 +513,25 @@ export function ContainerPage({
           </a>
           {" · "}
           {container.image ?? ABSENT}
+          {/* The one place a bare uptime figure belongs. The lists draw it as
+              a mark and only while it is short (UPTIME_MARK_S), because "up
+              41 d" is not something anyone scans a column for -- but "when did
+              this last come up" is a reason someone opens THIS page, so here
+              it is printed whatever the answer is. Omitted rather than dashed
+              when the host's agent cannot inspect: an absent fact and a fact
+              worth a dash are different things, and every other uptime surface
+              says nothing in that case too. */}
+          {container.started_at ? (
+            <span title={`Started ${absolute(container.started_at)}`}>
+              {" · up "}
+              {duration(
+                Math.max(
+                  0,
+                  (now.getTime() - Date.parse(container.started_at)) / 1000,
+                ),
+              )}
+            </span>
+          ) : null}
         </div>
         <Badge severity={state.severity}>{state.label}</Badge>
         {/* Which of the two the badge is. It used to always say "derived from

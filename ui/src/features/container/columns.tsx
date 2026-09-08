@@ -73,14 +73,26 @@ import { Meter, severityFromPercent, trendColor } from "../../ui/Meter";
 import { NowReading } from "../../ui/NowReading";
 import { METRIC_CELL_STYLE } from "../../ui/charts/size";
 import type { Column } from "../../ui/Table";
-import { ABSENT, binaryBytes, bytes, percent } from "../../lib/format";
+import {
+  ABSENT,
+  absolute,
+  binaryBytes,
+  bytes,
+  percent,
+} from "../../lib/format";
 import type { Container } from "../../lib/api";
 import { type Range } from "../../lib/range";
 import { ContainerChart } from "./ContainerChart";
 import { hasInteriorGaps } from "../../lib/metrics";
 import { hostStatus } from "../../lib/host";
 import { containerSamplesBlocked } from "../../lib/containers";
-import { deriveState, stateKindRank, type DerivedState } from "./state";
+import {
+  deriveState,
+  stateKindRank,
+  STARTING_STUCK_S,
+  UPTIME_MARK_S,
+  type DerivedState,
+} from "./state";
 
 /**
  * A container as a list sees it: what `GET /api/v1/hosts/{id}/containers`
@@ -516,6 +528,7 @@ function NameCell({
   row,
   groupedByProject,
   state,
+  now,
 }: {
   row: ContainerRow;
   groupedByProject: boolean;
@@ -523,6 +536,11 @@ function NameCell({
    * mark takes its severity from it, and two calls to containerState against
    * two different clocks could disagree inside one row. */
   state: DerivedState;
+  /** The same clock the state was derived against, for the uptime mark. Two
+   * clocks in one cell is the bug this parameter exists to prevent: the
+   * badge could read `starting` off one instant while the mark measured the
+   * age against another. */
+  now: Date;
 }) {
   const { project, service } = composeIdentity(row.container_key);
 
@@ -575,6 +593,7 @@ function NameCell({
           <Badge severity="warning">starting</Badge>
         ) : null}
         <RestartMark row={row} state={state} />
+        <UptimeMark row={row} now={now} />
         {/* No "gone" pill here any more. It stood beside a Status column that
             said "Silent" about the same container in the same instant, and
             the two were not two opinions: gone measures last_seen against the
@@ -827,6 +846,52 @@ function RestartMark({
   );
 }
 
+/**
+ * How long ago this container came up, as a mark beside its name -- and only
+ * while that is recent.
+ *
+ * Nothing at all above UPTIME_MARK_S, and nothing when the host's agent could
+ * not report a start time, which is the same shape RestartMark uses: no
+ * column, no dashes, no heading over a stack of blanks. A container that has
+ * been up for six weeks says what it has to say by staying silent.
+ *
+ * Amber under STARTING_STUCK_S, where the container is young enough that the
+ * Status column may be about to change its mind about it. Above that and
+ * under the hour it is a plain annotation on the name.
+ *
+ * One unit, not `duration`'s two: "up 4 m 12 s" beside a name is precision
+ * nobody asked for, and the mark exists to be read at a glance rather than
+ * measured. The exact instant is in the title for the reader who wants it.
+ */
+function UptimeMark({ row, now }: { row: ContainerRow; now: Date }) {
+  if (!row.started_at) return null;
+  const startedMs = Date.parse(row.started_at);
+  if (Number.isNaN(startedMs)) return null;
+
+  const seconds = (now.getTime() - startedMs) / 1000;
+  // A start time in the future is a clock skewed between the host and the
+  // hub, not a container that has been up for negative time. Clamp rather
+  // than print "up -3 m", which would read as a netra bug to whoever saw it.
+  const age = Math.max(0, Math.round(seconds));
+  if (age >= UPTIME_MARK_S) return null;
+
+  return (
+    <span
+      className={age < STARTING_STUCK_S ? "upmark fresh" : "upmark"}
+      title={`Started ${absolute(row.started_at)}`}
+    >
+      up {coarseAge(age)}
+    </span>
+  );
+}
+
+/** The largest whole unit of `seconds`, and nothing below it. */
+function coarseAge(seconds: number): string {
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)} h`;
+  if (seconds >= 60) return `${Math.floor(seconds / 60)} m`;
+  return `${seconds} s`;
+}
+
 /** The window the restart count was taken over, in words. */
 function restartWindowLabel(row: ContainerRow): string {
   const secs = row.restarts_window_seconds;
@@ -923,6 +988,7 @@ export function containerColumns({
           row={row}
           groupedByProject={groupedByProject}
           state={containerState(row, now)}
+          now={now}
         />
       ),
       // The displayed name, falling back to the key the cell falls back to,

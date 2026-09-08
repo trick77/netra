@@ -127,6 +127,77 @@ describe("containerColumns", () => {
     expect(badge.className).not.toContain("st-ok");
   });
 
+  // A mark, never a column: it is drawn on the few rows where "this came up
+  // just now" is worth seeing and on no others, which is the same shape the
+  // restart mark has.
+  describe("the uptime mark", () => {
+    const NOW = new Date("2026-08-10T14:00:00Z");
+
+    it("says how long ago a container just came up", () => {
+      renderRows([makeRow({ started_at: "2026-08-10T13:56:00Z" })], {
+        now: NOW,
+      });
+      expect(screen.getByText(/up 4 m/)).toBeInTheDocument();
+    });
+
+    // One unit. `duration` would say "4 m 12 s", which is precision nobody
+    // reads beside a name.
+    it("prints one unit, not two", () => {
+      renderRows([makeRow({ started_at: "2026-08-10T13:55:48Z" })], {
+        now: NOW,
+      });
+      expect(screen.getByText(/up 4 m/)).toBeInTheDocument();
+      expect(screen.queryByText(/12 s/)).toBeNull();
+    });
+
+    // Under STARTING_STUCK_S the Status column beside it may still change
+    // its mind about this container.
+    it("takes the warning colour while the container is very young", () => {
+      const { container } = renderRows(
+        [makeRow({ started_at: "2026-08-10T13:59:10Z" })],
+        { now: NOW },
+      );
+      expect(container.querySelector(".upmark.fresh")).not.toBeNull();
+    });
+
+    it("is a plain annotation once past the starting window", () => {
+      const { container } = renderRows(
+        [makeRow({ started_at: "2026-08-10T13:30:00Z" })],
+        { now: NOW },
+      );
+      expect(container.querySelector(".upmark")).not.toBeNull();
+      expect(container.querySelector(".upmark.fresh")).toBeNull();
+    });
+
+    // Above UPTIME_MARK_S there is nothing to say, and it says nothing --
+    // no dash, no "up 41 d".
+    it("draws nothing at all once the container is no longer new", () => {
+      const { container } = renderRows(
+        [makeRow({ started_at: "2026-08-10T02:00:00Z" })],
+        { now: NOW },
+      );
+      expect(container.querySelector(".upmark")).toBeNull();
+    });
+
+    // Every host whose socket refuses inspect reports no start time. That is
+    // the case a column would have turned into four hundred dashes.
+    it("draws nothing when the agent could not report a start time", () => {
+      const { container } = renderRows([makeRow({ started_at: null })], {
+        now: NOW,
+      });
+      expect(container.querySelector(".upmark")).toBeNull();
+    });
+
+    // A host clock ahead of the hub's is skew, not a container that has been
+    // up for negative time.
+    it("clamps a start time in the future rather than printing it", () => {
+      renderRows([makeRow({ started_at: "2026-08-10T14:05:00Z" })], {
+        now: NOW,
+      });
+      expect(screen.getByText(/up 0 s/)).toBeInTheDocument();
+    });
+  });
+
   // The whole point of the column: the words are deriveState's, so a
   // container reads the same here as on the page this row links to.
   describe("the Status column", () => {
