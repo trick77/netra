@@ -201,7 +201,7 @@ export default function App() {
             the install command is shown -- that page keeps its own button
             until adding a host is a dialog this can open. */}
         <div className="topbar-sep" aria-hidden="true" />
-        <a className="btn primary addhost" href="/admin/hosts">
+        <a className="btn addhost" href="/admin/hosts">
           <Plus aria-hidden="true" />
           Add host
         </a>
