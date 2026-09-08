@@ -3813,14 +3813,23 @@ svg.spark {
 
 /* ── The bar takes a second line ───────────────────────────────────────
    Every item in the bar is fixed-width -- six 36px squares, a wordmark and a
-   button -- so below about 430px they add up to more than the window and the
+   button -- so below about 450px they add up to more than the window and the
    PAGE scrolls sideways, which is the one thing this file says a layout must
    never do. Measured at 320px it overflowed by 67px.
+
+   The threshold was 430 while the wordmark was 20px; at 32px the bar's own
+   floor is 448, so a 440px window scrolled sideways with the wrap rules
+   still asleep. 480 rather than 448 exactly: a media query measures the
+   VIEWPORT and the bar gets the viewport minus a classic scrollbar, which
+   is another ~15px, so a threshold set on the floor still overflows by a
+   hair on the first width above it. .topbar is a flex row inside a 1fr grid
+   column -- minmax(auto, 1fr) -- so it is never narrower than its content
+   and the page, not the bar, is what scrolls.
 
    Nothing is dropped to fix it: the glyphs get a row of their own, spread
    across it, with the wordmark and the action on the line above. That is what
    the rail did at this width too, for the same reason. */
-@media (max-width: 430px) {
+@media (max-width: 480px) {
   .topbar {
     height: auto;
     flex-wrap: wrap;
