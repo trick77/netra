@@ -87,7 +87,68 @@ type Container struct {
 	// Labels is every label the daemon reported. An empty object is a container
 	// with no labels; null is a container nobody could ask about.
 	Labels map[string]string `json:"labels"`
+
+	// RestartsWindow is how many times this container restarted inside
+	// RestartWindow, SUMMED from the container_restart event log rather than
+	// differenced from a counter -- see migration 0019.
+	//
+	// Summed, never counted: one event can carry a delta of three, because a
+	// crash-looping container advances Docker's counter by more than one
+	// between two observations. Counting rows would report that loop as a
+	// single restart.
+	//
+	// This is the reading that catches a container which is broken without
+	// ever LOOKING broken -- one that dies and comes back every few minutes is
+	// docker_state "running" at almost every scrape, and no snapshot reveals
+	// it. It is the same job Unit.Restarts1h does for systemd.
+	//
+	// Zero is a real answer: the log was read and there were none. It is not
+	// the same as RestartCount being null, which is nobody having looked.
+	RestartsWindow int64 `json:"restarts_window"`
+	// RecreatesWindow is redeploys in the same window -- operator actions, not
+	// faults. Kept apart from the restarts above because mixing them would
+	// make every deploy look like an incident.
+	RecreatesWindow int64 `json:"recreates_window"`
+	// LastRestart is when the newest restart in the window was recorded, or
+	// null for none. On an event whose detail says ts_source "observed" this
+	// is an upper bound rather than a moment -- see 0019.
+	LastRestart *time.Time `json:"last_restart"`
+	// RestartsWindowSeconds is the window the two counts were taken over,
+	// echoed so a client never has to assume the server's default.
+	RestartsWindowSeconds int64 `json:"restarts_window_seconds"`
 }
+
+// RestartWindow is how far back the container listings count restarts.
+//
+// Twenty-four hours because that is the question a fleet list is scanned for --
+// "what has been crashing today" -- and because it is comfortably inside the
+// 90-day horizon netra_prune_discrete_events keeps. A caller wanting another
+// range asks the events API directly, filtered by type and subject; this is the
+// figure that rides the row.
+const RestartWindow = 24 * time.Hour
+
+// restartsLateral counts a container's restarts and redeploys over
+// RestartWindow.
+//
+// A LEFT JOIN LATERAL, the same shape Units uses over systemd_unit_events and
+// for the same reason: the count belongs to the row, and a second round trip
+// per container would be an N+1 on a page that lists hundreds. It rides 0017's
+// events_host_type_subject_ts_idx (host_id, type, subject, ts DESC) end to end.
+//
+// SUM of the delta for restarts, COUNT of rows for recreates -- a redeploy has
+// no multiplicity to accumulate, while a restart does.
+const restartsLateral = `
+	LEFT JOIN LATERAL (
+	     SELECT coalesce(sum((e.detail->>'delta')::bigint)
+	                     FILTER (WHERE e.type = 'container_restart'), 0) AS restarts,
+	            count(*) FILTER (WHERE e.type = 'container_recreate')     AS recreates,
+	            max(e.ts) FILTER (WHERE e.type = 'container_restart')     AS last_restart
+	       FROM events e
+	      WHERE e.host_id = c.host_id
+	        AND e.subject = c.container_key
+	        AND e.type IN ('container_restart', 'container_recreate')
+	        AND e.ts > now() - $%d::interval
+	) r ON TRUE`
 
 // Filesystem is one row of /hosts/{id}/filesystems, and the same shape the
 // host list embeds per host.
@@ -272,11 +333,12 @@ func (s *Service) Containers(ctx context.Context, hostID int32) ([]Container, er
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, container_key, name, image, is_agent, last_seen,
-		       docker_state, health, state_ts, restart_count, labels, started_at
-		  FROM containers
-		 WHERE host_id = $1
-		 ORDER BY container_key`, hostID)
+		SELECT c.id, c.container_key, c.name, c.image, c.is_agent, c.last_seen,
+		       c.docker_state, c.health, c.state_ts, c.restart_count, c.labels,
+		       c.started_at, r.restarts, r.recreates, r.last_restart
+		  FROM containers c`+fmt.Sprintf(restartsLateral, 2)+`
+		 WHERE c.host_id = $1
+		 ORDER BY c.container_key`, hostID, RestartWindow)
 	if err != nil {
 		return nil, fmt.Errorf("query containers: %w", err)
 	}
@@ -287,9 +349,10 @@ func (s *Service) Containers(ctx context.Context, hostID int32) ([]Container, er
 		var c Container
 		if err := rows.Scan(&c.ID, &c.Key, &c.Name, &c.Image, &c.IsAgent, &c.LastSeen,
 			&c.DockerState, &c.Health, &c.StateSince, &c.RestartCount, &c.Labels,
-			&c.StartedAt); err != nil {
+			&c.StartedAt, &c.RestartsWindow, &c.RecreatesWindow, &c.LastRestart); err != nil {
 			return nil, fmt.Errorf("scan container: %w", err)
 		}
+		c.RestartsWindowSeconds = int64(RestartWindow.Seconds())
 		out = append(out, c)
 	}
 	return out, rowsErr(rows.Err(), "containers")
@@ -332,11 +395,12 @@ func (s *Service) FleetContainers(ctx context.Context, hostIDs []int32) (FleetCo
 	}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT host_id, id, container_key, name, image, is_agent, last_seen,
-		       docker_state, health, state_ts, restart_count, labels, started_at
-		  FROM containers
-		 WHERE host_id = ANY($1)
-		 ORDER BY host_id, container_key`, hostIDs)
+		SELECT c.host_id, c.id, c.container_key, c.name, c.image, c.is_agent, c.last_seen,
+		       c.docker_state, c.health, c.state_ts, c.restart_count, c.labels,
+		       c.started_at, r.restarts, r.recreates, r.last_restart
+		  FROM containers c`+fmt.Sprintf(restartsLateral, 2)+`
+		 WHERE c.host_id = ANY($1)
+		 ORDER BY c.host_id, c.container_key`, hostIDs, RestartWindow)
 	if err != nil {
 		return FleetContainersResult{}, fmt.Errorf("query fleet containers: %w", err)
 	}
@@ -348,9 +412,10 @@ func (s *Service) FleetContainers(ctx context.Context, hostIDs []int32) (FleetCo
 		var c Container
 		if err := rows.Scan(&hostID, &c.ID, &c.Key, &c.Name, &c.Image, &c.IsAgent, &c.LastSeen,
 			&c.DockerState, &c.Health, &c.StateSince, &c.RestartCount, &c.Labels,
-			&c.StartedAt); err != nil {
+			&c.StartedAt, &c.RestartsWindow, &c.RecreatesWindow, &c.LastRestart); err != nil {
 			return FleetContainersResult{}, fmt.Errorf("scan fleet container: %w", err)
 		}
+		c.RestartsWindowSeconds = int64(RestartWindow.Seconds())
 		byHost[hostID] = append(byHost[hostID], c)
 	}
 	if err := rowsErr(rows.Err(), "fleet containers"); err != nil {

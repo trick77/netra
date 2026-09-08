@@ -390,3 +390,65 @@ func TestIntegrationAPoisonContainerDoesNotLoseAnotherContainersRestart(t *testi
 		t.Errorf("rows = %d, want 1: the good container's restart must survive", rows)
 	}
 }
+
+// The count that rides the listing row is a SUM of deltas over the window, not
+// a row count, and it is what the fleet list prints beside a container's name.
+func TestIntegrationContainersReportRestartsInTheWindow(t *testing.T) {
+	ctx := context.Background()
+	st := openMigrated(t)
+	id := seedInterfaceHost(t, st, "restart-window")
+
+	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond)
+	// 2 -> 3 -> 6: one restart, then three more.
+	for i, c := range []uint64{2, 3, 6} {
+		if _, err := st.InsertContainerSamples(ctx, id, []*netrav1.ContainerSample{
+			restartSample("shop/web", base.Add(time.Duration(i)*time.Minute), "nginx:1", u64(c), nil),
+		}); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+
+	var summed, rows int64
+	if err := st.Pool().QueryRow(ctx, `
+		SELECT coalesce(sum((detail->>'delta')::bigint), 0), count(*)
+		  FROM events
+		 WHERE host_id = $1 AND type = 'container_restart'
+		   AND ts > now() - INTERVAL '24 hours'`, id).Scan(&summed, &rows); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if rows != 2 {
+		t.Errorf("rows = %d, want 2 steps", rows)
+	}
+	if summed != 4 {
+		t.Errorf("sum(delta) = %d, want 4 restarts in the window", summed)
+	}
+}
+
+// Restarts older than the window are not counted -- the reading is "today",
+// not "ever". containers.restart_count remains the all-time number.
+func TestIntegrationRestartsOutsideTheWindowAreNotCounted(t *testing.T) {
+	ctx := context.Background()
+	st := openMigrated(t)
+	id := seedInterfaceHost(t, st, "restart-outside")
+
+	old := time.Now().Add(-72 * time.Hour).UTC().Truncate(time.Millisecond)
+	for i, c := range []uint64{1, 2} {
+		if _, err := st.InsertContainerSamples(ctx, id, []*netrav1.ContainerSample{
+			restartSample("shop/web", old.Add(time.Duration(i)*time.Minute), "nginx:1", u64(c), nil),
+		}); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+
+	var summed int64
+	if err := st.Pool().QueryRow(ctx, `
+		SELECT coalesce(sum((detail->>'delta')::bigint), 0)
+		  FROM events
+		 WHERE host_id = $1 AND type = 'container_restart'
+		   AND ts > now() - INTERVAL '24 hours'`, id).Scan(&summed); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if summed != 0 {
+		t.Errorf("sum(delta) = %d inside 24h, want 0 for a restart three days old", summed)
+	}
+}
