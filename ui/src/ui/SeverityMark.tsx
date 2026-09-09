@@ -1,63 +1,66 @@
-/**
- * The severity of a row, as a mark rather than a word.
- *
- * Badge is still the component for a status that has something to SAY -- a
- * container state, a systemd unit, the host page header. This one is for the
- * fleet list, where the word was the same four letters repeated down the
- * leftmost column and the reader is scanning for which rows have a mark at
- * all, not reading them.
- *
- * TWO GLYPHS, not one glyph in two colours. Badge's header sets out the rule
- * this has to keep (spec §3.3): netra's amber and its critical red measure
- * ΔE 2.2 under deuteranopia, so a triangle painted in each is one mark to a
- * reader who cannot separate the hues -- exactly the bare coloured dot
- * Badge's required `children` exists to prevent. Badge answers it with a
- * word; this answers it with SHAPE. A triangle and an octagon are different
- * marks in greyscale, at 14px, and at a glance, and the hue then reinforces
- * a distinction that no longer depends on it.
- *
- * The octagon is the road sign, and it is deliberate: triangle warns,
- * octagon stops. A reader who has never seen this table knows which of the
- * two outranks the other without a legend.
- *
- * role="img" with an aria-label, NOT aria-hidden: OsIcon may hide itself
- * because the OS name is spelled out beside it, and here nothing is. The
- * word is what a screen reader gets, so the column still says "critical" to
- * anyone not reading it by eye.
- */
-export type MarkSeverity = "warning" | "critical";
+// Severity never rides on colour alone (spec §3.3): netra's amber and its
+// critical red measure ΔE 7.2 at normal vision and 2.2 under deuteranopia --
+// not reliably distinguishable, and no re-stepping fixes it. Badge answers
+// that with a WORD beside its dot. This answers it with a mark, for the fleet
+// list, where the word was the same four letters repeated down the leftmost
+// column and what a reader scans for is which rows have a mark at all.
+//
+// THE SECOND CHANNEL IS THE INTERIOR, and the first shipped version had
+// nothing of the sort. It drew its own paths: a filled triangle, and a filled
+// regular octagon at 13px. An octagon has eight sides, and eight sides across
+// thirteen pixels are sub-pixel corner cuts -- it rendered as a circle, which
+// is precisely the bare coloured dot Badge's required `children` exists to
+// prevent, and the triangle beside it was a solid blob. At a glance the pair
+// read as "a red thing" and "a yellow thing".
+//
+// lucide is this app's icon set -- the nav, the palette, the table chevron,
+// InfoTip, Button's spinner -- and it draws these properly: an outline with a
+// mark inside it, which is what makes an icon legible small. TriangleAlert
+// carries an exclamation and OctagonX a cross, so those two differ by
+// interior AND by outline, and either survives greyscale on its own. Drawing
+// our own was the mistake: a second channel is not something to freehand at
+// 13px.
+//
+// TWO MARKS, not three. Offline is critical, and it draws critical's mark --
+// the same octagon, the same hue. It briefly had a bare X of its own, on the
+// argument that a host being gone is a different fact from a condition read
+// off a host that is answering, and that the two should therefore not share a
+// glyph. They are different facts, and the column still does not rank them:
+// what a reader takes off this column is how bad, not which kind, and a
+// second red glyph asked them to learn a vocabulary to get the same answer.
+// The kind is what the row's other cells are for -- the figures are all
+// absent on a host that is gone, and present on one that is merely full --
+// and it survives here as the accessible name.
+//
+// role="img" with an aria-label, NOT aria-hidden: OsIcon may hide itself
+// because the OS name is spelled out beside it, and here nothing is. The
+// label is the row's own word -- "offline", "never seen", "sporadic" -- so a
+// screen reader gets the specific fact rather than the severity band it falls
+// in, which is more than the mark says by eye.
+import { OctagonX, TriangleAlert } from "lucide-react";
 
-const SEVERITY_CLASS: Record<MarkSeverity, string> = {
-  warning: "st-warn",
-  critical: "st-crit",
-};
+export type MarkKind = "warning" | "critical";
 
-// A 16-box for both, so the two marks occupy the same area and a column of
-// them lines up regardless of which severity a row is at. The triangle is
-// inset a little at the top and full-width at the base -- an isoceles drawn
-// corner to corner in the box reads smaller than the octagon beside it,
-// because a triangle covers half the area a near-circle does.
-const PATHS: Record<MarkSeverity, string> = {
-  // Apex at the top, base on the floor, inset 0.8 from each edge so the
-  // corners are not clipped by the viewBox at 13px.
-  warning: "M8 1.5 15.2 14.2H0.8Z",
-  // A regular octagon: the corner cut of a side-16 square is 16/(2+√2).
-  critical: "M4.69 0H11.31L16 4.69V11.31L11.31 16H4.69L0 11.31V4.69Z",
-};
+const MARKS = {
+  warning: { Icon: TriangleAlert, cls: "st-warn" },
+  critical: { Icon: OctagonX, cls: "st-crit" },
+} as const;
 
-export function SeverityMark({ severity }: { severity: MarkSeverity }) {
+export function SeverityMark({
+  kind,
+  /** The row's own word for this state, for the accessible name. Defaults to
+   * the kind, which is the right word for a plain warning or critical. */
+  label,
+}: {
+  kind: MarkKind;
+  label?: string;
+}) {
+  const { Icon, cls } = MARKS[kind];
   return (
-    <svg
-      className={`smark ${SEVERITY_CLASS[severity]}`}
-      viewBox="0 0 16 16"
-      width="13"
-      height="13"
-      fill="currentColor"
-      role="img"
-      aria-label={severity}
-      focusable="false"
-    >
-      <path d={PATHS[severity]} />
-    </svg>
+    // Size and stroke come from .smark in index.css rather than from lucide's
+    // props: lucide draws at stroke 2 for a 24px box, so every use in this app
+    // smaller than that has had to re-weight it, and keeping both numbers in
+    // the stylesheet puts them next to the type they sit beside.
+    <Icon className={`smark ${cls}`} role="img" aria-label={label ?? kind} />
   );
 }

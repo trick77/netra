@@ -1022,17 +1022,15 @@ a:hover {
    Critical only, which is offline and never-seen: a sporadic host is
    answering, and its own amber mark is where that belongs.
 
-   WHAT SAYS IT IN WORDS IS THE LAST SEEN COLUMN, and that matters more than
-   it used to. This rule used to lean on the badge beside the name ("the badge
-   still says the word -- this is the same fact at the scan distance where
-   nobody has read the badge yet"), and that badge is gone: a silent host
-   draws no severity mark at all, because a critical derived from its last
-   known disk reading would claim to describe this minute. Severity may not
-   ride on colour alone (spec §3.3), so the hue here is the SECOND channel and
-   the age is the first -- "2 d 6 h ago" on a row whose every other figure is
-   absent, and the word "never" on a host that has never reported, which is
-   the case that would otherwise have had nothing but this hue to say it. See
-   LastSeenCell on why that one prints a word rather than the absent dash. */
+   THE HUE IS THE THIRD CHANNEL HERE, not the only one, and that is what makes
+   it allowed at all (severity may not ride on colour alone, spec §3.3). This
+   rule used to lean on the badge beside the name -- "the badge still says the
+   word" -- and that badge is gone. What replaced it: the bare X beside the
+   name (SeverityMark, and see hostMark on why offline gets its own mark
+   rather than the octagon a live critical draws), and the Last seen column,
+   which prints "2 d 6 h ago" on a row whose every other figure is absent and
+   the word "never" on a host that never reported. The name's colour is the
+   same fact again at the scan distance where nobody has read either yet. */
 .host-cell-name.gone {
   /* The TEXT step of the critical hue, not the fill: --st-crit is a bar
      colour and reads under the body floor as type. */
@@ -2673,10 +2671,29 @@ tbody tr:hover .host-cell-name {
    miss 4.5:1 against the body ground; a 13px solid glyph is measured as a
    graphic (3:1) and the raw hue is the one that reads as the status colour
    at that size -- --st-crit-text on a solid shape reads pink. */
+/* The fleet row's severity mark -- SeverityMark.tsx, a lucide icon rather
+   than a path this file draws. Sizing lives here and not on the component
+   because these two numbers are the whole of whether the mark reads, and they
+   are decided against the type it sits beside.
+
+   15px against the hostname's --text-ui 15px: the mark stands as tall as the
+   name it marks and no taller. It was 13, and 13 was where the first version
+   failed -- an octagon has eight sides, and eight sides across 13px are
+   sub-pixel corner cuts, so it drew a circle.
+
+   Stroke 2.25, up from lucide's own 2. lucide draws for a 24px box, so a
+   stroke of 2 there lands at 1.25px once the box is 15 -- and what thins out
+   first is the INTERIOR, the exclamation and the cross, which is the half
+   that makes the mark more than a coloured blob. The nav rail runs its own
+   15px icons at 2 because a glyph standing alone can afford to be quiet;
+   this one is 15px in a table of text and cannot. */
 .smark {
-  /* Never shrink: this is 13px of glyph beside a hostname that can be any
-     length, and .host-cell-top is a flex row -- without it a long name in a
-     narrow Host column squeezes the mark instead of wrapping. */
+  width: 15px;
+  height: 15px;
+  stroke-width: 2.25;
+  /* Never shrink: 15px of glyph beside a hostname that can be any length, and
+     .host-cell-top is a flex row -- without it a long name in a narrow Host
+     column squeezes the mark instead of wrapping. */
   flex: none;
   /* Block, so the SVG does not sit on a text baseline and carry inline
      layout's descender gap under it. .host-cell-top centres its children, so
