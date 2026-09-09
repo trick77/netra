@@ -2720,8 +2720,27 @@ th {
   padding: 5px var(--space-4);
   border-bottom: 1px solid var(--border);
 }
+/* 7px, not the 10px this shipped with, and the vertical padding is the whole
+   lever: it is what a row's height is MADE of, so the text size is very nearly
+   the wrong thing to reach for. Measured on the running app, a text-only list
+   loses 13-14% of its row height here (packages 44.3px -> 38.3px, three more
+   rows on screen at 1440x900) where dropping the cells to --text-label buys 4%
+   -- a change nobody can see, for a step down in the size the whole app reads
+   at, and --text-label is already spoken for INSIDE a cell by badges,
+   .imgcell, the group totals and .evtime, which would all lose their step
+   down with it.
+
+   The lists carrying charts move less, 6-7%, because a sparkline sets their
+   height rather than the type. That is the content differing, not the rule.
+
+   .grouprow td was ALREADY 7px, so the group heads in the container lists used
+   to sit tighter than the rows beneath them. One number now, everywhere.
+
+   Checked for cells whose contents stop clearing a shorter box -- badges,
+   meters, sparklines, the two-line host cell -- across all ten lists: none
+   clip. The horizontal 16px is untouched; only the row gets shorter. */
 td {
-  padding: 10px var(--space-4);
+  padding: 7px var(--space-4);
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
@@ -4369,12 +4388,18 @@ tbody:first-of-type .grouprow th {
   font-variant-numeric: tabular-nums;
 }
 /* The heading's cells take the body's padding, ground and rules, or the row
-   breaks in half where the spanned name ends. */
+   breaks in half where the spanned name ends.
+
+   They now actually do. This said --space-3 while the body said --space-4, so
+   the group's name hung 4px left of the rows it heads and its readings sat 4px
+   off the columns they total -- and the vertical 7px, which the body has only
+   just adopted, meant the heading was the tighter of the two. Both numbers are
+   the body's now, which is what the sentence above always claimed. */
 .grouprow td {
   background: var(--bg);
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  padding: 7px var(--space-3);
+  padding: 7px var(--space-4);
   vertical-align: middle;
 }
 
