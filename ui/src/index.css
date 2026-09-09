@@ -1210,7 +1210,21 @@ tbody tr:hover .host-cell-name {
   gap: 2px;
   height: 8px;
   flex: 1 1 auto;
-  min-width: 0;
+  /* A floor as well as a cap: ten cells and their nine 2px gaps need 88px
+     before a cell stops being countable, and a shrinkable bar next to a long
+     figure ("331.7 MB used · 737.8 MB free · 1.1 GB size") would otherwise
+     give up every pixel to it. Below this the figure wraps instead
+     (.mrow-read). */
+  min-width: 88px;
+  /* The bar has ONE size in the app, and 123px is the size the fleet cell
+     already draws it at: SPARK_WIDTH (175) less the figure's 44px column and
+     the --space-2 between them. A cap rather than a fixed width, so the fleet
+     row is unchanged to the pixel while a narrower cell may still squeeze it,
+     and so a card that is 900px wide draws the same ten cells as a table cell
+     rather than a bar the width of the page. The continuous fill this
+     replaced had no such limit, which is what made one reading a different
+     length on every surface. */
+  max-width: 123px;
 }
 .segbar i {
   display: block;
@@ -1234,6 +1248,23 @@ tbody tr:hover .host-cell-name {
 }
 .segbar.st-crit i.on {
   background: var(--st-crit);
+}
+/* The series palette, for a Meter given `series` -- a bounded quantity with
+   no severity to state. Here rather than as an inline fill on the cells,
+   which is where it lived while the bar was one continuous element. Nothing
+   in the app passes `series` today; the four rules keep the prop working
+   rather than leaving it to paint an uncoloured bar. */
+.segbar.s1 i.on {
+  background: var(--s1);
+}
+.segbar.s2 i.on {
+  background: var(--s2);
+}
+.segbar.s3 i.on {
+  background: var(--s3);
+}
+.segbar.s4 i.on {
+  background: var(--s4);
 }
 .metric-read {
   display: flex;
@@ -2975,29 +3006,30 @@ details.sysfold > .body {
   white-space: nowrap;
 }
 
-/* meter — fill carries severity/series colour (passed by the caller from
-   --st-* or --s1..--s4, never the accent), track is a lighter step. */
-.meter {
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--track);
-  overflow: hidden;
-  display: flex;
-}
-.meter i {
-  display: block;
-  height: 100%;
-}
+/* A Meter's row: the label on its own line, and under it the bar with its
+   figure beside it (.mrow-read). It was a 1fr/92px grid, which put the bar in
+   the first track and the figure at the far right of whatever the row
+   happened to be wide -- fine while the bar stretched to fill that track, and
+   half a page of empty space once every bar in the app became the fleet's
+   fixed ten cells. Bar and figure are one reading and now sit together, the
+   way the fleet row has always drawn them (.metric-now). The figures still
+   form a column down a card because the bar in front of them is one width. */
 .mrow {
-  display: grid;
-  grid-template-columns: 1fr 92px;
-  gap: var(--space-3);
-  align-items: center;
   padding: 9px 0;
   border-bottom: 1px solid var(--border);
 }
 .mrow:last-child {
   border-bottom: 0;
+}
+.mrow-read {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* The figure drops under the bar rather than squeezing it, once the row is
+     too narrow to hold both. The bar has a floor of its own (see .segbar) and
+     the pair still reads as one thing stacked. */
+  flex-wrap: wrap;
+  row-gap: 2px;
 }
 /* A reading drawn under the chart it qualifies, inside the panel: the
    container memory meter under the memory chart. Scoped rather than given its
@@ -3005,9 +3037,10 @@ details.sysfold > .body {
    Meter is shared by the fleet's disk cell and the host's filesystem list, and
    what changes here is placement, not the component.
 
-   The label is hidden because the panel title already carries it, and the
-   value column sizes to its text: the footer prints a bare percentage, not the
-   92px byte pair the host page needs. */
+   The label is hidden because the panel title already carries it. What used
+   to be here as well -- a value column sized to its text -- is gone with the
+   grid: .mrow-read puts the figure against the bar in every Meter, and this
+   footer's bare percentage sits there like the rest. */
 .smp .foot {
   margin-top: 9px;
   padding-top: 9px;
@@ -3016,8 +3049,6 @@ details.sysfold > .body {
 .smp .foot .mrow {
   padding: 0;
   border-bottom: 0;
-  grid-template-columns: 1fr auto;
-  gap: var(--space-2);
 }
 .smp .foot .lab {
   display: none;
@@ -3035,12 +3066,11 @@ details.sysfold > .body {
 /* The host page's filesystem list. Every mount carries a bar, not just the
    fullest one: a card that lists six filesystems as text makes a reader
    compare six pairs of numbers to find the one in trouble, which is the
-   comparison a bar does at a glance. The value column sizes to its text --
-   "331.7 MB used · 737.8 MB free · 1.1 GB size" does not fit 92px. */
-.fs-list .mrow {
-  grid-template-columns: 1fr auto;
-  gap: var(--space-3);
-}
+   comparison a bar does at a glance.
+
+   The grid override that used to be here is gone with the grid: it widened
+   the value track because "331.7 MB used · 737.8 MB free · 1.1 GB size" does
+   not fit 92px, and .mrow-read sizes the value to its text everywhere now. */
 
 /* Sortable column headers. The arrow is a pseudo-element so it stays out of
    the header's textContent -- the column name is read by tests and by the
@@ -3232,12 +3262,26 @@ details.sysfold > .body {
 .mrow .lab {
   font-size: var(--text-label);
   color: var(--ink-2);
+  /* The gap the grid used to give it, now that the label is a line of its own
+     above the bar rather than a cell stacked with it. */
+  margin-bottom: 5px;
 }
+/* Beside the bar, not right-aligned in a track of its own -- see .mrow. The
+   figures still line up down a card because the bar in front of them is one
+   fixed width; `flex: none` keeps a long one ("63.6k of 65.5k") from being
+   squeezed by a narrow cell. */
 .mrow .val {
   font-size: var(--text-label);
   color: var(--muted);
-  text-align: right;
   font-variant-numeric: tabular-nums;
+  /* Shrinkable, and NOT nowrap. The filesystem list's value is the long form
+     -- "331.7 MB used · 737.8 MB free · 1.1 GB size", some 290px of it -- and
+     an unshrinkable figure in a flex row wins every pixel from the bar beside
+     it: at a narrow window every mount drew its full text against a sliver of
+     bar, which is the comparison the list exists to make. It wraps instead,
+     and .mrow-read drops it under the bar before it gets that far. */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 /* The figure beside a meter takes the bar's own severity.
    Written as `.mrow .val.st-*` rather than leaning on the generic .st-* text
@@ -4532,13 +4576,11 @@ tbody:first-of-type .grouprow th {
   white-space: nowrap;
 }
 
-/* The Storage tab's mount table, Usage column. The third table cell to draw
-   a Meter and the only one that had no override, so every mount's bar came
-   with a rule the row already had and a percentage pinned 92px away from it.
-   Same shape as .disk-cell above. */
+/* The Storage tab's mount table, Usage column. Meter brings a row of its own
+   -- padding and a bottom rule -- and both are wrong inside a <td> that
+   already has them. The column widths it also used to override are Meter's
+   own business now (.mrow-read). */
 .usage-cell .mrow {
-  grid-template-columns: 1fr auto;
-  gap: var(--space-2);
   padding: 0;
   border-bottom: 0;
 }
@@ -4553,9 +4595,11 @@ tbody:first-of-type .grouprow th {
   display: none;
 }
 /* The bar needs a width to be readable as a proportion; in a table cell it
-   otherwise shrinks to whatever is left over after the percentage. */
+   otherwise shrinks to whatever is left over after the percentage. 171px is
+   the bar's own 123 plus the --space-2 and the "100 %" beside it, so the ten
+   cells the fleet draws are the ten cells this column draws. */
 .usage-cell {
-  min-width: 140px;
+  min-width: 171px;
 }
 
 /* Every interactive control shows where the keyboard is. :focus-visible

@@ -623,11 +623,17 @@ export function ContainerPage({
               // as null; a container that reported nothing at all has not said
               // it is unlimited, and gets the absent marker instead.
               noLimit={sampled !== null && memLimit === null}
-              // No label: the panel title says Memory, and the header above
-              // already carries "used · limit" through nowFmt. Repeating
-              // either inside the same card is noise. The percentage is what
-              // the bar adds -- it is the one form of the reading neither the
-              // header nor the dashed ceiling rule states.
+              // The label is passed but not SEEN: .smp .foot hides .lab,
+              // because the panel title already says Memory and repeating it
+              // inside the same card is noise. It is passed anyway because it
+              // is what names the bar for a screen reader -- the bar carries
+              // role="meter" now, and an unnamed meter announces a number with
+              // nothing to say what it measures. The Storage tab's Usage
+              // column does the same thing for the same reason.
+              label="Memory"
+              // The percentage is what the bar adds -- it is the one form of
+              // the reading neither the header nor the dashed ceiling rule
+              // states.
               formatValue={(_value, _max, pct) => percent(pct)}
             />
           }

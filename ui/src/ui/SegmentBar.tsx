@@ -37,16 +37,40 @@ export function litCells(pct: number): number {
 export function SegmentBar({
   pct,
   severity,
+  series,
   label,
+  valueText,
 }: {
   pct: number;
   /** Already decided by the caller, when it prints a figure in the same
    * colour and must not judge the value twice. Judged here otherwise. */
   severity?: FillSeverity;
+  /**
+   * The series palette (--s1..--s4) instead of the status palette, for a
+   * reading that has no severity to state. Meter's `series` prop reaches the
+   * bar through here; it used to paint the fill inline, which a row of cells
+   * cannot do from a stylesheet's side. Wins over `severity` when both are
+   * given, the way it did in the Meter.
+   */
+  series?: 1 | 2 | 3 | 4;
   label?: string;
+  /**
+   * What the reading actually says, when `pct` alone would misreport it.
+   *
+   * aria-valuenow is the CLAMPED percentage, because aria-valuemax is 100 and
+   * a container 150 % over its memory limit has no eleventh cell to light.
+   * The figure printed beside the bar says 150 % though, and a screen reader
+   * announcing 100 would be told something the page does not say. This is
+   * what aria-valuetext is for: the numeric value stays in range and the
+   * spoken one is the truth.
+   */
+  valueText?: string;
 }) {
   const lit = litCells(pct);
-  const cls = SEVERITY_CLASS[severity ?? severityFromPercent(pct)];
+  const cls =
+    series !== undefined
+      ? `s${series}`
+      : SEVERITY_CLASS[severity ?? severityFromPercent(pct)];
   return (
     <div
       className={`segbar ${cls}`}
@@ -54,6 +78,7 @@ export function SegmentBar({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(pct)}
+      aria-valuetext={valueText}
       aria-label={label}
     >
       {Array.from({ length: SEGMENT_CELLS }, (_, i) => (

@@ -2,9 +2,10 @@
 // palette (--st-ok/--st-warn/--st-crit), NEVER --accent -- the
 // accent is chrome (brand, current tab, ghost button, focus ring, primary
 // button), not a data or severity fill. See index.css's comment above
-// `.meter`. Links and the active nav entry rest in ink and are no longer on
+// `.segbar`. Links and the active nav entry rest in ink and are no longer on
 // that list -- see the comment above `a` in index.css.
 import { NEUTRAL_TREND_COLOR } from "./StatTile";
+import { SegmentBar } from "./SegmentBar";
 import type { ReactNode } from "react";
 import { ABSENT, percent } from "../lib/format";
 import type { Severity } from "./Badge";
@@ -91,12 +92,10 @@ export function trendColor(pct: number | null): string {
     : SEVERITY_COLOR[severityFromPercent(pct)];
 }
 
-const SERIES_VAR: Record<1 | 2 | 3 | 4, string> = {
-  1: "var(--s1)",
-  2: "var(--s2)",
-  3: "var(--s3)",
-  4: "var(--s4)",
-};
+// The series palette used to be reached from here, as an inline fill colour
+// on a continuous bar. A row of cells cannot be painted that way, so the four
+// hues live beside the status ones in index.css now (.segbar.s1 .. .s4) and
+// SegmentBar picks between them by class. The `series` prop is unchanged.
 
 /**
  * Where a percentage falls against the thresholds.
@@ -180,13 +179,22 @@ function Row({
     severity === null || severity === "ok"
       ? "val"
       : `val ${SEVERITY_CLASS[severity]}`;
+  // The figure sits BESIDE the bar, not in a column of its own at the far
+  // right of whatever the row happens to be wide. The old shape was a
+  // 1fr/92px grid, which made sense while the bar stretched to fill the 1fr;
+  // with the bar at one fixed width everywhere (see .segbar), that grid put
+  // the Overview's Disk panel bar at the left edge and its percentage most of
+  // a page away. The fleet row has always drawn the two together
+  // (.metric-now) for the reason that they are one reading. The figures still
+  // line up down the card, because every bar in the app is now the same
+  // width.
   return (
     <div className="mrow">
-      <div>
-        {label !== undefined && <div className="lab">{label}</div>}
+      {label !== undefined && <div className="lab">{label}</div>}
+      <div className="mrow-read">
         {bar}
+        <div className={valueClass}>{valueText}</div>
       </div>
-      <div className={valueClass}>{valueText}</div>
     </div>
   );
 }
@@ -214,20 +222,16 @@ export function Meter({
 
   // `rawPct` is the true, unclamped reading -- a container 150% over its
   // memory limit is a real and interesting state, and the number beside
-  // the bar must say so. `barPct` is clamped only because a bar cannot
-  // physically be drawn wider than its track: at >100% the fill renders
-  // full-width (a defensible choice -- there is no more "full" than full)
-  // but the text next to it still reports the true percentage, never the
-  // clamped one. Severity is likewise derived from the true value, so an
+  // the bar must say so. `barPct` is clamped only because a bar has no cell
+  // past its tenth: at >100% every cell lights (a defensible choice -- there
+  // is no more "full" than full) but the text next to it still reports the
+  // true percentage, never the clamped one. Severity is likewise derived from
+  // the true value, so an
   // overage still reads as critical rather than merely "at the top".
   const rawPct = (value / max) * 100;
   const barPct = Math.max(0, Math.min(100, rawPct));
   const resolvedSeverity: FillSeverity =
     severity ?? severityFromPercent(rawPct, thresholds);
-  const fillColor =
-    series !== undefined
-      ? SERIES_VAR[series]
-      : SEVERITY_COLOR[resolvedSeverity];
   const valueText = formatValue
     ? formatValue(value, max, rawPct)
     : percent(rawPct);
@@ -235,10 +239,25 @@ export function Meter({
   return (
     <Row
       label={label}
+      // The same ten-cell bar the fleet row draws, not a continuous fill of
+      // this component's own. Two shapes for one job was the whole of the
+      // difference: a filesystem at 62 % read as a proportion of a track here
+      // and as six lit cells of ten in the fleet, and the track stretched to
+      // whatever width the row had. litCells() also carries the floor of one
+      // lit cell above zero, so a mount at 3 % says "barely used" rather than
+      // drawing the empty row that means "nothing was measured".
       bar={
-        <div className="meter">
-          <i style={{ width: `${barPct}%`, background: fillColor }} />
-        </div>
+        <SegmentBar
+          pct={barPct}
+          severity={resolvedSeverity}
+          series={series}
+          label={label}
+          // The unclamped reading, spoken. `pct` is clamped so the bar has a
+          // cell to light and aria-valuenow stays inside its own max; this is
+          // the figure the row prints, which for an overage is the only one
+          // that is true.
+          valueText={valueText}
+        />
       }
       valueText={valueText}
       // The figure and the bar read the SAME severity. They did not before:
