@@ -18,11 +18,11 @@ import (
 // agent/collector/mdraid.go), but three paths legitimately re-send a state the
 // hub already has: the baseline every agent start emits (the hub cannot tell
 // "array it has never heard of" from "array that has not changed"), the re-arm
-// after a dropped scrape, and an agent older than the normalization below,
-// which reports the kernel's dirty-bit flapping as a change. Stored verbatim,
-// all three fill the log with rows that describe nothing -- which is what the
-// fleet's mdraid line did, minutes apart, for arrays that had simply been
-// clean the whole time.
+// after a dropped scrape, and either of those landing while the kernel's dirty
+// bit happens to be set, which changes the word without changing the array.
+// Stored verbatim, all three fill the log with rows that describe nothing --
+// which is what the fleet's mdraid line did, minutes apart, for arrays that had
+// simply been clean the whole time.
 //
 // This is the same guarantee InsertSystemdUnitEvents already gives its table.
 //
@@ -86,14 +86,19 @@ type mdraidState struct {
 // mdraidHealthyStates are the md/array_state words that all mean "nothing is
 // wrong with this array".
 //
-// THIRD copy of this list, and the duplication is load-bearing rather than an
-// oversight: agent/collector/mdraid.go has it for the agent's own change
-// detection, ui/src/features/events/message.ts for the browser's, and the hub
-// needs its own because it must handle an agent that predates either. The
-// kernel toggles `active` -> `clean` as the superblock dirty bit clears, so on
-// an array taking writes the raw word flaps every few minutes; an agent
-// shipped before that was normalized sends each flap as a state change, and
-// only the hub can still stop it.
+// A copy of the collector's list (agent/collector/mdraid.go), and the
+// duplication is load-bearing rather than an oversight. The agent normalizes
+// only inside compareKey, a value-receiver copy used for its own change
+// detection -- what it SENDS is the raw word the kernel reported, deliberately,
+// because that is the one place the exact word survives.
+//
+// So the collapsing has to happen here too, and it is not about old agents.
+// The agent's own dedup lasts as long as its process: on a restart, or after
+// ResendInventory re-arms it, `prev` is nil and it re-reports every array with
+// whatever word is current. The kernel toggles `active` -> `clean` as the
+// superblock dirty bit clears, so on an array taking writes that word is a coin
+// flip -- and without this, a baseline that says `active` against a stored row
+// that says `clean` reads as a change and stores a row describing nothing.
 //
 // Anything not listed -- inactive, readonly, suspended, clear, an empty read
 // -- is a real condition and keeps its own identity.

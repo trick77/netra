@@ -44,6 +44,12 @@ func TestSystemdReportsTheSummaryOnTheHostRow(t *testing.T) {
 // anything, with no unit name and no "since when", which is the question this
 // table exists to answer.
 //
+// The snapshot does NOT make this redundant, which is the trap: it states what
+// every unit IS, but the hub turns it into events through a JOIN against
+// systemd_units and creates the missing rows only afterwards, so a unit the hub
+// has never heard of contributes no event. On a fresh host the failure would
+// reach the units view and never reach the log.
+//
 // Restricted to failed units on purpose, unlike mdraid. Every loaded .service
 // on a normal host is 200-400, mostly inactive/dead oneshots, and
 // systemd_unit_events is a plain table with no retention policy: baselining
@@ -74,6 +80,16 @@ func TestSystemdEmitsABaselineOfFailedUnitsOnTheFirstScrape(t *testing.T) {
 	}
 	if ev.GetTsMs() == 0 {
 		t.Error("baseline event carries no ts_ms")
+	}
+
+	// And the snapshot rides along, carrying every unit rather than only the
+	// broken one: it is what lets the hub retire a failure it never saw end.
+	snap := res.SystemdSnapshot
+	if snap == nil {
+		t.Fatal("first scrape carried no snapshot")
+	}
+	if len(snap.GetUnits()) != 3 {
+		t.Errorf("snapshot carried %d units, want 3", len(snap.GetUnits()))
 	}
 }
 

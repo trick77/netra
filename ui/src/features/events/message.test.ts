@@ -8,7 +8,6 @@ import {
   CONDITION_EVENT_TYPES,
   KERNEL_EVENT_TYPES,
   KNOWN_EVENT_TYPES,
-  mdraidSeverity,
   messageOf,
   packageRunSize,
   packagesOmitted,
@@ -23,6 +22,7 @@ function event(over: Partial<Event> = {}): Event {
     type: "mdraid",
     subject: "md0",
     detail: {},
+    severity: "info",
     ...over,
   };
 }
@@ -291,54 +291,6 @@ describe("kernel events", () => {
     expect(
       messageOf(kernelEvent({ message: "mce: [Hardware Error]", count: 1 })),
     ).toBe("mce: [Hardware Error]");
-  });
-});
-
-describe("mdraidSeverity", () => {
-  // The bug this exists for: EventsPage's severity table matches the words
-  // "degraded", "faulty", "recovering", "rebuilding" against detail.state --
-  // and none of them is a value sysfs array_state can take. So for mdraid the
-  // table never fired once, and a raid1 down to its last disk was rendered
-  // "info", in the log whose whole job is to surface that.
-  const REAL_DEGRADED = {
-    state: "clean",
-    level: "raid1",
-    raid_disks: 2,
-    degraded: 1,
-    sync_action: "idle",
-  };
-
-  it("calls a degraded array with nothing being done about it critical", () => {
-    expect(mdraidSeverity(event({ detail: REAL_DEGRADED }))).toBe("critical");
-  });
-
-  it("softens to a warning while it rebuilds onto a spare", () => {
-    for (const sync of ["recover", "resync", "repair"]) {
-      expect(
-        mdraidSeverity(
-          event({ detail: { ...REAL_DEGRADED, sync_action: sync } }),
-        ),
-      ).toBe("warning");
-    }
-  });
-
-  it("has no opinion about a whole array, whatever it is doing", () => {
-    expect(
-      mdraidSeverity(event({ detail: { ...REAL_DEGRADED, degraded: 0 } })),
-    ).toBeNull();
-    expect(
-      mdraidSeverity(
-        event({
-          detail: { state: "clean", degraded: 0, sync_action: "check" },
-        }),
-      ),
-    ).toBeNull();
-  });
-
-  it("judges only mdraid, leaving other types to their own emitter", () => {
-    expect(
-      mdraidSeverity(event({ type: "package", detail: REAL_DEGRADED })),
-    ).toBeNull();
   });
 });
 

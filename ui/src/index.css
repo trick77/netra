@@ -3591,7 +3591,12 @@ a.tile:focus-visible {
      to the title itself. */
   align-items: flex-start;
   gap: var(--space-4);
-  padding: var(--space-4) 0;
+  /* No padding ABOVE the title. .pagehead has none, so this 16px was the page
+     title on one route starting 16px lower than the page title on every other
+     one -- the larger half of a 21px discrepancy the eye reads as the header
+     sagging when you click into a host. The space below it stays: that is the
+     gap to the tabs, which .pagehead spends on .pagesub instead. */
+  padding: 0 0 var(--space-4);
   /* Wraps rather than overflowing: the header carries a name, four facts, a
      badge, a range control and an action, which do not fit on one line at
      390px -- and a header that pushes the page sideways moves every element
@@ -3624,10 +3629,18 @@ a.tile:focus-visible {
   gap: var(--space-4);
   flex-wrap: wrap;
 }
+/* The same title as every other page's, and it has to SIT the same.
+   .pagehead h1 states margin and line-height; this one stated neither, so it
+   inherited the body's 1.55 and drew a 43.4px box where the rest of the app
+   draws 33.6px -- putting ~5px of half-leading above the glyphs that no other
+   page has. Measured against main, the name landed at 44px on this page and
+   23px on all five others. */
 .hosthead h1 {
+  margin: 0;
   font-family: var(--font-serif);
   font-size: var(--text-display);
   letter-spacing: -0.015em;
+  line-height: 1.2;
 }
 .hosthead .meta {
   font-size: var(--text-label);

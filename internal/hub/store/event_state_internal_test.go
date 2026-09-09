@@ -21,7 +21,9 @@ func TestEventStateKeyOnlyAnswersForStateShapedTypes(t *testing.T) {
 		},
 		{
 			// The dirty bit toggling under a write is the same healthy array
-			// twice, and an agent older than #214 sends both words.
+			// twice, and the agent sends the raw word: it normalizes only
+			// inside compareKey, for its own change detection, so a restart or
+			// a re-arm re-reports the array with whatever word is current.
 			name:    "active is clean",
 			typ:     "mdraid",
 			detail:  `{"state":"active","level":"raid1","raid_disks":2,"degraded":0,"sync_action":"idle"}`,
@@ -38,8 +40,9 @@ func TestEventStateKeyOnlyAnswersForStateShapedTypes(t *testing.T) {
 		},
 		{
 			// Severity is derived from these fields, so it must not be part of
-			// the key: an old agent that omits it would otherwise read as a
-			// different state from a new one that sends it.
+			// the key. Rows written before the detail key was retired still
+			// carry one, and it must not make an unchanged array read as a
+			// changed one.
 			name:    "severity is not part of the state",
 			typ:     "mdraid",
 			detail:  `{"state":"clean","level":"raid1","raid_disks":2,"degraded":0,"sync_action":"idle","severity":"critical"}`,

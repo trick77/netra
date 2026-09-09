@@ -13,6 +13,7 @@ function event(over: Partial<Event> = {}): Event {
     type: "package",
     subject: "openssl",
     detail: {},
+    severity: "info",
     ...over,
   };
 }
@@ -38,7 +39,8 @@ describe("Events", () => {
             id: "e:2",
             type: "mdraid",
             subject: "md0",
-            detail: { severity: "critical", state: "degraded" },
+            severity: "critical",
+            detail: { state: "degraded" },
           }),
         ]}
       />,
@@ -99,14 +101,14 @@ describe("Events sorting", () => {
       ts: "2026-08-10T10:00:00Z",
       type: "drive",
       subject: "sda",
-      detail: { severity: "critical" },
+      severity: "critical",
     }),
     event({
       id: "e:3",
       ts: "2026-08-10T08:00:00Z",
       type: "unit",
       subject: "cron.service",
-      detail: { severity: "warning" },
+      severity: "warning",
     }),
   ];
 

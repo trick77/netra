@@ -396,7 +396,17 @@ export type Event = {
   // detail is passed through as stored; its shape is the emitting
   // collector's, not this API's.
   detail: unknown;
+  /** How bad this event is, stated by the hub rather than worked out here.
+   *
+   * A column on `events` and a derivation on the other two branches of the
+   * union -- see internal/hub/read/events.go. It is the same value alerting
+   * reads, which is the point: a severity the browser computed for itself
+   * could disagree with the one everything else acts on. */
+  severity: EventSeverity;
 };
+
+/** The three words events.severity's CHECK constraint allows. */
+export type EventSeverity = "critical" | "warning" | "info";
 
 // internal/hub/read/conditions.go: Condition
 //
