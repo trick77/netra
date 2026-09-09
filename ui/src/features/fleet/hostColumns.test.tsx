@@ -371,13 +371,26 @@ describe("hostColumns", () => {
         expect(mark(makeRow({ last_seen: now() }), () => null)).toBeNull();
       });
 
-      // The one behaviour worth pinning down twice: a host nobody has heard
-      // from gets NO mark, because the row says it twice already -- the name
-      // is painted --st-crit-text and the Last seen column prints how long
-      // the silence has run. A third mark beside them said nothing the other
-      // two had not, in the narrowest column of the table.
-      it("leaves a silent host to its red name and its Last seen", () => {
-        expect(mark(makeRow({ last_seen: "2020-01-01T00:00:00Z" }))).toBeNull();
+      // A host nobody has heard from gets its OWN mark, not the octagon a
+      // live critical draws: the two are different facts, and a critical
+      // derived from a silent host's last known disk reading would claim to
+      // describe this minute. It drew nothing at all for one commit, on the
+      // argument that the red name and Last seen say it twice already -- they
+      // do, and it was still wrong: severity may not ride on colour alone and
+      // an age is not a severity.
+      it("gives a silent host the offline mark, not the critical one", () => {
+        const el = mark(makeRow({ last_seen: "2020-01-01T00:00:00Z" }));
+        expect(el).toHaveClass("st-crit");
+        expect(el).toHaveAttribute("aria-label", "offline");
+      });
+
+      // The word is the row's own, not the severity band it falls in -- it is
+      // the whole of what a screen reader gets in place of the mark.
+      it("names a host that has never reported by its own word", () => {
+        expect(mark(makeRow({ last_seen: null }))).toHaveAttribute(
+          "aria-label",
+          "never seen",
+        );
       });
 
       it("marks a reporting host's worst condition at its severity", () => {
@@ -391,15 +404,17 @@ describe("hostColumns", () => {
 
       // The rule the fleet is read by: a machine nobody has heard from has
       // stale figures for everything else, so a "critical" derived from its
-      // last known disk reading would claim to describe this minute. The disk
-      // that WAS 96% full is in the row's own Filesystem cell either way.
-      it("marks nothing on a silent host that also has a critical", () => {
+      // last known disk reading would claim to describe this minute. Offline
+      // outranks it, and says so with its own mark rather than borrowing the
+      // octagon. The disk that WAS 96% full is in the row's own Filesystem
+      // cell either way.
+      it("says offline, not critical, for a silent host that also has one", () => {
         expect(
           mark(
             makeRow({ last_seen: "2020-01-01T00:00:00Z" }),
             () => "critical",
           ),
-        ).toBeNull();
+        ).toHaveAttribute("aria-label", "offline");
       });
 
       // The other direction, and it is NOT symmetric: a sporadic host is
@@ -1291,15 +1306,16 @@ describe("hostColumns", () => {
     });
 
     // A host that has genuinely stopped is not sporadic, and it does not draw
-    // sporadic's amber mark: it draws no mark at all, and its silence is said
-    // by the red name and by Last seen. The gaps in its series are that same
-    // outage said a third time.
-    it("drops the sporadic mark entirely for a host that stopped", () => {
+    // sporadic's amber mark: it is offline, at the critical hue, and the gaps
+    // in its series are that same outage said a second time.
+    it("says offline rather than sporadic for a host that stopped", () => {
       const cols = hostColumns("1h", undefined, () => true);
       const hostCol = cols.find((c) => c.header === "Host")!;
       const row = makeRow({ last_seen: "2020-01-01T00:00:00Z" });
       const { container } = render(<>{hostCol.cell(row)}</>);
-      expect(container.querySelector(".smark")).toBeNull();
+      const smark = container.querySelector(".smark")!;
+      expect(smark).toHaveAttribute("aria-label", "offline");
+      expect(smark).not.toHaveClass("st-warn");
       expect(
         container.querySelector(".host-cell-name.gone"),
       ).toBeInTheDocument();

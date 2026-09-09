@@ -6,7 +6,7 @@
 // `width`/`align` (Table-only, see ui/Table.tsx) are deliberately never
 // set below: this file has no opinion on layout, only on content.
 import type { Column } from "../../ui/Table";
-import { SeverityMark } from "../../ui/SeverityMark";
+import { SeverityMark, type MarkKind } from "../../ui/SeverityMark";
 import { When } from "../../ui/When";
 import { NowReading } from "../../ui/NowReading";
 import { OsIcon } from "../../ui/OsIcon";
@@ -266,45 +266,55 @@ function reported(value: string | null | undefined): string | null {
  * them -- and the ranking is not theirs to do: it is the same worst-first
  * rule the counts line above the table already applies.
  *
- * It returns a SEVERITY and no longer a word. The word used to be the whole
- * point -- "critical", the way the Events tab writes it -- and what killed it
- * is that it was the same word on every row that had one, set in the
- * narrowest column of the table, four columns to the left of the cells that
- * say WHICH thing is critical. SeverityMark keeps the reading available to a
- * screen reader and to the pointer, and takes the repetition off the page.
+ * It returns a KIND and a word, and only the kind is drawn. The word used to
+ * be the whole point -- "critical", the way the Events tab writes it -- and
+ * what killed it on screen is that it was the same word on every row that had
+ * one, set in the narrowest column of the table, four columns to the left of
+ * the cells that say WHICH thing is critical. It survives as the mark's
+ * accessible name, so the specific fact ("never seen", "sporadic") still
+ * reaches a screen reader while the page stops repeating it.
  *
  * The order below is the ranking rule, and each step earns its place:
  *
- *   offline / never seen -- NO MARK AT ALL, and that is the one change of
- *     substance here. The row already says it twice: the hostname is painted
- *     --st-crit-text (see .host-cell-name.gone) and the Last seen column
- *     prints how long the silence has run. A third mark beside them added
- *     nothing, and it could not be the honest one anyway -- a "critical"
- *     derived from a silent host's last known disk reading claims to
- *     describe this minute. Which is why this branch returns null rather
- *     than falling through to `worst`: the conditions below are stale for
- *     exactly these hosts. The row's own cells still say "was 96 % full",
- *     and the host page holds the rest.
+ *   offline / never seen -- its own mark, the bare X, rather than the cross
+ *     in an octagon the next branch draws. A machine nobody has heard from
+ *     has stale figures for everything else, so a "critical" derived from its
+ *     last known disk reading would claim to describe this minute; the two
+ *     facts are different and they get different marks rather than one of
+ *     them borrowing the other's. It outranks everything, including
+ *     conditions that are still true of the machine: the row's Filesystem
+ *     cell still says "was 96 % full", and the host page holds the rest.
+ *
+ *     It briefly drew NOTHING here, on the argument that the red hostname and
+ *     the Last seen column say it twice already. They do, and it was still
+ *     wrong: severity may not ride on colour alone, an age is not a severity,
+ *     and the counts line above the table goes on counting a silent host as
+ *     critical -- so "Critical 3" pressed above three rows, one of which
+ *     carried no mark at all.
  *   critical -- something on a host that IS reporting needs acting on now.
- *   sporadic -- a host that answers but keeps dropping scrapes. It used to
- *     carry its own word, because "online" and "offline" are equally wrong
- *     summaries of it; the word is gone with the rest, and what says it now
- *     is the Last seen column ticking up past a scrape interval while the
- *     row keeps drawing figures. Judged by the HUB, over a fixed window --
- *     counting it here off row.reporting made the mark a fact about the
- *     reader's range picker as much as about the host.
+ *   sporadic -- a host that answers but keeps dropping scrapes. It is the
+ *     same severity as the generic warning below and gets the same mark; what
+ *     keeps it from being flattened into "warning" is its word, which is now
+ *     the accessible name, and the Last seen column ticking past a scrape
+ *     interval while the row keeps drawing figures. Judged by the HUB, over a
+ *     fixed window -- counting it here off row.reporting made the mark a fact
+ *     about the reader's range picker as much as about the host.
  *   warning
  */
 function hostMark(
   status: HostStatus,
   worst: "warning" | "critical" | null,
   sporadic: boolean,
-): "warning" | "critical" | null {
-  if (status.severity === "critical") return null;
-  if (worst === "critical") return "critical";
-  if (sporadic) return "warning";
-  if (status.severity === "warning") return "warning";
-  if (worst === "warning") return "warning";
+): { kind: MarkKind; label: string } | null {
+  if (status.severity === "critical") {
+    return { kind: "offline", label: status.label };
+  }
+  if (worst === "critical") return { kind: "critical", label: "critical" };
+  if (sporadic) return { kind: "warning", label: "sporadic" };
+  if (status.severity === "warning") {
+    return { kind: "warning", label: status.label };
+  }
+  if (worst === "warning") return { kind: "warning", label: "warning" };
   return null;
 }
 
@@ -357,10 +367,8 @@ function HostCell({
   // and os-release runs long enough that it had to be truncated to stay on
   // one line. The host page names the release in full.
   const location = hostLocationLines(row);
-  // Null on almost every row -- healthy is the majority state, and now also
-  // on every offline one, where the red name and the Last seen column say it
-  // instead. See hostMark for which of a host's several truths it picks, and
-  // why only one.
+  // Null on almost every row -- healthy is the majority state. See hostMark
+  // for which of a host's several truths it picks, and why only one.
   const mark = hostMark(status, worst?.(row) ?? null, sporadic?.(row) ?? false);
   return (
     // Its own wrapper rather than .host-cell itself: the container list's
@@ -406,7 +414,9 @@ function HostCell({
           every row, so the column ranks itself by which rows have one --
           and the shape, not the hue, is what separates the two severities.
           See SeverityMark on why that is not a style choice. */}
-          {mark !== null && <SeverityMark severity={mark} />}
+          {mark !== null && (
+            <SeverityMark kind={mark.kind} label={mark.label} />
+          )}
         </div>
         {/* The location goes under the name rather than beside it: the two are
           a heading and its subtitle, not two peers, and the row has the
@@ -1062,13 +1072,11 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
  *
  * That case is "never", and it is a WORD rather than the absent dash. A
  * container row always has a last_seen; a host record can exist having never
- * reported once, and on that row the dash was the only thing in the entire
- * table saying so -- the name's red is a hue, the mark is gone, and every
- * figure is absent for the ordinary reason that there is nothing to draw. A
- * dash there reads as "this cell has no value", which is true of four other
- * cells on the same row and is not the fact. "never" is the fact, it is the
- * word hostStatus already uses, and it is what keeps this row's condition
- * legible without colour -- see .host-cell-name.gone in index.css.
+ * reported once, and every figure on that row is absent for the ordinary
+ * reason that there is nothing to draw. A dash here joins them and reads as
+ * "this cell has no value", which is true of four other cells on the same row
+ * and is not the fact. "never" is the fact, and it is the word hostStatus
+ * already uses.
  *
  * `now` is the page's clock, the same instant hostMark judges the row's
  * severity against. A cell reading its own would let one row's name go red
