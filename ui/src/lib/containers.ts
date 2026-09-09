@@ -30,7 +30,7 @@ import { griddedValues } from "./metrics";
  * All three mirror internal/agent/collector/containers.go. The values are free
  * text on the wire -- capabilities is JSONB with no enum and no CHECK -- so an
  * unrecognised one must still render as something the operator can act on,
- * the same rule ContainerPage's NETWORK_UNAVAILABLE follows.
+ * the same rule NETWORK_UNAVAILABLE at the foot of this module follows.
  *
  * The sentences live here, in one module, because the fleet's container view
  * and the host's Containers tab both say them. Written twice they would drift,
@@ -202,6 +202,13 @@ export interface ContainerTrend {
   mem: (number | null)[];
   /** The container's own ceiling, or null when it runs unlimited. */
   memLimit: number | null;
+  /* Bytes per second in and out, as the agent measured them off
+     /proc/<pid>/net/dev rather than off the Docker stats endpoint. Absent
+     for every container on a host whose agent could not read the network
+     namespaces at all -- NETWORK_UNAVAILABLE below is what a panel says
+     instead of drawing the empty chart that state would otherwise produce. */
+  netRx: (number | null)[];
+  netTx: (number | null)[];
 }
 
 /**
@@ -209,9 +216,9 @@ export interface ContainerTrend {
  * container_key.
  *
  * Shared with the host page's inventory list, with the enlarged view a reader
- * opens off either list's CPU or Memory cell, and with the two stacked Docker
- * panels above the host's Containers list -- so all of them read the same
- * columns out of the same response shape.
+ * opens off either list's CPU or Memory cell, and with the three stacked
+ * Docker panels above the host's Containers list -- so all of them read the
+ * same columns out of the same response shape.
  *
  * It lived in features/fleet/hostTrends.ts, which is where the fleet list
  * first needed it. lib/bands.ts builds the stacked Docker panels from it now,
@@ -234,6 +241,8 @@ export function containerTrends(
       cpu: griddedValues(res, index, "cpu_pct"),
       mem: griddedValues(res, index, "mem_used"),
       memLimit: lastNumber(griddedValues(res, index, "mem_limit")),
+      netRx: griddedValues(res, index, "net_rx"),
+      netTx: griddedValues(res, index, "net_tx"),
     });
   });
   return trends;
@@ -253,4 +262,60 @@ function lastNumber(values: readonly (number | null)[]): number | null {
     if (v !== null && v !== undefined) return v;
   }
   return null;
+}
+
+/**
+ * What each `container_network` capability value means, in the reader's
+ * terms rather than the kernel's. Both are failures, and both name a remedy,
+ * because a sentence an operator cannot act on is the bug these replaced:
+ *
+ *   namespaced      the container was started without `pid: host`. The setup
+ *                   script now renders it unconditionally, so re-running it
+ *                   is the fix -- named here for the same reason
+ *                   CGROUP_REMEDY names it above.
+ *   no-host-netns   the namespace IS present and the link still would not
+ *                   read, which in practice is the kernel's ptrace access
+ *                   check: it needs CAP_SYS_PTRACE for a non-dumpable target
+ *                   even when the uids match, and `no-new-privileges` makes
+ *                   every target non-dumpable. Re-running the script changes
+ *                   nothing, so it points at the Docker socket instead --
+ *                   which answers host-vs-bridged outright and is the only
+ *                   path to this state, since a host WITH the socket never
+ *                   reaches the namespace comparison at all.
+ *
+ * Values mirror capNetNamespaced and capNetNoHostNS in
+ * internal/agent/collector/containers.go, which picks between them from
+ * AGENT_PID_HOST rather than from an errno -- the two failures are
+ * indistinguishable at the syscall.
+ *
+ * Here rather than on the container detail page because two panels say it
+ * now: that page's Network chart, and the host page's Docker Network panel
+ * over the Containers list. One capability, one wording.
+ */
+export const NETWORK_UNAVAILABLE: Record<string, string> = {
+  "no-host-netns":
+    "The agent could not read this host's network namespaces, so it cannot tell a host-networked container from a bridged one and measured no container traffic. Mounting the Docker socket answers that question without the kernel access this needs.",
+  namespaced:
+    "The agent is running without the host's PID namespace, so it cannot resolve the processes that own each container's interfaces and measured no container traffic. Re-run setup-agent.sh on this host.",
+};
+
+/**
+ * The sentence a Network panel shows instead of a chart, or undefined when
+ * there is a chart to draw.
+ *
+ * ANY value blanks the panel, because the key exists only to report that
+ * networking produced nothing -- a working collector reports no key at all.
+ * Matching one value left the other one, "namespaced", drawing the empty
+ * chart this exists to prevent. An unrecognised value still blanks it and
+ * says what the agent said: a capability netra does not know the wording of
+ * is still the agent reporting a failure.
+ */
+export function networkUnavailable(
+  capability: string | undefined,
+): string | undefined {
+  if (capability === undefined) return undefined;
+  return (
+    NETWORK_UNAVAILABLE[capability] ??
+    `The agent reported per-container networking as "${capability}", so no container traffic was measured.`
+  );
 }

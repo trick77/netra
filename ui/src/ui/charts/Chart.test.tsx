@@ -134,6 +134,35 @@ describe("Chart", () => {
       expect(c.querySelectorAll("[data-band]").length).toBe(2);
     });
 
+    // Opaque is the DEFAULT and the semantic stacks depend on it: the host
+    // memory family has its contrast measured against --surface at full
+    // opacity, with --mem-cached sitting on a documented 1.53:1 floor, and a
+    // blanket fade puts that band into the card.
+    it("draws a stacked band opaque unless the band asks otherwise", () => {
+      const c = draw(
+        <Chart series={pair} width={170} height={32} max={100} mark="stack" />,
+      );
+      for (const band of c.querySelectorAll("[data-band]")) {
+        expect(band.getAttribute("fill-opacity")).toBe("1");
+      }
+    });
+
+    // ...and a SWEPT band carries its own weight, set by lib/bands.ts where
+    // the sweep is assigned. On the band rather than on the chart so a panel
+    // and the dialog opened out of it cannot come to disagree.
+    it("fades a band that carries a fill weight", () => {
+      const swept = pair.map((s) => ({ ...s, fill: 0.45 }));
+      const c = draw(
+        <Chart series={swept} width={170} height={32} max={100} mark="stack" />,
+      );
+      for (const band of c.querySelectorAll("[data-band]")) {
+        expect(band.getAttribute("fill-opacity")).toBe("0.45");
+        // The edge stays at full strength -- that is what keeps the layers
+        // separable once the fill is translucent.
+        expect(band.getAttribute("stroke")).toBe(band.getAttribute("fill"));
+      }
+    });
+
     it("mirrors a pair about a midline", () => {
       const c = draw(
         <Chart series={pair} width={170} height={32} max={100} mark="mirror" />,

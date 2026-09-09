@@ -30,6 +30,17 @@ export interface OverlaySeries {
    * could pass it deliberately. See ChartSeries.band in Chart.tsx.
    */
   band?: (number | null)[];
+  /**
+   * Fill weight for a stacked band, opaque when absent.
+   *
+   * Declared here for the same reason `band` above is: it reaches Chart
+   * through this type, and left off it the swept stacks' fade type-checks by
+   * accident -- it survives only because nothing on the path copies these
+   * objects. Anything that later rebuilds a series (as StackedSparkline does)
+   * would silently drop the fade, and no caller could pass it deliberately.
+   * See ChartSeries.fill in Chart.tsx.
+   */
+  fill?: number;
 }
 
 export interface OverlayProps {

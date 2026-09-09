@@ -12,6 +12,9 @@ export interface Band {
   /** CSS variable string, e.g. "var(--s2)". Never a hex literal. */
   color: string;
   values: (number | null)[];
+  /** Fill weight when stacked, opaque when absent. Set by the swept
+   * palettes in lib/bands.ts; see ChartSeries.fill for the whole argument. */
+  fill?: number;
 }
 
 export interface StackedSparklineProps {
@@ -106,10 +109,14 @@ export function StackedSparkline({
           bandStroke={1} keeps this exactly as it was. Overlay's stack draws
           1.25; the two have always disagreed. See Chart's bandStroke. */}
       <Chart
+        // Rebuilt field by field rather than spread, so `fill` has to be
+        // named here to survive -- which is the point: a band that asked to
+        // be faded would otherwise be silently drawn opaque.
         series={bands.map((b) => ({
           name: b.name,
           color: b.color,
           values: b.values,
+          fill: b.fill,
         }))}
         width={width}
         height={height}
