@@ -37,16 +37,28 @@ export function litCells(pct: number): number {
 export function SegmentBar({
   pct,
   severity,
+  series,
   label,
 }: {
   pct: number;
   /** Already decided by the caller, when it prints a figure in the same
    * colour and must not judge the value twice. Judged here otherwise. */
   severity?: FillSeverity;
+  /**
+   * The series palette (--s1..--s4) instead of the status palette, for a
+   * reading that has no severity to state. Meter's `series` prop reaches the
+   * bar through here; it used to paint the fill inline, which a row of cells
+   * cannot do from a stylesheet's side. Wins over `severity` when both are
+   * given, the way it did in the Meter.
+   */
+  series?: 1 | 2 | 3 | 4;
   label?: string;
 }) {
   const lit = litCells(pct);
-  const cls = SEVERITY_CLASS[severity ?? severityFromPercent(pct)];
+  const cls =
+    series !== undefined
+      ? `s${series}`
+      : SEVERITY_CLASS[severity ?? severityFromPercent(pct)];
   return (
     <div
       className={`segbar ${cls}`}

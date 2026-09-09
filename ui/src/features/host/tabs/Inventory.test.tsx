@@ -873,7 +873,7 @@ describe("Mounts", () => {
 
     const dataRow = screen.getByText("data").closest("tr")!;
     expect(dataRow.textContent).toContain(ABSENT);
-    expect(dataRow.querySelector(".meter")).toBeNull();
+    expect(dataRow.querySelector(".segbar")).toBeNull();
   });
 });
 

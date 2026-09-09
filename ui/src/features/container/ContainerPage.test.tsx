@@ -257,7 +257,7 @@ describe("ContainerPage", () => {
     renderPage({ metrics: UNLIMITED });
 
     expect(screen.getByText("no limit")).toBeInTheDocument();
-    expect(document.querySelector(".meter")).toBeNull();
+    expect(document.querySelector(".segbar")).toBeNull();
   });
 
   it("renders network and disk as bytes per second, never as bits", () => {
@@ -281,7 +281,7 @@ describe("ContainerPage", () => {
     const memory = screen.getByLabelText("Memory chart", {
       selector: "section",
     });
-    expect(memory.querySelector(".meter")).not.toBeNull();
+    expect(memory.querySelector(".segbar")).not.toBeNull();
 
     // The bar carries the percentage and nothing else: the panel header above
     // it already prints "used · limit", so repeating the pair inside the same
@@ -300,7 +300,7 @@ describe("ContainerPage", () => {
     const network = screen.getByLabelText("Network, not collected", {
       selector: "section",
     });
-    expect(network.querySelector(".meter")).toBeNull();
+    expect(network.querySelector(".segbar")).toBeNull();
     expect(network.querySelector(".foot")).toBeNull();
   });
 
