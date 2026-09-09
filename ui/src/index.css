@@ -1257,7 +1257,18 @@ tbody tr:hover .host-cell-name {
   /* Never shrink: the chart is the fixed-width item here, and a rates column
      that gave way would wrap a byterate mid-number. */
   flex: none;
-  font-size: var(--text-label);
+  /* --text-micro, and it was --text-label. Nothing else in a fleet row was
+     set at --text-label: the readings -- CPU, memory and the fullest mount --
+     are --text-ui, and every line that annotates one of them (the location
+     under the hostname, "of 8 cores", the mount and what is left on it, and
+     the in/out words inside this very cell) is --text-micro. A 14px pair
+     therefore read as a THIRD rank of type that the row does not otherwise
+     have, on the one cell whose figures have no bar and no threshold behind
+     them, which is exactly backwards. At --text-micro the rates join the
+     layer they belong to: the number beside a mark, the same as the words
+     they sit next to. --muted stays, and is what still separates them from
+     those words at --muted-2 -- see .rate i. */
+  font-size: var(--text-micro);
   /* A tight pair, so the rates sit inside the chart's 45px rather than
      setting the row height themselves. It was tuned when the chart was 32px,
      where the body's 1.55 drew them 43px tall -- taller than the mark they
@@ -1276,13 +1287,20 @@ tbody tr:hover .host-cell-name {
      line opens with its direction, and those two words are what a reader
      scans down, not the digits.
 
-     110px, measured rather than guessed: the widest rate this cell can print
-     is "out 999.9 MB/s", which sets 104.6px at --text-label. At 98 it fitted
-     "in 22.7 kB/s" and broke "out 126.5 kB/s" across two lines -- a rate
-     wrapped between its figure and its unit, which is the one thing a
-     reading must never do. See the nowrap on .rate below, which is what
-     makes this width a promise rather than a hope. */
-  width: 110px;
+     90px, measured rather than guessed, and re-measured when the size below
+     changed: the widest rate this cell can print is "out 999.9 MB/s", which
+     sets 87.5px at --text-micro. It was 110px against the 104.6px that same
+     string set at --text-label, and left at 110 the cell would have carried
+     22px of dead space between the rates and the chart -- the shrink shows up
+     as a gap rather than as a tighter row.
+
+     The 2.5px over is deliberate and is the whole reason this is measured at
+     all: at 98px against a 104.6px string the cell fitted "in 22.7 kB/s" and
+     broke "out 126.5 kB/s" across two lines -- a rate wrapped between its
+     figure and its unit, which is the one thing a reading must never do. See
+     the nowrap on .rate below, which is what makes this width a promise
+     rather than a hope. */
+  width: 90px;
   line-height: 1.45;
   /* --muted, matching the disk percentage in the same row (.mrow .val).
      These are both the number BESIDE a chart -- a reading the sparkline or
@@ -1323,7 +1341,13 @@ tbody tr:hover .host-cell-name {
    Both name what the figure beside them is measured against and neither is
    ever the reading. Inheriting .traffic-rates' --text-label drew these words
    a step larger than every other label in the row, so the one part of the
-   cell that never changes was also the loudest. */
+   cell that never changes was also the loudest.
+
+   The size is no longer a step DOWN from the figure -- .traffic-rates is
+   --text-micro too now -- and the rule stays because --muted-2 is: the word
+   and the number are the same height and the number is the darker of the
+   two, which is the ranking, and it is the one the row's other annotated
+   readings use. */
 .rate i {
   font-style: normal;
   font-size: var(--text-micro);
@@ -2547,6 +2571,33 @@ tbody tr:hover .host-cell-name {
   color: var(--st-crit-text);
 }
 
+/* The severity MARK -- SeverityMark.tsx, the fleet list's replacement for a
+   badge beside the hostname. A triangle for warning, an octagon for
+   critical: shape carries the severity, which is what lets the hue stop
+   being the only thing that does (see the ΔE note above, and the component's
+   own header).
+
+   The TRUE --st-* hue, not the -text step, and that is the same split .dot
+   makes two rules up for the same reason: these are filled objects rather
+   than type. The -text tokens exist because a word set in the raw hue can
+   miss 4.5:1 against the body ground; a 13px solid glyph is measured as a
+   graphic (3:1) and the raw hue is the one that reads as the status colour
+   at that size -- --st-crit-text on a solid shape reads pink. */
+.smark {
+  flex: none;
+  /* Optically centred against the hostname beside it rather than sitting on
+     its baseline: the mark has no baseline of its own, and .host-cell-top
+     already centres its children, so this only corrects for the triangle's
+     mass sitting low inside its own box. */
+  display: block;
+}
+.smark.st-warn {
+  color: var(--st-warn);
+}
+.smark.st-crit {
+  color: var(--st-crit);
+}
+
 /* table */
 table {
   width: 100%;
@@ -3096,6 +3147,26 @@ details.sysfold > .body {
   font-size: var(--text-label);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+/* Last seen, in the fleet row. The same shape as .uptime-cell above -- both
+   are an age in the reader's units, both are context rather than the reading
+   anyone came for -- but a step quieter, because the two now live on
+   different pages. Uptime is on the HOST page, where a reader has asked
+   about one machine and its System card is a short list of facts; this is a
+   column of fifty of them beside four columns of gauges, and at
+   --text-label it was the only 14px thing in a row otherwise built from
+   --text-ui readings and --text-micro annotations. It takes the annotation
+   size, the same one the traffic rates opposite it now take.
+
+   tabular-nums is what makes the column scannable at all: `relative` prints
+   two-unit ages ("2 h 14 m ago") and proportional digits leave the unit
+   letters staggering down the column. Nowrap for the same reason .rate has
+   it -- an age broken between its figure and its unit reads as two. */
+.seen-cell {
+  font-size: var(--text-micro);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 .mrow .lab {
   font-size: var(--text-label);

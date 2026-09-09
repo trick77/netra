@@ -983,15 +983,20 @@ describe("FleetPage data fetching", () => {
     );
 
     const rows = container.querySelectorAll("tbody tr");
-    // No rail on either row any more -- the pill is the whole mark, so a
+    // No rail on either row any more -- the mark is the whole of it, so a
     // troubled row is no longer stated twice.
     expect(rows[0].className).toBe("");
     expect(rows[1].className).toBe("");
-    // The colour is never the only channel, and the pill needs no
-    // screen-reader-only word to manage that: the word IS the pill.
-    expect(rows[1].querySelector(".badge")?.textContent).toBe("critical");
-    expect(rows[1].querySelector(".badge")?.className).toContain("st-crit");
-    expect(rows[0].querySelector(".badge")).toBeNull();
+    // The colour is never the only channel, and the mark needs no
+    // screen-reader-only word to manage that: the glyph's SHAPE is the second
+    // channel by eye (see SeverityMark), and its aria-label is the word.
+    expect(rows[1].querySelector(".smark")?.getAttribute("class")).toContain(
+      "st-crit",
+    );
+    expect(rows[1].querySelector(".smark")?.getAttribute("aria-label")).toBe(
+      "critical",
+    );
+    expect(rows[0].querySelector(".smark")).toBeNull();
     expect(rows[1].querySelector(".sr-only")).toBeNull();
   });
 
