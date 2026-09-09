@@ -371,17 +371,32 @@ describe("hostColumns", () => {
         expect(mark(makeRow({ last_seen: now() }), () => null)).toBeNull();
       });
 
-      // A host nobody has heard from gets its OWN mark, not the octagon a
-      // live critical draws: the two are different facts, and a critical
-      // derived from a silent host's last known disk reading would claim to
-      // describe this minute. It drew nothing at all for one commit, on the
+      // A host nobody has heard from marks as critical and draws critical's
+      // mark -- the same glyph, the same hue. What a reader takes off this
+      // column is how bad, not which kind; the kind is in the rest of the row
+      // (every figure absent on a host that is gone) and in the mark's own
+      // accessible name. It drew nothing at all for one commit, on the
       // argument that the red name and Last seen say it twice already -- they
       // do, and it was still wrong: severity may not ride on colour alone and
       // an age is not a severity.
-      it("gives a silent host the offline mark, not the critical one", () => {
+      it("marks a silent host as critical, and names it offline", () => {
         const el = mark(makeRow({ last_seen: "2020-01-01T00:00:00Z" }));
         expect(el).toHaveClass("st-crit");
         expect(el).toHaveAttribute("aria-label", "offline");
+      });
+
+      // The glyph is shared, so the WORD is the only thing separating a host
+      // that is gone from one that is merely in trouble. If that ever stops
+      // being the row's own word, the two become the same to a screen reader.
+      it("draws one glyph for both, separated only by the word", () => {
+        const now = new Date().toISOString();
+        const gone = mark(makeRow({ last_seen: "2020-01-01T00:00:00Z" }))!;
+        const live = mark(makeRow({ last_seen: now }), () => "critical")!;
+
+        expect(gone.getAttribute("class")).toBe(live.getAttribute("class"));
+        expect(gone.getAttribute("aria-label")).not.toBe(
+          live.getAttribute("aria-label"),
+        );
       });
 
       // The word is the row's own, not the severity band it falls in -- it is

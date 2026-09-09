@@ -276,14 +276,16 @@ function reported(value: string | null | undefined): string | null {
  *
  * The order below is the ranking rule, and each step earns its place:
  *
- *   offline / never seen -- its own mark, the bare X, rather than the cross
- *     in an octagon the next branch draws. A machine nobody has heard from
- *     has stale figures for everything else, so a "critical" derived from its
- *     last known disk reading would claim to describe this minute; the two
- *     facts are different and they get different marks rather than one of
- *     them borrowing the other's. It outranks everything, including
- *     conditions that are still true of the machine: the row's Filesystem
- *     cell still says "was 96 % full", and the host page holds the rest.
+ *   offline / never seen -- critical's mark, and critical's hue. A machine
+ *     nobody has heard from has stale figures for everything else, so a
+ *     "critical" derived from its last known disk reading would claim to
+ *     describe this minute; this branch is what stops that, and it does it by
+ *     taking the row rather than by drawing a different glyph. The two facts
+ *     ARE different, and what separates them is the rest of the row -- every
+ *     figure absent on a host that is gone, present on one that is merely
+ *     full -- plus this mark's own accessible name. It outranks everything,
+ *     including conditions still true of the machine: the Filesystem cell
+ *     still says "was 96 % full", and the host page holds the rest.
  *
  *     It briefly drew NOTHING here, on the argument that the red hostname and
  *     the Last seen column say it twice already. They do, and it was still
@@ -307,7 +309,7 @@ function hostMark(
   sporadic: boolean,
 ): { kind: MarkKind; label: string } | null {
   if (status.severity === "critical") {
-    return { kind: "offline", label: status.label };
+    return { kind: "critical", label: status.label };
   }
   if (worst === "critical") return { kind: "critical", label: "critical" };
   if (sporadic) return { kind: "warning", label: "sporadic" };

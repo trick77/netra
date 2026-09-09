@@ -21,39 +21,29 @@
 // our own was the mistake: a second channel is not something to freehand at
 // 13px.
 //
-// Offline is the bare X, and bare deliberately. The obvious pick was CircleX
-// -- it would match the other two, which are both marks inside a frame -- and
-// it is the one shape that must not go next to OctagonX: an octagon and a
-// circle at 15px are the same outline, which is the exact failure the first
-// version shipped. Unenclosed against enclosed is a difference that holds at
-// any size, and it ranks the two the right way round while it is at it: the
-// cross in its frame is a condition read off a machine that is answering, the
-// bare cross is the machine itself being gone.
+// TWO MARKS, not three. Offline is critical, and it draws critical's mark --
+// the same octagon, the same hue. It briefly had a bare X of its own, on the
+// argument that a host being gone is a different fact from a condition read
+// off a host that is answering, and that the two should therefore not share a
+// glyph. They are different facts, and the column still does not rank them:
+// what a reader takes off this column is how bad, not which kind, and a
+// second red glyph asked them to learn a vocabulary to get the same answer.
+// The kind is what the row's other cells are for -- the figures are all
+// absent on a host that is gone, and present on one that is merely full --
+// and it survives here as the accessible name.
 //
 // role="img" with an aria-label, NOT aria-hidden: OsIcon may hide itself
 // because the OS name is spelled out beside it, and here nothing is. The
 // label is the row's own word -- "offline", "never seen", "sporadic" -- so a
 // screen reader gets the specific fact rather than the severity band it falls
-// in, which is more than the mark can say by eye.
-import { OctagonX, TriangleAlert, X } from "lucide-react";
+// in, which is more than the mark says by eye.
+import { OctagonX, TriangleAlert } from "lucide-react";
 
-/**
- * The three marks a fleet row can carry.
- *
- * `offline` is a KIND, not a severity: it sits at critical's hue and takes a
- * mark of its own because it is a different fact from "something on this
- * machine needs acting on". A host nobody has heard from has stale figures
- * for everything else, so the framed cross -- which means a condition read
- * off the machine this minute -- would be claiming something the row cannot
- * support. The bare cross says the machine itself is out, which is the honest
- * reading and the one the Last seen column beside it then quantifies.
- */
-export type MarkKind = "warning" | "critical" | "offline";
+export type MarkKind = "warning" | "critical";
 
 const MARKS = {
   warning: { Icon: TriangleAlert, cls: "st-warn" },
   critical: { Icon: OctagonX, cls: "st-crit" },
-  offline: { Icon: X, cls: "st-crit" },
 } as const;
 
 export function SeverityMark({
