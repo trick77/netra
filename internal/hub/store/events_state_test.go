@@ -87,17 +87,26 @@ func TestIntegrationRepeatedEventStatesAreNotStored(t *testing.T) {
 	}
 }
 
-// The dirty bit is not a state change.
+// The hub stores the state word it was given, and does not reinterpret it.
 //
 // The kernel says `active` while a write is outstanding and `clean` once the
 // superblock is flushed, so on an array taking writes the raw word flaps every
-// few minutes. An agent predating the normalization sends every flap.
-func TestIntegrationMdraidDirtyBitFlapIsNotAnEvent(t *testing.T) {
+// few minutes. The hub used to collapse those words itself, for agents that
+// sent every flap. The COLLECTOR does it now, before the event is ever sent
+// (normalizeArrayState, and TestMdraidIgnoresTheDirtyBitFlappingDuringACheck
+// covers it), so a second copy of that list here would only be a second place
+// to change it -- and a hub that reinterprets a word it was given cannot be
+// trusted to report what the kernel actually said.
+//
+// The dedup that remains is exact, and TestIntegrationRepeatedEventStatesAreNotStored
+// above covers it: a normalized stream of `clean` still stores one row.
+func TestIntegrationMdraidStateWordsAreStoredAsGiven(t *testing.T) {
 	ctx := context.Background()
 	s, id := openEvents(t)
 	start := time.Now().Add(-time.Hour)
 
-	for i, state := range []string{"clean", "active", "clean", "active-idle", "write-pending"} {
+	words := []string{"clean", "active", "clean", "active-idle", "write-pending"}
+	for i, state := range words {
 		at := start.Add(time.Duration(i) * time.Minute)
 		if _, err := s.InsertEvents(ctx, id, []*netrav1.Event{
 			mdraidEvent(at, "md3", mdraidDetail(state, 0, "idle")),
@@ -106,9 +115,12 @@ func TestIntegrationMdraidDirtyBitFlapIsNotAnEvent(t *testing.T) {
 		}
 	}
 
-	if got := eventDetails(t, s, id); len(got) != 1 {
-		t.Errorf("stored %d events (%v), want 1 -- every one of those words means "+
-			"the same healthy array", len(got), got)
+	// Five distinct words, so five rows: consecutive duplicates would still
+	// collapse, and none of these is a duplicate of the one before it.
+	got := eventDetails(t, s, id)
+	if len(got) != len(words) {
+		t.Fatalf("stored %d events (%v), want %d -- the hub must not rewrite the "+
+			"kernel's word", len(got), got, len(words))
 	}
 }
 

@@ -188,8 +188,15 @@ func (s *Systemd) SetClockForTest(fn func() time.Time) { s.now = fn }
 func (s *Systemd) SetListerForTest(l UnitLister) { s.lister = l }
 
 // EmitsBaseline implements BaselineEmitter, keeping this collector out of the
-// agent's startup priming. Its first Collect reports the units that are
-// already failed, and priming would discard exactly that.
+// agent's startup priming.
+//
+// Its first Collect is the one that carries the SNAPSHOT: the snapshot is
+// gated on prev == nil (or a snapshotFloor since the last one), and priming
+// discards the Result it collects while still setting prev. Priming this
+// collector would therefore throw the startup snapshot away and leave the hub
+// with no statement of what the host's units look like until the floor
+// elapsed -- which is the whole account of a unit that failed while the agent
+// was down.
 func (s *Systemd) EmitsBaseline() bool { return true }
 
 // Name implements Collector.
@@ -270,49 +277,31 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 	ts := s.now().UnixMilli()
 	var events []*netrav1.SystemdUnitEvent
 
-	// The first scrape emits a BASELINE, but only of the units that are
-	// FAILED.
+	// The first scrape emits NOTHING, and the snapshot below is why.
 	//
-	// The baseline exists because a unit already failed when the agent started
-	// would otherwise produce no event at all, and only the services_failed
-	// counter would reveal it -- with no unit name and no "since when". That
-	// is the question this table exists to answer, and it cannot answer it
-	// about a failure predating the agent unless the agent says what it found
-	// on arrival.
+	// This collector used to baseline the units that were already FAILED on
+	// arrival, so that a unit broken before the agent started produced some
+	// event rather than only moving the services_failed counter. The snapshot
+	// now states what every unit looks like right now, which covers that and
+	// the case the baseline never could -- a RECOVERY that happened while the
+	// agent was down.
 	//
-	// Restricted to failed units because the volume is nothing like mdraid's.
-	// mdraid baselines a handful of arrays; every loaded .service on a normal
-	// host is 200-400, most of them inactive/dead oneshots that say nothing.
-	// systemd_unit_events is a plain table pruned only at 90 days
-	// (netra_prune_discrete_events), sized on the premise that "a unit changes
-	// state a handful of times a month" -- so an unrestricted baseline would
-	// write a few hundred rows per host on EVERY agent restart, and a
-	// crash-looping agent or a fleet redeploy would multiply that. A failed
-	// unit is the rare case by construction, so this is normally zero rows and
-	// never more than a handful.
-	//
-	// This is the one place this collector deliberately differs from mdraid.
-	//
-	// The asymmetry -- it can announce a failure it found on arrival, but
-	// never a RECOVERY that happened while the agent was down -- is what the
-	// snapshot below now covers, so this branch is strictly redundant against
-	// a current hub. It stays for one release because agents roll forward
-	// ahead of hubs: deploy/agent/compose.yaml.tmpl pins netra-agent:latest,
-	// so a host can be running an agent that speaks SystemdSnapshot to a hub
-	// that ignores it, and dropping this would leave that pair reporting no
-	// failures at all. DELETE THIS BRANCH once no supported hub predates the
-	// snapshot.
+	// Nothing is emitted per unit here for the reason the baseline was always
+	// restricted: every loaded .service on a normal host is 200-400, most of
+	// them inactive/dead oneshots that say nothing. systemd_unit_events is a
+	// plain table pruned only at 90 days (netra_prune_discrete_events), sized
+	// on the premise that "a unit changes state a handful of times a month",
+	// so writing on arrival would add a few hundred rows per host on EVERY
+	// agent restart, multiplied by a crash-looping agent or a fleet redeploy.
 	for _, name := range names {
 		u := cur[name]
 		p, seen := prev[name]
 
 		if !seen && prev == nil {
-			// First scrape. Report it only if it is already broken; a healthy
-			// unit's state is not news, and saying so for every unit on the
-			// host is what the restriction above avoids.
-			if u.Active == "failed" {
-				events = append(events, unitEvent(ts, name, u))
-			}
+			// First scrape. Nothing is reported: a unit's state on arrival is
+			// not a change, and the snapshot below carries what the host looks
+			// like now. Emitting per unit here is what the restriction above
+			// exists to avoid.
 			continue
 		}
 

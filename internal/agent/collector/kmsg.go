@@ -715,10 +715,6 @@ type suppression struct {
 
 // kmsgDetail is what lands in events.detail.
 type kmsgDetail struct {
-	// Severity is read by both event views before anything else, which is what
-	// makes a kernel event render correctly with no new severity logic in
-	// either of them.
-	Severity string `json:"severity"`
 	Message  string `json:"message"`
 	Priority int    `json:"priority"`
 	// Count is the number of records folded into this event within one scrape,
@@ -876,7 +872,6 @@ func (k *Kmsg) flushExpired(now time.Time, emitted int) []*netrav1.Event {
 // event builds one event from a fold.
 func (k *Kmsg) event(key foldKey, f *suppression, carried int, ts time.Time) *netrav1.Event {
 	detail := kmsgDetail{
-		Severity:   f.severity,
 		Message:    f.message,
 		Priority:   f.priority,
 		Suppressed: carried,
@@ -898,13 +893,10 @@ func (k *Kmsg) event(key foldKey, f *suppression, carried int, ts time.Time) *ne
 		TsMs:    ts.UnixMilli(),
 		Type:    key.Type,
 		Subject: key.Subject,
-		// Stated in the field as well as the detail. The detail key is what
-		// both event views read and it is not going anywhere yet, but it is
-		// scheduled to go: the field is what the hub stores in events.severity
-		// and what anything other than a browser reads. Left out here, every
-		// ATA exception and block-layer error would silently reclassify as
-		// info the day the key is dropped -- the exact rows this collector
-		// exists to surface.
+		// The field is the only channel: it is what the hub stores in
+		// events.severity and what every reader takes it from. Left unset,
+		// every ATA exception and block-layer error this collector exists to
+		// surface would arrive as "info".
 		Severity:   &severity,
 		DetailJson: string(body),
 	}

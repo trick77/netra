@@ -16,6 +16,7 @@ import (
 	"github.com/trick77/netra/internal/hub/auth"
 	"github.com/trick77/netra/internal/hub/store"
 	netrav1 "github.com/trick77/netra/internal/shared/gen/netra/v1"
+	"github.com/trick77/netra/internal/shared/version"
 )
 
 // maxBodyBytes caps a single ingest POST. A 60s batch of host samples is a
@@ -26,6 +27,12 @@ const maxBodyBytes = 4 << 20
 // at least this long before retrying, rather than relying on its own
 // exponential backoff for a failure mode the hub can characterise directly.
 const storageFailureRetryAfter = 30 * time.Second
+
+// upgradeRequiredRetryAfter is handed back with a 426. Far longer than the
+// storage-failure figure because the fix is a human pulling a new image, not a
+// database recovering: retrying every 30s for however long that takes buys
+// nothing.
+const upgradeRequiredRetryAfter = 5 * time.Minute
 
 // minPlausibleTs and maxPlausibleFuture bound the timestamps the hub accepts
 // (spec §7.5, §9 "Clock skew"). A sample outside this range is dropped
@@ -93,6 +100,11 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req netrav1.IngestRequest
 	if err := proto.Unmarshal(raw, &req); err != nil {
 		http.Error(w, "malformed body", http.StatusBadRequest)
+		return
+	}
+
+	storedHash, rejected := h.rejectOldAgent(ctx, w, hostID, &req)
+	if rejected {
 		return
 	}
 
@@ -196,7 +208,7 @@ func (h *IngestHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requestMetadata, err := h.reconcileMetadata(ctx, hostID, &req)
+	requestMetadata, err := h.reconcileMetadata(ctx, hostID, &req, storedHash)
 	if err != nil {
 		slog.Error("reconcile metadata", "host_id", hostID, "err", err)
 		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
@@ -221,11 +233,88 @@ func plausibleTs(tsMs int64, future time.Time) bool {
 	return !ts.Before(minPlausibleTs) && !ts.After(future)
 }
 
+// rejectOldAgent refuses a batch from an agent below version.MinAgent, and
+// returns the stored metadata hash it read on the way so reconcileMetadata
+// does not have to read the same row again.
+//
+// It runs BEFORE any insert: a refused batch must leave no samples behind.
+//
+// Which version it judges is the whole subtlety, because the version is not on
+// every request. A POST carries an 8-byte metadata hash, and the full Metadata
+// block -- the only thing that names a version -- arrives only when the hub
+// last asked for one.
+//
+//   - Block present: judge what it says. It is the freshest answer available
+//     and costs no query.
+//   - No block: judge the stored version, but ONLY while the stored hash still
+//     matches the one on this request. A matching hash is what makes the
+//     stored version describe the agent that is running.
+//
+// That precondition is not caution, it is the difference between a gate and a
+// trap. Without it an operator who upgrades a rejected agent can never recover
+// it: the agent restarts with sendMetadata false (client.go), so it posts a
+// hash and no block; the hub reads the stale old version, rejects before it
+// ever compares hashes, and so never answers RequestMetadata -- so the block
+// that would prove the upgrade never gets asked for. The host stays locked out
+// by the fix that was supposed to free it.
+//
+// The cost of the precondition is that an agent whose hash has just changed
+// gets one batch in before the handshake reveals its version. That is inherent
+// to a protocol where the version rides the handshake, and one batch of
+// slightly misclassified rows is the cheaper side of the trade.
+func (h *IngestHandler) rejectOldAgent(ctx context.Context, w http.ResponseWriter, hostID int32, req *netrav1.IngestRequest) ([]byte, bool) {
+	storedHash, storedVersion, err := h.store.IngestIdentity(ctx, hostID)
+	if err != nil {
+		slog.Error("read ingest identity", "host_id", hostID, "err", err)
+		writeProtoStatus(w, http.StatusServiceUnavailable, &netrav1.IngestResponse{
+			RetryAfterS: uint32(storageFailureRetryAfter.Seconds()),
+		})
+		return nil, true
+	}
+
+	reported := storedVersion
+	fromBlock := false
+	if md := req.GetMetadata(); md != nil {
+		reported, fromBlock = md.GetAgentVersion(), true
+	} else if len(storedHash) == 0 || !bytes.Equal(storedHash, req.GetMetadataHash()) {
+		// Nothing stored yet, or what is stored describes a different build.
+		// Either way the hub does not know what this agent is; accept, and let
+		// reconcileMetadata ask.
+		return storedHash, false
+	}
+
+	if version.AtLeast(reported, version.MinAgent) {
+		return storedHash, false
+	}
+
+	// Persist the offending version before refusing it, when it arrived here.
+	// Otherwise hosts.agent_version stays as it was and the host page shows
+	// nothing for the one host an operator is trying to diagnose -- a rejected
+	// agent would be the only kind that cannot say what it is running. It also
+	// means the next hash-only POST is judged on this version directly.
+	if fromBlock {
+		if err := h.store.SaveMetadata(ctx, hostID, req.GetMetadataHash(), req.GetMetadata()); err != nil {
+			slog.Error("save metadata for rejected agent", "host_id", hostID, "err", err)
+		}
+	}
+
+	slog.Warn("refusing ingest from an agent below the minimum version",
+		"host_id", hostID, "agent_version", reported, "min_agent_version", version.MinAgent)
+	writeProtoStatus(w, http.StatusUpgradeRequired, &netrav1.IngestResponse{
+		RetryAfterS: uint32(upgradeRequiredRetryAfter.Seconds()),
+	})
+	return storedHash, true
+}
+
 // reconcileMetadata stores a supplied metadata block and reports whether the
 // hub still needs one. There is no connection to hang "on connect" off, so the
 // hash comparison is what makes the handshake self-healing across hub
 // restarts and agent upgrades alike.
-func (h *IngestHandler) reconcileMetadata(ctx context.Context, hostID int32, req *netrav1.IngestRequest) (bool, error) {
+//
+// storedHash is the value rejectOldAgent already read for this request, passed
+// in rather than re-queried: both need the same row, and the version gate has
+// to run before any insert while this runs after.
+func (h *IngestHandler) reconcileMetadata(ctx context.Context, hostID int32, req *netrav1.IngestRequest, storedHash []byte) (bool, error) {
 	if md := req.GetMetadata(); md != nil {
 		if err := h.store.SaveMetadata(ctx, hostID, req.GetMetadataHash(), md); err != nil {
 			return false, err
@@ -233,11 +322,7 @@ func (h *IngestHandler) reconcileMetadata(ctx context.Context, hostID int32, req
 		return false, nil
 	}
 
-	stored, err := h.store.MetadataHash(ctx, hostID)
-	if err != nil {
-		return false, err
-	}
-	return !bytes.Equal(stored, req.GetMetadataHash()) || len(stored) == 0, nil
+	return !bytes.Equal(storedHash, req.GetMetadataHash()) || len(storedHash) == 0, nil
 }
 
 // latestNetTotals sums a host's traffic across its interfaces at the most

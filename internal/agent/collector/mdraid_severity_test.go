@@ -20,15 +20,17 @@ func collectEvents(t *testing.T, testee *collector.Mdraid) []*netrav1.Event {
 	return res.Events
 }
 
-func severityOfEvent(t *testing.T, ev *netrav1.Event) (field string, detail string) {
+// severityOfEvent returns the event's severity field, and whether its detail
+// still carries a `severity` key. The key is not a channel any more -- the
+// field is -- so the second return exists to assert its absence.
+func severityOfEvent(t *testing.T, ev *netrav1.Event) (field string, inDetail bool) {
 	t.Helper()
-	var d struct {
-		Severity string `json:"severity"`
-	}
+	var d map[string]any
 	if err := json.Unmarshal([]byte(ev.GetDetailJson()), &d); err != nil {
 		t.Fatalf("detail_json is not an object: %v", err)
 	}
-	return ev.GetSeverity(), d.Severity
+	_, inDetail = d["severity"]
+	return ev.GetSeverity(), inDetail
 }
 
 // The rule this moved out of the browser.
@@ -59,15 +61,15 @@ func TestMdraidStatesCriticalForADegradedArray(t *testing.T) {
 		t.Fatalf("got %d events, want 1", len(events))
 	}
 
-	field, detail := severityOfEvent(t, events[0])
+	field, inDetail := severityOfEvent(t, events[0])
 	if field != "critical" {
 		t.Errorf("severity field = %q, want critical: nothing is rebuilding it", field)
 	}
-	// Both, deliberately: the field is what the hub stores and what a
-	// non-browser reader uses, and the key is what both event views read first
-	// -- the host Events tab accepts nothing else.
-	if detail != "critical" {
-		t.Errorf("detail severity = %q, want critical", detail)
+	// The field only. It rode the detail as well while the hub still read it
+	// from there; the hub reads the field now, so a second copy could only
+	// disagree with the first.
+	if inDetail {
+		t.Error("detail carries a severity key; the field is the only channel")
 	}
 }
 
@@ -149,9 +151,14 @@ func TestMdraidDetailKeepsItsFlatShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(events[0].GetDetailJson()), &d); err != nil {
 		t.Fatalf("detail_json: %v", err)
 	}
-	for _, key := range []string{"state", "level", "raid_disks", "degraded", "sync_action", "severity"} {
+	for _, key := range []string{"state", "level", "raid_disks", "degraded", "sync_action"} {
 		if _, ok := d[key]; !ok {
 			t.Errorf("detail is missing %q: %v", key, d)
 		}
+	}
+	// severity is NOT among them: it is the array's state that lands here, and
+	// the judgement about it travels in the event's own field.
+	if _, ok := d["severity"]; ok {
+		t.Errorf("detail carries a severity key: %v", d)
 	}
 }

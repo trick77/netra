@@ -402,32 +402,20 @@ func (s *Store) latestEventStates(ctx context.Context, hostID int32, want map[ev
 	return out, nil
 }
 
-// eventSeverity is what lands in events.severity, preferring the field over
-// the detail key.
-//
-// Both are read because they coexist for one release: the field is the real
-// channel, and detail_json's `severity` is where every producer put it before
-// the field existed. An agent is deployed per host and versions independently
-// of the hub, so an old agent's events must still classify rather than all
-// arrive as "info" -- which would be a silent downgrade of exactly the rows
-// that matter, since only the notable ones ever stated a severity at all.
+// eventSeverity is what lands in events.severity: the wire field, and nothing
+// else. It rode detail_json's `severity` key before the field existed, and the
+// hub read both while agents older than the field were still in the fleet.
+// Every producer states it in the field now, and 0015_event_severity.sql
+// backfilled the column from the detail key, so history says the same thing.
 //
 // An unrecognised word falls through to "info" rather than failing the row.
-// The column has a CHECK on it, so passing a value through unexamined would
-// turn one malformed event into a rejected BATCH, taking every other family in
-// it down with a host's whole scrape.
+// That is NOT the old fallback wearing a different hat: the column has a CHECK
+// on it, so passing a value through unexamined would turn one malformed event
+// into a rejected BATCH, taking every other family in it down with a host's
+// whole scrape.
 func eventSeverity(r *netrav1.Event) string {
 	if s := r.GetSeverity(); validEventSeverity(s) {
 		return s
-	}
-	// Only the key is read, not the shape around it: detail_json is the
-	// producer's own object and this must not care what else is in it.
-	var detail struct {
-		Severity string `json:"severity"`
-	}
-	if err := json.Unmarshal([]byte(r.GetDetailJson()), &detail); err == nil &&
-		validEventSeverity(detail.Severity) {
-		return detail.Severity
 	}
 	return "info"
 }
@@ -459,19 +447,10 @@ func (s *Store) resolveSensorIDs(ctx context.Context, hostID int32, rows []*netr
 		}
 		seen[key] = true
 
-		// An empty kind means an agent predating the field, and temperature
-		// is the only kind such an agent could have sent. Defaulted here
-		// rather than left to the column default so an UPDATE of an existing
-		// row is equally well-defined.
-		kind := r.GetKind()
-		if kind == "" {
-			kind = "temperature"
-		}
-
 		id, ok, err := s.resolveOne(ctx, "sensor", sensorName(r), `
 			INSERT INTO sensors (host_id, chip, label, kind, instance) VALUES ($1, $2, $3, $4, $5)
 			ON CONFLICT (host_id, chip, label, instance) DO UPDATE SET kind = EXCLUDED.kind
-			RETURNING id`, hostID, r.GetChip(), r.GetLabel(), kind, r.GetInstance())
+			RETURNING id`, hostID, r.GetChip(), r.GetLabel(), r.GetKind(), r.GetInstance())
 		if err != nil {
 			return nil, err
 		}

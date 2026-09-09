@@ -1,7 +1,7 @@
 // The fixtures are real emitter shapes: mdraid's detail JSON comes from
-// agent/collector/mdraid.go, matching collector/testdata/mdraid/degraded.
-// severity is asserted as something derived FROM them -- see severity.ts on
-// why the row's own column is not the source.
+// agent/collector/mdraid.go, matching collector/testdata/mdraid/degraded. The
+// severity rides its own field, as it does on the wire -- see severity.ts on
+// why the row's column is now the source rather than a derivation from detail.
 import { describe, expect, it } from "vitest";
 import type { Event } from "../../lib/api";
 import {
@@ -20,6 +20,7 @@ function event(overrides: Partial<Event> = {}): Event {
     type: "package",
     subject: "nginx",
     detail: { from: "1.26", to: "1.27" },
+    severity: "info",
     ...overrides,
   };
 }
@@ -29,7 +30,10 @@ const DEGRADED = event({
   type: "mdraid",
   subject: "md0",
   // array_state is "clean" even here: the kernel reports consistency, not how
-  // many disks are left. See mdraidSeverity in ./message.
+  // many disks are left -- which is why severityOf in agent/collector/mdraid.go
+  // counts devices, and why the answer arrives as a field rather than being
+  // guessed from `state`.
+  severity: "critical",
   detail: { state: "clean", level: "raid10", raid_disks: 4, degraded: 1 },
 });
 
@@ -39,6 +43,7 @@ const RECOVERING = event({
   id: "e:3",
   type: "mdraid",
   subject: "md1",
+  severity: "warning",
   detail: {
     state: "clean",
     level: "raid10",
@@ -49,11 +54,8 @@ const RECOVERING = event({
 });
 
 describe("severityOf", () => {
-  it("reads a degraded array as critical", () => {
+  it("reports what the hub stated", () => {
     expect(severityOf(DEGRADED)).toBe("critical");
-  });
-
-  it("reads a recovering array as a warning", () => {
     expect(severityOf(RECOVERING)).toBe("warning");
   });
 
@@ -62,17 +64,18 @@ describe("severityOf", () => {
     expect(severityOf(event())).toBe("info");
   });
 
-  it("believes a severity the emitter stated outright", () => {
+  // The detail blob is the emitting collector's own object and has no say in
+  // this any more. It used to: the severity was read out of it, so a detail
+  // that was not an object had to be guarded against right here.
+  it("ignores the detail entirely", () => {
     expect(severityOf(event({ detail: { severity: "critical" } }))).toBe(
-      "critical",
+      "info",
     );
-    // Not one of the two the design admits, so it decides nothing.
-    expect(severityOf(event({ detail: { severity: "spicy" } }))).toBe("info");
-  });
-
-  it("does not trip over a detail that is not an object", () => {
     expect(severityOf(event({ detail: "degraded" }))).toBe("info");
     expect(severityOf(event({ detail: null }))).toBe("info");
+    expect(
+      severityOf(event({ severity: "critical", detail: { severity: "info" } })),
+    ).toBe("critical");
   });
 });
 

@@ -8,8 +8,14 @@ import (
 
 func ptrTo[T any](v T) *T { return &v }
 
-// The field is the real channel, so it wins when both are present.
-func TestEventSeverityPrefersTheField(t *testing.T) {
+// The field is the only channel, so a detail key cannot contradict it.
+//
+// The hub used to read both, so that an agent predating the field still
+// classified. Every supported agent states it in the field now (the ingest
+// gate in httpapi refuses the ones that do not), and 0015_event_severity.sql
+// backfilled the column from the key -- so a row still carrying one is history
+// the column already agrees with, never a second opinion.
+func TestEventSeverityReadsTheFieldAndNothingElse(t *testing.T) {
 	got := eventSeverity(&netrav1.Event{
 		Severity:   ptrTo("critical"),
 		DetailJson: `{"severity":"info"}`,
@@ -19,18 +25,13 @@ func TestEventSeverityPrefersTheField(t *testing.T) {
 	}
 }
 
-// The fallback that keeps an old agent working.
-//
-// Agents are deployed per host and version independently of the hub, so an
-// agent predating the proto field must still classify. Without this every
-// event it sends arrives as "info" -- a silent downgrade of exactly the rows
-// that matter, since only the notable ones ever stated a severity at all.
-func TestEventSeverityFallsBackToTheDetailKey(t *testing.T) {
+// A detail key on its own no longer classifies anything.
+func TestEventSeverityIgnoresTheDetailKey(t *testing.T) {
 	got := eventSeverity(&netrav1.Event{
 		DetailJson: `{"state":"clean","degraded":1,"severity":"critical"}`,
 	})
-	if got != "critical" {
-		t.Errorf("eventSeverity = %q, want critical from the detail key", got)
+	if got != "info" {
+		t.Errorf("eventSeverity = %q, want info: the detail key is not a channel", got)
 	}
 }
 
@@ -62,8 +63,9 @@ func TestEventSeverityRefusesAnUnknownWord(t *testing.T) {
 		"unknown field": {Severity: ptrTo("catastrophic")},
 		"unknown key":   {DetailJson: `{"severity":"URGENT"}`},
 		"empty field":   {Severity: ptrTo("")},
-		// The field is unusable, so the detail key still gets its turn rather
-		// than the whole row falling to info.
+		// An unusable field falls to info. It does NOT hand the decision to
+		// the detail key -- that is the fallback this change removed, and the
+		// fallthrough here exists only to protect the CHECK constraint.
 		"bad field, good key": {
 			Severity:   ptrTo("catastrophic"),
 			DetailJson: `{"severity":"warning"}`,
@@ -74,8 +76,8 @@ func TestEventSeverityRefusesAnUnknownWord(t *testing.T) {
 			if !validEventSeverity(got) {
 				t.Fatalf("eventSeverity = %q, which the CHECK constraint would reject", got)
 			}
-			if name == "bad field, good key" && got != "warning" {
-				t.Errorf("eventSeverity = %q, want warning from the detail key", got)
+			if name == "bad field, good key" && got != "info" {
+				t.Errorf("eventSeverity = %q, want info: the detail key gets no turn", got)
 			}
 		})
 	}

@@ -1154,9 +1154,13 @@ func TestFlushBoundsBatchByTotalRowsNotScrapeCount(t *testing.T) {
 // see: main.go calls Prime before Run, Prime discards the Result it collects,
 // and a collector that reports its whole state on the first Collect has by
 // then also recorded that state as "previous". The first buffered scrape then
-// compares identical states and emits nothing -- so a unit that was already
-// failed when the agent started produces no event at all, which is precisely
-// the case the baseline exists for.
+// finds nothing new to say.
+//
+// For systemd the thing at stake is the SNAPSHOT, which is gated on prev being
+// nil (or a snapshotFloor having passed). Primed, the startup snapshot would
+// be collected, discarded, and not offered again until the floor elapsed -- so
+// a unit that was already failed when the agent started would go unreported
+// for that whole window.
 //
 // Asserted through Prime + ScrapeOnce + Flush rather than by calling Collect
 // directly, because calling Collect directly is exactly what hid this.
@@ -1187,15 +1191,18 @@ func TestPrimeDoesNotConsumeABaselineCollectorsFirstScrape(t *testing.T) {
 		t.Fatalf("Flush: %v", err)
 	}
 
-	events := rec.last().GetSystemdEvents()
-	if len(events) != 1 {
-		t.Fatalf("first scrape after Prime carried %d systemd events, want 1 -- priming consumed the baseline",
-			len(events))
+	snapshot := rec.last().GetSystemdSnapshot()
+	if snapshot == nil {
+		t.Fatal("first scrape after Prime carried no systemd snapshot -- priming consumed the baseline")
 	}
-	if got := events[0].GetUnitName(); got != "broken.service" {
+	units := snapshot.GetUnits()
+	if len(units) != 1 {
+		t.Fatalf("snapshot carried %d units, want 1", len(units))
+	}
+	if got := units[0].GetUnitName(); got != "broken.service" {
 		t.Errorf("unit_name = %q, want broken.service", got)
 	}
-	if got := events[0].GetState(); got != "failed" {
+	if got := units[0].GetState(); got != "failed" {
 		t.Errorf("state = %q, want failed", got)
 	}
 }
