@@ -2,65 +2,50 @@
 // the "what is firing right now" view is the Alerts tab that lands with
 // the Stage 2 engine, so nothing here pretends to hold current state.
 import type { Event } from "../../../lib/api";
-import { ABSENT, absolute, relative } from "../../../lib/format";
+import { ABSENT } from "../../../lib/format";
 import { Badge, type Severity } from "../../../ui/Badge";
 import type { Column } from "../../../ui/Table";
+import { EventTime } from "../../../ui/When";
 import { Inventory } from "./Inventory";
 import { messageOf } from "../../events/message";
 import { PackageRunFold } from "../../events/PackageRunFold";
+import { SEVERITY_RANK, severityOf } from "../../events/severity";
 
-// Only these two carry a status tint. A package upgrade is not a
-// colour-coded emergency, so every other event is a neutral chip.
-const STATED_SEVERITIES: Severity[] = ["warning", "critical"];
+// This tab used to carry its own `eventSeverity`, which accepted only a
+// severity the collector had STATED and gave everything else no mark at all.
+// It is gone, and the fleet log's severityOf is the one rule: the same row
+// rated `info` on /events and blank here is a difference a reader finds by
+// clicking between the two, and neither answer explains the other.
 
-/**
- * The severity the emitting collector stated, or null.
- *
- * Deriving a severity from the TYPE would mean this UI inventing a judgement
- * no collector made, so the only accepted source is one the producer stated,
- * and only when it is one of the two the design admits.
- *
- * Read from `detail.severity` rather than from the top-level `severity` the
- * API now also returns, and that is not an oversight yet: the column
- * (0015_event_severity.sql) defaults to `info`, so a row that stated nothing
- * is indistinguishable there from one that said "this is routine" -- and this
- * tab's whole rule is that an unstated severity gets no mark at all rather
- * than a quiet one. Moving to the field wants `severity` to become nullable,
- * or this tab to accept `info` as a stated value; either is a change to make
- * deliberately, not by swapping the accessor.
- */
-export function eventSeverity(event: Event): Severity | null {
-  const detail = event.detail;
-  if (detail === null || typeof detail !== "object") return null;
-  const stated = (detail as Record<string, unknown>).severity;
-  if (typeof stated !== "string") return null;
-  const match = STATED_SEVERITIES.find((s) => s === stated);
-  return match ?? null;
-}
-
-/**
- * How the two admitted severities ORDER, which is not how they alphabetise:
- * "critical" sorts before "warning" as a string, which is right by accident
- * in one direction and wrong in the other. An event the collector stated
- * nothing about returns null and sorts last either way -- it is not the
- * calmest event on the page, it is an event with no judgement on it.
- */
-const SEVERITY_RANK: Record<Severity, number> = {
-  neutral: 0,
-  ok: 1,
-  warning: 2,
-  critical: 4,
+/** The tint each severity word takes. `info` is neutral -- a real state that
+ * is simply not severe, which is Badge's documented use for it -- so the cell
+ * is the same shape in every row. See EventsPage's SeverityMark. */
+const SEVERITY_TINT: Record<string, Severity> = {
+  critical: "critical",
+  warning: "warning",
+  info: "neutral",
 };
 
 const COLUMNS: Column<Event>[] = [
   {
     key: "ts",
     header: "When",
-    cell: (row) => <span title={absolute(row.ts)}>{relative(row.ts)}</span>,
-    // The instant, not the "3 minutes ago" the cell prints: the two order
-    // identically and only one of them still does after the string is
-    // translated or the wording changes.
+    // The exact local instant, with the age on hover -- see EventTime. The
+    // fleet log reads the same way; a timestamp that means one thing on
+    // /events and another on this tab is two clocks.
+    cell: (row) => <EventTime iso={row.ts} />,
+    // The instant, not the string the cell prints: the two order identically
+    // and only one of them still does after the locale changes.
     sortValue: (row) => Date.parse(row.ts),
+  },
+  {
+    key: "severity",
+    header: "Severity",
+    cell: (row) => {
+      const severity = severityOf(row);
+      return <Badge severity={SEVERITY_TINT[severity]}>{severity}</Badge>;
+    },
+    sortValue: (row) => SEVERITY_RANK[severityOf(row)],
   },
   {
     key: "type",
@@ -69,22 +54,6 @@ const COLUMNS: Column<Event>[] = [
     // a type is a category rather than a judgement.
     cell: (row) => <span className="badge">{row.type}</span>,
     sortValue: (row) => row.type,
-  },
-  {
-    key: "severity",
-    header: "Severity",
-    cell: (row) => {
-      const severity = eventSeverity(row);
-      return severity === null ? (
-        ""
-      ) : (
-        <Badge severity={severity}>{severity}</Badge>
-      );
-    },
-    sortValue: (row) => {
-      const severity = eventSeverity(row);
-      return severity === null ? null : SEVERITY_RANK[severity];
-    },
   },
   {
     key: "subject",
@@ -129,6 +98,14 @@ export function Events({ events }: EventsProps) {
       columns={COLUMNS}
       rows={rows}
       rowKey={(row) => row.id}
+      // The same rail the fleet log draws, so the two lists mark trouble the
+      // same way. info draws none: a list where every row is marked has
+      // marked nothing.
+      rowSeverity={(row) => {
+        const severity = severityOf(row);
+        return severity === "info" ? null : severity;
+      }}
+      defaultSort={{ key: "ts", dir: "desc" }}
       searchText={(row) =>
         [row.type, row.subject, messageOf(row)].filter(Boolean).join(" ")
       }
