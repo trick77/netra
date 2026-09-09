@@ -291,6 +291,59 @@ export function absolute(iso: string | null, tz?: string): string {
 }
 
 /**
+ * An instant as `2026-09-09 02:14:08`, in the reader's own zone.
+ *
+ * `absolute` renders the same instant as `09 Sept 2026, 02:14:08`, and that is
+ * right where it is used -- a hover title, read once, one string at a time. It
+ * is wrong down a COLUMN. The month name is most of the width (168px of a
+ * 203px column, measured) and it is a word among digits, so the eye has to
+ * read it rather than skip it, once per row.
+ *
+ * ISO order rather than the Swiss `09.09.2026` this reader would write by
+ * hand: the fields run longest-to-shortest, so the string sorts in the order
+ * it reads, and there is no day-first/month-first ambiguity to resolve against
+ * a journalctl line sitting beside it. It is also the order the payload
+ * already speaks -- a container event's own message carries
+ * `observed_ts 2026-09-09T05:02:00Z`.
+ *
+ * No monospace is needed to line the column up, and this was measured rather
+ * than assumed: in Anthropic Sans at 14px, five different timestamps under
+ * `font-variant-numeric: tabular-nums` all render at 145.11px, against a 27px
+ * spread without it. The mono face aligns too, at 160.16px -- 10% wider, for
+ * nothing. See `.evtime` in index.css.
+ *
+ * Assembled from `formatToParts` rather than by naming a locale whose
+ * shorthand happens to produce this shape (`sv-SE` does): the shape is the
+ * requirement, and a locale that yields it today is a coincidence a CLDR
+ * update is free to withdraw.
+ *
+ * Absorbs `null` and an unparseable string into ABSENT, for the reason
+ * `relative` gives.
+ */
+export function instant(iso: string | null, tz?: string): string {
+  if (iso === null) return ABSENT;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return ABSENT;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const of = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  // `hour: "2-digit"` with hour12:false yields "24" for midnight in some
+  // engines rather than "00". The date has already rolled over by then, so
+  // only the hour is wrong, and only for one second in sixty-thousand.
+  const hour = of("hour") === "24" ? "00" : of("hour");
+  return `${of("year")}-${of("month")}-${of("day")} ${hour}:${of("minute")}:${of("second")}`;
+}
+
+/**
  * Age of an epoch-millisecond instant relative to `now`, for the one
  * timestamp shape in the read API that is NOT an ISO string: metrics.ts's
  * `seriesTimestamps()` returns epoch millis, transcribing

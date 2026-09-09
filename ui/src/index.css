@@ -3846,21 +3846,40 @@ svg.spark {
      to track with your head. Inline uses of .note ignore this, as they should. */
   max-width: var(--measure);
 }
-.evrow {
-  display: grid;
-  grid-template-columns: 74px 1fr;
-  gap: var(--space-3);
-  padding: 9px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--text-label);
-}
-.evrow:last-child {
-  border-bottom: 0;
-}
-.evrow time {
+/* An event's instant, in the reader's own zone. Tabular figures so the
+   column lines up digit under digit -- the whole point of showing the exact
+   time is that two rows can be compared against each other by eye -- and
+   nowrap because "09 Sep 2026, 09:20:52" broken over two lines is not a
+   timestamp any more. */
+.evtime {
   color: var(--muted);
+  /* One step under the row it sits in, which stays at the body's --text-ui
+     like every other table in the app. The instant annotates the event; the
+     sentence in the Event column is the reading, and a log where the clock is
+     set at the same size as what happened has two things competing.
+
+     The log used to be --text-label THROUGHOUT, because .evrow set it -- so
+     moving to the shared table put it up a step everywhere at once. The row
+     staying at 15px is deliberate: this is the one table in netra with a
+     column of running prose in it, but a list set a step smaller than every
+     other list is a worse inconsistency than a slightly heavy paragraph. */
   font-size: var(--text-label);
+  /* What lines the column up, and no monospace is needed for it -- measured,
+     not assumed. In Anthropic Sans at this size five different timestamps
+     under tabular figures all render at 145.11px, against a 27px spread
+     without them; ui-monospace also aligns, at 160.16px, which is 10% more
+     column for nothing and a second face in a row of prose. */
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The log's Host cell. The Event column takes whatever is left, which is most
+   of the table, so without this a hostname is the first thing squeezed --
+   "sim-vps-nvme" broke across two lines and took the row's height with it,
+   while the sentence beside it had room to spare. A hostname is an identifier
+   and is scanned down the column, so it wraps last, not first. */
+.evhost {
+  white-space: nowrap;
 }
 
 /* The rest of an apt run, folded. Modelled on `.attn .more` -- the same
@@ -4140,13 +4159,22 @@ svg.spark {
    rather than the viewport and does nothing without a max-height on it), and
    ChartDetail's .cd-stats table is not wrapped, so it never took the fill and
    keeps its own header rules either way. */
-/* A table inside a card is already on a surface. Nothing does this today;
-   the reset is here so the next one does not nest two borders. */
+/* A table inside a card is already on a surface. The events log is the first
+   caller -- the reset was written speculatively, so the next table in a card
+   would not nest two borders, and this is that table.
+
+   The negative inline margin is the other half, and it is what .evrow used to
+   carry for itself: .card .body pads 16px, so without this the rows stop short
+   of the card border and every hairline and hover band reads as a floating
+   strip rather than a band across the box. The cells keep their own 16px, so
+   the TEXT lands exactly where it did -- only the row's ground and rule reach
+   further. */
 .card .tablewrap {
   background: none;
   border: 0;
   border-radius: 0;
   margin-bottom: 0;
+  margin-inline: calc(-1 * var(--space-4));
 }
 
 /* A group header inside a table body: one <tbody> per group, each led by
@@ -4576,15 +4604,16 @@ summary:focus-visible,
    Nothing is added here for the tables: the frame, the hairline between rows
    and the hover are stated once above and every list gets them. Restating
    them under .tablewrap would only be a second place to keep in sync. */
-/* The events log is the one list that is not a table -- .evrow is a grid, in
-   a card -- and it is flat like one. The row still reaches the card's own
-   edge rather than stopping inside its padding: a row is a band across the
-   box, and its hover and its separator have to run the full width or they
-   read as a floating strip. */
-.card .body > [role="list"] {
-  margin: 0 calc(-1 * var(--space-4));
-}
-.evrow {
-  padding-left: var(--space-4);
-  padding-right: var(--space-4);
-}
+/* The events log used to be the one list that was not a table -- .evrow was a
+   two-column grid in a card -- and it carried two rules of its own: one to be
+   flat like a table, and one to REACH THE CARD'S EDGE. Becoming a table
+   answers the first; the rules above state the frame, the hairline and the
+   hover once for every list.
+
+   It does not answer the second, and the bleed is not decoration. .card .body
+   pads 16px, so a table dropped into it stops 16px short on both sides and
+   every row's bottom hairline and hover band ends inside the border -- a
+   floating strip, which is the exact thing .evrow's negative margin existed to
+   prevent. Measured on the page: the card ran 24..1416 and the rows 41..1399.
+   The bleed moves to .card .tablewrap below, where it covers any table in a
+   card rather than this one list. */

@@ -6,9 +6,9 @@
 // whose rows do not say what happened is a list of nouns.
 //
 // This lives in its own module rather than beside either page because both
-// need it and neither owns it. severityOf stays in EventsPage: it is that
-// page's filter vocabulary, and the host tab deliberately judges severity more
-// narrowly.
+// need it and neither owns it. severityOf is beside it in ./severity for the
+// same reason: it used to sit in EventsPage as "that page's judgement", which
+// stopped being true the moment the host tab had to rate a row the same way.
 import type { Event } from "../../lib/api";
 import { duration } from "../../lib/format";
 
@@ -260,7 +260,7 @@ function mdraidCondition(f: Record<string, unknown>): {
 
 /** The severity of an mdraid event, or null when the array is whole.
  *
- * Exported for EventsPage's severityOf, which otherwise judges an event by
+ * Exported for ./severity's severityOf, which otherwise judges an event by
  * matching words in its detail against a table -- a table that, for mdraid,
  * lists states the kernel has never emitted and so never fired. A degraded
  * array rendered as "info". */

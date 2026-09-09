@@ -236,29 +236,52 @@ describe("applyFilters", () => {
   });
 });
 
+/** The log's body rows, in the order the table drew them, header dropped. */
+function bodyRows(): HTMLElement[] {
+  const [, ...body] = screen.getAllByRole("row");
+  return body;
+}
+
 describe("EventsPage", () => {
   it("renders the type as a chip that takes no status tint", () => {
     renderPage({ events: [event()] });
 
     // Scoped to the row: "package" is also a filter option.
-    const chip = within(screen.getByRole("listitem")).getByText("package");
+    const chip = within(bodyRows()[0]!).getByText("package");
     expect(chip).toHaveClass("badge");
     expect(chip.className).not.toMatch(/st-/);
   });
 
-  it("gives critical and warning a tinted chip, and info the word alone", () => {
+  // One shape for all three, which is the point: the cell used to be a Badge
+  // for two of them and a bare word for the third, so a column of severities
+  // read as two different kinds of fact. The emphasis that lost is the row
+  // rail below, which info still does not draw.
+  it("gives every severity a badge, tinted only when it is one", () => {
     renderPage();
 
-    const rows = screen.getAllByRole("listitem").map((row) => within(row));
+    const rows = bodyRows().map((row) => within(row));
 
-    const critical = rows[1]!.getByText("critical");
-    expect(critical.closest(".badge")).toHaveClass("st-crit");
+    expect(rows[1]!.getByText("critical").closest(".badge")).toHaveClass(
+      "st-crit",
+    );
     expect(rows[2]!.getByText("warning").closest(".badge")).toHaveClass(
       "st-warn",
     );
 
-    const info = rows[0]!.getByText("info");
-    expect(info.closest(".badge")).toBeNull();
+    const info = rows[0]!.getByText("info").closest(".badge");
+    expect(info).not.toBeNull();
+    expect(info!.className).not.toMatch(/st-/);
+  });
+
+  // The rail is what a reader scanning for trouble follows, so it has to
+  // stay scarce: a table where every row is marked has marked nothing.
+  it("rails the warned and critical rows and leaves info unmarked", () => {
+    renderPage();
+
+    const rows = bodyRows();
+    expect(rows[0]!.className).not.toMatch(/rail/);
+    expect(rows[1]!.className).toMatch(/rail/);
+    expect(rows[2]!.className).toMatch(/rail/);
   });
 
   it("renders an event with nothing to say as the absent marker, not a blank", () => {
@@ -442,9 +465,9 @@ describe("EventsPage", () => {
   it("keeps the log newest-first, as the hub returned it", () => {
     renderPage();
 
-    const times = screen
-      .getAllByRole("listitem")
-      .map((row) => row.querySelector("time")!.getAttribute("dateTime"));
+    const times = bodyRows().map((row) =>
+      row.querySelector("time")!.getAttribute("dateTime"),
+    );
 
     expect(times).toEqual([
       "2026-08-10T13:59:00Z",
