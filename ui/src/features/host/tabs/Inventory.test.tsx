@@ -493,6 +493,24 @@ describe("Containers", () => {
     expect(headline("Docker CPU")).toBe("100%");
   });
 
+  // The commoner case, which no capability covers: every container on this
+  // host runs network_mode: host, so the collector reports no traffic rows
+  // for them and no failure either. The columns never arrive, the bands are
+  // empty, and a blank plot beside two populated ones reads as "these
+  // containers moved no bytes".
+  it("says why it is empty when traffic was never measured", () => {
+    render(
+      <Containers rows={containers} host={host} metrics={containerMetrics} />,
+    );
+
+    expect(
+      screen.getByText(/No container traffic reached the hub/),
+    ).toBeInTheDocument();
+    // The two panels beside it still draw, and are not implicated.
+    expect(headline("Docker CPU")).toBe("100%");
+    expect(headline("Docker Memory")).toBe("200 MB");
+  });
+
   // An unrecognised value is still the agent reporting a failure, and quoting
   // it beats silence: it is greppable in the agent's source.
   it("quotes a capability value it does not know the wording of", () => {

@@ -226,7 +226,7 @@ export function perCoreBands(
         // The key names the core. The sweep gives each one its own hue now,
         // but a hue is not a label: this is what a hovered band reads out.
         name: `core ${series.key.core ?? i}`,
-        color: seriesHue(i, n, CORE_HUE_OFFSET),
+        color: seriesHue(i, CORE_HUE_OFFSET),
         fill: SWEPT_FILL_OPACITY,
         values,
       };
@@ -291,11 +291,10 @@ export function containerBands(
   if (trends.length === 0) return [];
 
   const reported = bucketsWithAnyReading(trends.map((t) => t.values));
-  const n = trends.length;
 
   return trends.map((trend, i) => ({
     name: trend.key,
-    color: seriesHue(i, n, CONTAINER_HUE_OFFSET),
+    color: seriesHue(i, CONTAINER_HUE_OFFSET),
     fill: SWEPT_FILL_OPACITY,
     values: reported.map((any, j) => trend.values[j] ?? (any ? 0 : null)),
   }));
@@ -441,6 +440,18 @@ export const CONTAINER_HUE_OFFSET = 0;
  * which refetches at its own range -- would disagree with the panel it was
  * opened from. Position in the response is stable across both.
  *
+ * THE STEP IS THE GOLDEN ANGLE, NOT 360/n, and that is what makes the
+ * paragraph above true rather than merely intended. beszel divides the circle
+ * by the band COUNT, so every hue moves when the count does: three containers
+ * sit at 0/120/240, a fourth starts, and the next poll redraws them at
+ * 0/90/180/270 -- container 2 goes green to yellow with nothing else on the
+ * page changing. The enlarged view is worse, because it refetches at a wider
+ * range: a 7d window holding a container that was purged yesterday carries
+ * one more series than the panel and shifts every hue against it. Stepping by
+ * a constant 137.508 degrees depends on `i` alone, which IS stable, and it is
+ * the angle that keeps any number of samples near-evenly spread -- adjacent
+ * bands land 137 degrees apart however many there are.
+ *
  * This is NOT the monotonic one-hue ramp that was rejected here before: that
  * one subdivided a single hue's lightness, landing 0.047 apart in L per step
  * across thirty-two bands. A hue sweep holds full lightness contrast between
@@ -461,8 +472,10 @@ export const CONTAINER_HUE_OFFSET = 0;
  * status hues once a host runs more than a handful of containers, and these
  * bands carry no severity -- the rail, the dot and the word to their left do.
  */
-export function seriesHue(i: number, n: number, offset: number): string {
-  const hue = (offset + (i * 360) / Math.max(1, n)) % 360;
+const GOLDEN_ANGLE = 137.508;
+
+export function seriesHue(i: number, offset: number): string {
+  const hue = (offset + i * GOLDEN_ANGLE) % 360;
   return `hsl(${hue.toFixed(1)}, var(--series-s), var(--series-l))`;
 }
 

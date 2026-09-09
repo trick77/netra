@@ -196,7 +196,7 @@ function totalBand(values: (number | null)[]): Band[] {
     : [
         {
           name: "busy",
-          color: seriesHue(0, 1, CORE_HUE_OFFSET),
+          color: seriesHue(0, CORE_HUE_OFFSET),
           fill: SWEPT_FILL_OPACITY,
           values,
         },

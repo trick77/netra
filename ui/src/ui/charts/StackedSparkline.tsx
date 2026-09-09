@@ -109,10 +109,14 @@ export function StackedSparkline({
           bandStroke={1} keeps this exactly as it was. Overlay's stack draws
           1.25; the two have always disagreed. See Chart's bandStroke. */}
       <Chart
+        // Rebuilt field by field rather than spread, so `fill` has to be
+        // named here to survive -- which is the point: a band that asked to
+        // be faded would otherwise be silently drawn opaque.
         series={bands.map((b) => ({
           name: b.name,
           color: b.color,
           values: b.values,
+          fill: b.fill,
         }))}
         width={width}
         height={height}

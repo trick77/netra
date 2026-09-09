@@ -598,13 +598,27 @@ function DockerOverview({
         range={range}
         ranges={RAIL_RANGES}
         fetchSeries={detail("net")}
-        // The agent's own explanation wins over the generic one, because it
-        // is the specific one: `unavailable` above says containers are
-        // missing wholesale, while container_network says CPU and memory
-        // arrived and only the traffic did not. An empty chart in that state
-        // would claim these containers moved no bytes.
+        // Three states, most specific first.
+        //
+        // The agent's own explanation beats the generic one: `unavailable`
+        // says containers are missing wholesale, while container_network says
+        // CPU and memory arrived and only the traffic did not.
+        //
+        // Then the case NO capability covers, which is the common one on a
+        // real host: every container on `network_mode: host` shares the
+        // host's namespace, so the collector reports no rows for them rather
+        // than a failure, the columns never arrive, and containerBands has
+        // nothing to build. Judged on the BANDS, like `collected` above,
+        // because that is the only thing that knows whether traffic reached
+        // the hub. Without this the panel draws a blank plot beside two
+        // populated ones, which reads as "these containers moved no bytes" --
+        // exactly what networkUnavailable exists to prevent.
         unavailable={
-          networkUnavailable(capabilities?.container_network) ?? unavailable
+          networkUnavailable(capabilities?.container_network) ??
+          unavailable ??
+          (net.length === 0
+            ? "No container traffic reached the hub for this host. Containers that share the host's network namespace are counted in its own interface traffic instead."
+            : undefined)
         }
       />
     </div>
