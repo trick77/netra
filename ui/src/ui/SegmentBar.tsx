@@ -39,6 +39,7 @@ export function SegmentBar({
   severity,
   series,
   label,
+  valueText,
 }: {
   pct: number;
   /** Already decided by the caller, when it prints a figure in the same
@@ -53,6 +54,17 @@ export function SegmentBar({
    */
   series?: 1 | 2 | 3 | 4;
   label?: string;
+  /**
+   * What the reading actually says, when `pct` alone would misreport it.
+   *
+   * aria-valuenow is the CLAMPED percentage, because aria-valuemax is 100 and
+   * a container 150 % over its memory limit has no eleventh cell to light.
+   * The figure printed beside the bar says 150 % though, and a screen reader
+   * announcing 100 would be told something the page does not say. This is
+   * what aria-valuetext is for: the numeric value stays in range and the
+   * spoken one is the truth.
+   */
+  valueText?: string;
 }) {
   const lit = litCells(pct);
   const cls =
@@ -66,6 +78,7 @@ export function SegmentBar({
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(pct)}
+      aria-valuetext={valueText}
       aria-label={label}
     >
       {Array.from({ length: SEGMENT_CELLS }, (_, i) => (

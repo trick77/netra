@@ -252,6 +252,11 @@ export function Meter({
           severity={resolvedSeverity}
           series={series}
           label={label}
+          // The unclamped reading, spoken. `pct` is clamped so the bar has a
+          // cell to light and aria-valuenow stays inside its own max; this is
+          // the figure the row prints, which for an overage is the only one
+          // that is true.
+          valueText={valueText}
         />
       }
       valueText={valueText}

@@ -60,4 +60,14 @@ describe("SegmentBar", () => {
     expect(bar.getAttribute("aria-valuenow")).toBe("68");
     expect(bar.getAttribute("aria-label")).toBe("CPU now");
   });
+
+  // aria-valuemax is 100 and the bar has no eleventh cell, so an overage
+  // cannot be the numeric value. It is still what the row prints, so it is
+  // what gets spoken.
+  it("speaks the true reading when the bar is clamped", () => {
+    const { container } = render(<SegmentBar pct={100} valueText="150%" />);
+    const bar = container.querySelector(".segbar")!;
+    expect(bar.getAttribute("aria-valuenow")).toBe("100");
+    expect(bar.getAttribute("aria-valuetext")).toBe("150%");
+  });
 });

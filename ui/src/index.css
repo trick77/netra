@@ -1210,7 +1210,12 @@ tbody tr:hover .host-cell-name {
   gap: 2px;
   height: 8px;
   flex: 1 1 auto;
-  min-width: 0;
+  /* A floor as well as a cap: ten cells and their nine 2px gaps need 88px
+     before a cell stops being countable, and a shrinkable bar next to a long
+     figure ("331.7 MB used · 737.8 MB free · 1.1 GB size") would otherwise
+     give up every pixel to it. Below this the figure wraps instead
+     (.mrow-read). */
+  min-width: 88px;
   /* The bar has ONE size in the app, and 123px is the size the fleet cell
      already draws it at: SPARK_WIDTH (175) less the figure's 44px column and
      the --space-2 between them. A cap rather than a fixed width, so the fleet
@@ -3020,6 +3025,11 @@ details.sysfold > .body {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  /* The figure drops under the bar rather than squeezing it, once the row is
+     too narrow to hold both. The bar has a floor of its own (see .segbar) and
+     the pair still reads as one thing stacked. */
+  flex-wrap: wrap;
+  row-gap: 2px;
 }
 /* A reading drawn under the chart it qualifies, inside the panel: the
    container memory meter under the memory chart. Scoped rather than given its
@@ -3264,8 +3274,14 @@ details.sysfold > .body {
   font-size: var(--text-label);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  flex: none;
-  white-space: nowrap;
+  /* Shrinkable, and NOT nowrap. The filesystem list's value is the long form
+     -- "331.7 MB used · 737.8 MB free · 1.1 GB size", some 290px of it -- and
+     an unshrinkable figure in a flex row wins every pixel from the bar beside
+     it: at a narrow window every mount drew its full text against a sliver of
+     bar, which is the comparison the list exists to make. It wraps instead,
+     and .mrow-read drops it under the bar before it gets that far. */
+  flex: 0 1 auto;
+  min-width: 0;
 }
 /* The figure beside a meter takes the bar's own severity.
    Written as `.mrow .val.st-*` rather than leaning on the generic .st-* text
