@@ -17,10 +17,10 @@ function event(over: Partial<Event> = {}): Event {
   };
 }
 
-// The rule itself is severityOf's, tested in features/events/severity's own
-// suite. What this tab owes is that it USES that rule rather than a second
-// one -- which it did carry, in an eventSeverity of its own that marked
-// nothing the collector had not stated outright.
+// The rule itself is severityOf's, tested in features/events/severity.test.
+// What this tab owes is that it USES that rule rather than a second one --
+// which it did carry, in an eventSeverity of its own that marked nothing the
+// collector had not stated outright.
 
 describe("Events", () => {
   it("renders a package event as a neutral chip with no status tint", () => {

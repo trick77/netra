@@ -4072,13 +4072,22 @@ svg.spark {
    rather than the viewport and does nothing without a max-height on it), and
    ChartDetail's .cd-stats table is not wrapped, so it never took the fill and
    keeps its own header rules either way. */
-/* A table inside a card is already on a surface. Nothing does this today;
-   the reset is here so the next one does not nest two borders. */
+/* A table inside a card is already on a surface. The events log is the first
+   caller -- the reset was written speculatively, so the next table in a card
+   would not nest two borders, and this is that table.
+
+   The negative inline margin is the other half, and it is what .evrow used to
+   carry for itself: .card .body pads 16px, so without this the rows stop short
+   of the card border and every hairline and hover band reads as a floating
+   strip rather than a band across the box. The cells keep their own 16px, so
+   the TEXT lands exactly where it did -- only the row's ground and rule reach
+   further. */
 .card .tablewrap {
   background: none;
   border: 0;
   border-radius: 0;
   margin-bottom: 0;
+  margin-inline: calc(-1 * var(--space-4));
 }
 
 /* A group header inside a table body: one <tbody> per group, each led by
@@ -4509,7 +4518,15 @@ summary:focus-visible,
    and the hover are stated once above and every list gets them. Restating
    them under .tablewrap would only be a second place to keep in sync. */
 /* The events log used to be the one list that was not a table -- .evrow was a
-   two-column grid in a card -- and it needed its own rules to reach the card's
-   edge and to be flat like one. It IS a table now, so both are gone: the rules
-   above already say all of that for every list on the site, which is the whole
-   reason the log stopped drawing its own. */
+   two-column grid in a card -- and it carried two rules of its own: one to be
+   flat like a table, and one to REACH THE CARD'S EDGE. Becoming a table
+   answers the first; the rules above state the frame, the hairline and the
+   hover once for every list.
+
+   It does not answer the second, and the bleed is not decoration. .card .body
+   pads 16px, so a table dropped into it stops 16px short on both sides and
+   every row's bottom hairline and hover band ends inside the border -- a
+   floating strip, which is the exact thing .evrow's negative margin existed to
+   prevent. Measured on the page: the card ran 24..1416 and the rows 41..1399.
+   The bleed moves to .card .tablewrap below, where it covers any table in a
+   card rather than this one list. */

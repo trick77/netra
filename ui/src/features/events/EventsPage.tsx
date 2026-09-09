@@ -8,7 +8,7 @@
 // page's half of that contract -- the serialization lives with the type it
 // serializes, and nothing here touches history or location.
 import { Inbox } from "lucide-react";
-import { Badge, type Severity } from "../../ui/Badge";
+import { Badge } from "../../ui/Badge";
 import { Card } from "../../ui/Card";
 import { EmptyState } from "../../ui/EmptyState";
 import { Input, Select } from "../../ui/Control";
@@ -21,7 +21,13 @@ import { ABSENT } from "../../lib/format";
 import { KNOWN_EVENT_TYPES, messageOf } from "./message";
 import { PackageRunFold } from "./PackageRunFold";
 // Re-exported below, so a link written against EventsPage still resolves.
-import { SEVERITY_RANK, severityOf, type EventSeverity } from "./severity";
+import {
+  SEVERITY_RANK,
+  SEVERITY_TINT,
+  railSeverity,
+  severityOf,
+  type EventSeverity,
+} from "./severity";
 
 export { severityOf, type EventSeverity } from "./severity";
 
@@ -196,16 +202,11 @@ export function applyFilters(
  * (Table's rowSeverity), which no info row draws, so the quiet rows are still
  * quiet without the severity cell changing shape underneath them.
  *
- * `info` maps to neutral, which is the grey dot -- a real state that is simply
- * not severe, which is exactly Badge's documented use for it. */
+ * The tint comes from SEVERITY_TINT rather than a ternary here: keyed on
+ * EventSeverity, a fourth severity is a compile error instead of an undefined
+ * that Badge absorbs into a grey dot nobody asked for. */
 function SeverityMark({ severity }: { severity: EventSeverity }) {
-  const tint: Severity =
-    severity === "critical"
-      ? "critical"
-      : severity === "warning"
-        ? "warning"
-        : "neutral";
-  return <Badge severity={tint}>{severity}</Badge>;
+  return <Badge severity={SEVERITY_TINT[severity]}>{severity}</Badge>;
 }
 
 /** The type is a bare `.badge`: with no `st-*` class it takes the neutral
@@ -434,10 +435,7 @@ export function EventsPage({
             // The rail, not the badge, is what a reader scanning for trouble
             // actually follows: it marks the row from the table's edge. See
             // Table's rowSeverity.
-            rowSeverity={(event) => {
-              const severity = severityOf(event);
-              return severity === "info" ? null : severity;
-            }}
+            rowSeverity={(event) => railSeverity(severityOf(event))}
             defaultSort={{ key: "ts", dir: "desc" }}
           />
         )}

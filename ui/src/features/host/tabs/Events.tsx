@@ -3,28 +3,24 @@
 // the Stage 2 engine, so nothing here pretends to hold current state.
 import type { Event } from "../../../lib/api";
 import { ABSENT } from "../../../lib/format";
-import { Badge, type Severity } from "../../../ui/Badge";
+import { Badge } from "../../../ui/Badge";
 import type { Column } from "../../../ui/Table";
 import { EventTime } from "../../../ui/When";
 import { Inventory } from "./Inventory";
 import { messageOf } from "../../events/message";
 import { PackageRunFold } from "../../events/PackageRunFold";
-import { SEVERITY_RANK, severityOf } from "../../events/severity";
+import {
+  SEVERITY_RANK,
+  SEVERITY_TINT,
+  railSeverity,
+  severityOf,
+} from "../../events/severity";
 
 // This tab used to carry its own `eventSeverity`, which accepted only a
 // severity the collector had STATED and gave everything else no mark at all.
 // It is gone, and the fleet log's severityOf is the one rule: the same row
 // rated `info` on /events and blank here is a difference a reader finds by
 // clicking between the two, and neither answer explains the other.
-
-/** The tint each severity word takes. `info` is neutral -- a real state that
- * is simply not severe, which is Badge's documented use for it -- so the cell
- * is the same shape in every row. See EventsPage's SeverityMark. */
-const SEVERITY_TINT: Record<string, Severity> = {
-  critical: "critical",
-  warning: "warning",
-  info: "neutral",
-};
 
 const COLUMNS: Column<Event>[] = [
   {
@@ -101,10 +97,7 @@ export function Events({ events }: EventsProps) {
       // The same rail the fleet log draws, so the two lists mark trouble the
       // same way. info draws none: a list where every row is marked has
       // marked nothing.
-      rowSeverity={(row) => {
-        const severity = severityOf(row);
-        return severity === "info" ? null : severity;
-      }}
+      rowSeverity={(row) => railSeverity(severityOf(row))}
       defaultSort={{ key: "ts", dir: "desc" }}
       searchText={(row) =>
         [row.type, row.subject, messageOf(row)].filter(Boolean).join(" ")

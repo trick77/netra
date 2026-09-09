@@ -6,6 +6,7 @@
 // argument that it was "that page's judgement" -- which stopped being true the
 // moment the host tab had to render the same three words the same way.
 import type { Event } from "../../lib/api";
+import type { Severity } from "../../ui/Badge";
 import { mdraidSeverity } from "./message";
 
 /** Derived here, not read off the row.
@@ -29,6 +30,30 @@ export const SEVERITY_RANK: Record<EventSeverity, number> = {
   warning: 1,
   critical: 2,
 };
+
+/** The Badge tint each severity word takes, for the two lists that draw it.
+ *
+ * Keyed on EventSeverity rather than on `string`, and that is the point: a
+ * fourth severity is then a compile error here instead of an `undefined` that
+ * Badge quietly absorbs into `neutral` and ships as an untinted grey dot.
+ *
+ * `info` IS neutral -- a real state that is simply not severe, which is the
+ * second use Badge documents for it -- so the cell is the same shape in every
+ * row. */
+export const SEVERITY_TINT: Record<EventSeverity, Severity> = {
+  info: "neutral",
+  warning: "warning",
+  critical: "critical",
+};
+
+/** The rail a row of this severity draws, and null for the ones that draw
+ * none. A table where every row is marked has marked nothing, so `info` is
+ * deliberately unmarked -- the Severity cell already names it. */
+export function railSeverity(
+  severity: EventSeverity,
+): "warning" | "critical" | null {
+  return severity === "info" ? null : severity;
+}
 
 // The states an emitter puts in its own detail JSON.
 //
