@@ -15,10 +15,12 @@ import {
   sumSeries,
 } from "../../lib/metrics";
 import {
+  CORE_HUE_OFFSET,
   filesystemBands,
   fsUsePercent,
   memoryBands,
   perCoreBands,
+  seriesHue,
 } from "../../lib/bands";
 // containerTrends lives in lib/containers.ts, beside the capability wording
 // the same lists share. It was here, because the fleet list needed it first;
@@ -28,7 +30,7 @@ import { containerTrends, type ContainerTrend } from "../../lib/containers";
 import { currentFilesystems } from "../../lib/host";
 import { rangeWindow, type Range } from "../../lib/range";
 import type { Band } from "../../ui/charts/StackedSparkline";
-import { SPARK_WIDTH } from "../../ui/charts/size";
+import { SPARK_WIDTH, SWEPT_FILL_OPACITY } from "../../ui/charts/size";
 import { DOWN_COLOR, UP_COLOR } from "../../ui/charts/UpDownSparkline";
 import type { HostRow } from "./hostColumns";
 import { diskState, type DiskThresholds } from "./conditions";
@@ -182,9 +184,23 @@ export interface HostTrends {
 // series is also what the row's status is judged from (HostTrends.reporting),
 // and one column read twice is two readings that can be made to disagree.
 function totalBand(values: (number | null)[]): Band[] {
+  // seriesHue's band 0, not the bare --s1 it used to be, because this IS the
+  // per-core stack in the degenerate case: a host with one core, or one whose
+  // cpu_core family did not answer, and the two must draw the same chart.
+  // --s1 was that colour for as long as the per-core stack led with --cpu-1,
+  // which holds the same hex; the sweep moved band 0 to the same HUE at the
+  // series saturation, and leaving this behind would put the fallback 12 dE
+  // away from the stack it stands in for.
   return values.length === 0
     ? []
-    : [{ name: "busy", color: "var(--s1)", values }];
+    : [
+        {
+          name: "busy",
+          color: seriesHue(0, 1, CORE_HUE_OFFSET),
+          fill: SWEPT_FILL_OPACITY,
+          values,
+        },
+      ];
 }
 
 /**

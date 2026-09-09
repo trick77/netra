@@ -493,6 +493,13 @@ export const SYSTEM: PanelSpec[] = [
       "One band per logical CPU, each showing that core's own utilisation, so the stack runs to cores x 100 and has no axis. The CPU panel is the same data normalised to a 0-100 mean, where a single core pinned while the rest idle averages away.",
     source: "cpuCore",
     bases: [{ base: "busy", label: "busy" }],
+    // The SAME builder the CPU panel above uses, unnormalised. Spelling it
+    // out matters: with no `bands` this spec fell through to the generic
+    // per-index walk through SERIES_VARS, so the two per-core stacks on one
+    // page were coloured by two different mechanisms -- eight rotating
+    // series hues here, the swept per-core palette there. They are one
+    // chart at two scalings and now they say so.
+    bands: (res) => perCoreBands(res),
     stacked: true,
     // No ceiling and no axis: each band is one core's real utilisation, so
     // the stack runs to cores x 100. Every number a reader sees is the

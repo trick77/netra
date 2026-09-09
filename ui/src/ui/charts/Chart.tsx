@@ -62,6 +62,29 @@ export interface ChartSeries {
    * IS its own peak and there is no _max column to ask for.
    */
   band?: (number | null)[];
+  /**
+   * Fill weight for this band when it is drawn as a STACK, opaque when
+   * absent.
+   *
+   * On the series rather than on the chart because it belongs to the
+   * PALETTE, not to the size: lib/bands.ts sets it on the swept stacks it
+   * builds (per-core CPU, Docker CPU, Docker Memory) and on nothing else, so
+   * a panel and the enlarged view opened out of it -- which rebuilds its
+   * bands through the same function at a wider range -- cannot come to
+   * disagree about how heavy the mark is. A prop threaded through
+   * ChartPanel, Overlay, Enlargeable, ChartFigure and ChartDetail could.
+   *
+   * Opaque is the default because the semantic stacks depend on it: the host
+   * memory family has its contrast measured against --surface at full
+   * opacity, with --mem-cached sitting on its documented 1.53:1 floor, and
+   * fading that band puts it into the card. See SWEPT_FILL_OPACITY in
+   * size.ts for what the swept stacks buy with it instead.
+   *
+   * Read only by the plain stack mark. The mirrored marks derive their own
+   * weight from the plot's density through mirrorEdge(), which is why the
+   * Docker Network panel needs nothing here to match its neighbours.
+   */
+  fill?: number;
 }
 
 export type ChartMark = "line" | "area" | "stack" | "mirror" | "mirrorStack";
@@ -815,17 +838,23 @@ function StackMarks({
             data-band
             d={bands[i]!}
             fill={s.color}
-            // Opaque. A band used to be drawn at 0.55 "so it stays readable
-            // through the one above it", which is not a thing that happens:
-            // stackBands emits band k as the ribbon between running total
-            // k-1 and running total k, so the bands are disjoint and there
-            // is nothing behind any of them except the grid. All the
-            // translucency bought was the dotted gridline showing THROUGH
-            // the data -- and where a gridline crossed a band's own edge
-            // stroke, that edge read as broken. A grid is furniture; it
-            // belongs behind what it measures, which means being hidden by
-            // it.
-            fillOpacity={1}
+            // Opaque unless the caller asks otherwise. A band used to be
+            // drawn at 0.55 "so it stays readable through the one above it",
+            // which is not a thing that happens: stackBands emits band k as
+            // the ribbon between running total k-1 and running total k, so
+            // the bands are disjoint and there is nothing behind any of them
+            // except the grid. All that blanket translucency bought was the
+            // dotted gridline showing THROUGH the data -- and where a
+            // gridline crossed a band's own edge stroke, that edge read as
+            // broken. A grid is furniture; it belongs behind what it
+            // measures, which means being hidden by it.
+            //
+            // A SWEPT stack asks for it back, and pays for it differently:
+            // there hue is doing the separating, and a translucent mass with
+            // separable layers is what keeps a full spectrum from reading as
+            // a row of category blocks. See SWEPT_FILL_OPACITY in size.ts,
+            // and note that the semantic stacks must never pass it.
+            fillOpacity={s.fill ?? 1}
             stroke={s.color}
             strokeWidth={bandStroke}
             strokeLinejoin="round"

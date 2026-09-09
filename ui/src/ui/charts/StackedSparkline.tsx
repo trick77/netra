@@ -12,6 +12,9 @@ export interface Band {
   /** CSS variable string, e.g. "var(--s2)". Never a hex literal. */
   color: string;
   values: (number | null)[];
+  /** Fill weight when stacked, opaque when absent. Set by the swept
+   * palettes in lib/bands.ts; see ChartSeries.fill for the whole argument. */
+  fill?: number;
 }
 
 export interface StackedSparklineProps {

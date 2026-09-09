@@ -148,19 +148,34 @@ export function areaFillOpacity(count: number): number {
  * panel are both rx above the midline and tx below it, through the same
  * mirrorPaths() geometry, and an operator scans one and then the other.
  *
- * Deliberately NOT shared with the stacked branches, which draw their bands
- * opaque. That used to read "a stack's 0.55 answers a different question:
- * bands are layered over each other and the fill has to stay readable
- * through the one above it" -- which is not what stackBands builds. Band k
- * is the ribbon between running total k-1 and running total k, so the bands
- * are disjoint and nothing sits behind one except the grid. The translucency
- * only let the gridline show through the data. Tying the two together would
- * still be wrong: a future tune of one would silently move the other.
- *
  * These are the SPARSE weights -- see mirrorEdge() below for when an edge is
  * drawn at all.
  */
 export const MIRROR_FILL_OPACITY = 0.45;
+
+/**
+ * The fill weight of a SWEPT stack's band -- a per-core CPU stack, or the
+ * Docker CPU and Memory panels over a host's Containers list.
+ *
+ * The same number as MIRROR_FILL_OPACITY, and deliberately: the three Docker
+ * panels sit in one row, and the Network one is a mirrored stack that takes
+ * its weight from mirrorEdge(). Two fill weights in that row would read as
+ * two kinds of chart. beszel, where the sweep comes from, uses 0.4 for
+ * containers and 0.35 for cores; one number is worth more here than either.
+ *
+ * OPT-IN, never the default. Chart draws a stack opaque unless a caller asks
+ * for this, because the bands are disjoint -- band k is the ribbon between
+ * running total k-1 and running total k, so nothing sits behind one except
+ * the grid, and translucency only lets the gridline show through the data.
+ * What buys it back on a swept stack is that hue, not lightness, is doing
+ * the separating: a translucent mass with separable layers is what stops a
+ * full spectrum reading as a row of category blocks.
+ *
+ * It is emphatically NOT for the semantic stacks. The host memory family is
+ * measured opaque against --surface -- --mem-cached sits at 1.53:1, its own
+ * documented floor -- and fading it puts that band into the card.
+ */
+export const SWEPT_FILL_OPACITY = 0.45;
 
 /**
  * The edge on a filled band, whatever kind of band it is.
