@@ -459,16 +459,26 @@ func u32(p *uint32) any {
 	return int32(*p)
 }
 
-// MetadataHash returns the stored metadata hash for a host, or nil if the hub
-// has never received one.
-func (s *Store) MetadataHash(ctx context.Context, hostID int32) ([]byte, error) {
-	var hash []byte
-	err := s.pool.QueryRow(ctx,
-		`SELECT metadata_hash FROM hosts WHERE id = $1`, hostID).Scan(&hash)
+// IngestIdentity returns what the hub already knows about a host from its last
+// handshake: the stored metadata hash (nil if it has never received one) and
+// the agent version that hash describes ("" if unknown).
+//
+// The two are returned together because they are only meaningful together. The
+// version is whatever the metadata block carrying that hash said, so it
+// describes the running agent only while the hashes still match -- an agent
+// that has been upgraded sends a new hash and the stored version is stale
+// until the next handshake completes.
+func (s *Store) IngestIdentity(ctx context.Context, hostID int32) (hash []byte, agentVersion string, err error) {
+	var version *string
+	err = s.pool.QueryRow(ctx,
+		`SELECT metadata_hash, agent_version FROM hosts WHERE id = $1`, hostID).Scan(&hash, &version)
 	if err != nil {
-		return nil, fmt.Errorf("read metadata hash: %w", err)
+		return nil, "", fmt.Errorf("read ingest identity: %w", err)
 	}
-	return hash, nil
+	if version != nil {
+		agentVersion = *version
+	}
+	return hash, agentVersion, nil
 }
 
 // SaveMetadata persists the static facts an agent reports, together with the

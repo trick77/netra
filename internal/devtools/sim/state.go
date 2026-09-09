@@ -27,6 +27,15 @@ type timedEvent struct {
 	event *netrav1.Event
 }
 
+// eventSeverity is Event.Severity, which is optional on the wire and so wants
+// a pointer.
+//
+// Every simulated event states one, because every real collector does: the hub
+// reads events.severity from the field alone, so an event that leaves it unset
+// lands as "info" and a simulated fleet would show no notable rows at all --
+// the one thing the events log exists to show.
+func eventSeverity(s string) *string { return &s }
+
 // schedule is a host's discrete events over the whole simulated window,
 // sorted by time and consumed in order as the grid advances.
 type schedule struct {
@@ -52,6 +61,7 @@ func newSchedule(p *Profile, s signal, from, to time.Time) *schedule {
 		evs = append(evs, timedEvent{ts: from, event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    p.Mdraid,
+			Severity:   eventSeverity("info"),
 			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"idle"}`,
 		}})
 	}
@@ -330,8 +340,12 @@ func mdraidTrouble(p *Profile, s signal, from, to time.Time) []timedEvent {
 func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 	return []timedEvent{
 		{ts: at, event: &netrav1.Event{
-			Type:       "mdraid",
-			Subject:    array,
+			Type:    "mdraid",
+			Subject: array,
+			// Degraded and nothing is rebuilding it: severityOf in
+			// agent/collector/mdraid.go calls that critical, and the sim must
+			// state what the real collector would.
+			Severity:   eventSeverity("critical"),
 			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"idle"}`,
 		}},
 		// Well clear of the degrade rather than 90 seconds after it: on the
@@ -339,13 +353,16 @@ func mdraidIncident(array string, at, rebuilt time.Time) []timedEvent {
 		// timestamp, and the second would vanish into the unique index on
 		// (host_id, ts, type, subject).
 		{ts: at.Add(25 * time.Minute), event: &netrav1.Event{
-			Type:       "mdraid",
-			Subject:    array,
+			Type:    "mdraid",
+			Subject: array,
+			// Still degraded, but the kernel is rebuilding it: a warning.
+			Severity:   eventSeverity("warning"),
 			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":1,"sync_action":"recover"}`,
 		}},
 		{ts: rebuilt, event: &netrav1.Event{
 			Type:       "mdraid",
 			Subject:    array,
+			Severity:   eventSeverity("info"),
 			DetailJson: `{"state":"clean","level":"raid10","raid_disks":4,"degraded":0,"sync_action":"idle"}`,
 		}},
 	}
@@ -394,17 +411,19 @@ func kernelTrouble(p *Profile, s signal, from, to time.Time) []timedEvent {
 		evs = append(evs, timedEvent{ts: at, event: &netrav1.Event{
 			Type:       "ata_error",
 			Subject:    "ata4.00",
-			DetailJson: `{"severity":"critical","message":"ata4.00: exception Emask 0x0 SAct 0x780381ff SErr 0x0 action 0x0","priority":3,"count":4}`,
+			Severity:   eventSeverity("critical"),
+			DetailJson: `{"message":"ata4.00: exception Emask 0x0 SAct 0x780381ff SErr 0x0 action 0x0","priority":3,"count":4}`,
 		}})
 		// A minute later rather than the same instant: both would land in the
 		// same slot on the coarse grid, and the unique index on
 		// (host_id, ts, type, subject) does not separate them by type alone
 		// once the timestamps match -- see the mdraid note above.
 		evs = append(evs, timedEvent{ts: at.Add(time.Minute), event: &netrav1.Event{
-			Type:    "disk_error",
-			Subject: failing,
+			Type:     "disk_error",
+			Subject:  failing,
+			Severity: eventSeverity("critical"),
 			DetailJson: fmt.Sprintf(
-				`{"severity":"critical","message":"blk_update_request: I/O error, dev %s, sector 13211246 op 0x0:(READ) flags 0x0 phys_seg 20 prio class 0","priority":3,"count":4,"suppressed":118}`,
+				`{"message":"blk_update_request: I/O error, dev %s, sector 13211246 op 0x0:(READ) flags 0x0 phys_seg 20 prio class 0","priority":3,"count":4,"suppressed":118}`,
 				failing),
 		}})
 	}

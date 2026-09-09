@@ -113,9 +113,10 @@ type SensorSpec struct {
 	Swing float64
 
 	// What this sensor measures: temperature, fan, voltage, current or
-	// power. Empty means temperature, which keeps every existing spec in
-	// archetypes.go reading as it did and matches the hub's own default for
-	// an agent predating the field.
+	// power. Empty means temperature, which keeps every temperature spec in
+	// archetypes.go terse. That is this table's shorthand only -- what goes
+	// on the wire is always spelled out, because the hub stores the kind
+	// verbatim and has no default of its own.
 	//
 	// The unit follows the kind -- degrees C, RPM, volts, amps, watts -- so
 	// Base and Swing are read in that unit too: a fan's Base is a four-digit

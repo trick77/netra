@@ -91,7 +91,10 @@ func TestIntegrationRepeatedEventStatesAreNotStored(t *testing.T) {
 //
 // The kernel says `active` while a write is outstanding and `clean` once the
 // superblock is flushed, so on an array taking writes the raw word flaps every
-// few minutes. An agent predating the normalization sends every flap.
+// few minutes -- and the agent SENDS that raw word. It normalizes only inside
+// compareKey, a copy used for its own change detection, so its dedup lasts as
+// long as its process: every restart and every ResendInventory re-arm reports
+// each array again with whatever word is current.
 func TestIntegrationMdraidDirtyBitFlapIsNotAnEvent(t *testing.T) {
 	ctx := context.Background()
 	s, id := openEvents(t)

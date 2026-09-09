@@ -89,8 +89,11 @@ func TestOneOutageProducesExactlyOneEvent(t *testing.T) {
 	}
 
 	d := hubDetail(t, ev)
-	if d["severity"] != "info" {
-		t.Errorf("detail severity = %v, want info: both event views read the detail key first", d["severity"])
+	// The severity is asserted on the FIELD above and nowhere else. It used to
+	// ride the detail as well, for hubs that read it there; nothing does now,
+	// and a second copy could only drift from the first.
+	if _, ok := d["severity"]; ok {
+		t.Errorf("detail carries a severity key: %v -- the field is the only channel", d["severity"])
 	}
 	if d["reason"] != "unreachable" {
 		t.Errorf("reason = %v, want unreachable", d["reason"])

@@ -666,9 +666,10 @@ CREATE TABLE IF NOT EXISTS sensors (
     label   TEXT NOT NULL,
     -- What the sensor measures: temperature, fan, voltage, current, power.
     -- Charting a 1200 RPM fan on the same axis as a 45 degree package is the
-    -- mistake this exists to prevent. Defaulted rather than NOT NULL: an
-    -- agent predating the field sends nothing, and temperature is the only
-    -- kind such an agent could have meant.
+    -- mistake this exists to prevent. The DEFAULT is inert now -- every INSERT
+    -- names the column, and the hub stopped substituting temperature for an
+    -- empty kind once agents predating the field were refused at ingest -- and
+    -- stays only because this migration is applied and forward-only.
     kind    TEXT NOT NULL DEFAULT 'temperature'
 );
 

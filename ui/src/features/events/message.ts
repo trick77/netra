@@ -226,10 +226,11 @@ function normalizeArrayState(state: string): string {
   return HEALTHY_ARRAY_STATES.includes(state) ? "clean" : state;
 }
 
-function mdraidCondition(f: Record<string, unknown>): {
-  word: string;
-  severity: "critical" | "warning" | null;
-} {
+/** The word describing an array's condition, for the sentence this file
+ * builds. It does NOT decide severity: that is the collector's judgement now
+ * (severityOf in agent/collector/mdraid.go), travels in the event's own
+ * field, and is read straight off it. */
+function mdraidCondition(f: Record<string, unknown>): { word: string } {
   const degraded = Number(f["degraded"]);
   const missing = Number.isFinite(degraded) && degraded > 0;
   // A whole array is described by array_state, normalized: the kernel toggles
@@ -242,7 +243,7 @@ function mdraidCondition(f: Record<string, unknown>): {
   // An event carrying no state at all still has nothing to report, and the
   // caller falls back to spelling the detail out.
   if (!missing) {
-    return { word: normalizeArrayState(text(f, "state")), severity: null };
+    return { word: normalizeArrayState(text(f, "state")) };
   }
 
   // sync_action is idle / resync / recover / check / repair. The first two of
@@ -252,21 +253,7 @@ function mdraidCondition(f: Record<string, unknown>): {
   const sync = text(f, "sync_action");
   const rebuilding =
     sync === "recover" || sync === "resync" || sync === "repair";
-  return {
-    word: rebuilding ? "rebuilding" : "degraded",
-    severity: rebuilding ? "warning" : "critical",
-  };
-}
-
-/** The severity of an mdraid event, or null when the array is whole.
- *
- * Exported for ./severity's severityOf, which otherwise judges an event by
- * matching words in its detail against a table -- a table that, for mdraid,
- * lists states the kernel has never emitted and so never fired. A degraded
- * array rendered as "info". */
-export function mdraidSeverity(event: Event): "critical" | "warning" | null {
-  if (event.type !== "mdraid") return null;
-  return mdraidCondition(fields(event)).severity;
+  return { word: rebuilding ? "rebuilding" : "degraded" };
 }
 
 function mdraidMessage(name: string, f: Record<string, unknown>): string {

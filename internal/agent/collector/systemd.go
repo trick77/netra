@@ -189,7 +189,9 @@ func (s *Systemd) SetListerForTest(l UnitLister) { s.lister = l }
 
 // EmitsBaseline implements BaselineEmitter, keeping this collector out of the
 // agent's startup priming. Its first Collect reports the units that are
-// already failed, and priming would discard exactly that.
+// already failed, and carries the snapshot besides -- the snapshot is gated on
+// prev == nil (or a snapshotFloor since the last one), and priming discards the
+// Result it collects while still setting prev. Priming would throw both away.
 func (s *Systemd) EmitsBaseline() bool { return true }
 
 // Name implements Collector.
@@ -293,15 +295,16 @@ func (s *Systemd) Collect(ctx context.Context) (*Result, error) {
 	//
 	// This is the one place this collector deliberately differs from mdraid.
 	//
-	// The asymmetry -- it can announce a failure it found on arrival, but
-	// never a RECOVERY that happened while the agent was down -- is what the
-	// snapshot below now covers, so this branch is strictly redundant against
-	// a current hub. It stays for one release because agents roll forward
-	// ahead of hubs: deploy/agent/compose.yaml.tmpl pins netra-agent:latest,
-	// so a host can be running an agent that speaks SystemdSnapshot to a hub
-	// that ignores it, and dropping this would leave that pair reporting no
-	// failures at all. DELETE THIS BRANCH once no supported hub predates the
-	// snapshot.
+	// It READS as redundant against the snapshot below, which states what every
+	// unit IS and covers the case this branch cannot -- a RECOVERY that
+	// happened while the agent was down. It is not redundant.
+	// ApplySystemdSnapshot writes its catch-up events through a JOIN against
+	// systemd_units (step 1 in hub/store/families.go) and only creates the
+	// missing rows afterwards, in step 3, so a unit the hub has never seen
+	// contributes no event at all: on a fresh host, or for a unit installed and
+	// failed while the agent was down, the snapshot gives it a units row and
+	// the events log never mentions it. This branch is what puts that failure
+	// in the log.
 	for _, name := range names {
 		u := cur[name]
 		p, seen := prev[name]

@@ -95,9 +95,6 @@ func (c *Client) beginOutage() {
 
 // hubDetail is what lands in a hub event's detail.
 type hubDetail struct {
-	// Severity is read by both event views before anything else, which is what
-	// makes this render correctly with no new severity logic in either.
-	Severity string `json:"severity"`
 	// Reason distinguishes the two ways deliveries stop, which need different
 	// sentences: "unreachable" is the hub being away, "token-rejected" is a
 	// configuration error that will not fix itself.
@@ -157,7 +154,6 @@ func (c *Client) endOutage() {
 
 	now := c.clock()
 	detail := hubDetail{
-		Severity: severity,
 		Reason:   reason,
 		OutageMs: now.Sub(c.outage.startedAt).Milliseconds(),
 		Failures: c.outage.failures,
@@ -169,8 +165,8 @@ func (c *Client) endOutage() {
 	if err != nil {
 		// A struct of strings and integers cannot fail to marshal; if it
 		// somehow does, that the outage happened is worth more than its
-		// numbers.
-		body = []byte(`{"severity":"info"}`)
+		// numbers. The severity rides the field either way.
+		body = []byte(`{}`)
 	}
 	sev := severity
 	c.pendingEvents = append(c.pendingEvents, &netrav1.Event{

@@ -40,8 +40,9 @@ type Event struct {
 	// follow. A package upgrade is a fact, not an emergency, and is always
 	// info.
 	//
-	// Duplicated in the detail JSON for now, where the UI still reads it. The
-	// field is what a non-browser reader uses.
+	// The only channel. It was duplicated into the detail JSON while the UI
+	// read it from there; both event views take it from here now, and the
+	// producers have stopped writing the key.
 	Severity string `json:"severity"`
 }
 

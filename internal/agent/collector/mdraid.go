@@ -23,18 +23,6 @@ type arrayState struct {
 	SyncAction string `json:"sync_action"`
 }
 
-// mdraidDetail is what lands in events.detail: the array's state, plus the
-// severity this collector decided.
-//
-// Embedded rather than a field, so the detail keeps the flat shape it has
-// always had -- state, level, raid_disks, degraded, sync_action -- and gains
-// one key. A nested object would have broken every reader of the old shape,
-// including the migration that backfills historical rows.
-type mdraidDetail struct {
-	arrayState
-	Severity string `json:"severity"`
-}
-
 // healthyStates are the md/array_state values that all mean "nothing is wrong
 // with this array".
 //
@@ -196,7 +184,7 @@ func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
 		}
 
 		severity := state.severityOf()
-		detail, err := json.Marshal(mdraidDetail{arrayState: state, Severity: severity})
+		detail, err := json.Marshal(state)
 		if err != nil {
 			// Marshalling a struct of strings and ints cannot fail in
 			// practice; if it somehow does, the array's state change is worth
@@ -205,15 +193,10 @@ func (m *Mdraid) Collect(_ context.Context) (*Result, error) {
 		}
 
 		events = append(events, &netrav1.Event{
-			TsMs:     ts,
-			Type:     "mdraid",
-			Subject:  name,
-			Severity: &severity,
-			// Severity is in BOTH the field and the detail, deliberately. The
-			// field is what the hub stores and what a non-browser reader uses;
-			// the key is what both event views read first, and the host Events
-			// tab accepts nothing else -- so dropping it here would leave a
-			// degraded array uncoloured on the very page that lists it.
+			TsMs:       ts,
+			Type:       "mdraid",
+			Subject:    name,
+			Severity:   &severity,
 			DetailJson: string(detail),
 		})
 	}

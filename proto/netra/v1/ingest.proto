@@ -602,9 +602,9 @@ message SensorSample {
   // at 1200 RPM charted on the same scale as a 45 degree package temperature
   // is the failure this field exists to prevent.
   //
-  // One of: temperature, fan, voltage, current, power. Empty from an agent
-  // predating this field, which the hub reads as temperature -- the only
-  // kind those agents could send.
+  // One of: temperature, fan, voltage, current, power. Always set: the hub
+  // stores it verbatim and no longer defaults an empty one to temperature,
+  // which it did while agents predating this field were still reporting.
   string kind = 5;
 
   // The reading in the kind's own unit: degrees C, RPM, volts, amps, watts.
@@ -865,15 +865,20 @@ message Event {
   // "info", "warning" or "critical" -- how bad this event is, stated by the
   // producer rather than derived by whoever reads it.
   //
-  // It rode detail_json's `severity` key before this field existed, and both
-  // event views still read it there. That was enough while a browser was the
-  // only reader: alerting cannot call into the UI, so the judgement has to
-  // arrive as a field rather than as a convention inside a blob.
+  // It rode detail_json's `severity` key before this field existed. That was
+  // enough while a browser was the only reader: alerting cannot call into the
+  // UI, so the judgement has to arrive as a field rather than as a convention
+  // inside a blob.
   //
-  // Optional, and the hub falls back to the detail key when it is unset --
-  // agents are deployed per host, so an agent older than this field must keep
-  // classifying correctly. An unrecognised value is treated as unset for the
-  // same reason: a hub must not reject a batch over a word it does not know.
+  // This is now the ONLY channel. The hub read both while agents predating the
+  // field were still reporting; it reads the field alone now, producers have
+  // stopped duplicating the key, and the ingest gate refuses agents too old to
+  // set it. Rows written before that still carry the key, and
+  // 0015_event_severity.sql backfilled the column from it.
+  //
+  // Still optional, and an unrecognised value is treated as unset: events
+  // .severity has a CHECK on it, so a hub that passed a word through
+  // unexamined would turn one malformed event into a rejected batch.
   optional string severity = 5;
 }
 

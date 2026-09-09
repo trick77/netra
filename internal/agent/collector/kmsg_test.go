@@ -189,8 +189,12 @@ func TestKmsgClassifiesRealKernelMessages(t *testing.T) {
 			if ev.GetSubject() != tc.subject {
 				t.Errorf("subject = %q, want %q", ev.GetSubject(), tc.subject)
 			}
-			if got := detailOf(t, ev)["severity"]; got != tc.sev {
-				t.Errorf("severity = %v, want %q", got, tc.sev)
+			// The field, which is the only place a severity travels now.
+			if got := ev.GetSeverity(); got != tc.sev {
+				t.Errorf("severity = %q, want %q", got, tc.sev)
+			}
+			if _, ok := detailOf(t, ev)["severity"]; ok {
+				t.Error("detail carries a severity key; the field is the only channel")
 			}
 		})
 	}
