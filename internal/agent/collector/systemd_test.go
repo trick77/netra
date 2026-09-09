@@ -37,19 +37,25 @@ func TestSystemdReportsTheSummaryOnTheHostRow(t *testing.T) {
 	}
 }
 
-// The first scrape emits NO events, and states everything in the SNAPSHOT.
+// The first scrape emits a BASELINE of the units that are already FAILED.
 //
-// This collector used to baseline the already-failed units as events, so that
-// a unit broken before the agent started said something more than the
-// services_failed counter. The snapshot answers that and the case the event
-// baseline never could -- a unit that RECOVERED while the agent was down --
-// so the events are pure transitions now.
+// A unit that was already failed when the agent started would otherwise
+// produce no event at all -- only the services_failed counter would show
+// anything, with no unit name and no "since when", which is the question this
+// table exists to answer.
 //
-// Nothing is emitted per unit for the reason the baseline was always
-// restricted to failures: every loaded .service on a normal host is 200-400,
-// mostly inactive/dead oneshots, and systemd_unit_events is a plain table with
-// no retention policy.
-func TestSystemdFirstScrapeStatesUnitsInTheSnapshotNotAsEvents(t *testing.T) {
+// The snapshot does NOT make this redundant, which is the trap: it states what
+// every unit IS, but the hub turns it into events through a JOIN against
+// systemd_units and creates the missing rows only afterwards, so a unit the hub
+// has never heard of contributes no event. On a fresh host the failure would
+// reach the units view and never reach the log.
+//
+// Restricted to failed units on purpose, unlike mdraid. Every loaded .service
+// on a normal host is 200-400, mostly inactive/dead oneshots, and
+// systemd_unit_events is a plain table with no retention policy: baselining
+// all of them would write a few hundred unprunable rows per host on every
+// agent restart.
+func TestSystemdEmitsABaselineOfFailedUnitsOnTheFirstScrape(t *testing.T) {
 	testee := collector.NewSystemd(fakeUnits(
 		collector.Unit{Name: "ssh.service", Active: "active", SubState: "running"},
 		collector.Unit{Name: "nginx.service", Active: "failed", SubState: "failed"},
@@ -61,37 +67,29 @@ func TestSystemdFirstScrapeStatesUnitsInTheSnapshotNotAsEvents(t *testing.T) {
 		t.Fatalf("Collect: %v", err)
 	}
 
-	if len(res.SystemdEvents) != 0 {
-		t.Fatalf("events on the first scrape = %d, want 0 -- arrival is not a transition",
+	if len(res.SystemdEvents) != 1 {
+		t.Fatalf("events on the first scrape = %d, want 1 -- only the failed unit is news",
 			len(res.SystemdEvents))
 	}
+	ev := res.SystemdEvents[0]
+	if got := ev.GetUnitName(); got != "nginx.service" {
+		t.Errorf("unit_name = %q, want nginx.service", got)
+	}
+	if got := ev.GetState(); got != "failed" {
+		t.Errorf("state = %q, want failed", got)
+	}
+	if ev.GetTsMs() == 0 {
+		t.Error("baseline event carries no ts_ms")
+	}
 
+	// And the snapshot rides along, carrying every unit rather than only the
+	// broken one: it is what lets the hub retire a failure it never saw end.
 	snap := res.SystemdSnapshot
 	if snap == nil {
-		t.Fatal("first scrape carried no snapshot; nothing would say the host has a failed unit")
+		t.Fatal("first scrape carried no snapshot")
 	}
-	if !snap.GetComplete() {
-		t.Error("snapshot is not marked complete")
-	}
-	if snap.GetTsMs() == 0 {
-		t.Error("snapshot carries no ts_ms")
-	}
-
-	states := map[string]string{}
-	for _, u := range snap.GetUnits() {
-		states[u.GetUnitName()] = u.GetState()
-	}
-	// Every unit, not just the broken one: the snapshot is what IS, and it is
-	// what lets the hub retire a failure it never saw end.
-	want := map[string]string{
-		"ssh.service":     "active",
-		"nginx.service":   "failed",
-		"cleanup.service": "inactive",
-	}
-	for name, state := range want {
-		if states[name] != state {
-			t.Errorf("snapshot state for %s = %q, want %q", name, states[name], state)
-		}
+	if len(snap.GetUnits()) != 3 {
+		t.Errorf("snapshot carried %d units, want 3", len(snap.GetUnits()))
 	}
 }
 
@@ -262,25 +260,15 @@ func TestSystemdResendInventoryReArmsTheFailedBaseline(t *testing.T) {
 		t.Fatalf("Collect after re-arm: %v", err)
 	}
 
-	// Then: the hub is told the failure again -- through the snapshot, which
-	// the re-arm re-triggers by forgetting the previous states. Events stay
-	// transitions, and a re-arm has no transition to report.
-	if len(res.SystemdEvents) != 0 {
-		t.Fatalf("events after re-arm = %d, want 0 -- the snapshot carries the state", len(res.SystemdEvents))
+	// Then: the failure is reported again -- and only the failure, not every
+	// loaded unit.
+	if len(res.SystemdEvents) != 1 {
+		t.Fatalf("events after re-arm = %d, want 1 (the failed unit only)", len(res.SystemdEvents))
 	}
-
-	snap := res.SystemdSnapshot
-	if snap == nil {
-		t.Fatal("no snapshot after re-arm; the hub would keep serving active for a failed unit")
+	if got := res.SystemdEvents[0].GetUnitName(); got != "nginx.service" {
+		t.Errorf("unit = %q, want nginx.service", got)
 	}
-	states := map[string]string{}
-	for _, u := range snap.GetUnits() {
-		states[u.GetUnitName()] = u.GetState()
-	}
-	if states["nginx.service"] != "failed" {
-		t.Errorf("nginx.service = %q after re-arm, want failed", states["nginx.service"])
-	}
-	if states["ssh.service"] != "active" {
-		t.Errorf("ssh.service = %q after re-arm, want active", states["ssh.service"])
+	if got := res.SystemdEvents[0].GetState(); got != "failed" {
+		t.Errorf("state = %q, want failed", got)
 	}
 }

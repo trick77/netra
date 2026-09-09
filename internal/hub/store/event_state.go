@@ -15,12 +15,14 @@ import (
 // row says nothing the first did not.
 //
 // The agent already emits state types on change only (see
-// agent/collector/mdraid.go), but two paths legitimately re-send a state the
+// agent/collector/mdraid.go), but three paths legitimately re-send a state the
 // hub already has: the baseline every agent start emits (the hub cannot tell
-// "array it has never heard of" from "array that has not changed") and the
-// re-arm after a dropped scrape. Stored verbatim, both fill the log with rows
-// that describe nothing -- which is what the fleet's mdraid line did, minutes
-// apart, for arrays that had simply been clean the whole time.
+// "array it has never heard of" from "array that has not changed"), the re-arm
+// after a dropped scrape, and either of those landing while the kernel's dirty
+// bit happens to be set, which changes the word without changing the array.
+// Stored verbatim, all three fill the log with rows that describe nothing --
+// which is what the fleet's mdraid line did, minutes apart, for arrays that had
+// simply been clean the whole time.
 //
 // This is the same guarantee InsertSystemdUnitEvents already gives its table.
 //
@@ -81,21 +83,45 @@ type mdraidState struct {
 	SyncAction string `json:"sync_action"`
 }
 
+// mdraidHealthyStates are the md/array_state words that all mean "nothing is
+// wrong with this array".
+//
+// A copy of the collector's list (agent/collector/mdraid.go), and the
+// duplication is load-bearing rather than an oversight. The agent normalizes
+// only inside compareKey, a value-receiver copy used for its own change
+// detection -- what it SENDS is the raw word the kernel reported, deliberately,
+// because that is the one place the exact word survives.
+//
+// So the collapsing has to happen here too, and it is not about old agents.
+// The agent's own dedup lasts as long as its process: on a restart, or after
+// ResendInventory re-arms it, `prev` is nil and it re-reports every array with
+// whatever word is current. The kernel toggles `active` -> `clean` as the
+// superblock dirty bit clears, so on an array taking writes that word is a coin
+// flip -- and without this, a baseline that says `active` against a stored row
+// that says `clean` reads as a change and stores a row describing nothing.
+//
+// Anything not listed -- inactive, readonly, suspended, clear, an empty read
+// -- is a real condition and keeps its own identity.
+var mdraidHealthyStates = map[string]bool{
+	"clean":         true,
+	"active":        true,
+	"active-idle":   true,
+	"write-pending": true,
+	"read-auto":     true,
+}
+
 func mdraidStateKey(detail json.RawMessage) (string, error) {
 	var s mdraidState
 	if err := json.Unmarshal(detail, &s); err != nil {
 		return "", fmt.Errorf("parse mdraid detail: %w", err)
 	}
-	// state is taken verbatim. The kernel toggles `active` -> `clean` as the
-	// superblock dirty bit clears, so on an array taking writes the raw word
-	// flaps every few minutes -- but the agent collapses the healthy words
-	// before sending (normalizeArrayState in agent/collector/mdraid.go), so
-	// what arrives here is already stable and a second copy of that list would
-	// only be a second place to change it.
-	//
+	state := s.State
+	if mdraidHealthyStates[state] {
+		state = "clean"
+	}
 	// level, raid_disks, degraded and sync_action compare exactly, so a scrub
 	// starting and finishing (idle -> check -> idle) still records both: those
 	// are the collector's own account of the scrub, and only the flapping
 	// underneath them is dropped.
-	return fmt.Sprintf("%s|%s|%d|%d|%s", s.State, s.Level, s.RaidDisks, s.Degraded, s.SyncAction), nil
+	return fmt.Sprintf("%s|%s|%d|%d|%s", state, s.Level, s.RaidDisks, s.Degraded, s.SyncAction), nil
 }

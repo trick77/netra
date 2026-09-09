@@ -20,15 +20,14 @@ func TestEventStateKeyOnlyAnswersForStateShapedTypes(t *testing.T) {
 			wantOK:  true,
 		},
 		{
-			// The state word is taken verbatim. The dirty bit toggling under a
-			// write is the same healthy array twice, but the AGENT collapses
-			// those words before sending (normalizeArrayState), so the hub
-			// sees "clean" and a second copy of that list here would only be a
-			// second place to change it.
-			name:    "the state word is not reinterpreted",
+			// The dirty bit toggling under a write is the same healthy array
+			// twice, and the agent sends the raw word: it normalizes only
+			// inside compareKey, for its own change detection, so a restart or
+			// a re-arm re-reports the array with whatever word is current.
+			name:    "active is clean",
 			typ:     "mdraid",
 			detail:  `{"state":"active","level":"raid1","raid_disks":2,"degraded":0,"sync_action":"idle"}`,
-			wantKey: "active|raid1|2|0|idle",
+			wantKey: "clean|raid1|2|0|idle",
 			wantOK:  true,
 		},
 		{

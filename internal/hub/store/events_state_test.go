@@ -87,26 +87,20 @@ func TestIntegrationRepeatedEventStatesAreNotStored(t *testing.T) {
 	}
 }
 
-// The hub stores the state word it was given, and does not reinterpret it.
+// The dirty bit is not a state change.
 //
 // The kernel says `active` while a write is outstanding and `clean` once the
 // superblock is flushed, so on an array taking writes the raw word flaps every
-// few minutes. The hub used to collapse those words itself, for agents that
-// sent every flap. The COLLECTOR does it now, before the event is ever sent
-// (normalizeArrayState, and TestMdraidIgnoresTheDirtyBitFlappingDuringACheck
-// covers it), so a second copy of that list here would only be a second place
-// to change it -- and a hub that reinterprets a word it was given cannot be
-// trusted to report what the kernel actually said.
-//
-// The dedup that remains is exact, and TestIntegrationRepeatedEventStatesAreNotStored
-// above covers it: a normalized stream of `clean` still stores one row.
-func TestIntegrationMdraidStateWordsAreStoredAsGiven(t *testing.T) {
+// few minutes -- and the agent SENDS that raw word. It normalizes only inside
+// compareKey, a copy used for its own change detection, so its dedup lasts as
+// long as its process: every restart and every ResendInventory re-arm reports
+// each array again with whatever word is current.
+func TestIntegrationMdraidDirtyBitFlapIsNotAnEvent(t *testing.T) {
 	ctx := context.Background()
 	s, id := openEvents(t)
 	start := time.Now().Add(-time.Hour)
 
-	words := []string{"clean", "active", "clean", "active-idle", "write-pending"}
-	for i, state := range words {
+	for i, state := range []string{"clean", "active", "clean", "active-idle", "write-pending"} {
 		at := start.Add(time.Duration(i) * time.Minute)
 		if _, err := s.InsertEvents(ctx, id, []*netrav1.Event{
 			mdraidEvent(at, "md3", mdraidDetail(state, 0, "idle")),
@@ -115,12 +109,9 @@ func TestIntegrationMdraidStateWordsAreStoredAsGiven(t *testing.T) {
 		}
 	}
 
-	// Five distinct words, so five rows: consecutive duplicates would still
-	// collapse, and none of these is a duplicate of the one before it.
-	got := eventDetails(t, s, id)
-	if len(got) != len(words) {
-		t.Fatalf("stored %d events (%v), want %d -- the hub must not rewrite the "+
-			"kernel's word", len(got), got, len(words))
+	if got := eventDetails(t, s, id); len(got) != 1 {
+		t.Errorf("stored %d events (%v), want 1 -- every one of those words means "+
+			"the same healthy array", len(got), got)
 	}
 }
 

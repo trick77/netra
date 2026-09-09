@@ -30,8 +30,17 @@ const storageFailureRetryAfter = 30 * time.Second
 
 // upgradeRequiredRetryAfter is handed back with a 426. Far longer than the
 // storage-failure figure because the fix is a human pulling a new image, not a
-// database recovering: retrying every 30s for however long that takes buys
+// database recovering: retrying every scrape for however long that takes buys
 // nothing.
+//
+// No agent acts on it TODAY, and by construction none ever will: the client
+// reads retry_after_s only from a 503 (parseRetryAfter in agent/client), and
+// the only agents that can be refused here are builds older than the gate. So a
+// refused agent retries on its own backoff and records the refusals as an
+// outage with reason "unreachable", which is the one misleading part of this --
+// the hub answered, it just would not take the batch. Sent anyway because the
+// field is what the response means and a later agent can honour it without a
+// hub change.
 const upgradeRequiredRetryAfter = 5 * time.Minute
 
 // minPlausibleTs and maxPlausibleFuture bound the timestamps the hub accepts
