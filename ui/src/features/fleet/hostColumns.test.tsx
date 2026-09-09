@@ -9,7 +9,7 @@ import { render, screen } from "@testing-library/react";
 import { areaPath, linePath } from "../../ui/charts/geometry";
 import { SPARK_STRIP_HEIGHT, SPARK_WIDTH } from "../../ui/charts/size";
 import { diskAxis, hostColumns, type HostRow } from "./hostColumns";
-import { ABSENT } from "../../lib/format";
+import { ABSENT, absolute } from "../../lib/format";
 
 function makeRow(overrides: Partial<HostRow> = {}): HostRow {
   return {
@@ -102,7 +102,10 @@ describe("hostColumns", () => {
   // it ran through the middle of the three that have both; the gauges are the
   // block a reader scans for what needs acting on, and they now run
   // uninterrupted.
-  it("yields Host, CPU, Memory, Filesystem, Traffic in that exact order", () => {
+  // Last seen sits at the right end, after Traffic: it is the row's quietest
+  // fact, and beside the hostname it would have split the identity from the
+  // block of gauges the list is scanned by -- see the column's own note.
+  it("yields Host, CPU, Memory, Filesystem, Traffic, Last seen in that exact order", () => {
     const cols = hostColumns("1h");
     expect(cols.map((c) => c.header)).toEqual([
       "Host",
@@ -110,13 +113,14 @@ describe("hostColumns", () => {
       "Memory",
       "Filesystem",
       "Traffic",
+      "Last seen",
     ]);
   });
 
   it("consumes the range parameter (build fails silently otherwise via noUnusedParameters)", () => {
     // Both calls must succeed and be independent column arrays.
-    expect(hostColumns("1h")).toHaveLength(5);
-    expect(hostColumns("24h")).toHaveLength(5);
+    expect(hostColumns("1h")).toHaveLength(6);
+    expect(hostColumns("24h")).toHaveLength(6);
   });
 
   // The accessors are separate from the cell on purpose -- a cell is a
@@ -346,12 +350,12 @@ describe("hostColumns", () => {
       ).not.toContain("gone");
     });
 
-    // The pill is the whole point of the column's second mark, and what it
-    // has to get right is the RANKING -- see hostPill. Every case below is a
+    // The mark is the whole point of the column's second element, and what it
+    // has to get right is the RANKING -- see hostMark. Every case below is a
     // host that is more than one thing at once.
-    describe("severity pill", () => {
+    describe("severity mark", () => {
       const now = () => new Date().toISOString();
-      const pill = (
+      const mark = (
         row: HostRow,
         worst?: (row: HostRow) => "warning" | "critical" | null,
         sporadic?: (row: HostRow) => boolean,
@@ -360,41 +364,42 @@ describe("hostColumns", () => {
           (c) => c.header === "Host",
         )!;
         const { container } = render(<>{col.cell(row)}</>);
-        return container.querySelector(".badge");
+        return container.querySelector(".smark");
       };
 
       it("says nothing about a host with nothing wrong", () => {
-        expect(pill(makeRow({ last_seen: now() }), () => null)).toBeNull();
+        expect(mark(makeRow({ last_seen: now() }), () => null)).toBeNull();
       });
 
-      // A caller that derives no conditions at all still gets the reporting
-      // status it always had -- the fleet list is not the only table built
-      // from these columns.
-      it("keeps the reporting status when no severity is supplied", () => {
-        const badge = pill(makeRow({ last_seen: "2020-01-01T00:00:00Z" }));
-        expect(badge?.textContent).toBe("offline");
+      // The one behaviour worth pinning down twice: a host nobody has heard
+      // from gets NO mark, because the row says it twice already -- the name
+      // is painted --st-crit-text and the Last seen column prints how long
+      // the silence has run. A third mark beside them said nothing the other
+      // two had not, in the narrowest column of the table.
+      it("leaves a silent host to its red name and its Last seen", () => {
+        expect(mark(makeRow({ last_seen: "2020-01-01T00:00:00Z" }))).toBeNull();
       });
 
-      it("words a reporting host's worst condition as its severity", () => {
+      it("marks a reporting host's worst condition at its severity", () => {
         expect(
-          pill(makeRow({ last_seen: now() }), () => "critical")?.textContent,
-        ).toBe("critical");
+          mark(makeRow({ last_seen: now() }), () => "critical"),
+        ).toHaveClass("st-crit");
         expect(
-          pill(makeRow({ last_seen: now() }), () => "warning")?.textContent,
-        ).toBe("warning");
+          mark(makeRow({ last_seen: now() }), () => "warning"),
+        ).toHaveClass("st-warn");
       });
 
       // The rule the fleet is read by: a machine nobody has heard from has
-      // stale figures for everything else, so its silence is the one fact
-      // worth marking. The disk that is still 96% full is in the row's own
-      // Filesystem cell either way.
-      it("says only offline for a silent host that also has a critical", () => {
-        const badge = pill(
-          makeRow({ last_seen: "2020-01-01T00:00:00Z" }),
-          () => "critical",
-        );
-        expect(badge?.textContent).toBe("offline");
-        expect(badge?.className).toContain("st-crit");
+      // stale figures for everything else, so a "critical" derived from its
+      // last known disk reading would claim to describe this minute. The disk
+      // that WAS 96% full is in the row's own Filesystem cell either way.
+      it("marks nothing on a silent host that also has a critical", () => {
+        expect(
+          mark(
+            makeRow({ last_seen: "2020-01-01T00:00:00Z" }),
+            () => "critical",
+          ),
+        ).toBeNull();
       });
 
       // The other direction, and it is NOT symmetric: a sporadic host is
@@ -402,38 +407,40 @@ describe("hostColumns", () => {
       // gaps in its series.
       //
       // Sporadic is the HUB's verdict now, read off the same conditions the
-      // severity is, so the pill's word and its colour cannot come from two
+      // severity is, so the mark's shape and its colour cannot come from two
       // different answers.
-      it("lets a critical outrank sporadic, and sporadic outrank a warning", () => {
+      it("lets a critical outrank sporadic, and sporadic hold at warning", () => {
         const gappy = makeRow({ last_seen: now() });
 
         expect(
-          pill(
+          mark(
             gappy,
             () => "critical",
             () => true,
-          )?.textContent,
-        ).toBe("critical");
+          ),
+        ).toHaveClass("st-crit");
         expect(
-          pill(
+          mark(
             gappy,
-            () => "warning",
+            () => null,
             () => true,
-          )?.textContent,
-        ).toBe("sporadic");
+          ),
+        ).toHaveClass("st-warn");
       });
 
-      // One pill, never two -- the ranking is this column's to do, not the
+      // One mark, never two -- the ranking is this column's to do, not the
       // reader's.
-      it("draws exactly one pill however many things are wrong", () => {
-        const col = hostColumns("1h", () => "critical").find(
-          (c) => c.header === "Host",
-        )!;
+      it("draws exactly one mark however many things are wrong", () => {
+        const col = hostColumns(
+          "1h",
+          () => "critical",
+          () => true,
+        ).find((c) => c.header === "Host")!;
         const { container } = render(
-          <>{col.cell(makeRow({ last_seen: "2020-01-01T00:00:00Z" }))}</>,
+          <>{col.cell(makeRow({ last_seen: now() }))}</>,
         );
 
-        expect(container.querySelectorAll(".badge")).toHaveLength(1);
+        expect(container.querySelectorAll(".smark")).toHaveLength(1);
       });
     });
 
@@ -1193,14 +1200,35 @@ describe("hostColumns", () => {
   });
 
   describe("host cell", () => {
-    it("carries a status word inside the chip, never colour alone", () => {
-      const cols = hostColumns("1h");
-      const hostCol = cols.find((c) => c.header === "Host")!;
-      const row = makeRow({ last_seen: "2026-08-10T13:59:30Z" });
-      const { container } = render(<>{hostCol.cell(row)}</>);
-      const badge = container.querySelector(".badge")!;
-      expect(badge.className).toMatch(/st-/);
-      expect(badge).toHaveTextContent(/./);
+    // Severity never rides on colour alone (spec §3.3, and the header of
+    // Badge.tsx on why: amber and crit measure ΔE 2.2 under deuteranopia).
+    // The fleet mark answers it with SHAPE rather than with a word, so what
+    // this pins is that the two severities are two different glyphs -- if a
+    // future edit collapses them to one path in two colours, the mark stops
+    // being a mitigation and this fails.
+    it("draws a different glyph per severity, never one glyph in two colours", () => {
+      const path = (worst: "warning" | "critical"): string => {
+        const hostCol = hostColumns("1h", () => worst).find(
+          (c) => c.header === "Host",
+        )!;
+        const { container } = render(
+          <>{hostCol.cell(makeRow({ last_seen: new Date().toISOString() }))}</>,
+        );
+        return container.querySelector(".smark path")!.getAttribute("d")!;
+      };
+
+      expect(path("warning")).not.toBe(path("critical"));
+    });
+
+    // And the word is still there for anyone not reading the row by eye.
+    it("names the severity for a screen reader", () => {
+      const hostCol = hostColumns("1h", () => "critical").find(
+        (c) => c.header === "Host",
+      )!;
+      render(
+        <>{hostCol.cell(makeRow({ last_seen: new Date().toISOString() }))}</>,
+      );
+      expect(screen.getByLabelText("critical")).toBeInTheDocument();
       expect(screen.getByText("web-01")).toBeInTheDocument();
     });
 
@@ -1209,19 +1237,22 @@ describe("hostColumns", () => {
     // i.e. 180s) rather than a separately-invented number -- these two
     // tests pin the boundary at that 180s line, not at some other value
     // a future edit might drift to.
-    // Healthy is the majority state, so it carries no badge at all: a row
-    // that says "online" down the whole page spends the eye's first stop on
-    // the word that never changes. The absence of a badge IS the healthy
-    // reading, and the boundary below is still pinned at 180s.
+    // Healthy is the majority state, so it carries no mark at all: a row that
+    // says "online" down the whole page spends the eye's first stop on the
+    // word that never changes. The absence of a mark IS the healthy reading.
+    //
+    // What the boundary is read off is now the NAME rather than a badge --
+    // the row's mark for a host that has gone quiet is .host-cell-name.gone,
+    // and the pair of tests around this line is still what pins it at 180s.
     it("says nothing at 179s since last_seen, just under 3x the scrape interval", () => {
       const cols = hostColumns("1h");
       const hostCol = cols.find((c) => c.header === "Host")!;
       const lastSeen = new Date(Date.now() - 179_000).toISOString();
       const row = makeRow({ last_seen: lastSeen });
       const { container } = render(<>{hostCol.cell(row)}</>);
-      expect(container.querySelector(".badge.st-crit")).not.toBeInTheDocument();
+      expect(container.querySelector(".host-cell-name.gone")).toBeNull();
       expect(screen.queryByText("online")).toBeNull();
-      expect(container.querySelector(".badge")).not.toBeInTheDocument();
+      expect(container.querySelector(".smark")).toBeNull();
     });
 
     // Answering now, but a fifth of the window missing. "online" and
@@ -1232,7 +1263,11 @@ describe("hostColumns", () => {
     // FIXED window rather than the range the reader had picked -- the guards
     // it needs are pinned in internal/hub/conditions/rules_test.go and the
     // SQL that trims the window's edges in
-    // TestIntegrationScanFindsASporadicHost. What is left here is the badge.
+    // TestIntegrationScanFindsASporadicHost. What is left here is the mark --
+    // amber, the same one a warning condition draws. The word it used to
+    // carry is gone with every other word in this column; what says it now is
+    // the Last seen column ticking past a scrape interval while the row keeps
+    // drawing figures.
     it("marks a host the hub called sporadic", () => {
       const cols = hostColumns("1h", undefined, () => true);
       const hostCol = cols.find((c) => c.header === "Host")!;
@@ -1240,11 +1275,10 @@ describe("hostColumns", () => {
         last_seen: new Date(Date.now() - 10_000).toISOString(),
       });
       const { container } = render(<>{hostCol.cell(row)}</>);
-      expect(screen.getByText("sporadic")).toBeInTheDocument();
-      expect(container.querySelector(".badge.st-crit")).not.toBeInTheDocument();
+      expect(container.querySelector(".smark")).toHaveClass("st-warn");
     });
 
-    // And the converse, so the test above cannot pass by the badge simply
+    // And the converse, so the test above cannot pass by the mark simply
     // always appearing.
     it("says nothing about a host the hub did not call sporadic", () => {
       const cols = hostColumns("1h", undefined, () => false);
@@ -1252,20 +1286,23 @@ describe("hostColumns", () => {
       const row = makeRow({
         last_seen: new Date(Date.now() - 10_000).toISOString(),
       });
-      render(<>{hostCol.cell(row)}</>);
-      expect(screen.queryByText("sporadic")).toBeNull();
+      const { container } = render(<>{hostCol.cell(row)}</>);
+      expect(container.querySelector(".smark")).toBeNull();
     });
 
-    // A host that has genuinely stopped is offline, not sporadic: its silence
-    // is the one fact worth marking, and the gaps in its series are that same
-    // outage said a second time.
-    it("says offline rather than sporadic for a host that stopped", () => {
+    // A host that has genuinely stopped is not sporadic, and it does not draw
+    // sporadic's amber mark: it draws no mark at all, and its silence is said
+    // by the red name and by Last seen. The gaps in its series are that same
+    // outage said a third time.
+    it("drops the sporadic mark entirely for a host that stopped", () => {
       const cols = hostColumns("1h", undefined, () => true);
       const hostCol = cols.find((c) => c.header === "Host")!;
       const row = makeRow({ last_seen: "2020-01-01T00:00:00Z" });
-      render(<>{hostCol.cell(row)}</>);
-      expect(screen.getByText("offline")).toBeInTheDocument();
-      expect(screen.queryByText("sporadic")).toBeNull();
+      const { container } = render(<>{hostCol.cell(row)}</>);
+      expect(container.querySelector(".smark")).toBeNull();
+      expect(
+        container.querySelector(".host-cell-name.gone"),
+      ).toBeInTheDocument();
     });
 
     it("reads offline at 181s since last_seen, just past 3x the scrape interval", () => {
@@ -1274,8 +1311,84 @@ describe("hostColumns", () => {
       const lastSeen = new Date(Date.now() - 181_000).toISOString();
       const row = makeRow({ last_seen: lastSeen });
       const { container } = render(<>{hostCol.cell(row)}</>);
-      expect(container.querySelector(".badge.st-crit")).toBeInTheDocument();
-      expect(screen.getByText("offline")).toBeInTheDocument();
+      expect(
+        container.querySelector(".host-cell-name.gone"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  // The column the "offline" word was traded for. What it has to get right is
+  // that it answers "since when", which is the question the word could not.
+  describe("last seen", () => {
+    const seen = (row: HostRow, now?: Date): Element => {
+      const col = hostColumns("1h", undefined, undefined, now).find(
+        (c) => c.header === "Last seen",
+      )!;
+      const { container } = render(<>{col.cell(row)}</>);
+      return container.querySelector(".seen-cell")!;
+    };
+
+    it("prints an age against the page's clock, not the wall clock", () => {
+      const now = new Date("2026-08-10T14:00:00Z");
+      expect(
+        seen(makeRow({ last_seen: "2026-08-10T11:46:00Z" }), now).textContent,
+      ).toBe("2 h 14 m ago");
+    });
+
+    // A minute past the threshold and four days dead drew the identical
+    // "offline" chip, and the difference between those two is the whole of
+    // what a reader wants at that moment.
+    it("separates a host just over the line from one long dead", () => {
+      const now = new Date("2026-08-10T14:00:00Z");
+      const justOver = seen(
+        makeRow({ last_seen: "2026-08-10T13:56:00Z" }),
+        now,
+      ).textContent;
+      const longDead = seen(
+        makeRow({ last_seen: "2026-08-06T14:00:00Z" }),
+        now,
+      ).textContent;
+      expect(justOver).toBe("4 m ago");
+      expect(longDead).toBe("4 d ago");
+    });
+
+    // The WORD, not the absent dash. Four other cells on that row print the
+    // dash for the ordinary reason that there is nothing to draw, so a fifth
+    // one reads as "no value here" rather than as the host's condition -- and
+    // on a never-seen row it is the only thing besides the name's hue that
+    // states that condition at all. Severity may not ride on colour alone.
+    it("says never, not a dash, for a host that has never reported", () => {
+      const cell = seen(makeRow({ last_seen: null }));
+      expect(cell.textContent).toBe("never");
+      expect(cell.textContent).not.toBe(ABSENT);
+    });
+
+    // The exact instant belongs under the pointer -- an age is the scanning
+    // reading, a timestamp is the one you take to a log.
+    it("carries the exact instant on the title", () => {
+      const cell = seen(makeRow({ last_seen: "2026-08-10T11:46:00Z" }));
+      expect(cell.querySelector("[title]")!.getAttribute("title")).toBe(
+        absolute("2026-08-10T11:46:00Z"),
+      );
+    });
+
+    // The instant, the way the container list's Last seen sorts the same
+    // field -- not the raw ISO string, which orders by an offset nothing
+    // guarantees. Null goes to the unknown group, which Table always sorts
+    // last: a host nobody has ever heard from is not the longest-silent host
+    // on the page.
+    it("sorts on the instant, and puts a never-seen host in the unknown group", () => {
+      const col = hostColumns("1h").find((c) => c.header === "Last seen")!;
+      expect(
+        col.sortValue!(makeRow({ last_seen: "2026-08-10T11:46:00Z" })),
+      ).toBe(Date.parse("2026-08-10T11:46:00Z"));
+      // Same instant, written at a different offset: it must sort to the same
+      // place, which sorting the string could not promise.
+      expect(
+        col.sortValue!(makeRow({ last_seen: "2026-08-10T13:46:00+02:00" })),
+      ).toBe(col.sortValue!(makeRow({ last_seen: "2026-08-10T11:46:00Z" })));
+      expect(col.sortValue!(makeRow({ last_seen: null }))).toBeNull();
+      expect(col.sortValue!(makeRow({ last_seen: "not a date" }))).toBeNull();
     });
   });
   // The cell refuses to print a figure for a host that stopped reporting, so

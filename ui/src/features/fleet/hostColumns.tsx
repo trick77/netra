@@ -6,7 +6,8 @@
 // `width`/`align` (Table-only, see ui/Table.tsx) are deliberately never
 // set below: this file has no opinion on layout, only on content.
 import type { Column } from "../../ui/Table";
-import { Badge } from "../../ui/Badge";
+import { SeverityMark } from "../../ui/SeverityMark";
+import { When } from "../../ui/When";
 import { NowReading } from "../../ui/NowReading";
 import { OsIcon } from "../../ui/OsIcon";
 import type { Band } from "../../ui/charts/StackedSparkline";
@@ -257,57 +258,53 @@ function reported(value: string | null | undefined): string | null {
 }
 
 /**
- * What the one pill beside a hostname says, or null when the row has nothing
+ * What the one mark beside a hostname says, or null when the row has nothing
  * to report.
  *
- * ONE pill, never two. A row that said "sporadic" and "critical" side by side
- * spent the identity column on two marks and left the reader to rank them --
- * and the ranking is not theirs to do: it is the same worst-first rule the
- * rail down the row's leading edge and the counts line above the table
- * already apply.
+ * ONE mark, never two. A row that showed "sporadic" and "critical" side by
+ * side spent the identity column on two of them and left the reader to rank
+ * them -- and the ranking is not theirs to do: it is the same worst-first
+ * rule the counts line above the table already applies.
  *
- * The order below IS that rule, and each step earns its place:
+ * It returns a SEVERITY and no longer a word. The word used to be the whole
+ * point -- "critical", the way the Events tab writes it -- and what killed it
+ * is that it was the same word on every row that had one, set in the
+ * narrowest column of the table, four columns to the left of the cells that
+ * say WHICH thing is critical. SeverityMark keeps the reading available to a
+ * screen reader and to the pointer, and takes the repetition off the page.
  *
- *   offline / never seen -- a host nobody has heard from has stale figures
- *     for everything else, so a "critical" derived from its last known disk
- *     reading would claim to describe this minute. It outranks everything,
- *     including conditions that are still true of the machine: the row's own
- *     Filesystem cell still says "was 96 % full", and the host page holds the
- *     rest.
+ * The order below is the ranking rule, and each step earns its place:
+ *
+ *   offline / never seen -- NO MARK AT ALL, and that is the one change of
+ *     substance here. The row already says it twice: the hostname is painted
+ *     --st-crit-text (see .host-cell-name.gone) and the Last seen column
+ *     prints how long the silence has run. A third mark beside them added
+ *     nothing, and it could not be the honest one anyway -- a "critical"
+ *     derived from a silent host's last known disk reading claims to
+ *     describe this minute. Which is why this branch returns null rather
+ *     than falling through to `worst`: the conditions below are stale for
+ *     exactly these hosts. The row's own cells still say "was 96 % full",
+ *     and the host page holds the rest.
  *   critical -- something on a host that IS reporting needs acting on now.
- *   sporadic -- the same severity as the generic warning below, and the more
- *     specific word at that severity, so a host with gaps keeps saying so
- *     instead of being flattened into "warning".
+ *   sporadic -- a host that answers but keeps dropping scrapes. It used to
+ *     carry its own word, because "online" and "offline" are equally wrong
+ *     summaries of it; the word is gone with the rest, and what says it now
+ *     is the Last seen column ticking up past a scrape interval while the
+ *     row keeps drawing figures. Judged by the HUB, over a fixed window --
+ *     counting it here off row.reporting made the mark a fact about the
+ *     reader's range picker as much as about the host.
  *   warning
- *
- * The word is the SEVERITY, not the kind that earned it -- "critical", the
- * way the Events tab and the counts line above this table already write it.
- * The kind is named in the row's own cells and in full on the host page, and
- * this is the narrowest column in the table: "Filesystem nearly full" set
- * beside a hostname is a variable-width pill repeating what the counts line
- * above the table already groups by.
  */
-function hostPill(
+function hostMark(
   status: HostStatus,
   worst: "warning" | "critical" | null,
   sporadic: boolean,
-): { severity: "warning" | "critical"; label: string } | null {
-  if (status.severity === "critical") {
-    return { severity: "critical", label: status.label };
-  }
-  if (worst === "critical") return { severity: "critical", label: "critical" };
-  // A host that answers now but keeps dropping scrapes. It is neither online
-  // nor offline, and "online" is exactly as wrong a summary of it as "offline"
-  // -- so the word is its own rather than the generic "warning" below.
-  //
-  // Judged by the HUB now. This used to be counted here off row.reporting,
-  // over whatever range the reader had picked, which made the badge a fact
-  // about the range as much as about the host.
-  if (sporadic) return { severity: "warning", label: "sporadic" };
-  if (status.severity === "warning") {
-    return { severity: "warning", label: status.label };
-  }
-  if (worst === "warning") return { severity: "warning", label: "warning" };
+): "warning" | "critical" | null {
+  if (status.severity === "critical") return null;
+  if (worst === "critical") return "critical";
+  if (sporadic) return "warning";
+  if (status.severity === "warning") return "warning";
+  if (worst === "warning") return "warning";
   return null;
 }
 
@@ -324,7 +321,7 @@ function HostCell({
   now?: Date;
   /**
    * The worst severity anything on this host is at -- read through the very
-   * function that draws the row's rail, so the pill and the rail can never
+   * function that draws the row's rail, so the mark and the rail can never
    * disagree about the same host.
    *
    * undefined is a caller that derives no conditions at all, and leaves the
@@ -333,7 +330,7 @@ function HostCell({
    */
   worst?: (row: HostRow) => "warning" | "critical" | null;
   /** Whether the hub raised `sporadic` on this host. Read through the same
-   * conditions `worst` is, so the pill's word and its colour cannot come from
+   * conditions `worst` is, so the mark's shape and its colour cannot come from
    * two different answers. */
   sporadic?: (row: HostRow) => boolean;
 }) {
@@ -347,10 +344,10 @@ function HostCell({
   // already visible in its sparkline, and this says the same thing in a word.
   //
   // `now` comes from the page rather than being read off the wall clock here,
-  // and that matters now that the pill is the row's only severity mark: the
+  // and that matters now that the mark is the row's only severity mark: the
   // conditions this cell's `worst` is derived from are judged against the
   // page's clock, so a cell reading its own would let the two halves of one
-  // pill disagree about whether a host is still reporting. They are the same
+  // mark disagree about whether a host is still reporting. They are the same
   // instant in a browser; they are not in a test, and they are not for a
   // caller that supplies its own.
   const status = hostStatus(row, now);
@@ -360,9 +357,11 @@ function HostCell({
   // and os-release runs long enough that it had to be truncated to stay on
   // one line. The host page names the release in full.
   const location = hostLocationLines(row);
-  // Null on almost every row -- healthy is the majority state. See hostPill
-  // for which of a host's several truths it picks, and why only one.
-  const pill = hostPill(status, worst?.(row) ?? null, sporadic?.(row) ?? false);
+  // Null on almost every row -- healthy is the majority state, and now also
+  // on every offline one, where the red name and the Last seen column say it
+  // instead. See hostMark for which of a host's several truths it picks, and
+  // why only one.
+  const mark = hostMark(status, worst?.(row) ?? null, sporadic?.(row) ?? false);
   return (
     // Its own wrapper rather than .host-cell itself: the container list's
     // name cell is built from .host-cell too, and it has no mark to seat, so
@@ -399,10 +398,15 @@ function HostCell({
           eye's first stop -- and the leftmost column -- on the word "online"
           repeated down the page. What a reader scans for is the exception,
           which is now the only thing marked. Which exception it marks when a
-          host has more than one, and why it marks only one: see hostPill. */}
-          {pill !== null && (
-            <Badge severity={pill.severity}>{pill.label}</Badge>
-          )}
+          host has more than one, and why it marks only one: see hostMark.
+
+          A mark rather than a badge, since the badge that survived that cut
+          was still a variable-width object carrying a word the reader had
+          already learned by the third row. SeverityMark is one glyph wide on
+          every row, so the column ranks itself by which rows have one --
+          and the shape, not the hue, is what separates the two severities.
+          See SeverityMark on why that is not a style choice. */}
+          {mark !== null && <SeverityMark severity={mark} />}
         </div>
         {/* The location goes under the name rather than beside it: the two are
           a heading and its subtitle, not two peers, and the row has the
@@ -1036,6 +1040,53 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
   );
 }
 
+/**
+ * How long ago the hub last heard from this host.
+ *
+ * The column exists because the fleet stopped saying it in words. "offline"
+ * used to sit beside the hostname and answer a question it could not
+ * actually answer -- offline since when? A minute past the threshold and
+ * four days dead drew the identical chip, and the difference between those
+ * two is the whole of what a reader wants at that moment. An age answers it
+ * and needs no threshold to do so, which is also why it is on EVERY row and
+ * not only the silent ones: a healthy fleet reading "18 s ago" down the
+ * column is the fleet telling you the scrape loop is alive, and a row that
+ * has drifted to "4 m ago" is visible here before any threshold has fired
+ * and before the name goes red.
+ *
+ * `When` does the formatting, and it is the same `When` the container list's
+ * own Last seen column renders. Its header says why: three tables now print a
+ * seen-at column, and a second copy is how two columns headed the same thing
+ * come to format differently. This cell adds the type (.seen-cell) and the
+ * one case the container list does not have.
+ *
+ * That case is "never", and it is a WORD rather than the absent dash. A
+ * container row always has a last_seen; a host record can exist having never
+ * reported once, and on that row the dash was the only thing in the entire
+ * table saying so -- the name's red is a hue, the mark is gone, and every
+ * figure is absent for the ordinary reason that there is nothing to draw. A
+ * dash there reads as "this cell has no value", which is true of four other
+ * cells on the same row and is not the fact. "never" is the fact, it is the
+ * word hostStatus already uses, and it is what keeps this row's condition
+ * legible without colour -- see .host-cell-name.gone in index.css.
+ *
+ * `now` is the page's clock, the same instant hostMark judges the row's
+ * severity against. A cell reading its own would let one row's name go red
+ * against a different millisecond than the one its Last seen was measured
+ * from; identical in a browser, not in a test.
+ */
+function LastSeenCell({ row, now }: { row: HostRow; now?: Date }) {
+  return (
+    <span className="seen-cell">
+      {row.last_seen === null ? (
+        <span className="absent">never</span>
+      ) : (
+        <When iso={row.last_seen} now={now} />
+      )}
+    </span>
+  );
+}
+
 // The Uptime column and its cell are gone from this list. Uptime is a fact
 // about a host, not a reading to scan a fleet by: it is the same number all
 // day and the row's job is what changed. It still leads the host page's
@@ -1122,12 +1173,12 @@ export function hostColumns(
       // answers no question at all.
       sortValue: (row) => row.fullest?.pct ?? null,
     },
-    // Last, at the right end of the row. It sat second, on the argument that
-    // traffic is what a fleet list is most often scanned for; the three
-    // columns after it are the ones with a bar and a threshold, so scanning
-    // for what needs acting on had to step over a rate that has neither.
-    // CPU, memory and disk now run as one uninterrupted block of gauges and
-    // traffic reads as the context beside them.
+    // After the gauges. It sat second, on the argument that traffic is what a
+    // fleet list is most often scanned for; the three columns after it are
+    // the ones with a bar and a threshold, so scanning for what needs acting
+    // on had to step over a rate that has neither. CPU, memory and disk now
+    // run as one uninterrupted block of gauges and traffic reads as the
+    // context beside them.
     {
       key: "traffic",
       header: "Traffic",
@@ -1145,6 +1196,35 @@ export function hostColumns(
         const tx = row.net_tx_bytes;
         if (rx === null && tx === null) return null;
         return (rx ?? 0) + (tx ?? 0);
+      },
+    },
+    // Last, at the right end of the row, and the only column after Traffic.
+    // It is the row's quietest fact: on a healthy fleet every line of it says
+    // the same thing, seconds, and nobody reads it until something else has
+    // already drawn the eye. Put beside the hostname it explains it would
+    // have been the second thing scanned on every row to answer a question
+    // asked on almost none of them, and it would have split the identity from
+    // the block of gauges the list exists to be scanned by.
+    {
+      key: "seen",
+      header: "Last seen",
+      cell: (row) => <LastSeenCell row={row} now={now} />,
+      // The INSTANT, the way the container list's Last seen column sorts the
+      // same field. It sorted the raw ISO string for one commit, on the claim
+      // that every last_seen is UTC so lexicographic order is chronological
+      // order -- nothing enforces that claim: read/host.go marshals a
+      // *time.Time with whatever offset the driver hands back, and one row
+      // arriving at +02:00 would sort into the wrong place through Table's
+      // string branch. Two spellings of one column is also how the two drift.
+      //
+      // Null and an unparseable date both go to the unknown group (see
+      // Column.sortValue), which is where a host nobody has ever heard from
+      // belongs: it is not the longest-silent host on the page, and flipping
+      // the arrow must not promote it to the top.
+      sortValue: (row) => {
+        if (row.last_seen === null) return null;
+        const ms = Date.parse(row.last_seen);
+        return Number.isNaN(ms) ? null : ms;
       },
     },
   ];
