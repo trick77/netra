@@ -370,12 +370,15 @@ describe("EventsPage", () => {
     expect(screen.queryByText(/more packages changed/)).toBeNull();
   });
 
-  it("links each row to its host", () => {
+  // To the same URL every other host link in the app spells out, `/overview`
+  // included. Bare `/hosts/3` reached the same screen by redirect, which made
+  // this the one host link written differently for no gain.
+  it("links each row to its host overview", () => {
     renderPage({ events: [event()] });
 
     expect(screen.getByRole("link", { name: "web-01" })).toHaveAttribute(
       "href",
-      "/hosts/3",
+      "/hosts/3/overview",
     );
   });
 

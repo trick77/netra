@@ -63,7 +63,12 @@
      different jobs (the size a control or a cell is set in, and the size a
      label beside it is), and a later change to one should not silently move
      the other. */
-  --text-display: 1.75rem;
+  /* 24px, which is the wordmark's size in the bar overhead (.topbar
+     .wordmark, stated in px there because it is measured against the bar's
+     52px rather than against this scale). It was 28px, so the page title
+     out-sized the product's own name on every screen. Feeds .pagehead h1 and
+     .hosthead h1 and nothing else, so the two move together. */
+  --text-display: 1.5rem;
   --text-title: 1.25rem;
   --text-body: 1rem;
   --text-ui: 0.875rem;
@@ -551,8 +556,36 @@ a {
   text-decoration: none;
   transition: color 120ms ease;
 }
-a:hover {
-  color: var(--accent);
+/* What a link does under the pointer, once, for the whole app: it underlines.
+   It does NOT change colour, and the two halves of that are separate
+   decisions.
+
+   THE UNDERLINE, not a hue, because colour here is a data channel and is
+   already fully spent. Accent names the clause saying what is wrong,
+   --st-crit-text marks a host that is gone, the severity glyphs carry their
+   own. A hover that repaints text accent competes with all of it, and this
+   file has already discovered that twice and patched it locally: a.hostname
+   needed an underline rule of its own because .hostname is ALREADY accent so
+   the hover did nothing, and .host-cell-name.gone keeps its red through hover
+   only by being (0,2,0) and winning a fight it should never have been in.
+   Underline is the one channel nothing else is using.
+
+   `a:where(:hover)` rather than `a:hover`, and the parenthesis is the whole
+   fix. `a:hover` is (0,1,1), which BEATS every opt-out written as a single
+   class -- .atile, .pal-row, .tile, .host-cell-name are all (0,1,0) -- so
+   their `color` was silently overridden while the pointer was down and their
+   authors' intent never reached the screen. Measured, not deduced: a
+   container name sat at --ink and turned accent under the pointer; the
+   palette painted the row under a resting cursor accent while the keyboard's
+   own .on highlight was somewhere else, which is the exact state that
+   component's comment says it was built to avoid.
+
+   :where() contributes nothing, so this lands at (0,0,1) -- enough to beat
+   `a`'s own text-decoration above it, and less than any class. Every opt-out
+   below now works as written, and one added later cannot fail silently. */
+a:where(:hover) {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .serif {
   font-family: var(--font-serif);
@@ -1074,19 +1107,11 @@ a:hover {
 .hostname {
   color: var(--accent);
 }
-/* A hostname LINK still has to answer the pointer.
-   `a:hover` paints --accent, which is what .hostname already is, so giving
-   these the accent silently cost them their only hover feedback: the Host
-   column of the containers list, the container detail header and the fleet's
-   container group went from ink-to-accent on hover to no change at all.
-   Underline rather than a second hue, matching .host-cell-name in the row
-   above -- and on the link itself here, because these sit in prose and in
-   table cells that are not themselves the target the row lists. Excluded
-   where the row already owns it, so a fleet row keeps underlining once. */
-a.hostname:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
+/* The underline this used to declare for itself is the base `a:where(:hover)`
+   rule now, so the local exception is gone. It existed because `a:hover`
+   painted accent and .hostname is already accent, leaving these three sites
+   with no hover feedback at all; the base rule no longer touches colour, so
+   every text link underlines and this one needs to say nothing. */
 /* Underlined on row hover rather than on the link itself: the whole row is
    the target a pointer is over, and underlining only under the cursor made
    the name look like the one live thing in a row that is entirely live. */
@@ -1655,6 +1680,11 @@ tbody tr:hover .host-cell-name {
   font-size: var(--text-label);
   padding: 9px 13px;
   color: var(--muted);
+  /* A tab is a control, not a word in a sentence: it says where you are with
+     colour and a bottom border, and must not underline under the pointer.
+     Stated here rather than left to the base `a` rule, which the hover
+     underline now outranks. */
+  text-decoration: none;
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
@@ -2176,6 +2206,11 @@ tbody tr:hover .host-cell-name {
   padding: 0;
   border-radius: var(--radius-sm);
   color: var(--ink-2);
+  /* A control, and one holding a glyph rather than a word: it answers the
+     pointer with a ground and a hue below, and there is nothing here for an
+     underline to sit under. Stated rather than inherited from `a`, which the
+     hover underline now outranks. */
+  text-decoration: none;
   position: relative;
   /* Same 120ms ease .atile uses -- this app has one hover timing. */
   transition:
@@ -2507,6 +2542,11 @@ tbody tr:hover .host-cell-name {
   border-radius: var(--radius-ui);
   background: var(--surface);
   color: var(--ink);
+  /* .btn is worn by <button> AND by <a> (App.tsx's "Add host"). A button
+     shape is the affordance; underlining the word inside it would say the
+     same thing twice and in the wrong register. Stated because the hover
+     underline outranks the base `a`. */
+  text-decoration: none;
   cursor: pointer;
 }
 .btn.primary {
@@ -3687,7 +3727,10 @@ a.tile:focus-visible {
   margin: 0;
   font-family: var(--font-serif);
   font-size: var(--text-display);
-  letter-spacing: -0.015em;
+  /* -0.01em, matching .pagehead h1 and the wordmark. It was -0.015em, which
+     set the same face at the same size fractionally tighter here than on
+     every other page for no reason anyone recorded. */
+  letter-spacing: -0.01em;
   line-height: 1.2;
 }
 .hosthead .meta {
@@ -4730,6 +4773,10 @@ summary:focus-visible,
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
+  /* It arrives as a framed chip on focus, which is its affordance; the hover
+     underline would only fire if a pointer found a control that exists for
+     the keyboard, and it would fight the frame. */
+  text-decoration: none;
   z-index: 10;
 }
 .skip:focus {

@@ -244,8 +244,12 @@ function columns(now: Date): Column<Event>[] {
     {
       key: "host",
       header: "Host",
+      // `/overview` explicitly, which every other host link in the app already
+      // spells out -- the fleet row, the containers list, the container page,
+      // the palette. This one said `/hosts/{id}` and reached the same screen
+      // by redirect, so it was the odd link out for no gain.
       cell: (event) => (
-        <a className="evhost" href={`/hosts/${event.host_id}`}>
+        <a className="evhost" href={`/hosts/${event.host_id}/overview`}>
           {event.hostname}
         </a>
       ),
