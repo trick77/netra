@@ -226,7 +226,7 @@ export function perCoreBands(
         // The key names the core. The sweep gives each one its own hue now,
         // but a hue is not a label: this is what a hovered band reads out.
         name: `core ${series.key.core ?? i}`,
-        color: seriesHue(i, CORE_HUE_OFFSET),
+        color: seriesHue(i, n, CORE_HUE_OFFSET),
         fill: SWEPT_FILL_OPACITY,
         values,
       };
@@ -291,10 +291,11 @@ export function containerBands(
   if (trends.length === 0) return [];
 
   const reported = bucketsWithAnyReading(trends.map((t) => t.values));
+  const n = trends.length;
 
   return trends.map((trend, i) => ({
     name: trend.key,
-    color: seriesHue(i, CONTAINER_HUE_OFFSET),
+    color: seriesHue(i, n, CONTAINER_HUE_OFFSET),
     fill: SWEPT_FILL_OPACITY,
     values: reported.map((any, j) => trend.values[j] ?? (any ? 0 : null)),
   }));
@@ -435,22 +436,29 @@ export const CONTAINER_HUE_OFFSET = 0;
  *
  * ORDER IS THE RESPONSE'S, never usage rank. beszel sorts its containers by
  * total usage before assigning hue, which re-colours the whole stack whenever
- * the busiest container changes; netra's pages poll, so a container would
- * change colour under a reader between refreshes and the enlarged view --
- * which refetches at its own range -- would disagree with the panel it was
- * opened from. Position in the response is stable across both.
+ * the busiest container changes. Position in the response does not move like
+ * that, so a container keeps its place in the stack between polls.
  *
- * THE STEP IS THE GOLDEN ANGLE, NOT 360/n, and that is what makes the
- * paragraph above true rather than merely intended. beszel divides the circle
- * by the band COUNT, so every hue moves when the count does: three containers
- * sit at 0/120/240, a fourth starts, and the next poll redraws them at
- * 0/90/180/270 -- container 2 goes green to yellow with nothing else on the
- * page changing. The enlarged view is worse, because it refetches at a wider
- * range: a 7d window holding a container that was purged yesterday carries
- * one more series than the panel and shifts every hue against it. Stepping by
- * a constant 137.508 degrees depends on `i` alone, which IS stable, and it is
- * the angle that keeps any number of samples near-evenly spread -- adjacent
- * bands land 137 degrees apart however many there are.
+ * THE STEP IS 360/n, DIVIDING THE WHOLE CIRCLE, and it is the step rather
+ * than the palette that makes this read as beszel. Neighbours in the stack
+ * get neighbouring hues, so the bands sweep bottom to top as one spectrum --
+ * red, amber, green, teal, blue, violet -- and the stack looks like a
+ * deliberate ramp. It was briefly the golden angle, 137.508 degrees, which is
+ * independent of the count and therefore perfectly stable; it also puts every
+ * band two thirds of the wheel from the one below it, and the result is a
+ * jumble. Olive against blue against purple is a set of unrelated colours,
+ * not a family, which is exactly the "reads as a category" objection the old
+ * four-step walk was defended with.
+ *
+ * WHAT THAT COSTS, stated because it is real: every hue depends on `n`, so a
+ * container starting or stopping re-colours the whole stack on the next poll.
+ * Three containers sit at 0/120/240; a fourth appears and they redraw at
+ * 0/90/180/270, so the second one goes green to yellow with nothing else on
+ * the page changing. The enlarged view can differ from the panel for the same
+ * reason, since it refetches at a wider range and may see a container the
+ * panel's window does not. That is accepted: the colour identifies a band
+ * against its neighbours within one chart, never across time, and the key on
+ * hover and the enlarged view's stats table are what name a container.
  *
  * This is NOT the monotonic one-hue ramp that was rejected here before: that
  * one subdivided a single hue's lightness, landing 0.047 apart in L per step
@@ -472,10 +480,8 @@ export const CONTAINER_HUE_OFFSET = 0;
  * status hues once a host runs more than a handful of containers, and these
  * bands carry no severity -- the rail, the dot and the word to their left do.
  */
-const GOLDEN_ANGLE = 137.508;
-
-export function seriesHue(i: number, offset: number): string {
-  const hue = (offset + i * GOLDEN_ANGLE) % 360;
+export function seriesHue(i: number, n: number, offset: number): string {
+  const hue = (offset + (i * 360) / Math.max(1, n)) % 360;
   return `hsl(${hue.toFixed(1)}, var(--series-s), var(--series-l))`;
 }
 
