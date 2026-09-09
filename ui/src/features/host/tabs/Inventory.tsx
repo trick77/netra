@@ -1469,7 +1469,21 @@ const PACKAGE_COLUMNS: Column<Pkg>[] = [
   {
     key: "version",
     header: "Version",
-    cell: (row) => row.version,
+    // The identifier face, which is what .mono documents itself as: a string
+    // read character by character rather than as prose. A version is the one
+    // column here that is DIFFED -- 1.2.0-2 against 1.2.0-3 -- and in the
+    // proportional face the digits of one row land nowhere near the next.
+    // Measured over twelve rows: 35px to 46.9px wide in sans, a uniform 54.8px
+    // in mono, so the fields stack in a column instead of drifting.
+    //
+    // Name is deliberately NOT mono, though it is equally an identifier: it is
+    // scanned alphabetically as a word, and setting it in mono turns the whole
+    // table into a terminal dump. Same split the container list already makes,
+    // where the name is sans and only the image ref is .mono.
+    //
+    // One step under the row, because a mono face reads larger than sans at
+    // the same px -- .imgcell drops a step for the same reason.
+    cell: (row) => <span className="pkgver">{row.version}</span>,
     // Table's numeric-aware string compare, which gets "1.9" under "1.10"
     // right and makes no claim to understand an epoch or a "~rc1" suffix.
     // Ordering Debian versions properly is dpkg's job, not a column's.
@@ -1491,7 +1505,24 @@ const PACKAGE_COLUMNS: Column<Pkg>[] = [
     key: "size",
     header: "Size",
     align: "right",
-    cell: (row) => bytes(row.size_bytes),
+    // Tabular figures, which a right-aligned numeric column needs and this one
+    // never had: 453 kB, 825.2 kB and 49.2 kB set in proportional digits do
+    // not line up on the decimal, so the column reads as ragged despite being
+    // aligned. .tnum, not .mono -- these are quantities to compare in size, not
+    // identifiers to diff character by character.
+    //
+    // The absent case is returned BARE, and that is not a stylistic choice:
+    // Table dims a cell by comparing its output to ABSENT by identity
+    // (dimAbsent), so an element always fails the test. Wrapped
+    // unconditionally, a package that reported no size drew its dash at full
+    // data contrast -- the stack-of-dashes the helper exists to prevent. There
+    // are no digits to align in a dash anyway.
+    cell: (row) =>
+      row.size_bytes === null ? (
+        bytes(row.size_bytes)
+      ) : (
+        <span className="tnum">{bytes(row.size_bytes)}</span>
+      ),
     // Bytes, not the formatted string -- see the filesystem table's own size
     // columns for what that costs. Null stays null rather than becoming 0: a
     // package that reported no size is not the smallest one installed, and
