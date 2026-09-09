@@ -1352,30 +1352,43 @@ describe("hostColumns", () => {
       expect(longDead).toBe("4 d ago");
     });
 
-    // The dash, not a zero and not "never": a host nobody has heard from has
-    // no instant to name, and inventing one would read as a reading.
-    it("prints the absent dash for a host that has never reported", () => {
+    // The WORD, not the absent dash. Four other cells on that row print the
+    // dash for the ordinary reason that there is nothing to draw, so a fifth
+    // one reads as "no value here" rather than as the host's condition -- and
+    // on a never-seen row it is the only thing besides the name's hue that
+    // states that condition at all. Severity may not ride on colour alone.
+    it("says never, not a dash, for a host that has never reported", () => {
       const cell = seen(makeRow({ last_seen: null }));
-      expect(cell.textContent).toBe(ABSENT);
-      expect(cell.getAttribute("title")).toBeNull();
+      expect(cell.textContent).toBe("never");
+      expect(cell.textContent).not.toBe(ABSENT);
     });
 
     // The exact instant belongs under the pointer -- an age is the scanning
     // reading, a timestamp is the one you take to a log.
     it("carries the exact instant on the title", () => {
       const cell = seen(makeRow({ last_seen: "2026-08-10T11:46:00Z" }));
-      expect(cell.getAttribute("title")).toBe(absolute("2026-08-10T11:46:00Z"));
+      expect(cell.querySelector("[title]")!.getAttribute("title")).toBe(
+        absolute("2026-08-10T11:46:00Z"),
+      );
     });
 
-    // Sorting is on the ISO string itself -- see the column. Null goes to the
-    // unknown group, which Table always sorts last: a host nobody has ever
-    // heard from is not the longest-silent host on the page.
+    // The instant, the way the container list's Last seen sorts the same
+    // field -- not the raw ISO string, which orders by an offset nothing
+    // guarantees. Null goes to the unknown group, which Table always sorts
+    // last: a host nobody has ever heard from is not the longest-silent host
+    // on the page.
     it("sorts on the instant, and puts a never-seen host in the unknown group", () => {
       const col = hostColumns("1h").find((c) => c.header === "Last seen")!;
       expect(
         col.sortValue!(makeRow({ last_seen: "2026-08-10T11:46:00Z" })),
-      ).toBe("2026-08-10T11:46:00Z");
+      ).toBe(Date.parse("2026-08-10T11:46:00Z"));
+      // Same instant, written at a different offset: it must sort to the same
+      // place, which sorting the string could not promise.
+      expect(
+        col.sortValue!(makeRow({ last_seen: "2026-08-10T13:46:00+02:00" })),
+      ).toBe(col.sortValue!(makeRow({ last_seen: "2026-08-10T11:46:00Z" })));
       expect(col.sortValue!(makeRow({ last_seen: null }))).toBeNull();
+      expect(col.sortValue!(makeRow({ last_seen: "not a date" }))).toBeNull();
     });
   });
   // The cell refuses to print a figure for a host that stopped reporting, so

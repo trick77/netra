@@ -38,8 +38,8 @@ const SEVERITY_CLASS: Record<MarkSeverity, string> = {
 // corner to corner in the box reads smaller than the octagon beside it,
 // because a triangle covers half the area a near-circle does.
 const PATHS: Record<MarkSeverity, string> = {
-  // Apex at the top, base on the floor, with the corners nicked so the mark
-  // does not draw three hairline spikes at 14px.
+  // Apex at the top, base on the floor, inset 0.8 from each edge so the
+  // corners are not clipped by the viewBox at 13px.
   warning: "M8 1.5 15.2 14.2H0.8Z",
   // A regular octagon: the corner cut of a side-16 square is 16/(2+√2).
   critical: "M4.69 0H11.31L16 4.69V11.31L11.31 16H4.69L0 11.31V4.69Z",

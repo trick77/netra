@@ -7,6 +7,7 @@
 // set below: this file has no opinion on layout, only on content.
 import type { Column } from "../../ui/Table";
 import { SeverityMark } from "../../ui/SeverityMark";
+import { When } from "../../ui/When";
 import { NowReading } from "../../ui/NowReading";
 import { OsIcon } from "../../ui/OsIcon";
 import type { Band } from "../../ui/charts/StackedSparkline";
@@ -24,14 +25,7 @@ import {
   UP_COLOR,
   UpDownSparkline,
 } from "../../ui/charts/UpDownSparkline";
-import {
-  absolute,
-  binaryBytes,
-  byterate,
-  bytes,
-  percent,
-  relative,
-} from "../../lib/format";
+import { binaryBytes, byterate, bytes, percent } from "../../lib/format";
 import type { Drive, Host } from "../../lib/api";
 import { hostStatus, isReporting, type HostStatus } from "../../lib/host";
 import { RAIL_RANGES, rangeLabel, type Range } from "../../lib/range";
@@ -1060,15 +1054,21 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
  * has drifted to "4 m ago" is visible here before any threshold has fired
  * and before the name goes red.
  *
- * `relative` renders null and an unparseable date as ABSENT rather than
- * inventing a zero, so a host that has never reported prints the dash -- the
- * honest reading, and the one the removed "never seen" chip was spending a
- * variable-width object on.
+ * `When` does the formatting, and it is the same `When` the container list's
+ * own Last seen column renders. Its header says why: three tables now print a
+ * seen-at column, and a second copy is how two columns headed the same thing
+ * come to format differently. This cell adds the type (.seen-cell) and the
+ * one case the container list does not have.
  *
- * The exact instant rides on `title`, in the reader's own zone. An age is
- * the scanning reading and a timestamp is the one you take to a log, and the
- * pointer is where the second belongs -- the same split absolute() serves
- * everywhere else in the app.
+ * That case is "never", and it is a WORD rather than the absent dash. A
+ * container row always has a last_seen; a host record can exist having never
+ * reported once, and on that row the dash was the only thing in the entire
+ * table saying so -- the name's red is a hue, the mark is gone, and every
+ * figure is absent for the ordinary reason that there is nothing to draw. A
+ * dash there reads as "this cell has no value", which is true of four other
+ * cells on the same row and is not the fact. "never" is the fact, it is the
+ * word hostStatus already uses, and it is what keeps this row's condition
+ * legible without colour -- see .host-cell-name.gone in index.css.
  *
  * `now` is the page's clock, the same instant hostMark judges the row's
  * severity against. A cell reading its own would let one row's name go red
@@ -1077,14 +1077,12 @@ function DiskCell({ row, range }: { row: HostRow; range: Range }) {
  */
 function LastSeenCell({ row, now }: { row: HostRow; now?: Date }) {
   return (
-    <span
-      className="seen-cell"
-      // No title at all on a host that has never reported, rather than a
-      // tooltip reading "–": there is no instant to name, and a hover that
-      // repeats the dash under the pointer is worse than no hover.
-      title={row.last_seen === null ? undefined : absolute(row.last_seen)}
-    >
-      {relative(row.last_seen, now)}
+    <span className="seen-cell">
+      {row.last_seen === null ? (
+        <span className="absent">never</span>
+      ) : (
+        <When iso={row.last_seen} now={now} />
+      )}
     </span>
   );
 }
@@ -1211,14 +1209,23 @@ export function hostColumns(
       key: "seen",
       header: "Last seen",
       cell: (row) => <LastSeenCell row={row} now={now} />,
-      // The ISO string itself. Every row's last_seen is UTC off the same
-      // endpoint, and ISO-8601 in a fixed zone sorts lexicographically in
-      // exactly the order it sorts chronologically -- so this needs no
-      // Date.parse per row per sort. Null sorts to the unknown group (see
+      // The INSTANT, the way the container list's Last seen column sorts the
+      // same field. It sorted the raw ISO string for one commit, on the claim
+      // that every last_seen is UTC so lexicographic order is chronological
+      // order -- nothing enforces that claim: read/host.go marshals a
+      // *time.Time with whatever offset the driver hands back, and one row
+      // arriving at +02:00 would sort into the wrong place through Table's
+      // string branch. Two spellings of one column is also how the two drift.
+      //
+      // Null and an unparseable date both go to the unknown group (see
       // Column.sortValue), which is where a host nobody has ever heard from
       // belongs: it is not the longest-silent host on the page, and flipping
       // the arrow must not promote it to the top.
-      sortValue: (row) => row.last_seen ?? null,
+      sortValue: (row) => {
+        if (row.last_seen === null) return null;
+        const ms = Date.parse(row.last_seen);
+        return Number.isNaN(ms) ? null : ms;
+      },
     },
   ];
 }

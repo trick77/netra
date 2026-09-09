@@ -467,11 +467,15 @@ h3 {
    That column is the exception this rule used to be written against: dark
    --accent (#d97757) sits in the same warm band as the status hues, so an
    orange name beside a severity mark can read as a severity itself. What
-   makes it safe where it is: the mark beside a hostname is a BADGE with a
-   word in it ("offline", "sporadic"), not a bare dot, so the hue is never
-   what a reader resolves it by; and the name is the one link in a row of
-   readings, which is the other thing the colour is doing there. A bare
-   status dot next to accent-coloured text is still the thing to avoid.
+   makes it safe where it is: the mark beside a hostname carries a second
+   channel of its own, so the hue is never what a reader resolves it by. That
+   used to be a BADGE with a word in it ("offline", "sporadic"); the fleet's
+   mark is a wordless glyph now, and what carries it there is SHAPE -- a
+   triangle for warning against an octagon for critical, which stay apart in
+   greyscale (see SeverityMark.tsx). The other half is unchanged: the name is
+   the one link in a row of readings, which is the other thing the colour is
+   doing there. A bare status dot next to accent-coloured text is still the
+   thing to avoid.
    120ms is the app's one hover timing. */
 a {
   color: var(--ink-2);
@@ -970,10 +974,20 @@ a:hover {
 /* Except a host that is not reporting. That one keeps a hue, and it is the
    status palette's rather than the brand's: the name IS the reading on a row
    whose figures have all gone absent, so it is the only thing left to mark.
-   The badge beside it still says the word -- this is the same fact at the
-   scan distance where nobody has read the badge yet.
    Critical only, which is offline and never-seen: a sporadic host is
-   answering, and its own amber badge is where that belongs. */
+   answering, and its own amber mark is where that belongs.
+
+   WHAT SAYS IT IN WORDS IS THE LAST SEEN COLUMN, and that matters more than
+   it used to. This rule used to lean on the badge beside the name ("the badge
+   still says the word -- this is the same fact at the scan distance where
+   nobody has read the badge yet"), and that badge is gone: a silent host
+   draws no severity mark at all, because a critical derived from its last
+   known disk reading would claim to describe this minute. Severity may not
+   ride on colour alone (spec §3.3), so the hue here is the SECOND channel and
+   the age is the first -- "2 d 6 h ago" on a row whose every other figure is
+   absent, and the word "never" on a host that has never reported, which is
+   the case that would otherwise have had nothing but this hue to say it. See
+   LastSeenCell on why that one prints a word rather than the absent dash. */
 .host-cell-name.gone {
   /* The TEXT step of the critical hue, not the fill: --st-crit is a bar
      colour and reads under the body floor as type. */
@@ -2584,11 +2598,13 @@ tbody tr:hover .host-cell-name {
    graphic (3:1) and the raw hue is the one that reads as the status colour
    at that size -- --st-crit-text on a solid shape reads pink. */
 .smark {
+  /* Never shrink: this is 13px of glyph beside a hostname that can be any
+     length, and .host-cell-top is a flex row -- without it a long name in a
+     narrow Host column squeezes the mark instead of wrapping. */
   flex: none;
-  /* Optically centred against the hostname beside it rather than sitting on
-     its baseline: the mark has no baseline of its own, and .host-cell-top
-     already centres its children, so this only corrects for the triangle's
-     mass sitting low inside its own box. */
+  /* Block, so the SVG does not sit on a text baseline and carry inline
+     layout's descender gap under it. .host-cell-top centres its children, so
+     the vertical placement comes from there and needs no nudge here. */
   display: block;
 }
 .smark.st-warn {
