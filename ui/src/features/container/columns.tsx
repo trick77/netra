@@ -1082,10 +1082,11 @@ export function containerColumns({
     // that is tabular figures, for columns of digits that must line up.
     //
     // `.imgcell` is what stops it shouting. `.mono` sets a FAMILY and nothing
-    // else, so this cell inherited the body's --text-ui (15px) while every
-    // other piece of text in the row -- the identity line, the memory
-    // reading, the group totals -- is stepped down to --text-label. A
-    // mono face at 15px also carries a wider advance and a taller x-height
+    // else, so this cell inherited the body size while every other piece of
+    // text in the row -- the identity line, the memory reading, the group
+    // totals -- sat a step under it. (That step is gone: --text-ui and
+    // --text-label are both 14px now.) A mono face at the body size also
+    // carries a wider advance and a taller x-height
     // than the sans beside it, so the longest, least urgent string in the
     // row ("ghcr.io/immich-app/immich-server:v1.119.1") was drawn as the
     // loudest. It is a version, read when something is wrong with a version.

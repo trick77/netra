@@ -38,11 +38,35 @@
   --font-serif: "Anthropic Serif", Georgia, "Times New Roman", serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
-  /* type scale — role → size (spec §3.6). 12px is the floor. */
+  /* type scale — role → size (spec §3.6). 12px is the floor.
+
+     --text-ui is 14px, not the 15px it shipped with, and that collapses a step
+     rather than adding one. It and --text-label were two BODY sizes with
+     nothing to tell them apart: cells, values and hostnames took the first,
+     subtitles, meta lines and timestamps the second, so one events row painted
+     12, 14 and 15 at once and no rule said which a new element should reach
+     for. The host page's tab menu is 14px and is the size the eye calibrates
+     against on arrival, so that is the one that survives.
+
+     Non-monospaced sizes actually painted, measured on /events: 12, 14, 15, 28
+     before; 12, 14, 28 after. Nothing here changes a WEIGHT or a family --
+     15px cells were not too bold, there were simply two of them.
+
+     That count is of the SANS scale, and .pkgver is the one deliberate
+     exception to it: 13px, which no token names. A mono face reads larger than
+     sans at the same px, so a version set at 14 would out-weigh the columns
+     either side of it; 13 is an optical correction to match them, not a step
+     in the scale, and it applies to one cell. Naming it as a token would
+     invite a second caller to reach for it as a size.
+
+     The two tokens are now equal on purpose and both are kept: they name
+     different jobs (the size a control or a cell is set in, and the size a
+     label beside it is), and a later change to one should not silently move
+     the other. */
   --text-display: 1.75rem;
   --text-title: 1.25rem;
   --text-body: 1rem;
-  --text-ui: 0.9375rem;
+  --text-ui: 0.875rem;
   --text-label: 0.875rem;
   --text-micro: 0.75rem;
 
@@ -1451,11 +1475,13 @@ tbody tr:hover .host-cell-name {
 }
 
 /* The container list's Image cell. .mono sets a family and nothing else, so
-   this was the one cell in the row still at the body's --text-ui while the
-   identity line, the memory reading and the group totals are all --text-label
-   -- and a mono face at the same px reads larger than the sans beside it. The
+   this was the one cell in the row left at the body size while the identity
+   line, the memory reading and the group totals were all a step under it --
+   and a mono face at the same px reads larger than the sans beside it. The
    result was the longest and least urgent string in the row drawn as the
-   loudest thing in it.
+   loudest thing in it. (The step it was measured against is gone -- --text-ui
+   and --text-label are both 14px now -- but the mono-reads-larger half stands
+   on its own and is the half that decided this rule.)
 
    --text-micro is one of its three sanctioned uses (spec 3.6: badges, axis
    ticks, eyebrows) stretched to a fourth, and deliberately: this is an
@@ -1467,6 +1493,22 @@ tbody tr:hover .host-cell-name {
   font-size: var(--text-micro);
   color: var(--muted);
   word-break: break-all;
+}
+
+/* The packages list's Version cell. The identifier face, for the reason .mono
+   states -- a version is diffed character by character, and 1.2.0-2 against
+   1.2.0-3 is the whole reading of that column.
+
+   Its own class rather than bare .mono because of the size. A mono face reads
+   larger than the sans beside it at the same px, which is the note above on
+   .imgcell; 13px lands it at the visual weight of the 14px sans in the columns
+   either side. It does NOT go to --text-micro the way .imgcell does: an image
+   ref is looked up once something is already wrong, whereas the version IS
+   what this list is read for, so it stays at the row's own register rather
+   than dropping to an annotation. Ink, not --muted, for the same reason. */
+.pkgver {
+  font-family: var(--font-mono);
+  font-size: 13px;
 }
 
 /* The severity rail: which rows to look at, readable from the edge of the
@@ -2676,20 +2718,26 @@ tbody tr:hover .host-cell-name {
    because these two numbers are the whole of whether the mark reads, and they
    are decided against the type it sits beside.
 
-   15px against the hostname's --text-ui 15px: the mark stands as tall as the
-   name it marks and no taller. It was 13, and 13 was where the first version
-   failed -- an octagon has eight sides, and eight sides across 13px are
-   sub-pixel corner cuts, so it drew a circle.
+   --text-ui, which is what .host-cell-name is set in: the mark stands as tall
+   as the name it marks and no taller. It was written as a hardcoded 15px to
+   match that token's old value, so when --text-ui became 14px the mark was
+   suddenly the taller of the two -- the inverse of the rule this paragraph
+   states. Tracking the token means the pair cannot come apart again.
+
+   It was 13px once, and 13 was where the FIRST version failed -- but that was
+   a hand-drawn polygon, where eight sides across 13px are sub-pixel corner
+   cuts and the octagon drew itself as a circle. These are lucide outlines with
+   an interior mark, which is a different failure mode: what thins out first is
+   the cross and the exclamation, not the outline.
 
    Stroke 2.25, up from lucide's own 2. lucide draws for a 24px box, so a
-   stroke of 2 there lands at 1.25px once the box is 15 -- and what thins out
-   first is the INTERIOR, the exclamation and the cross, which is the half
-   that makes the mark more than a coloured blob. The nav rail runs its own
-   15px icons at 2 because a glyph standing alone can afford to be quiet;
-   this one is 15px in a table of text and cannot. */
+   stroke of 2 there lands at 1.25px at this size -- and what goes first is the
+   INTERIOR, which is the half that makes the mark more than a coloured blob.
+   The nav rail runs its own icons at 2 because a glyph standing alone can
+   afford to be quiet; this one sits in a table of text and cannot. */
 .smark {
-  width: 15px;
-  height: 15px;
+  width: var(--text-ui);
+  height: var(--text-ui);
   stroke-width: 2.25;
   /* Never shrink: 15px of glyph beside a hostname that can be any length, and
      .host-cell-top is a flex row -- without it a long name in a narrow Host
@@ -2716,8 +2764,8 @@ table {
    at Label 14px, which put it 2px above every other uppercase eyebrow in the
    UI (.grouphead, .attn-sev, .grouprow .gbytes, .sysstrip dt are all Micro) and
    the header rail the first thing the eye landed on. It was never actually
-   BIGGER than the data -- td inherits body's --text-ui 15px, so the label was a
-   pixel smaller -- but caps set every glyph at cap height, which is taller than
+   BIGGER than the data -- td inherited the body size, which was 15px then and
+   is 14px now -- but caps set every glyph at cap height, which is taller than
    the x-height of the lowercase beneath it, and 0.07em spreads the run wider
    still. Micro is the size the rest of the system already uses for exactly this
    job, and the tighter padding takes the row from ~38px to ~27px of height
@@ -3946,16 +3994,17 @@ svg.spark {
    timestamp any more. */
 .evtime {
   color: var(--muted);
-  /* One step under the row it sits in, which stays at the body's --text-ui
-     like every other table in the app. The instant annotates the event; the
-     sentence in the Event column is the reading, and a log where the clock is
-     set at the same size as what happened has two things competing.
+  /* The row's own size. This was written as "one step under the row it sits
+     in" and set --text-label against a 15px --text-ui, on the argument that
+     the instant annotates the event while the sentence is the reading.
 
-     The log used to be --text-label THROUGHOUT, because .evrow set it -- so
-     moving to the shared table put it up a step everywhere at once. The row
-     staying at 15px is deliberate: this is the one table in netra with a
-     column of running prose in it, but a list set a step smaller than every
-     other list is a worse inconsistency than a slightly heavy paragraph. */
+     There is no step left to take: --text-ui is 14px now, so the two tokens
+     are equal and this declaration keeps the clock at exactly the size of the
+     words beside it. The stated intent goes with the step, and deliberately --
+     inventing a smaller size here to preserve it would put a fourth value back
+     into a log that just got down to two. What separates the clock from the
+     sentence is --muted and the tabular figures below, which is enough: it
+     reads as a column of times rather than as part of the prose. */
   font-size: var(--text-label);
   /* What lines the column up, and no monospace is needed for it -- measured,
      not assumed. In Anthropic Sans at this size five different timestamps
