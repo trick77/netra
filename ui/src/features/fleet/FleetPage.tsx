@@ -584,35 +584,6 @@ export function FleetPage({
           ways. */}
       <div className="pagehead">
         <h1>{entity === "containers" ? "All containers" : "All hosts"}</h1>
-        <div className="spacer" />
-        {/* The filter, off the right end of the title rather than in a
-            toolbar under it: it is the one control that narrows what the
-            heading names, and a row holding nothing else was a band of chrome
-            between the page's name and its list.
-
-            The key that focuses it is said where the field is. "/" has
-            focused the filter since useSlashToFocus was written and nothing
-            on screen mentioned it, which makes a shortcut a thing you either
-            already know or never learn. aria-hidden: it is a hint about the
-            keyboard, and a screen-reader user reaching this field has not
-            typed "/" to get here. */}
-        <div className="filterbox">
-          <Input
-            ref={filterRef}
-            type="search"
-            value={filter}
-            placeholder={
-              entity === "hosts" ? "Filter hosts" : "Filter containers"
-            }
-            aria-label={
-              entity === "hosts" ? "Filter hosts" : "Filter containers"
-            }
-            onChange={(e) => setFilter(e.target.value)}
-          />
-          <span className="kbd" aria-hidden="true">
-            /
-          </span>
-        </div>
       </div>
 
       {/* The ambient figures, on a rail rather than in cards. They were three
@@ -720,15 +691,30 @@ export function FleetPage({
         />
       ) : null}
 
-      {/* The severity segments, and nothing else -- the filter they compose
-          with is up in the title row now. Rendered only when there ARE
-          segments: the toolbar used to hold the filter as well, so it always
-          had something in it, and an empty one is a band of padding above a
-          list that has not started. Hosts only -- every condition netra has is
+      {/* The row of controls that sit over the list: the severity segments on
+          the left, the filter on the right. The filter used to hang off the
+          right end of the title, which put it a block away from the segments
+          it composes with; both narrow the same list, so both belong on the
+          line directly above it, and the field keeps the same right edge it
+          had. The toolbar is drawn whether or not there are segments -- an
+          empty left half is a row with the filter in it, which is the row the
+          list needs, and a control that moves up a block on a healthy fleet
+          is a control the reader has to find twice.
+
+          The segments are hosts only: every condition netra has is
           host-level, so on the containers list this control would offer three
-          segments that all show the same rows. */}
-      {entity === "hosts" && troubled > 0 ? (
-        <div className="toolbar">
+          segments that all show the same rows. And only once something is
+          wrong, since three segments reading "All 5 / Critical 0 / Warning 0"
+          offer two choices that lead nowhere.
+
+          The key that focuses the filter is said where the field is. "/" has
+          focused it since useSlashToFocus was written and nothing on screen
+          mentioned it, which makes a shortcut a thing you either already know
+          or never learn. aria-hidden: it is a hint about the keyboard, and a
+          screen-reader user reaching this field has not typed "/" to get
+          here. */}
+      <div className="toolbar">
+        {entity === "hosts" && troubled > 0 ? (
           <Segmented
             options={[
               { value: "all", label: `All ${hostRows.length}` },
@@ -756,9 +742,26 @@ export function FleetPage({
             }
             onChange={(next) => setAttention(next as AttentionFilter)}
           />
-          <div className="spacer" />
+        ) : null}
+        <div className="spacer" />
+        <div className="filterbox">
+          <Input
+            ref={filterRef}
+            type="search"
+            value={filter}
+            placeholder={
+              entity === "hosts" ? "Filter hosts" : "Filter containers"
+            }
+            aria-label={
+              entity === "hosts" ? "Filter hosts" : "Filter containers"
+            }
+            onChange={(e) => setFilter(e.target.value)}
+          />
+          <span className="kbd" aria-hidden="true">
+            /
+          </span>
         </div>
-      ) : null}
+      </div>
 
       {entity === "hosts" && !filtered ? (
         // Says what was left out, and how to stop leaving it out. The band's
